@@ -56,6 +56,7 @@ it('preserves a successful transcript when cache cleanup fails', async () => {
 });
 
 it('sends the Expo file as authenticated WAV multipart to the selected runtime', async () => {
+  const timeoutSpy = jest.spyOn(AbortSignal, 'timeout');
   const requestId = 'sp_1789000000000_abcdefghijklmnop';
   const response = { contractVersion: 1, requestId, status: 'succeeded', outcome: 'transcript', text: 'hello', audioDurationMs: 1000 };
   const encoded = new TextEncoder().encode(JSON.stringify(response));
@@ -70,8 +71,10 @@ it('sends the Expo file as authenticated WAV multipart to the selected runtime',
   const recording = init.body.get('recording');
   expect(init.body.get('requestId')).toBe(requestId);
   expect(recording).toMatchObject({ name: 'recording.wav', type: 'audio/wav' });
+  expect(timeoutSpy).toHaveBeenCalledWith(70_000);
   expect(mockWrite).toHaveBeenCalledTimes(1);
   expect(mockDelete).toHaveBeenCalledTimes(1);
+  timeoutSpy.mockRestore();
 });
 
 it('aborts an in-flight Expo upload and still removes the cache file', async () => {

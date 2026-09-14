@@ -208,7 +208,7 @@ describe("shared chat platform speech input", () => {
     const retryingClient = speechClient();
     vi.mocked(retryingClient.capabilities)
       .mockRejectedValueOnce(new Error("temporary network failure"));
-    render(<ChatInput
+    render(<TestChatInput
       speechScopeKey="chat-1"
       connected
       busy={false}

@@ -18,16 +18,14 @@ function removeCachedRecording(file: File, retriesRemaining = 1): void {
 
 export function createNativeSpeechClient(options: { baseUrl: string; runtimeSlot: string; getToken: () => Promise<string | null> }) {
   async function request<T>(path: string, schema: { parse(value: unknown): T }, signal?: AbortSignal, body?: FormData | string, method = 'GET') {
-    const controller = new AbortController();
-    const abort = () => controller.abort();
-    signal?.addEventListener('abort', abort, { once: true });
-    const timeout = setTimeout(abort, method === 'POST' ? 70000 : 10000);
+    const timeoutSignal = AbortSignal.timeout(method === 'POST' ? 70_000 : 10_000);
+    const requestSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
     try {
       const token = await options.getToken();
-      if (!token || signal?.aborted || controller.signal.aborted) throw new Error('Unavailable');
+      if (!token || requestSignal.aborted) throw new Error('Unavailable');
       const response = await expoFetch(buildGatewayRequestUrl(options.baseUrl, `/api/speech${path}`, { runtime: options.runtimeSlot }), {
         method, body, headers: { Authorization: `Bearer ${token}`, accept: 'application/json' },
-        signal: controller.signal, redirect: 'error',
+        signal: requestSignal, redirect: 'error',
       });
       if (!response.ok || !response.body) throw new Error('Unavailable');
       const reader = response.body.getReader();
@@ -47,7 +45,6 @@ export function createNativeSpeechClient(options: { baseUrl: string; runtimeSlot
       for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
       return schema.parse(JSON.parse(new TextDecoder().decode(bytes)));
     } catch (_error: unknown) { throw new Error('Speech is unavailable. Try again.'); }
-    finally { clearTimeout(timeout); signal?.removeEventListener('abort', abort); }
   }
   return {
     capabilities: (signal?: AbortSignal) => request('/capabilities', SpeechCapabilitiesResponseSchema, signal),
