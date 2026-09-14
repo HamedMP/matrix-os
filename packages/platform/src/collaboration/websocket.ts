@@ -281,7 +281,7 @@ function parseRoute(rawPath: string): {
     throw new CollaborationWebSocketError("invalid_route", "Collaboration socket route is invalid");
   }
   const purpose = match[2] as Purpose;
-  if (after !== undefined && (purpose !== "events" || !/^(?:0|[1-9][0-9]{0,18})$/.test(after))) {
+  if (after !== undefined && !/^(?:0|[1-9][0-9]{0,18})$/.test(after)) {
     throw new CollaborationWebSocketError("invalid_route", "Collaboration socket route is invalid");
   }
   return {

@@ -144,6 +144,60 @@ describe("CollaborationWebSocketAuthorizer", () => {
     })).resolves.toMatchObject({ scopeId, purpose: "events" });
   });
 
+  it("forwards a validated terminal replay cursor through the deployed platform path", async () => {
+    await repository.applyDirectoryEvent({
+      eventId: "20000000-0000-4000-8000-000000000020",
+      scopeId,
+      runtimeId: "runtime_owner",
+      ownerId: platformCollaborationActors.owner,
+      kind: "terminal",
+      authorityGeneration: 2,
+      metadataRevision: 2,
+      recipients: [
+        { actorId: platformCollaborationActors.owner, status: "accepted" },
+        { actorId: platformCollaborationActors.recipientWithoutComputer, status: "accepted" },
+      ],
+    });
+    await repository.setPolicy({
+      milestone: "m3",
+      expectedRevision: 0,
+      mode: "internal",
+      cohort: [platformCollaborationActors.owner, platformCollaborationActors.recipientWithoutComputer],
+      changedBy: "operator_test",
+    });
+    const terminalAuthorizer = new CollaborationWebSocketAuthorizer({
+      repository,
+      signer: new CollaborationProofSigner({
+        activeKeyId: "collaboration-key-1",
+        keys: { "collaboration-key-1": key },
+        now: () => now,
+        createNonce: () => "b".repeat(32),
+      }),
+      allowedOrigins: ["https://app.matrix-os.com"],
+      enabledPurposes: ["terminal"],
+      now: () => now,
+      createToken: () => `${"b".repeat(43)}${++tokenNumber}`,
+    });
+    const terminalPath = `/ws/collaboration/scopes/${scopeId}/terminal`;
+    const issued = await terminalAuthorizer.issueTicket({
+      actorId: platformCollaborationActors.recipientWithoutComputer,
+      scopeId,
+      purpose: "terminal",
+      clientRequestId: "40000000-0000-4000-8000-000000000020",
+    });
+
+    await expect(terminalAuthorizer.authorizeUpgrade({
+      actorId: platformCollaborationActors.recipientWithoutComputer,
+      authentication: "ticket",
+      rawPath: `${terminalPath}?ticket=${encodeURIComponent(issued.ticket)}&after=7`,
+      origin: "https://app.matrix-os.com",
+    })).resolves.toMatchObject({
+      upstreamPath: `${terminalPath}?after=7`,
+      purpose: "terminal",
+      signedPolicy: { policy: { milestone: "m3" } },
+    });
+  });
+
   it.each([
     { rawPath: `${eventPath}?token=public-snapshot`, origin: "https://app.matrix-os.com" },
     { rawPath: `${eventPath}?ticket=unknown&extra=value`, origin: "https://app.matrix-os.com" },
