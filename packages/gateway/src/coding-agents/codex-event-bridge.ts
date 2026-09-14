@@ -410,7 +410,7 @@ export function createCodexEventBridge(options: {
         if (existing.threadId !== parsed.threadId || existing.principal.userId !== input.principal.userId) {
           throw new Error("Codex event watcher identity mismatch");
         }
-        if (!parsed.startAtEnd) { existing.lastTouchedAt = nowMs(); existing.checkpoint ||= parsed.checkpoint; return { path, offset: existing.offset }; }
+        if (!parsed.startAtEnd) { existing.lastTouchedAt = nowMs(); existing.checkpoint ||= parsed.checkpoint; return { path, ...(parsed.checkpoint ? { offset: existing.offset } : {}) }; }
       }
       if (!existing) evictIfNeeded();
       // Renew supervision without dropping bytes already owned by an active watcher.
@@ -439,7 +439,7 @@ export function createCodexEventBridge(options: {
         offset,
         lastTouchedAt: nowMs(),
       });
-      return { path, offset };
+      return { path, ...(parsed.checkpoint ? { offset } : {}) };
     },
     unwatch(sessionId: string): void {
       if (SessionIdSchema.safeParse(sessionId).success) watchers.delete(sessionId);

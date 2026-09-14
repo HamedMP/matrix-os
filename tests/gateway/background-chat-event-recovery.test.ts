@@ -32,8 +32,9 @@ describe("background Chat durable observation", () => {
     let restarted: ReturnType<typeof createCodexEventBridge> | undefined;
     try {
       bridge.attachThreadStore(f.store);
-      await bridge.watch({ principal, threadId: f.threadId, sessionId: f.sessionId, checkpoint: true });
       const path = codexProviderEventPath(f.homePath, f.sessionId);
+      await expect(bridge.watch({ principal, threadId: f.threadId, sessionId: f.sessionId, checkpoint: true })).resolves.toEqual({ path, offset: 0 });
+      await expect(bridge.watch({ principal, threadId: f.threadId, sessionId: f.sessionId })).resolves.toEqual({ path });
       const first = JSON.stringify({ type: "item.completed", item: { id: "msg_first", type: "agent_message", text: "first part" } }) + "\n";
       await writeFile(path, first);
       await bridge.drain();
