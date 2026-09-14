@@ -12,9 +12,11 @@ function clampLevel(level: number): number {
 
 export function SpeechInputWaveform({
   level,
+  sampleSequence,
   className,
 }: {
   level: number;
+  sampleSequence: number;
   className?: string;
 }) {
   const normalizedLevel = clampLevel(level);
@@ -22,13 +24,14 @@ export function SpeechInputWaveform({
 
   useEffect(() => {
     setHistory((current) => [...current.slice(1), normalizedLevel]);
-  }, [normalizedLevel]);
+  }, [normalizedLevel, sampleSequence]);
 
   return (
     <span
       aria-hidden="true"
       data-testid="speech-input-waveform"
       data-level={String(normalizedLevel)}
+      data-sample-sequence={String(sampleSequence)}
       className={className}
       style={{
         alignItems: "center",
@@ -43,14 +46,13 @@ export function SpeechInputWaveform({
           // A fixed chronological slot keeps the waveform stable while values flow left.
           // eslint-disable-next-line react/no-array-index-key
           key={index}
-          className="motion-reduce:transition-none"
+          className="transition-[height,opacity] duration-[80ms] ease-out motion-reduce:transition-none"
           style={{
             background: "currentColor",
             borderRadius: 999,
             display: "block",
             height: MIN_BAR_HEIGHT + Math.round(sample * (MAX_BAR_HEIGHT - MIN_BAR_HEIGHT)),
             opacity: 0.45 + sample * 0.55,
-            transition: "height 80ms ease-out, opacity 80ms ease-out",
             width: 2,
           }}
         />

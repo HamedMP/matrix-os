@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 import {
   encodePcm16Wav,
+  encodePcm16WavBytes,
   normalizeSpeechInputLevel,
   resolveSpeechWorkletUrl,
   smoothSpeechInputLevel,
@@ -27,6 +28,15 @@ describe("platform speech PCM recorder", () => {
     expect(view.getUint16(34, true)).toBe(16);
     expect(view.getUint32(40, true)).toBe(10);
     expect(view.getInt16(52, true)).toBe(-32_768);
+  });
+
+  it("exposes the same platform-neutral WAV bytes for native capture", async () => {
+    const chunks = [new Int16Array([0, 32_767, -32_768])];
+    const bytes = encodePcm16WavBytes(chunks, 16_000);
+    const browserBytes = new Uint8Array(await encodePcm16Wav(chunks, 16_000).arrayBuffer());
+
+    expect(bytes).toEqual(browserBytes);
+    expect(bytes.byteLength).toBe(50);
   });
 
   it("rejects invalid sample rates and empty recordings", () => {

@@ -66,6 +66,7 @@ export type {
   PlatformSpeechCaptureAdapter,
   PlatformSpeechDraftClient,
   PlatformSpeechDraftPhase,
+  PlatformSpeechRecording,
   UsePlatformSpeechDraftResult,
 } from "./speech/use-platform-speech-draft.js";
 export {
@@ -76,6 +77,7 @@ export type { BrowserSpeechClient } from "./speech/browser-client.js";
 export {
   createWebPcmSpeechCaptureAdapter,
   encodePcm16Wav,
+  encodePcm16WavBytes,
   normalizeSpeechInputLevel,
   PlatformSpeechRecorderError,
   resolveSpeechWorkletUrl,

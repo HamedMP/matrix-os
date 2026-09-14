@@ -1,6 +1,7 @@
 import {
   createWebPcmSpeechCaptureAdapter as createSharedWebPcmSpeechCaptureAdapter,
   encodePcm16Wav,
+  encodePcm16WavBytes,
   normalizeSpeechInputLevel,
   PlatformSpeechRecorderError,
   smoothSpeechInputLevel,
@@ -12,6 +13,7 @@ const WORKLET_ASSET_PATH = "/speech-pcm-capture-worklet.js";
 
 export {
   encodePcm16Wav,
+  encodePcm16WavBytes,
   normalizeSpeechInputLevel,
   PlatformSpeechRecorderError,
   smoothSpeechInputLevel,
