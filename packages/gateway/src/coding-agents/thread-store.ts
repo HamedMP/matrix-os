@@ -27,6 +27,15 @@ import {
   type CreateAgentTurnResponse,
   type UserInputAnswerRequest,
 } from "@matrix-os/contracts";
+import {
+  MAX_PENDING_TERMINAL_STOPS,
+  PendingTerminalStopSchema,
+  TerminalStoppedStatusSchema,
+  appendPendingTerminalStop,
+  consumePendingTerminalStop,
+  terminalStopMatchesThread,
+  type PendingTerminalStop,
+} from "./thread-terminal-stops.js";
 import { atomicWriteJson } from "../state-ops.js";
 import type { RequestPrincipal } from "../request-principal.js";
 import { logCodingAgentWarning } from "./diagnostics.js";
@@ -81,7 +90,6 @@ const MAX_EVENTS_PER_THREAD = 500;
 const MAX_ABORT_REQUEST_IDS = 50;
 const MAX_APPROVAL_DECISION_REQUEST_IDS = 50;
 const MAX_INPUT_ANSWER_REQUEST_IDS = 50;
-const MAX_PENDING_TERMINAL_STOPS = 100;
 // Retain bounded request payloads for dispatch/idempotency. At the shared
 // 96 KiB request limit, this caps worst-case turn payload storage below 10 MiB.
 const MAX_STORED_TURNS = 100;
@@ -128,15 +136,6 @@ const TerminalTabStoppedReconciliationSchema = z.object({
   terminalRef: TerminalRefSchema,
   runtimeStatus: z.enum(["starting", "running", "idle", "waiting", "exited", "failed", "degraded"]),
 }).strict();
-const TerminalStoppedStatusSchema = z.enum(["exited", "failed", "degraded"]);
-const PendingTerminalStopSchema = z.object({
-  ownerId: OwnerIdSchema,
-  workspaceSessionId: WorkspaceSessionIdSchema.optional(),
-  terminalRef: TerminalRefSchema,
-  runtimeStatus: TerminalStoppedStatusSchema,
-  occurredAt: IsoTimestampSchema,
-}).strict();
-
 const StoredThreadStateSchema = z.object({
   version: z.literal(1),
   threads: z.array(StoredThreadSchema).max(MAX_STORED_THREADS),
@@ -153,7 +152,6 @@ type TurnAcceptMutationResult = {
   eventsToPublish: AgentThreadEvent[];
   dispatch?: { thread: StoredThread; turn: StoredTurn };
 };
-type PendingTerminalStop = z.infer<typeof PendingTerminalStopSchema>;
 type AgentThreadSnapshot = z.infer<typeof AgentThreadSnapshotSchema>;
 type ThreadCreateResult = { snapshot: AgentThreadSnapshot; existing: boolean };
 type ThreadCreateMutationResult = ThreadCreateResult & {
@@ -556,49 +554,6 @@ function stoppedRuntimeStatus(
   runtimeStatus: TerminalTabStoppedReconciliation["runtimeStatus"],
 ): runtimeStatus is PendingTerminalStop["runtimeStatus"] {
   return TerminalStoppedStatusSchema.safeParse(runtimeStatus).success;
-}
-
-function appendPendingTerminalStop(
-  pendingTerminalStops: PendingTerminalStop[],
-  stop: PendingTerminalStop,
-): PendingTerminalStop[] {
-  return [
-    ...pendingTerminalStops.filter((candidate) =>
-      candidate.ownerId !== stop.ownerId ||
-      candidate.workspaceSessionId !== stop.workspaceSessionId ||
-      candidate.terminalRef.workspaceId !== stop.terminalRef.workspaceId ||
-      candidate.terminalRef.tabId !== stop.terminalRef.tabId
-    ),
-    stop,
-  ].slice(-MAX_PENDING_TERMINAL_STOPS);
-}
-
-function workspaceSessionIdForThread(threadId: string): string {
-  return `sess_${threadId.slice("thread_".length)}`;
-}
-
-function terminalStopMatchesThread(stop: Pick<PendingTerminalStop, "ownerId" | "workspaceSessionId" | "terminalRef">, thread: StoredThread): boolean {
-  return thread.ownerId === stop.ownerId &&
-    thread.terminalRef?.workspaceId === stop.terminalRef.workspaceId &&
-    thread.terminalRef.tabId === stop.terminalRef.tabId &&
-    (stop.workspaceSessionId === undefined || stop.workspaceSessionId === workspaceSessionIdForThread(thread.id));
-}
-
-function consumePendingTerminalStop(
-  pendingTerminalStops: PendingTerminalStop[],
-  thread: StoredThread,
-): { pendingStop?: PendingTerminalStop; pendingTerminalStops: PendingTerminalStop[] } {
-  if (!thread.terminalRef) {
-    return { pendingTerminalStops };
-  }
-  const pendingStop = pendingTerminalStops.find((candidate) => terminalStopMatchesThread(candidate, thread));
-  if (!pendingStop) {
-    return { pendingTerminalStops };
-  }
-  return {
-    pendingStop,
-    pendingTerminalStops: pendingTerminalStops.filter((candidate) => candidate !== pendingStop),
-  };
 }
 
 function invalidInputAnswer(message: string): never {
@@ -1557,7 +1512,7 @@ export function createCodingAgentThreadStore(
             events: state.events.filter((event) => !threadIds.has(event.threadId)),
             turns: state.turns.filter((turn) => !threadIds.has(turn.threadId)),
             pendingTerminalStops: state.pendingTerminalStops.filter((stop) =>
-              stop.ownerId !== principal.userId || !terminalRefKeys.includes(
+              !("terminalRef" in stop) || stop.ownerId !== principal.userId || !terminalRefKeys.includes(
                 `${stop.terminalRef.workspaceId}:${stop.terminalRef.tabId}`,
               )
             ),
@@ -1809,6 +1764,7 @@ export function createCodingAgentThreadStore(
                 ...state,
                 pendingTerminalStops: state.pendingTerminalStops.filter((stop) =>
                   !(
+                    "terminalRef" in stop &&
                     stop.ownerId === parsed.ownerId &&
                     stop.workspaceSessionId === parsed.workspaceSessionId &&
                     stop.terminalRef.workspaceId === parsed.terminalRef.workspaceId &&
@@ -1863,6 +1819,7 @@ export function createCodingAgentThreadStore(
           turns: state.turns,
           pendingTerminalStops: state.pendingTerminalStops.filter((stop) =>
             !(
+              "terminalRef" in stop &&
               stop.ownerId === parsed.ownerId &&
               stop.workspaceSessionId === parsed.workspaceSessionId &&
               stop.terminalRef.workspaceId === parsed.terminalRef.workspaceId &&
