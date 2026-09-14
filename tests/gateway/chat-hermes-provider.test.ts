@@ -988,11 +988,16 @@ describe("Hermes canonical Chat Provider adapter", () => {
       { type: "assistant.delta", delta: "continued" },
       { type: "run.completed", outcome: "completed" },
     ]);
-    expect(gateway.requests.find(({ method }) => method === "session.resume")?.params).toMatchObject({
+    expect(gateway.requests.find(({ method }) => method === "session.resume")?.params).toEqual({
       session_id: "durable_session",
-      cwd: "/safe/project",
+      cols: 120,
+      source: "matrix-os-desktop",
       omit_messages: true,
     });
+    expect(gateway.requests).toContainEqual(expect.objectContaining({
+      method: "session.cwd.set",
+      params: { session_id: "live_session", cwd: "/safe/project" },
+    }));
     expect(gateway.requests).toContainEqual(expect.objectContaining({
       method: "config.set",
       params: {
