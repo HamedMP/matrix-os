@@ -60,7 +60,10 @@ export function GatewayPanel({
   }, [budget]);
   const credit = source ? gatewayCreditLines(source) : { primary: "Credit unavailable", secondary: null, stale: false };
   const usageAsOf = source?.usage.asOf ?? null;
-  const ready = source?.readiness.state === "ready" && policy?.accessSourceId === source.id;
+  // One Matrix AI policy and balance may fund more than one internal serving
+  // route. The policy's accessSourceId identifies its canonical source; it is
+  // not a requirement that every ready Matrix route share that exact id.
+  const ready = source?.readiness.state === "ready" && policy !== null;
   const status = !source || !policy ? "Setup needed" : ready ? "Ready" : titleCase(source.readiness.state);
 
   const saveBudget = () => {
