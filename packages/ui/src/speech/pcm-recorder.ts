@@ -6,6 +6,8 @@ const MIN_SAMPLE_RATE = 8_000;
 const MAX_SAMPLE_RATE = 96_000;
 const WORKLET_ASSET_PATH = "speech-pcm-capture-worklet.js";
 const FLUSH_TIMEOUT_MS = 500;
+const MIN_METER_RMS = 0.001;
+const METER_DECIBEL_RANGE = 60;
 
 export class PlatformSpeechRecorderError extends Error {
   constructor(readonly safeMessage: string) {
@@ -16,6 +18,19 @@ export class PlatformSpeechRecorderError extends Error {
 
 export function resolveSpeechWorkletUrl(documentUrl: string = window.location.href): string {
   return new URL(`./${WORKLET_ASSET_PATH}`, documentUrl).toString();
+}
+
+export function normalizeSpeechInputLevel(rms: number): number {
+  if (!Number.isFinite(rms) || rms <= MIN_METER_RMS) return 0;
+  const decibels = 20 * Math.log10(Math.min(1, rms));
+  return Math.max(0, Math.min(1, (decibels + METER_DECIBEL_RANGE) / METER_DECIBEL_RANGE));
+}
+
+export function smoothSpeechInputLevel(previous: number, next: number): number {
+  const safePrevious = Number.isFinite(previous) ? Math.max(0, Math.min(1, previous)) : 0;
+  const safeNext = Number.isFinite(next) ? Math.max(0, Math.min(1, next)) : 0;
+  const response = safeNext >= safePrevious ? 0.7 : 0.22;
+  return safePrevious + (safeNext - safePrevious) * response;
 }
 
 function writeAscii(view: DataView, offset: number, value: string): void {
@@ -105,12 +120,18 @@ export function createWebPcmSpeechCaptureAdapter(options: { workletUrl?: string 
         const chunks: Int16Array[] = [];
         let pcmBytes = 0;
         let overflowed = false;
+        let smoothedLevel = 0;
         let flushComplete: (() => void) | undefined;
         worklet.port.onmessage = (event: MessageEvent<unknown>) => {
           if (!event.data || typeof event.data !== "object") return;
-          const message = event.data as { type?: unknown; bytes?: unknown };
+          const message = event.data as { type?: unknown; bytes?: unknown; level?: unknown };
           if (message.type === "flushed") {
             flushComplete?.();
+            return;
+          }
+          if (message.type === "level" && typeof message.level === "number") {
+            smoothedLevel = smoothSpeechInputLevel(smoothedLevel, normalizeSpeechInputLevel(message.level));
+            input.onLevel?.(smoothedLevel);
             return;
           }
           if (message.type !== "audio" || !(message.bytes instanceof ArrayBuffer)) return;

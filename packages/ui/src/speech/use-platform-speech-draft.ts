@@ -17,6 +17,8 @@ export interface UsePlatformSpeechDraftResult {
   error: string | null;
   isSupported: boolean;
   elapsedMs: number;
+  /** Current microphone energy, normalized to the inclusive range 0..1. */
+  inputLevel: number;
   start(): Promise<void>;
   stop(): void;
   cancel(): void;
@@ -29,7 +31,11 @@ export interface PlatformSpeechCapture {
 
 export interface PlatformSpeechCaptureAdapter {
   isSupported(): boolean;
-  start(input: { maxBytes: number; signal: AbortSignal }): Promise<PlatformSpeechCapture>;
+  start(input: {
+    maxBytes: number;
+    signal: AbortSignal;
+    onLevel?: (level: number) => void;
+  }): Promise<PlatformSpeechCapture>;
 }
 
 export interface PlatformSpeechDraftClient {
@@ -102,6 +108,7 @@ export function usePlatformSpeechDraft(options: {
   const [phase, setPhase] = useState<PlatformSpeechDraftPhase>("loading");
   const [error, setError] = useState<string | null>(null);
   const [elapsedMs, setElapsedMs] = useState(0);
+  const [inputLevel, setInputLevel] = useState(0);
   const [capabilities, setCapabilities] = useState<SpeechCapabilitiesResponse | null>(null);
   const generationRef = useRef(0);
   const recordingRef = useRef<ActiveRecording | null>(null);
@@ -115,6 +122,7 @@ export function usePlatformSpeechDraft(options: {
   };
 
   const disposeActive = (notifyRemote: boolean) => {
+    setInputLevel(0);
     captureStartRef.current?.abort();
     captureStartRef.current = null;
     const recording = recordingRef.current;
@@ -172,6 +180,7 @@ export function usePlatformSpeechDraft(options: {
     active.stopping = true;
     clearTimeout(active.timeout);
     clearInterval(active.elapsedTimer);
+    setInputLevel(0);
     if (recordingRef.current === active) recordingRef.current = null;
     if (generationRef.current !== active.generation) return;
     let recording: Blob;
@@ -229,14 +238,20 @@ export function usePlatformSpeechDraft(options: {
     const generation = ++generationRef.current;
     setError(null);
     setElapsedMs(0);
+    setInputLevel(0);
     setPhase("requesting_permission");
     const controller = new AbortController();
     captureStartRef.current = controller;
     let capture: PlatformSpeechCapture;
+    let active!: ActiveRecording;
     try {
       capture = await options.captureAdapter.start({
         maxBytes: capabilities.fileTranscription.dictation.maxBytes,
         signal: controller.signal,
+        onLevel: (level) => {
+          if (recordingRef.current !== active || generationRef.current !== generation) return;
+          setInputLevel(Number.isFinite(level) ? Math.max(0, Math.min(1, level)) : 0);
+        },
       });
     } catch (caught: unknown) {
       if (captureStartRef.current === controller) captureStartRef.current = null;
@@ -253,7 +268,7 @@ export function usePlatformSpeechDraft(options: {
     }
     const policy = capabilities.fileTranscription.dictation;
     const startedAt = Date.now();
-    const active: ActiveRecording = {
+    active = {
       capture,
       generation,
       timeout: setTimeout(() => {
@@ -279,6 +294,7 @@ export function usePlatformSpeechDraft(options: {
     disposeActive(true);
     setError(null);
     setElapsedMs(0);
+    setInputLevel(0);
     setPhase(supportedMediaType(capabilities, options.captureAdapter) ? "idle" : "unavailable");
   }
 
@@ -289,6 +305,7 @@ export function usePlatformSpeechDraft(options: {
       && phase !== "unavailable"
       && supportedMediaType(capabilities, options.captureAdapter) !== undefined,
     elapsedMs,
+    inputLevel,
     start,
     stop,
     cancel,

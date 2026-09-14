@@ -7,6 +7,9 @@ class SpeechPcm16CaptureProcessor extends AudioWorkletProcessor {
     super();
     this.samples = [];
     this.chunkSamples = 16_384;
+    this.levelSumSquares = 0;
+    this.levelSampleCount = 0;
+    this.levelWindowSamples = Math.max(256, Math.round(sampleRate / 20));
     this.port.onmessage = (event) => {
       if (event.data?.type !== "flush") return;
       this.emit(true);
@@ -28,8 +31,19 @@ class SpeechPcm16CaptureProcessor extends AudioWorkletProcessor {
     const channel = inputs[0]?.[0];
     if (!channel) return true;
     for (let index = 0; index < channel.length; index += 1) {
-      const sample = Math.max(-1, Math.min(1, channel[index]));
+      const rawSample = channel[index];
+      const sample = Number.isFinite(rawSample) ? Math.max(-1, Math.min(1, rawSample)) : 0;
       this.samples.push(sample < 0 ? sample * 0x8000 : sample * 0x7fff);
+      this.levelSumSquares += sample * sample;
+      this.levelSampleCount += 1;
+      if (this.levelSampleCount >= this.levelWindowSamples) {
+        this.port.postMessage({
+          type: "level",
+          level: Math.sqrt(this.levelSumSquares / this.levelSampleCount),
+        });
+        this.levelSumSquares = 0;
+        this.levelSampleCount = 0;
+      }
     }
     this.emit();
     return true;

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   BrowserSpeechClient,
@@ -76,6 +76,32 @@ describe("Electron shared Chat speech input", () => {
     await waitFor(() => expect(onDraft).toHaveBeenCalledWith("spoken draft"));
     expect(speechClient.transcribe).toHaveBeenCalledTimes(1);
     expect(screen.getByRole("button", { name: "Start voice input" })).toBeTruthy();
+  });
+
+  it("renders the shared input-reactive waveform while recording", async () => {
+    let emitLevel: ((level: number) => void) | undefined;
+    const captureAdapter: PlatformSpeechCaptureAdapter = {
+      isSupported: () => true,
+      start: vi.fn(async (input) => {
+        emitLevel = input.onLevel;
+        return {
+          stop: vi.fn(async () => new Blob([new Uint8Array(44)], { type: "audio/wav" })),
+          cancel: vi.fn(async () => undefined),
+        };
+      }),
+    };
+    render(<DesktopSpeechInputControl
+      scopeKey="account-a:primary:chat-a"
+      client={client()}
+      captureAdapter={captureAdapter}
+      onDraft={vi.fn()}
+      disabled={false}
+    />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Start voice input" }));
+    const waveform = await screen.findByTestId("speech-input-waveform");
+    act(() => emitLevel?.(0.64));
+    await waitFor(() => expect(waveform.getAttribute("data-level")).toBe("0.64"));
   });
 
   it("cancels delayed permission and cleans up a late capture", async () => {
