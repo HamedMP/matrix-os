@@ -10,7 +10,6 @@ import {
   CollaborationAiRequestsResponseSchema,
   type CollaborationAiRequest,
   type CollaborationApproval,
-  type CollaborationProject,
 } from "@matrix-os/contracts/collaboration";
 import { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
 import { ActivityIndicator, FlatList, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, View,
@@ -21,10 +20,8 @@ import { renderChatMarkdown, type ChatMarkdownTheme } from "@/lib/chat-markdown"
 import { loadCollaborationDraft, saveCollaborationDraft } from "@/lib/collaboration-drafts";
 import { SharedChatComposer, canControlSharedAiRequest } from "@/components/collaboration/SharedChatComposer";
 import { SharedTerminalScreen } from "@/components/collaboration/SharedTerminalScreen";
-import {
-  CollaborationRecoverySupersededError,
-  useSharedProjectWorkflow,
-} from "@/components/collaboration/useSharedProjectWorkflow";
+import { SharedProjectScreen } from "@/components/collaboration/SharedProjectScreen";
+import { CollaborationRecoverySupersededError } from "@/components/collaboration/useSharedProjectWorkflow";
 import {
   acceptCollaborationInvitation,
   collaborationEventsUrl,
@@ -60,7 +57,6 @@ type ScreenState = {
   paginationError: string;
   scope: Scope | null;
   chat: Chat | null;
-  project: CollaborationProject | null;
   messages: Message[];
   hasMoreMessages: boolean;
   loadingMoreMessages: boolean;
@@ -86,7 +82,6 @@ const initialState: ScreenState = {
   paginationError: "",
   scope: null,
   chat: null,
-  project: null,
   messages: [],
   hasMoreMessages: false,
   loadingMoreMessages: false,
@@ -151,12 +146,6 @@ export default function SharedScreen() {
     if (!value) throw new Error("CollaborationUnavailable");
     return value;
   }, []);
-  const { closeProject, loadProject, markUnavailable: markProjectUnavailable, refreshLiveProject } = useSharedProjectWorkflow({
-    token,
-    dispatch,
-    eventScopeRef,
-    eventSequenceRef,
-  });
   const loadHome = useCallback(async () => {
     dispatch({ type: "patch", patch: { loading: true, error: "" } });
     try {
@@ -359,8 +348,8 @@ export default function SharedScreen() {
       console.warn("[mobile-collaboration] realtime read state failed", failure instanceof Error ? failure.name : "UnknownError");
     });
   }, [token]);
-  const activeScope = view.kind === "chat" || view.kind === "project"
-    ? { id: view.scopeId, kind: view.kind }
+  const activeScope = view.kind === "chat"
+    ? { id: view.scopeId, kind: "chat" as const }
     : null;
   const activeScopeId = activeScope?.id ?? null;
   const activeScopeKind = activeScope?.kind ?? null;
@@ -402,9 +391,7 @@ export default function SharedScreen() {
             if (failure instanceof CollaborationRecoverySupersededError) return;
             console.warn("[mobile-collaboration] realtime refresh failed", failure instanceof Error ? failure.name : "UnknownError");
             if (!closed && eventScopeRef.current === activeScopeId) {
-              dispatch({ type: "patch", patch: { error: activeScopeKind === "chat"
-                ? "This shared Chat could not be refreshed. Try again."
-                : "This shared project could not be refreshed. Try again." } });
+              dispatch({ type: "patch", patch: { error: "This shared Chat could not be refreshed. Try again." } });
             }
             if (usable && !closed) {
               usable = false;
@@ -430,36 +417,31 @@ export default function SharedScreen() {
             } else if (frame.type === "unavailable") {
               closed = true;
               eventScopeRef.current = null;
-              if (activeScopeKind === "chat") {
-                chatLoadGeneration.current += 1;
-                chatRef.current = null;
-                messagesRef.current = [];
-                latestSequenceRef.current = "0";
-                aiWasAvailableRef.current = false;
-                dispatch({ type: "patch", patch: {
-                  scope: null,
-                  chat: null,
-                  messages: [],
-                  hasMoreMessages: false,
-                  loadingMoreMessages: false,
-                  draft: "",
-                  aiDraft: "",
-                  aiRequests: [],
-                  approvals: [],
-                  defaultSelection: null,
-                  aiAvailability: "unavailable",
-                  aiError: "",
-                  loading: false,
-                  error: "This shared Chat is unavailable. Your access may have changed.",
-                } });
-              } else {
-                markProjectUnavailable();
-              }
+              chatLoadGeneration.current += 1;
+              chatRef.current = null;
+              messagesRef.current = [];
+              latestSequenceRef.current = "0";
+              aiWasAvailableRef.current = false;
+              dispatch({ type: "patch", patch: {
+                scope: null,
+                chat: null,
+                messages: [],
+                hasMoreMessages: false,
+                loadingMoreMessages: false,
+                draft: "",
+                aiDraft: "",
+                aiRequests: [],
+                approvals: [],
+                defaultSelection: null,
+                aiAvailability: "unavailable",
+                aiError: "",
+                loading: false,
+                error: "This shared Chat is unavailable. Your access may have changed.",
+              } });
               next.close(1008, "Unavailable");
             } else if (frame.type === "changed" || frame.type === "capabilities_changed" || frame.type === "refresh_required") {
               enqueueAfterRecovery(async () => {
-                if (activeScopeKind === "chat") await refreshLiveChat(activeScopeId);
-                else await refreshLiveProject(activeScopeId);
+                await refreshLiveChat(activeScopeId);
                 if (usable && !closed) eventSequenceRef.current = frame.sequence;
               });
             }
@@ -488,7 +470,7 @@ export default function SharedScreen() {
       retryTimer?.cancel();
       socket?.close(1000, "Closed");
     };
-  }, [activeScopeId, activeScopeKind, markProjectUnavailable, refreshLiveChat, refreshLiveProject, token]);
+  }, [activeScopeId, activeScopeKind, refreshLiveChat, token]);
   const review = async (invitationId: string) => {
     dispatch({ type: "patch", patch: { loading: true, error: "" } });
     try { dispatch({ type: "patch", patch: { view: { kind: "invitation", invitation: await fetchCollaborationInvitation(await token(), invitationId) } } }); }
@@ -504,7 +486,7 @@ export default function SharedScreen() {
       if (invitation.scopeKind === "chat") await loadChat(result.scopeId);
       else if (invitation.scopeKind === "terminal") {
         dispatch({ type: "patch", patch: { view: { kind: "terminal", scopeId: result.scopeId }, loading: false } });
-      } else await loadProject(result.scopeId);
+      } else dispatch({ type: "patch", patch: { view: { kind: "project", scopeId: result.scopeId }, loading: false } });
     } catch (failure: unknown) {
       console.warn("[mobile-collaboration] invitation acceptance failed", failure instanceof Error ? failure.name : "UnknownError");
       dispatch({ type: "patch", patch: { error: "Invitation could not be accepted. Try again.", loading: false } });
@@ -641,8 +623,8 @@ export default function SharedScreen() {
   }
 
   if (view.kind === "project") {
-    return <SharedProjectScreen state={state} onBack={() => {
-      closeProject();
+    return <SharedProjectScreen scopeId={view.scopeId} getToken={token} onBack={() => {
+      dispatch({ type: "patch", patch: { view: { kind: "home" }, error: "" } });
       void loadHome();
     }} />;
   }
@@ -650,7 +632,9 @@ export default function SharedScreen() {
   return <CollaborationHomeScreen state={state} onReview={review}
     onOpen={(item) => item.kind === "terminal"
       ? Promise.resolve(dispatch({ type: "patch", patch: { view: { kind: "terminal", scopeId: item.scopeId } } }))
-      : item.kind === "project" ? loadProject(item.scopeId) : loadChat(item.scopeId)} onLoadMore={loadMoreItems} />;
+      : item.kind === "project"
+        ? Promise.resolve(dispatch({ type: "patch", patch: { view: { kind: "project", scopeId: item.scopeId } } }))
+        : loadChat(item.scopeId)} onLoadMore={loadMoreItems} />;
 }
 
 function InvitationScreen({ invitation, state, onBack, onAccept }: {
@@ -677,22 +661,6 @@ function InvitationScreen({ invitation, state, onBack, onAccept }: {
       : "Editors can discuss and request AI. Viewers have read-only access."}</Text>
     {state.error ? <Text accessibilityRole="alert" style={styles.error}>{state.error}</Text> : null}
     <Action label={state.loading ? "Accepting…" : "Accept invitation"} disabled={state.loading} onPress={() => void onAccept(invitation)} />
-  </ScrollView>;
-}
-
-function SharedProjectScreen({ state, onBack }: { state: ScreenState; onBack: () => void }) {
-  return <ScrollView contentContainerStyle={styles.page}>
-    <Back onPress={onBack} />
-    <Text style={styles.title}>{state.project?.id ?? "Shared project"}</Text>
-    <Text style={styles.muted}>{state.scope
-      ? `${roleLabel(state.scope.role)} · ${state.scope.role === "viewer" ? "read only" : "can edit"}`
-      : "Loading…"}</Text>
-    {state.loading ? <ActivityIndicator accessibilityLabel="Loading shared project" /> : null}
-    {state.error ? <Text accessibilityRole="alert" style={styles.error}>{state.error}</Text> : null}
-    {state.project?.resources.map((resource) => <View key={`${resource.kind}:${resource.id}`} style={styles.card}>
-      <Text style={styles.cardTitle}>{resource.id}</Text>
-      <Text style={styles.muted}>{resource.kind} · {resource.readiness}</Text>
-    </View>)}
   </ScrollView>;
 }
 

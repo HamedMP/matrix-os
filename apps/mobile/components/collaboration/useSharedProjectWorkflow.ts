@@ -15,7 +15,6 @@ type MutableValue<T> = { current: T };
 type ProjectPatch = {
   loading?: boolean;
   error?: string;
-  view?: { kind: "home" } | { kind: "project"; scopeId: string };
   scope?: CollaborationScope | null;
   project?: CollaborationProject | null;
 };
@@ -50,7 +49,6 @@ export function useSharedProjectWorkflow({
     dispatch({ type: "patch", patch: {
       loading: true,
       error: "",
-      view: { kind: "project", scopeId },
       scope: null,
       project: null,
     } });
@@ -108,16 +106,10 @@ export function useSharedProjectWorkflow({
     } });
   }, [dispatch]);
 
-  const closeProject = useCallback(() => {
+  const invalidateProject = useCallback(() => {
     loadGeneration.current += 1;
     eventScopeRef.current = null;
-    dispatch({ type: "patch", patch: {
-      view: { kind: "home" },
-      scope: null,
-      project: null,
-      error: "",
-    } });
-  }, [dispatch, eventScopeRef]);
+  }, [eventScopeRef]);
 
-  return { closeProject, loadProject, markUnavailable, refreshLiveProject };
+  return { invalidateProject, loadProject, markUnavailable, refreshLiveProject };
 }
