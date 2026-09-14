@@ -18,7 +18,7 @@ describe("dormant scope runtime host bundle", () => {
     expect(unit).toContain("RestrictAddressFamilies=AF_UNIX");
     expect(unit).not.toContain("EnvironmentFile=");
     const gatewayUnit = await readFile("distro/customer-vps/systemd/matrix-gateway.service", "utf8");
-    expect(gatewayUnit).toContain("Wants=matrix-scope-runtime.service");
+    expect(gatewayUnit).toMatch(/^Wants=(?:\S+\s+)*matrix-scope-runtime\.service(?:\s+\S+)*$/m);
     expect(gatewayUnit).toMatch(/After=.*matrix-scope-runtime\.service/);
   });
 
