@@ -1,3 +1,5 @@
+import { restoreBackgroundChatThread, createBackgroundChatProjection } from "./coding-agents/background-chat-recovery.js";
+import { createBackgroundAgentRuntime } from "./background-agent-runtime.js";
 import { bootstrapChatSharing, ChatSharing } from "./chat/sharing.js";
 import { createChatSharingRoutes } from "./chat/sharing-routes.js";
 import { readFileSync, existsSync, statSync, readdirSync } from "node:fs";
@@ -633,6 +635,8 @@ export async function createGateway(config: GatewayConfig) {
       return providerSettingsStore.getSnapshot();
     },
   };
+  const backgroundAgentRuntime = createBackgroundAgentRuntime({ homePath });
+  const backgroundChatProjection = createBackgroundChatProjection();
   if (codingAgentWorkspaceAgents.length > 0) {
     const codingAgentProjectManager = createProjectManager({ homePath });
     codexEventBridge = codexExecutable
@@ -642,7 +646,7 @@ export async function createGateway(config: GatewayConfig) {
         isRuntimeAlive: (sessionId: string) => {
           const sessions = codingAgentWorkspaceRuntime;
           return sessions
-            ? isWorkspaceSessionRuntimeAlive(sessionId, sessions, terminalWorkspaceRuntime)
+            ? isWorkspaceSessionRuntimeAlive(sessionId, sessions, terminalWorkspaceRuntime, backgroundAgentRuntime)
             : Promise.resolve(false);
         },
       })
@@ -652,12 +656,14 @@ export async function createGateway(config: GatewayConfig) {
       worktreeManager: codingAgentWorktreeManager,
       agentLauncher: agentCredentialLauncher,
       terminalRuntime: terminalWorkspaceRuntime,
+      backgroundRuntime: backgroundAgentRuntime,
     });
     codingAgentWorkspaceRuntime = createWorkspaceSessionOrchestrator({
       homePath,
       projectManager: codingAgentProjectManager,
       worktreeManager: codingAgentWorktreeManager,
       agentSessionManager: codingAgentSessionManager,
+      onClose: () => codingAgentSessionManager.shutdown(),
       agentSandbox: createAgentSandbox({ homePath }),
       sessionRuntimeBridge: workspaceSessionRuntimeBridge,
       eventPublisher: workspaceEventPublisher,
@@ -697,6 +703,12 @@ export async function createGateway(config: GatewayConfig) {
     ? createCodingAgentThreadStore({
       homePath,
       providers: codingAgentProviders,
+      restoreProviderThread: async (thread) => {
+        const restored = !!codingAgentWorkspaceRuntime && !!codexEventBridge
+          && await restoreBackgroundChatThread({ thread, sessions: codingAgentWorkspaceRuntime, events: codexEventBridge });
+        if (restored) backgroundChatProjection.track(thread);
+        return restored;
+      },
       relationValidator: createCodingAgentThreadRelationValidator({
         projectManager: codingAgentProjectManager,
         taskManager: createTaskManager({ homePath }),
@@ -706,7 +718,10 @@ export async function createGateway(config: GatewayConfig) {
         workspaceEventPublisher.publishCodingAgentThreadProjection(change),
     })
     : undefined;
-  if (codingAgentThreadStore) codexEventBridge?.attachThreadStore(codingAgentThreadStore);
+  if (codingAgentThreadStore) {
+    codexEventBridge?.attachThreadStore(codingAgentThreadStore);
+    backgroundChatProjection.attach(codingAgentThreadStore);
+  }
   const codingAgentProviderRegistry = createCodingAgentProviderRegistry({
     providers: codingAgentRegistryProviders,
     agentCredentials: agentCredentialService,
@@ -3032,6 +3047,7 @@ export async function createGateway(config: GatewayConfig) {
   const clientErrorBodyLimit = bodyLimit({ maxSize: CLIENT_ERROR_LOG_BODY_LIMIT });
   app.route("/", createWorkspaceRoutes({
     homePath,
+    backgroundRuntime: backgroundAgentRuntime,
     terminalRuntime: terminalWorkspaceRuntime,
     agentLauncher: agentCredentialLauncher,
     sessionRuntimeBridge: workspaceSessionRuntimeBridge,
@@ -3048,6 +3064,7 @@ export async function createGateway(config: GatewayConfig) {
   }));
   const workspaceStartupRecoveryController = createWorkspaceStartupRecovery({
     homePath,
+    backgroundRuntime: backgroundAgentRuntime,
     eventPublisher: workspaceEventPublisher,
     codingAgentThreadStore,
   });
@@ -4137,6 +4154,7 @@ export async function createGateway(config: GatewayConfig) {
       ...(canonicalChatCollaborationGuard ? { collaborationGuard: canonicalChatCollaborationGuard } : {}),
       onAiGeneration: recordAiGeneration,
     });
+    backgroundChatProjection.setReconciler(ownerId => canonicalChatOrchestrator?.reconcileActiveRuns({ type: "personal", ownerId }) ?? Promise.resolve());
     for (const ownerId of new Set(codingAgentOwnerIds)) {
       await canonicalChatOrchestrator.reconcileActiveRuns({ type: "personal", ownerId });
     }
@@ -4147,6 +4165,7 @@ export async function createGateway(config: GatewayConfig) {
       chatIdleReaper = createChatIdleReaper({
         sessions: codingAgentWorkspaceRuntime,
         terminalRuntime: terminalWorkspaceRuntime,
+        backgroundRuntime: backgroundAgentRuntime,
         threads: codingAgentThreadStore,
         control: createCodexControlClient({ homePath }),
         admitCanonical: (identity, reclaim) => withCanonicalIdleChat(repository.kysely, identity, reclaim),
@@ -4527,8 +4546,10 @@ export async function createGateway(config: GatewayConfig) {
       cronService.stop();
       await gatewayCollaboration?.shutdown();
       gatewayCollaboration = null;
+      await backgroundChatProjection.close();
       await canonicalChatOrchestrator?.close();
       canonicalChatOrchestrator = null;
+      await backgroundAgentRuntime.close();
       await codingAgentWorkspaceRuntime?.close();
       codingAgentWorkspaceRuntime = null;
       workspaceSessionRuntimeBridge.close();

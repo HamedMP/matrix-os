@@ -667,7 +667,7 @@ describe("Codex app-server control runtime", () => {
     }
   });
 
-  it("keeps accepting Turns through the control socket after terminal stdin closes", async () => {
+  it.each([false, true])("keeps accepting Turns through the control socket without terminal stdin (background=%s)", async (background) => {
     const homePath = await mkdtemp(join("/tmp", "codex-control-turns-"));
     const fakeCodexPath = join(homePath, "fake-codex-control-turns.mjs");
     const eventPath = codexProviderEventPath(homePath, "sess_control_turns_1");
@@ -697,14 +697,13 @@ describe("Codex app-server control runtime", () => {
       sandbox: "workspace-write",
       writableRoots: [homePath],
     }), "utf8").toString("base64");
-    const child = spawn(process.execPath, [
-      runnerPath,
-      eventPath,
-      process.version.slice(1),
-      process.execPath,
-      fakeCodexPath,
-      config,
-    ], { cwd: homePath, stdio: ["ignore", "pipe", "pipe"] });
+    let args = [runnerPath, eventPath, process.version.slice(1), process.execPath, fakeCodexPath, config];
+    if (background) {
+      const launchPath = join(homePath, "launch.json");
+      await writeFile(launchPath, JSON.stringify({ launch: { command: process.execPath, args, cwd: homePath, env: {} } }), { mode: 0o600 });
+      args = [join(process.cwd(), "packages/gateway/src/coding-agents/background-agent-runner.mjs"), launchPath];
+    }
+    const child = spawn(process.execPath, args, { cwd: homePath, stdio: ["ignore", "pipe", "pipe"] });
 
     try {
       await waitForTranscript(eventPath, /control-answer-1/);

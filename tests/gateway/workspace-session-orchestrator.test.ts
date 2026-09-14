@@ -612,14 +612,14 @@ describe("workspace session orchestrator", () => {
     expect(d.eventPublisher.publishSessionStarted).not.toHaveBeenCalled();
   });
 
-  it("cleans prepared scratch state when session startup fails", async () => {
+  it.each(["runtime_unavailable", "runtime_ownership_retained"])("cleans scratch only after confirmed startup cleanup: %s", async (code) => {
     const d = deps({
       agentSessionManager: {
         ...deps().agentSessionManager,
         startSession: vi.fn(async () => ({
           ok: false,
           status: 503,
-          error: { code: "runtime_unavailable", message: "Session runtime is unavailable" },
+          error: { code, message: "Session runtime is unavailable" },
         })),
       },
     });
@@ -638,7 +638,8 @@ describe("workspace session orchestrator", () => {
       },
     })).resolves.toMatchObject({ ok: false, status: 503 });
 
-    expect(d.agentSandbox.cleanup).toHaveBeenCalledWith({ sessionId: "sess_fixed" });
+    if (code === "runtime_ownership_retained") expect(d.agentSandbox.cleanup).not.toHaveBeenCalled();
+    else expect(d.agentSandbox.cleanup).toHaveBeenCalledWith({ sessionId: "sess_fixed" });
   });
 
   it("returns not found when the requested worktree is missing", async () => {

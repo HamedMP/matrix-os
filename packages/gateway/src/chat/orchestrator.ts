@@ -1,3 +1,5 @@
+import { BackgroundProjectionDetached, recoverBackgroundRunControl } from "./background-run-control.js";
+import { activityPersistenceId } from "./activity-persistence.js";
 import { createHash, randomUUID } from "node:crypto";
 import {
   CanonicalChatMessageSchema,
@@ -143,12 +145,6 @@ function mapSteerFinalizationError(error: unknown): never {
     safeError("run_unavailable", "The steering request is still resolving. Try again.", true, ["retry"]),
     503,
   );
-}
-
-function activityPersistenceId(runId: string, event: Record<string, unknown>): string {
-  if (event.type !== "agent.activity" || typeof event.activityId !== "string") return id("activity_");
-  const digest = createHash("sha256").update(`${runId}\0${event.activityId}`).digest("hex").slice(0, 32);
-  return `activity_${digest}`;
 }
 
 function assistantMessageId(runId: string, providerMessageId?: string): string {
@@ -984,6 +980,7 @@ export class CanonicalChatOrchestrator {
       }
     } catch (error: unknown) {
       if (error instanceof ChatRunNotActiveError) return;
+      if (controller.signal.reason instanceof BackgroundProjectionDetached) return;
       if (cleanupUnconfirmed) {
         controller.abort();
         console.warn("[chat/orchestrator] Execution cleanup unconfirmed", { runId: run.id });
@@ -1064,17 +1061,20 @@ export class CanonicalChatOrchestrator {
     runId: string,
   ): Promise<CanonicalChatRunCancellationResponse> {
     await this.assertPersonalExecutionAllowed(owner, chatId);
-    const active = this.active.get(runId);
+    const active = this.active.get(runId) ?? await recoverBackgroundRunControl({ owner, chatId, runId, repository: this.options.repository, adapters: this.options.adapters });
     let providerCancellation: Promise<void> | undefined;
     if (active && active.chatId === chatId && active.owner.type === owner.type
       && active.owner.ownerId === owner.ownerId) {
-      active.controller.abort();
+      if (!active.adapter.detachOnShutdown) active.controller.abort();
       providerCancellation = (async () => {
         const state = await this.options.repository.getAdapterState(owner, {
           runId,
           driverKind: active.adapter.driverKind,
           instanceId: active.instanceId,
         });
+        if (active.adapter.detachOnShutdown && (!state || state.schemaVersion !== active.adapter.stateSchemaVersion || !active.adapter.cancel)) {
+          throw new Error("Background cancellation identity unavailable");
+        }
         await active.adapter.cancel?.({
           owner,
           chatId,
@@ -1083,7 +1083,12 @@ export class CanonicalChatOrchestrator {
         });
       })().catch((error: unknown) => {
         console.warn("[chat/orchestrator] Provider cancel callback failed:", error instanceof Error ? error.name : "UnknownError");
+        if (active.adapter.detachOnShutdown) throw error;
       });
+      if (active.adapter.detachOnShutdown) {
+        await boundedOperation(() => providerCancellation!, 15_000);
+        active.controller.abort();
+      }
     }
     try {
       const finished = await this.options.repository.finishRun(owner, {
@@ -1338,7 +1343,7 @@ export class CanonicalChatOrchestrator {
   ): Promise<CanonicalChatApprovalSubmissionResponse> {
     await this.assertPersonalExecutionAllowed(owner, chatId);
     const input = CanonicalSubmitChatApprovalRequestSchema.parse(inputValue);
-    const active = this.active.get(runId);
+    const active = this.active.get(runId) ?? await recoverBackgroundRunControl({ owner, chatId, runId, repository: this.options.repository, adapters: this.options.adapters });
     if (!active || active.chatId !== chatId || active.owner.type !== owner.type
       || active.owner.ownerId !== owner.ownerId || !active.adapter.submitApproval) {
       throw new CanonicalChatOrchestrationError(
@@ -1430,6 +1435,7 @@ export class CanonicalChatOrchestrator {
           repository: this.options.repository,
           adapter: this.options.adapters.get(context.latestRun.driverKind),
           messageId: assistantMessageId,
+          persistActivities: (activities) => this.persistActivities(owner, context.latestRun, activities, completedAt),
           completedAt,
         });
         if (recovery === "pending") continue;
@@ -1476,7 +1482,19 @@ export class CanonicalChatOrchestrator {
     let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
       await Promise.race([
-        Promise.allSettled(active.map((entry) => this.cancelRun(entry.owner, entry.chatId, entry.runId)))
+        Promise.allSettled(active.map(async (entry) => {
+          if (entry.adapter.detachOnShutdown) {
+            const state = await this.options.repository.getAdapterState(entry.owner, {
+              runId: entry.runId, driverKind: entry.adapter.driverKind, instanceId: entry.instanceId,
+            });
+            if (state?.schemaVersion === entry.adapter.stateSchemaVersion) {
+              entry.adapter.parseState(state.state);
+              entry.controller.abort(new BackgroundProjectionDetached());
+              return;
+            }
+          }
+          await this.cancelRun(entry.owner, entry.chatId, entry.runId);
+        }))
           .then(() => this.drain()),
         new Promise<void>((resolve) => {
           timeout = setTimeout(resolve, this.shutdownDrainMs);

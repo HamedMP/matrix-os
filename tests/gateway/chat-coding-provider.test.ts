@@ -518,6 +518,7 @@ describe("canonical coding Chat Provider adapter", () => {
       expect.objectContaining({ userId: owner.ownerId }),
       "thread_native",
       "req_coding",
+      { runRequestId: "req_coding" },
     );
   });
 
@@ -781,4 +782,19 @@ describe("canonical coding Chat Provider adapter", () => {
       }
     }).rejects.toThrow("event buffer exceeded");
   });
+});
+
+
+import { BackgroundProjectionDetached } from "../../packages/gateway/src/chat/background-run-control.js";
+
+it("detaches a live Codex projection on gateway shutdown without cancelling native work", async () => {
+  const fake = fakeStore([]);
+  const controller = new AbortController();
+  const provider = createCanonicalCodingChatProviderAdapter({ providerId: "codex", threads: fake.store });
+  const stream = provider.start(input({ signal: controller.signal }))[Symbol.asyncIterator]();
+  expect((await stream.next()).value.type).toBe("state.updated");
+  const pending = stream.next();
+  controller.abort(new BackgroundProjectionDetached());
+  expect((await pending).done).toBe(true);
+  expect(fake.abortThread).not.toHaveBeenCalled();
 });

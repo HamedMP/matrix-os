@@ -1,3 +1,4 @@
+import { BackgroundAgentRefSchema, type BackgroundAgentRef } from "../background-agent-runtime.js";
 import { z } from "zod/v4";
 import { TerminalRefSchema, type TerminalRef } from "@matrix-os/contracts";
 import { logCodingAgentWarning } from "./diagnostics.js";
@@ -16,14 +17,16 @@ const SessionStopInputSchema = z.object({
   runtime: z.object({
     status: z.enum(["starting", "running", "idle", "waiting", "exited", "failed", "degraded"]),
   }).passthrough(),
-  terminalRef: TerminalRefSchema,
-}).passthrough();
+  terminalRef: TerminalRefSchema.optional(),
+  backgroundRef: BackgroundAgentRefSchema.optional(),
+}).passthrough().refine(input => !!input.terminalRef !== !!input.backgroundRef, "Execution identity required");
 
 type SessionStopInput = z.infer<typeof SessionStopInputSchema>;
 type PendingStop = {
   ownerId: string;
   workspaceSessionId: string;
-  terminalRef: TerminalRef;
+  terminalRef?: TerminalRef;
+  backgroundRef?: BackgroundAgentRef;
   runtimeStatus: "exited" | "failed" | "degraded";
 };
 
@@ -37,7 +40,7 @@ export function createCodingAgentSessionStopReconciler(options: {
 } = {}) {
   const maxPending = Math.max(1, Math.min(options.maxPending ?? DEFAULT_MAX_PENDING_STOPS, DEFAULT_MAX_PENDING_STOPS));
   const retryDelayMs = Math.max(10, Math.min(options.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS, MAX_RETRY_DELAY_MS));
-  let threadStore: Pick<CodingAgentThreadStore, "reconcileTerminalTabStopped"> | undefined;
+  let threadStore: Pick<CodingAgentThreadStore, "reconcileTerminalTabStopped"> & Partial<Pick<CodingAgentThreadStore, "reconcileBackgroundSessionStopped">> | undefined;
   let pendingStops: PendingStop[] = [];
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
   let disposed = false;
@@ -47,8 +50,9 @@ export function createCodingAgentSessionStopReconciler(options: {
       ...pendingStops.filter((candidate) =>
         candidate.ownerId !== stop.ownerId ||
         candidate.workspaceSessionId !== stop.workspaceSessionId ||
-        candidate.terminalRef.workspaceId !== stop.terminalRef.workspaceId ||
-        candidate.terminalRef.tabId !== stop.terminalRef.tabId
+        candidate.terminalRef?.workspaceId !== stop.terminalRef?.workspaceId ||
+        candidate.terminalRef?.tabId !== stop.terminalRef?.tabId ||
+        candidate.backgroundRef?.id !== stop.backgroundRef?.id
       ),
       stop,
     ].slice(-maxPending);
@@ -79,10 +83,15 @@ export function createCodingAgentSessionStopReconciler(options: {
       return;
     }
     try {
+      if (stop.backgroundRef) {
+        if (!store.reconcileBackgroundSessionStopped) throw new Error("Background stop reconciliation unavailable");
+        await store.reconcileBackgroundSessionStopped({ ownerId: stop.ownerId, workspaceSessionId: stop.workspaceSessionId, backgroundRef: stop.backgroundRef, runtimeStatus: stop.runtimeStatus });
+        return;
+      }
       await store.reconcileTerminalTabStopped({
         ownerId: stop.ownerId,
         workspaceSessionId: stop.workspaceSessionId,
-        terminalRef: stop.terminalRef,
+        terminalRef: stop.terminalRef!,
         runtimeStatus: stop.runtimeStatus,
       });
     } catch (err: unknown) {
@@ -127,7 +136,7 @@ export function createCodingAgentSessionStopReconciler(options: {
         await reconcileOrRetain({
           ownerId: parsed.ownerId,
           workspaceSessionId: parsed.id,
-          terminalRef: parsed.terminalRef,
+          ...(parsed.terminalRef ? { terminalRef: parsed.terminalRef } : { backgroundRef: parsed.backgroundRef }),
           runtimeStatus: parsed.runtime.status,
         });
       } catch (err: unknown) {
@@ -136,7 +145,7 @@ export function createCodingAgentSessionStopReconciler(options: {
       if (firstError) throw firstError;
     },
 
-    async attachThreadStore(store: Pick<CodingAgentThreadStore, "reconcileTerminalTabStopped">): Promise<void> {
+    async attachThreadStore(store: Pick<CodingAgentThreadStore, "reconcileTerminalTabStopped"> & Partial<Pick<CodingAgentThreadStore, "reconcileBackgroundSessionStopped">>): Promise<void> {
       threadStore = store;
       await drainPendingStops();
     },

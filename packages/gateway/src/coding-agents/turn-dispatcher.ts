@@ -14,7 +14,8 @@ const DEFAULT_TIMEOUT_MS = 10 * 60_000;
 interface DispatchEntry {
   controller: AbortController;
   startedAtMs: number;
-  abortReason?: "timeout" | "explicit" | "shutdown";
+  abortReason?: "timeout" | "explicit" | "shutdown" | "detached";
+  backgroundExecution?: boolean;
   promise?: Promise<void>;
 }
 
@@ -97,7 +98,7 @@ export function createCodingAgentTurnDispatcher(options: CodingAgentTurnDispatch
         now: options.now,
         nextEventId: options.nextEventId,
         ...(options.publishEvents ? {
-          publishEvents: (batch) => options.publishEvents!({
+          publishEvents: (batch) => entry.abortReason === "detached" ? Promise.resolve() : options.publishEvents!({
             ownerId: input.principal.userId,
             threadId: input.thread.id,
             turnId: input.turn.turnId,
@@ -116,6 +117,7 @@ export function createCodingAgentTurnDispatcher(options: CodingAgentTurnDispatch
           combinedSignal.removeEventListener("abort", rejectAborted);
         });
       });
+      if (entry.abortReason === "detached") return;
       const parsed = parseCodingAgentProviderRunResult(providerResult, input.thread.id);
       if (!parsed.outcome) throw new Error("Provider turn outcome unavailable");
       await options.finish({
@@ -127,6 +129,7 @@ export function createCodingAgentTurnDispatcher(options: CodingAgentTurnDispatch
         resumeState: parsed.resumeState,
       });
     } catch (err: unknown) {
+      if (entry.abortReason === "detached") return;
       options.logFailure("provider turn failed", err);
       await options.finish({
         ownerId: input.principal.userId,
@@ -160,6 +163,7 @@ export function createCodingAgentTurnDispatcher(options: CodingAgentTurnDispatch
     start(reservation: CodingAgentTurnDispatchReservation, input: CodingAgentTurnDispatchInput): void {
       active.delete(reservation.id);
       reservation.entry.startedAtMs = Date.now();
+      reservation.entry.backgroundExecution = !!input.providerResumeState.backgroundRef || !!options.getProvider(input.thread.providerId).backgroundExecution;
       active.set(input.turn.turnId, reservation.entry);
       const promise = dispatch(input, reservation.entry)
         .catch((err: unknown) => options.logFailure("turn dispatch finalization failed", err))
@@ -177,7 +181,7 @@ export function createCodingAgentTurnDispatcher(options: CodingAgentTurnDispatch
     async shutdown(): Promise<void> {
       closed = true;
       for (const entry of active.values()) {
-        entry.abortReason ??= "shutdown";
+        entry.abortReason ??= entry.backgroundExecution ? "detached" : "shutdown";
         entry.controller.abort();
       }
       await Promise.allSettled(
