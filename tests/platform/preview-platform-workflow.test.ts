@@ -82,6 +82,7 @@ describe("preview platform workflow", () => {
     expect(workflow).not.toContain("PRODUCTION_PLATFORM_SECRET");
     expect(workflow).not.toContain("PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}");
     expect(workflow).toContain("systemctl\",\"is-active\",\"--quiet\",\"matrix-gateway.service");
+    expect(workflow).toContain("--retry 5 --retry-all-errors --retry-delay 2 --retry-max-time 30");
     expect(workflow).toContain("/speech/capabilities?runtimeSlot=");
     expect(workflow).toContain("/api/speech/capabilities");
     expect(workflow).toContain('os.open(path, os.O_RDONLY | os.O_NOFOLLOW)');
