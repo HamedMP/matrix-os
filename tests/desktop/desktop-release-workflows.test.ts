@@ -192,7 +192,11 @@ describe("desktop release workflows", () => {
     expect(windowsJob).toContain('$uninstallEntry.QuietUninstallString');
     expect(windowsJob).toContain(`$uninstallCommand -notmatch '^"([^"]+)"'`);
     expect(windowsJob).not.toContain('Programs/Matrix OS');
+    expect(windowsJob).toContain('$appProcess = Start-Process -FilePath $installedAppPath');
     expect(windowsJob).toContain('foreach ($scheme in @("matrixos", "matrix-os"))');
+    expect(windowsJob.indexOf('foreach ($scheme in @("matrixos", "matrix-os"))')).toBeGreaterThan(
+      windowsJob.indexOf('$appProcess = Start-Process -FilePath $installedAppPath'),
+    );
     expect(windowsJob).toContain("Registry::HKEY_CURRENT_USER\\Software\\Classes\\$scheme");
     expect(windowsJob).toContain("desktop-update-fixture-server.mjs");
     expect(windowsJob).toContain('"--platform", "windows"');

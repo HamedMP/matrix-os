@@ -36,6 +36,7 @@ import {
 import { registerIpcHandlers } from "./ipc/handlers";
 import { createLocalStore } from "./persistence/local-store";
 import { installAppMenu } from "./platform/menu";
+import { registerWindowsProtocolClients } from "./platform/protocol-registration";
 import {
   fitWindowBoundsToWorkArea,
   type FittedWindowBounds,
@@ -165,6 +166,13 @@ if (!gotLock) {
   void app
     .whenReady()
     .then(async () => {
+      const failedProtocolRegistrations = registerWindowsProtocolClients(app);
+      if (failedProtocolRegistrations.length > 0) {
+        console.warn(
+          `[main] could not register Windows URL schemes: ${failedProtocolRegistrations.join(", ")}`,
+        );
+      }
+
       // Packaged builds get the icon from build/icon.icns automatically; in dev
       // the dock shows Electron's default icon unless we set the brand icon.
       if (process.platform === "darwin" && !app.isPackaged && app.dock) {

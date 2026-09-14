@@ -727,13 +727,6 @@ jobs:
                 throw "Silent NSIS install did not create $path"
               }
             }
-            foreach ($scheme in @("matrixos", "matrix-os")) {
-              $protocolKey = "Registry::HKEY_CURRENT_USER\Software\Classes\$scheme"
-              if (-not (Test-Path -LiteralPath $protocolKey)) {
-                throw "NSIS install did not register protocol $scheme"
-              }
-            }
-
             $portFile = Join-Path $smokeDirectory "update-fixture.port"
             $serverLog = Join-Path $smokeDirectory "update-fixture.log"
             $serverErrorLog = Join-Path $smokeDirectory "update-fixture-error.log"
@@ -765,6 +758,15 @@ jobs:
             $appErrorLog = Join-Path $smokeDirectory "matrix-os-launch-error.log"
             $appProcess = Start-Process -FilePath $installedAppPath -ArgumentList "--disable-gpu" `
               -PassThru -RedirectStandardOutput $appLog -RedirectStandardError $appErrorLog
+            foreach ($scheme in @("matrixos", "matrix-os")) {
+              $protocolKey = "Registry::HKEY_CURRENT_USER\Software\Classes\$scheme"
+              for ($attempt = 1; $attempt -le 40 -and -not (Test-Path -LiteralPath $protocolKey); $attempt++) {
+                Start-Sleep -Milliseconds 250
+              }
+              if (-not (Test-Path -LiteralPath $protocolKey)) {
+                throw "Installed Matrix OS did not register protocol $scheme on first launch"
+              }
+            }
             $updateSucceeded = $false
             for ($attempt = 1; $attempt -le 30; $attempt++) {
               if ($appProcess.HasExited) {
