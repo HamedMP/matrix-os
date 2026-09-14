@@ -90,3 +90,50 @@ bun run typecheck
 bun run check:patterns
 bun run test
 ```
+
+## Polling safety and activation (September 2026)
+
+Fresh customer VPSes install Symphony but do not enable or start it. Connect
+Linear in Matrix Settings, configure `SYMPHONY_LINEAR_PROJECT_SLUG` in
+`/opt/matrix/env/symphony.env` (or select an owner `SYMPHONY_WORKFLOW_FILE`), and
+start Symphony from its app or `matrix-symphony-control start`. The project is
+never inferred as `matrix-os`. Stopping from the app also disables boot startup.
+An existing custom workflow and explicit environment settings survive upgrades.
+An upgrade resumes Symphony only when the pre-update transaction recorded it as
+active; rollback obeys the same rule. Previously stopped services remain stopped.
+The wrapper also honors that transaction during the first update performed by an
+older sync agent. An unconfigured bundled workflow exits successfully, avoiding
+systemd restart loops. Configured owners using the former implicit project must
+set the actual project slug before rollout; inventory these owners first.
+
+The bridge accepts only fixed, bounded `symphony_*` operations. It never accepts
+caller GraphQL documents. The `linear` dynamic tool supports issue/workpad reads,
+comment creation/update and state resolution/update; `sync_workpad` uses those
+same operations. An explicit direct Linear credential can still expose the
+`linear_graphql` tool. Owner credentials remain on the platform when using the
+bridge. The platform resolves the connection from the authenticated owner's ID,
+not any account ID in the request.
+
+Startup waits a random 1–60 seconds. Successful polls use at least 30 seconds plus
+0–50% jitter. A shared client circuit covers polls, reconciliation, pagination,
+cleanup, workpads and worker calls. Transient failures back off from 30–45 seconds
+through 60–90, 120–180, 240–360 and 480–720 seconds, capped at 600–900 seconds.
+Req automatic retries and redirects are disabled; connect and receive timeouts
+are each 10 seconds. A request process death releases its single lease and opens
+transient backoff. Success resets the failure count.
+
+Permanent HTTP 4xx (except 408/429), invalid GraphQL responses and missing bridge
+configuration latch the circuit until the tracker/bridge configuration changes
+or the owner restarts Symphony. A manual dashboard refresh cannot bypass it.
+After connecting/reconnecting Linear, stop and start Symphony to retry. Missing
+project configuration makes no network request. Unknown dynamic GraphQL is
+rejected locally before acquiring a lease. Local workflow checks can continue
+while the network circuit is open.
+
+The loopback state API exposes `polling.circuit` with `outcome`, `failures`, and
+`next_retry_in_ms` (`null` for permanent suspension). `symphony_linear` log events
+contain only outcome, failure count and next retry; no credentials, fingerprints,
+queries or provider bodies. Platform admission summaries count admitted,
+limited and legacy-rejected requests once per minute of traffic.
+
+See [fleet rollout and compatibility](symphony-polling-rollout.md) before deploying.

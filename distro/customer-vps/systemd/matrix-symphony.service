@@ -7,6 +7,9 @@ ConditionPathExists=/opt/matrix/restore-complete
 ConditionPathExists=/opt/matrix/bin/matrix-symphony
 ConditionPathExists=/opt/matrix/app/packages/symphony-elixir/release/bin/symphony
 
+StartLimitIntervalSec=600
+StartLimitBurst=3
+
 [Service]
 User=matrix
 Group=matrix
@@ -21,7 +24,7 @@ KillMode=mixed
 KillSignal=SIGTERM
 TimeoutStopSec=30
 Restart=on-failure
-RestartSec=5
+RestartSec=60
 
 [Install]
 WantedBy=multi-user.target

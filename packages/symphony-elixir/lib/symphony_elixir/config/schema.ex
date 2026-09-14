@@ -354,7 +354,7 @@ defmodule SymphonyElixir.Config.Schema do
         project_slug:
           resolve_text_value(
             settings.tracker.project_slug,
-            System.get_env("SYMPHONY_LINEAR_PROJECT_SLUG") || "matrix-os"
+            System.get_env("SYMPHONY_LINEAR_PROJECT_SLUG")
           ),
         assignee:
           resolve_secret_setting(
@@ -418,6 +418,8 @@ defmodule SymphonyElixir.Config.Schema do
       resolved -> resolved
     end
   end
+
+  defp resolve_text_value(nil, fallback), do: normalize_secret_value(fallback)
 
   defp resolve_text_value(value, fallback) when is_binary(value) do
     case resolve_env_value(value, fallback) do

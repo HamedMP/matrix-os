@@ -15,7 +15,7 @@ tracker:
     - Duplicate
     - Done
 polling:
-  interval_ms: 5000
+  interval_ms: 30000
 workspace:
   root: "$SYMPHONY_WORKSPACE_ROOT"
 hooks:
@@ -74,9 +74,17 @@ Instructions:
 
 Work only in the provided repository copy. Do not touch any other path.
 
-## Prerequisite: `linear_graphql` tool is available
+## Prerequisite: typed `linear` tool is available
 
-The agent talks to Linear via the `linear_graphql` tool injected by Symphony's app-server. If it is not present, stop and ask the user to configure Linear. Do not use a Linear MCP server — it returns full JSON payloads that waste tokens. Use `linear_graphql` with narrowly scoped queries instead.
+Use Symphony's injected `linear` tool with `operation` and `params`. Supported operations:
+- `get_issue` (`issueId`): current issue, first 50 comments, and team states.
+- `create_comment` (`issueId`, `body`) and `update_comment` (`id`, `body`): workpad management.
+- `resolve_state` (`issueId`, `stateName`), then `update_state` (`issueId`, `stateId`).
+- `sync_workpad` reads a local file and creates or updates a workpad comment.
+
+If the tool is unavailable or reports setup required, stop for owner configuration.
+The Matrix bridge does not support arbitrary GraphQL. Direct owner credentials can
+also expose `linear_graphql`, but this workflow does not require it.
 
 ## Default posture
 

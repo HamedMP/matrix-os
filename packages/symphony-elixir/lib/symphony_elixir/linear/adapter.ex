@@ -11,6 +11,7 @@ defmodule SymphonyElixir.Linear.Adapter do
   mutation SymphonyCreateComment($issueId: String!, $body: String!) {
     commentCreate(input: {issueId: $issueId, body: $body}) {
       success
+      comment { id url }
     }
   }
   """
@@ -37,6 +38,38 @@ defmodule SymphonyElixir.Linear.Adapter do
   }
   """
 
+  @get_issue_query """
+  query SymphonyGetIssue($issueId: String!) {
+    issue(id: $issueId) {
+      id identifier title description url state { name }
+      comments(first: 50) { nodes { id body url } }
+      team { states(first: 50) { nodes { id name } } }
+    }
+  }
+  """
+
+  @update_comment_mutation """
+  mutation SymphonyUpdateComment($id: String!, $body: String!) {
+    commentUpdate(id: $id, input: {body: $body}) { success comment { id url } }
+  }
+  """
+
+  def operation_query("get_issue"), do: {:ok, @get_issue_query}
+  def operation_query("create_comment"), do: {:ok, @create_comment_mutation}
+  def operation_query("update_comment"), do: {:ok, @update_comment_mutation}
+  def operation_query("resolve_state"), do: {:ok, @state_lookup_query}
+  def operation_query("update_state"), do: {:ok, @update_state_mutation}
+  def operation_query(_), do: {:error, :unsupported_bridge_operation}
+
+  # Exact local documents map to fixed platform operations; dynamic GraphQL is
+  # available only with an owner's explicit direct Linear credential.
+  def bridge_action(@create_comment_mutation), do: {:ok, "symphony_create_comment"}
+  def bridge_action(@state_lookup_query), do: {:ok, "symphony_resolve_state"}
+  def bridge_action(@update_state_mutation), do: {:ok, "symphony_update_state"}
+  def bridge_action(@get_issue_query), do: {:ok, "symphony_get_issue"}
+  def bridge_action(@update_comment_mutation), do: {:ok, "symphony_update_comment"}
+  def bridge_action(_), do: {:error, :unsupported_bridge_operation}
+
   @spec fetch_candidate_issues() :: {:ok, [term()]} | {:error, term()}
   def fetch_candidate_issues, do: client_module().fetch_candidate_issues()
 
@@ -44,11 +77,13 @@ defmodule SymphonyElixir.Linear.Adapter do
   def fetch_issues_by_states(states), do: client_module().fetch_issues_by_states(states)
 
   @spec fetch_issue_states_by_ids([String.t()]) :: {:ok, [term()]} | {:error, term()}
-  def fetch_issue_states_by_ids(issue_ids), do: client_module().fetch_issue_states_by_ids(issue_ids)
+  def fetch_issue_states_by_ids(issue_ids),
+    do: client_module().fetch_issue_states_by_ids(issue_ids)
 
   @spec create_comment(String.t(), String.t()) :: :ok | {:error, term()}
   def create_comment(issue_id, body) when is_binary(issue_id) and is_binary(body) do
-    with {:ok, response} <- client_module().graphql(@create_comment_mutation, %{issueId: issue_id, body: body}),
+    with {:ok, response} <-
+           client_module().graphql(@create_comment_mutation, %{issueId: issue_id, body: body}),
          true <- get_in(response, ["data", "commentCreate", "success"]) == true do
       :ok
     else
@@ -79,7 +114,10 @@ defmodule SymphonyElixir.Linear.Adapter do
 
   defp resolve_state_id(issue_id, state_name) do
     with {:ok, response} <-
-           client_module().graphql(@state_lookup_query, %{issueId: issue_id, stateName: state_name}),
+           client_module().graphql(@state_lookup_query, %{
+             issueId: issue_id,
+             stateName: state_name
+           }),
          state_id when is_binary(state_id) <-
            get_in(response, ["data", "issue", "team", "states", "nodes", Access.at(0), "id"]) do
       {:ok, state_id}
