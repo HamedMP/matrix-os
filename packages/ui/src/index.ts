@@ -60,11 +60,13 @@ export type {
 export { createCanonicalChatRefresh } from "./canonical-chat-refresh.js";
 export { applyCanonicalChatContent } from "./canonical-chat-content.js";
 export { usePlatformSpeechDraft } from "./speech/use-platform-speech-draft.js";
+export { SpeechInputWaveform } from "./speech/SpeechInputWaveform.js";
 export type {
   PlatformSpeechCapture,
   PlatformSpeechCaptureAdapter,
   PlatformSpeechDraftClient,
   PlatformSpeechDraftPhase,
+  PlatformSpeechRecording,
   UsePlatformSpeechDraftResult,
 } from "./speech/use-platform-speech-draft.js";
 export {
@@ -75,8 +77,11 @@ export type { BrowserSpeechClient } from "./speech/browser-client.js";
 export {
   createWebPcmSpeechCaptureAdapter,
   encodePcm16Wav,
+  encodePcm16WavBytes,
+  normalizeSpeechInputLevel,
   PlatformSpeechRecorderError,
   resolveSpeechWorkletUrl,
+  smoothSpeechInputLevel,
 } from "./speech/pcm-recorder.js";
 
 export { ChatShareDialog } from "./chat/ChatShareDialog.js";
