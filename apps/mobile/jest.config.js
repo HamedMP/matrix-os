@@ -17,6 +17,7 @@ module.exports = {
   moduleNameMapper: {
     "^\\./canonical-chat-api\\.js$": "<rootDir>/../../packages/contracts/src/canonical-chat-api.ts",
     "^\\./canonical-chat-inputs\\.js$": "<rootDir>/../../packages/contracts/src/canonical-chat-inputs.ts",
+    "^(\\.{1,2}/.*)\\.js$": "$1",
     "^react$": "<rootDir>/node_modules/react",
     "^@/(.*)$": "<rootDir>/$1",
   },

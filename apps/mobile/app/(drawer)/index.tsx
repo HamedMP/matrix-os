@@ -39,12 +39,13 @@ import { AnalyticsMask } from "@/lib/analytics";
 import { CanonicalInputMessage } from "@/components/CanonicalInputMessage";
 import { CanonicalApprovalMessage } from "@/components/CanonicalApprovalMessage";
 import { ChatContextMenu } from "@/components/ChatContextMenu";
+import { NativeSpeechInput } from "@/components/NativeSpeechInput";
 import { HOSTED_GATEWAY_URL } from "@/lib/storage";
 
 const rabbitArtwork = require("../../assets/app.icon/Assets/rabbit.svg");
 
 export default function ChatScreen() {
-  const { isSignedIn } = useAuth();
+  const { isSignedIn, userId, getToken } = useAuth();
   const { user } = useUser();
   const { theme } = useUnistyles();
   const {
@@ -75,6 +76,8 @@ export default function ChatScreen() {
   ) ?? false);
 
   const [draft, setDraft] = useState("");
+  const [speechActive, setSpeechActive] = useState(false);
+  const appendSpeechDraft = useCallback((text: string) => setDraft(current => current ? `${current} ${text}` : text), []);
   const [inputFocused, setInputFocused] = useState(false);
   // Tapping the model picker itself blurs the TextInput a beat before its
   // native menu opens — delay hiding on blur, and cancel the hide entirely
@@ -110,11 +113,11 @@ export default function ChatScreen() {
 
   const isConnected = Boolean(isSignedIn);
   const hasDraftText = draft.trim().length > 0;
-  const canSend = hasDraftText && isConnected && Boolean(selection) && Boolean(turnModes) && !busy;
+  const canSend = !speechActive && hasDraftText && isConnected && Boolean(selection) && Boolean(turnModes) && !busy;
 
   const send = useCallback(() => {
     const trimmed = draft.trim();
-    if (!trimmed || !selection || !turnModes) return;
+    if (speechActive || !trimmed || !selection || !turnModes) return;
     // Clear the draft only once the send actually succeeds -- a failed token
     // fetch, computer resolution, chat creation, or turn admission leaves the
     // typed text in place so the user can retry instead of losing it. The
@@ -151,6 +154,7 @@ export default function ChatScreen() {
       },
     });
   }, [
+    speechActive,
     draft,
     selection,
     turnModes,
@@ -234,6 +238,15 @@ export default function ChatScreen() {
       />
 
       <View style={[styles.composerWrap, { paddingBottom: Math.max(insets.bottom, 12) + 8 }]}>
+        {isSignedIn && computer && <NativeSpeechInput
+          key={`${userId}:${computer.handle}:${computer.runtimeSlot}:${activeChatId ?? 'draft'}`}
+          scopeKey={`${userId}:${computer.handle}:${computer.runtimeSlot}:${activeChatId ?? 'draft'}`}
+          baseUrl={`${HOSTED_GATEWAY_URL}${computer.gatewayPath}`}
+          runtimeSlot={computer.runtimeSlot}
+          getToken={getToken}
+          onDraft={appendSpeechDraft}
+          onActive={setSpeechActive}
+        />}
         {inputFocused && activeChatId === null && projects.length > 0 ? (
           <View style={styles.projectPickerRow} onTouchStart={handlePickerTouchStart}>
             <ProjectPicker
