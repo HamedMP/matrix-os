@@ -3,7 +3,9 @@
 import { describe, expect, it } from "vitest";
 import {
   encodePcm16Wav,
+  normalizeSpeechInputLevel,
   resolveSpeechWorkletUrl,
+  smoothSpeechInputLevel,
 } from "../../shell/src/lib/platform-speech-recorder.js";
 
 describe("platform speech PCM recorder", () => {
@@ -30,6 +32,21 @@ describe("platform speech PCM recorder", () => {
   it("rejects invalid sample rates and empty recordings", () => {
     expect(() => encodePcm16Wav([], 16_000)).toThrow(/empty/i);
     expect(() => encodePcm16Wav([new Int16Array([1])], 1)).toThrow(/sample rate/i);
+  });
+
+  it("normalizes microphone RMS values and uses fast attack with slower release", () => {
+    expect(normalizeSpeechInputLevel(Number.NaN)).toBe(0);
+    expect(normalizeSpeechInputLevel(-1)).toBe(0);
+    expect(normalizeSpeechInputLevel(0)).toBe(0);
+    expect(normalizeSpeechInputLevel(1)).toBe(1);
+    expect(normalizeSpeechInputLevel(0.001)).toBeCloseTo(0, 5);
+    expect(normalizeSpeechInputLevel(0.1)).toBeCloseTo(2 / 3, 2);
+
+    const attacked = smoothSpeechInputLevel(0, 1);
+    const released = smoothSpeechInputLevel(attacked, 0);
+    expect(attacked).toBeGreaterThan(0.5);
+    expect(released).toBeGreaterThan(0);
+    expect(released).toBeLessThan(attacked);
   });
 
   it("binds the worklet asset to the explicit computer and runtime", () => {

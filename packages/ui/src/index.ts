@@ -65,6 +65,7 @@ export type {
 export { createCanonicalChatRefresh } from "./canonical-chat-refresh.js";
 export { applyCanonicalChatContent } from "./canonical-chat-content.js";
 export { usePlatformSpeechDraft } from "./speech/use-platform-speech-draft.js";
+export { SpeechInputWaveform } from "./speech/SpeechInputWaveform.js";
 export type {
   PlatformSpeechCapture,
   PlatformSpeechCaptureAdapter,
@@ -80,8 +81,10 @@ export type { BrowserSpeechClient } from "./speech/browser-client.js";
 export {
   createWebPcmSpeechCaptureAdapter,
   encodePcm16Wav,
+  normalizeSpeechInputLevel,
   PlatformSpeechRecorderError,
   resolveSpeechWorkletUrl,
+  smoothSpeechInputLevel,
 } from "./speech/pcm-recorder.js";
 
 export { ChatShareDialog } from "./chat/ChatShareDialog.js";
