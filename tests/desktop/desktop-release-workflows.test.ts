@@ -184,6 +184,14 @@ describe("desktop release workflows", () => {
     expect(windowsJob).toContain("Get-AuthenticodeSignature");
     expect(windowsJob).toContain("Status -ne [System.Management.Automation.SignatureStatus]::Valid");
     expect(windowsJob).toContain('Start-Process -FilePath $installerPath -ArgumentList "/S" -Wait');
+    expect(windowsJob).toContain(
+      'Registry::HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall',
+    );
+    expect(windowsJob).toContain('$_.DisplayName -eq "Matrix OS"');
+    expect(windowsJob).toContain('$_.DisplayVersion -eq $env:PACKAGE_VERSION');
+    expect(windowsJob).toContain('$uninstallEntry.QuietUninstallString');
+    expect(windowsJob).toContain(`$uninstallCommand -notmatch '^"([^"]+)"'`);
+    expect(windowsJob).not.toContain('Programs/Matrix OS');
     expect(windowsJob).toContain('foreach ($scheme in @("matrixos", "matrix-os"))');
     expect(windowsJob).toContain("Registry::HKEY_CURRENT_USER\\Software\\Classes\\$scheme");
     expect(windowsJob).toContain("desktop-update-fixture-server.mjs");

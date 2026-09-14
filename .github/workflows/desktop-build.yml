@@ -696,15 +696,32 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $installerPath = Join-Path $PWD "desktop/dist/$env:ARTIFACT_BASE.exe"
-          $installDirectory = Join-Path $env:LOCALAPPDATA "Programs/Matrix OS"
-          $installedAppPath = Join-Path $installDirectory "Matrix OS.exe"
-          $uninstallerPath = Join-Path $installDirectory "Uninstall Matrix OS.exe"
+          $installedAppPath = $null
+          $uninstallerPath = $null
           $smokeDirectory = Join-Path $env:RUNNER_TEMP "matrix-os-windows-smoke"
           New-Item -ItemType Directory -Force -Path $smokeDirectory | Out-Null
           $serverProcess = $null
           $appProcess = $null
           try {
             Start-Process -FilePath $installerPath -ArgumentList "/S" -Wait
+            $uninstallRoot = "Registry::HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Uninstall"
+            $uninstallEntry = Get-ChildItem -LiteralPath $uninstallRoot |
+              ForEach-Object { Get-ItemProperty -LiteralPath $_.PSPath } |
+              Where-Object {
+                $_.DisplayName -eq "Matrix OS" -and
+                $_.DisplayVersion -eq $env:PACKAGE_VERSION
+              } |
+              Select-Object -First 1
+            if (-not $uninstallEntry) {
+              throw "Silent NSIS install did not register Matrix OS $env:PACKAGE_VERSION"
+            }
+            $uninstallCommand = $uninstallEntry.QuietUninstallString
+            if ($uninstallCommand -notmatch '^"([^"]+)"') {
+              throw "NSIS install registered an invalid quiet uninstall command"
+            }
+            $uninstallerPath = $Matches[1]
+            $installDirectory = Split-Path -Parent $uninstallerPath
+            $installedAppPath = Join-Path $installDirectory "Matrix OS.exe"
             foreach ($path in @($installedAppPath, $uninstallerPath)) {
               if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
                 throw "Silent NSIS install did not create $path"
@@ -778,11 +795,11 @@ jobs:
               Stop-Process -Id $serverProcess.Id -Force -ErrorAction SilentlyContinue
               $serverProcess.WaitForExit()
             }
-            if (Test-Path -LiteralPath $uninstallerPath -PathType Leaf) {
+            if ($uninstallerPath -and (Test-Path -LiteralPath $uninstallerPath -PathType Leaf)) {
               Start-Process -FilePath $uninstallerPath -ArgumentList "/S" -Wait
             }
           }
-          if (Test-Path -LiteralPath $installedAppPath) {
+          if ($installedAppPath -and (Test-Path -LiteralPath $installedAppPath)) {
             throw "Silent NSIS uninstall left the installed app behind"
           }
 
