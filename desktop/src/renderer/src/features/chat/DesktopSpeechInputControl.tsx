@@ -68,7 +68,11 @@ export function DesktopSpeechInputControl({
       ) : null}
       {speech.phase === "recording" ? (
         <>
-          <SpeechInputWaveform level={speech.inputLevel} className="mx-1 text-[var(--danger)]" />
+          <SpeechInputWaveform
+            level={speech.inputLevel}
+            sampleSequence={speech.inputLevelSequence}
+            className="mx-1 text-[var(--danger)]"
+          />
           <span aria-live="polite" className="px-1 text-xs tabular-nums" style={{ color: "var(--text-tertiary)" }}>
             {Math.floor(speech.elapsedMs / 60_000)}:{String(Math.floor(speech.elapsedMs / 1_000) % 60).padStart(2, "0")}
           </span>

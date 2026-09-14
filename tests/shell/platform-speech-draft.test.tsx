@@ -103,8 +103,12 @@ describe("platform speech draft recording", () => {
 
     act(() => emitLevel?.(0.72));
     expect(hook.result.current.inputLevel).toBe(0.72);
+    expect(hook.result.current.inputLevelSequence).toBe(1);
+    act(() => emitLevel?.(0.72));
+    expect(hook.result.current.inputLevelSequence).toBe(2);
     act(() => hook.result.current.stop());
     await waitFor(() => expect(hook.result.current.inputLevel).toBe(0));
+    expect(hook.result.current.inputLevelSequence).toBe(0);
 
     act(() => emitLevel?.(0.95));
     expect(hook.result.current.inputLevel).toBe(0);
