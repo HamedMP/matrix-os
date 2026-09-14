@@ -280,6 +280,17 @@ export default function TerminalView({
       const selection = terminal.getSelection();
       if (selection) confirmedSelectionRef.current = selection;
     });
+    // Clears every selection layer readTerminalSelection() can return.
+    // terminal.clearSelection() alone only clears xterm's live selection;
+    // confirmed* refs survive and would leak the prior test's value into
+    // the next case via the readTerminalSelection() fallback chain.
+    const clearTerminalSelectionForTest = () => {
+      confirmedSelectionRef.current = "";
+      confirmedDomSelectionRef.current = "";
+      extendedSelectionRef.current = "";
+      terminal.clearSelection();
+      host.ownerDocument.getSelection()?.removeAllRanges();
+    };
     const osc52Disposable = terminal.parser.registerOscHandler(52, (data) => {
       const decoded = decodeOsc52Clipboard(data);
       if (!decoded.handled) return false;
@@ -441,6 +452,47 @@ export default function TerminalView({
     termRef.current = terminal;
     fitRef.current = fit;
     serializeRef.current = serialize;
+    // Test hooks must stay unconditional (including production builds).
+    // The packaged E2E suite runs against desktop/out/main/index.js with no
+    // test-flag plumbing through the Electron main process, so gating these
+    // behind an env flag would make them unreachable where they are needed.
+    // The renderer already owns the live Terminal instance, so exposing it on
+    // the same-origin [data-terminal-viewport] host grants no new privilege
+    // to remote web content; sanitized markdown/link content cannot reach this
+    // host without a full renderer compromise, at which point terminal access
+    // is already available. Keep this surface minimal: selection reader,
+    // selection reset, diagnostics, and the instance needed for buffer scans.
+    Object.defineProperty(host, "__xtermTerminal", {
+      value: terminal,
+      configurable: true,
+      writable: true,
+    });
+    Object.defineProperty(host, "__readTerminalSelection", {
+      value: readTerminalSelection,
+      configurable: true,
+      writable: true,
+    });
+    Object.defineProperty(host, "__clearTerminalSelection", {
+      value: clearTerminalSelectionForTest,
+      configurable: true,
+      writable: true,
+    });
+    Object.defineProperty(host, "__terminalDiagnostics", {
+      value: () => ({
+        cols: terminal.cols,
+        rows: terminal.rows,
+        viewportY: terminal.buffer.active.viewportY,
+        baseY: terminal.buffer.active.baseY,
+        cursorY: terminal.buffer.active.cursorY,
+        cursorX: terminal.buffer.active.cursorX,
+        bufferLength: terminal.buffer.active.length,
+        mouseTrackingMode: terminal.modes.mouseTrackingMode,
+        selection: readTerminalSelection(),
+        hasActiveLink: Boolean(hoveredLinkRef.current),
+      }),
+      configurable: true,
+      writable: true,
+    });
 
     let rafId: number | null = null;
     const observer = new ResizeObserver(() => {
@@ -481,6 +533,10 @@ export default function TerminalView({
         console.warn("[terminal] buffer snapshot failed:", err instanceof Error ? err.message : String(err));
       }
       if (manager.activeSessionName === sessionName) manager.detachActive();
+      delete (host as HTMLElement & { __xtermTerminal?: Terminal }).__xtermTerminal;
+      delete (host as HTMLElement & { __readTerminalSelection?: () => string }).__readTerminalSelection;
+      delete (host as HTMLElement & { __clearTerminalSelection?: () => void }).__clearTerminalSelection;
+      delete (host as HTMLElement & { __terminalDiagnostics?: () => unknown }).__terminalDiagnostics;
       terminal.dispose();
       termRef.current = null;
     };
