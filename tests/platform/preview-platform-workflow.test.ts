@@ -75,6 +75,7 @@ describe("preview platform workflow", () => {
       .toBeLessThan(connectJob.indexOf("Decrypt and validate handle-scoped preview runtime access"));
     expect(connectJob.indexOf("Decrypt and validate handle-scoped preview runtime access"))
       .toBeLessThan(connectJob.indexOf("Enable the existing tagged host without moving traffic"));
+    expect(workflow).toContain('if [ "$status" -ne 0 ]; then rm -f preview-share-runtime-access.json; fi');
     expect(workflow).toContain("trap 'rm -f preview-share-runtime-access.json' EXIT");
     expect(workflow).toContain("metadata.st_gid");
     expect(workflow).not.toContain("os.fchown(fd, 0, 0)");
