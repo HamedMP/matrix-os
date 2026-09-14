@@ -6,6 +6,7 @@
   "types": "src/index.ts",
   "exports": {
     ".": "./src/index.ts",
+    "./speech": "./src/speech/index.ts",
     "./styles.css": "./src/styles.css",
     "./agents-providers.css": "./src/agents-providers/agents-providers.css",
     "./chat-agents.css": "./src/chat-agents/chat-agents.css"

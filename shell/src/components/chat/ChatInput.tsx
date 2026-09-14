@@ -186,7 +186,11 @@ export function ChatInput({
           ) : null}
           {speech.phase === "recording" ? (
             <>
-              <SpeechInputWaveform level={speech.inputLevel} className="mx-1 text-destructive" />
+              <SpeechInputWaveform
+                level={speech.inputLevel}
+                sampleSequence={speech.inputLevelSequence}
+                className="mx-1 text-destructive"
+              />
               <span aria-live="polite" className="px-1 text-xs tabular-nums text-muted-foreground">
                 {Math.floor(speech.elapsedMs / 60_000)}:{String(Math.floor(speech.elapsedMs / 1_000) % 60).padStart(2, "0")}
               </span>
