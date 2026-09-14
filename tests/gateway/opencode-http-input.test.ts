@@ -2,6 +2,7 @@ import { createServer, type ServerResponse } from "node:http";
 import { EventEmitter, once } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 import type { AgentThreadEvent, AgentThreadSummary } from "@matrix-os/contracts";
+import { parseCodingAgentProviderEventBatch } from "../../packages/gateway/src/coding-agents/provider-adapter.js";
 import { createOpenCodeCodingAgentProvider } from "../../packages/gateway/src/coding-agents/opencode-provider.js";
 import { createOpenCodeServerProcess, OPENCODE_READ_ONLY_PERMISSIONS } from "../../packages/gateway/src/coding-agents/opencode-server-process.js";
 
@@ -54,13 +55,14 @@ describe("OpenCode HTTP input round trip", () => {
     const context = { principal, thread, now: () => new Date(), nextEventId: () => `evt_http_${++sequence}` };
     const observed: AgentThreadEvent[] = [];
     try {
-      const running = Promise.resolve(adapter.startThread({ ...context, request: { providerId: "opencode", projectId: "project", prompt: "Ask my favorite color", model: "anthropic:claude-sonnet-5", sandboxMode: "read_only", clientRequestId: "req_http_start" }, publishEvents: batch => { observed.push(...batch.events); } }));
+      const running = Promise.resolve(adapter.startThread({ ...context, request: { providerId: "opencode", projectId: "project", prompt: "Ask my favorite color", model: "anthropic:claude-sonnet-5", sandboxMode: "read_only", clientRequestId: "req_http_start" }, publishEvents: batch => { observed.push(...parseCodingAgentProviderEventBatch(batch, thread.id).events); } }));
       await vi.waitFor(() => expect(observed.some(event => event.type === "user_input.requested")).toBe(true));
       const input = observed.find(event => event.type === "user_input.requested")!;
       if (input.type !== "user_input.requested") throw new Error("Question missing");
       await adapter.submitInput!({ ...context, inputRequestId: input.request.requestId, request: { clientRequestId: "req_http_reply", correlationId: input.request.correlationId, answer: "Green", structuredAnswers: { q0: ["Green"] } } });
       const result = await running;
       expect(result.resumeState?.conversationId).toContain("ses_http");
+      expect(result.events).toEqual(expect.arrayContaining([expect.objectContaining({ type: "thread.completed", outcome: "completed" })]));
       expect(observed).toEqual(expect.arrayContaining([expect.objectContaining({ type: "assistant.text.delta", delta: "Green selected" }), expect.objectContaining({ type: "user_input.answered", reason: "answered" })]));
       expect({ prompts, replies, submitted }).toEqual({ prompts: 1, replies: 1, submitted: { answers: [["Green"]] } });
     } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }

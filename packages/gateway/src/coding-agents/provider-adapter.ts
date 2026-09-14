@@ -161,6 +161,7 @@ function providerMayEmit(event: AgentThreadEvent): boolean {
     case "tool.completed":
     case "approval.requested":
     case "user_input.requested":
+    case "user_input.answered":
     case "file.changed":
     case "review.ready":
     case "thread.error":
