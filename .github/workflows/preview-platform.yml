@@ -544,7 +544,7 @@ jobs:
             exit 1
           fi
           private_key=/tmp/preview-runtime-handoff-private.pem
-          trap 'rm -f "$private_key"' EXIT
+          trap 'status=$?; rm -f "$private_key"; if [ "$status" -ne 0 ]; then rm -f preview-share-runtime-access.json; fi; exit "$status"' EXIT
           printf '%s' "$PREVIEW_RUNTIME_HANDOFF_PRIVATE_KEY_B64" | base64 --decode > "$private_key"
           chmod 600 "$private_key"
           openssl pkey -in "$private_key" -noout
