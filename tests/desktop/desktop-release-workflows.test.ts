@@ -105,7 +105,7 @@ describe("desktop release workflows", () => {
     const desktopPackage = JSON.parse(
       readFileSync(join(root, "desktop/package.json"), "utf8"),
     ) as { scripts: Record<string, string> };
-    const brandBuild = "pnpm --dir .. --filter '@matrix-os/brand' build";
+    const brandBuild = "pnpm --dir .. --filter @matrix-os/brand build";
 
     expect(desktopPackage.scripts.dev).toBe(`${brandBuild} && electron-vite dev`);
     expect(desktopPackage.scripts.build).toBe(`${brandBuild} && electron-vite build`);
