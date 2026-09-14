@@ -79,6 +79,24 @@ describe("platform speech draft recording", () => {
     expect(speech.transcribe).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps a safe draft-commit error when the destination revision changed", async () => {
+    const onDraft = vi.fn(() => "Your draft changed while the recording was transcribed");
+    const hook = renderHook(() => usePlatformSpeechDraft({
+      scopeKey: "chat-1",
+      client: client(),
+      captureAdapter: captureAdapter(),
+      onDraft,
+      requestIdFactory: () => requestId,
+    }));
+    await waitFor(() => expect(hook.result.current.phase).toBe("idle"));
+    await act(async () => hook.result.current.start());
+    act(() => hook.result.current.stop());
+
+    await waitFor(() => expect(hook.result.current.phase).toBe("error"));
+    expect(hook.result.current.error).toBe("Your draft changed while the recording was transcribed");
+    expect(onDraft).toHaveBeenCalledTimes(1);
+  });
+
   it("publishes current input level only while the active recording owns the microphone", async () => {
     let emitLevel: ((level: number) => void) | undefined;
     const adapter: PlatformSpeechCaptureAdapter = {
@@ -112,6 +130,36 @@ describe("platform speech draft recording", () => {
 
     act(() => emitLevel?.(0.95));
     expect(hook.result.current.inputLevel).toBe(0);
+  });
+
+  it("ends recording immediately when the capture adapter reports a terminal buffer error", async () => {
+    let reportError: ((error: unknown) => void) | undefined;
+    const cancel = vi.fn(async () => undefined);
+    const adapter: PlatformSpeechCaptureAdapter = {
+      isSupported: () => true,
+      start: vi.fn(async (input) => {
+        reportError = input.onError;
+        return {
+          stop: vi.fn(async () => new Blob([new Uint8Array(44)], { type: "audio/wav" })),
+          cancel,
+        };
+      }),
+    };
+    const hook = renderHook(() => usePlatformSpeechDraft({
+      scopeKey: "chat-1",
+      client: client(),
+      captureAdapter: adapter,
+      onDraft: vi.fn(),
+      requestIdFactory: () => requestId,
+    }));
+    await waitFor(() => expect(hook.result.current.phase).toBe("idle"));
+    await act(async () => hook.result.current.start());
+
+    act(() => reportError?.(new Error("buffer changed")));
+
+    expect(hook.result.current.phase).toBe("error");
+    expect(hook.result.current.error).toBe("This recording cannot be transcribed");
+    expect(cancel).toHaveBeenCalledTimes(1);
   });
 
   it("admits only one microphone request when start is invoked twice before rendering settles", async () => {

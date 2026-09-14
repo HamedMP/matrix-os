@@ -40,6 +40,7 @@ import { CanonicalInputMessage } from "@/components/CanonicalInputMessage";
 import { CanonicalApprovalMessage } from "@/components/CanonicalApprovalMessage";
 import { ChatContextMenu } from "@/components/ChatContextMenu";
 import { NativeSpeechInput } from "@/components/NativeSpeechInput";
+import { mergeNativeSpeechDraft } from "@/lib/speech/draft";
 import { HOSTED_GATEWAY_URL } from "@/lib/storage";
 
 const rabbitArtwork = require("../../assets/app.icon/Assets/rabbit.svg");
@@ -76,8 +77,30 @@ export default function ChatScreen() {
   ) ?? false);
 
   const [draft, setDraft] = useState("");
+  const draftRef = useRef("");
+  const draftRevisionRef = useRef(0);
   const [speechActive, setSpeechActive] = useState(false);
-  const appendSpeechDraft = useCallback((text: string) => setDraft(current => current ? `${current} ${text}` : text), []);
+  const replaceDraft = useCallback((text: string) => {
+    draftRef.current = text;
+    draftRevisionRef.current += 1;
+    setDraft(text);
+  }, []);
+  const appendSpeechDraft = useCallback((text: string, recordingRevision: number): void | string => {
+    const merged = mergeNativeSpeechDraft({
+      current: draftRef.current,
+      currentRevision: draftRevisionRef.current,
+      recordingRevision,
+      transcript: text,
+    });
+    if (!merged.ok) {
+      return merged.reason === "stale"
+        ? "Your draft changed while the recording was transcribed"
+        : "The transcript is too long for this message";
+    }
+    draftRef.current = merged.value;
+    draftRevisionRef.current = merged.revision;
+    setDraft(merged.value);
+  }, []);
   const [inputFocused, setInputFocused] = useState(false);
   // Tapping the model picker itself blurs the TextInput a beat before its
   // native menu opens — delay hiding on blur, and cancel the hide entirely
@@ -150,7 +173,7 @@ export default function ChatScreen() {
     }, {
       onSuccess: () => {
         if (pendingSendRef.current?.text === trimmed) pendingSendRef.current = null;
-        setDraft((current) => (current === trimmed ? "" : current));
+        if (draftRef.current === trimmed) replaceDraft("");
       },
     });
   }, [
@@ -162,6 +185,7 @@ export default function ChatScreen() {
     detail?.record.chat.revision,
     selectedProjectId,
     sendMessage,
+    replaceDraft,
   ]);
 
   const insets = useSafeAreaInsets();
@@ -238,15 +262,6 @@ export default function ChatScreen() {
       />
 
       <View style={[styles.composerWrap, { paddingBottom: Math.max(insets.bottom, 12) + 8 }]}>
-        {isSignedIn && computer && <NativeSpeechInput
-          key={`${userId}:${computer.handle}:${computer.runtimeSlot}:${activeChatId ?? 'draft'}`}
-          scopeKey={`${userId}:${computer.handle}:${computer.runtimeSlot}:${activeChatId ?? 'draft'}`}
-          baseUrl={`${HOSTED_GATEWAY_URL}${computer.gatewayPath}`}
-          runtimeSlot={computer.runtimeSlot}
-          getToken={getToken}
-          onDraft={appendSpeechDraft}
-          onActive={setSpeechActive}
-        />}
         {inputFocused && activeChatId === null && projects.length > 0 ? (
           <View style={styles.projectPickerRow} onTouchStart={handlePickerTouchStart}>
             <ProjectPicker
@@ -257,29 +272,46 @@ export default function ChatScreen() {
           </View>
         ) : null}
         <View style={inputFocused ? styles.composerActive : styles.composer}>
-          {inputFocused ? null : (
-            <IconButton
-              accessibilityLabel="Attach"
-              icon={Add01Icon}
-              iconSize={23}
-              iconColor={theme.v2.appColors.ink}
+          <View style={[styles.composerInputRow, speechActive ? styles.composerInputRowRecording : null]}>
+            {!inputFocused && !speechActive ? (
+              <IconButton accessibilityLabel="Attach" icon={Add01Icon} iconSize={23} iconColor={theme.v2.appColors.ink} />
+            ) : null}
+            <TextInput
+              ref={inputRef}
+              accessibilityLabel="Message Matrix"
+              value={draft}
+              onChangeText={replaceDraft}
+              onSubmitEditing={send}
+              onFocus={handleInputFocus}
+              onBlur={handleInputBlur}
+              placeholder={isConnected ? "Message Matrix" : "Signing in…"}
+              placeholderTextColor={theme.v2.appColors.muted}
+              editable={isConnected}
+              returnKeyType="send"
+              style={inputFocused || speechActive ? styles.inputActive : styles.input}
             />
-          )}
-          <TextInput
-            ref={inputRef}
-            accessibilityLabel="Message Matrix"
-            value={draft}
-            onChangeText={setDraft}
-            onSubmitEditing={send}
-            onFocus={handleInputFocus}
-            onBlur={handleInputBlur}
-            placeholder={isConnected ? "Message Matrix" : "Signing in…"}
-            placeholderTextColor={theme.v2.appColors.muted}
-            editable={isConnected}
-            returnKeyType="send"
-            style={inputFocused ? styles.inputActive : styles.input}
-          />
-          {inputFocused ? (
+            {isSignedIn && computer ? <NativeSpeechInput
+              key={`${userId}:${computer.handle}:${computer.runtimeSlot}:${activeChatId ?? 'draft'}`}
+              scopeKey={`${userId}:${computer.handle}:${computer.runtimeSlot}:${activeChatId ?? 'draft'}`}
+              baseUrl={`${HOSTED_GATEWAY_URL}${computer.gatewayPath}`}
+              runtimeSlot={computer.runtimeSlot}
+              getToken={getToken}
+              getDraftRevision={() => draftRevisionRef.current}
+              onDraft={appendSpeechDraft}
+              onActive={setSpeechActive}
+            /> : null}
+            {!inputFocused && !speechActive ? <IconButton
+              accessibilityLabel={busy ? "Matrix is responding" : "Send message"}
+              icon={ArrowUp01Icon}
+              iconSize={19}
+              iconColor={theme.v2.appColors.surface}
+              backgroundColor={canSend || busy ? theme.v2.appColors.blue : theme.v2.appColors.disabledSurface}
+              loading={busy}
+              disabled={!canSend}
+              onPress={send}
+            /> : null}
+          </View>
+          {inputFocused && !speechActive ? (
             <View style={styles.composerControlsRow}>
               <IconButton
                 accessibilityLabel="Attach"
@@ -307,18 +339,7 @@ export default function ChatScreen() {
                 />
               </View>
             </View>
-          ) : (
-            <IconButton
-              accessibilityLabel={busy ? "Matrix is responding" : "Send message"}
-              icon={ArrowUp01Icon}
-              iconSize={19}
-              iconColor={theme.v2.appColors.surface}
-              backgroundColor={canSend || busy ? theme.v2.appColors.blue : theme.v2.appColors.disabledSurface}
-              loading={busy}
-              disabled={!canSend}
-              onPress={send}
-            />
-          )}
+          ) : null}
         </View>
       </View>
     </KeyboardAvoidingView>
@@ -540,6 +561,17 @@ const styles = StyleSheet.create((theme) => ({
     fontFamily: theme.v2.fonts.body,
     fontSize: 15,
     color: theme.v2.appColors.ink,
+  },
+  composerInputRow: {
+    minHeight: 46,
+    alignSelf: "stretch",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  composerInputRowRecording: {
+    flexDirection: "column",
+    alignItems: "stretch",
   },
   composerActive: {
     flexDirection: "column",

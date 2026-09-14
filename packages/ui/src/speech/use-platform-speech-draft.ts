@@ -42,6 +42,7 @@ export interface PlatformSpeechCaptureAdapter<TRecording extends PlatformSpeechR
     maxBytes: number;
     signal: AbortSignal;
     onLevel?: (level: number) => void;
+    onError?: (error: unknown) => void;
   }): Promise<PlatformSpeechCapture<TRecording>>;
 }
 
@@ -107,7 +108,8 @@ async function cancelCaptureSafely<TRecording extends PlatformSpeechRecording>(
 
 export function usePlatformSpeechDraft<TRecording extends PlatformSpeechRecording = Blob>(options: {
   scopeKey: string;
-  onDraft(text: string): void;
+  /** Return a short safe message when the destination can no longer accept the transcript. */
+  onDraft(text: string): void | string;
   client: PlatformSpeechDraftClient<TRecording>;
   captureAdapter: PlatformSpeechCaptureAdapter<TRecording>;
   requestIdFactory?: () => string;
@@ -223,7 +225,14 @@ export function usePlatformSpeechDraft<TRecording extends PlatformSpeechRecordin
         signal: controller.signal,
       });
       if (generationRef.current !== active.generation) return;
-      if (result.outcome === "transcript") options.onDraft(result.text);
+      if (result.outcome === "transcript") {
+        const commitError = options.onDraft(result.text);
+        if (typeof commitError === "string") {
+          setError(commitError);
+          setPhase("error");
+          return;
+        }
+      }
       setPhase("idle");
     } catch (caught: unknown) {
       if (generationRef.current !== active.generation || controller.signal.aborted) return;
@@ -261,6 +270,23 @@ export function usePlatformSpeechDraft<TRecording extends PlatformSpeechRecordin
           if (recordingRef.current !== active || generationRef.current !== generation) return;
           const normalized = Number.isFinite(level) ? Math.max(0, Math.min(1, level)) : 0;
           setInputMeter((current) => ({ level: normalized, sequence: current.sequence + 1 }));
+        },
+        onError: (caught) => {
+          const current = recordingRef.current;
+          if (!current || current.generation !== generation || generationRef.current !== generation) return;
+          recordingRef.current = null;
+          clearTimeout(current.timeout);
+          clearInterval(current.elapsedTimer);
+          setInputMeter({ level: 0, sequence: 0 });
+          void current.capture.cancel().catch((cleanupError: unknown) => {
+            console.warn("[speech-draft] microphone cleanup failed", cleanupError instanceof Error ? cleanupError.name : "UnknownError");
+          });
+          const safeMessage = options.safeErrorMessage?.(caught);
+          if (!safeMessage) {
+            console.warn("[speech-draft] recording failed", caught instanceof Error ? caught.name : "UnknownError");
+          }
+          setError(safeMessage ?? "This recording cannot be transcribed");
+          setPhase("error");
         },
       });
     } catch (caught: unknown) {
