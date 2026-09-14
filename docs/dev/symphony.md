@@ -96,15 +96,15 @@ bun run test
 Fresh customer VPSes install Symphony but do not enable or start it. Connect
 Linear in Matrix Settings, configure `SYMPHONY_LINEAR_PROJECT_SLUG` in
 `/opt/matrix/env/symphony.env` (or select an owner `SYMPHONY_WORKFLOW_FILE`), and
-start Symphony from its app or `matrix-symphony-control start`. The project is
-never inferred as `matrix-os`. Stopping from the app also disables boot startup.
+start Symphony from its app or `matrix-symphony-control start`. Automatic bridge-only installs never infer a project. An explicit legacy
+credential preserves the former `matrix-os` default. Stopping from the app also disables boot startup.
 An existing custom workflow and explicit environment settings survive upgrades.
 An upgrade resumes Symphony only when the pre-update transaction recorded it as
 active; rollback obeys the same rule. Previously stopped services remain stopped.
 The wrapper also honors that transaction during the first update performed by an
 older sync agent. An unconfigured bundled workflow exits successfully, avoiding
-systemd restart loops. Configured owners using the former implicit project must
-set the actual project slug before rollout; inventory these owners first.
+systemd restart loops.
+Inventory bridge-only owners who relied on the implicit project before rollout.
 
 The bridge accepts only fixed, bounded `symphony_*` operations. It never accepts
 caller GraphQL documents. The `linear` dynamic tool supports issue/workpad reads,
@@ -120,15 +120,21 @@ cleanup, workpads and worker calls. Transient failures back off from 30–45 sec
 through 60–90, 120–180, 240–360 and 480–720 seconds, capped at 600–900 seconds.
 Req automatic retries and redirects are disabled; connect and receive timeouts
 are each 10 seconds. A request process death releases its single lease and opens
-transient backoff. Success resets the failure count.
+transient backoff. A successful retry of the failed request resets the failure count; successful
+earlier pages or viewer requests cannot reset a later failing request.
 
-Permanent HTTP 4xx (except 408/429), invalid GraphQL responses and missing bridge
-configuration latch the circuit until the tracker/bridge configuration changes
+Permanent HTTP 4xx (except 408/429), malformed responses, structured GraphQL
+authentication/contract errors and missing bridge configuration latch the circuit until the tracker/bridge configuration changes
 or the owner restarts Symphony. A manual dashboard refresh cannot bypass it.
 After connecting/reconnecting Linear, stop and start Symphony to retry. Missing
 project configuration makes no network request. Unknown dynamic GraphQL is
 rejected locally before acquiring a lease. Local workflow checks can continue
-while the network circuit is open.
+while the network circuit is open. Item/input GraphQL errors suppress only the
+identical request for 15 minutes in a cache capped at 128 entries; other operations
+continue. Structured `RATELIMITED` errors use transient backoff even when carried
+in HTTP 400, as specified in [Linear rate-limit documentation](https://linear.app/developers/rate-limiting).
+The typed tool validates operation-specific parameter shapes locally for both
+direct credentials and bridge calls.
 
 The loopback state API exposes `polling.circuit` with `outcome`, `failures`, and
 `next_retry_in_ms` (`null` for permanent suspension). `symphony_linear` log events

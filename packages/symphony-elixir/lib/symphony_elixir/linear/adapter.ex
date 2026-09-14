@@ -54,6 +54,61 @@ defmodule SymphonyElixir.Linear.Adapter do
   }
   """
 
+  @operation_params %{
+    "get_issue" => %{"issueId" => :id},
+    "create_comment" => %{"issueId" => :id, "body" => :body},
+    "update_comment" => %{"id" => :id, "body" => :body},
+    "resolve_state" => %{"issueId" => :id, "stateName" => :text},
+    "update_state" => %{"issueId" => :id, "stateId" => :id}
+  }
+
+  def operation_params_schemas do
+    Enum.map(@operation_params, fn {_operation, fields} ->
+      %{
+        "type" => "object",
+        "additionalProperties" => false,
+        "required" => Map.keys(fields),
+        "properties" => Map.new(fields, fn {key, type} -> {key, param_schema(type)} end)
+      }
+    end)
+  end
+
+  def validate_operation_params(operation, params) when is_map(params) do
+    case @operation_params[operation] do
+      fields when is_map(fields) ->
+        if Enum.sort(Map.keys(fields)) == Enum.sort(Map.keys(params)) and
+             Enum.all?(fields, fn {key, type} -> valid_param?(type, params[key]) end),
+           do: :ok,
+           else: {:error, :invalid_linear_operation_params}
+
+      _ ->
+        {:error, :unsupported_bridge_operation}
+    end
+  end
+
+  def validate_operation_params(_, _), do: {:error, :invalid_linear_operation_params}
+
+  defp param_schema(:id),
+    do: %{
+      "type" => "string",
+      "minLength" => 1,
+      "maxLength" => 256,
+      "pattern" => "^[A-Za-z0-9][A-Za-z0-9_-]*$"
+    }
+
+  defp param_schema(:text), do: %{"type" => "string", "minLength" => 1, "maxLength" => 256}
+  defp param_schema(:body), do: %{"type" => "string", "minLength" => 1, "maxLength" => 10000}
+
+  defp valid_param?(:id, value) when is_binary(value),
+    do: byte_size(value) <= 256 and Regex.match?(~r/^[A-Za-z0-9][A-Za-z0-9_-]*$/, value)
+
+  defp valid_param?(type, value) when is_binary(value) do
+    max_length = if type == :body, do: 10000, else: 256
+    byte_size(value) <= max_length * 4 and String.length(value) in 1..max_length
+  end
+
+  defp valid_param?(_, _), do: false
+
   def operation_query("get_issue"), do: {:ok, @get_issue_query}
   def operation_query("create_comment"), do: {:ok, @create_comment_mutation}
   def operation_query("update_comment"), do: {:ok, @update_comment_mutation}

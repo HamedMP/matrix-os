@@ -93,7 +93,7 @@ defmodule SymphonyElixir.Codex.DynamicTool do
                 "update_state"
               ]
             },
-            "params" => %{"type" => "object", "additionalProperties" => true}
+            "params" => %{"anyOf" => Adapter.operation_params_schemas()}
           }
         }
       },
@@ -118,7 +118,8 @@ defmodule SymphonyElixir.Codex.DynamicTool do
        when is_map(params) do
     linear_client = Keyword.get(opts, :linear_client, &Client.graphql/3)
 
-    with {:ok, query} <- Adapter.operation_query(operation),
+    with :ok <- Adapter.validate_operation_params(operation, params),
+         {:ok, query} <- Adapter.operation_query(operation),
          {:ok, response} <- linear_client.(query, params, []) do
       graphql_response(response)
     else

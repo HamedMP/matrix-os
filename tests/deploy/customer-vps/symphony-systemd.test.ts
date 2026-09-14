@@ -255,7 +255,7 @@ describe("customer VPS Symphony systemd unit", () => {
       /SymphonyElixir\.PollingPolicy\.next_delay_ms\(\s*state\.last_tracker_status,\s*state\.poll_interval_ms\s*\)/,
     );
     expect(pollingPolicy).toContain("max(interval, 300_000)");
-    expect(orchestrator).toContain("PollingPolicy.startup_delay_ms()");
+    expect(orchestrator).toContain("RequestGate.snapshot().next_retry_in_ms");
   });
 
   it("uses Matrix-owned repository and runtime endpoint secrets", async () => {
@@ -338,7 +338,7 @@ describe("customer VPS Symphony systemd unit", () => {
     expect(linearClient).toContain('service: "linear"');
     expect(linearClient).not.toContain('action: "graphql"');
     expect(linearClient).toContain('"symphony_poll"');
-    expect(linearClient).toContain("RequestGate.checkout(fingerprint)");
+    expect(linearClient).toContain("RequestGate.checkout_request(");
     expect(linearClient).toContain("{:linear_api_status, status}");
     expect(linearClient).toContain("retry: false");
     expect(linearClient).not.toContain("linear_not_connected_error?");

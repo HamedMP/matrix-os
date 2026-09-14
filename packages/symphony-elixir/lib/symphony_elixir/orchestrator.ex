@@ -65,7 +65,7 @@ defmodule SymphonyElixir.Orchestrator do
       codex_rate_limits: nil
     }
 
-    state = schedule_tick(state, SymphonyElixir.PollingPolicy.startup_delay_ms())
+    state = schedule_tick(state, SymphonyElixir.Linear.RequestGate.snapshot().next_retry_in_ms || 0)
 
     {:ok, state}
   end

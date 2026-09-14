@@ -179,7 +179,11 @@ defmodule SymphonyElixir.Linear.Client do
 
     with :ok <- configured_tracker(tracker),
          :ok <- supported_request(tracker, payload),
-         {:ok, lease} <- RequestGate.checkout(fingerprint) do
+         {:ok, lease} <-
+           RequestGate.checkout_request(
+             fingerprint,
+             :crypto.hash(:sha256, :erlang.term_to_binary(payload))
+           ) do
       result = perform_request(payload, request_fun)
       :ok = RequestGate.finish(lease, result)
       result
@@ -203,14 +207,9 @@ defmodule SymphonyElixir.Linear.Client do
 
   defp perform_request(payload, request_fun) do
     with {:ok, headers} <- graphql_headers(),
-         {:ok, %{status: 200, body: body}} <- request_fun.(payload, headers) do
-      case body do
-        %{"errors" => _} -> {:error, :linear_graphql_error}
-        %{"data" => data} when is_map(data) -> {:ok, body}
-        _ -> {:error, :linear_unknown_payload}
-      end
+         {:ok, response} <- request_fun.(payload, headers) do
+      decode_response(response)
     else
-      {:ok, %{status: status}} -> {:error, {:linear_api_status, status}}
       {:error, reason} when is_atom(reason) -> {:error, reason}
       {:error, _reason} -> {:error, :network_error}
     end
@@ -219,6 +218,48 @@ defmodule SymphonyElixir.Linear.Client do
       Logger.warning("symphony_linear outcome=request_failed")
       {:error, :network_error}
   end
+
+  # Linear documents HTTP 400 + RATELIMITED as retryable. Classify structured
+  # codes only; never inspect or log provider messages.
+  defp decode_response(%{status: status, body: %{"errors" => errors}})
+       when status in [200, 400] and is_list(errors) and errors != [] do
+    codes =
+      errors
+      |> Enum.take(100)
+      |> Enum.map(fn
+        %{"extensions" => %{"code" => code}} when is_binary(code) -> code
+        _ -> nil
+      end)
+
+    cond do
+      Enum.any?(
+        codes,
+        &(&1 in [
+            "UNAUTHENTICATED",
+            "AUTHENTICATION_ERROR",
+            "GRAPHQL_VALIDATION_FAILED",
+            "GRAPHQL_PARSE_FAILED",
+            "CONFIGURATION_ERROR"
+          ])
+      ) ->
+        {:error, :linear_contract_error}
+
+      "RATELIMITED" in codes ->
+        {:error, {:linear_api_status, 429}}
+
+      Enum.any?(codes, &(&1 in ["INTERNAL_SERVER_ERROR", "INTERNAL_ERROR"])) ->
+        {:error, :network_error}
+
+      true ->
+        {:error, :linear_operation_error}
+    end
+  end
+
+  defp decode_response(%{status: 200, body: %{"data" => data} = body}) when is_map(data),
+    do: {:ok, body}
+
+  defp decode_response(%{status: 200}), do: {:error, :linear_unknown_payload}
+  defp decode_response(%{status: status}), do: {:error, {:linear_api_status, status}}
 
   @doc false
   @spec normalize_issue_for_test(map()) :: Issue.t() | nil

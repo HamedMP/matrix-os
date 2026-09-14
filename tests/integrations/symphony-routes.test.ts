@@ -49,4 +49,25 @@ describe('Symphony integration route contract', () => {
     expect((await call('graphql')).status).toBe(400);
     expect(pipedream.proxyPost).not.toHaveBeenCalled();
   });
+  it('recognizes documented rate limiting inside a provider HTTP 400', async () => {
+    const { call, pipedream } = fixture();
+    pipedream.proxyPost.mockRejectedValue({ statusCode: 400, body: { errors: [{ extensions: { code: 'RATELIMITED' } }] } });
+    expect((await call()).status).toBe(429);
+  });
+
+  it.each([200, 400])('isolates item errors with HTTP %s without leaking provider details', async status => {
+    const { call, pipedream } = fixture();
+    const body = { errors: [{ message: 'secret provider detail', extensions: { code: 'BAD_USER_INPUT' } }] };
+    if (status === 200) pipedream.proxyPost.mockResolvedValue(body as never);
+    else pipedream.proxyPost.mockRejectedValue({ statusCode: status, body });
+    const response = await call();
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ service: 'linear', action: 'symphony_viewer', data: { errors: [{ extensions: { code: 'OPERATION_FAILED' } }] } });
+  });
+  it('suspends authentication errors carried in a successful HTTP response', async () => {
+    const { call, pipedream } = fixture();
+    pipedream.proxyPost.mockResolvedValue({ errors: [{ extensions: { code: 'UNAUTHENTICATED' } }] } as never);
+    expect((await call()).status).toBe(422);
+  });
+
 });

@@ -14,6 +14,7 @@ defmodule SymphonyElixir.PollingPolicy do
   end
 
   def classify({:ok, _}), do: :ok
+  def classify({:error, :linear_operation_error}), do: :operation_error
   def classify({:error, {:linear_api_status, status}}) when status in [408, 429], do: :transient
 
   def classify({:error, {:linear_api_status, status}}) when status >= 400 and status < 500,

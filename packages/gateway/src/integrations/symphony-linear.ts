@@ -2,6 +2,7 @@ import { z } from "zod/v4";
 import type { ServiceAction } from "./types.js";
 
 const text = z.string().min(1).max(256);
+const id = z.string().min(1).max(256).regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/);
 const page = z.number().int().min(1).max(50);
 
 // Version 1: fixed documents only. Never interpolate caller input into GraphQL.
@@ -64,7 +65,7 @@ export const SYMPHONY_LINEAR_ACTIONS: Record<string, ServiceAction> = {
     description: "Symphony issues by id",
     risk: "read",
     params: {ids: { type: "array" }, first: { type: "number" }, relationFirst: { type: "number" }},
-    paramsSchema: z.object({ ids: z.array(text).min(1).max(50), first: page, relationFirst: page }).strict(),
+    paramsSchema: z.object({ ids: z.array(id).min(1).max(50), first: page, relationFirst: page }).strict(),
     directApi: {
       method: "POST",
       url: "https://api.linear.app/graphql",
@@ -131,7 +132,7 @@ export const SYMPHONY_LINEAR_ACTIONS: Record<string, ServiceAction> = {
     description: "Symphony create comment",
     risk: "write",
     params: {issueId: { type: "string" }, body: { type: "string" }},
-    paramsSchema: z.object({ issueId: text, body: z.string().min(1).max(10000) }).strict(),
+    paramsSchema: z.object({ issueId: id, body: z.string().min(1).max(10000) }).strict(),
     directApi: {
       method: "POST",
       url: "https://api.linear.app/graphql",
@@ -149,7 +150,7 @@ export const SYMPHONY_LINEAR_ACTIONS: Record<string, ServiceAction> = {
     description: "Symphony resolve state",
     risk: "read",
     params: {issueId: { type: "string" }, stateName: { type: "string" }},
-    paramsSchema: z.object({ issueId: text, stateName: text }).strict(),
+    paramsSchema: z.object({ issueId: id, stateName: text }).strict(),
     directApi: {
       method: "POST",
       url: "https://api.linear.app/graphql",
@@ -172,7 +173,7 @@ export const SYMPHONY_LINEAR_ACTIONS: Record<string, ServiceAction> = {
     description: "Symphony update state",
     risk: "write",
     params: {issueId: { type: "string" }, stateId: { type: "string" }},
-    paramsSchema: z.object({ issueId: text, stateId: text }).strict(),
+    paramsSchema: z.object({ issueId: id, stateId: id }).strict(),
     directApi: {
       method: "POST",
       url: "https://api.linear.app/graphql",
@@ -189,7 +190,7 @@ export const SYMPHONY_LINEAR_ACTIONS: Record<string, ServiceAction> = {
     description: "Symphony get issue",
     risk: "read",
     params: {issueId: { type: "string" }},
-    paramsSchema: z.object({ issueId: text }).strict(),
+    paramsSchema: z.object({ issueId: id }).strict(),
     directApi: {
       method: "POST",
       url: "https://api.linear.app/graphql",
@@ -208,7 +209,7 @@ export const SYMPHONY_LINEAR_ACTIONS: Record<string, ServiceAction> = {
     description: "Symphony update comment",
     risk: "write",
     params: {id: { type: "string" }, body: { type: "string" }},
-    paramsSchema: z.object({ id: text, body: z.string().min(1).max(10000) }).strict(),
+    paramsSchema: z.object({ id, body: z.string().min(1).max(10000) }).strict(),
     directApi: {
       method: "POST",
       url: "https://api.linear.app/graphql",
@@ -220,3 +221,22 @@ export const SYMPHONY_LINEAR_ACTIONS: Record<string, ServiceAction> = {
     },
   },
 };
+
+export type SymphonyGraphqlFailure = 'configuration' | 'rate_limited' | 'transient' | 'operation';
+
+/** Inspect only structured codes, never provider error-message text.
+ * Linear documents HTTP 400 + RATELIMITED at
+ * https://linear.app/developers/rate-limiting#handling-rate-limit-errors
+ */
+export function classifySymphonyGraphqlFailure(body: unknown): SymphonyGraphqlFailure | null {
+  if (!body || typeof body !== 'object' || !('errors' in body) || !Array.isArray(body.errors) || body.errors.length === 0) return null;
+  const codes = body.errors.slice(0, 100).map((error: unknown) => {
+    if (!error || typeof error !== 'object' || !('extensions' in error)) return undefined;
+    const ext = error.extensions;
+    return ext && typeof ext === 'object' && 'code' in ext && typeof ext.code === 'string' ? ext.code : undefined;
+  });
+  if (codes.some(code => ['UNAUTHENTICATED', 'AUTHENTICATION_ERROR', 'GRAPHQL_VALIDATION_FAILED', 'GRAPHQL_PARSE_FAILED', 'CONFIGURATION_ERROR'].includes(code ?? ''))) return 'configuration';
+  if (codes.includes('RATELIMITED')) return 'rate_limited';
+  if (codes.some(code => ['INTERNAL_SERVER_ERROR', 'INTERNAL_ERROR'].includes(code ?? ''))) return 'transient';
+  return 'operation';
+}

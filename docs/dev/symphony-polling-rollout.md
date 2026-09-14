@@ -20,8 +20,8 @@ Never log into customer Matrix accounts for validation.
 1. Inventory VPS bundle versions, Symphony service activity, custom workflow
    selection and whether a Linear project is explicitly configured. Record only
    booleans/version/activity, never credential values or workflow contents.
-   An owner who relied on the old implicit `matrix-os` project needs that slug
-   explicitly configured. Preserve intentionally running users and custom files.
+   An owner with an explicit credential retains the old `matrix-os` default.
+   Bridge-only owners relying on that implicit project need it explicitly configured. Preserve intentionally running users and custom files.
 2. Deploy the platform/app-shell service from the reviewed commit first. The new
    host bundle alone cannot update this Cloud Run boundary. Verify an authenticated
    legacy `linear/graphql` request returns 410 `unsupported_contract` without any
@@ -92,7 +92,12 @@ Auth remains the per-handle HMAC bearer before admission, followed by the existi
 owner lookup. Invalid handles/tokens fail closed. Body size is capped at 64 KiB;
 operation schemas reject unknown keys and bound strings, IDs and pages to 50.
 Only fixed GraphQL documents go upstream. Transient provider failure never falls
-through to account discovery for Symphony. The circuit opens on permanent failure.
+through to account discovery for Symphony. The circuit opens on permanent configuration/authentication/contract failure.
+Item-level GraphQL errors suppress only their identical request for 15 minutes
+(cache cap 128), so stale comments cannot suspend unrelated polling. Structured
+`RATELIMITED` errors, including HTTP 400, back off as transient failures. Typed
+worker parameters are validated locally as well as at the platform boundary.
+The orchestrator and request gate share one randomized startup deadline.
 
 Prefer rolling forward. A rollback to a pre-fix Symphony binary reintroduces the
 storm: keep platform protection and 3/30, and explicitly stop unconfigured legacy

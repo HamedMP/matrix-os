@@ -107,4 +107,46 @@ defmodule PollingSafetyTest do
     assert {:ok, _} = RequestGate.checkout(gate, :config)
     GenServer.stop(gate)
   end
+
+  test "successful earlier pages cannot reset backoff for a persistently failing page" do
+    {:ok, gate} = RequestGate.start_link(name: nil, startup_delay_ms: 0)
+
+    for attempt <- 1..4 do
+      :sys.replace_state(gate, &%{&1 | due: System.monotonic_time(:millisecond) - 1})
+      assert {:ok, viewer} = RequestGate.checkout_request(gate, :config, :viewer)
+      :ok = RequestGate.finish(gate, viewer, {:ok, %{}})
+      assert {:ok, page} = RequestGate.checkout_request(gate, :config, :failing_page)
+      :ok = RequestGate.finish(gate, page, {:error, {:linear_api_status, 503}})
+      assert :sys.get_state(gate).failures == attempt
+    end
+
+    GenServer.stop(gate)
+  end
+
+  test "operation suppression has a bounded cache and expires without blocking other requests" do
+    {:ok, gate} = RequestGate.start_link(name: nil, startup_delay_ms: 0)
+
+    for key <- 1..129 do
+      assert {:ok, lease} = RequestGate.checkout_request(gate, :config, key)
+      :ok = RequestGate.finish(gate, lease, {:error, :linear_operation_error})
+    end
+
+    assert map_size(:sys.get_state(gate).operation_errors) == 128
+    assert {:error, :linear_operation_error} = RequestGate.checkout_request(gate, :config, 129)
+
+    :sys.replace_state(gate, fn state ->
+      %{
+        state
+        | operation_errors:
+            Map.new(state.operation_errors, fn {key, _} ->
+              {key, System.monotonic_time(:millisecond) - 1}
+            end)
+      }
+    end)
+
+    assert {:ok, lease} = RequestGate.checkout_request(gate, :config, 129)
+    :ok = RequestGate.finish(gate, lease, {:ok, %{}})
+    assert :sys.get_state(gate).operation_errors == %{}
+    GenServer.stop(gate)
+  end
 end

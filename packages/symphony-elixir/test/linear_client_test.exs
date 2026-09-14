@@ -156,4 +156,88 @@ defmodule SymphonyElixir.LinearClientTest do
       refute result["success"]
     end
   end
+
+  test "an explicitly configured credential preserves the legacy implicit project", %{
+    workflow_path: file
+  } do
+    File.write!(file, "---\ntracker:\n  kind: linear\n---\nTest")
+    System.put_env("SYMPHONY_LINEAR_API_KEY", "explicit-owner-key")
+    on_exit(fn -> System.delete_env("SYMPHONY_LINEAR_API_KEY") end)
+    assert SymphonyElixir.Config.settings!().tracker.project_slug == "matrix-os"
+  end
+
+  test "item-level GraphQL errors reject that operation without suspending polling" do
+    System.put_env("SYMPHONY_LINEAR_API_KEY", "test-direct-credential")
+    on_exit(fn -> System.delete_env("SYMPHONY_LINEAR_API_KEY") end)
+    owner = self()
+
+    request = fn payload, _ ->
+      send(owner, {:request, payload["query"]})
+
+      if payload["query"] == "stale comment" do
+        {:ok,
+         %{status: 200, body: %{"errors" => [%{"extensions" => %{"code" => "ENTITY_NOT_FOUND"}}]}}}
+      else
+        {:ok, %{status: 200, body: %{"data" => %{}}}}
+      end
+    end
+
+    assert {:error, :linear_operation_error} =
+             Client.graphql("stale comment", %{}, request_fun: request)
+
+    assert_received {:request, "stale comment"}
+
+    for _ <- 1..100 do
+      assert {:error, :linear_operation_error} =
+               Client.graphql("stale comment", %{}, request_fun: request)
+    end
+
+    refute_received {:request, "stale comment"}
+    assert {:ok, _} = Client.graphql("poll", %{}, request_fun: request)
+    assert_received {:request, "poll"}
+  end
+
+  test "Linear's documented HTTP 400 RATELIMITED response is transient" do
+    System.put_env("SYMPHONY_LINEAR_API_KEY", "test-direct-credential")
+    on_exit(fn -> System.delete_env("SYMPHONY_LINEAR_API_KEY") end)
+
+    result =
+      Client.graphql("poll", %{},
+        request_fun: fn _, _ ->
+          {:ok,
+           %{status: 400, body: %{"errors" => [%{"extensions" => %{"code" => "RATELIMITED"}}]}}}
+        end
+      )
+
+    assert {:error, {:linear_api_status, 429}} = result
+    assert RequestGate.snapshot().outcome == :transient
+  end
+
+  test "typed tools validate their own per-operation parameters before either credential path" do
+    for {operation, params} <- [
+          {"get_issue", %{}},
+          {"get_issue", %{"issueId" => "abc", "extra" => "bad"}},
+          {"get_issue", %{"issueId" => "../../etc"}},
+          {"create_comment", %{"issueId" => "abc", "body" => String.duplicate("x", 10001)}},
+          {"update_comment", %{"id" => 2, "body" => "notes"}},
+          {"resolve_state", %{"issueId" => "abc", "stateName" => ""}},
+          {"update_state", %{"issueId" => "abc"}}
+        ] do
+      result =
+        DynamicTool.execute("linear", %{"operation" => operation, "params" => params},
+          linear_client: fn _, _, _ -> flunk("unvalidated params reached transport") end
+        )
+
+      refute result["success"]
+    end
+  end
+
+  test "orchestrator uses the shared gate's single startup deadline" do
+    stop_supervised!(RequestGate)
+    gate = start_supervised!({RequestGate, startup_delay_ms: 60_000})
+    {:ok, state} = SymphonyElixir.Orchestrator.init([])
+    Process.cancel_timer(state.tick_timer_ref)
+    assert abs(state.next_poll_due_at_ms - :sys.get_state(gate).due) < 50
+    assert state.last_tracker_status == nil
+  end
 end

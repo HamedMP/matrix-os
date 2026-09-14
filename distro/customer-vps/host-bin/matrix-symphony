@@ -40,6 +40,15 @@ if [ -f "$activity_file" ] && grep -Fxq 'matrix-symphony.service:inactive' "$act
   exit 0
 fi
 
+# Legacy owners who supplied a credential intentionally configured Symphony.
+# Preserve their former project default; automatic bridge-only installs do not
+# have any of these owner settings. Never print the credential value.
+legacy_linear_credential="${SYMPHONY_LINEAR_CREDENTIAL:-}${SYMPHONY_LINEAR_API_KEY:-}${MATRIX_LINEAR_API_KEY:-}${LINEAR_API_KEY:-}"
+if [ -z "${SYMPHONY_LINEAR_PROJECT_SLUG:-}" ] && [[ "$legacy_linear_credential" =~ [^[:space:]] ]]; then
+  export SYMPHONY_LINEAR_PROJECT_SLUG=matrix-os
+fi
+unset legacy_linear_credential
+
 # The bundled workflow needs an explicit project. A custom owner workflow is
 # preserved and validated by Elixir. Exit successfully so systemd cannot loop.
 if [ "$WORKFLOW_FILE" = "$APP_DIR/packages/symphony-elixir/WORKFLOW.md" ] &&
