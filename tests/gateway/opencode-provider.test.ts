@@ -1004,7 +1004,7 @@ describe("OpenCode coding-agent provider", () => {
       "/opt/matrix/runtime/node/bin/opencode",
       ["--version"],
       expect.objectContaining({
-        timeout: 1_500,
+        timeout: 5_000,
         env: expect.objectContaining({
           MATRIX_NODE_PREFIX: "/opt/matrix/runtime/node",
           PATH: expect.stringContaining("/opt/matrix/runtime/node/bin"),

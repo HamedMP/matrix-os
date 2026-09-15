@@ -79,7 +79,7 @@ describe("funded AI readiness", () => {
     }
   });
 
-  it("clears a shared observation at the deadline even if a dependency ignores abort", async () => {
+  it("allows a cold control plane its full request window but clears a shared observation at the outer deadline", async () => {
     vi.useFakeTimers();
     try {
       const { reader, state, getFundingSummary } = setup();
@@ -91,6 +91,10 @@ describe("funded AI readiness", () => {
       void first.then(() => { completed += 1; });
       void second.then(() => { completed += 1; });
       await vi.advanceTimersByTimeAsync(2_001);
+      expect(completed).toBe(0);
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(completed).toBe(0);
+      await vi.advanceTimersByTimeAsync(999);
       expect(completed).toBe(2);
       expect((await first).readiness.state).toBe("unavailable");
       expect((await reader.read()).readiness.state).toBe("ready");
