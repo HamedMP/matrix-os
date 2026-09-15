@@ -542,7 +542,8 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
         }
         if (err instanceof CodingAgentTurnError) {
           const status = err.code === "thread_not_found" ? 404 : 409;
-          return c.json({ error: turnError(err.code) }, status);
+          const publicCode = err.code === "thread_not_resumable" ? "turn_unavailable" : err.code;
+          return c.json({ error: turnError(publicCode) }, status);
         }
         if (err instanceof CodingAgentThreadRelationError) {
           if (err.code === "invalid_relation") {

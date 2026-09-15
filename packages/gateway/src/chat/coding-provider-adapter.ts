@@ -10,9 +10,10 @@ import {
   type AgentThreadSnapshot,
   type CreateAgentThreadRequest,
 } from "@matrix-os/contracts";
-import type {
-  CodingAgentThreadStore,
-  CodingAgentTurnStore,
+import {
+  CodingAgentTurnError,
+  type CodingAgentThreadStore,
+  type CodingAgentTurnStore,
 } from "../coding-agents/thread-store.js";
 import type { AiTokenUsage } from "../ai-analytics.js";
 import { projectCodingActivity } from "./coding-activity-projection.js";
@@ -369,7 +370,7 @@ export function createCanonicalCodingChatProviderAdapter(options: {
     }
   }
 
-  return {
+  const adapter: CanonicalChatProviderAdapter<CodingState> = {
     driverKind: kind,
     stateSchemaVersion: 1,
     parseState: (value) => CodingChatStateSchema.parse(value),
@@ -468,6 +469,7 @@ export function createCanonicalCodingChatProviderAdapter(options: {
       let releaseSteerRun: (() => void) | undefined;
       let admittedTurnId: string | undefined;
       let terminalObserved = false;
+      let restartFresh = false;
       const sink = options.threads.registerEventSink((published) => {
         if (published.ownerId === input.owner.ownerId && published.threadId === targetThreadId) {
           inbox.push(published.events, published.tokenUsage);
@@ -500,6 +502,15 @@ export function createCanonicalCodingChatProviderAdapter(options: {
           if (event.type === "run.completed") terminalObserved = true;
           yield event;
         }
+      } catch (error) {
+        // A failed initial launch can persist a Chat reference before the
+        // provider establishes resumable state. Replace only that stale seam;
+        // ordinary admission and capacity failures must continue to fail closed.
+        if (error instanceof CodingAgentTurnError && error.code === "thread_not_resumable") {
+          restartFresh = true;
+        } else {
+          throw error;
+        }
       } finally {
         releaseSteerRun?.();
         sink.dispose();
@@ -507,6 +518,7 @@ export function createCanonicalCodingChatProviderAdapter(options: {
           await stopUnprojectedRun(input, targetThreadId, { turnId: admittedTurnId });
         }
       }
+      if (restartFresh) yield* adapter.start(inputValue);
     },
     async steer(input) {
       const active = activeSteerRuns.get(input.runId);
@@ -558,4 +570,5 @@ export function createCanonicalCodingChatProviderAdapter(options: {
       );
     },
   };
+  return adapter;
 }
