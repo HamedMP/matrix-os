@@ -134,6 +134,19 @@ describe("CollaborationTerminalEventRegistry", () => {
     await expect(fixture.registry.open(connection(scopeA, "user_alice", "late", socket())))
       .rejects.toMatchObject({ code: "unavailable" });
   });
+
+  it("evicts a dead sender after an unavailable broadcast", async () => {
+    const fixture = setup();
+    const client = socket();
+    await fixture.registry.open(connection(scopeA, "user_alice", "alice", client));
+    client.send.mockImplementation(() => { throw new Error("closed socket"); });
+
+    await fixture.registry.publishExit(scopeA, incarnation);
+
+    expect(fixture.registry.connectionCount).toBe(0);
+    expect(client.close).toHaveBeenCalledWith(1008, "Unavailable");
+    fixture.registry.shutdown();
+  });
 });
 
 function setup(limits: {

@@ -329,11 +329,13 @@ export class CollaborationTerminalEventRegistry {
   }
 
   private async publishUnavailable(runtime: TerminalRuntime, code: "exited" | "unavailable"): Promise<void> {
+    const dead: TerminalConnection[] = [];
     for (const connectionId of [...runtime.connections]) {
       const connection = this.connections.get(connectionId);
       if (!connection) continue;
-      this.sendBestEffort(connection, unavailableFrame(connection, runtime, code));
+      if (!this.sendBestEffort(connection, unavailableFrame(connection, runtime, code))) dead.push(connection);
     }
+    for (const connection of dead) this.remove(connection, 1008, "Unavailable");
   }
 
   private sendRecord(connection: TerminalConnection, runtime: TerminalRuntime, record: OutputRecord): void {
@@ -355,11 +357,13 @@ export class CollaborationTerminalEventRegistry {
     connection.lastTouchedAt = this.now().getTime();
   }
 
-  private sendBestEffort(connection: TerminalConnection, frame: CollaborationTerminalFrame): void {
+  private sendBestEffort(connection: TerminalConnection, frame: CollaborationTerminalFrame): boolean {
     try {
       this.send(connection, frame);
+      return true;
     } catch (error: unknown) {
       console.warn("[collaboration-terminal-events] socket send failed", error instanceof Error ? error.name : "UnknownError");
+      return false;
     }
   }
 
