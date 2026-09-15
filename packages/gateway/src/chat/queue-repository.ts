@@ -25,6 +25,7 @@ import type { OwnerCollaborationDatabase } from "../collaboration/database.js";
 import type {
   ChatDatabase,
   ChatQueuedTurnsTable,
+  ChatRunsTable,
   ChatsTable,
 } from "./database.js";
 import { ChatBusyError, ChatConflictError, ChatNotFoundError } from "./errors.js";
@@ -92,6 +93,7 @@ export interface UpdateQueuedTurnInput {
 
 export interface ClaimNextQueuedTurnInput {
   chatId: string;
+  collaborationScopeId?: string;
   turnId: string;
   runId: string;
   messageId: string;
@@ -104,6 +106,14 @@ export interface ClaimedQueuedTurn {
   turn: CanonicalChatTurn;
   run: CanonicalChatRun;
   queueDepth: number;
+  sharedExecution?: {
+    scopeId: string;
+    requestingActorId: string;
+    authEpoch: number;
+    authorityGeneration: number;
+    executionGeneration: number;
+    executionEligibility: unknown;
+  };
 }
 
 export interface EnqueueSharedQueuedTurnInput extends Omit<EnqueueQueuedTurnInput, "baseRevision" | "createdAt"> {
@@ -125,7 +135,9 @@ export interface SharedQueuedTurn {
   acceptedSequence: number;
   acceptedAuthEpoch: number;
   retryOfRequestId?: string;
-  state: "queued" | "claimed" | "cancelled" | "interrupted" | "unauthorized" | "unavailable";
+  state: "queued" | "claimed" | "running" | "waiting_for_approval" | "waiting_for_input"
+    | "completed" | "failed" | "cancelled" | "interrupted" | "unauthorized" | "unavailable";
+  runId?: string;
   parts: CanonicalQueueChatTurnRequest["parts"];
   selection: CanonicalQueueChatTurnRequest["selection"];
   createdAt: string;
@@ -325,10 +337,17 @@ export class ChatQueueRepository {
       .where("owner_id", "=", owner.ownerId)
       .executeTakeFirst();
     if (!owned) return [];
-    const rows = await this.kysely.selectFrom("chat_queued_turns").selectAll()
-      .where("chat_id", "=", chatId)
-      .where("collaboration_scope_id", "is not", null)
-      .orderBy("accepted_seq", "asc")
+    const rows = await this.kysely.selectFrom("chat_queued_turns as queued")
+      .leftJoin("chat_runs as run", "run.id", "queued.claimed_run_id")
+      .selectAll("queued")
+      .select([
+        "run.id as projected_run_id",
+        "run.status as projected_run_status",
+        "run.updated_at as projected_run_updated_at",
+      ])
+      .where("queued.chat_id", "=", chatId)
+      .where("queued.collaboration_scope_id", "is not", null)
+      .orderBy("queued.accepted_seq", "asc")
       .limit(100)
       .execute();
     return rows.map(toSharedQueuedTurn);
@@ -628,12 +647,17 @@ export class ChatQueueRepository {
     const turnId = CanonicalChatTurnSchema.shape.id.parse(input.turnId);
     const runId = CanonicalChatRunSchema.shape.id.parse(input.runId);
     const messageId = CanonicalChatMessageSchema.shape.id.parse(input.messageId);
+    const collaborationScopeId = input.collaborationScopeId === undefined
+      ? undefined
+      : CollaborationIdSchema.parse(input.collaborationScopeId);
     const claimedAt = new Date(input.claimedAt).toISOString();
     return this.transact(async (trx) => {
       const candidateScope = await trx.selectFrom("chat_queued_turns")
         .select(["collaboration_scope_id", "requesting_actor_id", "accepted_auth_epoch"])
         .where("chat_id", "=", chatId)
         .where("status", "=", "queued")
+        .$if(collaborationScopeId !== undefined, (query) =>
+          query.where("collaboration_scope_id", "=", collaborationScopeId!))
         .orderBy("position")
         .executeTakeFirst();
       let sharedScope: {
@@ -688,6 +712,8 @@ export class ChatQueueRepository {
       const candidate = await trx.selectFrom("chat_queued_turns").selectAll()
         .where("chat_id", "=", chatId)
         .where("status", "=", "queued")
+        .$if(collaborationScopeId !== undefined, (query) =>
+          query.where("collaboration_scope_id", "=", collaborationScopeId!))
         .orderBy("position")
         .executeTakeFirst();
       if (!candidate) return null;
@@ -889,6 +915,17 @@ export class ChatQueueRepository {
         turn,
         run,
         queueDepth: await this.queueDepth(trx, chatId),
+        ...(row.collaboration_scope_id && row.requesting_actor_id && sharedScope?.execution_generation
+          && sharedScope.execution_eligibility ? {
+            sharedExecution: {
+              scopeId: row.collaboration_scope_id,
+              requestingActorId: row.requesting_actor_id,
+              authEpoch: Number(sharedScope.auth_epoch),
+              authorityGeneration: Number(sharedScope.authority_generation),
+              executionGeneration: Number(sharedScope.execution_generation),
+              executionEligibility: sharedScope.execution_eligibility,
+            },
+          } : {}),
       };
     });
   }
@@ -929,9 +966,13 @@ export class ChatQueueRepository {
   }
 }
 
-function toSharedQueuedTurn(row: Selectable<ChatQueuedTurnsTable>): SharedQueuedTurn {
+function toSharedQueuedTurn(row: Selectable<ChatQueuedTurnsTable> & {
+  projected_run_id?: string | null;
+  projected_run_status?: Selectable<ChatRunsTable>["status"] | null;
+  projected_run_updated_at?: Date | string | null;
+}): SharedQueuedTurn {
   const createdAt = asIso(row.created_at);
-  const updatedAt = asIso(row.updated_at);
+  const updatedAt = asIso(row.projected_run_updated_at ?? row.updated_at);
   if (!row.collaboration_scope_id || !row.requesting_actor_id || !row.actor_request_id || row.accepted_seq === null
     || row.accepted_auth_epoch === null || !createdAt || !updatedAt) {
     throw new SharedChatQueueError("unavailable");
@@ -945,12 +986,23 @@ function toSharedQueuedTurn(row: Selectable<ChatQueuedTurnsTable>): SharedQueued
     acceptedSequence: Number(row.accepted_seq),
     acceptedAuthEpoch: Number(row.accepted_auth_epoch),
     ...(row.retry_of_queued_turn_id ? { retryOfRequestId: row.retry_of_queued_turn_id } : {}),
-    state: row.status,
+    state: projectedSharedRequestState(row.status, row.projected_run_status),
+    ...(row.projected_run_id ? { runId: row.projected_run_id } : {}),
     parts: CanonicalChatQueuedTurnSchema.shape.parts.parse(parseJson(row.parts)),
     selection: CanonicalChatModelSelectionSchema.parse(parseJson(row.selection)),
     createdAt,
     updatedAt,
   };
+}
+
+function projectedSharedRequestState(
+  queued: Selectable<ChatQueuedTurnsTable>["status"],
+  run: Selectable<ChatRunsTable>["status"] | null | undefined,
+): SharedQueuedTurn["state"] {
+  if (queued !== "claimed" || !run) return queued;
+  if (run === "accepted") return "claimed";
+  if (run === "aborted") return "cancelled";
+  return run;
 }
 
 function sharedBindingMatches(value: unknown, scopeId: string): boolean {

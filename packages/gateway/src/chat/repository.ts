@@ -25,6 +25,7 @@ import {
 import { Kysely, sql, type Dialect, type Selectable, type Transaction } from "kysely";
 import { z } from "zod/v4";
 import { bootstrapChatDatabase, type ChatDatabase, type ChatRunsTable, type ChatsTable } from "./database.js";
+import type { OwnerCollaborationDatabase } from "../collaboration/database.js";
 import { ChatDetailRepository, type ChatDetailPage } from "./detail-repository.js";
 import {
   ChatBusyError,
@@ -286,20 +287,64 @@ async function toPrincipalRecord(
   row: Selectable<ChatsTable>,
   collaborationProjection?: CanonicalChatCollaboration,
 ): Promise<ChatRecord> {
-  const [activeRun, userState, latestSuccessfulCompletion] = await Promise.all([
+  const internalScopeId = collaborationProjection ? undefined : sharedBindingScopeId(row.collaboration);
+  const [activeRun, userState, latestSuccessfulCompletion, internalProjection] = await Promise.all([
     activeRunQuery(executor, row.id),
     userStateQuery(executor, owner, row.id),
     latestSuccessfulCompletionQuery(executor, row.id),
+    internalScopeId ? ownerSharedProjection(executor, internalScopeId, row.id) : undefined,
   ]);
+  const effectiveProjection = collaborationProjection ?? internalProjection;
   return toChatRecord(
-    collaborationProjection
-      ? { ...row, collaboration: JSON.stringify(collaborationProjection) }
+    effectiveProjection
+      ? { ...row, collaboration: JSON.stringify(effectiveProjection) }
       : row,
     activeRun,
     userState ? toUserState(userState) : undefined,
     latestSuccessfulCompletion,
     userState?.attention_acknowledged_at,
   );
+}
+
+function sharedBindingScopeId(value: unknown): string | undefined {
+  if (value === null) return undefined;
+  try {
+    const parsed = typeof value === "string" ? JSON.parse(value) as unknown : value;
+    if (!parsed || typeof parsed !== "object") return undefined;
+    const binding = parsed as { scopeId?: unknown; mode?: unknown; executionFenced?: unknown };
+    return binding.mode === "shared_ai" && binding.executionFenced === true
+      ? z.uuid().safeParse(binding.scopeId).data
+      : undefined;
+  } catch (error: unknown) {
+    if (!(error instanceof SyntaxError)) {
+      console.warn("[chat/repository] collaboration binding decode failed",
+        error instanceof Error ? error.name : "UnknownError");
+    }
+    return undefined;
+  }
+}
+
+async function ownerSharedProjection(
+  executor: Executor,
+  scopeId: string,
+  chatId: string,
+): Promise<CanonicalChatCollaboration | undefined> {
+  const collaborationExecutor = executor as unknown as Kysely<OwnerCollaborationDatabase>;
+  const scope = await collaborationExecutor.selectFrom("collaboration_scopes")
+    .select("id")
+    .where("id", "=", scopeId)
+    .where("kind", "=", "chat")
+    .where("resource_id", "=", chatId)
+    .where("lifecycle", "in", ["shared", "archived"])
+    .where("deleted_at", "is", null)
+    .executeTakeFirst();
+  if (!scope) return undefined;
+  const members = await collaborationExecutor.selectFrom("collaboration_members")
+    .select(({ fn }) => fn.countAll<number>().as("count"))
+    .where("scope_id", "=", scopeId)
+    .where("status", "=", "accepted")
+    .executeTakeFirstOrThrow();
+  return { mode: "shared", membership: { role: "owner", memberCount: Number(members.count) } };
 }
 
 async function hydrateAdmission(
@@ -441,6 +486,43 @@ export class ChatRepository {
     payload: Record<string, unknown> = {},
     collaborationProjection?: CanonicalChatCollaboration,
   ): Promise<void> {
+    if (typeof payload.runId === "string") {
+      const queuedRun = await executor.selectFrom("chat_queued_turns")
+        .select("collaboration_scope_id")
+        .where("claimed_run_id", "=", payload.runId)
+        .where("chat_id", "=", chatId)
+        .executeTakeFirst();
+      if (queuedRun?.collaboration_scope_id) {
+        const collaborationExecutor = executor as unknown as Kysely<OwnerCollaborationDatabase>;
+        const sharedRun = await collaborationExecutor.selectFrom("collaboration_scopes")
+          .select([
+            "id as scope_id",
+            "authority_generation",
+          ])
+          .where("id", "=", queuedRun.collaboration_scope_id)
+          .where("lifecycle", "=", "shared")
+          .executeTakeFirst();
+        if (sharedRun) {
+          const latest = await collaborationExecutor.selectFrom("collaboration_events")
+            .select(({ fn }) => fn.max<number>("scope_seq").as("scope_seq"))
+            .where("scope_id", "=", sharedRun.scope_id)
+            .executeTakeFirst();
+          const { messageDelta: _delta, failureDiagnostic: _diagnostic, ...metadata } = payload;
+          await collaborationExecutor.insertInto("collaboration_events").values({
+            scope_id: sharedRun.scope_id,
+            scope_seq: Number(latest?.scope_seq ?? 0) + 1,
+            event_id: randomUUID(),
+            resource_kind: "chat",
+            resource_id: chatId,
+            revision,
+            authority_generation: Number(sharedRun.authority_generation),
+            event_type: eventType,
+            payload: jsonb(metadata),
+          }).execute();
+          return;
+        }
+      }
+    }
     const captured = await captureChatContent(executor, owner, chatId, eventType, payload,
       (projectionOwner, projectionChatId) => hydrateRecord(
         executor,
@@ -1412,6 +1494,7 @@ export class ChatRepository {
     chatId: string;
     runId: string;
     outcome: "completed" | "failed" | "aborted";
+    sharedRequestState?: "interrupted" | "unauthorized" | "unavailable";
     completedAt: string;
     diagnostic?: ChatRunFailureDiagnostic;
     output?: CanonicalChatMessage;

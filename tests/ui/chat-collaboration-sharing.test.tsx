@@ -329,8 +329,8 @@ describe("Chat collaboration sharing", () => {
     const scope = {
       id: scopeId, ownerId: "user_owner", kind: "chat", resourceId: chatId,
       membershipMode: "direct", lifecycle: "shared", revision: "1", authEpoch: "1",
-      authorityGeneration: "1", role: "viewer",
-      capabilities: { read: true, discuss: false, manageMembers: false, requestAi: false },
+      authorityGeneration: "1", role: "editor",
+      capabilities: { read: true, discuss: true, manageMembers: false, requestAi: false },
     };
     const message = (text: string) => ({
       id: "msg_1", chatId, sequence: "1", role: "user", state: "committed", purpose: "discussion",
@@ -357,19 +357,19 @@ describe("Chat collaboration sharing", () => {
         return () => undefined;
       }),
     };
-    render(<ChatCollaboration view={{ kind: "chat", scopeId }} api={api} actorId="user_viewer" />);
+    render(<ChatCollaboration view={{ kind: "chat", scopeId }} api={api} actorId="user_editor" />);
     expect(await screen.findByText("Initial message")).toBeVisible();
-    const older = refresh();
-    // Attach the rejection handler immediately: superseded recoveries are
-    // intentionally reported to the subscription client for retry handling.
-    const olderOutcome = expect(older).rejects.toThrow("CollaborationRecoverySuperseded");
+    fireEvent.change(screen.getByLabelText("Message everyone"), { target: { value: "Ship it" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
     await waitFor(() => expect(resolveOlder).toBeTypeOf("function"));
     await act(async () => { await refresh(); });
     expect(screen.getByText("Newest message")).toBeVisible();
     await act(async () => {
       resolveOlder({ messages: [message("Stale message")] });
-      await olderOutcome;
+      await Promise.resolve();
+      await Promise.resolve();
     });
+    expect(screen.getByRole("heading", { name: "Refresh race" })).toBeVisible();
     expect(screen.getByText("Newest message")).toBeVisible();
     expect(screen.queryByText("Stale message")).toBeNull();
   });
@@ -476,31 +476,56 @@ describe("Chat collaboration sharing", () => {
     expect(screen.queryByRole("button", { name: "Load more messages" })).toBeNull();
   });
 
-  it("keeps loaded history visible when an older history page fails", async () => {
+  it("reenables history pagination when a failed recovery fences an older page", async () => {
     const firstPage = Array.from({ length: 100 }, (_, index) => ({
       id: `msg_${index}`, chatId, sequence: String(index + 1), role: "user" as const,
       state: "committed" as const, purpose: "discussion" as const,
       actor: { actorId: "user_owner", displayName: "Nima" }, parts: [{ type: "text" as const, text: `Message ${index + 1}` }],
       createdAt: "2026-09-07T12:00:00.000Z",
     }));
+    let refresh!: () => Promise<void>;
+    let failRecovery = false;
+    let resolvePage!: (value: unknown) => void;
+    let rejectRecovery!: (reason?: unknown) => void;
     const api = {
       baseUrl: "https://app.matrix-os.com",
       get: vi.fn(async (path: string) => {
         if (path.endsWith("after=0&limit=100")) return { messages: firstPage };
-        if (path.endsWith("after=100&limit=100")) throw new Error("private upstream detail");
-        if (path.endsWith("/chat")) return { id: chatId, scopeId, title: "Long Chat", lifecycle: "active", revision: "1", messageCount: "101" };
+        if (path.endsWith("after=100&limit=100")) return new Promise((resolve) => { resolvePage = resolve; });
+        if (path.endsWith("/chat")) {
+          if (failRecovery) return new Promise((_resolve, reject) => { rejectRecovery = reject; });
+          return { id: chatId, scopeId, title: "Long Chat", lifecycle: "active", revision: "1", messageCount: "101" };
+        }
         return { id: scopeId, ownerId: "user_owner", kind: "chat", resourceId: chatId, membershipMode: "direct", lifecycle: "shared",
           revision: "1", authEpoch: "1", authorityGeneration: "1", role: "viewer",
           capabilities: { read: true, discuss: false, manageMembers: false, requestAi: false } };
       }),
       post: vi.fn(), delete: vi.fn(),
+      subscribe: vi.fn((_scopeId: string, onEvent: () => Promise<void>) => {
+        refresh = onEvent;
+        return () => undefined;
+      }),
     };
     render(<ChatCollaboration view={{ kind: "chat", scopeId }} api={api} actorId="user_viewer" runtimeId="runtime_owner" />);
     expect(await screen.findByText("Message 1")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Load more messages" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("More messages could not be loaded");
+    await waitFor(() => expect(resolvePage).toBeTypeOf("function"));
+    failRecovery = true;
+    let recovery!: Promise<void>;
+    await act(async () => {
+      recovery = refresh();
+      await Promise.resolve();
+    });
+    expect(screen.getByRole("button", { name: "Loading…" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Loading…" }));
+    expect(api.get.mock.calls.filter(([path]) => path.endsWith("after=100&limit=100"))).toHaveLength(1);
+    await act(async () => {
+      rejectRecovery(new Error("private upstream detail"));
+      await expect(recovery).rejects.toThrow("private upstream detail");
+      resolvePage({ messages: [] });
+    });
     expect(screen.getByText("Message 1")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Load more messages" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Load more messages" })).toBeEnabled();
   });
 
   it("recovers every canonical page without collapsing already loaded history", async () => {

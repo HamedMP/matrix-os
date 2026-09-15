@@ -54,11 +54,20 @@ staged_release_metadata=""
 
 stop_runtime_services() {
   local service state
-  if ! sudo systemctl stop matrix-symphony matrix-gateway matrix-shell matrix-terminal-runtime; then
+  local runtime_services=(matrix-symphony matrix-gateway matrix-shell)
+  # Older installations may not have either collaboration runtime unit yet.
+  # Probe before stopping so the first bundle introducing one can still upgrade.
+  if sudo systemctl cat matrix-terminal-runtime.service >/dev/null 2>&1; then
+    runtime_services+=(matrix-terminal-runtime)
+  fi
+  if sudo systemctl cat matrix-scope-runtime.service >/dev/null 2>&1; then
+    runtime_services+=(matrix-scope-runtime)
+  fi
+  if ! sudo systemctl stop "${runtime_services[@]}"; then
     log "ERROR: systemd could not stop all runtime services"
     return 1
   fi
-  for service in matrix-symphony matrix-gateway matrix-shell matrix-terminal-runtime; do
+  for service in "${runtime_services[@]}"; do
     if ! state="$(sudo systemctl show --property=ActiveState --value "$service")"; then
       log "ERROR: systemd could not inspect $service after stopping it"
       return 1
@@ -1203,6 +1212,11 @@ apply_update() {
       else
         log "WARN: failed to enable matrix-sync-agent.service"
       fi
+    fi
+    if [ -f "$extract_dir/systemd/matrix-scope-runtime.service" ]; then
+      sudo systemctl enable matrix-scope-runtime.service
+      sudo systemctl start matrix-scope-runtime.service
+      log "Collaboration scope runtime service enabled"
     fi
     if [ -f "$extract_dir/systemd/matrix-code-server.service" ]; then
       sudo systemctl enable matrix-code-server.service

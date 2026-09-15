@@ -617,6 +617,7 @@ export class ChatRunLifecycleRepository {
     chatId: string;
     runId: string;
     outcome: "completed" | "failed" | "aborted";
+    sharedRequestState?: "interrupted" | "unauthorized" | "unavailable";
     completedAt: string;
     diagnostic?: ChatRunFailureDiagnostic;
     output?: CanonicalChatMessage;
@@ -705,6 +706,18 @@ export class ChatRunLifecycleRepository {
       }).where("id", "=", input.runId).where("status", "in", [...ACTIVE_RUNS])
         .returningAll().executeTakeFirst();
       if (!updated) throw new ChatBusyError(input.chatId);
+      if (input.sharedRequestState) {
+        const sharedRequest = await trx.updateTable("chat_queued_turns").set({
+          status: input.sharedRequestState,
+          updated_at: completedAt,
+        }).where("chat_id", "=", input.chatId)
+          .where("claimed_run_id", "=", input.runId)
+          .where("collaboration_scope_id", "is not", null)
+          .where("status", "=", "claimed")
+          .returning("id")
+          .executeTakeFirst();
+        if (!sharedRequest) throw new ChatConflictError(input.chatId, Number(chat.revision));
+      }
       await trx.updateTable("chat_turns").set({ status: input.outcome, updated_at: completedAt })
         .where("id", "=", updated.turn_id).execute();
       const revision = Number(chat.revision) + 1;

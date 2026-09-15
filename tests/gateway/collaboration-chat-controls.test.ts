@@ -140,6 +140,36 @@ describe("shared Chat durable controls", () => {
     });
   });
 
+  it("durably claims an active editor-owned cancellation before stopping execution", async () => {
+    await repository.enqueueSharedQueuedTurn(owner, aiRequest(40, collaborationActors.editor));
+    const claimed = await repository.claimNextQueuedTurn(owner, {
+      chatId: collaborationIds.chat,
+      collaborationScopeId: collaborationIds.scope,
+      turnId: "cturn_active_cancel",
+      runId: "run_active_cancel",
+      messageId: "msg_active_cancel",
+      claimedAt: now,
+    });
+    if (!claimed) throw new Error("Expected claimed request");
+    const submitCancellation = vi.fn(async () => undefined);
+    const commands = createCommands(undefined, undefined, submitCancellation);
+
+    await expect(commands.cancel({
+      scopeId: collaborationIds.scope,
+      actorId: collaborationActors.editor,
+      requestId: claimed.queuedTurn.id,
+      clientRequestId: uuid(140),
+      payloadHash: "8".repeat(64),
+      expectedRevision: 3,
+    })).resolves.toMatchObject({ state: "completed" });
+    expect(submitCancellation).toHaveBeenCalledWith(expect.objectContaining({
+      scopeId: collaborationIds.scope,
+      chatId: collaborationIds.chat,
+      runId: claimed.run.id,
+      actorId: collaborationActors.editor,
+    }));
+  });
+
   it("claims one competing owner approval decision before calling the adapter", async () => {
     const run = await activeRunWithApproval("approval_shared_1");
     const submitApproval = vi.fn(async () => undefined);
@@ -352,12 +382,14 @@ describe("shared Chat durable controls", () => {
   function createCommands(
     submitApproval = vi.fn(async () => undefined),
     reconcileApproval = vi.fn(async () => "failed" as const),
+    submitCancellation = vi.fn(async () => undefined),
   ) {
     return new CollaborationChatCommands({
       db: fixture.db,
       now: () => new Date(now),
       submitApproval,
       reconcileApproval,
+      submitCancellation,
     });
   }
 
@@ -446,7 +478,7 @@ async function seedSharedChat(fixture: CollaborationTestDatabase): Promise<void>
     kind: "chat", resource_id: collaborationIds.chat, parent_scope_id: null, membership_mode: "direct",
     lifecycle: "shared", revision: 1, auth_epoch: 1, authority_runtime_id: collaborationIds.runtime,
     authority_generation: 1, execution_generation: 1,
-    execution_eligibility: JSON.stringify({ profileId: "scope-runtime-proof-v1" }),
+    execution_eligibility: JSON.stringify({ profileId: "scope-runtime-chat-v1" }),
     deleted_at: null, created_at: now, updated_at: now,
   }).execute();
   await fixture.db.insertInto("collaboration_members").values([
