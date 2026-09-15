@@ -10,6 +10,9 @@ const root = resolve(__dirname, "../../..");
 const main = join(root, "desktop/out/main/index.js");
 const evidence = join(root, "output/mat524");
 const requireDesktop = createRequire(join(root, "desktop/package.json"));
+if (process.env.MATRIX_DESKTOP_E2E_REQUIRED === "1" && !existsSync(main)) {
+  throw new Error("Required Desktop build is missing");
+}
 const suite = existsSync(main) ? describe : describe.skip;
 suite("long Chat titles in the built Electron header", () => {
   let app: ElectronApplication;
