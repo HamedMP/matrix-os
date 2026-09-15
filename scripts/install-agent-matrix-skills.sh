@@ -32,4 +32,4 @@ for skill in "${skills[@]}"; do
   "$AGENT_BIN" skills install "${MATRIX_SKILLS_ROOT}/${skill}"
 done
 
-echo "Installed Matrix Agent skills from ${MATRIX_SKILLS_SOURCE}."
+echo "Installed Matrix OS agent skills from ${MATRIX_SKILLS_SOURCE}."
