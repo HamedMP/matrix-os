@@ -283,6 +283,17 @@ suite("packaged Electron production-mode terminal selection", () => {
     .getByTestId("desktop-terminal-app")
     .locator('[data-retained-pane][data-active="true"] [data-terminal-surface]');
 
+  async function prepareVisibleTerminal() {
+    // Pixel-based xterm gestures need a visible, unobstructed surface on small CI displays.
+    const onboarding = page.getByRole("dialog", { name: "Getting started", exact: true });
+    if (await onboarding.isVisible()) {
+      await page.getByRole("button", { name: /Getting started/ }).click();
+      await onboarding.waitFor({ state: "hidden" });
+    }
+    await page.getByRole("button", { name: "Maximize", exact: true }).click();
+    await terminalSurface().locator(".xterm-helper-textarea").focus();
+  }
+
   async function terminalGrid() {
     await expect.poll(
       () => gateway.state.terminalResizeEvents.findLast(
@@ -297,6 +308,11 @@ suite("packaged Electron production-mode terminal selection", () => {
       )),
     ]);
     if (!screenBox || !resize) throw new Error("production terminal geometry is unavailable");
+    for (const y of [screenBox.y + 2, screenBox.y + screenBox.height - 2]) {
+      expect(await page.evaluate(({ x, y }) => Boolean(
+        document.elementFromPoint(x, y)?.closest("[data-terminal-surface]"),
+      ), { x: screenBox.x + 2, y })).toBe(true);
+    }
     return {
       screenBox,
       resize,
@@ -320,6 +336,7 @@ suite("packaged Electron production-mode terminal selection", () => {
       },
     });
     page = await app.firstWindow();
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1024, 768));
     await page.waitForFunction(() => typeof window.operator?.invoke === "function");
     await page.evaluate(async () => {
       await window.operator.invoke("auth:start-device-flow", {});
@@ -328,7 +345,7 @@ suite("packaged Electron production-mode terminal selection", () => {
     await page.getByRole("button", { name: "Terminal", exact: true }).first().dblclick();
     await page.getByRole("button", { name: "Open matrix-task-1" }).click();
     await page.getByRole("heading", { name: "matrix-task-1", exact: true }).waitFor({ timeout: 10_000 });
-    await terminalSurface().locator(".xterm-helper-textarea").focus();
+    await prepareVisibleTerminal();
   }, 60_000);
 
   afterAll(async () => {
@@ -520,7 +537,7 @@ suite("packaged Electron production-mode terminal selection", () => {
     await page.getByRole("button", { name: "Terminal", exact: true }).first().dblclick();
     await page.getByRole("button", { name: "Open matrix-task-1" }).click();
     await page.getByRole("heading", { name: "matrix-task-1", exact: true }).waitFor({ timeout: 10_000 });
-    await terminalSurface().locator(".xterm-helper-textarea").focus();
+    await prepareVisibleTerminal();
     await expect.poll(
       () => gateway.state.terminalResizeEvents.filter(
         (event) => event.session === "matrix-task-1",
