@@ -14,6 +14,13 @@ export const mobileQueryKeys = {
     computerKey,
     chatId,
   ] as const,
+  canonicalChatStreamFence: (userId: string, computerKey: string) => [
+    "mobile",
+    "chats",
+    "stream-fence",
+    userId,
+    computerKey,
+  ] as const,
   chatProviderCatalog: (userId: string, computerKey: string) => [
     "mobile",
     "chat-providers",

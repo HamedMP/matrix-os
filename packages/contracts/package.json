@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./canonical-chat-streaming": "./src/canonical-chat-streaming.ts",
     "./collaboration": "./src/collaboration.ts"
   },
   "imports": {
