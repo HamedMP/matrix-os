@@ -86,6 +86,16 @@ export const CanonicalProviderRunEventSchema = z.discriminatedUnion("type", [
   }).strict(),
 ]);
 
+export const RecoveredControlActivitySchema = z.union([
+  CanonicalProviderRunEventSchema,
+  z.object({ type: z.literal("input.resolved"), requestId: SafeProviderRefSchema }).strict(),
+]).transform((event, ctx) => {
+  if (event.type === "approval.requested" || event.type === "approval.resolved" || event.type === "input.requested" || event.type === "input.resolved") return event;
+  ctx.addIssue({ code: "custom", message: "Unsupported recovery control" });
+  return z.NEVER;
+});
+export type RecoveredControlActivity = z.infer<typeof RecoveredControlActivitySchema>;
+
 export type CanonicalProviderRunEvent = z.infer<typeof CanonicalProviderRunEventSchema>;
 
 export interface CanonicalProviderRunInput<State = unknown> {
@@ -112,6 +122,8 @@ export interface CanonicalProviderRunInput<State = unknown> {
 export interface CanonicalChatProviderAdapter<State = unknown> {
   readonly driverKind: CanonicalProviderDriverKind;
   readonly stateSchemaVersion: number;
+  /** Native execution survives a gateway restart; detach only after identity is durable. */
+  readonly detachOnShutdown?: boolean;
   parseState(value: unknown): State;
   serializeState(value: State): unknown;
   /** Read-only admission guard for adapters whose execution can outlive projection. */
@@ -123,8 +135,9 @@ export interface CanonicalChatProviderAdapter<State = unknown> {
     state: State;
     signal: AbortSignal;
   }): Promise<{
-    outcome: "completed" | "failed" | "aborted";
+    outcome: "completed" | "failed" | "aborted" | "pending";
     messages: Array<{ messageId?: string; text: string }>;
+    activities?: RecoveredControlActivity[];
   } | null>;
   start(input: CanonicalProviderRunInput<State>): AsyncIterable<CanonicalProviderRunEvent>;
   resume?(input: CanonicalProviderRunInput<State> & { resumeState: State }): AsyncIterable<CanonicalProviderRunEvent>;

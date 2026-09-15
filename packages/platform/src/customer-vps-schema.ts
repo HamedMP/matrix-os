@@ -42,6 +42,7 @@ export const ProvisionRequestSchema = z.object({
 
 export const PREVIEW_RUNTIME_SLOT_PATTERN = /^pr-[1-9][0-9]{0,9}$/;
 export const PreviewRuntimeSlotSchema = z.string().regex(PREVIEW_RUNTIME_SLOT_PATTERN);
+export const HostBundleVersionSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9._-]+$/);
 
 export const PreviewProvisionRequestSchema = z.object({
   clerkUserId: ClerkUserIdSchema,
@@ -50,6 +51,7 @@ export const PreviewProvisionRequestSchema = z.object({
   accessClerkUserIds: z.array(ClerkUserIdSchema).max(8).default([]),
   developerTools: DeveloperToolsSchema.optional(),
   testSnapshotId: z.uuid().optional(),
+  bundleVersion: HostBundleVersionSchema.optional(),
 }).strict()
   .refine((request) => request.handle === request.runtimeSlot, {
     message: 'Preview handle and runtime slot must match',
@@ -61,6 +63,9 @@ export const PreviewProvisionRequestSchema = z.object({
     (value, index, values) => values.indexOf(value) === index,
   ), {
     message: 'Preview collaborators must be unique',
+  })
+  .refine((request) => !(request.testSnapshotId && request.bundleVersion), {
+    message: 'Specify either a test snapshot or a bundle version',
   });
 
 export const RegisterRequestSchema = z.object({

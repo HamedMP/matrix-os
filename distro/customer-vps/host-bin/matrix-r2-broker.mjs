@@ -3,8 +3,6 @@
 import { createReadStream } from 'node:fs';
 import { lstat, open, rename, rm } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
-import { Readable } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
 import { randomUUID } from 'node:crypto';
 
 const API_TIMEOUT_MS = 10_000;
@@ -208,8 +206,12 @@ async function get(key, destination) {
   let handle;
   try {
     handle = await open(temp, 'wx', 0o600);
-    const output = handle.createWriteStream({ autoClose: false });
-    await pipeline(Readable.fromWeb(response.body), output);
+    // Keep file-handle ownership here: an autoClose:false WriteStream retains
+    // the handle, so close() can remain pending and the CLI exit before rename.
+    // Await each bounded chunk to preserve backpressure without a second owner.
+    for await (const chunk of response.body) {
+      await handle.writeFile(chunk);
+    }
     await handle.sync();
     await handle.close();
     handle = undefined;

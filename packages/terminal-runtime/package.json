@@ -9,6 +9,11 @@
       "development": "./src/index.ts",
       "default": "./dist/index.js"
     },
+    "./zellij-config": {
+      "types": "./src/zellij-config.ts",
+      "development": "./src/zellij-config.ts",
+      "default": "./dist/zellij-config.js"
+    },
     "./user-systemd-capacity": {
       "types": "./src/user-systemd-capacity.ts",
       "development": "./src/user-systemd-capacity.ts",

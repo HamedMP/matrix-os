@@ -14,8 +14,6 @@ import {
   completeUserMachineBillingSuspend,
   completeUserMachineRegistration,
   getActiveUserMachineByClerkId,
-  getHostBundleRelease,
-  getHostBundleReleaseByChannel,
   getUserMachine,
   insertUserMachine,
   insertProviderDeletion,
@@ -71,6 +69,11 @@ import {
   type ResizeMachineRequest,
 } from './customer-vps-schema.js';
 import { assertPreviewProvisioningCapacity, isPreviewMachine } from './customer-vps-preview.js';
+import {
+  hostBundleUrlForImageVersion,
+  resolveHostBundleRef,
+  type HostBundleRef,
+} from './customer-vps-host-bundle.js';
 import { selectCustomerVpsDeployMachines } from './customer-vps-deploy-selection.js';
 import {
   getRuntimeAccessDecision,
@@ -121,7 +124,6 @@ import {
   bindTestSnapshotToPreviewProvisionInTransaction,
   createPreviewTestSnapshotCreateIntent,
   isPreviewTestSnapshotDecision,
-  resolvePinnedPreviewTestSnapshotBundle,
   resolvePersistedProvisioningImage,
 } from './golden-snapshot-preview-test.js';
 
@@ -275,6 +277,7 @@ const DEFAULT_CLOUD_INIT_TEMPLATE = [
   '    permissions: "0640"',
   '    content: |',
   '      MATRIX_REGISTRATION_TOKEN={{registrationToken}}',
+  '      MATRIX_REGISTRATION_TOKEN_EXPIRES_AT={{registrationTokenExpiresAt}}',
 ].join('\n');
 
 const PROVIDER_DELETION_RETRY_BASE_MS = 60_000;
@@ -353,6 +356,7 @@ function buildHostConfig(
   input: ProvisionRequest,
   machineId: string,
   registrationToken: string,
+  registrationTokenExpiresAt: string,
   postgresPassword: string,
   bundleRef: HostBundleRef,
 ): CustomerHostConfig {
@@ -374,6 +378,7 @@ function buildHostConfig(
       runtimeSlot: input.runtimeSlot,
     }, config.platformSecret),
     registrationToken,
+    registrationTokenExpiresAt,
     postgresPassword,
     posthogToken: config.posthogToken,
     posthogProjectToken: config.posthogProjectToken,
@@ -385,75 +390,8 @@ function buildHostConfig(
   };
 }
 
-const HOST_BUNDLE_CHANNELS = new Set(['stable', 'canary', 'beta', 'dev']);
 const MAX_LOCAL_PROVISION_LOCKS = 1_024;
 const MAX_LOCAL_PROVISION_QUEUE_DEPTH = 20;
-
-interface HostBundleRef {
-  imageVersion: string;
-  hostBundleUrl: string;
-  sha256?: string | null;
-}
-
-function tryPinHostBundleUrlForImageVersion(
-  config: CustomerVpsConfig,
-  imageVersion: string,
-): string | undefined {
-  const currentSegment = `/system-bundles/${encodeURIComponent(config.imageVersion)}/`;
-  const url = new URL(config.hostBundleUrl);
-  if (!url.pathname.includes(currentSegment)) return undefined;
-  const pinnedSegment = `/system-bundles/${encodeURIComponent(imageVersion)}/`;
-  url.pathname = url.pathname.replaceAll(currentSegment, pinnedSegment);
-  return url.toString();
-}
-
-function hostBundleUrlForImageVersion(config: CustomerVpsConfig, imageVersion: string): string {
-  const pinnedUrl = tryPinHostBundleUrlForImageVersion(config, imageVersion);
-  if (pinnedUrl) return pinnedUrl;
-  // Defensive fallback for future URL-template changes. The current generated
-  // URL always contains the encoded image-version segment above.
-  const url = new URL(config.hostBundleUrl);
-  url.pathname = `/system-bundles/${encodeURIComponent(imageVersion)}/matrix-host-bundle.tar.gz`;
-  return url.toString();
-}
-
-async function resolveHostBundleRef(
-  db: PlatformDB,
-  config: CustomerVpsConfig,
-  previewTestSnapshotId?: string,
-): Promise<HostBundleRef> {
-  if (previewTestSnapshotId) {
-    return resolvePinnedPreviewTestSnapshotBundle({
-      db,
-      snapshotId: previewTestSnapshotId,
-      currentBundleVersion: config.imageVersion,
-      currentBundleUrl: config.hostBundleUrl,
-    });
-  }
-  if (config.hostBundleUrlOverride || !HOST_BUNDLE_CHANNELS.has(config.imageVersion)) {
-    const release = await getHostBundleRelease(db, config.imageVersion);
-    return {
-      imageVersion: config.imageVersion,
-      hostBundleUrl: config.hostBundleUrl,
-      sha256: release?.sha256 ?? null,
-    };
-  }
-
-  const release = await getHostBundleReleaseByChannel(db, config.imageVersion);
-  if (!release) {
-    logCustomerVpsError(
-      `host bundle channel missing release channel=${config.imageVersion}`,
-      new Error('falling back to configured host bundle URL without immutable version pin'),
-    );
-    return { imageVersion: config.imageVersion, hostBundleUrl: config.hostBundleUrl, sha256: null };
-  }
-
-  return {
-    imageVersion: release.version,
-    hostBundleUrl: hostBundleUrlForImageVersion(config, release.version),
-    sha256: release.sha256,
-  };
-}
 
 function buildServerName(handle: string): string {
   return `matrix-${handle}`;
@@ -960,6 +898,12 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         const payload = openProvisioningPayload(row.recoveryEncryptedPayload, deps.config.platformSecret);
         if (!payload.recovery) throw new Error('Recovery intent is missing durable provenance');
         const imageVersion = row.targetBundleVersion ?? row.imageVersion ?? deps.config.imageVersion;
+        const fallbackRegistrationExpiresAt = new Date(Math.max(
+          row.registrationTokenExpiresAt === null
+            ? 0
+            : new Date(row.registrationTokenExpiresAt).getTime(),
+          now().getTime() + deps.config.registrationTokenTtlMs,
+        )).toISOString();
         const hostConfig = buildHostConfig(
           deps.config,
           {
@@ -970,6 +914,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
           },
           row.machineId,
           payload.registrationToken,
+          fallbackRegistrationExpiresAt,
           payload.postgresPassword,
           {
             imageVersion,
@@ -986,12 +931,6 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
             sourceBaseGeneration: null,
           },
         }, deps.config.platformSecret);
-        const fallbackRegistrationExpiresAt = new Date(Math.max(
-          row.registrationTokenExpiresAt === null
-            ? 0
-            : new Date(row.registrationTokenExpiresAt).getTime(),
-          now().getTime() + deps.config.registrationTokenTtlMs,
-        )).toISOString();
         const transitioned = await runInPlatformTransaction(deps.db, async (trx) => {
           const claimed = await trx.executor.updateTable('user_machines').set({
             hetzner_server_id: null,
@@ -1367,6 +1306,9 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         && imageDecision.targetBundleSha256 === '0'.repeat(64)) {
         throw new CustomerVpsError(503, 'provider_unavailable', 'Provisioning unavailable');
       }
+      if (!row.registrationTokenExpiresAt) {
+        throw new CustomerVpsError(409, 'registration_rejected', 'Registration rejected');
+      }
       const hostConfig = buildHostConfig(
         deps.config,
         {
@@ -1377,6 +1319,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         },
         row.machineId,
         payload.registrationToken,
+        row.registrationTokenExpiresAt,
         payload.postgresPassword,
         {
           imageVersion,
@@ -1810,6 +1753,9 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
     const testSnapshotId = provisioningClass === 'preview' && 'testSnapshotId' in input
       ? input.testSnapshotId
       : undefined;
+    const previewBundleVersion = provisioningClass === 'preview' && 'bundleVersion' in input
+      ? input.bundleVersion
+      : undefined;
     const request = {
       ...input,
       runtimeSlot: input.runtimeSlot ?? 'primary',
@@ -1876,6 +1822,12 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       throw new CustomerVpsError(400, 'invalid_state', 'Invalid request');
     }
 
+    // Validate operator-selected preview bundles before the idempotent existing
+    // machine return so retries cannot bypass the immutable release registry.
+    const explicitPreviewBundleRef = previewBundleVersion
+      ? await resolveHostBundleRef(deps.db, deps.config, undefined, previewBundleVersion)
+      : undefined;
+
     // A non-failed active machine (provisioning/running converge; recovering
     // is rejected by activeProvisionResponse). A `failed` row is retryable, so
     // it must NOT short-circuit here — it is retired inside the transaction.
@@ -1901,7 +1853,8 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       return activeProvisionResponse(reconciled, deps.config.provisionEtaSeconds);
     }
 
-    const bundleRef = await resolveHostBundleRef(deps.db, deps.config, testSnapshotId);
+    const bundleRef = explicitPreviewBundleRef
+      ?? await resolveHostBundleRef(deps.db, deps.config, testSnapshotId);
 
     let provisionRow: { existing: UserMachineRecord | null };
     try {
@@ -2162,6 +2115,9 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       if (!row) {
         throw new CustomerVpsError(404, 'not_found', 'Machine not found');
       }
+      if (row.status === 'running') {
+        throw new CustomerVpsError(409, 'already_registered', 'Machine already registered');
+      }
       if (row.status !== 'provisioning' && row.status !== 'recovering') {
         throw new CustomerVpsError(409, 'invalid_state', 'Machine cannot register');
       }
@@ -2304,7 +2260,13 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
             failureAt: null,
           },
         );
-        if (!registered) throw new CustomerVpsError(409, 'invalid_state', 'Machine cannot register');
+        if (!registered) {
+          const current = await getUserMachine(trx, input.machineId);
+          if (current?.status === 'running' && current.registrationTokenHash === null) {
+            throw new CustomerVpsError(409, 'already_registered', 'Machine already registered');
+          }
+          throw new CustomerVpsError(409, 'invalid_state', 'Machine cannot register');
+        }
         if (row.prebillingIntentId) {
           const markedReady = await markPrebillingIntentReady(trx, {
             intentId: row.prebillingIntentId,
@@ -2402,6 +2364,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         },
         machineId,
         registration.token,
+        registration.expiresAt,
         postgresPassword,
         bundleRef,
       );

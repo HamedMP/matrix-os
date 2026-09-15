@@ -100,6 +100,23 @@ afterEach(async () => {
 });
 
 describe('Preview VPS provisioning workflow', () => {
+  it('collects bounded updater diagnostics before an install timeout', () => {
+    const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
+    const deployStep = YAML.parse(workflow).jobs.deploy.steps.find(
+      (step: { name?: string }) => step.name === 'Deploy preview bundle to preview VPS',
+    ).run as string;
+
+    expect(deployStep).toContain('collect_preview_diagnostics()');
+    expect(deployStep).toContain('"/opt/matrix/app/.update-error.json"');
+    expect(deployStep).toContain('metadata.st_size > limit');
+    expect(deployStep).toContain('state["updateError"]');
+    expect(deployStep).toContain('state["updateVersion"]');
+    expect(deployStep).not.toContain('/usr/bin/journalctl');
+    expect(deployStep).toContain('collect_preview_diagnostics || true');
+    expect(deployStep.indexOf('collect_preview_diagnostics || true'))
+      .toBeLessThan(deployStep.indexOf('Timed out waiting for ${HANDLE}'));
+  });
+
   it('budgets the job for provisioning, bounded repair, and workflow overhead', () => {
     const workflow = YAML.parse(readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8'));
     const deploy = workflow.jobs.deploy;

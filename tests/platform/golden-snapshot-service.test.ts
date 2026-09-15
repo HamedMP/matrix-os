@@ -1,5 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { promisify } from 'node:util';
 import { parse as parseYaml } from 'yaml';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { upsertHostBundleRelease, type PlatformDB } from '../../packages/platform/src/db.js';
@@ -26,6 +30,49 @@ import {
   DefinitiveProviderRejectionError,
 } from '../../packages/platform/src/customer-vps-errors.js';
 import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
+
+const execFileAsync = promisify(execFile);
+
+async function verifyValidationFailureDiagnostics(userData: string): Promise<void> {
+  const { runcmd } = parseYaml(userData) as { runcmd: string[] };
+  const script = runcmd[0].slice(0, runcmd[0].indexOf('systemd-machine-id-setup'));
+  const diagnostic = { ...serviceDiagnostics, unit: 'matrix-terminal-runtime.service' };
+  for (const kind of ['valid', 'missing', 'malformed', 'symlink', 'oversized']) {
+    const root = await mkdtemp(join(tmpdir(), 'golden-validation-callback-'));
+    const run = join(root, 'run');
+    try {
+      await mkdir(run);
+      await writeFile(join(run, 'matrix-golden-snapshot-callback-token'), 'synthetic-callback-token');
+      await writeFile(join(run, 'matrix-golden-activation-stage'), 'activation_terminal_runtime_ready');
+      const diagnosticsPath = join(run, 'matrix-golden-service-diagnostics.json');
+      if (kind === 'valid') await writeFile(diagnosticsPath, JSON.stringify(diagnostic));
+      if (kind === 'malformed') await writeFile(diagnosticsPath, '{broken');
+      if (kind === 'oversized') await writeFile(diagnosticsPath, 'x'.repeat(131_073));
+      if (kind === 'symlink') {
+        await writeFile(join(root, 'outside.json'), JSON.stringify(diagnostic));
+        await symlink(join(root, 'outside.json'), diagnosticsPath);
+      }
+      // Execute the generated failure trap, replacing only its filesystem root
+      // and the HTTP transport. No systemd, provider, or real callback calls.
+      const harness = `curl() { cat >/dev/null; cp "$CAPTURE_ROOT/run/matrix-golden-failure.json" "$CAPTURE_ROOT/callback.json"; }
+${script.replaceAll('/run/', `${run}/`)}
+failureStage=activation
+exit 23
+`;
+      await expect(execFileAsync('sh', ['-c', harness], {
+        env: { ...process.env, CAPTURE_ROOT: root }, timeout: 5_000,
+      })).rejects.toMatchObject({ code: 23 });
+      const payload = JSON.parse(await readFile(join(root, 'callback.json'), 'utf8'));
+      expect(GoldenSnapshotCallbackSchema.safeParse(payload).success).toBe(true);
+      expect(payload).toMatchObject({ phase: 'failed', role: 'validation', stage: 'activation_terminal_runtime_ready' });
+      if (kind === 'valid') expect(payload.serviceDiagnostics).toEqual(diagnostic);
+      else expect(payload.serviceDiagnostics).toBeUndefined();
+      expect(await readdir(run)).toEqual([]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }
+}
 
 const compatibility = {
   provider: 'hetzner' as const,
@@ -123,6 +170,7 @@ describe('golden snapshot build service', () => {
       'activation_preflight_cloud_init',
       'activation_preflight_container_state',
       'activation_terminal_runtime',
+      'activation_terminal_runtime_ready',
       'activation_gateway_ready',
       'activation_shell_ready',
       'activation_sync_agent_ready',
@@ -141,10 +189,10 @@ describe('golden snapshot build service', () => {
     }
   });
 
-  it('accepts bounded service diagnostics and rejects oversized journal evidence', () => {
+  it.each(['matrix-gateway.service', 'matrix-terminal-runtime.service'])('accepts bounded %s diagnostics and rejects oversized journal evidence', (unit) => {
     const payload = {
       eventId: randomUUID(), phase: 'failed', role: 'builder', stage: 'activation_gateway_ready',
-      bundleVersion: 'v1', bundleSha256: '1'.repeat(64), serviceDiagnostics,
+      bundleVersion: 'v1', bundleSha256: '1'.repeat(64), serviceDiagnostics: { ...serviceDiagnostics, unit },
     };
 
     expect(GoldenSnapshotCallbackSchema.safeParse(payload).success).toBe(true);
@@ -439,6 +487,7 @@ describe('golden snapshot build service', () => {
       })],
       runcmd: [expect.stringContaining('matrix-golden-snapshot-activate validation')],
     });
+    await verifyValidationFailureDiagnostics(validationCreate!.userData!);
     expect(validationCreate?.userData).toContain('matrix-golden-snapshot-activate');
     expect(validationCreate?.userData).toContain(`MATRIX_BUILDER_MACHINE_ID_SHA256='${builderFingerprints.builderMachineIdSha256}'`);
     expect(validationCreate?.userData).toContain(`MATRIX_BUILDER_SSH_HOST_KEY_SHA256='${builderFingerprints.builderSshHostKeySha256}'`);
@@ -454,9 +503,9 @@ describe('golden snapshot build service', () => {
     expect(validationCreate?.userData?.indexOf('validationStatus=$?'))
       .toBeLessThan(validationCreate?.userData?.lastIndexOf('curl --config -') ?? -1);
     expect(validationCreate?.userData).toContain('exit "$validationStatus"');
-    expect(validationCreate?.userData).toContain('"phase":"failed"');
-    expect(validationCreate?.userData).toContain('"role":"validation"');
-    expect(validationCreate?.userData).toContain('"stage":"%s"');
+    expect(validationCreate?.userData).toContain("'phase': 'failed'");
+    expect(validationCreate?.userData).toContain("'role': 'validation'");
+    expect(validationCreate?.userData).toContain("'stage': reported_stage");
     expect(validationCreate?.userData).toContain('"$failureStage"');
     expect(validationCreate?.userData).toContain('trap reportFailure EXIT');
     expect(validationCreate?.userData).not.toContain('trap reportFailure ERR');

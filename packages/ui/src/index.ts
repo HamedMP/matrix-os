@@ -72,7 +72,10 @@ export { ChatSharingButton } from "./chat/ChatSharingButton.js";
 export { ChatAttachments, type ChatMessageAttachment } from "./chat/ChatAttachments.js";
 export { ChatCollaboratorsDialog, type CollaborationApi } from "./collaboration/ChatCollaboratorsDialog.js";
 export { ChatCollaboration, type ChatCollaborationView } from "./collaboration/ChatCollaboration.js";
-export { collaborationDraftKey, createCollaborationDraftStore } from "./collaboration/chat-state.js";
+export { SharedChatControls } from "./collaboration/SharedChatControls.js";
+export { SharedTerminalControls } from "./collaboration/SharedTerminalControls.js";
+export { TerminalSharingButton } from "./collaboration/TerminalSharingButton.js";
+export { collaborationDraftKey, collaborationDraftModeKey, createCollaborationDraftStore } from "./collaboration/chat-state.js";
 export { deriveChatPermissions } from "./collaboration/permissions.js";
 export { createCollaborationBrowserApi } from "./collaboration/client.js";
 export { TerminalControls } from './terminal/TerminalControls.js';
@@ -84,3 +87,5 @@ export { dispatchTerminalPaneRequest, TerminalPaneActionsUnavailableError } from
 
 export { WindowResizeControls, resizeWindowBounds, type WindowBounds, type ResizeDirection } from "./window/WindowResizeControls.js";
 export { constrainFloatingWindow, isPointNearWindow, WINDOW_BACKGROUND_CLICK_BUFFER } from "./window/window-placement.js";
+
+export { useFileDownload, type FileDownloadTransport, type FileDownloadController } from "./files/use-file-download.js";

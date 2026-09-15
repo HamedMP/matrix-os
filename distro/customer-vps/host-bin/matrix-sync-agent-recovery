@@ -1,0 +1,188 @@
+#!/usr/bin/env bash
+
+# Recovery and rollback functions for matrix-sync-agent.
+#
+# This file is sourced by the agent after its update primitives are defined. It
+# deliberately owns no process lifecycle or mutable globals of its own.
+
+release_metadata_matches_app() {
+  local app_dir="$1" release_file="$2" expected_version actual_version
+  [ -d "$app_dir" ] && [ ! -L "$app_dir" ] || return 1
+  [ -f "$app_dir/BUNDLE_VERSION" ] && [ ! -L "$app_dir/BUNDLE_VERSION" ] || return 1
+  [ -f "$release_file" ] && [ ! -L "$release_file" ] || return 1
+  IFS= read -r expected_version <"$app_dir/BUNDLE_VERSION" || return 1
+  [[ "$expected_version" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || return 1
+  actual_version="$(python3 - "$release_file" <<'PY'
+import json
+import os
+import stat
+import sys
+
+fd = os.open(sys.argv[1], os.O_RDONLY | os.O_NOFOLLOW)
+try:
+    metadata = os.fstat(fd)
+    if not stat.S_ISREG(metadata.st_mode) or metadata.st_size < 2 or metadata.st_size > 65536:
+        raise ValueError("invalid rollback release metadata")
+    payload = os.read(fd, 65537)
+    if len(payload) > 65536:
+        raise ValueError("oversized rollback release metadata")
+    version = json.loads(payload).get("version")
+    if not isinstance(version, str):
+        raise ValueError("missing rollback release version")
+    print(version)
+finally:
+    os.close(fd)
+PY
+  )" || return 1
+  [ "$actual_version" = "$expected_version" ]
+}
+
+rollback_release_metadata_is_ready() {
+  release_metadata_matches_app "$1" "$RELEASE_ROLLBACK_FILE"
+}
+
+recover_interrupted_update() {
+  local phase version="" transaction_state=""
+  [ -f "$UPDATE_PHASE_MARKER" ] && [ ! -L "$UPDATE_PHASE_MARKER" ] || return 0
+  phase="$(cat "$UPDATE_PHASE_MARKER" 2>/dev/null || true)"
+  case "$phase" in
+    prepare|download|verify|extract|terminal-runtime|app-install|host-bin|health) ;;
+    *) phase=unknown ;;
+  esac
+  if [ -f "$UPDATE_TRANSACTION_STATE" ] && [ ! -L "$UPDATE_TRANSACTION_STATE" ]; then
+    transaction_state="$(cat "$UPDATE_TRANSACTION_STATE" 2>/dev/null || true)"
+    case "$transaction_state" in
+      prepared|mutating)
+        log "Recovering interrupted update transaction"
+        if [ -f "$UPDATE_TRANSACTION_DIR/candidate-version" ] && [ ! -L "$UPDATE_TRANSACTION_DIR/candidate-version" ]; then
+          IFS= read -r version <"$UPDATE_TRANSACTION_DIR/candidate-version" || version=""
+          [[ "$version" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || version=""
+        fi
+        if transaction_candidate_is_committed "$version"; then
+          log "Interrupted update had already committed; finalizing transaction"
+          clear_consumed_update_markers
+          cleanup_update_transaction
+          rm -f -- "$UPDATE_PHASE_MARKER"
+          return 0
+        fi
+        if do_rollback false; then
+          write_update_error "apply_interrupted" "The interrupted update was rolled back to the previous runtime." "$version"
+        else
+          write_update_error "post_install_rollback_failed" "The interrupted update could not be rolled back completely." "$version"
+        fi
+        return 0
+        ;;
+      *)
+        log "ERROR: update transaction state is invalid"
+        return 1
+        ;;
+    esac
+  fi
+  [ -f "$UPDATE_MARKER" ] && [ ! -L "$UPDATE_MARKER" ] || {
+    case "$phase" in
+      host-bin|health)
+        version="$(current_version)"
+        [[ "$version" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || version=""
+        if [ -d "$APP_DIR.rollback" ] && [ ! -L "$APP_DIR.rollback" ]; then
+          if release_metadata_matches_app "$APP_DIR.rollback" "$RELEASE_FILE"; then
+            log "Recovering update interrupted after a legacy updater replaced the app"
+            if do_rollback false; then
+              write_update_error "apply_interrupted" "The interrupted update was rolled back to the previous runtime." "$version"
+            else
+              write_update_error "post_install_rollback_failed" "The interrupted update could not be rolled back completely." "$version"
+            fi
+          else
+            log "ERROR: interrupted legacy update metadata does not identify the rollback app"
+            write_update_error "post_install_rollback_failed" "The interrupted update could not be rolled back completely." "$version"
+          fi
+          return 0
+        fi
+        ;;
+    esac
+    rm -f -- "$UPDATE_PHASE_MARKER"
+    return 0
+  }
+  [ ! -e "$UPDATE_ERROR_MARKER" ] && [ ! -L "$UPDATE_ERROR_MARKER" ] || return 0
+  version="$(json_field "$(cat "$UPDATE_MARKER")" version 2>/dev/null || true)"
+  log "ERROR: interrupted update recovered at bounded phase $phase"
+  write_update_error "apply_interrupted" "The update process was interrupted before completion." "$version"
+}
+
+do_rollback() {
+  local restore_release_metadata="${1:-true}" has_app_rollback=false
+  if [ -d "$APP_DIR.rollback" ] && [ ! -L "$APP_DIR.rollback" ]; then
+    has_app_rollback=true
+  elif [ ! -f "$UPDATE_TRANSACTION_STATE" ] || [ -L "$UPDATE_TRANSACTION_STATE" ]; then
+    log "ERROR: no rollback app or update transaction is available"; return 1
+  fi
+  if [ "$has_app_rollback" = true ]; then
+    if [ "$restore_release_metadata" = true ]; then
+      if rollback_release_metadata_is_ready "$APP_DIR.rollback"; then
+        :
+      elif release_metadata_matches_app "$APP_DIR.rollback" "$RELEASE_FILE"; then
+        log "Installed release metadata already identifies the rollback app"
+        restore_release_metadata=false
+      else
+        log "ERROR: rollback release metadata is unavailable or inconsistent"
+        return 1
+      fi
+    elif ! release_metadata_matches_app "$APP_DIR.rollback" "$RELEASE_FILE"; then
+      log "ERROR: installed release metadata does not identify the rollback app"
+      return 1
+    fi
+  fi
+  log "Rolling back..."
+  if ! stop_runtime_services; then
+    log "ERROR: rollback could not stop the runtime services safely"
+    return 1
+  fi
+  if [ "$has_app_rollback" = true ] \
+    && [ -f "$APP_DIR/$TERMINAL_RUNTIME_GENERATION_FILE" ] \
+    && [ ! -f "$APP_DIR.rollback/$TERMINAL_RUNTIME_GENERATION_FILE" ] \
+    && [ -f "/home/matrix/home/system/terminal-migration-journal.json" ]; then
+    if ! /opt/matrix/bin/matrix-terminal-runtime --rollback; then
+      log "ERROR: terminal migration rollback failed while candidate code was available"
+      return 1
+    fi
+  fi
+  if [ "$has_app_rollback" = true ] && [ -d "$APP_DIR" ]; then
+    sudo mkdir -p "$STAGING_DIR"
+    sudo chown matrix:matrix "$STAGING_DIR"
+    sudo mv "$APP_DIR" "$STAGING_DIR/failed-$(date +%s)"
+  fi
+  if [ "$has_app_rollback" = true ]; then
+    sudo mv "$APP_DIR.rollback" "$APP_DIR"
+    sudo chown -R matrix:matrix "$APP_DIR"
+  fi
+  if [ "$restore_release_metadata" = true ] && [ "$has_app_rollback" = true ]; then
+    restore_rollback_release_metadata || {
+      log "ERROR: rollback release metadata restore failed"
+      return 1
+    }
+  fi
+  restore_update_transaction || {
+    log "ERROR: update transaction artifact restore failed"
+    return 1
+  }
+  if [ -f "$APP_DIR/$TERMINAL_RUNTIME_GENERATION_FILE" ]; then
+    activate_terminal_runtime_generation "$(cat "$APP_DIR/$TERMINAL_RUNTIME_GENERATION_FILE")"
+  fi
+  cleanup_terminal_runtime_generations || log "WARN: terminal generation cleanup remains above cap after rollback"
+  sudo systemctl start matrix-terminal-runtime || true
+  sudo systemctl start matrix-gateway matrix-shell
+  sudo systemctl start --no-block matrix-symphony || true
+  local healthy=false
+  for _ in $(seq 1 18); do
+    if curl --fail --silent --max-time 5 "$HEALTH_URL" >/dev/null 2>&1; then
+      healthy=true; break
+    fi
+    sleep 5
+  done
+  if [ "$healthy" = true ]; then
+    cleanup_update_transaction
+    log "Rollback complete (now at $(current_version))"
+  else
+    log "ERROR: rollback health check failed — services may be down"
+    return 1
+  fi
+}

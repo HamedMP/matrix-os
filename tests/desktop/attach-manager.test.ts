@@ -13,6 +13,7 @@ class FakeSocketControl implements SocketControl {
   detached = 0;
   disposedCount = 0;
   readonly inputs: string[] = [];
+  readonly binaryInputs: string[] = [];
   readonly resizes: Array<{ cols: number; rows: number }> = [];
 
   constructor(
@@ -27,6 +28,10 @@ class FakeSocketControl implements SocketControl {
 
   sendInput(data: string): void {
     this.inputs.push(data);
+  }
+
+  sendBinary(data: string): void {
+    this.binaryInputs.push(data);
   }
 
   resize(cols: number, rows: number): void {
@@ -164,18 +169,24 @@ describe("AttachManager generation guard", () => {
     const { manager, created } = createManager();
     const a = manager.attach("alpha", recordingEvents().events);
     a.write("first");
+    a.writeBinary("\x1b]10;?\x07");
     a.resize(80, 24);
     expect(created[0]?.inputs).toEqual(["first"]);
+    expect(created[0]?.binaryInputs).toEqual(["\x1b]10;?\x07"]);
     expect(created[0]?.resizes).toEqual([{ cols: 80, rows: 24 }]);
 
     const b = manager.attach("beta", recordingEvents().events);
     a.write("stale");
+    a.writeBinary("stale-binary");
     a.resize(100, 30);
     expect(created[0]?.inputs).toEqual(["first"]);
+    expect(created[0]?.binaryInputs).toEqual(["\x1b]10;?\x07"]);
     expect(created[0]?.resizes).toEqual([{ cols: 80, rows: 24 }]);
 
     b.write("live");
+    b.writeBinary("live-binary");
     expect(created[1]?.inputs).toEqual(["live"]);
+    expect(created[1]?.binaryInputs).toEqual(["live-binary"]);
     expect(b.sessionName).toBe("beta");
   });
 });

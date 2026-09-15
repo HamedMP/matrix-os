@@ -51,6 +51,7 @@ import {
 } from './billing.js';
 import { getRuntimeEntitlementDecision, getRuntimeEntitlementDecisionForUser, resolveEffectiveBillingEntitlement, stripeBillingEntitlementsEnabled } from './runtime-entitlement.js';
 import { createBillingRoutes } from './billing-routes.js';
+import { createRedditConversionsClient } from './reddit-conversions.js';
 import { createPrebillingProvisioningCoordinator } from './prebilling-provisioning.js';
 import { loadPrebillingProvisioningConfig } from './prebilling-provisioning-config.js';
 import { createJourneyRoutes, createJourneyUserResolver } from './journey-routes.js';
@@ -502,6 +503,7 @@ export function createApp(deps: {
     env: appEnv,
     resolveClerkUserId: resolveBillingClerkUserId,
     captureEvent: captureFunnelEvent,
+    redditConversions: createRedditConversionsClient({ env: appEnv }),
     prebilling,
     fundedAiRepository: deps.fundedAiRepository,
   }));

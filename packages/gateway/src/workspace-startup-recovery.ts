@@ -1,3 +1,4 @@
+import type { BackgroundAgentRuntime } from "./background-agent-runtime.js";
 import { resolve } from "node:path";
 import { createAgentLauncher } from "./agent-launcher.js";
 import { createAgentSandbox } from "./agent-sandbox.js";
@@ -229,6 +230,7 @@ export async function runWorkspaceStartupRecovery(
 }
 
 export function createWorkspaceStartupRecovery(options: {
+  backgroundRuntime?: BackgroundAgentRuntime;
   homePath: string;
   eventPublisher?: WorkspaceStartupRecoveryDeps["eventPublisher"];
   codingAgentThreadStore?: Pick<CodingAgentThreadStore, "deleteProjectThreads">;
@@ -246,6 +248,7 @@ export function createWorkspaceStartupRecovery(options: {
     worktreeManager,
     agentLauncher,
     terminalRuntime,
+    backgroundRuntime: options.backgroundRuntime,
   });
   const reviewStore = createReviewStore({ homePath });
   const projectLifecycleRecovery = createProjectLifecycleService({

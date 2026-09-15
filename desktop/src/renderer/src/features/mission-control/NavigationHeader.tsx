@@ -12,7 +12,7 @@ export default function NavigationHeader() {
 
   return (
     <header
-      className="titlebar-drag absolute inset-x-0 top-0 grid shrink-0 items-center"
+      className="native-titlebar titlebar-drag absolute inset-x-0 top-0 grid shrink-0 items-center"
       onDoubleClick={handleTitlebarDoubleClick}
       style={{
         zIndex: DESKTOP_Z_INDEX.chrome,

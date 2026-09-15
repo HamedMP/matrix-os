@@ -7,10 +7,10 @@ import {
   type ScopeRuntimeResponse,
 } from "@matrix-os/scope-runtime";
 
-const MAX_FRAME_BYTES = 64 * 1024;
-const MAX_TIMEOUT_MS = 60_000;
+const MAX_FRAME_BYTES = 128 * 1024;
+const MAX_TIMEOUT_MS = 90_000;
 const MAX_IN_FLIGHT_REQUESTS = 64;
-const DEFAULT_OPERATION_TIMEOUT_MS = 30_000;
+const DEFAULT_OPERATION_TIMEOUT_MS = 60_000;
 
 export interface ScopeRuntimeProfileCatalogEntry {
   profileVersion: number;
@@ -232,6 +232,37 @@ export function createScopeRuntimeClient(options: {
         runtimeHandle: response.runtimeHandle,
         executionGeneration: response.executionGeneration,
         state: response.state,
+      };
+    },
+    async runChat(input: {
+      runtimeHandle: string;
+      executionGeneration: string;
+      model: string;
+      prompt: string;
+    }) {
+      if (closed) throw new ScopeRuntimeClientError("client_closed");
+      const capability = currentCapability;
+      if (!capability.available || capability.executionGeneration !== input.executionGeneration) {
+        throw new ScopeRuntimeClientError("runtime_unavailable");
+      }
+      const response = await request({
+        version: 1,
+        type: "runtime.chat",
+        requestId: createRequestId(),
+        runtimeHandle: input.runtimeHandle,
+        executionGeneration: input.executionGeneration,
+        model: input.model,
+        prompt: input.prompt,
+      });
+      if (response.type !== "runtime.chat.result" || !response.ok
+        || response.runtimeHandle !== input.runtimeHandle
+        || response.executionGeneration !== input.executionGeneration) {
+        throw new ScopeRuntimeClientError("runtime_unavailable");
+      }
+      return {
+        runtimeHandle: response.runtimeHandle,
+        executionGeneration: response.executionGeneration,
+        text: response.text,
       };
     },
     async close(): Promise<void> {

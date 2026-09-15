@@ -13,7 +13,10 @@ import type { z } from "zod/v4";
 import { terminalRuntimeErrorDetails } from "./errors.js";
 import type { TerminalSnapshot } from "./workspace-store.js";
 import { encodeSocketFrame, SocketFrameDecoder } from "./socket-framing.js";
-import { MAX_TERMINAL_RUNTIME_RESPONSE_FRAME_BYTES } from "./limits.js";
+import {
+  MAX_TERMINAL_RUNTIME_RESPONSE_FRAME_BYTES,
+  TERMINAL_RUNTIME_SERVER_IDLE_TIMEOUT_MS,
+} from "./limits.js";
 import {
   TerminalRuntimeRequestSchema,
   type TerminalRuntimeRequest,
@@ -35,6 +38,7 @@ export interface TerminalRuntimeControlApi {
   renameTab(ref: { workspaceId: string; tabId: string }, input: { name: string; baseRevision: number }): Promise<TerminalTab>;
   reorderTabs(workspaceId: string, input: { tabIds: string[]; baseRevision: number }): Promise<TerminalWorkspace>;
   terminateTab(ref: { workspaceId: string; tabId: string }): Promise<void>;
+  deleteTab(ref: { workspaceId: string; tabId: string }): Promise<void>;
   paneAction(ref: { workspaceId: string; tabId: string }, action: TerminalPaneAction): Promise<void>;
   writeInput(ref: { workspaceId: string; tabId: string }, data: string): Promise<void>;
   updateTabUiState(ref: { workspaceId: string; tabId: string }, input: {
@@ -50,7 +54,7 @@ export interface TerminalRuntimeControlApi {
     viewerId: string;
     send(data: Uint8Array): void | Promise<void>;
     onExit(exitCode: number | null): void | Promise<void>;
-  }): Promise<{ write(data: string): Promise<void>; touch(): void; detach(): Promise<void> }>;
+  }): Promise<{ write(data: string | Uint8Array): Promise<void>; touch(): void; detach(): Promise<void> }>;
 }
 
 type TerminalServerFrame = z.infer<typeof TerminalTabServerFrameSchema>;
@@ -132,7 +136,10 @@ export class TerminalRuntimeSocketServer {
       return;
     }
     this.connections.add(socket);
-    socket.setTimeout(this.options.idleTimeoutMs ?? 30_000, () => socket.destroy());
+    socket.setTimeout(
+      this.options.idleTimeoutMs ?? TERMINAL_RUNTIME_SERVER_IDLE_TIMEOUT_MS,
+      () => socket.destroy(),
+    );
     const decoder = new SocketFrameDecoder();
     let handled = false;
     let streamMessage: ((raw: unknown) => Promise<void>) | null = null;
@@ -251,9 +258,10 @@ export class TerminalRuntimeSocketServer {
       canonicalSize: resized.canonicalSize,
       revision,
       nextSeq,
+      capabilities: ["binary-input-v1"],
     });
+    send({ type: "replay-start", terminalRef: ref, revision, fromSeq: effectiveFromSeq });
     if (snapshot) {
-      send({ type: "replay-start", terminalRef: ref, revision, fromSeq: effectiveFromSeq });
       if (effectiveFromSeq < snapshot.seq) {
         send({ type: "replay-evicted", terminalRef: ref, revision, fromSeq: effectiveFromSeq, nextSeq: snapshot.seq });
       }
@@ -267,8 +275,8 @@ export class TerminalRuntimeSocketServer {
         ansi: snapshot.ansi,
         viewport: { top: 0, rows: Math.min(snapshot.viewport.length || resized.canonicalSize.rows, 200) },
       });
-      send({ type: "replay-end", terminalRef: ref, revision, nextSeq, toSeq: snapshot.seq });
     }
+    send({ type: "replay-end", terminalRef: ref, revision, nextSeq, toSeq: snapshot?.seq ?? null });
     const decoder = new TextDecoder();
     const viewer = await this.options.runtime.attach(ref, {
       viewerId: request.input.viewerId,
@@ -296,6 +304,7 @@ export class TerminalRuntimeSocketServer {
         throw new Error("Terminal reference mismatch");
       }
       if (frame.type === "input") await viewer.write(frame.data);
+      if (frame.type === "binary") await viewer.write(Buffer.from(frame.dataBase64, "base64"));
       if (frame.type === "resize") {
         const workspace = await this.options.runtime.resize(ref, frame);
         revision = workspace.revision;
@@ -321,6 +330,7 @@ export class TerminalRuntimeSocketServer {
       case "RenameTab": return this.options.runtime.renameTab(request.input, request.input);
       case "ReorderTabs": return this.options.runtime.reorderTabs(request.input.workspaceId, request.input);
       case "TerminateTab": return this.options.runtime.terminateTab(request.input).then(() => null);
+      case "DeleteTab": return this.options.runtime.deleteTab(request.input).then(() => null);
       case "PaneAction": return this.options.runtime.paneAction(
         { workspaceId: request.input.workspaceId, tabId: request.input.tabId },
         request.input.action,

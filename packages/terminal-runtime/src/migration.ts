@@ -84,6 +84,11 @@ type Journal = z.infer<typeof JournalSchema>;
 export interface LegacyZellijCutover {
   stopLegacySessions(names: string[]): Promise<void>;
   ensureWorkspace(sessionName: string, size: { cols: number; rows: number }): Promise<void>;
+  prepareShellTabs?(sessionName: string, inputs: Array<{
+    internalName: string;
+    cwd: string;
+    command?: never;
+  }>): Promise<Record<string, { tabId: number; paneId: string }>>;
   createShellTab(sessionName: string, input: {
     internalName: string;
     cwd: string;
@@ -266,7 +271,20 @@ async function prepareReplacementWorkspaces(
     const internal = await stagedStore.getRuntimeWorkspace(workspace.id);
     if (!internal) throw new Error("staged_workspace_missing");
     await cutover.ensureWorkspace(internal.zellijSessionName, internal.canonicalSize);
-    for (const tab of Object.values(internal.tabs).sort((left, right) => left.order - right.order)) {
+    const tabs = Object.values(internal.tabs).sort((left, right) => left.order - right.order);
+    if (cutover.prepareShellTabs) {
+      const prepared = await cutover.prepareShellTabs(
+        internal.zellijSessionName,
+        tabs.map((tab) => ({ internalName: tab.zellijTabName, cwd: tab.cwd })),
+      );
+      for (const tab of tabs) {
+        const ids = prepared[tab.zellijTabName];
+        if (!ids) throw new Error("prepared_terminal_tab_missing");
+        await stagedStore.activateTab({ workspaceId: internal.id, tabId: tab.id }, ids);
+      }
+      continue;
+    }
+    for (const tab of tabs) {
       const ref = { workspaceId: internal.id, tabId: tab.id };
       let ids = await cutover.findTabByInternalName?.(internal.zellijSessionName, tab.zellijTabName);
       ids ??= tab.zellijTabId !== null && tab.zellijPaneId !== null

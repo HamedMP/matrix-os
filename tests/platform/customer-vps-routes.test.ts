@@ -174,6 +174,52 @@ describe('platform/customer-vps-routes', () => {
     });
     expect(provision).not.toHaveBeenCalled();
 
+    const exactBundleAccepted = await app.request('/vps/preview/provision', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${platformSecret}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        clerkUserId: 'user_123',
+        handle: 'pr-897',
+        runtimeSlot: 'pr-897',
+        bundleVersion: 'v2026.09.11-pr897-123-1-abcdef0',
+      }),
+    });
+    expect(exactBundleAccepted.status).toBe(202);
+    expect(provisionPreview).toHaveBeenLastCalledWith({
+      clerkUserId: 'user_123',
+      handle: 'pr-897',
+      runtimeSlot: 'pr-897',
+      accessClerkUserIds: [],
+      bundleVersion: 'v2026.09.11-pr897-123-1-abcdef0',
+    });
+
+    const ambiguousBundleSource = await app.request('/vps/preview/provision', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${platformSecret}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        clerkUserId: 'user_123',
+        handle: 'pr-897',
+        runtimeSlot: 'pr-897',
+        bundleVersion: 'v2026.09.11-pr897-123-1-abcdef0',
+        testSnapshotId: 'd9428888-122b-4d59-8619-9c97c6b2289d',
+      }),
+    });
+    expect(ambiguousBundleSource.status).toBe(400);
+    expect(provisionPreview).toHaveBeenCalledTimes(2);
+
+    const invalidBundleVersion = await app.request('/vps/preview/provision', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${platformSecret}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        clerkUserId: 'user_123',
+        handle: 'pr-897',
+        runtimeSlot: 'pr-897',
+        bundleVersion: '../stable',
+      }),
+    });
+    expect(invalidBundleVersion.status).toBe(400);
+    expect(provisionPreview).toHaveBeenCalledTimes(2);
+
     provisionPreview.mockRejectedValueOnce(new Error('provider token and private path leaked'));
     const failed = await app.request('/vps/preview/provision', {
       method: 'POST',

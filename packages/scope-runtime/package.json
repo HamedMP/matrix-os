@@ -5,7 +5,8 @@
   "type": "module",
   "exports": {
     ".": "./src/protocol.ts",
-    "./broker-protocol": "./src/broker-protocol.ts"
+    "./broker-protocol": "./src/broker-protocol.ts",
+    "./profile": "./src/profile.ts"
   },
   "scripts": {
     "build": "tsc",

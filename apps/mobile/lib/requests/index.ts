@@ -61,7 +61,11 @@ export {
   fetchCollaborationScope,
   fetchSharedChat,
   fetchSharedChatMessages,
+  fetchSharedAiRequests,
   fetchSharedCollaborations,
+  postSharedAiRequest,
+  controlSharedAiRequest,
+  decideSharedAiApproval,
   postSharedChatDiscussion,
   updateSharedChatReadState,
 } from "./collaboration";

@@ -203,7 +203,10 @@ describe("platform collaboration routes", () => {
       }),
     });
     expect(response.status).toBe(201);
-    expect(await response.json()).toMatchObject({ ticket: "c".repeat(43) });
+    expect(await response.json()).toMatchObject({
+      ticket: "c".repeat(43),
+      actorId: platformCollaborationActors.recipientWithoutComputer,
+    });
   });
 
   it("serves bounded participant identity only to an authenticated runtime", async () => {

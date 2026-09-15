@@ -1,5 +1,6 @@
-import { app, BrowserWindow, ipcMain, Notification, safeStorage, screen, session, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Notification, safeStorage, screen, session, shell } from "electron";
 import { join } from "node:path";
+import { createFileDownloadService } from "./files/file-download-service";
 import { AuthService } from "./auth/auth-service";
 import { createAnalyticsBeforeQuit } from "./analytics-quit";
 import { readDesktopBuildSource } from "./build-source";
@@ -47,11 +48,13 @@ import { registerIpcHandlers } from "./ipc/handlers";
 import { fetchDesktopSupportIdentity } from "./support/support-identity-client";
 import { createLocalStore } from "./persistence/local-store";
 import { installAppMenu } from "./platform/menu";
+import { registerWindowsProtocolClients } from "./platform/protocol-registration";
 import {
   fitWindowBoundsToWorkArea,
   type FittedWindowBounds,
   type WindowBounds,
 } from "./platform/window-bounds";
+import { windowChromeOptions } from "./platform/window-chrome";
 import { createUpdater } from "./updates";
 import { createUpdateAwareBeforeQuit } from "./update-quit";
 import { safeExternalHttpUrl } from "./external-url";
@@ -75,6 +78,9 @@ if (process.env.OPERATOR_USER_DATA_DIR) {
 
 let mainWindow: BrowserWindow | null = null;
 let updateCheckTimer: ReturnType<typeof setInterval> | null = null;
+let fileDownloads: ReturnType<typeof createFileDownloadService> | null = null;
+let downloadsDrained = false;
+let drainingDownloads = false;
 let closeCodingAgentThreadEvents: (() => void) | null = null;
 let handleUpdateBeforeQuit: ((event: { preventDefault(): void }) => void) | null = null;
 let handleAnalyticsBeforeQuit: ((event: { preventDefault(): void }) => boolean) | null = null;
@@ -120,10 +126,7 @@ async function openExternalHttpUrl(url: string): Promise<void> {
 function createWindow(bounds: FittedWindowBounds): BrowserWindow {
   const win = new BrowserWindow({
     ...bounds,
-    // Let the renderer's active surface continue beneath the macOS controls
-    // instead of retaining an opaque native title-bar material.
-    titleBarStyle: "hidden",
-    trafficLightPosition: { x: 14, y: 13 },
+    ...windowChromeOptions(process.platform),
     backgroundColor: "#0e0e13",
     show: false,
     webPreferences: {
@@ -185,6 +188,13 @@ if (!gotLock) {
   void app
     .whenReady()
     .then(async () => {
+      const failedProtocolRegistrations = registerWindowsProtocolClients(app);
+      if (failedProtocolRegistrations.length > 0) {
+        console.warn(
+          `[main] could not register Windows URL schemes: ${failedProtocolRegistrations.join(", ")}`,
+        );
+      }
+
       // Packaged builds get the icon from build/icon.icns automatically; in dev
       // the dock shows Electron's default icon unless we set the brand icon.
       if (process.platform === "darwin" && !app.isPackaged && app.dock) {
@@ -214,6 +224,7 @@ if (!gotLock) {
         saveProfile: (profile) => store.set("profile", profile),
         clearProfile: () => store.delete("profile"),
         onAuthChanged: (status) => {
+          fileDownloads?.cancelAll();
           sendEvent("auth:changed", {
             signedIn: status.signedIn,
             ...(status.signedIn ? {
@@ -313,7 +324,25 @@ if (!gotLock) {
       });
       closeCodingAgentThreadEvents = () => codingAgentThreadEvents.closeAll();
 
+      fileDownloads = createFileDownloadService({
+        auth,
+        chooseDestination: async (filename) => {
+          const options = {
+            title: "Download file",
+            defaultPath: join(app.getPath("downloads"), filename),
+            buttonLabel: "Save",
+            properties: ["createDirectory", "showOverwriteConfirmation"] as Array<"createDirectory" | "showOverwriteConfirmation">,
+          };
+          const result = mainWindow && !mainWindow.isDestroyed()
+            ? await dialog.showSaveDialog(mainWindow, options)
+            : await dialog.showSaveDialog(options);
+          return result.canceled ? null : result.filePath ?? null;
+        },
+      });
+      const downloads = fileDownloads;
       registerIpcHandlers(ipcMain, {
+        downloadFile: (request) => downloads.download(request),
+        cancelFileDownload: (requestId) => downloads.cancel(requestId),
         auth,
         store,
         embeds,
@@ -332,6 +361,7 @@ if (!gotLock) {
           notification.show();
         },
         onRuntimeChanged: (slot) => {
+          downloads.cancelAll();
           // Switching runtime invalidates embed cookies/tokens; tear them down so
           // they re-handshake against the new slot (Integration Wiring rule).
           embeds.closeAll();
@@ -467,6 +497,15 @@ if (!gotLock) {
 
   app.on("before-quit", (event) => {
     if (handleAnalyticsBeforeQuit?.(event)) return;
+    if (!downloadsDrained && fileDownloads) {
+      event.preventDefault();
+      if (!drainingDownloads) {
+        drainingDownloads = true;
+        void fileDownloads.dispose().catch((error: unknown) => logMainError("download cleanup failed", error))
+          .finally(() => { downloadsDrained = true; app.quit(); });
+      }
+      return;
+    }
     if (updateCheckTimer) {
       clearInterval(updateCheckTimer);
       updateCheckTimer = null;

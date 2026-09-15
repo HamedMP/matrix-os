@@ -271,6 +271,7 @@ export class CollaborationRepository {
       await requireAcceptedOwner(trx, input.scopeId, input.actorId);
       const replay = await readOperationReplay<InvitationMutationResult>(trx, input, "invitation.create");
       if (replay) return replay;
+      requireInvitationMutationLifecycle(scope);
       if (Number(scope.revision) !== input.expectedRevision) {
         throw new CollaborationRepositoryError("conflict", "Scope revision changed");
       }
@@ -381,6 +382,7 @@ export class CollaborationRepository {
         "invitation.accept",
       );
       if (replay) return { kind: "accepted" as const, value: replay };
+      requireInvitationMutationLifecycle(scope);
       if (Number(scope.revision) !== input.expectedRevision) {
         throw new CollaborationRepositoryError("conflict", "Scope revision changed");
       }
@@ -473,6 +475,7 @@ export class CollaborationRepository {
       await requireAcceptedOwner(trx, input.scopeId, input.actorId);
       const replay = await readOperationReplay<MemberMutationResult>(trx, input, "invitation.revoked");
       if (replay) return replay;
+      requireInvitationMutationLifecycle(scope);
       if (Number(scope.revision) !== input.expectedRevision) {
         throw new CollaborationRepositoryError("conflict", "Scope revision changed");
       }
@@ -607,6 +610,9 @@ export class CollaborationRepository {
     const operationExpiresAt = new Date(nowDate.getTime() + OPERATION_RETENTION_MS).toISOString();
     return this.db.transaction().execute(async (trx) => {
       const scope = await lockDirectScope(trx, input.scopeId);
+      if (scope.lifecycle !== "shared") {
+        throw new CollaborationRepositoryError("conflict", "Scope membership is not mutable");
+      }
       const actingMember = await trx.selectFrom("collaboration_members")
         .select(["role", "status"])
         .where("scope_id", "=", input.scopeId)
@@ -675,6 +681,12 @@ export class CollaborationRepository {
       });
       return result;
     });
+  }
+}
+
+function requireInvitationMutationLifecycle(scope: ScopeRow): void {
+  if (scope.lifecycle !== "private" && scope.lifecycle !== "shared") {
+    throw new CollaborationRepositoryError("conflict", "Scope membership is not mutable");
   }
 }
 

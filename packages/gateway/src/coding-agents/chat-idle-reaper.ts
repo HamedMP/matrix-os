@@ -6,6 +6,8 @@ import type { CodingAgentThreadStore } from "./thread-store.js";
 import type { CodexControlClient } from "./codex-control-client.js";
 import type { IdleWorkspaceIdentity } from "./idle-workspace-state.js";
 
+import type { BackgroundAgentRuntime } from "../background-agent-runtime.js";
+
 type Report = { checked: number; reclaimed: number; skipped: number };
 type Sessions = Pick<WorkspaceSessionOrchestrator, "getSession" | "listSessions">;
 type TerminalRuntime = Pick<TerminalRuntimeSocketClient, "listWorkspaces" | "terminateTab">;
@@ -28,9 +30,15 @@ export async function isWorkspaceSessionRuntimeAlive(
   sessionId: string,
   sessions: Pick<Sessions, "getSession">,
   terminalRuntime: Pick<TerminalRuntime, "listWorkspaces">,
+  backgroundRuntime?: Pick<BackgroundAgentRuntime, "isRunning">,
 ): Promise<boolean> {
   const current = await sessions.getSession(sessionId);
   if (!current.ok) return false;
+  if (current.session.runtime.type === "background") {
+    if (!backgroundRuntime || !current.session.backgroundRef) throw new Error("Background runtime unavailable");
+    return backgroundRuntime.isRunning(current.session.backgroundRef);
+  }
+  if (!current.session.terminalRef) return false;
   return activeTerminalRefs(await terminalRuntime.listWorkspaces())
     .has(terminalRefKey(current.session.terminalRef));
 }
@@ -39,6 +47,7 @@ export async function isWorkspaceSessionRuntimeAlive(
 export function createChatIdleReaper(options: {
   sessions: Sessions;
   terminalRuntime: TerminalRuntime;
+  backgroundRuntime?: Pick<BackgroundAgentRuntime, "isRunning" | "stop">;
   threads: Pick<CodingAgentThreadStore, "withIdleWorkspace">;
   control: Pick<CodexControlClient, "hibernate">;
   admitCanonical: (identity: IdleWorkspaceIdentity, reclaim: () => Promise<boolean>) => Promise<boolean>;
@@ -66,7 +75,10 @@ export function createChatIdleReaper(options: {
       && ["starting", "running", "idle", "waiting"].includes(session.runtime.status)
     ));
     if (candidates.length === 0) return report;
-    const liveTerminalRefs = activeTerminalRefs(await options.terminalRuntime.listWorkspaces());
+    let liveTerminalRefs: Set<string> | undefined;
+    async function terminalRefs() {
+      return liveTerminalRefs ??= activeTerminalRefs(await options.terminalRuntime.listWorkspaces());
+    }
     for (let scanned = 0; scanned < Math.min(candidates.length, 8) && report.reclaimed < 2 && !closed; scanned++) {
       cursor %= candidates.length;
       const candidate = candidates[cursor++]!;
@@ -78,8 +90,11 @@ export function createChatIdleReaper(options: {
           if (!ownerSession.ok || ownerSession.session.ownerId !== identity.ownerId
             || ownerSession.session.id !== identity.sessionId || ownerSession.session.kind !== "agent"
             || ownerSession.session.agent !== "codex" || ownerSession.session.attachedClients > 0
-            || !(Date.parse(ownerSession.session.lastActivityAt) <= cutoff)
-            || !liveTerminalRefs.has(terminalRefKey(ownerSession.session.terminalRef))) return false;
+            || !(Date.parse(ownerSession.session.lastActivityAt) <= cutoff)) return false;
+          const current = ownerSession.session;
+          if (current.runtime.type === "background") {
+            if (!current.backgroundRef || !options.backgroundRuntime || !await options.backgroundRuntime.isRunning(current.backgroundRef)) return false;
+          } else if (!current.terminalRef || !(await terminalRefs()).has(terminalRefKey(current.terminalRef))) return false;
           return options.admitCanonical(identity, async () => {
             if (closed) return false;
             await options.control.hibernate!({
@@ -87,8 +102,12 @@ export function createChatIdleReaper(options: {
               providerThreadId: identity.providerThreadId,
               clientRequestId: `req_${randomUUID()}`,
             });
-            await options.terminalRuntime.terminateTab(ownerSession.session.terminalRef);
-            liveTerminalRefs.delete(terminalRefKey(ownerSession.session.terminalRef));
+            if (current.runtime.type === "background") {
+              await options.backgroundRuntime!.stop(current.backgroundRef!);
+            } else {
+              await options.terminalRuntime.terminateTab(current.terminalRef!);
+              liveTerminalRefs!.delete(terminalRefKey(current.terminalRef!));
+            }
             options.unwatch(identity.sessionId);
             return true;
           });

@@ -16,7 +16,7 @@ describe("collaboration owner database", () => {
     await fixture.destroy();
   });
 
-  it("adds every M1 authority table and index idempotently", async () => {
+  it("adds every collaboration authority and transition table and index idempotently", async () => {
     await bootstrapCollaborationDatabase(fixture.db);
     await bootstrapCollaborationDatabase(fixture.db);
 
@@ -32,10 +32,14 @@ describe("collaboration owner database", () => {
       "collaboration_directory_outbox",
       "collaboration_events",
       "collaboration_exports",
+      "collaboration_layout_node_revisions",
       "collaboration_members",
       "collaboration_operations",
+      "collaboration_project_view_states",
+      "collaboration_resource_bindings",
       "collaboration_schema_migrations",
       "collaboration_scopes",
+      "collaboration_transitions",
     ]);
 
     const indexes = await sql<{ indexname: string }>`
@@ -46,9 +50,35 @@ describe("collaboration owner database", () => {
       "idx_collaboration_events_replay",
       "idx_collaboration_exports_expiry",
       "idx_collaboration_invitation_identity",
+      "idx_collaboration_layout_nodes",
       "idx_collaboration_outbox_delivery",
+      "idx_collaboration_resource_readiness",
+      "idx_collaboration_project_view_actor",
       "idx_collaboration_scope_binding",
+      "idx_collaboration_transition_in_progress",
+      "idx_collaboration_transition_recovery",
     ]));
+    expect(indexes.rows.map((row) => row.indexname)).not.toContain("idx_collaboration_resource_lookup");
+  });
+
+  it("rolls back the version 3 binding schema when its index migration fails", async () => {
+    await sql`CREATE TABLE idx_collaboration_resource_lookup (id INTEGER)`.execute(fixture.db);
+
+    await expect(bootstrapCollaborationDatabase(fixture.db)).rejects.toThrow();
+
+    const bindingTable = await sql<{ count: number }>`
+      SELECT count(*)::integer AS count
+      FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name = 'collaboration_resource_bindings'
+    `.execute(fixture.db);
+    expect(bindingTable.rows).toEqual([{ count: 0 }]);
+
+    const migration = await sql<{ count: number }>`
+      SELECT count(*)::integer AS count
+      FROM collaboration_schema_migrations
+      WHERE version = 3
+    `.execute(fixture.db);
+    expect(migration.rows).toEqual([{ count: 0 }]);
   });
 
   it("upgrades an existing canonical Chat schema with immutable attribution fields", async () => {

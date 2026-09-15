@@ -12,6 +12,7 @@ import {
   type Updateable,
 } from 'kysely';
 import pg from 'pg';
+import { runPlatformMigration } from './migration-runner.js';
 import { z } from 'zod/v4';
 import type {
   BillingEntitlementSource,
@@ -1219,12 +1220,7 @@ function wrapDb(
 }
 
 async function migrate(db: Kysely<PlatformDatabase>): Promise<void> {
-  await db.transaction().execute(async (trx) => {
-    await sql`
-      SELECT pg_advisory_xact_lock(hashtext('matrix_os_platform_schema_migration'))
-    `.execute(trx);
-    await migrateSchema(trx);
-  });
+  await runPlatformMigration(db, migrateSchema);
 }
 
 async function migrateSchema(db: Executor): Promise<void> {
