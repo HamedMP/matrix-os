@@ -57,6 +57,26 @@ describe("collaboration owner database", () => {
     expect(indexes.rows.map((row) => row.indexname)).not.toContain("idx_collaboration_resource_lookup");
   });
 
+  it("rolls back the version 3 binding schema when its index migration fails", async () => {
+    await sql`CREATE TABLE idx_collaboration_resource_lookup (id INTEGER)`.execute(fixture.db);
+
+    await expect(bootstrapCollaborationDatabase(fixture.db)).rejects.toThrow();
+
+    const bindingTable = await sql<{ count: number }>`
+      SELECT count(*)::integer AS count
+      FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name = 'collaboration_resource_bindings'
+    `.execute(fixture.db);
+    expect(bindingTable.rows).toEqual([{ count: 0 }]);
+
+    const migration = await sql<{ count: number }>`
+      SELECT count(*)::integer AS count
+      FROM collaboration_schema_migrations
+      WHERE version = 3
+    `.execute(fixture.db);
+    expect(migration.rows).toEqual([{ count: 0 }]);
+  });
+
   it("upgrades an existing canonical Chat schema with immutable attribution fields", async () => {
     await sql`ALTER TABLE chat_messages DROP COLUMN actor_id`.execute(fixture.db);
     await sql`ALTER TABLE chat_messages DROP COLUMN purpose`.execute(fixture.db);
