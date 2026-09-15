@@ -13,7 +13,7 @@ export function chatMessageVersionUrl(path: string): string {
   return `${path}${path.includes("?") ? "&" : "?"}messageVersion=2&inputVersion=1`;
 }
 
-function legacyMessage(message: CanonicalChatMessage): CanonicalChatMessage {
+function legacyMessage<T extends CanonicalChatMessage>(message: T) {
   const { actorId: _actorId, purpose: _purpose, ...legacy } = message;
   return legacy;
 }

@@ -1,3 +1,4 @@
+import { BackgroundAgentRefSchema } from "../background-agent-runtime.js";
 import { z } from "zod/v4";
 import {
   AgentThreadEventSchema,
@@ -17,6 +18,8 @@ const MAX_PROVIDER_EVENTS = 500;
 
 export const CodingAgentProviderResumeStateSchema = z.object({
   conversationId: z.string().trim().min(1).max(512),
+  backgroundRef: BackgroundAgentRefSchema.optional(),
+  eventOffset: z.number().int().min(0).max(16 * 1024 * 1024).optional(),
   providerThreadId: z.string().trim().min(1).max(512)
     .regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,511}$/)
     .optional(),
@@ -56,6 +59,8 @@ export interface CodingAgentProviderAdapter {
   providerId: string;
   /** Long-running initial executions are dispatched after durable thread creation. */
   initialRunExecution?: "background";
+  /** Native service execution and uncertain delivery survive gateway shutdown. */
+  backgroundExecution?: boolean;
   getSummary?(input: {
     principal: RequestPrincipal;
     now: () => Date;

@@ -25,6 +25,7 @@ export function installAppMenu(
   const template = createAppMenuTemplate({
     appName: app.name,
     isPackaged: app.isPackaged,
+    platform: process.platform,
     openExternal: (url) => {
       void shell.openExternal(url);
     },

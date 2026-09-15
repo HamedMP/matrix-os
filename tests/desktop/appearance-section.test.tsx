@@ -7,6 +7,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import AppearanceSection from "../../desktop/src/renderer/src/features/settings/sections/AppearanceSection";
 import { DEFAULT_THEME_ID, unifiedThemes } from "../../desktop/src/renderer/src/design/themes";
 import { useAppearance } from "../../desktop/src/renderer/src/stores/appearance";
+import { desktopShortcutLabel } from "../../desktop/src/renderer/src/lib/platform-labels";
+
+const ZOOM_IN_LABEL = `Zoom in (${desktopShortcutLabel("=")})`;
+const ZOOM_OUT_LABEL = `Zoom out (${desktopShortcutLabel("-")})`;
 
 // IconButton uses Radix tooltips; App.tsx provides the Tooltip.Provider in
 // production, so tests wrap the section the same way.
@@ -112,15 +116,15 @@ describe("AppearanceSection", () => {
   it("steps zoom through the store and applies it via IPC", () => {
     renderSection();
 
-    fireEvent.click(screen.getByRole("button", { name: "Zoom in (⌘=)" }));
+    fireEvent.click(screen.getByRole("button", { name: ZOOM_IN_LABEL }));
 
     expect(useAppearance.getState().zoom).toBe(1.1);
     expect(screen.getByText("110%")).not.toBeNull();
     expect(invoke).toHaveBeenCalledWith("app:set-zoom", { factor: 1.1 });
     expect(screen.getByRole("button", { name: "Reset" })).toHaveProperty("disabled", false);
 
-    fireEvent.click(screen.getByRole("button", { name: "Zoom out (⌘-)" }));
-    fireEvent.click(screen.getByRole("button", { name: "Zoom out (⌘-)" }));
+    fireEvent.click(screen.getByRole("button", { name: ZOOM_OUT_LABEL }));
+    fireEvent.click(screen.getByRole("button", { name: ZOOM_OUT_LABEL }));
 
     expect(useAppearance.getState().zoom).toBe(0.9);
     expect(screen.getByText("90%")).not.toBeNull();
@@ -143,7 +147,7 @@ describe("AppearanceSection", () => {
     useAppearance.getState().setZoom(2);
     renderSection();
 
-    expect(screen.getByRole("button", { name: "Zoom in (⌘=)" })).toHaveProperty("disabled", true);
-    expect(screen.getByRole("button", { name: "Zoom out (⌘-)" })).toHaveProperty("disabled", false);
+    expect(screen.getByRole("button", { name: ZOOM_IN_LABEL })).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: ZOOM_OUT_LABEL })).toHaveProperty("disabled", false);
   });
 });

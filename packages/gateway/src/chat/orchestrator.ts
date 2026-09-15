@@ -1,5 +1,7 @@
 import { submitCanonicalInput } from "./input-control.js";
 import { type CanonicalSubmitChatInputRequest, type CanonicalChatInputSubmissionResponse } from "@matrix-os/contracts";
+import { BackgroundProjectionDetached, recoverBackgroundRunControl } from "./background-run-control.js";
+import { activityPersistenceId } from "./activity-persistence.js";
 import { createHash, randomUUID } from "node:crypto";
 import {
   CanonicalChatMessageSchema,
@@ -7,7 +9,6 @@ import {
   CanonicalChatRunAdmissionResponseSchema,
   CanonicalChatRunSteeringResponseSchema,
   CanonicalChatRunSchema,
-  CanonicalChatSafeErrorSchema,
   CanonicalChatTurnAdmissionResponseSchema,
   CanonicalChatTurnSchema,
   CanonicalCreateChatTurnRequestSchema,
@@ -23,7 +24,6 @@ import {
   type CanonicalChatQueueAdmissionResponse,
   type CanonicalChatRunCancellationResponse,
   type CanonicalChatRunSteeringResponse,
-  type CanonicalChatSafeError,
   type CanonicalChatTurnAdmissionResponse,
   type CanonicalCreateChatTurnRequest,
   type CanonicalQueueChatTurnRequest,
@@ -55,14 +55,13 @@ import {
   ChatBusyError,
   ChatConflictError,
   ChatNotFoundError,
-  ChatProviderInstanceLockedError,
-  ChatRunNotAcknowledgeableError,
   ChatRunNotActiveError,
   type ChatRepository,
 } from "./repository.js";
 import type { ChatOwner } from "./records.js";
 import {
   CanonicalQueueAdmissionError,
+  chatProviderRequirements,
   enqueueCanonicalQueuedTurn,
 } from "./queue-admission.js";
 import { recoverOrphanedRun } from "./orphaned-run-recovery.js";
@@ -71,18 +70,22 @@ import { dispatchAdmissionKey, hasStoppingChatExecution } from "./dispatch-owner
 import { loadChatResumeState } from "./resume-checkpoint.js";
 import { boundedOperation } from "../bounded-operation.js";
 import { CHAT_RUN_CLEANUP_UNCONFIRMED_MESSAGE, diagnoseChatRunFailure, type ChatRunFailureDiagnostic } from "./failure-diagnostic.js";
+import {
+  CanonicalChatOrchestrationError,
+  canonicalChatSafeError as safeError,
+  mapRepositoryError,
+} from "./orchestration-errors.js";
+import {
+  SharedChatExecutionCoordinator,
+  type SharedChatExecutionCoordinatorOptions,
+} from "./shared-execution-coordinator.js";
 
 const MAX_ACTIVE_RUNS_GLOBAL = 64;
 const MAX_ACTIVE_RUNS_PER_OWNER = 8;
 const MAX_ASSISTANT_TEXT = 96 * 1024;
 const STEER_FINALIZE_ATTEMPTS = 2;
 
-export class CanonicalChatOrchestrationError extends Error {
-  constructor(readonly safeError: CanonicalChatSafeError, readonly status: 400 | 404 | 409 | 503) {
-    super(safeError.safeMessage);
-    this.name = "CanonicalChatOrchestrationError";
-  }
-}
+export { CanonicalChatOrchestrationError, mapRepositoryError } from "./orchestration-errors.js";
 
 interface ActiveRun {
   admissionKey?: string;
@@ -92,6 +95,7 @@ interface ActiveRun {
   chatId: string;
   runId: string;
   instanceId: string;
+  sharedScopeId?: string;
   completion: Promise<void>;
 }
 
@@ -147,30 +151,10 @@ function mapSteerFinalizationError(error: unknown): never {
   );
 }
 
-function activityPersistenceId(runId: string, event: Record<string, unknown>): string {
-  if (event.type !== "agent.activity" || typeof event.activityId !== "string") return id("activity_");
-  const digest = createHash("sha256").update(`${runId}\0${event.activityId}`).digest("hex").slice(0, 32);
-  return `activity_${digest}`;
-}
-
 function assistantMessageId(runId: string, providerMessageId?: string): string {
   if (!providerMessageId) return `msg_${runId.slice("run_".length)}_assistant`;
   const digest = createHash("sha256").update(`${runId}\0${providerMessageId}`).digest("hex").slice(0, 32);
   return `msg_${digest}`;
-}
-
-function safeError(
-  code: CanonicalChatSafeError["code"],
-  safeMessage: string,
-  retryable = false,
-  recoveryActions?: CanonicalChatSafeError["recoveryActions"],
-): CanonicalChatSafeError {
-  return CanonicalChatSafeErrorSchema.parse({
-    code,
-    safeMessage,
-    retryable,
-    ...(recoveryActions ? { recoveryActions } : {}),
-  });
 }
 
 function promptFor(parts: CanonicalCreateChatTurnRequest["parts"]): string {
@@ -211,59 +195,13 @@ function shellQuotedOwnerReference(ownerReference: string): string {
   return `"$MATRIX_HOME"/'${ownerReference.replaceAll("'", "'\\''")}'`;
 }
 
-function requirementsFor(input: CanonicalCreateChatTurnRequest) {
-  return {
-    attachments: input.parts.flatMap((part) =>
-      part.type === "attachment_reference" ? [part.kind] : []
-    ),
-    resources: input.parts.flatMap((part) =>
-      part.type === "resource_reference" ? [part.resource.kind] : []
-    ),
-    interactionMode: input.interactionMode,
-    permissionMode: input.permissionMode,
-    worktree: input.executionRoot?.kind === "worktree",
-  };
-}
-
-export function mapRepositoryError(error: unknown): never {
-  if (error instanceof ChatNotFoundError) {
-    throw new CanonicalChatOrchestrationError(safeError("chat_not_found", "Chat not found."), 404);
-  }
-  if (error instanceof ChatBusyError) {
-    throw new CanonicalChatOrchestrationError(safeError("chat_busy", "This Chat already has an active Run."), 409);
-  }
-  if (error instanceof ChatProviderInstanceLockedError) {
-    throw new CanonicalChatOrchestrationError(safeError(
-      "provider_instance_locked",
-      "This Chat is already bound to another Provider instance.",
-      false,
-      ["fork_chat", "start_new_chat"],
-    ), 409);
-  }
-  if (error instanceof ChatRunNotAcknowledgeableError) {
-    throw new CanonicalChatOrchestrationError(safeError(
-      "run_unavailable",
-      "Only a successful completed Run can be acknowledged.",
-    ), 409);
-  }
-  if (error instanceof ChatRunNotActiveError) {
-    throw new CanonicalChatOrchestrationError(
-      safeError("run_unavailable", "The Run is no longer active."),
-      409,
-    );
-  }
-  if (error instanceof ChatConflictError) {
-    throw new CanonicalChatOrchestrationError(safeError("chat_conflict", "Chat changed. Refresh and try again.", true, ["retry"]), 409);
-  }
-  throw error;
-}
-
 export class CanonicalChatOrchestrator {
   private readonly active = new Map<string, ActiveRun>();
   private readonly pendingDispatch = new Set<string>();
   private readonly queueDispatches = new Set<string>();
   private readonly reconciliation = new Map<string, Promise<number>>();
   private readonly shutdownDrainMs: number;
+  private readonly sharedExecution: SharedChatExecutionCoordinator;
   private closing = false;
 
   constructor(private readonly options: {
@@ -300,6 +238,10 @@ export class CanonicalChatOrchestrator {
       assertPersonalExecutionAllowed(owner: ChatOwner, chatId: string): Promise<void>;
     };
     onAiGeneration?: (input: AiGenerationInput) => void;
+    onSharedEvent?: (scopeId: string) => Promise<void>;
+    sharedExecutionCoordinatorFactory?: (
+      options: SharedChatExecutionCoordinatorOptions,
+    ) => SharedChatExecutionCoordinator;
     now?: () => Date;
     shutdownDrainMs?: number;
   }) {
@@ -307,6 +249,38 @@ export class CanonicalChatOrchestrator {
     if (!Number.isInteger(this.shutdownDrainMs) || this.shutdownDrainMs < 1 || this.shutdownDrainMs > 60_000) {
       throw new RangeError("Invalid canonical Chat shutdown drain timeout");
     }
+    const coordinatorOptions: SharedChatExecutionCoordinatorOptions = {
+      repository: options.repository,
+      isClosing: () => this.closing,
+      atCapacity: (owner) => this.atCapacity(owner),
+      hasActiveRun: (owner, chatId) => [...this.active.values()].some((entry) => (
+        entry.chatId === chatId && entry.owner.type === owner.type
+        && entry.owner.ownerId === owner.ownerId
+      )),
+      getActiveRun: (runId) => this.active.get(runId),
+      startDispatch: ({ owner, message, run, adapter, scopeId, onComplete }) => {
+        this.startDispatch(
+          owner,
+          message,
+          run,
+          adapter,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          scopeId,
+          onComplete,
+        );
+      },
+      runUnavailableError: () => new CanonicalChatOrchestrationError(
+        safeError("capability_mismatch", "This shared Run is no longer active."),
+        409,
+      ),
+      ...(options.onSharedEvent ? { onSharedEvent: options.onSharedEvent } : {}),
+      ...(options.now ? { now: options.now } : {}),
+    };
+    this.sharedExecution = options.sharedExecutionCoordinatorFactory?.(coordinatorOptions)
+      ?? new SharedChatExecutionCoordinator(coordinatorOptions);
   }
 
   get activeCount(): number {
@@ -375,7 +349,7 @@ export class CanonicalChatOrchestrator {
       catalog,
       selection: input.selection,
       ...(record.providerBinding ? { boundInstanceId: record.providerBinding.instanceId } : {}),
-      requirements: requirementsFor(input),
+      requirements: chatProviderRequirements(input),
     });
     if (!validated.ok) {
       throw new CanonicalChatOrchestrationError(validated.error, validated.error.code === "provider_instance_locked" ? 409 : 400);
@@ -743,9 +717,13 @@ export class CanonicalChatOrchestrator {
     resumeState?: unknown,
     promptOverride?: string,
     admissionKey?: string,
+    sharedScopeId?: string,
+    onComplete?: () => Promise<void>,
   ): void {
     const controller = new AbortController();
-    const completion = this.dispatch(owner, message, run, adapter, controller, resolvedRoot, resumeState, promptOverride)
+    const completion = this.dispatch(
+      owner, message, run, adapter, controller, resolvedRoot, resumeState, promptOverride, sharedScopeId,
+    )
       .catch((error: unknown) => {
         console.error("[chat/orchestrator] Run dispatch failed:", error instanceof Error ? error.name : "UnknownError");
       })
@@ -753,7 +731,8 @@ export class CanonicalChatOrchestrator {
         this.active.delete(run.id);
         if (this.closing) return;
         try {
-          await this.dispatchNextQueued(owner, run.chatId);
+          if (onComplete) await onComplete();
+          else await this.dispatchNextQueued(owner, run.chatId);
         } catch (error: unknown) {
           console.error(
             "[chat/orchestrator] Queued Run dispatch failed:",
@@ -769,8 +748,23 @@ export class CanonicalChatOrchestrator {
       chatId: run.chatId,
       runId: run.id,
       instanceId: run.instanceId,
+      ...(sharedScopeId ? { sharedScopeId } : {}),
       completion,
     });
+  }
+
+  async dispatchNextSharedQueued(
+    owner: ChatOwner,
+    chatId: string,
+    scopeId: string,
+    createAdapter: (
+      context: Parameters<SharedChatExecutionCoordinator["dispatchNextQueued"]>[3] extends (
+        context: infer Context,
+      ) => unknown ? Context : never,
+    ) => Promise<CanonicalChatProviderAdapter> | CanonicalChatProviderAdapter,
+  ): Promise<void> {
+    this.assertOpen();
+    await this.sharedExecution.dispatchNextQueued(owner, chatId, scopeId, createAdapter);
   }
 
   private async dispatchNextQueued(owner: ChatOwner, chatId: string): Promise<void> {
@@ -855,13 +849,14 @@ export class CanonicalChatOrchestrator {
     resolvedRoot?: ResolvedChatExecutionRoot,
     resumeState?: unknown,
     promptOverride?: string,
+    sharedScopeId?: string,
   ): Promise<void> {
     const startedAt = (this.options.now ?? (() => new Date()))().toISOString();
     let cleanupUnconfirmed = false;
     let lastKnownState: unknown;
     let failureStage: ChatRunFailureDiagnostic["stage"] = "preparation";
     try {
-      await this.assertPersonalExecutionAllowed(owner, run.chatId);
+      if (!sharedScopeId) await this.assertPersonalExecutionAllowed(owner, run.chatId);
       if (resolvedRoot && this.options.executionRoots) {
         const provenance: ChatExecutionRootProvenance = {
           ref: resolvedRoot.ref!,
@@ -875,6 +870,7 @@ export class CanonicalChatOrchestrator {
         turnId: run.turnId,
         status: "running",
       }], startedAt);
+      await this.sharedExecution.notify(sharedScopeId);
 
       const input: CanonicalProviderRunInput = {
         owner,
@@ -933,11 +929,13 @@ export class CanonicalChatOrchestrator {
             delta: event.delta,
             createdAt: (this.options.now ?? (() => new Date()))().toISOString(),
           });
+          await this.sharedExecution.notify(sharedScopeId);
         } else if (event.type === "run.completed") {
           terminal = event;
         } else {
           failureStage = "persistence";
           await this.persistActivities(owner, run, [event]);
+          await this.sharedExecution.notify(sharedScopeId);
         }
         failureStage = "provider";
       }
@@ -950,6 +948,7 @@ export class CanonicalChatOrchestrator {
       failureStage = "persistence";
       try {
         await this.persistActivities(owner, run, terminalActivities, completedAt);
+        await this.sharedExecution.notify(sharedScopeId);
       } catch (activityError: unknown) {
         if (!(activityError instanceof ChatConflictError)) throw activityError;
         console.warn(
@@ -961,8 +960,12 @@ export class CanonicalChatOrchestrator {
         chatId: run.chatId,
         runId: run.id,
         outcome: terminal.outcome,
+        ...(sharedScopeId && terminal.outcome === "failed"
+          ? { sharedRequestState: "interrupted" as const }
+          : {}),
         completedAt,
       });
+      await this.sharedExecution.notify(sharedScopeId);
       try {
         this.options.onAiGeneration?.({
           traceId: run.id,
@@ -987,6 +990,7 @@ export class CanonicalChatOrchestrator {
       }
     } catch (error: unknown) {
       if (error instanceof ChatRunNotActiveError) return;
+      if (controller.signal.reason instanceof BackgroundProjectionDetached) return;
       if (cleanupUnconfirmed) {
         controller.abort();
         console.warn("[chat/orchestrator] Execution cleanup unconfirmed", { runId: run.id });
@@ -1036,9 +1040,13 @@ export class CanonicalChatOrchestrator {
           chatId: run.chatId,
           runId: run.id,
           outcome,
+          ...(sharedScopeId && outcome === "failed"
+            ? { sharedRequestState: "interrupted" as const }
+            : {}),
           completedAt,
           ...(outcome === "failed" ? { diagnostic: diagnoseChatRunFailure(error, failureStage) } : {}),
         });
+        await this.sharedExecution.notify(sharedScopeId);
       } catch (finishError: unknown) {
         if (!(finishError instanceof ChatRunNotActiveError)) throw finishError;
       }
@@ -1067,17 +1075,20 @@ export class CanonicalChatOrchestrator {
     runId: string,
   ): Promise<CanonicalChatRunCancellationResponse> {
     await this.assertPersonalExecutionAllowed(owner, chatId);
-    const active = this.active.get(runId);
+    const active = this.active.get(runId) ?? await recoverBackgroundRunControl({ owner, chatId, runId, repository: this.options.repository, adapters: this.options.adapters });
     let providerCancellation: Promise<void> | undefined;
     if (active && active.chatId === chatId && active.owner.type === owner.type
       && active.owner.ownerId === owner.ownerId) {
-      active.controller.abort();
+      if (!active.adapter.detachOnShutdown) active.controller.abort();
       providerCancellation = (async () => {
         const state = await this.options.repository.getAdapterState(owner, {
           runId,
           driverKind: active.adapter.driverKind,
           instanceId: active.instanceId,
         });
+        if (active.adapter.detachOnShutdown && (!state || state.schemaVersion !== active.adapter.stateSchemaVersion || !active.adapter.cancel)) {
+          throw new Error("Background cancellation identity unavailable");
+        }
         await active.adapter.cancel?.({
           owner,
           chatId,
@@ -1086,7 +1097,12 @@ export class CanonicalChatOrchestrator {
         });
       })().catch((error: unknown) => {
         console.warn("[chat/orchestrator] Provider cancel callback failed:", error instanceof Error ? error.name : "UnknownError");
+        if (active.adapter.detachOnShutdown) throw error;
       });
+      if (active.adapter.detachOnShutdown) {
+        await boundedOperation(() => providerCancellation!, 15_000);
+        active.controller.abort();
+      }
     }
     try {
       const finished = await this.options.repository.finishRun(owner, {
@@ -1116,6 +1132,15 @@ export class CanonicalChatOrchestrator {
     } catch (error: unknown) {
       return mapRepositoryError(error);
     }
+  }
+
+  async cancelSharedRun(
+    owner: ChatOwner,
+    scopeId: string,
+    chatId: string,
+    runId: string,
+  ): Promise<void> {
+    await this.sharedExecution.cancel(owner, scopeId, chatId, runId);
   }
 
   async steerRun(
@@ -1346,7 +1371,7 @@ export class CanonicalChatOrchestrator {
   ): Promise<CanonicalChatApprovalSubmissionResponse> {
     await this.assertPersonalExecutionAllowed(owner, chatId);
     const input = CanonicalSubmitChatApprovalRequestSchema.parse(inputValue);
-    const active = this.active.get(runId);
+    const active = this.active.get(runId) ?? await recoverBackgroundRunControl({ owner, chatId, runId, repository: this.options.repository, adapters: this.options.adapters });
     if (!active || active.chatId !== chatId || active.owner.type !== owner.type
       || active.owner.ownerId !== owner.ownerId || !active.adapter.submitApproval) {
       throw new CanonicalChatOrchestrationError(
@@ -1419,6 +1444,7 @@ export class CanonicalChatOrchestrator {
           chatId: context.latestRun.chatId,
           runId: context.latestRun.id,
           outcome: "failed",
+          sharedRequestState: "interrupted",
           completedAt,
           diagnostic: diagnoseChatRunFailure(error, "preparation"),
         });
@@ -1438,6 +1464,7 @@ export class CanonicalChatOrchestrator {
           repository: this.options.repository,
           adapter: this.options.adapters.get(context.latestRun.driverKind),
           messageId: assistantMessageId,
+          persistActivities: (activities) => this.persistActivities(owner, context.latestRun, activities, completedAt),
           completedAt,
         });
         if (recovery === "pending") continue;
@@ -1484,7 +1511,28 @@ export class CanonicalChatOrchestrator {
     let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
       await Promise.race([
-        Promise.allSettled(active.map((entry) => this.cancelRun(entry.owner, entry.chatId, entry.runId)))
+        Promise.allSettled(active.map(async (entry) => {
+          if (entry.adapter.detachOnShutdown) {
+            const state = await this.options.repository.getAdapterState(entry.owner, {
+              runId: entry.runId, driverKind: entry.adapter.driverKind, instanceId: entry.instanceId,
+            });
+            if (state?.schemaVersion === entry.adapter.stateSchemaVersion) {
+              entry.adapter.parseState(state.state);
+              entry.controller.abort(new BackgroundProjectionDetached());
+              return;
+            }
+          }
+          if (entry.sharedScopeId) {
+            await this.cancelSharedRun(
+              entry.owner,
+              entry.sharedScopeId,
+              entry.chatId,
+              entry.runId,
+            );
+            return;
+          }
+          await this.cancelRun(entry.owner, entry.chatId, entry.runId);
+        }))
           .then(() => this.drain()),
         new Promise<void>((resolve) => {
           timeout = setTimeout(resolve, this.shutdownDrainMs);

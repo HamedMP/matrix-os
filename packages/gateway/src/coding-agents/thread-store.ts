@@ -1,3 +1,4 @@
+import { applyBackgroundThreadStop, withBackgroundResumeState, BackgroundThreadStopSchema, type BackgroundThreadStop } from "./background-thread-stop.js";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -27,6 +28,15 @@ import {
   type CreateAgentTurnResponse,
   type UserInputAnswerRequest,
 } from "@matrix-os/contracts";
+import {
+  MAX_PENDING_TERMINAL_STOPS,
+  PendingTerminalStopSchema,
+  TerminalStoppedStatusSchema,
+  appendPendingTerminalStop,
+  consumePendingTerminalStop,
+  terminalStopMatchesThread,
+  type PendingTerminalStop,
+} from "./thread-terminal-stops.js";
 import { atomicWriteJson } from "../state-ops.js";
 import type { RequestPrincipal } from "../request-principal.js";
 import { logCodingAgentWarning } from "./diagnostics.js";
@@ -81,7 +91,6 @@ const MAX_EVENTS_PER_THREAD = 500;
 const MAX_ABORT_REQUEST_IDS = 50;
 const MAX_APPROVAL_DECISION_REQUEST_IDS = 50;
 const MAX_INPUT_ANSWER_REQUEST_IDS = 50;
-const MAX_PENDING_TERMINAL_STOPS = 100;
 // Retain bounded request payloads for dispatch/idempotency. At the shared
 // 96 KiB request limit, this caps worst-case turn payload storage below 10 MiB.
 const MAX_STORED_TURNS = 100;
@@ -100,6 +109,7 @@ const StoredThreadSchema = AgentThreadSummarySchema.extend({
   activeTurnId: AgentTurnIdSchema.optional(),
   deliveredTurnId: AgentTurnIdSchema.optional(),
   providerResumeState: CodingAgentProviderResumeStateSchema.optional(),
+  providerEventOffset: z.number().int().min(0).max(16 * 1024 * 1024).optional(),
 }).strict();
 
 const StoredTurnSchema = z.object({
@@ -128,15 +138,6 @@ const TerminalTabStoppedReconciliationSchema = z.object({
   terminalRef: TerminalRefSchema,
   runtimeStatus: z.enum(["starting", "running", "idle", "waiting", "exited", "failed", "degraded"]),
 }).strict();
-const TerminalStoppedStatusSchema = z.enum(["exited", "failed", "degraded"]);
-const PendingTerminalStopSchema = z.object({
-  ownerId: OwnerIdSchema,
-  workspaceSessionId: WorkspaceSessionIdSchema.optional(),
-  terminalRef: TerminalRefSchema,
-  runtimeStatus: TerminalStoppedStatusSchema,
-  occurredAt: IsoTimestampSchema,
-}).strict();
-
 const StoredThreadStateSchema = z.object({
   version: z.literal(1),
   threads: z.array(StoredThreadSchema).max(MAX_STORED_THREADS),
@@ -153,7 +154,6 @@ type TurnAcceptMutationResult = {
   eventsToPublish: AgentThreadEvent[];
   dispatch?: { thread: StoredThread; turn: StoredTurn };
 };
-type PendingTerminalStop = z.infer<typeof PendingTerminalStopSchema>;
 type AgentThreadSnapshot = z.infer<typeof AgentThreadSnapshotSchema>;
 type ThreadCreateResult = { snapshot: AgentThreadSnapshot; existing: boolean };
 type ThreadCreateMutationResult = ThreadCreateResult & {
@@ -181,6 +181,7 @@ export interface CodingAgentThreadStoreOptions {
   projectionPublisher?: CodingAgentThreadProjectionPublisher;
   maxTurnDispatches?: number;
   turnDispatchTimeoutMs?: number;
+  restoreProviderThread?: (thread: StoredThread) => Promise<boolean>;
 }
 
 export interface CodingAgentThreadStore {
@@ -218,6 +219,7 @@ export interface CodingAgentThreadStore {
     principal: RequestPrincipal,
     threadId: string,
     batch: CodingAgentProviderEventBatch,
+    cursor?: { sessionId: string; offset: number },
   ): Promise<AgentThreadSnapshot>;
   abortThread(principal: RequestPrincipal, threadId: string, clientRequestId: string, scope?: CodingAbortScope): Promise<AgentThreadSnapshot>;
   steerTurn(
@@ -237,6 +239,7 @@ export interface CodingAgentThreadStore {
     inputRequestId: string,
     request: UserInputAnswerRequest,
   ): Promise<AgentThreadSnapshot>;
+  reconcileBackgroundSessionStopped(input: BackgroundThreadStop): Promise<void>;
   reconcileTerminalTabStopped(input: TerminalTabStoppedReconciliation): Promise<AgentThreadSnapshot[]>;
   registerEventSink(sink: ThreadEventSink): { dispose(): void };
 }
@@ -445,6 +448,7 @@ function stripOwner(thread: StoredThread): AgentThreadSummary {
     activeTurnId: _activeTurnId,
     deliveredTurnId: _deliveredTurnId,
     providerResumeState: _providerResumeState,
+    providerEventOffset: _providerEventOffset,
     ...summary
   } = thread;
   return AgentThreadSummarySchema.parse(summary);
@@ -556,49 +560,6 @@ function stoppedRuntimeStatus(
   runtimeStatus: TerminalTabStoppedReconciliation["runtimeStatus"],
 ): runtimeStatus is PendingTerminalStop["runtimeStatus"] {
   return TerminalStoppedStatusSchema.safeParse(runtimeStatus).success;
-}
-
-function appendPendingTerminalStop(
-  pendingTerminalStops: PendingTerminalStop[],
-  stop: PendingTerminalStop,
-): PendingTerminalStop[] {
-  return [
-    ...pendingTerminalStops.filter((candidate) =>
-      candidate.ownerId !== stop.ownerId ||
-      candidate.workspaceSessionId !== stop.workspaceSessionId ||
-      candidate.terminalRef.workspaceId !== stop.terminalRef.workspaceId ||
-      candidate.terminalRef.tabId !== stop.terminalRef.tabId
-    ),
-    stop,
-  ].slice(-MAX_PENDING_TERMINAL_STOPS);
-}
-
-function workspaceSessionIdForThread(threadId: string): string {
-  return `sess_${threadId.slice("thread_".length)}`;
-}
-
-function terminalStopMatchesThread(stop: Pick<PendingTerminalStop, "ownerId" | "workspaceSessionId" | "terminalRef">, thread: StoredThread): boolean {
-  return thread.ownerId === stop.ownerId &&
-    thread.terminalRef?.workspaceId === stop.terminalRef.workspaceId &&
-    thread.terminalRef.tabId === stop.terminalRef.tabId &&
-    (stop.workspaceSessionId === undefined || stop.workspaceSessionId === workspaceSessionIdForThread(thread.id));
-}
-
-function consumePendingTerminalStop(
-  pendingTerminalStops: PendingTerminalStop[],
-  thread: StoredThread,
-): { pendingStop?: PendingTerminalStop; pendingTerminalStops: PendingTerminalStop[] } {
-  if (!thread.terminalRef) {
-    return { pendingTerminalStops };
-  }
-  const pendingStop = pendingTerminalStops.find((candidate) => terminalStopMatchesThread(candidate, thread));
-  if (!pendingStop) {
-    return { pendingTerminalStops };
-  }
-  return {
-    pendingStop,
-    pendingTerminalStops: pendingTerminalStops.filter((candidate) => candidate !== pendingStop),
-  };
 }
 
 function invalidInputAnswer(message: string): never {
@@ -789,7 +750,7 @@ export function createCodingAgentThreadStore(
       let nextThread = thread;
       for (const event of events) nextThread = applyEvent(nextThread, event);
       if (parsed.resumeState) {
-        nextThread = { ...nextThread, providerResumeState: parsed.resumeState };
+        nextThread = withBackgroundResumeState(nextThread, parsed.resumeState);
       }
       if (parsed.providerThreadId) {
         if (!nextThread.providerResumeState) {
@@ -804,7 +765,7 @@ export function createCodingAgentThreadStore(
         nextThread = {
           ...nextThread,
           providerResumeState: {
-            conversationId: nextThread.providerResumeState.conversationId,
+            ...nextThread.providerResumeState,
             providerThreadId: parsed.providerThreadId,
           },
         };
@@ -925,10 +886,8 @@ export function createCodingAgentThreadStore(
       ];
       let nextThread = thread;
       for (const event of events) nextThread = applyEvent(nextThread, event);
-      nextThread = clearActiveTurn({
-        ...nextThread,
-        ...(input.resumeState ? { providerResumeState: input.resumeState } : {}),
-      });
+      nextThread = clearActiveTurn(nextThread);
+      if (input.resumeState) nextThread = withBackgroundResumeState(nextThread, input.resumeState);
       if (input.outcome === "delivered" && activeThread(nextThread)) {
         nextThread = { ...nextThread, deliveredTurnId: input.turnId };
       }
@@ -965,13 +924,24 @@ export function createCodingAgentThreadStore(
     timeoutMs: options.turnDispatchTimeoutMs,
   });
 
-  async function recoverActiveTurnsInternal(): Promise<void> {
+  async function recoverActiveTurnsInternal(shuttingDown = false): Promise<void> {
     const publications = await mutate(async (state) => {
       const recovered: Array<{ ownerId: string; threadId: string; events: AgentThreadEvent[] }> = [];
       let threads = state.threads;
       let turns = state.turns;
       let events = state.events;
       for (const thread of state.threads) {
+        if (shuttingDown && (thread.providerResumeState?.backgroundRef || providers.find(provider => provider.providerId === thread.providerId)?.backgroundExecution)) continue;
+        if ((activeThread(thread) || thread.activeTurnId) && await options.restoreProviderThread?.(thread)) {
+          if (thread.activeTurnId) {
+            // Dispatch was already handed to a durable service; observation owns completion now.
+            threads = threads.map(candidate => candidate === thread
+              ? { ...clearActiveTurn(thread), deliveredTurnId: thread.activeTurnId } : candidate);
+            turns = turns.map(turn => turn.ownerId === thread.ownerId && turn.threadId === thread.id && turn.turnId === thread.activeTurnId
+              ? settledTurn(turn, "completed", now().toISOString()) : turn);
+          }
+          continue;
+        }
         if (!thread.activeTurnId) continue;
         const recoveryEvents = terminalTurnEvents(thread.id, thread.activeTurnId, "failed");
         let nextThread = thread;
@@ -1035,7 +1005,7 @@ export function createCodingAgentThreadStore(
       let nextThread = thread;
       for (const event of input.providerEvents) nextThread = applyEvent(nextThread, event);
       if (input.providerResumeState) {
-        nextThread = { ...nextThread, providerResumeState: input.providerResumeState };
+        nextThread = withBackgroundResumeState(nextThread, input.providerResumeState);
       }
       const pending = consumePendingTerminalStop(state.pendingTerminalStops, nextThread);
       const events = [...input.providerEvents];
@@ -1230,7 +1200,7 @@ export function createCodingAgentThreadStore(
         thread = applyEvent(thread, event);
       }
       if (providerResumeState) {
-        thread = { ...thread, providerResumeState };
+        thread = withBackgroundResumeState(thread, providerResumeState);
       }
       const pending = consumePendingTerminalStop(state.pendingTerminalStops, thread);
       if (pending.pendingStop && activeThread(thread)) {
@@ -1487,7 +1457,7 @@ export function createCodingAgentThreadStore(
       activeInitialRuns.clear();
       await turnDispatcher.shutdown();
       await queue;
-      await recoverActiveTurnsInternal();
+      await recoverActiveTurnsInternal(true);
     },
     async listThreads(principal) {
       const state = await readState(options.homePath);
@@ -1557,7 +1527,7 @@ export function createCodingAgentThreadStore(
             events: state.events.filter((event) => !threadIds.has(event.threadId)),
             turns: state.turns.filter((turn) => !threadIds.has(turn.threadId)),
             pendingTerminalStops: state.pendingTerminalStops.filter((stop) =>
-              stop.ownerId !== principal.userId || !terminalRefKeys.includes(
+              !("terminalRef" in stop) || stop.ownerId !== principal.userId || !terminalRefKeys.includes(
                 `${stop.terminalRef.workspaceId}:${stop.terminalRef.tabId}`,
               )
             ),
@@ -1600,7 +1570,7 @@ export function createCodingAgentThreadStore(
       if (!thread) throw new CodingAgentThreadError("thread_not_found", "Thread not found");
       return snapshotFor(thread, state.events, cursor);
     },
-    async ingestProviderEvents(principal, threadId, batch) {
+    async ingestProviderEvents(principal, threadId, batch, cursor) {
       const parsed = parseCodingAgentProviderEventBatch(batch, threadId);
       if (parsed.resumeState) {
         throw new Error("Provider resume state cannot be ingested through the public event route");
@@ -1610,6 +1580,12 @@ export function createCodingAgentThreadStore(
           candidate.ownerId === principal.userId && candidate.id === threadId
         );
         if (!thread) throw new CodingAgentThreadError("thread_not_found", "Thread not found");
+        if (cursor) {
+          WorkspaceSessionIdSchema.parse(cursor.sessionId);
+          z.number().int().min(0).max(16 * 1024 * 1024).parse(cursor.offset);
+          if (thread.providerResumeState?.conversationId !== cursor.sessionId) throw new Error("Provider cursor identity mismatch");
+          if ((thread.providerEventOffset ?? -1) >= cursor.offset) return { state, result: { snapshot: snapshotFor(thread, state.events), eventsToPublish: [] as AgentThreadEvent[] } };
+        }
         const existingEventIds = new Set(
           state.events
             .filter((storedEvent) => storedEvent.threadId === threadId)
@@ -1631,11 +1607,12 @@ export function createCodingAgentThreadStore(
           nextThread = {
             ...nextThread,
             providerResumeState: {
-              conversationId: thread.providerResumeState.conversationId,
+              ...thread.providerResumeState,
               providerThreadId: parsed.providerThreadId,
             },
           };
         }
+        if (cursor) nextThread = { ...nextThread, providerEventOffset: cursor.offset };
         const nextState = {
           ...state,
           threads: state.threads.map((candidate) => candidate === thread ? nextThread : candidate),
@@ -1787,6 +1764,16 @@ export function createCodingAgentThreadStore(
       publish(principal.userId, threadId, result.eventsToPublish);
       return result.snapshot;
     },
+    async reconcileBackgroundSessionStopped(input) {
+      const parsed = BackgroundThreadStopSchema.parse(input);
+      const events = await mutate(async state => applyBackgroundThreadStop(state, parsed, {
+        active: activeThread,
+        settle: (turn, at) => settledTurn(turn, "failed", at),
+        events: (id, status) => terminalStoppedEvents(id, status, now, nextEventId),
+        apply: applyEvent,
+      }));
+      if (events.length) publish(parsed.ownerId, events[0]!.threadId, events);
+    },
     async reconcileTerminalTabStopped(input) {
       const parsed = TerminalTabStoppedReconciliationSchema.parse(input);
       if (!stoppedRuntimeStatus(parsed.runtimeStatus)) {
@@ -1809,6 +1796,7 @@ export function createCodingAgentThreadStore(
                 ...state,
                 pendingTerminalStops: state.pendingTerminalStops.filter((stop) =>
                   !(
+                    "terminalRef" in stop &&
                     stop.ownerId === parsed.ownerId &&
                     stop.workspaceSessionId === parsed.workspaceSessionId &&
                     stop.terminalRef.workspaceId === parsed.terminalRef.workspaceId &&
@@ -1863,6 +1851,7 @@ export function createCodingAgentThreadStore(
           turns: state.turns,
           pendingTerminalStops: state.pendingTerminalStops.filter((stop) =>
             !(
+              "terminalRef" in stop &&
               stop.ownerId === parsed.ownerId &&
               stop.workspaceSessionId === parsed.workspaceSessionId &&
               stop.terminalRef.workspaceId === parsed.terminalRef.workspaceId &&

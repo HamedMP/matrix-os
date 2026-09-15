@@ -1,3 +1,4 @@
+import { BackgroundProjectionDetached } from "../../packages/gateway/src/chat/background-run-control.js";
 import { describe, expect, it, vi } from "vitest";
 import { withAsyncChatInput } from "../../packages/gateway/src/chat/async-input-adapter.js";
 import { CodingChatStateSchema } from "../../packages/gateway/src/chat/coding-run-recovery.js";
@@ -32,6 +33,16 @@ function fixture() {
 }
 
 describe("asynchronous canonical questions", () => {
+  it("detaches on shutdown without reporting cancellation of background work", async () => {
+    const f = fixture();
+    const adapter = withAsyncChatInput({ ...f.native, detachOnShutdown: true });
+    const events: CanonicalProviderRunEvent[] = [];
+    const finished = (async () => { for await (const event of adapter.start(f.input)) events.push(event); })();
+    await vi.waitFor(() => expect(events.some(event => event.type === "assistant.delta")).toBe(true));
+    f.controller.abort(new BackgroundProjectionDetached());
+    await finished;
+    expect(events.some(event => event.type === "run.completed" || event.type === "input.resolved")).toBe(false);
+  });
   it("uses continuation identities accepted by the production coding state parser", async () => {
     const f = fixture();
     const native = { ...f.native, parseState: (state: unknown) => CodingChatStateSchema.parse(state), async *start(input: CanonicalProviderRunInput) {

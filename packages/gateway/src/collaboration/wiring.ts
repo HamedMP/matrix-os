@@ -2,6 +2,8 @@ import { sql, type Kysely } from "kysely";
 import type { Hono } from "hono";
 import type { UpgradeWebSocket } from "hono/ws";
 import type { ChatRepository } from "../chat/repository.js";
+import type { CanonicalChatOrchestrator } from "../chat/orchestrator.js";
+import type { MatrixFundedCredentialProvider } from "../funded-ai-credential-manager.js";
 import { CollaborationActorProofVerifier } from "./actor-proof.js";
 import { CollaborationAuthority } from "./authority.js";
 import { CollaborationChatAdapter } from "./chat-adapter.js";
@@ -13,6 +15,15 @@ import { CollaborationEventRegistry } from "./events.js";
 import { CollaborationParticipantResolver } from "./participant-resolver.js";
 import { CollaborationRepository } from "./repository.js";
 import { createCollaborationRoutes } from "./routes.js";
+import { createSharedAiRuntime } from "./shared-ai-runtime.js";
+import type { CollaborationChatExecutionAdapter } from "./chat-execution-adapter.js";
+import { CollaborationTerminalAdapter } from "./terminal-adapter.js";
+import { TerminalControlCoordinator } from "./terminal-control.js";
+import { CollaborationTerminalDispatcher } from "./terminal-dispatcher.js";
+import { CollaborationTerminalEventRegistry } from "./terminal-events.js";
+import { registerCollaborationTerminalWebSocketRoute } from "./terminal-websocket-route.js";
+import { createProjectTransitionJournal } from "./project-transition.js";
+import { createProjectFence } from "./project-fence.js";
 
 const MAX_PROOF_KEYS = 8;
 const ARTIFACT_CLEANUP_INTERVAL_MS = 60 * 60 * 1_000;
@@ -89,6 +100,8 @@ export async function createGatewayCollaboration(options: {
     runtimeId: options.config.runtimeId,
     preflightSecret: options.config.preflightSecret,
   });
+  const projectTransitions = createProjectTransitionJournal({ db: options.db });
+  const projectFence = createProjectFence({ db: options.db, transitions: projectTransitions });
   const outbox = new CollaborationDirectoryOutbox({
     db: options.db,
     platformBaseUrl: options.config.platformBaseUrl,
@@ -116,6 +129,12 @@ export async function createGatewayCollaboration(options: {
   cleanupTimer?.unref?.();
   let registered = false;
   let closing = false;
+  let chatExecutionAdapter: CollaborationChatExecutionAdapter | undefined;
+  let sharedAiRuntime: Awaited<ReturnType<typeof createSharedAiRuntime>> | undefined;
+  let terminalAdapter: CollaborationTerminalAdapter | undefined;
+  let terminalControl: TerminalControlCoordinator | undefined;
+  let terminalDispatcher: CollaborationTerminalDispatcher | undefined;
+  let terminalEventRegistry: CollaborationTerminalEventRegistry | undefined;
 
   return {
     repository,
@@ -126,6 +145,87 @@ export async function createGatewayCollaboration(options: {
     chatAdapter,
     outbox,
     collaborationGuard: chatScope,
+    projectTransitions,
+    projectFence,
+    projectOperationAdmission: {
+      withLegacyAdmission<T>(input: {
+        ownerType: "personal" | "organization";
+        ownerId: string;
+        projectId: string;
+        kind: "write" | "run";
+      }, operation: () => Promise<T>): Promise<T> {
+        return projectFence.withLegacyAdmission({
+          ...input,
+          authorityRuntimeId: options.config.runtimeId,
+        }, () => operation());
+      },
+    },
+    async enableSharedAi(input: {
+      orchestrator: CanonicalChatOrchestrator;
+      homePath: string;
+      fundedCredentialProvider?: MatrixFundedCredentialProvider;
+      supervisorSocket?: string;
+      brokerSocket?: string;
+      fetchImpl?: typeof fetch;
+    }): Promise<{ available: boolean }> {
+      if (registered || closing || sharedAiRuntime) {
+        throw new Error("Shared AI must be initialized exactly once before route registration");
+      }
+      sharedAiRuntime = await createSharedAiRuntime({
+        db: options.db,
+        repository: options.chatRepository,
+        chatScope,
+        authority,
+        verifier,
+        eventRegistry,
+        orchestrator: input.orchestrator,
+        platformBaseUrl: options.config.platformBaseUrl,
+        runtimeId: options.config.runtimeId,
+        serviceToken: options.config.serviceToken,
+        homePath: input.homePath,
+        resolveParticipant,
+        ...(input.fundedCredentialProvider ? { fundedCredentialProvider: input.fundedCredentialProvider } : {}),
+        ...(input.supervisorSocket ? { supervisorSocket: input.supervisorSocket } : {}),
+        ...(input.brokerSocket ? { brokerSocket: input.brokerSocket } : {}),
+        ...(input.fetchImpl ? { fetchImpl: input.fetchImpl } : {}),
+      });
+      if (sharedAiRuntime.available) chatExecutionAdapter = sharedAiRuntime.chatExecutionAdapter;
+      return { available: sharedAiRuntime.available };
+    },
+    enableSharedTerminal(input: {
+      registry: ConstructorParameters<typeof CollaborationTerminalAdapter>[0]["registry"];
+      runtime: ConstructorParameters<typeof CollaborationTerminalAdapter>[0]["runtime"];
+      executionEligibility: ConstructorParameters<typeof CollaborationTerminalAdapter>[0]["executionEligibility"];
+    }): { available: true } {
+      if (registered || closing || terminalAdapter) {
+        throw new Error("Shared terminal must be initialized exactly once before route registration");
+      }
+      terminalAdapter = new CollaborationTerminalAdapter({
+        repository,
+        registry: input.registry,
+        runtime: input.runtime,
+        runtimeId: options.config.runtimeId,
+        executionEligibility: input.executionEligibility,
+        preflightSecret: options.config.preflightSecret,
+      });
+      terminalControl = new TerminalControlCoordinator({
+        startTimer: options.startTimers,
+        onChanged: ({ scopeId }) => terminalEventRegistry?.publishState(scopeId),
+      });
+      terminalDispatcher = new CollaborationTerminalDispatcher({
+        authority,
+        terminal: terminalAdapter,
+        control: terminalControl,
+        resolveParticipant,
+      });
+      terminalEventRegistry = new CollaborationTerminalEventRegistry({
+        authorize: (scopeId, actorId) => authority.authorize({ scopeId, actorId, action: "read" }),
+        getTerminal: (scopeId, terminalId) => terminalAdapter!.get(scopeId, terminalId),
+        projectTerminal: (metadata) => terminalDispatcher!.project(metadata),
+        startTimers: options.startTimers,
+      });
+      return { available: true };
+    },
     register(input: { app: Hono; upgradeWebSocket: UpgradeWebSocket }): void {
       if (registered || closing) throw new Error("Collaboration routes are already registered or shutting down");
       registered = true;
@@ -136,9 +236,20 @@ export async function createGatewayCollaboration(options: {
         repository,
         chatScope,
         chatAdapter,
+        ...(chatExecutionAdapter ? { chatExecutionAdapter } : {}),
+        ...(terminalAdapter ? { terminalAdapter } : {}),
+        ...(terminalDispatcher ? { terminalDispatcher } : {}),
         resolveParticipant,
         onScopeCommitted: (scopeId) => eventRegistry.broadcastScope(scopeId),
-        onRevoked: (scopeId, actorId) => eventRegistry.notifyRevoked(scopeId, actorId),
+        onRevoked: (scopeId, actorId) => {
+          eventRegistry.notifyRevoked(scopeId, actorId);
+          terminalControl?.invalidateActor(scopeId, actorId);
+          terminalEventRegistry?.notifyRevoked(scopeId, actorId);
+        },
+        onRoleChanged: (scopeId, actorId, role) => {
+          if (role === "viewer") terminalControl?.invalidateActor(scopeId, actorId);
+          void terminalEventRegistry?.publishState(scopeId);
+        },
       }));
       registerCollaborationEventWebSocketRoute({
         app: input.app,
@@ -147,12 +258,32 @@ export async function createGatewayCollaboration(options: {
         authority,
         registry: eventRegistry,
       });
+      if (terminalAdapter && terminalDispatcher && terminalControl && terminalEventRegistry) {
+        registerCollaborationTerminalWebSocketRoute({
+          app: input.app,
+          upgradeWebSocket: input.upgradeWebSocket,
+          verifier,
+          authority,
+          dispatcher: terminalDispatcher,
+          registry: terminalEventRegistry,
+          control: terminalControl,
+        });
+      }
     },
     async shutdown(): Promise<void> {
       if (closing) return;
       closing = true;
       if (cleanupTimer) clearInterval(cleanupTimer);
+      await sharedAiRuntime?.shutdown();
+      sharedAiRuntime = undefined;
+      chatExecutionAdapter = undefined;
       eventRegistry.shutdown();
+      terminalEventRegistry?.shutdown();
+      terminalEventRegistry = undefined;
+      terminalControl?.close();
+      terminalControl = undefined;
+      terminalDispatcher = undefined;
+      terminalAdapter = undefined;
       await outbox.shutdown();
       participantResolver?.shutdown();
       verifier.shutdown();

@@ -698,7 +698,6 @@ export function createHermesChatProviderAdapter(options: {
               session_id: resumeState.sessionId,
               cols: 120,
               source: "matrix-os-desktop",
-              cwd: input.executionRoot ?? options.homePath,
               omit_messages: true,
             }))
           : await withinRun(client.request("session.create", {

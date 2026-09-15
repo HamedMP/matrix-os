@@ -13,6 +13,7 @@ function launcher(overrides: Partial<ScopeRuntimeLauncher> = {}): ScopeRuntimeLa
   return {
     list: vi.fn(async () => []),
     start: vi.fn(async () => undefined),
+    runChat: vi.fn(async () => ({ text: "Scoped response" })),
     stop: vi.fn(async () => undefined),
     ...overrides,
   };
@@ -44,7 +45,7 @@ describe("scope runtime supervisor", () => {
       uidMax: 65_519,
     });
     expect(SCOPE_RUNTIME_PROFILE.profileDigest)
-      .toBe("8f5c1d40eb30581026f89870c98d21064187386d36a80928a9eb2be7b671da37");
+      .toBe("6650e74684fd322251882f65c36e1226149087dac346eee8a43da426a57fad8e");
     expect(SCOPE_RUNTIME_PROFILE.adapters).toEqual([{
       adapterId: "claude-code",
       harnessVersion: "2.1.240",
@@ -77,6 +78,22 @@ describe("scope runtime supervisor", () => {
       adapterId: "claude-code",
       harnessVersion: "2.1.240",
       executionGeneration: "10",
+    });
+
+    await expect(controller.handle({
+      version: 1,
+      type: "runtime.chat",
+      requestId: REQUEST_ID,
+      runtimeHandle: RUNTIME_HANDLE,
+      executionGeneration: "10",
+      model: "claude-opus-4-6",
+      prompt: "Summarize the visible shared discussion.",
+    })).resolves.toMatchObject({ ok: true, text: "Scoped response" });
+    expect(native.runChat).toHaveBeenCalledWith({
+      runtimeHandle: RUNTIME_HANDLE,
+      executionGeneration: "10",
+      model: "claude-opus-4-6",
+      prompt: "Summarize the visible shared discussion.",
     });
 
     await expect(controller.handle({

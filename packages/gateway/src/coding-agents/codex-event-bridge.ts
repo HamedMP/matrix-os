@@ -25,6 +25,8 @@ const WatchInputSchema = z.object({
   threadId: AgentThreadSummarySchema.shape.id,
   sessionId: SessionIdSchema,
   startAtEnd: z.boolean().optional(),
+  startOffset: z.number().int().min(0).max(16 * 1024 * 1024).optional(),
+  checkpoint: z.boolean().optional(),
 }).strict();
 const MAX_WATCHERS = 100;
 const MAX_TRANSCRIPT_BYTES = 16 * 1024 * 1024;
@@ -47,9 +49,11 @@ type ProviderEventStore = {
     principal: RequestPrincipal,
     threadId: string,
     batch: CodingAgentProviderEventBatch,
+    cursor?: { sessionId: string; offset: number },
   ): Promise<unknown>;
 };
 type WatchEntry = {
+  checkpoint?: boolean;
   supervision: RuntimeSupervision;
   failureEvents?: AgentThreadEvent[];
   principal: RequestPrincipal;
@@ -262,6 +266,15 @@ export function createCodexEventBridge(options: {
       }
       absoluteOffset += newline - lineStart + 1;
       lineStart = newline + 1;
+      if (entry.checkpoint) {
+        await store.ingestProviderEvents(entry.principal, entry.threadId, {
+          events: [...events], ...(providerThreadId ? { providerThreadId } : {}),
+          ...(parsed.outcome && tokenUsage ? { tokenUsage } : {}),
+        }, { sessionId: entry.sessionId, offset: absoluteOffset });
+        events.length = 0;
+        providerThreadId = undefined;
+        tokenUsage = undefined;
+      }
     }
 
     const chunks: AgentThreadEvent[][] = [];
@@ -377,7 +390,9 @@ export function createCodexEventBridge(options: {
       threadId: string;
       sessionId: string;
       startAtEnd?: boolean;
-    }): Promise<{ path: string }> {
+      startOffset?: number;
+      checkpoint?: boolean;
+    }): Promise<{ path: string; offset?: number }> {
       if (closed || !await versionIsVerified()) {
         throw new Error("Codex structured events are unavailable");
       }
@@ -385,6 +400,8 @@ export function createCodexEventBridge(options: {
         threadId: input.threadId,
         sessionId: input.sessionId,
         ...(input.startAtEnd !== undefined ? { startAtEnd: input.startAtEnd } : {}),
+        ...(input.startOffset !== undefined ? { startOffset: input.startOffset } : {}),
+        ...(input.checkpoint !== undefined ? { checkpoint: input.checkpoint } : {}),
       });
       await ensureEventDirectory();
       const path = codexProviderEventPath(homePath, parsed.sessionId);
@@ -393,11 +410,11 @@ export function createCodexEventBridge(options: {
         if (existing.threadId !== parsed.threadId || existing.principal.userId !== input.principal.userId) {
           throw new Error("Codex event watcher identity mismatch");
         }
-        if (!parsed.startAtEnd) { existing.lastTouchedAt = nowMs(); return { path }; }
+        if (!parsed.startAtEnd) { existing.lastTouchedAt = nowMs(); existing.checkpoint ||= parsed.checkpoint; return { path, ...(parsed.checkpoint ? { offset: existing.offset } : {}) }; }
       }
       if (!existing) evictIfNeeded();
       // Renew supervision without dropping bytes already owned by an active watcher.
-      let offset = existing?.offset ?? 0;
+      let offset = existing?.offset ?? parsed.startOffset ?? 0;
       if (parsed.startAtEnd && !existing) {
         try {
           const info = await lstat(path);
@@ -412,8 +429,9 @@ export function createCodexEventBridge(options: {
         }
       }
       watchers.set(parsed.sessionId, {
+        checkpoint: parsed.checkpoint ?? existing?.checkpoint,
         supervision: { startedAt: nowMs(), nextProbeAt: nowMs() + 10_000, failures: 0,
-          ready: false, terminal: false },
+          ready: parsed.startOffset !== undefined, terminal: false },
         principal: input.principal,
         threadId: parsed.threadId,
         sessionId: parsed.sessionId,
@@ -421,7 +439,7 @@ export function createCodexEventBridge(options: {
         offset,
         lastTouchedAt: nowMs(),
       });
-      return { path };
+      return { path, ...(parsed.checkpoint ? { offset } : {}) };
     },
     unwatch(sessionId: string): void {
       if (SessionIdSchema.safeParse(sessionId).success) watchers.delete(sessionId);

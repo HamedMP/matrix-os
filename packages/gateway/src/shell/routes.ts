@@ -40,7 +40,6 @@ interface SessionRegistryRoutes {
     visualStatus?: "running" | "finished" | "idle" | "waiting";
   }): Promise<unknown>;
 }
-
 interface ShellSessionLifecycleRoutes {
   withSessionLifecycleLock<T>(name: string, operation: () => Promise<T>): Promise<T>;
   beginSessionDeletion(name: string): Promise<void>;

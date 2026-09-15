@@ -2,6 +2,7 @@ import { lstat, readFile, readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { z } from "zod/v4";
 import { migrateTerminalWorkspaces, rollbackTerminalWorkspaceMigration } from "./migration.js";
+import { initializeMatrixZellijConfig } from "./zellij-bootstrap.js";
 import { TerminalRuntime } from "./runtime.js";
 import { TerminalRuntimeSocketClient } from "./socket-client.js";
 import { TerminalRuntimeSocketServer } from "./socket-server.js";
@@ -89,6 +90,8 @@ async function main(): Promise<void> {
     await rollbackTerminalWorkspaceMigration({ homePath, cutover: zellij });
     return;
   }
+  // Migration starts Zellij in ExecStartPre, before the gateway can initialize it.
+  await initializeMatrixZellijConfig(homePath);
   await migrateTerminalWorkspaces({ homePath, projects: await listProjects(homePath), cutover: zellij });
   if (mode === "--migrate-only") return;
 

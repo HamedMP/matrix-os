@@ -1,3 +1,4 @@
+import { BackgroundProjectionDetached } from "./background-run-control.js";
 import { createHash } from "node:crypto";
 import { ASYNC_QUESTION_NOTICE } from "../coding-agents/async-input-notice.mjs";
 import type { CanonicalSubmitChatInputRequest } from "@matrix-os/contracts";
@@ -109,6 +110,7 @@ export function withAsyncChatInput(native: CanonicalChatProviderAdapter, options
         // One bounded answer payload per phase, without repeating all option descriptions.
         phaseAnswers = run.answers.splice(0, 1); phase++;
       }
+      if (native.detachOnShutdown && input.signal.reason instanceof BackgroundProjectionDetached) return;
       for (const requestId of run.pending.keys()) yield { type: "input.resolved", requestId, reason: "cancelled" };
       yield input.signal.aborted ? { type: "run.completed", outcome: "aborted", ...(tokenUsage ? { tokenUsage } : {}) } : lastTerminal;
     } finally {

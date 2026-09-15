@@ -1,7 +1,7 @@
 import { AgentThreadEventSchema, type AgentThreadEvent } from "@matrix-os/contracts";
 import { safeDisplayPath } from "../chat/safe-activity-projection.js";
 import { logCodingAgentWarning } from "./diagnostics.js";
-const MAX_DELTA_CHARS = 3_500;
+import { chunkAssistantText, chunkDisplayText } from "./pi-output-chunks.js";
 const MAX_TEXT_CHARS = 24_000;
 const MAX_SESSION_ID_CHARS = 64;
 
@@ -23,25 +23,6 @@ function safeToolName(raw: unknown): string {
   if (cleaned.length === 0) return "tool";
   if (/stack trace|\/home\/|\/tmp\/|\/var\/|\.ssh\/|id_rsa|bearer\s|sk-/i.test(cleaned)) return "tool";
   return cleaned;
-}
-
-// Contracts require non-blank text per event. Chunk long text preserving
-// order; fold whitespace-only chunks into the previous one so every emitted
-// chunk parses, keeping each chunk <= 4000 chars / 16KB.
-function chunkDisplayText(text: string): string[] {
-  const out: string[] = [];
-  for (let index = 0; index < text.length; index += MAX_DELTA_CHARS) {
-    const chunk = text.slice(index, index + MAX_DELTA_CHARS);
-    if (chunk.trim().length === 0) {
-      const last = out.at(-1);
-      if (last !== undefined && last.length + chunk.length <= 4_000) {
-        out[out.length - 1] = last + chunk;
-      }
-      continue;
-    }
-    out.push(chunk);
-  }
-  return out;
 }
 
 function truncateText(text: string, maxChars: number): { text: string; truncated: boolean } {
@@ -104,7 +85,7 @@ export function createPiRunCollector(options: PiRunCollectorOptions) {
   function emitPendingAssistantText(): void {
     if (!assistantMessageId || assistantEmittedChars >= assistantText.length) return;
     const pending = assistantText.slice(assistantEmittedChars);
-    for (const chunk of chunkDisplayText(pending)) {
+    for (const chunk of chunkAssistantText(pending)) {
       emit({ ...baseEvent(), type: "assistant.text.delta", messageId: assistantMessageId, delta: chunk });
     }
     assistantEmittedChars = assistantText.length;
@@ -119,7 +100,7 @@ export function createPiRunCollector(options: PiRunCollectorOptions) {
     if (options.streaming) {
       emitPendingAssistantText();
     } else {
-      for (const chunk of chunkDisplayText(bounded.text)) {
+      for (const chunk of chunkAssistantText(bounded.text)) {
         emit({ ...baseEvent(), type: "assistant.text.delta", messageId, delta: chunk });
       }
     }
