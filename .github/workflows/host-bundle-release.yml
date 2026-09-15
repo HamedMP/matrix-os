@@ -384,7 +384,7 @@ jobs:
   deploy:
     name: Deploy published host bundle
     needs: [dev-bundle-gate, build, publish]
-    if: ${{ needs.dev-bundle-gate.outputs.should_build == 'true' && github.event_name == 'workflow_dispatch' && inputs.deploy_after_publish && ((github.ref_type == 'branch' && github.ref_name == 'main') || github.ref_type == 'tag') }}
+    if: ${{ needs.dev-bundle-gate.outputs.should_build == 'true' && github.event_name == 'workflow_dispatch' && inputs.deploy_after_publish && inputs.channel != 'none' && ((github.ref_type == 'branch' && github.ref_name == 'main') || github.ref_type == 'tag') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
