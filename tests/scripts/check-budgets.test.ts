@@ -135,6 +135,39 @@ describe("checkBudgets", () => {
     await expect(checkBudgets({ root: "/tmp/../etc", config: { fileCap: 1, ratchets: {}, dirCaps: {}, allowlist: {} } })).rejects.toThrow();
   });
 
+  it("rejects allowlist entries without a linked issue and phase note", async () => {
+    const root = await fixture({ "packages/a/src/ok.ts": lines(10) });
+    try {
+      const base = { fileCap: 1000, ratchets: {}, dirCaps: {} };
+      await expect(
+        checkBudgets({ root, config: { ...base, allowlist: { "x.ts": { issue: "", note: "Phase 1" } } } }),
+      ).rejects.toThrow(/allowlist/);
+      await expect(
+        checkBudgets({ root, config: { ...base, allowlist: { "x.ts": { issue: "#1676" } } } }),
+      ).rejects.toThrow(/allowlist/);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("caps reported findings so memory stays bounded on huge trees", async () => {
+    const files = {};
+    for (let i = 0; i < 105; i += 1) {
+      files[`packages/a/src/f${i}.ts`] = lines(5);
+    }
+    const root = await fixture(files);
+    try {
+      const result = await checkBudgets({
+        root,
+        config: { fileCap: 1, ratchets: {}, dirCaps: {}, allowlist: {} },
+      });
+      expect(result.violations).toHaveLength(100);
+      expect(result.suppressed.violations).toBe(5);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("rejects a root that is not a directory", async () => {
     const root = await fixture({ "packages/a/src/ok.ts": lines(10) });
     try {

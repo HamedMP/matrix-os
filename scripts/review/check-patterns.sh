@@ -244,11 +244,17 @@ header "9. Architecture budgets — file LOC ratchets and flat-dir caps"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if command -v node &>/dev/null && [[ -f "$SCRIPT_DIR/check-budgets.mjs" ]]; then
-  BUDGET_OUTPUT=$(node "$SCRIPT_DIR/check-budgets.mjs" 2>&1 || true)
-  BUDGET_VIOLATIONS=$(printf '%s\n' "$BUDGET_OUTPUT" | grep -c '^VIOLATION' || true)
-  if [[ "$BUDGET_VIOLATIONS" -gt 0 ]]; then
-    violation "Architecture budget exceeded (see bun run check:budgets for details)"
-    printf '%s\n' "$BUDGET_OUTPUT" | grep '^VIOLATION' | head -20 || true
+  BUDGET_STATUS=0
+  BUDGET_OUTPUT=$(node "$SCRIPT_DIR/check-budgets.mjs" 2>&1) || BUDGET_STATUS=$?
+  if [[ "$BUDGET_STATUS" -ne 0 ]]; then
+    violation "check-budgets.mjs failed with exit $BUDGET_STATUS — architecture budgets unenforced"
+    printf '%s\n' "$BUDGET_OUTPUT" | head -20 || true
+  else
+    BUDGET_VIOLATIONS=$(printf '%s\n' "$BUDGET_OUTPUT" | grep -c '^VIOLATION' || true)
+    if [[ "$BUDGET_VIOLATIONS" -gt 0 ]]; then
+      violation "Architecture budget exceeded (see bun run check:budgets for details)"
+      printf '%s\n' "$BUDGET_OUTPUT" | grep '^VIOLATION' | head -20 || true
+    fi
   fi
 else
   warning "check-budgets.mjs skipped — node unavailable or script missing"

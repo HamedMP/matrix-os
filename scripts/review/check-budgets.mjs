@@ -23,6 +23,9 @@ const SKIP_DIRS = new Set(['node_modules', 'dist']);
 // Test-support data, not shipped architecture: large stub servers and
 // recorded payloads used only to exercise tests.
 const SKIP_ANYWHERE = new Set(['fixtures', '__fixtures__']);
+// Findings arrays are capped so a pathological tree cannot grow memory
+// without bound; overflow is reported via `suppressed` counts.
+const MAX_REPORTED_FINDINGS = 100;
 
 function fail(name, message) {
   throw new Error(`[check-budgets] ${name} ${message}`);
@@ -66,8 +69,10 @@ function validateConfig(config) {
   }
   for (const [rel, entry] of Object.entries(allowlist)) {
     assertRelPath('allowlist', rel);
-    if (entry === null || typeof entry !== 'object' || typeof entry.issue !== 'string') {
-      fail(`config.allowlist[${rel}]`, 'must be an object with an issue string.');
+    if (entry === null || typeof entry !== 'object'
+      || typeof entry.issue !== 'string' || entry.issue.length === 0
+      || typeof entry.note !== 'string' || entry.note.length === 0) {
+      fail(`config.allowlist[${rel}]`, 'must be an object with non-empty issue and note strings.');
     }
   }
   return { fileCap, ratchets, dirCaps, allowlist };
@@ -106,8 +111,10 @@ function isScannedSource(fileName) {
   return SOURCE_EXT.has(extOf(fileName)) && !isTestFile(fileName) && !isDeclarationFile(fileName);
 }
 
-async function walkSources(root) {
-  const found = new Map();
+async function walkSources(root, onFile) {
+  // Incremental: each source file is handed to onFile immediately, so no
+  // per-file state accumulates. The stack holds one entry per directory
+  // depth level; readdir listings are transient per directory.
   const stack = [root];
   while (stack.length > 0) {
     const dir = stack.pop();
@@ -115,7 +122,7 @@ async function walkSources(root) {
     try {
       entries = await readdir(dir, { withFileTypes: true });
     } catch (err) {
-      if (err?.code === 'ENOENT' || err?.code === 'ENOTDIR') return found;
+      if (err?.code === 'ENOENT' || err?.code === 'ENOTDIR') return;
       throw err;
     }
     for (const entry of entries) {
@@ -125,11 +132,10 @@ async function walkSources(root) {
       if (entry.isDirectory()) {
         if (!SKIP_DIRS.has(entry.name)) stack.push(abs);
       } else if (entry.isFile() && isScannedSource(entry.name)) {
-        found.set(relative(root, abs).split(sep).join('/'), abs);
+        await onFile(relative(root, abs).split(sep).join('/'), abs);
       }
     }
   }
-  return found;
 }
 
 async function readLineCount(abs) {
@@ -160,6 +166,18 @@ async function flatTsCount(dirAbs) {
   return count;
 }
 
+function makeFindings() {
+  return { items: [], suppressed: 0 };
+}
+
+function report(findings, item) {
+  if (findings.items.length < MAX_REPORTED_FINDINGS) {
+    findings.items.push(item);
+  } else {
+    findings.suppressed += 1;
+  }
+}
+
 export async function checkBudgets({ root, config }) {
   const absRoot = validateRoot(root);
   let rootStat;
@@ -173,45 +191,56 @@ export async function checkBudgets({ root, config }) {
     fail('root', `not a directory: ${absRoot}`);
   }
   const { fileCap, ratchets, dirCaps, allowlist } = validateConfig(config);
-  const violations = [];
-  const warnings = [];
+  const violations = makeFindings();
+  const warnings = makeFindings();
 
-  const sources = await walkSources(absRoot);
-  const lineCounts = new Map();
-  for (const [rel, abs] of sources) {
-    const n = await readLineCount(abs);
-    if (n !== null) lineCounts.set(rel, n);
-  }
+  // Ratchet observations are keyed by config entry, so retained state is
+  // bounded by the config file — not by tree size.
+  const ratchetSeen = Object.create(null);
+  await walkSources(absRoot, async (rel, abs) => {
+    const actual = await readLineCount(abs);
+    if (actual === null) return;
+    if (Object.hasOwn(ratchets, rel)) {
+      ratchetSeen[rel] = actual;
+    }
+    if (actual <= fileCap) return;
+    if (Object.hasOwn(allowlist, rel)) {
+      report(warnings, { kind: 'allowlisted', path: rel, actual, cap: fileCap, issue: allowlist[rel].issue });
+    } else {
+      report(violations, { kind: 'file-cap', path: rel, actual, max: fileCap });
+    }
+  });
 
   for (const [rel, max] of Object.entries(ratchets)) {
-    const abs = join(absRoot, rel.split('/').join(sep));
-    const actual = lineCounts.get(rel) ?? await readLineCount(abs);
-    if (actual === null || actual === undefined) {
-      warnings.push({ kind: 'stale-ratchet', path: rel, note: 'file missing; prune this entry' });
-    } else if (actual > max) {
-      violations.push({ kind: 'ratchet', path: rel, actual, max });
+    if (Object.hasOwn(ratchetSeen, rel)) {
+      const actual = ratchetSeen[rel];
+      if (actual > max) {
+        report(violations, { kind: 'ratchet', path: rel, actual, max });
+      }
+      continue;
     }
-  }
-
-  for (const [rel, actual] of lineCounts) {
-    if (actual <= fileCap) continue;
-    if (Object.hasOwn(allowlist, rel)) {
-      warnings.push({ kind: 'allowlisted', path: rel, actual, cap: fileCap, issue: allowlist[rel].issue });
-    } else {
-      violations.push({ kind: 'file-cap', path: rel, actual, max: fileCap });
+    const actual = await readLineCount(join(absRoot, rel.split('/').join(sep)));
+    if (actual === null) {
+      report(warnings, { kind: 'stale-ratchet', path: rel, note: 'file missing; prune this entry' });
+    } else if (actual > max) {
+      report(violations, { kind: 'ratchet', path: rel, actual, max });
     }
   }
 
   for (const [rel, max] of Object.entries(dirCaps)) {
     const actual = await flatTsCount(join(absRoot, rel.split('/').join(sep)));
     if (actual === null) {
-      warnings.push({ kind: 'stale-dir-cap', path: rel, note: 'directory missing; prune this entry' });
+      report(warnings, { kind: 'stale-dir-cap', path: rel, note: 'directory missing; prune this entry' });
     } else if (actual > max) {
-      violations.push({ kind: 'dir-cap', path: rel, actual, max });
+      report(violations, { kind: 'dir-cap', path: rel, actual, max });
     }
   }
 
-  return { violations, warnings };
+  return {
+    violations: violations.items,
+    warnings: warnings.items,
+    suppressed: { violations: violations.suppressed, warnings: warnings.suppressed },
+  };
 }
 
 function parseArgs(argv) {
@@ -240,12 +269,15 @@ async function main() {
     if (err?.code === 'ENOENT') fail('config', `not found: ${absConfig}`);
     throw err;
   }
-  const { violations, warnings } = await checkBudgets({ root, config });
+  const { violations, warnings, suppressed } = await checkBudgets({ root, config });
   for (const w of warnings) {
     console.log(`WARNING [${w.kind}] ${w.path}${w.actual !== undefined ? ` (${w.actual} lines)` : ''}${w.issue ? ` ${w.issue}` : ''}`);
   }
   for (const v of violations) {
     console.log(`VIOLATION [${v.kind}] ${v.path}: ${v.actual} > ${v.max}`);
+  }
+  if (suppressed.violations > 0 || suppressed.warnings > 0) {
+    console.log(`(+${suppressed.violations} violation(s), +${suppressed.warnings} warning(s) suppressed past report cap)`);
   }
   if (violations.length > 0) {
     console.log(`FAIL: ${violations.length} budget violation(s), ${warnings.length} warning(s)`);
