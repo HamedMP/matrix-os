@@ -574,6 +574,46 @@ describe("BillingSection", () => {
     expect(onCheckoutNavigate).toHaveBeenCalledWith("https://checkout.stripe.test/session");
   });
 
+  // A malformed or regressed platform response must never navigate the shell to
+  // a relative, plaintext, or executable-scheme checkout target.
+  it.each([
+    ["a relative path", "/billing/checkout"],
+    ["a plaintext URL", "http://checkout.stripe.test/session"],
+    // eslint-disable-next-line no-script-url
+    ["an executable scheme", "javascript:alert(1)"],
+    ["a data URL", "data:text/html,<script>alert(1)</script>"],
+    ["an overlong URL", `https://checkout.stripe.test/${"a".repeat(2048)}`],
+  ])("refuses to navigate checkout to %s", async (_label, url) => {
+    clerkState.isLoaded = true;
+    clerkState.activePlan = null;
+    let resolveCheckout!: (response: Response) => void;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (input === "/billing/checkout") {
+        return await new Promise<Response>((resolve) => { resolveCheckout = resolve; });
+      }
+      return new Response(JSON.stringify({ access: { runtimeProxyAllowed: false } }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    const { BillingSection } = await loadBillingSection();
+
+    const onCheckoutNavigate = vi.fn();
+    render(<BillingSection mode="provisioning" onCheckoutNavigate={onCheckoutNavigate} />);
+    await waitForBillingConfigurator();
+    fireEvent.click(screen.getByRole("button", { name: "Continue to pay" }));
+
+    expect(await screen.findByRole("button", { name: "Opening secure checkout" })).toBeTruthy();
+    await act(async () => {
+      resolveCheckout(new Response(JSON.stringify({ url }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }));
+    });
+
+    expect(onCheckoutNavigate).not.toHaveBeenCalled();
+  });
+
   it("closes only the picker on Escape without dismissing the Settings panel", async () => {
     clerkState.isLoaded = true;
     clerkState.activePlan = null;

@@ -36,4 +36,50 @@ describe('Web Desktop and Web Canvas billing portal access', () => {
   render(<BillingPanel active={false} entitlement={{...entitlement, source: 'stripe', status}} mode="settings" />);
   expect((screen.getByRole('button', {name: 'View receipts'}) as HTMLButtonElement).disabled).toBe(false);
  });
+
+ // A malformed or regressed platform response must never navigate the shell to a
+ // relative, plaintext, or executable-scheme target.
+ it.each([
+  ['a relative path', '/billing/portal'],
+  ['a plaintext URL', 'http://billing.stripe.com/p/session'],
+  // eslint-disable-next-line no-script-url
+  ['an executable scheme', 'javascript:alert(1)'],
+  ['a data URL', 'data:text/html,<script>alert(1)</script>'],
+  ['an overlong URL', `https://billing.stripe.com/p/${'a'.repeat(2048)}`],
+  ['a missing URL', undefined],
+ ])('refuses to navigate to %s returned by the portal endpoint', async (_label, url) => {
+  vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+   new Response(JSON.stringify(url === undefined ? {} : {url}), {status: 200}),
+  );
+  const assign = vi.fn();
+  const original = window.location;
+  Object.defineProperty(window, 'location', {configurable: true, value: {...original, assign}});
+  try {
+   render(<BillingPanel active entitlement={entitlement} mode="settings" />);
+   fireEvent.click(screen.getByRole('button', {name: 'View receipts'}));
+   await waitFor(() =>
+    expect(screen.getByText('Billing portal is unavailable. Try again in a moment.')).toBeTruthy(),
+   );
+   expect(assign).not.toHaveBeenCalled();
+  } finally {
+   Object.defineProperty(window, 'location', {configurable: true, value: original});
+  }
+ });
+
+ it('navigates to a normal Stripe HTTPS portal redirect', async () => {
+  const target = 'https://billing.stripe.com/p/session/live_abc123';
+  vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+   new Response(JSON.stringify({url: target}), {status: 200}),
+  );
+  const assign = vi.fn();
+  const original = window.location;
+  Object.defineProperty(window, 'location', {configurable: true, value: {...original, assign}});
+  try {
+   render(<BillingPanel active entitlement={entitlement} mode="settings" />);
+   fireEvent.click(screen.getByRole('button', {name: 'View receipts'}));
+   await waitFor(() => expect(assign).toHaveBeenCalledWith(target));
+  } finally {
+   Object.defineProperty(window, 'location', {configurable: true, value: original});
+  }
+ });
 });

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
+import { parseBillingRedirectUrl } from "@matrix-os/contracts";
 import { ArrowUpRightIcon, ExternalLinkIcon, Loader2Icon, PlusIcon, ReceiptTextIcon, XCircleIcon } from "@/lib/hugeicons";
 import { MATRIX_BILLING_SERVER_PROFILES } from "@/lib/billing";
 import type { BillingEntitlementSummary } from "@/hooks/useMatrixBillingAccess";
@@ -63,19 +64,20 @@ export function BillingPortalButton({
         signal: controller.signal,
       });
       const body = response.ok
-        ? (await response.json().catch((err: unknown) => {
+        ? await response.json().catch((err: unknown) => {
           capturePostHogLog("warn", "billing portal_response_parse_error", {
             source: "settings-billing",
             error_kind: err instanceof Error ? err.name : typeof err,
           });
           return null;
-        })) as { url?: string } | null
+        })
         : null;
-      if (!response.ok || !body?.url) {
+      const target = response.ok ? parseBillingRedirectUrl(body) : null;
+      if (!target) {
         // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler bailout on the throw inside try/catch; intentional control flow routing an unusable portal response into the catch handler. The code is correct.
         throw new Error("portal_unavailable");
       }
-      window.location.assign(body.url);
+      window.location.assign(target);
     } catch (err: unknown) {
       setError("Billing portal is unavailable. Try again in a moment.");
       capturePostHogLog("error", "billing portal_error", {
