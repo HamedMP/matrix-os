@@ -1,3 +1,5 @@
+import { PREVIEW_TERMINAL_HEADER, isPreviewTerminalPath } from "@matrix-os/contracts";
+import { PREVIEW_TERMINAL_CONTEXT_KEY, verifyPreviewTerminalDelegation } from "./preview-terminal-delegation.js";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { Context, MiddlewareHandler } from "hono";
 import { createRateLimiter } from "./security/rate-limiter.js";
@@ -192,6 +194,13 @@ export function authMiddleware(
   const webhookProviders = options?.webhookProviders ?? new Set<string>();
 
   return async (c, next) => {
+    const setTerminalDelegation = (actorId: string) => {
+      if (!token || !isPreviewTerminalPath(c.req.path)) return;
+      const delegation = verifyPreviewTerminalDelegation({
+        value: c.req.header(PREVIEW_TERMINAL_HEADER), key: token, actorId,
+      });
+      if (delegation) c.set(PREVIEW_TERMINAL_CONTEXT_KEY, delegation);
+    };
     // Read JWT config + handle per-call so env-var changes during tests
     // are picked up without recreating the middleware.
     const jwtKey = await readJwtKeyConfig();
@@ -313,6 +322,7 @@ export function authMiddleware(
         // Stash claims on the Hono context so downstream handlers can
         // resolve the authenticated Clerk userId through the request principal.
         c.set(JWT_CLAIMS_CONTEXT_KEY, claims);
+        setTerminalDelegation(claims.sub);
         return nextWithReady(c, next);
       } catch (err) {
         // Fall through. We don't expose JWT failure reasons to the client,
@@ -338,7 +348,10 @@ export function authMiddleware(
 
     if (legacyHeaderOk) {
       const platformUserId = readPlatformVerifiedUserId(c, token);
-      if (platformUserId) setPlatformVerifiedPrincipal(c, platformUserId);
+      if (platformUserId) {
+        setPlatformVerifiedPrincipal(c, platformUserId);
+        setTerminalDelegation(platformUserId);
+      }
       return nextWithReady(c, next);
     }
 

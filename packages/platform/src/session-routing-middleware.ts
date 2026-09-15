@@ -1,3 +1,5 @@
+import { PREVIEW_TERMINAL_HEADER } from "@matrix-os/contracts";
+import { buildPreviewTerminalDelegation } from "./preview-terminal-delegation.js";
 import { randomBytes } from 'node:crypto';
 import { proxyChatShare } from './chat-share-proxy.js';
 import { fetchRuntimeProxy, shouldReleaseRuntimeProxyTimeout } from "./runtime-proxy-fetch.js";
@@ -668,7 +670,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       }
       if (explicitVmRoute.upstreamPath === '/api/auth/ws-token') {
         return issueWebSocketTokenResponse(c, {
-          clerkUserId: machine.clerkUserId,
+          clerkUserId: identity.userId,
           handle: machine.handle,
           runtimeSlot: machine.runtimeSlot,
         });
@@ -706,6 +708,9 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         if (identity.userId) {
           headers.set('x-platform-user-id', identity.userId);
           headers.set('x-platform-verified', buildPlatformUserProof(machine.handle, identity.userId, platformSecret));
+          const delegation = buildPreviewTerminalDelegation({ machine, actorId: identity.userId,
+            path: explicitVmRoute.upstreamPath, platformSecret });
+          if (delegation) headers.set(PREVIEW_TERMINAL_HEADER, delegation);
         }
       }
       if (shouldMarkNativeAppSession(identity, authHeader, cookieHeader, platformJwtSecret)) {
@@ -857,6 +862,9 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
           headers.set('x-platform-user-id', platformUserId);
           if (identity.source !== 'mobile-session' && identity.source !== 'static-route') {
             headers.set('x-platform-verified', buildPlatformUserProof(runningMachine.handle, platformUserId, platformSecret));
+            const delegation = buildPreviewTerminalDelegation({ machine: runningMachine,
+              actorId: platformUserId, path, platformSecret });
+            if (delegation) headers.set(PREVIEW_TERMINAL_HEADER, delegation);
           }
         }
       }

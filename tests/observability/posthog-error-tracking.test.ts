@@ -641,10 +641,11 @@ describe("PostHog error tracking", () => {
   });
 
   it("tracks terminal websocket lifecycle without terminal output payloads", async () => {
-    const [terminalPane, terminalRuntime, gatewayServer] = await Promise.all([
+    const [terminalPane, terminalRuntime, gatewayServer, terminalSocket] = await Promise.all([
       readFile("shell/src/components/terminal/TerminalPane.tsx", "utf8"),
       readFile("shell/src/components/terminal/terminal-xterm-runtime.ts", "utf8"),
       readFile("packages/gateway/src/server.ts", "utf8"),
+      readFile("packages/gateway/src/shell/terminal-tab-ws.ts", "utf8"),
     ]);
 
     expect(terminalRuntime).toContain('capturePostHogEvent("shell_terminal_ws"');
@@ -652,8 +653,9 @@ describe("PostHog error tracking", () => {
     expect(terminalPane).toContain('track("schedule-reconnect"');
     expect(terminalRuntime).not.toContain("capturePostHogEvent(\"shell_terminal_ws\", { data");
     expect(gatewayServer).toContain('posthogErrorTracker.captureEvent("gateway_terminal_ws"');
-    expect(gatewayServer).toContain('captureTerminalEvent("attach-request"');
-    expect(gatewayServer).not.toContain('captureTerminalEvent("input"');
+    expect(gatewayServer).toContain("createTerminalTabWebSocketHandler(c, {");
+    expect(terminalSocket).toContain('captureTerminalEvent("attach-request"');
+    expect(gatewayServer + terminalSocket).not.toContain('captureTerminalEvent("input"');
   });
 
   it("tracks billing provisioning decisions as metadata-only events", async () => {
