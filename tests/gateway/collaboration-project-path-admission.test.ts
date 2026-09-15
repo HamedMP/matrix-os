@@ -81,12 +81,15 @@ describe("legacy project path admission", () => {
     expect(withLegacyAdmission).toHaveBeenCalledTimes(1);
   });
 
-  it("rejects stored manifests above the bounded maintenance limit before project lookup", async () => {
-    const listOwnerProjects = vi.fn(async () => []);
+  it("admits complete stored manifests above fifty thousand entries without copying per-path state", async () => {
+    const withLegacyAdmission = vi.fn(async (_input, operation: () => Promise<string>) => operation());
+    const listOwnerProjects = vi.fn(async () => [
+      { id: "proj_a", localPath: join(homePath, "projects", "outer") },
+    ]);
     const admission = createLegacyProjectPathAdmission({
       homePath,
       listOwnerProjects,
-      projectOperationAdmission: { withLegacyAdmission: vi.fn() },
+      projectOperationAdmission: { withLegacyAdmission },
     });
 
     await expect(admission.withStoredPaths({
@@ -94,7 +97,8 @@ describe("legacy project path admission", () => {
       ownerId: "user_owner",
       paths: Array.from({ length: 50_001 }, () => "projects/outer/file.ts"),
       kind: "write",
-    }, async () => "emptied")).rejects.toMatchObject({ code: "invalid" });
-    expect(listOwnerProjects).not.toHaveBeenCalled();
+    }, async () => "emptied")).resolves.toBe("emptied");
+    expect(listOwnerProjects).toHaveBeenCalledTimes(1);
+    expect(withLegacyAdmission).toHaveBeenCalledTimes(1);
   });
 });

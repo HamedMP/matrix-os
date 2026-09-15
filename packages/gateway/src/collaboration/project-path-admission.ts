@@ -8,7 +8,6 @@ import {
 
 const MAX_MATCHED_PROJECTS = 32;
 const MAX_OWNER_PROJECTS = 10_000;
-const MAX_STORED_PATHS = 50_000;
 const PATHS_PER_EVENT_LOOP_TURN = 256;
 const PathSchema = z.string().min(1).max(4_096);
 const OwnerIdSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/);
@@ -54,7 +53,7 @@ export function createLegacyProjectPathAdmission(options: {
       paths: readonly string[];
       kind: "write" | "run";
     },
-    maxPaths: number,
+    maxPaths: number | undefined,
     operation: () => Promise<T>,
   ): Promise<T> {
     const input = AdmissionContextSchema.safeParse({
@@ -63,7 +62,7 @@ export function createLegacyProjectPathAdmission(options: {
       kind: rawInput.kind,
     });
     if (!input.success) throw new ProjectFenceError("invalid");
-    if (!Array.isArray(rawInput.paths) || rawInput.paths.length > maxPaths) {
+    if (!Array.isArray(rawInput.paths) || (maxPaths !== undefined && rawInput.paths.length > maxPaths)) {
       throw new ProjectFenceError("invalid");
     }
 
@@ -134,7 +133,11 @@ export function createLegacyProjectPathAdmission(options: {
       paths: readonly string[];
       kind: "write" | "run";
     }, operation: () => Promise<T>): Promise<T> {
-      return admit(rawInput, MAX_STORED_PATHS, operation);
+      // Stored maintenance manifests must remain fully recoverable regardless
+      // of entry count. admit() streams the existing array without retaining
+      // per-path state, yields every PATHS_PER_EVENT_LOOP_TURN entries, and
+      // keeps both the project inventory and matched-project set capped.
+      return admit(rawInput, undefined, operation);
     },
   };
 }
