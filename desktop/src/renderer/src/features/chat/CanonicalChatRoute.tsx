@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { CanonicalChatDetailResponse } from "@matrix-os/contracts";
+import type { ChatAgentDraftRequest } from "@matrix-os/ui";
 import type { ApiClient } from "../../lib/api";
 import {
   createCanonicalChatClient,
@@ -20,6 +21,7 @@ export function CanonicalChatRoute({
   tabId,
   initialChatId,
   initialView,
+  draftRequest,
   projectLabel,
   active,
   live = active,
@@ -35,6 +37,7 @@ export function CanonicalChatRoute({
   tabId?: string;
   initialChatId?: string;
   initialView?: "index" | "draft" | "conversation";
+  draftRequest?: ChatAgentDraftRequest | null;
   projectLabel?: string;
   active: boolean;
   live?: boolean;
@@ -145,6 +148,7 @@ export function CanonicalChatRoute({
       projectId={canonicalProjectId}
       initialChatId={initialChatId}
       initialView={initialView}
+      draftRequest={draftRequest}
       projectLabel={projectLabel}
       active={active}
       live={live}

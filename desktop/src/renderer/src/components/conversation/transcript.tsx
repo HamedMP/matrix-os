@@ -1,4 +1,4 @@
-import { CanonicalChatInputForm } from "@matrix-os/ui";
+import { ChatContextReceipt, CanonicalChatInputForm } from "@matrix-os/ui";
 import { UserMessage } from "./user-message";
 import {
   CheckCircle2,
@@ -406,6 +406,7 @@ function ConversationTurn({
   return (
     <>
       {turn.user ? <UserMessage message={turn.user} callbacks={callbacks} /> : null}
+      <ChatContextReceipt context={turn.runContext} />
       {hasWork || turn.final || turn.active ? (
         <TurnReceipt
           startedAt={turn.startedAt}
