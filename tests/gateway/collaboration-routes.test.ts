@@ -10,6 +10,7 @@ import { CollaborationChatExecutionAdapter } from "../../packages/gateway/src/co
 import { CollaborationChatScopeService } from "../../packages/gateway/src/collaboration/chat-scope.js";
 import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
 import { CollaborationRepository } from "../../packages/gateway/src/collaboration/repository.js";
+import { createCollaborationProjectLifecycle } from "../../packages/gateway/src/collaboration/project-lifecycle.js";
 import { createCollaborationRoutes } from "../../packages/gateway/src/collaboration/routes.js";
 import { CollaborationTerminalAdapter } from "../../packages/gateway/src/collaboration/terminal-adapter.js";
 import { TerminalControlCoordinator } from "../../packages/gateway/src/collaboration/terminal-control.js";
@@ -29,6 +30,7 @@ const acceptanceRequestId = "50000000-0000-4000-8000-000000000002";
 const discussionRequestId = "50000000-0000-4000-8000-000000000003";
 const terminalId = "terminal_release";
 const terminalIncarnation = `terminal-${"a".repeat(32)}`;
+const projectScopeId = "10000000-0000-4000-8000-000000000401";
 
 function request(index: number): string {
   return `50000000-0000-4000-8000-${index.toString().padStart(12, "0")}`;
@@ -139,6 +141,16 @@ describe("collaboration gateway routes", () => {
       control: new TerminalControlCoordinator({ startTimer: false }),
       resolveParticipant,
     });
+    const projectLifecycle = createCollaborationProjectLifecycle({
+      db: fixture.db,
+      now: () => now,
+      stageTransfer: async () => ({
+        destinationAuthorityRuntimeId: "runtime_project_successor",
+        destinationAuthorityGeneration: 1,
+        publicationMarker: "publication_project_transfer",
+      }),
+      deleteProject: async () => undefined,
+    });
     nonce = 0;
     signer = new CollaborationProofSigner({
       activeKeyId: "collaboration-key-1",
@@ -162,6 +174,7 @@ describe("collaboration gateway routes", () => {
       chatExecutionAdapter,
       terminalAdapter,
       terminalDispatcher,
+      projectLifecycle,
       resolveParticipant,
       now: () => now,
     }));
@@ -545,6 +558,60 @@ describe("collaboration gateway routes", () => {
       method: "GET",
       path: `/api/collaboration/scopes/${collaborationIds.scope}`,
     })).status).toBe(404);
+  });
+
+  it("routes project lifecycle operations through the project service", async () => {
+    await fixture.db.insertInto("collaboration_scopes").values({
+      id: projectScopeId,
+      owner_type: "personal",
+      owner_id: collaborationActors.owner,
+      kind: "project",
+      resource_id: "proj_routes",
+      parent_scope_id: null,
+      membership_mode: "direct",
+      lifecycle: "shared",
+      revision: 1,
+      auth_epoch: 1,
+      authority_runtime_id: collaborationIds.runtime,
+      authority_generation: 1,
+      execution_generation: null,
+      execution_eligibility: null,
+      created_at: now,
+      updated_at: now,
+      deleted_at: null,
+    }).execute();
+    await fixture.db.insertInto("collaboration_members").values({
+      scope_id: projectScopeId,
+      actor_id: collaborationActors.owner,
+      role: "owner",
+      status: "accepted",
+      invitation_id: null,
+      invited_by: collaborationActors.owner,
+      accepted_at: now,
+      expires_at: null,
+      revision: 1,
+      joined_at: now,
+      updated_at: now,
+    }).execute();
+
+    const archived = await signedJson({
+      actorId: collaborationActors.owner,
+      scopeId: projectScopeId,
+      method: "POST",
+      path: `/api/collaboration/scopes/${projectScopeId}/lifecycle`,
+      body: { type: "archive", clientRequestId: request(110), expectedRevision: "1" },
+    });
+
+    expect(archived.status).toBe(200);
+    expect(await archived.json()).toMatchObject({ type: "archive", status: "completed", revision: "2" });
+    const operation = await signedJson({
+      actorId: collaborationActors.owner,
+      scopeId: projectScopeId,
+      method: "GET",
+      path: `/api/collaboration/scopes/${projectScopeId}/operations/${request(110)}`,
+    });
+    expect(operation.status).toBe(200);
+    expect(await operation.json()).toMatchObject({ type: "archive", status: "completed" });
   });
 
   it("applies downgrade immediately and revocation removes all live scope access", async () => {
