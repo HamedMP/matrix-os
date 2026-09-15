@@ -18,7 +18,18 @@ describe("managed generic harness process configuration", () => {
   });
   it("uses OpenCode's OpenAI-compatible adapter and disables the remote title agent", () => {
     const config = JSON.parse(buildOpenCodeRunConfiguration({ OPENAI_API_KEY: "lease", OPENAI_BASE_URL: "https://relay.example.test/v1" }));
-    expect(config.provider.cloudflare).toMatchObject({ npm: "@ai-sdk/openai-compatible", options: { baseURL: "https://relay.example.test/v1", apiKey: "{env:OPENAI_API_KEY}" } });
+    expect(config.provider.cloudflare).toMatchObject({
+      name: "Matrix AI",
+      npm: "@ai-sdk/openai-compatible",
+      options: { baseURL: "https://relay.example.test/v1", apiKey: "{env:OPENAI_API_KEY}" },
+      models: {
+        "@cf/zai-org/glm-5.3-flash": {
+          name: "GLM 5.3 Flash",
+          reasoning: true,
+          interleaved: { field: "reasoning_content" },
+        },
+      },
+    });
     expect(config.agent.title.disable).toBe(true);
     expect(config.provider.anthropic).toBeUndefined();
   });
