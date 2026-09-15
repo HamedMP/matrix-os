@@ -22,9 +22,11 @@ describe("App desktop update experience", () => {
     vi.unstubAllGlobals();
   });
 
-  it("keeps the workspace mounted beneath a dismissible compatibility reminder", async () => {
+  it.each(["different-release", "incompatible", "unavailable"])("keeps the workspace usable without cloud update controls: %s", async (scenario) => {
     vi.stubGlobal("operator", {
       invoke: vi.fn(async (channel: string) => {
+        if (channel === "app:get-version") return { version: "0.1.0", source: { commit: "b".repeat(40), ancestors: ["a".repeat(40)] } };
+        if (channel === "update:check") return { status: "up-to-date" };
         if (channel === "update:get-state") return { status: "disabled" };
         if (channel === "update:get-whats-new") return { release: null, shouldOpen: false };
         return { ok: true };
@@ -35,16 +37,19 @@ describe("App desktop update experience", () => {
     useConnection.setState({
       status: "signed-in",
       refresh: vi.fn(async () => undefined),
-      api: { forRuntime() { return this; }, get: vi.fn(async () => ({
-        version: "v2026.09.09-1",
-        runtimeCompatibility: { schemaVersion: 1, minDesktopProtocol: 2, maxDesktopProtocol: 3 },
-      })) } as never,
+      api: { forRuntime() { return this; }, post: vi.fn(), get: vi.fn(async () => {
+        if (scenario === "unavailable") throw new Error("HTTP 502");
+        return { version: "v2026.09.09-1", build: { sha: "a".repeat(40) },
+          runtimeCompatibility: { schemaVersion: 1, minDesktopProtocol: scenario === "incompatible" ? 2 : 1, maxDesktopProtocol: 3 } };
+      }) } as never,
     });
     render(<App />);
     expect(screen.getByText("Mission Control")).toBeTruthy();
-    expect(await screen.findByRole("dialog", { name: "Update Matrix OS" })).toBeTruthy();
-    expect(screen.getByText("Desktop app")).toBeTruthy();
-    expect(screen.getByText("Cloud computer")).toBeTruthy();
+    await act(async () => {});
+    expect(screen.queryByRole("dialog", { name: "Update Matrix OS" })).toBeNull();
+    expect(screen.queryByText("Cloud computer")).toBeNull();
+    expect(useConnection.getState().api!.get).not.toHaveBeenCalled();
+    expect(useConnection.getState().api!.post).not.toHaveBeenCalled();
   });
 
   it("keeps manual update feedback available while signed out", async () => {

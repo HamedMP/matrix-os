@@ -6,7 +6,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { WebSocketServer, type WebSocket } from "ws";
 import { resolve } from "node:path";
 import { readBuildSource } from "../../../../scripts/release/build-source.mjs";
-import { createSystemInfoFixture } from "./system-info";
+import { createSystemInfoFixture, type SystemInfoFixtureOptions } from "./system-info";
 import {
   AgentThreadSnapshotSchema,
   ProjectAgentWorkspaceSchema,
@@ -25,6 +25,7 @@ export interface StubGateway {
   setKernelResponseDelay(delayMs: number): void;
   setBuildCommit(commit: string): void;
   setSystemInfo(info: Record<string, unknown>): void;
+  cloudUpdatePosts(): number;
   disconnectKernel(): void;
   close(): Promise<void>;
   state: {
@@ -43,6 +44,7 @@ export interface StubGateway {
 }
 
 export interface StubGatewayOptions {
+  systemInfo?: SystemInfoFixtureOptions;
   rootFileEntries?: Array<{
     name: string;
     type: "directory" | "file";
@@ -580,7 +582,7 @@ export function codingAgentSummary(): RuntimeSummary {
 }
 
 export async function startStubGateway(options: StubGatewayOptions = {}): Promise<StubGateway> {
-  const systemInfo = createSystemInfoFixture(readBuildSource(resolve(__dirname, "../../../.."))?.commit ?? "unknown");
+  const systemInfo = createSystemInfoFixture(readBuildSource(resolve(__dirname, "../../../.."))?.commit ?? "unknown", options.systemInfo);
   const tasks = TASKS.map((task) => ({ ...task, tags: [...task.tags] }));
   const terminalTabs: Array<Record<string, unknown>> = [
     {
@@ -1266,10 +1268,7 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
       });
       return;
     }
-    if (path === "/api/system/info") {
-      json(res, 200, systemInfo.read());
-      return;
-    }
+    if (systemInfo.handleRequest(path, req.method ?? "GET", res)) return;
     json(res, 404, { error: "not found" });
   }
 
@@ -1426,6 +1425,7 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
     state,
     setBuildCommit: systemInfo.setBuildCommit,
     setSystemInfo: systemInfo.setSystemInfo,
+    cloudUpdatePosts: systemInfo.cloudUpdatePosts,
     sendTerminalOutput: (data, session = "matrix-task-1") => activeTerminalOutputs[session]?.(data),
     setConversationBusy: (id, busy) => {
       if (busy) busyHermesConversations.add(id);
