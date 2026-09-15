@@ -29,6 +29,10 @@ import {
   type ProjectDeletionDriver,
   type ProjectTransferStager,
 } from "./project-lifecycle.js";
+import {
+  CollaborationProjectScopeService,
+  type CollaborationProjectSource,
+} from "./project-scope.js";
 
 const MAX_PROOF_KEYS = 8;
 const ARTIFACT_CLEANUP_INTERVAL_MS = 60 * 60 * 1_000;
@@ -88,6 +92,7 @@ export async function createGatewayCollaboration(options: {
     deleteProject: ProjectDeletionDriver;
   };
   startTimers?: boolean;
+  projectSource?: CollaborationProjectSource;
 }) {
   await bootstrapCollaborationDatabase(options.db);
   await cleanupExpiredArtifacts(options.db, new Date());
@@ -115,6 +120,11 @@ export async function createGatewayCollaboration(options: {
     ? createCollaborationProjectLifecycle({ db: options.db, ...options.projectLifecycleDrivers })
     : undefined;
   if (projectLifecycle) await projectLifecycle.recoverPending();
+  const projectScope = options.projectSource ? new CollaborationProjectScopeService(options.db, {
+    runtimeId: options.config.runtimeId,
+    preflightSecret: options.config.preflightSecret,
+    source: options.projectSource,
+  }) : undefined;
   const outbox = new CollaborationDirectoryOutbox({
     db: options.db,
     platformBaseUrl: options.config.platformBaseUrl,
@@ -160,6 +170,7 @@ export async function createGatewayCollaboration(options: {
     collaborationGuard: chatScope,
     projectTransitions,
     projectFence,
+    projectScope,
     projectOperationAdmission: {
       withLegacyAdmission<T>(input: {
         ownerType: "personal" | "organization";
@@ -253,6 +264,7 @@ export async function createGatewayCollaboration(options: {
         ...(terminalAdapter ? { terminalAdapter } : {}),
         ...(terminalDispatcher ? { terminalDispatcher } : {}),
         ...(projectLifecycle ? { projectLifecycle } : {}),
+        ...(projectScope ? { projectScope } : {}),
         resolveParticipant,
         onScopeCommitted: (scopeId) => eventRegistry.broadcastScope(scopeId),
         onRevoked: (scopeId, actorId) => {

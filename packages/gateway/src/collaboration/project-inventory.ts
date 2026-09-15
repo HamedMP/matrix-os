@@ -44,7 +44,14 @@ const MembershipEffectSchema = z.object({
   actorId: ActorIdSchema,
   role: z.enum(["editor", "viewer"]),
   effect: z.enum(["join_project", "retain_item_only", "end_item_grant"]),
-}).strict();
+  resourceKind: z.enum(["chat", "terminal"]).optional(),
+  resourceId: SafeIdSchema.optional(),
+}).strict().superRefine((effect, context) => {
+  const itemEffect = effect.effect !== "join_project";
+  if (itemEffect !== (effect.resourceKind !== undefined && effect.resourceId !== undefined)) {
+    context.addIssue({ code: "custom", message: "Item membership effects require one affected resource" });
+  }
+});
 
 const ConfirmationPayloadSchema = z.object({
   version: z.literal(1),
@@ -319,10 +326,17 @@ function hashJson(value: unknown): string {
 }
 
 function sortedEffects(values: readonly ProjectInventoryMembershipEffect[]): ProjectInventoryMembershipEffect[] {
-  const parsed = z.array(MembershipEffectSchema).max(7).parse(values);
-  const unique = new Set(parsed.map((value) => value.actorId));
+  const parsed = z.array(MembershipEffectSchema).max(1_000).parse(values);
+  const unique = new Set(parsed.map((value) =>
+    `${value.actorId}\0${value.effect}\0${value.resourceKind ?? "project"}\0${value.resourceId ?? "project"}`,
+  ));
   if (unique.size !== parsed.length) throw new ProjectInventoryError("project_unavailable");
-  return [...parsed].sort((left, right) => left.actorId.localeCompare(right.actorId));
+  return [...parsed].sort((left, right) => {
+    const actorOrder = left.actorId.localeCompare(right.actorId);
+    if (actorOrder !== 0) return actorOrder;
+    return `${left.resourceKind ?? "project"}:${left.resourceId ?? ""}`
+      .localeCompare(`${right.resourceKind ?? "project"}:${right.resourceId ?? ""}`);
+  });
 }
 
 function itemOrder(left: { kind: string; id: string }, right: { kind: string; id: string }): number {

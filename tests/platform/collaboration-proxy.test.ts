@@ -18,6 +18,7 @@ import {
 const now = new Date("2026-09-07T12:00:00.000Z");
 const key = "0123456789abcdef0123456789abcdef";
 const scopeId = "10000000-0000-4000-8000-000000000001";
+const projectScopeId = "10000000-0000-4000-8000-000000000002";
 const invitationId = "30000000-0000-4000-8000-000000000001";
 
 describe("CollaborationProxy", () => {
@@ -201,6 +202,86 @@ describe("CollaborationProxy", () => {
       .toBe("m3");
     expect(collaborationMilestoneForRoute("POST", `/api/collaboration/scopes/${scopeId}/terminal/actions`))
       .toBe("m3");
+  });
+
+  it("classifies only exact project resource routes under M4", () => {
+    const base = `/api/collaboration/scopes/${scopeId}/project`;
+    expect(collaborationMilestoneForRoute("GET", `${base}/inventory`)).toBe("m4");
+    expect(collaborationMilestoneForRoute("POST", `${base}/confirm`)).toBe("m4");
+    expect(collaborationMilestoneForRoute("GET", base)).toBe("m4");
+    expect(collaborationMilestoneForRoute("GET", `${base}/files`)).toBe("m4");
+    expect(collaborationMilestoneForRoute("PUT", `${base}/files`)).toBe("m4");
+    expect(collaborationMilestoneForRoute("DELETE", `${base}/files`)).toBe("m4");
+    expect(collaborationMilestoneForRoute("GET", `${base}/git`)).toBe("m4");
+    expect(collaborationMilestoneForRoute("POST", `${base}/git/actions`)).toBe("m4");
+    expect(collaborationMilestoneForRoute("GET", `${base}/apps/app_board`)).toBe("m4");
+    expect(collaborationMilestoneForRoute("POST", `${base}/apps/app_board/actions`)).toBe("m4");
+    expect(collaborationMilestoneForRoute("GET", `${base}/layout`)).toBe("m4");
+    expect(collaborationMilestoneForRoute("PATCH", `${base}/layout`)).toBe("m4");
+    expect(collaborationMilestoneForRoute("POST", `${base}/chats`)).toBe("m4");
+    expect(collaborationMilestoneForRoute("POST", `${base}/terminals`)).toBe("m4");
+    expect(parseCollaborationProxyRoute("GET", `${base}/files/private/escape`)).toBeNull();
+    expect(parseCollaborationProxyRoute("POST", `${base}/apps/app_board/actions/extra`)).toBeNull();
+  });
+
+  it("keeps project preparation and project scopes off until M4 is enabled", async () => {
+    await repository.applyDirectoryEvent({
+      eventId: "20000000-0000-4000-8000-000000000002",
+      scopeId: projectScopeId,
+      runtimeId: "runtime_owner",
+      ownerId: platformCollaborationActors.owner,
+      kind: "project",
+      authorityGeneration: 1,
+      metadataRevision: 1,
+      recipients: [
+        { actorId: platformCollaborationActors.owner, status: "accepted" },
+        { actorId: platformCollaborationActors.recipientWithoutComputer, status: "accepted" },
+      ],
+    });
+    const preflightPath = "/api/collaboration/runtimes/runtime_owner/scopes/preflight";
+    const projectBody = new TextEncoder().encode(JSON.stringify({ kind: "project", resourceId: "project_alpha" }));
+    expect((await proxy.forward({
+      actorId: platformCollaborationActors.owner,
+      method: "POST",
+      path: preflightPath,
+      query: "",
+      body: projectBody,
+      headers: new Headers({ "content-type": "application/json" }),
+    })).status).toBe(404);
+    expect((await proxy.forward({
+      actorId: platformCollaborationActors.recipientWithoutComputer,
+      method: "GET",
+      path: `/api/collaboration/scopes/${projectScopeId}`,
+      query: "",
+      body: new Uint8Array(),
+      headers: new Headers(),
+    })).status).toBe(404);
+    expect(fetchImpl).not.toHaveBeenCalled();
+
+    await repository.setPolicy({
+      milestone: "m4",
+      expectedRevision: 0,
+      mode: "internal",
+      cohort: [platformCollaborationActors.owner, platformCollaborationActors.recipientWithoutComputer],
+      changedBy: "operator_test",
+    });
+    const enabled = await proxy.forward({
+      actorId: platformCollaborationActors.recipientWithoutComputer,
+      method: "GET",
+      path: `/api/collaboration/scopes/${projectScopeId}`,
+      query: "",
+      body: new Uint8Array(),
+      headers: new Headers(),
+    });
+    expect(enabled.status).toBe(200);
+    const [, init] = fetchImpl.mock.calls[0] as [string, RequestInit];
+    const policyHeader = new Headers(init.headers).get("x-matrix-collaboration-policy");
+    expect(policyHeader).toMatch(/^[A-Za-z0-9_-]+$/);
+    const verifier = new CollaborationActorProofVerifier({
+      runtimeId: "runtime_owner", keys: { "collaboration-key-1": key }, now: () => now,
+    });
+    expect(verifier.verifyPolicy(JSON.parse(Buffer.from(policyHeader!, "base64url").toString("utf8"))))
+      .toMatchObject({ milestone: "m4", mode: "internal" });
   });
 
   it("keeps M2 AI routes disabled independently from M1 discussion", async () => {
