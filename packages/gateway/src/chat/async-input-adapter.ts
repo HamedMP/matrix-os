@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { ASYNC_QUESTION_NOTICE } from "../coding-agents/async-input-notice.mjs";
 import type { CanonicalSubmitChatInputRequest } from "@matrix-os/contracts";
+import type { AiTokenUsage } from "../ai-analytics.js";
 import { validateChatInputAnswer } from "./input-submission.js";
 import type { CanonicalChatProviderAdapter, CanonicalProviderRunEvent, CanonicalProviderRunInput } from "./provider-adapter.js";
 
@@ -11,6 +12,7 @@ type Run = {
   input: CanonicalProviderRunInput;
   pending: Map<string, { request: Question; timer: ReturnType<typeof setTimeout> }>;
   deferred: Set<string>;
+  nativeOnly: Set<string>;
   answers: Answer[];
   expired: CanonicalProviderRunEvent[];
   wake?: () => void;
@@ -28,13 +30,14 @@ export function withAsyncChatInput(native: CanonicalChatProviderAdapter, options
 
   async function* execute(input: CanonicalProviderRunInput): AsyncIterable<CanonicalProviderRunEvent> {
     if (runs.has(input.runId) || runs.size >= 128) throw new Error("Async question Run unavailable");
-    const run: Run = { input, pending: new Map(), deferred: new Set(), answers: [], expired: [] };
+    const run: Run = { input, pending: new Map(), deferred: new Set(), nativeOnly: new Set(), answers: [], expired: [] };
     runs.set(input.runId, run);
     const wake = () => { run.wake?.(); run.wake = undefined; };
     input.signal.addEventListener("abort", wake);
     let state = input.resumeState;
     let phase = 0;
     let phaseAnswers: Answer[] = [];
+    let tokenUsage: AiTokenUsage | undefined;
     let lastTerminal: Extract<CanonicalProviderRunEvent, { type: "run.completed" }> = { type: "run.completed", outcome: "completed" };
     try {
       while (!input.signal.aborted) {
@@ -56,6 +59,14 @@ export function withAsyncChatInput(native: CanonicalChatProviderAdapter, options
           }
           if (event.type === "state.updated") state = native.parseState(event.state);
           if (event.type === "input.requested" && event.questions?.length) {
+            // A resumed user prompt is persisted by coding providers. Secret answers must
+            // remain on the original ephemeral native tool channel instead.
+            if (event.questions.some(question => question.secret)) {
+              if (run.nativeOnly.size >= 16) throw new Error("Native question limit exceeded");
+              run.nativeOnly.add(event.requestId);
+              yield event;
+              continue;
+            }
             if (run.deferred.has(event.requestId)) continue;
             if (run.pending.size >= 16 || run.deferred.size >= 64) throw new Error("Async question limit exceeded");
             const request = { ...event, asynchronous: true, expiresAt: new Date(Date.now() + timeout).toISOString(), safeDescription: "You can answer while work continues. Only work that needs your answer will wait." };
@@ -72,12 +83,20 @@ export function withAsyncChatInput(native: CanonicalChatProviderAdapter, options
           }
           // Native tool acknowledgement is not a user answer. Only the later answer phase resolves it.
           if (event.type === "input.resolved" && run.deferred.has(event.requestId)) continue;
+          if (event.type === "input.resolved") run.nativeOnly.delete(event.requestId);
           if (event.type === "run.completed") { terminal = event; continue; }
           yield event.type === "assistant.delta" && phase ? { ...event, messageId: `async_${digest(`${phase}:${event.messageId ?? "answer"}`)}` } : event;
         }
         if (input.signal.aborted) break;
         if (!terminal) throw new Error("Native phase ended without completion");
-        lastTerminal = terminal;
+        if (terminal.tokenUsage) {
+          const usage = terminal.tokenUsage;
+          const sum = (key: keyof AiTokenUsage) => Math.min(Number.MAX_SAFE_INTEGER, (tokenUsage?.[key] ?? 0) + (usage[key] ?? 0));
+          tokenUsage = { inputTokens: sum("inputTokens"), outputTokens: sum("outputTokens"),
+            ...(tokenUsage?.cachedInputTokens !== undefined || usage.cachedInputTokens !== undefined ? { cachedInputTokens: sum("cachedInputTokens") } : {}),
+            ...(tokenUsage?.reasoningOutputTokens !== undefined || usage.reasoningOutputTokens !== undefined ? { reasoningOutputTokens: sum("reasoningOutputTokens") } : {}) };
+        }
+        lastTerminal = { ...terminal, ...(tokenUsage ? { tokenUsage } : {}) };
         if (terminal.outcome !== "completed") break;
         while (!input.signal.aborted && run.pending.size && !run.answers.length) {
           while (run.expired.length) yield run.expired.shift()!;
@@ -91,10 +110,10 @@ export function withAsyncChatInput(native: CanonicalChatProviderAdapter, options
         phaseAnswers = run.answers.splice(0, 1); phase++;
       }
       for (const requestId of run.pending.keys()) yield { type: "input.resolved", requestId, reason: "cancelled" };
-      yield input.signal.aborted ? { type: "run.completed", outcome: "aborted" } : lastTerminal;
+      yield input.signal.aborted ? { type: "run.completed", outcome: "aborted", ...(tokenUsage ? { tokenUsage } : {}) } : lastTerminal;
     } finally {
       for (const pending of run.pending.values()) clearTimeout(pending.timer);
-      run.pending.clear(); run.deferred.clear(); run.answers.length = 0; run.expired.length = 0;
+      run.pending.clear(); run.deferred.clear(); run.nativeOnly.clear(); run.answers.length = 0; run.expired.length = 0;
       input.signal.removeEventListener("abort", wake); wake(); runs.delete(input.runId);
     }
   }
@@ -103,6 +122,11 @@ export function withAsyncChatInput(native: CanonicalChatProviderAdapter, options
     async submitInput(input) {
       const run = runs.get(input.runId);
       if (!run || run.input.signal.aborted || run.input.chatId !== input.chatId || run.input.owner.type !== input.owner.type || run.input.owner.ownerId !== input.owner.ownerId) throw new Error("Async question unavailable");
+      if (run.nativeOnly.has(input.requestId)) {
+        if (!native.submitInput) throw new Error("Native question unavailable");
+        run.nativeOnly.delete(input.requestId);
+        return native.submitInput(input);
+      }
       const pending = run.pending.get(input.requestId);
       if (!pending) throw new Error("Async question unavailable");
       validateChatInputAnswer(pending.request, input);

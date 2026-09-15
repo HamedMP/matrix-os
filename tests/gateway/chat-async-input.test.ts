@@ -31,6 +31,37 @@ function fixture() {
 }
 
 describe("asynchronous canonical questions", () => {
+  it("includes independent and answer phases in the canonical token usage", async () => {
+    const f = fixture();
+    const native = { ...f.native, async *start(input: CanonicalProviderRunInput) {
+      for await (const event of f.native.start(input)) yield event.type === "run.completed" ? { ...event, tokenUsage: { inputTokens: 10, outputTokens: 3, cachedInputTokens: 2 } } : event;
+    }, async *resume() {
+      yield { type: "run.completed", outcome: "completed", tokenUsage: { inputTokens: 20, outputTokens: 5 } } as const;
+    } };
+    const adapter = withAsyncChatInput(native); const events: CanonicalProviderRunEvent[] = [];
+    const finished = (async () => { for await (const e of adapter.start(f.input)) events.push(e); })();
+    await vi.waitFor(() => expect(events.some(e => e.type === "assistant.delta")).toBe(true));
+    await adapter.submitInput!(f.answer); await finished;
+    expect(events.at(-1)).toMatchObject({ tokenUsage: { inputTokens: 30, outputTokens: 8, cachedInputTokens: 2 } });
+  });
+  it("keeps secret answers on the native input channel instead of persisting them in a resumed prompt", async () => {
+    const f = fixture(); let answered!: () => void;
+    const answerReceived = new Promise<void>(resolve => { answered = resolve; });
+    const submitInput = vi.fn(async () => { answered(); });
+    const native = { ...f.native, submitInput, async *start() {
+      yield { ...request, questions: request.questions.map(question => ({ ...question, secret: true })) };
+      await answerReceived;
+      yield { type: "run.completed", outcome: "completed" } as const;
+    } };
+    const adapter = withAsyncChatInput(native); const events: CanonicalProviderRunEvent[] = [];
+    const finished = (async () => { for await (const e of adapter.start(f.input)) events.push(e); })();
+    await vi.waitFor(() => expect(events.length).toBeGreaterThan(0));
+    expect(events[0]).not.toHaveProperty("asynchronous");
+    expect(f.deferInput).not.toHaveBeenCalled();
+    await adapter.submitInput!(f.answer); await finished;
+    expect(submitInput).toHaveBeenCalledOnce();
+    expect(f.resume).not.toHaveBeenCalled();
+  });
   it("queues an answer during independent work and waits for the safe native phase boundary", async () => {
     const f = fixture();
     let finishPhase!: () => void;
