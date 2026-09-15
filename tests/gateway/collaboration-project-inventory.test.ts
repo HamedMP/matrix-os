@@ -40,7 +40,7 @@ function source(
   overrides: Partial<ProjectInventoryResourceSource> = {},
 ): ProjectInventoryResourceSource {
   return {
-    async getProject(projectId) {
+    async getProject(_ownerId, projectId) {
       return projectId === PROJECT_ID
         ? { id: PROJECT_ID, ownerId: OWNER_ID, rootPath: projectRoot, revision: 7 }
         : null;

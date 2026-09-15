@@ -9,7 +9,7 @@ import { createCollaborationTestDatabase, type CollaborationTestDatabase } from 
 
 const PROJECT_SCOPE_ID = "10000000-0000-4000-8000-000000000071";
 const OWNER_ID = "user_project_owner";
-const AUTHORITY_RUNTIME_ID = "runtime_project_shared";
+const AUTHORITY_RUNTIME_ID = "vps:runtime_project_shared";
 const NOW = new Date("2026-08-12T12:00:00.000Z");
 
 describe("project collaboration inheritance", () => {

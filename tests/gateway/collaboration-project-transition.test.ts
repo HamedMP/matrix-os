@@ -139,6 +139,27 @@ describe("project collaboration transition journal", () => {
     });
   });
 
+  it("moves to a new authority generation on the same owner runtime", async () => {
+    await expect(journal().prepare({
+      scopeId: SCOPE_ID,
+      ownerId: OWNER_ID,
+      requestedBy: OWNER_ID,
+      clientRequestId: CLIENT_REQUEST_ID,
+      payloadHash: PAYLOAD_HASH,
+      expectedScopeRevision: 4,
+      inventoryRevision: 7,
+      inventoryHash: INVENTORY_HASH,
+      membershipHash: MEMBERSHIP_HASH,
+      destinationAuthorityRuntimeId: SOURCE_RUNTIME,
+      destinationAuthorityGeneration: 4,
+    })).resolves.toMatchObject({
+      sourceAuthorityRuntimeId: SOURCE_RUNTIME,
+      sourceAuthorityGeneration: 3,
+      destinationAuthorityRuntimeId: SOURCE_RUNTIME,
+      destinationAuthorityGeneration: 4,
+    });
+  });
+
   it("requires ordered durable stages and publishes the destination authority exactly once", async () => {
     const transitions = journal();
     await prepare();
@@ -274,6 +295,20 @@ describe("project collaboration transition journal", () => {
       clientRequestId: CLIENT_REQUEST_ID,
       payloadHash: "d".repeat(64),
     })).rejects.toMatchObject({ code: "conflict" });
+  });
+
+  it("preserves prepared transitions when the coordinator treats them as a durable queue", async () => {
+    const transitions = journal();
+    await prepare();
+    const cleanupStaging = vi.fn(async () => undefined);
+
+    await expect(transitions.recover({
+      cleanupStaging,
+      completePublication: async () => undefined,
+      preservePrepared: true,
+    })).resolves.toEqual({ recovered: 0, activated: 0, failed: 0 });
+    await expect(transitions.get(TRANSITION_ID)).resolves.toMatchObject({ status: "prepared" });
+    expect(cleanupStaging).not.toHaveBeenCalled();
   });
 
   it("removes staged bindings and inherited scopes when recovery restores privacy", async () => {
