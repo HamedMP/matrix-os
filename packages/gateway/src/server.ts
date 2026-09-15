@@ -241,7 +241,6 @@ import { createAppDb, type AppDb } from "./app-db.js";
 import { createAppRegistry, type AppRegistry } from "./app-db-registry.js";
 import { registerNativeAppStorage } from "./native-app-storage.js";
 import { createQueryEngine, type QueryEngine } from "./app-db-query.js";
-import { BridgeQueryBodySchema } from "./app-db-contracts.js";
 import { isSafeName, normalizeAppStorageSlug } from "./app-db-types.js";
 import { createKvStore, type KvStore } from "./app-db-kv.js";
 import { renameApp, deleteApp } from "./app-ops.js";
@@ -249,7 +248,6 @@ import { createPlatformDb, type PlatformDb } from "./platform-db.js";
 import { createPipedreamClient, type PipedreamConnectClient } from "./integrations/pipedream.js";
 import { registerCustomMcpGatewayRoutes } from "./integrations/custom-mcp/gateway-routes.js";
 import { createIntegrationRoutes } from "./integrations/routes.js";
-import { createIntegrationBridgeRoutes } from "./integrations/bridge-routes.js";
 import { discoverComponentKeys } from "./integrations/registry.js";
 import { createIntegrationProxyResponse } from "./integrations/proxy-response.js";
 import { z } from "zod/v4";
@@ -334,7 +332,8 @@ import {
 } from "./server/symphony-origin.js";
 import { registerAppRuntimeRoutes } from "./server/app-runtime-routes.js";
 import { registerFileRoutes } from "./server/file-routes.js";
-import { registerConversationHistoryRoutes } from "./server/conversation-history-routes.js";
+import { createBridgeRoutes } from "./routes/bridge.js";
+import { createConversationRoutes } from "./routes/conversations.js";
 import { startTerminalPasteAssetCleanup } from "./shell/paste-asset-cleanup-runtime.js";
 import {
   metricsRegistry,
@@ -384,15 +383,6 @@ const SAFE_ICON_STEM = /^[a-zA-Z0-9_-]+$/;
 function isSafeIconStem(value: unknown): value is string {
   return typeof value === "string" && SAFE_ICON_STEM.test(value);
 }
-
-const ApiMessageBodySchema = z.object({
-  text: z.string().refine((value) => value.trim().length > 0),
-  sessionId: z.string().optional(),
-  from: z.object({
-    handle: z.string(),
-    displayName: z.string().optional(),
-  }).optional(),
-});
 
 const PushRegisterBodySchema = z.object({
   token: z.string().trim().min(1).max(512),
@@ -3185,10 +3175,6 @@ export async function createGateway(config: GatewayConfig) {
     } : {}),
   });
 
-  const apiMessageBodyLimit = bodyLimit({ maxSize: 64 * 1024 });
-  const bridgeQueryBodyLimit = bodyLimit({ maxSize: 1_000_000 });
-  const bridgeDataBodyLimit = bodyLimit({ maxSize: 1_000_000 });
-  const conversationBodyLimit = bodyLimit({ maxSize: 4096 });
   const layoutBodyLimit = bodyLimit({ maxSize: 100_000 });
   const canvasBodyLimit = bodyLimit({ maxSize: 100_000 });
   const taskBodyLimit = bodyLimit({ maxSize: 64 * 1024 });
@@ -3267,339 +3253,29 @@ export async function createGateway(config: GatewayConfig) {
     }
   });
 
-  app.post("/api/message", apiMessageBodyLimit, async (c) => {
-    let rawBody: unknown;
-    try {
-      rawBody = await c.req.json();
-    } catch (err: unknown) {
-      console.warn("[gateway] Invalid /api/message JSON:", err instanceof Error ? err.message : String(err));
-      return c.json({ error: "Invalid JSON" }, 400);
-    }
-    const parsedBody = ApiMessageBodySchema.safeParse(rawBody);
-    if (!parsedBody.success) {
-      return c.json({ error: "Invalid message body" }, 400);
-    }
-    const body = parsedBody.data;
-    const events: KernelEvent[] = [];
-
-    const context: DispatchContext | undefined = body.from
-      ? { senderId: body.from.handle, senderName: body.from.displayName ?? body.from.handle }
-      : undefined;
-
-    try {
-      await dispatcher.dispatch(body.text, body.sessionId, (event) => {
-        events.push(event);
-      }, context);
-    } catch (err: unknown) {
-      console.error("[gateway] Message dispatch failed:", err);
-      return c.json({ error: "Message dispatch failed" }, 500);
-    }
-
-    return c.json({ events });
-  });
-
-  // Structured query API (Postgres-backed)
-  app.post("/api/bridge/query", bridgeQueryBodyLimit, async (c) => {
-    if (!queryEngine || !appRegistry) {
-      return c.json({ error: "Database not configured (no DATABASE_URL)" }, 503);
-    }
-
-    let rawBody: unknown;
-    try {
-      rawBody = await c.req.json();
-    } catch (err: unknown) {
-      if (err instanceof SyntaxError) {
-        return c.json({ error: "Invalid JSON body" }, 400);
-      }
-      console.error("[bridge/query] Failed to read request body:", err);
-      return c.json({ error: "Failed to read request body" }, 500);
-    }
-
-    const parsedBody = BridgeQueryBodySchema.safeParse(rawBody);
-    if (!parsedBody.success) {
-      const exceedsRowLimit = parsedBody.error.issues.some((issue) =>
-        issue.code === "too_big" && (issue.path[0] === "rows" || issue.path[0] === "updates")
-      );
-      return c.json(
-        { error: exceedsRowLimit ? "rows too large (max 200 rows)" : "Invalid query body" },
-        exceedsRowLimit ? 413 : 400,
-      );
-    }
-    const body = parsedBody.data;
-    const action = body.action;
-    const appSlug = action === "listApps" ? "" : body.app;
-    const safeTable = "table" in body ? body.table : "";
-
-    // Ensure the app's Postgres schema exists before querying. Apps built in-OS
-    // after gateway startup aren't in the startup registration pass; provision
-    // them lazily from their manifest so the first query doesn't 500.
-    if (appSlug && action !== "listApps") {
-      await ensureAppProvisioned(appSlug);
-    }
-
-    try {
-      switch (action) {
-        case "find":
-          return c.json(await queryEngine.find(appSlug, safeTable, {
-            filter: body.filter,
-            orderBy: body.orderBy,
-            limit: body.limit,
-            offset: body.offset,
-          }));
-        case "findOne":
-          return c.json(await queryEngine.findOne(appSlug, safeTable, body.id));
-        case "insert": {
-          const result = await queryEngine.insert(appSlug, safeTable, body.data);
-          broadcast({ type: "data:change", app: appSlug, key: safeTable });
-          return c.json(result, 201);
-        }
-        case "bulkInsert": {
-          const result = await queryEngine.bulkInsert(
-            appSlug,
-            safeTable,
-            body.rows,
-          );
-          broadcast({ type: "data:change", app: appSlug, key: safeTable });
-          return c.json(result, 201);
-        }
-        case "update": {
-          await queryEngine.update(appSlug, safeTable, body.id, body.data);
-          broadcast({ type: "data:change", app: appSlug, key: safeTable });
-          return c.json({ ok: true });
-        }
-        case "bulkUpdate": {
-          await queryEngine.bulkUpdate(
-            appSlug,
-            safeTable,
-            body.updates,
-          );
-          broadcast({ type: "data:change", app: appSlug, key: safeTable });
-          return c.json({ ok: true });
-        }
-        case "delete": {
-          await queryEngine.delete(appSlug, safeTable, body.id);
-          broadcast({ type: "data:change", app: appSlug, key: safeTable });
-          return c.json({ ok: true });
-        }
-        case "count":
-          return c.json({ count: await queryEngine.count(appSlug, safeTable, body.filter) });
-        case "schema":
-          return c.json(await appRegistry.getSchema(appSlug));
-        case "appInfo": {
-          const record = await appRegistry.get(appSlug);
-          if (!record) return c.json({ error: "App not found" }, 404);
-          return c.json({ installedVersion: record.installed_version });
-        }
-        case "listApps":
-          return c.json(await appRegistry.listApps());
-        default:
-          return c.json({ error: `Unknown action: ${action}` }, 400);
-      }
-    } catch (e) {
-      const msg = (e as Error).message;
-      console.error("[app-db] Query error:", msg);
-      const isValidation =
-        msg.startsWith("Invalid ") ||
-        msg.startsWith("insert:") ||
-        msg.startsWith("bulkInsert:") ||
-        msg.startsWith("update:") ||
-        msg.startsWith("bulkUpdate:");
-      const safe = isValidation ? msg : "Query failed";
-      return c.json({ error: safe }, isValidation ? 400 : 500);
-    }
-  });
-
-  // Read-only outbound proxy for sandboxed apps. Apps run in a null-origin iframe
-  // with CSP connect-src 'self', so they cannot call third-party APIs directly.
-  // This proxies GET requests to a small, fixed allowlist of public, keyless data
-  // APIs. Allowlist-only (no user-supplied host) keeps the SSRF surface closed.
-  // The fetch remains hostname-based after allowlist validation, so it accepts
-  // the residual DNS-rebinding risk for these stable public API hosts.
-  const BRIDGE_PROXY_ALLOWED_HOSTS = new Set([
-    "api.open-meteo.com",
-    "geocoding-api.open-meteo.com",
-  ]);
-  app.get("/api/bridge/proxy", async (c) => {
-    const target = c.req.query("url");
-    if (!target || typeof target !== "string" || target.length > 2048) {
-      return c.json({ error: "url query param required" }, 400);
-    }
-    let parsed: URL;
-    try {
-      parsed = new URL(target);
-    } catch (err) {
-      if (!(err instanceof TypeError)) {
-        console.warn("[bridge/proxy] URL parse failed:", err instanceof Error ? err.message : String(err));
-      }
-      return c.json({ error: "invalid url" }, 400);
-    }
-    if (parsed.protocol !== "https:" || !BRIDGE_PROXY_ALLOWED_HOSTS.has(parsed.hostname)) {
-      // Do not echo the host back; this is an allowlist boundary.
-      return c.json({ error: "url not allowed" }, 403);
-    }
-    try {
-      const upstream = await fetch(parsed.toString(), {
-        method: "GET",
-        redirect: "error",
-        headers: { accept: "application/json" },
-        signal: AbortSignal.timeout(10_000),
-      });
-      if (!upstream.ok) {
-        // Coarse status only; never leak upstream body/headers on failure.
-        return c.json({ error: "upstream request failed" }, 502);
-      }
-      let data: unknown = null;
-      try {
-        data = await upstream.json();
-      } catch (err) {
-        console.warn("[bridge/proxy] upstream JSON parse failed:", err instanceof Error ? err.message : String(err));
-      }
-      if (data == null) return c.json({ error: "upstream returned no data" }, 502);
-      return c.json({ data });
-    } catch (e) {
-      console.error("[bridge/proxy] fetch error:", (e as Error).message);
-      return c.json({ error: "proxy request failed" }, 502);
-    }
-  });
-
-  // Key-value bridge: GET for reads (query params), POST for read/write (JSON body)
-  app.get("/api/bridge/data", async (c) => {
-    const appName = c.req.query("app");
-    const key = c.req.query("key");
-    if (!appName || !key) return c.json({ error: "app and key query params required" }, 400);
-
-    const safeApp = appName.replace(/[^a-zA-Z0-9_-]/g, "");
-    const safeKey = key.replace(/[^a-zA-Z0-9_-]/g, "");
-    if (!safeApp || !safeKey) return c.json({ error: "Invalid app or key" }, 400);
-
-    if (kvStore) {
-      try {
-        const value = await kvStore.read(safeApp, safeKey);
-        return c.json({ value });
-      } catch (e) {
-        console.error(`[app-db] KV read error for ${safeApp}/${safeKey}:`, (e as Error).message);
-        return c.json({ error: "Database read failed" }, 500);
-      }
-    }
-
-    const dataDir = join(homePath, "data", safeApp);
-    const filePath = normalize(join(dataDir, `${safeKey}.json`));
-    if (!filePath.startsWith(normalize(dataDir))) return c.json({ error: "Path traversal denied" }, 403);
-    if (!existsSync(filePath)) return c.json({ value: null });
-    const content = readFileSync(filePath, "utf-8");
-    let value = content;
-    try {
-      const parsed = JSON.parse(content);
-      if (typeof parsed === "string") value = parsed;
-    } catch (err: unknown) {
-      logUnexpectedJsonParseFailure("Failed to parse stored bridge value", err);
-    }
-    return c.json({ value });
-  });
-
-  app.post("/api/bridge/data", bridgeDataBodyLimit, async (c) => {
-    let body: { action: "read" | "write"; app: string; key: string; value?: string };
-    try {
-      body = await c.req.json();
-    } catch (err: unknown) {
-      if (err instanceof SyntaxError) {
-        return c.json({ error: "Invalid JSON body" }, 400);
-      }
-      console.error("[bridge/data] Failed to read request body:", err);
-      return c.json({ error: "Failed to read request body" }, 500);
-    }
-
-    if (!body.app || typeof body.app !== "string" || !body.key || typeof body.key !== "string") {
-      return c.json({ error: "app and key are required strings" }, 400);
-    }
-
-    const safeApp = body.app.replace(/[^a-zA-Z0-9_-]/g, "");
-    const safeKey = body.key.replace(/[^a-zA-Z0-9_-]/g, "");
-
-    if (!safeApp || !safeKey) {
-      return c.json({ error: "app and key must contain valid characters" }, 400);
-    }
-
-    // Postgres-backed path
-    if (kvStore) {
-      try {
-        if (body.action === "read") {
-          const value = await kvStore.read(safeApp, safeKey);
-          return c.json({ value });
-        }
-        await kvStore.write(safeApp, safeKey, body.value ?? "");
-        broadcast({ type: "data:change", app: safeApp, key: safeKey });
-        return c.json({ ok: true });
-      } catch (e) {
-        console.error(`[app-db] KV ${body.action} error for ${safeApp}/${safeKey}:`, (e as Error).message);
-        return c.json({ error: "Database operation failed" }, 500);
-      }
-    }
-
-    // File-based fallback (no Postgres)
-    const dataDir = join(homePath, "data", safeApp);
-    const filePath = normalize(join(dataDir, `${safeKey}.json`));
-
-    if (!filePath.startsWith(normalize(dataDir))) {
-      return c.json({ error: "Path traversal denied" }, 403);
-    }
-
-    if (body.action === "read") {
-      if (!existsSync(filePath)) return c.json({ value: null });
-      const content = readFileSync(filePath, "utf-8");
-      let value = content;
-      try {
-        const parsed = JSON.parse(content);
-        if (typeof parsed === "string") {
-          value = parsed;
-        }
-      } catch (err: unknown) {
-        logUnexpectedJsonParseFailure("Failed to parse stored bridge data", err);
-      }
-      return c.json({ value });
-    }
-
-    await mkdirAsync(dataDir, { recursive: true });
-    const raw = body.value ?? "";
-    await writeFileAsync(filePath, typeof raw === "string" ? raw : String(raw), "utf-8");
-    broadcast({ type: "data:change", app: safeApp, key: safeKey });
-    return c.json({ ok: true });
-  });
-
-  app.route("/api/bridge/service", createIntegrationBridgeRoutes({
-    platformDb,
-    pipedream: pipedreamClient,
-    resolveUserId: resolveIntegrationUserId,
+  app.route("/", createBridgeRoutes({
+    dispatcher,
+    getQueryEngine: () => queryEngine,
+    getAppRegistry: () => appRegistry,
+    getKvStore: () => kvStore,
+    homePath,
+    ensureAppProvisioned,
+    broadcast,
+    logUnexpectedJsonParseFailure,
+    integrationBridge: {
+      platformDb,
+      pipedream: pipedreamClient,
+      resolveUserId: resolveIntegrationUserId,
+    },
   }));
 
-  registerConversationHistoryRoutes(app, {
+  app.route("/", createConversationRoutes({
     conversations,
     conversationLifecycle,
     conversationRuns,
-    contextResolver: conversationContextResolver,
-    getOwnerScope: (c) => ({ type: "user", id: requireRequestPrincipal(c).userId }),
-  });
+    conversationContextResolver,
+  }));
 
-  app.post("/api/conversations", conversationBodyLimit, async (c) => {
-    let body: { channel?: string } = {};
-    try {
-      body = await c.req.json<{ channel?: string }>();
-    } catch (err: unknown) {
-      if (!(err instanceof SyntaxError)) {
-        console.error("[gateway] Failed to read conversation create body:", err);
-      }
-    }
-    const id = conversations.create(body.channel);
-    return c.json({ id }, 201);
-  });
-
-  app.get("/api/conversations/:id/search", (c) => {
-    const query = c.req.query("q");
-    if (!query) return c.json({ error: "q parameter required" }, 400);
-    const limit = c.req.query("limit") ? Number(c.req.query("limit")) : undefined;
-    const results = conversations.search(query, { limit });
-    return c.json(results);
-  });
 
   app.get("/api/layout", (c) => {
     const layoutPath = join(homePath, "system/layout.json");
