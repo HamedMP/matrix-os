@@ -1,7 +1,14 @@
 import { z } from "zod/v4";
 
 export const NATIVE_APP_GATEWAY_CHANNEL = "native-app:gateway-fetch";
+export const NATIVE_APP_ACTIVITY_BRIDGE_ARG = "--matrix-app-activity-bridge";
 export const NATIVE_APP_GATEWAY_TIMEOUT_MS = 10_000;
+
+export function isNativeAppActivityIdentity(appIdentity: string, routeSlug: string): boolean {
+  // This capability belongs to the built-in at its canonical route. Do not
+  // accept an independently supplied Resource Manager identity for another app.
+  return appIdentity === "resource-manager" && routeSlug === "resource-manager";
+}
 
 const ActivityQuerySchema = z.strictObject({
   processLimit: z.string().regex(/^(?:[1-9][0-9]?|100)$/).optional(),
