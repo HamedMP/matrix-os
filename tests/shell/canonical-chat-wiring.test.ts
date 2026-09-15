@@ -9,7 +9,7 @@ describe("Canvas and web desktop canonical Chat wiring", () => {
     const providerState = readFileSync(join(process.cwd(), "shell/src/components/chat-app-provider-setup.tsx"), "utf8");
     const desktop = readFileSync(join(process.cwd(), "shell/src/components/Desktop.tsx"), "utf8");
 
-    expect(shellHome).toContain("useCanonicalChatState()");
+    expect(shellHome).toContain("useCanonicalChatState({ initialDraft: recipePrompt })");
     expect(shellHome).not.toContain("useChatState()");
     expect(canonicalState).toContain("client.admitTurn(");
     expect(canonicalState).toContain("client.uploadAttachment(");
