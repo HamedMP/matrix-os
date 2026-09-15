@@ -1425,16 +1425,44 @@ describe("canonical Chat Provider catalog", () => {
     expect(JSON.stringify(catalog)).not.toContain("secret coding inventory failure");
   });
 
-  it("names an unenumerated legacy model after its harness", async () => {
+  it("never fabricates a sendable model for an unenumerated legacy Codex default", async () => {
     const service = createChatProviderCatalogService({
       codingProviders: codingRegistry([codingProvider({ defaultModel: "GPT 5 default" })]),
       agentRuntimeSource: runtimeSource(),
     });
 
-    const catalog = await service.getCatalog(principal);
+    const codex = (await service.getCatalog(principal)).instances
+      .find((instance) => instance.id === "codex_default")!;
 
-    expect(catalog.instances.find((instance) => instance.id === "codex_default")?.models)
-      .toMatchObject([{ id: "provider-default", displayName: "Codex default" }]);
+    // An unparseable legacy default is exactly as unusable as no default at
+    // all: Matrix cannot resolve it to a real model id, so it must never be
+    // turned into a synthetic "provider-default" id that Codex itself would
+    // reject at send time. See "never exposes a fake sendable Codex model
+    // when catalog discovery fails" below for the failed-fetch counterpart.
+    expect(codex.models).toEqual([]);
+    expect(codex.defaultSelection).toBeUndefined();
+    expect(codex.models.some((model) => model.id === "provider-default")).toBe(false);
+  });
+
+  it("never exposes a fake sendable Codex model when catalog discovery fails", async () => {
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry([codingProvider({ defaultModel: undefined })]),
+      agentRuntimeSource: runtimeSource(),
+      codingModelCatalogSource: vi.fn(async (provider) => {
+        if (provider.id !== "codex") return null;
+        throw new Error("Codex model catalog unavailable");
+      }),
+    });
+
+    const codex = (await service.getCatalog(principal)).instances
+      .find((instance) => instance.id === "codex_default")!;
+
+    // This is the exact shape of the confirmed bug: catalog discovery fails,
+    // Matrix must not fall back to a synthetic model id that gets threaded
+    // through to the real Codex app-server and rejected at send time.
+    expect(codex.models).toEqual([]);
+    expect(codex.models.some((model) => model.id === "provider-default")).toBe(false);
+    expect(codex.defaultSelection).toBeUndefined();
   });
 
   it("advertises file attachments forwarded by native Pi and OpenCode adapters", async () => {
