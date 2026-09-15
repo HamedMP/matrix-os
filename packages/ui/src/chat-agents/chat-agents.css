@@ -1,0 +1,341 @@
+@keyframes matrix-chat-agents-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.992);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes matrix-chat-agents-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes matrix-rabbit-wink {
+  0%, 42%, 58%, 100% { transform: scaleY(1); }
+  50% { transform: scaleY(0.08); }
+}
+
+@keyframes matrix-rabbit-attention-wink {
+  0%, 89%, 96%, 100% { transform: scaleY(1); }
+  93% { transform: scaleY(0.08); }
+}
+
+@keyframes matrix-rabbit-working-ears {
+  0%, 64%, 100% { transform: translateY(-4px) scaleY(1.16) rotate(0deg); }
+  72% { transform: translateY(-5px) scaleY(1.2) rotate(2deg); }
+  82% { transform: translateY(-4px) scaleY(1.16) rotate(-1deg); }
+}
+
+@keyframes matrix-rabbit-working-status {
+  0%, 100% { opacity: 0.58; transform: scale(0.86); }
+  50% { opacity: 1; transform: scale(1); }
+}
+
+@keyframes matrix-rabbit-success-pop {
+  from { opacity: 0; transform: scale(0.84) rotate(-8deg); }
+  to { opacity: 1; transform: scale(1) rotate(0deg); }
+}
+
+.matrix-chat-agents-panel {
+  isolation: isolate;
+  animation: matrix-chat-agents-enter 220ms cubic-bezier(0.19, 1, 0.22, 1) both;
+}
+
+.matrix-chat-agents-rail__items {
+  animation: matrix-chat-agents-fade 150ms ease-out both;
+}
+
+.matrix-chat-agent-rail-row,
+.matrix-chat-agents-rail button {
+  transition: background-color 150ms ease, color 150ms ease, transform 150ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+.matrix-chat-agent-rail-row:active,
+.matrix-chat-agents-rail > div > button:last-child:active {
+  transform: scale(0.97);
+}
+
+.matrix-chat-agents-hero {
+  background:
+    radial-gradient(circle at 82% 8%, color-mix(in srgb, var(--accent, var(--matrix-accent)) 18%, transparent), transparent 42%),
+    linear-gradient(145deg,
+      color-mix(in srgb, var(--bg-raised, var(--matrix-card)) 96%, var(--accent, var(--matrix-accent)) 4%),
+      var(--bg-surface, var(--matrix-card)));
+  border-color: color-mix(in srgb, var(--border-default, var(--matrix-border)) 72%, var(--accent, var(--matrix-accent)) 28%);
+  box-shadow: 0 18px 45px color-mix(in srgb, var(--text-primary, var(--matrix-card-fg)) 8%, transparent);
+}
+
+.matrix-chat-agent-recipes__intro {
+  background:
+    radial-gradient(circle at 86% 12%, color-mix(in srgb, #28bfae 22%, transparent), transparent 36%),
+    radial-gradient(circle at 72% 110%, color-mix(in srgb, #6657d9 15%, transparent), transparent 42%),
+    color-mix(in srgb, var(--bg-raised, var(--matrix-card)) 94%, #d7f7ef 6%);
+  border-color: color-mix(in srgb, var(--border-default, var(--matrix-border)) 65%, #28bfae 35%);
+}
+
+.matrix-chat-agent-recipes {
+  container-name: matrix-agent-recipes;
+  container-type: inline-size;
+}
+
+.matrix-chat-agent-recipes__grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+@container matrix-agent-recipes (min-width: 720px) {
+  .matrix-chat-agent-recipes__grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.matrix-chat-agent-recipe-card {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 248px;
+  background:
+    radial-gradient(circle at 2% 0%, color-mix(in srgb, #28bfae 8%, transparent), transparent 38%),
+    color-mix(in srgb, var(--bg-raised, var(--matrix-card)) 96%, #ebe8ff 4%);
+}
+
+.matrix-recipe-rabbit {
+  display: inline-flex;
+  flex: 0 0 auto;
+  width: 48px;
+  height: 48px;
+}
+
+.matrix-recipe-rabbit--small { width: 32px; height: 32px; }
+.matrix-recipe-rabbit--medium { width: 48px; height: 48px; }
+.matrix-recipe-rabbit--large { width: 52px; height: 52px; }
+
+.matrix-recipe-rabbit svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.matrix-agent-rabbit__face,
+.matrix-agent-rabbit__ear,
+.matrix-agent-rabbit__eyes,
+.matrix-agent-rabbit__wink,
+.matrix-agent-rabbit__status {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.matrix-agent-rabbit__face,
+.matrix-agent-rabbit__eyes,
+.matrix-agent-rabbit__ear,
+.matrix-agent-rabbit__status {
+  transition-duration: 180ms;
+  transition-property: transform, opacity;
+  transition-timing-function: cubic-bezier(0.19, 1, 0.22, 1);
+}
+
+.matrix-agent-rabbit__ear {
+  transform-origin: 50% 100%;
+}
+
+.matrix-agent-rabbit__ear--left {
+  transform: translateY(-1px) scaleY(0.96) rotate(-5deg);
+}
+
+.matrix-agent-rabbit__ear--right {
+  transform: translateY(-1px) scaleY(0.96) rotate(5deg);
+}
+
+.matrix-agent-rabbit__status {
+  opacity: 0;
+  transform: scale(0.84);
+}
+
+.matrix-agent-rabbit__status-spark,
+.matrix-agent-rabbit__status-minus {
+  opacity: 0;
+}
+
+.matrix-recipe-rabbit[data-rabbit-state="attention"] .matrix-agent-rabbit__ear--left,
+.matrix-recipe-rabbit[data-rabbit-state="success"] .matrix-agent-rabbit__ear--left {
+  transform: translateY(-3px) scaleY(1.1) rotate(-2deg);
+}
+
+.matrix-recipe-rabbit[data-rabbit-state="attention"] .matrix-agent-rabbit__ear--right,
+.matrix-recipe-rabbit[data-rabbit-state="success"] .matrix-agent-rabbit__ear--right {
+  transform: translateY(-3px) scaleY(1.1) rotate(2deg);
+}
+
+.matrix-recipe-rabbit[data-rabbit-state="attention"] .matrix-agent-rabbit__status,
+.matrix-recipe-rabbit[data-rabbit-state="working"] .matrix-agent-rabbit__status,
+.matrix-recipe-rabbit[data-rabbit-state="success"] .matrix-agent-rabbit__status,
+.matrix-recipe-rabbit[data-rabbit-state="blocked"] .matrix-agent-rabbit__status {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.matrix-recipe-rabbit[data-rabbit-state="attention"] .matrix-agent-rabbit__wink {
+  animation: matrix-rabbit-attention-wink 6.4s cubic-bezier(0.19, 1, 0.22, 1) var(--rabbit-delay) infinite;
+}
+
+.matrix-recipe-rabbit[data-rabbit-state="working"] .matrix-agent-rabbit__ear {
+  animation: matrix-rabbit-working-ears 2.8s cubic-bezier(0.645, 0.045, 0.355, 1) var(--rabbit-delay) infinite;
+}
+
+.matrix-recipe-rabbit[data-rabbit-state="working"] .matrix-agent-rabbit__status {
+  animation: matrix-rabbit-working-status 1.4s ease-in-out var(--rabbit-delay) infinite;
+}
+
+.matrix-recipe-rabbit[data-rabbit-state="success"] .matrix-agent-rabbit__wink {
+  animation: matrix-rabbit-wink 520ms cubic-bezier(0.19, 1, 0.22, 1) both;
+}
+
+.matrix-recipe-rabbit[data-rabbit-state="success"] .matrix-agent-rabbit__status {
+  animation: matrix-rabbit-success-pop 320ms cubic-bezier(0.19, 1, 0.22, 1) both;
+}
+
+.matrix-recipe-rabbit[data-rabbit-state="success"] .matrix-agent-rabbit__status-dot,
+.matrix-recipe-rabbit[data-rabbit-state="success"] .matrix-agent-rabbit__status-minus {
+  opacity: 0;
+}
+
+.matrix-recipe-rabbit[data-rabbit-state="success"] .matrix-agent-rabbit__status-spark {
+  opacity: 1;
+  fill: var(--rabbit-accent);
+}
+
+.matrix-recipe-rabbit[data-rabbit-state="blocked"] .matrix-agent-rabbit__ear--left {
+  transform: translateY(0) scaleY(0.9) rotate(-18deg);
+}
+
+.matrix-recipe-rabbit[data-rabbit-state="blocked"] .matrix-agent-rabbit__ear--right {
+  transform: translateY(0) scaleY(0.9) rotate(18deg);
+}
+
+.matrix-recipe-rabbit[data-rabbit-state="blocked"] .matrix-agent-rabbit__status-dot {
+  fill: #d94b4b;
+}
+
+.matrix-recipe-rabbit[data-rabbit-state="blocked"] .matrix-agent-rabbit__status-minus {
+  opacity: 1;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .matrix-chat-agent-recipe-card:hover .matrix-recipe-rabbit[data-rabbit-state="idle"] .matrix-agent-rabbit__face,
+  .matrix-chat-agent-rail-row:hover .matrix-recipe-rabbit[data-rabbit-state="idle"] .matrix-agent-rabbit__face {
+    transform: scale(1.02);
+  }
+
+  .matrix-chat-agent-recipe-card:hover .matrix-recipe-rabbit[data-rabbit-state="idle"] .matrix-agent-rabbit__ear--left,
+  .matrix-chat-agent-rail-row:hover .matrix-recipe-rabbit[data-rabbit-state="idle"] .matrix-agent-rabbit__ear--left {
+    transform: translateY(-3px) scaleY(1.1) rotate(-2deg);
+  }
+
+  .matrix-chat-agent-recipe-card:hover .matrix-recipe-rabbit[data-rabbit-state="idle"] .matrix-agent-rabbit__ear--right,
+  .matrix-chat-agent-rail-row:hover .matrix-recipe-rabbit[data-rabbit-state="idle"] .matrix-agent-rabbit__ear--right {
+    transform: translateY(-3px) scaleY(1.1) rotate(2deg);
+  }
+
+  .matrix-chat-agent-recipe-card:hover .matrix-recipe-rabbit[data-rabbit-state="idle"] .matrix-agent-rabbit__wink,
+  .matrix-chat-agent-rail-row:hover .matrix-recipe-rabbit[data-rabbit-state="idle"] .matrix-agent-rabbit__wink {
+    animation: matrix-rabbit-wink 540ms cubic-bezier(0.19, 1, 0.22, 1) both;
+  }
+}
+
+.matrix-chat-agents-presence {
+  background: color-mix(in srgb, var(--bg-surface, var(--matrix-card)) 82%, transparent);
+  border-color: color-mix(in srgb, var(--border-default, var(--matrix-border)) 78%, transparent);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+.matrix-chat-agent-card {
+  background: color-mix(in srgb, var(--bg-raised, var(--matrix-card)) 92%, transparent);
+  border-color: color-mix(in srgb, var(--border-default, var(--matrix-border)) 86%, transparent);
+  box-shadow: 0 1px 0 color-mix(in srgb, white 44%, transparent) inset;
+  transition-duration: 150ms;
+  transition-property: transform, background-color, border-color, box-shadow;
+  transition-timing-function: cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+.matrix-chat-agent-card__content {
+  transform: translateY(0);
+  transition: transform 150ms cubic-bezier(0.19, 1, 0.22, 1);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .matrix-chat-agent-card:hover {
+    background: color-mix(in srgb, var(--bg-hover, var(--matrix-secondary)) 72%, var(--bg-raised, var(--matrix-card)) 28%);
+    border-color: color-mix(in srgb, var(--border-default, var(--matrix-border)) 58%, var(--accent, var(--matrix-accent)) 42%);
+    box-shadow: 0 12px 28px color-mix(in srgb, var(--text-primary, var(--matrix-card-fg)) 9%, transparent);
+  }
+
+  .matrix-chat-agent-card:hover .matrix-chat-agent-card__content {
+    transform: translateY(-1px);
+  }
+}
+
+.matrix-chat-agent-card:active {
+  transform: scale(0.985);
+}
+
+.matrix-chat-agent-button {
+  transition-duration: 150ms;
+  transition-property: transform, background-color, border-color, color, box-shadow;
+  transition-timing-function: cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+.matrix-chat-agent-button:active:enabled {
+  transform: scale(0.98);
+}
+
+.matrix-chat-agent-input {
+  transition-duration: 150ms;
+  transition-property: background-color, border-color, box-shadow;
+  transition-timing-function: ease;
+}
+
+.matrix-chat-agent-chip {
+  background: color-mix(in srgb, var(--bg-hover, var(--matrix-secondary)) 76%, transparent);
+  border-color: color-mix(in srgb, var(--border-default, var(--matrix-border)) 76%, transparent);
+}
+
+.matrix-chat-agent-mention {
+  color: var(--accent, var(--matrix-accent));
+  background: color-mix(in srgb, var(--accent, var(--matrix-accent)) 10%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .matrix-chat-agents-panel {
+    animation: matrix-chat-agents-fade 140ms ease-out both;
+  }
+
+  .matrix-chat-agent-card,
+  .matrix-chat-agent-card__content,
+  .matrix-chat-agent-button,
+  .matrix-chat-agent-input {
+    transform: none;
+    transition-duration: 0.01ms;
+  }
+
+  .matrix-chat-agents-rail__items {
+    animation: none;
+  }
+
+  .matrix-chat-agent-rail-row,
+  .matrix-chat-agents-rail button {
+    transform: none;
+    transition-duration: 0.01ms;
+  }
+
+  .matrix-recipe-rabbit,
+  .matrix-agent-rabbit__face,
+  .matrix-agent-rabbit__eyes,
+  .matrix-agent-rabbit__ear,
+  .matrix-agent-rabbit__wink,
+  .matrix-agent-rabbit__status {
+    animation: none;
+    transition-duration: 0.01ms;
+  }
+}
