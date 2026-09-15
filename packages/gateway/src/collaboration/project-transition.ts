@@ -484,12 +484,19 @@ export function createProjectTransitionJournal(options: {
       signal: AbortSignal;
     }): Promise<void>;
   }): Promise<{ recovered: number; activated: number; failed: number }> {
-    const rows = await options.db.selectFrom("collaboration_transitions").selectAll()
-      .where("status", "in", ["prepared", "staging", "fenced", "committing", "recovering"])
-      .orderBy("created_at", "asc").limit(recoveryBatchSize).execute();
     let recovered = 0;
     let activated = 0;
     let failed = 0;
+    const availableSlots = Math.min(
+      recoveryBatchSize,
+      MAX_RECOVERY_BATCH - activeRecoveryAttempts.size,
+    );
+    if (availableSlots < 1) return { recovered, activated, failed };
+    const activeTransitionIds = [...activeRecoveryAttempts.keys()];
+    const rows = await options.db.selectFrom("collaboration_transitions").selectAll()
+      .where("status", "in", ["prepared", "staging", "fenced", "committing", "recovering"])
+      .$if(activeTransitionIds.length > 0, (query) => query.where("id", "not in", activeTransitionIds))
+      .orderBy("created_at", "asc").limit(availableSlots).execute();
     for (const value of rows.map(rowToTransition)) {
       if (activeRecoveryAttempts.has(value.id)) continue;
       if (activeRecoveryAttempts.size >= MAX_RECOVERY_BATCH) break;

@@ -366,6 +366,83 @@ describe("project collaboration transition journal", () => {
       warning.mockRestore();
     }
   });
+
+  it("does not let a timed-out oldest callback starve newer recovery work", async () => {
+    const newerScopeId = "10000000-0000-4000-8000-000000000052";
+    const newerTransitionId = "20000000-0000-4000-8000-000000000052";
+    const transitions = journal();
+    await prepare();
+    await transitions.beginStaging(TRANSITION_ID);
+    await fixture.db.insertInto("collaboration_scopes").values({
+      id: newerScopeId,
+      owner_type: "personal",
+      owner_id: OWNER_ID,
+      kind: "project",
+      resource_id: "proj_newer_recovery",
+      parent_scope_id: null,
+      membership_mode: "direct",
+      lifecycle: "preparing",
+      revision: 1,
+      auth_epoch: 0,
+      authority_runtime_id: SOURCE_RUNTIME,
+      authority_generation: 1,
+      execution_generation: null,
+      execution_eligibility: null,
+      created_at: NOW,
+      updated_at: NOW,
+      deleted_at: null,
+    }).execute();
+    await fixture.db.insertInto("collaboration_transitions").values({
+      id: newerTransitionId,
+      scope_id: newerScopeId,
+      source_authority_runtime_id: SOURCE_RUNTIME,
+      source_authority_generation: 1,
+      destination_authority_runtime_id: DESTINATION_RUNTIME,
+      destination_authority_generation: 1,
+      requested_by: OWNER_ID,
+      inventory_revision: 1,
+      inventory_hash: INVENTORY_HASH,
+      intended_membership_hash: MEMBERSHIP_HASH,
+      status: "prepared",
+      source_fence_epoch: null,
+      staged_manifest_ref: null,
+      publication_marker: null,
+      retry_count: 0,
+      error_code: null,
+      created_at: new Date(NOW.getTime() + 1),
+      updated_at: NOW,
+    }).execute();
+
+    let release: (() => void) | undefined;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    const cleanupStaging = vi.fn(async ({ transitionId }: { transitionId: string }) => {
+      if (transitionId === TRANSITION_ID) await blocked;
+    });
+    const bounded = createProjectTransitionJournal({
+      db: fixture.db,
+      now: () => NOW,
+      recoveryTimeoutMs: 5,
+      recoveryBatchSize: 1,
+    });
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      await expect(bounded.recover({
+        cleanupStaging,
+        completePublication: vi.fn(async () => undefined),
+      })).resolves.toEqual({ recovered: 0, activated: 0, failed: 0 });
+      await expect(bounded.recover({
+        cleanupStaging,
+        completePublication: vi.fn(async () => undefined),
+      })).resolves.toEqual({ recovered: 1, activated: 0, failed: 1 });
+
+      expect(cleanupStaging).toHaveBeenCalledTimes(2);
+      await expect(bounded.get(newerTransitionId)).resolves.toMatchObject({ status: "failed" });
+    } finally {
+      release?.();
+      await expect.poll(async () => (await bounded.get(TRANSITION_ID))?.status).toBe("failed");
+      warning.mockRestore();
+    }
+  });
 });
 
 const realDescribe = process.env.MATRIX_TEST_POSTGRES_URL ? describe : describe.skip;
