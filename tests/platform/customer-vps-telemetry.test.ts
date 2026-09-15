@@ -267,6 +267,7 @@ describe('platform/customer-vps-routes telemetry', () => {
     const res = await registerRequest(app);
 
     expect(res.status).toBe(401);
+    await expect(res.json()).resolves.toMatchObject({ failure_code: 'registration_rejected' });
     expect(captureEvent).toHaveBeenCalledTimes(1);
     expect(captureEvent).toHaveBeenCalledWith(MATRIX_TELEMETRY_EVENTS.VPS_REGISTRATION_FAILED, {
       properties: { failure_code: 'registration_rejected', http_status: 401, machine_id: MACHINE_ID },

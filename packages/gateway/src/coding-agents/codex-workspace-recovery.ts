@@ -24,7 +24,7 @@ export async function recoverCodexWorkspace(
       attachments: turn.attachments, model: turn.model, modelOptions: turn.modelOptions,
       projectSlug: thread.projectId, worktreeId: previous.session.worktreeId, taskId: thread.taskId,
       approvalPolicy: turn.approvalPolicy ?? "on_request", sandboxMode: turn.sandboxMode ?? "workspace_write",
-      runtimePreference: "zellij",
+      runtimePreference: "background",
     },
   });
   if (!restarted.ok) throw new Error("Workspace provider turn recovery failed");

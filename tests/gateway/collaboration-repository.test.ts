@@ -217,6 +217,8 @@ describe("CollaborationRepository", () => {
       expectedRevision: 1,
       payloadHash: "6".repeat(64),
     });
+    await fixture.db.updateTable("collaboration_scopes").set({ lifecycle: "shared" })
+      .where("id", "=", scope.id).execute();
 
     const downgraded = await repository.changeMemberRole({
       scopeId: scope.id,

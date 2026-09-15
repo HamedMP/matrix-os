@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ZellijCliRuntimeAdapter } from "../../packages/terminal-runtime/src/zellij-adapter.js";
+import { createTerminalRuntimeEnvironment } from "../../packages/terminal-runtime/src/runtime-environment.js";
 
 const execFileAsync = promisify(execFile);
 const binaryPath = process.env.MATRIX_TEST_ZELLIJ_BIN ?? "/usr/local/bin/zellij";
@@ -16,6 +17,7 @@ describe.runIf(available)("real bundled Zellij 0.44.3 integration", () => {
   let homePath = "";
   let sessionName = "";
   let adapter: ZellijCliRuntimeAdapter;
+  let runtimeEnv: Record<string, string>;
   const extraSessionNames: string[] = [];
 
   beforeAll(async () => {
@@ -23,7 +25,8 @@ describe.runIf(available)("real bundled Zellij 0.44.3 integration", () => {
     expect(version.stdout.trim()).toBe("zellij 0.44.3");
     homePath = await mkdtemp(join(tmpdir(), "matrix-zellij-real-"));
     sessionName = `matrix-w-${randomBytes(16).toString("hex")}`;
-    adapter = new ZellijCliRuntimeAdapter({ homePath, binaryPath });
+    runtimeEnv = createTerminalRuntimeEnvironment({ homePath, uid: process.getuid?.() ?? 0 });
+    adapter = new ZellijCliRuntimeAdapter({ homePath, binaryPath, env: runtimeEnv });
     await adapter.ensureSession(sessionName, { cols: 100, rows: 30 });
   }, 20_000);
 
@@ -63,7 +66,7 @@ describe.runIf(available)("real bundled Zellij 0.44.3 integration", () => {
     await Promise.race([observed, new Promise<never>((_, reject) => setTimeout(async () => {
       const dump = await execFileAsync(binaryPath, ["--session", sessionName, "action", "dump-screen", "--pane-id", first.paneId, "--full", "--ansi"], {
         timeout: 5_000,
-        env: { ...process.env, HOME: homePath, MATRIX_HOME: homePath, ZELLIJ_CONFIG_DIR: join(homePath, "system", "zellij") },
+        env: runtimeEnv,
       }).catch(() => ({ stdout: "<dump failed>" }));
       reject(new Error(`observer did not receive targeted output; dump=${dump.stdout}; updates=${JSON.stringify(paneUpdates)}`));
     }, 15_000))]);
@@ -73,6 +76,122 @@ describe.runIf(available)("real bundled Zellij 0.44.3 integration", () => {
     await adapter.renameTab(sessionName, second.tabId, "renamed");
     await adapter.closeTab(sessionName, second.tabId);
     expect(await adapter.findTabByInternalName(sessionName, secondName)).toBeUndefined();
+  }, 30_000);
+
+  it("routes keyboard and terminal-emulator replies through the attached PTY", async () => {
+    const internalName = `matrix-tab-${randomBytes(16).toString("hex")}`;
+    const tab = await adapter.createTab(sessionName, { internalName, cwd: "", command: ["sh"] });
+    let output = "";
+    let attachmentExitCode: number | null | undefined;
+    const commandObserved = Promise.withResolvers<void>();
+    const paletteQueryObserved = Promise.withResolvers<void>();
+    const attachment = await adapter.openAttachment(sessionName, {
+      paneId: tab.paneId,
+      size: { cols: 100, rows: 30 },
+      onData: (data) => {
+        output = `${output}${new TextDecoder().decode(data)}`.slice(-64 * 1024);
+        if (output.split("matrix-pty-round-trip").length >= 3) commandObserved.resolve();
+        if (output.includes("\x1b]10;?")) paletteQueryObserved.resolve();
+      },
+      onExit: (exitCode) => { attachmentExitCode = exitCode; },
+    });
+
+    await attachment.write(new TextEncoder().encode("printf 'matrix-pty-round-trip\\n'\r"));
+    await Promise.race([
+      commandObserved.promise,
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("attached PTY ignored keyboard input")), 10_000)),
+    ]);
+    await Promise.race([
+      paletteQueryObserved.promise,
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`Zellij emitted no OSC 10 query: ${JSON.stringify(output.slice(0, 4096))}`)), 2_000)),
+    ]);
+    expect(await adapter.findTabByInternalName(sessionName, internalName)).toEqual(tab);
+    expect(attachmentExitCode).toBeUndefined();
+    const oscReply = Buffer.from("\x1b]10;rgb:1111/2222/3333\x07", "latin1");
+    await attachment.write(oscReply);
+    await new Promise<void>((resolve) => setTimeout(resolve, 250));
+    expect(await adapter.findTabByInternalName(sessionName, internalName)).toEqual(tab);
+    expect(attachmentExitCode).toBeUndefined();
+    const dump = await execFileAsync(binaryPath, [
+      "--session", sessionName, "action", "dump-screen", "--pane-id", tab.paneId, "--full", "--ansi",
+    ], {
+      timeout: 5_000,
+      env: runtimeEnv,
+    });
+    await attachment.close();
+
+    expect(dump.stdout).not.toContain("rgb:1111/2222/3333");
+  }, 30_000);
+
+  it("keeps simultaneous PTY attachments bound to their requested panes", async () => {
+    const firstName = `matrix-tab-${randomBytes(16).toString("hex")}`;
+    const secondName = `matrix-tab-${randomBytes(16).toString("hex")}`;
+    const first = await adapter.createTab(sessionName, { internalName: firstName, cwd: "", command: ["sh"] });
+    const second = await adapter.createTab(sessionName, { internalName: secondName, cwd: "", command: ["sh"] });
+    const firstMarker = `matrix-first-${randomBytes(8).toString("hex")}`;
+    const secondMarker = `matrix-second-${randomBytes(8).toString("hex")}`;
+    let firstOutput = "";
+    let secondOutput = "";
+    const firstReady = Promise.withResolvers<void>();
+    const secondReady = Promise.withResolvers<void>();
+    const firstAttachment = await adapter.openAttachment(sessionName, {
+      paneId: first.paneId,
+      size: { cols: 100, rows: 30 },
+      onData: (data) => {
+        firstOutput = `${firstOutput}${new TextDecoder().decode(data)}`.slice(-64 * 1024);
+        if (firstOutput.includes(firstMarker)) firstReady.resolve();
+      },
+      onExit: firstReady.reject,
+    });
+    let secondAttachment: Awaited<ReturnType<typeof adapter.openAttachment>> | undefined;
+
+    try {
+      await firstAttachment.write(new TextEncoder().encode(`printf '${firstMarker}\\n'\r`));
+      await Promise.race([
+        firstReady.promise,
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("first attachment ignored input")), 10_000)),
+      ]);
+      firstOutput = "";
+
+      secondAttachment = await adapter.openAttachment(sessionName, {
+        paneId: second.paneId,
+        size: { cols: 100, rows: 30 },
+        onData: (data) => {
+          secondOutput = `${secondOutput}${new TextDecoder().decode(data)}`.slice(-64 * 1024);
+          if (secondOutput.includes(secondMarker)) secondReady.resolve();
+        },
+        onExit: secondReady.reject,
+      });
+      await secondAttachment.write(new TextEncoder().encode(`printf '${secondMarker}\\n'\r`));
+      await Promise.race([
+        secondReady.promise,
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error(
+          `second attachment was not bound to its pane; first=${JSON.stringify(firstOutput)} second=${JSON.stringify(secondOutput)}`,
+        )), 10_000)),
+      ]);
+
+      const [firstDump, secondDump] = await Promise.all([first.paneId, second.paneId].map(async (paneId) => {
+        const result = await execFileAsync(binaryPath, [
+          "--session", sessionName, "action", "dump-screen", "--pane-id", paneId, "--full", "--ansi",
+        ], { timeout: 5_000, env: runtimeEnv });
+        return result.stdout;
+      }));
+      const liveSessions = await execFileAsync(binaryPath, ["list-sessions", "--no-formatting"], {
+        timeout: 5_000,
+        env: runtimeEnv,
+      });
+
+      expect(firstOutput).not.toContain(secondMarker);
+      expect(secondOutput).toContain(secondMarker);
+      expect(firstDump).toContain(firstMarker);
+      expect(firstDump).not.toContain(secondMarker);
+      expect(secondDump).toContain(secondMarker);
+      expect(secondDump).not.toContain(firstMarker);
+      expect(liveSessions.stdout).not.toContain("matrix-attach-");
+    } finally {
+      await secondAttachment?.close();
+      await firstAttachment.close();
+    }
   }, 30_000);
 
   it("uses one substantially smaller Zellij server for 23 idle tabs", async () => {

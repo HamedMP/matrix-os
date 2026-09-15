@@ -18,13 +18,13 @@ it.each([true, false])("keeps steered replies distinct with text_start=%s", asyn
     const stderr = new EventEmitter();
     const lifecycle = new EventEmitter();
     const attempt = starts++;
-    const reply = ["STEP1: initial read complete", "STEP2: redirected read complete", "STEER_OK ORBIT-228"][attempt]!;
+    const reply = ["STEP1: initial read complete", "STEP2: redirected read complete", "STEER_OK\nORBIT-228\n"][attempt]!;
     queueMicrotask(() => {
       for (const event of [
         { type: "session", id: args[args.indexOf("--session-id") + 1] },
         { type: "message_start", message: { role: "assistant", content: [] } },
         ...(hasTextStart ? [{ type: "message_update", assistantMessageEvent: { type: "text_start" } }] : []),
-        { type: "message_update", assistantMessageEvent: { type: "text_delta", delta: reply } },
+        ...reply.split(/(\n)/).filter(Boolean).map(delta => ({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta } })),
         { type: "message_end", message: { role: "assistant", content: [{ type: "text", text: reply }] } },
       ]) stdout.emit("data", Buffer.from(`${JSON.stringify(event)}\n`));
       if (attempt === 2) lifecycle.emit("exit", 0, null);
@@ -78,5 +78,5 @@ it.each([true, false])("keeps steered replies distinct with text_start=%s", asyn
   expect(completed).toHaveLength(3);
   expect(new Set(completed.map((event) => event.messageId)).size).toBe(3);
   const final = published.filter((event) => event.type === "assistant.text.delta" && event.messageId === completed[2]!.messageId);
-  expect(final.map((event) => event.delta).join("")).toBe("STEER_OK ORBIT-228");
+  expect(final.map((event) => event.delta).join("")).toBe("STEER_OK\nORBIT-228\n");
 });

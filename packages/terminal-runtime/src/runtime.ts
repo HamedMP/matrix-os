@@ -34,6 +34,10 @@ export interface ZellijRuntimeAdapter {
     onEvent: (event: ZellijObserverEvent) => void;
   }): Promise<ZellijObserver>;
   findTabByInternalName?(sessionName: string, internalName: string): Promise<{ tabId: number; paneId: string } | undefined>;
+  findTabsByInternalName?(
+    sessionName: string,
+    internalNames: string[],
+  ): Promise<Record<string, { tabId: number; paneId: string }>>;
   renameTab?(sessionName: string, tabId: number, name: string): Promise<void>;
   closeTab?(sessionName: string, tabId: number): Promise<void>;
   deleteSession?(sessionName: string): Promise<void>;
@@ -72,7 +76,7 @@ export interface TerminalRuntimeOptions {
   observerCloseTimeoutMs?: number;
 }
 export interface TerminalViewer {
-  write(data: string): Promise<void>;
+  write(data: string | Uint8Array): Promise<void>;
   touch(): void;
   detach(): Promise<void>;
 }
@@ -270,9 +274,19 @@ export class TerminalRuntime {
       : () => undefined;
     try {
       await this.zellij.ensureSession(workspace.zellijSessionName, workspace.canonicalSize);
-      for (const tab of Object.values(workspace.tabs).sort((left, right) => left.order - right.order)) {
-        if (tab.status === "exited" || tab.status === "failed") continue;
-        let ids = await this.zellij.findTabByInternalName?.(workspace.zellijSessionName, tab.zellijTabName);
+      const restorableTabs = Object.values(workspace.tabs)
+        .filter((tab) => tab.status !== "exited" && tab.status !== "failed")
+        .sort((left, right) => left.order - right.order);
+      const recoveredTabs = restorableTabs.length > 0 && this.zellij.findTabsByInternalName
+        ? await this.zellij.findTabsByInternalName(
+            workspace.zellijSessionName,
+            restorableTabs.map((tab) => tab.zellijTabName),
+          )
+        : undefined;
+      for (const tab of restorableTabs) {
+        let ids = recoveredTabs
+          ? recoveredTabs[tab.zellijTabName]
+          : await this.zellij.findTabByInternalName?.(workspace.zellijSessionName, tab.zellijTabName);
         if (tab.status === "starting" && tab.startupCommand === undefined) {
           // Records without startup intent predate stable client-supplied tab
           // IDs. Recover an already-created Zellij tab when possible; an
@@ -341,6 +355,14 @@ export class TerminalRuntime {
   }
 
   async terminateTab(refInput: TerminalRef): Promise<void> {
+    await this.finishTab(refInput, false);
+  }
+
+  async deleteTab(refInput: TerminalRef): Promise<void> {
+    await this.finishTab(refInput, true);
+  }
+
+  private async finishTab(refInput: TerminalRef, removeCanonicalRecord: boolean): Promise<void> {
     const ref = TerminalRefSchema.parse(refInput);
     const key = refKey(ref);
     if (this.terminatingTabKeys.has(key)) throw new TerminalRuntimeError("conflict");
@@ -353,7 +375,15 @@ export class TerminalRuntime {
         const workspace = await this.requireRuntimeWorkspace(ref.workspaceId);
         const tab = workspace.tabs[ref.tabId];
         if (!tab) throw new TerminalRuntimeError("not_found");
-        let zellijTabId = tab.zellijTabId;
+        const terminalAlreadyExited = tab.status === "exited" || tab.status === "failed";
+        let zellijTabId = terminalAlreadyExited ? null : tab.zellijTabId;
+        if (removeCanonicalRecord && terminalAlreadyExited) {
+          if (!this.zellij.findTabByInternalName) throw new TerminalRuntimeError("unavailable");
+          zellijTabId = (await this.zellij.findTabByInternalName(
+            workspace.zellijSessionName,
+            tab.zellijTabName,
+          ))?.tabId ?? null;
+        }
         if (zellijTabId === null && tab.status === "starting") {
           if (!this.zellij.findTabByInternalName) throw new TerminalRuntimeError("unavailable");
           zellijTabId = (await this.zellij.findTabByInternalName(
@@ -369,7 +399,8 @@ export class TerminalRuntime {
         if (zellijTabId !== null) {
           await this.zellij.closeTab!(workspace.zellijSessionName, zellijTabId);
         }
-        await this.store.markTabExited(ref);
+        if (removeCanonicalRecord) await this.store.removeTab(ref);
+        else await this.store.markTabExited(ref);
         await this.restartObserver(ref.workspaceId);
       });
     } finally {
@@ -781,14 +812,19 @@ export class TerminalRuntime {
 
   private async enqueueWrite(
     ref: TerminalRef,
-    dataInput: string,
+    dataInput: string | Uint8Array,
     writer: (data: Uint8Array) => Promise<void>,
   ): Promise<void> {
     if (this.shuttingDown) throw new TerminalRuntimeError("unavailable");
     if (this.deletingWorkspaceId === ref.workspaceId) {
       throw new TerminalRuntimeError("conflict", "Terminal workspace deletion in progress");
     }
-    const data = new TextEncoder().encode(z.string().min(1).max(64 * 1024).parse(dataInput));
+    const data = typeof dataInput === "string"
+      ? new TextEncoder().encode(z.string().min(1).max(64 * 1024).parse(dataInput))
+      : Uint8Array.from(dataInput);
+    if (data.byteLength < 1 || data.byteLength > 64 * 1024) {
+      throw new TerminalRuntimeError("invalid_request");
+    }
     const key = refKey(ref);
     this.assertTabAcceptsInput(key);
     let queue = this.inputQueues.get(key);

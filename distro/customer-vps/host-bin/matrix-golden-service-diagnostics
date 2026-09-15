@@ -3,7 +3,7 @@ set -euo pipefail
 
 unit="${1:-}"
 case "$unit" in
-  matrix-gateway.service|matrix-shell.service|matrix-sync-agent.service) ;;
+  matrix-terminal-runtime.service|matrix-gateway.service|matrix-shell.service|matrix-sync-agent.service) ;;
   *) echo "unsupported Matrix service diagnostic unit" >&2; exit 64 ;;
 esac
 

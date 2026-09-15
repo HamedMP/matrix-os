@@ -645,6 +645,7 @@ export class GatewayClient {
     if (workspaceId) params.set("workspaceId", workspaceId);
     if (tabId) params.set("tabId", tabId);
     params.set("client", "mobile");
+    params.set("inputCapability", "binary-input-v1");
     if (typeof fromSeq === "number" && Number.isFinite(fromSeq)) params.set("fromSeq", String(fromSeq));
     if (token) params.set("token", token);
     const query = params.toString();

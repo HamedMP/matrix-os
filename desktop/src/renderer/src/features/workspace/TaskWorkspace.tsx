@@ -9,6 +9,7 @@ import {
   Sparkles,
   SquareTerminal,
 } from "@renderer/lib/hugeicons";
+import { desktopShortcutLabel } from "@renderer/lib/platform-labels";
 import { useEffect, useMemo, useState } from "react";
 import { EmptyState, IconButton, StatusDot } from "../../design/primitives";
 import { useBoard } from "../../stores/board";
@@ -325,7 +326,7 @@ export default function TaskWorkspace({
           {PANEL_SHORTCUT_ORDER.map((panel, i) => (
             <IconButton
               key={panel}
-              label={`${PANEL_TITLES[panel]} (⌘${i + 1})`}
+              label={`${PANEL_TITLES[panel]} (${desktopShortcutLabel(String(i + 1))})`}
               active={Boolean(layout.visible[panel])}
               onClick={() => togglePanel(taskId, panel)}
             >

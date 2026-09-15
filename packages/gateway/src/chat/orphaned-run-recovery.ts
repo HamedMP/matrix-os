@@ -2,12 +2,13 @@ import { z } from "zod/v4";
 import type { CanonicalChatRun } from "@matrix-os/contracts";
 import type { ChatOwner } from "./records.js";
 import type { ChatRepository } from "./repository.js";
-import type { CanonicalChatProviderAdapter } from "./provider-adapter.js";
+import { RecoveredControlActivitySchema, type RecoveredControlActivity, type CanonicalChatProviderAdapter } from "./provider-adapter.js";
 import { boundedOperation } from "../bounded-operation.js";
 import { ChatConflictError } from "./errors.js";
 
 const Snapshot = z.object({
-  outcome: z.enum(["completed", "failed", "aborted"]),
+  activities: z.array(RecoveredControlActivitySchema).max(100).optional(),
+  outcome: z.enum(["completed", "failed", "aborted", "pending"]),
   messages: z.array(z.object({ messageId: z.string().min(1).max(512).optional(), text: z.string().max(96 * 1024) })).max(256),
 }).refine((value) => value.messages.reduce((size, message) => size + Buffer.byteLength(message.text), 0) <= 96 * 1024);
 
@@ -18,6 +19,7 @@ export async function recoverOrphanedRun(input: {
   adapter: CanonicalChatProviderAdapter | undefined;
   messageId: (runId: string, providerId?: string) => string;
   completedAt: string;
+  persistActivities?: (activities: RecoveredControlActivity[]) => Promise<void>;
 }): Promise<boolean | "pending"> {
   const { owner, run, repository, adapter, completedAt } = input;
   if (!adapter) return false;
@@ -81,6 +83,8 @@ export async function recoverOrphanedRun(input: {
       return false;
     }
   }
+  if (recovered.activities?.length) await input.persistActivities?.(recovered.activities);
+  if (recovered.outcome === "pending") return "pending";
   const result = await repository.finishRun(owner, {
     chatId: run.chatId, runId: run.id, outcome: recovered.outcome, completedAt,
   });

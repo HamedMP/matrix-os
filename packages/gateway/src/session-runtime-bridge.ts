@@ -158,7 +158,9 @@ export function terminalAttachmentAllowsFrame(
   frame: z.input<typeof TerminalTabClientFrameSchema>,
 ): boolean {
   if (mode === "owner") return true;
-  return frame.type !== "input" && !(frame.type === "resize" && frame.mode === "hard");
+  return frame.type !== "input"
+    && frame.type !== "binary"
+    && !(frame.type === "resize" && frame.mode === "hard");
 }
 
 export async function resolveTerminalAttachmentMode(
@@ -206,6 +208,7 @@ export function createSessionRuntimeBridge(options: SessionRuntimeBridgeOptions 
   }
 
   function issueAttachment(session: WorkspaceSession, mode: BridgeMode): string {
+    if (!session.terminalRef) throw new Error("Terminal reference unavailable");
     sweepExpiredAttachments();
     while (attachments.size >= maxAttachments) {
       const oldestToken = attachments.keys().next().value;
@@ -239,7 +242,7 @@ export function createSessionRuntimeBridge(options: SessionRuntimeBridgeOptions 
         return failure(409, "session_unavailable", "Session is not attachable");
       }
 
-      if (session.runtime.type === "zellij") {
+      if (session.runtime.type === "zellij" && session.terminalRef) {
         return {
           ok: true,
           mode: parsed.data.mode,

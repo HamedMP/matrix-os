@@ -1,3 +1,4 @@
+import { BackgroundProjectionDetached } from "./background-run-control.js";
 import { createHash } from "node:crypto";
 import { boundedOperation } from "../bounded-operation.js";
 import type { CodingAbortScope } from "../coding-agents/thread-abort.js";
@@ -382,9 +383,10 @@ export function createCanonicalCodingChatProviderAdapter(options: {
         return ["queued", "starting", "running", "waiting_for_approval", "waiting_for_input"].includes(snapshot.thread.status);
       },
     } : {}),
+    detachOnShutdown: options.providerId === "codex",
     async recover(input) {
       const state = CodingChatStateSchema.parse(input.state);
-      return recoverCodingRun({ ...input, state,
+      return recoverCodingRun({ ...input, state, includePending: options.providerId === "codex",
         read: (cursor) => options.threads.getThread(principal(input.owner.ownerId), state.conversationId, cursor),
       });
     },
@@ -453,7 +455,7 @@ export function createCanonicalCodingChatProviderAdapter(options: {
         sink.dispose();
         // for-await consumer failures call return(), not throw(). Settle the
         // accepted native run before returning control to Chat's failure path.
-        if (options.providerId === "codex" && targetThreadId && !terminalObserved) {
+        if (options.providerId === "codex" && targetThreadId && !terminalObserved && !(input.signal.reason instanceof BackgroundProjectionDetached)) {
           await stopUnprojectedRun(input, targetThreadId, { initialRequestId: legacyRequestId(input.runId) });
         }
       }
@@ -501,7 +503,7 @@ export function createCanonicalCodingChatProviderAdapter(options: {
       } finally {
         releaseSteerRun?.();
         sink.dispose();
-        if (options.providerId === "codex" && admittedTurnId && !terminalObserved) {
+        if (options.providerId === "codex" && admittedTurnId && !terminalObserved && !(input.signal.reason instanceof BackgroundProjectionDetached)) {
           await stopUnprojectedRun(input, targetThreadId, { turnId: admittedTurnId });
         }
       }
@@ -528,6 +530,7 @@ export function createCanonicalCodingChatProviderAdapter(options: {
         principal(input.owner.ownerId),
         state.conversationId,
         legacyRequestId(input.runId),
+        ...(options.providerId === "codex" ? [{ runRequestId: legacyRequestId(input.runId) }] : []),
       );
     },
     async submitApproval(input) {

@@ -379,6 +379,27 @@ exec /bin/sh "$@"
     expect(runtime.startSession).toHaveBeenCalled();
   });
 
+  it("starts structured Codex in the background without publishing a Terminal binding", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-background-provider-"));
+    const runtime = {
+      startSession: vi.fn(async () => ({ ok: true, status: 201, session: workspaceSession({ runtime: { type: "background", status: "running" }, terminalRef: undefined, backgroundRef: { id: "bg_00000000000000000000000000000001" } }) })),
+      stopSession: vi.fn(),
+    };
+    const threads = createCodingAgentThreadStore({ homePath, now: () => baseNow, providers: [
+      createWorkspaceCodingAgentProvider({ providerId: "codex", agent: "codex", runtime,
+        codexEvents: { watch: vi.fn(), unwatch: vi.fn() } as never,
+        codexControl: {} as never,
+      }),
+    ] });
+    try {
+      const created = await threads.createThread(ownerPrincipal, createBody);
+      expect(runtime.startSession).toHaveBeenCalledWith(expect.objectContaining({ request: expect.objectContaining({ runtimePreference: "background" }) }));
+      expect(created.snapshot.thread.status).toBe("running");
+      expect(created.snapshot.thread.terminalRef).toBeUndefined();
+      expect(created.snapshot.events.items.some(event => event.type === "terminal.bound")).toBe(false);
+    } finally { await rm(homePath, { recursive: true, force: true }); }
+  });
+
   it("starts a workspace agent session and binds the terminal reference to the stored thread", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "matrix-coding-agent-workspace-provider-"));
     const runtime = {
@@ -710,8 +731,9 @@ exec /bin/sh "$@"
     })).rejects.toThrow("Workspace provider steering target changed");
   });
 
-  it("rebuilds a dead Codex runner before accepting the next same-thread Turn", async () => {
-    const startSession = vi.fn(async () => ({ ok: true, status: 201, session: workspaceSession() }));
+  it.each(["zellij", "background"])("rebuilds a dead %s Codex runner before accepting the next same-thread Turn", async (runtimeType) => {
+    const recovered = workspaceSession({ runtime: { type: runtimeType, status: "running", createdAt: runtimeCreatedAt }, ...(runtimeType === "background" ? { terminalRef: undefined } : {}) });
+    const startSession = vi.fn(async () => ({ ok: true, status: 201, session: recovered }));
     const submitTurn = vi.fn(async () => {
       const error = new Error("private socket path");
       error.name = "CodexControlUnavailableError";
@@ -724,7 +746,7 @@ exec /bin/sh "$@"
       runtime: {
         startSession,
         stopSession: vi.fn(),
-        getSession: vi.fn(async () => ({ ok: true as const, session: workspaceSession({ id: "sess_workspace_dead_1" }) })),
+        getSession: vi.fn(async () => ({ ok: true as const, session: { ...recovered, id: "sess_workspace_dead_1" } })),
       },
       codexEvents: {
         healthCheck: vi.fn(async () => ({ ok: true })),
@@ -769,7 +791,7 @@ exec /bin/sh "$@"
       nextEventId: () => "evt_workspace_recovered_1",
     } as never)).resolves.toMatchObject({
       outcome: "delivered",
-      events: [expect.objectContaining({
+      events: runtimeType === "background" ? [] : [expect.objectContaining({
         type: "terminal.bound",
         terminalRef: TEST_TERMINAL_REF,
         terminalSessionCreatedAt: workspaceSession().runtime.createdAt,
@@ -794,7 +816,7 @@ exec /bin/sh "$@"
         modelOptions: [{ id: "effort", value: "high" }],
         approvalPolicy: "never",
         sandboxMode: "full_access",
-        runtimePreference: "zellij",
+        runtimePreference: "background",
       }),
     });
     expect(warn).toHaveBeenCalledWith(
@@ -883,6 +905,7 @@ exec /bin/sh "$@"
       threadId: "thread_workspace_restarted_1",
       sessionId: "sess_workspace_restarted_1",
       startAtEnd: true,
+      checkpoint: true,
     });
     expect(watch.mock.invocationCallOrder[0]).toBeLessThan(submitTurn.mock.invocationCallOrder[0]!);
   });

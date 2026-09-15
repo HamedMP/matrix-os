@@ -193,3 +193,35 @@ Incident classification:
 - **Provider disappearance/delete timeout:** preserve the DB record and reconcile until absence or exact deletion is proven.
 
 Repository documentation must remain public-safe. Customer identifiers, IP addresses, provider tokens, resource IDs tied to incidents, and private dashboards belong in the private operator system. A separate PR is required for the private operator/site runbook, and the canonical public docs require a separate PR in `FinnaAI/matrix-os-site`; neither is part of this repository stack.
+
+## Terminal Runtime Cold-Start Regression (v2026.09.14-1250)
+
+A clean-home reproduction of this bundle failed in `matrix-terminal-runtime.service`
+`ExecStartPre=... --migrate-only`. Migration launches Zellij with an explicit
+`ZELLIJ_CONFIG_FILE`, but the cutover had left initialization of that file and its
+shell/layout dependencies in the old gateway terminal path. The pinned Zellij
+starter reported `IoError: No such file or directory` for `system/zellij/config.kdl`.
+
+Initializing the existing canonical assets on a fresh diagnostic home made the
+unchanged builder activation succeed in 24 seconds. Gateway and terminal socket
+health passed, and all four services were active with zero restarts. This verified
+activation only; a selectable golden snapshot still requires normal sanitation
+and independent-clone validation of the new immutable bundle.
+
+Terminal runtime now initializes missing assets before migration/restoration,
+including `--migrate-only`. Existing regular files are preserved, symlinks are
+rejected, and complete defaults are published without overwriting concurrent
+writers. The gateway and terminal service share the same templates.
+
+A failed terminal pre-start is reported as `activation_terminal_runtime_ready`
+with bounded terminal-service diagnostics. Previously the failure handler ignored
+terminal runtime and could report `activation_gateway_health` immediately after
+`systemctl start` failed. That label did not establish a gateway health timeout.
+Deploy the platform callback schema accepting the new stage/unit before building
+a golden candidate with the updated host bundle. The activation deadlines are unchanged.
+
+Run the pinned-binary regression with:
+
+```sh
+MATRIX_TEST_ZELLIJ_BIN=/path/to/zellij-0.44.3 pnpm exec vitest run tests/terminal-runtime/zellij-bootstrap.integration.test.ts
+```

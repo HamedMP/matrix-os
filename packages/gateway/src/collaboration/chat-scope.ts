@@ -4,6 +4,7 @@ import { sql, type Kysely, type Transaction } from "kysely";
 import type { ChatOwner } from "../chat/records.js";
 import type { OwnerCollaborationDatabase } from "./database.js";
 import type { CollaborationScopeRecord } from "./repository.js";
+import { parseCollaborationAiEligibility } from "./chat-execution-adapter.js";
 
 const ACTIVE_RUN_STATES = ["accepted", "running", "waiting_for_approval", "waiting_for_input"] as const;
 const PREFLIGHT_LIFETIME_MS = 60_000;
@@ -263,6 +264,85 @@ export class CollaborationChatScopeService {
     await assertDiscussionOnlyChatExecutionAllowed(this.db, owner, chatId);
   }
 
+  async reconcileExecutionEligibility(input: {
+    executionGeneration: number | null;
+    eligibility: unknown | null;
+  }): Promise<{ updated: number }> {
+    const capability = input.executionGeneration === null && input.eligibility === null
+      ? null
+      : {
+          executionGeneration: z.number().int().min(1).parse(input.executionGeneration),
+          eligibility: parseCollaborationAiEligibility(input.eligibility),
+        };
+    const candidates = await this.db.selectFrom("collaboration_scopes")
+      .select("id")
+      .where("authority_runtime_id", "=", this.options.runtimeId)
+      .where("kind", "=", "chat")
+      .where("lifecycle", "=", "shared")
+      .where("deleted_at", "is", null)
+      .execute();
+    let updated = 0;
+    for (const candidate of candidates) {
+      const changed = await this.db.transaction().execute(async (trx) => {
+        const scope = await trx.selectFrom("collaboration_scopes").selectAll()
+          .where("id", "=", candidate.id)
+          .where("kind", "=", "chat")
+          .where("lifecycle", "=", "shared")
+          .where("deleted_at", "is", null)
+          .forUpdate().executeTakeFirst();
+        if (!scope) return false;
+        const nextEligibility = capability?.eligibility ?? null;
+        const currentEligibility = scope.execution_eligibility;
+        if (Number(scope.execution_generation ?? 0) === Number(capability?.executionGeneration ?? 0)
+          && eligibilityMatches(currentEligibility, nextEligibility)) return false;
+        const chat = await trx.selectFrom("chats").select(["id", "revision"])
+          .where("id", "=", scope.resource_id)
+          .where("owner_type", "=", scope.owner_type)
+          .where("owner_id", "=", scope.owner_id)
+          .where("lifecycle", "=", "active")
+          .forUpdate().executeTakeFirst();
+        if (!chat) return false;
+        const now = this.now().toISOString();
+        const scopeRevision = Number(scope.revision) + 1;
+        const chatRevision = Number(chat.revision) + 1;
+        const changedScope = await trx.updateTable("collaboration_scopes").set({
+          execution_generation: capability?.executionGeneration ?? null,
+          execution_eligibility: capability ? jsonb(capability.eligibility) : null,
+          revision: scopeRevision,
+          updated_at: now,
+        }).where("id", "=", scope.id)
+          .where("revision", "=", Number(scope.revision))
+          .returning("id").executeTakeFirst();
+        if (!changedScope) throw new CollaborationChatScopeError("conflict", "Scope capability changed");
+        const changedChat = await trx.updateTable("chats").set({
+          revision: chatRevision,
+          updated_at: now,
+        }).where("id", "=", chat.id)
+          .where("revision", "=", Number(chat.revision))
+          .returning("id").executeTakeFirst();
+        if (!changedChat) throw new CollaborationChatScopeError("conflict", "Chat changed");
+        const latest = await trx.selectFrom("collaboration_events")
+          .select(({ fn }) => fn.max<number>("scope_seq").as("scope_seq"))
+          .where("scope_id", "=", scope.id).executeTakeFirst();
+        await trx.insertInto("collaboration_events").values({
+          scope_id: scope.id,
+          scope_seq: Number(latest?.scope_seq ?? 0) + 1,
+          event_id: randomUUID(),
+          resource_kind: "chat",
+          resource_id: chat.id,
+          revision: chatRevision,
+          authority_generation: Number(scope.authority_generation),
+          event_type: "scope.execution_eligibility_changed",
+          payload: jsonb({ available: capability !== null }),
+          created_at: now,
+        }).execute();
+        return true;
+      });
+      if (changed) updated += 1;
+    }
+    return { updated };
+  }
+
   private verifyConfirmation(input: {
     ownerId: string;
     chatId: string;
@@ -287,6 +367,23 @@ export class CollaborationChatScopeService {
     if (!payload.success || payload.data.ownerId !== input.ownerId || payload.data.chatId !== input.chatId
       || payload.data.chatRevision !== input.expectedChatRevision
       || Date.parse(payload.data.expiresAt) <= this.now().getTime()) throw invalidConfirmation();
+  }
+}
+
+function eligibilityMatches(current: unknown, next: unknown): boolean {
+  if (current === null || next === null) return current === next;
+  try {
+    const left = parseCollaborationAiEligibility(current);
+    const right = parseCollaborationAiEligibility(next);
+    return left.profileId === right.profileId
+      && left.profileVersion === right.profileVersion
+      && left.profileDigest === right.profileDigest
+      && left.adapterId === right.adapterId
+      && left.harnessVersion === right.harnessVersion;
+  } catch (error: unknown) {
+    console.warn("[collaboration] stored execution eligibility is invalid",
+      error instanceof Error ? error.name : "UnknownError");
+    return false;
   }
 }
 

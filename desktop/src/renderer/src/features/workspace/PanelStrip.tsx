@@ -1,4 +1,5 @@
 import { Component, useMemo, type ErrorInfo, type ReactNode } from "react";
+import { desktopShortcutLabel } from "@renderer/lib/platform-labels";
 import { Group, Panel, Separator, type Layout as GroupLayout } from "react-resizable-panels";
 import {
   useWorkspace,
@@ -101,7 +102,7 @@ export default function PanelStrip({ taskId, renderPanel }: PanelStripProps) {
     return (
       <div className="flex flex-1 items-center justify-center">
         <span className="text-sm" style={{ color: "var(--text-tertiary)" }}>
-          All panels hidden. Toggle one from the toolbar (⌘1–⌘7).
+          All panels hidden. Toggle one from the toolbar ({desktopShortcutLabel("1")}–{desktopShortcutLabel("7")}).
         </span>
       </div>
     );

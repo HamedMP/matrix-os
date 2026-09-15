@@ -218,7 +218,8 @@ describe("Files workspace", () => {
     fireEvent.doubleClick(await screen.findByRole("button", { name: "Open workspaces" }));
     fireEvent.click(await screen.findByRole("button", { name: "Open app.ts" }));
 
-    fireEvent.click(await screen.findByRole("button", { name: "Open in Editor" }));
+    fireEvent.keyDown(screen.getByRole("button", { name: "File actions" }), { key: "ArrowDown" });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Open in Editor" }));
 
     expect(useDesktopEditor.getState().activePath).toBe("workspaces/app.ts");
     expect(useTabs.getState().tabs).toContainEqual(expect.objectContaining({ kind: "editor" }));

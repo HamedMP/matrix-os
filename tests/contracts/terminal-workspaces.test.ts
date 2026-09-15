@@ -89,6 +89,29 @@ describe("project-scoped terminal workspace contracts", () => {
       terminalRef,
       data: "ls\r",
     }).terminalRef).toEqual(terminalRef);
+    expect(TerminalTabClientFrameSchema.parse({
+      type: "binary",
+      terminalRef,
+      dataBase64: "G1s8NjQ7MTU7NU0=",
+    })).toMatchObject({ type: "binary", dataBase64: "G1s8NjQ7MTU7NU0=" });
+    expect(() => TerminalTabClientFrameSchema.parse({
+      type: "binary",
+      terminalRef,
+      dataBase64: "not base64",
+    })).toThrow();
+    expect(() => TerminalTabClientFrameSchema.parse({
+      type: "binary",
+      terminalRef,
+      dataBase64: Buffer.alloc((64 * 1024) + 1).toString("base64"),
+    })).toThrow();
+    expect(TerminalTabServerFrameSchema.parse({
+      type: "attached",
+      terminalRef,
+      canonicalSize: { cols: 120, rows: 36 },
+      revision: 4,
+      nextSeq: 12,
+      capabilities: ["binary-input-v1"],
+    })).toMatchObject({ capabilities: ["binary-input-v1"] });
     const snapshotFrame = TerminalTabServerFrameSchema.parse({
       type: "snapshot",
       terminalRef,

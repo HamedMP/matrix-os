@@ -18,6 +18,32 @@ function session(id: string, attachedClients = 0) {
 }
 
 describe("Chat idle reaper", () => {
+  it("checks and hibernates a background job even when Terminal inventory is unavailable", async () => {
+    const backgroundRef = { id: "bg_00000000000000000000000000000001" };
+    const current = { ...session("sess_background"), runtime: { type: "background", status: "running" }, terminalRef: undefined, backgroundRef };
+    const sessions = {
+      getSession: vi.fn(async () => ({ ok: true, session: current })),
+      listSessions: vi.fn(async () => ({ ok: true, sessions: [current], nextCursor: null })),
+    };
+    const terminalRuntime = { listWorkspaces: vi.fn().mockRejectedValue(new Error("Terminal unavailable")), terminateTab: vi.fn() };
+    const backgroundRuntime = { isRunning: vi.fn().mockResolvedValue(true), stop: vi.fn().mockResolvedValue(undefined) };
+    await expect(isWorkspaceSessionRuntimeAlive("sess_background", sessions as never, terminalRuntime as never, backgroundRuntime)).resolves.toBe(true);
+    const reaper = createChatIdleReaper({
+      sessions, terminalRuntime, backgroundRuntime,
+      threads: { withIdleWorkspace: async (_id: string, _cutoff: number, action: (identity: unknown) => Promise<boolean>) => action({ ownerId: "owner", sessionId: current.id, providerThreadId: "native_saved" }) },
+      control: { hibernate: vi.fn().mockResolvedValue(undefined) },
+      admitCanonical: async (_identity: unknown, action: () => Promise<boolean>) => action(),
+      unwatch: vi.fn(), underPressure: async () => false,
+      now: () => Date.parse("2026-09-08T01:00:00Z"),
+    } as never);
+    try {
+      expect((await reaper.sweep()).reclaimed).toBe(1);
+      expect(backgroundRuntime.stop).toHaveBeenCalledWith(backgroundRef);
+      expect(terminalRuntime.listWorkspaces).not.toHaveBeenCalled();
+      expect(terminalRuntime.terminateTab).not.toHaveBeenCalled();
+    } finally { await reaper.close(); }
+  });
+
   it("reports liveness for the exact persisted tab rather than a sibling tab", async () => {
     const sessions = {
       getSession: vi.fn(async () => ({

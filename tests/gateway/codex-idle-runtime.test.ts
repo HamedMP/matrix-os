@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -30,12 +30,17 @@ function control(path: string, providerThreadId: string): Promise<unknown> {
 }
 
 describe("Codex idle runtime handshake", () => {
-  it.each([false, true])("hibernates only after work has completed (active=%s)", async (active) => {
+  it.each([{ active: false, background: false }, { active: true, background: false }, { active: false, background: true }, { active: true, background: true }])("hibernates only after work has completed ($active, background=$background)", async ({ active, background }) => {
     const home = await mkdtemp("/tmp/codex-idle-");
     const eventPath = codexProviderEventPath(home, "sess_idle");
     const config = Buffer.from(JSON.stringify({ prompt: "Small task", approvalPolicy: "never", sandbox: "read-only", writableRoots: [home] })).toString("base64");
-    const child = spawn(process.execPath, [join(process.cwd(), "packages/gateway/src/coding-agents/codex-app-server-runner.mjs"),
-      eventPath, process.version.slice(1), process.execPath, join(process.cwd(), "tests/fixtures/codex-idle-provider.mjs"), config], {
+    let args = [join(process.cwd(), "packages/gateway/src/coding-agents/codex-app-server-runner.mjs"), eventPath, process.version.slice(1), process.execPath, join(process.cwd(), "tests/fixtures/codex-idle-provider.mjs"), config];
+    if (background) {
+      const launchPath = join(home, "launch.json");
+      await writeFile(launchPath, JSON.stringify({ launch: { command: process.execPath, args, cwd: home, env: {} } }), { mode: 0o600 });
+      args = [join(process.cwd(), "packages/gateway/src/coding-agents/background-agent-runner.mjs"), launchPath];
+    }
+    const child = spawn(process.execPath, args, {
       cwd: home, stdio: ["pipe", "ignore", "pipe"], env: { ...process.env, ...(active ? { MATRIX_TEST_KEEP_ACTIVE: "1" } : {}) },
     });
     const exited = once(child, "close");

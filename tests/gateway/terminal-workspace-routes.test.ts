@@ -13,6 +13,7 @@ import {
   saveTerminalPasteAsset,
 } from "../../packages/gateway/src/shell/paste-assets.js";
 import { TerminalRuntimeError } from "../../packages/terminal-runtime/src/errors.js";
+import { ProjectFenceError } from "../../packages/gateway/src/collaboration/project-fence.js";
 
 const workspace = {
   id: "tws_0123456789abcdef0123456789abcdef",
@@ -194,6 +195,93 @@ describe("terminal workspace gateway routes", () => {
     expect(source).toContain("await pinnedDirectory.handle.close()");
   });
 
+  it("reauthorizes project workspace mutations through the legacy project fence", async () => {
+    const tab = {
+      id: "tt_0123456789abcdef0123456789abcdef",
+      workspaceId: workspace.id,
+      name: "main",
+      cwd: "projects/matrix-os",
+      status: "running" as const,
+      revision: 1,
+      order: 0,
+      createdAt: workspace.createdAt,
+      updatedAt: workspace.updatedAt,
+    };
+    const runtime = {
+      listWorkspaces: vi.fn(async () => [{ ...workspace, tabs: [tab] }]),
+      ensureWorkspace: vi.fn(async () => workspace),
+      createTab: vi.fn(async () => tab),
+      paneAction: vi.fn(async () => undefined),
+      deletionImpact: vi.fn(async () => ({ runningTabs: 0, tabs: [tab] })),
+      deleteWorkspace: vi.fn(async () => undefined),
+    };
+    const withLegacyAdmission = vi.fn(async (
+      _input: unknown,
+      operation: () => Promise<unknown>,
+    ) => operation());
+    const app = new Hono().route("/api/terminal", createTerminalWorkspaceRoutes({
+      runtime,
+      ...ownerOptions,
+      projectOperationAdmission: { withLegacyAdmission },
+    }));
+
+    expect((await app.request(`/api/terminal/workspaces/${workspace.id}/tabs`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "main", cwd: "projects/matrix-os" }),
+    })).status).toBe(201);
+    expect((await app.request(`/api/terminal/workspaces/${workspace.id}/tabs/${tab.id}/pane-actions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ type: "fullscreen" }),
+    })).status).toBe(200);
+    expect((await app.request(`/api/terminal/workspaces/${workspace.id}`, {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ confirmTerminate: true }),
+    })).status).toBe(204);
+
+    expect(withLegacyAdmission).toHaveBeenCalledTimes(3);
+    for (const [input] of withLegacyAdmission.mock.calls) {
+      expect(input).toMatchObject({
+        ownerType: "personal",
+        ownerId: "user_owner",
+        projectId: "matrix-os",
+        kind: "run",
+      });
+    }
+  });
+
+  it("rejects owner-path project terminal mutations after the project is shared", async () => {
+    const createTab = vi.fn();
+    const runtime = {
+      listWorkspaces: vi.fn(async () => [workspace]),
+      ensureWorkspace: vi.fn(async () => workspace),
+      createTab,
+      deletionImpact: vi.fn(async () => ({ runningTabs: 0, tabs: [] })),
+      deleteWorkspace: vi.fn(),
+    };
+    const app = new Hono().route("/api/terminal", createTerminalWorkspaceRoutes({
+      runtime,
+      ...ownerOptions,
+      projectOperationAdmission: {
+        withLegacyAdmission: vi.fn(async () => {
+          throw new ProjectFenceError("scope_required");
+        }),
+      },
+    }));
+
+    const response = await app.request(`/api/terminal/workspaces/${workspace.id}/tabs`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "main", cwd: "projects/matrix-os" }),
+    });
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({ error: "Terminal operation unavailable" });
+    expect(createTab).not.toHaveBeenCalled();
+  });
+
   it("validates workspace/tab mutations and requires deletion confirmation", async () => {
     const runtime = {
       listWorkspaces: vi.fn(async () => [workspace]),
@@ -334,6 +422,27 @@ describe("terminal workspace gateway routes", () => {
     } finally {
       await rm(homePath, { recursive: true, force: true });
     }
+  });
+
+  it("deletes a terminal tab by exact IDs instead of retaining an exited record", async () => {
+    const deleteTab = vi.fn(async () => undefined);
+    const runtime = {
+      listWorkspaces: vi.fn(async () => [workspace]),
+      ensureWorkspace: vi.fn(async () => workspace),
+      createTab: vi.fn(),
+      deleteTab,
+      deletionImpact: vi.fn(async () => ({ runningTabs: 0, tabs: [] })),
+      deleteWorkspace: vi.fn(async () => undefined),
+    };
+    const app = new Hono().route("/api/terminal", createTerminalWorkspaceRoutes({ runtime, ...ownerOptions }));
+    const tabId = "tt_0123456789abcdef0123456789abcdef";
+
+    const response = await app.request(`/api/terminal/workspaces/${workspace.id}/tabs/${tabId}`, {
+      method: "DELETE",
+    });
+
+    expect(response.status).toBe(204);
+    expect(deleteTab).toHaveBeenCalledWith({ workspaceId: workspace.id, tabId });
   });
 
   it("binds a Chat terminal by stable workspace/tab ref and cleans up failed bindings", async () => {
