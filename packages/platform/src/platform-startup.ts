@@ -321,6 +321,7 @@ async function startPlatformServerWithCleanup(
       platformSecret: fundedAiConfig.platformSecret,
       repository: fundedAiRepository,
       topUpEnabled: loadAiCreditCheckoutConfig(process.env).enabled,
+      promotionalGrant: fundedAiConfig.promotionalGrant,
     });
     internalFundedAiRelayRoutes = createAiFundedRelayRoutes({
       relayControlToken: fundedAiConfig.relayControlToken,

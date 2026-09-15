@@ -17,7 +17,7 @@ import { createAiFundedMeteringRepository } from "./ai-funded-metering-repositor
 
 export { AiFundedPolicyError, type AiFundedPolicyErrorCode } from "./ai-funded-policy-errors.js";
 
-const ModelIdsSchema = z.array(z.string().min(3).max(200).regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/))
+const ModelIdsSchema = z.array(z.string().min(3).max(200).regex(/^(?:[A-Za-z0-9][A-Za-z0-9._:/-]*|@cf\/zai-org\/glm-5\.3-flash)$/))
   .max(64).refine((values) => new Set(values).size === values.length);
 const IdentitySchema = z.object({
   ownerId: z.string().min(1).max(160),

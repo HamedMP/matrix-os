@@ -643,7 +643,7 @@ describe("ChatTab", () => {
     ));
   });
 
-  it("keeps non-Hermes harnesses visible but unavailable on the legacy Global route", async () => {
+  it("keeps non-Hermes Global routes inspectable but unavailable", async () => {
     const catalog = createLegacyGlobalProviderCatalog({ hasProject: true });
     const availableCatalog = {
       ...catalog,
@@ -666,8 +666,8 @@ describe("ChatTab", () => {
     render(<ChatTab />);
 
     fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
-    const codex = await screen.findByRole("button", { name: "Codex harness, Unavailable" });
-    expect(codex.getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(await screen.findByText("Manage agents"));
+    expect(screen.getByText("Codex — Unavailable")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Choose model and provider" }).textContent)
       .toContain("Current model");
     expect(useTabs.getState().tabs).not.toContainEqual(expect.objectContaining({ kind: "project" }));
@@ -742,7 +742,8 @@ describe("ChatTab", () => {
     render(<ChatTab />);
 
     fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Claude Code harness, Unavailable" }));
+    fireEvent.click(await screen.findByText("Manage agents"));
+    expect(screen.getByText("Claude Code — Unavailable")).toBeTruthy();
     fireEvent.click(await screen.findByRole("button", { name: "Connect Claude" }));
 
     await waitFor(() => expect(post).toHaveBeenCalledWith("/api/terminal/workspaces/ensure", {}));
@@ -799,8 +800,8 @@ describe("ChatTab", () => {
     render(<ChatTab />);
 
     fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
-    const codex = screen.getByRole("button", { name: "Codex harness, Unavailable" });
-    expect(codex.getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(screen.getByText("Manage agents"));
+    expect(screen.getByText(/Codex — /)).toBeTruthy();
   });
 
   it("does not intercept a text-only drop in Chat", () => {

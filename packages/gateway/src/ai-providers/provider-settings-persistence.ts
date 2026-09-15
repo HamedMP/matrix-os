@@ -180,14 +180,15 @@ function sourceForHarness(
       && source.vendor === "anthropic")
       ?? candidates.find((source) => source.id === "owner_anthropic_profile")
       ?? candidates.find((source) => source.id === "owner_anthropic_key")
-      ?? candidates.find((source) => source.fundingKind === "matrix_included")
+      ?? candidates.find((source) => source.fundingKind === "matrix_included" && source.vendor === "anthropic")
       ?? null;
   }
   const portableCandidates = harness === "pi" || harness === "opencode"
     ? candidates.filter((source) => source.fundingKind === "matrix_included"
       || source.fundingKind === "matrix_addon" || source.fundingKind === "owner_api_key")
     : candidates;
-  return portableCandidates.find((source) => source.id === canonical.active.accessSourceId)
+  return portableCandidates.find((source) => source.id === "matrix_cloudflare" && source.state === "ready")
+    ?? portableCandidates.find((source) => source.id === canonical.active.accessSourceId)
     ?? portableCandidates.find((source) => source.state === "ready")
     ?? portableCandidates.find((source) => source.fundingKind === "matrix_included")
     ?? portableCandidates[0]
@@ -285,7 +286,9 @@ export function initialProviderSettingsConfiguration(canonical: AiProviderSnapsh
     gatewayPolicy: gateway ? {
       accessSourceId: gateway.id,
       monthlyBudgetMicrousd: null,
-      allowedModelIds: [...gateway.eligibleModelIds],
+      allowedModelIds: [...new Set(canonical.accessSources.filter((source) =>
+        source.fundingKind === "matrix_included" || source.fundingKind === "matrix_addon")
+        .flatMap((source) => source.eligibleModelIds))],
       topUpEnabled: false,
     } : null,
     receipts: [],

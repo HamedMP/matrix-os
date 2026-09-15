@@ -52,7 +52,10 @@ import { AppViewer } from "@/components/AppViewer";
 import { Settings } from "@/components/Settings";
 import { PreviewWindow } from "@/components/preview-window/PreviewWindow";
 import { enqueueTerminalLaunch, type TerminalLaunchAction } from "@/lib/terminal-launch";
-import { enqueueExistingTerminalSession } from "@/lib/provider-terminal-session";
+import {
+  enqueueExistingTerminalRef,
+  enqueueExistingTerminalSession,
+} from "@/lib/provider-terminal-session";
 import {
   createTerminalLayoutId,
   type TerminalPersistence,
@@ -299,7 +302,9 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette, cacheScope }:
       : [...previous, { id, app: terminal, openedAt: Date.now() }]);
     setSettingsOpen(false);
     setView("app");
-    enqueueExistingTerminalSession(sessionId, id);
+    if (!enqueueExistingTerminalRef(sessionId, id)) {
+      enqueueExistingTerminalSession(sessionId, id);
+    }
   }, []);
 
   useEffect(() => {

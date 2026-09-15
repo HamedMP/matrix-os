@@ -89,6 +89,7 @@ write_files:
       Group=matrix
       EnvironmentFile=/opt/matrix/env/host.env
       Environment=SYMPHONY_PORT=4766
+      Environment=MATRIX_NODE_PREFIX=/opt/matrix/runtime/node
       Environment=MATRIX_CODING_AGENTS_WORKSPACE_PROVIDERS=claude,codex,pi,opencode
       WorkingDirectory=/opt/matrix
       ExecStart=/opt/matrix/bin/matrix-gateway
@@ -387,6 +388,7 @@ write_files:
       MATRIX_CLERK_USER_ID={{clerkUserId}}
       MATRIX_HANDLE={{handle}}
       MATRIX_RUNTIME_SLOT={{runtimeSlot}}
+      MATRIX_NODE_PREFIX=/opt/matrix/runtime/node
       MATRIX_DEVELOPER_TOOLS='{{developerTools}}'
       MATRIX_IMAGE_VERSION={{imageVersion}}
       MATRIX_IMAGE_SOURCE={{imageSource}}

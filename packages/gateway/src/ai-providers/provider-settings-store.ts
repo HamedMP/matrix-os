@@ -2,8 +2,6 @@ import { randomUUID } from "node:crypto";
 import { basename, dirname, join, resolve } from "node:path";
 import {
   AiProviderSnapshotV3Schema,
-  FundedAiEffectivePolicySchema,
-  FundedAiFundingSummarySchema,
   ProviderConnectionAttemptSchema,
   ProviderDependencyCountsSchema,
   ProviderSettingsMutationResponseSchema,
@@ -39,6 +37,7 @@ import type {
   ProviderSettingsRuntimeMutationInput,
   ProviderSettingsRuntimeCoordinator,
 } from "./provider-settings-coordinators.js";
+import type { GenericHarnessModelCatalogReader } from "./generic-harness-model-catalog.js";
 import {
   assertProviderSettingsAction,
   coordinatorLoginHarness,
@@ -52,6 +51,7 @@ import {
   sameProviderDependencyCounts,
 } from "./provider-settings-receipts.js";
 import type { FundedAiFundingSummaryReader } from "../funded-ai-funding-summary-client.js";
+import { readProviderSettingsEnrichment, type ProviderSettingsEnrichment } from "./provider-settings-enrichment.js";
 
 const CONFIG_PATH = "system/ai-providers/settings.json";
 const PRIVATE_DIRECTORY = ".matrix-private";
@@ -66,7 +66,7 @@ export type {
   ProviderSettingsRuntimeCoordinator,
 } from "./provider-settings-coordinators.js";
 export interface ProviderSettingsStoreWriter {
-  getSnapshot(): Promise<ProviderSettingsSnapshot>;
+  getSnapshot(options?: { refresh?: boolean }): Promise<ProviderSettingsSnapshot>;
   mutate(mutation: ProviderSettingsMutation): Promise<ProviderSettingsMutationResponse>;
 }
 interface ProviderSettingsStoreOptions {
@@ -81,6 +81,7 @@ interface ProviderSettingsStoreOptions {
   idGenerator?: () => string;
   maxProjectionAgeMs?: number;
   fundingSummaryReader?: FundedAiFundingSummaryReader;
+  genericModelCatalogReader?: GenericHarnessModelCatalogReader;
 }
 
 export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
@@ -95,6 +96,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
   readonly #id: () => string;
   readonly #maxProjectionAgeMs: number;
   readonly #fundingSummary?: FundedAiFundingSummaryReader;
+  readonly #genericModelCatalog?: GenericHarnessModelCatalogReader;
   #writeTail: Promise<void> = Promise.resolve();
 
   constructor(options: ProviderSettingsStoreOptions) {
@@ -120,6 +122,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
       Math.min(options.maxProjectionAgeMs ?? DEFAULT_PROJECTION_AGE_MS, 30 * 60_000),
     );
     this.#fundingSummary = options.fundingSummaryReader;
+    this.#genericModelCatalog = options.genericModelCatalogReader;
   }
 
   async #serialize<T>(operation: () => Promise<T>): Promise<T> {
@@ -159,23 +162,13 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
     }
   }
 
-  async #project(canonical: AiProviderSnapshotV3, config: ProviderSettingsConfiguration) {
+  async #project(canonical: AiProviderSnapshotV3, config: ProviderSettingsConfiguration, refresh = false,
+    enrichment?: ProviderSettingsEnrichment) {
     try {
-      let fundingSummary;
-      let fundedPolicy;
-      if (this.#fundingSummary && canonical.accessSources.some((source) =>
-        source.fundingKind === "matrix_included" || source.fundingKind === "matrix_addon")) {
-        try {
-          const state = await this.#fundingSummary.getFundingSummary();
-          fundingSummary = FundedAiFundingSummarySchema.parse(state.funding);
-          fundedPolicy = FundedAiEffectivePolicySchema.parse(state.policy);
-        } catch (error) {
-          console.warn(
-            "[provider-settings] Matrix funding summary unavailable:",
-            error instanceof Error ? error.name : "UnknownError",
-          );
-        }
-      }
+      const { fundingSummary, fundedPolicy, genericModelCatalog } = enrichment ?? await readProviderSettingsEnrichment({
+        canonical, fundingSummary: this.#fundingSummary,
+        genericModelCatalog: this.#genericModelCatalog, refresh,
+      });
       return await projectProviderSettings({
         canonical,
         config,
@@ -185,6 +178,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
         fundingSummary,
         fundedPolicy,
         fundedPolicyAuthoritative: Boolean(this.#fundingSummary),
+        genericModelCatalog,
         configurationHarnessKinds: [...(this.#runtime?.supportedHarnessKinds ?? [])],
         loginMethods: (harness) => coordinatorLoginMethods({
           login: this.#login,
@@ -230,13 +224,23 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
     });
   }
 
-  async getSnapshot(): Promise<ProviderSettingsSnapshot> {
+  async getSnapshot(options: { refresh?: boolean } = {}): Promise<ProviderSettingsSnapshot> {
     return await this.#serialize(async () => {
       if (this.#runtime && !this.#runtime.isRecoveryReady()) {
         throw new ProviderSettingsStoreError("runtime_unavailable", 503);
       }
-      const canonical = await this.#canonical();
-      return await this.#project(canonical, await this.#configuration(canonical));
+      const refresh = options.refresh === true;
+      const inventory = this.#canonical(refresh);
+      // Begin these bounded observations inside the serialized read, not behind
+      // inventory. Never share results across mutations or authorize from them alone.
+      const [canonical, enrichment] = await Promise.all([
+        inventory,
+        readProviderSettingsEnrichment({
+          canonical: inventory, fundingSummary: this.#fundingSummary,
+          genericModelCatalog: this.#genericModelCatalog, refresh,
+        }),
+      ]);
+      return await this.#project(canonical, await this.#configuration(canonical), refresh, enrichment);
     });
   }
 

@@ -10,6 +10,7 @@ import {
   createDesktopProviderSettingsTransport,
   desktopProviderIdentityKey,
   openAiCreditCheckout,
+  openDesktopProviderAgentSetup,
   openExistingProviderTerminalSession,
   openProviderAuthorizationPath,
 } from "./provider-settings-desktop-adapter";
@@ -146,8 +147,15 @@ function ConnectedAgentsProvidersAdapter({
       }}
       onMutate={(intent) => {
         setActionError(null);
-        void controller.mutate(intent);
+        return controller.mutate(intent, {
+          onLoginAction: (action) => {
+            if (!isIdentityCurrent()) return;
+            if (action.kind === "open_terminal") openTerminal(action.terminalSessionId);
+            else if (action.kind === "open_browser") openBrowser(action.authorizationPath);
+          },
+        });
       }}
+      onSetupHarness={(harness) => openDesktopProviderAgentSetup(runtimeApi, harness, isIdentityCurrent)}
       onOpenTerminal={openTerminal}
       onOpenBrowser={openBrowser}
       onAddCredit={addCredit}

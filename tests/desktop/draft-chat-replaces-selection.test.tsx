@@ -387,8 +387,7 @@ describe("draft chat replaces the selected thread", () => {
 
     const provider = await screen.findByRole("button", { name: "Choose model and provider" });
     fireEvent.click(provider);
-    fireEvent.click(screen.getByRole("button", { name: "Claude Code harness, Available" }));
-    fireEvent.click(screen.getByRole("option", { name: /Claude Code · Available/ }));
+    fireEvent.click(screen.getByRole("option", { name: /via Claude Code/ }));
     await waitFor(() => expect(provider.getAttribute("data-provider-instance")).toBe("claude_code_default"));
     await waitFor(() => expect(useDraftChat.getState().draftFor("matrix-os")?.providerId).toBe("claude"));
     expect(screen.getByLabelText("Message new chat").textContent).toBe("");

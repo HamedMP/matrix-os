@@ -17,6 +17,10 @@ export const OPEN_PROVIDER_TERMINAL_EVENT = "matrix:open-provider-terminal";
 export const PROVIDER_SETTINGS_CHANGED_EVENT = "matrix:provider-settings-changed";
 export const CANONICAL_PROVIDER_SETUP_ERROR = "Could not open setup. Open Settings to continue.";
 
+export function openProviderSettings(): void {
+  window.dispatchEvent(new CustomEvent(OPEN_PROVIDER_SETTINGS_EVENT));
+}
+
 type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
 function sameAction(
@@ -85,7 +89,7 @@ export async function executeCanonicalProviderSetupAction(input: {
 }): Promise<boolean> {
   if (!input.instance.setupActions.some((candidate) => sameAction(candidate, input.action))) return false;
   if (input.action.kind === "open_settings") {
-    window.dispatchEvent(new CustomEvent(OPEN_PROVIDER_SETTINGS_EVENT));
+    openProviderSettings();
     return true;
   }
   if (!input.action.id.startsWith(`${actionPrefix(input.instance)}_`)) return false;

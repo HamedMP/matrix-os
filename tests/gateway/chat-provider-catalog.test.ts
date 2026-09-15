@@ -24,6 +24,7 @@ import { createNativeCodingModelCatalogSource } from "../../packages/gateway/src
 import type { CodingAgentProviderRegistry } from "../../packages/gateway/src/coding-agents/provider-registry.js";
 import type { RequestPrincipal } from "../../packages/gateway/src/request-principal.js";
 import { providerSettingsCanonicalFixture } from "./provider-settings-test-support.js";
+import { makeAiProviderSnapshot } from "../fixtures/ai-provider-snapshot.js";
 
 const principal: RequestPrincipal = { userId: "owner_1", source: "jwt" };
 
@@ -297,6 +298,142 @@ describe("canonical Chat Provider catalog", () => {
       });
   });
 
+  it("projects OpenCode's Matrix-funded Cloudflare route into Chat", async () => {
+    const configured = {
+      ...configuredHarness("opencode", true),
+      accessSourceId: "matrix_cloudflare",
+      route: {
+        kind: "configurable" as const,
+        providerId: "cloudflare",
+        modelId: "@cf/zai-org/glm-5.3-flash",
+      },
+    };
+    const settings = await harnessSettings([configured]).getSnapshot();
+    settings.accessSources = [{
+      ...settings.accessSources[0]!,
+      id: "matrix_cloudflare",
+      kind: "matrix_gateway",
+      fundingKind: "matrix_included",
+      providerId: "cloudflare",
+      accountId: null,
+      displayName: "Matrix AI",
+      eligibleModelIds: ["@cf/zai-org/glm-5.3-flash"],
+    }];
+    settings.modelProviders = [{
+      id: "cloudflare",
+      displayName: "Cloudflare Workers AI",
+      models: [{
+        id: "@cf/zai-org/glm-5.3-flash",
+        displayName: "GLM 5.3 Flash",
+        enabled: true,
+      }],
+    }];
+    const aiSnapshot = providerSettingsCanonicalFixture();
+    aiSnapshot.accessSources.push({
+      ...aiSnapshot.accessSources[0]!,
+      id: "matrix_cloudflare",
+      vendor: "cloudflare",
+      eligibleModelIds: ["@cf/zai-org/glm-5.3-flash"],
+    });
+    aiSnapshot.models.push({
+      ...aiSnapshot.models[0]!,
+      id: "@cf/zai-org/glm-5.3-flash",
+      vendor: "cloudflare",
+      displayName: "GLM 5.3 Flash",
+      effortControls: [],
+      eligibleAccessSourceIds: ["matrix_cloudflare"],
+      dataPolicies: [{
+        accessSourceId: "matrix_cloudflare",
+        route: "matrix_relay",
+        disclosureKey: "matrix-cloudflare-workers-ai",
+      }],
+    });
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry([codingProvider({
+        id: "opencode",
+        displayName: "OpenCode",
+        kind: "opencode",
+        supportedModes: ["default"],
+        defaultModel: undefined,
+        setupActions: [],
+      })]),
+      agentRuntimeSource: runtimeSource(),
+      aiProviderSource: { getSnapshot: async () => aiSnapshot },
+      harnessSettingsSource: { getSnapshot: async () => settings },
+      executableDriverKinds: ["opencode"],
+      credentialedDriverKinds: ["opencode"],
+    });
+
+    expect((await service.getCatalog(principal)).instances.find((instance) => (
+      instance.id === "opencode_default"
+    ))).toMatchObject({
+      availability: "available",
+      connectionLabel: "Matrix AI",
+      models: [{ id: "cloudflare:@cf/zai-org/glm-5.3-flash", displayName: "GLM 5.3 Flash" }],
+      defaultSelection: {
+        instanceId: "opencode_default",
+        model: "cloudflare:@cf/zai-org/glm-5.3-flash",
+      },
+    });
+  });
+
+  it("projects an OpenCode-native model from the same live Settings catalog", async () => {
+    const configured = {
+      ...configuredHarness("opencode", true),
+      accessSourceId: "harness_opencode_baseten",
+      route: {
+        kind: "configurable" as const,
+        providerId: "baseten",
+        modelId: "baseten:zai-org/GLM-5.3",
+      },
+    };
+    const settings = await harnessSettings([configured]).getSnapshot();
+    settings.modelProviders = [{
+      id: "baseten",
+      displayName: "Baseten",
+      models: [{ id: "baseten:zai-org/GLM-5.3", displayName: "GLM-5.3", enabled: true }],
+    }];
+    settings.accessSources = [{
+      ...settings.accessSources[0]!,
+      kind: "harness_profile",
+      harness: "opencode",
+      fundingKind: "owner_account",
+      providerId: "baseten",
+      accountId: null,
+      displayName: "OpenCode account",
+      eligibleModelIds: ["baseten:zai-org/GLM-5.3"],
+      usage: {
+        kind: "unavailable",
+        authority: "unavailable",
+        state: "not_applicable",
+        scope: "access_source",
+        reason: "provider_does_not_report",
+        asOf: null,
+      },
+    }];
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry([codingProvider({
+        id: "opencode",
+        displayName: "OpenCode",
+        kind: "opencode",
+        supportedModes: ["default"],
+        defaultModel: undefined,
+        setupActions: [],
+      })]),
+      agentRuntimeSource: runtimeSource(),
+      harnessSettingsSource: { getSnapshot: async () => settings },
+      executableDriverKinds: ["opencode"],
+      credentialedDriverKinds: ["opencode"],
+    });
+
+    expect((await service.getCatalog(principal)).instances.find((instance) => instance.id === "opencode_default"))
+      .toMatchObject({
+        availability: "available",
+        models: [{ id: "baseten:zai-org/GLM-5.3", displayName: "GLM-5.3" }],
+        defaultSelection: { instanceId: "opencode_default", model: "baseten:zai-org/GLM-5.3" },
+      });
+  });
+
   it.each(["pi", "opencode"] as const)(
     "projects terminal-authenticated %s without requiring a duplicate Settings row",
     async (kind) => {
@@ -354,7 +491,7 @@ describe("canonical Chat Provider catalog", () => {
 
   it("publishes native Pi and OpenCode model discovery instead of a synthetic default", async () => {
     const runCommand = vi.fn(async (command: string) => ({
-      stdout: command === "pi"
+      stdout: command.endsWith("/pi") || command === "pi"
         ? [
             "provider   model            context  max-out  thinking  images",
             "anthropic  claude-sonnet-5  200K     64K      yes       yes",
@@ -393,6 +530,10 @@ describe("canonical Chat Provider catalog", () => {
       defaultSelection: { model: "opencode:big-pickle" },
     });
     expect(runCommand).toHaveBeenCalledTimes(2);
+    expect(runCommand.mock.calls.map(([command]) => command)).toEqual([
+      "/opt/matrix/runtime/node/bin/pi",
+      "/opt/matrix/runtime/node/bin/opencode",
+    ]);
   });
 
   it.each(["pi", "opencode"] as const)(
@@ -775,6 +916,19 @@ describe("canonical Chat Provider catalog", () => {
 
     expect((await service.getCatalog(principal)).instances.find((instance) => instance.id === "pi_default"))
       .toMatchObject({ availability: "unavailable", unavailabilityReason: "authentication_required" });
+  });
+
+  it("exposes the policy-checked managed route through the canonical catalog", async () => {
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry([]), agentRuntimeSource: runtimeSource(),
+      aiProviderSource: { getSnapshot: async () => makeAiProviderSnapshot() },
+      executableDriverKinds: ["kernel"],
+    });
+    const catalog = await service.getCatalog(principal);
+    expect(catalog.instances.find((instance) => instance.id === "kernel_matrix_included"))
+      .toMatchObject({ displayName: "Matrix AI", availability: "available" });
+    expect(catalog.drivers.find((driver) => driver.kind === "kernel"))
+      .toMatchObject({ displayName: "Claude SDK", capabilityClass: "system_agent" });
   });
 
   it("hides every Matrix Agent driver and instance while Matrix AI is not release-ready", async () => {
@@ -1506,6 +1660,23 @@ describe("canonical Chat Provider catalog", () => {
 
     await expect(service.getCatalog(principal)).rejects
       .toBeInstanceOf(ProviderCatalogUnavailableError);
+  });
+
+  it("logs only safe schema paths when the canonical projection is invalid", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry([
+        codingProvider({ supportedModes: ["unsafe/mode"] }),
+      ]),
+      agentRuntimeSource: runtimeSource(),
+    });
+
+    await expect(service.getCatalog(principal)).rejects
+      .toBeInstanceOf(ProviderCatalogUnavailableError);
+    expect(warning).toHaveBeenCalledWith(
+      "[chat-providers] Canonical Provider projection failed validation: instances.2.supports.interactionModes.0:invalid_format",
+    );
+    warning.mockRestore();
   });
 });
 

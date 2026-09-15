@@ -6,7 +6,9 @@ import {
   type ProviderSettingsMutation,
   type ProviderSettingsMutationResponse,
   type ProviderSettingsSnapshot,
+  type ProviderHarnessKind,
 } from "@matrix-os/contracts";
+import { openProviderAgentSetup } from "@matrix-os/ui";
 import type {
   ProviderSettingsTransport,
   ProviderSettingsTransportErrorCode,
@@ -59,13 +61,13 @@ function mapTransportError(error: unknown): DesktopProviderSettingsTransportErro
 }
 
 export function createDesktopProviderSettingsTransport(api: ApiClient): ProviderSettingsTransport & {
-  getSnapshot(signal: AbortSignal): Promise<ProviderSettingsSnapshot>;
+  getSnapshot(signal: AbortSignal, options?: { refresh?: boolean }): Promise<ProviderSettingsSnapshot>;
   mutate(mutation: ProviderSettingsMutation, signal: AbortSignal): Promise<ProviderSettingsMutationResponse>;
 } {
   return {
-    async getSnapshot(signal) {
+    async getSnapshot(signal, options = {}) {
       try {
-        const value = await api.get<unknown>(PROVIDER_SETTINGS_PATH, {
+        const value = await api.get<unknown>(`${PROVIDER_SETTINGS_PATH}?includeCapabilities=true${options.refresh ? "&refresh=true" : ""}`, {
           maxBytes: MAX_RESPONSE_BYTES,
           signal,
         });
@@ -84,7 +86,7 @@ export function createDesktopProviderSettingsTransport(api: ApiClient): Provider
         throw new DesktopProviderSettingsTransportError("invalid_request");
       }
       try {
-        const value = await api.post<unknown>(PROVIDER_SETTINGS_ACTIONS_PATH, mutation.data, {
+        const value = await api.post<unknown>(`${PROVIDER_SETTINGS_ACTIONS_PATH}?includeCapabilities=true`, mutation.data, {
           maxBytes: MAX_RESPONSE_BYTES,
           signal,
         });
@@ -113,6 +115,23 @@ export async function openExistingProviderTerminalSession(
   useTabs.getState().openTab({ kind: "terminals", title: "Terminal" });
   useTabs.getState().requestTerminalSession(terminalSessionId);
   return true;
+}
+
+export async function openDesktopProviderAgentSetup(
+  api: ApiClient,
+  harness: ProviderHarnessKind,
+  isIdentityCurrent: () => boolean,
+): Promise<boolean> {
+  return openProviderAgentSetup({
+    harness,
+    getCatalog: () => api.get("/api/chat-providers?refresh=true&includeConnectionLabels=true", { maxBytes: MAX_RESPONSE_BYTES, signal: AbortSignal.timeout(10_000) }),
+    openCommand: async (cmd) => {
+      if (!isIdentityCurrent()) return false;
+      const session = await useShellSessions.getState().create(api, { cmd });
+      if (!session || !isIdentityCurrent()) return false;
+      return openExistingProviderTerminalSession(api, session.name, isIdentityCurrent);
+    },
+  });
 }
 
 type OpenExternal = (url: string) => Promise<unknown>;

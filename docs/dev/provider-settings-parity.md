@@ -189,16 +189,64 @@ unavailable credentials, offline routes, unsupported model vendors, and stale
 explicit models all remain non-runnable. Resume state retains only the provider
 session ID and validated working directory; it never persists a credential.
 
-The portable-credential predicate is one shared contract. The add-harness UI
+Pi and OpenCode model choices come from bounded live CLI discovery
+(`pi --list-models` and `opencode models`) rather than a copied static list.
+Discovery runs with an allowlisted environment, a five-second timeout, a 256 KiB
+output limit, provider/model caps, safe identifiers, and a one-minute cache.
+Explicit Settings refresh bypasses the cache. One CLI failing or returning no
+authenticated models does not erase the other CLI's catalog. A configured
+harness whose catalog fails remains visible and offline so the owner can
+refresh, disable, or repair it, even when its saved provider cannot be inserted
+into the bounded selectable catalog. The projection marks that fail-closed
+state as `routeAvailability: "catalog_unavailable"`; Chat and execution still
+reject it.
+
+The runnable-credential predicate is one shared contract. The add-harness UI
 filters provider, model, and source choices with it, configuration mutations
 revalidate it at the gateway boundary, and the Chat catalog plus child-process
 credential resolver enforce it again. Renderer state can therefore never make
 an otherwise unsupported owner subscription or model vendor executable.
 
+Settings presents the route as `Harness → Model → Paid through`. The model
+provider supplies the model; Matrix AI, an owner key, or a harness-owned profile
+appears only under **Paid through**. Matrix AI must never be inserted into the
+model-provider selector.
+
 Multiple accounts are first-class. Account IDs are stable and owner-scoped;
 labels are safe display metadata, not secret suffixes. Adding an account must
 not overwrite another account, and every runnable instance identifies the
 selected account or Matrix-funded access source explicitly.
+
+## Setup presentation and failure behavior
+
+All three desktop presentations use the shared compact, expandable agent list.
+Matrix AI appears above that list even when configuration or funding is missing;
+its card explains the missing state rather than disappearing. Show compatible
+agent navigation when the selected agent cannot use the managed connection.
+The explicit **Use Matrix AI** connection action saves an eligible route and
+enables an installed agent atomically when supported. Ordinary model/route
+edits never silently enable a disabled agent. A saved source ID alone is
+not enough to label a route selected when its model is no longer allowed.
+Generic managed routes are currently executable through Pi/OpenCode. Hermes
+and OpenClaw system-runtime configuration does not yet apply that funding path;
+both presentation and mutation validation must reject a Matrix AI selection
+there rather than save a misleading access label.
+
+The header **Add agent** action guides **Agent → Connect → Model**. Installation
+and native profile management open the selected agent's server-advertised
+command in a visible canonical Terminal. Surface adapters pin the target
+computer and reject a computer switch before launch or navigation. Installed
+agents are discovered; users should not recreate entries just to see them.
+
+Connection actions precede collapsed **Advanced** customization. Unsupported
+multi-account actions remain hidden: native CLI sign-in may replace the current
+login and must not imply isolated concurrent accounts. Keep supported native
+profile management reachable after authentication. Failed login remains
+retryable within its original attempt expiry. Add, remove, and reassignment
+dialogs retain drafts/errors until the server confirms success. Once the user
+continues past Connect, refresh must not silently substitute a different funding
+source. Operator-owned budgets and unavailable controls are readable values,
+not inert form fields.
 
 ## Gateway readiness, credits, and usage
 
@@ -218,8 +266,12 @@ Cloudflare AI Gateway provides Unified Billing and a coarse operator spend
 fuse. It does not own Matrix user identity, per-user balances, model entitlement,
 or add-on credit. Cloudflare spend rules are defense in depth because accounting
 can be eventually consistent and rule counts are bounded. Matrix owns the
-authoritative Kysely/Postgres ledger, reserves spend atomically before a funded
-call, and reconciles provider usage afterward. Provider settings reads the
+authoritative Kysely/Postgres ledger. In Cloudflare usage mode it atomically
+holds the currently affordable amount before a funded call, allows only one
+funded request in flight per owner, then reconciles the exact usage returned in
+the provider response. The user's debit is capped at that hold; Matrix absorbs
+any final in-flight overrun without creating debt or clawing back later credit.
+Provider settings reads the
 resulting promotional balance, add-on balance, held reservations, settled
 monthly use, and remaining monthly budget through a machine-authenticated
 platform summary. The response is identity-free and is never persisted on the
@@ -235,12 +287,24 @@ revisions. Owner self-service may later narrow an operator ceiling, but it must
 be a machine-authenticated platform mutation before either shell advertises it.
 
 First-launch promotional credit is also platform-owned. It is disabled unless
-an operator explicitly configures one bounded campaign ID, positive microusd
-amount, and ISO expiry. Grant creation derives the exact owner, machine, and
-runtime slot from the running handle and uses one `ON CONFLICT`-guarded ledger
-entry per campaign/runtime. Retries cannot double-credit. Once remaining
+an operator explicitly configures one bounded campaign ID and ISO expiry. The
+amount defaults to $5 and may be set to $10 for a reviewed campaign. After live
+policy eligibility succeeds, the first authenticated funding-summary read
+claims it automatically. Grant creation derives identity from the running
+handle and uses one `ON CONFLICT`-guarded ledger entry per owner/campaign across
+runtimes. Retries and another computer cannot double-credit. Once remaining
 promotional credit expires, new funded admission and usage summaries fail
 closed; an expired local value is never treated as spendable credit.
+
+`@cf/zai-org/glm-5.3-flash` is the new managed default for generic OpenAI-wire
+harnesses such as Pi and OpenCode. The UI labels Cloudflare Workers AI as the
+model provider and Matrix AI as **Paid through**. Native Claude remains on its
+Anthropic-compatible route. Existing explicit Chat, harness, and own-account
+selections are preserved rather than silently rewritten.
+
+If a started usage-mode request ends without trustworthy final usage, its hold
+remains unresolved and blocks another funded request for that owner until exact
+operator reconciliation. Cleanup must not invent a charge or release that hold.
 
 Usage displays must state their authority:
 
@@ -308,6 +372,80 @@ the required active tax registrations.
   file, and credential payload logging remains disabled.
 
 ## Delivery stack
+
+### Setup interaction contract
+
+- Agent artwork reuses the Terminal new-tab assets; do not replace recognizable
+  coding-agent logos with text glyphs.
+- Installed Pi/OpenCode instances offer **Use Matrix AI** and **Own account**
+  before advanced routing fields. Matrix AI is still an access source, not a
+  fabricated inference vendor.
+- Explicit connection selection may send `set_route` with `enableHarness: true`.
+  Validate the installed harness, exact credential source, account, model, and
+  policy before persisting the route and enabled state together. A failed
+  mutation changes neither. Ordinary route edits do not implicitly enable an
+  agent, and an unready own-account connection must not claim funded readiness.
+  Clients opt into `includeCapabilities=true` on Settings reads and actions;
+  only a server-confirmed `atomicConnectSupported` flag permits this new field.
+  Older runtimes retain plain route selection for enabled agents and show an
+  update requirement for one-step connection of disabled agents. Default wire
+  snapshots stay unchanged for older strict-schema clients.
+- First sign-in opens the newly returned Terminal action directly. Reopening
+  Settings must not replay an old login attempt. Keep Continue as recovery if
+  the window could not open, and guard handoff against a runtime switch.
+- Provider-login named Terminal IDs can be 64 characters; route them through
+  the canonical named-session protocol, not the legacy UUID attach protocol.
+- Mounting Settings or Chat reads the existing catalog without forcing health
+  refresh. Explicit Refresh and settings-change reconciliation can refresh it;
+  this does not permit stale policy or credentials during run admission.
+  Cold Settings inventory, funding summary, and model discovery overlap within
+  the serialized read; do not queue independent checks behind CLI discovery or
+  cache authorization to hide loading delays.
+- Chat's Settings gear opens **Agents & providers** directly in Web Canvas,
+  Web Desktop, and Electron Desktop, even while model choices are loading.
+  Model selection has its own compact trigger. Shared picker colors use scoped
+  CSS variables with both hosts' token fallbacks; sharing JSX alone is not
+  visual parity. The Web settings inset matches Electron's content frame.
+- Chat model selection is a bounded, searchable overlay, not a layout-pushing
+  setup page. Unavailable agents belong under Manage agents. Preserve existing
+  Chat instance binding and permission controls. Display the canonical
+  `connectionLabel` beside the harness, so Pi/OpenCode funded through Matrix AI
+  are distinguishable from their own-account routes. Never infer funding from
+  a model ID or user-supplied account name. Updated clients request
+  `includeConnectionLabels=true`; the default catalog response omits this
+  additive field for older strict-schema clients. Admission uses the unchanged
+  internal catalog regardless of this presentation opt-in.
+
+Verification must distinguish catalog loading, Chat admission, and inference.
+For Pi/OpenCode, failure to discover an owner's native model catalog must not
+erase a saved Matrix route when the installed driver, exact canonical model,
+authoritative current policy, and fresh ready Matrix source all remain valid.
+Own-account catalog failures and revoked, missing, or stale funding remain
+fail-closed. Preserve server rejection codes across Chat clients and map them
+to shared local recovery copy; never display raw upstream error text.
+A failed token-count preflight occurs after admission and does not, by itself,
+explain a failed Chat-create request. A green gateway health indicator is not
+evidence of a successful funded turn. Capture all three desktop surfaces and
+verify a real bounded funded turn before declaring the preview usable.
+
+OpenCode's Anthropic connection uses the AI SDK API-prefix convention: its
+generated `provider.anthropic.options.baseURL` must end in `/v1`, since the SDK
+appends `/messages`. Normalize only that OpenCode config value, preserving
+proxy path prefixes and an existing `/v1`. Do not change the shared portable
+`ANTHROPIC_BASE_URL` used by Anthropic SDK clients. Verify the actual relay
+request path in preview; successful Chat admission alone is not inference
+acceptance. See [AI SDK Anthropic configuration](https://v4.ai-sdk.dev/providers/ai-sdk-providers/anthropic).
+
+Preview upgrades must also preserve Chat database compatibility. A computer
+that previously ran collaboration-enabled Chat can retain a required
+`chat_messages.purpose` column even when an older feature branch is deployed.
+All message writers (admission, queue claim, steering, streaming, and final
+output) must provide the stored purpose explicitly. Bootstrap may atomically
+add/backfill the column for legacy databases, but must preserve existing
+discussion purposes, actor attribution, and constraints. Do not drop owner
+tables or weaken constraints to make an older preview run. Test both fresh
+schemas and upgraded schemas without a column default; generic health checks
+do not exercise this write contract.
 
 Land this work in independently reviewable Graphite layers, each with tests
 first, applicable build/pattern gates, current visual evidence, and Greptile

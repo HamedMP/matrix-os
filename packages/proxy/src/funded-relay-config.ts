@@ -22,6 +22,8 @@ export const BETA_ID = /^[a-zA-Z0-9][a-zA-Z0-9._=-]{0,127}$/;
 export interface FundedRelayConfig {
   gatewayBaseUrl: string;
   gatewayToken: string;
+  reservationMode: "cloudflare-count" | "usage";
+  workersAiToken?: string;
   platformBaseUrl: string;
   relayControlToken: string;
   metadataSecret: string;
@@ -154,12 +156,23 @@ export function resolveFundedRelayConfig(
   const gatewayToken = readSecret(env, "CLOUDFLARE_AI_GATEWAY_TOKEN");
   const relayControlToken = readSecret(env, "AI_RELAY_CONTROL_TOKEN");
   const metadataSecret = readSecret(env, "AI_RELAY_METADATA_SECRET");
+  const reservationMode = env.MATRIX_FUNDED_AI_RESERVATION_MODE?.trim() || "cloudflare-count";
+  if (reservationMode !== "cloudflare-count" && reservationMode !== "usage") {
+    throw new Error("MATRIX_FUNDED_AI_RESERVATION_MODE must be cloudflare-count or usage");
+  }
+  const workersAiToken = env.CLOUDFLARE_WORKERS_AI_TOKEN?.trim()
+    ? readSecret(env, "CLOUDFLARE_WORKERS_AI_TOKEN") : undefined;
+  if (workersAiToken === relayControlToken || workersAiToken === metadataSecret) {
+    throw new Error("Workers AI credential must not reuse internal relay authority");
+  }
   if (new Set([gatewayToken, relayControlToken, metadataSecret]).size !== 3) {
     throw new Error("Funded AI relay credentials must be distinct");
   }
   return {
     gatewayBaseUrl,
     gatewayToken,
+    reservationMode,
+    workersAiToken,
     platformBaseUrl,
     relayControlToken,
     metadataSecret,

@@ -18,6 +18,7 @@ import {
   OWNER_OPENAI_MODEL_IDS,
 } from "./model-catalog.js";
 import type { MatrixFundedCredentialProvider } from "../funded-ai-credential-manager.js";
+import type { FundedAiReadinessReader } from "../funded-ai-readiness.js";
 
 const HEALTH_TIMEOUT_MS = 2_000;
 const KERNEL_CAPABILITIES = [
@@ -46,6 +47,7 @@ interface AiProviderServiceOptions {
   healthTimeoutMs?: number;
   driverInventory?: (signal: AbortSignal) => Promise<AiProviderSnapshotV3["drivers"]>;
   fundedCredentialProvider?: MatrixFundedCredentialProvider;
+  fundedReadinessReader?: FundedAiReadinessReader;
 }
 
 function readinessForObservation(
@@ -160,6 +162,7 @@ export class AiProviderService implements AiProviderSnapshotReader {
   readonly #ownsHealthCache: boolean;
   readonly #healthTimeoutMs: number;
   readonly #driverInventory?: AiProviderServiceOptions["driverInventory"];
+  readonly #fundedReadiness?: FundedAiReadinessReader;
 
   constructor(options: AiProviderServiceOptions) {
     if (!options.homePath) throw new Error("AI provider home path is required");
@@ -177,6 +180,7 @@ export class AiProviderService implements AiProviderSnapshotReader {
       Math.min(options.healthTimeoutMs ?? HEALTH_TIMEOUT_MS, HEALTH_TIMEOUT_MS),
     );
     this.#driverInventory = options.driverInventory;
+    this.#fundedReadiness = options.fundedReadinessReader;
   }
 
   async #drivers(): Promise<AiProviderSnapshotV3["drivers"]> {
@@ -271,38 +275,46 @@ export class AiProviderService implements AiProviderSnapshotReader {
   async getSnapshot(options: { refresh?: boolean } = {}): Promise<AiProviderSnapshotV3> {
     const now = this.#now().toISOString();
     const { credentials, savedModel } = await this.#credentials.read();
-    const drivers = await this.#drivers();
+    // These observations are independent. A slow CLI must not serialize the
+    // funding and credential checks behind its bounded inventory deadline.
+    const [drivers, funded, apiKeyReadiness, profileReadiness] = await Promise.all([
+      this.#drivers(),
+      credentials.matrixIncluded.state === "ready" && this.#fundedReadiness
+        ? this.#fundedReadiness.read()
+        : undefined,
+      this.#resolveOwnerReadiness(
+        "owner_anthropic_key", credentials.ownerApiKey.state, "api_key", now, options.refresh === true,
+      ),
+      this.#resolveOwnerReadiness(
+        "owner_anthropic_profile", credentials.ownerProfile.state, "profile", now, options.refresh === true,
+      ),
+    ]);
     const codexDriver = drivers.find((driver) => driver.id === "codex");
     const codexReadiness = readinessForDriver(codexDriver, now);
-    const matrixReadiness = readinessForObservation(
-      credentials.matrixIncluded.state,
+    const matrixReadiness = funded?.readiness ?? readinessForObservation(
+      credentials.matrixIncluded.state === "ready" ? "unverified" : credentials.matrixIncluded.state,
       "matrix",
       now,
-    );
-    const apiKeyReadiness = await this.#resolveOwnerReadiness(
-      "owner_anthropic_key",
-      credentials.ownerApiKey.state,
-      "api_key",
-      now,
-      options.refresh === true,
-    );
-    const profileReadiness = await this.#resolveOwnerReadiness(
-      "owner_anthropic_profile",
-      credentials.ownerProfile.state,
-      "profile",
-      now,
-      options.refresh === true,
     );
     const catalog = buildBundledModelCatalog();
 
     const accessSources: AiAccessSourceView[] = [
+      sourceFromReadiness({
+        id: "matrix_cloudflare", displayName: "Matrix AI", fundingKind: "matrix_included",
+        vendor: "cloudflare", accountLabel: "Included",
+        eligibleModelIds: eligibleModelsForSource("matrix_cloudflare", catalog)
+          .filter((model) => funded?.allowedModelIds.includes(model.id)).map((model) => model.id),
+        policyVersion: AI_PROVIDER_CATALOG_VERSION,
+      }, matrixReadiness),
       sourceFromReadiness({
         id: "matrix_included",
         displayName: "Matrix AI",
         fundingKind: "matrix_included",
         vendor: "anthropic",
         accountLabel: "Included",
-        eligibleModelIds: eligibleModelsForSource("matrix_included", catalog).map((model) => model.id),
+        eligibleModelIds: eligibleModelsForSource("matrix_included", catalog)
+          .filter((model) => funded?.allowedModelIds.includes(model.id))
+          .map((model) => model.id),
         policyVersion: AI_PROVIDER_CATALOG_VERSION,
       }, matrixReadiness),
       sourceFromReadiness({
@@ -376,7 +388,8 @@ export class AiProviderService implements AiProviderSnapshotReader {
     const kernelInstances = accessSources
       .filter((source) => source.vendor === "anthropic")
       .map((source) => {
-        const sourceModels = eligibleModelsForSource(source.id, catalog);
+        const sourceModels = eligibleModelsForSource(source.id, catalog)
+          .filter((model) => source.eligibleModelIds.includes(model.id));
         // A persisted selection is an explicit route request. If the selected
         // access source cannot serve it, fail closed instead of silently
         // replacing it with a cheaper or differently governed model.

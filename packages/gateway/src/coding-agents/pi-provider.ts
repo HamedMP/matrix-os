@@ -18,10 +18,10 @@ import { logCodingAgentWarning } from "./diagnostics.js";
 import { spawnIsolatedProviderProcess } from "./provider-process-isolation.js";
 import { chunkAssistantText, chunkDisplayText } from "./pi-output-chunks.js";
 import {
-  addPortableProviderCredentials,
   buildPiChildEnvironment,
   resolvePiCommand,
 } from "./pi-process-environment.js";
+import { preparePiRunEnvironment } from "./managed-harness-process-config.js";
 import type {
   CodingHarnessCredentialLaunch,
   CodingHarnessCredentialResolver,
@@ -715,15 +715,11 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
       return { events: [], outcome: "failed", sessionId: input.sessionId };
     }
     const credentialLaunch = credentialResolution.launch;
-    const ownerEnvironment = buildPiChildEnvironment({
-      ...options.env,
-      HOME: homePath,
+    const env = await preparePiRunEnvironment({
+      homePath,
+      baseEnvironment: options.env,
+      credentials: credentialLaunch?.env,
     });
-    ownerEnvironment.HOME = homePath;
-    const env = addPortableProviderCredentials(
-      ownerEnvironment,
-      credentialLaunch?.env,
-    );
     const effectiveRunTimeoutMs = credentialLaunch?.maxRunMs
       ? Math.min(runTimeoutMs, credentialLaunch.maxRunMs)
       : runTimeoutMs;

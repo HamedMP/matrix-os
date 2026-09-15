@@ -4,7 +4,7 @@ import {
   CanonicalChatSkillDescriptorSchema,
   CanonicalProviderCatalogSchema,
   CODEX_VERIFIED_NPM_PACKAGE,
-  isPortableGenericHarnessCredentialRoute,
+  isRunnableGenericHarnessCredentialRoute,
   type AgentProviderDescriptor,
   type AgentProviderSummary,
   type AgentRuntimeDescriptor,
@@ -35,6 +35,8 @@ import type { CodingAgentProviderRegistry } from "../coding-agents/provider-regi
 import type { RequestPrincipal } from "../request-principal.js";
 import type { AiProviderSnapshotReader } from "../ai-providers/service.js";
 import { ProviderSettingsStoreError } from "../ai-providers/provider-settings-errors.js";
+import { managedChatInstances } from "./managed-chat-catalog.js";
+import { configuredHarnessInstanceFromAiSnapshot, unavailableInstance, unavailableReasonFor } from "./configured-harness-catalog.js";
 import { claudeFallbackCatalog } from "./claude-model-catalog.js";
 
 const ADAPTER_VERSION = "1.0.0";
@@ -504,63 +506,6 @@ function systemHarnessKind(kind: CanonicalProviderDriverKind): ProviderHarnessKi
   return null;
 }
 
-function unavailableReasonFor(
-  instance: InstanceDraft,
-): NonNullable<CanonicalProviderInstanceDescriptor["unavailabilityReason"]> {
-  if (instance.availability === "setup_required") return "not_installed";
-  if (instance.availability === "auth_required") return "authentication_required";
-  return "runtime_unavailable";
-}
-
-function unavailableInstance(
-  instance: InstanceDraft,
-  reason: NonNullable<CanonicalProviderInstanceDescriptor["unavailabilityReason"]>,
-): InstanceDraft {
-  return {
-    ...instance,
-    availability: "unavailable",
-    unavailabilityReason: reason,
-    models: [],
-    options: [],
-    defaultSelection: undefined,
-    ...(reason === "runtime_not_runnable" ? { setupActions: [] } : {}),
-  };
-}
-
-function configuredHarnessInstanceFromAiSnapshot(input: {
-  instance: InstanceDraft;
-  harness: ProviderHarnessInstance;
-  aiSnapshot?: AiProviderSnapshotV3;
-}): InstanceDraft {
-  if (input.instance.availability !== "available") {
-    return unavailableInstance(input.instance, unavailableReasonFor(input.instance));
-  }
-  const configured = input.aiSnapshot?.models.find((model) =>
-    model.vendor === input.harness.route.providerId && model.id === input.harness.route.modelId
-  );
-  if (!configured || configured.status === "unavailable" || configured.status === "retired") {
-    return unavailableInstance(input.instance, "runtime_unavailable");
-  }
-  const modelId = `${input.harness.route.providerId}:${input.harness.route.modelId}`;
-  const capabilities = configured.capabilities.filter((capability) =>
-    capability === "reasoning" || capability === "tools" || capability === "vision"
-  );
-  const model: CanonicalModelDescriptor = {
-    id: modelId,
-    displayName: configured.displayName,
-    availability: "available",
-    capabilities,
-    supportsVision: capabilities.includes("vision"),
-    supportsToolUse: capabilities.includes("tools"),
-  };
-  return {
-    ...input.instance,
-    models: [model],
-    options: [],
-    defaultSelection: { instanceId: input.instance.id, model: modelId },
-    unavailabilityReason: undefined,
-  };
-}
 
 function configuredSystemInstance(
   instance: InstanceDraft,
@@ -692,13 +637,14 @@ function applyHarnessSettings(input: {
     const harness = enabledHarness!;
     if (generic === "pi" || generic === "opencode") {
       const source = input.settings!.accessSources.find((candidate) => candidate.id === harness.accessSourceId);
-      if (!isPortableGenericHarnessCredentialRoute(harness, source)) {
+      if (!isRunnableGenericHarnessCredentialRoute(harness, source)) {
         return unavailableInstance(configuredInstance, "runtime_not_runnable");
       }
       return configuredHarnessInstanceFromAiSnapshot({
         instance: { ...configuredInstance, availability: "available" },
         harness,
         aiSnapshot: input.aiSnapshot,
+        settings: input.settings!,
       });
     }
     if (generic === "hermes" || generic === "openclaw") {
@@ -814,7 +760,9 @@ export function createChatProviderCatalogService(options: {
       const skills = projectSkills(options.skillsSource?.() ?? []);
       const seenCodingDrivers: CanonicalProviderDriverKind[] = [];
       const codingInstances: InstanceDraft[] = [];
-      for (const provider of coding) {
+      // The registry bounds provider count. Independent CLI timeouts must not add
+      // together; Promise.all preserves registry order even if probes finish out of order.
+      const projectedInstances = await Promise.all(coding.map(async (provider) => {
         let projectedCatalog: CodingModelCatalogProjection | null = null;
         if (options.codingModelCatalogSource) {
           try {
@@ -823,7 +771,9 @@ export function createChatProviderCatalogService(options: {
             console.warn("[chat-providers] Coding model catalog unavailable");
           }
         }
-        const instance = codingInstance(provider, skills, projectedCatalog);
+        return codingInstance(provider, skills, projectedCatalog);
+      }));
+      for (const instance of projectedInstances) {
         if (instance === null) continue;
         if (seenCodingDrivers.includes(instance.driverKind)) {
           throw new ProviderCatalogUnavailableError(false);
@@ -866,6 +816,7 @@ export function createChatProviderCatalogService(options: {
       const executableDriverKinds = options.executableDriverKinds;
       const instances = applyHarnessSettings({
         instances: [
+        ...managedChatInstances(aiSnapshot, skills),
         ...systemInstances,
         ...completeCodingInstances,
         ],
@@ -877,6 +828,7 @@ export function createChatProviderCatalogService(options: {
         aiSnapshot,
       });
       const driverKinds: CanonicalProviderDriverKind[] = [
+        ...(instances.some((instance) => instance.driverKind === "kernel") ? ["kernel" as const] : []),
         ...SYSTEM_DRIVERS,
         ...CODING_DRIVERS,
       ];
@@ -884,7 +836,7 @@ export function createChatProviderCatalogService(options: {
         kind,
         displayName: driverDisplayName(kind),
         adapterVersion: ADAPTER_VERSION,
-        capabilityClass: SYSTEM_DRIVERS.includes(kind as typeof SYSTEM_DRIVERS[number])
+        capabilityClass: kind === "kernel" || SYSTEM_DRIVERS.includes(kind as typeof SYSTEM_DRIVERS[number])
           ? "system_agent" as const
           : "coding_agent" as const,
       }));
@@ -895,7 +847,10 @@ export function createChatProviderCatalogService(options: {
         instances: instances.map((instance) => ({ ...instance, catalogRevision: revision })),
       });
       if (!parsed.success) {
-        console.warn("[chat-providers] Canonical Provider projection failed validation");
+        const safeIssuePaths = parsed.error.issues.slice(0, 16).map((issue) => (
+          `${issue.path.join(".") || "catalog"}:${issue.code}`
+        ));
+        console.warn(`[chat-providers] Canonical Provider projection failed validation: ${safeIssuePaths.join(",")}`);
         throw new ProviderCatalogUnavailableError(false);
       }
       return parsed.data;

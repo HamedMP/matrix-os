@@ -46,6 +46,20 @@ postgres) and its own named volumes. Slot ownership lives in
 
 ## Preview VPS — the verify loop
 
+### Host configuration safety
+
+Preview host configuration changes must preserve the existing file owner,
+group, and mode across atomic replacement. The service wrapper runs as the
+runtime user and sources `/opt/matrix/env/host.env`; a root-only replacement
+can prevent the gateway from starting even when its values are correct. Check
+metadata and readability as the service user before restarting anything, retain
+a bounded rollback copy, and verify local health immediately afterward. Never
+print the file contents or use a reboot as a substitute for restoring access.
+If the gateway is unavailable, use an explicitly authorized operator connection;
+do not recreate the preview or affect production machines to repair it.
+
+### Provisioning workflow
+
 Add the **`preview-vps`** label to a same-repo PR. The `Preview VPS` workflow:
 
 1. Builds the host bundle as `0.0.0-pr<N>.<sha7>` (re-runs on every push while

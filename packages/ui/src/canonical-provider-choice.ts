@@ -9,6 +9,7 @@ export interface CanonicalProviderChoice {
   instanceId: string;
   driverKind: CanonicalProviderDriverKind;
   harnessLabel: string;
+  connectionLabel?: string;
   modelId: string;
   modelLabel: string;
   interactionMode: string;
@@ -18,6 +19,28 @@ export interface CanonicalProviderChoice {
   options: CanonicalProviderOptionDescriptor[];
   selectedOptions: Array<{ id: string; value: string | boolean }>;
   supportsFileAttachments: boolean;
+}
+
+const MANAGED_GLM_MODEL_ID = "cloudflare:@cf/zai-org/glm-5.3-flash";
+
+function isManagedGlmInstance(instance: CanonicalProviderInstanceDescriptor): boolean {
+  return instance.connectionLabel === "Matrix AI"
+    && instance.models.some((model) => (
+      model.id === MANAGED_GLM_MODEL_ID && model.availability === "available"
+    ));
+}
+
+export function orderCanonicalProviderInstancesForDefault(
+  instances: readonly CanonicalProviderInstanceDescriptor[],
+): CanonicalProviderInstanceDescriptor[] {
+  return instances
+    .map((instance, index) => ({ instance, index }))
+    .sort((left, right) => {
+      const priority = Number(isManagedGlmInstance(right.instance))
+        - Number(isManagedGlmInstance(left.instance));
+      return priority || left.index - right.index;
+    })
+    .map(({ instance }) => instance);
 }
 
 function defaultOptionValue(
@@ -69,7 +92,7 @@ export function canonicalProviderAvailabilityLabel(
 export function deriveCanonicalProviderChoices(
   catalog: CanonicalProviderCatalog,
 ): CanonicalProviderChoice[] {
-  return catalog.instances.flatMap((instance) => {
+  return orderCanonicalProviderInstancesForDefault(catalog.instances).flatMap((instance) => {
     if (instance.availability !== "available") return [];
     const interactionMode = instance.supports.interactionModes[0];
     const permissionMode = instance.supports.permissionModes[0];
@@ -78,6 +101,7 @@ export function deriveCanonicalProviderChoices(
       instanceId: instance.id,
       driverKind: instance.driverKind,
       harnessLabel: instance.displayName,
+      ...(instance.connectionLabel ? { connectionLabel: instance.connectionLabel } : {}),
       modelId: model.id,
       modelLabel: model.displayName,
       interactionMode,

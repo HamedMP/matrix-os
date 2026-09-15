@@ -19,4 +19,10 @@ describe("canonical Chat submit failures", () => {
       new AppError("server", { detail: "provider secret detail" }),
     )).toBe("Something went wrong. Please try again.");
   });
+  it("uses the same neutral connection recovery and rejects prototype names", () => {
+    expect(canonicalChatSubmitFailureReason(new AppError("server", { detail: "provider_unavailable" })))
+      .toBe("This connection is currently unavailable. Open Agents & providers to check it.");
+    expect(canonicalChatSubmitFailureReason(new AppError("server", { detail: "toString" })))
+      .toBe("Something went wrong. Please try again.");
+  });
 });

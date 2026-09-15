@@ -297,7 +297,7 @@ describe("canonical shell Chat state", () => {
         return Response.json({ ok: true, path, size: 5 });
       }
       if (url.endsWith("/api/chats/chat_a/turns?messageVersion=2")) {
-        return Response.json({ error: "conflict" }, { status: 409 });
+        return Response.json({ error: { code: "provider_unavailable", safeMessage: "Do not render upstream details", retryable: true } }, { status: 409 });
       }
       if (url.includes("/api/files/blob?") && init?.method === "DELETE") {
         const parsed = new URL(url);
@@ -325,7 +325,7 @@ describe("canonical shell Chat state", () => {
     await waitFor(() => expect(fetchFn.mock.calls.some(([url, init]) =>
       String(url).includes("/api/files/blob?") && (init as RequestInit | undefined)?.method === "DELETE"))
       .toBe(true));
-    expect(result.current.messages.at(-1)?.content).toBe("Message could not be sent. Try again.");
+    expect(result.current.messages.at(-1)?.content).toBe("This connection is currently unavailable. Open Agents & providers to check it.");
   });
 
   it("waits for parallel uploads to settle before deleting partial successes", async () => {

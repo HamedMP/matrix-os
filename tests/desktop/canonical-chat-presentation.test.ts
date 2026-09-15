@@ -77,7 +77,7 @@ describe("canonical Chat presentation adapter", () => {
 
     expect(presented[0]?.final).toMatchObject({
       tone: "failed",
-      markdown: "The Run failed.",
+      markdown: "The agent could not complete its reply. Try again or check Agents & providers.",
     });
     expect(presented[0]?.final).not.toHaveProperty("actions");
     expect(presented[1]?.final).toMatchObject({ markdown: "continued" });
@@ -930,7 +930,7 @@ describe("canonical Chat presentation adapter", () => {
         runId: run.id,
         sequence: 1,
         type: "run.error",
-        error: { code: "run_failed", safeMessage: "The agent run failed.", retryable: true },
+        error: { code: "run_failed", safeMessage: "Private upstream sk-secret error", retryable: true },
         occurredAt: completedAt,
       }],
     });
@@ -945,7 +945,7 @@ describe("canonical Chat presentation adapter", () => {
       kind: "notice",
       tone: "failed",
       label: "Agent work failed",
-      markdown: "The agent run failed.",
+      markdown: "The agent could not complete its reply. Try again or check Agents & providers.",
     });
   });
 

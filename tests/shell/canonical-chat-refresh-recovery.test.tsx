@@ -126,7 +126,7 @@ describe("Web Desktop and Web Mobile shared Chat refresh", () => {
     try {
       await tick();
       expect(hook.result.current.messages.map((message) => message.content)).toEqual([
-        "Prompt 1", "Agent work failed. Please try again.", "Prompt 2",
+        "Prompt 1", "The agent could not complete its reply. Try again or check Agents & providers.", "Prompt 2",
       ]);
       expect(hook.result.current.busy).toBe(false);
       recovered = true;

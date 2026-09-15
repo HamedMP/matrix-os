@@ -142,6 +142,8 @@ export const CanonicalProviderInstanceDescriptorSchema = z.object({
   id: CanonicalProviderInstanceIdSchema,
   driverKind: CanonicalProviderDriverKindSchema,
   displayName: canonicalSafeLabel(160, 640),
+  /** Server-projected connection name; display only, never an authorization signal. */
+  connectionLabel: canonicalSafeLabel(160, 640).optional(),
   availability: z.enum(["available", "setup_required", "auth_required", "unavailable"]),
   unavailabilityReason: z.enum([
     "disabled_in_settings",

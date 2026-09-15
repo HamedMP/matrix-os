@@ -4,6 +4,11 @@ This directory owns the secret-free provider snapshot consumed by Chat and Setti
 
 - `ProviderCredentialStore` adapts owner-controlled runtime files and the inherited Matrix credential without returning secret material. File presence is `unknown` until a bounded health probe verifies it.
 - `AiProviderService` is the sole snapshot composer. Explicit owner selection never silently falls back to Matrix-funded access.
+- Funded readiness comes from `funded-ai-readiness.ts`: a fresh platform policy,
+  positive remaining credit/budget, and a two-second relay health probe. A
+  configured credential manager alone projects unknown readiness, not ready.
+  Catalog reads do not issue credentials or reserve credit; execution still
+  reauthorizes and reserves atomically. Readiness expires within 30 seconds.
 - `ProviderHealthCache` has a fixed cap, TTL/LRU eviction, a recurring sweep, and an explicit shutdown drain owned by the gateway.
 - `model-catalog.ts` is a bounded bundled policy. Remote catalogs, executable driver definitions, arbitrary URLs, and owner mutations are not accepted here.
 - `GET /api/ai/providers` is read-only and runs behind the gateway's authenticated API boundary. Route failures expose only a generic message.

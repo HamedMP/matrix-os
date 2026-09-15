@@ -51,14 +51,16 @@ Use dedicated development/staging values; never production credentials in tests.
 
 ```text
 MATRIX_FUNDED_AI_ENABLED=0
-MATRIX_FUNDED_AI_MODELS=<validated allowlist>
+MATRIX_FUNDED_AI_MODELS=@cf/zai-org/glm-5.3-flash
 MATRIX_FUNDED_AI_BETAS=<validated beta allowlist or empty>
+MATRIX_FUNDED_AI_RESERVATION_MODE=usage
 MATRIX_FUNDED_AI_FIRST_RESPONSE_TIMEOUT_MS=10000
 MATRIX_FUNDED_AI_GLOBAL_CONCURRENCY=<bounded>
 MATRIX_FUNDED_AI_RUNTIME_CONCURRENCY=<bounded>
 MATRIX_FUNDED_AI_RATE_LIMIT=<bounded>
 CLOUDFLARE_AI_GATEWAY_URL=<fixed dedicated gateway URL>
 CLOUDFLARE_AI_GATEWAY_TOKEN=<central relay only>
+CLOUDFLARE_WORKERS_AI_TOKEN=<central relay only>
 
 # Platform control plane; all three secrets are distinct and at least 32 chars.
 MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED=true
@@ -68,7 +70,8 @@ AI_FUNDED_CREDENTIAL_HASH_SECRET=<dedicated credential hash secret>
 # Optional first-launch campaign. Omit or set false to issue no free credit.
 AI_FUNDED_PROMOTIONAL_GRANT_ENABLED=true
 AI_FUNDED_PROMOTIONAL_GRANT_CAMPAIGN_ID=<bounded stable campaign id>
-AI_FUNDED_PROMOTIONAL_GRANT_MICROUSD=<positive integer>
+# Optional; defaults to $5. Use 10000000 for a reviewed $10 campaign.
+AI_FUNDED_PROMOTIONAL_GRANT_MICROUSD=5000000
 AI_FUNDED_PROMOTIONAL_GRANT_EXPIRES_AT=<ISO timestamp>
 ```
 
@@ -79,10 +82,12 @@ allows at least one model **and** fresh bounded relay health is ready. A legacy
 key, configured URL, or previous successful request does not satisfy readiness.
 Global and per-runtime policy activation is operator-authenticated and
 revisioned. The runtime policy route derives owner, machine, and runtime slot
-from the reviewed handle; request bodies cannot supply identity. Promotional
-grant creation is separately operator-authenticated, disabled without the
-explicit campaign configuration above, and idempotent for that campaign and
-runtime. Stripe/add-on purchase remains unavailable.
+from the reviewed handle; request bodies cannot supply identity. After current
+policy eligibility is verified, the first authenticated funding-summary read
+claims the configured starter credit idempotently. The ledger allows one claim
+per owner and campaign across runtimes, so retries or another computer cannot
+mint a second grant. The operator grant endpoint is an idempotent repair/replay
+path, not a first-Chat prerequisite. Stripe/add-on purchase remains unavailable.
 
 The platform exposes operator-authenticated `GET`/`PUT`
 `/api/operator/ai/funded/global-policy`, `GET`/`PUT`
@@ -113,7 +118,9 @@ Repeat for disconnect, timeout, oversized/malformed stream, rejected model, disa
   the opaque `matrix_user_ref` metadata key. Cloudflare limits are a delayed
   safety backstop; the Matrix Postgres ledger remains the exact balance source.
 - Confirm `cf-aig-collect-log-payload: false` and inspect logs for metadata-only records.
-- Verify required Anthropic SDK/beta headers, streaming cancellation, and canonical usage/model metadata.
+- Verify the fixed Workers AI route for `@cf/zai-org/glm-5.3-flash`, streaming
+  cancellation, and canonical final usage/model metadata. Settlement uses the
+  provider-reported response usage; it does not require a token-count key.
 - Do not enable semantic caching.
 
 The dedicated relay deploys through `AI Relay Cloud Run`. Its Cloud Run service
@@ -134,8 +141,8 @@ Preview activation order is deliberate:
    environment and deploy that platform revision;
 5. provision or recreate the disposable VPS so cloud-init receives the funded
    relay URL and runtime credential;
-6. enable the runtime policy and a bounded promotional grant through the
-   operator-authenticated platform endpoints;
+6. enable the runtime policy and campaign, then verify the owner's first
+   authenticated funding-summary read claims the bounded starter grant once;
 7. test Canvas, Web Desktop, and Electron before any production rollout.
 
 The relay workflow intentionally refuses production today. Removing that gate

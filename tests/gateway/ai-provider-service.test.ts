@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AiProviderSnapshotV3Schema, type AiProviderSnapshotV3 } from "@matrix-os/contracts";
 import {
   AiProviderService,
@@ -51,6 +51,10 @@ describe("AiProviderService", () => {
         ? fundedProvider()
         : undefined,
       now: () => NOW,
+      fundedReadinessReader: { read: async () => ({
+        readiness: { state: "ready", checkedAt: NOW.toISOString(), staleAfter: new Date(NOW.getTime() + 30_000).toISOString(), action: "none", safeReason: null },
+        allowedModelIds: ["claude-sonnet-5"],
+      }) },
       healthProbe: options.healthProbe,
       healthTimeoutMs: options.healthTimeoutMs,
       driverInventory: options.driverInventory === undefined
@@ -58,6 +62,39 @@ describe("AiProviderService", () => {
         : async () => options.driverInventory!(),
     });
   }
+
+  it("requires an authoritative readiness reader even when funded credentials are configured", async () => {
+    const service = new AiProviderService({ homePath, fundedCredentialProvider: fundedProvider() });
+    const snapshot = await service.getSnapshot();
+    expect(snapshot.accessSources.find((source) => source.id === "matrix_included"))
+      .toMatchObject({ state: "unknown", eligibleModelIds: [] });
+    expect(snapshot.active.providerInstanceId).toBeNull();
+    service.close();
+  });
+
+  it("checks funded readiness without waiting for slow CLI inventory", async () => {
+    const inventory = Promise.withResolvers<AiProviderSnapshotV3["drivers"]>();
+    const driverInventory = vi.fn(() => inventory.promise);
+    const read = vi.fn(async () => ({
+      readiness: { state: "unavailable" as const, checkedAt: NOW.toISOString(), staleAfter: null, action: "retry" as const, safeReason: "timeout" as const },
+      allowedModelIds: [],
+    }));
+    const service = new AiProviderService({
+      homePath, fundedCredentialProvider: fundedProvider(), driverInventory,
+      fundedReadinessReader: { read }, now: () => NOW,
+    });
+    const pending = service.getSnapshot();
+    try {
+      await vi.waitFor(() => expect(driverInventory).toHaveBeenCalledOnce());
+      expect(read).toHaveBeenCalledOnce();
+    } finally {
+      inventory.resolve([]);
+      const snapshot = await pending;
+      expect(snapshot.accessSources.find((source) => source.id === "matrix_included"))
+        .toMatchObject({ state: "unavailable", eligibleModelIds: [] });
+      service.close();
+    }
+  });
 
   it("projects Matrix-funded readiness independently from disconnected owner accounts", async () => {
     const service = createService({ platformKey: "platform-secret" });
