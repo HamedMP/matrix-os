@@ -482,6 +482,8 @@ describe("Chat collaboration sharing", () => {
       resolveLiveMessages({ messages: [message] });
       await liveRefresh;
     });
+    expect(screen.getByRole("heading", { name: "Overlap Chat" })).toBeVisible();
+    expect(screen.queryByText("Shared Chat unavailable")).toBeNull();
   });
 
   it("keeps viewer discussion controls read-only", async () => {
