@@ -19,7 +19,9 @@ afterEach(() => {
 });
 
 it("loads Resource Manager through the actual native app preload", async () => {
-  vi.spyOn(process, "argv", "get").mockReturnValue(["electron", "--matrix-app-bridge"]);
+  vi.spyOn(process, "argv", "get").mockReturnValue([
+    "electron", "--matrix-app-bridge", "--matrix-app-activity-bridge",
+  ]);
   electron.contextBridge.exposeInMainWorld.mockImplementation((name, value) => {
     Object.assign(window, { [name]: value });
   });
