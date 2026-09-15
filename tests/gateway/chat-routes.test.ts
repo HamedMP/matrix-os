@@ -83,6 +83,7 @@ function routeService(overrides: Partial<CanonicalChatRouteService> = {}): Canon
     cancelRun: vi.fn(async () => {
       throw new Error("not configured");
     }),
+    submitInput: vi.fn(async () => { throw new Error("not configured"); }),
     submitApproval: vi.fn(async () => {
       throw new Error("not configured");
     }),
@@ -926,6 +927,19 @@ describe("canonical Chat routes", () => {
         expectedTurnId: "cturn_route",
       }),
     );
+  });
+
+  it("submits bounded input using the authenticated owner and validates the body", async () => {
+    const submitInput = vi.fn(async () => ({ requestId: "input_color", submission: "accepted" as const }));
+    const app = appFor(routeService({ submitInput }));
+    const path = "/api/chats/chat_route_test/runs/run_route/inputs/input_color";
+    const payload = { clientRequestId: "req_input", structuredAnswers: { color: ["Red"] } };
+    const request = (body: unknown) => app.request(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    expect((await request(payload)).status).toBe(200);
+    expect(submitInput).toHaveBeenCalledWith({ type: "personal", ownerId: "owner_1" }, "chat_route_test", "run_route", "input_color", payload);
+    expect((await request({ clientRequestId: "req_empty" })).status).toBe(400);
+    expect((await request({ clientRequestId: "req_large", answer: "x".repeat(41 * 1024) })).status).toBe(413);
+    expect(submitInput).toHaveBeenCalledTimes(1);
   });
 
   it("submits a bounded approval decision for the authenticated owner's active Run", async () => {

@@ -769,6 +769,7 @@ export function CanonicalChatWorkspace({
                 return true;
               },
               ...(api ? { loadImage: loadChatImage } : {}),
+              submitInput: controller.submitInput,
               performAction: performTranscriptAction,
               canPerformAction: canPerformTranscriptAction,
             }} />

@@ -1733,7 +1733,7 @@ export function createCodingAgentThreadStore(
             throw new CodingAgentThreadError("thread_store_unavailable", "Provider input submit failed");
           }
         } else {
-          inputEvents = defaultInputAnswerEvents(threadId, parsedInputRequestId, request, now, nextEventId);
+          throw new CodingAgentThreadError("thread_store_unavailable", "Provider input is unavailable");
         }
         if (inputEvents.length === 0) {
           inputEvents = defaultInputAnswerEvents(threadId, parsedInputRequestId, request, now, nextEventId);

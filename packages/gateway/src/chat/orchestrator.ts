@@ -1,3 +1,5 @@
+import { submitCanonicalInput } from "./input-control.js";
+import { type CanonicalSubmitChatInputRequest, type CanonicalChatInputSubmissionResponse } from "@matrix-os/contracts";
 import { BackgroundProjectionDetached, recoverBackgroundRunControl } from "./background-run-control.js";
 import { activityPersistenceId } from "./activity-persistence.js";
 import { createHash, randomUUID } from "node:crypto";
@@ -221,6 +223,8 @@ export class CanonicalChatOrchestrator {
       | "updateAdapterState"
       | "finishRun"
       | "getAdapterState"
+      | "getInputState"
+      | "reopenInputSubmission"
       | "getPendingApproval"
       | "getLatestAdapterStateForChat"
       | "hasRetryRequest"
@@ -1352,6 +1356,11 @@ export class CanonicalChatOrchestrator {
       message,
       steering: "accepted",
     });
+  }
+
+  async submitInput(owner: ChatOwner, chatId: string, runId: string, requestId: string, input: CanonicalSubmitChatInputRequest): Promise<CanonicalChatInputSubmissionResponse> {
+    await this.assertPersonalExecutionAllowed(owner, chatId);
+    return submitCanonicalInput({ repository: this.options.repository, active: this.active.get(runId), owner, chatId, runId, requestId, input });
   }
 
   async submitApproval(

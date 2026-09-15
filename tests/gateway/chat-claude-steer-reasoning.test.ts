@@ -18,6 +18,7 @@ it("does not reopen a completed Thinking activity after consecutive Claude Steer
     spawnFn() {
       const launch = launches++;
       const child = Object.assign(new EventEmitter(), {
+      stdin: { write: (_chunk: string, callback?: (error?: Error | null) => void) => { callback?.(); return true; } },
         stdout: new EventEmitter(), stderr: new EventEmitter(),
         kill() { queueMicrotask(() => child.emit("exit", null, "SIGTERM")); },
       });

@@ -270,7 +270,7 @@ describe("Codex app-server control runtime", () => {
     }
   });
 
-  it("maps structured answers to native questions without persisting secret input", async () => {
+  it.each(["input", "defer_input"] as const)("delivers %s to native questions without persisting secret input", async (controlType) => {
     const homePath = await mkdtemp(join("/tmp", "codex-input-"));
     const fakeCodexPath = join(homePath, "fake-codex-input.mjs");
     const responsesPath = join(homePath, "responses.jsonl");
@@ -288,6 +288,7 @@ describe("Codex app-server control runtime", () => {
       "  else if (message.method === 'thread/start') console.log(JSON.stringify({ id: message.id, result: { thread: { id: 'native-thread-input' }, model: 'codex', modelProvider: 'openai', cwd: '/private/project', approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: {} } }));",
       "  else if (message.method === 'turn/start') {",
       "    console.log(JSON.stringify({ id: message.id, result: { turn: { id: 'native-turn-input' } } }));",
+      "    if (!process.argv.includes('features.default_mode_request_user_input=true')) process.exit(43);",
       "    console.log(JSON.stringify({ id: 'rpc-input-secret', method: 'item/tool/requestUserInput', params: { threadId: 'native-thread-input', turnId: 'native-turn-input', itemId: 'native-item-input', questions: [{ id: 'native-approach', header: 'Approach', question: 'Which approach for /home/matrix/private-question?', options: [{ label: 'Minimal', description: 'Use /home/matrix/private-question.' }], isOther: true, isSecret: false }, { id: 'native-secret', header: 'Secret', question: 'Enter the temporary value.', options: null, isOther: false, isSecret: true }] } }));",
       "  } else if (message.id === 'rpc-input-secret') {",
       "    await appendFile(responsesPath, JSON.stringify(message) + '\\n');",
@@ -331,12 +332,12 @@ describe("Codex app-server control runtime", () => {
 
       const [approach, secret] = request.questions;
       await expect(sendControl(controlPath, {
-        type: "input",
+        type: controlType,
         requestId: request.requestId,
-        structuredAnswers: {
+        ...(controlType === "input" ? { structuredAnswers: {
           [approach.questionId]: ["Minimal"],
           [secret.questionId]: ["temporary-secret-value"],
-        },
+        } } : {}),
         clientRequestId: "req_control_input_1",
       })).resolves.toEqual({ ok: true });
       await expect(waitForExit(child)).resolves.toBe(0);
@@ -346,8 +347,8 @@ describe("Codex app-server control runtime", () => {
         id: "rpc-input-secret",
         result: {
           answers: {
-            "native-approach": { answers: ["Minimal"] },
-            "native-secret": { answers: ["temporary-secret-value"] },
+            "native-approach": { answers: [controlType === "input" ? "Minimal" : expect.stringContaining("user has NOT answered")] },
+            "native-secret": { answers: [controlType === "input" ? "temporary-secret-value" : expect.stringContaining("user has NOT answered")] },
           },
         },
       });

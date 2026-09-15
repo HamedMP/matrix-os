@@ -136,6 +136,8 @@ export interface CodingAgentProviderAdapter {
     now: () => Date;
     nextEventId: () => string;
   }): Promise<AgentThreadEvent[]> | AgentThreadEvent[];
+  /** Internal OS acknowledgement; no user answer or permission is implied. */
+  deferInput?(input: { principal: RequestPrincipal; thread: AgentThreadSummary; inputRequestId: string }): Promise<void> | void;
 }
 
 export function parseCodingAgentProviderEvents(
@@ -166,6 +168,7 @@ function providerMayEmit(event: AgentThreadEvent): boolean {
     case "tool.completed":
     case "approval.requested":
     case "user_input.requested":
+    case "user_input.answered":
     case "file.changed":
     case "review.ready":
     case "thread.error":

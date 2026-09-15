@@ -1,6 +1,7 @@
 import { restoreBackgroundChatThread, createBackgroundChatProjection } from "./coding-agents/background-chat-recovery.js";
 import { createBackgroundAgentRuntime } from "./background-agent-runtime.js";
 import { bootstrapChatSharing, ChatSharing } from "./chat/sharing.js";
+import { withAsyncChatInput } from "./chat/async-input-adapter.js";
 import { createChatSharingRoutes } from "./chat/sharing-routes.js";
 import { readFileSync, existsSync, statSync, readdirSync } from "node:fs";
 import {
@@ -4218,25 +4219,28 @@ export async function createGateway(config: GatewayConfig) {
         canonicalAdapters.push(createCanonicalCodingChatProviderAdapter({
           providerId: "codex",
           threads: codingAgentThreadStore,
+          nativeInputProvider: codingAgentProviders.find(provider => provider.providerId === "codex"),
         }));
       }
       if (codingAgentProviders.some((provider) => provider.providerId === "pi")) {
         canonicalAdapters.push(createCanonicalCodingChatProviderAdapter({
           providerId: "pi",
           threads: codingAgentThreadStore,
+          nativeInputProvider: codingAgentProviders.find(provider => provider.providerId === "pi"),
         }));
       }
       if (codingAgentProviders.some((provider) => provider.providerId === "opencode")) {
         canonicalAdapters.push(createCanonicalCodingChatProviderAdapter({
           providerId: "opencode",
           threads: codingAgentThreadStore,
+          nativeInputProvider: codingAgentProviders.find(provider => provider.providerId === "opencode"),
         }));
       }
     }
     canonicalChatOrchestrator = new CanonicalChatOrchestrator({
       repository: chatRepository,
       catalog: canonicalChatProviderCatalog,
-      adapters: new CanonicalChatProviderRegistry(canonicalAdapters),
+      adapters: new CanonicalChatProviderRegistry(canonicalAdapters.map(adapter => withAsyncChatInput(adapter))),
       executionRoots: canonicalChatExecutionRoots,
       ...(canonicalChatCollaborationGuard ? { collaborationGuard: canonicalChatCollaborationGuard } : {}),
       ...(gatewayCollaboration ? {

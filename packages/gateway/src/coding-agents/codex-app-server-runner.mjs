@@ -10,6 +10,7 @@ import { assertCodexProviderVersion } from "./codex-provider-version-check.mjs";
 import { createCodexSessionApprovalGrants } from "./codex-session-approvals.mjs";
 import { createCodexExecutionWatchdog } from "./codex-execution-watchdog.mjs";
 import { CodexHibernateControlSchema, createCodexIdleHibernation } from "./codex-idle-hibernation.mjs";
+import { CodexDeferredInputControlSchema, deferCodexNativeInput } from "./codex-deferred-input.mjs";
 import { createCodexMcpElicitations, rejectCodexServerRequest } from "./codex-mcp-elicitations.mjs";
 import { initializeCodexProvider, ProviderStartupCleanupUnconfirmed, signalCodexProviderChild } from "./codex-provider-startup.mjs";
 
@@ -299,6 +300,7 @@ const ControlSchema = z.discriminatedUnion("type", [
   InterruptControlSchema,
   ApprovalControlSchema,
   InputControlSchema,
+  CodexDeferredInputControlSchema,
 ]);
 
 function fail(message) {
@@ -1001,6 +1003,8 @@ async function applyControl(control) {
   } else if (control.type === "interrupt") {
     if (!nativeThreadId || !activeNativeTurnId) return { ok: false };
     await request("turn/interrupt", { threadId: nativeThreadId, turnId: activeNativeTurnId });
+  } else if (control.type === "defer_input") {
+    if (!deferCodexNativeInput(control, pendingInputs, sendProvider)) return { ok: false };
   } else if (control.type === "approval") {
     if (!await mcpElicitations.decide(control.approvalId, control.decision)) {
       const pending = pendingApprovals.get(control.approvalId);

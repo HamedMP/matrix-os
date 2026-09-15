@@ -1744,3 +1744,15 @@ describe("GET /api/chat-providers", () => {
     warning.mockRestore();
   });
 });
+
+it("advertises input only for drivers with a native answer transport", async () => {
+  const service = createChatProviderCatalogService({
+    codingProviders: codingRegistry(), agentRuntimeSource: runtimeSource(),
+  });
+  const catalog = await service.getCatalog(principal);
+  for (const kind of ["claude_code", "codex", "pi", "opencode", "hermes", "openclaw"]) {
+    const instance = catalog.instances.find(instance => instance.driverKind === kind);
+    expect(instance, kind).toBeDefined();
+    expect(instance!.supports.userInput, kind).toBe(kind !== "openclaw");
+  }
+});

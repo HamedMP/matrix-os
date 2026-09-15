@@ -1,0 +1,4 @@
+{"type":"extension_ui_request","id":"b8d5568b-d071-4915-92e5-b2bedd285314","method":"notify","message":"{\"activeTools\":[\"read\",\"ask_user\"]}"}
+{"type":"extension_ui_request","id":"2f556a18-cbe6-4452-8ffa-566f6b9bcd88","method":"select","title":"Probe direction?","options":["North","South"]}
+{"type":"extension_ui_request","id":"52940064-e310-4c8d-b41d-287b1e41a381","method":"notify","message":"MATRIX_INPUT_PROBE_PASSED"}
+{"id":"probe_command","type":"response","command":"prompt","success":true}

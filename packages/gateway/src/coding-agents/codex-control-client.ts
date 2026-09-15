@@ -12,6 +12,7 @@ import {
 } from "@matrix-os/contracts";
 import { codexProviderEventPath } from "./codex-event-bridge.js";
 import { CodexHibernateControlSchema } from "./codex-idle-hibernation.mjs";
+import { CodexDeferredInputControlSchema } from "./codex-deferred-input.mjs";
 
 const SessionIdSchema = z.string().regex(/^sess_[A-Za-z0-9_-]{1,128}$/);
 const MatrixQuestionIdSchema = z.string().regex(/^question_codex_[a-f0-9]{24}$/);
@@ -59,6 +60,7 @@ const ControlFrameSchema = z.discriminatedUnion("type", [
   InterruptFrameSchema,
   ApprovalFrameSchema,
   InputFrameSchema,
+  CodexDeferredInputControlSchema,
 ]);
 const ControlResponseSchema = z.union([
   z.object({ ok: z.literal(true), replayed: z.boolean().optional() }).strict(),
@@ -75,6 +77,7 @@ const MAX_CONTROL_FRAME_BYTES = 128 * 1024;
 const MAX_RESPONSE_BYTES = 4 * 1024;
 
 export interface CodexControlClient {
+  deferInput(input: { sessionId: string; inputRequestId: string; clientRequestId: string }): Promise<void>;
   hibernate?(input: { sessionId: string; providerThreadId: string; clientRequestId: string }): Promise<void>;
   submitTurn(input: {
     sessionId: string;
@@ -226,6 +229,9 @@ export function createCodexControlClient(options: {
         structuredAnswers: input.structuredAnswers,
         clientRequestId: input.clientRequestId,
       });
+    },
+    deferInput(input) {
+      return send(input.sessionId, { type: "defer_input", requestId: input.inputRequestId, clientRequestId: input.clientRequestId });
     },
   };
 }

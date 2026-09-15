@@ -372,6 +372,16 @@ describe('CI workflows', () => {
     );
   });
 
+  it('requires Chat input E2E after the Electron build under a virtual display', () => {
+    const workflow = parse(readFileSync(join(process.cwd(), '.github/workflows/ci.yml'), 'utf8'));
+    const steps = workflow.jobs.e2e.steps;
+    const build = steps.findIndex((step: { name?: string }) => step.name === 'Build Desktop for Electron E2E');
+    const input = steps.findIndex((step: { name?: string }) => step.name === 'Run required Desktop Chat input regression');
+    expect(input).toBeGreaterThan(build);
+    expect(steps[input].env.MATRIX_DESKTOP_E2E_REQUIRED).toBe('1');
+    expect(steps[input].run).toBe('xvfb-run --auto-servernum bun run test:e2e -- tests/e2e/desktop/canonical-input.e2e.test.ts');
+  });
+
   it('requires download E2E after the Electron build under a virtual display', () => {
     const workflow = parse(readFileSync(join(process.cwd(), '.github/workflows/ci.yml'), 'utf8'));
     const steps = workflow.jobs.e2e.steps;

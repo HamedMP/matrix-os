@@ -1,3 +1,4 @@
+import { CanonicalSubmitChatInputRequestSchema, CanonicalChatInputSubmissionResponseSchema, type CanonicalSubmitChatInputRequest, type CanonicalChatInputSubmissionResponse } from "@matrix-os/contracts";
 import { chatMessageVersionUrl } from "@matrix-os/contracts";
 import {
   CanonicalAcknowledgeChatCompletionRequestSchema,
@@ -153,6 +154,7 @@ export interface CanonicalChatClient {
     runId: string,
     input: CanonicalCancelChatRunRequest,
   ): Promise<CanonicalChatRunCancellationResponse>;
+  submitInput(chatId: string, runId: string, requestId: string, input: CanonicalSubmitChatInputRequest): Promise<CanonicalChatInputSubmissionResponse>;
   submitApproval(
     chatId: string,
     runId: string,
@@ -393,6 +395,16 @@ export function createCanonicalChatClient(
       return CanonicalChatRunCancellationResponseSchema.parse(await api.post(
         `/api/chats/${encodeURIComponent(parsedChatId)}/runs/${encodeURIComponent(parsedRunId)}/cancel`,
         request,
+      ));
+    },
+
+    async submitInput(chatId, runId, requestId, input) {
+      const parsedChatId = CanonicalChatIdSchema.parse(chatId);
+      const parsedRunId = CanonicalChatRunIdSchema.parse(runId);
+      const parsedRequestId = z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/).parse(requestId);
+      return CanonicalChatInputSubmissionResponseSchema.parse(await api.post(
+        `/api/chats/${encodeURIComponent(parsedChatId)}/runs/${encodeURIComponent(parsedRunId)}/inputs/${encodeURIComponent(parsedRequestId)}`,
+        CanonicalSubmitChatInputRequestSchema.parse(input),
       ));
     },
 

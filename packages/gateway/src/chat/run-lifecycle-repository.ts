@@ -1,3 +1,4 @@
+import { assertInputClaim, getChatInputState, pendingInputTransition } from "./input-submission.js";
 import {
   CanonicalChatIdSchema,
   CanonicalChatMessagePartSchema,
@@ -84,7 +85,7 @@ function railTransitionForActivity(activity: CanonicalChatRunActivity): {
     case "approval.requested":
       return { runStatus: "waiting_for_approval", attention: "approval_required" };
     case "input.requested":
-      return { runStatus: "waiting_for_input", attention: "input_required" };
+      return { runStatus: activity.asynchronous ? "running" : "waiting_for_input", attention: "input_required" };
     case "approval.resolved":
     case "input.resolved":
       return { runStatus: "running", attention: "none" };
@@ -206,6 +207,26 @@ export class ChatRunLifecycleRepository {
     };
   }
 
+  async getInputState(owner: ChatOwner, input: { chatId: string; runId: string; requestId: string }) {
+    validateOwner(owner);
+    CanonicalChatIdSchema.parse(input.chatId);
+    [input.runId, input.requestId].forEach(requireSafeRef);
+    return getChatInputState(this.kysely, owner, input);
+  }
+
+  async reopenInputSubmission(owner: ChatOwner, input: { chatId: string; runId: string; requestId: string; submissionId: string }): Promise<boolean> {
+    const state = await this.getInputState(owner, input);
+    if (!state.request || state.resolved || state.submitted?.id !== input.submissionId) return false;
+    try {
+      return await this.appendRunActivities(owner, input.chatId, input.runId, [{
+        ...state.request, id: `activity_input_retry_${input.submissionId}`, occurredAt: new Date().toISOString(),
+      }], input) > 0;
+    } catch (error: unknown) {
+      if (error instanceof ChatRunNotActiveError || error instanceof ChatConflictError) return false;
+      throw error;
+    }
+  }
+
   async getPendingApproval(ownerInput: ChatOwner, input: {
     chatId: string;
     runId: string;
@@ -325,6 +346,7 @@ export class ChatRunLifecycleRepository {
     chatId: string,
     runId: string,
     input: CanonicalChatRunActivity[],
+    expectedInputClaim?: { requestId: string; submissionId: string },
   ): Promise<number> {
     const owner = validateOwner(ownerInput);
     if (input.length > 100) throw new ChatConflictError(chatId, 0);
@@ -343,6 +365,10 @@ export class ChatRunLifecycleRepository {
         .where("id", "=", runId).where("chat_id", "=", chatId).executeTakeFirst();
       if (existingRun && !run) throw new ChatRunNotActiveError(chatId, runId);
       if (!run) throw new ChatNotFoundError(chatId);
+      if (expectedInputClaim) {
+        const state = await getChatInputState(trx, owner, { chatId, runId, requestId: expectedInputClaim.requestId });
+        if (state.resolved || state.submitted?.id !== expectedInputClaim.submissionId) throw new ChatConflictError(chatId, Number(current.revision));
+      }
       const count = await trx.selectFrom("chat_run_events").select(({ fn }) => fn.countAll().as("count"))
         .where("run_id", "=", runId).executeTakeFirstOrThrow();
       const activityIds = [...new Set(activities.map((activity) => activity.id))];
@@ -441,6 +467,7 @@ export class ChatRunLifecycleRepository {
           changed += 1;
           continue;
         }
+        await assertInputClaim(trx, owner, activity);
         nextSequence += 1;
         const sequenced = CanonicalChatRunActivitySchema.parse({
           ...activity,
@@ -477,6 +504,7 @@ export class ChatRunLifecycleRepository {
       if (changed > 0) {
         const revision = Number(current.revision) + 1;
         if (railTransition) {
+          if (activities.some(activity => activity.type === "input.resolved" || activity.type === "approval.resolved")) railTransition = await pendingInputTransition(trx, runId);
           await trx.updateTable("chat_runs").set({
             status: railTransition.runStatus,
             updated_at: sql`now()`,

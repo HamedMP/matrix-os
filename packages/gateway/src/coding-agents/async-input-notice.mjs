@@ -1,0 +1,1 @@
+export const ASYNC_QUESTION_NOTICE = "The user has NOT answered. Matrix has displayed this question asynchronously and will deliver their answer later, identified by the question. Continue useful work that does not depend on the answer. Do not choose a default, treat silence as permission, repeat the question, or claim the task is fully complete while the answer is needed.";
