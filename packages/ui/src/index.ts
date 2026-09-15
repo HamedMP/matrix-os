@@ -83,3 +83,5 @@ export { WindowResizeControls, resizeWindowBounds, type WindowBounds, type Resiz
 export { constrainFloatingWindow, isPointNearWindow, WINDOW_BACKGROUND_CLICK_BUFFER } from "./window/window-placement.js";
 
 export { useFileDownload, type FileDownloadTransport, type FileDownloadController } from "./files/use-file-download.js";
+
+export { generatedChatTitle } from "./generated-chat-title";

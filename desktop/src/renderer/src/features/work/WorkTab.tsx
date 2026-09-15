@@ -677,7 +677,7 @@ export default function WorkTab({
         <ChatTitleEditor
           title={activeChatTitle}
           disabled={renamingChatTitle}
-          className="w-[min(360px,40vw)]"
+          className="w-[min(360px,40vw)] max-w-full"
           onCommit={(title) => { void renameActiveChat(title); }}
           onCancel={() => setEditingChatTitle(false)}
         />
@@ -685,8 +685,8 @@ export default function WorkTab({
         <button
           type="button"
           aria-label={`Rename ${activeChatTitle}`}
-          title="Rename chat"
-          className="no-drag pointer-events-auto min-w-0 truncate rounded px-1.5 py-0.5 text-left outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+          title={activeChatTitle}
+          className="no-drag pointer-events-auto min-w-0 max-w-full truncate rounded px-1.5 py-0.5 text-left outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
           onClick={() => { setRenameChatError(null); setEditingChatTitle(true); }}
         >
           {activeChatTitle}
