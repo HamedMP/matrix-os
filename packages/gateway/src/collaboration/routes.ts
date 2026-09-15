@@ -28,6 +28,7 @@ import {
   CollaborationScopePreflightResponseSchema,
   CollaborationScopeSchema,
   CollaborationScopeExportSchema,
+  CollaborationTerminalActionSchema,
   CollaborationUserStatePatchSchema,
   CollaborationUserStateSchema,
 } from "@matrix-os/contracts";
@@ -46,6 +47,14 @@ import {
 import type { CollaborationChatAdapter } from "./chat-adapter.js";
 import type { CollaborationChatExecutionAdapter } from "./chat-execution-adapter.js";
 import { CollaborationChatScopeError, type CollaborationChatScopeService } from "./chat-scope.js";
+import {
+  CollaborationTerminalAdapterError,
+  type CollaborationTerminalAdapter,
+} from "./terminal-adapter.js";
+import {
+  CollaborationTerminalDispatcherError,
+  type CollaborationTerminalDispatcher,
+} from "./terminal-dispatcher.js";
 import {
   CollaborationRepositoryError,
   type CollaborationMemberRecord,
@@ -70,9 +79,12 @@ export function createCollaborationRoutes(options: {
   chatScope: CollaborationChatScopeService;
   chatAdapter: CollaborationChatAdapter;
   chatExecutionAdapter?: CollaborationChatExecutionAdapter;
+  terminalAdapter?: CollaborationTerminalAdapter;
+  terminalDispatcher?: CollaborationTerminalDispatcher;
   resolveParticipant(actorId: string): Promise<Participant>;
   onScopeCommitted?(scopeId: string): Promise<void>;
   onRevoked?(scopeId: string, actorId: string): void;
+  onRoleChanged?(scopeId: string, actorId: string, role: "editor" | "viewer"): void;
   now?: () => Date;
 }): Hono {
   const routes = new Hono();
@@ -92,16 +104,18 @@ export function createCollaborationRoutes(options: {
     const proof = await verifyHttp(options.verifier, c, bytes);
     requireOwnerCreationProof(proof, CollaborationRuntimeIdSchema.parse(c.req.param("runtimeId")), options.runtimeId);
     const input = CollaborationScopePreflightRequestSchema.parse(value);
-    if (input.kind !== "chat") return c.json(CollaborationScopePreflightResponseSchema.parse({
-      eligible: false,
-      reason: "unsupported",
-      resourceRevision: "0",
-    }));
-    const result = await options.chatScope.preflight({ ownerId: proof.ownerId, chatId: input.resourceId });
+    const result = input.kind === "chat"
+      ? await options.chatScope.preflight({ ownerId: proof.ownerId, chatId: input.resourceId })
+      : input.kind === "terminal"
+        ? await requireTerminalAdapter(options.terminalAdapter).preflight({
+            ownerId: proof.ownerId,
+            terminalId: input.resourceId,
+          })
+        : { eligible: false as const, reason: "unsupported" as const, resourceRevision: 0 };
     return c.json(CollaborationScopePreflightResponseSchema.parse({
       eligible: result.eligible,
       ...(result.reason ? { reason: result.reason } : {}),
-      resourceRevision: String(result.chatRevision),
+      resourceRevision: String("chatRevision" in result ? result.chatRevision : result.resourceRevision),
       ...(result.confirmationToken ? { confirmationToken: result.confirmationToken } : {}),
     }));
   }));
@@ -111,15 +125,25 @@ export function createCollaborationRoutes(options: {
     const proof = await verifyHttp(options.verifier, c, bytes);
     requireOwnerCreationProof(proof, CollaborationRuntimeIdSchema.parse(c.req.param("runtimeId")), options.runtimeId);
     const input = CollaborationCreateScopeRequestSchema.parse(value);
-    if (input.kind !== "chat") throw new CollaborationAuthorizationError("unavailable", "Scope kind is unavailable");
-    const scope = await options.chatScope.shareChat({
-      ownerId: proof.ownerId,
-      chatId: input.resourceId,
-      clientRequestId: input.clientRequestId,
-      payloadHash: digest(bytes),
-      expectedChatRevision: Number(input.expectedRevision),
-      confirmationToken: input.confirmationToken,
-    });
+    const scope = input.kind === "chat"
+      ? await options.chatScope.shareChat({
+          ownerId: proof.ownerId,
+          chatId: input.resourceId,
+          clientRequestId: input.clientRequestId,
+          payloadHash: digest(bytes),
+          expectedChatRevision: Number(input.expectedRevision),
+          confirmationToken: input.confirmationToken,
+        })
+      : input.kind === "terminal"
+        ? await requireTerminalAdapter(options.terminalAdapter).shareTerminal({
+            ownerId: proof.ownerId,
+            terminalId: input.resourceId,
+            clientRequestId: input.clientRequestId,
+            payloadHash: digest(bytes),
+            expectedResourceRevision: Number(input.expectedRevision),
+            confirmationToken: input.confirmationToken,
+          })
+        : (() => { throw new CollaborationAuthorizationError("unavailable", "Scope kind is unavailable"); })();
     const context = await options.authority.authorize({
       scopeId: scope.id,
       actorId: proof.actorId,
@@ -234,6 +258,7 @@ export function createCollaborationRoutes(options: {
       expectedMemberRevision: Number(input.expectedMemberRevision),
       payloadHash: digest(bytes),
     });
+    options.onRoleChanged?.(scopeId, result.actorId, result.role);
     await notifyScope(options, scopeId);
     return c.json(result);
   }));
@@ -307,7 +332,7 @@ export function createCollaborationRoutes(options: {
   routes.get("/api/collaboration/scopes/:scopeId/chat/requests", async (c) => handle(c, async () => {
     const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
     const adapter = requireExecutionAdapter(options.chatExecutionAdapter);
-    const context = await authorize(options, c, new Uint8Array(), "read", scopeId, true);
+    const context = await authorize(options, c, new Uint8Array(), "read", scopeId, "m2");
     const requests = await adapter.list(context);
     return c.json(CollaborationAiRequestsResponseSchema.parse({
       requests,
@@ -320,7 +345,7 @@ export function createCollaborationRoutes(options: {
     const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
     const adapter = requireExecutionAdapter(options.chatExecutionAdapter);
     const { value, bytes } = await readJson(c);
-    const context = await authorize(options, c, bytes, "request_ai", scopeId, true);
+    const context = await authorize(options, c, bytes, "request_ai", scopeId, "m2");
     return c.json(await adapter.submit(context, CollaborationCreateAiRequestSchema.parse(value)), 201);
   }));
 
@@ -329,7 +354,7 @@ export function createCollaborationRoutes(options: {
     const requestId = CollaborationResourceIdSchema.parse(c.req.param("requestId"));
     const adapter = requireExecutionAdapter(options.chatExecutionAdapter);
     const { value, bytes } = await readJson(c);
-    const context = await authorize(options, c, bytes, "control_execution", scopeId, true);
+    const context = await authorize(options, c, bytes, "control_execution", scopeId, "m2");
     return c.json(await adapter.cancel(context, requestId, CollaborationAiRequestControlSchema.parse(value)));
   }));
 
@@ -338,7 +363,7 @@ export function createCollaborationRoutes(options: {
     const requestId = CollaborationResourceIdSchema.parse(c.req.param("requestId"));
     const adapter = requireExecutionAdapter(options.chatExecutionAdapter);
     const { value, bytes } = await readJson(c);
-    const context = await authorize(options, c, bytes, "control_execution", scopeId, true);
+    const context = await authorize(options, c, bytes, "control_execution", scopeId, "m2");
     return c.json(await adapter.retry(context, requestId, CollaborationAiRequestControlSchema.parse(value)), 201);
   }));
 
@@ -347,12 +372,34 @@ export function createCollaborationRoutes(options: {
     const approvalId = CollaborationResourceIdSchema.parse(c.req.param("approvalId"));
     const adapter = requireExecutionAdapter(options.chatExecutionAdapter);
     const { value, bytes } = await readJson(c);
-    const context = await authorize(options, c, bytes, "control_execution", scopeId, true);
+    const context = await authorize(options, c, bytes, "control_execution", scopeId, "m2");
     return c.json(await adapter.decideApproval(
       context,
       approvalId,
       CollaborationApprovalDecisionRequestSchema.parse(value),
     ));
+  }));
+
+  routes.get("/api/collaboration/scopes/:scopeId/terminal", async (c) => handle(c, async () => {
+    const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
+    const context = await authorize(options, c, new Uint8Array(), "read", scopeId, "m3");
+    return c.json(await requireTerminalDispatcher(options.terminalDispatcher).read(context));
+  }));
+
+  routes.post("/api/collaboration/scopes/:scopeId/terminal/actions", async (c) => handle(c, async () => {
+    const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
+    const { value, bytes } = await readJson(c);
+    const action = CollaborationTerminalActionSchema.parse(value);
+    const context = await authorize(options, c, bytes, "control_execution", scopeId, "m3");
+    const policy = options.verifier.verifyPolicy(decodePolicy(c));
+    const connectionId = "connectionId" in action ? action.connectionId : `http_${context.actorId}`;
+    return c.json(await requireTerminalDispatcher(options.terminalDispatcher).dispatch({
+      scopeId,
+      actorId: context.actorId,
+      connectionId,
+      policy,
+      action,
+    }));
   }));
 
   routes.post("/api/collaboration/scopes/:scopeId/lifecycle", async (c) => handle(c, async () => {
@@ -405,9 +452,9 @@ async function authorize(
   body: Uint8Array,
   action: CollaborationAction,
   scopeId: string,
-  requireM2 = false,
+  requiredMilestone?: "m2" | "m3",
 ): Promise<AuthorizedCollaborationContext> {
-  const executionPolicy = requireM2 ? options.verifier.verifyPolicy(decodePolicy(c)) : undefined;
+  const executionPolicy = requiredMilestone ? options.verifier.verifyPolicy(decodePolicy(c)) : undefined;
   const context = await options.verifier.verifyAndAuthorize({
     signedProof: decodeProof(c),
     method: method(c),
@@ -419,7 +466,7 @@ async function authorize(
     ...(executionPolicy ? { executionPolicy } : {}),
   });
   if (context.scopeId !== scopeId) throw new CollaborationAuthorizationError("forbidden", "Scope access is required");
-  if (executionPolicy && (executionPolicy.milestone !== "m2" || executionPolicy.mode === "off"
+  if (executionPolicy && (executionPolicy.milestone !== requiredMilestone || executionPolicy.mode === "off"
     || (executionPolicy.mode === "internal"
       && (!executionPolicy.cohort.includes(context.actorId)
         || !executionPolicy.cohort.includes(context.ownerId))))) {
@@ -491,6 +538,18 @@ function requireExecutionAdapter(
 ): CollaborationChatExecutionAdapter {
   if (!adapter) throw new CollaborationAuthorizationError("unavailable", "Shared execution is unavailable");
   return adapter;
+}
+
+function requireTerminalAdapter(adapter: CollaborationTerminalAdapter | undefined): CollaborationTerminalAdapter {
+  if (!adapter) throw new CollaborationAuthorizationError("unavailable", "Shared terminal is unavailable");
+  return adapter;
+}
+
+function requireTerminalDispatcher(
+  dispatcher: CollaborationTerminalDispatcher | undefined,
+): CollaborationTerminalDispatcher {
+  if (!dispatcher) throw new CollaborationAuthorizationError("unavailable", "Shared terminal is unavailable");
+  return dispatcher;
 }
 
 async function readJson(c: Context): Promise<{ value: unknown; bytes: Uint8Array }> {
@@ -653,6 +712,15 @@ async function handle(c: Context, operation: () => Promise<Response>): Promise<R
       const status = error.code === "not_found" ? 404
         : error.code === "active_work" || error.code === "conflict" || error.code === "invalid_confirmation" ? 409
           : 503;
+      return c.json({ error: "Collaboration state changed", code: error.code }, status);
+    }
+    if (error instanceof CollaborationTerminalAdapterError
+      || error instanceof CollaborationTerminalDispatcherError) {
+      const status = error.code === "not_found" ? 404
+        : error.code === "forbidden" ? 403
+          : error.code === "capacity" ? 429
+            : error.code === "conflict" || error.code === "invalid_confirmation"
+              || error.code === "held" || error.code === "stale_lease" ? 409 : 503;
       return c.json({ error: "Collaboration state changed", code: error.code }, status);
     }
     if (error instanceof CollaborationRepositoryError) {

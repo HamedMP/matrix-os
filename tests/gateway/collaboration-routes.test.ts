@@ -11,6 +11,9 @@ import { CollaborationChatScopeService } from "../../packages/gateway/src/collab
 import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
 import { CollaborationRepository } from "../../packages/gateway/src/collaboration/repository.js";
 import { createCollaborationRoutes } from "../../packages/gateway/src/collaboration/routes.js";
+import { CollaborationTerminalAdapter } from "../../packages/gateway/src/collaboration/terminal-adapter.js";
+import { TerminalControlCoordinator } from "../../packages/gateway/src/collaboration/terminal-control.js";
+import { CollaborationTerminalDispatcher } from "../../packages/gateway/src/collaboration/terminal-dispatcher.js";
 import { CollaborationProofSigner } from "../../packages/platform/src/collaboration/proof.js";
 import {
   collaborationActors,
@@ -24,6 +27,8 @@ const key = "0123456789abcdef0123456789abcdef";
 const invitationRequestId = "50000000-0000-4000-8000-000000000001";
 const acceptanceRequestId = "50000000-0000-4000-8000-000000000002";
 const discussionRequestId = "50000000-0000-4000-8000-000000000003";
+const terminalId = "terminal_release";
+const terminalIncarnation = `terminal-${"a".repeat(32)}`;
 
 function request(index: number): string {
   return `50000000-0000-4000-8000-${index.toString().padStart(12, "0")}`;
@@ -88,6 +93,52 @@ describe("collaboration gateway routes", () => {
       now: () => now,
       createQueuedTurnId: () => "qturn_shared_route_1",
     });
+    const terminalSession: Record<string, unknown> = {
+      name: terminalId,
+      status: "active",
+      createdAt: now.toISOString(),
+      incarnationVerified: true,
+      creatorActorId: collaborationActors.owner,
+      sessionIncarnation: terminalIncarnation,
+      executionGeneration: 4,
+      sharedControlMode: "eligible",
+    };
+    const terminalRuntime = {
+      input: async () => undefined,
+      paste: async () => undefined,
+      resize: async () => undefined,
+      stop: async () => undefined,
+    };
+    const terminalAdapter = new CollaborationTerminalAdapter({
+      repository,
+      registry: {
+        get: async () => terminalSession,
+        bindCollaboration: async (_name, input) => {
+          terminalSession.collaborationScopeId = input.scopeId;
+          terminalSession.sharedControlMode = "shared";
+          return terminalSession;
+        },
+        unbindCollaboration: async () => undefined,
+      },
+      runtime: terminalRuntime,
+      runtimeId: collaborationIds.runtime,
+      executionEligibility: {
+        profileId: "scope-runtime-terminal-v1",
+        profileVersion: 1,
+        profileDigest: "c".repeat(64),
+        adapterId: "terminal",
+        harnessVersion: "1.0.0",
+      },
+      preflightSecret: key,
+      now: () => now,
+      createScopeId: () => collaborationIds.scope,
+    });
+    const terminalDispatcher = new CollaborationTerminalDispatcher({
+      authority,
+      terminal: terminalAdapter,
+      control: new TerminalControlCoordinator({ startTimer: false }),
+      resolveParticipant,
+    });
     nonce = 0;
     signer = new CollaborationProofSigner({
       activeKeyId: "collaboration-key-1",
@@ -109,6 +160,8 @@ describe("collaboration gateway routes", () => {
       chatScope,
       chatAdapter,
       chatExecutionAdapter,
+      terminalAdapter,
+      terminalDispatcher,
       resolveParticipant,
       now: () => now,
     }));
@@ -146,6 +199,68 @@ describe("collaboration gateway routes", () => {
       kind: "chat",
       role: "owner",
       capabilities: { discuss: true, requestAi: false },
+    });
+  });
+
+  it("preflights, shares, reads, and controls a terminal only with signed M3 policy", async () => {
+    const preflightPath = `/api/collaboration/runtimes/${collaborationIds.runtime}/scopes/preflight`;
+    const preflight = await signedJson({
+      actorId: collaborationActors.owner,
+      method: "POST",
+      path: preflightPath,
+      body: { kind: "terminal", resourceId: terminalId },
+    });
+    const eligibility = await preflight.json() as { confirmationToken: string; resourceRevision: string };
+    expect(preflight.status).toBe(200);
+    const created = await signedJson({
+      actorId: collaborationActors.owner,
+      method: "POST",
+      path: `/api/collaboration/runtimes/${collaborationIds.runtime}/scopes`,
+      body: {
+        kind: "terminal",
+        resourceId: terminalId,
+        clientRequestId: request(90),
+        expectedRevision: eligibility.resourceRevision,
+        confirmationToken: eligibility.confirmationToken,
+      },
+    });
+    expect(created.status).toBe(201);
+    expect(await created.json()).toMatchObject({ kind: "terminal", resourceId: terminalId });
+
+    const terminalPath = `/api/collaboration/scopes/${collaborationIds.scope}/terminal`;
+    expect((await signedJson({
+      actorId: collaborationActors.owner,
+      scopeId: collaborationIds.scope,
+      method: "GET",
+      path: terminalPath,
+    })).status).toBe(401);
+    const terminal = await signedJson({
+      actorId: collaborationActors.owner,
+      scopeId: collaborationIds.scope,
+      method: "GET",
+      path: terminalPath,
+      m3Policy: true,
+    });
+    expect(terminal.status).toBe(200);
+    expect(await terminal.json()).toMatchObject({ id: terminalId, incarnation: terminalIncarnation });
+
+    const action = await signedJson({
+      actorId: collaborationActors.owner,
+      scopeId: collaborationIds.scope,
+      method: "POST",
+      path: `${terminalPath}/actions`,
+      m3Policy: true,
+      body: {
+        type: "acquire",
+        clientRequestId: request(91),
+        incarnation: terminalIncarnation,
+        connectionId: "connection_owner",
+      },
+    });
+    expect(action.status).toBe(200);
+    expect(await action.json()).toMatchObject({
+      action: "acquired",
+      terminal: { controller: { actor: { actorId: collaborationActors.owner }, leaseEpoch: "1" } },
     });
   });
 
@@ -569,6 +684,7 @@ describe("collaboration gateway routes", () => {
     body?: unknown;
     deleteConditions?: { clientRequestId: string; expectedRevision: string; expectedMemberRevision: string };
     m2Policy?: boolean;
+    m3Policy?: boolean;
   }): Promise<Response> {
     const body = input.body === undefined ? new Uint8Array() : new TextEncoder().encode(JSON.stringify(input.body));
     const proof = signer.signHttp({
@@ -582,8 +698,8 @@ describe("collaboration gateway routes", () => {
       body,
       ...(input.deleteConditions ? { conditionalHeaders: input.deleteConditions } : {}),
     });
-    const policy = input.m2Policy ? signer.signPolicy({
-      milestone: "m2",
+    const policy = input.m2Policy || input.m3Policy ? signer.signPolicy({
+      milestone: input.m3Policy ? "m3" : "m2",
       revision: "1",
       mode: "enabled",
       cohort: [],

@@ -77,6 +77,15 @@ export class CollaborationTerminalDispatcher {
     resolveParticipant?(actorId: string): Promise<CollaborationParticipant>;
   }) {}
 
+  async read(context: AuthorizedCollaborationContext): Promise<CollaborationTerminal> {
+    if (context.resourceKind !== "terminal" || context.capability !== "read") {
+      throw new CollaborationTerminalDispatcherError("forbidden");
+    }
+    const terminal = await this.options.terminal.get(context.scopeId, context.resourceId);
+    if (!terminal) throw new CollaborationTerminalDispatcherError("not_found");
+    return this.project(terminal);
+  }
+
   async dispatch(input: {
     scopeId: string;
     actorId: string;
@@ -183,7 +192,7 @@ export class CollaborationTerminalDispatcher {
     };
   }
 
-  private async project(
+  async project(
     metadata: CollaborationTerminalMetadata,
     lease: TerminalControlLease | null = this.options.control.current(
       metadata.scopeId,
