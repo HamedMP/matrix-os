@@ -105,6 +105,16 @@ describe("shared Chat canonical queue", () => {
     })).rejects.toMatchObject({ code: "conflict" });
   });
 
+  it("does not conflate the scope revision with the canonical Chat revision", async () => {
+    await fixture.db.updateTable("collaboration_scopes").set({ revision: 2, updated_at: now })
+      .where("id", "=", collaborationIds.scope).execute();
+
+    await expect(repository.enqueueSharedQueuedTurn(
+      owner,
+      request(14, collaborationActors.editor, 1),
+    )).resolves.toMatchObject({ acceptedSequence: 1, resourceRevision: 2 });
+  });
+
   it("allows 32 pending requests and rejects the thirty-third without consuming order", async () => {
     for (let index = 1; index <= 32; index += 1) {
       await expect(repository.enqueueSharedQueuedTurn(
@@ -166,6 +176,42 @@ realDescribe("shared Chat queue real PostgreSQL ordering", () => {
     const ordered = await repository.listSharedQueuedTurns(owner, collaborationIds.chat);
     expect(ordered.map((entry) => entry.acceptedSequence)).toEqual(
       Array.from({ length: 12 }, (_value, index) => index + 1),
+    );
+  });
+
+  it("enforces the 32-pending ceiling under simultaneous admission", async () => {
+    const results = await Promise.allSettled(Array.from({ length: 33 }, (_value, index) =>
+      enqueueAfterConflict(
+        repository,
+        fixture,
+        request(index + 1, index % 2 === 0 ? collaborationActors.owner : collaborationActors.editor),
+      )));
+
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(32);
+    const rejected = results.filter((result) => result.status === "rejected");
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]).toMatchObject({ reason: { code: "capacity" } });
+    const ordered = await repository.listSharedQueuedTurns(owner, collaborationIds.chat);
+    expect(ordered).toHaveLength(32);
+    expect(ordered.map((entry) => entry.acceptedSequence)).toEqual(
+      Array.from({ length: 32 }, (_value, index) => index + 1),
+    );
+  });
+
+  it("serializes actor-scoped idempotency without conflating two actors", async () => {
+    const [first, replay, otherActor] = await Promise.all([
+      enqueueAfterConflict(repository, fixture, request(40, collaborationActors.owner)),
+      enqueueAfterConflict(repository, fixture, request(40, collaborationActors.owner)),
+      enqueueAfterConflict(repository, fixture, request(40, collaborationActors.editor)),
+    ]);
+
+    expect([first.alreadyAccepted, replay.alreadyAccepted].sort()).toEqual([false, true]);
+    expect(first.id).toBe(replay.id);
+    expect(otherActor).toMatchObject({ alreadyAccepted: false });
+    const ordered = await repository.listSharedQueuedTurns(owner, collaborationIds.chat);
+    expect(ordered).toHaveLength(2);
+    expect(new Set(ordered.map((entry) => entry.requestingActorId))).toEqual(
+      new Set([collaborationActors.owner, collaborationActors.editor]),
     );
   });
 });

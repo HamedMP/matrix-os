@@ -194,6 +194,20 @@ export async function createSharedAiRuntime(options: {
     repository: options.repository,
     commands,
     resolveParticipant: options.resolveParticipant,
+    resolveResourceRevision: async (scopeId, chatId) => {
+      const row = await options.db.selectFrom("chats")
+        .innerJoin("collaboration_scopes", "collaboration_scopes.resource_id", "chats.id")
+        .select("chats.revision")
+        .where("collaboration_scopes.id", "=", scopeId)
+        .where("collaboration_scopes.kind", "=", "chat")
+        .where("collaboration_scopes.lifecycle", "=", "shared")
+        .where("chats.id", "=", chatId)
+        .where("chats.lifecycle", "=", "active")
+        .whereRef("chats.owner_id", "=", "collaboration_scopes.owner_id")
+        .whereRef("chats.owner_type", "=", "collaboration_scopes.owner_type")
+        .executeTakeFirst();
+      return row ? Number(row.revision) : null;
+    },
     resolveEligibility: async (scopeId) => {
       const scope = await options.db.selectFrom("collaboration_scopes")
         .select(["execution_generation", "execution_eligibility"])

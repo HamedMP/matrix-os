@@ -147,6 +147,7 @@ export interface SharedQueuedTurn {
 export interface EnqueuedSharedQueuedTurn extends SharedQueuedTurn {
   pendingCount: number;
   alreadyAccepted: boolean;
+  resourceRevision: number;
 }
 
 export class SharedChatQueueError extends Error {
@@ -262,7 +263,10 @@ export class ChatQueueRepository {
           throw new SharedChatQueueError("conflict");
         }
         const pendingCount = await this.sharedPendingCount(executor, chatId);
-        return { ...toSharedQueuedTurn(duplicate), pendingCount, alreadyAccepted: true };
+        return {
+          ...toSharedQueuedTurn(duplicate), pendingCount, alreadyAccepted: true,
+          resourceRevision: Number(chat.revision),
+        };
       }
       if (Number(chat.revision) !== input.expectedRevision) {
         throw new SharedChatQueueError("conflict");
@@ -324,6 +328,7 @@ export class ChatQueueRepository {
         ...toSharedQueuedTurn(inserted),
         pendingCount: position,
         alreadyAccepted: false,
+        resourceRevision: revision,
       };
     });
   }

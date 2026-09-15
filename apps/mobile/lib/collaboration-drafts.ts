@@ -13,6 +13,7 @@ interface DraftIdentity {
   actorId: string | null | undefined;
   scopeId: string;
   chatId: string;
+  mode?: "discussion" | "ai";
 }
 
 interface DraftInput extends DraftIdentity {
@@ -20,7 +21,8 @@ interface DraftInput extends DraftIdentity {
 }
 
 function draftKey(identity: DraftIdentity): string {
-  return `${DRAFT_PREFIX}${encodeURIComponent(identity.actorId ?? "unknown")}:${encodeURIComponent(identity.scopeId)}:${encodeURIComponent(identity.chatId)}`;
+  const base = `${DRAFT_PREFIX}${encodeURIComponent(identity.actorId ?? "unknown")}:${encodeURIComponent(identity.scopeId)}:${encodeURIComponent(identity.chatId)}`;
+  return identity.mode === "ai" ? `${base}:ai` : base;
 }
 
 async function readIndex(storage: DraftStorage): Promise<string[]> {

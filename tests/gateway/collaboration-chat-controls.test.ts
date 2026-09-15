@@ -7,6 +7,7 @@ import {
   collaborationActors,
   collaborationIds,
   createCollaborationTestDatabase,
+  createRealCollaborationTestDatabase,
   type CollaborationTestDatabase,
 } from "./collaboration-test-support.js";
 
@@ -188,6 +189,39 @@ describe("shared Chat durable controls", () => {
       ...base, decision: "decline", clientRequestId: uuid(121), payloadHash: "2".repeat(64),
     })).rejects.toMatchObject({ code: "conflict" });
     expect(submitApproval).toHaveBeenCalledTimes(1);
+  });
+
+  it("projects only unresolved approvals from runs claimed by the selected shared scope", async () => {
+    const run = await activeRunWithApproval("approval_shared_projection");
+    await expect(repository.listSharedPendingApprovals(
+      owner, collaborationIds.chat, collaborationIds.scope,
+    )).resolves.toEqual([expect.objectContaining({
+      approvalId: "approval_shared_projection",
+      runId: run.id,
+      requestId: "qturn_control_50_user_collaboration_owner",
+      title: "Approve scoped action",
+    })]);
+
+    await fixture.db.insertInto("chat_run_events").values({
+      id: "activity_approval_shared_projection_resolved",
+      chat_id: collaborationIds.chat,
+      run_id: run.id,
+      run_seq: 2,
+      event: JSON.stringify({
+        id: "activity_approval_shared_projection_resolved",
+        chatId: collaborationIds.chat,
+        runId: run.id,
+        sequence: 2,
+        type: "approval.resolved",
+        approvalId: "approval_shared_projection",
+        decision: "approve",
+        occurredAt: now,
+      }),
+      occurred_at: now,
+    }).execute();
+    await expect(repository.listSharedPendingApprovals(
+      owner, collaborationIds.chat, collaborationIds.scope,
+    )).resolves.toEqual([]);
   });
 
   it("reconciles an unknown approval outcome after restart without replaying it", async () => {
@@ -441,6 +475,92 @@ describe("shared Chat durable controls", () => {
         .where("claimed_run_id", "=", runId).execute();
     });
   }
+});
+
+const realDescribe = process.env.MATRIX_TEST_POSTGRES_URL ? describe : describe.skip;
+
+realDescribe("shared Chat controls real PostgreSQL races", () => {
+  let fixture: CollaborationTestDatabase;
+  let repository: ChatRepository;
+
+  beforeEach(async () => {
+    fixture = await createRealCollaborationTestDatabase();
+    repository = new ChatRepository(fixture.db);
+    await repository.bootstrap();
+    await bootstrapCollaborationDatabase(fixture.db);
+    await seedSharedChat(fixture);
+  });
+
+  afterEach(async () => {
+    if (fixture) await fixture.destroy();
+  });
+
+  it("commits exactly one competing owner approval before the external call", async () => {
+    await repository.enqueueSharedQueuedTurn(owner, aiRequest(70, collaborationActors.owner));
+    const claimed = await repository.claimNextQueuedTurn(owner, {
+      chatId: collaborationIds.chat,
+      collaborationScopeId: collaborationIds.scope,
+      turnId: "cturn_real_approval",
+      runId: "run_real_approval",
+      messageId: "msg_real_approval",
+      claimedAt: now,
+    });
+    if (!claimed) throw new Error("Expected claimed run");
+    await fixture.db.updateTable("chat_runs").set({ status: "waiting_for_approval", started_at: now })
+      .where("id", "=", claimed.run.id).execute();
+    await fixture.db.insertInto("chat_run_events").values({
+      id: "activity_real_approval",
+      chat_id: collaborationIds.chat,
+      run_id: claimed.run.id,
+      run_seq: 1,
+      event: JSON.stringify({
+        id: "activity_real_approval",
+        chatId: collaborationIds.chat,
+        runId: claimed.run.id,
+        sequence: 1,
+        type: "approval.requested",
+        approvalId: "approval_real_race",
+        title: "Approve scoped action",
+        risk: "high",
+        allowedDecisions: ["approve", "decline"],
+        occurredAt: now,
+      }),
+      occurred_at: now,
+    }).execute();
+    const submitApproval = vi.fn(async () => undefined);
+    const commands = new CollaborationChatCommands({
+      db: fixture.db,
+      now: () => new Date(now),
+      submitApproval,
+      submitCancellation: async () => undefined,
+    });
+    const input = {
+      scopeId: collaborationIds.scope,
+      actorId: collaborationActors.owner,
+      approvalId: "approval_real_race",
+      runId: claimed.run.id,
+      expectedRevision: 3,
+    };
+
+    const decisions = await Promise.allSettled([
+      commands.decideApproval({
+        ...input,
+        decision: "approve",
+        clientRequestId: uuid(171),
+        payloadHash: "7".repeat(64),
+      }),
+      commands.decideApproval({
+        ...input,
+        decision: "decline",
+        clientRequestId: uuid(172),
+        payloadHash: "8".repeat(64),
+      }),
+    ]);
+
+    expect(decisions.filter((decision) => decision.status === "fulfilled")).toHaveLength(1);
+    expect(decisions.filter((decision) => decision.status === "rejected")).toHaveLength(1);
+    expect(submitApproval).toHaveBeenCalledTimes(1);
+  });
 });
 
 function aiRequest(index: number, actorId: string, expectedRevision = 1) {

@@ -6,6 +6,10 @@ import {
   fetchCollaborationEventTicket,
   fetchCollaborationInbox,
   fetchSharedChatMessages,
+  fetchSharedAiRequests,
+  postSharedAiRequest,
+  controlSharedAiRequest,
+  decideSharedAiApproval,
   postSharedChatDiscussion,
 } from "@/lib/requests/collaboration";
 
@@ -62,6 +66,44 @@ describe("mobile collaboration requests", () => {
     expect(fetchMock).toHaveBeenCalledWith(
       `https://app.matrix-os.com/api/collaboration/scopes/${scopeId}/chat/messages?after=100&limit=100`,
       expect.any(Object),
+    );
+  });
+
+  it("uses the same scoped M2 queue and control routes", async () => {
+    const defaultSelection = { instanceId: "claude_shared", model: "claude-opus-4-6" };
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({
+      ok: true,
+      json: jest.fn()
+        .mockResolvedValueOnce({ requests: [], approvals: [], defaultSelection, resourceRevision: "4" })
+        .mockResolvedValueOnce({
+          resourceRevision: "5",
+          request: {
+            id: "qturn_one", chatId: "chat_one", acceptedSequence: "1",
+            actor: { actorId: "user_editor", displayName: "Ada" }, state: "queued", text: "Summarize",
+            selection: defaultSelection, acceptedAt: "2026-09-07T12:01:00.000Z", updatedAt: "2026-09-07T12:01:00.000Z",
+          },
+        })
+        .mockResolvedValue({ state: "accepted" }),
+    } as unknown as Response);
+    await fetchSharedAiRequests("clerk-token", scopeId);
+    await postSharedAiRequest("clerk-token", scopeId, "1", "Summarize", defaultSelection,
+      "40000000-0000-4000-8000-000000000020");
+    await controlSharedAiRequest("clerk-token", scopeId, "qturn_one", "cancel", "4",
+      "40000000-0000-4000-8000-000000000021");
+    await decideSharedAiApproval("clerk-token", scopeId, "approval_one", "run_one", "approve", "5",
+      "40000000-0000-4000-8000-000000000022");
+
+    expect(fetchMock).toHaveBeenNthCalledWith(2,
+      `https://app.matrix-os.com/api/collaboration/scopes/${scopeId}/chat/requests`,
+      expect.objectContaining({ method: "POST", body: expect.stringContaining("Summarize") }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(3,
+      `https://app.matrix-os.com/api/collaboration/scopes/${scopeId}/chat/requests/qturn_one/cancel`,
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(4,
+      `https://app.matrix-os.com/api/collaboration/scopes/${scopeId}/chat/approvals/approval_one/decision`,
+      expect.objectContaining({ method: "POST" }),
     );
   });
 

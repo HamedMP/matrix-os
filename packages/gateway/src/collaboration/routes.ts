@@ -308,7 +308,12 @@ export function createCollaborationRoutes(options: {
     const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
     const adapter = requireExecutionAdapter(options.chatExecutionAdapter);
     const context = await authorize(options, c, new Uint8Array(), "read", scopeId, true);
-    return c.json(CollaborationAiRequestsResponseSchema.parse({ requests: await adapter.list(context) }));
+    const requests = await adapter.list(context);
+    return c.json(CollaborationAiRequestsResponseSchema.parse({
+      requests,
+      ...await adapter.capability(context, requests),
+      resourceRevision: await adapter.resourceRevision(context),
+    }));
   }));
 
   routes.post("/api/collaboration/scopes/:scopeId/chat/requests", async (c) => handle(c, async () => {

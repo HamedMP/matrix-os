@@ -134,7 +134,7 @@ export function ChatCollaboratorsDialog({ api, scope, members, onRefresh, onClos
         </button>
       </div>
       <p className="mt-3 text-xs" style={{ color: "var(--text-secondary)" }}>
-        Editors can read and discuss. Viewers can read only. AI requests remain unavailable for everyone in this milestone.
+        Editors can read, discuss, and request AI when shared AI is available. Viewers can read only. Owners decide AI approvals.
       </p>
     </section>
     <section aria-labelledby="people-heading">
