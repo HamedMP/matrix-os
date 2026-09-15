@@ -13,13 +13,17 @@ export function HostedWorkSidebar({ tab, active }: { tab: Tab; active: boolean }
   const runtime = useWorkSurfaceRuntime();
   const projects = useBoard((state) => state.projects);
   const route = tab.workRoute ?? (tab.kind === "projects" ? "projects" : tab.kind === "project" ? "project" : "chat");
-  const openGlobalDraft = () => useTabs.getState().openTab({
+  const navigateToGlobalDraft = () => useTabs.getState().openTab({
     kind: "work",
     title: "Chat",
     workRoute: "chat",
     chatView: "draft",
     closable: false,
   });
+  const openGlobalDraft = () => {
+    runtime?.requestAgentDraft("", []);
+    navigateToGlobalDraft();
+  };
   const selectChat = (record: CanonicalChatRecord, project?: Project) => {
     if (project) {
       openWorkProject(project, record.chat.id, record.chat.title);
@@ -48,6 +52,10 @@ export function HostedWorkSidebar({ tab, active }: { tab: Tab; active: boolean }
       onCollapse={() => undefined}
       showCollapseControl={false}
       onNewGlobalChat={openGlobalDraft}
+      onStartAgentChat={(text, resources) => {
+        runtime?.requestAgentDraft(text, resources);
+        navigateToGlobalDraft();
+      }}
       onCreateProject={() => useUi.getState().openCreateProject()}
       onNewProjectChat={openWorkProject}
       onSelectChat={selectChat}

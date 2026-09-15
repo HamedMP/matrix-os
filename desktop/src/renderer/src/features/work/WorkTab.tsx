@@ -1,4 +1,6 @@
+import type { ChatAgentDraftRequest, StartAgentChat } from "@matrix-os/ui";
 import { chatMessageVersionUrl } from "@matrix-os/contracts";
+import { ChatAgentsWorkspace, ChatAgentsContent, useChatAgentsNavigation } from "@matrix-os/ui";
 import { ChatSharingButton } from "../chat/ChatSharingButton";
 import { ChatFileNavigationProvider } from "./ChatFileNavigation";
 import { ArrowLeft, PanelLeftCloseIcon, PanelRightCloseIcon, PanelRightOpen } from "@renderer/lib/hugeicons";
@@ -10,6 +12,7 @@ import {
   useRef,
   useState,
   type ReactNode,
+  type ComponentProps,
   type Ref,
   type RefObject,
 } from "react";
@@ -195,7 +198,11 @@ function ResponsiveWorkInspector({
   );
 }
 
-export default function WorkTab({
+export default function WorkTab(props: ComponentProps<typeof WorkTabContent>) {
+  return <ChatAgentsWorkspace><WorkTabContent {...props} /></ChatAgentsWorkspace>;
+}
+
+function WorkTabContent({
   tabId,
   route,
   projectSlug,
@@ -248,6 +255,8 @@ export default function WorkTab({
     session: TerminalSessionSummary;
   } | null>(null);
   const [activeChatTitle, setActiveChatTitle] = useState(initialChatTitle ?? "Chat");
+  const [agentDraftRequest, setAgentDraftRequest] = useState<ChatAgentDraftRequest | null>(null);
+  const agentDraftSequence = useRef(0);
   const [editingChatTitle, setEditingChatTitle] = useState(false);
   const [renamingChatTitle, setRenamingChatTitle] = useState(false);
   const [renameChatError, setRenameChatError] = useState<string | null>(null);
@@ -272,6 +281,8 @@ export default function WorkTab({
     });
   }, [api, authGeneration, hostedRuntime, runtimeSlot, visible]);
   const client = hostedRuntime?.client ?? localClient;
+  const agentsNavigation = useChatAgentsNavigation();
+  const agentsOpen = Boolean(client?.agents && agentsNavigation?.opened?.client === client.agents);
   const eventSource = hostedRuntime?.eventSource ?? localEventSource;
   const activeChatScopeRef = useRef({ client, chatId: initialChatId });
   activeChatScopeRef.current = { client, chatId: initialChatId };
@@ -462,7 +473,7 @@ export default function WorkTab({
       narrowPaneRouteKey: routeKey,
     }));
   }, [routeKey]);
-  const openGlobalDraft = useCallback(() => {
+  const navigateToGlobalDraft = useCallback(() => {
     useCodingAgentWorkspace.getState().requestComposerFocus();
     showChat(layout === "narrow");
     useTabs.getState().openTab({
@@ -473,6 +484,15 @@ export default function WorkTab({
       closable: false,
     });
   }, [layout, showChat]);
+  const openAgentDraft = useCallback<StartAgentChat>((text, resources) => {
+    if (hostedRuntime) hostedRuntime.requestAgentDraft(text, resources);
+    else {
+      agentDraftSequence.current += 1;
+      setAgentDraftRequest({ id: agentDraftSequence.current, text, resources });
+    }
+    navigateToGlobalDraft();
+  }, [hostedRuntime, navigateToGlobalDraft]);
+  const openGlobalDraft = useCallback(() => openAgentDraft("", []), [openAgentDraft]);
   const openCreateProject = useCallback(() => useUi.getState().openCreateProject(), []);
   const openProjectDraft = useCallback((project: Project) => {
     showChat(layout === "narrow");
@@ -645,7 +665,7 @@ export default function WorkTab({
   ) : null;
   const canonicalInspector = initialChatId ? renderInspector : undefined;
   const content = route === "chat"
-    ? <ChatTab tabId={tabId} active={active} visible={visible} initialChatId={initialChatId} initialView={initialChatView} eventSource={eventSource ?? undefined} externalNavigation renderInspector={canonicalInspector} inspectorExclusive={inspectorExclusive} allowLegacyFallback={false} />
+    ? <ChatTab tabId={tabId} active={active} visible={visible} initialChatId={initialChatId} initialView={initialChatView} draftRequest={hostedRuntime ? hostedRuntime.agentDraftRequest : agentDraftRequest} eventSource={eventSource ?? undefined} externalNavigation renderInspector={canonicalInspector} inspectorExclusive={inspectorExclusive} allowLegacyFallback={false} />
     : route === "projects"
       ? <ProjectsIndex />
       : projectSlug
@@ -670,8 +690,10 @@ export default function WorkTab({
       onSelectChat={selectRailChat}
       onChatDeleted={handleRailChatDeleted}
       onChatRenamed={applyRenamedChat}
+      onOpenAgents={() => { if (layout === "narrow") showChat(); }}
+      onStartAgentChat={openAgentDraft}
     />
-  ), [active, applyRenamedChat, client, collapseRail, eventSource, handleRailChatDeleted, initialChatId, openCreateProject, openGlobalDraft, openProjectDraft, projectSlug, projects, route, selectRailChat]);
+  ), [active, applyRenamedChat, client, collapseRail, eventSource, handleRailChatDeleted, hostedChrome, initialChatId, openAgentDraft, openCreateProject, openGlobalDraft, openProjectDraft, projectSlug, projects, route, selectRailChat, layout, showChat]);
   const chromeTitle = useMemo(() => initialChatId && initialChatId !== draftTerminalLaunch?.chatId
     ? editingChatTitle ? (
         <ChatTitleEditor
@@ -705,10 +727,10 @@ export default function WorkTab({
     <ChatSharingButton key={`${runtimeSlot}:${authGeneration}:${initialChatId}`} api={api} chatId={initialChatId} copyText={async (text) => { await navigator.clipboard.writeText(text); }} />
   ) : null, [api, initialChatId, runtimeSlot, authGeneration]);
   const chromeSpec = useMemo(() => ({
-    title: chromeTitle,
+    title: agentsOpen ? "Agents" : chromeTitle,
     leftPaneWidth: hostedChrome || (layout !== "narrow" && navigationVisible) ? NAVIGATION_WIDTH : 0,
-    rightPaneWidth: layout !== "narrow" && inspectorVisible ? inspectorWidth : 0,
-    rightActions: hasInspector ? (
+    rightPaneWidth: !agentsOpen && layout !== "narrow" && inspectorVisible ? inspectorWidth : 0,
+    rightActions: agentsOpen ? null : hasInspector ? (
       <div className="flex items-center gap-1">
         {sharingControl}
         <PaneButton
@@ -725,7 +747,7 @@ export default function WorkTab({
         </PaneButton>
       </div>
     ) : sharingControl,
-  }), [sharingControl, chromeTitle, closeInspector, hasInspector, hostedChrome, inspectorVisible, inspectorWidth, layout, navigationVisible, openInspector]);
+  }), [agentsOpen, sharingControl, chromeTitle, closeInspector, hasInspector, hostedChrome, inspectorVisible, inspectorWidth, layout, navigationVisible, openInspector]);
 
   useLayoutEffect(() => {
     if (!active || !surfaceChromeHost) return;
@@ -823,8 +845,10 @@ export default function WorkTab({
             ? "hidden"
             : "relative flex min-h-0 min-w-0 flex-1 overflow-hidden"}
         >
-          {content}
-          {draftInspector}
+          <ChatAgentsContent client={client?.agents} scopeKey={`${route}:${projectSlug ?? ""}:${initialChatView ?? ""}:${initialChatId ?? "draft"}`}>
+            {content}
+            {draftInspector}
+          </ChatAgentsContent>
         </div>
       </div>
     </div>
