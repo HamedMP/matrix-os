@@ -1,15 +1,20 @@
 import { createServer, request as httpRequest, type ServerResponse } from "node:http";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { afterAll, beforeAll, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { _electron, type ElectronApplication, type Page } from "playwright";
 import { CanonicalChatDetailResponseSchema, type CanonicalChatDetailResponse } from "@matrix-os/contracts";
 import { createCanonicalChatFixture } from "../../contracts/fixtures/canonical-chat";
 import { startStubGateway, type StubGateway } from "./fixtures/stub-gateway";
 
 const root = resolve(import.meta.dirname, "../../..");
+const hasDesktopBuild = existsSync(join(root, "desktop/out/main/index.js"));
+if (process.env.MATRIX_DESKTOP_E2E_REQUIRED === "1" && !hasDesktopBuild) {
+  throw new Error("Required Desktop E2E build is missing");
+}
+const suite = hasDesktopBuild ? describe : describe.skip;
 const executablePath = createRequire(join(root, "desktop/package.json"))("electron") as string;
 const manualReview = process.env.OM239_HUMAN_REVIEW === "1";
 const output = join(root, "output/playwright/om-239");
@@ -46,6 +51,7 @@ const server = createServer((req, res) => {
   upstream.on("error", () => { if (!res.headersSent) res.writeHead(502); res.end(); });
   req.pipe(upstream);
 });
+suite("Desktop canonical Chat input", () => {
 beforeAll(async () => {
   const { snapshot } = createCanonicalChatFixture("input_required");
   snapshot.chat.title = "Plan the report";
@@ -118,3 +124,4 @@ it("answers in the existing run and receives intermediate output without reloadi
   await page.screenshot({ path: join(output, "03-same-run-continuation.png") });
   if (manualReview) await page.waitForTimeout(60_000);
 }, manualReview ? 17 * 60_000 : 40_000);
+});
