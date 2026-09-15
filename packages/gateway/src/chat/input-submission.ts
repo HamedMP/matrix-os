@@ -32,7 +32,10 @@ export async function getChatInputState(db: Kysely<ChatDatabase> | Transaction<C
     if (!parsed.success) continue;
     const event = parsed.data;
     if (!("requestId" in event) || event.requestId !== input.requestId) continue;
-    if (event.type === "input.requested") request = event;
+    if (event.type === "input.requested") {
+      if (submitted && event.id === `activity_input_retry_${submitted.id}`) submitted = undefined;
+      request = event;
+    }
     if (event.type === "input.submitted") submitted = event;
     if (event.type === "input.resolved") resolved = true;
   }

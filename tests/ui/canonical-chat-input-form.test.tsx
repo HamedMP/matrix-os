@@ -70,3 +70,17 @@ it("keeps a confirmed answer resolved after its original expiry time", () => {
   expect(screen.getByText("Answer submitted", { exact: true })).toBeTruthy();
   expect(screen.queryByText("This question has expired.")).toBeNull();
 });
+
+it("retains free text when a rejected claim is durably reopened", async () => {
+  const submit = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+  const { rerender } = render(<CanonicalChatInputForm request={request} onSubmit={submit} />);
+  fireEvent.click(screen.getByRole("radio", { name: "Other" }));
+  fireEvent.change(screen.getByRole("textbox", { name: /Your answer/ }), { target: { value: "Keep my answer" } });
+  fireEvent.click(screen.getByRole("button", { name: "Submit answer" }));
+  await screen.findByRole("alert");
+  rerender(<CanonicalChatInputForm request={{ ...request, id: "activity_input_retry_evt_claim" }} onSubmit={submit} />);
+  expect((screen.getByRole("textbox", { name: /Your answer/ }) as HTMLInputElement).value).toBe("Keep my answer");
+  fireEvent.click(screen.getByRole("button", { name: "Submit answer" }));
+  await waitFor(() => expect(submit).toHaveBeenCalledTimes(2));
+  expect(submit).toHaveBeenLastCalledWith({ structuredAnswers: { destination: ["Keep my answer"] } });
+});

@@ -1,10 +1,16 @@
+import { ChatInputNotDeliveredError } from "../../packages/gateway/src/chat/input-delivery-error.js";
 import { describe, expect, it, vi } from "vitest";
 import { submitCanonicalInput } from "../../packages/gateway/src/chat/input-control.js";
 const owner = { type: "personal" as const, ownerId: "owner_test" };
 function fixture() {
-  const request = { type: "input.requested", requestId: "input_test", questions: [{ questionId: "q", question: "Name?", header: "Name", allowOther: false, secret: false }] };
+  let request = { id: "evt_question", chatId: "chat_test", runId: "run_test", occurredAt: new Date().toISOString(), title: "Name", type: "input.requested", requestId: "input_test", questions: [{ questionId: "q", question: "Name?", header: "Name", allowOther: false, secret: false }] };
   let submitted: unknown;
   const repository = {
+    reopenInputSubmission: vi.fn(async (_owner, input) => {
+      request = { ...request, id: `activity_input_retry_${input.submissionId}` };
+      submitted = undefined;
+      return true;
+    }),
     getInputState: vi.fn(async () => ({ request, submitted, resolved: false })),
     getAdapterState: vi.fn(async () => null),
     appendRunActivities: vi.fn(async (_owner, _chatId, _runId, events) => { submitted = events[0]; return 1; }),
@@ -14,6 +20,19 @@ function fixture() {
   return { repository, active, submitInput, owner, chatId: "chat_test", runId: "run_test", requestId: "input_test", input: { clientRequestId: "req_test", structuredAnswers: { q: ["Ada"] } } };
 }
 describe("input delivery fencing", () => {
+  it("reopens a confirmed undelivered claim and permits one idempotent retry", async () => {
+    const options = fixture();
+    options.submitInput.mockRejectedValueOnce(new ChatInputNotDeliveredError());
+    await expect(submitCanonicalInput(options as never)).rejects.toMatchObject({ status: 503, safeError: { retryable: true } });
+    expect(options.repository.reopenInputSubmission).toHaveBeenCalledOnce();
+    options.submitInput.mockResolvedValueOnce(undefined as never);
+    await expect(submitCanonicalInput(options as never)).resolves.toMatchObject({ submission: "accepted" });
+    expect(options.submitInput).toHaveBeenCalledTimes(2);
+    const claims = options.repository.appendRunActivities.mock.calls.map(call => call[3][0]).filter(event => event.type === "input.submitted");
+    expect(claims).toHaveLength(2);
+    expect(claims[0].id).not.toBe(claims[1].id);
+    expect(JSON.stringify(options.repository.reopenInputSubmission.mock.calls)).not.toContain("Ada");
+  });
   it("does not resolve a queued asynchronous answer before native continuation", async () => {
     const options = fixture();
     const submitInput = vi.fn(async () => "queued" as const);

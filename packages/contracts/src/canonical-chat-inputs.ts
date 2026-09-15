@@ -21,16 +21,20 @@ export interface CanonicalChatInputView {
 export function canonicalChatInputs(detail: Pick<CanonicalChatDetailResponse, "runs" | "turns" | "messages" | "activities">, now = Date.now()): CanonicalChatInputView[] {
   const requests = new Map<string, Request>();
   const resolved = new Set<string>();
-  const submitted = new Set<string>();
+  const submitted = new Map<string, string>();
   const reasons = new Map<string, CanonicalChatInputView["reason"]>();
   const key = (runId: string, requestId: string) => `${runId}\0${requestId}`;
   for (const activity of detail.activities) {
-    if (activity.type === "input.requested") requests.set(key(activity.runId, activity.requestId), activity);
+    if (activity.type === "input.requested") {
+      const identity = key(activity.runId, activity.requestId);
+      if (activity.id === `activity_input_retry_${submitted.get(identity)}`) submitted.delete(identity);
+      requests.set(identity, activity);
+    }
     if (activity.type === "input.resolved") {
       resolved.add(key(activity.runId, activity.requestId));
       reasons.set(key(activity.runId, activity.requestId), activity.reason);
     }
-    if (activity.type === "input.submitted") submitted.add(key(activity.runId, activity.requestId));
+    if (activity.type === "input.submitted") submitted.set(key(activity.runId, activity.requestId), activity.id);
   }
   return [...requests.entries()].flatMap(([identity, request]) => {
     const run = detail.runs.find(run => run.id === request.runId);

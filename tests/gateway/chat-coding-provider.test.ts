@@ -522,6 +522,17 @@ describe("canonical coding Chat Provider adapter", () => {
     );
   });
 
+  it("cancels the persisted async continuation instead of the original native turn", async () => {
+    const fake = fakeStore([]);
+    const adapter = createCanonicalCodingChatProviderAdapter({ providerId: "codex", threads: fake.store });
+    await adapter.cancel!({ owner, chatId: "chat_coding", runId: "run_coding",
+      state: { conversationId: "thread_native", runId: "run_async_answer" } });
+    expect(fake.abortThread).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: owner.ownerId }), "thread_native", "req_coding",
+      { runRequestId: "req_async_answer" },
+    );
+  });
+
   it("steers only the registered active canonical Run through the legacy thread seam", async () => {
     const fake = fakeStore([]);
     const adapter = createCanonicalCodingChatProviderAdapter({ providerId: "codex", threads: fake.store });

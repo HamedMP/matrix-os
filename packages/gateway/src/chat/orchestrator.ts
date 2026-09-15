@@ -224,6 +224,7 @@ export class CanonicalChatOrchestrator {
       | "finishRun"
       | "getAdapterState"
       | "getInputState"
+      | "reopenInputSubmission"
       | "getPendingApproval"
       | "getLatestAdapterStateForChat"
       | "hasRetryRequest"

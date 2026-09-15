@@ -1495,6 +1495,10 @@ export class ChatRepository {
     return this.runLifecycle.getInputState(owner, input);
   }
 
+  async reopenInputSubmission(owner: ChatOwner, input: { chatId: string; runId: string; requestId: string; submissionId: string }): Promise<boolean> {
+    return this.runLifecycle.reopenInputSubmission(owner, input);
+  }
+
   async getPendingApproval(ownerInput: ChatOwner, input: {
     chatId: string;
     runId: string;

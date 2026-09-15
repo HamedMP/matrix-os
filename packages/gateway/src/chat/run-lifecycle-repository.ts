@@ -214,6 +214,19 @@ export class ChatRunLifecycleRepository {
     return getChatInputState(this.kysely, owner, input);
   }
 
+  async reopenInputSubmission(owner: ChatOwner, input: { chatId: string; runId: string; requestId: string; submissionId: string }): Promise<boolean> {
+    const state = await this.getInputState(owner, input);
+    if (!state.request || state.resolved || state.submitted?.id !== input.submissionId) return false;
+    try {
+      return await this.appendRunActivities(owner, input.chatId, input.runId, [{
+        ...state.request, id: `activity_input_retry_${input.submissionId}`, occurredAt: new Date().toISOString(),
+      }], input) > 0;
+    } catch (error: unknown) {
+      if (error instanceof ChatRunNotActiveError || error instanceof ChatConflictError) return false;
+      throw error;
+    }
+  }
+
   async getPendingApproval(ownerInput: ChatOwner, input: {
     chatId: string;
     runId: string;
@@ -333,6 +346,7 @@ export class ChatRunLifecycleRepository {
     chatId: string,
     runId: string,
     input: CanonicalChatRunActivity[],
+    expectedInputClaim?: { requestId: string; submissionId: string },
   ): Promise<number> {
     const owner = validateOwner(ownerInput);
     if (input.length > 100) throw new ChatConflictError(chatId, 0);
@@ -351,6 +365,10 @@ export class ChatRunLifecycleRepository {
         .where("id", "=", runId).where("chat_id", "=", chatId).executeTakeFirst();
       if (existingRun && !run) throw new ChatRunNotActiveError(chatId, runId);
       if (!run) throw new ChatNotFoundError(chatId);
+      if (expectedInputClaim) {
+        const state = await getChatInputState(trx, owner, { chatId, runId, requestId: expectedInputClaim.requestId });
+        if (state.resolved || state.submitted?.id !== expectedInputClaim.submissionId) throw new ChatConflictError(chatId, Number(current.revision));
+      }
       const count = await trx.selectFrom("chat_run_events").select(({ fn }) => fn.countAll().as("count"))
         .where("run_id", "=", runId).executeTakeFirstOrThrow();
       const activityIds = [...new Set(activities.map((activity) => activity.id))];

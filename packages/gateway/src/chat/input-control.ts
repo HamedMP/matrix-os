@@ -1,3 +1,4 @@
+import { ChatInputNotDeliveredError } from "./input-delivery-error.js";
 import { createHash } from "node:crypto";
 import { CanonicalSubmitChatInputRequestSchema, type CanonicalChatInputSubmissionResponse, type CanonicalSubmitChatInputRequest } from "@matrix-os/contracts";
 import type { ChatRepository } from "./repository.js";
@@ -11,7 +12,7 @@ function unavailable() {
   return new CanonicalChatOrchestrationError({ code: "capability_mismatch", safeMessage: "This input request is no longer available.", retryable: false, recoveryActions: [] }, 409);
 }
 export async function submitCanonicalInput(options: {
-  repository: Pick<ChatRepository, "getInputState" | "getAdapterState" | "appendRunActivities">;
+  repository: Pick<ChatRepository, "getInputState" | "getAdapterState" | "appendRunActivities" | "reopenInputSubmission">;
   active?: Active; owner: ChatOwner; chatId: string; runId: string; requestId: string; input: CanonicalSubmitChatInputRequest;
 }): Promise<CanonicalChatInputSubmissionResponse> {
   const { repository, active, owner, chatId, runId, requestId } = options;
@@ -31,7 +32,7 @@ export async function submitCanonicalInput(options: {
   const saved = await repository.getAdapterState(owner, { runId, driverKind: active.adapter.driverKind, instanceId: active.instanceId });
   const state = saved ? active.adapter.parseState(saved.state) : undefined;
   // Claim identity belongs to the pending request, not to the browser retry id.
-  const identity = createHash("sha256").update(`${runId}\0${requestId}`).digest("hex");
+  const identity = createHash("sha256").update(`${runId}\0${requestId}\0${existing.request.id}`).digest("hex");
   let claimed: number;
   try {
     claimed = await repository.appendRunActivities(owner, chatId, runId, [{
@@ -47,9 +48,9 @@ export async function submitCanonicalInput(options: {
     if (claim.submitted?.clientRequestId === input.clientRequestId) return { requestId, submission: "already_submitted" };
     throw unavailable();
   }
-  if (active.controller.signal.aborted) throw unavailable();
   let queued = false;
   try {
+    if (active.controller.signal.aborted) throw new ChatInputNotDeliveredError();
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       queued = await Promise.race([
@@ -59,6 +60,13 @@ export async function submitCanonicalInput(options: {
     } finally { if (timer) clearTimeout(timer); }
   } catch (error: unknown) {
     console.warn("[chat/input] Provider input callback failed:", error instanceof Error ? error.name : "UnknownError");
+    if (error instanceof ChatInputNotDeliveredError) {
+      const reopened = await repository.reopenInputSubmission(owner, {
+        chatId, runId, requestId, submissionId: `activity_input_${identity}`,
+      });
+      if (!reopened) throw unavailable();
+      throw new CanonicalChatOrchestrationError({ code: "run_unavailable", safeMessage: "The answer was not sent. Please try again.", retryable: true, recoveryActions: [] }, 503);
+    }
     // Delivery is ambiguous: preserve the durable claim and never replay native work.
     throw new CanonicalChatOrchestrationError({ code: "run_unavailable", safeMessage: "The answer could not be confirmed. Check the conversation before continuing.", retryable: false, recoveryActions: [] }, 503);
   }

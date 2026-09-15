@@ -1,9 +1,10 @@
+import { ChatInputNotDeliveredError } from "./input-delivery-error.js";
 import { BackgroundProjectionDetached } from "./background-run-control.js";
 import { createHash } from "node:crypto";
 import { ASYNC_QUESTION_NOTICE } from "../coding-agents/async-input-notice.mjs";
 import type { CanonicalSubmitChatInputRequest } from "@matrix-os/contracts";
 import type { AiTokenUsage } from "../ai-analytics.js";
-import { validateChatInputAnswer } from "./input-submission.js";
+import { ChatInputAnswerValidationError, validateChatInputAnswer } from "./input-submission.js";
 import type { CanonicalChatProviderAdapter, CanonicalProviderRunEvent, CanonicalProviderRunInput } from "./provider-adapter.js";
 
 const ASYNC_PROMPT = `\n\n[Matrix question delivery]\nQuestions are asynchronous. ${ASYNC_QUESTION_NOTICE}`;
@@ -123,16 +124,19 @@ export function withAsyncChatInput(native: CanonicalChatProviderAdapter, options
     ...native, start: execute, resume: execute,
     async submitInput(input) {
       const run = runs.get(input.runId);
-      if (!run || run.input.signal.aborted || run.input.chatId !== input.chatId || run.input.owner.type !== input.owner.type || run.input.owner.ownerId !== input.owner.ownerId) throw new Error("Async question unavailable");
+      if (!run || run.input.signal.aborted || run.input.chatId !== input.chatId || run.input.owner.type !== input.owner.type || run.input.owner.ownerId !== input.owner.ownerId) throw new ChatInputNotDeliveredError();
       if (run.nativeOnly.has(input.requestId)) {
         if (!native.submitInput) throw new Error("Native question unavailable");
         run.nativeOnly.delete(input.requestId);
         return native.submitInput(input);
       }
       const pending = run.pending.get(input.requestId);
-      if (!pending) throw new Error("Async question unavailable");
-      validateChatInputAnswer(pending.request, input);
-      if (run.answers.length >= 16) throw new Error("Async answer queue full");
+      if (!pending) throw new ChatInputNotDeliveredError();
+      try { validateChatInputAnswer(pending.request, input); } catch (error: unknown) {
+        if (error instanceof ChatInputAnswerValidationError) throw new ChatInputNotDeliveredError();
+        throw error;
+      }
+      if (run.answers.length >= 16) throw new ChatInputNotDeliveredError();
       clearTimeout(pending.timer); run.pending.delete(input.requestId);
       run.answers.push({ request: pending.request, input }); run.wake?.(); run.wake = undefined;
       return "queued";

@@ -1,3 +1,4 @@
+import { ChatInputNotDeliveredError } from "./input-delivery-error.js";
 import { BackgroundProjectionDetached } from "./background-run-control.js";
 import { createHash } from "node:crypto";
 import { boundedOperation } from "../bounded-operation.js";
@@ -539,7 +540,7 @@ export function createCanonicalCodingChatProviderAdapter(options: {
         principal(input.owner.ownerId),
         state.conversationId,
         legacyRequestId(input.runId),
-        ...(options.providerId === "codex" ? [{ runRequestId: legacyRequestId(input.runId) }] : []),
+        ...(options.providerId === "codex" ? [{ runRequestId: legacyRequestId(state.runId ?? input.runId) }] : []),
       );
     },
     ...(options.nativeInputProvider?.deferInput ? { deferInput: async (input: { owner: CanonicalProviderRunInput["owner"]; chatId: string; runId: string; requestId: string }) => {
@@ -554,7 +555,7 @@ export function createCanonicalCodingChatProviderAdapter(options: {
     async submitInput(input) {
       const active = activeSteerRuns.get(input.runId);
       if (!active || active.ownerId !== input.owner.ownerId || active.chatId !== input.chatId) {
-        throw new Error("Input Run unavailable");
+        throw new ChatInputNotDeliveredError();
       }
       const current = await options.threads.getThread(principal(input.owner.ownerId), active.threadId);
       let correlationId: string | undefined;
@@ -562,7 +563,7 @@ export function createCanonicalCodingChatProviderAdapter(options: {
         if (event.type === "user_input.requested" && event.request.requestId === input.requestId) correlationId = event.request.correlationId;
         if (event.type === "user_input.answered" && event.requestId === input.requestId) correlationId = undefined;
       }
-      if (!correlationId) throw new Error("Input request unavailable");
+      if (!correlationId) throw new ChatInputNotDeliveredError();
       await options.threads.submitInput(principal(input.owner.ownerId), active.threadId, input.requestId, {
         answer: input.answer ?? Object.values(input.structuredAnswers ?? {}).flat().join("\n"),
         ...(input.structuredAnswers ? { structuredAnswers: input.structuredAnswers } : {}),
