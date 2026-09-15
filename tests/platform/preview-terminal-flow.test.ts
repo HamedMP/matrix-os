@@ -65,7 +65,7 @@ function fixture() {
     attach: vi.fn((options) => ({
       close: vi.fn(), send: (frame: { type: string; data?: string }) => {
         input(frame);
-        options.onFrame({ type: "output", seq: 1, data: `output:${frame.data}` });
+        options.onFrame({ type: "output", terminalRef: options.ref, revision: 1, seq: 1, data: `output:${frame.data}` });
       },
     })),
   };
@@ -167,7 +167,7 @@ describe("Clerk preview collaborator terminal flow", () => {
         const connection = await f.upgrade(token, tab.id);
         expect(connection.denied).toBe(false);
         connection.handler!.onMessage?.(new MessageEvent("message", { data: JSON.stringify({ type: "input", terminalRef: { workspaceId, tabId: tab.id }, data: "echo shared\r" }) }), connection.ws!);
-        await vi.waitFor(() => expect(connection.sent).toContainEqual({ type: "output", seq: 1, data: "output:echo shared\r" }));
+        await vi.waitFor(() => expect(connection.sent).toContainEqual({ type: "output", terminalRef: { workspaceId, tabId: tab.id }, revision: 1, seq: 1, data: "output:echo shared\r" }));
         connection.handler!.onClose?.(new Event("close") as CloseEvent, connection.ws!);
       }
       expect(f.actors.at(-1)).toBe(actor);
