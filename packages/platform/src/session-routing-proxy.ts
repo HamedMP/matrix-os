@@ -13,6 +13,9 @@ export const APP_ASSET_ROUTE_OMITTED_QUERY_PARAMS = [APP_ASSET_ROUTE_TOKEN_PARAM
 
 const SENSITIVE_PROXY_HEADERS = new Set([
   'authorization',
+  'x-platform-user-id',
+  'x-platform-verified',
+  'x-platform-preview-terminal',
   'cookie',
   EDGE_SECRET_HEADER,
   NATIVE_APP_SESSION_PROXY_HEADER,

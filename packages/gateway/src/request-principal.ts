@@ -1,3 +1,5 @@
+import type { PreviewTerminalDelegation } from "@matrix-os/contracts";
+import { PREVIEW_TERMINAL_CONTEXT_KEY } from "./preview-terminal-delegation.js";
 import type { SyncJwtClaims } from "./auth-jwt.js";
 
 export const JWT_CLAIMS_CONTEXT_KEY = "jwtClaims";
@@ -10,6 +12,7 @@ export type PrincipalSource = "jwt" | "platform-verified" | "configured-containe
 export interface RequestPrincipal {
   userId: string;
   source: PrincipalSource;
+  previewTerminalDelegation?: PreviewTerminalDelegation;
 }
 
 export interface PrincipalRuntimeConfig {
@@ -108,19 +111,24 @@ export function getOptionalRequestPrincipal(
     throw new RequestPrincipalMisconfiguredError();
   }
 
+  const delegation = typeof c.get === "function"
+    ? c.get(PREVIEW_TERMINAL_CONTEXT_KEY as never) as PreviewTerminalDelegation | undefined
+    : undefined;
+  const delegatedContext = (actorId: string) => delegation?.actorId === actorId
+    ? { previewTerminalDelegation: delegation } : {};
   const claims = readClaims(c);
   if (claims) {
     if (typeof claims.sub !== "string" || claims.sub.length === 0) {
       throw new InvalidRequestPrincipalError("jwt");
     }
     assertSafePrincipalUserId(claims.sub, "jwt");
-    return { userId: claims.sub, source: "jwt" };
+    return { userId: claims.sub, source: "jwt", ...delegatedContext(claims.sub) };
   }
 
   const platformUserId = readPlatformUserId(c);
   if (platformUserId) {
     assertSafePrincipalUserId(platformUserId, "platform-verified");
-    return { userId: platformUserId, source: "platform-verified" };
+    return { userId: platformUserId, source: "platform-verified", ...delegatedContext(platformUserId) };
   }
 
   if (runtime.configuredUserId && runtime.isTrustedSingleUserGateway) {

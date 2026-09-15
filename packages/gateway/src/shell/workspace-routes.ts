@@ -119,7 +119,7 @@ export function createTerminalWorkspaceProjectAdmission(options: {
     if (!projectId || !options.projectOperationAdmission) return operation();
     return options.projectOperationAdmission.withLegacyAdmission({
       ownerType: "personal",
-      ownerId: principal.userId,
+      ownerId: terminalResourceOwnerId(principal),
       projectId,
       kind,
     }, operation);
@@ -143,6 +143,12 @@ export function createTerminalWorkspaceProjectAdmission(options: {
   };
 }
 
+/** Canonical terminal ownership only; authentication and Chat scopes keep the actor. */
+export function terminalResourceOwnerId(principal: RequestPrincipal): string {
+  const delegation = principal.previewTerminalDelegation;
+  return delegation?.actorId === principal.userId ? delegation.ownerId : principal.userId;
+}
+
 export function terminalRuntimeOwnerAccess(
   principal: RequestPrincipal,
   terminalOwnerIds: readonly string[],
@@ -151,7 +157,10 @@ export function terminalRuntimeOwnerAccess(
     .map((ownerId) => ownerId.trim())
     .filter((ownerId, index, ownerIds) => Boolean(ownerId) && ownerIds.indexOf(ownerId) === index);
   if (configuredOwners.length !== 1) return "unavailable";
-  return configuredOwners[0] === principal.userId ? "allowed" : "not_found";
+  if (configuredOwners[0] === principal.userId) return "allowed";
+  const delegation = principal.previewTerminalDelegation;
+  return delegation?.actorId === principal.userId && delegation.ownerId === configuredOwners[0]
+    ? "allowed" : "not_found";
 }
 
 export async function terminalRuntimeRefAccess(

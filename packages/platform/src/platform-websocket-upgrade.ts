@@ -1,3 +1,4 @@
+import { buildPreviewTerminalDelegation } from "./preview-terminal-delegation.js";
 import { createConnection, type Socket } from 'node:net';
 import { connect as createTlsConnection } from 'node:tls';
 import type { IncomingMessage, Server } from 'node:http';
@@ -321,6 +322,10 @@ export function registerPlatformWebSocketUpgradeHandler(
         platformSecret,
         includePlatformProof: includePlatformProof && identity.source !== 'static-route',
         isCodeDomain,
+        previewTerminalDelegation: runningMachine && identity.source !== 'static-route'
+          ? buildPreviewTerminalDelegation({ machine: runningMachine, actorId: identity.userId,
+              path: new URL(webSocketProxyPath, 'https://app.matrix-os.com').pathname, platformSecret })
+          : undefined,
       })
     );
 
