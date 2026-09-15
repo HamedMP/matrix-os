@@ -1,6 +1,7 @@
 import { z } from "zod/v4";
 
 export const NATIVE_APP_GATEWAY_CHANNEL = "native-app:gateway-fetch";
+export const NATIVE_APP_ACTIVITY_BRIDGE_ARG = "--matrix-app-activity-bridge";
 export const NATIVE_APP_GATEWAY_TIMEOUT_MS = 10_000;
 
 const ActivityQuerySchema = z.strictObject({
