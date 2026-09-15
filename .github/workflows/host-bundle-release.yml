@@ -221,10 +221,15 @@ jobs:
 
       - name: Generate version
         id: version
+        env:
+          PUBLISH_CHANNEL: ${{ inputs.channel || '' }}
         run: |
           set -euo pipefail
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             VERSION="${GITHUB_REF_NAME}"
+          elif [ "${PUBLISH_CHANNEL:-}" = "none" ]; then
+            # Support builds compare by build time, not a shared-channel counter.
+            VERSION="main-support-${{ github.run_number }}"
           else
             VERSION="v$(date -u +%Y.%m.%d)-${{ github.run_number }}"
           fi
