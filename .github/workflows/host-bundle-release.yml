@@ -21,7 +21,7 @@ on:
   workflow_dispatch:
     inputs:
       channel:
-        description: "Release channel to promote"
+        description: "Release channel to promote (none registers only)"
         required: false
         default: "dev"
         type: choice
@@ -30,6 +30,7 @@ on:
           - canary
           - beta
           - stable
+          - none
       severity:
         description: "Update severity (normal, security)"
         required: false
