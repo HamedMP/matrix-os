@@ -14,6 +14,16 @@ function fixture() {
   return { repository, active, submitInput, owner, chatId: "chat_test", runId: "run_test", requestId: "input_test", input: { clientRequestId: "req_test", structuredAnswers: { q: ["Ada"] } } };
 }
 describe("input delivery fencing", () => {
+  it("does not resolve a queued asynchronous answer before native continuation", async () => {
+    const options = fixture();
+    const submitInput = vi.fn(async () => "queued" as const);
+    options.active.adapter.submitInput = submitInput as never;
+    await expect(submitCanonicalInput(options as never)).resolves.toMatchObject({ submission: "accepted" });
+    expect(options.repository.appendRunActivities).toHaveBeenCalledOnce();
+    expect(options.repository.appendRunActivities.mock.calls[0]![3][0]).toMatchObject({ type: "input.submitted" });
+    await expect(submitCanonicalInput(options as never)).resolves.toMatchObject({ submission: "already_submitted" });
+    expect(submitInput).toHaveBeenCalledOnce();
+  });
   it("never repeats an uncertain native delivery and does not persist the answer", async () => {
     const options = fixture();
     await expect(submitCanonicalInput(options as never)).rejects.toMatchObject({ status: 503, safeError: { retryable: false } });

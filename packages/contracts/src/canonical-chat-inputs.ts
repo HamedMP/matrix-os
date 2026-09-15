@@ -9,6 +9,7 @@ export interface CanonicalChatInputView {
   safeDescription?: string;
   questions?: Request["questions"];
   expiresAt?: string;
+  asynchronous?: boolean;
   pending: boolean;
   submitted: boolean;
   resolved: boolean;

@@ -80,6 +80,7 @@ export const CanonicalProviderRunEventSchema = z.discriminatedUnion("type", [
     questions: UserInputQuestionListSchema.optional(),
     safeDescription: z.string().trim().min(1).max(600).optional(),
     expiresAt: z.iso.datetime().optional(),
+    asynchronous: z.boolean().optional(),
   }).strict(),
   z.object({ type: z.literal("input.resolved"), requestId: SafeProviderRefSchema, reason: z.enum(["answered", "cancelled", "expired"]).optional() }).strict(),
   z.object({ type: z.literal("state.updated"), state: z.unknown() }).strict(),
@@ -108,6 +109,8 @@ export interface CanonicalProviderRunInput<State = unknown> {
   projectSlug?: string;
   worktreeId?: string;
   resumeState?: State;
+  /** Unique native admission identity for a continuation of the same canonical Run. */
+  continuationId?: string;
   signal: AbortSignal;
   /** Generator return() errors can be masked by a consumer throw; report unresolved cleanup explicitly. */
   onCleanupUnconfirmed?: () => void;
@@ -145,7 +148,9 @@ export interface CanonicalChatProviderAdapter<State = unknown> {
     parts: CanonicalChatMessagePart[];
     state?: State;
   }): Promise<void>;
-  submitInput?(input: CanonicalSubmitChatInputRequest & { owner: CanonicalOwnerScope; chatId: string; runId: string; requestId: string; state?: State }): Promise<void>;
+  submitInput?(input: CanonicalSubmitChatInputRequest & { owner: CanonicalOwnerScope; chatId: string; runId: string; requestId: string; state?: State }): Promise<void | "queued">;
+  /** Internal acknowledgement only: the user has NOT answered or authorized anything. */
+  deferInput?(input: { owner: CanonicalOwnerScope; chatId: string; runId: string; requestId: string }): Promise<void>;
   submitApproval?(input: {
     owner: CanonicalOwnerScope;
     chatId: string;

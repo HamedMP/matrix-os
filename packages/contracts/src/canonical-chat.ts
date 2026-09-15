@@ -535,6 +535,7 @@ export const CanonicalChatRunActivitySchema = z.discriminatedUnion("type", [
     safeDescription: canonicalSafeLabel(600, 2_400).optional(),
     questions: UserInputQuestionListSchema.optional(),
     expiresAt: z.iso.datetime().optional(),
+    asynchronous: z.boolean().optional(),
   }).strict(),
   CanonicalChatRunActivityBaseSchema.extend({
     type: z.literal("input.submitted"),

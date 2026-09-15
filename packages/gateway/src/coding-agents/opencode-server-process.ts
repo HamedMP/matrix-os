@@ -170,6 +170,11 @@ export function createOpenCodeServerProcess(
     stdout, stderr,
     once(event: "exit" | "error", listener: never) { events.once(event, listener); },
     kill(signal) { stop(null, signal); },
+    async deferInput(requestId: string) {
+      if (stopped) throw new Error("OpenCode input unavailable");
+      const submission = inputs.defer(requestId); submissions.add(submission);
+      try { await submission; } finally { submissions.delete(submission); }
+    },
     async submitInput(requestId: string, input: UserInputAnswerRequest) {
       if (stopped || submissions.size >= 16) throw new Error("OpenCode run unavailable");
       const submission = inputs.submit(requestId, input); submissions.add(submission);

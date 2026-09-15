@@ -50,17 +50,18 @@ export async function assertInputClaim(db: Kysely<ChatDatabase> | Transaction<Ch
 /** A late response to one request must not clear a newer pending question. */
 export async function pendingInputTransition(db: Kysely<ChatDatabase> | Transaction<ChatDatabase>, runId: string) {
   const rows = await db.selectFrom("chat_run_events").select("event").where("run_id", "=", runId).orderBy("run_seq").limit(500).execute();
-  const pending = new Map<string, "input" | "approval">();
+  const pending = new Map<string, "input" | "async_input" | "approval">();
   for (const row of rows) {
     const parsed = CanonicalChatRunActivitySchema.safeParse(row.event);
     if (!parsed.success) continue;
     const event = parsed.data;
-    if (event.type === "input.requested") pending.set(`input:${event.requestId}`, "input");
+    if (event.type === "input.requested") pending.set(`input:${event.requestId}`, event.asynchronous ? "async_input" : "input");
     if (event.type === "input.resolved") pending.delete(`input:${event.requestId}`);
     if (event.type === "approval.requested") pending.set(`approval:${event.approvalId}`, "approval");
     if (event.type === "approval.resolved") pending.delete(`approval:${event.approvalId}`);
   }
   if ([...pending.values()].includes("approval")) return { runStatus: "waiting_for_approval" as const, attention: "approval_required" as const };
-  if (pending.size) return { runStatus: "waiting_for_input" as const, attention: "input_required" as const };
+  if ([...pending.values()].includes("input")) return { runStatus: "waiting_for_input" as const, attention: "input_required" as const };
+  if (pending.size) return { runStatus: "running" as const, attention: "input_required" as const };
   return { runStatus: "running" as const, attention: "none" as const };
 }

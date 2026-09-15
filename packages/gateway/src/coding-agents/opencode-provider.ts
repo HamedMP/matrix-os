@@ -62,6 +62,7 @@ export interface OpenCodeProcess {
   once(event: "error", listener: (error: Error) => void): void;
   kill(signal: NodeJS.Signals): void;
   submitInput?(requestId: string, input: UserInputAnswerRequest): Promise<void>;
+  deferInput?(requestId: string): Promise<void>;
 }
 export type OpenCodeSpawnFn = (command: string, args: string[], options: SpawnOptions) => OpenCodeProcess;
 type RunCommand = (
@@ -389,6 +390,7 @@ export function createOpenCodeCodingAgentProvider(
     evict: () => void;
     steer: (message: string) => void;
     submitInput: (requestId: string, request: UserInputAnswerRequest) => Promise<void>;
+    deferInput: (requestId: string) => Promise<void>;
   }>();
   const resolveProjectPath = options.resolveProjectPath ?? (async (slug: string) => {
     const result = await createProjectManager({ homePath: options.homePath }).getProject(slug);
@@ -498,6 +500,10 @@ export function createOpenCodeCodingAgentProvider(
         killTimer.unref?.();
       };
       const tracked = {
+        deferInput: async (requestId: string) => {
+          if (!child.deferInput || settled || terminationReason) throw new Error("OpenCode input unavailable");
+          await child.deferInput(requestId);
+        },
         submitInput: async (requestId: string, request: UserInputAnswerRequest) => {
           if (!child.submitInput || settled || terminationReason) throw new Error("OpenCode input unavailable");
           await child.submitInput(requestId, request);
@@ -766,6 +772,11 @@ export function createOpenCodeCodingAgentProvider(
       running.steer(message);
     },
     submitApproval() { return []; },
+    async deferInput({ thread, inputRequestId }) {
+      const running = active.get(thread.id);
+      if (!running) throw new Error("OpenCode input unavailable");
+      await running.deferInput(inputRequestId);
+    },
     async submitInput({ thread, inputRequestId, request }) {
       const running = active.get(thread.id);
       if (!running) throw new Error("OpenCode input unavailable");

@@ -270,7 +270,7 @@ describe("Codex app-server control runtime", () => {
     }
   });
 
-  it("maps structured answers to native questions without persisting secret input", async () => {
+  it.each(["input", "defer_input"] as const)("delivers %s to native questions without persisting secret input", async (controlType) => {
     const homePath = await mkdtemp(join("/tmp", "codex-input-"));
     const fakeCodexPath = join(homePath, "fake-codex-input.mjs");
     const responsesPath = join(homePath, "responses.jsonl");
@@ -332,12 +332,12 @@ describe("Codex app-server control runtime", () => {
 
       const [approach, secret] = request.questions;
       await expect(sendControl(controlPath, {
-        type: "input",
+        type: controlType,
         requestId: request.requestId,
-        structuredAnswers: {
+        ...(controlType === "input" ? { structuredAnswers: {
           [approach.questionId]: ["Minimal"],
           [secret.questionId]: ["temporary-secret-value"],
-        },
+        } } : {}),
         clientRequestId: "req_control_input_1",
       })).resolves.toEqual({ ok: true });
       await expect(waitForExit(child)).resolves.toBe(0);
@@ -347,8 +347,8 @@ describe("Codex app-server control runtime", () => {
         id: "rpc-input-secret",
         result: {
           answers: {
-            "native-approach": { answers: ["Minimal"] },
-            "native-secret": { answers: ["temporary-secret-value"] },
+            "native-approach": { answers: [controlType === "input" ? "Minimal" : expect.stringContaining("user has NOT answered")] },
+            "native-secret": { answers: [controlType === "input" ? "temporary-secret-value" : expect.stringContaining("user has NOT answered")] },
           },
         },
       });

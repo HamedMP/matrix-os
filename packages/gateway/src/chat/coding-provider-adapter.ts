@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { boundedOperation } from "../bounded-operation.js";
 import type { CodingAbortScope } from "../coding-agents/thread-abort.js";
+import type { CodingAgentProviderAdapter } from "../coding-agents/provider-adapter.js";
 import {
   AgentModeSchema,
   CanonicalChatSafeErrorSchema,
@@ -333,6 +334,7 @@ function eventsForAcceptedRun(snapshot: AgentThreadSnapshot, requestId: string):
 export function createCanonicalCodingChatProviderAdapter(options: {
   providerId: "codex" | "claude" | "opencode" | "pi";
   threads: CodingThreads;
+  nativeInputProvider?: Pick<CodingAgentProviderAdapter, "deferInput">;
 }): CanonicalChatProviderAdapter<CodingState> {
   const kind = driverKind(options.providerId);
   const activeSteerRuns = new Map<string, {
@@ -423,7 +425,7 @@ export function createCanonicalCodingChatProviderAdapter(options: {
         }
       });
       try {
-        const requestId = legacyRequestId(input.runId);
+        const requestId = legacyRequestId(input.continuationId ?? input.runId);
         const created = await options.threads.createThread(principal(input.owner.ownerId), {
           providerId: options.providerId,
           prompt: input.prompt,
@@ -478,7 +480,7 @@ export function createCanonicalCodingChatProviderAdapter(options: {
         }
       });
       try {
-        const requestId = legacyRequestId(input.runId);
+        const requestId = legacyRequestId(input.continuationId ?? input.runId);
         const accepted = await options.threads.acceptTurn(principal(input.owner.ownerId), targetThreadId, {
           message: input.prompt,
           attachments: attachments(input),
@@ -495,7 +497,7 @@ export function createCanonicalCodingChatProviderAdapter(options: {
           legacyTurnId: accepted.turnId,
         });
         const current = await options.threads.getThread(principal(input.owner.ownerId), targetThreadId);
-        yield { type: "state.updated", state: recoveryState(targetThreadId, input.runId, current.events.items) };
+        yield { type: "state.updated", state: recoveryState(targetThreadId, input.continuationId ?? input.runId, current.events.items) };
         inbox.lastEventId = current.events.items.at(-1)?.eventId;
         inbox.reconcileWith(async () => {
           const recovered = await options.threads.getThread(principal(input.owner.ownerId), targetThreadId, inbox.lastEventId);
@@ -537,6 +539,15 @@ export function createCanonicalCodingChatProviderAdapter(options: {
         legacyRequestId(input.runId),
       );
     },
+    ...(options.nativeInputProvider?.deferInput ? { deferInput: async (input: { owner: CanonicalProviderRunInput["owner"]; chatId: string; runId: string; requestId: string }) => {
+      const active = activeSteerRuns.get(input.runId);
+      if (!active || active.ownerId !== input.owner.ownerId || active.chatId !== input.chatId) throw new Error("Input Run unavailable");
+      const snapshot = await options.threads.getThread(principal(input.owner.ownerId), active.threadId);
+      const requested = snapshot.events.items.some(event => event.type === "user_input.requested" && event.request.requestId === input.requestId);
+      const resolved = snapshot.events.items.some(event => event.type === "user_input.answered" && event.requestId === input.requestId);
+      if (!requested || resolved) throw new Error("Input unavailable");
+      await options.nativeInputProvider!.deferInput!({ principal: principal(input.owner.ownerId), thread: snapshot.thread, inputRequestId: input.requestId });
+    } } : {}),
     async submitInput(input) {
       const active = activeSteerRuns.get(input.runId);
       if (!active || active.ownerId !== input.owner.ownerId || active.chatId !== input.chatId) {

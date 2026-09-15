@@ -1,0 +1,115 @@
+import { createHash } from "node:crypto";
+import { ASYNC_QUESTION_NOTICE } from "../coding-agents/async-input-notice.mjs";
+import type { CanonicalSubmitChatInputRequest } from "@matrix-os/contracts";
+import { validateChatInputAnswer } from "./input-submission.js";
+import type { CanonicalChatProviderAdapter, CanonicalProviderRunEvent, CanonicalProviderRunInput } from "./provider-adapter.js";
+
+const ASYNC_PROMPT = `\n\n[Matrix question delivery]\nQuestions are asynchronous. ${ASYNC_QUESTION_NOTICE}`;
+type Question = Extract<CanonicalProviderRunEvent, { type: "input.requested" }>;
+type Answer = { request: Question; input: CanonicalSubmitChatInputRequest };
+type Run = {
+  input: CanonicalProviderRunInput;
+  pending: Map<string, { request: Question; timer: ReturnType<typeof setTimeout> }>;
+  deferred: Set<string>;
+  answers: Answer[];
+  expired: CanonicalProviderRunEvent[];
+  wake?: () => void;
+};
+
+/** A native phase can finish while questions remain open. The canonical Run stays alive.
+ * Late answers enter the same native conversation at its next safe turn boundary.
+ * Registries are capped; each question expires and every Run drains on cancellation.
+ */
+export function withAsyncChatInput(native: CanonicalChatProviderAdapter, options: { questionTimeoutMs?: number } = {}): CanonicalChatProviderAdapter {
+  if (!native.deferInput || !native.resume) return native;
+  const runs = new Map<string, Run>();
+  const timeout = Math.max(1, Math.min(options.questionTimeoutMs ?? 60 * 60_000, 60 * 60_000));
+  const digest = (value: string) => createHash("sha256").update(value).digest("hex").slice(0, 32);
+
+  async function* execute(input: CanonicalProviderRunInput): AsyncIterable<CanonicalProviderRunEvent> {
+    if (runs.has(input.runId) || runs.size >= 128) throw new Error("Async question Run unavailable");
+    const run: Run = { input, pending: new Map(), deferred: new Set(), answers: [], expired: [] };
+    runs.set(input.runId, run);
+    const wake = () => { run.wake?.(); run.wake = undefined; };
+    input.signal.addEventListener("abort", wake);
+    let state = input.resumeState;
+    let phase = 0;
+    let phaseAnswers: Answer[] = [];
+    let lastTerminal: Extract<CanonicalProviderRunEvent, { type: "run.completed" }> = { type: "run.completed", outcome: "completed" };
+    try {
+      while (!input.signal.aborted) {
+        const prompt = phase === 0 ? input.prompt :
+          `[Matrix: answers to your earlier asynchronous questions]\n${JSON.stringify(phaseAnswers.map(answer => ({ requestId: answer.request.requestId, questions: answer.request.questions?.map(question => ({ questionId: question.questionId, question: question.question })), answers: answer.input.structuredAnswers ?? answer.input.answer })))}\nApply these user answers to the pending work. Do not ask the same questions again.${ASYNC_PROMPT}`;
+        const parts = phase === 0 ? input.parts : [{ type: "text" as const, text: prompt }];
+        const next = { ...input, prompt, parts, ...(state === undefined ? {} : { resumeState: state }),
+          ...(phase ? { continuationId: `async_${digest(`${input.runId}:${phase}`)}` } : {}) };
+        const source = state === undefined ? native.start(next) : native.resume!({ ...next, resumeState: state });
+        let terminal: typeof lastTerminal | undefined;
+        let answersConfirmed = phaseAnswers.length === 0;
+        for await (const event of source) {
+          if (input.signal.aborted) break;
+          while (run.expired.length) yield run.expired.shift()!;
+          if (terminal) throw new Error("Native phase emitted after completion");
+          if (!answersConfirmed && (event.type === "assistant.delta" || event.type === "tool.progress" || event.type === "input.requested" || (event.type === "run.completed" && event.outcome === "completed"))) {
+            answersConfirmed = true;
+            for (const answer of phaseAnswers) yield { type: "input.resolved", requestId: answer.request.requestId, reason: "answered" };
+          }
+          if (event.type === "state.updated") state = native.parseState(event.state);
+          if (event.type === "input.requested" && event.questions?.length) {
+            if (run.deferred.has(event.requestId)) continue;
+            if (run.pending.size >= 16 || run.deferred.size >= 64) throw new Error("Async question limit exceeded");
+            const request = { ...event, asynchronous: true, expiresAt: new Date(Date.now() + timeout).toISOString(), safeDescription: "You can answer while work continues. Only work that needs your answer will wait." };
+            const timer = setTimeout(() => {
+              if (run.pending.delete(request.requestId)) run.expired.push({ type: "input.resolved", requestId: request.requestId, reason: "expired" });
+              wake();
+            }, timeout);
+            timer.unref?.();
+            run.pending.set(request.requestId, { request, timer }); run.deferred.add(request.requestId);
+            // The consumer persists the visible question before the native tool is released.
+            yield request;
+            await native.deferInput!({ owner: input.owner, chatId: input.chatId, runId: input.runId, requestId: request.requestId });
+            continue;
+          }
+          // Native tool acknowledgement is not a user answer. Only the later answer phase resolves it.
+          if (event.type === "input.resolved" && run.deferred.has(event.requestId)) continue;
+          if (event.type === "run.completed") { terminal = event; continue; }
+          yield event.type === "assistant.delta" && phase ? { ...event, messageId: `async_${digest(`${phase}:${event.messageId ?? "answer"}`)}` } : event;
+        }
+        if (input.signal.aborted) break;
+        if (!terminal) throw new Error("Native phase ended without completion");
+        lastTerminal = terminal;
+        if (terminal.outcome !== "completed") break;
+        while (!input.signal.aborted && run.pending.size && !run.answers.length) {
+          while (run.expired.length) yield run.expired.shift()!;
+          if (!run.pending.size) break;
+          await new Promise<void>(resolve => { run.wake = resolve; if (input.signal.aborted || run.answers.length) wake(); });
+        }
+        while (run.expired.length) yield run.expired.shift()!;
+        if (input.signal.aborted || !run.answers.length) break;
+        if (state === undefined) throw new Error("Native conversation cannot resume for an answer");
+        // One bounded answer payload per phase, without repeating all option descriptions.
+        phaseAnswers = run.answers.splice(0, 1); phase++;
+      }
+      for (const requestId of run.pending.keys()) yield { type: "input.resolved", requestId, reason: "cancelled" };
+      yield input.signal.aborted ? { type: "run.completed", outcome: "aborted" } : lastTerminal;
+    } finally {
+      for (const pending of run.pending.values()) clearTimeout(pending.timer);
+      run.pending.clear(); run.deferred.clear(); run.answers.length = 0; run.expired.length = 0;
+      input.signal.removeEventListener("abort", wake); wake(); runs.delete(input.runId);
+    }
+  }
+  return {
+    ...native, start: execute, resume: execute,
+    async submitInput(input) {
+      const run = runs.get(input.runId);
+      if (!run || run.input.signal.aborted || run.input.chatId !== input.chatId || run.input.owner.type !== input.owner.type || run.input.owner.ownerId !== input.owner.ownerId) throw new Error("Async question unavailable");
+      const pending = run.pending.get(input.requestId);
+      if (!pending) throw new Error("Async question unavailable");
+      validateChatInputAnswer(pending.request, input);
+      if (run.answers.length >= 16) throw new Error("Async answer queue full");
+      clearTimeout(pending.timer); run.pending.delete(input.requestId);
+      run.answers.push({ request: pending.request, input }); run.wake?.(); run.wake = undefined;
+      return "queued";
+    },
+  };
+}

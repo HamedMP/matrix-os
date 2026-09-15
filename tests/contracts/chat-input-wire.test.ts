@@ -7,6 +7,11 @@ const activities: CanonicalChatRunActivity[] = [
   { ...base, id: "evt_claim", type: "input.submitted", requestId: "input_wire", clientRequestId: "req_submit" },
   { ...base, id: "evt_resolved", type: "input.resolved", requestId: "input_wire", reason: "answered" },
 ];
+it("projects asynchronous metadata away for strict input-v1 clients", () => {
+  const asynchronous = activities.map(event => event.type === "input.requested" ? { ...event, asynchronous: true } : event);
+  expect(projectChatMessageResponse({ activities: asynchronous }, "2", "1").activities).toEqual(activities);
+  expect(asynchronous[0]).toHaveProperty("asynchronous", true);
+});
 it("keeps strict older clients compatible even when they opt into message v2", () => {
   const result = projectChatMessageResponse({ activities }, "2", "0");
   expect(result.activities).toEqual([

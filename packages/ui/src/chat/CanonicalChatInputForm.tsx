@@ -77,7 +77,7 @@ function InputForm({ request, onSubmit }: CanonicalChatInputFormProps) {
     : "Answering is unavailable for this request. Stop the run and try again.";
   return <section style={borderStyle} className="space-y-3 rounded-xl border p-3 text-sm" aria-label={request.title}>
     <p className="font-medium">{request.title}</p>
-    {request.safeDescription ? <p className="opacity-75 whitespace-pre-wrap">{request.safeDescription}</p> : null}
+    {available && request.safeDescription ? <p className="opacity-75 whitespace-pre-wrap">{request.safeDescription}</p> : null}
     {available ? <form className="space-y-3" onSubmit={event => { event.preventDefault(); void submit(); }}>
       {questions.map(q => <fieldset key={q.questionId} disabled={pending} className="space-y-2">
         <legend className="font-medium whitespace-pre-wrap">{q.question}</legend>

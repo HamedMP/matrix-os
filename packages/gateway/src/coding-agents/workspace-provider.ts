@@ -417,6 +417,10 @@ export function createWorkspaceCodingAgentProvider(
       });
       return [];
     },
+    async deferInput({ thread, inputRequestId }) {
+      if (agent !== "codex" || !options.codexControl) throw new Error("Input deferral unavailable");
+      await options.codexControl.deferInput({ sessionId: sessionIdForThread(thread.id), inputRequestId, clientRequestId: `defer_${inputRequestId}` });
+    },
     async submitInput({ thread, inputRequestId, request }) {
       if (agent !== "codex" || !options.codexControl || !request.structuredAnswers) {
         throw new Error("Workspace provider input unavailable");

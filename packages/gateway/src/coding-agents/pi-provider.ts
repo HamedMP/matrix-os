@@ -261,7 +261,7 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
   const runTimeoutMs = boundedTimeout(options.runTimeoutMs, DEFAULT_RUN_TIMEOUT_MS);
   const killGraceMs = Math.max(1, Math.min(options.killGraceMs ?? DEFAULT_KILL_GRACE_MS, 30_000));
   const maxEvents = Math.max(1, Math.min(options.maxEvents ?? MAX_EVENTS_PER_RUN, MAX_EVENTS_PER_RUN));
-  type ActiveProcess = { abort: () => void; steer: (message: string) => void; submitInput: (id: string, answer: UserInputAnswerRequest) => AgentThreadEvent[] };
+  type ActiveProcess = { abort: () => void; steer: (message: string) => void; submitInput: (id: string, answer: UserInputAnswerRequest) => AgentThreadEvent[]; deferInput: (id: string) => void };
   const activeProcesses = new Map<string, ActiveProcess>();
 
   const resolveProjectPath = options.resolveProjectPath ?? (async (projectSlug: string) => {
@@ -281,6 +281,7 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
     abort: () => void,
     steer: (message: string) => void,
     submitInput: ActiveProcess["submitInput"],
+    deferInput: ActiveProcess["deferInput"],
   ): ActiveProcess {
     if (activeProcesses.size >= MAX_ACTIVE_PROCESSES) {
       const oldest = activeProcesses.keys().next().value as string | undefined;
@@ -294,7 +295,7 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
         }
       }
     }
-    const tracked = { abort, steer, submitInput };
+    const tracked = { abort, steer, submitInput, deferInput };
     activeProcesses.set(threadId, tracked);
     return tracked;
   }
@@ -459,7 +460,7 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
       const inputControl = createPiInputControl({ threadId: input.threadId, now: input.now,
         nextEventId: input.nextEventId, write, emit: queueEvents });
       const onSteer = (message: string) => write({ type: "steer", message });
-      const trackedProcess = trackProcess(input.threadId, onAbort, onSteer, inputControl.submit);
+      const trackedProcess = trackProcess(input.threadId, onAbort, onSteer, inputControl.submit, inputControl.defer);
       if (input.signal) {
         if (input.signal.aborted) onAbort();
         else input.signal.addEventListener("abort", onAbort, { once: true });
@@ -923,6 +924,11 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
       return [];
     },
 
+    deferInput({ thread, inputRequestId }) {
+      const active = activeProcesses.get(thread.id);
+      if (!active) throw new Error("Pi active Run unavailable");
+      active.deferInput(inputRequestId);
+    },
     submitInput({ thread, inputRequestId, request }) {
       const active = activeProcesses.get(thread.id);
       if (!active) throw new Error("Pi active Run unavailable");

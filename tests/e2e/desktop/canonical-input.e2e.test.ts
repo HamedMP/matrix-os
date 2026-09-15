@@ -49,10 +49,12 @@ const server = createServer((req, res) => {
 beforeAll(async () => {
   const { snapshot } = createCanonicalChatFixture("input_required");
   snapshot.chat.title = "Plan the report";
-  for (const run of snapshot.runs) { run.startedAt = new Date().toISOString(); run.updatedAt = run.startedAt; }
+  for (const run of snapshot.runs) { run.startedAt = new Date().toISOString(); run.updatedAt = run.startedAt; run.status = "running"; }
+  if (snapshot.chat.activeRun) snapshot.chat.activeRun.status = "running";
   const { project, providerBinding, activeRun, ...chat } = snapshot.chat;
   detail = CanonicalChatDetailResponseSchema.parse({ record: { chat, activeRun: snapshot.chat.activeRun, providerBinding: snapshot.chat.providerBinding }, messages: snapshot.messages, turns: snapshot.turns, runs: snapshot.runs, activities: [{
-    id: "evt_question", chatId: snapshot.chat.id, runId: snapshot.runs[0]!.id, occurredAt: new Date().toISOString(), type: "input.requested", requestId: "input_destination", title: "A few details before I continue", questions: [
+    id: "evt_question", chatId: snapshot.chat.id, runId: snapshot.runs[0]!.id, occurredAt: new Date().toISOString(), type: "input.requested", requestId: "input_destination", title: "A few details for the report", asynchronous: true,
+    safeDescription: "You can answer while work continues. Only work that needs your answer will wait.", questions: [
       { questionId: "destination", header: "Destination", question: "Where should I save the report?", allowOther: true, secret: false, options: [{ label: "Project folder", description: "Keep it with this project" }, { label: "Documents", description: "Save it in your files" }] },
       { questionId: "note", header: "Note", question: "What should the report include?", allowOther: false, secret: false },
     ],
@@ -83,6 +85,12 @@ it("answers in the existing run and receives intermediate output without reloadi
   await page.getByRole("button", { name: /Getting started —/ }).click();
   await page.getByRole("button", { name: "Maximize", exact: true }).click();
   await page.locator('[contenteditable="true"]').fill("Keep this unsent draft");
+  detail.messages.push({ id: "msg_independent", chatId: detail.record.chat.id, runId: detail.runs[0]!.id, turnId: detail.turns[0]!.id, seq: 2, role: "assistant", state: "pending", parts: [{ type: "text", text: "I am preparing the report outline while you choose where to save it." }], createdAt: new Date().toISOString() });
+  CanonicalChatDetailResponseSchema.parse(detail);
+  for (const stream of streams) stream.write(`data: ${JSON.stringify({ type: "chat.event", event: { cursor: 1, revision: 2, chatId: detail.record.chat.id, eventType: "run.message", createdAt: new Date().toISOString() } })}\n\n`);
+  await page.getByText("I am preparing the report outline while you choose where to save it.", { exact: true }).waitFor();
+  expect(submissions).toHaveLength(0);
+  await page.getByRole("radio", { name: /Project folder/ }).waitFor();
   await page.screenshot({ path: join(output, "01-question-wide.png") });
   await page.setViewportSize({ width: 600, height: 850 });
   await page.getByRole("button", { name: "Toggle Chat sidebar" }).click();
@@ -97,10 +105,10 @@ it("answers in the existing run and receives intermediate output without reloadi
   await page.getByText("Answer submitted", { exact: true }).waitFor();
   expect(submissions).toHaveLength(1);
   if (!manualReview) expect(submissions[0]).toMatchObject({ structuredAnswers: { destination: ["Project folder"], note: ["Progress and next steps"] } });
-  detail.messages.push({ id: "msg_progress", chatId: detail.record.chat.id, runId: detail.runs[0]!.id, turnId: detail.turns[0]!.id, seq: 2, role: "assistant", state: "pending", parts: [{ type: "text", text: "I have your answers and am drafting the report now." }], createdAt: new Date().toISOString() });
+  detail.messages.push({ id: "msg_progress", chatId: detail.record.chat.id, runId: detail.runs[0]!.id, turnId: detail.turns[0]!.id, seq: 3, role: "assistant", state: "pending", parts: [{ type: "text", text: "I have your answers and am drafting the report now." }], createdAt: new Date().toISOString() });
   CanonicalChatDetailResponseSchema.parse(detail);
   expect(streams.size).toBeGreaterThan(0);
-  const frame = { type: "chat.event", event: { cursor: 1, revision: 2, chatId: detail.record.chat.id, eventType: "run.message", createdAt: new Date().toISOString() } };
+  const frame = { type: "chat.event", event: { cursor: 2, revision: 3, chatId: detail.record.chat.id, eventType: "run.message", createdAt: new Date().toISOString() } };
   for (const stream of streams) stream.write(`data: ${JSON.stringify(frame)}\n\n`);
   await page.getByText("I have your answers and am drafting the report now.", { exact: true }).waitFor({ timeout: 10_000 });
   expect(detail.runs[0]!.status).toBe("running");

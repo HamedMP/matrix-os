@@ -5,6 +5,7 @@ import { CanonicalProviderRunEventSchema, type CanonicalProviderRunEvent } from 
 import type { HermesStdioClient } from "./hermes-stdio-client.js";
 import { inputSubmissionGate, nativeInputId, questionAnswers, secretQuestion } from "./native-input-control.js";
 import { boundedOperation } from "../bounded-operation.js";
+import { ASYNC_QUESTION_NOTICE } from "../coding-agents/async-input-notice.mjs";
 const QuestionSchema = z.object({
   qid: z.string().min(1).max(256).optional(), question: z.string().min(1).max(600),
   choices: z.array(z.string().min(1).max(160)).max(10).nullish(), multi_select: z.boolean().optional(),
@@ -46,6 +47,20 @@ export function createHermesInputController() {
       return event;
     },
     expire,
+    async defer(input: { owner: CanonicalOwnerScope; chatId: string; runId: string; requestId: string }) {
+      const run = runs.get(input.runId);
+      if (!run || run.chatId !== input.chatId || run.owner.type !== input.owner.type || run.owner.ownerId !== input.owner.ownerId) throw new Error("Input Run unavailable");
+      const pending = run.pending.get(input.requestId);
+      if (!pending || pending.sent) throw new Error("Input unavailable");
+      // Claim before sending: an uncertain native acknowledgement must never be repeated.
+      run.pending.delete(input.requestId);
+      for (const question of pending.questions) {
+        const response = await boundedOperation(() => run.client.request("clarify.respond", {
+          request_id: pending.nativeId, ...(question.qid ? { question_id: question.qid } : {}), answer: ASYNC_QUESTION_NOTICE,
+        }), 10_000);
+        if (z.object({ status: z.enum(["ok", "expired"]) }).parse(response).status !== "ok") throw new Error("Input expired");
+      }
+    },
     async submit(input: CanonicalSubmitChatInputRequest & { owner: CanonicalOwnerScope; chatId: string; runId: string; requestId: string }) {
       const run = runs.get(input.runId);
       if (!run || run.chatId !== input.chatId || run.owner.type !== input.owner.type || run.owner.ownerId !== input.owner.ownerId) throw new Error("Input Run unavailable");

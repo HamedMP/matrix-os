@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { ASYNC_QUESTION_NOTICE } from "./async-input-notice.mjs";
 import { AgentThreadEventSchema, UserInputRequestSchema, buildCanonicalChatInputAnswer, type AgentThreadEvent, type UserInputAnswerRequest } from "@matrix-os/contracts";
 import { logCodingAgentWarning } from "./diagnostics.js";
 import { z } from "zod/v4";
@@ -62,6 +63,12 @@ export function createPiInputControl(options: {
       options.write({ type: "extension_ui_response", id: entry.nativeId, ...(entry.method === "confirm" ? { confirmed: selected === "Yes" } : { value: selected }) });
       clearTimeout(entry.timer); pending.delete(requestId); nativeIds.delete(entry.nativeId);
       return [AgentThreadEventSchema.parse({ ...base(), type: "user_input.answered", requestId, correlationId: entry.request.correlationId })];
+    },
+    defer(requestId: string) {
+      const entry = pending.get(requestId);
+      if (!entry || entry.method === "confirm") throw new Error("Input deferral unavailable");
+      pending.delete(requestId); nativeIds.delete(entry.nativeId); clearTimeout(entry.timer);
+      options.write({ type: "extension_ui_response", id: entry.nativeId, value: ASYNC_QUESTION_NOTICE });
     },
     dispose() {
       for (const entry of pending.values()) clearTimeout(entry.timer);

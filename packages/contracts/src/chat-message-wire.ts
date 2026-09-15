@@ -18,11 +18,16 @@ function legacyMessage(message: CanonicalChatMessage): CanonicalChatMessage {
   return legacy;
 }
 
-function legacyInputActivities(activities: CanonicalChatRunActivity[]): CanonicalChatRunActivity[] {
+function legacyInputActivities(activities: CanonicalChatRunActivity[], version: ChatInputWireVersion): CanonicalChatRunActivity[] {
   return activities.flatMap<CanonicalChatRunActivity>(activity => {
+    if (version === "1") {
+      if (activity.type !== "input.requested") return [activity];
+      const { asynchronous: _asynchronous, ...compatible } = activity;
+      return [compatible];
+    }
     if (activity.type === "input.submitted") return [];
     if (activity.type === "input.requested") {
-      const { questions: _questions, safeDescription: _description, expiresAt: _expiresAt, ...legacy } = activity;
+      const { questions: _questions, safeDescription: _description, expiresAt: _expiresAt, asynchronous: _asynchronous, ...legacy } = activity;
       return [legacy];
     }
     if (activity.type === "input.resolved") {
@@ -39,12 +44,12 @@ export function projectChatMessageResponse<T extends {
   messages?: CanonicalChatMessage[];
   activities?: CanonicalChatRunActivity[];
 }>(response: T, version: ChatMessageWireVersion, inputVersion: ChatInputWireVersion = "0"): T {
-  if (version === "2" && (inputVersion === "1" || !response.activities)) return response;
+  if (version === "2" && !response.activities) return response;
   return {
     ...response,
     ...(version === "1" && response.message ? { message: legacyMessage(response.message) } : {}),
     ...(version === "1" && response.messages ? { messages: response.messages.map(legacyMessage) } : {}),
-    ...(inputVersion === "0" && response.activities ? { activities: legacyInputActivities(response.activities) } : {}),
+    ...(response.activities ? { activities: legacyInputActivities(response.activities, inputVersion) } : {}),
   };
 }
 

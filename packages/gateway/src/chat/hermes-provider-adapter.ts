@@ -897,5 +897,6 @@ export function createHermesChatProviderAdapter(options: {
     },
     submitApproval: (input) => approvals.submit(input),
     submitInput: (input) => inputs.submit(input),
+    deferInput: (input) => inputs.defer(input),
   };
 }

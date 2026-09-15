@@ -436,8 +436,9 @@ describe("ChatRepository", () => {
     const running = await admitChat(repository, "rail_running");
     const approval = await admitChat(repository, "rail_approval");
     const inputRequired = await admitChat(repository, "rail_input");
+    const asyncInput = await admitChat(repository, "rail_async_input");
 
-    for (const state of [running, approval, inputRequired]) {
+    for (const state of [running, approval, inputRequired, asyncInput]) {
       await repository.markRunRunning(owner, {
         chatId: state.chatId,
         runId: state.runId,
@@ -460,6 +461,10 @@ describe("ChatRepository", () => {
       requestId: "input_rail_exact",
       title: "Choose an option",
     });
+    await appendActivity(repository, asyncInput, {
+      id: "activity_rail_async_input", occurredAt: "2026-08-25T00:00:50.000Z",
+      type: "input.requested", requestId: "input_rail_async", title: "Choose while work continues", asynchronous: true,
+    });
 
     const list = await repository.list(owner, { limit: 100 });
     const byId = new Map(list.items.map((record) => [record.chat.id, record]));
@@ -468,11 +473,12 @@ describe("ChatRepository", () => {
       [running, "none", "running"],
       [approval, "approval_required", "waiting_for_approval"],
       [inputRequired, "input_required", "waiting_for_input"],
+      [asyncInput, "input_required", "running"],
     ] as const) expect(byId.get(state.chatId)).toMatchObject({
       chat: { attention }, activeRun: { runId: state.runId, status },
     });
 
-    for (const expected of [accepted, running, approval, inputRequired]) {
+    for (const expected of [accepted, running, approval, inputRequired, asyncInput]) {
       const detail = await repository.getDetailPage(owner, expected.chatId, { limit: 200 });
       expect(detail?.record).toEqual(byId.get(expected.chatId));
     }

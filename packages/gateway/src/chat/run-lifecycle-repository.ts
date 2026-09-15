@@ -77,7 +77,7 @@ function railTransitionForActivity(activity: CanonicalChatRunActivity): {
     case "approval.requested":
       return { runStatus: "waiting_for_approval", attention: "approval_required" };
     case "input.requested":
-      return { runStatus: "waiting_for_input", attention: "input_required" };
+      return { runStatus: activity.asynchronous ? "running" : "waiting_for_input", attention: "input_required" };
     case "approval.resolved":
     case "input.resolved":
       return { runStatus: "running", attention: "none" };

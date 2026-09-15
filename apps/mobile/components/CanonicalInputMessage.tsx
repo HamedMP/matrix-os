@@ -88,7 +88,7 @@ export function CanonicalInputMessage({ request, chatId, gatewayUrl, onSettled }
 
   return <View style={styles.card}>
     <Text style={styles.text}>{request.title}</Text>
-    {request.safeDescription ? <Text style={styles.text}>{request.safeDescription}</Text> : null}
+    {actionable && request.safeDescription ? <Text style={styles.text}>{request.safeDescription}</Text> : null}
     {actionable ? <>
       {request.questions?.map(question => <View key={question.questionId} style={styles.question}>
         <Text style={styles.text}>{question.question}</Text>

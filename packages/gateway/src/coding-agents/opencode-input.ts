@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { ASYNC_QUESTION_NOTICE } from "./async-input-notice.mjs";
 import { z } from "zod/v4";
 import { UserInputQuestionListSchema, type UserInputAnswerRequest } from "@matrix-os/contracts";
 import { questionAnswers } from "../chat/native-input-control.js";
@@ -46,6 +47,14 @@ export function createOpenCodeInputController(emit: (record: Record<string, unkn
       const result = await reply(`/question/${encodeURIComponent(request.nativeId)}/reply`, { answers });
       if (result !== true) throw new Error("OpenCode input unconfirmed");
       this.resolved(request.nativeId, "answered");
+    },
+    async defer(requestId: string) {
+      const request = pending.get(requestId);
+      if (!request || claims.has(requestId)) throw new Error("Input deferral unavailable");
+      claims.add(requestId);
+      const result = await reply(`/question/${encodeURIComponent(request.nativeId)}/reply`, { answers: request.questions.map(() => [ASYNC_QUESTION_NOTICE]) });
+      if (result !== true) throw new Error("Input deferral unconfirmed");
+      pending.delete(requestId);
     },
     clear() { pending.clear(); claims.clear(); },
   };

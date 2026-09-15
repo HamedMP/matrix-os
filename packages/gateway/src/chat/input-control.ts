@@ -48,19 +48,21 @@ export async function submitCanonicalInput(options: {
     throw unavailable();
   }
   if (active.controller.signal.aborted) throw unavailable();
+  let queued = false;
   try {
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      await Promise.race([
+      queued = await Promise.race([
         active.adapter.submitInput({ owner, chatId, runId, requestId, ...input, ...(state === undefined ? {} : { state }) }),
         new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("Input delivery timed out")), 10_000); }),
-      ]);
+      ]) === "queued";
     } finally { if (timer) clearTimeout(timer); }
   } catch (error: unknown) {
     console.warn("[chat/input] Provider input callback failed:", error instanceof Error ? error.name : "UnknownError");
     // Delivery is ambiguous: preserve the durable claim and never replay native work.
     throw new CanonicalChatOrchestrationError({ code: "run_unavailable", safeMessage: "The answer could not be confirmed. Check the conversation before continuing.", retryable: false, recoveryActions: [] }, 503);
   }
+  if (queued) return { requestId, submission: "accepted" };
   try {
     const delivered = await repository.getInputState(owner, { chatId, runId, requestId });
     if (delivered.resolved) return { requestId, submission: "accepted" };
