@@ -40,10 +40,18 @@ export function buildOpenCodeRunConfiguration(
       agent: { title: { disable: true } },
       provider: {
         cloudflare: {
+          name: "Matrix AI",
           npm: "@ai-sdk/openai-compatible",
           options: {
             baseURL: baseUrl.replace(/\/+$/, ""),
             apiKey: "{env:OPENAI_API_KEY}",
+          },
+          models: {
+            [MANAGED_GLM_MODEL]: {
+              name: "GLM 5.3 Flash",
+              reasoning: true,
+              interleaved: { field: "reasoning_content" },
+            },
           },
         },
       },
