@@ -116,7 +116,7 @@ function GettingStartedPopoverContent() {
     setOpen(true);
   }, [autoOpenKey, connectionStatus, snapshot.completedCount, snapshot.loaded, blocked, isBlocked, setOpen]);
 
-  const openSettings = useCallback((section: "services" | "providers" | "billing") => {
+  const openSettings = useCallback((section: "services" | "providers" | "billing" | "cli") => {
     requestSettingsSection(section);
     openTab({ kind: "settings", title: "Settings" });
   }, [openTab, requestSettingsSection]);
@@ -250,6 +250,11 @@ function GettingStartedPopoverContent() {
               );
             })}
           </div>
+          <button type="button" onClick={() => openSettings("cli")}
+            className="w-full border-t px-3 py-3 text-left text-xs hover:bg-[var(--bg-hover)] focus-visible:outline focus-visible:outline-2"
+            style={{ color: BRAND_COLORS.text }}>
+            Set up local CLI, MCP &amp; skills
+          </button>
         </Popover.Content>
       </Popover.Portal>
     </Popover.Root>

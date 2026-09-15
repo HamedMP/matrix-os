@@ -21,6 +21,7 @@ export { Tooltip } from "./Tooltip.js";
 export type { TooltipProps } from "./Tooltip.js";
 
 export { cn } from "./cn.js";
+export { MatrixLocalSetup, MatrixCliSetup, CLI_BREW_INSTALL_COMMAND, CLI_NPM_INSTALL_COMMAND } from "./matrix-local-setup/MatrixLocalSetup.js";
 
 export { AgentsProvidersView } from "./agents-providers/AgentsProvidersView.js";
 export type {

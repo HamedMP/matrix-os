@@ -23,7 +23,7 @@ const BRAND_COLORS = onboardingChecklist.colors;
 export const DESKTOP_APP_DOWNLOAD_URL = "https://github.com/HamedMP/matrix-os/releases";
 export const GETTING_STARTED_REFRESH_MS = 15_000;
 
-export type GettingStartedSettingsSection = "integrations" | "agents-providers" | "billing";
+export type GettingStartedSettingsSection = "integrations" | "agents-providers" | "billing" | "cli";
 
 interface GettingStartedPopoverProps {
   onOpenSettings: (section: GettingStartedSettingsSection) => void;
@@ -311,6 +311,11 @@ function GettingStartedPopoverContent({
               );
             })}
           </div>
+          <button type="button" onClick={() => onOpenSettings("cli")}
+            className="w-full border-t px-3 py-3 text-left text-xs hover:bg-muted/70 focus-visible:outline focus-visible:outline-2"
+            style={{ color: BRAND_COLORS.text }}>
+            Set up local CLI, MCP &amp; skills
+          </button>
         </PopoverPrimitive.Content>
       </PopoverPrimitive.Portal>
     </PopoverPrimitive.Root>

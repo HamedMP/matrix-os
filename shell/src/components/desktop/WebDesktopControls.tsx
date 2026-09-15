@@ -3,9 +3,9 @@
 import Link from "next/link";
 import { DiscordIcon, MessageCircleIcon, SearchIcon, ServerIcon } from "@/lib/hugeicons";
 import { UserButton } from "../UserButton";
-import { GettingStartedPopover } from "../onboarding/GettingStartedPopover";
+import { GettingStartedPopover, type GettingStartedSettingsSection } from "../onboarding/GettingStartedPopover";
 
-export type WebDesktopSettingsSection = "appearance" | "billing" | "integrations" | "agents-providers";
+export type WebDesktopSettingsSection = GettingStartedSettingsSection | "appearance";
 
 interface WebDesktopControlsProps {
   onOpenSettings: (section: WebDesktopSettingsSection) => void;

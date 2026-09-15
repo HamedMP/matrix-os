@@ -63,7 +63,7 @@ describe("desktop plugins CLI install card", () => {
     render(<CliSection />);
     fireEvent.click(screen.getByTestId("plugins-cli-copy-brew"));
     await waitFor(() =>
-      expect(screen.getByText("Could not copy to the clipboard.")).not.toBeNull(),
+      expect(screen.getByText("Could not copy. Select and copy the text manually.")).not.toBeNull(),
     );
     expect(warn.mock.calls.flat().join(" ")).not.toContain("secret-token-leak");
   });
