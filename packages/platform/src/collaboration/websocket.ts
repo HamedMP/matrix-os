@@ -138,7 +138,11 @@ export class CollaborationWebSocketAuthorizer {
     const policy = await this.requirePolicy(input.actorId, directory.ownerId, input.scopeId, request.purpose);
     const ticket = this.createToken();
     const expiresAt = new Date(this.now().getTime() + TICKET_LIFETIME_MS).toISOString();
-    const response = CollaborationConnectionTicketResponseSchema.parse({ ticket, expiresAt });
+    const response = CollaborationConnectionTicketResponseSchema.parse({
+      ticket,
+      actorId: input.actorId,
+      expiresAt,
+    });
     await this.options.repository.createConnectionTicket({
       token: response.ticket,
       actorId: input.actorId,

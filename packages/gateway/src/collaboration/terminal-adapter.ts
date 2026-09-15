@@ -98,7 +98,8 @@ export class CollaborationTerminalAdapter implements CollaborationTerminalRuntim
     session = await this.repairOrphanedPrivateBinding(input.ownerId, input.terminalId, session);
     const resourceRevision = session?.executionGeneration ?? 0;
     if (!session) return { eligible: false, reason: "unavailable", resourceRevision };
-    if (!eligiblePrivateSession(session, input.ownerId)) {
+    if (!eligiblePrivateSession(session, input.ownerId)
+      && !await this.matchesSharedScope(session, input.ownerId, input.terminalId)) {
       return { eligible: false, reason: "unsupported", resourceRevision };
     }
     const payload = PreflightPayloadSchema.parse({
@@ -127,7 +128,11 @@ export class CollaborationTerminalAdapter implements CollaborationTerminalRuntim
     const confirmation = this.verifyConfirmation(input);
     let session = await this.readSession(input.terminalId);
     session = await this.repairOrphanedPrivateBinding(input.ownerId, input.terminalId, session);
-    if (!session || !eligiblePrivateSession(session, input.ownerId)
+    const privateSession = session ? eligiblePrivateSession(session, input.ownerId) : false;
+    const existingSharedScope = session
+      ? await this.matchingSharedScope(session, input.ownerId, input.terminalId)
+      : null;
+    if (!session || (!privateSession && !existingSharedScope)
       || session.sessionIncarnation !== confirmation.incarnation
       || session.executionGeneration !== input.expectedResourceRevision) {
       throw new CollaborationTerminalAdapterError("conflict");
@@ -140,8 +145,10 @@ export class CollaborationTerminalAdapter implements CollaborationTerminalRuntim
       authorityRuntimeId: this.options.runtimeId,
     });
     if (scope.lifecycle !== "private") {
+      if (existingSharedScope?.id !== scope.id) throw new CollaborationTerminalAdapterError("conflict");
       return this.replaySharedScope(scope, input);
     }
+    if (!privateSession) throw new CollaborationTerminalAdapterError("conflict");
 
     try {
       await this.options.registry.bindCollaboration(input.terminalId, {
@@ -261,6 +268,21 @@ export class CollaborationTerminalAdapter implements CollaborationTerminalRuntim
     }
   }
 
+  private async matchesSharedScope(session: RegistrySession, ownerId: string, terminalId: string): Promise<boolean> {
+    return Boolean(await this.matchingSharedScope(session, ownerId, terminalId));
+  }
+
+  private async matchingSharedScope(
+    session: RegistrySession,
+    ownerId: string,
+    terminalId: string,
+  ): Promise<CollaborationScopeRecord | null> {
+    if (!eligibleSharedSession(session, ownerId) || !session.collaborationScopeId) return null;
+    const scope = await this.options.repository.getScope(session.collaborationScopeId);
+    return scope?.ownerId === ownerId && scope.kind === "terminal" && scope.resourceId === terminalId
+      && scope.lifecycle === "shared" ? scope : null;
+  }
+
   private verifyConfirmation(input: {
     ownerId: string;
     terminalId: string;
@@ -366,19 +388,42 @@ export class CollaborationTerminalAdapter implements CollaborationTerminalRuntim
 
   private async replaySharedScope(
     scope: CollaborationScopeRecord,
-    input: { ownerId: string; clientRequestId: string; payloadHash: string },
+    input: {
+      ownerId: string;
+      clientRequestId: string;
+      payloadHash: string;
+      expectedResourceRevision: number;
+    },
   ): Promise<CollaborationScopeRecord> {
     if (scope.lifecycle !== "shared") throw new CollaborationTerminalAdapterError("conflict");
-    const operation = await this.options.repository.db.selectFrom("collaboration_operations")
-      .select(["payload_hash", "status"])
-      .where("scope_id", "=", scope.id)
-      .where("actor_id", "=", input.ownerId)
-      .where("client_request_id", "=", input.clientRequestId)
-      .where("operation_kind", "=", "scope.create").executeTakeFirst();
-    if (!operation || operation.payload_hash !== input.payloadHash || operation.status !== "completed") {
-      throw new CollaborationTerminalAdapterError("conflict");
-    }
-    return scope;
+    return this.options.repository.db.transaction().execute(async (trx) => {
+      const createdAt = this.now();
+      await trx.insertInto("collaboration_operations").values({
+        scope_id: scope.id,
+        actor_id: input.ownerId,
+        client_request_id: input.clientRequestId,
+        operation_kind: "scope.create",
+        payload_hash: input.payloadHash,
+        status: "completed",
+        result_ref: { scopeId: scope.id },
+        expected_revision: input.expectedResourceRevision,
+        accepted_auth_epoch: scope.authEpoch,
+        created_at: createdAt.toISOString(),
+        expires_at: new Date(createdAt.getTime() + OPERATION_RETENTION_MS).toISOString(),
+      }).onConflict((conflict) => conflict
+        .columns(["scope_id", "actor_id", "client_request_id", "operation_kind"])
+        .doNothing()).execute();
+      const operation = await trx.selectFrom("collaboration_operations")
+        .select(["payload_hash", "status"])
+        .where("scope_id", "=", scope.id)
+        .where("actor_id", "=", input.ownerId)
+        .where("client_request_id", "=", input.clientRequestId)
+        .where("operation_kind", "=", "scope.create").executeTakeFirst();
+      if (!operation || operation.payload_hash !== input.payloadHash || operation.status !== "completed") {
+        throw new CollaborationTerminalAdapterError("conflict");
+      }
+      return scope;
+    });
   }
 }
 
@@ -387,6 +432,13 @@ function eligiblePrivateSession(session: RegistrySession, ownerId: string): bool
     && session.creatorActorId === ownerId && Boolean(session.sessionIncarnation)
     && Boolean(session.executionGeneration) && session.sharedControlMode === "eligible"
     && session.collaborationScopeId === undefined;
+}
+
+function eligibleSharedSession(session: RegistrySession, ownerId: string): boolean {
+  return session.status === "active" && session.incarnationVerified
+    && session.creatorActorId === ownerId && Boolean(session.sessionIncarnation)
+    && Boolean(session.executionGeneration) && session.sharedControlMode === "shared"
+    && Boolean(session.collaborationScopeId);
 }
 
 function signPreflight(payload: z.infer<typeof PreflightPayloadSchema>, secret: string): string {

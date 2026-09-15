@@ -15,7 +15,11 @@ import {
   CollaborationRevisionSchema,
   CollaborationResourceIdSchema,
   CollaborationScopeSchema,
+  CollaborationTerminalActionResultSchema,
+  CollaborationTerminalActionSchema,
+  CollaborationTerminalSchema,
   CollaborationUserStateSchema,
+  type CollaborationTerminalAction,
 } from "@matrix-os/contracts/collaboration";
 import { z } from "zod/v4";
 import { HOSTED_GATEWAY_URL } from "@/lib/storage";
@@ -188,6 +192,7 @@ export function fetchCollaborationEventTicket(
   token: string,
   scopeId: string,
   clientRequestId: string,
+  purpose: "events" | "terminal" = "events",
 ) {
   const id = CollaborationIdSchema.parse(scopeId);
   return fetchAuthenticatedJson({
@@ -199,8 +204,36 @@ export function fetchCollaborationEventTicket(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       clientRequestId: CollaborationIdSchema.parse(clientRequestId),
-      purpose: "events",
+      purpose,
     }),
+  });
+}
+
+export function fetchSharedTerminal(token: string, scopeId: string) {
+  const id = CollaborationIdSchema.parse(scopeId);
+  return fetchAuthenticatedJson({
+    url: url(`/api/collaboration/scopes/${id}/terminal`),
+    token,
+    schema: CollaborationTerminalSchema,
+    errorMessage: ERROR,
+  });
+}
+
+export function controlSharedTerminal(
+  token: string,
+  scopeId: string,
+  action: CollaborationTerminalAction,
+) {
+  const id = CollaborationIdSchema.parse(scopeId);
+  const body = CollaborationTerminalActionSchema.parse(action);
+  return fetchAuthenticatedJson({
+    url: url(`/api/collaboration/scopes/${id}/terminal/actions`),
+    token,
+    schema: CollaborationTerminalActionResultSchema,
+    errorMessage: ERROR,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
   });
 }
 
@@ -212,5 +245,14 @@ export function collaborationEventsUrl(scopeId: string, ticket: string, after = 
   target.protocol = target.protocol === "https:" ? "wss:" : "ws:";
   target.searchParams.set("ticket", parsedTicket);
   target.searchParams.set("after", cursor);
+  return target.toString();
+}
+
+export function collaborationTerminalUrl(scopeId: string, ticket: string): string {
+  const id = CollaborationIdSchema.parse(scopeId);
+  const parsedTicket = CollaborationConnectionTicketResponseSchema.shape.ticket.parse(ticket);
+  const target = new URL(`/ws/collaboration/scopes/${id}/terminal`, HOSTED_GATEWAY_URL);
+  target.protocol = target.protocol === "https:" ? "wss:" : "ws:";
+  target.searchParams.set("ticket", parsedTicket);
   return target.toString();
 }

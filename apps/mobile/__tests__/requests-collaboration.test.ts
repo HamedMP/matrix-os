@@ -3,8 +3,11 @@ jest.mock("@/lib/storage", () => ({ HOSTED_GATEWAY_URL: "https://app.matrix-os.c
 import {
   acceptCollaborationInvitation,
   collaborationEventsUrl,
+  collaborationTerminalUrl,
+  controlSharedTerminal,
   fetchCollaborationEventTicket,
   fetchCollaborationInbox,
+  fetchSharedTerminal,
   fetchSharedChatMessages,
   fetchSharedAiRequests,
   postSharedAiRequest,
@@ -124,6 +127,62 @@ describe("mobile collaboration requests", () => {
     );
     expect(collaborationEventsUrl(scopeId, ticket, "12")).toBe(
       `wss://app.matrix-os.com/ws/collaboration/scopes/${scopeId}/events?ticket=${ticket}&after=12`,
+    );
+  });
+
+  it("reads and controls a terminal through its scoped M3 routes", async () => {
+    const terminal = {
+      id: "terminal_release",
+      scopeId,
+      incarnation: `terminal-${"a".repeat(32)}`,
+      executionGeneration: "4",
+      status: "active",
+      createdBy: { actorId: "user_owner", displayName: "Nima" },
+      createdAt: "2026-09-11T12:00:00.000Z",
+    };
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({
+      ok: true,
+      json: jest.fn().mockResolvedValueOnce(terminal).mockResolvedValueOnce({ terminal, action: "acquired" }),
+    } as unknown as Response);
+
+    await expect(fetchSharedTerminal("clerk-token", scopeId)).resolves.toEqual(terminal);
+    await expect(controlSharedTerminal("clerk-token", scopeId, {
+      type: "acquire",
+      clientRequestId: "40000000-0000-4000-8000-000000000030",
+      incarnation: terminal.incarnation,
+      connectionId: "connection_mobile",
+    })).resolves.toMatchObject({ action: "acquired" });
+
+    expect(fetchMock).toHaveBeenNthCalledWith(1,
+      `https://app.matrix-os.com/api/collaboration/scopes/${scopeId}/terminal`,
+      expect.objectContaining({ headers: { Authorization: "Bearer clerk-token" } }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(2,
+      `https://app.matrix-os.com/api/collaboration/scopes/${scopeId}/terminal/actions`,
+      expect.objectContaining({ method: "POST", body: expect.stringContaining("connection_mobile") }),
+    );
+  });
+
+  it("obtains a terminal ticket and builds the exact scoped terminal socket URL", async () => {
+    const ticket = "u".repeat(43);
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({
+      ok: true,
+      json: jest.fn().mockResolvedValue({ ticket, expiresAt: "2026-09-11T12:00:30.000Z" }),
+    } as unknown as Response);
+
+    await fetchCollaborationEventTicket(
+      "clerk-token",
+      scopeId,
+      "40000000-0000-4000-8000-000000000031",
+      "terminal",
+    );
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      `https://app.matrix-os.com/api/collaboration/scopes/${scopeId}/connection-tickets`,
+      expect.objectContaining({ body: expect.stringContaining('"purpose":"terminal"') }),
+    );
+    expect(collaborationTerminalUrl(scopeId, ticket)).toBe(
+      `wss://app.matrix-os.com/ws/collaboration/scopes/${scopeId}/terminal?ticket=${ticket}`,
     );
   });
 });
