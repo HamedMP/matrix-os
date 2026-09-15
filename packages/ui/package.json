@@ -7,7 +7,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./styles.css": "./src/styles.css",
-    "./agents-providers.css": "./src/agents-providers/agents-providers.css"
+    "./agents-providers.css": "./src/agents-providers/agents-providers.css",
+    "./chat-agents.css": "./src/chat-agents/chat-agents.css"
   },
   "dependencies": {
     "@matrix-os/contracts": "workspace:*",
