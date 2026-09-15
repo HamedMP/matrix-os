@@ -157,11 +157,22 @@ describe("collaboration project lifecycle", () => {
       .resolves.toMatchObject({ type: "transfer", status: "completed", revision: "6" });
   });
 
-  it("fences successor membership while an ownership transfer is staged", async () => {
+  it("fences every membership mutation while an ownership transfer is staged", async () => {
     let releaseStage!: () => void;
     let markStageEntered!: () => void;
     const stageEntered = new Promise<void>((resolve) => { markStageEntered = resolve; });
     const stageGate = new Promise<void>((resolve) => { releaseStage = resolve; });
+    const repository = new CollaborationRepository(fixture.db, { now: () => NOW });
+    const pendingInvitation = await repository.createInvitation({
+      scopeId: PROJECT_SCOPE_ID,
+      actorId: OWNER_ID,
+      targetActorId: "user_project_pending",
+      role: "viewer",
+      clientRequestId: request(60),
+      expectedRevision: 4,
+      payloadHash: "6".repeat(64),
+      expiresAt: new Date(NOW.getTime() + 60_000).toISOString(),
+    });
     const lifecycle = service(fixture, {
       stageTransfer: async () => {
         markStageEntered();
@@ -180,11 +191,10 @@ describe("collaboration project lifecycle", () => {
       successorActorId: SUCCESSOR_ID,
       expectedMemberRevision: 1,
       clientRequestId: request(6),
-      expectedRevision: 4,
+      expectedRevision: 5,
       payloadHash: "f".repeat(64),
     });
     await stageEntered;
-    const repository = new CollaborationRepository(fixture.db, { now: () => NOW });
 
     await expect(repository.changeMemberRole({
       scopeId: PROJECT_SCOPE_ID,
@@ -192,9 +202,35 @@ describe("collaboration project lifecycle", () => {
       targetActorId: SUCCESSOR_ID,
       role: "viewer",
       clientRequestId: request(7),
-      expectedRevision: 5,
+      expectedRevision: 6,
       expectedMemberRevision: 1,
       payloadHash: "1".repeat(64),
+    })).rejects.toMatchObject({ code: "conflict" });
+    await expect(repository.createInvitation({
+      scopeId: PROJECT_SCOPE_ID,
+      actorId: OWNER_ID,
+      targetActorId: "user_project_new",
+      role: "editor",
+      clientRequestId: request(61),
+      expectedRevision: 6,
+      payloadHash: "7".repeat(64),
+      expiresAt: new Date(NOW.getTime() + 60_000).toISOString(),
+    })).rejects.toMatchObject({ code: "conflict" });
+    await expect(repository.acceptInvitation({
+      invitationId: pendingInvitation.invitationId,
+      actorId: "user_project_pending",
+      clientRequestId: request(62),
+      expectedRevision: 6,
+      payloadHash: "8".repeat(64),
+    })).rejects.toMatchObject({ code: "conflict" });
+    await expect(repository.revokeInvitation({
+      scopeId: PROJECT_SCOPE_ID,
+      invitationId: pendingInvitation.invitationId,
+      actorId: OWNER_ID,
+      clientRequestId: request(63),
+      expectedRevision: 6,
+      expectedMemberRevision: 1,
+      payloadHash: "9".repeat(64),
     })).rejects.toMatchObject({ code: "conflict" });
     releaseStage();
 
