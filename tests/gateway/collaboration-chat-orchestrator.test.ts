@@ -1,8 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  CanonicalChatOrchestrator,
-  SharedChatRunPreparationError,
-} from "../../packages/gateway/src/chat/orchestrator.js";
+import { CanonicalChatOrchestrator } from "../../packages/gateway/src/chat/orchestrator.js";
+import { SharedChatRunPreparationError } from "../../packages/gateway/src/chat/shared-execution-coordinator.js";
 import { CanonicalChatProviderRegistry } from "../../packages/gateway/src/chat/provider-adapter.js";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
 import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";

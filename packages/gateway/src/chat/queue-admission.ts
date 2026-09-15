@@ -38,7 +38,7 @@ function safeError(
   });
 }
 
-function requirementsFor(input: CanonicalQueueChatTurnRequest) {
+export function chatProviderRequirements(input: CanonicalQueueChatTurnRequest) {
   return {
     attachments: input.parts.flatMap((part) =>
       part.type === "attachment_reference" ? [part.kind] : []
@@ -82,7 +82,7 @@ export async function enqueueCanonicalQueuedTurn(options: {
     catalog,
     selection: input.selection,
     ...(record.providerBinding ? { boundInstanceId: record.providerBinding.instanceId } : {}),
-    requirements: requirementsFor(input),
+    requirements: chatProviderRequirements(input),
   });
   if (!validated.ok) {
     throw new CanonicalQueueAdmissionError(
