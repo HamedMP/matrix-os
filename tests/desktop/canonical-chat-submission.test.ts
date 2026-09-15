@@ -45,3 +45,27 @@ describe("canonical Chat submission", () => {
     expect(title.length).toBeLessThanOrEqual(56);
   });
 });
+
+describe("generated title boundaries", () => {
+  it("uses the first Chinese sentence from the reported prompt", () => {
+    expect(canonicalChatTitle({ text: "我想设计一个个人主页。请先用 request_user_input 工具询问我喜欢的视觉风格，提供三个选项和简短说明。", agentPrompt: "", resources: [], invocations: [] })).toBe("我想设计一个个人主页");
+  });
+
+  it("bounds resource-only fallback titles", () => {
+    const title = canonicalChatTitle({ text: "", agentPrompt: "", invocations: [], resources: [{ kind: "file", id: "f", label: "长".repeat(200) }] });
+    expect(title).toBe("长".repeat(55) + "…");
+  });
+
+  it("bounds invocation-only fallback titles", () => {
+    const title = canonicalChatTitle({ text: "", agentPrompt: "", resources: [], invocations: [{ kind: "skill", descriptorId: "s", invocation: "/" + "x".repeat(200) }] });
+    expect(title.length).toBeLessThanOrEqual(56);
+  });
+
+  it("never splits emoji graphemes when truncating", () => {
+    const emoji = "👩🏽‍💻";
+    const title = canonicalChatTitle({ text: emoji.repeat(80), agentPrompt: "", resources: [], invocations: [] });
+    expect(title.endsWith("…")).toBe(true);
+    expect(title.slice(0, -1).split(emoji).join("")).toBe("");
+    expect(title.length).toBeLessThanOrEqual(56);
+  });
+});

@@ -1,5 +1,6 @@
 "use client";
 
+import { generatedChatTitle } from "@matrix-os/ui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   CanonicalChatApprovalDecision,
@@ -266,7 +267,7 @@ export function useCanonicalChatState(): ChatState {
         if (!record) {
           record = await client.create({
             clientRequestId: requestId(),
-            title: (options.displayText?.trim() || text.trim()).slice(0, 200),
+            title: generatedChatTitle(options.displayText?.trim() || text),
             currentSelection: selection,
           });
           setActiveChatId(record.chat.id);

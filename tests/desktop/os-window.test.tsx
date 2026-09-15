@@ -156,7 +156,7 @@ describe("Electron OS window chrome", () => {
     expect(screen.queryByRole("button", { name: "Close Release planning" })).toBeNull();
     const chromeGrid = screen.getByTestId("os-window-chrome-grid");
     expect(chromeGrid.className).not.toContain("border-b");
-    expect((chromeGrid as HTMLElement).style.gridTemplateColumns).toBe("260px minmax(0, 1fr) 640px");
+    expect((chromeGrid as HTMLElement).style.gridTemplateColumns).toBe("260px minmax(0, 1fr) minmax(640px, max-content)");
     expect(chromeGrid.firstElementChild?.className).not.toContain("border-r");
     const title = screen.getByText("Release planning");
     expect(title.parentElement?.className).toContain("justify-start");
@@ -178,8 +178,8 @@ describe("Electron OS window chrome", () => {
     const openInspector = screen.getByRole("button", { name: "Toggle inspector" });
     const inspectorSlot = openInspector.parentElement;
     expect(openNavigation.parentElement?.className).toContain("ml-auto");
-    expect(inspectorSlot?.className).toContain("absolute");
-    expect(inspectorSlot?.className).toContain("right-0");
+    expect(inspectorSlot?.className).toContain("justify-end");
+    expect(inspectorSlot?.hasAttribute("data-os-window-actions")).toBe(true);
 
     rerender(
       <TopBar

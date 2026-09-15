@@ -439,6 +439,7 @@ export function ChatApp({
                   <button
                     type="button"
                     aria-label={activeConversationTitle ? `Rename ${activeConversationTitle}` : undefined}
+                    title={activeConversationTitle}
                     disabled={!sessionId || !activeConversationTitle || !onRenameConversation || renamePending}
                     className={`max-w-full truncate rounded px-1 text-sm font-semibold leading-4 text-foreground outline-none enabled:hover:bg-accent/40 enabled:focus-visible:ring-2 enabled:focus-visible:ring-primary/40 ${mobile ? "min-h-11 py-2" : ""}`}
                     onClick={() => sessionId && activeConversationTitle && setEditingChat({ id: sessionId, source: "header" })}

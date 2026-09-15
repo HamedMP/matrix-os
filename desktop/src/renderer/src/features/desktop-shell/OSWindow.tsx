@@ -203,17 +203,12 @@ export function TopBar({
               </div>
             </div>
           ) : null}
-          {rightActions ? (
-            <div className="pointer-events-auto absolute inset-y-0 right-0 z-40 flex items-center px-1">
-              {rightActions}
-            </div>
-          ) : null}
           <div
             data-os-window-chrome-placement={chromePlacement}
             data-testid="os-window-chrome-grid"
             className="pointer-events-none absolute inset-0 z-30 grid"
             style={{
-              gridTemplateColumns: `${alignedLeftWidth}px minmax(0, 1fr) ${alignedRightWidth}px`,
+              gridTemplateColumns: `${alignedLeftWidth}px minmax(0, 1fr) ${rightActions ? `minmax(${alignedRightWidth}px, max-content)` : `${alignedRightWidth}px`}`,
             }}
           >
             <div
@@ -230,17 +225,20 @@ export function TopBar({
                 </div>
               ) : null}
               {title || showSidebarTrigger ? (
-                <div className={`flex min-w-0 items-center justify-start text-[15px] font-medium ${showSidebarTrigger ? "gap-1" : "gap-1.5"}`}>
+                <div className={`flex min-w-0 flex-1 items-center justify-start text-[15px] font-medium ${showSidebarTrigger ? "gap-1" : "gap-1.5"}`}>
                   {showSidebarTrigger ? <OSWindowSidebarTrigger label={sidebarTriggerLabel} /> : null}
                   {icon}
-                  <span className="min-w-0 truncate">{title}</span>
+                  <span className="block min-w-0 flex-1 truncate">{title}</span>
                 </div>
               ) : null}
             </div>
             <div
-              className={alignedRightWidth > 0 ? "min-w-0 border-l" : "min-w-0"}
+              data-os-window-actions
+              className={`pointer-events-auto flex min-w-0 items-center justify-end ${rightActions ? "px-1" : ""} ${alignedRightWidth > 0 ? "border-l" : ""}`}
               style={{ borderColor: "var(--border-subtle)" }}
-            />
+            >
+              {rightActions}
+            </div>
           </div>
         </>
       ) : (
