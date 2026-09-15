@@ -1,0 +1,4 @@
+interface:
+  display_name: "Run on Matrix"
+  short_description: "Remote execution, supervision and peer review"
+  default_prompt: "Use $run-on-matrix to execute this task on my Matrix computer, monitor progress, and coordinate parallel workers and independent review."
