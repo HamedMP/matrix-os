@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { withAsyncChatInput } from "../../packages/gateway/src/chat/async-input-adapter.js";
+import { CodingChatStateSchema } from "../../packages/gateway/src/chat/coding-run-recovery.js";
 import type { CanonicalChatProviderAdapter, CanonicalProviderRunEvent, CanonicalProviderRunInput } from "../../packages/gateway/src/chat/provider-adapter.js";
 
 const request = { type: "input.requested" as const, requestId: "question_color", title: "Color", questions: [{ questionId: "color", header: "Color", question: "Which color?", options: [{ label: "Blue", description: "Blue" }, { label: "Red", description: "Red" }], allowOther: false, multiSelect: false, secret: false }] };
@@ -31,6 +32,23 @@ function fixture() {
 }
 
 describe("asynchronous canonical questions", () => {
+  it("uses continuation identities accepted by the production coding state parser", async () => {
+    const f = fixture();
+    const native = { ...f.native, parseState: (state: unknown) => CodingChatStateSchema.parse(state), async *start(input: CanonicalProviderRunInput) {
+      yield { type: "state.updated", state: { conversationId: "thread_test", runId: input.runId } } as const;
+      yield request;
+      yield { type: "run.completed", outcome: "completed" } as const;
+    }, async *resume(input: CanonicalProviderRunInput) {
+      yield { type: "state.updated", state: { conversationId: "thread_test", runId: input.continuationId } } as const;
+      yield { type: "run.completed", outcome: "completed" } as const;
+    } };
+    const adapter = withAsyncChatInput(native); const events: CanonicalProviderRunEvent[] = [];
+    const finished = (async () => { for await (const e of adapter.start(f.input)) events.push(e); })();
+    await vi.waitFor(() => expect(events.some(e => e.type === "input.requested")).toBe(true));
+    await adapter.submitInput!(f.answer);
+    await expect(finished).resolves.toBeUndefined();
+    expect(events.at(-1)).toMatchObject({ type: "run.completed", outcome: "completed" });
+  });
   it("includes independent and answer phases in the canonical token usage", async () => {
     const f = fixture();
     const native = { ...f.native, async *start(input: CanonicalProviderRunInput) {

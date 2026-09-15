@@ -45,7 +45,7 @@ export function withAsyncChatInput(native: CanonicalChatProviderAdapter, options
           `[Matrix: answers to your earlier asynchronous questions]\n${JSON.stringify(phaseAnswers.map(answer => ({ requestId: answer.request.requestId, questions: answer.request.questions?.map(question => ({ questionId: question.questionId, question: question.question })), answers: answer.input.structuredAnswers ?? answer.input.answer })))}\nApply these user answers to the pending work. Do not ask the same questions again.${ASYNC_PROMPT}`;
         const parts = phase === 0 ? input.parts : [{ type: "text" as const, text: prompt }];
         const next = { ...input, prompt, parts, ...(state === undefined ? {} : { resumeState: state }),
-          ...(phase ? { continuationId: `async_${digest(`${input.runId}:${phase}`)}` } : {}) };
+          ...(phase ? { continuationId: `run_async_${digest(`${input.runId}:${phase}`)}` } : {}) };
         const source = state === undefined ? native.start(next) : native.resume!({ ...next, resumeState: state });
         let terminal: typeof lastTerminal | undefined;
         let answersConfirmed = phaseAnswers.length === 0;
