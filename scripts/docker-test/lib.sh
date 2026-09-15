@@ -214,8 +214,20 @@ pull_compose_images() {
 }
 
 cleanup() {
+  local exit_code=$?
+  # EXIT traps run before the workflow's failure steps. Preserve diagnostics
+  # before down removes the containers; CI uploads them with seven-day retention.
+  if [ "$exit_code" -ne 0 ] && [ -n "${DOCKER_TEST_LOG_DIR:-}" ]; then
+    if mkdir -p "$DOCKER_TEST_LOG_DIR"; then
+      $COMPOSE logs --no-color --timestamps --tail 200 > "$DOCKER_TEST_LOG_DIR/compose-pre-cleanup.log" 2>&1 || true
+      $COMPOSE ps -a > "$DOCKER_TEST_LOG_DIR/containers-pre-cleanup.log" 2>&1 || true
+    else
+      echo "Could not create Docker test diagnostics directory" >&2
+    fi
+  fi
   echo -e "${YELLOW}[CLEANUP]${NC} Stopping containers..."
   $COMPOSE down -v --timeout 5 2>/dev/null || true
+  return "$exit_code"
 }
 
 summary() {

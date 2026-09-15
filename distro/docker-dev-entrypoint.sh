@@ -12,7 +12,7 @@ export PATH="/app/node_modules/.bin:$PATH"
 # then breaks with "Module not found" even after a restart. md5sum -c compares
 # the real content, so a restart always reinstalls iff the lockfile changed.
 ensure_deps() {
-  if [ -d "node_modules/.pnpm" ] && md5sum --status -c node_modules/.pnpm-lock-hash 2>/dev/null; then
+  if [ -d "node_modules/.pnpm" ] && md5sum -c node_modules/.pnpm-lock-hash >/dev/null 2>&1; then
     return 0
   fi
   echo "[matrix-os-dev] Installing dependencies (lockfile changed)..."
@@ -191,7 +191,7 @@ if [ "${MATRIX_DEV_DEP_WATCH:-1}" != "0" ]; then
   (
     while true; do
       sleep 5
-      md5sum --status -c node_modules/.pnpm-lock-hash 2>/dev/null && continue
+      md5sum -c node_modules/.pnpm-lock-hash >/dev/null 2>&1 && continue
       echo "[matrix-os-dev] Lockfile changed -- reinstalling dependencies..."
       if pnpm install --frozen-lockfile --config.enableGlobalVirtualStore=false; then
         md5sum pnpm-lock.yaml > node_modules/.pnpm-lock-hash 2>/dev/null || true
