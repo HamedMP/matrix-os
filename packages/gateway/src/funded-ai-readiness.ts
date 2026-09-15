@@ -1,6 +1,11 @@
 import { FundedAiRuntimeFundingSummaryResponseSchema, type AiProviderReadiness } from "@matrix-os/contracts";
 import type { FundedAiFundingSummaryReader } from "./funded-ai-funding-summary-client.js";
 
+// The funding-summary client owns its bounded 5s request. Keep this outer
+// deadline slightly longer so a cold control plane gets the full request
+// window while dependencies that ignore abort still cannot hang readiness.
+const READINESS_DEADLINE_MS = 6_000;
+
 export interface FundedAiReadiness {
   readiness: AiProviderReadiness;
   allowedModelIds: string[];
@@ -39,7 +44,7 @@ export function createFundedAiReadinessReader(options: {
         timeout = setTimeout(() => {
           controller.abort();
           reject(new Error("Funded readiness deadline exceeded"));
-        }, 2_000);
+        }, READINESS_DEADLINE_MS);
       });
       const [raw, healthy] = await Promise.race([Promise.all([
         options.summary.getFundingSummary({ signal }),

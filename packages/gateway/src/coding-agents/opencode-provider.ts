@@ -37,7 +37,7 @@ import { hasNativeHarnessAuth } from "./native-harness-auth.js";
 
 const DEFAULT_RUN_TIMEOUT_MS = 10 * 60_000;
 const DEFAULT_KILL_GRACE_MS = 2_000;
-const PROBE_TIMEOUT_MS = 1_500;
+const PROBE_TIMEOUT_MS = 5_000;
 const MAX_ACTIVE_PROCESSES = 100;
 const MAX_EVENTS = 480;
 const MAX_SEEN_PARTS = 512;
