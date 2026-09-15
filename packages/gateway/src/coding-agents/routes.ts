@@ -533,6 +533,13 @@ export function createCodingAgentRoutes(deps: CodingAgentRouteDeps): Hono {
         if (err instanceof z.ZodError) {
           return c.json({ error: validationFailed() }, 400);
         }
+        if (err instanceof CodingAgentThreadError) {
+          if (err.code === "thread_not_found") {
+            return c.json({ error: turnError("thread_not_found") }, 404);
+          }
+          logCodingAgentWarning("thread lookup unavailable before turn admission", err);
+          return c.json({ error: turnError("turn_unavailable") }, 503);
+        }
         if (err instanceof CodingAgentTurnError) {
           const status = err.code === "thread_not_found" ? 404 : 409;
           return c.json({ error: turnError(err.code) }, status);
