@@ -118,6 +118,14 @@ describe("createGateway Chat terminal production wiring", () => {
     expect(repositoryGuard).toBeGreaterThan(chatAuthorization);
     expect(ownerOnlyFallback).toBeGreaterThan(repositoryGuard);
     expect(ownerOnlyFallback).toBeLessThan(source.indexOf("terminalWorkspaceRuntime.attach({", workspaceSocket));
+    const workspaceAdmission = source.indexOf("terminalWorkspaceProjectAdmission.withWorkspace(", workspaceSocket);
+    const attach = source.indexOf("terminalWorkspaceRuntime.attach({", workspaceSocket);
+    const frameAdmission = source.indexOf("terminalWorkspaceProjectAdmission.withWorkspace(", workspaceAdmission + 1);
+    const frameSend = source.indexOf("stream.send(frame)", frameAdmission);
+    expect(workspaceAdmission).toBeGreaterThan(ownerOnlyFallback);
+    expect(workspaceAdmission).toBeLessThan(attach);
+    expect(frameAdmission).toBeGreaterThan(attach);
+    expect(frameSend).toBeGreaterThan(frameAdmission);
     expect(source).not.toContain("createUserSystemdZellijAdapter({");
     expect(source).not.toContain("createUserSystemdTerminalRuntime({");
     expect(source).not.toContain("sweepOrphanedSessions()");

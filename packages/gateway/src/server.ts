@@ -185,6 +185,7 @@ import {
   loadGatewayCollaborationConfig,
   type GatewayCollaborationRuntime,
 } from "./collaboration/wiring.js";
+import { createLegacyProjectPathAdmission } from "./collaboration/project-path-admission.js";
 import { createCodingAgentFileStore } from "./coding-agents/file-read.js";
 import { createCodingAgentSourceControlStore } from "./coding-agents/source-control.js";
 import { registerCodingAgentAttentionNotifications } from "./coding-agents/attention-notifications.js";
@@ -349,6 +350,7 @@ import {
   createTerminalWindowLayoutRoutes,
   TerminalWindowLayoutStore,
   createTerminalWorkspaceRoutes,
+  createTerminalWorkspaceProjectAdmission,
   terminalRuntimeRefAccess,
   shellWsMessageDataToString,
 } from "./shell/index.js";
@@ -1907,6 +1909,19 @@ export async function createGateway(config: GatewayConfig) {
   }));
   app.use("*", securityHeadersMiddleware());
   app.use("*", authMiddleware(process.env.MATRIX_AUTH_TOKEN));
+  const legacyProjectPathAdmission = gatewayCollaboration
+    ? createLegacyProjectPathAdmission({
+        homePath,
+        projectOperationAdmission: gatewayCollaboration.projectOperationAdmission,
+        listOwnerProjects: async (ownerType, ownerId) => {
+          const result = await codingAgentProjectManager.listManagedProjects({
+            visibility: "all",
+            ownerScope: { type: ownerType === "organization" ? "org" : "user", id: ownerId },
+          });
+          return result.projects.map((project) => ({ id: project.id, localPath: project.localPath }));
+        },
+      })
+    : undefined;
   app.route("/api/onboarding", createReadinessRoutes({ service: readinessService }));
   app.route("/api/onboarding", createToolPackRoutes({ service: toolPackService }));
   app.route("/api/agents", createAgentCredentialRoutes({ service: agentCredentialService }));
@@ -1920,6 +1935,16 @@ export async function createGateway(config: GatewayConfig) {
     files: codingAgentFileStore,
     sourceControl: codingAgentSourceControlStore,
     notificationPreferences: codingAgentNotificationPreferenceStore,
+    ...(gatewayCollaboration ? {
+      projectOperationAdmission: gatewayCollaboration.projectOperationAdmission,
+      resolveProjectId: async (principal, projectSlug) => {
+        const project = await codingAgentProjectManager.getProject(
+          projectSlug,
+          { type: "user", id: principal.userId },
+        );
+        return project.ok ? project.project.id : null;
+      },
+    } : {}),
   }));
   app.route("/api/integrations", createIntegrationCapabilityRoutes({
     service: integrationCapabilityService,
@@ -2048,12 +2073,21 @@ export async function createGateway(config: GatewayConfig) {
     savePolicy: (policy) => systemActivityPolicy.save(policy),
     readHistory: (query) => systemActivityHistory.list(query),
   }));
+  const terminalWorkspaceProjectAdmission = createTerminalWorkspaceProjectAdmission({
+    runtime: terminalWorkspaceRuntime,
+    ...(gatewayCollaboration ? {
+      projectOperationAdmission: gatewayCollaboration.projectOperationAdmission,
+    } : {}),
+  });
   app.route("/api/terminal", createTerminalWorkspaceRoutes({
     runtime: terminalWorkspaceRuntime,
     homePath,
     getPrincipal: (c) => requireRequestPrincipal(c),
     terminalOwnerIds: terminalRuntimeOwnerIds,
     chatTerminals: shellRouteDeps.chatTerminals,
+    ...(gatewayCollaboration ? {
+      projectOperationAdmission: gatewayCollaboration.projectOperationAdmission,
+    } : {}),
   }));
   app.route("/api/terminal", createShellRoutes(shellRouteDeps));
   app.route(
@@ -2666,8 +2700,12 @@ export async function createGateway(config: GatewayConfig) {
         && Number.isSafeInteger(rows) && rows >= 5 && rows <= 200;
       let stream: ReturnType<TerminalRuntimeSocketClient["attach"]> | null = null;
       let attachmentMode: "owner" | "observe" | null = null;
+      let principal: RequestPrincipal | null = null;
       let closed = false;
       const pending: unknown[] = [];
+      let frameAdmissionTail = Promise.resolve();
+      let pendingFrameAdmissions = 0;
+      let sendAuthorizedFrame: ((frame: z.infer<typeof TerminalTabClientFrameSchema>) => void) | null = null;
 
       return {
         onOpen(_event, ws) {
@@ -2678,7 +2716,7 @@ export async function createGateway(config: GatewayConfig) {
             return;
           }
           void (async () => {
-            const principal = requireRequestPrincipal(c);
+            principal = requireRequestPrincipal(c);
             const refAccess = await terminalRuntimeRefAccess(
               principal,
               terminalRuntimeOwnerIds,
@@ -2718,34 +2756,73 @@ export async function createGateway(config: GatewayConfig) {
             if (closed) return;
             const mode = clientResult.data === "cli" ? "hard" as const : "soft" as const;
             captureTerminalEvent("attach-request", { client: clientResult.data, mode });
-            stream = terminalWorkspaceRuntime.attach({
-              ref: refResult.data,
-              viewerId: `${clientResult.data}:${randomUUID()}`,
-              fromSeq,
-              mode,
-              size: { cols, rows },
-              onFrame: (frame) => {
-                if (closed) return;
-                try {
-                  ws.send(JSON.stringify(terminalFrameForInputCapabilities(frame, binaryInputRequested)));
-                }
-                catch (error) { logUnexpectedWsSendFailure("Terminal tab WebSocket send failed", error); }
-              },
-              onClose: () => { if (!closed) ws.close(); },
-              onError: (error) => {
-                captureTerminalEvent("runtime-error", { client: clientResult.data });
-                logBestEffortFailure("Terminal tab runtime stream failed", error);
+            stream = await terminalWorkspaceProjectAdmission.withWorkspace(
+              principal,
+              refResult.data.workspaceId,
+              "run",
+              async () => terminalWorkspaceRuntime.attach({
+                ref: refResult.data,
+                viewerId: `${clientResult.data}:${randomUUID()}`,
+                fromSeq,
+                mode,
+                size: { cols, rows },
+                onFrame: (frame) => {
+                  if (closed) return;
+                  try {
+                    ws.send(JSON.stringify(terminalFrameForInputCapabilities(frame, binaryInputRequested)));
+                  }
+                  catch (error) { logUnexpectedWsSendFailure("Terminal tab WebSocket send failed", error); }
+                },
+                onClose: () => { if (!closed) ws.close(); },
+                onError: (error) => {
+                  captureTerminalEvent("runtime-error", { client: clientResult.data });
+                  logBestEffortFailure("Terminal tab runtime stream failed", error);
+                  if (!closed) {
+                    try { ws.send(JSON.stringify({ type: "error", code: "runtime_unavailable", message: "Terminal unavailable" })); }
+                    catch (sendError) { logUnexpectedWsSendFailure("Terminal tab WebSocket error send failed", sendError); }
+                    ws.close();
+                  }
+                },
+              }),
+            );
+            sendAuthorizedFrame = (frame) => {
+              if (pendingFrameAdmissions >= 32) {
+                ws.close();
+                return;
+              }
+              pendingFrameAdmissions += 1;
+              frameAdmissionTail = frameAdmissionTail.then(async () => {
+                if (closed || !stream || !principal) return;
+                await terminalWorkspaceProjectAdmission.withWorkspace(
+                  principal,
+                  refResult.data.workspaceId,
+                  "run",
+                  async () => {
+                    if (!closed && stream) stream.send(frame);
+                  },
+                );
+              }).catch((error: unknown) => {
+                logBestEffortFailure("Terminal tab mutation authorization failed", error);
                 if (!closed) {
-                  try { ws.send(JSON.stringify({ type: "error", code: "runtime_unavailable", message: "Terminal unavailable" })); }
-                  catch (sendError) { logUnexpectedWsSendFailure("Terminal tab WebSocket error send failed", sendError); }
+                  try {
+                    ws.send(JSON.stringify({
+                      type: "error",
+                      code: "authorization_failed",
+                      message: "Terminal operation unavailable",
+                    }));
+                  } catch (sendError: unknown) {
+                    logUnexpectedWsSendFailure("Terminal tab WebSocket error send failed", sendError);
+                  }
                   ws.close();
                 }
-              },
-            });
+              }).finally(() => {
+                pendingFrameAdmissions -= 1;
+              });
+            };
             for (const frame of pending.splice(0)) {
               const parsedFrame = TerminalTabClientFrameSchema.parse(frame);
               if (terminalAttachmentAllowsFrame(attachmentMode, parsedFrame)) {
-                stream.send(parsedFrame);
+                sendAuthorizedFrame(parsedFrame);
               } else {
                 ws.send(JSON.stringify({ type: "error", code: "read_only", message: "Terminal is read-only" }));
               }
@@ -2777,7 +2854,7 @@ export async function createGateway(config: GatewayConfig) {
           }
           if (attachmentMode && !terminalAttachmentAllowsFrame(attachmentMode, parsed.data)) {
             ws.send(JSON.stringify({ type: "error", code: "read_only", message: "Terminal is read-only" }));
-          } else if (stream) stream.send(parsed.data);
+          } else if (sendAuthorizedFrame) sendAuthorizedFrame(parsed.data);
           else if (pending.length < 32) pending.push(parsed.data);
           else ws.close();
         },
@@ -2785,6 +2862,7 @@ export async function createGateway(config: GatewayConfig) {
           if (stream) captureTerminalEvent("close", { client: clientResult.success ? clientResult.data : undefined });
           closed = true;
           pending.splice(0);
+          sendAuthorizedFrame = null;
           stream?.close();
           stream = null;
         },
@@ -3029,7 +3107,13 @@ export async function createGateway(config: GatewayConfig) {
     }),
   );
 
-  registerFileRoutes(app, { homePath });
+  registerFileRoutes(app, {
+    homePath,
+    ...(legacyProjectPathAdmission ? {
+      getOwnerId: (c) => requireRequestPrincipal(c).userId,
+      projectPathAdmission: legacyProjectPathAdmission,
+    } : {}),
+  });
 
   const apiMessageBodyLimit = bodyLimit({ maxSize: 64 * 1024 });
   const bridgeQueryBodyLimit = bodyLimit({ maxSize: 1_000_000 });
@@ -3056,6 +3140,9 @@ export async function createGateway(config: GatewayConfig) {
     reviewStore,
     codingAgentThreadStore,
     getOwnerScope: (c) => ({ type: "user", id: requireRequestPrincipal(c).userId }),
+    ...(gatewayCollaboration ? {
+      projectOperationAdmission: gatewayCollaboration.projectOperationAdmission,
+    } : {}),
     ...chatBoundWorkspaceRouteDeps,
   }));
   app.route("/api", createShellRoutes(shellRouteDeps));
@@ -4268,6 +4355,9 @@ export async function createGateway(config: GatewayConfig) {
       service: canvasService,
       getUserId: (c) => requireRequestPrincipal(c).userId,
       broadcastCanvasUpdate: (canvasId, message) => canvasSubscriptionHub?.broadcast(canvasId, message),
+      ...(gatewayCollaboration ? {
+        projectOperationAdmission: gatewayCollaboration.projectOperationAdmission,
+      } : {}),
     }));
 
     app.get(
