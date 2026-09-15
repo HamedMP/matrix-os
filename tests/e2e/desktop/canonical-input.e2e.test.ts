@@ -69,10 +69,13 @@ beforeAll(async () => {
   await new Promise<void>(done => server.listen(0, "127.0.0.1", done));
   const url = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
   profile = mkdtempSync(join(tmpdir(), "om239-electron-")); mkdirSync(output, { recursive: true });
-  const launch = () => _electron.launch({ executablePath, args: [join(root, "desktop/out/main/index.js")], env: { ...process.env, OPERATOR_GATEWAY_URL: url, OPERATOR_USER_DATA_DIR: profile } });
+  const launch = () => _electron.launch({ executablePath, args: [resolve(import.meta.dirname, "fixtures/canonical-input-electron.mjs")], env: { ...process.env, OPERATOR_GATEWAY_URL: url, OPERATOR_USER_DATA_DIR: profile } });
   app = await launch();
   // Seed only the local fixture credential; never invoke external browser authentication.
-  const encrypted = await app.evaluate(({ safeStorage }) => safeStorage.encryptString(JSON.stringify({ accessToken: "stub-token-1", expiresAt: Date.now() + 3_600_000, userId: "user-1", handle: "neo" })).toString("base64"));
+  const encrypted = await app.evaluate(async ({ app, safeStorage }) => {
+    await app.whenReady();
+    return safeStorage.encryptString(JSON.stringify({ accessToken: "stub-token-1", expiresAt: Date.now() + 3_600_000, userId: "user-1", handle: "neo" })).toString("base64");
+  });
   writeFileSync(join(profile, "credential.bin"), Buffer.from(encrypted, "base64"));
   await app.close(); app = await launch(); page = await app.firstWindow();
   await page.setViewportSize({ width: 1280, height: 900 });
