@@ -13,9 +13,9 @@ const record = {
 };
 const options = { instanceId: "codex_fixture", model: "gpt-5.6-sol", interactionMode: "default", permissionMode: "full_access", clientRequestId: "req_agent_fixed", resources: [{ kind: "chat" as const, id: "chat_notes", label: "Notes" }] };
 it("hydrates a recipe draft without restoring a previous Chat or sending a request", async () => {
-  const fetcher = vi.fn(async (url: string) => {
+  const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
     if (url.includes("/events?")) return new Response(new ReadableStream());
-    if (url.includes("/api/chats?")) return Response.json({ items: [record] });
+    if (url.includes("/api/chats?") && init?.method !== "POST") return Response.json({ items: [record] });
     if (url.includes("/api/chats/chat_agent?")) return Response.json({ record, messages: [], turns: [], runs: [], activities: [] });
     throw new Error("UnexpectedRequest");
   });
@@ -35,7 +35,7 @@ it("returns a rejected result and keeps the exact reference request key for retr
   const requests: unknown[] = [];
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
     if (url.includes("/events?")) return new Response(new ReadableStream());
-    if (url.includes("/api/chats?")) return Response.json({ items: [record] });
+    if (url.includes("/api/chats?") && init?.method !== "POST") return Response.json({ items: [record] });
     if (url.includes("/api/chats/chat_agent?")) return Response.json({ record, messages: [], turns: [], runs: [], activities: [] });
     if (url.includes("/turns?")) { requests.push(JSON.parse(init!.body as string)); return Response.json({ error: "Unavailable" }, { status: 503 }); }
     throw new Error("UnexpectedRequest");
@@ -54,9 +54,9 @@ it("returns a rejected result and keeps the exact reference request key for retr
 it("routes referenced requests to the durable queue while a Run is active", async () => {
   const running = { ...record, activeRun: { runId: "run_busy", turnId: "cturn_busy", status: "running" } };
   const requests: string[] = [];
-  vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
     if (url.includes("/events?")) return new Response(new ReadableStream());
-    if (url.includes("/api/chats?")) return Response.json({ items: [running] });
+    if (url.includes("/api/chats?") && init?.method !== "POST") return Response.json({ items: [running] });
     if (url.includes("/api/chats/chat_agent?")) return Response.json({ record: running, messages: [], turns: [], runs: [], activities: [] });
     requests.push(url);
     return Response.json({ error: "Unavailable" }, { status: 503 });
@@ -73,7 +73,7 @@ it("reuses attachment references after an ambiguous mentioned-request failure", 
   const uploads: string[] = [];
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
     if (url.includes("/events?")) return new Response(new ReadableStream());
-    if (url.includes("/api/chats?")) return Response.json({ items: [record] });
+    if (url.includes("/api/chats?") && init?.method !== "POST") return Response.json({ items: [record] });
     if (url.includes("/api/chats/chat_agent?")) return Response.json({ record, messages: [], turns: [], runs: [], activities: [] });
     if (url.includes("/api/files/blob?")) {
       const path = new URL(url, "http://localhost").searchParams.get("path");
@@ -96,8 +96,8 @@ it("keeps a new Chat draft selected until admission succeeds and reuses its crea
   const createKeys: string[] = [];
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
     if (url.includes("/events?")) return new Response(new ReadableStream());
-    if (url.includes("/api/chats?")) return Response.json({ items: [] });
-    if (url.endsWith("/api/chats") && init?.method === "POST") {
+    if (url.includes("/api/chats?") && init?.method !== "POST") return Response.json({ items: [] });
+    if (url.endsWith("/api/chats?readStateVersion=1") && init?.method === "POST") {
       createKeys.push(JSON.parse(init.body as string).clientRequestId);
       return Response.json(record);
     }
@@ -117,8 +117,8 @@ it("uses the shared automatic title without shortening the actual request", asyn
   const turns: { parts: { text?: string }[] }[] = [];
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
     if (url.includes("/events?")) return new Response(new ReadableStream());
-    if (url.includes("/api/chats?")) return Response.json({ items: [] });
-    if (url.endsWith("/api/chats") && init?.method === "POST") {
+    if (url.includes("/api/chats?") && init?.method !== "POST") return Response.json({ items: [] });
+    if (url.endsWith("/api/chats?readStateVersion=1") && init?.method === "POST") {
       creates.push(JSON.parse(init.body as string));
       return Response.json(record);
     }
@@ -141,7 +141,7 @@ it.each([false, true])("preserves the first operation after ambiguous acknowledg
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
     const current = { ...record, ...(active ? { activeRun: { runId: "run_busy", turnId: "cturn_busy", status: "running" } } : {}) };
     if (url.includes("/events?")) return new Response(new ReadableStream());
-    if (url.includes("/api/chats?")) return Response.json({ items: [current] });
+    if (url.includes("/api/chats?") && init?.method !== "POST") return Response.json({ items: [current] });
     if (url.includes("/api/chats/chat_agent?")) return Response.json({ record: current, messages: [], turns: [], runs: [], activities: [] });
     requests.push({ url, body: JSON.parse(init!.body as string) });
     return Response.json({}, { status: 503 });
@@ -163,7 +163,7 @@ it("accepts a consumed queue retry without resurrecting the visible queued item"
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
     const current = { ...record, ...(active ? { activeRun: { runId: "run_busy", turnId: "cturn_busy", status: "running" } } : {}) };
     if (url.includes("/events?")) return new Response(new ReadableStream());
-    if (url.includes("/api/chats?")) return Response.json({ items: [current] });
+    if (url.includes("/api/chats?") && init?.method !== "POST") return Response.json({ items: [current] });
     if (url.includes("/api/chats/chat_agent?")) return Response.json({ record: current, messages: [], turns: [], runs: [], activities: [], queuedTurns: [] });
     if (url.includes("/queued-turns")) {
       if (++attempts === 1) return Response.json({}, { status: 503 });

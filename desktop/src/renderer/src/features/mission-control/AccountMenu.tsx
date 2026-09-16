@@ -13,6 +13,7 @@ import { useConnection } from "../../stores/connection";
 import { useTabs } from "../../stores/tabs";
 import { useUi } from "../../stores/ui";
 import { openHelpInMatrixBrowser } from "../browser/help-navigation";
+import { useCollaborationRuntimeId } from "../collaboration/useCollaborationRuntime";
 
 function AccountAvatar({
   imageUrl,
@@ -63,6 +64,47 @@ function MenuRow({
   );
 }
 
+function SharedWithMeMenuRow({ onSelect }: { onSelect: () => void }) {
+  const api = useConnection((state) => state.api);
+  const collaborationEnabled = useCollaborationRuntimeId(api) !== null;
+  if (!collaborationEnabled) return null;
+  return <MenuRow icon={<UsersIcon size={14} />} label="Shared with me" trailing onSelect={onSelect} />;
+}
+
+function AccountMenuTrigger({
+  collapsed,
+  compact,
+  imageUrl,
+  primaryLabel,
+  secondaryLabel,
+}: {
+  collapsed: boolean;
+  compact: boolean;
+  imageUrl: string | null;
+  primaryLabel: string;
+  secondaryLabel: string | null;
+}) {
+  return <DropdownMenu.Trigger asChild>
+    <button
+      type="button"
+      aria-label="Open account menu"
+      title={collapsed ? primaryLabel : undefined}
+      className={`flex min-w-0 items-center rounded-md outline-none transition-colors hover:bg-[var(--bg-hover)] focus-visible:bg-[var(--bg-hover)] ${compact ? "size-7 justify-center" : collapsed ? "h-10 w-full justify-center" : "flex-1 gap-2"}`}
+    >
+      <span
+        className={`flex shrink-0 items-center justify-center overflow-hidden rounded-full text-xs font-semibold ${compact ? "size-6" : "h-7 w-7"}`}
+        style={{ background: "var(--accent-muted)", color: "var(--accent)" }}
+      >
+        <AccountAvatar key={imageUrl} imageUrl={imageUrl} label={primaryLabel} />
+      </span>
+      {!collapsed ? <span className="min-w-0 flex-1 text-left leading-tight">
+        <span className="block truncate text-xs font-semibold" style={{ color: "var(--text-primary)" }}>{primaryLabel}</span>
+        {secondaryLabel ? <span className="block truncate text-[10px]" style={{ color: "var(--text-tertiary)" }}>{secondaryLabel}</span> : null}
+      </span> : null}
+    </button>
+  </DropdownMenu.Trigger>;
+}
+
 export default function AccountMenu({
   collapsed,
   compact = false,
@@ -99,29 +141,8 @@ export default function AccountMenu({
   return (
     <div className={compact ? "flex items-center" : collapsed ? "p-2 pt-1" : "flex items-center gap-1 px-4 py-4"}>
       <DropdownMenu.Root open={open} onOpenChange={setOpen}>
-        <DropdownMenu.Trigger asChild>
-          <button
-            type="button"
-            aria-label="Open account menu"
-            title={collapsed ? primaryLabel : undefined}
-            className={`flex min-w-0 items-center rounded-md outline-none transition-colors hover:bg-[var(--bg-hover)] focus-visible:bg-[var(--bg-hover)] ${compact ? "size-7 justify-center" : collapsed ? "h-10 w-full justify-center" : "flex-1 gap-2"}`}
-          >
-            <span
-              className={`flex shrink-0 items-center justify-center overflow-hidden rounded-full text-xs font-semibold ${compact ? "size-6" : "h-7 w-7"}`}
-              style={{ background: "var(--accent-muted)", color: "var(--accent)" }}
-            >
-              <AccountAvatar key={imageUrl} imageUrl={imageUrl} label={primaryLabel} />
-            </span>
-            {!collapsed ? (
-              <span className="min-w-0 flex-1 text-left leading-tight">
-                <span className="block truncate text-xs font-semibold" style={{ color: "var(--text-primary)" }}>{primaryLabel}</span>
-                {secondaryLabel ? (
-                  <span className="block truncate text-[10px]" style={{ color: "var(--text-tertiary)" }}>{secondaryLabel}</span>
-                ) : null}
-              </span>
-            ) : null}
-          </button>
-        </DropdownMenu.Trigger>
+        <AccountMenuTrigger collapsed={collapsed} compact={compact} imageUrl={imageUrl}
+          primaryLabel={primaryLabel} secondaryLabel={secondaryLabel} />
         <DropdownMenu.Portal>
           <DropdownMenu.Content
             aria-label="Account"
@@ -159,7 +180,7 @@ export default function AccountMenu({
             </DropdownMenu.Label>
             <DropdownMenu.Separator className="my-1 h-px" style={{ background: "var(--border-subtle)" }} />
             <MenuRow icon={<Settings size={14} />} label="Settings" trailing onSelect={() => openSettings("account")} />
-            <MenuRow icon={<UsersIcon size={14} />} label="Shared with me" trailing onSelect={() => {
+            <SharedWithMeMenuRow onSelect={() => {
               setOpen(false);
               openTab({ kind: "shared", title: "Shared with me" });
             }} />

@@ -169,6 +169,7 @@ export async function admitChatTurn(deps: TurnAdmissionDependencies, ownerInput:
           bound_at_turn_id: current.bound_at_turn_id ?? turn.id,
         } : {}),
         updated_at: sql`now()`,
+        activity_at: sql`clock_timestamp()`,
       }).where("id", "=", input.chatId).where("revision", "=", input.baseRevision)
         .returningAll().executeTakeFirst();
       if (!updated) throw new ChatConflictError(input.chatId, Number(current.revision));

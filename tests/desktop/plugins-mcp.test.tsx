@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { McpServersSection } from "../../desktop/src/renderer/src/features/plugins";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
+import { createApiClient } from "../../desktop/src/renderer/src/lib/api";
 import type { ApiClient } from "../../desktop/src/renderer/src/lib/api";
 
 function makeApi() {
@@ -33,10 +34,30 @@ describe("desktop Custom MCP management", () => {
   });
   afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
+  it("keeps the session and form values while unavailable, then recovers on retry", async () => {
+    const onUnauthorized = vi.fn();
+    const fetchFn = vi.fn()
+      .mockResolvedValueOnce(Response.json({ error: "custom_mcp_unavailable" }, { status: 503 }))
+      .mockResolvedValueOnce(Response.json([]));
+    const api = createApiClient({ baseUrl: "https://app.matrix-os.com", getRuntimeSlot: () => "primary", fetchFn, onUnauthorized });
+    useConnection.setState({ api });
+    render(<McpServersSection />);
+    fireEvent.change(screen.getByLabelText("MCP server name"), { target: { value: "Research" } });
+    fireEvent.change(screen.getByLabelText("MCP server URL"), { target: { value: "https://example.com/mcp" } });
+    expect((await screen.findByRole("alert")).textContent).toContain("MCP servers are currently unavailable.");
+    expect(screen.getByRole("button", { name: "Add MCP server" }).matches(":disabled")).toBe(true);
+    expect(onUnauthorized).not.toHaveBeenCalled();
+    expect(useConnection.getState().status).toBe("signed-in");
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    expect((screen.getByLabelText("MCP server name") as HTMLInputElement).value).toBe("Research");
+    expect(screen.getByRole("button", { name: "Add MCP server" }).matches(":disabled")).toBe(false);
+  });
+
   it("loads the platform-brokered list and renders the add flow", async () => {
     render(<McpServersSection />);
     expect(screen.getByRole("button", { name: "Add MCP server" })).not.toBeNull();
-    expect(screen.getByText("No personal MCP servers yet")).not.toBeNull();
+    expect(await screen.findByText("No personal MCP servers yet")).not.toBeNull();
     await waitFor(() => expect(useConnection.getState().api!.get).toHaveBeenCalledWith("/api/mcp-servers"));
   });
 
@@ -46,6 +67,7 @@ describe("desktop Custom MCP management", () => {
     fireEvent.change(screen.getByLabelText("MCP server name"), { target: { value: "Research" } });
     fireEvent.change(screen.getByLabelText("MCP server URL"), { target: { value: "https://mcp.acme.tools/mcp" } });
     fireEvent.change(screen.getByLabelText("Authentication mode"), { target: { value: "none" } });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Add MCP server" }).matches(":disabled")).toBe(false));
     fireEvent.click(screen.getByRole("button", { name: "Add MCP server" }));
     await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/mcp-servers", {
       name: "Research",
