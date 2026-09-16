@@ -1,3 +1,4 @@
+import { createOrderedRunControls } from "./ordered-run-controls.js";
 import { admitCanonicalTurn } from "./turn-admission.js";
 import { contextPrompt, type ChatAgentContext } from "./agent-context.js";
 import { promptFor, retryPromptFor } from "./orchestration-input.js";
@@ -164,6 +165,7 @@ export class CanonicalChatOrchestrator {
   private readonly shutdownDrainMs: number;
   private readonly sharedExecution: SharedChatExecutionCoordinator;
   private closing = false;
+  private readonly orderedControls = createOrderedRunControls();
 
   constructor(private readonly options: {
     repository: Pick<ChatRepository,
@@ -211,6 +213,9 @@ export class CanonicalChatOrchestrator {
     now?: () => Date;
     shutdownDrainMs?: number;
   }) {
+    this.steerRun = this.orderedControls.wrap(this.steerRun.bind(this));
+    this.steerQueuedTurn = this.orderedControls.wrap(this.steerQueuedTurn.bind(this));
+    this.submitInput = this.orderedControls.wrap(this.submitInput.bind(this));
     this.shutdownDrainMs = options.shutdownDrainMs ?? 10_000;
     if (!Number.isInteger(this.shutdownDrainMs) || this.shutdownDrainMs < 1 || this.shutdownDrainMs > 60_000) {
       throw new RangeError("Invalid canonical Chat shutdown drain timeout");
@@ -1314,6 +1319,7 @@ export class CanonicalChatOrchestrator {
 
   async close(): Promise<void> {
     this.closing = true;
+    this.orderedControls.close();
     const active = [...this.active.values()];
     let timeout: ReturnType<typeof setTimeout> | undefined;
     try {

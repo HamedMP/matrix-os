@@ -79,7 +79,7 @@ describe("Window Manager Store", () => {
       expect(w2.x).toBe(w1.x);
       expect(w2.y).toBe(w1.y);
       expect(w1.x).toBe(Math.round((window.innerWidth - w1.width) / 2));
-      expect(w1.y).toBe(Math.max(24, Math.round((window.innerHeight - 38 - w1.height) / 2)));
+      expect(w1.y).toBe(Math.max(20, Math.round((window.innerHeight - 38 - 86 - w1.height) / 2)));
     });
 
     it("places second canvas window to the right of the first", () => {
@@ -103,7 +103,7 @@ describe("Window Manager Store", () => {
         x: 20,
         y: 20,
         width: 860,
-        height: 522,
+        height: 436,
       });
     });
 
@@ -192,6 +192,7 @@ describe("Window Manager Store", () => {
     });
 
     it("accepts valid sizes above minimum", () => {
+      Object.defineProperty(window, "innerHeight", { configurable: true, value: 1000 });
       useWindowManager.getState().openWindow("Notes", "apps/notes.html", 80);
       const winId = useWindowManager.getState().windows[0].id;
       useWindowManager.getState().resizeWindow(winId, 800, 600);
@@ -224,7 +225,7 @@ describe("Window Manager Store", () => {
         x: -32,
         y: -16,
         width: 864,
-        height: 510,
+        height: 392,
       });
     });
 
@@ -249,9 +250,9 @@ describe("Window Manager Store", () => {
         x: 40,
         y: -16,
         width: 600,
-        height: 260,
+        height: 142,
       });
-      expect(windowRecord.y + 38 + windowRecord.height).toBeLessThanOrEqual(window.innerHeight + 32);
+      expect(windowRecord.y + 38 + windowRecord.height).toBeLessThanOrEqual(window.innerHeight - 86);
     });
 
     it("leaves spatial Canvas windows unchanged", () => {
@@ -509,6 +510,7 @@ describe("Window Manager Store", () => {
     });
 
     it("preserves user placement of restored wide windows without forcing symmetric margins", () => {
+      Object.defineProperty(window, "innerHeight", { configurable: true, value: 1000 });
       const width = Math.round(window.innerWidth * 0.9);
       const saved: LayoutWindow[] = [
         {
@@ -553,10 +555,10 @@ describe("Window Manager Store", () => {
         x: -32,
         y: -16,
         width: 964,
-        height: 610,
+        height: 492,
       });
       expect(restored.x + restored.width).toBeLessThanOrEqual(window.innerWidth + 32);
-      expect(restored.y + 38 + restored.height).toBeLessThanOrEqual(window.innerHeight + 32);
+      expect(restored.y + 38 + restored.height).toBeLessThanOrEqual(window.innerHeight - 86);
     });
 
     it("shrinks a restored terminal below its preferred minimum on narrow desktops", () => {
@@ -578,7 +580,7 @@ describe("Window Manager Store", () => {
         x: -32,
         y: -16,
         width: 964,
-        height: 610,
+        height: 492,
       });
     });
 
@@ -602,7 +604,7 @@ describe("Window Manager Store", () => {
         x: -32,
         y: -16,
         width: 964,
-        height: 610,
+        height: 492,
       });
     });
 

@@ -444,6 +444,7 @@ export class ChatSteeringRepository {
       await trx.updateTable("chats").set({
         revision,
         updated_at: acceptedAt,
+        ...(message && !input.queuedTurnId ? { activity_at: sql`clock_timestamp()` } : {}),
         ...(message ? {
           message_count: sql<number>`message_count + 1`,
           last_message_preview: preview(message),

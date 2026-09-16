@@ -26,7 +26,7 @@ function record(id = "chat_service_test"): CanonicalChatRecord {
   };
 }
 
-function repository(overrides: Partial<Pick<ChatRepository, "create" | "list" | "search" | "getDetailPage" | "update" | "hardDelete">> = {}) {
+function repository(overrides: Partial<Pick<ChatRepository, "create" | "list" | "search" | "getDetailPage" | "rename" | "update" | "hardDelete">> = {}) {
   return {
     create: vi.fn(async () => record()),
     list: vi.fn(async () => ({ items: [record()] } satisfies ChatListPage)),
@@ -39,10 +39,11 @@ function repository(overrides: Partial<Pick<ChatRepository, "create" | "list" | 
       activities: [],
       queuedTurns: [],
     } satisfies ChatDetailPage)),
+    rename: vi.fn(async () => record()),
     update: vi.fn(async () => ({ ...record(), projectId: "project_1" })),
     hardDelete: vi.fn(async () => ({ chatId: "chat_service_test", deletedAt: "2026-08-26T12:00:00.000Z" })),
     ...overrides,
-  } as Pick<ChatRepository, "create" | "list" | "search" | "getDetailPage" | "update" | "hardDelete">;
+  } as Pick<ChatRepository, "create" | "list" | "search" | "getDetailPage" | "rename" | "update" | "hardDelete">;
 }
 
 describe("canonical Chat service", () => {
@@ -96,14 +97,14 @@ describe("canonical Chat service", () => {
       chat: { ...record().chat, title: "Release plan", revision: 1 },
     };
     const update = vi.fn(async () => renamed);
-    const service = createCanonicalChatService(repository({ update }));
+    const service = createCanonicalChatService(repository({ rename: update }));
 
     await expect(service.updateTitle(owner, "chat_service_test", {
-      baseRevision: 0,
+      expectedTitleVersion: 0,
       title: "  Release plan  ",
     })).resolves.toEqual(renamed);
     expect(update).toHaveBeenCalledWith(owner, "chat_service_test", {
-      baseRevision: 0,
+      expectedTitleVersion: 0,
       title: "Release plan",
     });
   });
@@ -147,12 +148,19 @@ describe("canonical Chat service", () => {
     expect(update).not.toHaveBeenCalled();
   });
 
+  it("keeps released rename requests revision guarded during transition", async () => {
+    const update = vi.fn(async () => record());
+    const service = createCanonicalChatService(repository({ update }));
+    await service.updateLegacyTitle(owner, "chat_service_test", { baseRevision: 7, title: "  Legacy  " });
+    expect(update).toHaveBeenCalledWith(owner, "chat_service_test", { baseRevision: 7, title: "Legacy" });
+  });
+
   it("round-trips opaque list cursors without exposing repository cursor fields", async () => {
     const list = vi.fn()
       .mockResolvedValueOnce({
         items: [record()],
         nextCursor: {
-          updatedAt: "2026-08-25T12:00:00.123456Z",
+          activityAt: "2026-08-25T12:00:00.123456Z",
           chatId: "chat_service_test",
         },
       } satisfies ChatListPage)
@@ -166,7 +174,7 @@ describe("canonical Chat service", () => {
     expect(list).toHaveBeenLastCalledWith(owner, {
       limit: 25,
       cursor: {
-        updatedAt: "2026-08-25T12:00:00.123456Z",
+        activityAt: "2026-08-25T12:00:00.123456Z",
         chatId: "chat_service_test",
       },
     });

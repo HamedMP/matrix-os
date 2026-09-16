@@ -17,6 +17,8 @@ export function WorkRailProjectGroup({
   onSelectChat,
   renamingChatId,
   renamePending,
+  onToggleRead,
+  readPending,
   onRenameChat,
   onRenameCommit,
   onRenameCancel,
@@ -34,6 +36,8 @@ export function WorkRailProjectGroup({
   onSelectChat: (record: CanonicalChatRecord, project: Project) => void;
   renamingChatId: string | null;
   renamePending: boolean;
+  onToggleRead?: (record: CanonicalChatRecord) => void;
+  readPending?: boolean;
   onRenameChat: (record: CanonicalChatRecord) => void;
   onRenameCommit: (record: CanonicalChatRecord, title: string) => void;
   onRenameCancel: () => void;
@@ -95,6 +99,8 @@ export function WorkRailProjectGroup({
               renaming={renamingChatId === record.chat.id}
               renamePending={renamePending && renamingChatId === record.chat.id}
               renameDisabled={renamePending}
+              onToggleRead={onToggleRead ? () => onToggleRead(record) : undefined}
+              readPending={readPending}
               onRenameStart={() => onRenameChat(record)}
               onRenameCommit={(title) => onRenameCommit(record, title)}
               onRenameCancel={onRenameCancel}

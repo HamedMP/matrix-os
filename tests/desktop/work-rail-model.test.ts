@@ -216,8 +216,8 @@ describe("buildWorkRailModel", () => {
       projects,
       "deploy",
     ).map((result) => result.contextLabel)).toEqual([
-      "Alpha · Codex · 2026-08-28 12:00:59 UTC",
       "Alpha · Codex · 2026-08-28 12:00:00 UTC",
+      "Alpha · Codex · 2026-08-28 12:00:59 UTC",
     ]);
     const sameTimestampDuplicate = {
       ...providerBound,
