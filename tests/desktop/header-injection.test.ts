@@ -168,6 +168,17 @@ describe("installHeaderInjection", () => {
 });
 
 describe("installGatewayCors", () => {
+  it("permits canonical chat metadata and resumable stream preflights", () => {
+    const { session, fire } = corsSession();
+    installGatewayCors(session, () => GATEWAY, "null");
+    const res = fire({ url: `${GATEWAY}/api/chats/chat-1/events`, method: "OPTIONS" });
+    const allowed = res.responseHeaders?.["Access-Control-Allow-Headers"]?.[0]
+      .toLowerCase().split(/,\s*/);
+    expect(allowed).toEqual(expect.arrayContaining([
+      "x-matrix-chat-metadata", "x-matrix-chat-protocol", "last-event-id",
+    ]));
+  });
+
   it("adds Access-Control-Allow-Origin for gateway responses", () => {
     const { session, fire } = corsSession();
     installGatewayCors(session, () => GATEWAY, "http://localhost:5173");
