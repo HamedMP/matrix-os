@@ -63,6 +63,32 @@ describe("shared terminal grid presentation", () => {
     expect(host.scrollTop).toBe(20);
   });
 
+  it("keeps quantized font metrics stable across output-only layout passes", () => {
+    const { root, terminal, layout, presentation } = setup();
+    const screen = root.querySelector<HTMLElement>(".xterm-screen")!;
+    let fontSize = 13;
+    const measure = () => {
+      screen.style.width = `${63 * fontSize}px`;
+      // Real renderer cell heights are quantized, not proportional to font size.
+      screen.style.height = `${fontSize === 11 ? 612 : fontSize === 12 ? 720 : 756}px`;
+    };
+    terminal.options = {
+      get fontSize() { return fontSize; },
+      set fontSize(value) { fontSize = value; measure(); },
+    };
+    measure();
+    layout(714, 623);
+    const settled = { font: fontSize, transform: root.style.transform, height: root.parentElement!.style.height };
+    for (let output = 0; output < 4; output += 1) {
+      presentation.schedule();
+      flush();
+      expect({ font: fontSize, transform: root.style.transform, height: root.parentElement!.style.height })
+        .toEqual(settled);
+    }
+    layout(1_600, 900);
+    expect(fontSize).toBe(13);
+  });
+
   it("does not pull a reader out of xterm scrollback when the window shrinks", () => {
     const { host, terminal, layout } = setup();
     Object.defineProperty(terminal, "buffer", { value: {

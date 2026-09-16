@@ -59,6 +59,7 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
   let restoreStyle: Partial<CSSStyleDeclaration> | null = null;
   let previousPan: { top: number; left: number } | null = null;
   let presentationScale = 1;
+  let settledLayout: { metrics: number[]; layout: ReturnType<typeof computeSoftGridLayout> } | null = null;
   let outputSubscription: { dispose(): void } | undefined;
 
   const onWheel = (event: WheelEvent & { matrixGridCorrected?: boolean }) => {
@@ -101,14 +102,20 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
     if (viewportWidth <= 0 || viewportHeight <= 0) return;
     // xterm reserves this gutter beside its screen for native scrollback.
     const gutter = terminal.options.scrollback === 0 ? 0 : terminal.options.overviewRuler?.width || 14;
-    const layout = computeSoftGridLayout({
-      viewportWidth, viewportHeight,
-      gridWidth: width * configured / fontSize + gutter,
-      gridHeight: height * configured / fontSize,
-      configuredFontSize: configured,
-      minimumReadableFontSize: 10,
-      devicePixelRatio: window.devicePixelRatio,
-    });
+    const metrics = [viewportWidth, viewportHeight, width, height, fontSize, configured, gutter, window.devicePixelRatio];
+    // Cell metrics are quantized: extrapolating the configured font from the
+    // last fitted font can alternate between two sizes on every output batch.
+    // Reuse the fitted result until the viewport, grid, or font metrics change.
+    const layout = settledLayout?.metrics.every((value, index) => value === metrics[index])
+      ? settledLayout.layout
+      : computeSoftGridLayout({
+        viewportWidth, viewportHeight,
+        gridWidth: width * configured / fontSize + gutter,
+        gridHeight: height * configured / fontSize,
+        configuredFontSize: configured,
+        minimumReadableFontSize: 10,
+        devicePixelRatio: window.devicePixelRatio,
+      });
     const buffer = terminal.buffer?.active;
     const live = buffer && buffer.viewportY >= buffer.baseY;
     const followY = live && (!previousPan || Math.abs(host.scrollTop - previousPan.top) <= 1);
@@ -137,6 +144,10 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
     // by the renderer, so multiplying the old size alone can clip a final row.
     const gridWidth = dimension(screen, "width") + gutter;
     const gridHeight = dimension(screen, "height");
+    settledLayout = {
+      metrics: [viewportWidth, viewportHeight, gridWidth - gutter, gridHeight, layout.fontSize, configured, gutter, window.devicePixelRatio],
+      layout,
+    };
     const scale = Math.min(layout.scale, Math.max(
       Math.min(1, viewportWidth / gridWidth, viewportHeight / gridHeight),
       Math.min(configured, 10) / layout.fontSize,
@@ -191,6 +202,7 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
     element = null;
     restoreStyle = null;
     previousPan = null;
+    settledLayout = null;
     host.style.overflowX = "hidden";
     host.style.overflowY = "hidden";
     options.onScale?.(1);

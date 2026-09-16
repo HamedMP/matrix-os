@@ -78,3 +78,10 @@ gateway; it does not claim live VPS transport coverage. The clipboard assertion
 requires the complete final output row before capturing the screenshot.
 The keyboard-settings warning visible in the stub-backed screenshot is outside
 this fixture's gateway contract; keyboard-settings loading is not validated here.
+
+A further exact-head repeat exposed a shared layout oscillation: rounded cell
+metrics at 11px and 12px caused output-only passes to alternate the displayed
+grid height. The presentation now reuses its settled layout while viewport,
+grid, and font metrics are unchanged; genuine resize/font changes still compute
+a new layout. A red/green regression reproduces those quantized metrics, checks
+repeated output passes, and verifies expansion restores the configured font.
