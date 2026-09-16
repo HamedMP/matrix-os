@@ -213,7 +213,7 @@ describe("terminal runtime Unix socket API", () => {
       revision: 1,
       presentationRevision: 0,
       seq: 41,
-      ansi: "checkpoint",
+      ansi: "checkpoint\nsecond row\r\nthird row",
       viewport: [],
       scrollback: [],
       updatedAt: tab.updatedAt,
@@ -268,6 +268,9 @@ describe("terminal runtime Unix socket API", () => {
     expect(frames.find((frame) => frame.type === "attached")).toMatchObject({
       nextSeq: 42,
       capabilities: ["binary-input-v1"],
+    });
+    expect(frames.find((frame) => frame.type === "snapshot")).toMatchObject({
+      ansi: "checkpoint\r\nsecond row\r\nthird row",
     });
     expect(frames.filter((frame) => frame.type === "output").map((frame) => frame.seq))
       .toEqual([42, 43]);

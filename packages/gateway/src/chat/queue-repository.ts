@@ -334,7 +334,7 @@ export class ChatQueueRepository {
         updated_at: acceptedAt,
       }).returningAll().executeTakeFirstOrThrow();
       const revision = Number(chat.revision) + 1;
-      const updated = await trx.updateTable("chats").set({ revision, updated_at: acceptedAt })
+      const updated = await trx.updateTable("chats").set({ revision, updated_at: acceptedAt, activity_at: sql`clock_timestamp()` })
         .where("id", "=", chatId)
         .where("revision", "=", Number(chat.revision))
         .returning("id")
@@ -466,6 +466,7 @@ export class ChatQueueRepository {
       const updated = await trx.updateTable("chats").set({
         revision,
         updated_at: createdAt,
+        activity_at: sql`clock_timestamp()`,
       }).where("id", "=", chatId)
         .where("revision", "=", currentRevision)
         .returning("id")

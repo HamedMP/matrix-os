@@ -133,6 +133,8 @@ export const CanonicalChatSchema = z.object({
   id: CanonicalChatIdSchema,
   ownerScope: CanonicalOwnerScopeSchema,
   title: canonicalBoundedText(200, 1024),
+  titleVersion: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+  activityAt: IsoTimestampSchema.optional(),
   lifecycle: z.enum(["active", "archived"]),
   attention: CanonicalChatAttentionSchema,
   revision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),

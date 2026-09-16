@@ -4,25 +4,27 @@ import { expect, it, vi } from "vitest";
 import { useCanonicalChatState } from "../../shell/src/hooks/useCanonicalChatState.js";
 vi.mock("@/hooks/useSocket", () => ({ useSocket: () => ({ connected: true }) }));
 
-it("renders streamed content and completion without any per-event detail request", async () => {
+it.each([false, true])("renders streaming through an in-flight rename (%s) without skipping deltas", async (rename) => {
   vi.useFakeTimers();
   let controller!: ReadableStreamDefaultController<Uint8Array>;
   const stream = new Response(new ReadableStream<Uint8Array>({ start(c) { controller = c; } }), {
     headers: { "content-type": "text/event-stream" },
   });
   const chat = { id: "chat_content", ownerScope: { type: "personal", ownerId: "owner_test" },
-    title: "Content", lifecycle: "active", attention: "none", revision: 1, messageCount: 0,
+    title: "Content", titleVersion: 0, lifecycle: "active", attention: "none", revision: 1, messageCount: 0,
     createdAt: "2026-09-06T00:00:00.000Z", updatedAt: "2026-09-06T00:00:00.000Z" };
   const record = { chat, activeRun: { runId: "run_content", turnId: "cturn_content", status: "running" } };
   const detail = vi.fn(async () => Response.json({ record, messages: [], runs: [], turns: [], activities: [] }));
   vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-    if (url.endsWith("/api/chats/events?messageVersion=2&inputVersion=1")) return stream;
+    if (url.endsWith("/api/chats/events?messageVersion=2&inputVersion=1&readStateVersion=1")) return stream;
+    if (url.includes("/title?")) return Response.json({ ...record, chat: { ...chat, title: "Manual", titleVersion: 1, revision: 4 } });
     if (url.includes("/api/chats?")) return Response.json({ items: [record] });
     return detail();
   }));
   const hook = renderHook(() => useCanonicalChatState());
   try {
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    if (rename) await act(async () => { await hook.result.current.renameConversation!(chat.id, "Manual"); });
     const message = { id: "msg_content", chatId: chat.id, role: "assistant", state: "pending", seq: 1,
       runId: "run_content", turnId: "cturn_content", createdAt: chat.createdAt, parts: [{ type: "text", text: "hello" }] };
     const frames = [
@@ -37,6 +39,7 @@ it("renders streamed content and completion without any per-event detail request
     await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
     expect(hook.result.current.messages[0]?.content).toBe("hello");
     expect(hook.result.current.busy).toBe(false);
+    expect(hook.result.current.activeConversationTitle).toBe(rename ? "Manual" : "Content");
     expect(detail).toHaveBeenCalledTimes(1);
   } finally { hook.unmount(); vi.useRealTimers(); vi.unstubAllGlobals(); }
 });

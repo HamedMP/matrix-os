@@ -16,6 +16,9 @@ export function ChatTitleEditor({
   const [value, setValue] = useState(title);
   const inputRef = useRef<HTMLInputElement>(null);
   const settledRef = useRef(false);
+  useEffect(() => {
+    if (!disabled) settledRef.current = false;
+  }, [disabled]);
 
   useEffect(() => {
     inputRef.current?.focus();

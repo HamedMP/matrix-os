@@ -558,6 +558,11 @@ function MobileAppFrame({
     }
     return (
       <ChatApp
+                filterUnreadOnly={chat.unreadOnly}
+                onUnreadFilterChange={chat.setUnreadOnly}
+                readState={chat.readState}
+                displayedThroughSeq={chat.displayedThroughSeq}
+                onUpdateReadState={chat.updateReadState}
         mobile
         messages={chat.messages}
         sessionId={chat.sessionId}

@@ -17,7 +17,7 @@ const chatId = "chat_one";
 describe("Chat collaboration sharing", () => {
   it("keeps snapshot sharing and live invitations as distinct choices", () => {
     const api = { baseUrl: "https://gateway.test", get: vi.fn(), post: vi.fn(), delete: vi.fn() };
-    render(<ChatSharingButton api={api} collaborationApi={api} runtimeId="runtime_owner" chatId={chatId}
+    render(<ChatSharingButton api={api} collaborationEnabled collaborationApi={api} runtimeId="runtime_owner" chatId={chatId}
       handle="owner" runtimeSlot="primary" platformHost="https://app.matrix-os.com" copyText={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: "Share" }));
     expect((screen.getByRole("dialog", { name: "Share Chat" }).firstElementChild as HTMLElement).style.background)
@@ -28,6 +28,16 @@ describe("Chat collaboration sharing", () => {
     expect(screen.getByText(/ongoing Chat/i)).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Share" }));
     expect(screen.queryByRole("button", { name: "Share snapshot" })).toBeNull();
+  });
+
+  it("hides live collaboration entirely when the computer flag is off", () => {
+    const api = { baseUrl: "https://gateway.test", get: vi.fn(), post: vi.fn(), delete: vi.fn() };
+    render(<ChatSharingButton api={api} collaborationEnabled={false} collaborationApi={api} runtimeId="runtime_owner" chatId={chatId}
+      handle="owner" runtimeSlot="primary" platformHost="https://app.matrix-os.com" copyText={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Share" }));
+    expect(screen.getByRole("button", { name: "Share snapshot" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Invite collaborators" })).toBeNull();
+    expect(screen.queryByText(/Live collaboration is unavailable/i)).toBeNull();
   });
 
   it("converts an idle Chat once and invites an editor through the live authority", async () => {
@@ -50,7 +60,7 @@ describe("Chat collaboration sharing", () => {
       patch: vi.fn(),
     };
     const snapshotApi = { baseUrl: "https://gateway.test", get: vi.fn(), post: vi.fn(), delete: vi.fn() };
-    render(<ChatSharingButton api={snapshotApi} collaborationApi={collaborationApi} runtimeId="runtime_owner"
+    render(<ChatSharingButton api={snapshotApi} collaborationEnabled collaborationApi={collaborationApi} runtimeId="runtime_owner"
       chatId={chatId} handle="owner" runtimeSlot="primary" platformHost="https://app.matrix-os.com" copyText={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: "Share" }));
     fireEvent.click(screen.getByRole("button", { name: "Invite collaborators" }));
