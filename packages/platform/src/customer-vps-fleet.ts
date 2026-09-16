@@ -1,4 +1,4 @@
-import type { StatusResponse } from './customer-vps.js';
+import type { StatusResponse } from './customer-vps-helpers.js';
 
 export interface FleetMachineView extends StatusResponse {
   healthy: boolean;
