@@ -1402,3 +1402,5 @@ export { ShareSnapshotSchema, ShareTokenSchema, shareHtml, isPublicShareLink, ty
 export * from "#terminal-keyboard";
 
 export * from "#file-download";
+
+export * from "./custom-mcp-availability.js";

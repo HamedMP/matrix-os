@@ -1,6 +1,6 @@
 "use client";
 
-import { rebaseCustomMcpPolicy } from "@matrix-os/contracts";
+import { CUSTOM_MCP_UNAVAILABLE, CUSTOM_MCP_UNAVAILABLE_MESSAGE, rebaseCustomMcpPolicy } from "@matrix-os/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getGatewayUrl } from "@/lib/gateway";
 
@@ -67,7 +67,13 @@ function isMcpServer(value: unknown): value is McpServer {
 
 async function fetchMcpServers(): Promise<McpServer[]> {
   const response = await fetch(`${GATEWAY}/api/mcp-servers`, { signal: AbortSignal.timeout(10_000) });
-  if (!response.ok) throw new Error("Custom MCP unavailable");
+  if (!response.ok) {
+    if (response.status === 503) {
+      const body: unknown = await response.json();
+      if (isRecord(body) && body.error === CUSTOM_MCP_UNAVAILABLE) throw new Error(CUSTOM_MCP_UNAVAILABLE);
+    }
+    throw new Error("Custom MCP request failed");
+  }
   const payload: unknown = await response.json();
   if (!Array.isArray(payload) || !payload.every(isMcpServer)) {
     throw new Error("Invalid Custom MCP response");
@@ -89,6 +95,8 @@ export function CustomMcpServersPanel() {
   const [authMode, setAuthMode] = useState<AuthMode>("oauth");
   const [credential, setCredential] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const replaceServers = useCallback((next: McpServer[]) => {
@@ -96,19 +104,26 @@ export function CustomMcpServersPanel() {
     setServers(next);
   }, []);
   const load = useCallback(async () => {
-    replaceServers(await fetchMcpServers());
+    setLoading(true);
+    setLoaded(false);
+    try {
+      replaceServers(await fetchMcpServers());
+      setLoaded(true);
+      setError(null);
+    } catch (loadError: unknown) {
+      setError(loadError instanceof Error && loadError.message === CUSTOM_MCP_UNAVAILABLE
+        ? CUSTOM_MCP_UNAVAILABLE_MESSAGE : "Could not load Custom MCP servers.");
+      throw loadError;
+    } finally {
+      setLoading(false);
+    }
   }, [replaceServers]);
-
-  useEffect(() => {
-    // react-doctor-disable-next-line react-hooks-js/set-state-in-effect -- mount-time external data load; state is updated only in the promise rejection callback after the gateway request settles.
+  const retryLoad = useCallback(() => {
     void load().catch((loadError: unknown) => {
-      console.warn(
-        "[custom-mcp] load failed:",
-        loadError instanceof Error ? loadError.message : String(loadError),
-      );
-      setError("Could not load Custom MCP servers.");
+      console.warn("[custom-mcp] load failed:", loadError instanceof Error ? loadError.name : typeof loadError);
     });
   }, [load]);
+  useEffect(() => { retryLoad(); }, [retryLoad]);
 
   async function mutate<T>(id: string, path: string, method: "POST" | "PATCH" | "DELETE", body: unknown = {}) {
     setBusy(id);
@@ -235,7 +250,23 @@ export function CustomMcpServersPanel() {
         <h3 className="text-sm font-medium">Personal Custom MCP servers</h3>
         <p className="mt-1 text-sm text-muted-foreground">Remote HTTPS Streamable HTTP servers only. Credentials stay in the Matrix platform broker.</p>
       </div>
-      {error && <p role="alert" className="text-sm text-red-400">{error}</p>}
+      {error ? (
+        <div className="flex items-center gap-3">
+          <p role="alert" className="text-sm text-muted-foreground">{error}</p>
+          {!loaded ? (
+            <button
+              type="button"
+              onClick={retryLoad}
+              disabled={loading || busy !== null}
+              className="min-h-9 rounded-md border border-border px-3 text-sm hover:bg-muted active:opacity-80 disabled:opacity-50"
+            >
+              Retry
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+      {loading && <p role="status" className="text-sm text-muted-foreground">Loading MCP servers…</p>}
+      <fieldset disabled={!loaded || loading} className="min-w-0 space-y-4">
       <div className="grid gap-2 rounded-lg border border-border/60 bg-card/50 p-4 sm:grid-cols-2">
         <input aria-label="MCP server name" value={name} onChange={(event) => setName(event.target.value)} placeholder="Server name" maxLength={100} className="rounded-md border border-border bg-background px-3 py-2 text-sm" />
         <input aria-label="MCP server URL" value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://example.com/mcp" maxLength={2048} className="rounded-md border border-border bg-background px-3 py-2 text-sm" />
@@ -246,7 +277,7 @@ export function CustomMcpServersPanel() {
         <button type="button" disabled={busy !== null || !name.trim() || !url.trim()} onClick={createServer} className="rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50">Add MCP server</button>
       </div>
       <div className="space-y-3">
-        {servers.length === 0 && !error ? (
+        {loaded && servers.length === 0 && !error ? (
           <div className="rounded-lg border border-dashed border-border/60 bg-card/30 p-6 text-center">
             <p className="text-sm font-medium">No personal MCP servers yet</p>
             <p className="mt-1 text-sm text-muted-foreground">Add a remote HTTPS server above to discover and approve its tools.</p>
@@ -274,6 +305,7 @@ export function CustomMcpServersPanel() {
           </article>
         ))}
       </div>
+      </fieldset>
     </section>
   );
 }
