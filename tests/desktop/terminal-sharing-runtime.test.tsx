@@ -25,7 +25,7 @@ describe("DesktopTerminalSharing", () => {
     useConnection.setState({ api: firstApi as never });
     render(<DesktopTerminalSharing terminalId="terminal_release" />);
     await act(async () => {
-      resolveFirst({ runtime: { machineId: "10000000-0000-4000-8000-000000000001" } });
+      resolveFirst({ runtime: { machineId: "10000000-0000-4000-8000-000000000001" }, capabilities: { collaboration: true } });
       await Promise.resolve();
     });
     await waitFor(() => expect(sharingButton).toHaveBeenLastCalledWith(
@@ -36,13 +36,21 @@ describe("DesktopTerminalSharing", () => {
     let resolveSecond!: (value: unknown) => void;
     const secondApi = { get: vi.fn(() => new Promise((resolve) => { resolveSecond = resolve; })) };
     act(() => useConnection.setState({ api: secondApi as never }));
-    await waitFor(() => expect(sharingButton).toHaveBeenLastCalledWith(
-      expect.objectContaining({ runtimeId: null }),
-      undefined,
-    ));
+    await waitFor(() => expect(sharingButton).toHaveBeenCalledTimes(1));
     await act(async () => {
-      resolveSecond({ runtime: { machineId: "10000000-0000-4000-8000-000000000002" } });
+      resolveSecond({ runtime: { machineId: "10000000-0000-4000-8000-000000000002" }, capabilities: { collaboration: true } });
       await Promise.resolve();
     });
+  });
+
+  it("does not render collaboration controls when the computer flag is off", async () => {
+    const api = { get: vi.fn(async () => ({
+      runtime: { machineId: "10000000-0000-4000-8000-000000000001" },
+      capabilities: { collaboration: false },
+    })) };
+    useConnection.setState({ api: api as never });
+    render(<DesktopTerminalSharing terminalId="terminal_release" />);
+    await waitFor(() => expect(api.get).toHaveBeenCalled());
+    expect(sharingButton).not.toHaveBeenCalled();
   });
 });
