@@ -127,19 +127,35 @@ describe("real terminal renderer soft-grid resizing", () => {
       await expect.poll(async () => { const g = await geometry(page); return g.bottom - g.visibleBottom; }).toBeLessThanOrEqual(1);
       // Native browser selection defaults must stay suppressed when xterm
       // cancels a forwarded event, including a double click with no movement.
+      const shortGridHeight = (await geometry(page)).stageHeight;
       await page.evaluate(() => {
         Object.defineProperty(navigator, "clipboard", { configurable: true, value: {
           writeText: async (text: string) => { document.body.dataset.copied = text; },
         } });
         const windowElement = document.getElementById("terminal-window")!;
-        windowElement.style.width = "1000px";
-        windowElement.style.height = "577px";
+        windowElement.style.width = "1600px";
+        windowElement.style.height = "1200px";
         (window as unknown as { fixtureOutput: (data: string) => void })
           .fixtureOutput("\x1bcDOUBLECLICK prefix targetword suffix");
       });
+      await expect.poll(async () => (await geometry(page)).stageHeight).toBeGreaterThan(shortGridHeight);
+      await expect.poll(async () => (await geometry(page)).scale).toBe("scale(1)");
+      // Font metrics differ between Chromium and native Electron hosts. Derive
+      // a small shrink from the restored grid, above the readable font floor.
+      await page.locator("#terminal-window").evaluate((element) => {
+        const windowElement = element as HTMLElement;
+        const host = element.querySelector<HTMLElement>("[data-terminal-viewport]")!;
+        const screen = host.querySelector<HTMLElement>(".xterm-screen")!;
+        const style = getComputedStyle(host);
+        const horizontalChrome = windowElement.clientWidth - host.clientWidth
+          + Number.parseFloat(style.paddingLeft) + Number.parseFloat(style.paddingRight);
+        const verticalChrome = windowElement.clientHeight - host.clientHeight
+          + Number.parseFloat(style.paddingTop) + Number.parseFloat(style.paddingBottom);
+        windowElement.style.width = `${screen.offsetWidth + horizontalChrome + 32}px`;
+        windowElement.style.height = `${screen.offsetHeight * 0.97 + verticalChrome}px`;
+      });
       await expect.poll(async () => (await geometry(page)).panTop).toBe(0);
-      await page.waitForTimeout(250);
-      expect((await geometry(page)).scale).not.toBe("scale(1)");
+      await expect.poll(async () => (await geometry(page)).scale).not.toBe("scale(1)");
       const word = await page.locator(".xterm-screen").evaluate((screen) => {
         const rect = screen.getBoundingClientRect();
         return { x: rect.left + rect.width / 120 * 22.5, y: rect.top + rect.height / 36 * 0.5 };
