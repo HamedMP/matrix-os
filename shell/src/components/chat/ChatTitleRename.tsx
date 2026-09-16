@@ -21,6 +21,9 @@ export function ChatTitleEditor({ title, pending, onCommit, onCancel }: {
 }) {
   const [value, setValue] = useState(title);
   const committedRef = useRef(false);
+  useEffect(() => {
+    if (!pending) committedRef.current = false;
+  }, [pending]);
   const commit = () => {
     if (committedRef.current || pending) return;
     const next = value.trim();

@@ -23,6 +23,7 @@ export interface CanonicalChatTitleProjection {
   chatId: string;
   title: string;
   revision: number;
+  titleVersion?: number;
 }
 
 const MAX_CHAT_TITLE_PROJECTIONS = 100;
@@ -83,12 +84,13 @@ export function WorkSurfaceRuntimeProvider({ active, children }: { active: boole
     setProjection((current) => {
       const titles = current?.client === client ? current.titles : [];
       const existing = titles.find((candidate) => candidate.chatId === record.chat.id);
-      if (existing && existing.revision > record.chat.revision) return current;
+      if (existing && ((existing.titleVersion ?? 0) > (record.chat.titleVersion ?? 0)
+        || ((existing.titleVersion ?? 0) === (record.chat.titleVersion ?? 0) && existing.revision > record.chat.revision))) return current;
       return {
         client,
         titles: [
           ...titles.filter((candidate) => candidate.chatId !== record.chat.id),
-          { chatId: record.chat.id, title: record.chat.title, revision: record.chat.revision },
+          { chatId: record.chat.id, title: record.chat.title, titleVersion: record.chat.titleVersion, revision: record.chat.revision },
         ].slice(-MAX_CHAT_TITLE_PROJECTIONS),
       };
     });
