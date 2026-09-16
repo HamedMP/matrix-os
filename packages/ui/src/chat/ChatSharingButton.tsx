@@ -14,8 +14,9 @@ const PreviewSchema = z.object({
 const SharesSchema = z.object({ shares: z.array(z.object({ id: z.uuid(), expiresAt: z.string().max(100) })).max(10) });
 const CreatedSchema = z.object({ id: z.uuid(), token: z.string().regex(/^[a-f0-9]{64}$/) });
 
-export function ChatSharingButton({ api, collaborationApi, runtimeId, chatId, copyText, handle, runtimeSlot, platformHost }: {
+export function ChatSharingButton({ api, collaborationEnabled, collaborationApi, runtimeId, chatId, copyText, handle, runtimeSlot, platformHost }: {
   api: { baseUrl: string; get(path: string): Promise<unknown>; post(path: string, body: unknown): Promise<unknown>; delete(path: string): Promise<unknown> };
+  collaborationEnabled: boolean;
   collaborationApi?: CollaborationApi;
   runtimeId?: string | null;
   handle: string | null;
@@ -90,7 +91,7 @@ export function ChatSharingButton({ api, collaborationApi, runtimeId, chatId, co
     {error ? <span role="alert" className="absolute right-0 top-full z-50 mt-2 w-64 rounded-lg border bg-[var(--bg-surface,var(--background))] p-3 shadow-lg">Sharing unavailable. Try again.</span> : null}
     <button type="button" disabled={pending} aria-expanded={surface !== null} onClick={() => surface ? close() : setSurface("choice")}
       className="rounded-lg px-3 py-1.5 hover:bg-[var(--bg-hover)] disabled:opacity-50">{pending ? "Loading share…" : "Share"}</button>
-    {surface === "choice" ? <ShareChoiceDialog collaborationAvailable={Boolean(collaborationApi && runtimeId)} pending={pending}
+    {surface === "choice" ? <ShareChoiceDialog collaborationAvailable={collaborationEnabled && Boolean(collaborationApi && runtimeId)} pending={pending}
       onClose={close} onSnapshot={() => void openSnapshot()} onCollaborate={() => void openCollaborators()} /> : null}
     {surface === "snapshot" && preview ? <ChatShareDialog confirmationKey={`${preview.fingerprint}:${preview.revision}`} notice={notice} title={preview.title} messages={preview.messages} existing={existing} copyText={copyText}
       onClose={close} revoke={async (id) => { await api.delete(`${path}/${encodeURIComponent(id)}`); }}

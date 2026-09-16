@@ -3,10 +3,11 @@
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import { useEffect, useRef, useState, type ReactElement } from "react";
 
-export function ChatContextMenu({ chatId, children, items = [], zIndex = 100 }: {
+export function ChatContextMenu({ chatId, children, primaryAction, items = [], zIndex = 100 }: {
   chatId?: string | null;
   children: ReactElement;
   zIndex?: number;
+  primaryAction?: { label: string; disabled?: boolean; onSelect: () => void };
   items?: { label: string; disabled?: boolean; danger?: boolean; onSelect: () => void }[];
 }) {
   const [feedback, setFeedback] = useState<"pending" | "copied" | "failed" | null>(null);
@@ -48,6 +49,8 @@ export function ChatContextMenu({ chatId, children, items = [], zIndex = 100 }: 
           color: "var(--text-primary, var(--popover-foreground))",
           borderColor: "var(--border-default, var(--border))",
         }}>
+          {primaryAction ? <ContextMenu.Item disabled={primaryAction.disabled} onSelect={primaryAction.onSelect}
+            className="cursor-default rounded px-2.5 py-1.5 text-sm outline-none focus:bg-accent data-[disabled]:opacity-40">{primaryAction.label}</ContextMenu.Item> : null}
           {selectedText && <ContextMenu.Item disabled={feedback === "pending"}
             className="cursor-default rounded px-2.5 py-1.5 text-sm outline-none focus:bg-accent"
             onSelect={(event) => copy(selectedText, "selected text", event)}>Copy selected text</ContextMenu.Item>}

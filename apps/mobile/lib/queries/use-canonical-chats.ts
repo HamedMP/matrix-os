@@ -28,9 +28,7 @@ export function useCanonicalChats() {
       if (!token || !computer) throw new Error("Chats unavailable.");
       return fetchChats(token, `${HOSTED_GATEWAY_URL}${computer.gatewayPath}`);
     },
-    select: (response) => [...response.items].sort(
-      (left, right) => Date.parse(right.chat.updatedAt) - Date.parse(left.chat.updatedAt),
-    ),
+    select: (response) => response.items,
   });
 
   return {

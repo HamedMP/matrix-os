@@ -1,3 +1,5 @@
+import { LegacyUpdateChatTitleRequestSchema, type LegacyUpdateChatTitleRequest } from "@matrix-os/contracts";
+import { CanonicalUpdateChatReadStateRequestSchema } from "@matrix-os/contracts";
 import { CanonicalSubmitChatInputRequestSchema, type CanonicalSubmitChatInputRequest, type CanonicalChatInputSubmissionResponse } from "@matrix-os/contracts";
 import { randomUUID } from "node:crypto";
 import {
@@ -66,9 +68,9 @@ import { CanonicalChatOrchestrationError, type CanonicalChatOrchestrator } from 
 
 const CursorEnvelopeSchema = z.discriminatedUnion("kind", [
   z.object({
-    version: z.literal(1),
+    version: z.literal(2),
     kind: z.literal("list"),
-    updatedAt: z.iso.datetime({ offset: true }),
+    activityAt: z.iso.datetime({ offset: true }),
     chatId: CanonicalChatIdSchema,
   }).strict(),
   z.object({
@@ -82,7 +84,9 @@ const CursorEnvelopeSchema = z.discriminatedUnion("kind", [
 type CursorEnvelope = z.infer<typeof CursorEnvelopeSchema>;
 type ChatServiceRepository = Pick<ChatRepository,
   | "create"
+  | "rename"
   | "update"
+  | "updateReadState"
   | "updateUserState"
   | "acknowledgeCompletion"
   | "hardDelete"
@@ -118,7 +122,7 @@ function decodeListCursor(value: string) {
   const cursor = decodeCursor(value);
   z.literal("list").parse(cursor.kind);
   if (cursor.kind !== "list") throw new Error("Invalid Chat list cursor");
-  return { updatedAt: cursor.updatedAt, chatId: cursor.chatId };
+  return { activityAt: cursor.activityAt, chatId: cursor.chatId };
 }
 
 function decodeMessageCursor(value: string, chatId: string): number {
@@ -210,10 +214,22 @@ export function createCanonicalChatService(
       chatId: string,
       input: CanonicalUpdateChatTitleRequest,
     ): Promise<CanonicalChatRecord> {
-      return CanonicalChatRecordSchema.parse(await repository.update(
+      return CanonicalChatRecordSchema.parse(await repository.rename(
         owner,
         CanonicalChatIdSchema.parse(chatId),
         CanonicalUpdateChatTitleRequestSchema.parse(input),
+      ));
+    },
+
+    async updateLegacyTitle(owner: ChatOwner, chatId: string, input: LegacyUpdateChatTitleRequest): Promise<CanonicalChatRecord> {
+      return CanonicalChatRecordSchema.parse(await repository.update(
+        owner, CanonicalChatIdSchema.parse(chatId), LegacyUpdateChatTitleRequestSchema.parse(input),
+      ));
+    },
+
+    async updateReadState(owner, chatId, input): Promise<CanonicalChatRecord> {
+      return CanonicalChatRecordSchema.parse(await repository.updateReadState(
+        owner, CanonicalChatIdSchema.parse(chatId), CanonicalUpdateChatReadStateRequestSchema.parse(input),
       ));
     },
 
@@ -247,6 +263,7 @@ export function createCanonicalChatService(
     async list(owner, input): Promise<CanonicalChatListResponse> {
       await options.orchestrator?.reconcileActiveRuns(owner);
       const page = await repository.list(owner, {
+        ...(input.unreadOnly === undefined ? {} : { unreadOnly: input.unreadOnly }),
         limit: input.limit,
         ...(input.lifecycle === undefined ? {} : { lifecycle: input.lifecycle }),
         ...(input.projectId === undefined ? {} : { projectId: input.projectId }),
@@ -256,9 +273,9 @@ export function createCanonicalChatService(
         items: page.items,
         ...(page.nextCursor === undefined ? {} : {
           nextCursor: encodeCursor({
-            version: 1,
+            version: 2,
             kind: "list",
-            updatedAt: page.nextCursor.updatedAt,
+            activityAt: page.nextCursor.activityAt,
             chatId: page.nextCursor.chatId,
           }),
         }),
@@ -508,6 +525,8 @@ export function createUnavailableCanonicalChatService(): CanonicalChatRouteServi
     create: unavailable,
     updateProject: unavailable,
     updateTitle: unavailable,
+    updateLegacyTitle: unavailable,
+    updateReadState: unavailable,
     updateUserState: unavailable,
     acknowledgeCompletion: unavailable,
     delete: unavailable,

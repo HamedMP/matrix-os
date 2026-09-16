@@ -25,5 +25,5 @@ export function TerminalSharing({ terminalId }: { terminalId: string }) {
     });
     return () => { active = false; };
   }, []);
-  return api ? <TerminalSharingButton api={api} runtimeId={runtimeId} terminalId={terminalId} /> : null;
+  return api && runtimeId ? <TerminalSharingButton api={api} runtimeId={runtimeId} terminalId={terminalId} /> : null;
 }

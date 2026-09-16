@@ -307,8 +307,8 @@ describe("ShellSocket URL building", () => {
       viewport: { top: 0, rows: 40 },
     });
 
-    expect(h.events.gaps).toBe(1);
-    expect(h.events.outputs).toEqual([{ data: "\u001b[?1000hless redraw", seq: 7 }]);
+    expect(h.events.gaps).toBe(0);
+    expect(h.events.outputs).toEqual([{ data: "\x1bc\u001b[?1000hless redraw", seq: 7 }]);
   });
 
   it("converts http base urls to ws and strips trailing slashes", () => {
@@ -521,10 +521,10 @@ describe("ShellSocket server frames", () => {
       viewport: { top: 0, rows: 40 },
     });
 
-    expect(h.events.gaps).toBe(1);
+    expect(h.events.gaps).toBe(0);
     expect(h.events.outputs).toEqual([
       { data: "pre-reset live output", seq: LIVE_TAIL_FROM_SEQ },
-      { data: "replacement presentation", seq: 3 },
+      { data: "\x1bcreplacement presentation", seq: 3 },
     ]);
     expect(h.socket.lastSeq).toBe(3);
   });
@@ -584,7 +584,7 @@ describe("ShellSocket server frames", () => {
       { data: "retained 5", seq: 5 },
       { data: "retained 6", seq: 6 },
       { data: "retained 7", seq: 7 },
-      { data: "replacement presentation", seq: 3 },
+      { data: "\x1bcreplacement presentation", seq: 3 },
     ]);
     h.latest().frame({ type: "output", revision: 3, seq: 8, data: "replacement 8" });
     expect(h.events.outputs.at(-1)).toEqual({ data: "replacement 8", seq: 8 });
@@ -611,10 +611,10 @@ describe("ShellSocket server frames", () => {
     });
 
     expect(h.sockets[1]?.closed).toBe(false);
-    expect(h.events.gaps).toBe(1);
+    expect(h.events.gaps).toBe(0);
     expect(h.events.outputs).toEqual([
       { data: "complete live presentation", seq: 7 },
-      { data: "replacement outside retention", seq: 3 },
+      { data: "\x1bcreplacement outside retention", seq: 3 },
     ]);
     expect(h.socket.lastSeq).toBe(7);
     expect(h.socket.state).toBe("attached");
