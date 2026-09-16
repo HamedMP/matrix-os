@@ -262,7 +262,7 @@ describe("mouse-reporting terminal selection", () => {
     remove();
   });
 
-  it("auto-scrolls an ordinary xterm selection without swallowing its native pointer events", () => {
+  it("captures complete rows while auto-scrolling an ordinary xterm selection", () => {
     vi.useFakeTimers();
     const { root, delivered, onExtendedSelection, scrollLines, remove } = setup({
       mouseTrackingMode: "none",
@@ -273,19 +273,19 @@ describe("mouse-reporting terminal selection", () => {
     root.addEventListener("mousedown", nativeDown);
 
     root.dispatchEvent(mouse("mousedown", { button: 0, buttons: 1, clientX: 120, clientY: 80 }));
-    outside.dispatchEvent(mouse("mousemove", { button: 0, buttons: 1, clientX: 130, clientY: 20 }));
+    outside.dispatchEvent(mouse("mousemove", { button: 0, buttons: 1, clientX: 130, clientY: 290 }));
     vi.advanceTimersByTime(160);
 
     expect(nativeDown).toHaveBeenCalledOnce();
     expect(scrollLines.mock.calls.length).toBeGreaterThanOrEqual(3);
-    expect(scrollLines.mock.calls.every(([amount]) => amount < 0)).toBe(true);
+    expect(scrollLines.mock.calls.every(([amount]) => amount > 0)).toBe(true);
     expect(delivered).toEqual(expect.arrayContaining([
-      expect.objectContaining({ type: "mousemove", clientY: 20, altKey: false, shiftKey: false }),
+      expect.objectContaining({ type: "mousemove", clientY: 290, altKey: false, shiftKey: false }),
     ]));
-    expect(onExtendedSelection).not.toHaveBeenCalled();
 
-    outside.dispatchEvent(mouse("mouseup", { button: 0, buttons: 0, clientX: 130, clientY: 20 }));
+    outside.dispatchEvent(mouse("mouseup", { button: 0, buttons: 0, clientX: 130, clientY: 290 }));
     expect(delivered.at(-1)).toEqual(expect.objectContaining({ type: "mouseup", altKey: false }));
+    expect(onExtendedSelection.mock.calls.at(-1)?.[0]).toMatch(/^103\nline-104[\s\S]*\nline-127$/);
     remove();
   });
 

@@ -385,21 +385,19 @@ export function installMouseTrackingSelection({
       return;
     }
     const terminal = getTerminal();
-    if (gesture.appOwnsSelection) {
-      const captureAmount = pendingEdgeScrollAmount || amount;
-      if (terminal) {
-        captureExtendedSelection(
-          terminal,
-          captureAmount,
-          Math.abs(pendingEdgeScrollAmount),
-        );
-      }
-      dispatchEdgeWheel(edgePointer, amount);
-      pendingEdgeScrollAmount = amount;
-      terminal?.scrollLines(amount);
-    } else {
-      terminal?.scrollLines(amount);
+    const captureAmount = pendingEdgeScrollAmount || amount;
+    if (terminal) {
+      captureExtendedSelection(
+        terminal,
+        captureAmount,
+        Math.abs(pendingEdgeScrollAmount),
+      );
     }
+    if (gesture.appOwnsSelection) {
+      dispatchEdgeWheel(edgePointer, amount);
+    }
+    pendingEdgeScrollAmount = amount;
+    terminal?.scrollLines(amount);
     dispatch(
       selectionTarget(edgePointer),
       "mousemove",
@@ -476,7 +474,7 @@ export function installMouseTrackingSelection({
     if (gesture.forceSelection || replacesUnscaledEvent) stopOriginal(event);
     const current = alignPointerToVerticalSelectionEdge(selectionTarget(snapshot(event)));
     const terminal = getTerminal();
-    if (pendingEdgeScrollAmount !== 0 && terminal && gesture.appOwnsSelection) {
+    if (pendingEdgeScrollAmount !== 0 && terminal) {
       captureExtendedSelection(
         terminal,
         pendingEdgeScrollAmount,
