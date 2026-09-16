@@ -41,6 +41,14 @@ describe("one-button update planning", () => {
     expect(plan.compatibilityUpdateRequired).toBe(true);
     expect(plan.reason).toContain("desktop app must be updated");
   });
+  it("does not claim no update exists when the required component's check is unavailable", async () => {
+    const f = fixture({ local: false });
+    Object.assign(f.info, { runtimeCompatibility: { schemaVersion: 1, minDesktopProtocol: 2, maxDesktopProtocol: 2 } });
+    const plan = await loadRepairPlan({ ...f, readLocal: async () => ({ version: "0.1.1", snapshot: { status: "disabled" }, source: f.source }) });
+    expect(plan.targets).toEqual([]);
+    expect(plan.reason).toContain("Update availability could not be confirmed");
+    expect(plan.reason).not.toContain("No update is currently available");
+  });
   it("keeps an installed cloud update pending until its services restart", async () => {
     const f = fixture({ local: false, cloud: false });
     f.info.runningVersion = "v2026.09.08-1";

@@ -87,9 +87,12 @@ export async function loadRepairPlan(scope: Scope & {
       : "Compatibility could not be checked. Check again when the connection is available.";
   if (compatibilityUpdateRequired) {
     const required = protocol === "desktop-update-required" ? "desktop app" : "cloud computer";
+    const requiredState = protocol === "desktop-update-required" ? local.state : cloud.state;
     reason = `The ${required} must be updated to support this connection. ${targets.length
       ? "An update is available on its current channel. Compatibility will be checked again after updating; a newer release may not resolve it."
-      : "No update is currently available on its channel. You can check again later or use another computer."}`;
+      : requiredState === "current"
+        ? "No update is currently available on its channel. You can check again later or use another computer."
+        : "Update availability could not be confirmed. Check again using an installed app and an available connection."}`;
   } else if (targets.length) {
     reason += targets.length === 2 ? " Both have optional updates. The cloud computer updates first, followed by the desktop app."
       : targets[0] === "cloud" ? " An optional cloud update is available."
