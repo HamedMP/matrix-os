@@ -971,6 +971,20 @@ describe("WorkRail", () => {
     expect(screen.queryByText("Chat pin could not be updated.")).toBeNull();
   });
 
+  it("does not carry title versions across runtime clients with the same chat id", async () => {
+    const previous = { ...recent, chat: { ...recent.chat, title: "Previous computer", titleVersion: 10, revision: 100 } };
+    const replacement = { ...recent, chat: { ...recent.chat, title: "Current computer", titleVersion: 1, revision: 2 } };
+    const first = { list: vi.fn(async () => ({ items: [previous] })) } as unknown as CanonicalChatClient;
+    const second = { list: vi.fn(async () => ({ items: [replacement] })) } as unknown as CanonicalChatClient;
+    const props = { projects: [], active: true, onNewGlobalChat: vi.fn(), onCreateProject: vi.fn(),
+      onNewProjectChat: vi.fn(), onSelectChat: vi.fn(), onCollapse: vi.fn() };
+    const view = render(<WorkRail {...props} client={first} />);
+    await screen.findByRole("button", { name: "Previous computer" });
+    view.rerender(<WorkRail {...props} client={second} />);
+    expect(await screen.findByRole("button", { name: "Current computer" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Previous computer" })).toBeNull();
+  });
+
   it("does not surface a pin failure from a replaced client", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
     let rejectPin!: (error: Error) => void;
@@ -1128,7 +1142,7 @@ describe("WorkRail", () => {
     fireEvent.keyDown(input, { key: "Enter" });
 
     await waitFor(() => expect(client.updateTitle).toHaveBeenCalledWith("chat_recent", {
-      baseRevision: 1,
+      expectedTitleVersion: 0,
       title: "Release plan",
     }));
     expect(await screen.findByRole("button", { name: "Release plan" })).toBeTruthy();
@@ -1149,7 +1163,7 @@ describe("WorkRail", () => {
     expect(client.updateTitle).not.toHaveBeenCalled();
   });
 
-  it("commits a changed title on blur and restores the old title after a safe failure", async () => {
+  it("commits a changed title on blur and retains the draft after a safe failure", async () => {
     const { client } = setup();
     const updateTitle = client.updateTitle as ReturnType<typeof vi.fn>;
     const recentChat = await screen.findByRole("button", { name: "Recent global" });
@@ -1167,7 +1181,7 @@ describe("WorkRail", () => {
     fireEvent.keyDown(retryInput, { key: "Enter" });
 
     expect((await screen.findByRole("alert")).textContent).toBe("The Chat could not be renamed. Try again.");
-    expect(screen.getByRole("button", { name: "Blurred title" })).toBeTruthy();
+    expect((screen.getByRole("textbox", { name: "Rename Blurred title" }) as HTMLInputElement).value).toBe("Will fail");
   });
 
   it("blocks a second row from entering rename while the first rename is pending", async () => {

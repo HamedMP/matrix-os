@@ -9,6 +9,7 @@ import { DrawerContent } from "@/components/shell/DrawerContent";
 import { useCanonicalChatSession } from "@/lib/canonical-chat-session-context";
 import { useCanonicalChats } from "@/lib/queries/use-canonical-chats";
 import { useProjects } from "@/lib/queries/use-projects";
+import { useSettingsSystemInfo } from "@/lib/queries/use-settings-system-info";
 
 function triggerDrawerHaptic() {
   void Promise.resolve(
@@ -25,6 +26,7 @@ export default function DrawerLayout() {
   const { computer, chats, isPending: recentChatsLoading } = useCanonicalChats();
   const { projects } = useProjects();
   const { activeChatId, selectChat, startDraftChat } = useCanonicalChatSession();
+  const { systemInfo } = useSettingsSystemInfo();
   const { theme } = useUnistyles();
   const computerName = computer?.handle ?? (recentChatsLoading ? "Loading…" : "Not connected");
 
@@ -38,6 +40,7 @@ export default function DrawerLayout() {
         <DrawerContent
           {...props}
           computerName={computerName}
+          collaborationEnabled={systemInfo?.capabilities?.collaboration === true}
           recentChats={chats}
           recentChatsLoading={recentChatsLoading}
           projects={projects}
@@ -81,7 +84,9 @@ export default function DrawerLayout() {
       <Drawer.Screen name="terminal" options={{ title: null, drawerLabel: "Terminal" }} />
       <Drawer.Screen name="integrations" options={{ title: null, drawerLabel: "Integrations" }} />
       <Drawer.Screen name="apps" options={{ title: null, drawerLabel: "Apps" }} />
-      <Drawer.Screen name="shared" options={{ title: null, drawerLabel: "Shared with me" }} />
+      {systemInfo?.capabilities?.collaboration === true
+        ? <Drawer.Screen name="shared" options={{ title: null, drawerLabel: "Shared with me" }} />
+        : null}
       <Drawer.Screen name="settings" options={{ title: null, drawerLabel: "Settings" }} />
     </Drawer>
   );

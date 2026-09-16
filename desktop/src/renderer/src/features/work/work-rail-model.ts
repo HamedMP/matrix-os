@@ -1,3 +1,4 @@
+import { compareCanonicalChatActivity, isChatUnread } from "@matrix-os/ui";
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
 import type { Project } from "../../stores/board";
 
@@ -43,9 +44,7 @@ export function buildWorkRailSearchResults(
   const normalized = query.trim().toLocaleLowerCase();
   const seen = new Set<string>();
   const results: WorkRailSearchResult[] = [];
-  const newestFirst = [...records].sort((left, right) => (
-    right.chat.updatedAt.localeCompare(left.chat.updatedAt)
-  ));
+  const newestFirst = [...records].sort(compareCanonicalChatActivity);
   for (const record of newestFirst) {
     if (seen.has(record.chat.id)) continue;
     seen.add(record.chat.id);
@@ -109,7 +108,7 @@ export function resolveWorkRailAgentState(record: CanonicalChatRecord): WorkRail
   }
   if (record.activeRun) return "running";
   if (record.chat.attention === "failed") return "failed";
-  if (record.latestSuccessfulCompletion?.unacknowledged) return "unseen_completion";
+  if (isChatUnread(record)) return "unseen_completion";
   return "idle";
 }
 

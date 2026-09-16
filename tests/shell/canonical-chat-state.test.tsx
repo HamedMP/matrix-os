@@ -10,7 +10,7 @@ vi.mock("@/hooks/useSocket", () => ({ useSocket: () => ({ connected: true }) }))
 function record(id: string, title: string, revision = 0) {
   return {
     chat: {
-      id, ownerScope: { type: "personal" as const, ownerId: "owner_shell" }, title,
+      id, ownerScope: { type: "personal" as const, ownerId: "owner_shell" }, title, titleVersion: revision,
       lifecycle: "active" as const, attention: "none" as const, revision, messageCount: 1,
       currentSelection: { instanceId: "pi_default", model: "anthropic:claude-sonnet-5" },
       createdAt: "2026-08-31T00:00:00.000Z", updatedAt: "2026-08-31T00:00:00.000Z",
@@ -47,7 +47,7 @@ describe("canonical shell Chat state", () => {
     };
     let detailCalls = 0;
     const fetchFn = vi.fn(async (url: string) => {
-      if (url.endsWith("/api/chats/events?messageVersion=2&inputVersion=1")) return streamResponse;
+      if (url.endsWith("/api/chats/events?messageVersion=2&inputVersion=1&readStateVersion=1")) return streamResponse;
       if (url.includes("/api/chats?")) return Response.json({ items: [runningRecord] });
       if (url.includes("/api/chats/chat_stream?")) {
         detailCalls += 1;
@@ -111,7 +111,7 @@ describe("canonical shell Chat state", () => {
     };
     let detailCalls = 0;
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-      if (url.endsWith("/api/chats/events?messageVersion=2&inputVersion=1")) return streamResponse;
+      if (url.endsWith("/api/chats/events?messageVersion=2&inputVersion=1&readStateVersion=1")) return streamResponse;
       if (url.includes("/api/chats?")) return Response.json({ items: [runningRecord] });
       if (url.includes("/api/chats/chat_fallback?")) {
         detailCalls += 1;
@@ -144,8 +144,8 @@ describe("canonical shell Chat state", () => {
       if (url.includes("/api/chats/chat_a?") && init?.method === undefined) {
         return Response.json(detail("chat_a", "Old title", 3));
       }
-      if (url.endsWith("/api/chats/chat_a/title") && init?.method === "PATCH") {
-        expect(JSON.parse(String(init.body))).toEqual({ baseRevision: 3, title: "New title" });
+      if (url.endsWith("/api/chats/chat_a/title?readStateVersion=1") && init?.method === "PATCH") {
+        expect(JSON.parse(String(init.body))).toEqual({ expectedTitleVersion: 3, title: "New title" });
         return Response.json(record("chat_a", "New title", 4));
       }
       throw new Error(`Unexpected request: ${url}`);
@@ -176,7 +176,7 @@ describe("canonical shell Chat state", () => {
         detailCalls += 1;
         return Response.json(detail("chat_a", detailCalls === 1 ? "Initial" : "Newest refresh", detailCalls === 1 ? 3 : 5));
       }
-      if (url.endsWith("/api/chats/chat_a/title") && init?.method === "PATCH") return renameResponse;
+      if (url.endsWith("/api/chats/chat_a/title?readStateVersion=1") && init?.method === "PATCH") return renameResponse;
       throw new Error(`Unexpected request: ${url}`);
     }));
 
@@ -191,6 +191,36 @@ describe("canonical shell Chat state", () => {
 
     expect(result.current.conversations[0]?.title).toBe("Newest refresh");
     expect(result.current.activeConversationTitle).toBe("Newest refresh");
+  });
+
+  it("retains a successful title when an older list and detail finish after rename", async () => {
+    let staleList!: (response: Response) => void;
+    let staleDetail!: (response: Response) => void;
+    let listCalls = 0;
+    let detailCalls = 0;
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.includes("/api/chats?")) {
+        if (++listCalls === 1) return Response.json({ items: [record("chat_a", "Initial", 3)] });
+        return new Promise<Response>((resolve) => { staleList = resolve; });
+      }
+      if (url.includes("/api/chats/chat_a?")) {
+        if (++detailCalls === 1) return Response.json(detail("chat_a", "Initial", 3));
+        return new Promise<Response>((resolve) => { staleDetail = resolve; });
+      }
+      if (url.endsWith("/title?readStateVersion=1") && init?.method === "PATCH") return Response.json(record("chat_a", "Manual", 4));
+      throw new Error("Unexpected request");
+    }));
+    const { result } = renderHook(() => useCanonicalChatState());
+    await waitFor(() => expect(result.current.activeConversationTitle).toBe("Initial"));
+    act(() => window.dispatchEvent(new Event("focus")));
+    await waitFor(() => expect(staleDetail).toBeDefined());
+    await act(async () => { await result.current.renameConversation!("chat_a", "Manual"); });
+    await act(async () => {
+      staleList(Response.json({ items: [record("chat_a", "Initial", 3)] }));
+      staleDetail(Response.json(detail("chat_a", "Initial", 3)));
+    });
+    expect(result.current.activeConversationTitle).toBe("Manual");
+    expect(result.current.conversations[0].title).toBe("Manual");
   });
 
   it("ignores an out-of-order detail response after switching chats", async () => {
@@ -296,7 +326,7 @@ describe("canonical shell Chat state", () => {
         const path = parsed.searchParams.get("path")!;
         return Response.json({ ok: true, path, size: 5 });
       }
-      if (url.endsWith("/api/chats/chat_a/turns?messageVersion=2&inputVersion=1")) {
+      if (url.endsWith("/api/chats/chat_a/turns?messageVersion=2&inputVersion=1&readStateVersion=1")) {
         return Response.json({ error: "conflict" }, { status: 409 });
       }
       if (url.includes("/api/files/blob?") && init?.method === "DELETE") {
@@ -369,7 +399,7 @@ describe("canonical shell Chat state", () => {
 
     await waitFor(() => expect(fetchFn.mock.calls.filter(([, init]) =>
       (init as RequestInit | undefined)?.method === "DELETE")).toHaveLength(1));
-    expect(fetchFn.mock.calls.some(([url]) => String(url).endsWith("/api/chats/chat_a/turns?messageVersion=2&inputVersion=1"))).toBe(false);
+    expect(fetchFn.mock.calls.some(([url]) => String(url).endsWith("/api/chats/chat_a/turns?messageVersion=2&inputVersion=1&readStateVersion=1"))).toBe(false);
   });
 
   it("keeps uploaded files when admission outcome is ambiguous", async () => {
@@ -383,7 +413,7 @@ describe("canonical shell Chat state", () => {
         const path = new URL(url).searchParams.get("path")!;
         return Response.json({ ok: true, path, size: 5 });
       }
-      if (url.endsWith("/api/chats/chat_a/turns?messageVersion=2&inputVersion=1")) {
+      if (url.endsWith("/api/chats/chat_a/turns?messageVersion=2&inputVersion=1&readStateVersion=1")) {
         return Response.json({ error: "unavailable" }, { status: 503 });
       }
       if (url.includes("/api/files/blob?") && init?.method === "DELETE") {
@@ -467,4 +497,23 @@ describe("canonical shell Chat state", () => {
     expect(fetchFn.mock.calls.some(([url]) =>
       String(url).includes("/runs/run_current/approvals/approval_reused"))).toBe(false);
   });
+});
+
+it("loads unread results beyond the first page", async () => {
+  const fetchFn = vi.fn(async (input: string) => {
+    const url = new URL(input, "http://localhost");
+    if (url.pathname.endsWith("/events")) return new Response(new ReadableStream(), { headers: { "content-type": "text/event-stream" } });
+    if (url.pathname === "/api/chats") {
+      if (!url.searchParams.has("unread")) return Response.json({ items: [] });
+      const item = (id: string) => ({ ...record(id, id), readState: { unread: true, markedUnread: true, version: 1, readThroughSeq: 0, latestIncomingSeq: 0 } });
+      return Response.json(url.searchParams.has("cursor") ? { items: [item("chat_second")] }
+        : { items: [item("chat_first")], nextCursor: "chatcur_page_two" });
+    }
+    return Response.json(detail("chat_first", "chat_first"));
+  });
+  vi.stubGlobal("fetch", fetchFn);
+  const { result, unmount } = renderHook(() => useCanonicalChatState());
+  await act(async () => { result.current.setUnreadOnly?.(true); });
+  await waitFor(() => expect(result.current.conversations.map(item => item.id)).toEqual(["chat_first", "chat_second"]));
+  unmount();
 });

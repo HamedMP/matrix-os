@@ -255,7 +255,7 @@ export function installGatewayCors(
       responseHeaders["Access-Control-Allow-Origin"] = [rendererOrigin];
       responseHeaders["Access-Control-Allow-Methods"] = ["GET, POST, PATCH, PUT, DELETE, OPTIONS"];
       responseHeaders["Access-Control-Allow-Headers"] = [
-        "Authorization, Content-Type, x-runtime-slot, X-Matrix-Filename, X-Conversations-Token",
+        "Authorization, Content-Type, x-runtime-slot, X-Matrix-Filename, X-Conversations-Token, X-Matrix-Chat-Metadata, X-Matrix-Chat-Protocol, Last-Event-ID",
       ];
       responseHeaders["Access-Control-Allow-Credentials"] = ["true"];
     }

@@ -1,3 +1,4 @@
+import { ChatSteerNotDeliveredError } from "./steer-delivery-error.js";
 import { createHermesInputController } from "./hermes-input-control.js";
 import { delimiter, join } from "node:path";
 import { createHash } from "node:crypto";
@@ -884,7 +885,8 @@ export function createHermesChatProviderAdapter(options: {
     resume: (input) => execute(input, HermesChatStateSchema.parse(input.resumeState)),
     async steer(input) {
       const active = activeSteerRuns.get(input.runId);
-      if (!active || active.ownerId !== input.owner.ownerId || active.chatId !== input.chatId
+      if (!active) throw new ChatSteerNotDeliveredError();
+      if (active.ownerId !== input.owner.ownerId || active.chatId !== input.chatId
         || active.turnId !== input.turnId) {
         throw new Error("Hermes steering Run unavailable");
       }
