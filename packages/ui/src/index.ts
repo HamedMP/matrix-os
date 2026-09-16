@@ -104,3 +104,6 @@ export { useFileDownload, type FileDownloadTransport, type FileDownloadControlle
 
 export { resolveRecipeHandoff } from "./chat-agents/recipe-handoff.js";
 export { generatedChatTitle } from "./generated-chat-title";
+
+export { useChatReadState } from "./chat/use-chat-read-state.js";
+export { isChatUnread, chatReadAction, mergeChatReadState } from "./chat/read-state.js";

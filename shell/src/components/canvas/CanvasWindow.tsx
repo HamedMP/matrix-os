@@ -473,6 +473,12 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
         <div className="h-full overflow-hidden">
           {chatState && (
             <ChatApp
+                filterUnreadOnly={chatState.unreadOnly}
+                onUnreadFilterChange={chatState.setUnreadOnly}
+                active={isFocused && !win.minimized}
+                readState={chatState.readState}
+                displayedThroughSeq={chatState.displayedThroughSeq}
+                onUpdateReadState={chatState.updateReadState}
               messages={chatState.messages}
               sessionId={chatState.sessionId}
               busy={chatState.busy}

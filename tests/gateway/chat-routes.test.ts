@@ -47,6 +47,7 @@ function routeService(overrides: Partial<CanonicalChatRouteService> = {}): Canon
     create: vi.fn(async () => record),
     updateProject: vi.fn(async () => record),
     updateTitle: vi.fn(async () => record),
+    updateReadState: vi.fn(async () => record),
     updateUserState: vi.fn(async () => record),
     acknowledgeCompletion: vi.fn(async () => record),
     delete: vi.fn(async () => ({ chatId: record.chat.id, deletedAt: record.chat.updatedAt })),

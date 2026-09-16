@@ -1,3 +1,4 @@
+import { isChatUnread, chatReadAction, mergeChatReadState } from "@matrix-os/ui";
 import type { StartAgentChat } from "@matrix-os/ui";
 import { ChatAgentsRailSection, useChatAgentsNavigation } from "@matrix-os/ui";
 import { useUi } from "../../stores/ui";
@@ -41,11 +42,11 @@ function applyProjectedChats(
   });
 }
 
-async function loadWorkRailChats(client: CanonicalChatClient): Promise<CanonicalChatRecord[]> {
+async function loadWorkRailChats(client: CanonicalChatClient, unreadOnly = false): Promise<CanonicalChatRecord[]> {
   const records: CanonicalChatRecord[] = [];
   let cursor: string | undefined;
   for (let page = 0; page < MAX_CHAT_PAGES; page += 1) {
-    const response = await client.list({ limit: 100, ...(cursor ? { cursor } : {}) });
+    const response = await client.list({ ...(unreadOnly ? { unreadOnly: true } : {}), limit: 100, ...(cursor ? { cursor } : {}) });
     records.push(...response.items);
     if (!response.nextCursor || response.nextCursor === cursor) break;
     cursor = response.nextCursor;
@@ -97,6 +98,9 @@ export function WorkRail({
   const onCreateProject = () => { agentsNavigation?.close(); createProject(); };
   const onNewProjectChat = (project: Project) => { agentsNavigation?.close(); newProjectChat(project); };
   const onSelectChat = (...args: Parameters<typeof selectChat>) => { agentsNavigation?.close(); selectChat(...args); };
+  const [readPending, setReadPending] = useState(false);
+  const [readError, setReadError] = useState<string | null>(null);
+  const [unreadOnly, setUnreadOnly] = useState(false);
   const [records, setRecords] = useState<CanonicalChatRecord[]>([]);
   const [status, setStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [sections, setSections] = useState<Record<SectionKey, boolean>>({
@@ -126,7 +130,7 @@ export function WorkRail({
       generation: routeScopeRef.current.generation + 1,
     };
   }
-  const model = useMemo(() => buildWorkRailModel(records, projects), [projects, records]);
+  const model = useMemo(() => buildWorkRailModel(unreadOnly ? records.filter(isChatUnread) : records, projects), [projects, records, unreadOnly]);
 
   useEffect(() => {
     if (!active || !client) setSearchOpen(false);
@@ -139,6 +143,8 @@ export function WorkRail({
     let refreshPending = false;
     setPinError(null);
     setPinning({});
+    setReadPending(false);
+    setReadError(null);
     setDeleteChatTarget(null);
     setDeletingChat(false);
     setDeleteChatError(null);
@@ -155,9 +161,12 @@ export function WorkRail({
       do {
         refreshPending = false;
         try {
-          const loaded = await loadWorkRailChats(client);
+          const loaded = await loadWorkRailChats(client, unreadOnly);
           if (!current) return;
-          setRecords(applyProjectedChats(loaded, projectedChatTitlesRef.current));
+          setRecords((current) => applyProjectedChats(loaded.map((record) => {
+            const previous = current.find((item) => item.chat.id === record.chat.id);
+            return previous ? mergeChatReadState(record, previous) : record;
+          }), projectedChatTitlesRef.current));
           setStatus("ready");
         } catch (error: unknown) {
           if (!current) return;
@@ -180,12 +189,30 @@ export function WorkRail({
       refreshPending = false;
       subscription?.dispose();
     };
-  }, [active, activeChatId, activeProjectSlug, client, eventSource]);
+  }, [active, activeChatId, activeProjectSlug, client, eventSource, unreadOnly]);
 
   useEffect(() => {
     if (!projectedChatTitles?.length) return;
     setRecords((current) => applyProjectedChats(current, projectedChatTitles));
   }, [projectedChatTitles]);
+
+  const toggleRead = async (record: CanonicalChatRecord) => {
+    if (!client || readPending) return;
+    const scope = routeScopeRef.current;
+    setReadPending(true);
+    setReadError(null);
+    try {
+      const updated = await client.updateReadState(record.chat.id, chatReadAction(record));
+      if (routeScopeRef.current.client === scope.client) {
+        setRecords((current) => current.map((item) => mergeChatReadState(item, updated)));
+      }
+    } catch (error: unknown) {
+      console.warn("[chat] Read state update failed:", error instanceof Error ? error.name : "UnknownError");
+      if (routeScopeRef.current.client === scope.client) setReadError("The Chat could not be updated. Try again.");
+    } finally {
+      if (routeScopeRef.current.client === scope.client) setReadPending(false);
+    }
+  };
 
   const toggleSection = (key: SectionKey) => {
     setSections((current) => ({ ...current, [key]: !current[key] }));
@@ -292,6 +319,12 @@ export function WorkRail({
         onCollapse={onCollapse}
         showCollapseControl={showCollapseControl}
       />
+      <div className="flex items-center gap-2 px-3 py-2 text-xs">
+        <button type="button" aria-pressed={!unreadOnly} onClick={() => setUnreadOnly(false)} className="rounded px-2 py-1 hover:bg-[var(--bg-hover)] aria-pressed:bg-[var(--bg-selected)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]">All</button>
+        <button type="button" aria-pressed={unreadOnly} onClick={() => setUnreadOnly(true)} className="rounded px-2 py-1 hover:bg-[var(--bg-hover)] aria-pressed:bg-[var(--bg-selected)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]">Unread</button>
+      </div>
+      {readError ? <p role="alert" className="px-3 text-xs">{readError}</p> : null}
+      {unreadOnly && !records.some(isChatUnread) ? <p className="px-3 text-xs">No unread chats.</p> : null}
       <ChatAgentsRailSection client={client?.agents} onOpen={onOpenAgents} onStartChat={onStartAgentChat} onSetup={() => { useUi.getState().requestSettingsSection("agents-providers"); useTabs.getState().openTab({ kind: "settings", title: "Settings" }); }} />
       <div className="contents">
         <WorkRailSection
@@ -309,6 +342,8 @@ export function WorkRail({
               renaming={renamingChatId === record.chat.id}
               renamePending={renamePending && renamingChatId === record.chat.id}
               renameDisabled={renamePending}
+              onToggleRead={() => { void toggleRead(record); }}
+              readPending={readPending}
               onRenameStart={() => {
                 if (renamePending) return;
                 setRenameError(null);
@@ -360,6 +395,8 @@ export function WorkRail({
                 pinning={pinning}
                 renamingChatId={renamingChatId}
                 renamePending={renamePending}
+                onToggleRead={(record) => { void toggleRead(record); }}
+                readPending={readPending}
                 onRenameChat={(record) => {
                   if (renamePending) return;
                   setRenameError(null);
@@ -401,6 +438,8 @@ export function WorkRail({
               renaming={renamingChatId === record.chat.id}
               renamePending={renamePending && renamingChatId === record.chat.id}
               renameDisabled={renamePending}
+              onToggleRead={() => { void toggleRead(record); }}
+              readPending={readPending}
               onRenameStart={() => {
                 if (renamePending) return;
                 setRenameError(null);

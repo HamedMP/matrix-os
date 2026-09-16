@@ -1,3 +1,4 @@
+import { mergeChatReadState } from "./chat/read-state.js";
 import type { CanonicalChatContentFrame, CanonicalChatDetailResponse } from "@matrix-os/contracts";
 
 function upsert<T extends { id: string }>(current: T[], incoming: T[] = []): T[] {
@@ -50,7 +51,7 @@ export function applyCanonicalChatContent(
   const visibleRunIds = runs.map((run) => run.id);
   const next = {
     ...detail,
-    record: content.record,
+    record: mergeChatReadState(content.record, detail.record),
     messages: windowMessages,
     ...(messages.length > 200 ? { nextBeforeSeq: windowMessages[0]!.seq } : {}),
     turns,

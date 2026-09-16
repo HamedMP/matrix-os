@@ -37,6 +37,8 @@ export interface ChatMembersTable {
 }
 
 export interface ChatUserStateTable {
+  marked_unread: Generated<boolean>;
+  read_state_version: Generated<number>;
   chat_id: string;
   principal_id: string;
   read_through_seq: ColumnType<number, number | undefined, number>;
@@ -698,4 +700,18 @@ export async function bootstrapChatDatabase<Database extends ChatDatabase>(
   `.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_chat_messages_search ON chat_messages USING GIN (to_tsvector('simple', search_text)) WHERE state = 'committed'`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_chat_outbox_owner_cursor ON chat_outbox(owner_type, owner_id, cursor)`.execute(db);
+  await bootstrapChatReadState(db);
+}
+
+// Existing history starts read once on upgrade; subsequent bootstraps preserve user choices.
+export async function bootstrapChatReadState<Database extends ChatDatabase>(db: Kysely<Database>): Promise<void> {
+  await db.transaction().execute(async (trx) => {
+    await sql`ALTER TABLE chat_user_state ADD COLUMN IF NOT EXISTS marked_unread BOOLEAN NOT NULL DEFAULT FALSE`.execute(trx);
+    await sql`ALTER TABLE chat_user_state ADD COLUMN IF NOT EXISTS read_state_version BIGINT`.execute(trx);
+    await sql`UPDATE chat_user_state SET read_through_seq = GREATEST(read_through_seq,
+    COALESCE((SELECT MAX(seq) FROM chat_messages WHERE chat_messages.chat_id = chat_user_state.chat_id), 0)),
+    read_state_version = 0 WHERE read_state_version IS NULL`.execute(trx);
+    await sql`ALTER TABLE chat_user_state ALTER COLUMN read_state_version SET DEFAULT 0`.execute(trx);
+    await sql`ALTER TABLE chat_user_state ALTER COLUMN read_state_version SET NOT NULL`.execute(trx);
+  });
 }
