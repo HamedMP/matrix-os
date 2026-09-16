@@ -609,7 +609,10 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
             continue;
           }
           newWindows.push({
-            id: `win-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+            // Bootstrap may settle after a launch link has already mounted Chat.
+            // Keep mounted state (including a consumed recipe draft) across hydration.
+            id: state.windows.find((window) => window.path === s.path)?.id
+              ?? `win-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
             title: s.title,
             path: s.path,
             x: restored.x,

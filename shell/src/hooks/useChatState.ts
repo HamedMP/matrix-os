@@ -1,12 +1,14 @@
 "use client";
 import type { CanonicalSubmitChatInputRequest } from "@matrix-os/contracts";
 
+import type { ChatAgentClient } from "@matrix-os/ui";
+import type { CanonicalChatQueuedTurn } from "@matrix-os/contracts";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useSocket, type ServerMessage } from "@/hooks/useSocket";
 import { useConversation } from "@/hooks/useConversation";
 import { reduceChat, hydrateMessages, type ChatMessage } from "@/lib/chat";
 import { getGatewayUrl } from "@/lib/gateway";
-import type { CanonicalChatApprovalDecision, CanonicalChatModelSelection } from "@matrix-os/contracts";
+import type { CanonicalChatResourceReference, CanonicalChatApprovalDecision, CanonicalChatModelSelection } from "@matrix-os/contracts";
 
 const GATEWAY_URL = getGatewayUrl();
 const GATEWAY_FETCH_TIMEOUT_MS = 10_000;
@@ -23,6 +25,9 @@ interface QueuedMessage {
 const MAX_SEEN_REPLAY_EVENTS = 2_000;
 
 export interface ChatState {
+  agentClient?: ChatAgentClient;
+  queuedTurns?: CanonicalChatQueuedTurn[];
+  cancelQueuedTurn?: (id: string) => Promise<boolean>;
   messages: ChatMessage[];
   sessionId: string | undefined;
   busy: boolean;
@@ -42,7 +47,7 @@ export interface ChatState {
     text: string,
     files?: Array<{ name: string; type: string; data: string }>,
     options?: ChatSubmitOptions,
-  ) => void;
+  ) => void | Promise<boolean>;
   newChat: () => Promise<void>;
   switchConversation: (id: string) => void;
   /** Stops the in-flight agent run. No-op if nothing is running. */
@@ -56,6 +61,8 @@ export interface ChatState {
 }
 
 export interface ChatSubmitOptions {
+  resources?: CanonicalChatResourceReference[];
+  clientRequestId?: string;
   displayText?: string;
   promptText?: string;
   instanceId?: string;
