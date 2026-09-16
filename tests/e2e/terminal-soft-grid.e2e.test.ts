@@ -86,9 +86,10 @@ describe("real terminal renderer soft-grid resizing", () => {
   }
 
   it.each([
-    { surface: "web", zoom: 1 }, { surface: "web", zoom: 0.75 }, { surface: "electron", zoom: 1 },
-    { surface: "web-mobile", zoom: 1 },
-  ].filter((entry) => !nativeElectron || entry.surface === "electron"))("keeps the final row visible in $surface at zoom $zoom", async ({ surface, zoom }) => {
+    { surface: "web", name: "Web Desktop", zoom: 1 }, { surface: "web", name: "Web Canvas", zoom: 0.75 },
+    { surface: "electron", name: "Electron Desktop", zoom: 1 },
+    { surface: "web-mobile", name: "Web Mobile", zoom: 1 },
+  ].filter((entry) => !nativeElectron || entry.surface === "electron"))("keeps the final row visible in $name at zoom $zoom", async ({ surface, zoom }) => {
     const page = electron ? await electron.firstWindow() : await browser.newPage({ viewport: { width: surface === "web-mobile" ? 430 : 1450, height: 1050 },
       isMobile: surface === "web-mobile", hasTouch: surface === "web-mobile" });
     const errors: string[] = [];

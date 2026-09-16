@@ -23,7 +23,8 @@ Native Mobile uses its independent React Native WebView implementation in
 [`TerminalSurface.tsx`](../../../apps/mobile/components/TerminalSurface.tsx), with
 its own bundled xterm, fit logic, and native message bridge. It imports neither
 `TerminalPane` nor the modified shared DOM presentation helper. This PR fixes
-desktop window resizing and does not change that renderer or its capabilities.
+Web Desktop, Web Canvas, and Electron Desktop window resizing and does not
+change that renderer or its capabilities.
 The coordinating scope reviewer approved this architectural N/A. No Native Mobile
 execution or device evidence is claimed.
 

@@ -540,7 +540,7 @@ describe("TerminalPane scrolling", () => {
     Reflect.deleteProperty(window, "visualViewport");
   });
 
-  it.each([1, 0.75])("keeps the last canonical row accessible after soft viewport resizing at canvas zoom %s", async (canvasZoom) => {
+  it.each([1, 0.75])("keeps the last canonical row accessible after soft viewport resizing at Web Canvas zoom %s", async (canvasZoom) => {
     const { container } = render(<TerminalPane
       paneId="soft-resize-regression" cwd="" theme={theme} isFocused
       sessionId={TERMINAL_REF_KEY} canvasZoom={canvasZoom}
