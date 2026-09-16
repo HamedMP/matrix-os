@@ -10,6 +10,7 @@ import {
 } from "@matrix-os/contracts";
 import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod/v4";
+import { openBufferedAttachment } from "./attachment-bootstrap.js";
 import { TerminalRuntimeError } from "./errors.js";
 import {
   TerminalWorkspaceStore,
@@ -508,11 +509,13 @@ export class TerminalRuntime {
     await this.sweepStaleViewers();
     const key = refKey(ref);
     let attachment = this.attachments.get(key);
+    let bootstrap: Awaited<ReturnType<typeof openBufferedAttachment>> | undefined;
     if (!attachment) {
       if (this.attachments.size >= this.maxAttachments) throw new TerminalRuntimeError("capacity");
       const workspace = await this.requireRuntimeWorkspace(ref.workspaceId);
       const tab = workspace.tabs[ref.tabId];
       if (!tab || tab.zellijPaneId === null) throw new TerminalRuntimeError("not_found");
+      const paneId = tab.zellijPaneId;
       const next: AttachmentState = {
         ref,
         handle: undefined as unknown as ZellijAttachment,
@@ -520,10 +523,10 @@ export class TerminalRuntime {
       };
       let openingExit: { exitCode: number | null; release: () => void } | undefined;
       try {
-        next.handle = await this.zellij.openAttachment(workspace.zellijSessionName, {
-          paneId: tab.zellijPaneId,
+        bootstrap = await openBufferedAttachment((onData) => this.zellij.openAttachment(workspace.zellijSessionName, {
+          paneId,
           size: workspace.canonicalSize,
-          onData: (data) => { void this.broadcast(key, data); },
+          onData,
           onExit: (exitCode) => {
             if (!this.attachments.has(key)) { openingExit ??= { exitCode, release: this.reservePaneClosure(key) }; return; }
             const releasePaneClosure = this.reservePaneClosure(key);
@@ -531,7 +534,8 @@ export class TerminalRuntime {
               .catch((error: unknown) => { console.error("[terminal-runtime] failed to record terminal attachment exit", error); })
               .finally(releasePaneClosure);
           },
-        });
+        }), (data) => { void this.broadcast(key, data); });
+        next.handle = bootstrap.handle;
         this.attachments.set(key, next);
         if (openingExit) { await this.handleAttachmentExit(key, openingExit.exitCode); throw new Error("Terminal tab unavailable"); }
       } finally { openingExit?.release(); }
@@ -546,6 +550,7 @@ export class TerminalRuntime {
       send: input.send,
       ...(input.onExit ? { onExit: input.onExit } : {}),
     });
+    bootstrap?.flush();
     let detached = false;
     return {
       write: async (data) => {
