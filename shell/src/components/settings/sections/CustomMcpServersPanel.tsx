@@ -106,6 +106,7 @@ export function CustomMcpServersPanel() {
   const load = useCallback(async () => {
     setLoading(true);
     setLoaded(false);
+    // react-doctor-disable-next-line react-hooks-js/todo -- finally clears loading on both rejected requests and successful retries; keep the cleanup guarantee when the compiler skips this callback.
     try {
       replaceServers(await fetchMcpServers());
       setLoaded(true);
@@ -123,6 +124,7 @@ export function CustomMcpServersPanel() {
       console.warn("[custom-mcp] load failed:", loadError instanceof Error ? loadError.name : typeof loadError);
     });
   }, [load]);
+  // react-doctor-disable-next-line react-hooks-js/set-state-in-effect -- mount loads the external server list; load also owns the flags for user-triggered retries.
   useEffect(() => { retryLoad(); }, [retryLoad]);
 
   async function mutate<T>(id: string, path: string, method: "POST" | "PATCH" | "DELETE", body: unknown = {}) {

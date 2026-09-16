@@ -1403,4 +1403,4 @@ export * from "#terminal-keyboard";
 
 export * from "#file-download";
 
-export * from "./custom-mcp-availability.js";
+export * from "#custom-mcp-availability";
