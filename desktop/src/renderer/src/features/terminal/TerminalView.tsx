@@ -3,7 +3,7 @@ import { DESKTOP_Z_INDEX } from "../../design/layering";
 import { createPortal } from "react-dom";
 import { TerminalControls } from "@matrix-os/ui";
 import {
-  classifyTerminalClipboardShortcut,
+  resolveTerminalClipboardKeyEvent,
   classifyTerminalPointerEvent,
 } from "@matrix-os/contracts";
 import { FitAddon } from "@xterm/addon-fit";
@@ -307,7 +307,7 @@ export default function TerminalView({
     host.ownerDocument.addEventListener("selectionchange", onDocumentSelectionChange);
     terminal.attachCustomKeyEventHandler((event) => {
       const selection = readTerminalSelection();
-      const action = classifyTerminalClipboardShortcut({
+      const action = resolveTerminalClipboardKeyEvent({
         type: event.type as "keydown" | "keyup" | "keypress",
         key: event.key,
         isMac: navigator.platform.startsWith("Mac"),
@@ -318,6 +318,8 @@ export default function TerminalView({
         repeat: event.repeat,
         isComposing: event.isComposing,
         hasSelection: Boolean(selection),
+        keyCode: event.keyCode,
+        altGraphKey: event.getModifierState?.("AltGraph"),
       });
       if (!action) return controlsRef.current.handleKeyEvent(event);
       event.preventDefault();
@@ -325,7 +327,7 @@ export default function TerminalView({
         void copyTerminalTextWithFeedback(selection);
       } else if (action === "paste") {
         void pasteClipboardRef.current();
-      } else {
+      } else if (action === "select-all") {
         terminal.selectAll();
       }
       return false;
