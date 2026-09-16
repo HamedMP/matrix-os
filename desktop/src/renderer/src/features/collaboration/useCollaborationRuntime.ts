@@ -10,7 +10,7 @@ export function useCollaborationRuntimeId(api: ApiClient | null): string | null 
 
   useEffect(() => {
     let active = true;
-    if (!api) return () => { active = false; };
+    if (!api || typeof api.get !== "function") return () => { active = false; };
     void api.get("/api/system/info", { maxBytes: 64 * 1024 }).then((value) => {
       if (active) setIdentity({ api, runtimeId: collaborationRuntimeIdFromSystemInfo(value) });
     }).catch((error: unknown) => {
@@ -19,5 +19,5 @@ export function useCollaborationRuntimeId(api: ApiClient | null): string | null 
     return () => { active = false; };
   }, [api]);
 
-  return identity.api === api ? identity.runtimeId : null;
+  return api && typeof api.get === "function" && identity.api === api ? identity.runtimeId : null;
 }

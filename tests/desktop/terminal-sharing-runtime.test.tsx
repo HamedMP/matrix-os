@@ -53,4 +53,13 @@ describe("DesktopTerminalSharing", () => {
     await waitFor(() => expect(api.get).toHaveBeenCalled());
     expect(sharingButton).not.toHaveBeenCalled();
   });
+
+  it("fails closed when a legacy client does not expose bounded JSON reads", async () => {
+    useConnection.setState({ api: {} as never });
+
+    render(<DesktopTerminalSharing terminalId="terminal_release" />);
+
+    await act(async () => { await Promise.resolve(); });
+    expect(sharingButton).not.toHaveBeenCalled();
+  });
 });
