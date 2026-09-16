@@ -419,6 +419,8 @@ export function TerminalPane({
       // Mark the event so our own handler ignores it and does not re-correct.
       markTerminalZoomCorrected(synthetic);
       target.dispatchEvent(synthetic);
+      // Preserve xterm's suppression of native DOM selection on the real event.
+      if (synthetic.defaultPrevented) e.preventDefault();
     };
 
     return installTerminalPointerInterception({

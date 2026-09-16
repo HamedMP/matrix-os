@@ -53,4 +53,6 @@ For native Electron, run the same test with `MATRIX_GRID_ELECTRON=1` inside
 
 Assertions cover shrink (600 → 300), expand (850), final-row visibility, actual
 scroll extents, restored scale, an SGR wheel report at column 6 / row 35, and later output moving the cursor
-below an already short viewport.
+below an already short viewport. A scaled double-click followed by Copy also
+checks that forwarding pointer coordinates preserves xterm's cancellation of
+native browser text selection.

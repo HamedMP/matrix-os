@@ -1350,14 +1350,18 @@ describe("TerminalView session switching", () => {
       const xtermCoordinates: Array<[number, number]> = [];
       root.addEventListener("mousedown", (event) => {
         xtermCoordinates.push([event.clientX, event.clientY]);
+        event.preventDefault();
       });
 
-      fireEvent.mouseDown(root, {
+      const original = new MouseEvent("mousedown", {
+        bubbles: true, cancelable: true,
         button: 0,
         buttons: 1,
         clientX: 100 + 36 * visualScale,
         clientY: 50 + 24 * visualScale,
       });
+      fireEvent(root, original);
+      expect(original.defaultPrevented).toBe(true);
 
       expect(xtermCoordinates).toEqual([[136, 74]]);
 

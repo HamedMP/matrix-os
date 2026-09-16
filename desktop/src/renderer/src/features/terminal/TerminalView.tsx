@@ -401,6 +401,8 @@ export default function TerminalView({
       });
       Object.defineProperty(synthetic, "_xtermScaleCorrected", { value: true });
       target.dispatchEvent(synthetic);
+      // Preserve xterm's suppression of native DOM selection on the real event.
+      if (synthetic.defaultPrevented) event.preventDefault();
     };
     const onTerminalContextMenu = (event: MouseEvent) => {
       const link = linkAtPointer(event);

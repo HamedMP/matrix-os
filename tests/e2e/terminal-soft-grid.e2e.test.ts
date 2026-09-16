@@ -124,6 +124,28 @@ describe("real terminal renderer soft-grid resizing", () => {
       await page.waitForTimeout(250);
       await page.evaluate(() => (window as unknown as { fixtureOutput: (data: string) => void }).fixtureOutput("\r\n".repeat(35) + "LATE-OUTPUT-VISIBLE$ "));
       await expect.poll(async () => { const g = await geometry(page); return g.bottom - g.visibleBottom; }).toBeLessThanOrEqual(1);
+      // Native browser selection defaults must stay suppressed when xterm
+      // cancels a forwarded event, including a double click with no movement.
+      await page.evaluate(() => {
+        Object.defineProperty(navigator, "clipboard", { configurable: true, value: {
+          writeText: async (text: string) => { document.body.dataset.copied = text; },
+        } });
+        const windowElement = document.getElementById("terminal-window")!;
+        windowElement.style.width = "1000px";
+        windowElement.style.height = "577px";
+        (window as unknown as { fixtureOutput: (data: string) => void })
+          .fixtureOutput("\x1bcDOUBLECLICK prefix targetword suffix");
+      });
+      await expect.poll(async () => (await geometry(page)).panTop).toBe(0);
+      await page.waitForTimeout(250);
+      expect((await geometry(page)).scale).not.toBe("scale(1)");
+      const word = await page.locator(".xterm-screen").evaluate((screen) => {
+        const rect = screen.getBoundingClientRect();
+        return { x: rect.left + rect.width / 120 * 22.5, y: rect.top + rect.height / 36 * 0.5 };
+      });
+      await page.mouse.dblclick(word.x, word.y);
+      await page.keyboard.press("Control+Shift+C");
+      await expect.poll(() => page.locator("body").getAttribute("data-copied")).toBe("targetword");
       expect(errors).toEqual([]);
     } finally { if (!electron) await page.close(); }
   }, 30_000);

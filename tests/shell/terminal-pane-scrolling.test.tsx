@@ -564,6 +564,13 @@ describe("TerminalPane scrolling", () => {
     });
     expect(stubWs.send.mock.calls.map(([frame]) => JSON.parse(frame as string))
       .filter((frame) => frame.type === "resize").every((frame) => frame.mode === "soft")).toBe(true);
+    // xterm suppresses native DOM selection on mousedown. Forwarding through
+    // Canvas/grid transforms must preserve that cancellation on the real event.
+    terminal.element!.addEventListener("mousedown", (event) => event.preventDefault());
+    const pointer = new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0, buttons: 1 });
+    fireEvent(terminal.element!, pointer);
+    expect(pointer.defaultPrevented).toBe(true);
+
   });
 
   it("attaches browser terminal tabs as soft clients with proposed dimensions", async () => {
