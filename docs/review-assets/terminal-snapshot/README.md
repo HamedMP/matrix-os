@@ -12,7 +12,7 @@ Reproduce after building Electron Desktop:
 xvfb-run --auto-servernum pnpm exec vitest run --config vitest.e2e.config.ts tests/e2e/desktop/terminal-snapshot.e2e.test.ts
 ```
 
-The test writes `output/terminal-snapshot-restored.png`. Tests for the bootstrap output buffer separately verify that the initial redraw arrives before incremental output and that failed/oversized openings clean up.
+The test writes `output/playwright/terminal-snapshot/restored.png`. Tests for the bootstrap output buffer separately verify that the initial redraw arrives before incremental output and that failed/oversized openings clean up.
 
 ## Surface coverage
 

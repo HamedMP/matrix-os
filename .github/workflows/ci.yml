@@ -620,7 +620,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: desktop-terminal-snapshot-evidence
-          path: output/terminal-snapshot-restored.png
+          path: output/playwright/terminal-snapshot/restored.png
           if-no-files-found: ignore
           retention-days: 14
 

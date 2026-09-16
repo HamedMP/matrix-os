@@ -21,7 +21,7 @@ suite("Electron Desktop terminal snapshot recovery", () => {
   let userDataDir: string;
 
   beforeAll(async () => {
-    mkdirSync(join(ROOT, "output"), { recursive: true });
+    mkdirSync(join(ROOT, "output/playwright/terminal-snapshot"), { recursive: true });
     gateway = await startStubGateway({
       // Raw LF emulates an older host dump; the production Electron socket
       // must normalize it and replace the stub shell prompt already queued.
@@ -63,6 +63,6 @@ suite("Electron Desktop terminal snapshot recovery", () => {
     await page.getByRole("dialog", { name: "Terminal window" })
       .getByRole("button", { name: "Maximize", exact: true }).click();
     await viewport.click({ position: { x: 500, y: 300 } });
-    await page.screenshot({ path: join(ROOT, "output/terminal-snapshot-restored.png") });
+    await page.screenshot({ path: join(ROOT, "output/playwright/terminal-snapshot/restored.png") });
   });
 });
