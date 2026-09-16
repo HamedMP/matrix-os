@@ -264,7 +264,27 @@ export const CanonicalChatLatestSuccessfulCompletionSchema = z.object({
   unacknowledged: z.boolean(),
 }).strict();
 
+export const CanonicalChatReadStateSchema = z.object({
+  unread: z.boolean(),
+  markedUnread: z.boolean(),
+  version: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  readThroughSeq: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  latestIncomingSeq: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+}).strict();
+
+export const CanonicalUpdateChatReadStateRequestSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("mark_unread") }).strict(),
+  z.object({
+    type: z.literal("mark_read"),
+    throughSeq: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+    baseVersion: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  }).strict(),
+]);
+export type CanonicalChatReadState = z.infer<typeof CanonicalChatReadStateSchema>;
+export type CanonicalUpdateChatReadStateRequest = z.infer<typeof CanonicalUpdateChatReadStateRequestSchema>;
+
 export const CanonicalChatRecordSchema = z.object({
+  readState: CanonicalChatReadStateSchema.optional(),
   chat: CanonicalChatSchema,
   projectId: canonicalReferenceId(160).optional(),
   providerBinding: CanonicalChatProviderBindingSchema.optional(),

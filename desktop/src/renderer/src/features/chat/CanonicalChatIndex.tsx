@@ -1,5 +1,5 @@
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
-import { ChatContextMenu } from "@matrix-os/ui";
+import { isChatUnread, ChatContextMenu } from "@matrix-os/ui";
 import { MessageSquare, Plus, Search, Trash2, X } from "@renderer/lib/hugeicons";
 import { useState } from "react";
 
@@ -25,6 +25,7 @@ export function CanonicalChatIndex({
   onQueryChange,
   onSearch,
   onSelect,
+  onToggleRead,
   onDelete,
   onNewChat,
   layout = "wide",
@@ -37,6 +38,7 @@ export function CanonicalChatIndex({
   onQueryChange: (query: string) => void;
   onSearch: (query: string) => void;
   onSelect: (chatId: string) => void;
+  onToggleRead?: (record: CanonicalChatRecord) => void;
   onDelete: (record: CanonicalChatRecord) => void;
   onNewChat: () => void;
   layout?: "wide" | "narrow";
@@ -124,7 +126,7 @@ export function CanonicalChatIndex({
         {items.length > 0 ? (
           <ul aria-label="Chat history" className="min-h-0 flex-1 overflow-y-auto pb-4">
             {items.map((record) => (
-              <ChatContextMenu key={record.chat.id} chatId={record.chat.id}>
+              <ChatContextMenu key={record.chat.id} chatId={record.chat.id} primaryAction={onToggleRead ? { label: isChatUnread(record) ? "Mark as read" : "Mark as unread", onSelect: () => onToggleRead(record) } : undefined}>
               <li className="group/chat relative shrink-0 border-b" style={{ borderColor: "var(--border-default, #F3F2F2)" }}>
                 <button
                   type="button"
@@ -134,6 +136,7 @@ export function CanonicalChatIndex({
                   style={{ background: record.chat.id === activeChatId ? "var(--bg-selected)" : "transparent" }}
                   onClick={() => onSelect(record.chat.id)}
                 >
+                  {isChatUnread(record) ? <span aria-label={`Unread ${record.chat.title}`} className="mr-2 size-2 shrink-0 rounded-full bg-[var(--accent)]" /> : null}
                   <span className="min-w-0 flex-1 truncate text-[14px] leading-[20px]" style={{ color: "var(--text-primary)" }}>{record.chat.title}</span>
                 </button>
                 <time className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-[12px] leading-[16px] tracking-[0.12px] transition-opacity group-hover/chat:opacity-0" style={{ color: "var(--text-tertiary)" }} dateTime={record.chat.updatedAt}>

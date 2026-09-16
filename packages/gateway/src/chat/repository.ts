@@ -1,3 +1,5 @@
+import { projectChatReadState, writeChatReadState, unreadChatPredicate } from "./read-state-repository.js";
+import { CanonicalUpdateChatReadStateRequestSchema, type CanonicalUpdateChatReadStateRequest } from "@matrix-os/contracts";
 import { findChatTurnAdmission, findChatRetryAdmission } from "./admission-replay.js";
 import { admitChatTurn } from "./turn-admission-repository.js";
 import { randomUUID } from "node:crypto";
@@ -309,7 +311,7 @@ async function toPrincipalRecord(
     internalScopeId ? ownerSharedProjection(executor, internalScopeId, row.id) : undefined,
   ]);
   const effectiveProjection = collaborationProjection ?? internalProjection;
-  return toChatRecord(
+  const record = toChatRecord(
     effectiveProjection
       ? { ...row, collaboration: JSON.stringify(effectiveProjection) }
       : row,
@@ -318,6 +320,7 @@ async function toPrincipalRecord(
     latestSuccessfulCompletion,
     userState?.attention_acknowledged_at,
   );
+  return { ...record, readState: await projectChatReadState(executor, owner, row.id) };
 }
 
 function sharedBindingScopeId(value: unknown): string | undefined {
@@ -638,11 +641,7 @@ export class ChatRepository {
         last_opened_at: null,
       }).execute();
       await this.appendOutbox(trx, owner, inserted.id, 0, "chat.created");
-      return toChatRecord(inserted, undefined, {
-        readThroughSeq: 0,
-        pinned: false,
-        muted: false,
-      });
+      return toPrincipalRecord(trx, owner, inserted);
     });
   }
 
@@ -825,6 +824,7 @@ export class ChatRepository {
   }
 
   async list(ownerInput: ChatOwner, input: {
+    unreadOnly?: boolean;
     limit: number;
     lifecycle?: "active" | "archived";
     projectId?: string | null;
@@ -837,6 +837,7 @@ export class ChatRepository {
         .as("cursor_updated_at"))
       .where("owner_type", "=", owner.type)
       .where("owner_id", "=", owner.ownerId);
+    if (input.unreadOnly) query = query.where(unreadChatPredicate(owner.ownerId));
     if (input.lifecycle) query = query.where("lifecycle", "=", input.lifecycle);
     if (input.projectId !== undefined) query = input.projectId === null
       ? query.where("project_id", "is", null)
@@ -897,6 +898,20 @@ export class ChatRepository {
       const record = await toPrincipalRecord(trx, owner, updated);
       await this.appendOutbox(trx, owner, chatId, record.chat.revision, "chat.updated");
       return record;
+    });
+  }
+
+  async updateReadState(ownerInput: ChatOwner, chatId: string, input: CanonicalUpdateChatReadStateRequest): Promise<ChatRecord> {
+    const owner = validateOwner(ownerInput);
+    CanonicalChatIdSchema.parse(chatId);
+    const request = CanonicalUpdateChatReadStateRequestSchema.parse(input);
+    return this.transact(async (trx) => {
+      const chat = await selectOwnedChat(trx, owner, chatId, true);
+      if (!chat) throw new ChatNotFoundError(chatId);
+      if (await writeChatReadState(trx, owner, chat, request)) {
+        await this.appendOutbox(trx, owner, chatId, Number(chat.revision), "chat.user_state_updated");
+      }
+      return toPrincipalRecord(trx, owner, chat);
     });
   }
 

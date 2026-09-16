@@ -1,3 +1,4 @@
+import { useWindowManager } from "@/hooks/useWindowManager";
 import { AppWindowResizeControls } from "../window/AppWindowResizeControls";
 import type { CSSProperties, PointerEvent } from "react";
 import type { ChatState } from "@/hooks/useChatState";
@@ -85,6 +86,7 @@ export function DesktopWindow({
   onToggleFullscreen,
   topInset = 0,
 }: DesktopWindowProps) {
+  const focusedWindowId = useWindowManager((state) => state.focusedWindowId);
   const isFullscreen = win.id === fullscreenWindowId;
   const isMinimizing = minimizingIds.has(win.id);
   const isHidden = win.minimized && !isMinimizing && !isFullscreen;
@@ -206,6 +208,12 @@ export function DesktopWindow({
           <div className="h-full overflow-hidden">
             {chat && (
               <ChatApp
+                filterUnreadOnly={chat.unreadOnly}
+                onUnreadFilterChange={chat.setUnreadOnly}
+                active={focusedWindowId === win.id && !win.minimized}
+                readState={chat.readState}
+                displayedThroughSeq={chat.displayedThroughSeq}
+                onUpdateReadState={chat.updateReadState}
                 messages={chat.messages}
                 sessionId={chat.sessionId}
                 busy={chat.busy}

@@ -1,3 +1,4 @@
+import { CanonicalUpdateChatReadStateRequestSchema, type CanonicalUpdateChatReadStateRequest } from "@matrix-os/contracts";
 import { createChatAgentClient, type ChatAgentClient } from "@matrix-os/ui";
 import { chatMessageVersionUrl } from "@matrix-os/contracts";
 import {
@@ -41,10 +42,11 @@ const REQUEST_TIMEOUT_MS = 10_000;
 
 export interface CanonicalShellChatClient {
   agents?: ChatAgentClient;
-  list(): Promise<CanonicalChatListResponse>;
+  list(input?: { unreadOnly?: boolean; cursor?: string }): Promise<CanonicalChatListResponse>;
   openEventStream(input: { cursor?: number; signal: AbortSignal }): Promise<Response>;
   create(input: CanonicalCreateChatRequest): Promise<CanonicalChatRecord>;
   detail(chatId: string): Promise<CanonicalChatDetailResponse>;
+  updateReadState(chatId: string, input: CanonicalUpdateChatReadStateRequest): Promise<CanonicalChatRecord>;
   updateTitle(chatId: string, input: CanonicalUpdateChatTitleRequest): Promise<CanonicalChatRecord>;
   admitTurn(chatId: string, input: CanonicalCreateChatTurnRequest): Promise<CanonicalChatTurnAdmissionResponse>;
   queueTurn(chatId: string, input: CanonicalCreateChatTurnRequest): Promise<CanonicalChatQueueAdmissionResponse>;
@@ -152,8 +154,11 @@ export function createCanonicalShellChatClient(options: {
       if (!response.ok) throw new CanonicalShellChatRequestError(response.status);
       return response;
     },
-    async list() {
-      return CanonicalChatListResponseSchema.parse(await request("/api/chats?limit=100&scope=global"));
+    async list(input = {}) {
+      const query = new URLSearchParams({ limit: "100", scope: "global" });
+      if (input.unreadOnly) query.set("unread", "true");
+      if (input.cursor) query.set("cursor", input.cursor);
+      return CanonicalChatListResponseSchema.parse(await request(`/api/chats?${query}`));
     },
     async create(input) {
       const body = CanonicalCreateChatRequestSchema.parse(input);
@@ -166,6 +171,13 @@ export function createCanonicalShellChatClient(options: {
     async detail(chatId) {
       const id = CanonicalChatIdSchema.parse(chatId);
       return CanonicalChatDetailResponseSchema.parse(await request(chatMessageVersionUrl(`/api/chats/${encodeURIComponent(id)}?limit=200`)));
+    },
+    async updateReadState(chatId, input) {
+      const id = CanonicalChatIdSchema.parse(chatId);
+      const body = CanonicalUpdateChatReadStateRequestSchema.parse(input);
+      return CanonicalChatRecordSchema.parse(await request(`/api/chats/${encodeURIComponent(id)}/read-state`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+      }));
     },
     async updateTitle(chatId, input) {
       const id = CanonicalChatIdSchema.parse(chatId);

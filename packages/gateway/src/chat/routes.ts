@@ -1,3 +1,4 @@
+import { CanonicalUpdateChatReadStateRequestSchema, type CanonicalUpdateChatReadStateRequest } from "@matrix-os/contracts";
 import { ChatInputWireVersionSchema } from "@matrix-os/contracts";
 import { CanonicalSubmitChatInputRequestSchema, CanonicalChatInputSubmissionResponseSchema, type CanonicalSubmitChatInputRequest, type CanonicalChatInputSubmissionResponse } from "@matrix-os/contracts";
 import {
@@ -86,6 +87,7 @@ const CHAT_UPDATE_BODY_LIMIT = 4 * 1024;
 const CHAT_ACKNOWLEDGEMENT_BODY_LIMIT = 4 * 1024;
 
 const ChatListQuerySchema = z.object({
+  unread: z.enum(["true", "false"]).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(50),
   lifecycle: z.enum(["active", "archived"]).optional(),
   projectId: CanonicalCreateChatRequestSchema.shape.projectId.optional(),
@@ -121,6 +123,7 @@ export interface CanonicalChatRouteService {
     chatId: string,
     input: CanonicalUpdateChatTitleRequest,
   ): Promise<CanonicalChatRecord>;
+  updateReadState(owner: ChatOwner, chatId: string, input: CanonicalUpdateChatReadStateRequest): Promise<CanonicalChatRecord>;
   updateUserState(
     owner: ChatOwner,
     chatId: string,
@@ -133,6 +136,7 @@ export interface CanonicalChatRouteService {
   ): Promise<CanonicalChatRecord>;
   delete(owner: ChatOwner, chatId: string, clientRequestId: string): Promise<{ chatId: string; deletedAt: string }>;
   list(owner: ChatOwner, input: {
+    unreadOnly?: boolean;
     limit: number;
     lifecycle?: "active" | "archived";
     projectId?: string | null;
@@ -336,6 +340,7 @@ export function createCanonicalChatRoutes(options: {
   routes.get("/api/chats", async (context) => {
     try {
       const parsed = ChatListQuerySchema.safeParse({
+        unread: context.req.query("unread"),
         limit: context.req.query("limit"),
         lifecycle: context.req.query("lifecycle"),
         projectId: context.req.query("projectId"),
@@ -346,6 +351,7 @@ export function createCanonicalChatRoutes(options: {
       const result = await options.service.list(
         ownerFromPrincipal(options.getPrincipal(context)),
         {
+          ...(parsed.data.unread === undefined ? {} : { unreadOnly: parsed.data.unread === "true" }),
           limit: parsed.data.limit,
           ...(parsed.data.lifecycle === undefined ? {} : { lifecycle: parsed.data.lifecycle }),
           ...(parsed.data.scope === "global"
@@ -410,6 +416,20 @@ export function createCanonicalChatRoutes(options: {
         ownerFromPrincipal(options.getPrincipal(context)),
         chatId,
         parsed.data,
+      );
+      return context.json(CanonicalChatRecordSchema.parse(result));
+    } catch (error: unknown) {
+      return handleError(context, error);
+    }
+  });
+
+  routes.patch("/api/chats/:chatId/read-state", updateBodyLimit, async (context) => {
+    try {
+      const chatId = CanonicalChatIdSchema.parse(context.req.param("chatId"));
+      const parsed = CanonicalUpdateChatReadStateRequestSchema.safeParse(await context.req.json());
+      if (!parsed.success) return validationError(context);
+      const result = await options.service.updateReadState(
+        ownerFromPrincipal(options.getPrincipal(context)), chatId, parsed.data,
       );
       return context.json(CanonicalChatRecordSchema.parse(result));
     } catch (error: unknown) {

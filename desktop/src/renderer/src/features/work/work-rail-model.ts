@@ -1,3 +1,4 @@
+import { isChatUnread } from "@matrix-os/ui";
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
 import type { Project } from "../../stores/board";
 
@@ -109,7 +110,7 @@ export function resolveWorkRailAgentState(record: CanonicalChatRecord): WorkRail
   }
   if (record.activeRun) return "running";
   if (record.chat.attention === "failed") return "failed";
-  if (record.latestSuccessfulCompletion?.unacknowledged) return "unseen_completion";
+  if (isChatUnread(record)) return "unseen_completion";
   return "idle";
 }
 
