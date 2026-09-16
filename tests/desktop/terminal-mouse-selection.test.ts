@@ -289,6 +289,46 @@ describe("mouse-reporting terminal selection", () => {
     remove();
   });
 
+  it("releases the captured edge range when an ordinary drag returns inside", () => {
+    vi.useFakeTimers();
+    const { root, onExtendedSelection, remove } = setup({
+      mouseTrackingMode: "none",
+    });
+    const outside = document.createElement("div");
+    document.body.append(outside);
+
+    root.dispatchEvent(mouse("mousedown", {
+      button: 0,
+      buttons: 1,
+      clientX: 120,
+      clientY: 80,
+    }));
+    outside.dispatchEvent(mouse("mousemove", {
+      button: 0,
+      buttons: 1,
+      clientX: 130,
+      clientY: 290,
+    }));
+    vi.advanceTimersByTime(80);
+    expect(onExtendedSelection.mock.calls.at(-1)?.[0]).not.toBe("");
+
+    root.dispatchEvent(mouse("mousemove", {
+      button: 0,
+      buttons: 1,
+      clientX: 130,
+      clientY: 100,
+    }));
+    root.dispatchEvent(mouse("mouseup", {
+      button: 0,
+      buttons: 0,
+      clientX: 130,
+      clientY: 100,
+    }));
+
+    expect(onExtendedSelection.mock.calls.at(-1)?.[0]).toBe("");
+    remove();
+  });
+
   it("replaces unscaled document events while an ordinary scaled selection leaves the terminal", () => {
     const { root, delivered, remove } = setup({
       mouseTrackingMode: "none",

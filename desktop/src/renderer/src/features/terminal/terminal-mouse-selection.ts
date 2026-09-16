@@ -253,6 +253,17 @@ export function installMouseTrackingSelection({
     }
   };
 
+  const resetEdgeCapture = (releaseSelection = false) => {
+    const hadCapturedSelection = extendedSelectionLines !== null
+      || pendingEdgeScrollAmount !== 0;
+    extendedSelectionLines = null;
+    previousEdgeViewport = null;
+    edgeDirection = null;
+    edgeAnchorColumn = null;
+    pendingEdgeScrollAmount = 0;
+    if (releaseSelection && hadCapturedSelection) onExtendedSelection?.("");
+  };
+
   const selectionTarget = (source: MouseSnapshot): MouseSnapshot => (
     gesture ? { ...source, target: gesture.start.target } : source
   );
@@ -382,6 +393,7 @@ export function installMouseTrackingSelection({
     const amount = edgeScrollAmount(edgePointer);
     if (amount === 0) {
       stopEdgeScroll();
+      resetEdgeCapture(true);
       return;
     }
     const terminal = getTerminal();
@@ -413,6 +425,7 @@ export function installMouseTrackingSelection({
   const updateEdgeScroll = (source: MouseSnapshot) => {
     if (edgeScrollAmount(source) === 0) {
       stopEdgeScroll();
+      resetEdgeCapture(true);
       return;
     }
     edgePointer = selectionTarget(source);
@@ -427,11 +440,7 @@ export function installMouseTrackingSelection({
   const cancelGesture = () => {
     stopEdgeScroll();
     gesture = null;
-    extendedSelectionLines = null;
-    previousEdgeViewport = null;
-    edgeDirection = null;
-    edgeAnchorColumn = null;
-    pendingEdgeScrollAmount = 0;
+    resetEdgeCapture();
     removeDocumentListeners();
   };
 
