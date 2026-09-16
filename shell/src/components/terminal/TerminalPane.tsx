@@ -39,9 +39,9 @@ import { TERMINAL_INPUT_EVENT, type TerminalInputEventDetail } from "./terminal-
 import { applyTerminalAppearance } from "./terminal-appearance";
 import { buildTerminalFontStack } from "./terminal-fonts";
 import { createCodexTuiCompatTransform, transformTerminalOutputForCompat, type CodexTuiCompatTransform } from "./codex-tui-compat";
+import { createWebTerminalGridPresentation } from "./terminal-grid-presentation";
 import { sendTerminalResize } from "./terminal-remote-resize";
 import {
-  computeSoftGridLayout,
   correctTerminalPointerCoordinates,
   shouldCorrectTerminalPointerCoordinates,
 } from "./terminal-soft-grid";
@@ -57,10 +57,7 @@ import {
   IMAGE_ADDON_OPTIONS,
   MAX_OSC52_BASE64_LENGTH,
   OSC52_ALLOWED_TARGETS,
-  TERMINAL_CANONICAL_MAX_COLS,
-  TERMINAL_CANONICAL_MAX_ROWS,
   TERMINAL_FAST_SCROLL_SENSITIVITY,
-  TERMINAL_MINIMUM_READABLE_FONT_SIZE,
   TERMINAL_SCROLLBACK_LINES,
   TERMINAL_SCROLL_SENSITIVITY,
   applyXtermScrollOptions,
@@ -240,7 +237,7 @@ export function TerminalPane({
   const codexCompatTransformRef = useRef<CodexTuiCompatTransform | null>(null);
   const softGridScaleRef = useRef(1);
   const softGridLayoutRef = useRef<(() => void) | null>(null);
-  const hardGridMeasureRef = useRef<(() => void) | null>(null);
+  const viewportMeasureRef = useRef<(() => void) | null>(null);
   const terminalFontSizeRef = useRef(terminalFontSize);
   const collapseTerminalLinks = useCallback(() => {
     dispatchTerminalLinks({ type: "collapse" });
@@ -628,189 +625,23 @@ export function TerminalPane({
       let searchAddon: unknown = null;
       let webglAddon: unknown = null;
       let coldReplayVisibility: ColdReplayVisibility | null = null;
-      let softGridLayoutFrame: number | null = null;
-      let hardGridMeasureFrame: number | null = null;
-      let lastDeclaredHardSize: { cols: number; rows: number } | null = null;
       let webSocketConnectPending = false;
       const xtermTheme = buildXtermTheme(theme, terminalThemeId);
       codexCompatTransformRef.current = createCodexTuiCompatTransform(xtermTheme);
 
-      const usesCanonicalGrid = () => {
-        const currentSessionId = sessionIdRef.current;
-        return Boolean(currentSessionId && isCanonicalShellSessionId(currentSessionId));
-      };
-      const usesSoftGrid = () => usesCanonicalGrid() && suppressNativeKeyboard;
-      const usesHardGrid = () => usesCanonicalGrid() && !suppressNativeKeyboard;
-
-      const unscaledElementSize = (
-        element: HTMLElement,
-        dimension: "width" | "height",
-      ): number => {
-        const offset = dimension === "width" ? element.offsetWidth : element.offsetHeight;
-        if (offset > 0) {
-          return offset;
-        }
-        const styled = Number.parseFloat(element.style[dimension]);
-        if (Number.isFinite(styled) && styled > 0) {
-          return styled;
-        }
-        const rect = element.getBoundingClientRect();
-        const transformed = dimension === "width" ? rect.width : rect.height;
-        return transformed > 0 ? transformed / softGridScaleRef.current : 0;
-      };
-
-      const applySoftGridLayout = () => {
-        if (disposed || !usesSoftGrid()) {
-          return;
-        }
-        const termElement = term.element;
-        const screen = termElement?.querySelector(".xterm-screen");
-        if (!termElement || !(screen instanceof HTMLElement)) {
-          return;
-        }
-        const gridWidth = unscaledElementSize(screen, "width");
-        const gridHeight = unscaledElementSize(screen, "height");
-        if (gridWidth <= 0 || gridHeight <= 0) {
-          return;
-        }
-        const currentFontSize = typeof term.options.fontSize === "number"
-          ? term.options.fontSize
-          : terminalFontSizeRef.current;
-        const configuredFontSize = terminalFontSizeRef.current;
-        const baseGridWidth = gridWidth * (configuredFontSize / currentFontSize);
-        const baseGridHeight = gridHeight * (configuredFontSize / currentFontSize);
-        const layout = computeSoftGridLayout({
-          viewportWidth: container.clientWidth,
-          viewportHeight: container.clientHeight,
-          gridWidth: baseGridWidth,
-          gridHeight: baseGridHeight,
-          configuredFontSize,
-          minimumReadableFontSize: TERMINAL_MINIMUM_READABLE_FONT_SIZE,
-          devicePixelRatio: window.devicePixelRatio,
-        });
-        if (Math.abs(currentFontSize - layout.fontSize) > 0.01) {
-          term.options.fontSize = layout.fontSize;
-        }
-        softGridScaleRef.current = layout.scale;
-        termElement.style.transformOrigin = "top left";
-        termElement.style.transform = `scale(${layout.scale})`;
-        container.style.overflowX = layout.panX ? "auto" : "hidden";
-        container.style.overflowY = layout.panY ? "auto" : "hidden";
-      };
-
-      const scheduleSoftGridLayout = () => {
-        if (disposed || softGridLayoutFrame !== null) {
-          return;
-        }
-        softGridLayoutFrame = requestAnimationFrame(() => {
-          softGridLayoutFrame = null;
-          applySoftGridLayout();
-        });
-      };
-
-      const clearSoftGridLayout = () => {
-        softGridScaleRef.current = 1;
-        const termElement = term.element;
-        if (termElement) {
-          termElement.style.transform = "";
-          termElement.style.transformOrigin = "";
-        }
-        container.style.overflowX = "hidden";
-        container.style.overflowY = "hidden";
-      };
-
-      const proposeHardGridDimensions = (): { cols: number; rows: number } | null => {
-        if (
-          disposed
-          || !usesHardGrid()
-          || container.clientWidth <= 0
-          || container.clientHeight <= 0
-        ) {
-          return null;
-        }
-        const proposeDimensions = (fitAddon as {
-          proposeDimensions?: () => { cols: number; rows: number } | undefined;
-        }).proposeDimensions;
-        if (typeof proposeDimensions !== "function") {
-          return null;
-        }
-        let proposed: { cols: number; rows: number } | undefined;
-        try {
-          proposed = proposeDimensions.call(fitAddon);
-        } catch (err: unknown) {
-          log("dimension-proposal-failed", {
-            message: err instanceof Error ? err.message : String(err),
-          });
-          return null;
-        }
-        if (
-          !proposed
-          || !Number.isFinite(proposed.cols)
-          || !Number.isFinite(proposed.rows)
-          || proposed.cols <= 0
-          || proposed.rows <= 0
-        ) {
-          return null;
-        }
-        return {
-          cols: Math.min(TERMINAL_CANONICAL_MAX_COLS, Math.floor(proposed.cols)),
-          rows: Math.min(TERMINAL_CANONICAL_MAX_ROWS, Math.floor(proposed.rows)),
-        };
-      };
-
-      const rememberHardGridDeclaration = (size: { cols: number; rows: number }): boolean => {
-        if (
-          lastDeclaredHardSize?.cols === size.cols
-          && lastDeclaredHardSize.rows === size.rows
-        ) {
-          return false;
-        }
-        lastDeclaredHardSize = size;
-        return true;
-      };
-
-      const measureAndDeclareHardGrid = () => {
-        const proposed = proposeHardGridDimensions();
-        if (!proposed) {
-          return;
-        }
-        const ws = wsRef.current;
-        if (ws?.readyState !== WebSocket.OPEN) {
-          if (!ws || ws.readyState === WebSocket.CLOSED) {
-            connectWs();
-          }
-          return;
-        }
-        if (!allowRemoteResizeRef.current || !rememberHardGridDeclaration(proposed)) {
-          return;
-        }
-        sendTerminalResize(ws, proposed, true, sessionIdRef.current);
-      };
-
-      const scheduleHardGridMeasurement = () => {
-        if (disposed || hardGridMeasureFrame !== null || !usesHardGrid()) {
-          return;
-        }
-        hardGridMeasureFrame = requestAnimationFrame(() => {
-          hardGridMeasureFrame = null;
-          measureAndDeclareHardGrid();
-        });
-      };
-
-      const applyCanonicalGridSize = (size: { cols: number; rows: number }) => {
-        if (!usesCanonicalGrid()) {
-          return;
-        }
-        if (usesHardGrid()) {
-          clearSoftGridLayout();
-        }
-        if (term.cols !== size.cols || term.rows !== size.rows) {
-          term.resize(size.cols, size.rows);
-        }
-        if (usesSoftGrid()) {
-          scheduleSoftGridLayout();
-        }
-      };
+      const gridPresentation = createWebTerminalGridPresentation({
+        container, getTerm: () => term, getFitAddon: () => fitAddon,
+        getSessionId: () => sessionIdRef.current, getSocket: () => wsRef.current,
+        getFontSize: () => terminalFontSizeRef.current, isDisposed: () => disposed,
+        allowRemoteResize: () => allowRemoteResizeRef.current, suppressNativeKeyboard,
+        connectWs, onScale: (scale) => { softGridScaleRef.current = scale; },
+        getParentScale: () => canvasZoomRef.current, log,
+      });
+      const {
+        usesCanonicalGrid, declaresViewportSize, proposeViewportDimensions,
+        rememberViewportDeclaration, scheduleSoftGridLayout, scheduleViewportMeasurement,
+        applyCanonicalGridSize,
+      } = gridPresentation;
 
       const focusIfAllowed = () => {
         if (isFocusedRef.current && !suppressNativeKeyboard) {
@@ -824,12 +655,7 @@ export function TerminalPane({
         }
         try {
           if (usesCanonicalGrid()) {
-            if (usesSoftGrid()) {
-              scheduleSoftGridLayout();
-            } else {
-              clearSoftGridLayout();
-              scheduleHardGridMeasurement();
-            }
+            scheduleSoftGridLayout();
             focusIfAllowed();
             return;
           }
@@ -924,12 +750,7 @@ export function TerminalPane({
         lastPresentationRevisionRef.current = cached.presentationRevision ?? 0;
         let restoredFitSucceeded = true;
         if (usesCanonicalGrid()) {
-          if (usesSoftGrid()) {
-            scheduleSoftGridLayout();
-          } else {
-            clearSoftGridLayout();
-            scheduleHardGridMeasurement();
-          }
+          scheduleSoftGridLayout();
         } else {
           try {
             fitAddon.fit();
@@ -1094,7 +915,7 @@ export function TerminalPane({
       }
 
       softGridLayoutRef.current = scheduleSoftGridLayout;
-      hardGridMeasureRef.current = scheduleHardGridMeasurement;
+      viewportMeasureRef.current = scheduleViewportMeasurement;
 
       if (isFocusedRef.current && !suppressNativeKeyboard) {
         requestAnimationFrame(() => {
@@ -1218,8 +1039,8 @@ export function TerminalPane({
           if (attachOnOpen) {
             sendAttach();
           }
-          if (usesHardGrid()) {
-            scheduleHardGridMeasurement();
+          if (declaresViewportSize()) {
+            scheduleViewportMeasurement();
           }
         };
 
@@ -1438,12 +1259,7 @@ export function TerminalPane({
         if (!attachOnOpen && ws.readyState === WebSocket.OPEN) {
           if (alreadyAttached) {
             if (usesCanonicalGrid()) {
-              if (usesSoftGrid()) {
-                scheduleSoftGridLayout();
-              } else {
-                clearSoftGridLayout();
-                scheduleHardGridMeasurement();
-              }
+              scheduleSoftGridLayout();
             } else {
               sendTerminalResize(ws, term, allowRemoteResizeRef.current, sessionIdRef.current);
             }
@@ -1478,15 +1294,14 @@ export function TerminalPane({
         if (!terminalRef) return;
         const wsPath = terminalWebSocketPathForSession(currentSessionId);
         const replayRequest = getCanonicalReplayRequest();
-        const declaredSize = usesHardGrid() ? proposeHardGridDimensions() : null;
-        // A hard declaration without dimensions is intentionally downgraded to
-        // legacy by the gateway. Wait for a real measurement so a hidden pane
-        // can never join as either a legacy client or a destructive 1x1 grid.
-        if (usesHardGrid() && !declaredSize) {
+        const declaredSize = declaresViewportSize() ? proposeViewportDimensions() : null;
+        // Defer an initially hidden pane until its viewport can be measured.
+        // These dimensions remain a soft proposal, never shared-grid authority.
+        if (declaresViewportSize() && !declaredSize) {
           return;
         }
         if (declaredSize) {
-          rememberHardGridDeclaration(declaredSize);
+          rememberViewportDeclaration(declaredSize);
         }
         webSocketConnectPending = true;
         const generation = wsGenerationRef.current + 1;
@@ -1666,9 +1481,7 @@ export function TerminalPane({
       onResizeDisposableRef.current?.dispose();
       onResizeDisposableRef.current = term.onResize(({ cols, rows }: { cols: number; rows: number }) => {
         if (usesCanonicalGrid()) {
-          if (usesSoftGrid()) {
-            scheduleSoftGridLayout();
-          }
+          scheduleSoftGridLayout();
           return;
         }
         sendTerminalResize(wsRef.current, { cols, rows }, allowRemoteResizeRef.current, sessionIdRef.current);
@@ -1688,11 +1501,7 @@ export function TerminalPane({
       // react-doctor-disable-next-line react-doctor/effect-observer-needs-disconnect -- the async init lifecycle returns a cleanup below that disconnects this observer before terminal teardown.
       const resizeObserver = new ResizeObserver(() => {
         if (usesCanonicalGrid()) {
-          if (usesSoftGrid()) {
-            scheduleSoftGridLayout();
-          } else {
-            scheduleHardGridMeasurement();
-          }
+          scheduleSoftGridLayout();
         } else {
           requestAnimationFrame(refitOnly);
         }
@@ -1712,19 +1521,12 @@ export function TerminalPane({
         container.removeEventListener("contextmenu", onLinkContextMenu, true);
         fontSet?.removeEventListener("loadingdone", onFontMetricsChange);
         resizeObserver.disconnect();
-        if (softGridLayoutFrame !== null) {
-          cancelAnimationFrame(softGridLayoutFrame);
-          softGridLayoutFrame = null;
-        }
-        if (hardGridMeasureFrame !== null) {
-          cancelAnimationFrame(hardGridMeasureFrame);
-          hardGridMeasureFrame = null;
-        }
+        gridPresentation.dispose();
         if (softGridLayoutRef.current === scheduleSoftGridLayout) {
           softGridLayoutRef.current = null;
         }
-        if (hardGridMeasureRef.current === scheduleHardGridMeasurement) {
-          hardGridMeasureRef.current = null;
+        if (viewportMeasureRef.current === scheduleViewportMeasurement) {
+          viewportMeasureRef.current = null;
         }
         softGridScaleRef.current = 1;
         clearLinkDetectTimer();
@@ -1846,7 +1648,7 @@ export function TerminalPane({
         },
       );
       softGridLayoutRef.current?.();
-      hardGridMeasureRef.current?.();
+      viewportMeasureRef.current?.();
     }
   }, [
     cursorBlink,
@@ -1876,11 +1678,8 @@ export function TerminalPane({
     const currentSessionId = sessionIdRef.current;
     if (currentSessionId && isCanonicalShellSessionId(currentSessionId)) {
       const id = requestAnimationFrame(() => {
-        if (suppressNativeKeyboard) {
-          softGridLayoutRef.current?.();
-        } else {
-          hardGridMeasureRef.current?.();
-        }
+        softGridLayoutRef.current?.();
+        viewportMeasureRef.current?.();
       });
       return () => cancelAnimationFrame(id);
     }

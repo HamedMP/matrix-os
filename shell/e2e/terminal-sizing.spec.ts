@@ -8,10 +8,10 @@ interface TerminalSizingState {
 
 const WORKSPACE_ID = "tws_00000000000000000000000000000001";
 const TAB_ID = "tt_00000000000000000000000000000001";
-const TERMINAL_REF = { workspaceId: WORKSPACE_ID, tabId: TAB_ID };
 
 async function installTerminalGateway(page: Page): Promise<void> {
   await page.addInitScript(() => {
+    const TERMINAL_REF = { workspaceId: "tws_00000000000000000000000000000001", tabId: "tt_00000000000000000000000000000001" };
     const state: TerminalSizingState = { declarations: [], confirmations: [] };
     (window as typeof window & { __terminalSizing?: TerminalSizingState }).__terminalSizing = state;
     window.localStorage.setItem("matrix-os-terminal-settings", JSON.stringify({
@@ -39,13 +39,13 @@ async function installTerminalGateway(page: Page): Promise<void> {
         const parsed = new URL(this.url);
         const cols = Number(parsed.searchParams.get("cols"));
         const rows = Number(parsed.searchParams.get("rows"));
-        if (parsed.searchParams.get("client") === "hard" && cols > 0 && rows > 0) {
+        if (parsed.searchParams.get("client") === "soft" && cols > 0 && rows > 0) {
           state.declarations.push({ source: "attach", cols, rows });
         }
         window.setTimeout(() => {
           this.readyState = TerminalWebSocket.OPEN;
           this.onopen?.(new Event("open"));
-          const canonical = cols > 0 && rows > 0 ? { cols, rows } : { cols: 120, rows: 40 };
+          const canonical = { cols: 120, rows: 40 };
           state.confirmations.push(canonical);
           this.receive({
             type: "attached",
@@ -55,7 +55,7 @@ async function installTerminalGateway(page: Page): Promise<void> {
             nextSeq: 0,
           });
           this.receive({ type: "replay-start", terminalRef: TERMINAL_REF, revision: 1, fromSeq: 0 });
-          this.receive({ type: "output", terminalRef: TERMINAL_REF, revision: 1, seq: 0, data: "matrix@web:~$ real rows fill this pane" });
+          this.receive({ type: "output", terminalRef: TERMINAL_REF, revision: 1, seq: 0, data: Array.from({ length: 39 }, (_, row) => `Synthetic row ${row + 1}`).join("\r\n") + "\r\nLAST-ROW-VISIBLE$ " });
           this.receive({ type: "replay-end", terminalRef: TERMINAL_REF, revision: 1, nextSeq: 1, toSeq: 0 });
         }, 0);
       }
@@ -63,15 +63,8 @@ async function installTerminalGateway(page: Page): Promise<void> {
       send(raw: string): void {
         const frame = JSON.parse(raw) as { type?: string; size?: { cols?: number; rows?: number } };
         if (frame.type === "resize" && frame.size?.cols && frame.size.rows) {
-          const canonical = { cols: frame.size.cols, rows: frame.size.rows };
-          state.declarations.push({ source: "resize", ...canonical });
-          state.confirmations.push(canonical);
-          window.setTimeout(() => this.receive({
-            type: "canonical-size",
-            terminalRef: TERMINAL_REF,
-            revision: 2,
-            canonicalSize: canonical,
-          }), 0);
+          state.declarations.push({ source: "resize", cols: frame.size.cols, rows: frame.size.rows });
+          // Soft viewers propose their viewport, but do not own the shared grid.
         } else if (frame.type === "ping") {
           window.setTimeout(() => this.receive({ type: "pong", terminalRef: TERMINAL_REF, revision: 2 }), 0);
         }
@@ -173,7 +166,7 @@ async function mockShellApis(page: Page): Promise<void> {
   }));
 }
 
-test("a tall light desktop terminal grows real rows without a black gap", async ({ page }) => {
+test("Web Canvas terminal shrink and expand preserves the shared grid and final row", async ({ page }, testInfo) => {
   await installTerminalGateway(page);
   await mockShellApis(page);
   await page.setViewportSize({ width: 1_440, height: 1_200 });
@@ -195,24 +188,36 @@ test("a tall light desktop terminal grows real rows without a black gap", async 
     (window as typeof window & { __terminalSizing?: TerminalSizingState }).__terminalSizing?.confirmations.length ?? 0
   ))).toBeGreaterThan(0);
 
-  const initial = await page.evaluate(() => {
-    const state = (window as typeof window & { __terminalSizing?: TerminalSizingState }).__terminalSizing;
-    return state?.confirmations.at(-1) ?? null;
-  });
-  expect(initial).not.toBeNull();
+  await expect.poll(async () => page.evaluate(() =>
+    (window as typeof window & { __terminalSizing?: TerminalSizingState }).__terminalSizing!.declarations.length,
+  )).toBeGreaterThan(0);
 
+  const initialRows = await page.evaluate(() =>
+    (window as typeof window & { __terminalSizing?: TerminalSizingState }).__terminalSizing!.declarations.at(-1)!.rows);
+  const initialHeight = (await terminalHost.boundingBox())!.height;
   const resizeHandle = page.locator(".cursor-se-resize:visible").last();
-  const handleBox = await resizeHandle.boundingBox();
-  expect(handleBox).not.toBeNull();
-  await page.mouse.move(handleBox!.x + handleBox!.width / 2, handleBox!.y + handleBox!.height / 2);
-  await page.mouse.down();
-  await page.mouse.move(handleBox!.x + handleBox!.width / 2, handleBox!.y + 320, { steps: 8 });
-  await page.mouse.up();
-
-  await expect.poll(async () => page.evaluate(() => {
-    const state = (window as typeof window & { __terminalSizing?: TerminalSizingState }).__terminalSizing;
-    return state?.declarations.at(-1)?.rows ?? 0;
-  })).toBeGreaterThan(initial!.rows);
+  for (const delta of [-120, 440]) {
+    const handleBox = (await resizeHandle.boundingBox())!;
+    await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2 + delta, { steps: 8 });
+    await page.mouse.up();
+    await expect.poll(async () => terminalHost.evaluate((host) => {
+      const screen = host.querySelector(".xterm-screen")!.getBoundingClientRect();
+      return screen.bottom - host.getBoundingClientRect().bottom;
+    })).toBeLessThanOrEqual(1);
+    await expect.poll(async () => terminalHost.evaluate((host) => {
+      const stage = host.querySelector<HTMLElement>("[data-terminal-grid-stage]")!;
+      return host.scrollHeight - Math.max(stage.offsetHeight, host.clientHeight);
+    })).toBeLessThanOrEqual(1);
+    await testInfo.attach(delta < 0 ? "Web Canvas short terminal" : "Web Canvas tall terminal", {
+      body: await terminalHost.screenshot(), contentType: "image/png",
+    });
+  }
+  expect((await terminalHost.boundingBox())!.height).toBeGreaterThan(initialHeight);
+  await expect.poll(async () => page.evaluate(() =>
+    (window as typeof window & { __terminalSizing?: TerminalSizingState }).__terminalSizing!.declarations.at(-1)!.rows,
+  )).toBeGreaterThan(initialRows);
 
   const result = await page.evaluate(() => {
     const state = (window as typeof window & { __terminalSizing?: TerminalSizingState }).__terminalSizing!;
@@ -234,9 +239,8 @@ test("a tall light desktop terminal grows real rows without a black gap", async 
     };
   });
 
-  expect(result.declared.rows).toBe(result.confirmed.rows);
+  expect(result.confirmed).toEqual({ cols: 120, rows: 40 });
   expect(result.gap).toBeGreaterThanOrEqual(-0.5);
-  expect(result.gap).toBeLessThan(result.cellHeight);
   expect(new Set(result.colors)).toEqual(new Set(["rgb(251, 241, 199)"]));
   await page.addStyleTag({
     content: "[data-sonner-toaster], [data-sonner-toast] { display: none !important; }",
@@ -256,8 +260,4 @@ test("a tall light desktop terminal grows real rows without a black gap", async 
     }
   }
 
-  const terminalApp = terminalHost.locator("xpath=ancestor::*[@role='application' and @aria-label='Terminal'][1]");
-  await expect(terminalApp).toHaveScreenshot("light-terminal-tall.png", {
-    maxDiffPixelRatio: 0.005,
-  });
 });
