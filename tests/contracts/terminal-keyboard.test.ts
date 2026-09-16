@@ -174,6 +174,11 @@ describe("terminal shortcuts", () => {
       resolveTerminalShortcut(event("ArrowLeft", { altKey: true }), p),
     ).toBeNull();
   });
+  it("reserves Ctrl+V for clipboard paste instead of accepting an unreachable override", () => {
+    expect(TerminalKeyboardPreferencesSchema.safeParse({
+      overrides: { "split-right": "Ctrl+V" },
+    }).success).toBe(false);
+  });
   it("rejects invalid/unbounded/colliding bindings and action payloads", () => {
     for (const overrides of [
       { "split-right": "Ctrl+Shift+F" },
