@@ -64,3 +64,18 @@ it("rejects unsupported read versions before invoking services or streams", asyn
   expect((await app.request("/api/chats/events?readStateVersion=2", { headers: { accept: "text/event-stream" } })).status).toBe(400);
   expect(open).not.toHaveBeenCalled();
 });
+
+it("keeps Electron mention search compatible with the real strict query route", async () => {
+  const { createCanonicalChatClient } = await import("../../desktop/src/renderer/src/lib/canonical-chat-client");
+  const { createChatAgentRoutes } = await import("../../packages/gateway/src/chat/agent-routes");
+  const app = createChatAgentRoutes({ enabled: () => false, catalog: { getCatalog: vi.fn() },
+    getPrincipal: () => ({ userId: "owner", source: "jwt" }) });
+  const get = vi.fn(async (path: string) => {
+    const response = await app.request(path);
+    expect(response.status).toBe(200);
+    return response.json();
+  });
+  const client = createCanonicalChatClient({ get, post: vi.fn(), patch: vi.fn(), delete: vi.fn() });
+  await expect(client.agents!.search("todo", "chat_wire")).resolves.toEqual({ enabled: false, resources: [] });
+  expect(get).toHaveBeenCalledWith("/api/chat-mentions?query=todo&chatId=chat_wire");
+});

@@ -196,8 +196,8 @@ export function createCanonicalChatClient(
   };
   const trackEvent = options.trackEvent ?? trackDesktopEvent;
   return {
-    agents: createChatAgentClient((path, method, body) => method === "GET" ? api.get(path)
-      : method === "POST" ? api.post(path, body) : api.patch(path, body)),
+    agents: createChatAgentClient((path, method, body) => method === "GET" ? transport.get(path)
+      : method === "POST" ? transport.post(path, body) : transport.patch(path, body)),
     async list(input = {}) {
       const parsed = CanonicalChatListInputSchema.parse(input);
       const response = await api.get(withQuery("/api/chats", {
