@@ -9,7 +9,7 @@ Status: implementation authorized by Yuhan on 2026-09-10. This supersedes the ea
 - Agents occupies the main Chat content area instead of opening a modal. Keep the navigation rail available; on narrow Web screens, dismiss the rail after opening Agents. Back to Chat restores the same mounted conversation, draft, model and streamed updates. Selecting another Chat or a different runtime leaves Agent configuration. Recipe fields use the page's single scroll area.
 - Extend the existing `@` picker with two labelled kinds: Agents execute the selected saved role; Chats supply context from another authorized conversation.
 - One Agent and at most three referenced Chats per request. Selecting a suggestion does not send. Invocations are not sticky; the default Chat harness and model remain unchanged.
-- `MATRIX_CHAT_AGENTS_ENABLED=1` is the server feature switch, default off. The server advertises availability; UI and all admission paths use that truth. With it off, ordinary Chat behavior remains available and new references fail closed.
+- Saved Agents, Recipes and @Chat context are available without a feature flag. The retired `MATRIX_CHAT_AGENTS_ENABLED` variable is ignored, including existing `0` values. Owner authorization, provider readiness and permission checks still apply.
 - Hermes executes Agent runs. Model/account readiness comes from the existing V3-backed canonical catalog. Existing runtime tools and permissions apply; the UI describes the actual full-access mode before use and does not claim a restricted tool sandbox.
 - No Kanban redesign, automatic scheduling, publishing, additional VM per Bot, or unrelated Chat visual changes in this slice.
 
@@ -27,14 +27,14 @@ Queued work keeps references and resolved snapshots durable. Current-Chat histor
 
 | Route / operation | Authentication and authorization | Validation / limits |
 | --- | --- | --- |
-| GET `/api/chat-agents` | Existing request principal; personal owner only | Server flag; bounded Agent list; coarse readiness |
-| GET `/api/chat-agents/recipe-catalog` | Existing request principal; personal owner only | Server flag; bounded installed/bundled skill and integration service metadata; no credentials or absolute paths |
+| GET `/api/chat-agents` | Existing request principal; personal owner only | Bounded Agent list; coarse readiness |
+| GET `/api/chat-agents/recipe-catalog` | Existing request principal; personal owner only | Bounded installed/bundled skill and integration service metadata; no credentials or absolute paths |
 | POST `/api/chat-agents` | Same owner | Body limit; bounded strict schema; idempotency key |
 | PATCH `/api/chat-agents/:agentId` | Same owner | Body limit; safe ID; revision compare; explicit fields |
 | GET `/api/chat-mentions` | Same owner | Bounded query; current Chat exclusion; max results |
 | GET `/api/chat-context/:chatId` | Same owner; private active Chat only | Safe ID; 40 messages / 8 KB text; no tools or attachments |
-| Existing create/queue/retry turn APIs | Existing owner / collaboration guard | Flag, one Agent / three Chats, no forged snapshot, current catalog readiness |
-| Dispatch / resumed queue | Server-owned snapshot | Recheck archival, reference access, flag and execution root |
+| Existing create/queue/retry turn APIs | Existing owner / collaboration guard | One Agent / three Chats, no forged snapshot, current catalog readiness |
+| Dispatch / resumed queue | Server-owned snapshot | Recheck archival, reference access and execution root |
 
 - Do not expose raw provider, filesystem or database failures. Preserve drafts when admission fails.
 - Agent paths derive from validated IDs and hashed owner scope; reject symlinks and oversized files. Serialize owner writes, use atomic file publication and revision checks, and clean temporary files after use and on startup.
@@ -45,11 +45,11 @@ Queued work keeps references and resolved snapshots durable. Current-Chat histor
 ## Reviewable layers and tests
 
 1. **Contracts and storage**: failing contract / filesystem tests; typed references, immutable snapshots, owner-scoped definitions; extract large admission functions with existing behavioral tests before adding execution logic.
-2. **Execution and routes**: failing integration tests; persisted snapshots, Hermes routing, queue/retry/steering guards, server switch, authenticated CRUD/search and startup wiring.
+2. **Execution and routes**: failing integration tests; persisted snapshots, Hermes routing, queue/retry/steering guards, authenticated CRUD/search and startup wiring.
 3. **Existing Chat UI**: failing interaction tests; shared client/derivations, Agents panel, existing picker extension, attribution and state preservation. Use common components across Web Canvas, Web Desktop and Electron Desktop. Web Mobile consumes the shared Chat surface. Native Mobile does not yet expose saved Agents or these typed mentions; its existing Chat remains unchanged. Native controls and transport support require a separate parity follow-up before advertising this capability there.
-4. **Validation and delivery**: required checks, React audit, current screenshots, real Hermes execution and no-reload streaming on an exact-head Preview VPS; separate public documentation PR in `FinnaAI/matrix-os-site/content/docs/`. Keep flag off by default and wait for Yuhan's Human Review feedback before merging.
+4. **Validation and delivery**: required checks, React audit, current screenshots, real Hermes execution and no-reload streaming on an exact-head Preview VPS; separate public documentation PR in `FinnaAI/matrix-os-site/content/docs/`. Agents are available without a feature flag; wait for Yuhan's Human Review feedback before merging.
 
-Use Graphite for stack operations. Each layer must remain deploy-safe with the switch off. Provider protocol doubles are not evidence of real Hermes execution.
+Use Graphite for stack operations. The original stack used a disabled preview switch; that environment switch is now retired. Provider protocol doubles are not evidence of real Hermes execution.
 
 ### Recipe extension (2026-09-10)
 
@@ -135,7 +135,7 @@ follow-up before public rollout.
 - [ ] Native Mobile applicability and any platform limitation are documented and tested.
 - [ ] Required typecheck, patterns, tests, React audit and production builds recorded.
 - [ ] Exact-head real Hermes / streaming evidence and Human Review environment prepared.
-- [ ] Public docs prepared with an accurate feature-switch boundary.
+- [ ] Public docs prepared with accurate availability and provider-readiness boundaries.
 
 ### Backend checkpoint (2026-09-10)
 

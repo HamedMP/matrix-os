@@ -76,7 +76,7 @@ describe("Chat Agent HTTP boundary", () => {
     expect((await agents.get(owner, created.id))?.revision).toBe(2);
   });
 
-  it("defaults to a quiet disabled feature and rejects mutations when switched off", async () => {
+  it("hides the feature and rejects mutations when availability is disabled", async () => {
     enabled = false;
     expect(await (await app.request("/api/chat-agents")).json()).toEqual({ enabled: false, agents: [] });
     expect(await (await app.request("/api/chat-agents/recipe-catalog")).json()).toEqual({ enabled: false, skills: [], services: [] });

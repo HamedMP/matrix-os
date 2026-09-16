@@ -88,6 +88,7 @@ describe("Hermes Agent invocation through canonical Chat", () => {
     })).id;
   });
   afterEach(async () => {
+    vi.unstubAllEnvs();
     release?.();
     await orchestrator.close();
     await agents.close();
@@ -109,6 +110,23 @@ describe("Hermes Agent invocation through canonical Chat", () => {
     await complete();
     return result;
   }
+
+  it.each([undefined, "0"])("admits saved Agents without configuration or with the retired flag %j", async (legacyFlag) => {
+    vi.stubEnv("MATRIX_CHAT_AGENTS_ENABLED", legacyFlag);
+    const runtime = await createCanonicalChatRuntime({
+      homePath: home, recipeSkillsRoot, repository,
+      catalog: { getCatalog: async () => createCanonicalProviderCatalogFixture() },
+      adapters: new CanonicalChatProviderRegistry([]),
+    });
+    try {
+      const prepared = await runtime.context.prepare(owner, "chat_parent",
+        await input("req_default_agent", [mention("agent", agentId), { type: "text", text: "Review notes" }]));
+      expect(prepared.context?.agent?.id).toBe(agentId);
+    } finally {
+      await runtime.orchestrator.close();
+      await runtime.agents.close();
+    }
+  });
 
   it("runs a saved Codex Agent with pinned instructions and preserves the ordinary Chat binding", async () => {
     await agents.update(owner, agentId, { baseRevision: 1, selection });

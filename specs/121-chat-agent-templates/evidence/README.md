@@ -13,7 +13,7 @@ The recipe was created through the UI and reopened to verify saved account choic
 
 Local checks on the final source passed: 289 distinct covering tests, contracts/gateway/UI/Web/Electron typechecks, and Web/Electron production builds. The Web build used the repository CI public Clerk placeholder and does not establish authentication. Pattern checks reported zero violations. React Doctor reported no shell findings; documented existing Electron composition warnings and a controlled-row positional-key warning remain, with row-removal behavior covered by an interaction test.
 
-Exact Preview deployment, real intended-account reads, source-linked output, cross-presentation persistence and Human Review remain acceptance gates. The feature stays disabled by default; these images are not a production rollout approval.
+Exact Preview deployment, real intended-account reads, source-linked output, cross-presentation persistence and Human Review remain acceptance gates. The feature was disabled by default for this evidence checkpoint; these images were not a production rollout approval. The current implementation removes the environment feature flag and makes Agents available normally.
 
 The Web-only title correction also passed the focused 9-test title suite, the 15-test ChatApp selection/rename suite, shell typecheck and Web production build. Its changed-scope React audit retained the existing ChatApp complexity warning.
 
