@@ -2,6 +2,7 @@
 import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { assertSoftResizeLifecycle, installSoftResizeGeometry, type SoftResizeTerminal } from "../helpers/terminal-soft-resize-regression";
 import type { ShellSocketEvents } from "@desktop/renderer/src/lib/shell-socket";
 import TerminalView from "@desktop/renderer/src/features/terminal/TerminalView";
 import { useAppearance } from "@desktop/renderer/src/stores/appearance";
@@ -276,6 +277,22 @@ describe("TerminalView session switching", () => {
     expect(root.style.backgroundColor).toBe(colorProbe.style.backgroundColor);
     expect(viewport.style.backgroundColor).toBe(colorProbe.style.backgroundColor);
     expect(scrollable.style.backgroundColor).toBe(colorProbe.style.backgroundColor);
+  });
+
+  it("keeps the last canonical row accessible after soft viewport resizing", async () => {
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => setTimeout(() => callback(0), 0));
+    vi.stubGlobal("cancelAnimationFrame", clearTimeout);
+    const { container } = render(<TerminalView sessionName={TERMINAL_REF_KEY} active />);
+    const terminal = createdTerminals.at(-1)! as unknown as SoftResizeTerminal;
+    const host = container.querySelector<HTMLElement>("[data-terminal-viewport]")!;
+    const geometry = installSoftResizeGeometry(terminal, host);
+    geometry.setHostSize(1_600, 900);
+    const events = attachMock.mock.calls.at(-1)![1] as ShellSocketEvents;
+    act(() => events.onCanonicalSize?.({ cols: 120, rows: 36 }));
+    await assertSoftResizeLifecycle({
+      terminal, host, geometry,
+      resizeHost: () => resizeObserverCallbacks.at(-1)!([], {} as ResizeObserver),
+    });
   });
 
   it("proposes a new grid to the authority without locally refitting after a host resize", () => {

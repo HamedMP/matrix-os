@@ -2,6 +2,7 @@
 import React from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { assertSoftResizeLifecycle, installSoftResizeGeometry } from "../helpers/terminal-soft-resize-regression";
 
 const originalClipboardDescriptor = Object.getOwnPropertyDescriptor(navigator, "clipboard");
 const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(navigator, "platform");
@@ -537,6 +538,32 @@ describe("TerminalPane scrolling", () => {
     });
     socketHealthConfigs.length = 0;
     Reflect.deleteProperty(window, "visualViewport");
+  });
+
+  it.each([1, 0.75])("keeps the last canonical row accessible after soft viewport resizing at canvas zoom %s", async (canvasZoom) => {
+    const { container } = render(<TerminalPane
+      paneId="soft-resize-regression" cwd="" theme={theme} isFocused
+      sessionId={TERMINAL_REF_KEY} canvasZoom={canvasZoom}
+      shouldCacheOnUnmount={() => false} shouldDestroyOnUnmount={() => false}
+    />);
+    await waitFor(() => expect(WebSocketMock.instances).toHaveLength(1));
+    await waitFor(() => expect(ResizeObserverMock.instances.length).toBeGreaterThan(0));
+    const terminal = createdTerminals[0];
+    const host = container.querySelector<HTMLElement>("[data-terminal-viewport]")!;
+    const geometry = installSoftResizeGeometry(terminal, host);
+    geometry.setHostSize(1_600, 900);
+    // Real soft-client responses preserve canonical size instead of echoing proposals.
+    await act(async () => {
+      WebSocketMock.instances[0].onmessage?.({ data: JSON.stringify(attachedFrame(0, { cols: 120, rows: 36 })) });
+      WebSocketMock.instances[0].onmessage?.({ data: JSON.stringify(replayEndFrame(0)) });
+      terminal.flushWrites();
+    });
+    await assertSoftResizeLifecycle({
+      terminal, host, geometry,
+      resizeHost: () => ResizeObserverMock.instances.at(-1)!.trigger(),
+    });
+    expect(stubWs.send.mock.calls.map(([frame]) => JSON.parse(frame as string))
+      .filter((frame) => frame.type === "resize").every((frame) => frame.mode === "soft")).toBe(true);
   });
 
   it("attaches browser terminal tabs as soft clients with proposed dimensions", async () => {
