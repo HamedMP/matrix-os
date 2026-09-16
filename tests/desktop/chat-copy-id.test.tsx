@@ -55,6 +55,19 @@ it("offers Copy chat ID on Web chat rows even when renaming is unavailable", asy
   await waitFor(() => expect(writeText).toHaveBeenCalledWith("chat_web"));
 });
 
+it("keeps a long Web chat title selectable while exposing its full accessible name", () => {
+  const title = "C".repeat(200);
+  const select = vi.fn();
+  render(<RenameableConversationRow conversation={{ id: "chat_long_title", title, preview: "", messageCount: 0, updatedAt: 0 }}
+    active={false} mobile={false} editing={false} renamePending={false} onSelect={select}
+    onRenameCommit={vi.fn()} onRenameCancel={vi.fn()} />);
+
+  const row = screen.getByRole("button", { name: title });
+  expect(row.textContent).toBe(`${title.slice(0, 40)}...`);
+  fireEvent.click(row, { detail: 0 });
+  expect(select).toHaveBeenCalledOnce();
+});
+
 it("keeps a safe, retryable clipboard failure visible in the menu", async () => {
   const writeText = vi.fn().mockRejectedValueOnce(new Error("secret platform failure")).mockResolvedValue(undefined);
   vi.stubGlobal("navigator", { clipboard: { writeText } });

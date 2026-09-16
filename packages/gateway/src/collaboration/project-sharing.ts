@@ -79,10 +79,11 @@ export function createProjectSharingService(options: {
     runtimeId: string;
     authorityGeneration: number;
   }>;
+  onPrepared?(transition: ProjectTransitionRecord): boolean;
 }) {
   async function preparePreview(scopeId: string, actorId: string) {
     const scope = await loadPreparationScope(options.db, scopeId, actorId);
-    const membershipEffects = await deriveMembershipEffects(options.db, scope.id, scope.owner_id);
+    const membershipEffects = await deriveProjectMembershipEffects(options.db, scope.id, scope.owner_id);
     const inventory = await options.inventory.preview({
       ownerId: scope.owner_id,
       projectId: scope.resource_id,
@@ -92,6 +93,45 @@ export function createProjectSharingService(options: {
   }
 
   return {
+    async read(input: { scopeId: string }) {
+      const scopeId = ScopeIdSchema.parse(input.scopeId);
+      try {
+        const scope = await options.db.selectFrom("collaboration_scopes").selectAll()
+          .where("id", "=", scopeId)
+          .where("kind", "=", "project")
+          .where("lifecycle", "in", ["shared", "archived"])
+          .where("deleted_at", "is", null)
+          .executeTakeFirst();
+        if (!scope) throw new ProjectSharingError("not_found");
+        const resources = await options.db.selectFrom("collaboration_resource_bindings")
+          .select(["resource_kind", "resource_id", "revision", "readiness", "incarnation"])
+          .where("project_scope_id", "=", scope.id)
+          .where("authority_runtime_id", "=", scope.authority_runtime_id)
+          .where("authority_generation", "=", Number(scope.authority_generation))
+          .orderBy("resource_kind", "asc")
+          .orderBy("resource_id", "asc")
+          .limit(100_001)
+          .execute();
+        if (resources.length > 100_000) throw new ProjectSharingError("capacity");
+        return {
+          id: scope.resource_id,
+          scopeId: scope.id,
+          status: scope.lifecycle === "archived" ? "archived" as const : "active" as const,
+          resources: resources.map((resource) => ({
+            kind: resource.resource_kind,
+            id: resource.resource_id,
+            revision: String(resource.revision),
+            readiness: resource.readiness,
+            ...(resource.incarnation ? { incarnation: resource.incarnation } : {}),
+          })),
+        };
+      } catch (error: unknown) {
+        if (error instanceof ProjectSharingError) throw error;
+        console.warn("[collaboration-project] shared project projection failed", error instanceof Error ? error.name : "UnknownError");
+        throw new ProjectSharingError("unavailable");
+      }
+    },
+
     async preview(input: { scopeId: string; actorId: string }) {
       const scopeId = ScopeIdSchema.parse(input.scopeId);
       const actorId = ActorIdSchema.parse(input.actorId);
@@ -164,7 +204,7 @@ export function createProjectSharingService(options: {
         }
         throw new ProjectSharingError("unavailable");
       }
-      return options.transitions.prepare({
+      const transition = await options.transitions.prepare({
         scopeId: scope.id,
         ownerId: scope.owner_id,
         requestedBy: parsed.actorId,
@@ -177,6 +217,10 @@ export function createProjectSharingService(options: {
         destinationAuthorityRuntimeId: destination.runtimeId,
         destinationAuthorityGeneration: destination.authorityGeneration,
       });
+      if (options.onPrepared && !options.onPrepared(transition)) {
+        throw new ProjectSharingError("capacity");
+      }
+      return transition;
     },
   };
 }
@@ -210,7 +254,7 @@ async function loadPreparationScope(
   }
 }
 
-async function deriveMembershipEffects(
+export async function deriveProjectMembershipEffects(
   db: Kysely<OwnerCollaborationDatabase>,
   projectScopeId: string,
   ownerId: string,

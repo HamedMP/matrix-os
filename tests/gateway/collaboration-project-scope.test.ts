@@ -30,7 +30,7 @@ describe("project collaboration scope preparation", () => {
 
   afterEach(async () => fixture.destroy());
 
-  it("creates one unpublished owner scope and directory route atomically", async () => {
+  it("creates one unpublished owner scope without a discoverable directory route", async () => {
     const service = projectScopeService(fixture, () => revision);
     const preflight = await service.preflight({ ownerId: OWNER_ID, projectId: PROJECT_ID });
     const scope = await service.prepare({
@@ -56,13 +56,7 @@ describe("project collaboration scope preparation", () => {
       { actor_id: OWNER_ID, role: "owner", status: "accepted" },
     ]);
     await expect(fixture.db.selectFrom("collaboration_directory_outbox")
-      .select(["scope_id", "authority_runtime_id", "resource_kind", "discovery_state"])
-      .where("scope_id", "=", SCOPE_ID).executeTakeFirstOrThrow()).resolves.toEqual({
-      scope_id: SCOPE_ID,
-      authority_runtime_id: RUNTIME_ID,
-      resource_kind: "project",
-      discovery_state: "accepted",
-    });
+      .select("scope_id").where("scope_id", "=", SCOPE_ID).execute()).resolves.toEqual([]);
   });
 
   it("replays the same actor request but rejects a changed payload", async () => {
@@ -104,6 +98,27 @@ describe("project collaboration scope preparation", () => {
       .where("scope_id", "=", SCOPE_ID)
       .where("operation_kind", "=", "scope.create")
       .executeTakeFirstOrThrow()).resolves.toMatchObject({ count: 2 });
+  });
+
+  it("returns an existing project scope in preflight so the owner can reopen sharing", async () => {
+    const service = projectScopeService(fixture, () => revision);
+    const preflight = await service.preflight({ ownerId: OWNER_ID, projectId: PROJECT_ID });
+    await service.prepare({
+      ownerId: OWNER_ID,
+      projectId: PROJECT_ID,
+      clientRequestId: REQUEST_ID,
+      payloadHash: "a".repeat(64),
+      expectedProjectRevision: preflight.projectRevision,
+      confirmationToken: preflight.confirmationToken,
+    });
+    await fixture.db.updateTable("collaboration_scopes").set({ lifecycle: "shared", revision: 1 })
+      .where("id", "=", SCOPE_ID).execute();
+
+    await expect(service.preflight({ ownerId: OWNER_ID, projectId: PROJECT_ID })).resolves.toMatchObject({
+      eligible: true,
+      existingScopeId: SCOPE_ID,
+      existingLifecycle: "shared",
+    });
   });
 
   it("rejects stale or cross-owner confirmation without creating a scope", async () => {

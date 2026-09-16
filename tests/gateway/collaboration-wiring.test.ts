@@ -92,6 +92,7 @@ describe("gateway collaboration wiring", () => {
         { version: 2 },
         { version: 3 },
         { version: 4 },
+        { version: 5 },
       ]);
     await runtime.shutdown();
     await expect(runtime.outbox.runOnce()).resolves.toBe(0);

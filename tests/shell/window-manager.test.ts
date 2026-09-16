@@ -455,6 +455,13 @@ describe("Window Manager Store", () => {
   });
 
   describe("loadLayout", () => {
+    it("preserves a mounted Chat identity when server layout arrives after a recipe launch", () => {
+      useWindowManager.getState().openWindow("Chat", "__chat__");
+      const launched = useWindowManager.getState().windows[0];
+      useWindowManager.getState().loadLayout([{ path: "__chat__", title: "Chat", state: "open", x: 80, y: 60, width: 800, height: 600 }]);
+      expect(useWindowManager.getState().windows).toHaveLength(1);
+      expect(useWindowManager.getState().windows[0].id).toBe(launched.id);
+    });
     it("restores the same Terminal layout id across shell reloads", () => {
       const terminalLayoutId = "term-layout_0123456789abcdef0123456789abcdef";
       useWindowManager.getState().loadLayout([{

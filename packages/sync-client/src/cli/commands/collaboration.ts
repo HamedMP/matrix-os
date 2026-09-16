@@ -12,6 +12,7 @@ import {
   CollaborationDiscoveryResponseSchema,
   CollaborationInvitationSchema,
   CollaborationPageRequestSchema,
+  CollaborationProjectSchema,
   CollaborationScopeSchema,
   CollaborationResourceIdSchema,
   CollaborationTerminalFrameSchema,
@@ -26,7 +27,7 @@ import { resolveCliProfile } from "../profiles.js";
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const ScopeIdSchema = z.uuid();
 const RevisionSchema = z.string().regex(/^(?:0|[1-9][0-9]{0,18})$/);
-const COLLABORATION_PATH = /^\/api\/collaboration\/(?:inbox|shared|invitations\/[0-9a-f-]+(?:\/accept)?|scopes\/[0-9a-f-]+(?:\/chat(?:\/messages|\/requests(?:\/[A-Za-z0-9_.:-]+\/(?:cancel|retry))?|\/approvals\/[A-Za-z0-9_.:-]+\/decision)?|\/terminal(?:\/actions)?|\/connection-tickets|\/user-state)?)?(?:\?[^#]*)?$/i;
+const COLLABORATION_PATH = /^\/api\/collaboration\/(?:inbox|shared|invitations\/[0-9a-f-]+(?:\/accept)?|scopes\/[0-9a-f-]+(?:\/chat(?:\/messages|\/requests(?:\/[A-Za-z0-9_.:-]+\/(?:cancel|retry))?|\/approvals\/[A-Za-z0-9_.:-]+\/decision)?|\/terminal(?:\/actions)?|\/project|\/connection-tickets|\/user-state)?)?(?:\?[^#]*)?$/i;
 const MAX_TERMINAL_FRAME_BYTES = 80 * 1024;
 const TERMINAL_HEARTBEAT_MS = 10_000;
 
@@ -297,7 +298,7 @@ const controlArgs = {
 } as const;
 
 export const collaborationCommand = defineCommand({
-  meta: { name: "collaboration", description: "Access Chats and terminals shared with your account" },
+  meta: { name: "collaboration", description: "Access Chats, terminals, and projects shared with your account" },
   subCommands: {
     inbox: defineCommand({
       meta: { name: "inbox", description: "List pending collaboration invitations" },
@@ -460,6 +461,22 @@ export const collaborationCommand = defineCommand({
         return { scope, terminal };
       }),
     }),
+    project: defineCommand({
+      meta: { name: "project", description: "Read a shared project's complete inherited inventory" },
+      args: scopeArgs,
+      run: async ({ args }) => run(args, async (platformUrl, token) => {
+        const scopeId = value(args, "scope", ScopeIdSchema);
+        const request = (path: string) => collaborationRequest({ platformUrl, token, method: "GET", path });
+        const [scope, project] = await Promise.all([
+          request(`/api/collaboration/scopes/${scopeId}`).then((data) => CollaborationScopeSchema.parse(data)),
+          request(`/api/collaboration/scopes/${scopeId}/project`).then((data) => CollaborationProjectSchema.parse(data)),
+        ]);
+        if (scope.kind !== "project" || project.scopeId !== scope.id || project.id !== scope.resourceId) {
+          throw cliError("collaboration_failed");
+        }
+        return { scope, project };
+      }),
+    }),
     "terminal-watch": defineCommand({
       meta: { name: "terminal-watch", description: "Watch shared terminal output and optionally send one fenced input" },
       args: {
@@ -502,7 +519,7 @@ export const collaborationCommand = defineCommand({
       }),
     }),
   },
-  run: () => console.log("Usage: matrix collaboration inbox|shared|accept|open|discuss|requests|ask|cancel|retry|approve|terminal|terminal-watch|terminal-stop"),
+  run: () => console.log("Usage: matrix collaboration inbox|shared|accept|open|discuss|requests|ask|cancel|retry|approve|terminal|terminal-watch|terminal-stop|project"),
 });
 
 async function requestControl(

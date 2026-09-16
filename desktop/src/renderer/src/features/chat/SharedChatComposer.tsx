@@ -1,3 +1,4 @@
+import { canAddChatMention, isChatMention, orderChatResources } from "@matrix-os/ui";
 import type {
   CanonicalChatResourceReference,
   CanonicalProviderCatalog,
@@ -9,7 +10,7 @@ import { Box, ChevronDown, Paperclip, SlidersHorizontalIcon, SquareTerminal } fr
 import { useEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
 import { PromptInput } from "./elements/prompt-input";
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";
-import { ComposerResourceGlyph } from "./ComposerResourceGlyph";
+import { ResourceRows } from "./ComposerResourceRows";
 import {
   listCanonicalSlashEntries,
   updateCanonicalComposerOption,
@@ -145,57 +146,6 @@ function SuggestionMenu({
   );
 }
 
-function ResourceRows({
-  role,
-  canAttach,
-  resources,
-  selectedIndex,
-  onAttach,
-  onResource,
-}: {
-  role: "menuitem" | "option";
-  canAttach: boolean;
-  resources: CanonicalChatResourceReference[];
-  selectedIndex?: number;
-  onAttach: () => void;
-  onResource: (resource: CanonicalChatResourceReference) => void;
-}) {
-  const offset = canAttach ? 1 : 0;
-  return (
-    <>
-      {canAttach ? (
-        <button
-          type="button"
-          role={role}
-          {...(role === "option" ? { "aria-selected": selectedIndex === 0 } : {})}
-          className="flex min-h-10 w-full items-center gap-2 rounded-lg px-2 text-left text-sm hover:bg-[var(--bg-hover)] aria-selected:bg-[var(--bg-hover)]"
-          style={{ color: "var(--text-primary)" }}
-          onClick={onAttach}
-        >
-          <Paperclip size={15} aria-hidden style={{ color: "var(--text-secondary)" }} />
-          <span>Attach files</span>
-        </button>
-      ) : null}
-      {resources.map((resource, index) => (
-        <button
-          key={`${resource.kind}:${resource.id}`}
-          type="button"
-          role={role}
-          {...(role === "option" ? { "aria-selected": selectedIndex === index + offset } : {})}
-          className="flex min-h-10 w-full items-center gap-2 rounded-lg px-2 text-left hover:bg-[var(--bg-hover)] aria-selected:bg-[var(--bg-hover)]"
-          onClick={() => onResource(resource)}
-        >
-          <span className="inline-flex shrink-0" style={{ color: "var(--text-tertiary)" }}>
-            <ComposerResourceGlyph resource={resource} size={15} />
-          </span>
-          <span className="truncate text-sm" style={{ color: "var(--text-primary)" }}>{resource.label}</span>
-          <span className="ml-auto shrink-0 text-[11px] capitalize" style={{ color: "var(--text-tertiary)" }}>{resource.kind.replace("_", " ")}</span>
-        </button>
-      ))}
-    </>
-  );
-}
-
 export function SharedChatComposer({
   value,
   onChange,
@@ -317,10 +267,11 @@ export function SharedChatComposer({
     entry.invocation.slice(1).toLocaleLowerCase().includes(slashQuery)
     || entry.displayName.toLocaleLowerCase().includes(slashQuery)
   ));
-  const availableResources = [...resources, ...remoteResources]
+  const availableResources = orderChatResources([...resources, ...remoteResources])
     .filter((resource, index, all) => all.findIndex((candidate) => (
       candidate.kind === resource.kind && candidate.id === resource.id
-    )) === index);
+    )) === index)
+    .filter((resource) => !isChatMention(resource) || canAddChatMention(referenceTokens.flatMap((token) => token.type === "resource" ? [token.resource] : []), resource));
   const filteredResources = resourceQuery === null ? [] : availableResources
     .filter((resource) => resource.label.toLocaleLowerCase().includes(resourceQuery));
   const suggestionCount = slashMenuOpen

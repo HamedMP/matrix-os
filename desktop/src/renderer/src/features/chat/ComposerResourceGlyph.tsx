@@ -1,6 +1,8 @@
 import type { CanonicalChatResourceReference } from "@matrix-os/contracts";
 import {
   AppWindow,
+  Bot,
+  MessageSquare,
   Braces,
   Folder,
   FolderKanban,
@@ -109,6 +111,8 @@ export function ComposerResourceGlyph({
   if (resource.kind === "folder") {
     return <span data-file-kind="folder" className="inline-flex"><Folder size={size} aria-hidden /></span>;
   }
+  if (resource.kind === "agent") return <Bot size={size} aria-hidden />;
+  if (resource.kind === "chat") return <MessageSquare size={size} aria-hidden />;
   if (resource.kind === "project") return <FolderKanban size={size} aria-hidden />;
   if (resource.kind === "task") return <ListTodo size={size} aria-hidden />;
   if (resource.kind === "app") return <AppWindow size={size} aria-hidden />;

@@ -411,7 +411,8 @@ jobs:
     name: Unit Tests (${{ matrix.shard }}/4)
     needs: [changes, patterns, sync-client]
     runs-on: ubuntu-latest
-    # Shard 4 completed in 14m50s on PR #1675; leave room for runner variance.
+    # Shard 4 passed all tests at ~15 minutes including setup; allow cleanup
+    # and runner variance without cancelling an otherwise successful shard.
     timeout-minutes: 20
     strategy:
       fail-fast: false

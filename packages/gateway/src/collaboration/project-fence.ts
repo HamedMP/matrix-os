@@ -8,7 +8,7 @@ const DEFAULT_PER_PROJECT_CAPACITY = 64;
 const ScopeIdSchema = z.uuid();
 const ActorIdSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/);
 const ProjectIdSchema = z.string().min(1).max(256).regex(/^[A-Za-z0-9_-]+$/);
-const RuntimeIdSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/);
+const RuntimeIdSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$/);
 const DigestSchema = z.string().regex(/^[a-f0-9]{64}$/);
 
 type ProjectTransitionJournal = Pick<

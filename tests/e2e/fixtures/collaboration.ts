@@ -17,6 +17,8 @@ const CollaborationJourneyEnvironmentSchema = z.object({
   MATRIX_COLLABORATION_E2E_RUNTIME_HANDLE: RuntimeHandleSchema,
   MATRIX_COLLABORATION_E2E_OWNER_STATE: StorageStatePathSchema,
   MATRIX_COLLABORATION_E2E_EDITOR_STATE: StorageStatePathSchema,
+  MATRIX_COLLABORATION_E2E_PROJECT_ID: z.string().min(1).max(256).regex(/^[A-Za-z0-9_-]+$/),
+  MATRIX_COLLABORATION_E2E_EDITOR_ACTOR_ID: z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/),
 });
 
 export interface CollaborationJourneyEnvironment {
@@ -24,6 +26,8 @@ export interface CollaborationJourneyEnvironment {
   runtimePath: string;
   ownerStorageState: string;
   editorStorageState: string;
+  projectId: string;
+  editorActorId: string;
 }
 
 export interface CollaborationJourneyActor {
@@ -58,6 +62,8 @@ export function parseCollaborationJourneyEnvironment(
     runtimePath: `/vm/${encodeURIComponent(parsed.MATRIX_COLLABORATION_E2E_RUNTIME_HANDLE)}`,
     ownerStorageState: parsed.MATRIX_COLLABORATION_E2E_OWNER_STATE,
     editorStorageState: parsed.MATRIX_COLLABORATION_E2E_EDITOR_STATE,
+    projectId: parsed.MATRIX_COLLABORATION_E2E_PROJECT_ID,
+    editorActorId: parsed.MATRIX_COLLABORATION_E2E_EDITOR_ACTOR_ID,
   };
 }
 

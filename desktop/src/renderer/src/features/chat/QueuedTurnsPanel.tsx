@@ -1,3 +1,4 @@
+import { hasChatMentionParts } from "@matrix-os/ui";
 import type { CanonicalChatQueuedTurn } from "@matrix-os/contracts";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import {
@@ -165,7 +166,7 @@ export function QueuedTurnsPanel({
                 <button
                   type="button"
                   aria-label={`${steering ? "Steering" : "Steer"} ${label}`}
-                  disabled={rowDisabled || !canSteer}
+                  disabled={rowDisabled || !canSteer || hasChatMentionParts(turn.parts)}
                   className="h-7 rounded-lg px-2 text-[13px] font-medium outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-40"
                   style={{ color: "var(--text-secondary)" }}
                   onClick={() => onSteer(turn.id)}

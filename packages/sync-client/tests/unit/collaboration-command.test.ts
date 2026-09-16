@@ -23,6 +23,21 @@ describe("collaboration CLI transport", () => {
     })).rejects.toMatchObject({ code: "collaboration_failed" });
   });
 
+  it("allows the shared project projection through the scoped transport boundary", async () => {
+    const path = "/api/collaboration/scopes/10000000-0000-4000-8000-000000000001/project";
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+      id: "project_launch",
+    }), { headers: { "content-type": "application/json" } }));
+
+    await expect(collaborationRequest({
+      platformUrl: "https://app.matrix-os.com", token: "actor-token", method: "GET", path,
+    })).resolves.toEqual({ id: "project_launch" });
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining(path), expect.objectContaining({
+      method: "GET",
+      signal: expect.any(AbortSignal),
+    }));
+  });
+
   it.each([
     "/api/collaboration/scopes/10000000-0000-4000-8000-000000000001/chat/requests",
     "/api/collaboration/scopes/10000000-0000-4000-8000-000000000001/chat/requests/qturn_one/cancel",

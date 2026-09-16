@@ -1,6 +1,6 @@
 "use client";
 
-import { GettingStartedVisibilityProvider } from "@matrix-os/ui";
+import { GettingStartedVisibilityProvider, resolveRecipeHandoff } from "@matrix-os/ui";
 import { useState, useCallback, useEffect, useRef, useSyncExternalStore } from "react";
 import { useAuth } from "@clerk/nextjs";
 import { useTheme } from "@/hooks/useTheme";
@@ -29,8 +29,14 @@ const LAUNCHABLE_BUILT_IN_PATHS = new Set([
 
 function readLaunchPathFromLocation(): string | null {
   if (typeof window === "undefined") return null;
+  if (readRecipePromptFromLocation()) return "__chat__";
   const launch = new URLSearchParams(window.location.search).get("launch");
   return launch && LAUNCHABLE_BUILT_IN_PATHS.has(launch) ? launch : null;
+}
+
+function readRecipePromptFromLocation(): string | null {
+  const values = new URLSearchParams(window.location.search).getAll("recipe");
+  return values.length === 1 ? resolveRecipeHandoff(values[0]!)?.prompt ?? null : null;
 }
 
 // The launch path lives in window.location.search (read once at load). useSyncExternalStore
@@ -53,7 +59,8 @@ export function ShellHome() {
   useDesktopConfig({ cacheScope });
 
   const runtimeSlot = useSyncExternalStore(subscribeLaunchPathNoop, readRuntimeSlotFromLocation, getLaunchPathServerSnapshot);
-  const chat = useCanonicalChatState();
+  const recipePrompt = useSyncExternalStore(subscribeLaunchPathNoop, readRecipePromptFromLocation, getLaunchPathServerSnapshot);
+  const chat = useCanonicalChatState({ initialDraft: recipePrompt });
   const [paletteOpen, setPaletteOpen] = useState(false);
   const launchAppPath = useSyncExternalStore(
     subscribeLaunchPathNoop,

@@ -36,8 +36,29 @@ describe("platform collaboration wiring", () => {
 
   it("registers local and exact proxy routes after migrations", async () => {
     const terminalScopeId = "10000000-0000-4000-8000-000000000002";
+    const projectScopeId = "10000000-0000-4000-8000-000000000003";
     const upstream = vi.fn(async (input: string | URL | Request) => new Response(JSON.stringify(
-      String(input).endsWith("/terminal")
+      String(input).endsWith("/project")
+        ? {
+          id: "proj_alpha", scopeId: projectScopeId, status: "active",
+          resources: [{ kind: "file", id: "README.md", revision: "1", readiness: "ready" }],
+        }
+        : String(input).includes(projectScopeId)
+          ? {
+            id: projectScopeId,
+            ownerId: platformCollaborationActors.owner,
+            kind: "project",
+            resourceId: "proj_alpha",
+            membershipMode: "direct",
+            lifecycle: "shared",
+            revision: "1",
+            authEpoch: "1",
+            authorityGeneration: "2",
+            role: "editor",
+            capabilities: { read: true, discuss: true, manageMembers: false, requestAi: true,
+              observeTerminal: false, controlTerminal: false, stopTerminal: false },
+          }
+          : String(input).endsWith("/terminal")
         ? {
           id: "terminal_release", scopeId: terminalScopeId, incarnation: `terminal-${"a".repeat(32)}`,
           executionGeneration: "4", status: "active",
@@ -158,6 +179,34 @@ describe("platform collaboration wiring", () => {
       resource: expect.objectContaining({
         scope: expect.objectContaining({ id: terminalScopeId, kind: "terminal", role: "viewer" }),
         terminal: expect.objectContaining({ id: "terminal_release", status: "active" }),
+      }),
+    })]) });
+
+    await runtime.repository.applyDirectoryEvent({
+      eventId: "20000000-0000-4000-8000-000000000003",
+      scopeId: projectScopeId,
+      runtimeId: "runtime_owner",
+      ownerId: platformCollaborationActors.owner,
+      kind: "project",
+      authorityGeneration: 2,
+      metadataRevision: 1,
+      recipients: [{ actorId: platformCollaborationActors.recipientWithoutComputer, status: "accepted" }],
+    });
+    await runtime.repository.setPolicy({
+      milestone: "m4",
+      expectedRevision: 0,
+      mode: "enabled",
+      cohort: [],
+      changedBy: "operator_test",
+    });
+    const projectDiscovery = await app.request("/api/collaboration/shared", {
+      headers: { "x-test-actor": platformCollaborationActors.recipientWithoutComputer },
+    });
+    expect(projectDiscovery.status).toBe(200);
+    expect(await projectDiscovery.json()).toMatchObject({ items: expect.arrayContaining([expect.objectContaining({
+      resource: expect.objectContaining({
+        scope: expect.objectContaining({ id: projectScopeId, kind: "project", role: "editor" }),
+        project: expect.objectContaining({ id: "proj_alpha", status: "active" }),
       }),
     })]) });
     await runtime.shutdown();

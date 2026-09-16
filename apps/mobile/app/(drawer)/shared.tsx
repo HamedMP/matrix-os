@@ -20,6 +20,8 @@ import { renderChatMarkdown, type ChatMarkdownTheme } from "@/lib/chat-markdown"
 import { loadCollaborationDraft, saveCollaborationDraft } from "@/lib/collaboration-drafts";
 import { SharedChatComposer, canControlSharedAiRequest } from "@/components/collaboration/SharedChatComposer";
 import { SharedTerminalScreen } from "@/components/collaboration/SharedTerminalScreen";
+import { SharedProjectScreen } from "@/components/collaboration/SharedProjectScreen";
+import { CollaborationRecoverySupersededError } from "@/components/collaboration/useSharedProjectWorkflow";
 import {
   acceptCollaborationInvitation,
   collaborationEventsUrl,
@@ -44,7 +46,8 @@ type Scope = z.infer<typeof CollaborationScopeSchema>;
 type Chat = z.infer<typeof CollaborationChatSchema>;
 type Message = z.infer<typeof CollaborationSharedChatMessageSchema>;
 type ViewState = { kind: "home" } | { kind: "invitation"; invitation: Invitation }
-  | { kind: "chat"; scopeId: string } | { kind: "terminal"; scopeId: string };
+  | { kind: "chat"; scopeId: string } | { kind: "terminal"; scopeId: string }
+  | { kind: "project"; scopeId: string };
 type ScreenState = {
   view: ViewState;
   items: DiscoveryItem[];
@@ -345,9 +348,13 @@ export default function SharedScreen() {
       console.warn("[mobile-collaboration] realtime read state failed", failure instanceof Error ? failure.name : "UnknownError");
     });
   }, [token]);
-  const activeScopeId = view.kind === "chat" ? view.scopeId : null;
+  const activeScope = view.kind === "chat"
+    ? { id: view.scopeId, kind: "chat" as const }
+    : null;
+  const activeScopeId = activeScope?.id ?? null;
+  const activeScopeKind = activeScope?.kind ?? null;
   useEffect(() => {
-    if (!activeScopeId) return;
+    if (!activeScopeId || !activeScopeKind) return;
     let closed = false;
     let socket: WebSocket | null = null;
     let retryTimer: RetryTimer | null = null;
@@ -409,8 +416,8 @@ export default function SharedScreen() {
               enqueueAfterRecovery(() => { eventSequenceRef.current = frame.sequence; });
             } else if (frame.type === "unavailable") {
               closed = true;
-              chatLoadGeneration.current += 1;
               eventScopeRef.current = null;
+              chatLoadGeneration.current += 1;
               chatRef.current = null;
               messagesRef.current = [];
               latestSequenceRef.current = "0";
@@ -463,7 +470,7 @@ export default function SharedScreen() {
       retryTimer?.cancel();
       socket?.close(1000, "Closed");
     };
-  }, [activeScopeId, refreshLiveChat, token]);
+  }, [activeScopeId, activeScopeKind, refreshLiveChat, token]);
   const review = async (invitationId: string) => {
     dispatch({ type: "patch", patch: { loading: true, error: "" } });
     try { dispatch({ type: "patch", patch: { view: { kind: "invitation", invitation: await fetchCollaborationInvitation(await token(), invitationId) } } }); }
@@ -479,7 +486,7 @@ export default function SharedScreen() {
       if (invitation.scopeKind === "chat") await loadChat(result.scopeId);
       else if (invitation.scopeKind === "terminal") {
         dispatch({ type: "patch", patch: { view: { kind: "terminal", scopeId: result.scopeId }, loading: false } });
-      }
+      } else dispatch({ type: "patch", patch: { view: { kind: "project", scopeId: result.scopeId }, loading: false } });
     } catch (failure: unknown) {
       console.warn("[mobile-collaboration] invitation acceptance failed", failure instanceof Error ? failure.name : "UnknownError");
       dispatch({ type: "patch", patch: { error: "Invitation could not be accepted. Try again.", loading: false } });
@@ -615,10 +622,19 @@ export default function SharedScreen() {
       }} />;
   }
 
+  if (view.kind === "project") {
+    return <SharedProjectScreen scopeId={view.scopeId} getToken={token} onBack={() => {
+      dispatch({ type: "patch", patch: { view: { kind: "home" }, error: "" } });
+      void loadHome();
+    }} />;
+  }
+
   return <CollaborationHomeScreen state={state} onReview={review}
     onOpen={(item) => item.kind === "terminal"
       ? Promise.resolve(dispatch({ type: "patch", patch: { view: { kind: "terminal", scopeId: item.scopeId } } }))
-      : loadChat(item.scopeId)} onLoadMore={loadMoreItems} />;
+      : item.kind === "project"
+        ? Promise.resolve(dispatch({ type: "patch", patch: { view: { kind: "project", scopeId: item.scopeId } } }))
+        : loadChat(item.scopeId)} onLoadMore={loadMoreItems} />;
 }
 
 function InvitationScreen({ invitation, state, onBack, onAccept }: {
@@ -629,15 +645,17 @@ function InvitationScreen({ invitation, state, onBack, onAccept }: {
 }) {
   return <ScrollView contentContainerStyle={styles.page}>
     <Back onPress={onBack} />
-    <Text style={styles.title}>Join this shared {invitation.scopeKind === "terminal" ? "terminal" : "Chat"}?</Text>
+    <Text style={styles.title}>Join this shared {invitation.scopeKind === "terminal" ? "terminal" : invitation.scopeKind === "project" ? "project" : "Chat"}?</Text>
     <Text style={styles.body}>{invitation.owner.displayName} invited you as an {invitation.role}.</Text>
     <View style={styles.card}><Text style={styles.cardTitle}>This share includes</Text>
       <Text style={styles.body}>{invitation.scopeKind === "terminal"
         ? "This terminal session, its retained output, and attributed control while the session remains active."
-        : "The ongoing Chat history, human discussion, and shared AI queue."}</Text>
+        : invitation.scopeKind === "project" ? "The complete project inventory and future project-owned contents."
+          : "The ongoing Chat history, human discussion, and shared AI queue."}</Text>
       <Text style={styles.cardTitle}>This stays private</Text><Text style={styles.body}>{invitation.scopeKind === "terminal"
         ? "Its project, sibling terminals, files, apps, Chats, credentials, and unrelated runtime access."
-        : "Its project, sibling Chats, files, apps, terminals, and private drafts."}</Text></View>
+        : invitation.scopeKind === "project" ? "External references, credentials, unrelated resources, and personal view state."
+          : "Its project, sibling Chats, files, apps, terminals, and private drafts."}</Text></View>
     <Text style={styles.muted}>{invitation.scopeKind === "terminal"
       ? "Editors can request control. Viewers can only watch. Owners may take over control."
       : "Editors can discuss and request AI. Viewers have read-only access."}</Text>
@@ -706,7 +724,7 @@ function CollaborationHomeScreen({ state, onReview, onOpen, onLoadMore }: {
   return <FlatList data={state.items} keyExtractor={discoveryKey} contentContainerStyle={styles.page}
     ListHeaderComponent={<>
       <Text style={styles.title}>Shared with me</Text>
-      <Text style={styles.muted}>Invitations, Chats, and terminals shared with your Matrix account.</Text>
+      <Text style={styles.muted}>Invitations, Chats, terminals, and projects shared with your Matrix account.</Text>
       {state.loading ? <ActivityIndicator accessibilityLabel="Loading shared items" /> : null}
       {state.error ? <Text accessibilityRole="alert" style={styles.error}>{state.error}</Text> : null}
       {!state.loading && !state.error && state.items.length === 0 ? <View style={styles.empty}>
@@ -728,13 +746,18 @@ function DiscoveryCard({ item, onReview, onOpen }: {
 }) {
   if (item.status === "invited") return <View style={styles.card}>
     <Text style={styles.cardTitle}>{item.resource.owner.displayName} invited you</Text>
-    <Text style={styles.muted}>Shared {item.kind === "terminal" ? "terminal" : "Chat"} · {roleLabel(item.resource.role)}</Text>
+    <Text style={styles.muted}>Shared {item.kind === "terminal" ? "terminal" : item.kind === "project" ? "project" : "Chat"} · {roleLabel(item.resource.role)}</Text>
     <Action label={`Review invitation from ${item.resource.owner.displayName}`} onPress={() => void onReview(item.invitationId)} />
   </View>;
   if ("terminal" in item.resource) return <View style={styles.card}>
     <Text style={styles.cardTitle}>Shared terminal</Text>
     <Text style={styles.muted}>{item.resource.terminal.id} · {roleLabel(item.resource.scope.role)}</Text>
     <Action label={`Open shared terminal ${item.resource.terminal.id}`} onPress={() => void onOpen(item)} />
+  </View>;
+  if ("project" in item.resource) return <View style={styles.card}>
+    <Text style={styles.cardTitle}>{item.resource.project.id}</Text>
+    <Text style={styles.muted}>Shared project · {roleLabel(item.resource.scope.role)}</Text>
+    <Action label={`Open shared project ${item.resource.project.id}`} onPress={() => void onOpen(item)} />
   </View>;
   return <View style={styles.card}>
     <Text style={styles.cardTitle}>{item.resource.chat.title}</Text>
@@ -754,13 +777,6 @@ function keyedMessageParts(message: Message) {
 }
 
 type RetryTimer = { cancel: () => void };
-
-class CollaborationRecoverySupersededError extends Error {
-  constructor() {
-    super("Collaboration recovery was superseded");
-    this.name = "CollaborationRecoverySupersededError";
-  }
-}
 
 function createRetryTimer(callback: () => void, delay: number): RetryTimer {
   const timer = setTimeout(callback, delay);

@@ -44,6 +44,8 @@ describe("Matrix integrations MCP server", () => {
       "list_custom_mcp_servers",
       "describe_custom_mcp_server",
       "call_custom_mcp_tool",
+      "list_chat_agent_options",
+      "create_chat_agent",
     ]);
     expect(listed.tools[0]?.description).toContain("new conversation");
 

@@ -139,6 +139,27 @@ describe("project collaboration transition journal", () => {
     });
   });
 
+  it("moves to a new authority generation on the same owner runtime", async () => {
+    await expect(journal().prepare({
+      scopeId: SCOPE_ID,
+      ownerId: OWNER_ID,
+      requestedBy: OWNER_ID,
+      clientRequestId: CLIENT_REQUEST_ID,
+      payloadHash: PAYLOAD_HASH,
+      expectedScopeRevision: 4,
+      inventoryRevision: 7,
+      inventoryHash: INVENTORY_HASH,
+      membershipHash: MEMBERSHIP_HASH,
+      destinationAuthorityRuntimeId: SOURCE_RUNTIME,
+      destinationAuthorityGeneration: 4,
+    })).resolves.toMatchObject({
+      sourceAuthorityRuntimeId: SOURCE_RUNTIME,
+      sourceAuthorityGeneration: 3,
+      destinationAuthorityRuntimeId: SOURCE_RUNTIME,
+      destinationAuthorityGeneration: 4,
+    });
+  });
+
   it("requires ordered durable stages and publishes the destination authority exactly once", async () => {
     const transitions = journal();
     await prepare();
@@ -216,6 +237,91 @@ describe("project collaboration transition journal", () => {
       .executeTakeFirstOrThrow()).toEqual({ count: 1 });
   });
 
+  it("publishes accepted and pending members only after activation at the destination authority", async () => {
+    const editorId = "user_project_editor";
+    const inviteeId = "user_project_invitee";
+    const expiredInviteeId = "user_project_expired";
+    const invitationId = "40000000-0000-4000-8000-000000000051";
+    for (const member of [
+      {
+        scope_id: SCOPE_ID,
+        actor_id: OWNER_ID,
+        role: "owner" as const,
+        status: "accepted" as const,
+        invitation_id: null,
+        accepted_at: NOW,
+      },
+      {
+        scope_id: SCOPE_ID,
+        actor_id: editorId,
+        role: "editor" as const,
+        status: "accepted" as const,
+        invitation_id: null,
+        accepted_at: NOW,
+      },
+      {
+        scope_id: SCOPE_ID,
+        actor_id: inviteeId,
+        role: "viewer" as const,
+        status: "pending" as const,
+        invitation_id: invitationId,
+        accepted_at: null,
+        expires_at: new Date("2026-09-18T12:00:00.000Z"),
+      },
+      {
+        scope_id: SCOPE_ID,
+        actor_id: expiredInviteeId,
+        role: "viewer" as const,
+        status: "pending" as const,
+        invitation_id: "40000000-0000-4000-8000-000000000052",
+        accepted_at: null,
+        expires_at: new Date("2026-08-11T11:59:59.000Z"),
+      },
+    ]) {
+      await fixture.db.insertInto("collaboration_members").values({
+        ...member,
+        invited_by: OWNER_ID,
+        expires_at: "expires_at" in member ? member.expires_at : null,
+        revision: 1,
+        joined_at: member.status === "accepted" ? member.accepted_at : null,
+        updated_at: NOW,
+      }).execute();
+    }
+    const transitions = journal();
+    await prepare();
+    await transitions.beginStaging(TRANSITION_ID);
+    await transitions.recordStagedManifest(TRANSITION_ID, "manifest_11111111111111111111111111111111");
+    await transitions.markFenced({
+      transitionId: TRANSITION_ID,
+      sourceFenceEpoch: 8,
+      currentInventoryRevision: 7,
+      currentInventoryHash: INVENTORY_HASH,
+      currentMembershipHash: MEMBERSHIP_HASH,
+    });
+    await transitions.beginCommit(TRANSITION_ID);
+    await transitions.recordPublication(TRANSITION_ID, "publication_11111111111111111111111111111111");
+
+    expect(await fixture.db.selectFrom("collaboration_directory_outbox")
+      .select("event_id").where("scope_id", "=", SCOPE_ID).execute()).toEqual([]);
+    await transitions.activate(TRANSITION_ID);
+    await expect(fixture.db.selectFrom("collaboration_directory_outbox")
+      .select(["recipient_actor_ids", "authority_runtime_id", "authority_generation", "discovery_state"])
+      .where("scope_id", "=", SCOPE_ID).orderBy("discovery_state", "asc").execute()).resolves.toEqual([
+      {
+        recipient_actor_ids: [{ actorId: OWNER_ID }, { actorId: editorId }],
+        authority_runtime_id: DESTINATION_RUNTIME,
+        authority_generation: 1,
+        discovery_state: "accepted",
+      },
+      {
+        recipient_actor_ids: [{ actorId: inviteeId, invitationId }],
+        authority_runtime_id: DESTINATION_RUNTIME,
+        authority_generation: 1,
+        discovery_state: "invited",
+      },
+    ]);
+  });
+
   it("invalidates stale confirmation under the fence and preserves the source authority", async () => {
     const transitions = journal();
     await prepare();
@@ -274,6 +380,20 @@ describe("project collaboration transition journal", () => {
       clientRequestId: CLIENT_REQUEST_ID,
       payloadHash: "d".repeat(64),
     })).rejects.toMatchObject({ code: "conflict" });
+  });
+
+  it("preserves prepared transitions when the coordinator treats them as a durable queue", async () => {
+    const transitions = journal();
+    await prepare();
+    const cleanupStaging = vi.fn(async () => undefined);
+
+    await expect(transitions.recover({
+      cleanupStaging,
+      completePublication: async () => undefined,
+      preservePrepared: true,
+    })).resolves.toEqual({ recovered: 0, activated: 0, failed: 0 });
+    await expect(transitions.get(TRANSITION_ID)).resolves.toMatchObject({ status: "prepared" });
+    expect(cleanupStaging).not.toHaveBeenCalled();
   });
 
   it("removes staged bindings and inherited scopes when recovery restores privacy", async () => {
