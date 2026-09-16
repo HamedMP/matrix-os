@@ -5,6 +5,7 @@ const EMPTY_REFERENCE_TOKENS: ComposerReferenceToken[] = [];
 const MAX_COMPOSER_DRAFTS = 100;
 
 type ComposerDraft = {
+  requestIdentity: number;
   text: string;
   referenceTokens: ComposerReferenceToken[];
   projectId: string | null;
@@ -23,6 +24,7 @@ function rememberDraft(
   const next = { ...drafts };
   delete next[scope];
   next[scope] = {
+    requestIdentity: 0,
     text: "",
     referenceTokens: [],
     projectId: fallbackProjectId,
@@ -47,6 +49,7 @@ export function useChatComposerDrafts({
 }) {
   const scope = conversation && chatId ? `chat:${chatId}` : newChatDraftScope(projectId);
   const [drafts, setDrafts] = useState<Record<string, ComposerDraft>>({});
+  const requestSequence = useRef(0);
   const previousClientIdentity = useRef(clientIdentity);
   const draft = drafts[scope];
 
@@ -64,6 +67,7 @@ export function useChatComposerDrafts({
   }, [scope, updateScope]);
 
   return {
+    requestIdentity: draft?.requestIdentity ?? 0,
     text: draft?.text ?? "",
     referenceTokens: draft?.referenceTokens ?? EMPTY_REFERENCE_TOKENS,
     draftProjectId: draft?.projectId ?? projectId,
@@ -75,7 +79,9 @@ export function useChatComposerDrafts({
       updateCurrent({ projectId: nextProjectId })
     ), [updateCurrent]),
     prepareNewChatDraft: useCallback((patch: Partial<ComposerDraft> = {}) => {
-      updateScope(newChatDraftScope(projectId), { projectId, ...patch });
+      updateScope(newChatDraftScope(projectId), {
+        projectId, text: "", referenceTokens: [], ...patch, requestIdentity: ++requestSequence.current,
+      });
     }, [projectId, updateScope]),
     removeChatDraft: useCallback((removedChatId: string) => {
       setDrafts((current) => {

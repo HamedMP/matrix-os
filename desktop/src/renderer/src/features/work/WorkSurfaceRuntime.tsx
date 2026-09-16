@@ -1,4 +1,5 @@
 import { chatMessageVersionUrl } from "@matrix-os/contracts";
+import { ChatAgentsWorkspace, type ChatAgentDraftRequest, type StartAgentChat } from "@matrix-os/ui";
 import {
   createCanonicalChatClient,
   createCanonicalChatEventSource,
@@ -14,6 +15,8 @@ interface WorkSurfaceRuntime {
   eventSource: CanonicalChatEventSource | null;
   projectedChatTitles: CanonicalChatTitleProjection[];
   projectChat: (record: CanonicalChatRecord) => void;
+  agentDraftRequest: ChatAgentDraftRequest | null;
+  requestAgentDraft: StartAgentChat;
 }
 
 export interface CanonicalChatTitleProjection {
@@ -37,6 +40,13 @@ export function WorkSurfaceRuntimeProvider({ active, children }: { active: boole
   } | null>(null);
   const pendingDisposalRef = useRef<{ source: CanonicalChatEventSource; cancelled: boolean } | null>(null);
   const client = useMemo(() => api ? createCanonicalChatClient(api) : null, [api, authGeneration, runtimeSlot]);
+  const agentDraftSequence = useRef(0);
+  const [agentDraft, setAgentDraft] = useState<{ client: CanonicalChatClient | null; request: ChatAgentDraftRequest } | null>(null);
+  const requestAgentDraft = useCallback<StartAgentChat>((text, resources) => {
+    agentDraftSequence.current += 1;
+    setAgentDraft({ client, request: { id: agentDraftSequence.current, text, resources } });
+  }, [client]);
+  const agentDraftRequest = agentDraft?.client === client ? agentDraft.request : null;
   const eventSource = useMemo<CanonicalChatEventSource | null>(() => {
     if (!api || !active) return null;
     return createCanonicalChatEventSource({
@@ -85,10 +95,10 @@ export function WorkSurfaceRuntimeProvider({ active, children }: { active: boole
   }, [client]);
   const projectedChatTitles = projection?.client === client ? projection.titles : EMPTY_CHAT_TITLE_PROJECTIONS;
   const value = useMemo(
-    () => ({ client, eventSource, projectedChatTitles, projectChat }),
-    [client, eventSource, projectChat, projectedChatTitles],
+    () => ({ client, eventSource, projectedChatTitles, projectChat, agentDraftRequest, requestAgentDraft }),
+    [client, eventSource, projectChat, projectedChatTitles, agentDraftRequest, requestAgentDraft],
   );
-  return <WorkSurfaceRuntimeContext.Provider value={value}>{children}</WorkSurfaceRuntimeContext.Provider>;
+  return <WorkSurfaceRuntimeContext.Provider value={value}><ChatAgentsWorkspace>{children}</ChatAgentsWorkspace></WorkSurfaceRuntimeContext.Provider>;
 }
 
 export function useWorkSurfaceRuntime(): WorkSurfaceRuntime | null {
