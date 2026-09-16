@@ -393,6 +393,7 @@ write_files:
       MATRIX_TARGET_BUNDLE_SHA256={{targetBundleSha256}}
       MATRIX_SNAPSHOT_SOURCE_VERSION={{snapshotSourceVersion}}
       MATRIX_UPDATE_CHANNEL={{updateChannel}}
+      MATRIX_COLLABORATION_ENABLED=false
       MATRIX_PLATFORM_REGISTER_URL={{platformRegisterUrl}}
       PLATFORM_INTERNAL_URL={{platformInternalUrl}}
       UPGRADE_TOKEN={{platformVerificationToken}}
@@ -434,8 +435,7 @@ write_files:
 runcmd:
   - |
     set -eu
-    # Snapshot images are sanitized with blank/absent host identity. Recreate
-    # it before any Matrix service or owner-scoped state is initialized.
+    # Recreate clone-specific host identity before Matrix starts.
     rm -f /var/lib/matrix/golden-snapshot-sanitized
     systemd-machine-id-setup
     ssh-keygen -A

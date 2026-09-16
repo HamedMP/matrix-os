@@ -1,3 +1,4 @@
+import { ChatSteerNotDeliveredError } from "../../packages/gateway/src/chat/steer-delivery-error.js";
 import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 import { createHermesChatProviderAdapter } from "../../packages/gateway/src/chat/hermes-provider-adapter.js";
@@ -164,7 +165,7 @@ describe("Hermes canonical Chat Provider adapter", () => {
       clientRequestId: "req_hermes_steer_terminal",
       prompt: "Too late.",
       parts: [{ type: "text", text: "Too late." }],
-    })).rejects.toThrow("steering Run unavailable");
+    })).rejects.toBeInstanceOf(ChatSteerNotDeliveredError);
   });
 
   it("projects a large official Hermes vision result before the final assistant message", async () => {

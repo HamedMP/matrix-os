@@ -45,6 +45,17 @@ platform stores AES-256-GCM encrypted OAuth/static credentials; the VPS stores
 only the non-secret revisioned enforcement projection in
 `~/system/mcp-servers.json`. Calls require the intersection of both copies.
 
+The Custom MCP backend is enabled with `CUSTOM_MCP_ENABLED`, independently of
+`MATRIX_MCP_ENABLED` (the hosted Matrix `/mcp` endpoint). When Custom MCP is
+disabled, authenticated `/api/mcp-servers` requests and the corresponding
+internal VPS proxy routes return `503` with `custom_mcp_unavailable` and
+`Cache-Control: no-store`. These namespaces never fall through to platform
+admin authentication; unmatched routes in an enabled backend return `404`.
+Electron Desktop and the shared Web Desktop/Web Canvas Settings panel show
+“MCP servers are currently unavailable” with Retry, preserve form values,
+and disable management until loading succeeds. This does not expire the
+Matrix session or close open windows. Invalid credentials still fail authentication.
+
 The boundary is a local stdio MCP server at
 `/opt/matrix/bin/matrix-integrations-mcp`. The MCP process calls only the
 authenticated loopback gateway at `http://127.0.0.1:4000`. On a customer VPS,

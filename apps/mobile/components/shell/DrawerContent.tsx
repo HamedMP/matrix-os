@@ -37,6 +37,7 @@ const primaryItems: Array<{ route: string; label: string; icon: IconData }> = [
 
 interface DrawerContentProps extends DrawerContentComponentProps {
   computerName: string;
+  collaborationEnabled: boolean;
   recentChats: CanonicalChatRecord[];
   recentChatsLoading: boolean;
   projects: ProjectSummary[];
@@ -48,6 +49,7 @@ interface DrawerContentProps extends DrawerContentComponentProps {
 
 export function DrawerContent({
   computerName,
+  collaborationEnabled,
   recentChats,
   recentChatsLoading,
   projects,
@@ -102,7 +104,7 @@ export function DrawerContent({
 
         <Spacer size="xl" />
 
-        {primaryItems.map((item, index) => {
+        {primaryItems.filter((item) => item.route !== "shared" || collaborationEnabled).map((item, index, visibleItems) => {
           return (
             <Fragment key={item.route}>
               <Pressable
@@ -125,7 +127,7 @@ export function DrawerContent({
                 </View>
                 <Spacer size="xxs" />
               </Pressable>
-              {index < primaryItems.length - 1 ? <Spacer size="sm" /> : null}
+              {index < visibleItems.length - 1 ? <Spacer size="sm" /> : null}
             </Fragment>
           );
         })}

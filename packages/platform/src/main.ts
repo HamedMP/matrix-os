@@ -78,6 +78,7 @@ import { createLegacyContainerRoutes } from './legacy-container-routes.js';
 import { createAppSessionRoutes } from './app-session-routes.js';
 import { createComputerRoutes } from './computer-routes.js';
 import { createPlatformMcpRoutes } from './mcp-registration.js';
+import { registerCustomMcpRoutes } from './custom-mcp-route-registration.js';
 import {
   HANDLE_PATTERN,
   describeError,
@@ -622,9 +623,12 @@ export function createApp(deps: {
   if (deps.integrationRoutes) {
     app.route('/api/integrations', deps.integrationRoutes);
   }
-  if (deps.customMcpRoutes) {
-    app.route('/api/mcp-servers', deps.customMcpRoutes);
-  }
+  registerCustomMcpRoutes(app, {
+    db,
+    platformSecret,
+    customMcpRoutes: deps.customMcpRoutes,
+    internalCustomMcpRoutes: deps.internalCustomMcpRoutes,
+  });
   if (deps.internalIntegrationRoutes) {
     const internalIntegrationApp = new Hono<{
       Variables: {
@@ -663,30 +667,6 @@ export function createApp(deps: {
     });
     internalIntegrationApp.route('/', deps.internalIntegrationRoutes);
     app.route('/internal/containers/:handle/integrations', internalIntegrationApp);
-  }
-  if (deps.internalCustomMcpRoutes) {
-    const internalCustomMcpApp = new Hono<{
-      Variables: {
-        internalContainerHandle: string;
-        internalContainerClerkUserId: string;
-      };
-    }>();
-    internalCustomMcpApp.use('*', async (c, next) => {
-      const handle = c.req.param('handle');
-      if (!handle || !platformSecret) return c.json({ error: 'Unauthorized' }, 401);
-      const auth = c.req.header('authorization');
-      const token = auth?.startsWith('Bearer ') ? auth.slice(7) : undefined;
-      if (!timingSafeTokenEquals(token, buildPlatformVerificationToken(handle, platformSecret))) {
-        return c.json({ error: 'Unauthorized' }, 401);
-      }
-      const record = (await getRunningUserMachineByHandle(db, handle)) ?? (await getContainer(db, handle));
-      if (!record?.clerkUserId) return c.json({ error: 'Unknown handle' }, 404);
-      c.set('internalContainerHandle', handle);
-      c.set('internalContainerClerkUserId', record.clerkUserId);
-      return next();
-    });
-    internalCustomMcpApp.route('/', deps.internalCustomMcpRoutes);
-    app.route('/internal/containers/:handle/mcp-servers', internalCustomMcpApp);
   }
   if (deps.internalSyncRoutes) {
     app.route('/internal/containers/:handle/sync', deps.internalSyncRoutes);

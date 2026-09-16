@@ -10,6 +10,21 @@ describe("Canvas Custom MCP management", () => {
     vi.restoreAllMocks();
   });
 
+  it("shows unavailable and retries without discarding the form", async () => {
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(Response.json({ error: "custom_mcp_unavailable" }, { status: 503 }))
+      .mockResolvedValueOnce(Response.json([]));
+    render(<CustomMcpServersPanel />);
+    fireEvent.change(screen.getByLabelText("MCP server name"), { target: { value: "Research" } });
+    fireEvent.change(screen.getByLabelText("MCP server URL"), { target: { value: "https://example.com/mcp" } });
+    expect((await screen.findByRole("alert")).textContent).toContain("MCP servers are currently unavailable.");
+    expect(screen.getByRole("button", { name: "Add MCP server" }).matches(":disabled")).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    expect((screen.getByLabelText("MCP server name") as HTMLInputElement).value).toBe("Research");
+    expect(screen.getByRole("button", { name: "Add MCP server" }).matches(":disabled")).toBe(false);
+  });
+
   it("fails safely when the server list response is malformed", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ servers: [] }));
 

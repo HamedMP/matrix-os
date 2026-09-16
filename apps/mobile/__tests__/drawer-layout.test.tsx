@@ -8,6 +8,7 @@ const mockUseCanonicalChats = jest.fn();
 const mockUseProjects = jest.fn();
 const mockSelectChat = jest.fn();
 const mockStartDraftChat = jest.fn();
+const mockUseSettingsSystemInfo = jest.fn();
 
 jest.mock("@/lib/queries/use-canonical-chats", () => ({
   useCanonicalChats: () => mockUseCanonicalChats(),
@@ -23,6 +24,10 @@ jest.mock("@/lib/canonical-chat-session-context", () => ({
     selectChat: mockSelectChat,
     startDraftChat: mockStartDraftChat,
   }),
+}));
+
+jest.mock("@/lib/queries/use-settings-system-info", () => ({
+  useSettingsSystemInfo: () => mockUseSettingsSystemInfo(),
 }));
 
 jest.mock("expo-router/drawer", () => {
@@ -81,6 +86,7 @@ describe("authenticated drawer layout", () => {
     render(<DrawerContent {...({
       state: { index: 0, routeNames: ["index"] }, navigation: { navigate: jest.fn(), closeDrawer: jest.fn() }, descriptors: {},
       computerName: "Computer", recentChatsLoading: false, projects: [], activeSessionId: null,
+      collaborationEnabled: false,
       recentChats: [chatRecord({ id: "chat_native_list", title: "Investigate run" })],
       onSelectConversation: jest.fn(), onNewConversation: jest.fn(),
     } as unknown as React.ComponentProps<typeof DrawerContent>)} />);
@@ -107,6 +113,13 @@ describe("authenticated drawer layout", () => {
       isError: false,
     });
     mockUseProjects.mockReturnValue({ projects: [], isPending: false, isError: false });
+    mockUseSettingsSystemInfo.mockReturnValue({ systemInfo: undefined });
+  });
+
+  it("shows shared navigation only when the computer advertises collaboration", () => {
+    mockUseSettingsSystemInfo.mockReturnValue({ systemInfo: { capabilities: { collaboration: true } } });
+    render(<DrawerLayout />);
+    expect(registeredScreens.map((registered) => registered.name)).toContain("shared");
   });
 
   it("plays a medium haptic when the drawer opens and closes", () => {
@@ -142,6 +155,7 @@ describe("authenticated drawer layout", () => {
           navigation: { navigate, closeDrawer },
           descriptors: {},
           computerName: "Studio Mac",
+          collaborationEnabled: false,
           recentChatsLoading: false,
           recentChats: [
             chatRecord({ id: "chat-2", title: "Ship the mobile sidebar", updatedAt: "2026-01-02T00:00:00.000Z" }),
@@ -186,6 +200,7 @@ describe("authenticated drawer layout", () => {
           navigation: { navigate: jest.fn(), closeDrawer: jest.fn() },
           descriptors: {},
           computerName: "Studio Mac",
+          collaborationEnabled: false,
           recentChats: [],
           recentChatsLoading: true,
           projects: [],

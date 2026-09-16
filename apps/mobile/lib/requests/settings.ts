@@ -7,15 +7,16 @@ import {
 import { HOSTED_GATEWAY_URL } from "@/lib/storage";
 import { buildGatewayRequestUrl, fetchAuthenticatedJson } from "./http";
 
-const SystemInfoSchema = z.object({
+const SystemInfoSchema = z.looseObject({
   version: z.string(),
   runningVersion: z.string(),
   model: z.string(),
   effort: z.string(),
-  release: z.object({ version: z.string() }).passthrough().optional(),
-}).passthrough();
+  capabilities: z.looseObject({ collaboration: z.boolean() }).optional(),
+  release: z.looseObject({ version: z.string() }).optional(),
+});
 
-const OkResponseSchema = z.object({ ok: z.literal(true) }).passthrough();
+const OkResponseSchema = z.looseObject({ ok: z.literal(true) });
 const BillingPortalSchema = z.object({ url: z.url() }).strict();
 
 export type MobileSystemInfo = z.infer<typeof SystemInfoSchema>;

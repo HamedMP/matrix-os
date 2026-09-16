@@ -8,19 +8,25 @@ const SystemInfoSchema = z.object({
     runtimeSlot: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/),
     machineId: z.string().nullable().optional(),
   }).passthrough(),
+  capabilities: z.object({
+    collaboration: z.boolean(),
+  }).passthrough().optional(),
 }).passthrough();
 
 export function collaborationRuntimeFromSystemInfo(value: unknown): {
   handle: string | null;
   runtimeSlot: string;
   runtimeId: string | null;
+  collaborationEnabled: boolean;
 } {
-  const { runtime } = SystemInfoSchema.parse(value);
+  const { runtime, capabilities } = SystemInfoSchema.parse(value);
+  const collaborationEnabled = capabilities?.collaboration === true;
   const machineId = MachineIdSchema.safeParse(runtime.machineId);
   return {
     handle: runtime.handle,
     runtimeSlot: runtime.runtimeSlot,
-    runtimeId: machineId.success ? `vps:${machineId.data}` : null,
+    runtimeId: collaborationEnabled && machineId.success ? `vps:${machineId.data}` : null,
+    collaborationEnabled,
   };
 }
 
