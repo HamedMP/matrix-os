@@ -582,6 +582,21 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Run required Desktop provider auth Terminal regression
+        if: needs.changes.outputs.should_run == 'true'
+        env:
+          MATRIX_DESKTOP_E2E_REQUIRED: "1"
+        run: xvfb-run --auto-servernum bun run test:e2e -- tests/e2e/desktop/provider-auth-terminal.e2e.test.ts
+
+      - name: Upload Desktop provider auth evidence
+        if: always() && needs.changes.outputs.should_run == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: desktop-provider-auth-evidence
+          path: output/playwright/om-255/
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Run required MAT-335 Desktop regression
         if: needs.changes.outputs.should_run == 'true'
         env:
