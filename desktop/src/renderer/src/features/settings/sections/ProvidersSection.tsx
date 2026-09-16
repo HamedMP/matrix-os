@@ -9,9 +9,8 @@ import { useEffect, useState } from "react";
 import { Button, StatusDot } from "../../../design/primitives";
 import { invoke } from "../../../lib/operator";
 import { useConnection } from "../../../stores/connection";
-import { useTabs } from "../../../stores/tabs";
+import { useProviderSettingsReturnSequence, useProviderTerminalAction } from "../use-provider-terminal-action";
 import {
-  openProviderSetupTerminal,
   providerSetupCommands,
   type ProviderSetupCommand,
 } from "../../coding-agents/provider-setup-terminal";
@@ -51,7 +50,6 @@ export function RefreshButton({
 }
 
 const STATUS_UNAVAILABLE_ERROR = "Provider status is unavailable right now.";
-const SETUP_TERMINAL_ERROR = "Could not open setup terminal. Try again from Terminal.";
 const OFFLINE_MESSAGE = "Connect to your Matrix computer to manage coding agent providers.";
 
 function titleCaseStatus(value: string): string {
@@ -67,9 +65,11 @@ function ProviderCard({
   provider,
   isDefault,
   onOpenSetup,
+  pending,
 }: {
   provider: AgentProviderSummary;
   isDefault: boolean;
+  pending: boolean;
   onOpenSetup: (setup: ProviderSetupCommand) => void;
 }) {
   const setupCommands = providerSetupCommands([provider]);
@@ -111,10 +111,12 @@ function ProviderCard({
               key={setup.key}
               variant="subtle"
               aria-label={`Open provider setup ${setup.label}`}
+              disabled={pending}
+              aria-busy={pending}
               onClick={() => onOpenSetup(setup)}
             >
               <SquareTerminal size={13} />
-              {setup.label}
+              {pending ? "Opening Terminal…" : setup.label}
             </Button>
           ))}
         </div>
@@ -126,7 +128,8 @@ function ProviderCard({
 export default function ProvidersSection() {
   const api = useConnection((s) => s.api);
   const runtimeSlot = useConnection((s) => s.runtimeSlot);
-  const openTab = useTabs((s) => s.openTab);
+  const returnSequence = useProviderSettingsReturnSequence();
+  const { open: openSetup, pending, error: setupError } = useProviderTerminalAction("settings-providers");
   const defaultProviderId = useProviderPreferences((s) => s.defaultProviderId);
   const hydratePreferences = useProviderPreferences((s) => s.hydrate);
   const setDefaultProvider = useProviderPreferences((s) => s.setDefaultProvider);
@@ -134,7 +137,6 @@ export default function ProvidersSection() {
   const [summary, setSummary] = useState<RuntimeSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const [setupError, setSetupError] = useState<string | null>(null);
   const [reloadSeq, setReloadSeq] = useState(0);
 
   useEffect(() => {
@@ -147,7 +149,6 @@ export default function ProvidersSection() {
       // previous identity; never show one user's providers to the next.
       setSummary(null);
       setError(null);
-      setSetupError(null);
       setRefreshing(false);
       return;
     }
@@ -172,19 +173,9 @@ export default function ProvidersSection() {
     return () => {
       cancelled = true;
     };
-  }, [api, runtimeSlot, reloadSeq]);
+  }, [api, runtimeSlot, reloadSeq, returnSequence]);
 
   const retry = () => setReloadSeq((seq) => seq + 1);
-
-  const openSetup = async (setup: ProviderSetupCommand) => {
-    setSetupError(null);
-    if (!api) {
-      setSetupError(OFFLINE_MESSAGE);
-      return;
-    }
-    const opened = await openProviderSetupTerminal(api, setup, openTab, "settings-providers");
-    if (!opened) setSetupError(SETUP_TERMINAL_ERROR);
-  };
 
   const providers = summary?.providers ?? [];
   const unknownDefault =
@@ -288,6 +279,7 @@ export default function ProvidersSection() {
               key={provider.id}
               provider={provider}
               isDefault={provider.id === defaultProviderId}
+              pending={pending}
               onOpenSetup={(setup) => void openSetup(setup)}
             />
           ))}
