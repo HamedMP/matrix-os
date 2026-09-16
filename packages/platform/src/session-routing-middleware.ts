@@ -116,6 +116,8 @@ import {
   platformRuntimeShellUnavailableResponse,
   shouldServePlatformRuntimeShell,
 } from './session-routing-helpers.js';
+// Re-exported so existing importers (tests, routes) keep working.
+export { shouldServePlatformRuntimeShell };
 
 export interface CreateSessionRoutingMiddlewareOpts {
   db: PlatformDB;
