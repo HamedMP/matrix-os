@@ -423,13 +423,18 @@ export function installMouseTrackingSelection({
   };
 
   const updateEdgeScroll = (source: MouseSnapshot) => {
-    if (edgeScrollAmount(source) === 0) {
+    const amount = edgeScrollAmount(source);
+    if (amount === 0) {
       stopEdgeScroll();
       resetEdgeCapture(true);
       return;
     }
     edgePointer = selectionTarget(source);
     if (edgeScrollTimer === null) {
+      // xterm also runs a drag-scroll timer. Preserve the anchor viewport
+      // before either timer can move it and discard the first selected rows.
+      const terminal = getTerminal();
+      if (terminal) captureExtendedSelection(terminal, amount);
       edgeScrollTimer = document.defaultView?.setInterval(
         tickEdgeScroll,
         EDGE_SCROLL_INTERVAL_MS,
@@ -466,10 +471,10 @@ export function installMouseTrackingSelection({
       }
     }
     const targetedCurrent = alignPointerToVerticalSelectionEdge(selectionTarget(current));
+    updateEdgeScroll(targetedCurrent);
     if (gesture.forceSelection || outsideHost) {
       dispatch(targetedCurrent, "mousemove", 0, 1, gesture.forceSelection);
     }
-    updateEdgeScroll(targetedCurrent);
   };
 
   const onDocumentMouseUp = (event: MouseEvent) => {

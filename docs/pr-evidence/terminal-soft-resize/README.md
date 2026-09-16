@@ -57,3 +57,24 @@ scroll extents, restored scale, an SGR wheel report at column 6 / row 35, and la
 below an already short viewport. A scaled double-click followed by Copy also
 checks that forwarding pointer coordinates preserves xterm's cancellation of
 native browser text selection.
+
+## Electron Desktop packaged clipboard follow-up
+
+The packaged clipboard suite exposed a race between xterm's drag-scroll timer
+and the edge-selection snapshot. Capturing immediately when the pointer crosses
+the edge preserves the original selected rows before either timer advances the
+viewport. A focused regression covers both ordinary and mouse-reporting drags
+with an intervening xterm scroll before the first capture timer tick.
+
+The pixel-based test also reused a screen rectangle measured before terminal
+output changed the presented grid. It now waits for fonts and stable geometry,
+measures the screen after output, and avoids ambiguous half-cell boundaries.
+All seven clipboard cases retain their copy and input-routing assertions.
+
+`electron-desktop-edge-selection.png` records the packaged Electron Desktop
+terminal after a downward edge drag. It uses the actual built main/preload/renderer
+under Xvfb, a temporary profile, and synthetic terminal data from the local stub
+gateway; it does not claim live VPS transport coverage. The clipboard assertion
+requires the complete final output row before capturing the screenshot.
+The keyboard-settings warning visible in the stub-backed screenshot is outside
+this fixture's gateway contract; keyboard-settings loading is not validated here.

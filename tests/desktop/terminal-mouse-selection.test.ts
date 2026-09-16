@@ -289,6 +289,27 @@ describe("mouse-reporting terminal selection", () => {
     remove();
   });
 
+  it.each(["none", "any"])("captures the anchor before xterm scrolls between edge entry and the first timer tick (%s)", (mouseTrackingMode) => {
+    vi.useFakeTimers();
+    const { root, scrollLines, onExtendedSelection, remove } = setup({ mouseTrackingMode });
+    try {
+      root.dispatchEvent(mouse("mousedown", {
+        button: 0, buttons: 1, clientX: 120, clientY: 65,
+      }));
+      root.dispatchEvent(mouse("mousemove", {
+        button: 0, buttons: 1, clientX: 120, clientY: 290,
+      }));
+      // xterm has its own drag-scroll timer, independent of our capture timer.
+      scrollLines(2);
+      vi.advanceTimersByTime(40);
+      const selected = onExtendedSelection.mock.calls.at(-1)?.[0] as string;
+      expect(selected).toContain("line-102");
+      expect(selected).toContain("line-121");
+    } finally {
+      remove();
+    }
+  });
+
   it("releases the captured edge range when an ordinary drag returns inside", () => {
     vi.useFakeTimers();
     const { root, onExtendedSelection, remove } = setup({
