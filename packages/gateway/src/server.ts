@@ -176,7 +176,7 @@ import {
   type CanonicalChatProviderAdapter,
 } from "./chat/provider-adapter.js";
 import { CanonicalChatOrchestrator } from "./chat/orchestrator.js";
-import { createCanonicalChatRuntime, chatAgentsEnabled } from "./chat/runtime.js";
+import { createCanonicalChatRuntime } from "./chat/runtime.js";
 import { createChatAgentRoutes } from "./chat/agent-routes.js";
 import {
   createCanonicalChatService,
@@ -4384,7 +4384,7 @@ export async function createGateway(config: GatewayConfig) {
       recipes: canonicalChatRuntime.recipes,
       repository: chatRepository,
     } : {}),
-    enabled: chatAgentsEnabled,
+    enabled: () => true,
     catalog: canonicalChatProviderCatalog,
     getPrincipal: (c) => requireRequestPrincipal(c),
   }));

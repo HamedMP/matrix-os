@@ -12,7 +12,7 @@
 
 ## Global constraints
 
-- Keep `MATRIX_CHAT_AGENTS_ENABLED=1` gated; use existing Hermes Full access. Recipe read-only instructions are workflow boundaries, not a new runtime sandbox.
+- Saved Agents and Recipes are available without a feature flag; use existing Hermes Full access. Recipe read-only instructions are workflow boundaries, not a new runtime sandbox.
 - No email sending, Calendar mutation, automatic scheduling, credential copying, or public user-data artifacts.
 - Retain existing Agent IDs/files and historical snapshots. Optional recipe fields preserve old definitions.
 - Source skill files live under `skills/matrix/`; never maintain duplicate instruction bodies in the UI.
