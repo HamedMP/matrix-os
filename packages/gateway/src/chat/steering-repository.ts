@@ -221,6 +221,10 @@ export class ChatSteeringRepository {
       const parts = CanonicalChatQueuedTurnSchema.shape.parts.parse(
         typeof queued.parts === "string" ? JSON.parse(queued.parts) : queued.parts,
       );
+      if (parts.some((part) => part.type === "resource_reference"
+        && (part.resource.kind === "agent" || part.resource.kind === "chat"))) {
+        throw new ChatConflictError(chatId, Number(chat.revision));
+      }
       await trx.insertInto("chat_run_steers").values({
         id: input.steerId,
         chat_id: chatId,
@@ -440,6 +444,7 @@ export class ChatSteeringRepository {
       await trx.updateTable("chats").set({
         revision,
         updated_at: acceptedAt,
+        ...(message && !input.queuedTurnId ? { activity_at: sql`clock_timestamp()` } : {}),
         ...(message ? {
           message_count: sql<number>`message_count + 1`,
           last_message_preview: preview(message),

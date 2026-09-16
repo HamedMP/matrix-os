@@ -31,6 +31,7 @@ function DraftHarness({ chatId }: { chatId?: string }) {
 }
 const chatTabProps = vi.hoisted(() => ({
   tabIds: [] as Array<string | undefined>,
+  draftRequests: [] as Array<{ id: number; text: string } | null | undefined>,
 }));
 const eventSourceProps = vi.hoisted(() => ({ rail: [] as unknown[], chat: [] as unknown[], project: [] as unknown[] }));
 const chatEventSourceFactory = vi.hoisted(() => ({
@@ -79,14 +80,17 @@ vi.mock("@desktop/renderer/src/features/chat/ChatTab", () => ({
     eventSource,
     renderInspector,
     inspectorExclusive,
+    draftRequest,
   }: {
     tabId?: string;
     initialChatId?: string;
     eventSource?: unknown;
     renderInspector?: (detail: unknown) => React.ReactNode;
     inspectorExclusive?: boolean;
+    draftRequest?: { id: number; text: string } | null;
   }) => {
     chatTabProps.tabIds.push(tabId);
+    chatTabProps.draftRequests.push(draftRequest);
     eventSourceProps.chat.push(eventSource);
     return (
       <>
@@ -232,6 +236,7 @@ describe("WorkTab rail integration", () => {
     resizeObserverEntries.length = 0;
     inspectorProps.active = [];
     chatTabProps.tabIds = [];
+    chatTabProps.draftRequests = [];
     eventSourceProps.rail = [];
     eventSourceProps.chat = [];
     eventSourceProps.project = [];
@@ -254,7 +259,8 @@ describe("WorkTab rail integration", () => {
     });
     globalThis.ResizeObserver = WorkResizeObserver;
     const get = vi.fn(async (path: string) => {
-      if (path === "/api/chats/chat_global?limit=200&messageVersion=2&inputVersion=1") return {
+      if (path === "/api/chat-agents") return { enabled: true, agents: [] };
+      if (path === "/api/chats/chat_global?limit=200&messageVersion=2&inputVersion=1&readStateVersion=1") return {
         record: globalChat,
         messages: [],
         turns: [],
@@ -273,11 +279,11 @@ describe("WorkTab rail integration", () => {
         baseUrl: "https://matrix.test",
         get,
         post: vi.fn(async (path: string) => {
-          if (path === "/api/chats") return chat("chat_draft_terminal", "New chat");
+          if (path === "/api/chats?readStateVersion=1") return chat("chat_draft_terminal", "New chat");
           throw new Error("Unexpected WorkTab test request");
         }),
         patch: vi.fn(async (path: string, body: unknown) => {
-          if (path === "/api/chats/chat_global/title") return {
+          if (path === "/api/chats/chat_global/title?readStateVersion=1") return {
             ...globalChat,
             chat: {
               ...globalChat.chat,
@@ -294,6 +300,13 @@ describe("WorkTab rail integration", () => {
     useProjectView.setState(useProjectView.getInitialState(), true);
     useTabs.setState(useTabs.getInitialState(), true);
     useUi.setState(useUi.getInitialState(), true);
+  });
+
+  it("routes the Agents plus action into a fresh conversational Chat draft", async () => {
+    render(<WorkTab route="chat" active initialChatId="chat_global" initialChatView="conversation" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Create an agent" }));
+    await waitFor(() => expect(chatTabProps.draftRequests.at(-1)?.text).toContain("Help me create an agent"));
+    expect(useTabs.getState().tabs.find((tab) => tab.kind === "work")?.chatView).toBe("draft");
   });
 
   afterEach(() => {
@@ -394,7 +407,7 @@ describe("WorkTab rail integration", () => {
 
   it("opens a Global draft and the existing Create Project dialog state", async () => {
     useTabs.getState().openTab({ kind: "work", title: "Chat", workRoute: "projects", closable: false });
-    render(<WorkTab route="projects" active />);
+    const view = render(<WorkTab route="projects" active />);
     await screen.findByRole("button", { name: "Global chat" });
 
     const previousFocusRequestId = useCodingAgentWorkspace.getState().composerFocusRequestId;
@@ -407,6 +420,12 @@ describe("WorkTab rail integration", () => {
       projectSlug: undefined,
     });
     expect(useCodingAgentWorkspace.getState().composerFocusRequestId).toBe(previousFocusRequestId + 1);
+    view.rerender(<WorkTab route="chat" initialChatView="draft" active />);
+    expect(chatTabProps.draftRequests.at(-1)).toMatchObject({ text: "", resources: [] });
+    const firstDraftId = chatTabProps.draftRequests.at(-1)?.id;
+    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
+    expect(chatTabProps.draftRequests.at(-1)?.id).not.toBe(firstDraftId);
+
 
     fireEvent.click(screen.getByRole("button", { name: "Create project" }));
     expect(useUi.getState().createProjectOpen).toBe(true);
@@ -679,7 +698,7 @@ describe("WorkTab rail integration", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create draft terminal" }));
 
     await waitFor(() => expect(useConnection.getState().api?.post).toHaveBeenCalledWith(
-      "/api/chats",
+      "/api/chats?readStateVersion=1",
       expect.objectContaining({ title: "New chat", clientRequestId: expect.stringMatching(/^req_/) }),
     ));
     await waitFor(() => expect(activeWorkTab()).toMatchObject({
@@ -809,8 +828,8 @@ describe("WorkTab rail integration", () => {
     fireEvent.keyDown(input, { key: "Enter" });
 
     await waitFor(() => expect(useConnection.getState().api?.patch).toHaveBeenCalledWith(
-      "/api/chats/chat_global/title",
-      { baseRevision: 1, title: "Release plan" },
+      "/api/chats/chat_global/title?readStateVersion=1",
+      { expectedTitleVersion: 0, title: "Release plan" },
     ));
     expect(await screen.findByRole("button", { name: "Rename Release plan" })).toBeTruthy();
   });

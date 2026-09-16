@@ -1,4 +1,7 @@
-import { chatMessageVersionUrl } from "@matrix-os/contracts";
+import { mergeCanonicalChatRecord } from "@matrix-os/ui";
+import type { ChatAgentDraftRequest, StartAgentChat } from "@matrix-os/ui";
+import { chatMessageVersionUrl, chatReadStateVersionUrl } from "@matrix-os/contracts";
+import { ChatAgentsWorkspace, ChatAgentsContent, useChatAgentsNavigation } from "@matrix-os/ui";
 import { ChatSharingButton } from "../chat/ChatSharingButton";
 import { ChatFileNavigationProvider } from "./ChatFileNavigation";
 import { ArrowLeft, PanelLeftCloseIcon, PanelRightCloseIcon, PanelRightOpen } from "@renderer/lib/hugeicons";
@@ -10,6 +13,7 @@ import {
   useRef,
   useState,
   type ReactNode,
+  type ComponentProps,
   type Ref,
   type RefObject,
 } from "react";
@@ -195,7 +199,11 @@ function ResponsiveWorkInspector({
   );
 }
 
-export default function WorkTab({
+export default function WorkTab(props: ComponentProps<typeof WorkTabContent>) {
+  return <ChatAgentsWorkspace><WorkTabContent {...props} /></ChatAgentsWorkspace>;
+}
+
+function WorkTabContent({
   tabId,
   route,
   projectSlug,
@@ -247,7 +255,10 @@ export default function WorkTab({
     chatId: string;
     session: TerminalSessionSummary;
   } | null>(null);
+  const activeTitleRecordRef = useRef<CanonicalChatRecord | null>(null);
   const [activeChatTitle, setActiveChatTitle] = useState(initialChatTitle ?? "Chat");
+  const [agentDraftRequest, setAgentDraftRequest] = useState<ChatAgentDraftRequest | null>(null);
+  const agentDraftSequence = useRef(0);
   const [editingChatTitle, setEditingChatTitle] = useState(false);
   const [renamingChatTitle, setRenamingChatTitle] = useState(false);
   const [renameChatError, setRenameChatError] = useState<string | null>(null);
@@ -262,7 +273,7 @@ export default function WorkTab({
     if (hostedRuntime || !api || !visible) return null;
     return createCanonicalChatEventSource({
       openStream({ cursor, signal }) {
-        return api.openStream(chatMessageVersionUrl("/api/chats/events"), {
+        return api.openStream(chatReadStateVersionUrl(chatMessageVersionUrl("/api/chats/events")), {
           accept: "text/event-stream",
           signal,
           timeoutMs: 5 * 60 * 1000,
@@ -272,6 +283,8 @@ export default function WorkTab({
     });
   }, [api, authGeneration, hostedRuntime, runtimeSlot, visible]);
   const client = hostedRuntime?.client ?? localClient;
+  const agentsNavigation = useChatAgentsNavigation();
+  const agentsOpen = Boolean(client?.agents && agentsNavigation?.opened?.client === client.agents);
   const eventSource = hostedRuntime?.eventSource ?? localEventSource;
   const activeChatScopeRef = useRef({ client, chatId: initialChatId });
   activeChatScopeRef.current = { client, chatId: initialChatId };
@@ -314,11 +327,11 @@ export default function WorkTab({
   }, [draftTerminalLaunch, initialChatId, initialChatTitle]);
 
   useEffect(() => {
-    setActiveChatTitle(initialChatTitle ?? "Chat");
+    activeTitleRecordRef.current = null;
     setEditingChatTitle(false);
     setRenamingChatTitle(false);
     setRenameChatError(null);
-  }, [initialChatId, initialChatTitle]);
+  }, [initialChatId, client]);
 
   useLayoutEffect(() => {
     if (!active || route !== "project" || !projectSlug) return;
@@ -462,7 +475,7 @@ export default function WorkTab({
       narrowPaneRouteKey: routeKey,
     }));
   }, [routeKey]);
-  const openGlobalDraft = useCallback(() => {
+  const navigateToGlobalDraft = useCallback(() => {
     useCodingAgentWorkspace.getState().requestComposerFocus();
     showChat(layout === "narrow");
     useTabs.getState().openTab({
@@ -473,6 +486,15 @@ export default function WorkTab({
       closable: false,
     });
   }, [layout, showChat]);
+  const openAgentDraft = useCallback<StartAgentChat>((text, resources) => {
+    if (hostedRuntime) hostedRuntime.requestAgentDraft(text, resources);
+    else {
+      agentDraftSequence.current += 1;
+      setAgentDraftRequest({ id: agentDraftSequence.current, text, resources });
+    }
+    navigateToGlobalDraft();
+  }, [hostedRuntime, navigateToGlobalDraft]);
+  const openGlobalDraft = useCallback(() => openAgentDraft("", []), [openAgentDraft]);
   const openCreateProject = useCallback(() => useUi.getState().openCreateProject(), []);
   const openProjectDraft = useCallback((project: Project) => {
     showChat(layout === "narrow");
@@ -503,13 +525,39 @@ export default function WorkTab({
     }
     openGlobalDraft();
   }, [initialChatId, layout, openGlobalDraft, showChat]);
-  const applyRenamedChat = useCallback((record: CanonicalChatRecord) => {
-    useTabs.getState().updateChatTitle(record.chat.id, record.chat.title);
-    hostedRuntime?.projectChat(record);
+  useEffect(() => {
+    if (!activeTitleRecordRef.current) setActiveChatTitle(initialChatTitle ?? "Chat");
+  }, [initialChatId, initialChatTitle, client]);
+  const applyRenamedChat = useCallback((incoming: CanonicalChatRecord) => {
+    const current = activeTitleRecordRef.current;
+    const record = current?.chat.id === incoming.chat.id
+      ? mergeCanonicalChatRecord(current, incoming) : incoming;
     if (record.chat.id === activeChatScopeRef.current.chatId) {
+      activeTitleRecordRef.current = record;
       setActiveChatTitle(record.chat.title);
     }
+    useTabs.getState().updateChatTitle(record.chat.id, record.chat.title);
+    hostedRuntime?.projectChat(record);
   }, [hostedRuntime]);
+  useEffect(() => {
+    const scope = activeChatScopeRef.current;
+    if (!scope.client || !scope.chatId || !eventSource) return;
+    let active = true;
+    const subscription = eventSource.subscribe((event) => {
+      if (event.type !== "chat.full_refresh"
+        && (event.chatId !== scope.chatId || event.eventType !== "chat.updated")) return;
+      if (event.type === "chat.changed" && event.content) {
+        applyRenamedChat(event.content.content.record);
+        return;
+      }
+      void scope.client!.getDetail(scope.chatId!, { limit: 1 }).then((detail) => {
+        if (active) applyRenamedChat(detail.record);
+      }).catch((error: unknown) => {
+        console.warn("[work] Title refresh failed:", error instanceof Error ? error.name : "UnknownError");
+      });
+    });
+    return () => { active = false; subscription.dispose(); };
+  }, [eventSource, initialChatId, applyRenamedChat]);
   const renameActiveChat = useCallback(async (title: string) => {
     const scope = activeChatScopeRef.current;
     if (!scope.client || !scope.chatId || renamingChatTitle) return;
@@ -518,7 +566,7 @@ export default function WorkTab({
     try {
       const detail = await scope.client.getDetail(scope.chatId, { limit: 200 });
       const updated = await scope.client.updateTitle(scope.chatId, {
-        baseRevision: detail.record.chat.revision,
+        expectedTitleVersion: detail.record.chat.titleVersion ?? 0,
         title,
       });
       if (activeChatScopeRef.current.client !== scope.client
@@ -530,7 +578,6 @@ export default function WorkTab({
       if (activeChatScopeRef.current.client === scope.client
         && activeChatScopeRef.current.chatId === scope.chatId) {
         setRenameChatError("The Chat could not be renamed. Try again.");
-        setEditingChatTitle(false);
       }
     } finally {
       if (activeChatScopeRef.current.client === scope.client
@@ -645,7 +692,7 @@ export default function WorkTab({
   ) : null;
   const canonicalInspector = initialChatId ? renderInspector : undefined;
   const content = route === "chat"
-    ? <ChatTab tabId={tabId} active={active} visible={visible} initialChatId={initialChatId} initialView={initialChatView} eventSource={eventSource ?? undefined} externalNavigation renderInspector={canonicalInspector} inspectorExclusive={inspectorExclusive} allowLegacyFallback={false} />
+    ? <ChatTab tabId={tabId} active={active} visible={visible} initialChatId={initialChatId} initialView={initialChatView} draftRequest={hostedRuntime ? hostedRuntime.agentDraftRequest : agentDraftRequest} eventSource={eventSource ?? undefined} externalNavigation renderInspector={canonicalInspector} inspectorExclusive={inspectorExclusive} allowLegacyFallback={false} />
     : route === "projects"
       ? <ProjectsIndex />
       : projectSlug
@@ -670,8 +717,10 @@ export default function WorkTab({
       onSelectChat={selectRailChat}
       onChatDeleted={handleRailChatDeleted}
       onChatRenamed={applyRenamedChat}
+      onOpenAgents={() => { if (layout === "narrow") showChat(); }}
+      onStartAgentChat={openAgentDraft}
     />
-  ), [active, applyRenamedChat, client, collapseRail, eventSource, handleRailChatDeleted, initialChatId, openCreateProject, openGlobalDraft, openProjectDraft, projectSlug, projects, route, selectRailChat]);
+  ), [active, applyRenamedChat, client, collapseRail, eventSource, handleRailChatDeleted, hostedChrome, initialChatId, openAgentDraft, openCreateProject, openGlobalDraft, openProjectDraft, projectSlug, projects, route, selectRailChat, layout, showChat]);
   const chromeTitle = useMemo(() => initialChatId && initialChatId !== draftTerminalLaunch?.chatId
     ? editingChatTitle ? (
         <ChatTitleEditor
@@ -705,10 +754,10 @@ export default function WorkTab({
     <ChatSharingButton key={`${runtimeSlot}:${authGeneration}:${initialChatId}`} api={api} chatId={initialChatId} copyText={async (text) => { await navigator.clipboard.writeText(text); }} />
   ) : null, [api, initialChatId, runtimeSlot, authGeneration]);
   const chromeSpec = useMemo(() => ({
-    title: chromeTitle,
+    title: agentsOpen ? "Agents" : chromeTitle,
     leftPaneWidth: hostedChrome || (layout !== "narrow" && navigationVisible) ? NAVIGATION_WIDTH : 0,
-    rightPaneWidth: layout !== "narrow" && inspectorVisible ? inspectorWidth : 0,
-    rightActions: hasInspector ? (
+    rightPaneWidth: !agentsOpen && layout !== "narrow" && inspectorVisible ? inspectorWidth : 0,
+    rightActions: agentsOpen ? null : hasInspector ? (
       <div className="flex items-center gap-1">
         {sharingControl}
         <PaneButton
@@ -725,7 +774,7 @@ export default function WorkTab({
         </PaneButton>
       </div>
     ) : sharingControl,
-  }), [sharingControl, chromeTitle, closeInspector, hasInspector, hostedChrome, inspectorVisible, inspectorWidth, layout, navigationVisible, openInspector]);
+  }), [agentsOpen, sharingControl, chromeTitle, closeInspector, hasInspector, hostedChrome, inspectorVisible, inspectorWidth, layout, navigationVisible, openInspector]);
 
   useLayoutEffect(() => {
     if (!active || !surfaceChromeHost) return;
@@ -823,8 +872,10 @@ export default function WorkTab({
             ? "hidden"
             : "relative flex min-h-0 min-w-0 flex-1 overflow-hidden"}
         >
-          {content}
-          {draftInspector}
+          <ChatAgentsContent client={client?.agents} scopeKey={`${route}:${projectSlug ?? ""}:${initialChatView ?? ""}:${initialChatId ?? "draft"}`}>
+            {content}
+            {draftInspector}
+          </ChatAgentsContent>
         </div>
       </div>
     </div>

@@ -176,6 +176,8 @@ import {
   type CanonicalChatProviderAdapter,
 } from "./chat/provider-adapter.js";
 import { CanonicalChatOrchestrator } from "./chat/orchestrator.js";
+import { createCanonicalChatRuntime } from "./chat/runtime.js";
+import { createChatAgentRoutes } from "./chat/agent-routes.js";
 import {
   createCanonicalChatService,
   createUnavailableCanonicalChatService,
@@ -897,6 +899,7 @@ export async function createGateway(config: GatewayConfig) {
   let chatIdleReaper: ReturnType<typeof createChatIdleReaper> | null = null;
   let canonicalChatEventStream: ReturnType<typeof createGatewayChatEventStream> | null = null;
   let canonicalChatOrchestrator: CanonicalChatOrchestrator | null = null;
+  let canonicalChatRuntime: Awaited<ReturnType<typeof createCanonicalChatRuntime>> | null = null;
   let canonicalChatExecutionRoots: ChatExecutionRootResolver | null = null;
   let canonicalChatCollaborationGuard: ReturnType<typeof createDiscussionOnlyChatExecutionGuard> | null = null;
   let gatewayCollaboration: GatewayCollaborationRuntime | null = null;
@@ -4306,7 +4309,8 @@ export async function createGateway(config: GatewayConfig) {
         }));
       }
     }
-    canonicalChatOrchestrator = new CanonicalChatOrchestrator({
+    canonicalChatRuntime = await createCanonicalChatRuntime({
+      homePath,
       repository: chatRepository,
       catalog: canonicalChatProviderCatalog,
       adapters: new CanonicalChatProviderRegistry(canonicalAdapters.map(adapter => withAsyncChatInput(adapter))),
@@ -4317,6 +4321,7 @@ export async function createGateway(config: GatewayConfig) {
       } : {}),
       onAiGeneration: recordAiGeneration,
     });
+    canonicalChatOrchestrator = canonicalChatRuntime.orchestrator;
     backgroundChatProjection.setReconciler(ownerId => canonicalChatOrchestrator?.reconcileActiveRuns({ type: "personal", ownerId }) ?? Promise.resolve());
     for (const ownerId of new Set(codingAgentOwnerIds)) {
       await canonicalChatOrchestrator.reconcileActiveRuns({ type: "personal", ownerId });
@@ -4370,6 +4375,17 @@ export async function createGateway(config: GatewayConfig) {
           ...(canonicalChatCollaborationGuard ? { collaborationGuard: canonicalChatCollaborationGuard } : {}),
         })
       : createUnavailableCanonicalChatService(),
+    getPrincipal: (c) => requireRequestPrincipal(c),
+  }));
+  app.route("/", createChatAgentRoutes({
+    ...(canonicalChatRuntime && chatRepository ? {
+      agents: canonicalChatRuntime.agents,
+      context: canonicalChatRuntime.context,
+      recipes: canonicalChatRuntime.recipes,
+      repository: chatRepository,
+    } : {}),
+    enabled: () => true,
+    catalog: canonicalChatProviderCatalog,
     getPrincipal: (c) => requireRequestPrincipal(c),
   }));
   app.route("/", createChatProviderRoutes({
@@ -4721,6 +4737,8 @@ export async function createGateway(config: GatewayConfig) {
       await backgroundChatProjection.close();
       await canonicalChatOrchestrator?.close();
       canonicalChatOrchestrator = null;
+      await canonicalChatRuntime?.agents.close();
+      canonicalChatRuntime = null;
       await gatewayCollaboration?.shutdown();
       gatewayCollaboration = null;
       await backgroundAgentRuntime.close();

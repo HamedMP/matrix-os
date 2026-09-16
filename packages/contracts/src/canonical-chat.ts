@@ -1,4 +1,5 @@
 import { z } from "zod/v4";
+import { ChatRunContextSchema, isChatAgentDriver } from "#chat-agent-context";
 import { IsoTimestampSchema, ProviderModelReferenceSchema } from "#contract-primitives";
 import { UserInputQuestionListSchema, MAX_AGENT_ATTACHMENT_BYTES } from "#agent-thread-contracts";
 import {
@@ -84,6 +85,8 @@ export const CanonicalChatResourceKindSchema = z.enum([
   "task",
   "app",
   "terminal_session",
+  "agent",
+  "chat",
 ]);
 
 export const CanonicalChatResourceReferenceSchema = z.object({
@@ -130,6 +133,8 @@ export const CanonicalChatSchema = z.object({
   id: CanonicalChatIdSchema,
   ownerScope: CanonicalOwnerScopeSchema,
   title: canonicalBoundedText(200, 1024),
+  titleVersion: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+  activityAt: IsoTimestampSchema.optional(),
   lifecycle: z.enum(["active", "archived"]),
   attention: CanonicalChatAttentionSchema,
   revision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
@@ -180,6 +185,7 @@ export const CanonicalChatRunSchema = z.object({
   startedAt: IsoTimestampSchema.optional(),
   completedAt: IsoTimestampSchema.optional(),
   historyBoundarySeq: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  context: ChatRunContextSchema.optional(),
   capabilitySnapshot: z.object({
     revision: canonicalReferenceId(160),
     rootChat: z.boolean(),
@@ -198,6 +204,9 @@ export const CanonicalChatRunSchema = z.object({
   createdAt: IsoTimestampSchema,
   updatedAt: IsoTimestampSchema,
 }).strict().superRefine((run, ctx) => {
+  if (run.context?.agent && !isChatAgentDriver(run.driverKind)) {
+    ctx.addIssue({ code: "custom", path: ["context", "agent"], message: "Saved Agent harness is unsupported" });
+  }
   if (run.instanceId !== run.selection.instanceId) {
     ctx.addIssue({ code: "custom", path: ["selection", "instanceId"], message: "Run Instance mismatch" });
   }

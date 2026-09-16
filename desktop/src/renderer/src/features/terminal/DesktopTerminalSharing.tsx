@@ -1,28 +1,15 @@
 import { TerminalSharingButton } from "@matrix-os/ui";
-import { useEffect, useMemo, useState } from "react";
-import { collaborationRuntimeIdFromSystemInfo, createDesktopCollaborationApi } from "../../lib/collaboration";
+import { useMemo } from "react";
+import { createDesktopCollaborationApi } from "../../lib/collaboration";
 import { useConnection } from "../../stores/connection";
+import { useCollaborationRuntimeId } from "../collaboration/useCollaborationRuntime";
 
 export function DesktopTerminalSharing({ terminalId }: { terminalId: string }) {
   const api = useConnection((state) => state.api);
   const platformHost = useConnection((state) => state.platformHost);
   const collaborationApi = useMemo(() => createDesktopCollaborationApi(platformHost), [platformHost]);
-  const [runtimeIdentity, setRuntimeIdentity] = useState<{ api: typeof api; runtimeId: string | null }>({
-    api: null,
-    runtimeId: null,
-  });
-  useEffect(() => {
-    let active = true;
-    if (!api) return () => { active = false; };
-    void api.get("/api/system/info", { maxBytes: 64 * 1024 }).then((value) => {
-      if (active) setRuntimeIdentity({ api, runtimeId: collaborationRuntimeIdFromSystemInfo(value) });
-    }).catch((error: unknown) => {
-      console.warn("[terminal-collaboration] runtime identity unavailable", error instanceof Error ? error.name : "UnknownError");
-    });
-    return () => { active = false; };
-  }, [api]);
-  const runtimeId = runtimeIdentity.api === api ? runtimeIdentity.runtimeId : null;
-  return collaborationApi
+  const runtimeId = useCollaborationRuntimeId(api);
+  return collaborationApi && runtimeId
     ? <TerminalSharingButton api={collaborationApi} runtimeId={runtimeId} terminalId={terminalId} />
     : null;
 }

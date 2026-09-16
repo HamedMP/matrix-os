@@ -1,14 +1,16 @@
 "use client";
 
-import { generatedChatTitle } from "@matrix-os/ui";
+import { generatedChatTitle, mergeCanonicalChatRecord, mergeChatReadState } from "@matrix-os/ui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
+  CanonicalChatMessagePart,
   CanonicalChatApprovalDecision,
   CanonicalSubmitChatInputRequest,
   CanonicalChatDetailResponse,
   CanonicalChatRecord,
 } from "@matrix-os/contracts";
 import {
+  createChatMentionRequestTracker,
   createSharedCanonicalChatEventSource,
   createCanonicalChatRefresh,
   applyCanonicalChatContent,
@@ -32,25 +34,31 @@ function requestId(): string {
 
 function conversationMeta(record: CanonicalChatRecord) {
   return {
+    readState: record.readState,
     id: record.chat.id,
     title: record.chat.title,
     preview: record.chat.lastMessagePreview ?? record.chat.title,
     messageCount: record.chat.messageCount,
     createdAt: Date.parse(record.chat.createdAt),
-    updatedAt: Date.parse(record.chat.updatedAt),
+    updatedAt: Date.parse(record.chat.activityAt ?? record.chat.createdAt),
   };
 }
 
-export function useCanonicalChatState(): ChatState {
+export function useCanonicalChatState({ initialDraft }: { initialDraft?: string | null } = {}): ChatState {
+  const [mentionRequests] = useState(createChatMentionRequestTracker);
   const client = useMemo(() => createCanonicalShellChatClient({ gatewayUrl: getGatewayUrl() }), []);
   const eventSource = useMemo(() => createSharedCanonicalChatEventSource({
     openStream: (input) => client.openEventStream(input),
   }), [client]);
   const { connected } = useSocket();
+  const [unreadOnly, setUnreadOnly] = useState(false);
   const [records, setRecords] = useState<CanonicalChatRecord[]>([]);
+  const recordsRef = useRef(records);
+  useEffect(() => { recordsRef.current = records; }, [records]);
   const [activeChatId, setActiveChatId] = useState<string>();
   const [detail, setDetail] = useState<CanonicalChatDetailResponse | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
   const [safeError, setSafeError] = useState<string | null>(null);
   const [eventConnectionState, setEventConnectionState] = useState<CanonicalChatEventConnectionState>(
     eventSource.connectionState(),
@@ -68,26 +76,54 @@ export function useCanonicalChatState(): ChatState {
   const activeChatIdRef = useRef(activeChatId);
   // An empty selection after New chat is intentional, not an initial restore.
   const autoRestoreChatRef = useRef(true);
+  const initialDraftConsumed = useRef(false);
   detailRef.current = detail;
   activeChatIdRef.current = activeChatId;
 
+  useEffect(() => {
+    if (!initialDraft || initialDraftConsumed.current) return;
+    initialDraftConsumed.current = true;
+    autoRestoreChatRef.current = false;
+    activeChatIdRef.current = undefined;
+    detailRef.current = null;
+    detailRequestGeneration.current += 1;
+    setActiveChatId(undefined);
+    setDetail(null);
+    setComposerDraftRequest({ id: ++composerDraftSequence.current, text: initialDraft });
+  }, [initialDraft]);
+
+  const listGeneration = useRef(0);
   const loadList = useCallback(async () => {
+    const generation = ++listGeneration.current;
     try {
-      const page = await client.list();
-      setRecords(page.items);
+      const loaded: CanonicalChatRecord[] = [];
+      let cursor: string | undefined;
+      // Match the Work Rail's bounded 1,000-chat window, following server cursors.
+      for (let pageIndex = 0; pageIndex < 10; pageIndex += 1) {
+        const page = await client.list({ ...(unreadOnly ? { unreadOnly: true } : {}), ...(cursor ? { cursor } : {}) });
+        if (listGeneration.current !== generation) return;
+        loaded.push(...page.items);
+        if (!page.nextCursor || page.nextCursor === cursor) break;
+        cursor = page.nextCursor;
+      }
+      setRecords((current) => loaded.map((record) => {
+        const previous = current.find((item) => item.chat.id === record.chat.id);
+        return previous ? mergeCanonicalChatRecord(previous, record) : record;
+      }));
       if (autoRestoreChatRef.current) {
-        setActiveChatId((current) => current ?? page.items[0]?.chat.id);
+        setActiveChatId((current) => current ?? loaded[0]?.chat.id);
       }
     } catch (error: unknown) {
+      if (listGeneration.current !== generation) return;
       console.warn("[canonical-chat] Shell list unavailable:", error instanceof Error ? error.name : "UnknownError");
       setSafeError("Chats could not be loaded. Try again.");
     }
-  }, [client]);
+  }, [client, unreadOnly]);
 
   const loadDetail = useCallback(async (chatId: string) => {
     const generation = ++detailRequestGeneration.current;
     try {
-      const value = await client.detail(chatId);
+      let value = await client.detail(chatId);
       if (activeChatIdRef.current !== chatId || detailRequestGeneration.current !== generation) {
         return null;
       }
@@ -96,6 +132,14 @@ export function useCanonicalChatState(): ChatState {
         && current.record.chat.revision > value.record.chat.revision) {
         return current;
       }
+      const known = recordsRef.current.find((item) => item.chat.id === chatId);
+      const merged = known ? mergeCanonicalChatRecord(known, value.record) : value.record;
+      const titleRecord = current?.record.chat.id === chatId
+        ? mergeCanonicalChatRecord(current.record, merged) : merged;
+      value = { ...value, record: { ...value.record, chat: { ...value.record.chat,
+        title: titleRecord.chat.title, titleVersion: titleRecord.chat.titleVersion,
+      } } };
+      if (current) value = { ...value, record: mergeChatReadState(value.record, current.record) };
       detailRef.current = value;
       setDetail(value);
       setSafeError(null);
@@ -146,7 +190,7 @@ export function useCanonicalChatState(): ChatState {
       if (event.type === "chat.changed" && event.content) {
         const record = event.content.content.record;
         setRecords((current) => current.map((item) => item.chat.id === record.chat.id
-          && item.chat.revision < record.chat.revision ? record : item));
+          ? mergeCanonicalChatRecord(item, record) : item));
         if (event.chatId === activeChatId) {
           const current = detailRef.current;
           const next = current ? applyCanonicalChatContent(current, event.content) : null;
@@ -235,23 +279,25 @@ export function useCanonicalChatState(): ChatState {
     };
   }, [activeChatId, Boolean(detail?.record.activeRun), eventConnectionState, loadDetail]);
 
-  const submitMessage = useCallback((
+  const submitMessage = useCallback(async (
     text: string,
     files?: Array<{ name: string; type: string; data: string }>,
     options?: ChatSubmitOptions,
   ) => {
-    if (!text.trim() || submitting) return;
+    if ((!text.trim() && !options?.resources?.length && !files?.length) || submittingRef.current) return false;
     if (activeChatId && detailRef.current?.record.chat.id !== activeChatId) {
       setSafeError("Wait for this chat to finish loading.");
-      return;
+      return false;
     }
     if (!options?.instanceId || !options.model || !options.interactionMode || !options.permissionMode) {
       setSafeError("Choose an available harness and model.");
-      return;
+      return false;
     }
+    submittingRef.current = true;
+    const sourceChatId = activeChatId;
     setSubmitting(true);
     setSafeError(null);
-    void (async () => {
+    const send = async () => {
       const uploadedReferences: string[] = [];
       let turnAdmitted = false;
       let admissionAttempted = false;
@@ -265,16 +311,18 @@ export function useCanonicalChatState(): ChatState {
         };
         let record = detailRef.current?.record ?? null;
         if (!record) {
+          autoRestoreChatRef.current = false;
           record = await client.create({
-            clientRequestId: requestId(),
+            clientRequestId: options.clientRequestId ? `${options.clientRequestId}_chat` : requestId(),
             title: generatedChatTitle(options.displayText?.trim() || text),
             currentSelection: selection,
           });
-          setActiveChatId(record.chat.id);
         }
         if ((files?.length ?? 0) > 8) throw new Error("TooManyAttachments");
-        const uploadResults = await Promise.allSettled((files ?? []).map(async (file) => {
-          const reference = await client.uploadAttachment(file);
+        const uploadResults = await Promise.allSettled((files ?? []).map(async (file, index) => {
+          const retryKey = options.resources?.length && options.clientRequestId
+            ? `${options.clientRequestId}:${index}` : undefined;
+          const reference = await client.uploadAttachment(file, retryKey);
           if (!reference.ownerReference) throw new Error("InvalidAttachmentReference");
           uploadedReferences.push(reference.ownerReference);
           return reference;
@@ -284,37 +332,87 @@ export function useCanonicalChatState(): ChatState {
         const attachmentParts = uploadResults.flatMap((result) =>
           result.status === "fulfilled" ? [result.value] : []);
         admissionAttempted = true;
-        const admitted = await client.admitTurn(record.chat.id, {
-          clientRequestId: requestId(),
-          baseRevision: record.chat.revision,
-          parts: [{ type: "text", text: options.promptText?.trim() || text.trim() }, ...attachmentParts],
-          selection,
-          interactionMode: options.interactionMode!,
-          permissionMode: options.permissionMode!,
-        });
+        const parts: CanonicalChatMessagePart[] = [
+          ...(text.trim() ? [{ type: "text" as const, text: options.promptText?.trim() || text.trim() }] : []),
+          ...(options.resources ?? []).map((resource) => ({ type: "resource_reference" as const, resource })),
+          ...attachmentParts,
+        ];
+        const input = {
+          clientRequestId: options.clientRequestId ?? requestId(), baseRevision: record.chat.revision,
+          parts, selection, interactionMode: options.interactionMode!, permissionMode: options.permissionMode!,
+        };
+        const requestScope = record.chat.id;
+        let operation = record.activeRun && options.resources?.length ? "queue" as const : "send" as const;
+        if (options.resources?.length) {
+          const { clientRequestId: seed, baseRevision: _revision, ...semanticInput } = input;
+          const attempt = mentionRequests.resolve(client, requestScope, semanticInput, operation, seed);
+          input.clientRequestId = attempt.clientRequestId;
+          operation = attempt.operation;
+        }
+        if (operation === "queue") {
+          const queued = await client.queueTurn(record.chat.id, input);
+          turnAdmitted = true;
+          mentionRequests.accepted(requestScope, input.clientRequestId);
+          const current = detailRef.current;
+          if (activeChatIdRef.current === record.chat.id && current?.record.chat.id === record.chat.id) {
+            const queuedTurns = [...(current.queuedTurns ?? []).filter((row) => row.id !== queued.queuedTurn.id), ...(queued.alreadyClaimed ? [] : [queued.queuedTurn])];
+            const next = { ...current, queuedTurns };
+            detailRef.current = next;
+            setDetail(next);
+          }
+          await loadDetail(record.chat.id);
+          return true;
+        }
+        const admitted = await client.admitTurn(record.chat.id, input);
         turnAdmitted = true;
-        setDetail((current) => current?.record.chat.id === admitted.record.chat.id
-          && current.record.chat.revision >= admitted.record.chat.revision ? current : ({
-          record: admitted.record,
-          messages: [...(current?.record.chat.id === record.chat.id ? current.messages : []), admitted.message],
-          turns: [...(current?.record.chat.id === record.chat.id ? current.turns : []), admitted.turn],
-          runs: [...(current?.record.chat.id === record.chat.id ? current.runs : []), admitted.run],
-          activities: current?.record.chat.id === record.chat.id ? current.activities : [],
-        }));
+        mentionRequests.accepted(requestScope, input.clientRequestId);
+        if (activeChatIdRef.current === sourceChatId) {
+          activeChatIdRef.current = record.chat.id;
+          setActiveChatId(record.chat.id);
+          const current = detailRef.current?.record.chat.id === record.chat.id ? detailRef.current : null;
+          if (!current || current.record.chat.revision < admitted.record.chat.revision) {
+            const next = {
+              record: admitted.record,
+              messages: [...(current?.messages ?? []), admitted.message],
+              turns: [...(current?.turns ?? []), admitted.turn], runs: [...(current?.runs ?? []), admitted.run],
+              activities: current?.activities ?? [], queuedTurns: current?.queuedTurns,
+            };
+            detailRef.current = next;
+            setDetail(next);
+          }
+        }
         await loadList();
         await loadDetail(record.chat.id);
+        return true;
       } catch (error: unknown) {
         const definitelyUnadmitted = !admissionAttempted || isDefinitiveCanonicalChatRejection(error);
         if (!turnAdmitted && definitelyUnadmitted && uploadedReferences.length > 0) {
           await Promise.allSettled(uploadedReferences.map((reference) => client.deleteAttachment(reference)));
         }
         console.warn("[canonical-chat] Shell Turn admission failed:", error instanceof Error ? error.name : "UnknownError");
-        setSafeError("Message could not be sent. Try again.");
-      } finally {
-        setSubmitting(false);
+        if (activeChatIdRef.current === sourceChatId) setSafeError("Message could not be sent. Try again.");
+        return turnAdmitted;
       }
-    })();
-  }, [activeChatId, client, loadDetail, loadList, submitting]);
+    };
+    return send().finally(() => {
+      submittingRef.current = false;
+      setSubmitting(false);
+    });
+  }, [activeChatId, client, loadDetail, loadList, mentionRequests]);
+
+  const cancelQueuedTurn = useCallback(async (queuedTurnId: string) => {
+    const current = detailRef.current;
+    if (!activeChatId || current?.record.chat.id !== activeChatId) return false;
+    try {
+      await client.cancelQueuedTurn(activeChatId, queuedTurnId, { clientRequestId: requestId(), baseRevision: current.record.chat.revision });
+      await loadDetail(activeChatId);
+      return true;
+    } catch (error: unknown) {
+      console.warn("[canonical-chat] Queue cancellation failed:", error instanceof Error ? error.name : "UnknownError");
+      if (activeChatIdRef.current === activeChatId) setSafeError("Queued request could not be cancelled. Try again.");
+      return false;
+    }
+  }, [activeChatId, client, loadDetail]);
 
   const newChat = useCallback(async () => {
     autoRestoreChatRef.current = false;
@@ -412,34 +510,48 @@ export function useCanonicalChatState(): ChatState {
     }
     try {
       const updated = await client.updateTitle(chatId, {
-        baseRevision: current.chat.revision,
+        expectedTitleVersion: current.chat.titleVersion ?? 0,
         title,
       });
-      const projectTitle = (record: CanonicalChatRecord) => (
-        record.chat.revision > updated.chat.revision
-          ? record
-          : {
-            ...record,
-            chat: {
-              ...record.chat,
-              title: updated.chat.title,
-              revision: updated.chat.revision,
-              updatedAt: updated.chat.updatedAt,
-            },
-          }
-      );
-      setRecords((existing) => existing.map((record) => record.chat.id === chatId ? projectTitle(record) : record));
-      setDetail((existing) => existing?.record.chat.id === chatId
-        ? { ...existing, record: projectTitle(existing.record) }
-        : existing);
+      setRecords((existing) => existing.map((record) => record.chat.id === chatId
+        ? mergeCanonicalChatRecord(record, updated) : record));
+      const active = detailRef.current;
+      if (active?.record.chat.id === chatId) {
+        const merged = mergeCanonicalChatRecord(active.record, updated);
+        const next = { ...active, record: { ...active.record, chat: { ...active.record.chat,
+          title: merged.chat.title, titleVersion: merged.chat.titleVersion,
+        } } };
+        detailRef.current = next;
+        setDetail(next);
+      }
       setSafeError(null);
       return true;
     } catch (error: unknown) {
       console.warn("[canonical-chat] Shell rename failed:", error instanceof Error ? error.name : "UnknownError");
+      await loadList();
+      await loadDetail(chatId);
       setSafeError("The Chat could not be renamed. Try again.");
       return false;
     }
-  }, [client, records]);
+  }, [client, records, loadList, loadDetail]);
+
+  const updateReadState = useCallback(async (chatId: string, input: import("@matrix-os/contracts").CanonicalUpdateChatReadStateRequest) => {
+    try {
+      const response = await client.updateReadState(chatId, input);
+      setRecords((current) => current.map((record) => mergeChatReadState(record, response)));
+      const current = detailRef.current;
+      if (current?.record.chat.id === chatId) {
+        const next = { ...current, record: mergeChatReadState(current.record, response) };
+        detailRef.current = next;
+        setDetail(next);
+      }
+      return true;
+    } catch (error: unknown) {
+      console.warn("[chat] Read state update failed:", error instanceof Error ? error.name : "UnknownError");
+      setSafeError("The Chat could not be updated. Try again.");
+      return false;
+    }
+  }, [client]);
 
   const messages = detail ? projectCanonicalTranscript(detail) : [];
   if (safeError) {
@@ -450,12 +562,19 @@ export function useCanonicalChatState(): ChatState {
     : records.find((record) => record.chat.id === activeChatId);
   const detailLoading = activeChatId !== undefined && detail?.record.chat.id !== activeChatId;
   return {
+    unreadOnly, setUnreadOnly,
+    readState: detail?.record.chat.id === activeChatId ? detail?.record.readState : undefined,
+    displayedThroughSeq: Math.max(0, ...(detail?.messages ?? []).filter((message) => message.role === "assistant" && message.state === "committed").map((message) => message.seq)),
+    updateReadState,
     messages,
     sessionId: activeChatId,
     busy: submitting || detailLoading || Boolean(detail?.record.activeRun),
     currentTool: null,
     connected,
     queue: [],
+    agentClient: client.agents,
+    queuedTurns: detail?.queuedTurns ?? [],
+    cancelQueuedTurn,
     providerSelection: activeRecord?.chat.currentSelection,
     conversations: records.map(conversationMeta),
     activeConversationTitle: activeRecord?.chat.title,

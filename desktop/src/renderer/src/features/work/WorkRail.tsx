@@ -1,3 +1,8 @@
+import { mergeCanonicalChatRecord, isChatUnread, chatReadAction, mergeChatReadState } from "@matrix-os/ui";
+import type { StartAgentChat } from "@matrix-os/ui";
+import { ChatAgentsRailSection, useChatAgentsNavigation } from "@matrix-os/ui";
+import { useUi } from "../../stores/ui";
+import { useTabs } from "../../stores/tabs";
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
 import { Plus } from "@renderer/lib/hugeicons";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -29,19 +34,20 @@ function applyProjectedChats(
   if (!projections?.length) return records;
   return records.map((record) => {
     const projection = projections.find((candidate) => candidate.chatId === record.chat.id);
-    if (!projection || record.chat.revision >= projection.revision) return record;
-    return {
+    if (!projection || ((record.chat.titleVersion ?? 0) === (projection.titleVersion ?? 0)
+      && record.chat.revision >= projection.revision)) return record;
+    return mergeCanonicalChatRecord(record, {
       ...record,
-      chat: { ...record.chat, title: projection.title, revision: projection.revision },
-    };
+      chat: { ...record.chat, title: projection.title, titleVersion: projection.titleVersion, revision: projection.revision },
+    });
   });
 }
 
-async function loadWorkRailChats(client: CanonicalChatClient): Promise<CanonicalChatRecord[]> {
+async function loadWorkRailChats(client: CanonicalChatClient, unreadOnly = false): Promise<CanonicalChatRecord[]> {
   const records: CanonicalChatRecord[] = [];
   let cursor: string | undefined;
   for (let page = 0; page < MAX_CHAT_PAGES; page += 1) {
-    const response = await client.list({ limit: 100, ...(cursor ? { cursor } : {}) });
+    const response = await client.list({ ...(unreadOnly ? { unreadOnly: true } : {}), limit: 100, ...(cursor ? { cursor } : {}) });
     records.push(...response.items);
     if (!response.nextCursor || response.nextCursor === cursor) break;
     cursor = response.nextCursor;
@@ -57,10 +63,12 @@ export function WorkRail({
   active,
   activeChatId,
   activeProjectSlug,
-  onNewGlobalChat,
-  onCreateProject,
-  onNewProjectChat,
-  onSelectChat,
+  onNewGlobalChat: newGlobalChat,
+  onCreateProject: createProject,
+  onNewProjectChat: newProjectChat,
+  onSelectChat: selectChat,
+  onOpenAgents,
+  onStartAgentChat,
   onChatDeleted,
   onChatRenamed,
   onCollapse,
@@ -75,6 +83,8 @@ export function WorkRail({
   activeChatId?: string;
   activeProjectSlug?: string;
   onNewGlobalChat: () => void;
+  onOpenAgents?: () => void;
+  onStartAgentChat?: StartAgentChat;
   onCreateProject: () => void;
   onNewProjectChat: (project: Project) => void;
   onSelectChat: (record: CanonicalChatRecord, project?: Project) => void;
@@ -84,7 +94,18 @@ export function WorkRail({
   showCollapseControl?: boolean;
   className?: string;
 }) {
+  const agentsNavigation = useChatAgentsNavigation();
+  const onNewGlobalChat = () => { agentsNavigation?.close(); newGlobalChat(); };
+  const onCreateProject = () => { agentsNavigation?.close(); createProject(); };
+  const onNewProjectChat = (project: Project) => { agentsNavigation?.close(); newProjectChat(project); };
+  const onSelectChat = (...args: Parameters<typeof selectChat>) => { agentsNavigation?.close(); selectChat(...args); };
+  const [readPending, setReadPending] = useState(false);
+  const [readError, setReadError] = useState<string | null>(null);
+  const [unreadOnly, setUnreadOnly] = useState(false);
   const [records, setRecords] = useState<CanonicalChatRecord[]>([]);
+  const recordsRef = useRef(records);
+  const recordsClientRef = useRef(client);
+  useEffect(() => { recordsRef.current = records; }, [records]);
   const [status, setStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [sections, setSections] = useState<Record<SectionKey, boolean>>({
     pinned: true,
@@ -113,7 +134,7 @@ export function WorkRail({
       generation: routeScopeRef.current.generation + 1,
     };
   }
-  const model = useMemo(() => buildWorkRailModel(records, projects), [projects, records]);
+  const model = useMemo(() => buildWorkRailModel(unreadOnly ? records.filter(isChatUnread) : records, projects), [projects, records, unreadOnly]);
 
   useEffect(() => {
     if (!active || !client) setSearchOpen(false);
@@ -122,10 +143,16 @@ export function WorkRail({
   useEffect(() => {
     let current = true;
     if (!client || !active) return () => { current = false; };
+    if (recordsClientRef.current !== client) {
+      recordsClientRef.current = client;
+      setRecords([]);
+    }
     let refreshInFlight = false;
     let refreshPending = false;
     setPinError(null);
     setPinning({});
+    setReadPending(false);
+    setReadError(null);
     setDeleteChatTarget(null);
     setDeletingChat(false);
     setDeleteChatError(null);
@@ -142,9 +169,12 @@ export function WorkRail({
       do {
         refreshPending = false;
         try {
-          const loaded = await loadWorkRailChats(client);
+          const loaded = await loadWorkRailChats(client, unreadOnly);
           if (!current) return;
-          setRecords(applyProjectedChats(loaded, projectedChatTitlesRef.current));
+          setRecords((previous) => applyProjectedChats(loaded.map((record) => {
+            const known = previous.find((item) => item.chat.id === record.chat.id);
+            return known ? mergeCanonicalChatRecord(known, record) : record;
+          }), projectedChatTitlesRef.current));
           setStatus("ready");
         } catch (error: unknown) {
           if (!current) return;
@@ -167,12 +197,30 @@ export function WorkRail({
       refreshPending = false;
       subscription?.dispose();
     };
-  }, [active, activeChatId, activeProjectSlug, client, eventSource]);
+  }, [active, activeChatId, activeProjectSlug, client, eventSource, unreadOnly]);
 
   useEffect(() => {
     if (!projectedChatTitles?.length) return;
     setRecords((current) => applyProjectedChats(current, projectedChatTitles));
   }, [projectedChatTitles]);
+
+  const toggleRead = async (record: CanonicalChatRecord) => {
+    if (!client || readPending) return;
+    const scope = routeScopeRef.current;
+    setReadPending(true);
+    setReadError(null);
+    try {
+      const updated = await client.updateReadState(record.chat.id, chatReadAction(record));
+      if (routeScopeRef.current.client === scope.client) {
+        setRecords((current) => current.map((item) => mergeChatReadState(item, updated)));
+      }
+    } catch (error: unknown) {
+      console.warn("[chat] Read state update failed:", error instanceof Error ? error.name : "UnknownError");
+      if (routeScopeRef.current.client === scope.client) setReadError("The Chat could not be updated. Try again.");
+    } finally {
+      if (routeScopeRef.current.client === scope.client) setReadPending(false);
+    }
+  };
 
   const toggleSection = (key: SectionKey) => {
     setSections((current) => ({ ...current, [key]: !current[key] }));
@@ -187,7 +235,7 @@ export function WorkRail({
     void client.updateUserState(record.chat.id, { pinned }).then((updated) => {
       if (routeScopeRef.current.generation !== requestRouteGeneration) return;
       setRecords((current) => current.map((candidate) => (
-        candidate.chat.id === updated.chat.id ? updated : candidate
+        candidate.chat.id === updated.chat.id ? mergeCanonicalChatRecord(candidate, updated) : candidate
       )));
     }).catch((error: unknown) => {
       console.warn(
@@ -247,20 +295,30 @@ export function WorkRail({
     setRenameError(null);
     try {
       const updated = await client.updateTitle(record.chat.id, {
-        baseRevision: record.chat.revision,
+        expectedTitleVersion: record.chat.titleVersion ?? 0,
         title,
       });
       if (routeScopeRef.current.generation !== requestRouteGeneration) return;
       setRecords((current) => current.map((candidate) => (
-        candidate.chat.id === updated.chat.id ? updated : candidate
+        candidate.chat.id === updated.chat.id ? mergeCanonicalChatRecord(candidate, updated) : candidate
       )));
       setRenamingChatId(null);
-      onChatRenamed?.(updated, targetProject);
+      const known = recordsRef.current.find((candidate) => candidate.chat.id === updated.chat.id);
+      onChatRenamed?.(known ? mergeCanonicalChatRecord(known, updated) : updated, targetProject);
     } catch (error: unknown) {
       console.warn("[work] Chat rename failed:", error instanceof Error ? error.name : "UnknownError");
       if (routeScopeRef.current.generation === requestRouteGeneration) {
         setRenameError("The Chat could not be renamed. Try again.");
-        setRenamingChatId(null);
+        // Refresh the title version for an explicit retry while keeping the draft.
+        try {
+          const latest = await client.getDetail(record.chat.id, { limit: 1 });
+          if (routeScopeRef.current.generation === requestRouteGeneration) {
+            setRecords((current) => current.map((candidate) => candidate.chat.id === record.chat.id
+              ? mergeCanonicalChatRecord(candidate, latest.record) : candidate));
+          }
+        } catch (refreshError: unknown) {
+          console.warn("[work] Rename refresh failed:", refreshError instanceof Error ? refreshError.name : "UnknownError");
+        }
       }
     } finally {
       if (routeScopeRef.current.generation === requestRouteGeneration) setRenamePending(false);
@@ -279,6 +337,13 @@ export function WorkRail({
         onCollapse={onCollapse}
         showCollapseControl={showCollapseControl}
       />
+      <div className="flex items-center gap-2 px-3 py-2 text-xs">
+        <button type="button" aria-pressed={!unreadOnly} onClick={() => setUnreadOnly(false)} className="rounded px-2 py-1 hover:bg-[var(--bg-hover)] aria-pressed:bg-[var(--bg-selected)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]">All</button>
+        <button type="button" aria-pressed={unreadOnly} onClick={() => setUnreadOnly(true)} className="rounded px-2 py-1 hover:bg-[var(--bg-hover)] aria-pressed:bg-[var(--bg-selected)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]">Unread</button>
+      </div>
+      {readError ? <p role="alert" className="px-3 text-xs">{readError}</p> : null}
+      {unreadOnly && !records.some(isChatUnread) ? <p className="px-3 text-xs">No unread chats.</p> : null}
+      <ChatAgentsRailSection client={client?.agents} onOpen={onOpenAgents} onStartChat={onStartAgentChat} onSetup={() => { useUi.getState().requestSettingsSection("agents-providers"); useTabs.getState().openTab({ kind: "settings", title: "Settings" }); }} />
       <div className="contents">
         <WorkRailSection
           label="Pinned"
@@ -295,6 +360,8 @@ export function WorkRail({
               renaming={renamingChatId === record.chat.id}
               renamePending={renamePending && renamingChatId === record.chat.id}
               renameDisabled={renamePending}
+              onToggleRead={() => { void toggleRead(record); }}
+              readPending={readPending}
               onRenameStart={() => {
                 if (renamePending) return;
                 setRenameError(null);
@@ -346,6 +413,8 @@ export function WorkRail({
                 pinning={pinning}
                 renamingChatId={renamingChatId}
                 renamePending={renamePending}
+                onToggleRead={(record) => { void toggleRead(record); }}
+                readPending={readPending}
                 onRenameChat={(record) => {
                   if (renamePending) return;
                   setRenameError(null);
@@ -387,6 +456,8 @@ export function WorkRail({
               renaming={renamingChatId === record.chat.id}
               renamePending={renamePending && renamingChatId === record.chat.id}
               renameDisabled={renamePending}
+              onToggleRead={() => { void toggleRead(record); }}
+              readPending={readPending}
               onRenameStart={() => {
                 if (renamePending) return;
                 setRenameError(null);

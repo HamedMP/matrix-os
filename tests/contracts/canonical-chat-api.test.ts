@@ -126,19 +126,19 @@ describe("canonical Chat API contracts", () => {
 
   it("accepts only bounded, non-empty revision-guarded Chat titles", () => {
     expect(CanonicalUpdateChatTitleRequestSchema.parse({
-      baseRevision: 4,
+      expectedTitleVersion: 4,
       title: "  Release plan  ",
-    })).toEqual({ baseRevision: 4, title: "Release plan" });
+    })).toEqual({ expectedTitleVersion: 4, title: "Release plan" });
     expect(CanonicalUpdateChatTitleRequestSchema.safeParse({
-      baseRevision: 4,
+      expectedTitleVersion: 4,
       title: "   ",
     }).success).toBe(false);
     expect(CanonicalUpdateChatTitleRequestSchema.safeParse({
-      baseRevision: 4,
+      expectedTitleVersion: 4,
       title: "x".repeat(161),
     }).success).toBe(false);
     expect(CanonicalUpdateChatTitleRequestSchema.safeParse({
-      baseRevision: 4,
+      expectedTitleVersion: 4,
       title: "Release plan",
       ownerId: "other_owner",
     }).success).toBe(false);

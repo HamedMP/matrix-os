@@ -1,3 +1,4 @@
+import { useDesktopSurfaces } from "../../desktop/src/renderer/src/stores/desktop-surfaces";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProviderSettingsMutation, ProviderSettingsSnapshot } from "@matrix-os/contracts";
 import { AppError } from "../../desktop/src/shared/app-error";
@@ -217,7 +218,12 @@ describe("desktop provider connection actions", () => {
   it("opens and requests only the exact existing canonical Terminal tab without creating one", async () => {
     const get = vi.fn().mockResolvedValue(providerTerminalWorkspaces());
     const post = vi.fn();
+    const root = useTabs.getState().openTab({ kind: "terminals", title: "Terminal" });
+    useDesktopSurfaces.getState().reconcileTabs([root], { width: 1280, height: 800 });
+    useDesktopSurfaces.getState().activateSurface(root);
+    useDesktopSurfaces.getState().closeSurface(root);
     const opened = await openExistingProviderTerminalSession(api({ get, post }), providerTerminalRef);
+    expect(useDesktopSurfaces.getState().surfaces[root]?.mode).toBe("window");
 
     expect(opened).toBe(true);
     expect(get).toHaveBeenCalledWith("/api/terminal/workspaces");

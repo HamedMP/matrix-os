@@ -411,7 +411,9 @@ jobs:
     name: Unit Tests (${{ matrix.shard }}/4)
     needs: [changes, patterns, sync-client]
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Shard 4 passed all tests at ~15 minutes including setup; allow cleanup
+    # and runner variance without cancelling an otherwise successful shard.
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -580,6 +582,21 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Run required Desktop provider auth Terminal regression
+        if: needs.changes.outputs.should_run == 'true'
+        env:
+          MATRIX_DESKTOP_E2E_REQUIRED: "1"
+        run: xvfb-run --auto-servernum bun run test:e2e -- tests/e2e/desktop/provider-auth-terminal.e2e.test.ts
+
+      - name: Upload Desktop provider auth evidence
+        if: always() && needs.changes.outputs.should_run == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: desktop-provider-auth-evidence
+          path: output/playwright/om-255/
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Run required MAT-335 Desktop regression
         if: needs.changes.outputs.should_run == 'true'
         env:
@@ -591,6 +608,21 @@ jobs:
         env:
           MATRIX_DESKTOP_E2E_REQUIRED: "1"
         run: xvfb-run --auto-servernum bun run test:e2e -- tests/e2e/desktop/terminal-clipboard.e2e.test.ts
+
+      - name: Run required Desktop terminal snapshot regression
+        if: needs.changes.outputs.should_run == 'true'
+        env:
+          MATRIX_DESKTOP_E2E_REQUIRED: "1"
+        run: xvfb-run --auto-servernum bun run test:e2e -- tests/e2e/desktop/terminal-snapshot.e2e.test.ts
+
+      - name: Upload Desktop terminal snapshot evidence
+        if: always() && needs.changes.outputs.should_run == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: desktop-terminal-snapshot-evidence
+          path: output/playwright/terminal-snapshot/restored.png
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Run required Desktop release alignment regression
         if: needs.changes.outputs.should_run == 'true'

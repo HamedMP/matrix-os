@@ -4,7 +4,7 @@ import { toMessage } from "../../packages/gateway/src/chat/records";
 import { registerCanonicalChatEventHttpRoute } from "../../packages/gateway/src/chat/event-http-route";
 import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat";
 import { Hono } from "hono";
-import { CanonicalChatMessageSchema, type CanonicalChatDetailResponse } from "@matrix-os/contracts";
+import { CanonicalChatSchema, CanonicalChatMessageSchema, type CanonicalChatDetailResponse } from "@matrix-os/contracts";
 import { createCanonicalChatRoutes, type CanonicalChatRouteService } from "../../packages/gateway/src/chat/routes";
 
 // Frozen field set from Desktop 0.1.0-canary.20260908044406 (919eb2e6d).
@@ -18,7 +18,7 @@ const legacyDesktopMessage = z.object({
 const timestamp = "2026-09-09T00:00:00.000Z";
 const detail: CanonicalChatDetailResponse = {
   record: { chat: { id: "chat_test", ownerScope: { type: "personal", ownerId: "owner" },
-    title: "Compatibility", lifecycle: "active", attention: "none", revision: 1,
+    title: "Compatibility", titleVersion: 3, activityAt: timestamp, lifecycle: "active", attention: "none", revision: 1,
     messageCount: 1, createdAt: timestamp, updatedAt: timestamp } },
   messages: [toMessage({ id: "msg_test", chat_id: "chat_test", seq: 1, role: "user", state: "committed",
     actor_id: "owner", purpose: "ai_request", turn_id: null, run_id: null,
@@ -108,4 +108,29 @@ it.each(["turn", "steer", "queued-steer"])("preserves the old parser for %s resp
     if (version === "2") expect(output).toEqual(message);
     else expect(legacyDesktopMessage.safeParse(output).success).toBe(true);
   }
+});
+
+const oldChat = CanonicalChatSchema.omit({ titleVersion: true, activityAt: true }).strict();
+it.each(["0", "1"])("negotiates chat title and activity metadata in HTTP and SSE (%s)", async (version) => {
+  const headers = { "x-matrix-chat-metadata": version, "x-matrix-chat-protocol": "2", accept: "text/event-stream" };
+  const response = await app().request("/api/chats/chat_test?messageVersion=2", { headers });
+  const body = await response.json();
+  expect(oldChat.safeParse(body.record.chat).success).toBe(version === "0");
+  expect(body.record.chat.titleVersion).toBe(version === "1" ? 3 : undefined);
+  const streamApp = new Hono();
+  registerCanonicalChatEventHttpRoute({ app: streamApp, getPrincipal: () => ({ userId: "owner", source: "jwt" }),
+    stream: { open: async ({ sink }) => {
+      sink.send({ type: "chat.content", event: { cursor: 1, chatId: "chat_test", revision: 1, eventType: "chat.updated", createdAt: timestamp }, content: { record: detail.record } });
+      return { onClose() {}, touch() {} };
+    } }, setIntervalFn: vi.fn(() => 1), clearIntervalFn: vi.fn(),
+  });
+  const live = await streamApp.request("/api/chats/events?messageVersion=2", { headers });
+  const reader = live.body!.getReader();
+  try {
+    const text = new TextDecoder().decode((await reader.read()).value);
+    const frame = JSON.parse(text.split("data: ")[1]!.trim());
+    expect(oldChat.safeParse(frame.content.record.chat).success).toBe(version === "0");
+    expect(frame.content.record.chat.titleVersion).toBe(version === "1" ? 3 : undefined);
+    expect(detail.record.chat.titleVersion).toBe(3);
+  } finally { await reader.cancel(); }
 });

@@ -25,5 +25,7 @@ export function ProjectSharing({ projectId, projectName }: { projectId: string; 
     });
     return () => { active = false; };
   }, []);
-  return api ? <ProjectSharingButton api={api} runtimeId={runtimeId} projectId={projectId} projectName={projectName} /> : null;
+  return api && runtimeId
+    ? <ProjectSharingButton api={api} runtimeId={runtimeId} projectId={projectId} projectName={projectName} />
+    : null;
 }

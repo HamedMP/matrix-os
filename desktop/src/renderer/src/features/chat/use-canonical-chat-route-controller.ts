@@ -1,3 +1,5 @@
+import { useChatReadState, mergeChatReadState } from "@matrix-os/ui";
+import type { CanonicalUpdateChatReadStateRequest } from "@matrix-os/contracts";
 import { useCanonicalInputSubmission } from "./use-canonical-input-submission";
 import type {
   CanonicalChatDetailResponse,
@@ -31,7 +33,7 @@ function detailWithRecord(
   detail: CanonicalChatDetailResponse,
   record: CanonicalChatRecord,
 ): CanonicalChatDetailResponse {
-  return detail.record.chat.revision > record.chat.revision ? detail : { ...detail, record };
+  return detail.record.chat.revision > record.chat.revision ? detail : { ...detail, record: mergeChatReadState(record, detail.record) };
 }
 
 function shouldApplyAcknowledgement(
@@ -117,12 +119,15 @@ export function useCanonicalChatRouteController({
   ) => {
     const sequence = ++detailRequestSequence.current;
     try {
-      const loaded = await client.getDetail(chatId, { limit: 200 });
+      let loaded = await client.getDetail(chatId, { limit: 200 });
       if (sequence !== detailRequestSequence.current) return null;
       const current = detailRef.current;
       if (current?.record.chat.id === loaded.record.chat.id
         && current.record.chat.revision > loaded.record.chat.revision) {
         return current;
+      }
+      if (current?.record.chat.id === loaded.record.chat.id) {
+        loaded = { ...loaded, record: mergeChatReadState(loaded.record, current.record) };
       }
       detailRef.current = loaded;
       setDetail(loaded);
@@ -144,7 +149,10 @@ export function useCanonicalChatRouteController({
         ? await client.search(query, { projectId, limit: 100 })
         : await client.list({ projectId, limit: 100 });
       if (sequence !== listRequestSequence.current) return;
-      setItems(page.items);
+      setItems((current) => page.items.map((item) => {
+        const previous = current.find((candidate) => candidate.chat.id === item.chat.id);
+        return previous ? mergeChatReadState(item, previous) : item;
+      }));
       if (!options.background) setError(null);
       setStatus("ready");
       setActiveChatId((current) => {
@@ -210,7 +218,7 @@ export function useCanonicalChatRouteController({
       if (event.type === "chat.changed" && event.content) {
         const record = event.content.content.record;
         setItems((current) => current.map((item) => item.chat.id === record.chat.id
-          && item.chat.revision < record.chat.revision ? record : item));
+          && item.chat.revision < record.chat.revision ? mergeChatReadState(record, item) : item));
         if (event.chatId === activeChatIdRef.current) {
           const streamedMessageId = event.content.content.messageDelta?.message.id;
           if (streamedMessageId) {
@@ -311,7 +319,7 @@ export function useCanonicalChatRouteController({
       setItems((items) => items.map((item) => (
         item.chat.id === record.chat.id
           && shouldApplyAcknowledgement(item, record, attempt.runId)
-          ? record
+          ? mergeChatReadState(record, item)
           : item
       )));
     }).catch((error: unknown) => {
@@ -399,7 +407,7 @@ export function useCanonicalChatRouteController({
   }, [client, detail, loadDetail, updateDetail]);
 
   const submitTurn = useCallback(async (
-    input: Omit<CanonicalCreateChatTurnRequest, "clientRequestId" | "baseRevision">,
+    input: Omit<CanonicalCreateChatTurnRequest, "clientRequestId" | "baseRevision"> & { clientRequestId?: string },
     title: string,
     initialProjectId: string | null = projectId,
   ) => {
@@ -410,7 +418,7 @@ export function useCanonicalChatRouteController({
       let current = detail;
       if (!current) {
         const record = await client.create({
-          clientRequestId: canonicalChatRequestId(),
+          clientRequestId: input.clientRequestId ? `${input.clientRequestId}_chat` : canonicalChatRequestId(),
           title,
           ...(initialProjectId === null ? {} : { projectId: initialProjectId }),
           currentSelection: input.selection,
@@ -426,7 +434,7 @@ export function useCanonicalChatRouteController({
       }
       const admitted = await client.admitTurn(current.record.chat.id, {
         ...input,
-        clientRequestId: canonicalChatRequestId(),
+        clientRequestId: input.clientRequestId ?? canonicalChatRequestId(),
         baseRevision: current.record.chat.revision,
       }, {
         chatScope: current.record.projectId ? "project" : "global",
@@ -528,19 +536,24 @@ export function useCanonicalChatRouteController({
   }, [client, loadDetail, updateDetail]);
 
   const queueTurn = useCallback(async (
-    input: Omit<CanonicalQueueChatTurnRequest, "clientRequestId" | "baseRevision">,
+    input: Omit<CanonicalQueueChatTurnRequest, "clientRequestId" | "baseRevision"> & { clientRequestId?: string },
   ) => {
     const current = detailRef.current;
-    if (!current?.record.activeRun) return null;
+    if (!current || (!current.record.activeRun && !input.clientRequestId)) return null;
     const routeScope = routeScopeRef.current;
     const isCurrentScope = () => Boolean(routeScope?.active && routeScopeRef.current === routeScope);
     try {
       const response = await client.queueTurn(current.record.chat.id, {
         ...input,
-        clientRequestId: canonicalChatRequestId(),
+        clientRequestId: input.clientRequestId ?? canonicalChatRequestId(),
         baseRevision: current.record.chat.revision,
       });
       if (!isCurrentScope()) return null;
+      if (response.alreadyClaimed) {
+        await loadDetail(current.record.chat.id);
+        setError(null);
+        return response;
+      }
       detailRequestSequence.current += 1;
       updateDetail((currentDetail) => {
         if (!currentDetail || currentDetail.record.chat.id !== current.record.chat.id
@@ -838,7 +851,29 @@ export function useCanonicalChatRouteController({
     }
   }, [client, selectChat]);
 
+  const updateReadState = useCallback(async (chatId: string, input: CanonicalUpdateChatReadStateRequest) => {
+    const scope = routeScopeRef.current;
+    try {
+      const response = await client.updateReadState(chatId, input);
+      if (routeScopeRef.current !== scope) return false;
+      setItems((current) => current.map((item) => mergeChatReadState(item, response)));
+      updateDetail((current) => current ? { ...current, record: mergeChatReadState(current.record, response) } : current);
+      return true;
+    } catch (error: unknown) {
+      console.warn("[chat] Read state update failed:", diagnosticErrorKind(error));
+      if (routeScopeRef.current === scope) setError("The Chat could not be updated. Try again.");
+      return false;
+    }
+  }, [client, updateDetail]);
+  useChatReadState({
+    chatId: activeChatId,
+    state: detail?.record.chat.id === activeChatId ? detail.record.readState : undefined,
+    throughSeq: Math.max(0, ...(detail?.messages ?? []).filter((message) => message.role === "assistant" && message.state === "committed").map((message) => message.seq)),
+    active, onRead: updateReadState,
+  });
+
   return {
+    updateReadState,
     items,
     activeChatId,
     detail,

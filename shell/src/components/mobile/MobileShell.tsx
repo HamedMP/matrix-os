@@ -558,6 +558,11 @@ function MobileAppFrame({
     }
     return (
       <ChatApp
+                filterUnreadOnly={chat.unreadOnly}
+                onUnreadFilterChange={chat.setUnreadOnly}
+                readState={chat.readState}
+                displayedThroughSeq={chat.displayedThroughSeq}
+                onUpdateReadState={chat.updateReadState}
         mobile
         messages={chat.messages}
         sessionId={chat.sessionId}
@@ -569,6 +574,7 @@ function MobileAppFrame({
         activeConversationTitle={chat.activeConversationTitle}
         onRenameConversation={chat.renameConversation}
         onSubmit={chat.submitMessage}
+              agentClient={chat.agentClient} queuedTurns={chat.queuedTurns} onCancelQueuedTurn={chat.cancelQueuedTurn}
         onSubmitApproval={chat.submitApproval}
               onSubmitInput={chat.submitInput}
         providerSelection={chat.providerSelection}
