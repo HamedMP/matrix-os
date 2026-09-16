@@ -1,6 +1,6 @@
 import { z } from "zod/v4";
-import { KernelEffortSchema, KernelModelSchema } from "../domains/integrations/kernel-settings.js";
-import { KernelCredentialAccessSourceIdSchema } from "../domains/integrations/kernel-credentials.js";
+import { KernelEffortSchema, KernelModelSchema } from "./kernel-settings.js";
+import { KernelCredentialAccessSourceIdSchema } from "./kernel-credentials.js";
 
 export const MainWsClientMessageSchema = z.discriminatedUnion("type", [
   z.object({

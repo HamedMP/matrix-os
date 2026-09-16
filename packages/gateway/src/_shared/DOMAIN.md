@@ -12,7 +12,6 @@ the boundary check (Phase 1-A3.0 follow-up).
 | `http-body.ts` | Shared body helpers |
 | `ring-buffer.ts` | Bounded ring buffer |
 | `path-security.ts` | `resolveWithinPrefix`-style path validation |
-| `ws-message-schema.ts` | WebSocket frame schemas |
 | `forward-ws.ts` | WS forwarding primitives |
 | `postgres-manager.ts` | Owner Postgres lifecycle helpers |
 | `bounded-json-file.ts` | Size-capped JSON file store |

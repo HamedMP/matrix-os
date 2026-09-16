@@ -10,7 +10,9 @@ follow-up.)
 
 `funded-ai-credential-manager.ts` ·
 `funded-ai-funding-summary-client.ts` · `kernel-credentials.ts` ·
-`kernel-settings.ts`
+`kernel-settings.ts` · `ws-message-schema.ts` (WS wire schemas over the
+kernel credential/model contracts — moved here so `_shared` keeps its
+no-domain-imports rule)
 
 ## Decision log
 

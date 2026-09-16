@@ -322,7 +322,7 @@ import type { WSContext } from "hono/ws";
 import {
   MainWsClientMessageSchema,
   type MainWsClientMessage,
-} from "./_shared/ws-message-schema.js";
+} from "./domains/integrations/ws-message-schema.js";
 import type { GatewayConfig, ServerMessage } from "./server/types.js";
 import {
   kernelEventToServerMessage,
