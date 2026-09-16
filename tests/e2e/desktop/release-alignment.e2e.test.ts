@@ -50,7 +50,7 @@ suite("Desktop release alignment through the built IPC and gateway", () => {
   afterEach(async ({ task }) => {
     if (task.result?.state === "fail" && page && !page.isClosed()) {
       mkdirSync(evidence, { recursive: true });
-      await page.screenshot({ path: join(evidence, "failure.png") });
+      await page.screenshot({ animations: "disabled", path: join(evidence, "failure.png") });
     }
   });
 
@@ -72,7 +72,7 @@ suite("Desktop release alignment through the built IPC and gateway", () => {
     await recheck();
     expect(await page.getByRole("dialog", { name: "Update Matrix OS" }).count()).toBe(0);
     mkdirSync(evidence, { recursive: true });
-    await page.screenshot({ path: join(evidence, "compatible-different-source.png") });
+    await page.screenshot({ animations: "disabled", path: join(evidence, "compatible-different-source.png") });
   });
 
   it("prompts only for an unsupported protocol and preserves an unsent draft", async () => {
@@ -87,10 +87,10 @@ suite("Desktop release alignment through the built IPC and gateway", () => {
     await recheck();
     await dialog.waitFor();
     await page.getByText(/desktop app must be updated/).waitFor();
-    await page.screenshot({ path: join(evidence, "desktop-update-required.png") });
+    await page.screenshot({ animations: "disabled", path: join(evidence, "desktop-update-required.png") });
     await dialog.getByRole("button", { name: "Later", exact: true }).click();
     await expect.poll(() => composer.textContent()).toBe("Unsent compatibility regression draft");
-    await page.screenshot({ path: join(evidence, "dismissed-draft-preserved.png") });
+    await page.screenshot({ animations: "disabled", path: join(evidence, "dismissed-draft-preserved.png") });
     await recheck();
     expect(await dialog.count()).toBe(0);
 
