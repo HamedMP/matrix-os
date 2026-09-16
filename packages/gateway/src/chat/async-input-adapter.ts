@@ -10,12 +10,16 @@ import type { CanonicalChatProviderAdapter, CanonicalProviderRunEvent, Canonical
 const ASYNC_PROMPT = `\n\n[Matrix question delivery]\nQuestions are asynchronous. ${ASYNC_QUESTION_NOTICE}`;
 type Question = Extract<CanonicalProviderRunEvent, { type: "input.requested" }>;
 type Answer = { request: Question; input: CanonicalSubmitChatInputRequest };
+type Steer = Parameters<NonNullable<CanonicalChatProviderAdapter["steer"]>>[0];
+type Continuation = { kind: "answer"; answer: Answer } | { kind: "steer"; input: Steer };
 type Run = {
   input: CanonicalProviderRunInput;
   pending: Map<string, { request: Question; timer: ReturnType<typeof setTimeout> }>;
   deferred: Set<string>;
   nativeOnly: Set<string>;
-  answers: Answer[];
+  continuations: Continuation[];
+  nativeActive: boolean;
+  resumable: boolean;
   expired: CanonicalProviderRunEvent[];
   wake?: () => void;
 };
@@ -32,20 +36,22 @@ export function withAsyncChatInput(native: CanonicalChatProviderAdapter, options
 
   async function* execute(input: CanonicalProviderRunInput): AsyncIterable<CanonicalProviderRunEvent> {
     if (runs.has(input.runId) || runs.size >= 128) throw new Error("Async question Run unavailable");
-    const run: Run = { input, pending: new Map(), deferred: new Set(), nativeOnly: new Set(), answers: [], expired: [] };
+    const run: Run = { input, pending: new Map(), deferred: new Set(), nativeOnly: new Set(), continuations: [], nativeActive: true, resumable: false, expired: [] };
     runs.set(input.runId, run);
     const wake = () => { run.wake?.(); run.wake = undefined; };
     input.signal.addEventListener("abort", wake);
     let state = input.resumeState;
     let phase = 0;
-    let phaseAnswers: Answer[] = [];
+    let continuation: Continuation | undefined;
     let tokenUsage: AiTokenUsage | undefined;
     let lastTerminal: Extract<CanonicalProviderRunEvent, { type: "run.completed" }> = { type: "run.completed", outcome: "completed" };
     try {
       while (!input.signal.aborted) {
-        const prompt = phase === 0 ? input.prompt :
+        const phaseAnswers = continuation?.kind === "answer" ? [continuation.answer] : [];
+        const prompt = continuation?.kind === "steer" ? `${continuation.input.prompt}${ASYNC_PROMPT}` : phase === 0 ? input.prompt :
           `[Matrix: answers to your earlier asynchronous questions]\n${JSON.stringify(phaseAnswers.map(answer => ({ requestId: answer.request.requestId, questions: answer.request.questions?.map(question => ({ questionId: question.questionId, question: question.question })), answers: answer.input.structuredAnswers ?? answer.input.answer })))}\nApply these user answers to the pending work. Do not ask the same questions again.${ASYNC_PROMPT}`;
-        const parts = phase === 0 ? input.parts : [{ type: "text" as const, text: prompt }];
+        const parts = continuation?.kind === "steer" ? continuation.input.parts : phase === 0 ? input.parts : [{ type: "text" as const, text: prompt }];
+        run.nativeActive = true;
         const next = { ...input, prompt, parts, ...(state === undefined ? {} : { resumeState: state }),
           ...(phase ? { continuationId: `run_async_${digest(`${input.runId}:${phase}`)}` } : {}) };
         const source = state === undefined ? native.start(next) : native.resume!({ ...next, resumeState: state });
@@ -100,28 +106,43 @@ export function withAsyncChatInput(native: CanonicalChatProviderAdapter, options
         }
         lastTerminal = { ...terminal, ...(tokenUsage ? { tokenUsage } : {}) };
         if (terminal.outcome !== "completed") break;
-        while (!input.signal.aborted && run.pending.size && !run.answers.length) {
+        run.resumable = state !== undefined;
+        run.nativeActive = false;
+        while (!input.signal.aborted && run.pending.size && !run.continuations.length) {
           while (run.expired.length) yield run.expired.shift()!;
           if (!run.pending.size) break;
-          await new Promise<void>(resolve => { run.wake = resolve; if (input.signal.aborted || run.answers.length) wake(); });
+          await new Promise<void>(resolve => { run.wake = resolve; if (input.signal.aborted || run.continuations.length) wake(); });
         }
         while (run.expired.length) yield run.expired.shift()!;
-        if (input.signal.aborted || !run.answers.length) break;
-        if (state === undefined) throw new Error("Native conversation cannot resume for an answer");
-        // One bounded answer payload per phase, without repeating all option descriptions.
-        phaseAnswers = run.answers.splice(0, 1); phase++;
+        if (input.signal.aborted || !run.continuations.length) break;
+        if (state === undefined) throw new Error("Native conversation cannot resume for a continuation");
+        // Drain answers and corrections in arrival order, one bounded payload per phase.
+        continuation = run.continuations.shift(); phase++;
       }
       if (native.detachOnShutdown && input.signal.reason instanceof BackgroundProjectionDetached) return;
       for (const requestId of run.pending.keys()) yield { type: "input.resolved", requestId, reason: "cancelled" };
       yield input.signal.aborted ? { type: "run.completed", outcome: "aborted", ...(tokenUsage ? { tokenUsage } : {}) } : lastTerminal;
     } finally {
       for (const pending of run.pending.values()) clearTimeout(pending.timer);
-      run.pending.clear(); run.deferred.clear(); run.nativeOnly.clear(); run.answers.length = 0; run.expired.length = 0;
+      run.pending.clear(); run.deferred.clear(); run.nativeOnly.clear(); run.continuations.length = 0; run.expired.length = 0;
       input.signal.removeEventListener("abort", wake); wake(); runs.delete(input.runId);
     }
   }
   return {
     ...native, start: execute, resume: execute,
+    ...(native.steer ? { async steer(input: Steer) {
+      const run = runs.get(input.runId);
+      if (!run || run.input.signal.aborted || run.input.chatId !== input.chatId || run.input.turnId !== input.turnId
+        || run.input.owner.type !== input.owner.type || run.input.owner.ownerId !== input.owner.ownerId) {
+        throw new Error("Steering Run unavailable");
+      }
+      // Never replay an uncertain native delivery. Only a completed native phase
+      // can accept a correction as a continuation of the canonical Run.
+      if (run.nativeActive) return native.steer!(input);
+      if (!run.resumable || run.continuations.length >= 16) throw new Error("Steering Run unavailable");
+      run.continuations.push({ kind: "steer", input });
+      run.wake?.(); run.wake = undefined;
+    } } : {}),
     async submitInput(input) {
       const run = runs.get(input.runId);
       if (!run || run.input.signal.aborted || run.input.chatId !== input.chatId || run.input.owner.type !== input.owner.type || run.input.owner.ownerId !== input.owner.ownerId) throw new ChatInputNotDeliveredError();
@@ -136,9 +157,9 @@ export function withAsyncChatInput(native: CanonicalChatProviderAdapter, options
         if (error instanceof ChatInputAnswerValidationError) throw new ChatInputNotDeliveredError();
         throw error;
       }
-      if (run.answers.length >= 16) throw new ChatInputNotDeliveredError();
+      if (run.continuations.length >= 16) throw new ChatInputNotDeliveredError();
       clearTimeout(pending.timer); run.pending.delete(input.requestId);
-      run.answers.push({ request: pending.request, input }); run.wake?.(); run.wake = undefined;
+      run.continuations.push({ kind: "answer", answer: { request: pending.request, input } }); run.wake?.(); run.wake = undefined;
       return "queued";
     },
   };

@@ -13,3 +13,23 @@ Auth: POST /api/chats/:chatId/runs/:runId/inputs/:requestId uses existing Chat o
 | Native input controls | Controls are bound to the admitted owner and run. Codex/Pi use process-local transport, Hermes its local control socket, and OpenCode an authenticated loopback endpoint. | No |
 
 No public or anonymous endpoint is introduced. Native callbacks do not replace gateway authentication. Confirmed pre-delivery failures reopen only their exact durable claim under the Chat row lock; ambiguous delivery remains fenced against replay.
+
+## Steering while asynchronous questions remain open
+
+The canonical Run may outlive its native execution phase while waiting for an
+answer. A steering request in this interval must resume the same native
+conversation with the correction, preserving the canonical Run and Turn IDs.
+It must not call a native steering registry that has already been released.
+Answers and idle-phase corrections share a bounded FIFO continuation queue.
+Outstanding questions remain answerable; a correction is not an answer or an
+approval. Each resumed phase has a distinct continuation identity.
+
+During a live native phase, steering still uses the provider's native path.
+A rejected or uncertain native delivery is never replayed automatically as a
+continuation. Owner, Chat, Run, and Turn identity must match, and cancellation
+rejects subsequent corrections and drains pending continuations.
+
+Regression coverage: `tests/gateway/chat-async-steer.test.ts`. Real Hermes
+validation must cover native phase completion with a question still pending,
+accepted steering, and a subsequent model response to that correction without
+resolving the question as answered.
