@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import { getSystemInfo } from "../../packages/gateway/src/system-info";
+import { getSystemInfo } from "../../packages/gateway/src/domains/observability/system-info";
 import { evaluateDesktopReleaseState } from "../../packages/contracts/src/release-alignment";
 import hostInfo from "../fixtures/host-release-system-info.json";
 

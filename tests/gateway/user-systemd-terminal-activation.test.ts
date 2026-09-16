@@ -6,7 +6,7 @@ import { rm } from "node:fs/promises";
 import {
   TERMINAL_USER_SYSTEMD_ACTIVATION_MARKER,
   resolveUserSystemdTerminalActivation,
-} from "../../packages/gateway/src/terminal-user-systemd-activation.js";
+} from "../../packages/gateway/src/domains/terminal/terminal-user-systemd-activation.js";
 
 describe("user-systemd terminal activation", () => {
   const roots: string[] = [];

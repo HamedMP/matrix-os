@@ -1,7 +1,7 @@
 import type { StoredThread } from "./thread-store.js";
 import type { CodexEventBridge } from "./codex-event-bridge.js";
-import type { WorkspaceSessionOrchestrator } from "../workspace-session-orchestrator.js";
-import { BackgroundAgentRefSchema } from "../background-agent-runtime.js";
+import type { WorkspaceSessionOrchestrator } from "../domains/workspace/workspace-session-orchestrator.js";
+import { BackgroundAgentRefSchema } from "../domains/sessions/background-agent-runtime.js";
 
 /** Restore observation only: never replay a prompt whose delivery is uncertain. */
 export async function restoreBackgroundChatThread(options: {

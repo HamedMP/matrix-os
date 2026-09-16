@@ -15,9 +15,9 @@ import {
   createConversationStore,
   type ConversationFile,
   type SearchResult,
-} from "../../packages/gateway/src/conversations.js";
+} from "../../packages/gateway/src/domains/sessions/conversations.js";
 import { createConversationMutationLock } from
-  "../../packages/gateway/src/conversation-mutation-lock.js";
+  "../../packages/gateway/src/domains/sessions/conversation-mutation-lock.js";
 
 function deferred() {
   let resolve!: () => void;

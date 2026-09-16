@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { ClientMessageSchema } from "../../packages/gateway/src/session-registry.js";
+import { ClientMessageSchema } from "../../packages/gateway/src/domains/sessions/session-registry.js";
 
 describe("WebSocket ping/pong protocol", () => {
   describe("ClientMessageSchema", () => {

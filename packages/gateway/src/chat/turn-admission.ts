@@ -6,7 +6,7 @@ import {
   type CanonicalCreateChatTurnRequest, type CanonicalChatMessage, type CanonicalChatRun,
   type CanonicalChatTurnAdmissionResponse,
 } from "@matrix-os/contracts";
-import type { RequestPrincipal } from "../request-principal.js";
+import type { RequestPrincipal } from "../domains/identity/request-principal.js";
 import type { ChatOwner } from "./records.js";
 import type { ChatRepository } from "./repository.js";
 import { ChatBusyError, ChatNotFoundError } from "./errors.js";

@@ -7,7 +7,7 @@ import {
   clientErrorLogPath,
   forwardClientErrorToPostHog,
   writeClientErrorReport,
-} from "../../packages/gateway/src/client-error-log.js";
+} from "../../packages/gateway/src/domains/observability/client-error-log.js";
 
 async function tmpHome(): Promise<string> {
   return resolve(await mkdtemp(join(tmpdir(), "client-error-log-")));

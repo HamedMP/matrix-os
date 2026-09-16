@@ -1,7 +1,7 @@
 import { CanonicalChatContentSchema, CanonicalChatSafeErrorSchema, type CanonicalChatContent } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import { MATRIX_TELEMETRY_EVENTS } from "@matrix-os/observability/events";
-import type { AiCaptureFn } from "../ai-analytics.js";
+import type { AiCaptureFn } from "../domains/observability/ai-analytics.js";
 import type { ChatOutboxSink } from "./outbox-delivery.js";
 import { ChatRunFailureDiagnosticSchema, CHAT_FAILURE_CATEGORY_REASONS, CHAT_RUN_CLEANUP_UNCONFIRMED_MESSAGE } from "./failure-diagnostic.js";
 

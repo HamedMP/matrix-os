@@ -3,7 +3,7 @@ import { reconcileDesktopRuntimeChange } from "../../desktop/src/renderer/src/st
 import { useBoard } from "../../desktop/src/renderer/src/stores/board";
 import { useHermesChat } from "../../desktop/src/renderer/src/stores/hermes-chat";
 import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
-import { useProjectLifecycle } from "../../desktop/src/renderer/src/stores/project-lifecycle";
+import { useProjectLifecycle } from "../../packages/gateway/src/domains/workspace/project-lifecycle";
 import { useProjectView } from "../../desktop/src/renderer/src/stores/project-view";
 import { useProjectWorkspaces } from "../../desktop/src/renderer/src/stores/project-workspaces";
 import { clearDraftChats, useDraftChat } from "../../desktop/src/renderer/src/stores/draft-chat";

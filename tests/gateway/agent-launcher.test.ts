@@ -5,7 +5,7 @@ import {
   buildAgentRuntimeEnvironment,
   createAgentLauncher,
   SupportedAgentSchema,
-} from "../../packages/gateway/src/agent-launcher.js";
+} from "../../packages/gateway/src/domains/sessions/agent-launcher.js";
 
 describe("agent-launcher", () => {
   it("forwards validated execution budgets through the isolated runtime environment", () => {

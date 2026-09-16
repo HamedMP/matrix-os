@@ -1,11 +1,11 @@
 import { createHmac } from "node:crypto";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { authMiddleware } from "../../packages/gateway/src/auth.js";
+import { authMiddleware } from "../../packages/gateway/src/domains/identity/auth.js";
 import {
   SYNC_JWT_AUDIENCE,
   validateSyncJwt,
   type JwtKeyConfig,
-} from "../../packages/gateway/src/auth-jwt.js";
+} from "../../packages/gateway/src/domains/identity/auth-jwt.js";
 import { exportSPKI, generateKeyPair, SignJWT } from "jose";
 import { issueSyncJwt } from "../../packages/platform/src/sync-jwt.js";
 

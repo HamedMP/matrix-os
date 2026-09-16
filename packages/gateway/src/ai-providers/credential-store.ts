@@ -4,9 +4,9 @@ import { z } from "zod/v4";
 import {
   resolveKernelCredentialSources,
   type KernelCredentialSources,
-} from "../kernel-credentials.js";
-import { normalizeKernelModel, type KernelModel } from "../kernel-settings.js";
-import type { MatrixFundedCredentialProvider } from "../funded-ai-credential-manager.js";
+} from "../domains/integrations/kernel-credentials.js";
+import { normalizeKernelModel, type KernelModel } from "../domains/integrations/kernel-settings.js";
+import type { MatrixFundedCredentialProvider } from "../domains/integrations/funded-ai-credential-manager.js";
 
 const SavedKernelConfigSchema = z.object({
   kernel: z.object({

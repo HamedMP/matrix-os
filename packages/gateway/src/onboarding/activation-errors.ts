@@ -2,7 +2,7 @@ import { ZodError } from "zod/v4";
 import {
   isRequestPrincipalError,
   mapRequestPrincipalError,
-} from "../request-principal.js";
+} from "../domains/identity/request-principal.js";
 
 const UNSAFE_CLIENT_ERROR = /(postgres|sqlite|mysql|pipedream|twilio|openai|anthropic|claude|codex|\/home\/|\/tmp\/|stack|constraint|zod|issues|secret|token|key)/i;
 

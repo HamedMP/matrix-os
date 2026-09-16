@@ -3,7 +3,7 @@ import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createSessionTranscriptManager } from "../../packages/gateway/src/session-transcript.js";
+import { createSessionTranscriptManager } from "../../packages/gateway/src/domains/sessions/session-transcript.js";
 
 describe("session-transcript", () => {
   let homePath: string;

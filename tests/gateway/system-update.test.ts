@@ -17,7 +17,7 @@ import {
   startSystemUpdate,
   startSystemUpdateRepair,
   writeInternalUpgradeTrigger,
-} from "../../packages/gateway/src/system-update.js";
+} from "../../packages/gateway/src/domains/observability/system-update.js";
 
 describe("system update checks", () => {
   it("compares host bundle releases by semver and commit", () => {

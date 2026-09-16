@@ -13,7 +13,7 @@ import { join } from "node:path";
 import type { AgentRuntimeSource } from "../../packages/gateway/src/agent-config/service.js";
 import { AiProviderService } from "../../packages/gateway/src/ai-providers/service.js";
 import { ProviderSettingsStoreError } from "../../packages/gateway/src/ai-providers/provider-settings-store.js";
-import type { MatrixFundedCredentialProvider } from "../../packages/gateway/src/funded-ai-credential-manager.js";
+import type { MatrixFundedCredentialProvider } from "../../packages/gateway/src/domains/integrations/funded-ai-credential-manager.js";
 import {
   ProviderCatalogUnavailableError,
   createChatProviderCatalogService,
@@ -22,7 +22,7 @@ import {
 import { createChatProviderRoutes } from "../../packages/gateway/src/chat/provider-routes.js";
 import { createNativeCodingModelCatalogSource } from "../../packages/gateway/src/chat/native-coding-model-catalog.js";
 import type { CodingAgentProviderRegistry } from "../../packages/gateway/src/coding-agents/provider-registry.js";
-import type { RequestPrincipal } from "../../packages/gateway/src/request-principal.js";
+import type { RequestPrincipal } from "../../packages/gateway/src/domains/identity/request-principal.js";
 import { providerSettingsCanonicalFixture } from "./provider-settings-test-support.js";
 
 const principal: RequestPrincipal = { userId: "owner_1", source: "jwt" };

@@ -3,7 +3,7 @@ import { mkdtemp, writeFile, mkdir, rm, readFile, stat } from "node:fs/promises"
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { existsSync } from "node:fs";
-import { publishApp, type PublishResult } from "../../packages/cli/src/commands/app-publish.js";
+import { publishApp, type PublishResult } from "../../packages/gateway/src/domains/apps/app-publish.js";
 
 let tmpDir: string;
 let storeDir: string;

@@ -15,8 +15,8 @@ import {
   createFakeCodingAgentProvider,
   type CodingAgentProviderAdapter,
 } from "../../packages/gateway/src/coding-agents/thread-store.js";
-import type { RequestPrincipal } from "../../packages/gateway/src/request-principal.js";
-import { MissingRequestPrincipalError } from "../../packages/gateway/src/request-principal.js";
+import type { RequestPrincipal } from "../../packages/gateway/src/domains/identity/request-principal.js";
+import { MissingRequestPrincipalError } from "../../packages/gateway/src/domains/identity/request-principal.js";
 import { ProjectFenceError } from "../../packages/gateway/src/collaboration/project-fence.js";
 
 const ownerPrincipal: RequestPrincipal = { userId: "owner_user", source: "jwt" };

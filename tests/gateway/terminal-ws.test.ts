@@ -12,7 +12,7 @@ import {
   ResizeSchema,
   DetachSchema,
   DestroySchema,
-} from "../../packages/gateway/src/session-registry.js";
+} from "../../packages/gateway/src/domains/sessions/session-registry.js";
 import {
   resetVolatilePtySessionList,
   registerTerminalSessionRoutes,

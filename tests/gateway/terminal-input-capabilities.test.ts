@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   parseTerminalInputCapabilityRequest,
   terminalFrameForInputCapabilities,
-} from "../../packages/gateway/src/terminal-input-capabilities.js";
+} from "../../packages/gateway/src/domains/terminal/terminal-input-capabilities.js";
 
 const ATTACHED_FRAME = {
   type: "attached" as const,

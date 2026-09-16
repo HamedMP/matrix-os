@@ -4,7 +4,7 @@ import { lstat, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod/v4";
-import { buildAgentRuntimeEnvironment } from "../agent-launcher.js";
+import { buildAgentRuntimeEnvironment } from "../domains/sessions/agent-launcher.js";
 import { ProviderSettingsStoreError } from "./provider-settings-errors.js";
 import { writeProviderJsonAtomic } from "./provider-settings-persistence.js";
 import type {

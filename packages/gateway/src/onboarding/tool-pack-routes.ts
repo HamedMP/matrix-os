@@ -7,7 +7,7 @@ import type { ToolPackService } from "./tool-packs.js";
 import {
   requireRequestPrincipal,
   type RequestPrincipal,
-} from "../request-principal.js";
+} from "../domains/identity/request-principal.js";
 
 const TOOL_PACK_BODY_LIMIT = 2048;
 

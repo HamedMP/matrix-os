@@ -12,8 +12,8 @@ import {
   type SafeSetupAction,
   type UserInputAnswerRequest,
 } from "@matrix-os/contracts";
-import { createProjectManager } from "../project-manager.js";
-import { createWorktreeManager } from "../worktree-manager.js";
+import { createProjectManager } from "../domains/workspace/project-manager.js";
+import { createWorktreeManager } from "../domains/git/worktree-manager.js";
 import {
   safeDisplayPath,
   safeToolActivity,

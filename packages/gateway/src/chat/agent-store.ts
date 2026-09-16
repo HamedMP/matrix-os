@@ -9,7 +9,7 @@ import {
   CreateChatAgentRequestSchema, UpdateChatAgentRequestSchema,
   type ChatAgent, type CreateChatAgentRequest, type UpdateChatAgentRequest,
 } from "@matrix-os/contracts";
-import { resolveWithinHome } from "../path-security.js";
+import { resolveWithinHome } from "../_shared/path-security.js";
 import type { ChatDatabase } from "./database.js";
 import type { ChatOwner } from "./records.js";
 

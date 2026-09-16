@@ -7,7 +7,7 @@ import { createCodingAgentProviderRegistry } from "../../packages/gateway/src/co
 import type { OpenCodeSpawnFn } from "../../packages/gateway/src/coding-agents/opencode-provider.js";
 import { resolveWorkspaceProviderRuntime } from "../../packages/gateway/src/coding-agents/workspace-provider-config.js";
 import { createWorkspaceCodingAgentProviderSet } from "../../packages/gateway/src/coding-agents/workspace-provider.js";
-import type { RequestPrincipal } from "../../packages/gateway/src/request-principal.js";
+import type { RequestPrincipal } from "../../packages/gateway/src/domains/identity/request-principal.js";
 import { providerSettingsCanonicalFixture } from "./provider-settings-test-support.js";
 
 const principal: RequestPrincipal = { userId: "owner_runtime", source: "jwt" };

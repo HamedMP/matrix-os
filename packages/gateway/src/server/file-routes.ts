@@ -12,14 +12,14 @@ import {
   resolveExistingFileApiPath,
   resolveWithinHome,
   resolveWritableFileApiPath,
-} from "../path-security.js";
-import { listDirectory } from "../files-tree.js";
-import { getMissingFileFallback } from "../file-fallbacks.js";
-import { fileStat, fileMkdir, fileTouch, fileRename, fileCopy, fileDuplicate } from "../file-ops.js";
-import { createFileBlobRoutes } from "../file-blob-routes.js";
-import { fileSearch } from "../file-search.js";
-import { fileDelete, trashList, trashRestore, trashEmpty } from "../trash.js";
-import { listProjects } from "../projects.js";
+} from "../_shared/path-security.js";
+import { listDirectory } from "../domains/files/files-tree.js";
+import { getMissingFileFallback } from "../domains/files/file-fallbacks.js";
+import { fileStat, fileMkdir, fileTouch, fileRename, fileCopy, fileDuplicate } from "../domains/files/file-ops.js";
+import { createFileBlobRoutes } from "../domains/files/file-blob-routes.js";
+import { fileSearch } from "../domains/files/file-search.js";
+import { fileDelete, trashList, trashRestore, trashEmpty } from "../domains/files/trash.js";
+import { listProjects } from "../domains/workspace/projects.js";
 import {
   ProjectFenceError,
 } from "../collaboration/project-fence.js";

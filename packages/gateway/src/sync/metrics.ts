@@ -1,5 +1,5 @@
 import { Counter, Histogram, Gauge } from "prom-client";
-import { metricsRegistry } from "../metrics.js";
+import { metricsRegistry } from "../domains/observability/metrics.js";
 
 export const syncFilesSyncedTotal = new Counter({
   name: "sync_files_synced_total",

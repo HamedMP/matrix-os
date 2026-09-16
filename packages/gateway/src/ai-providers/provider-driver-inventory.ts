@@ -1,5 +1,5 @@
 import type { AiProviderSnapshotV3 } from "@matrix-os/contracts";
-import type { AgentStatus } from "../agent-launcher.js";
+import type { AgentStatus } from "../domains/sessions/agent-launcher.js";
 import type { AgentRuntimeSource } from "../agent-config/service.js";
 
 type Driver = AiProviderSnapshotV3["drivers"][number];

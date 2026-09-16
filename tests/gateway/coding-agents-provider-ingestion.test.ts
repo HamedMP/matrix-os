@@ -11,7 +11,7 @@ import {
   createCodingAgentThreadStore,
 } from "../../packages/gateway/src/coding-agents/thread-store.js";
 import type { CodingAgentProviderAdapter } from "../../packages/gateway/src/coding-agents/provider-adapter.js";
-import type { RequestPrincipal } from "../../packages/gateway/src/request-principal.js";
+import type { RequestPrincipal } from "../../packages/gateway/src/domains/identity/request-principal.js";
 
 const principal: RequestPrincipal = { userId: "owner_user", source: "jwt" };
 const otherPrincipal: RequestPrincipal = { userId: "other_user", source: "jwt" };

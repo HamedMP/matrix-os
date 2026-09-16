@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, rm, symlink, truncate, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createFileBlobRoutes } from "../../packages/gateway/src/file-blob-routes";
+import { createFileBlobRoutes } from "../../packages/gateway/src/domains/files/file-blob-routes";
 
 describe("streamed attachment downloads", () => {
   let home: string;

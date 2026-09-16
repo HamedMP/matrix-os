@@ -6,8 +6,8 @@ import { Hono } from "hono";
 import { RuntimeSummarySchema } from "../../packages/contracts/src/index.js";
 import { createCodingAgentProjectMutationService } from "../../packages/gateway/src/coding-agents/project-mutations.js";
 import { createCodingAgentRoutes } from "../../packages/gateway/src/coding-agents/routes.js";
-import { createProjectManager } from "../../packages/gateway/src/project-manager.js";
-import { MissingRequestPrincipalError } from "../../packages/gateway/src/request-principal.js";
+import { createProjectManager } from "../../packages/gateway/src/domains/workspace/project-manager.js";
+import { MissingRequestPrincipalError } from "../../packages/gateway/src/domains/identity/request-principal.js";
 import { testPrincipal } from "../helpers/activation-readiness.js";
 
 const cleanup: string[] = [];

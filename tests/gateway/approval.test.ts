@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   createApprovalBridge,
   type ApprovalBridge,
-} from "../../packages/gateway/src/approval.js";
+} from "../../packages/gateway/src/domains/sessions/approval.js";
 
 describe("Approval bridge (gateway)", () => {
   let bridge: ApprovalBridge;

@@ -3,7 +3,7 @@ import { readFile, statfs } from "node:fs/promises";
 import { promisify } from "node:util";
 import { cpus, freemem, hostname, loadavg, totalmem, uptime } from "node:os";
 import type { ActivityCollectOptions, ActivitySnapshot, MachineIdentity, ProcessSummary, ServiceStatus } from "./types.js";
-import { getSystemInfo } from "../system-info.js";
+import { getSystemInfo } from "../domains/observability/system-info.js";
 import type { CleanupCandidateRegistry } from "./cleanup.js";
 
 const execFileAsync = promisify(execFile);

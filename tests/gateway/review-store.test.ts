@@ -3,8 +3,8 @@ import { mkdtemp, readFile, stat } from "node:fs/promises";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createReviewLoopRecord } from "../../packages/gateway/src/review-loop.js";
-import { createReviewStore } from "../../packages/gateway/src/review-store.js";
+import { createReviewLoopRecord } from "../../packages/gateway/src/domains/review/review-loop.js";
+import { createReviewStore } from "../../packages/gateway/src/domains/review/review-store.js";
 
 describe("review-store", () => {
   let homePath: string;

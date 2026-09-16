@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { createAppManager, type AppManager } from "../../packages/gateway/src/app-manager.js";
+import { createAppManager, type AppManager } from "../../packages/gateway/src/domains/apps/app-manager.js";
 
 describe("T1402: App lifecycle API", () => {
   let homePath: string;

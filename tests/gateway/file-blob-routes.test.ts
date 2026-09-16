@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdtemp, mkdir, readFile, rm, stat, symlink, truncate, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { createFileBlobRoutes } from "../../packages/gateway/src/file-blob-routes.js";
+import { createFileBlobRoutes } from "../../packages/gateway/src/domains/files/file-blob-routes.js";
 
 describe("file blob routes", () => {
   let homePath: string;

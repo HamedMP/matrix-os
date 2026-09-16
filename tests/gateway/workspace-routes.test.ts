@@ -3,10 +3,10 @@ import { chmod, mkdir, mkdtemp, stat, writeFile } from "node:fs/promises";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createWorkspaceRoutes } from "../../packages/gateway/src/workspace-routes.js";
-import { MissingRequestPrincipalError } from "../../packages/gateway/src/request-principal.js";
-import { atomicWriteJson } from "../../packages/gateway/src/state-ops.js";
-import { createZellijRuntime } from "../../packages/gateway/src/zellij-runtime.js";
+import { createWorkspaceRoutes } from "../../packages/gateway/src/domains/workspace/workspace-routes.js";
+import { MissingRequestPrincipalError } from "../../packages/gateway/src/domains/identity/request-principal.js";
+import { atomicWriteJson } from "../../packages/gateway/src/domains/files/state-ops.js";
+import { createZellijRuntime } from "../../packages/gateway/src/domains/terminal/zellij-runtime.js";
 import { ProjectFenceError } from "../../packages/gateway/src/collaboration/project-fence.js";
 
 function jsonRequest(path: string, body: unknown): Request {

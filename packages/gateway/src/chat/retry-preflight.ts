@@ -1,5 +1,5 @@
 import type { CanonicalOwnerScope } from "@matrix-os/contracts";
-import { boundedOperation } from "../bounded-operation.js";
+import { boundedOperation } from "../_shared/bounded-operation.js";
 import type { CanonicalChatProviderAdapter } from "./provider-adapter.js";
 
 /** Read-only preflight. Admission remains transactionally guarded by the repository. */

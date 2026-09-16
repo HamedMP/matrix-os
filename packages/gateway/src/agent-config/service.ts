@@ -16,7 +16,7 @@ import {
   normalizeKernelEffort,
   normalizeKernelModel,
   resolveKernelModelOption,
-} from "../kernel-settings.js";
+} from "../domains/integrations/kernel-settings.js";
 
 interface BuildAgentSettingsViewInput {
   identity: Record<string, unknown>;

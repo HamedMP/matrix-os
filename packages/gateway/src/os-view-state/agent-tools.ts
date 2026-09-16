@@ -7,7 +7,7 @@ import {
   type OsViewDesktopAddResult,
   type OsViewStateResponse,
 } from "@matrix-os/contracts";
-import { listApps, type AppEntry } from "../apps.js";
+import { listApps, type AppEntry } from "../domains/apps/apps.js";
 import { OsViewStateConflictError } from "./repository.js";
 
 const AGENT_DESKTOP_BOUNDS = { width: 1280, height: 640 } as const;

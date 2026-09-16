@@ -8,8 +8,8 @@ import {
   createOwnerCodingAgentProjectSummaryStore,
 } from "../../packages/gateway/src/coding-agents/project-summary.js";
 import { createCodingAgentRuntimeSummaryService } from "../../packages/gateway/src/coding-agents/runtime-summary.js";
-import { createProjectManager } from "../../packages/gateway/src/project-manager.js";
-import { createTaskManager } from "../../packages/gateway/src/task-manager.js";
+import { createProjectManager } from "../../packages/gateway/src/domains/workspace/project-manager.js";
+import { createTaskManager } from "../../packages/gateway/src/domains/workspace/task-manager.js";
 import { testPrincipal } from "../helpers/activation-readiness.js";
 
 const now = new Date("2026-07-10T10:00:00.000Z");

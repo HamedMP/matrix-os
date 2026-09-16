@@ -9,12 +9,12 @@ import {
   ProjectLockCapacityError,
   readJsonFile,
   withProjectLock,
-} from "../../packages/gateway/src/state-ops.js";
+} from "../../packages/gateway/src/domains/files/state-ops.js";
 import {
   readBoundedJsonFileWithIdentity,
   removeFileIfUnchanged,
-} from "../../packages/gateway/src/bounded-json-file.js";
-import { removeValidatedLegacyProjectState } from "../../packages/gateway/src/legacy-project-state.js";
+} from "../../packages/gateway/src/_shared/bounded-json-file.js";
+import { removeValidatedLegacyProjectState } from "../../packages/gateway/src/domains/workspace/legacy-project-state.js";
 
 describe("state-ops", () => {
   let homePath: string;

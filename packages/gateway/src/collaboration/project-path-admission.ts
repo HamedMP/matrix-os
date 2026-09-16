@@ -1,6 +1,6 @@
 import { dirname, resolve } from "node:path";
 import { z } from "zod/v4";
-import { resolveWithinHome, resolveWritableFileApiPath } from "../path-security.js";
+import { resolveWithinHome, resolveWritableFileApiPath } from "../_shared/path-security.js";
 import {
   ProjectFenceError,
   type LegacyProjectOperationAdmission,

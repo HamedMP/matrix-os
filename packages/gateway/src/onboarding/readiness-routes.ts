@@ -10,7 +10,7 @@ import type { ReadinessService } from "./readiness-service.js";
 import {
   requireRequestPrincipal,
   type RequestPrincipal,
-} from "../request-principal.js";
+} from "../domains/identity/request-principal.js";
 
 const READINESS_BODY_LIMIT = 4096;
 const READINESS_EMPTY_BODY_LIMIT = 512;

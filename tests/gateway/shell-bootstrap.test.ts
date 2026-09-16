@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { buildShellBootstrap } from "../../packages/gateway/src/shell-bootstrap.js";
+import { buildShellBootstrap } from "../../packages/gateway/src/domains/apps/shell-bootstrap.js";
 
 describe("shell bootstrap", () => {
   let homePath: string;

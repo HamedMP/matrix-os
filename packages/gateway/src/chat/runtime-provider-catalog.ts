@@ -1,6 +1,6 @@
 import { loadSkills } from "@matrix-os/kernel";
-import { buildKernelCredentialLaunch } from "../kernel-credentials.js";
-import type { MatrixFundedCredentialProvider } from "../funded-ai-credential-manager.js";
+import { buildKernelCredentialLaunch } from "../domains/integrations/kernel-credentials.js";
+import type { MatrixFundedCredentialProvider } from "../domains/integrations/funded-ai-credential-manager.js";
 import { createRuntimeClaudeModelCatalogSource } from "./claude-runtime-model-catalog.js";
 import { createCodexModelCatalogSource } from "./codex-model-catalog.js";
 import { createNativeCodingModelCatalogSource } from "./native-coding-model-catalog.js";

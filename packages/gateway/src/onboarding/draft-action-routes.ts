@@ -7,7 +7,7 @@ import type { DraftActionReadinessService } from "./draft-action-readiness.js";
 import {
   requireRequestPrincipal,
   type RequestPrincipal,
-} from "../request-principal.js";
+} from "../domains/identity/request-principal.js";
 
 const DRAFT_ACTION_BODY_LIMIT = 16 * 1024;
 

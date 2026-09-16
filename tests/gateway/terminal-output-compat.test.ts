@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createTerminalOutputCompatStream } from "../../packages/gateway/src/terminal-output-compat.js";
+import { createTerminalOutputCompatStream } from "../../packages/gateway/src/domains/terminal/terminal-output-compat.js";
 
 const READABLE_PROMPT = "\x1b[38;2;214;216;221;48;2;48;54;61mprompt\x1b[39;49m";
 const RAW_PROMPT = "\x1b[7mprompt\x1b[27m";

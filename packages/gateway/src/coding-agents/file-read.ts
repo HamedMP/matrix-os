@@ -21,8 +21,8 @@ import {
   type FileWriteRequest,
   type FileWriteResponse,
 } from "@matrix-os/contracts";
-import { createProjectRegistry } from "../project-registry.js";
-import type { RequestPrincipal } from "../request-principal.js";
+import { createProjectRegistry } from "../domains/workspace/project-registry.js";
+import type { RequestPrincipal } from "../domains/identity/request-principal.js";
 import { resolveOwnedWorktree, type OwnerScopedWorktreeSource } from "./owned-worktree.js";
 
 const DEFAULT_FILE_READ_LIMIT_BYTES = 64 * 1024;

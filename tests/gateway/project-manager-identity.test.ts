@@ -3,9 +3,9 @@ import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createProjectManager } from "../../packages/gateway/src/project-manager.js";
-import { reconcileProjectIdentityIndex } from "../../packages/gateway/src/project-identity-index.js";
-import { atomicWriteJson } from "../../packages/gateway/src/state-ops.js";
+import { createProjectManager } from "../../packages/gateway/src/domains/workspace/project-manager.js";
+import { reconcileProjectIdentityIndex } from "../../packages/gateway/src/domains/workspace/project-identity-index.js";
+import { atomicWriteJson } from "../../packages/gateway/src/domains/files/state-ops.js";
 
 describe("project-manager immutable identity", () => {
   let homePath: string;

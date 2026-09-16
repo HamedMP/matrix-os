@@ -1,4 +1,4 @@
-import type { Dispatcher, DispatchContext } from "../dispatcher.js";
+import type { Dispatcher, DispatchContext } from "../domains/sessions/dispatcher.js";
 import type { TranscriptEntry } from "./types.js";
 
 export type VoiceResponseParams = {

@@ -7,8 +7,8 @@ import {
   createAiGenerationRecorder,
   sanitizeAiTraceId,
   type AiCaptureFn,
-} from "../../packages/gateway/src/ai-analytics.js";
-import { createDispatcher, type SpawnFn } from "../../packages/gateway/src/dispatcher.js";
+} from "../../packages/gateway/src/domains/observability/ai-analytics.js";
+import { createDispatcher, type SpawnFn } from "../../packages/gateway/src/domains/sessions/dispatcher.js";
 import type { KernelEvent } from "@matrix-os/kernel";
 
 type CapturedCall = {

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { AgentThreadEvent, AgentThreadSummary, CreateAgentTurnRequest } from "@matrix-os/contracts";
-import type { RequestPrincipal } from "../request-principal.js";
+import type { RequestPrincipal } from "../domains/identity/request-principal.js";
 import {
   parseCodingAgentProviderRunResult,
   type CodingAgentProviderAdapter,

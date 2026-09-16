@@ -4,7 +4,7 @@ import {
   type PtyMessage,
   type PtyServerMessage,
   type SpawnFn,
-} from "../../packages/gateway/src/pty.js";
+} from "../../packages/gateway/src/domains/terminal/pty.js";
 
 function createMockPty() {
   return {

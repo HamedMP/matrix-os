@@ -2,14 +2,14 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { getMissingFileFallback } from "../../packages/gateway/src/file-fallbacks.js";
+import { getMissingFileFallback } from "../../packages/gateway/src/domains/files/file-fallbacks.js";
 import {
   isDeniedFileApiPath,
   resolveExistingFileApiPath,
   resolveWithinHome,
   resolveWritableFileApiPath,
-} from "../../packages/gateway/src/path-security.js";
-import { listDirectory } from "../../packages/gateway/src/files-tree.js";
+} from "../../packages/gateway/src/_shared/path-security.js";
+import { listDirectory } from "../../packages/gateway/src/domains/files/files-tree.js";
 
 describe("/files/* path containment", () => {
   let homePath: string;

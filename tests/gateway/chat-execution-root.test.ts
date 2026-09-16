@@ -8,8 +8,8 @@ import {
   type ChatExecutionRootProject,
   type ChatExecutionRootWorktree,
 } from "../../packages/gateway/src/chat/execution-root.js";
-import { createProjectManager } from "../../packages/gateway/src/project-manager.js";
-import { createWorktreeManager } from "../../packages/gateway/src/worktree-manager.js";
+import { createProjectManager } from "../../packages/gateway/src/domains/workspace/project-manager.js";
+import { createWorktreeManager } from "../../packages/gateway/src/domains/git/worktree-manager.js";
 
 const owner = { type: "personal" as const, ownerId: "user_owner" };
 const roots: string[] = [];

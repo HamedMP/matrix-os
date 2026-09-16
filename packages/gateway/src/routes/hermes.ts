@@ -30,7 +30,7 @@ import {
   requireRequestPrincipal,
   isRequestPrincipalError,
   mapRequestPrincipalError,
-} from "../request-principal.js";
+} from "../domains/identity/request-principal.js";
 import {
   createHermesDashboardClient,
   HermesUnavailableError,

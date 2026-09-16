@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createKernelChatProviderAdapter } from "../../packages/gateway/src/chat/kernel-provider-adapter.js";
-import type { Dispatcher } from "../../packages/gateway/src/dispatcher.js";
+import type { Dispatcher } from "../../packages/gateway/src/domains/sessions/dispatcher.js";
 
 function runInput(overrides: Record<string, unknown> = {}) {
   return {

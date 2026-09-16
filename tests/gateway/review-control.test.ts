@@ -9,7 +9,7 @@ import {
   controlFilePath,
   readReviewControlFile,
   writeReviewControlFile,
-} from "../../packages/gateway/src/review-control.js";
+} from "../../packages/gateway/src/domains/review/review-control.js";
 
 describe("review-control", () => {
   let worktreePath: string;

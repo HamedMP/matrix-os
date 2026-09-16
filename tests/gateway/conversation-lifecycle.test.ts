@@ -3,15 +3,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createConversationLifecycle } from
-  "../../packages/gateway/src/conversation-lifecycle.js";
+  "../../packages/gateway/src/domains/sessions/conversation-lifecycle.js";
 import { providerResumeSessionId } from
-  "../../packages/gateway/src/conversation-lifecycle.js";
+  "../../packages/gateway/src/domains/sessions/conversation-lifecycle.js";
 import { createConversationMutationLock } from
-  "../../packages/gateway/src/conversation-mutation-lock.js";
+  "../../packages/gateway/src/domains/sessions/conversation-mutation-lock.js";
 import { ConversationRunRegistry } from
-  "../../packages/gateway/src/conversation-run-registry.js";
+  "../../packages/gateway/src/domains/sessions/conversation-run-registry.js";
 import { createConversationStore } from
-  "../../packages/gateway/src/conversations.js";
+  "../../packages/gateway/src/domains/sessions/conversations.js";
 
 function deferred() {
   let resolve!: () => void;

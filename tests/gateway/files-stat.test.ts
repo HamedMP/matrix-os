@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { fileStat } from "../../packages/gateway/src/file-ops.js";
+import { fileStat } from "../../packages/gateway/src/domains/files/file-ops.js";
 
 describe("fileStat", () => {
   let testDir: string;

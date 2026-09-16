@@ -12,7 +12,7 @@ import type { IntegrationCapabilityService } from "./integration-capabilities.js
 import {
   requireRequestPrincipal,
   type RequestPrincipal,
-} from "../request-principal.js";
+} from "../domains/identity/request-principal.js";
 
 const INTEGRATION_CAPABILITY_BODY_LIMIT = 2048;
 

@@ -9,7 +9,7 @@ import {
   DEFAULT_SOCIAL_CONFIG,
   loadSocialConfig,
   generateWeeklySummary,
-} from '../../packages/gateway/src/social-activity.js';
+} from '../../packages/gateway/src/domains/social/social-activity.js';
 
 describe('gateway/social-activity', () => {
   let tmpDir: string;

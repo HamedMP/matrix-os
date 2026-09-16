@@ -13,11 +13,11 @@ import {
 } from "@matrix-os/contracts";
 import type { Context, Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
-import type { ConversationContextResolver } from "../conversation-context.js";
-import type { ConversationLifecycle } from "../conversation-lifecycle.js";
-import type { ConversationRunRegistry } from "../conversation-run-registry.js";
-import type { ConversationStore } from "../conversations.js";
-import type { OwnerScope } from "../state-ops.js";
+import type { ConversationContextResolver } from "../domains/sessions/conversation-context.js";
+import type { ConversationLifecycle } from "../domains/sessions/conversation-lifecycle.js";
+import type { ConversationRunRegistry } from "../domains/sessions/conversation-run-registry.js";
+import type { ConversationStore } from "../domains/sessions/conversations.js";
+import type { OwnerScope } from "../domains/files/state-ops.js";
 
 const MAX_HISTORY_CONTENT_CHARS = 32_000;
 const MAX_DELETE_BODY_BYTES = 512;

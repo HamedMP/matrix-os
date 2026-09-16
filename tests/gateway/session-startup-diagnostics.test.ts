@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { collectStartupCapacity, logSessionStartupFailure } from "../../packages/gateway/src/session-startup-diagnostics.js";
+import { collectStartupCapacity, logSessionStartupFailure } from "../../packages/gateway/src/domains/sessions/session-startup-diagnostics.js";
 
 const { readCounter } = vi.hoisted(() => ({ readCounter: vi.fn() }));
 vi.mock("node:fs/promises", () => ({ readFile: readCounter }));

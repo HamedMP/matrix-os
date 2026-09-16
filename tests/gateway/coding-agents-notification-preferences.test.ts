@@ -5,7 +5,7 @@ import { Hono } from "hono";
 import { describe, expect, it } from "vitest";
 import { createCodingAgentNotificationPreferenceStore } from "../../packages/gateway/src/coding-agents/notification-preferences.js";
 import { createCodingAgentRoutes } from "../../packages/gateway/src/coding-agents/routes.js";
-import type { RequestPrincipal } from "../../packages/gateway/src/request-principal.js";
+import type { RequestPrincipal } from "../../packages/gateway/src/domains/identity/request-principal.js";
 
 const principal: RequestPrincipal = { userId: "owner_user", source: "jwt" };
 

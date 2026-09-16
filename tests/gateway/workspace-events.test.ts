@@ -3,7 +3,7 @@ import { mkdtemp } from "node:fs/promises";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createWorkspaceEventStore } from "../../packages/gateway/src/workspace-events.js";
+import { createWorkspaceEventStore } from "../../packages/gateway/src/domains/workspace/workspace-events.js";
 
 describe("workspace-events", () => {
   let homePath: string;

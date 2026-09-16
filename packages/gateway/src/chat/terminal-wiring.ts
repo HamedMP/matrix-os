@@ -6,8 +6,8 @@ import {
   type TerminalPaneAction,
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
-import type { RequestPrincipal } from "../request-principal.js";
-import type { OwnerScope } from "../state-ops.js";
+import type { RequestPrincipal } from "../domains/identity/request-principal.js";
+import type { OwnerScope } from "../domains/files/state-ops.js";
 import type { ShellRouteDeps } from "../shell/routes.js";
 import { createPendingTerminalInputQueue } from "../shell/pending-input.js";
 import { SESSION_NAME_PATTERN } from "../shell/names.js";

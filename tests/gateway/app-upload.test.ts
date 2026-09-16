@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { handleAppUpload, validateUploadManifest } from "../../packages/gateway/src/app-upload.js";
+import { handleAppUpload, validateUploadManifest } from "../../packages/gateway/src/domains/apps/app-upload.js";
 
 const TEST_HOME = join(tmpdir(), `matrix-upload-${Date.now()}`);
 const APPS_DIR = join(TEST_HOME, "apps");

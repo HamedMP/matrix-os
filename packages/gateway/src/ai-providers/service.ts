@@ -7,8 +7,8 @@ import {
   type AiProviderReadiness,
   type AiProviderSnapshotV3,
 } from "@matrix-os/contracts";
-import type { KernelCredentialObservationState } from "../kernel-credentials.js";
-import { KERNEL_DEFAULTS } from "../kernel-settings.js";
+import type { KernelCredentialObservationState } from "../domains/integrations/kernel-credentials.js";
+import { KERNEL_DEFAULTS } from "../domains/integrations/kernel-settings.js";
 import { ProviderCredentialStore } from "./credential-store.js";
 import { ProviderHealthCache } from "./health.js";
 import {
@@ -16,7 +16,7 @@ import {
   buildBundledModelCatalog,
   eligibleModelsForSource,
 } from "./model-catalog.js";
-import type { MatrixFundedCredentialProvider } from "../funded-ai-credential-manager.js";
+import type { MatrixFundedCredentialProvider } from "../domains/integrations/funded-ai-credential-manager.js";
 
 const HEALTH_TIMEOUT_MS = 2_000;
 const KERNEL_CAPABILITIES = [

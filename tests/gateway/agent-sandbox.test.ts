@@ -3,7 +3,7 @@ import { lstat, mkdir, mkdtemp, realpath, stat, symlink, utimes, writeFile } fro
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createAgentSandbox } from "../../packages/gateway/src/agent-sandbox.js";
+import { createAgentSandbox } from "../../packages/gateway/src/domains/sessions/agent-sandbox.js";
 
 describe("agent-sandbox", () => {
   let homePath: string;

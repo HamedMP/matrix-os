@@ -1,6 +1,6 @@
 import type { KernelEvent } from "@matrix-os/kernel";
 import { isKernelResultFailureText } from "@matrix-os/contracts";
-import type { MainWsClientMessage } from "../ws-message-schema.js";
+import type { MainWsClientMessage } from "../_shared/ws-message-schema.js";
 import type { ServerMessage } from "./types.js";
 
 type WebSocketSender = {

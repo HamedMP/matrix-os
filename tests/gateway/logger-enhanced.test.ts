@@ -6,7 +6,7 @@ import {
   createInteractionLogger,
   type InteractionInput,
   type InteractionEntry,
-} from "../../packages/gateway/src/logger.js";
+} from "../../packages/gateway/src/_shared/logger.js";
 
 function makeTempHome(): string {
   const dir = resolve(mkdtempSync(join(tmpdir(), "logger-enh-")));

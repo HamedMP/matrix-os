@@ -1,5 +1,5 @@
-import type { AgentStatus } from "../agent-launcher.js";
-import { resolveKernelCredentialMode } from "../kernel-credentials.js";
+import type { AgentStatus } from "../domains/sessions/agent-launcher.js";
+import { resolveKernelCredentialMode } from "../domains/integrations/kernel-credentials.js";
 import type { AgentCredentialProbeResult } from "./agent-credential-status.js";
 
 type ProbedAgent = Extract<AgentStatus["id"], "claude" | "codex">;

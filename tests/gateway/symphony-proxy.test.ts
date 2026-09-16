@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createElixirSymphonyProxyRoutes, createHostSymphonyServiceControl } from "../../packages/gateway/src/symphony/proxy.js";
-import { MissingRequestPrincipalError } from "../../packages/gateway/src/request-principal.js";
+import { MissingRequestPrincipalError } from "../../packages/gateway/src/domains/identity/request-principal.js";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 

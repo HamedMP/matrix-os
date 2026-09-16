@@ -9,7 +9,7 @@ import {
   aiCostTotal,
   aiTokensTotal,
   normalizePath,
-} from "../../packages/gateway/src/metrics.js";
+} from "../../packages/gateway/src/domains/observability/metrics.js";
 
 describe("T1200: Gateway metrics module", () => {
   beforeEach(async () => {

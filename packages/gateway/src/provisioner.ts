@@ -9,9 +9,9 @@ import {
   generateIconBatch,
 } from "@matrix-os/kernel";
 import { join } from "node:path";
-import type { Dispatcher, BatchEntry, BatchResult } from "./dispatcher.js";
+import type { Dispatcher, BatchEntry, BatchResult } from "./domains/sessions/dispatcher.js";
 import type { ServerMessage } from "./server.js";
-import { nameToSlug } from "./app-ops.js";
+import { nameToSlug } from "./domains/apps/app-ops.js";
 
 export interface ProvisionerConfig {
   homePath: string;

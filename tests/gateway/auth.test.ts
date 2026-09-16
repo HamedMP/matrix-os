@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { Hono } from "hono";
-import { authMiddleware } from "../../packages/gateway/src/auth.js";
-import { mapRequestPrincipalError, requireRequestPrincipal, isRequestPrincipalError } from "../../packages/gateway/src/request-principal.js";
+import { authMiddleware } from "../../packages/gateway/src/domains/identity/auth.js";
+import { mapRequestPrincipalError, requireRequestPrincipal, isRequestPrincipalError } from "../../packages/gateway/src/domains/identity/request-principal.js";
 import { buildPlatformVerificationToken } from "../../packages/platform/src/platform-token.js";
 import { buildPlatformUserProof } from "../../packages/platform/src/session-routing-websocket.js";
 

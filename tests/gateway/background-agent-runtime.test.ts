@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, symlink, lstat, utimes, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createBackgroundAgentRuntime } from "../../packages/gateway/src/background-agent-runtime.js";
+import { createBackgroundAgentRuntime } from "../../packages/gateway/src/domains/sessions/background-agent-runtime.js";
 
 const homes: string[] = [];
 const runtimes: Array<{ close(): Promise<void> }> = [];

@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createUserSystemdZellijRuntime, workspaceRuntimeId } from "../../packages/gateway/src/user-systemd-zellij-runtime.js";
+import { createUserSystemdZellijRuntime, workspaceRuntimeId } from "../../packages/gateway/src/domains/terminal/user-systemd-zellij-runtime.js";
 import type { ZellijAdapter } from "../../packages/gateway/src/shell/zellij.js";
 import { createUserSystemdTerminalRuntime } from "../../packages/terminal-runtime/src/user-systemd-controller.js";
 

@@ -3,7 +3,7 @@ import {
   createMatrixClient,
   type MatrixClient,
   type MatrixClientConfig,
-} from '../../packages/gateway/src/matrix-client.js';
+} from '../../packages/gateway/src/domains/social/matrix-client.js';
 
 describe('gateway/matrix-client', () => {
   let client: MatrixClient;

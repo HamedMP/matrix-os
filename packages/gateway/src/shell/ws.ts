@@ -10,7 +10,7 @@ import type { ShellAttachProcess } from "./zellij.js";
 import {
   createTerminalOutputCompatStream,
   type TerminalOutputCompatStream,
-} from "../terminal-output-compat.js";
+} from "../domains/terminal/terminal-output-compat.js";
 
 const ShellWsInputSchema = z.object({
   type: z.literal("input"),

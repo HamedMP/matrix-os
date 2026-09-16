@@ -9,7 +9,7 @@ import type { AgentCredentialStatusService } from "./agent-credential-status.js"
 import {
   requireRequestPrincipal,
   type RequestPrincipal,
-} from "../request-principal.js";
+} from "../domains/identity/request-principal.js";
 
 const AGENT_CREDENTIAL_BODY_LIMIT = 1024;
 

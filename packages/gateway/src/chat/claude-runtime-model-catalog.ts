@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readClaudeModelInventory } from "@matrix-os/kernel";
-import { buildAgentLaunch } from "../agent-launcher.js";
-import type { KernelCredentialLaunch } from "../kernel-credentials.js";
+import { buildAgentLaunch } from "../domains/sessions/agent-launcher.js";
+import type { KernelCredentialLaunch } from "../domains/integrations/kernel-credentials.js";
 import { createClaudeModelCatalogSource } from "./claude-model-catalog.js";
 
 export function createRuntimeClaudeModelCatalogSource(options: {

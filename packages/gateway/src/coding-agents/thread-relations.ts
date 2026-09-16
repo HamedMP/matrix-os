@@ -1,5 +1,5 @@
 import type { CreateAgentThreadRequest } from "@matrix-os/contracts";
-import type { RequestPrincipal } from "../request-principal.js";
+import type { RequestPrincipal } from "../domains/identity/request-principal.js";
 
 const TASK_PAGE_LIMIT = 100;
 const MAX_TASK_PAGES = 10;

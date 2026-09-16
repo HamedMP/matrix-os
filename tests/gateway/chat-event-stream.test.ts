@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { CanonicalChatStreamServerFrame } from "@matrix-os/contracts";
 import { Hono } from "hono";
-import { authMiddleware } from "../../packages/gateway/src/auth.js";
+import { authMiddleware } from "../../packages/gateway/src/domains/identity/auth.js";
 import {
   createCanonicalChatEventStream,
   type CanonicalChatEventRepository,
@@ -11,7 +11,7 @@ import {
 import { registerCanonicalChatEventHttpRoute } from "../../packages/gateway/src/chat/event-http-route.js";
 import { closeCanonicalChatEventLifecycle } from "../../packages/gateway/src/chat/routes.js";
 import type { ChatOutboxEvent, ChatOwner } from "../../packages/gateway/src/chat/records.js";
-import type { RequestPrincipal } from "../../packages/gateway/src/request-principal.js";
+import type { RequestPrincipal } from "../../packages/gateway/src/domains/identity/request-principal.js";
 
 const principalA: RequestPrincipal = { userId: "owner_a", source: "jwt" };
 const principalB: RequestPrincipal = { userId: "owner_b", source: "jwt" };

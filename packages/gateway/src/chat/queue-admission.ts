@@ -8,7 +8,7 @@ import {
   type CanonicalChatSafeError,
   type CanonicalQueueChatTurnRequest,
 } from "@matrix-os/contracts";
-import type { RequestPrincipal } from "../request-principal.js";
+import type { RequestPrincipal } from "../domains/identity/request-principal.js";
 import type { ChatExecutionRootResolver } from "./execution-root.js";
 import {
   validateChatProviderSelection,

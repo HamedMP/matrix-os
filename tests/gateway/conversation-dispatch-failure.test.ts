@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { buildDispatchFailureReplayMessage } from "../../packages/gateway/src/conversation-dispatch-failure.js";
+import { buildDispatchFailureReplayMessage } from "../../packages/gateway/src/domains/sessions/conversation-dispatch-failure.js";
 
 describe("conversation dispatch failure replay messages", () => {
   it("stamps a dispatch failure once for both replay buffer and live socket", () => {

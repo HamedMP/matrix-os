@@ -2,7 +2,7 @@ import { CanonicalChatEventCursorSchema } from "@matrix-os/contracts";
 import type { Context, Hono } from "hono";
 import type { UpgradeWebSocket, WSContext } from "hono/ws";
 import { z } from "zod/v4";
-import type { RequestPrincipal } from "../request-principal.js";
+import type { RequestPrincipal } from "../domains/identity/request-principal.js";
 import type { CanonicalChatEventStreamSession, createCanonicalChatEventStream } from "./event-stream.js";
 
 const ClientFrame = z.discriminatedUnion("type", [

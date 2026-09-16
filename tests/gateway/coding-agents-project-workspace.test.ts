@@ -10,10 +10,10 @@ import {
   createCodingAgentProjectWorkspaceStore,
   createOwnerCodingAgentProjectWorkspaceStore,
 } from "../../packages/gateway/src/coding-agents/project-workspace.js";
-import { MissingRequestPrincipalError } from "../../packages/gateway/src/request-principal.js";
+import { MissingRequestPrincipalError } from "../../packages/gateway/src/domains/identity/request-principal.js";
 import { createCodingAgentThreadStore } from "../../packages/gateway/src/coding-agents/thread-store.js";
-import { createProjectManager } from "../../packages/gateway/src/project-manager.js";
-import { createTaskManager } from "../../packages/gateway/src/task-manager.js";
+import { createProjectManager } from "../../packages/gateway/src/domains/workspace/project-manager.js";
+import { createTaskManager } from "../../packages/gateway/src/domains/workspace/task-manager.js";
 import { testPrincipal } from "../helpers/activation-readiness.js";
 
 const now = "2026-07-10T10:00:00.000Z";

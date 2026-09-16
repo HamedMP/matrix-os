@@ -3,8 +3,8 @@ import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createTaskManager } from "../../packages/gateway/src/task-manager.js";
-import { atomicWriteJson } from "../../packages/gateway/src/state-ops.js";
+import { createTaskManager } from "../../packages/gateway/src/domains/workspace/task-manager.js";
+import { atomicWriteJson } from "../../packages/gateway/src/domains/files/state-ops.js";
 
 describe("task-manager", () => {
   let homePath: string;

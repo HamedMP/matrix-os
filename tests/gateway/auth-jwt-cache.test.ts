@@ -18,7 +18,7 @@ describe("readJwtKeyConfig", () => {
       };
     });
 
-    const { readJwtKeyConfig } = await import("../../packages/gateway/src/auth-jwt.js");
+    const { readJwtKeyConfig } = await import("../../packages/gateway/src/domains/identity/auth-jwt.js");
     const env = { PLATFORM_JWT_PUBLIC_KEY: "not-a-valid-pem" } as NodeJS.ProcessEnv;
 
     await expect(readJwtKeyConfig(env)).rejects.toThrow("bad pem");
@@ -44,7 +44,7 @@ describe("readJwtKeyConfig", () => {
       };
     });
 
-    const { readJwtKeyConfig } = await import("../../packages/gateway/src/auth-jwt.js");
+    const { readJwtKeyConfig } = await import("../../packages/gateway/src/domains/identity/auth-jwt.js");
     const env = {
       PLATFORM_JWT_PUBLIC_KEY: "-----BEGIN PUBLIC KEY-----\nfake\n-----END PUBLIC KEY-----",
     } as NodeJS.ProcessEnv;

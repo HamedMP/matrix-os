@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import { BridgeQueryBodySchema, type BridgeQueryBody } from "../app-db-contracts.js";
-import { normalizeAppStorageSlug } from "../app-db-types.js";
+import { BridgeQueryBodySchema, type BridgeQueryBody } from "../domains/apps/db/app-db-contracts.js";
+import { normalizeAppStorageSlug } from "../domains/apps/db/app-db-types.js";
 import { type Kysely, type Transaction } from "kysely";
 import { z } from "zod/v4";
 import {

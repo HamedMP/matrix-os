@@ -4,7 +4,7 @@ import {
   KERNEL_MODELS,
   LEGACY_KERNEL_MODEL_IDS,
   resolveKernelModelOption,
-} from "../kernel-settings.js";
+} from "../domains/integrations/kernel-settings.js";
 
 export const AI_PROVIDER_CATALOG_VERSION = "bundled_2026_08_30";
 export const MATRIX_INCLUDED_MODEL_IDS = ["claude-sonnet-5"] as const;

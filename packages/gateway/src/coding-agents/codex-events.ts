@@ -9,7 +9,7 @@ import {
   type AgentThreadEvent,
 } from "@matrix-os/contracts";
 import { safePublishedText } from "../chat/safe-activity-projection.js";
-import { AiTokenUsageSchema, type AiTokenUsage } from "../ai-analytics.js";
+import { AiTokenUsageSchema, type AiTokenUsage } from "../domains/observability/ai-analytics.js";
 
 const MAX_CODEX_JSON_LINE_BYTES = 64 * 1024;
 const MAX_ASSISTANT_DELTA_CHARS = 4_000;

@@ -7,7 +7,7 @@ import { Hono } from "hono";
 import { RuntimeSummarySchema } from "../../packages/contracts/src/index.js";
 import { createCodingAgentRoutes } from "../../packages/gateway/src/coding-agents/routes.js";
 import { createCodingAgentSourceControlStore } from "../../packages/gateway/src/coding-agents/source-control.js";
-import { MissingRequestPrincipalError, type RequestPrincipal } from "../../packages/gateway/src/request-principal.js";
+import { MissingRequestPrincipalError, type RequestPrincipal } from "../../packages/gateway/src/domains/identity/request-principal.js";
 import { testPrincipal } from "../helpers/activation-readiness.js";
 
 const now = "2026-07-07T12:00:00.000Z";

@@ -16,13 +16,13 @@ describe("T1400: App Runtime", () => {
   });
 
   describe("matrix.json manifest schema", () => {
-    let parseAppManifest: typeof import("../../packages/gateway/src/app-manifest.js").parseAppManifest;
-    let loadAppManifest: typeof import("../../packages/gateway/src/app-manifest.js").loadAppManifest;
-    let assignPort: typeof import("../../packages/gateway/src/app-manifest.js").assignPort;
-    let AppManifestSchema: typeof import("../../packages/gateway/src/app-manifest.js").AppManifestSchema;
+    let parseAppManifest: typeof import("../../packages/gateway/src/domains/apps/app-manifest.js").parseAppManifest;
+    let loadAppManifest: typeof import("../../packages/gateway/src/domains/apps/app-manifest.js").loadAppManifest;
+    let assignPort: typeof import("../../packages/gateway/src/domains/apps/app-manifest.js").assignPort;
+    let AppManifestSchema: typeof import("../../packages/gateway/src/domains/apps/app-manifest.js").AppManifestSchema;
 
     beforeEach(async () => {
-      const mod = await import("../../packages/gateway/src/app-manifest.js");
+      const mod = await import("../../packages/gateway/src/domains/apps/app-manifest.js");
       parseAppManifest = mod.parseAppManifest;
       loadAppManifest = mod.loadAppManifest;
       assignPort = mod.assignPort;
@@ -191,10 +191,10 @@ icon: N
   });
 
   describe("App process manager", () => {
-    let createAppManager: typeof import("../../packages/gateway/src/app-manager.js").createAppManager;
+    let createAppManager: typeof import("../../packages/gateway/src/domains/apps/app-manager.js").createAppManager;
 
     beforeEach(async () => {
-      const mod = await import("../../packages/gateway/src/app-manager.js");
+      const mod = await import("../../packages/gateway/src/domains/apps/app-manager.js");
       createAppManager = mod.createAppManager;
     });
 
@@ -315,10 +315,10 @@ icon: N
   });
 
   describe("Enhanced listApps with matrix.json support", () => {
-    let listAppsEnhanced: typeof import("../../packages/gateway/src/apps.js").listApps;
+    let listAppsEnhanced: typeof import("../../packages/gateway/src/domains/apps/apps.js").listApps;
 
     beforeEach(async () => {
-      const mod = await import("../../packages/gateway/src/apps.js");
+      const mod = await import("../../packages/gateway/src/domains/apps/apps.js");
       listAppsEnhanced = mod.listApps;
     });
 

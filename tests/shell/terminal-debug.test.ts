@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { isTerminalDebugEnabled } from "../../shell/src/lib/terminal-debug.js";
+import { isTerminalDebugEnabled } from "../../packages/gateway/src/domains/terminal/terminal-debug.js";
 
 describe("isTerminalDebugEnabled", () => {
   let storage: { getItem: ReturnType<typeof vi.fn> };

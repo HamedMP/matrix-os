@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { RingBuffer, type BufferChunk } from "../../packages/gateway/src/ring-buffer.js";
+import { RingBuffer, type BufferChunk } from "../../packages/gateway/src/_shared/ring-buffer.js";
 
 describe("RingBuffer", () => {
   it("starts with zero bytes and seq 0", () => {

@@ -4,8 +4,8 @@ import {
   type CodingAgentProjectCreateRequest,
   type CodingAgentProjectCreateResponse,
 } from "@matrix-os/contracts";
-import type { createProjectManager } from "../project-manager.js";
-import type { RequestPrincipal } from "../request-principal.js";
+import type { createProjectManager } from "../domains/workspace/project-manager.js";
+import type { RequestPrincipal } from "../domains/identity/request-principal.js";
 
 type ProjectManager = Pick<ReturnType<typeof createProjectManager>, "createProject">;
 

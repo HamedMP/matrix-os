@@ -8,8 +8,8 @@ import {
   KernelCredentialAccessSourceIdSchema,
   type KernelCredentialAccessSourceId,
   type KernelCredentialLaunch,
-} from "../kernel-credentials.js";
-import type { MatrixFundedCredentialProvider } from "../funded-ai-credential-manager.js";
+} from "../domains/integrations/kernel-credentials.js";
+import type { MatrixFundedCredentialProvider } from "../domains/integrations/funded-ai-credential-manager.js";
 import { hasNativeHarnessAuth } from "./native-harness-auth.js";
 
 const PORTABLE_CREDENTIAL_KEYS = ["ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"] as const;

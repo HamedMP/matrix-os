@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { authMiddleware } from "../../packages/gateway/src/auth.js";
+import { authMiddleware } from "../../packages/gateway/src/domains/identity/auth.js";
 import {
   createShellWsHandler,
   SHELL_ATTACH_LIVE_TAIL_FROM_SEQ,

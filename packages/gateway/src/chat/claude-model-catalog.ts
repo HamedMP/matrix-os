@@ -1,6 +1,6 @@
 import type { CodingModelCatalogProjection } from "./provider-catalog.js";
 import { CanonicalChatModelSelectionSchema, CanonicalModelDescriptorSchema, type AgentProviderSummary } from "@matrix-os/contracts";
-import type { RequestPrincipal } from "../request-principal.js";
+import type { RequestPrincipal } from "../domains/identity/request-principal.js";
 import { z } from "zod/v4";
 
 // Maintained fallback, not proof of account entitlement. Native execution remains

@@ -18,7 +18,7 @@ import {
 } from "../../packages/gateway/src/coding-agents/pi-provider.js";
 import { createCodingHarnessCredentialResolver } from "../../packages/gateway/src/coding-agents/harness-credentials.js";
 import { createCodingAgentThreadStore } from "../../packages/gateway/src/coding-agents/thread-store.js";
-import type { RequestPrincipal } from "../../packages/gateway/src/request-principal.js";
+import type { RequestPrincipal } from "../../packages/gateway/src/domains/identity/request-principal.js";
 import { providerSettingsCanonicalFixture } from "./provider-settings-test-support.js";
 
 const ownerPrincipal: RequestPrincipal = { userId: "owner_user", source: "jwt" };

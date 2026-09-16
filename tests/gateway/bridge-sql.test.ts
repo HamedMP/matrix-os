@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import {
   createBridgeSql,
   type BridgeSql,
-} from "../../packages/gateway/src/bridge-sql.js";
+} from "../../packages/gateway/src/domains/apps/db/bridge-sql.js";
 
 function tmpHome(): string {
   const dir = resolve(mkdtempSync(join(tmpdir(), "bridge-sql-")));

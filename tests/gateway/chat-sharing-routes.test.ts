@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { Hono } from "hono";
-import { markAuthContextReady } from "../../packages/gateway/src/request-principal";
+import { markAuthContextReady } from "../../packages/gateway/src/domains/identity/request-principal";
 import { createChatSharingRoutes, shareHtml } from "../../packages/gateway/src/chat/sharing-routes";
 
 it("renders shared text as inert content and sets restrictive headers", async () => {
@@ -42,7 +42,7 @@ it("isolates public readers by transport source and ignores spoofed forwarding h
 });
 
 it("exempts only exact GET capabilities from gateway authentication", async () => {
-  const { authMiddleware } = await import("../../packages/gateway/src/auth");
+  const { authMiddleware } = await import("../../packages/gateway/src/domains/identity/auth");
   const app = new Hono();
   app.use("*", authMiddleware("test-secret"));
   app.all("*", (c) => c.text("public"));

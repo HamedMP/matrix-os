@@ -1,4 +1,4 @@
-import type { SpawnFn } from "../dispatcher.js";
+import type { SpawnFn } from "../domains/sessions/dispatcher.js";
 
 export interface GatewayConfig {
   homePath: string;

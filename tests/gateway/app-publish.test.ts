@@ -6,7 +6,7 @@ import {
   validateForPublish,
   generateSlug,
   preparePublishPayload,
-} from '../../packages/gateway/src/app-publish.js';
+} from '../../packages/gateway/src/domains/apps/app-publish.js';
 
 describe('gateway/app-publish', () => {
   let tmpDir: string;

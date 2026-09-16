@@ -4,7 +4,7 @@ import { z } from "zod/v4";
 import {
   KernelCredentialAccessSourceIdSchema,
   type KernelCredentialAccessSourceId,
-} from "../kernel-credentials.js";
+} from "../domains/integrations/kernel-credentials.js";
 import type { ScopeRuntimeBrokerAuthorization } from "./scope-runtime-broker.js";
 const MAX_CAPACITY = 64;
 const MAX_TTL_MS = 5 * 60_000;

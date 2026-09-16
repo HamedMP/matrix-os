@@ -16,13 +16,13 @@ import { AgentSettingsUpdateSchema } from "@matrix-os/contracts";
 import type { ChannelManager } from "../channels/manager.js";
 import type { ChannelConfig, ChannelId } from "../channels/types.js";
 import { validateApiKeyFormat, validateApiKeyLive, storeApiKey, hasApiKey } from "../onboarding/api-key.js";
-import { buildAgentProfileSummary } from "../agent-profile-summary.js";
+import { buildAgentProfileSummary } from "../domains/sessions/agent-profile-summary.js";
 import {
   KernelEffortSchema,
   KernelModelSchema,
   normalizeKernelEffort,
   normalizeKernelModel,
-} from "../kernel-settings.js";
+} from "../domains/integrations/kernel-settings.js";
 import {
   buildAgentSettingsView,
   hasClaudeLogin,

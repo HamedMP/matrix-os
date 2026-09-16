@@ -6,7 +6,7 @@ import {
   InvalidRequestPrincipalError,
   MissingRequestPrincipalError,
   RequestPrincipalMisconfiguredError,
-} from "../../packages/gateway/src/request-principal.js";
+} from "../../packages/gateway/src/domains/identity/request-principal.js";
 import { ProjectFenceError } from "../../packages/gateway/src/collaboration/project-fence.js";
 
 function createApp(

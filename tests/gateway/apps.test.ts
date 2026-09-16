@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, readdirSyn
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { listApps } from "../../packages/gateway/src/apps.js";
+import { listApps } from "../../packages/gateway/src/domains/apps/apps.js";
 
 describe("T711: GET /api/apps", () => {
   let homePath: string;

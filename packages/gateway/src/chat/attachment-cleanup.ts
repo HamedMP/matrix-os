@@ -1,6 +1,6 @@
 import { lstat, mkdir, opendir, unlink } from "node:fs/promises";
 import { join } from "node:path";
-import { resolveExistingFileApiPath, resolveWritableFileApiPath } from "../path-security.js";
+import { resolveExistingFileApiPath, resolveWritableFileApiPath } from "../_shared/path-security.js";
 
 export const CHAT_ATTACHMENT_DIRECTORY = "temporary/desktop-chat";
 export const CHAT_ATTACHMENT_CLEANUP_POLICY = {

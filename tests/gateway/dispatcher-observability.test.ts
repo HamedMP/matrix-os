@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import {
   createDispatcher,
   type SpawnFn,
-} from "../../packages/gateway/src/dispatcher.js";
+} from "../../packages/gateway/src/domains/sessions/dispatcher.js";
 import type { KernelEvent } from "@matrix-os/kernel";
 import {
   metricsRegistry,
@@ -13,7 +13,7 @@ import {
   kernelDispatchDuration,
   aiCostTotal,
   aiTokensTotal,
-} from "../../packages/gateway/src/metrics.js";
+} from "../../packages/gateway/src/domains/observability/metrics.js";
 
 function makeHomePath(): string {
   const dir = resolve(mkdtempSync(join(tmpdir(), "dispatch-obs-")));

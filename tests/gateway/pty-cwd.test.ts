@@ -4,7 +4,7 @@ import { join } from "node:path";
 import {
   createPtyHandler,
   type SpawnFn,
-} from "../../packages/gateway/src/pty.js";
+} from "../../packages/gateway/src/domains/terminal/pty.js";
 
 const TEST_HOME = join(import.meta.dirname ?? __dirname, ".tmp-pty-cwd-test");
 

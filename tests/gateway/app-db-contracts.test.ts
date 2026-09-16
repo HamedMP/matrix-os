@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BridgeQueryBodySchema } from "../../packages/gateway/src/app-db-contracts";
+import { BridgeQueryBodySchema } from "../../packages/gateway/src/domains/apps/db/app-db-contracts";
 
 describe("BridgeQueryBodySchema", () => {
   it("accepts the complete supported action contract", () => {

@@ -1,7 +1,7 @@
 import { ChatInputWireVersionSchema, ChatMessageWireVersionSchema, projectChatMessageFrame } from "@matrix-os/contracts";
 import { CanonicalChatEventCursorSchema, type CanonicalChatTransportFrame } from "@matrix-os/contracts";
 import { type Context, type Hono } from "hono";
-import type { RequestPrincipal } from "../request-principal.js";
+import type { RequestPrincipal } from "../domains/identity/request-principal.js";
 import type {
   CanonicalChatEventStreamSession,
   createCanonicalChatEventStream,

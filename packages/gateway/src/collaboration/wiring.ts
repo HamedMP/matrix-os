@@ -3,7 +3,7 @@ import type { Hono } from "hono";
 import type { UpgradeWebSocket } from "hono/ws";
 import type { ChatRepository } from "../chat/repository.js";
 import type { CanonicalChatOrchestrator } from "../chat/orchestrator.js";
-import type { MatrixFundedCredentialProvider } from "../funded-ai-credential-manager.js";
+import type { MatrixFundedCredentialProvider } from "../domains/integrations/funded-ai-credential-manager.js";
 import { CollaborationActorProofVerifier } from "./actor-proof.js";
 import { CollaborationAuthority } from "./authority.js";
 import { CollaborationChatAdapter } from "./chat-adapter.js";

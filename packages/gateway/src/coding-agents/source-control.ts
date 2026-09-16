@@ -12,8 +12,8 @@ import {
   type SourceControlPrepareCommitRequest,
   type SourceControlPrepareCommitResponse,
 } from "@matrix-os/contracts";
-import { GIT_ENV } from "../git-env.js";
-import type { RequestPrincipal } from "../request-principal.js";
+import { GIT_ENV } from "../domains/git/git-env.js";
+import type { RequestPrincipal } from "../domains/identity/request-principal.js";
 import { resolveOwnedWorktree, type OwnerScopedWorktreeSource } from "./owned-worktree.js";
 
 const execFileAsync = promisify(execFile);

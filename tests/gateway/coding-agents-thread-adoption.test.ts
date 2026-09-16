@@ -13,10 +13,10 @@ import {
   type CodingAgentProviderAdapter,
 } from "../../packages/gateway/src/coding-agents/thread-store.js";
 import { createCodingAgentThreadRelationValidator } from "../../packages/gateway/src/coding-agents/thread-relations.js";
-import { createProjectManager } from "../../packages/gateway/src/project-manager.js";
-import type { RequestPrincipal } from "../../packages/gateway/src/request-principal.js";
-import { MissingRequestPrincipalError } from "../../packages/gateway/src/request-principal.js";
-import { createTaskManager } from "../../packages/gateway/src/task-manager.js";
+import { createProjectManager } from "../../packages/gateway/src/domains/workspace/project-manager.js";
+import type { RequestPrincipal } from "../../packages/gateway/src/domains/identity/request-principal.js";
+import { MissingRequestPrincipalError } from "../../packages/gateway/src/domains/identity/request-principal.js";
+import { createTaskManager } from "../../packages/gateway/src/domains/workspace/task-manager.js";
 
 const owner: RequestPrincipal = { userId: "owner_user", source: "jwt" };
 const otherOwner: RequestPrincipal = { userId: "other_user", source: "jwt" };

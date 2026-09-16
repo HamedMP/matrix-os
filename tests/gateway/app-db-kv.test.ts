@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { createAppDb, type AppDb } from "../../packages/gateway/src/app-db.js";
-import { createKvStore, type KvStore } from "../../packages/gateway/src/app-db-kv.js";
+import { createAppDb, type AppDb } from "../../packages/gateway/src/domains/apps/db/app-db.js";
+import { createKvStore, type KvStore } from "../../packages/gateway/src/domains/apps/db/app-db-kv.js";
 import { KyselyPGlite } from "kysely-pglite";
 
 describe("KvStore", () => {

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { parseAppManifest } from "../../packages/gateway/src/app-manifest.js";
+import { parseAppManifest } from "../../packages/gateway/src/domains/apps/app-manifest.js";
 
 const GAMES_DIR = join(__dirname, "../../home/apps/games");
 const SHARED_RENDERER = join(__dirname, "../../home/apps/_shared/default-apps.tsx");

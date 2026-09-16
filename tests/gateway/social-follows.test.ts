@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { createAppDb, type AppDb } from "../../packages/gateway/src/app-db.js";
-import { createAppRegistry } from "../../packages/gateway/src/app-db-registry.js";
-import { createQueryEngine, type QueryEngine } from "../../packages/gateway/src/app-db-query.js";
+import { createAppDb, type AppDb } from "../../packages/gateway/src/domains/apps/db/app-db.js";
+import { createAppRegistry } from "../../packages/gateway/src/domains/apps/db/app-db-registry.js";
+import { createQueryEngine, type QueryEngine } from "../../packages/gateway/src/domains/apps/db/app-db-query.js";
 import { KyselyPGlite } from "kysely-pglite";
 import {
   followUser,
@@ -11,7 +11,7 @@ import {
   getFollowCounts,
   getFollowingIds,
   isFollowing,
-} from "../../packages/gateway/src/social.js";
+} from "../../packages/gateway/src/domains/social/social.js";
 
 const SOCIAL_TABLES = {
   posts: {

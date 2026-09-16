@@ -6,7 +6,7 @@ import { Hono } from "hono";
 import { createSettingsRoutes } from "../../packages/gateway/src/routes/settings.js";
 import { buildAgentSettingsView } from "../../packages/gateway/src/agent-config/service.js";
 import { AiProviderService } from "../../packages/gateway/src/ai-providers/service.js";
-import type { MatrixFundedCredentialProvider } from "../../packages/gateway/src/funded-ai-credential-manager.js";
+import type { MatrixFundedCredentialProvider } from "../../packages/gateway/src/domains/integrations/funded-ai-credential-manager.js";
 
 function fundedProvider(): MatrixFundedCredentialProvider {
   return {

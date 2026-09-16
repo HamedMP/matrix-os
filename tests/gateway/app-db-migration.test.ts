@@ -2,9 +2,9 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { createAppDb, type AppDb } from "../../packages/gateway/src/app-db.js";
-import { createKvStore, type KvStore } from "../../packages/gateway/src/app-db-kv.js";
-import { migrateJsonToKv } from "../../packages/gateway/src/app-db-migration.js";
+import { createAppDb, type AppDb } from "../../packages/gateway/src/domains/apps/db/app-db.js";
+import { createKvStore, type KvStore } from "../../packages/gateway/src/domains/apps/db/app-db-kv.js";
+import { migrateJsonToKv } from "../../packages/gateway/src/domains/apps/db/app-db-migration.js";
 import { KyselyPGlite } from "kysely-pglite";
 
 describe("migrateJsonToKv", () => {

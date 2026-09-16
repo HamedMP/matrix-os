@@ -19,7 +19,7 @@ import {
   threadStreamFrameDataToString,
   type CodingAgentThreadStreamSocket,
 } from "../../packages/gateway/src/coding-agents/thread-stream.js";
-import { authMiddleware } from "../../packages/gateway/src/auth.js";
+import { authMiddleware } from "../../packages/gateway/src/domains/identity/auth.js";
 import { testPrincipal } from "../helpers/activation-readiness.js";
 
 const now = new Date("2026-07-06T12:00:00.000Z");

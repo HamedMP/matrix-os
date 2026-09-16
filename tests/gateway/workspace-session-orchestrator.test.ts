@@ -5,7 +5,7 @@ import { join } from "node:path";
 import {
   cleanupExpiredRootChatWorkspaces,
   createWorkspaceSessionOrchestrator,
-} from "../../packages/gateway/src/workspace-session-orchestrator.js";
+} from "../../packages/gateway/src/domains/workspace/workspace-session-orchestrator.js";
 
 describe("workspace session orchestrator", () => {
   const terminalRef = {

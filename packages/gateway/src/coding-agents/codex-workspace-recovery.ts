@@ -1,4 +1,4 @@
-import type { WorkspaceSessionOrchestrator } from "../workspace-session-orchestrator.js";
+import type { WorkspaceSessionOrchestrator } from "../domains/workspace/workspace-session-orchestrator.js";
 import type { CodingAgentProviderAdapter } from "./thread-store.js";
 
 /** Cold resume requires owner-scoped durable identity; never substitute a fresh empty conversation. */

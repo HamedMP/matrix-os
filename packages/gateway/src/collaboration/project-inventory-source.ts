@@ -1,7 +1,7 @@
 import { relative, resolve, sep } from "node:path";
 import { z } from "zod/v4";
 import { TerminalRefSchema, TerminalWorkspaceSchema } from "@matrix-os/contracts";
-import { resolveWithinHome } from "../path-security.js";
+import { resolveWithinHome } from "../_shared/path-security.js";
 import type {
   ProjectInventoryResourceRecord,
   ProjectInventoryResourceSource,

@@ -4,7 +4,7 @@ import {
   saveSummary,
   loadRecentSummaries,
   type ConversationForSummary,
-} from "../../packages/gateway/src/conversation-summary.js";
+} from "../../packages/gateway/src/domains/sessions/conversation-summary.js";
 import { mkdtempSync, mkdirSync, rmSync, readFileSync, existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";

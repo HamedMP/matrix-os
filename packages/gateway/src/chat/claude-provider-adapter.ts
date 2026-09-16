@@ -1,11 +1,11 @@
 import { createClaudeInputController } from "./claude-input-control.js";
 import { z } from "zod/v4";
 import { classifyClaudeUsageFailure } from "./claude-usage-failure.js";
-import { buildAgentLaunch } from "../agent-launcher.js";
+import { buildAgentLaunch } from "../domains/sessions/agent-launcher.js";
 import {
   buildKernelCredentialLaunch,
   type KernelCredentialLaunch,
-} from "../kernel-credentials.js";
+} from "../domains/integrations/kernel-credentials.js";
 import {
   CanonicalProviderRunEventSchema,
   parseCanonicalProviderRunInput,

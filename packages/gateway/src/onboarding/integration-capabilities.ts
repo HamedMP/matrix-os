@@ -6,7 +6,7 @@ import type {
 } from "./activation-contracts.js";
 import { ActivationRouteError } from "./activation-errors.js";
 import { SERVICE_REGISTRY } from "../integrations/registry.js";
-import { atomicWriteJson, readJsonFile } from "../state-ops.js";
+import { atomicWriteJson, readJsonFile } from "../domains/files/state-ops.js";
 
 const MAX_OWNERS = 512;
 const VALID_AGENTS = new Set<AgentId>(["claude", "codex", "hermes"]);

@@ -8,7 +8,7 @@ import {
   type RuntimeSummary,
   type TerminalWorkspace,
 } from "@matrix-os/contracts";
-import type { RequestPrincipal } from "../request-principal.js";
+import type { RequestPrincipal } from "../domains/identity/request-principal.js";
 import type {
   AgentCredentialStatusResponse,
   AgentCredentialSummary,

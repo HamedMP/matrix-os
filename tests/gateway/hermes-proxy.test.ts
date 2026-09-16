@@ -14,7 +14,7 @@ import {
 import {
   markAuthContextReady,
   JWT_CLAIMS_CONTEXT_KEY,
-} from "../../packages/gateway/src/request-principal.js";
+} from "../../packages/gateway/src/domains/identity/request-principal.js";
 
 // ---------------------------------------------------------------------------
 // Helpers

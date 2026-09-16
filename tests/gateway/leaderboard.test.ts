@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { getLeaderboard } from "../../packages/gateway/src/leaderboard.js";
+import { getLeaderboard } from "../../packages/gateway/src/domains/social/leaderboard.js";
 
 describe("T2063: Leaderboard API", () => {
   let homePath: string;

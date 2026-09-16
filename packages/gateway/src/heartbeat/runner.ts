@@ -1,4 +1,4 @@
-import type { Dispatcher } from "../dispatcher.js";
+import type { Dispatcher } from "../domains/sessions/dispatcher.js";
 import type { ChannelManager } from "../channels/manager.js";
 import { buildHeartbeatPrompt } from "./prompt.js";
 import type { CronJob } from "../cron/types.js";

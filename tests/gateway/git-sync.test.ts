@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
-import { createGitSync, createAutoSync, type GitSync, type AutoSync } from "../../packages/gateway/src/git-sync.js";
+import { createGitSync, createAutoSync, type GitSync, type AutoSync } from "../../packages/gateway/src/domains/git/git-sync.js";
 
 const GIT_ID = ["-c", "user.email=ci@matrix-os.test", "-c", "user.name=Test"];
 

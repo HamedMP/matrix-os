@@ -18,7 +18,7 @@ import {
   createWorkspaceCodingAgentProvider,
   createWorkspaceCodingAgentProviderSet,
 } from "../../packages/gateway/src/coding-agents/workspace-provider.js";
-import type { RequestPrincipal } from "../../packages/gateway/src/request-principal.js";
+import type { RequestPrincipal } from "../../packages/gateway/src/domains/identity/request-principal.js";
 import { matrixTerminalShellScript } from "../../packages/gateway/src/shell/zellij-config.js";
 
 const execFileAsync = promisify(execFile);

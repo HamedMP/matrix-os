@@ -9,15 +9,15 @@ import { execFile } from "node:child_process";
 import { access } from "node:fs/promises";
 import { resolve, sep } from "node:path";
 import { promisify } from "node:util";
-import type { RequestPrincipal } from "../request-principal.js";
-import type { ReviewLoopRecord } from "../review-loop.js";
-import { resolveWorktreeCheckoutPath } from "../worktree-manager.js";
+import type { RequestPrincipal } from "../domains/identity/request-principal.js";
+import type { ReviewLoopRecord } from "../domains/review/review-loop.js";
+import { resolveWorktreeCheckoutPath } from "../domains/git/worktree-manager.js";
 import {
   parseFindingsFile,
   type FindingsParseFailure,
   type FindingsParseSuccess,
   type ParsedFinding,
-} from "../findings-parser.js";
+} from "../domains/review/findings-parser.js";
 
 const REVIEW_SUMMARY_LIMIT = 50;
 const RAW_REVIEW_SCAN_LIMIT = 100;

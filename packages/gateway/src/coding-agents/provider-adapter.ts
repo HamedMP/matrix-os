@@ -1,4 +1,4 @@
-import { BackgroundAgentRefSchema } from "../background-agent-runtime.js";
+import { BackgroundAgentRefSchema } from "../domains/sessions/background-agent-runtime.js";
 import { z } from "zod/v4";
 import {
   AgentThreadEventSchema,
@@ -11,8 +11,8 @@ import {
   type SafeSetupAction,
   type UserInputAnswerRequest,
 } from "@matrix-os/contracts";
-import type { RequestPrincipal } from "../request-principal.js";
-import { AiTokenUsageSchema } from "../ai-analytics.js";
+import type { RequestPrincipal } from "../domains/identity/request-principal.js";
+import { AiTokenUsageSchema } from "../domains/observability/ai-analytics.js";
 
 const MAX_PROVIDER_EVENTS = 500;
 

@@ -32,7 +32,7 @@ import {
   type AgentRuntimeSource,
 } from "../agent-config/service.js";
 import type { CodingAgentProviderRegistry } from "../coding-agents/provider-registry.js";
-import type { RequestPrincipal } from "../request-principal.js";
+import type { RequestPrincipal } from "../domains/identity/request-principal.js";
 import type { AiProviderSnapshotReader } from "../ai-providers/service.js";
 import { ProviderSettingsStoreError } from "../ai-providers/provider-settings-errors.js";
 import { claudeFallbackCatalog } from "./claude-model-catalog.js";

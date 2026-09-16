@@ -1,4 +1,4 @@
-import { boundedOperation } from "../bounded-operation.js";
+import { boundedOperation } from "../_shared/bounded-operation.js";
 
 export interface RuntimeSupervision {
   startedAt: number;

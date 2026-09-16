@@ -17,7 +17,7 @@ import {
   KERNEL_MODEL_IDS,
   normalizeKernelModel,
   resolveKernelModelOption,
-} from "../../packages/gateway/src/kernel-settings.js";
+} from "../../packages/gateway/src/domains/integrations/kernel-settings.js";
 import {
   buildBundledModelCatalog,
   OWNER_ANTHROPIC_MODEL_IDS,
