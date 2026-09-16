@@ -94,6 +94,22 @@ export async function createPlatformCollaboration(options: {
       ]);
       return { scope, chat };
     }
+    if (input.entry.status === "accepted" && input.entry.kind === "terminal") {
+      const scopePath = `/api/collaboration/scopes/${input.entry.scopeId}`;
+      const [scope, terminal] = await Promise.all([
+        proxyJson(proxy, input.actorId, scopePath),
+        proxyJson(proxy, input.actorId, `${scopePath}/terminal`),
+      ]);
+      return { scope, terminal };
+    }
+    if (input.entry.status === "accepted" && input.entry.kind === "project") {
+      const scopePath = `/api/collaboration/scopes/${input.entry.scopeId}`;
+      const [scope, project] = await Promise.all([
+        proxyJson(proxy, input.actorId, scopePath),
+        proxyJson(proxy, input.actorId, `${scopePath}/project`),
+      ]);
+      return { scope, project };
+    }
     throw new Error("Collaboration projection unavailable");
   };
   const routes = createPlatformCollaborationRoutes({

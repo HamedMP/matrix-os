@@ -2,6 +2,7 @@ import { chmod, lstat, mkdir, unlink } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
 import {
+  normalizeTerminalSnapshot,
   TerminalTabClientFrameSchema,
   type TerminalPaneAction,
   type TerminalRef,
@@ -38,6 +39,7 @@ export interface TerminalRuntimeControlApi {
   renameTab(ref: { workspaceId: string; tabId: string }, input: { name: string; baseRevision: number }): Promise<TerminalTab>;
   reorderTabs(workspaceId: string, input: { tabIds: string[]; baseRevision: number }): Promise<TerminalWorkspace>;
   terminateTab(ref: { workspaceId: string; tabId: string }): Promise<void>;
+  deleteTab(ref: { workspaceId: string; tabId: string }): Promise<void>;
   paneAction(ref: { workspaceId: string; tabId: string }, action: TerminalPaneAction): Promise<void>;
   writeInput(ref: { workspaceId: string; tabId: string }, data: string): Promise<void>;
   updateTabUiState(ref: { workspaceId: string; tabId: string }, input: {
@@ -259,8 +261,8 @@ export class TerminalRuntimeSocketServer {
       nextSeq,
       capabilities: ["binary-input-v1"],
     });
+    send({ type: "replay-start", terminalRef: ref, revision, fromSeq: effectiveFromSeq });
     if (snapshot) {
-      send({ type: "replay-start", terminalRef: ref, revision, fromSeq: effectiveFromSeq });
       if (effectiveFromSeq < snapshot.seq) {
         send({ type: "replay-evicted", terminalRef: ref, revision, fromSeq: effectiveFromSeq, nextSeq: snapshot.seq });
       }
@@ -271,11 +273,11 @@ export class TerminalRuntimeSocketServer {
         revision,
         presentationRevision: snapshot.presentationRevision,
         seq: snapshot.seq,
-        ansi: snapshot.ansi,
+        ansi: normalizeTerminalSnapshot(snapshot.ansi),
         viewport: { top: 0, rows: Math.min(snapshot.viewport.length || resized.canonicalSize.rows, 200) },
       });
-      send({ type: "replay-end", terminalRef: ref, revision, nextSeq, toSeq: snapshot.seq });
     }
+    send({ type: "replay-end", terminalRef: ref, revision, nextSeq, toSeq: snapshot?.seq ?? null });
     const decoder = new TextDecoder();
     const viewer = await this.options.runtime.attach(ref, {
       viewerId: request.input.viewerId,
@@ -329,6 +331,7 @@ export class TerminalRuntimeSocketServer {
       case "RenameTab": return this.options.runtime.renameTab(request.input, request.input);
       case "ReorderTabs": return this.options.runtime.reorderTabs(request.input.workspaceId, request.input);
       case "TerminateTab": return this.options.runtime.terminateTab(request.input).then(() => null);
+      case "DeleteTab": return this.options.runtime.deleteTab(request.input).then(() => null);
       case "PaneAction": return this.options.runtime.paneAction(
         { workspaceId: request.input.workspaceId, tabId: request.input.tabId },
         request.input.action,

@@ -473,6 +473,12 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
         <div className="h-full overflow-hidden">
           {chatState && (
             <ChatApp
+                filterUnreadOnly={chatState.unreadOnly}
+                onUnreadFilterChange={chatState.setUnreadOnly}
+                active={isFocused && !win.minimized}
+                readState={chatState.readState}
+                displayedThroughSeq={chatState.displayedThroughSeq}
+                onUpdateReadState={chatState.updateReadState}
               messages={chatState.messages}
               sessionId={chatState.sessionId}
               busy={chatState.busy}
@@ -483,7 +489,9 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
               activeConversationTitle={chatState.activeConversationTitle}
               onRenameConversation={chatState.renameConversation}
               onSubmit={chatState.submitMessage}
+              agentClient={chatState.agentClient} queuedTurns={chatState.queuedTurns} onCancelQueuedTurn={chatState.cancelQueuedTurn}
               onSubmitApproval={chatState.submitApproval}
+              onSubmitInput={chatState.submitInput}
               providerSelection={chatState.providerSelection}
               composerDraftRequest={chatState.composerDraftRequest}
               onComposerDraftConsumed={chatState.consumeComposerDraft}

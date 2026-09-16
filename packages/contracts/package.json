@@ -8,6 +8,7 @@
     "./collaboration": "./src/collaboration.ts"
   },
   "imports": {
+    "#file-download": "./src/file-download.ts",
     "#release-alignment": "./src/release-alignment.ts",
     "#runtime-compatibility": "./src/runtime-compatibility.ts",
     "#chat-message-wire": "./src/chat-message-wire.ts",
@@ -20,7 +21,11 @@
     "#agent-runtime-config": "./src/agent-runtime-config.ts",
     "#agent-thread-contracts": "./src/agent-thread-contracts.ts",
     "#canonical-chat": "./src/canonical-chat.ts",
+    "#chat-agents": "./src/chat-agents.ts",
+    "#chat-agent-context": "./src/chat-agent-context.ts",
+    "#chat-agent-recipe": "./src/chat-agent-recipe.ts",
     "#canonical-chat-api": "./src/canonical-chat-api.ts",
+    "#canonical-chat-inputs": "./src/canonical-chat-inputs.ts",
     "#canonical-chat-content": "./src/canonical-chat-content.ts",
     "#canonical-chat-approvals": "./src/canonical-chat-approvals.ts",
     "#canonical-chat-primitives": "./src/canonical-chat-primitives.ts",
@@ -30,6 +35,7 @@
     "#canonical-chat-surface": "./src/canonical-chat-surface.ts",
     "#collaboration": "./src/collaboration.ts",
     "#contract-primitives": "./src/primitives.ts",
+    "#custom-mcp-availability": "./src/custom-mcp-availability.ts",
     "#custom-mcp-policy": "./src/custom-mcp-policy.ts",
     "#hermes-configuration": "./src/hermes-configuration.ts",
     "#kernel-result": "./src/kernel-result.ts",
@@ -45,6 +51,7 @@
     "#support-chat-properties": "./src/support-chat-properties.ts",
     "#terminal-clipboard": "./src/terminal-clipboard.ts",
     "#terminal-keyboard": "./src/terminal-keyboard.ts",
+    "#terminal-snapshot": "./src/terminal-snapshot.ts",
     "#terminal-links": "./src/terminal-links.ts"
   },
   "main": "src/index.ts",

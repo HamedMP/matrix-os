@@ -47,7 +47,10 @@ async function confirmedStop(child, closed) {
 
 async function initializeAttempt({ command, args, cwd, env, signal }) {
   signal.throwIfAborted();
-  const child = spawn(command, [...args, "app-server"], { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
+  // Native questions are opt-in outside Plan mode in the pinned Codex runtime.
+  const child = spawn(command, [...args, "-c", "features.default_mode_request_user_input=true", "app-server"], {
+    cwd, env, stdio: ["pipe", "pipe", "pipe"],
+  });
   const closed = new Promise((resolve) => child.once("close", (code, exitSignal) => resolve({ code, signal: exitSignal })));
   // Suppress raw stderr during initialization; the owner takes over after ready.
   const discard = () => undefined;

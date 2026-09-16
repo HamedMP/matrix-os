@@ -14,6 +14,7 @@ import {
   type NativeAppQuery,
 } from "../shared/native-app-bridge";
 import {
+  NATIVE_APP_ACTIVITY_BRIDGE_ARG,
   NATIVE_APP_GATEWAY_CHANNEL,
   createNativeAppGatewayFetch,
 } from "../shared/native-app-gateway";
@@ -50,7 +51,11 @@ if (process.argv.includes(NATIVE_APP_BRIDGE_ARG)) {
     ipcRenderer.invoke(NATIVE_APP_QUERY_CHANNEL, query));
   contextBridge.exposeInMainWorld("MatrixOS", Object.freeze({
     db: database,
-    gatewayFetch: createNativeAppGatewayFetch((request) => ipcRenderer.invoke(NATIVE_APP_GATEWAY_CHANNEL, request)),
+    // Advertise only capabilities this view can use. Other apps retain the
+    // pre-#1624 surface so feature detection does not select an unusable API.
+    ...(process.argv.includes(NATIVE_APP_ACTIVITY_BRIDGE_ARG) ? {
+      gatewayFetch: createNativeAppGatewayFetch((request) => ipcRenderer.invoke(NATIVE_APP_GATEWAY_CHANNEL, request)),
+    } : {}),
   }));
 } else {
   contextBridge.exposeInMainWorld("operator", api);

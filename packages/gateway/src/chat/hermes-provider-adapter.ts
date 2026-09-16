@@ -1,3 +1,5 @@
+import { ChatSteerNotDeliveredError } from "./steer-delivery-error.js";
+import { createHermesInputController } from "./hermes-input-control.js";
 import { delimiter, join } from "node:path";
 import { createHash } from "node:crypto";
 import { z } from "zod/v4";
@@ -293,6 +295,7 @@ export function createHermesChatProviderAdapter(options: {
 }): CanonicalChatProviderAdapter<HermesChatState> {
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const approvals = createHermesApprovalController();
+  const inputs = createHermesInputController();
   const activeSteerRuns = new Map<string, {
     ownerId: string;
     chatId: string;
@@ -330,6 +333,7 @@ export function createHermesChatProviderAdapter(options: {
     const toolActivities = new Map<string, Pick<HermesActivity, "kind" | "label" | "preview" | "previewKind" | "detail">>();
     const statusActivities = new Map<string, Pick<HermesActivity, "activityId" | "kind" | "label" | "summary">>();
     let activeDelegationId: string | undefined;
+    let releaseInputRun: (() => void) | undefined;
     let releaseApprovalRun: (() => void) | undefined;
     let releaseSteerRun: (() => void) | undefined;
 
@@ -595,11 +599,15 @@ export function createHermesChatProviderAdapter(options: {
         queue.push(approvals.registerRequest(input.runId, approvalId, parsed));
       } else if (event.type === "clarify.request") {
         const parsed = HermesClarifyRequestSchema.parse(event.payload);
-        queue.push(CanonicalProviderRunEventSchema.parse({
-          type: "input.requested",
-          requestId: providerReference("", parsed.request_id),
-          title: "Hermes needs input",
-        }));
+        // Legacy title-only payloads remain visible but cannot be answered.
+        if ("question" in parsed || "questions" in parsed) {
+          queue.push(inputs.registerRequest(input.runId, event.payload));
+        } else {
+          queue.push(CanonicalProviderRunEventSchema.parse({ type: "input.requested", requestId: providerReference("", parsed.request_id), title: "Input needed" }));
+        }
+      } else if (event.type === "clarify.expire") {
+        const parsed = HermesClarifyRequestSchema.parse(event.payload);
+        inputs.expire(input.runId, parsed.request_id);
       } else if (event.type === "error") {
         // Hermes may publish this untyped advisory after a failed activity while the turn continues.
         // Only its terminal completion frame or process failure can end such a recovered turn.
@@ -691,7 +699,6 @@ export function createHermesChatProviderAdapter(options: {
               session_id: resumeState.sessionId,
               cols: 120,
               source: "matrix-os-desktop",
-              cwd: input.executionRoot ?? options.homePath,
               omit_messages: true,
             }))
           : await withinRun(client.request("session.create", {
@@ -711,6 +718,7 @@ export function createHermesChatProviderAdapter(options: {
             state: { sessionId: durableSessionId },
           }));
         }
+        releaseInputRun = inputs.registerRun({ owner: input.owner, chatId: input.chatId, runId: input.runId, client, emit: event => queue.push(event) });
         releaseApprovalRun = approvals.registerRun({
           owner: input.owner,
           chatId: input.chatId,
@@ -839,6 +847,7 @@ export function createHermesChatProviderAdapter(options: {
       } finally {
         releaseSteerRun?.();
         releaseApprovalRun?.();
+        releaseInputRun?.();
         if (deltaFlushTimer) clearTimeout(deltaFlushTimer);
         if (totalTimer) clearTimeout(totalTimer);
         if (abortRun) runSignal.removeEventListener("abort", abortRun);
@@ -876,7 +885,8 @@ export function createHermesChatProviderAdapter(options: {
     resume: (input) => execute(input, HermesChatStateSchema.parse(input.resumeState)),
     async steer(input) {
       const active = activeSteerRuns.get(input.runId);
-      if (!active || active.ownerId !== input.owner.ownerId || active.chatId !== input.chatId
+      if (!active) throw new ChatSteerNotDeliveredError();
+      if (active.ownerId !== input.owner.ownerId || active.chatId !== input.chatId
         || active.turnId !== input.turnId) {
         throw new Error("Hermes steering Run unavailable");
       }
@@ -887,5 +897,7 @@ export function createHermesChatProviderAdapter(options: {
       if (response.status !== "queued") throw new Error("Hermes steering rejected");
     },
     submitApproval: (input) => approvals.submit(input),
+    submitInput: (input) => inputs.submit(input),
+    deferInput: (input) => inputs.defer(input),
   };
 }

@@ -27,6 +27,7 @@ const CleanupProviderResourceIdSchema = z.coerce.number().int().positive().max(N
 const SystemdStateSchema = z.string().min(1).max(64).regex(/^[A-Za-z0-9_.:@-]+$/);
 export const GoldenSnapshotServiceDiagnosticsSchema = z.object({
   unit: z.enum([
+    'matrix-terminal-runtime.service',
     'matrix-gateway.service',
     'matrix-shell.service',
     'matrix-sync-agent.service',
@@ -82,6 +83,7 @@ const GoldenSnapshotFailureStageSchema = z.enum([
   'activation_postgres_ready',
   'activation_services_start',
   'activation_services_ready',
+  'activation_terminal_runtime_ready',
   'activation_gateway_ready',
   'activation_shell_ready',
   'activation_sync_agent_ready',
@@ -318,14 +320,39 @@ runcmd:
         && [ ! -L /run/matrix-golden-activation-stage ]; then
         activationStage="$(cat /run/matrix-golden-activation-stage)"
         case "$activationStage" in
-          activation_preflight_evidence|activation_preflight_forbidden_state|activation_preflight_host_prerequisites|activation_preflight_user_state|activation_preflight_runtime_state|activation_preflight_owner_state|activation_preflight_root_ssh_state|activation_preflight_root_local_state|activation_preflight_log_state|activation_preflight_cloud_init|activation_preflight_container_state|activation_runtime_setup|activation_terminal_runtime|activation_docker_start|activation_postgres_pull|activation_postgres_start|activation_postgres_ready|activation_services_start|activation_services_ready|activation_gateway_ready|activation_shell_ready|activation_sync_agent_ready|activation_gateway_health) reportedStage="$activationStage" ;;
+          activation_preflight_evidence|activation_preflight_forbidden_state|activation_preflight_host_prerequisites|activation_preflight_user_state|activation_preflight_runtime_state|activation_preflight_owner_state|activation_preflight_root_ssh_state|activation_preflight_root_local_state|activation_preflight_log_state|activation_preflight_cloud_init|activation_preflight_container_state|activation_runtime_setup|activation_terminal_runtime|activation_docker_start|activation_postgres_pull|activation_postgres_start|activation_postgres_ready|activation_services_start|activation_services_ready|activation_terminal_runtime_ready|activation_gateway_ready|activation_shell_ready|activation_sync_agent_ready|activation_gateway_health) reportedStage="$activationStage" ;;
         esac
       fi
       callbackToken="$(cat /run/matrix-golden-snapshot-callback-token 2>/dev/null)"
-      printf '{"eventId":"${input.callbackEventId}","phase":"failed","role":"validation","stage":"%s","bundleVersion":"${bundleVersion}","bundleSha256":"${input.bundleSha256}"}\\n' "$reportedStage" >/run/matrix-golden-failure.json
+      python3 - "$reportedStage" /run/matrix-golden-service-diagnostics.json >/run/matrix-golden-failure.json <<'PY'
+    import json
+    import os
+    import sys
+
+    reported_stage, diagnostics_path = sys.argv[1:]
+    payload = {
+        'eventId': '${input.callbackEventId}',
+        'phase': 'failed',
+        'role': 'validation',
+        'stage': reported_stage,
+        'bundleVersion': '${bundleVersion}',
+        'bundleSha256': '${input.bundleSha256}',
+    }
+    if os.path.isfile(diagnostics_path) and not os.path.islink(diagnostics_path):
+        try:
+            with open(diagnostics_path, 'rb') as handle:
+                raw = handle.read(131073)
+            if len(raw) <= 131072:
+                diagnostics = json.loads(raw)
+                if isinstance(diagnostics, dict):
+                    payload['serviceDiagnostics'] = diagnostics
+        except (OSError, ValueError, UnicodeError):
+            print('Golden service diagnostics unavailable; reporting failure stage only', file=sys.stderr)
+    json.dump(payload, sys.stdout, separators=(',', ':'))
+    PY
       printf 'header = "authorization: Bearer %s"\\n' "$callbackToken" |
         curl --config - --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 --retry-max-time 60 --connect-timeout 10 --max-time 10 -H 'content-type: application/json' --data-binary @/run/matrix-golden-failure.json '${input.callbackUrl}'
-      rm -f /run/matrix-golden-snapshot-callback-token /run/matrix-golden-failure.json /run/matrix-golden-validation.json /run/matrix-golden-activation-stage
+      rm -f /run/matrix-golden-snapshot-callback-token /run/matrix-golden-failure.json /run/matrix-golden-validation.json /run/matrix-golden-activation-stage /run/matrix-golden-service-diagnostics.json
       exit "$failureStatus"
     }
     trap reportFailure EXIT
@@ -367,7 +394,7 @@ runcmd:
       curl --config - --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 --retry-max-time 60 --connect-timeout 10 --max-time 10 -H 'content-type: application/json' --data-binary @/run/matrix-golden-validation.json '${input.callbackUrl}'
     failureArmed=0
     trap - EXIT
-    rm -f /run/matrix-golden-snapshot-callback-token /run/matrix-golden-validation.json
+    rm -f /run/matrix-golden-snapshot-callback-token /run/matrix-golden-validation.json /run/matrix-golden-activation-stage /run/matrix-golden-service-diagnostics.json
     exit "$validationStatus"
 `;
 }

@@ -1,3 +1,4 @@
+import type { ChatAgentDraftRequest } from "@matrix-os/ui";
 import { openChatWebLink } from "./chat-web-navigation";
 import type { AgentProviderSummary, CanonicalChatDetailResponse } from "@matrix-os/contracts";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -392,6 +393,7 @@ export default function ChatTab({
   tabId,
   initialChatId,
   initialView,
+  draftRequest,
   externalNavigation = false,
   renderInspector,
   inspectorExclusive = false,
@@ -403,6 +405,7 @@ export default function ChatTab({
   tabId?: string;
   initialChatId?: string;
   initialView?: "index" | "draft" | "conversation";
+  draftRequest?: ChatAgentDraftRequest | null;
   externalNavigation?: boolean;
   renderInspector?: (detail: CanonicalChatDetailResponse) => ReactNode;
   inspectorExclusive?: boolean;
@@ -419,6 +422,7 @@ export default function ChatTab({
       tabId={tabId}
       initialChatId={initialChatId}
       initialView={initialView}
+      draftRequest={draftRequest}
       active={active}
       live={visible}
       eventSource={eventSource}

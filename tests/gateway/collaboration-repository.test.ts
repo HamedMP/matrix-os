@@ -198,6 +198,39 @@ describe("CollaborationRepository", () => {
     expect(counts.map(({ count }) => Number(count))).toEqual([2, 1, 1, 1, 1]);
   });
 
+  it("keeps project invitations and acceptance undiscoverable until project activation", async () => {
+    const scope = await repository.createDirectScope({
+      scopeId: collaborationIds.scope,
+      ownerId: collaborationActors.owner,
+      kind: "project",
+      resourceId: "project_private",
+      authorityRuntimeId: collaborationIds.runtime,
+    });
+    const invitation = await repository.createInvitation({
+      scopeId: scope.id,
+      actorId: collaborationActors.owner,
+      targetActorId: collaborationActors.editor,
+      role: "editor",
+      clientRequestId: uuid(41),
+      expectedRevision: 0,
+      payloadHash: "f".repeat(64),
+      expiresAt: future,
+    });
+    await repository.acceptInvitation({
+      invitationId: invitation.invitationId,
+      actorId: collaborationActors.editor,
+      clientRequestId: uuid(42),
+      expectedRevision: 1,
+      payloadHash: "a".repeat(64),
+    });
+
+    await expect(fixture.db.selectFrom("collaboration_directory_outbox")
+      .select("event_id").where("scope_id", "=", scope.id).execute()).resolves.toEqual([]);
+    await expect(fixture.db.selectFrom("collaboration_events")
+      .select(({ fn }) => fn.countAll<number>().as("count"))
+      .where("scope_id", "=", scope.id).executeTakeFirstOrThrow()).resolves.toEqual({ count: 2 });
+  });
+
   it("conditionally changes roles, revokes members, and protects the final owner", async () => {
     const scope = await createScope();
     const invitation = await repository.createInvitation({
@@ -217,6 +250,8 @@ describe("CollaborationRepository", () => {
       expectedRevision: 1,
       payloadHash: "6".repeat(64),
     });
+    await fixture.db.updateTable("collaboration_scopes").set({ lifecycle: "shared" })
+      .where("id", "=", scope.id).execute();
 
     const downgraded = await repository.changeMemberRole({
       scopeId: scope.id,

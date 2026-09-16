@@ -115,6 +115,8 @@ export function ListView({ renamingPath, onStartRename, onCancelRename, onOpenFi
             return (
               <tr
                 key={entry.name}
+                data-web-file-path={currentPath ? `${currentPath}/${entry.name}` : entry.name}
+                data-web-file-type={entry.type}
                 className={cn(
                   "cursor-default hover:bg-accent/50 transition-colors",
                   selected && "bg-accent",

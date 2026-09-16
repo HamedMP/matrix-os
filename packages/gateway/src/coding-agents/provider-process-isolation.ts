@@ -1,7 +1,7 @@
 import { execFile, spawn, type ChildProcessByStdio } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import type { Readable } from "node:stream";
+import type { Readable, Writable } from "node:stream";
 import { promisify } from "node:util";
 
 const SYSTEMD_RUN_PATH = "/usr/bin/systemd-run";
@@ -158,21 +158,31 @@ export async function cleanupStaleIsolatedProviderProcesses(options: IsolationPr
  * group so the CLI and any tools it started cannot outlive the canonical Run.
  */
 export function spawnIsolatedProviderProcess(
+  command: string, args: string[],
+  options: { cwd: string; env: Record<string, string>; stdio: ["ignore", "pipe", "pipe"] },
+): ChildProcessByStdio<null, Readable, Readable>;
+export function spawnIsolatedProviderProcess(
+  command: string, args: string[],
+  options: { cwd: string; env: Record<string, string>; stdio: ["pipe", "pipe", "pipe"] },
+): ChildProcessByStdio<Writable, Readable, Readable>;
+export function spawnIsolatedProviderProcess(
+  command: string, args: string[],
+  options: { cwd: string; env: Record<string, string>; stdio: ["ignore" | "pipe", "pipe", "pipe"] },
+): ChildProcessByStdio<Writable | null, Readable, Readable>;
+export function spawnIsolatedProviderProcess(
   command: string,
   args: string[],
   options: {
     cwd: string;
     env: Record<string, string>;
-    stdio: ["ignore", "pipe", "pipe"];
+    stdio: ["ignore" | "pipe", "pipe", "pipe"];
   },
-): ChildProcessByStdio<null, Readable, Readable> {
+): ChildProcessByStdio<Writable | null, Readable, Readable> {
   const launch = buildIsolatedProviderLaunch({ command, args, env: options.env });
-  const child = spawn(launch.command, launch.args, {
-    cwd: options.cwd,
-    env: launch.env,
-    stdio: options.stdio,
-    detached: launch.isolated,
-  });
+  const spawnOptions = { cwd: options.cwd, env: launch.env, detached: launch.isolated };
+  const child = options.stdio[0] === "pipe"
+    ? spawn(launch.command, launch.args, { ...spawnOptions, stdio: ["pipe", "pipe", "pipe"] })
+    : spawn(launch.command, launch.args, { ...spawnOptions, stdio: ["ignore", "pipe", "pipe"] });
   if (!launch.isolated) return child;
 
   const directKill = child.kill.bind(child);

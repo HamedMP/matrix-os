@@ -18,6 +18,10 @@ vi.mock("../../shell/src/components/terminal/PaneGrid.js", () => ({
   },
 }));
 
+vi.mock("@/components/projects/ProjectSharing", () => ({
+  ProjectSharing: ({ projectId }: { projectId: string }) => <button type="button">Share project {projectId}</button>,
+}));
+
 vi.mock("@/hooks/useTheme", () => ({
   useTheme: () => ({
     name: "matrix-dark",
@@ -152,6 +156,26 @@ describe("TerminalApp workspace contract", () => {
     vi.unstubAllGlobals();
   });
 
+  it("renders whole-project sharing in the web project group", () => {
+    const projectShell: ShellSessionSummary = {
+      name: REF_KEY,
+      workspaceId: WORKSPACE_ID,
+      tabId: TAB_ID,
+      revision: 1,
+      workspaceRevision: 1,
+      projectId: "proj_alpha",
+      project: "proj_alpha",
+      status: "active",
+    };
+    render(<ShellSessionGroup label="Active" shells={[projectShell]} expanded foreground
+      deletingShellNames={[]} selectedShellName={null}
+      onOpen={vi.fn()} onToggle={vi.fn()} onPin={vi.fn()} onRename={vi.fn(async () => true)}
+      onDelete={vi.fn()} draggingShellName={null} dragOverShellName={null}
+      onDragStart={vi.fn()} onDragOver={vi.fn()} onDrop={vi.fn()} onDragEnd={vi.fn()} />);
+
+    expect(screen.getByRole("button", { name: "Share project proj_alpha" })).toBeTruthy();
+  });
+
   it("opens a canvas-provided TerminalRef without creating another tab", async () => {
     render(<TerminalApp initialSessionId={REF_KEY} />);
     await settle();
@@ -225,15 +249,21 @@ describe("TerminalApp workspace contract", () => {
       if (url.endsWith("/api/files/tree")) return json([]);
       return json({});
     });
-    render(<TerminalApp initialSessionId={REF_KEY} />);
+    render(<TerminalApp initialSessionId={REF_KEY} desktopParity />);
     await settle();
     fireEvent.click(screen.getByRole("button", { name: "New shell session" }));
     await settle();
 
-    expect(vi.mocked(fetch).mock.calls).toContainEqual([
-      expect.stringContaining(`/api/terminal/workspaces/${WORKSPACE_ID}/tabs`),
-      expect.objectContaining({ method: "POST" }),
-    ]);
+    const createCall = vi.mocked(fetch).mock.calls.find(([input, init]) => (
+      String(input).endsWith(`/api/terminal/workspaces/${WORKSPACE_ID}/tabs`)
+      && init?.method === "POST"
+    ));
+    expect(createCall).toBeDefined();
+    const requestBody = JSON.parse(String(createCall?.[1]?.body)) as { name: string };
+    expect(requestBody).toMatchObject({
+      name: expect.stringMatching(/^[a-z]+-[a-z]+$/),
+    });
+    expect(screen.queryByText(requestBody.name)).not.toBeNull();
   });
 
   it("creates queued runtime launches as canonical workspace tabs", async () => {

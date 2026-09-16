@@ -1,3 +1,4 @@
+import type { ChatRunContext, CanonicalChatInputView, CanonicalSubmitChatInputRequest } from "@matrix-os/contracts";
 export type ConversationMessageRole = "user" | "assistant";
 
 export interface ConversationAttachmentPresentation {
@@ -83,6 +84,7 @@ export interface ConversationRequestPresentation {
   kind: "request";
   id: string;
   phase: "commentary" | "final";
+  input?: CanonicalChatInputView;
   requestKind: "approval" | "input";
   requestId: string;
   state: "waiting" | "resolved";
@@ -113,6 +115,8 @@ export type ConversationTurnTimelinePresentation =
   | { kind: "user-followup"; message: ConversationMessagePresentation };
 
 export interface ConversationTurnPresentation {
+  agentLabel?: string;
+  runContext?: ChatRunContext;
   id: string;
   startedAt: number;
   endedAt: number;
@@ -128,6 +132,7 @@ export interface ConversationTurnPresentation {
 export interface ConversationPresentationCallbacks {
   copyText: (text: string) => Promise<void>;
   loadImage?: (src: string) => Promise<Blob>;
+  submitInput?: (runId: string, requestId: string, input: Omit<CanonicalSubmitChatInputRequest, "clientRequestId">) => Promise<boolean>;
   performAction?: (action: ConversationActionPresentation, input?: string) => Promise<void>;
   canPerformAction?: (action: ConversationActionPresentation) => boolean;
   openFile?: (path: string) => boolean;

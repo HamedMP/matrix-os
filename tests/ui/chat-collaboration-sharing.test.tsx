@@ -17,7 +17,7 @@ const chatId = "chat_one";
 describe("Chat collaboration sharing", () => {
   it("keeps snapshot sharing and live invitations as distinct choices", () => {
     const api = { baseUrl: "https://gateway.test", get: vi.fn(), post: vi.fn(), delete: vi.fn() };
-    render(<ChatSharingButton api={api} collaborationApi={api} runtimeId="runtime_owner" chatId={chatId}
+    render(<ChatSharingButton api={api} collaborationEnabled collaborationApi={api} runtimeId="runtime_owner" chatId={chatId}
       handle="owner" runtimeSlot="primary" platformHost="https://app.matrix-os.com" copyText={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: "Share" }));
     expect((screen.getByRole("dialog", { name: "Share Chat" }).firstElementChild as HTMLElement).style.background)
@@ -28,6 +28,16 @@ describe("Chat collaboration sharing", () => {
     expect(screen.getByText(/ongoing Chat/i)).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Share" }));
     expect(screen.queryByRole("button", { name: "Share snapshot" })).toBeNull();
+  });
+
+  it("hides live collaboration entirely when the computer flag is off", () => {
+    const api = { baseUrl: "https://gateway.test", get: vi.fn(), post: vi.fn(), delete: vi.fn() };
+    render(<ChatSharingButton api={api} collaborationEnabled={false} collaborationApi={api} runtimeId="runtime_owner" chatId={chatId}
+      handle="owner" runtimeSlot="primary" platformHost="https://app.matrix-os.com" copyText={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Share" }));
+    expect(screen.getByRole("button", { name: "Share snapshot" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Invite collaborators" })).toBeNull();
+    expect(screen.queryByText(/Live collaboration is unavailable/i)).toBeNull();
   });
 
   it("converts an idle Chat once and invites an editor through the live authority", async () => {
@@ -50,7 +60,7 @@ describe("Chat collaboration sharing", () => {
       patch: vi.fn(),
     };
     const snapshotApi = { baseUrl: "https://gateway.test", get: vi.fn(), post: vi.fn(), delete: vi.fn() };
-    render(<ChatSharingButton api={snapshotApi} collaborationApi={collaborationApi} runtimeId="runtime_owner"
+    render(<ChatSharingButton api={snapshotApi} collaborationEnabled collaborationApi={collaborationApi} runtimeId="runtime_owner"
       chatId={chatId} handle="owner" runtimeSlot="primary" platformHost="https://app.matrix-os.com" copyText={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: "Share" }));
     fireEvent.click(screen.getByRole("button", { name: "Invite collaborators" }));
@@ -142,6 +152,96 @@ describe("Chat collaboration sharing", () => {
     expect(screen.getByText("Owner One invited you")).toBeVisible();
   });
 
+  it("opens accepted terminal discovery in the shared terminal surface", async () => {
+    const terminalScope = {
+      id: scopeId, ownerId: "user_owner", kind: "terminal" as const, resourceId: "terminal_release",
+      membershipMode: "direct" as const, lifecycle: "shared" as const, revision: "1", authEpoch: "1",
+      authorityGeneration: "1", role: "viewer" as const,
+      capabilities: { read: true, discuss: false, manageMembers: false, requestAi: false,
+        observeTerminal: true, controlTerminal: false, stopTerminal: false },
+    };
+    const terminal = {
+      id: "terminal_release", scopeId, incarnation: `terminal-${"a".repeat(32)}`,
+      executionGeneration: "4", status: "active" as const,
+      createdBy: { actorId: "user_owner", displayName: "Nima" }, createdAt: "2026-09-11T12:00:00.000Z",
+    };
+    const api = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async (path: string) => path.endsWith("/inbox") ? { items: [] } : path.endsWith("/shared")
+        ? { items: [{ scopeId, runtimeId: "runtime_owner", ownerId: "user_owner", kind: "terminal",
+          authorityGeneration: 1, status: "accepted", resource: { scope: terminalScope, terminal } }] }
+        : path.endsWith(`/scopes/${scopeId}`) ? terminalScope : terminal),
+      post: vi.fn(), delete: vi.fn(),
+      subscribeTerminal: vi.fn(() => () => undefined),
+    };
+    const openTerminal = vi.fn();
+    const { rerender } = render(<ChatCollaboration view={{ kind: "home" }} api={api} actorId="user_viewer"
+      openTerminal={openTerminal} />);
+    expect(await screen.findByText("terminal_release")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Open terminal" }));
+    expect(openTerminal).toHaveBeenCalledWith(scopeId);
+
+    rerender(<ChatCollaboration view={{ kind: "terminal", scopeId }} api={api} actorId="user_viewer"
+      openTerminal={openTerminal} />);
+    expect(await screen.findByText("Watching only")).toBeVisible();
+  });
+
+  it("opens an accepted whole project with inherited resources and read-only role state", async () => {
+    const projectScope = {
+      id: scopeId, ownerId: "user_owner", kind: "project" as const, resourceId: "proj_launch",
+      membershipMode: "direct" as const, lifecycle: "shared" as const, revision: "5", authEpoch: "2",
+      authorityGeneration: "2", role: "viewer" as const,
+      capabilities: { read: true, discuss: false, manageMembers: false, requestAi: false,
+        observeTerminal: false, controlTerminal: false, stopTerminal: false },
+    };
+    const project = {
+      id: "proj_launch", scopeId, status: "active" as const,
+      resources: [
+        { kind: "file" as const, id: "README.md", revision: "0", readiness: "ready" as const },
+        { kind: "chat" as const, id: "chat_launch", revision: "4", readiness: "ready" as const },
+      ],
+    };
+    let currentProjectScope = { ...projectScope, role: projectScope.role as "owner" | "editor" | "viewer" };
+    let refreshProject = () => undefined;
+    let revokeProject = () => undefined;
+    const api = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async (path: string) => path.endsWith("/inbox") ? { items: [] } : path.endsWith("/shared")
+        ? { items: [{ scopeId, runtimeId: "runtime_owner", ownerId: "user_owner", kind: "project",
+          authorityGeneration: 2, status: "accepted", resource: { scope: projectScope, project } }] }
+        : path.endsWith(`/scopes/${scopeId}`) ? currentProjectScope : project),
+      post: vi.fn(), delete: vi.fn(),
+      subscribe: vi.fn((_scopeId: string, onEvent: () => void, onUnavailable: () => void) => {
+        refreshProject = onEvent;
+        revokeProject = onUnavailable;
+        return () => undefined;
+      }),
+    };
+    const openProject = vi.fn();
+    const { rerender } = render(<ChatCollaboration view={{ kind: "home" }} api={api} actorId="user_viewer"
+      openProject={openProject} />);
+    expect(await screen.findByText("proj_launch")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Open project" }));
+    expect(openProject).toHaveBeenCalledWith(scopeId);
+
+    rerender(<ChatCollaboration view={{ kind: "project", scopeId }} api={api} actorId="user_viewer"
+      openProject={openProject} />);
+    expect(await screen.findByRole("heading", { name: "proj_launch" })).toBeVisible();
+    expect(screen.getByText("README.md")).toBeVisible();
+    expect(screen.getByText(/Viewer · read only/i)).toBeVisible();
+    currentProjectScope = {
+      ...projectScope,
+      revision: "6",
+      role: "editor",
+      capabilities: { ...projectScope.capabilities, discuss: true },
+    };
+    await act(async () => refreshProject());
+    expect(await screen.findByText(/Editor · can edit/i)).toBeVisible();
+    act(() => revokeProject());
+    expect(await screen.findByText("Shared project unavailable")).toBeVisible();
+    expect(screen.queryByText("README.md")).toBeNull();
+  });
+
   it("renders attributed canonical history and preserves a private draft after failure", async () => {
     const scope = {
       id: scopeId, ownerId: "user_owner", kind: "chat" as const, resourceId: chatId,
@@ -178,7 +278,7 @@ describe("Chat collaboration sharing", () => {
       actorId="user_editor" runtimeId="runtime_owner" />);
     expect(await screen.findByText("Nima")).toBeVisible();
     expect(screen.getByText("Welcome")).toBeVisible();
-    expect(screen.getByText(/AI requests are unavailable/i)).toBeVisible();
+    expect(await screen.findByText(/AI requests are unavailable/i)).toBeVisible();
     fireEvent.change(screen.getByLabelText("Message everyone"), { target: { value: "Ready" } });
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Message was not sent");
@@ -329,8 +429,8 @@ describe("Chat collaboration sharing", () => {
     const scope = {
       id: scopeId, ownerId: "user_owner", kind: "chat", resourceId: chatId,
       membershipMode: "direct", lifecycle: "shared", revision: "1", authEpoch: "1",
-      authorityGeneration: "1", role: "viewer",
-      capabilities: { read: true, discuss: false, manageMembers: false, requestAi: false },
+      authorityGeneration: "1", role: "editor",
+      capabilities: { read: true, discuss: true, manageMembers: false, requestAi: false },
     };
     const message = (text: string) => ({
       id: "msg_1", chatId, sequence: "1", role: "user", state: "committed", purpose: "discussion",
@@ -357,19 +457,19 @@ describe("Chat collaboration sharing", () => {
         return () => undefined;
       }),
     };
-    render(<ChatCollaboration view={{ kind: "chat", scopeId }} api={api} actorId="user_viewer" />);
+    render(<ChatCollaboration view={{ kind: "chat", scopeId }} api={api} actorId="user_editor" />);
     expect(await screen.findByText("Initial message")).toBeVisible();
-    const older = refresh();
-    // Attach the rejection handler immediately: superseded recoveries are
-    // intentionally reported to the subscription client for retry handling.
-    const olderOutcome = expect(older).rejects.toThrow("CollaborationRecoverySuperseded");
+    fireEvent.change(screen.getByLabelText("Message everyone"), { target: { value: "Ship it" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
     await waitFor(() => expect(resolveOlder).toBeTypeOf("function"));
     await act(async () => { await refresh(); });
     expect(screen.getByText("Newest message")).toBeVisible();
     await act(async () => {
       resolveOlder({ messages: [message("Stale message")] });
-      await olderOutcome;
+      await Promise.resolve();
+      await Promise.resolve();
     });
+    expect(screen.getByRole("heading", { name: "Refresh race" })).toBeVisible();
     expect(screen.getByText("Newest message")).toBeVisible();
     expect(screen.queryByText("Stale message")).toBeNull();
   });
@@ -428,6 +528,64 @@ describe("Chat collaboration sharing", () => {
     expect(screen.queryByText("Shared Chat unavailable")).toBeNull();
   });
 
+  it("keeps a healthy Chat visible when a post-send recovery is superseded", async () => {
+    const scope = {
+      id: scopeId, ownerId: "user_owner", kind: "chat", resourceId: chatId,
+      membershipMode: "direct", lifecycle: "shared", revision: "1", authEpoch: "1",
+      authorityGeneration: "1", role: "editor",
+      capabilities: { read: true, discuss: true, manageMembers: false, requestAi: false },
+    };
+    const message = { id: "msg_1", chatId, sequence: "1", role: "user", state: "committed", purpose: "discussion",
+      actor: { actorId: "user_owner", displayName: "Nima" }, parts: [{ type: "text", text: "Still healthy" }],
+      createdAt: "2026-09-07T12:00:00.000Z" };
+    let refresh!: () => Promise<void>;
+    let resolveSendChat!: (value: unknown) => void;
+    let resolveLiveMessages!: (value: unknown) => void;
+    let chatReads = 0;
+    let messageReads = 0;
+    const chat = { id: chatId, scopeId, title: "Overlap Chat", lifecycle: "active", revision: "1", messageCount: "1" };
+    const api = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async (path: string) => {
+        if (path.includes("/messages?")) {
+          messageReads += 1;
+          if (messageReads === 2) return new Promise((resolve) => { resolveLiveMessages = resolve; });
+          return { messages: [message] };
+        }
+        if (path.endsWith("/chat")) {
+          chatReads += 1;
+          if (chatReads === 2) return new Promise((resolve) => { resolveSendChat = resolve; });
+          return chat;
+        }
+        return scope;
+      }),
+      post: vi.fn(async () => ({})), delete: vi.fn(),
+      subscribe: vi.fn((_scopeId: string, onEvent: () => Promise<void>) => {
+        refresh = onEvent;
+        return () => undefined;
+      }),
+    };
+    render(<ChatCollaboration view={{ kind: "chat", scopeId }} api={api} actorId="user_editor" />);
+    expect(await screen.findByRole("heading", { name: "Overlap Chat" })).toBeVisible();
+    fireEvent.change(screen.getByLabelText("Message everyone"), { target: { value: "Ship it" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(resolveSendChat).toBeTypeOf("function"));
+    const liveRefresh = refresh();
+    await waitFor(() => expect(resolveLiveMessages).toBeTypeOf("function"));
+    await act(async () => {
+      resolveSendChat(chat);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(screen.getByRole("heading", { name: "Overlap Chat" })).toBeVisible();
+    await act(async () => {
+      resolveLiveMessages({ messages: [message] });
+      await liveRefresh;
+    });
+    expect(screen.getByRole("heading", { name: "Overlap Chat" })).toBeVisible();
+    expect(screen.queryByText("Shared Chat unavailable")).toBeNull();
+  });
+
   it("keeps viewer discussion controls read-only", async () => {
     const api = {
       baseUrl: "https://app.matrix-os.com",
@@ -476,31 +634,56 @@ describe("Chat collaboration sharing", () => {
     expect(screen.queryByRole("button", { name: "Load more messages" })).toBeNull();
   });
 
-  it("keeps loaded history visible when an older history page fails", async () => {
+  it("reenables history pagination when a failed recovery fences an older page", async () => {
     const firstPage = Array.from({ length: 100 }, (_, index) => ({
       id: `msg_${index}`, chatId, sequence: String(index + 1), role: "user" as const,
       state: "committed" as const, purpose: "discussion" as const,
       actor: { actorId: "user_owner", displayName: "Nima" }, parts: [{ type: "text" as const, text: `Message ${index + 1}` }],
       createdAt: "2026-09-07T12:00:00.000Z",
     }));
+    let refresh!: () => Promise<void>;
+    let failRecovery = false;
+    let resolvePage!: (value: unknown) => void;
+    let rejectRecovery!: (reason?: unknown) => void;
     const api = {
       baseUrl: "https://app.matrix-os.com",
       get: vi.fn(async (path: string) => {
         if (path.endsWith("after=0&limit=100")) return { messages: firstPage };
-        if (path.endsWith("after=100&limit=100")) throw new Error("private upstream detail");
-        if (path.endsWith("/chat")) return { id: chatId, scopeId, title: "Long Chat", lifecycle: "active", revision: "1", messageCount: "101" };
+        if (path.endsWith("after=100&limit=100")) return new Promise((resolve) => { resolvePage = resolve; });
+        if (path.endsWith("/chat")) {
+          if (failRecovery) return new Promise((_resolve, reject) => { rejectRecovery = reject; });
+          return { id: chatId, scopeId, title: "Long Chat", lifecycle: "active", revision: "1", messageCount: "101" };
+        }
         return { id: scopeId, ownerId: "user_owner", kind: "chat", resourceId: chatId, membershipMode: "direct", lifecycle: "shared",
           revision: "1", authEpoch: "1", authorityGeneration: "1", role: "viewer",
           capabilities: { read: true, discuss: false, manageMembers: false, requestAi: false } };
       }),
       post: vi.fn(), delete: vi.fn(),
+      subscribe: vi.fn((_scopeId: string, onEvent: () => Promise<void>) => {
+        refresh = onEvent;
+        return () => undefined;
+      }),
     };
     render(<ChatCollaboration view={{ kind: "chat", scopeId }} api={api} actorId="user_viewer" runtimeId="runtime_owner" />);
     expect(await screen.findByText("Message 1")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Load more messages" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("More messages could not be loaded");
+    await waitFor(() => expect(resolvePage).toBeTypeOf("function"));
+    failRecovery = true;
+    let recovery!: Promise<void>;
+    await act(async () => {
+      recovery = refresh();
+      await Promise.resolve();
+    });
+    expect(screen.getByRole("button", { name: "Loading…" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Loading…" }));
+    expect(api.get.mock.calls.filter(([path]) => path.endsWith("after=100&limit=100"))).toHaveLength(1);
+    await act(async () => {
+      rejectRecovery(new Error("private upstream detail"));
+      await expect(recovery).rejects.toThrow("private upstream detail");
+      resolvePage({ messages: [] });
+    });
     expect(screen.getByText("Message 1")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Load more messages" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Load more messages" })).toBeEnabled();
   });
 
   it("recovers every canonical page without collapsing already loaded history", async () => {

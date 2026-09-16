@@ -11,13 +11,13 @@ const DRAFT_INDEX_KEY = `${DRAFT_PREFIX}:index`;
 const DEFAULT_MAX_ENTRIES = 20;
 const DraftSchema = z.strictObject({
   text: z.string().max(65_536).refine((value) => new TextEncoder().encode(value).byteLength <= 64 * 1024),
-  mode: z.literal("discussion"),
+  mode: z.enum(["discussion", "ai"]),
 });
 const DraftIndexSchema = z.array(z.string().max(1_024).regex(/^matrix:collaboration:chat-draft:v1:/)).max(100);
 
 export interface CollaborationDraft {
   text: string;
-  mode: "discussion";
+  mode: "discussion" | "ai";
 }
 
 export function collaborationDraftKey(input: {
@@ -35,20 +35,28 @@ export function collaborationDraftKey(input: {
   return `${DRAFT_PREFIX}:${values.map(encodeURIComponent).join(":")}`;
 }
 
+export function collaborationDraftModeKey(
+  baseKey: string,
+  mode: CollaborationDraft["mode"],
+): string {
+  requireDraftKey(baseKey);
+  return mode === "ai" ? `${baseKey}:ai` : baseKey;
+}
+
 export function createCollaborationDraftStore(
   storage: Pick<Storage, "getItem" | "setItem" | "removeItem">,
   options: { maxEntries?: number } = {},
 ) {
   const maxEntries = z.number().int().min(1).max(50).parse(options.maxEntries ?? DEFAULT_MAX_ENTRIES);
   return {
-    load(key: string): CollaborationDraft {
+    load(key: string, mode: CollaborationDraft["mode"] = "discussion"): CollaborationDraft {
       requireDraftKey(key);
       try {
         const raw = storage.getItem(key);
-        return raw ? DraftSchema.parse(JSON.parse(raw) as unknown) : emptyDraft();
+        return raw ? DraftSchema.parse(JSON.parse(raw) as unknown) : emptyDraft(mode);
       } catch (error: unknown) {
         console.warn("[chat-collaboration] private draft load failed", error instanceof Error ? error.name : "UnknownError");
-        return emptyDraft();
+        return emptyDraft(mode);
       }
     },
     save(key: string, value: CollaborationDraft): void {
@@ -77,8 +85,8 @@ export function createCollaborationDraftStore(
   };
 }
 
-function emptyDraft(): CollaborationDraft {
-  return { text: "", mode: "discussion" };
+function emptyDraft(mode: CollaborationDraft["mode"]): CollaborationDraft {
+  return { text: "", mode };
 }
 
 function requireDraftKey(key: string): void {

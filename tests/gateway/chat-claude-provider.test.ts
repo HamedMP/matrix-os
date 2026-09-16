@@ -12,6 +12,7 @@ function child(lines: string[], exitCode = 0, stderrLines: string[] = []) {
     stderr: FakeStream;
     kill: ReturnType<typeof vi.fn>;
   };
+  Object.assign(process, { stdin: { write: (_chunk: string, callback?: (error?: Error | null) => void) => { callback?.(); return true; } } });
   process.stdout = stdout;
   process.stderr = stderr;
   process.kill = vi.fn();
@@ -50,6 +51,7 @@ describe("Claude canonical Chat Provider adapter", () => {
       stderr: FakeStream;
       kill: ReturnType<typeof vi.fn>;
     };
+    Object.assign(firstProcess, { stdin: { write: (_chunk: string, callback?: (error?: Error | null) => void) => { callback?.(); return true; } } });
     firstProcess.stdout = firstStdout;
     firstProcess.stderr = firstStderr;
     firstProcess.kill = vi.fn(() => queueMicrotask(() => firstProcess.emit("exit", exitCode, exitCode === null ? "SIGTERM" : null)));
@@ -87,7 +89,7 @@ describe("Claude canonical Chat Provider adapter", () => {
     expect(firstProcess.kill).toHaveBeenCalled();
     expect(spawnFn).toHaveBeenCalledTimes(2);
     expect(spawnFn.mock.calls[1]?.[1]).toEqual(expect.arrayContaining([
-      "--resume", "claude_steer_session", "--", "Reply 222",
+      "--resume", "claude_steer_session", "--input-format", "stream-json",
     ]));
     expect(events).toContainEqual({ type: "assistant.delta", delta: "222" });
     expect(events.at(-1)).toEqual({ type: "run.completed", outcome: "completed" });
@@ -537,7 +539,8 @@ describe("Claude canonical Chat Provider adapter", () => {
       stderr: FakeStream;
       kill: ReturnType<typeof vi.fn>;
     };
-    process.stdout = stdout;
+    Object.assign(process, { stdin: { write: (_chunk: string, callback?: (error?: Error | null) => void) => { callback?.(); return true; } } });
+  process.stdout = stdout;
     process.stderr = stderr;
     process.kill = vi.fn(() => queueMicrotask(() => process.emit("exit", null, "SIGTERM")));
     const spawnFn = vi.fn(() => process);
@@ -827,7 +830,8 @@ describe("Claude canonical Chat Provider adapter", () => {
       stderr: FakeStream;
       kill: ReturnType<typeof vi.fn>;
     };
-    process.stdout = stdout;
+    Object.assign(process, { stdin: { write: (_chunk: string, callback?: (error?: Error | null) => void) => { callback?.(); return true; } } });
+  process.stdout = stdout;
     process.stderr = stderr;
     process.kill = vi.fn(() => queueMicrotask(() => process.emit("exit", null, "SIGTERM")));
     const spawnFn = vi.fn(() => {
@@ -852,7 +856,8 @@ describe("Claude canonical Chat Provider adapter", () => {
       stderr: FakeStream;
       kill: ReturnType<typeof vi.fn>;
     };
-    process.stdout = stdout;
+    Object.assign(process, { stdin: { write: (_chunk: string, callback?: (error?: Error | null) => void) => { callback?.(); return true; } } });
+  process.stdout = stdout;
     process.stderr = stderr;
     process.kill = vi.fn(() => queueMicrotask(() => process.emit("exit", null, "SIGTERM")));
     const spawnFn = vi.fn(() => process);
@@ -905,4 +910,34 @@ describe("Claude canonical Chat Provider adapter", () => {
       { type: "run.completed", outcome: "completed" },
     ]);
   });
+});
+
+it("answers Claude AskUserQuestion on the same running stdin connection", async () => {
+  const stdout = new FakeStream(); const stderr = new FakeStream(); const process = new EventEmitter();
+  const frames: Record<string, unknown>[] = [];
+  const send = (frame: unknown) => stdout.emit("data", Buffer.from(`${JSON.stringify(frame)}\n`));
+  const child = Object.assign(process, { stdout, stderr, kill: vi.fn(), stdin: {
+    write(frame: string, callback?: (error?: Error | null) => void) {
+      const parsed = JSON.parse(frame); frames.push(parsed); callback?.();
+      queueMicrotask(() => {
+        if (parsed.type === "user") send({ type: "control_request", request_id: "native_question", request: { subtype: "can_use_tool", tool_name: "AskUserQuestion", input: { questions: [{ question: "Color?", header: "Color", options: [{ label: "Blue", description: "Ocean" }, { label: "Red", description: "Fire" }] }] } } });
+        else if (parsed.type === "control_response") { send({ type: "result", subtype: "success", result: "Blue selected" }); }
+      });
+      return true;
+    },
+    end() { queueMicrotask(() => process.emit("exit", 0, null)); },
+  } });
+  const spawnFn = vi.fn(() => child);
+  const adapter = createClaudeChatProviderAdapter({ homePath: "/safe/home", spawnFn, resolveCredentialEnv: async () => ({}) });
+  const stream = adapter.start(baseInput);
+  const requested = (await stream.next()).value;
+  expect(requested).toMatchObject({ type: "input.requested", requestId: "native_question", questions: [{ questionId: "q0" }] });
+  await expect(adapter.submitInput!({ owner: { type: "personal", ownerId: "wrong" }, chatId: baseInput.chatId, runId: baseInput.runId, requestId: "native_question", clientRequestId: "req_answer", structuredAnswers: { q0: ["Blue"] } })).rejects.toThrow();
+  await adapter.submitInput!({ owner: baseInput.owner, chatId: baseInput.chatId, runId: baseInput.runId, requestId: "native_question", clientRequestId: "req_answer", structuredAnswers: { q0: ["Blue"] } });
+  const events = []; for await (const event of stream) events.push(event);
+  expect(events).toContainEqual(expect.objectContaining({ type: "input.resolved", reason: "answered" }));
+  expect(events).toContainEqual({ type: "assistant.delta", delta: "Blue selected" });
+  expect(spawnFn).toHaveBeenCalledOnce();
+  expect(frames.filter(frame => frame.type === "user")).toHaveLength(1);
+  expect(spawnFn.mock.calls[0]?.[1]).not.toContain(baseInput.prompt);
 });

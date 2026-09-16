@@ -35,6 +35,17 @@ describe("coding agent session stop reconciler", () => {
     });
   });
 
+  it("buffers and forwards a background identity without manufacturing a Terminal reference", async () => {
+    const store = { reconcileTerminalTabStopped: vi.fn(), reconcileBackgroundSessionStopped: vi.fn().mockResolvedValue(undefined) };
+    const reconciler = createCodingAgentSessionStopReconciler();
+    const backgroundRef = { id: "bg_00000000000000000000000000000001" };
+    await reconciler.handleSessionStopped({ id: "sess_1", ownerId: "owner_user", kind: "agent", runtime: { type: "background", status: "failed" }, backgroundRef });
+    await reconciler.attachThreadStore(store);
+    expect(store.reconcileBackgroundSessionStopped).toHaveBeenCalledWith({ ownerId: "owner_user", workspaceSessionId: "sess_1", backgroundRef, runtimeStatus: "failed" });
+    expect(store.reconcileTerminalTabStopped).not.toHaveBeenCalled();
+    reconciler.dispose();
+  });
+
   it("caps pending stopped tabs and evicts the oldest", async () => {
     const store = { reconcileTerminalTabStopped: vi.fn(async () => []) };
     const reconciler = createCodingAgentSessionStopReconciler({ maxPending: 2 });

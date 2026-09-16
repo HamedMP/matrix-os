@@ -36,6 +36,7 @@ import { ModelPicker } from "@/components/ModelPicker";
 import { ProjectPicker } from "@/components/ProjectPicker";
 import { Icon, IconButton } from "@/components/ui";
 import { AnalyticsMask } from "@/lib/analytics";
+import { CanonicalInputMessage } from "@/components/CanonicalInputMessage";
 import { CanonicalApprovalMessage } from "@/components/CanonicalApprovalMessage";
 import { ChatContextMenu } from "@/components/ChatContextMenu";
 import { HOSTED_GATEWAY_URL } from "@/lib/storage";
@@ -180,7 +181,11 @@ export default function ChatScreen() {
     <ChatContextMenu chatId={detail?.record.chat.id}>
       <Pressable accessible={false}>
         <AnalyticsMask>
-          {item.approval && activeChatId && computer ? <CanonicalApprovalMessage
+          {item.input && activeChatId && computer ? <CanonicalInputMessage
+            key={`${activeChatId}:${item.input.runId}:${item.input.requestId}`}
+            request={item.input} chatId={activeChatId}
+            gatewayUrl={`${HOSTED_GATEWAY_URL}${computer.gatewayPath}`} onSettled={refresh}
+          /> : item.approval && activeChatId && computer ? <CanonicalApprovalMessage
             key={`${activeChatId}:${item.approval.runId}:${item.approval.approvalId}`}
             approval={item.approval} chatId={activeChatId}
             gatewayUrl={`${HOSTED_GATEWAY_URL}${computer.gatewayPath}`} onSettled={refresh}

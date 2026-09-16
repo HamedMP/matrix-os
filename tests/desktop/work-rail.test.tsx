@@ -477,72 +477,29 @@ describe("WorkRail", () => {
     expect(document.activeElement).toBe(pin);
   });
 
-  it("scrolls only an overflowing Chat title while hover actions are visible", async () => {
-    let resize!: ResizeObserverCallback;
-    class TitleResizeObserver implements ResizeObserver {
-      constructor(callback: ResizeObserverCallback) { resize = callback; }
-      observe() {}
-      unobserve() {}
-      disconnect() {}
-    }
-    vi.stubGlobal("ResizeObserver", TitleResizeObserver);
-    setup();
-    const chat = await screen.findByRole("button", { name: "Recent global" });
-    const title = within(chat).getByTitle("Recent global");
-    const viewport = title.parentElement!;
-    Object.defineProperty(viewport, "clientWidth", { configurable: true, value: 120 });
-    Object.defineProperty(title, "scrollWidth", { configurable: true, value: 220 });
+  it("keeps an old long Chat title accessible and selectable", async () => {
+    const longTitle = "A previously saved Chat title that is intentionally long enough to overflow the narrow Recents rail ".repeat(2).trim();
+    const longChat = record("chat_old_long", longTitle, { updatedAt: "2026-08-28T12:00:00.000Z" });
+    const client = { list: vi.fn(async () => ({ items: [longChat] })) } as unknown as CanonicalChatClient;
+    const onSelectChat = vi.fn();
+    render(<WorkRail client={client} projects={[]} active onNewGlobalChat={vi.fn()} onCreateProject={vi.fn()}
+      onNewProjectChat={vi.fn()} onSelectChat={onSelectChat} onCollapse={vi.fn()} />);
 
-    act(() => resize([], {} as ResizeObserver));
-
-    expect(viewport.dataset.overflowing).toBe("true");
-    expect(title.className).toContain("group-hover/chat:animate-[chat-title-scroll_4s_ease-in-out_infinite_alternate]");
-    expect(title.className).toContain("group-focus-within/chat:animate-[chat-title-scroll_4s_ease-in-out_infinite_alternate]");
-    expect(title.className).toContain("motion-reduce:animate-none");
-    expect(viewport.style.getPropertyValue("--chat-title-scroll-distance")).toBe("156px");
+    const chat = await screen.findByRole("button", { name: longTitle });
+    expect(within(chat).getByTitle(longTitle).textContent).toBe(longTitle);
+    fireEvent.click(chat);
+    expect(onSelectChat).toHaveBeenCalledWith(longChat);
   });
 
-  it("keeps short Chat titles stable when hover actions are visible", async () => {
-    const observers: Array<{ callback: ResizeObserverCallback; elements: Set<Element> }> = [];
-    class TitleResizeObserver implements ResizeObserver {
-      private readonly entry: { callback: ResizeObserverCallback; elements: Set<Element> };
-      constructor(callback: ResizeObserverCallback) {
-        this.entry = { callback, elements: new Set() };
-        observers.push(this.entry);
-      }
-      observe(element: Element) { this.entry.elements.add(element); }
-      unobserve(element: Element) { this.entry.elements.delete(element); }
-      disconnect() { this.entry.elements.clear(); }
-    }
-    vi.stubGlobal("ResizeObserver", TitleResizeObserver);
-    setup();
+  it("keeps a short Chat title accessible and selectable", async () => {
+    const { actions } = setup();
     const chat = await screen.findByRole("button", { name: "Recent global" });
-    const title = within(chat).getByTitle("Recent global");
-    const viewport = title.parentElement!;
-    Object.defineProperty(viewport, "clientWidth", { configurable: true, value: 180 });
-    Object.defineProperty(title, "scrollWidth", { configurable: true, value: 60 });
-    const observer = observers.find((candidate) => candidate.elements.has(viewport))!;
-
-    act(() => observer.callback([], observer as unknown as ResizeObserver));
-
-    expect(viewport.dataset.overflowing).toBe("false");
-    expect(title.className).not.toContain("chat-title-scroll");
-    expect(viewport.style.getPropertyValue("--chat-title-scroll-distance")).toBe("0px");
+    expect(within(chat).getByTitle("Recent global").textContent).toBe("Recent global");
+    fireEvent.click(chat);
+    expect(actions.onSelectChat).toHaveBeenCalledWith(recent);
   });
 
-  it("preserves overlay scrolling for a selected pinned Chat row", async () => {
-    const observers: Array<{ callback: ResizeObserverCallback; elements: Set<Element> }> = [];
-    class TitleResizeObserver implements ResizeObserver {
-      private readonly entry: { callback: ResizeObserverCallback; elements: Set<Element> };
-      constructor(callback: ResizeObserverCallback) {
-        this.entry = { callback, elements: new Set() };
-        observers.push(this.entry);
-      }
-      observe(element: Element) { this.entry.elements.add(element); }
-      unobserve(element: Element) { this.entry.elements.delete(element); }
-      disconnect() { this.entry.elements.clear(); }
-    }
-    vi.stubGlobal("ResizeObserver", TitleResizeObserver);
+  it("preserves selected pinned Chat actions with the bounded title", async () => {
     const client = { list: vi.fn(async () => ({ items: [pinned] })) } as unknown as CanonicalChatClient;
     render(
       <WorkRail client={client} projects={[]} active activeChatId="chat_pinned"
@@ -550,20 +507,11 @@ describe("WorkRail", () => {
         onSelectChat={vi.fn()} onCollapse={vi.fn()} />,
     );
     const chat = await screen.findByRole("button", { name: "Pinned global" });
-    const title = within(chat).getByTitle("Pinned global");
-    const viewport = title.parentElement!;
-    Object.defineProperty(viewport, "clientWidth", { configurable: true, value: 110 });
-    Object.defineProperty(title, "scrollWidth", { configurable: true, value: 190 });
-    const observer = observers.find((candidate) => candidate.elements.has(viewport))!;
-    act(() => observer.callback([], observer as unknown as ResizeObserver));
-
-    const actions = screen.getByRole("button", { name: "Unpin Pinned global" }).parentElement!;
+    const unpin = screen.getByRole("button", { name: "Unpin Pinned global" });
     expect(chat.getAttribute("aria-current")).toBe("page");
-    expect(viewport.dataset.overflowing).toBe("true");
-    expect(actions.className).toContain("absolute");
-    expect(actions.getAttribute("style")).toContain(
-      "background: linear-gradient(var(--bg-selected), var(--bg-selected)), var(--bg-surface)",
-    );
+    expect(within(chat).getByTitle("Pinned global")).toBeTruthy();
+    unpin.focus();
+    expect(document.activeElement).toBe(unpin);
   });
 
   it("opens an autofocused Chat search dialog from the top of the rail", async () => {
@@ -1023,6 +971,20 @@ describe("WorkRail", () => {
     expect(screen.queryByText("Chat pin could not be updated.")).toBeNull();
   });
 
+  it("does not carry title versions across runtime clients with the same chat id", async () => {
+    const previous = { ...recent, chat: { ...recent.chat, title: "Previous computer", titleVersion: 10, revision: 100 } };
+    const replacement = { ...recent, chat: { ...recent.chat, title: "Current computer", titleVersion: 1, revision: 2 } };
+    const first = { list: vi.fn(async () => ({ items: [previous] })) } as unknown as CanonicalChatClient;
+    const second = { list: vi.fn(async () => ({ items: [replacement] })) } as unknown as CanonicalChatClient;
+    const props = { projects: [], active: true, onNewGlobalChat: vi.fn(), onCreateProject: vi.fn(),
+      onNewProjectChat: vi.fn(), onSelectChat: vi.fn(), onCollapse: vi.fn() };
+    const view = render(<WorkRail {...props} client={first} />);
+    await screen.findByRole("button", { name: "Previous computer" });
+    view.rerender(<WorkRail {...props} client={second} />);
+    expect(await screen.findByRole("button", { name: "Current computer" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Previous computer" })).toBeNull();
+  });
+
   it("does not surface a pin failure from a replaced client", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
     let rejectPin!: (error: Error) => void;
@@ -1180,7 +1142,7 @@ describe("WorkRail", () => {
     fireEvent.keyDown(input, { key: "Enter" });
 
     await waitFor(() => expect(client.updateTitle).toHaveBeenCalledWith("chat_recent", {
-      baseRevision: 1,
+      expectedTitleVersion: 0,
       title: "Release plan",
     }));
     expect(await screen.findByRole("button", { name: "Release plan" })).toBeTruthy();
@@ -1201,7 +1163,7 @@ describe("WorkRail", () => {
     expect(client.updateTitle).not.toHaveBeenCalled();
   });
 
-  it("commits a changed title on blur and restores the old title after a safe failure", async () => {
+  it("commits a changed title on blur and retains the draft after a safe failure", async () => {
     const { client } = setup();
     const updateTitle = client.updateTitle as ReturnType<typeof vi.fn>;
     const recentChat = await screen.findByRole("button", { name: "Recent global" });
@@ -1219,7 +1181,7 @@ describe("WorkRail", () => {
     fireEvent.keyDown(retryInput, { key: "Enter" });
 
     expect((await screen.findByRole("alert")).textContent).toBe("The Chat could not be renamed. Try again.");
-    expect(screen.getByRole("button", { name: "Blurred title" })).toBeTruthy();
+    expect((screen.getByRole("textbox", { name: "Rename Blurred title" }) as HTMLInputElement).value).toBe("Will fail");
   });
 
   it("blocks a second row from entering rename while the first rename is pending", async () => {

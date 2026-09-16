@@ -45,9 +45,11 @@ describe("native Resource Manager gateway bridge", () => {
     const { bridge, fetchFn } = setup();
     bridge.register(43, "notes");
     bridge.register(44, "custom/resource-manager", "resource-manager");
+    bridge.register(45, "resource-manager", "notes");
     for (const source of [
       { ...sender, id: 99 }, { id: 43, url: "https://gateway.test/apps/notes/" },
       { ...sender, id: 44 }, { ...sender, url: "https://attacker.test/apps/resource-manager/" },
+      { id: 45, url: "https://gateway.test/apps/notes/" },
       { ...sender, url: "https://gateway.test/apps/notes/" },
     ]) await expect(bridge.gatewayFetch(source, { url })).rejects.toThrow();
     bridge.unregister(42);

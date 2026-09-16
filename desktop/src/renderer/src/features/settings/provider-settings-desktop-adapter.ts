@@ -16,6 +16,7 @@ import { buildGatewayUrl, type ApiClient } from "../../lib/api";
 import { invoke } from "../../lib/operator";
 import { isValidShellSessionName, useShellSessions } from "../../stores/shell-sessions";
 import { useTabs } from "../../stores/tabs";
+import { useDesktopSurfaces } from "../../stores/desktop-surfaces";
 
 const PROVIDER_SETTINGS_PATH = "/api/ai/provider-settings";
 const PROVIDER_SETTINGS_ACTIONS_PATH = "/api/ai/provider-settings/actions";
@@ -110,7 +111,8 @@ export async function openExistingProviderTerminalSession(
     session.name === terminalSessionId && session.status === "active"
   )) ?? false;
   if (!exists) return false;
-  useTabs.getState().openTab({ kind: "terminals", title: "Terminal" });
+  const tabId = useTabs.getState().openTab({ kind: "terminals", title: "Terminal" });
+  useDesktopSurfaces.getState().activateSurface(tabId);
   useTabs.getState().requestTerminalSession(terminalSessionId);
   return true;
 }

@@ -322,6 +322,16 @@ jobs:
             --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
             --remove-tags "pr-${PR_NUMBER}" --quiet
           for rev in $revisions; do
+            current_service="$(gcloud run services describe "$CLOUD_RUN_PREVIEW_SERVICE" \
+              --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format json --quiet)"
+            if jq -e --arg revision "$rev" \
+              '.status.latestCreatedRevisionName == $revision or
+               any((.status.traffic // [])[];
+                 .revisionName == $revision and ((.percent // 0) > 0 or (.tag // "") != ""))' \
+              <<< "$current_service" >/dev/null; then
+              echo "Retaining protected or referenced revision $rev after removing the PR tag."
+              continue
+            fi
             gcloud run revisions delete "$rev" \
               --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet
             echo "Deleted revision $rev"

@@ -9,6 +9,7 @@ import {
 import {
   NATIVE_APP_GATEWAY_CHANNEL,
   NativeAppGatewayRequestSchema,
+  isNativeAppActivityIdentity,
   type NativeAppGatewayRequest,
 } from "../../shared/native-app-gateway";
 
@@ -217,7 +218,7 @@ export class NativeAppBridge {
   async gatewayFetch(sender: NativeAppSender, rawRequest: unknown): Promise<unknown> {
     const identity = this.senders.get(sender.id);
     if (
-      identity?.appIdentity !== "resource-manager"
+      !identity || !isNativeAppActivityIdentity(identity.appIdentity, identity.routeSlug)
       || !isSenderAtApp(sender, this.options.gatewayOrigin(), identity.routeSlug)
     ) throw new Error("not authorized");
     const parsed = NativeAppGatewayRequestSchema.safeParse(rawRequest);

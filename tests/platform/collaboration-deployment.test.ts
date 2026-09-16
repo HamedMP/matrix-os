@@ -1,0 +1,22 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { describe, expect, it } from "vitest";
+
+const workflow = readFileSync(resolve(".github/workflows/platform-cloud-run.yml"), "utf8");
+
+describe("platform collaboration deployment contract", () => {
+  it("keeps the platform authority enabled across Cloud Run deployments", () => {
+    expect(workflow).toContain("MATRIX_COLLABORATION_ENABLED: 'true'");
+    expect(workflow).toContain("MATRIX_COLLABORATION_ACTIVE_KEY_ID:");
+    expect(workflow).toContain("MATRIX_COLLABORATION_ALLOWED_ORIGINS:");
+    expect(workflow).toContain("MATRIX_COLLABORATION_ENABLED=${MATRIX_COLLABORATION_ENABLED}");
+    expect(workflow).toContain("MATRIX_COLLABORATION_PROOF_KEYS=collaboration-proof-keys:latest");
+  });
+
+  it("verifies the proof-key secret and the deployed revision contract", () => {
+    expect(workflow).toContain("Verify collaboration proof secret");
+    expect(workflow).toContain("secret_name=collaboration-proof-keys");
+    expect(workflow).toContain("MATRIX_COLLABORATION_ENABLED\n");
+    expect(workflow).toContain("MATRIX_COLLABORATION_PROOF_KEYS=collaboration-proof-keys:latest");
+  });
+});

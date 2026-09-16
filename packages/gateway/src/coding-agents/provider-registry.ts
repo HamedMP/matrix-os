@@ -1,3 +1,4 @@
+import { providerAuthActions } from "./provider-auth-actions.js";
 import {
   AgentProviderSummarySchema,
   ProviderIdSchema,
@@ -174,11 +175,6 @@ export function applyCredentialState(
       return unhandledStatus;
     }
   }
-}
-
-function setupActionsForInstallState(summary: AgentProviderSummary): SafeSetupAction[] {
-  if (summary.installStatus !== "installed") return summary.setupActions;
-  return summary.setupActions.filter((action) => !action.id.endsWith("_install"));
 }
 
 function shouldCheckHealth(summary: AgentProviderSummary): boolean {
@@ -359,7 +355,7 @@ export function createCodingAgentProviderRegistry(
     const credentialNormalized = applyCredentialState({ ...base.summary, setupActions }, credential);
     const normalized = {
       ...credentialNormalized,
-      setupActions: setupActionsForInstallState(credentialNormalized),
+      setupActions: providerAuthActions(credentialNormalized),
     };
     if (!shouldCheckHealth(normalized)) return AgentProviderSummarySchema.parse(normalized);
 

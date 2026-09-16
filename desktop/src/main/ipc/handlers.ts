@@ -69,6 +69,8 @@ export interface HandlerContext {
   fetchFileSearch: (request: FileSearchRequest) => Promise<FileSearchResponse>;
   fetchFileContent: (request: FileReadRequest) => Promise<FileReadResponse>;
   saveFileContent: (request: FileWriteRequest) => Promise<FileWriteResponse>;
+  downloadFile: (request: InvokeRequest<"runtime:download-file">) => Promise<InvokeResponse<"runtime:download-file">>;
+  cancelFileDownload: (requestId: string) => InvokeResponse<"runtime:cancel-file-download">;
   prepareSourceCommit: (
     request: SourceControlPrepareCommitRequest,
   ) => Promise<SourceControlPrepareCommitResponse>;
@@ -171,6 +173,10 @@ function toWebContentsViewBounds(
 
 export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): void {
   const buildSource = BuildSourceSchema.nullable().parse(ctx.buildSource);
+  const { downloadFile, cancelFileDownload } = ctx;
+  if (typeof downloadFile !== "function" || typeof cancelFileDownload !== "function") {
+    throw new Error("download service unavailable");
+  }
   function handle<C extends InvokeChannel>(channel: C, handler: Handler<C>): void {
     ipcMain.handle(channel, async (_event, rawPayload) => {
       const parsedRequest = INVOKE_CHANNELS[channel].request.safeParse(rawPayload ?? {});
@@ -239,6 +245,8 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
   handle("runtime:browse-files", (request) => ctx.fetchFileBrowse(request));
   handle("runtime:search-files", (request) => ctx.fetchFileSearch(request));
   handle("runtime:get-file-content", (request) => ctx.fetchFileContent(request));
+  handle("runtime:download-file", (request) => downloadFile(request));
+  handle("runtime:cancel-file-download", ({ requestId }) => cancelFileDownload(requestId));
   handle("runtime:save-file-content", (request) => ctx.saveFileContent(request));
   handle("runtime:prepare-source-commit", (request) => ctx.prepareSourceCommit(request));
   handle("runtime:create-source-pull-request", (request) => ctx.createSourcePullRequest(request));

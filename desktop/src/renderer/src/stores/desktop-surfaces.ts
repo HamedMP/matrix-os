@@ -91,7 +91,9 @@ export function desktopSurfaceBounds(
   viewport: DesktopViewport,
   previous?: DesktopSurfaceBounds,
 ): DesktopSurfaceBounds {
-  return constrainFloatingWindow(bounds, viewport, { width: MIN_WINDOW_WIDTH, height: MIN_WINDOW_HEIGHT }, previous);
+  return constrainFloatingWindow(bounds, viewport, { width: MIN_WINDOW_WIDTH, height: MIN_WINDOW_HEIGHT }, previous, {
+    allowBottomOverflow: false,
+  });
 }
 
 export function defaultDesktopSurfaceBounds(

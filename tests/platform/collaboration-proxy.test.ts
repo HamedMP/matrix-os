@@ -2,7 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CollaborationActorProofVerifier } from "../../packages/gateway/src/collaboration/actor-proof.js";
 import { bootstrapPlatformCollaborationDatabase } from "../../packages/platform/src/collaboration/database.js";
 import { CollaborationProofSigner } from "../../packages/platform/src/collaboration/proof.js";
-import { CollaborationProxy, parseCollaborationProxyRoute } from "../../packages/platform/src/collaboration/proxy.js";
+import {
+  CollaborationProxy,
+  collaborationMilestoneForRoute,
+  parseCollaborationProxyRoute,
+} from "../../packages/platform/src/collaboration/proxy.js";
 import { PlatformCollaborationRepository } from "../../packages/platform/src/collaboration/repository.js";
 import {
   createPlatformCollaborationTestDatabase,
@@ -14,6 +18,7 @@ import {
 const now = new Date("2026-09-07T12:00:00.000Z");
 const key = "0123456789abcdef0123456789abcdef";
 const scopeId = "10000000-0000-4000-8000-000000000001";
+const projectScopeId = "10000000-0000-4000-8000-000000000002";
 const invitationId = "30000000-0000-4000-8000-000000000001";
 
 describe("CollaborationProxy", () => {
@@ -63,6 +68,7 @@ describe("CollaborationProxy", () => {
         ? { runtimeId, ownerId: platformCollaborationActors.owner, baseUrl: "https://owner-runtime.internal" }
         : null,
       fetchImpl,
+      now: () => now,
     });
   });
 
@@ -169,6 +175,158 @@ describe("CollaborationProxy", () => {
       .toEqual({ kind: "scope", identifier: scopeId });
     expect(parseCollaborationProxyRoute("GET", `/api/collaboration/scopes/${scopeId}/exports/${operationId}/raw`))
       .toBeNull();
+  });
+
+  it("classifies shared AI routes under M2 without moving discussion off M1", () => {
+    const requestId = "qturn_shared_request_1";
+    const approvalId = "approval_shared_request_1";
+    expect(collaborationMilestoneForRoute("GET", `/api/collaboration/scopes/${scopeId}/chat/messages`))
+      .toBe("m1");
+    expect(collaborationMilestoneForRoute("GET", `/api/collaboration/scopes/${scopeId}/chat/requests`))
+      .toBe("m2");
+    expect(collaborationMilestoneForRoute("POST", `/api/collaboration/scopes/${scopeId}/chat/requests`))
+      .toBe("m2");
+    expect(collaborationMilestoneForRoute(
+      "POST",
+      `/api/collaboration/scopes/${scopeId}/chat/requests/${requestId}/cancel`,
+    )).toBe("m2");
+    expect(collaborationMilestoneForRoute(
+      "POST",
+      `/api/collaboration/scopes/${scopeId}/chat/requests/${requestId}/retry`,
+    )).toBe("m2");
+    expect(collaborationMilestoneForRoute(
+      "POST",
+      `/api/collaboration/scopes/${scopeId}/chat/approvals/${approvalId}/decision`,
+    )).toBe("m2");
+    expect(collaborationMilestoneForRoute("GET", `/api/collaboration/scopes/${scopeId}/terminal`))
+      .toBe("m3");
+    expect(collaborationMilestoneForRoute("POST", `/api/collaboration/scopes/${scopeId}/terminal/actions`))
+      .toBe("m3");
+  });
+
+  it("classifies only exact project resource routes under M4", () => {
+    const base = `/api/collaboration/scopes/${scopeId}/project`;
+    expect(collaborationMilestoneForRoute("GET", `${base}/inventory`)).toBe("m4");
+    expect(collaborationMilestoneForRoute("POST", `${base}/confirm`)).toBe("m4");
+    expect(collaborationMilestoneForRoute("GET", base)).toBe("m4");
+    expect(collaborationMilestoneForRoute("GET", `${base}/files`)).toBe("m4");
+    expect(collaborationMilestoneForRoute("PUT", `${base}/files`)).toBe("m4");
+    expect(collaborationMilestoneForRoute("DELETE", `${base}/files`)).toBe("m4");
+    expect(collaborationMilestoneForRoute("GET", `${base}/git`)).toBe("m4");
+    expect(collaborationMilestoneForRoute("POST", `${base}/git/actions`)).toBe("m4");
+    expect(collaborationMilestoneForRoute("GET", `${base}/apps/app_board`)).toBe("m4");
+    expect(collaborationMilestoneForRoute("POST", `${base}/apps/app_board/actions`)).toBe("m4");
+    expect(collaborationMilestoneForRoute("GET", `${base}/layout`)).toBe("m4");
+    expect(collaborationMilestoneForRoute("PATCH", `${base}/layout`)).toBe("m4");
+    expect(collaborationMilestoneForRoute("POST", `${base}/chats`)).toBe("m4");
+    expect(collaborationMilestoneForRoute("POST", `${base}/terminals`)).toBe("m4");
+    expect(parseCollaborationProxyRoute("GET", `${base}/files/private/escape`)).toBeNull();
+    expect(parseCollaborationProxyRoute("POST", `${base}/apps/app_board/actions/extra`)).toBeNull();
+  });
+
+  it("keeps project preparation and project scopes off until M4 is enabled", async () => {
+    await repository.applyDirectoryEvent({
+      eventId: "20000000-0000-4000-8000-000000000002",
+      scopeId: projectScopeId,
+      runtimeId: "runtime_owner",
+      ownerId: platformCollaborationActors.owner,
+      kind: "project",
+      authorityGeneration: 1,
+      metadataRevision: 1,
+      recipients: [
+        { actorId: platformCollaborationActors.owner, status: "accepted" },
+        { actorId: platformCollaborationActors.recipientWithoutComputer, status: "accepted" },
+      ],
+    });
+    const preflightPath = "/api/collaboration/runtimes/runtime_owner/scopes/preflight";
+    const projectBody = new TextEncoder().encode(JSON.stringify({ kind: "project", resourceId: "project_alpha" }));
+    expect((await proxy.forward({
+      actorId: platformCollaborationActors.owner,
+      method: "POST",
+      path: preflightPath,
+      query: "",
+      body: projectBody,
+      headers: new Headers({ "content-type": "application/json" }),
+    })).status).toBe(404);
+    expect((await proxy.forward({
+      actorId: platformCollaborationActors.recipientWithoutComputer,
+      method: "GET",
+      path: `/api/collaboration/scopes/${projectScopeId}`,
+      query: "",
+      body: new Uint8Array(),
+      headers: new Headers(),
+    })).status).toBe(404);
+    expect(fetchImpl).not.toHaveBeenCalled();
+
+    await repository.setPolicy({
+      milestone: "m4",
+      expectedRevision: 0,
+      mode: "internal",
+      cohort: [platformCollaborationActors.owner, platformCollaborationActors.recipientWithoutComputer],
+      changedBy: "operator_test",
+    });
+    const enabled = await proxy.forward({
+      actorId: platformCollaborationActors.recipientWithoutComputer,
+      method: "GET",
+      path: `/api/collaboration/scopes/${projectScopeId}`,
+      query: "",
+      body: new Uint8Array(),
+      headers: new Headers(),
+    });
+    expect(enabled.status).toBe(200);
+    const [, init] = fetchImpl.mock.calls[0] as [string, RequestInit];
+    const policyHeader = new Headers(init.headers).get("x-matrix-collaboration-policy");
+    expect(policyHeader).toMatch(/^[A-Za-z0-9_-]+$/);
+    const verifier = new CollaborationActorProofVerifier({
+      runtimeId: "runtime_owner", keys: { "collaboration-key-1": key }, now: () => now,
+    });
+    expect(verifier.verifyPolicy(JSON.parse(Buffer.from(policyHeader!, "base64url").toString("utf8"))))
+      .toMatchObject({ milestone: "m4", mode: "internal" });
+  });
+
+  it("keeps M2 AI routes disabled independently from M1 discussion", async () => {
+    const path = `/api/collaboration/scopes/${scopeId}/chat/requests`;
+    const body = new TextEncoder().encode(JSON.stringify({
+      clientRequestId: "40000000-0000-4000-8000-000000000011",
+      expectedRevision: "1",
+      text: "Summarize our discussion",
+    }));
+    const disabled = await proxy.forward({
+      actorId: platformCollaborationActors.recipientWithoutComputer,
+      method: "POST",
+      path,
+      query: "",
+      body,
+      headers: new Headers({ "content-type": "application/json" }),
+    });
+    expect(disabled.status).toBe(404);
+    expect(fetchImpl).not.toHaveBeenCalled();
+
+    await repository.setPolicy({
+      milestone: "m2",
+      expectedRevision: 0,
+      mode: "internal",
+      cohort: [platformCollaborationActors.owner, platformCollaborationActors.recipientWithoutComputer],
+      changedBy: "operator_test",
+    });
+    const enabled = await proxy.forward({
+      actorId: platformCollaborationActors.recipientWithoutComputer,
+      method: "POST",
+      path,
+      query: "",
+      body,
+      headers: new Headers({ "content-type": "application/json" }),
+    });
+    expect(enabled.status).toBe(200);
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    const [, init] = fetchImpl.mock.calls[0] as [string, RequestInit];
+    const policyHeader = new Headers(init.headers).get("x-matrix-collaboration-policy");
+    expect(policyHeader).toMatch(/^[A-Za-z0-9_-]+$/);
+    const verifier = new CollaborationActorProofVerifier({
+      runtimeId: "runtime_owner", keys: { "collaboration-key-1": key }, now: () => now,
+    });
+    expect(verifier.verifyPolicy(JSON.parse(Buffer.from(policyHeader!, "base64url").toString("utf8"))))
+      .toMatchObject({ milestone: "m2", mode: "internal" });
   });
 
   it("streams a completed owner export without applying the JSON API buffer limit", async () => {

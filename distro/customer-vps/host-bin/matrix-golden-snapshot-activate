@@ -19,7 +19,10 @@ capture_service_diagnostics() {
 
 capture_activation_service_failure() {
   local diagnostic_unit
-  if ! systemctl is-active --quiet matrix-gateway.service; then
+  if ! systemctl is-active --quiet matrix-terminal-runtime.service; then
+    set_activation_stage activation_terminal_runtime_ready
+    diagnostic_unit=matrix-terminal-runtime.service
+  elif ! systemctl is-active --quiet matrix-gateway.service; then
     set_activation_stage activation_gateway_ready
     diagnostic_unit=matrix-gateway.service
   elif ! systemctl is-active --quiet matrix-shell.service; then

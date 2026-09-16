@@ -1,4 +1,6 @@
 import {
+  UserInputQuestionListSchema,
+  type CanonicalSubmitChatInputRequest,
   CanonicalChatAgentActivityPayloadSchema,
   CanonicalChatApprovalDecisionSchema,
   CanonicalChatMessagePartSchema,
@@ -75,7 +77,12 @@ export const CanonicalProviderRunEventSchema = z.discriminatedUnion("type", [
     type: z.literal("input.requested"),
     requestId: SafeProviderRefSchema,
     title: z.string().trim().min(1).max(160),
+    questions: UserInputQuestionListSchema.optional(),
+    safeDescription: z.string().trim().min(1).max(600).optional(),
+    expiresAt: z.iso.datetime().optional(),
+    asynchronous: z.boolean().optional(),
   }).strict(),
+  z.object({ type: z.literal("input.resolved"), requestId: SafeProviderRefSchema, reason: z.enum(["answered", "cancelled", "expired"]).optional() }).strict(),
   z.object({ type: z.literal("state.updated"), state: z.unknown() }).strict(),
   z.object({
     type: z.literal("run.completed"),
@@ -85,6 +92,16 @@ export const CanonicalProviderRunEventSchema = z.discriminatedUnion("type", [
     tokenUsage: AiTokenUsageSchema.optional(),
   }).strict(),
 ]);
+
+export const RecoveredControlActivitySchema = z.union([
+  CanonicalProviderRunEventSchema,
+  z.object({ type: z.literal("input.resolved"), requestId: SafeProviderRefSchema }).strict(),
+]).transform((event, ctx) => {
+  if (event.type === "approval.requested" || event.type === "approval.resolved" || event.type === "input.requested" || event.type === "input.resolved") return event;
+  ctx.addIssue({ code: "custom", message: "Unsupported recovery control" });
+  return z.NEVER;
+});
+export type RecoveredControlActivity = z.infer<typeof RecoveredControlActivitySchema>;
 
 export type CanonicalProviderRunEvent = z.infer<typeof CanonicalProviderRunEventSchema>;
 
@@ -102,6 +119,8 @@ export interface CanonicalProviderRunInput<State = unknown> {
   projectSlug?: string;
   worktreeId?: string;
   resumeState?: State;
+  /** Unique native admission identity for a continuation of the same canonical Run. */
+  continuationId?: string;
   signal: AbortSignal;
   /** Generator return() errors can be masked by a consumer throw; report unresolved cleanup explicitly. */
   onCleanupUnconfirmed?: () => void;
@@ -112,6 +131,8 @@ export interface CanonicalProviderRunInput<State = unknown> {
 export interface CanonicalChatProviderAdapter<State = unknown> {
   readonly driverKind: CanonicalProviderDriverKind;
   readonly stateSchemaVersion: number;
+  /** Native execution survives a gateway restart; detach only after identity is durable. */
+  readonly detachOnShutdown?: boolean;
   parseState(value: unknown): State;
   serializeState(value: State): unknown;
   /** Read-only admission guard for adapters whose execution can outlive projection. */
@@ -123,8 +144,9 @@ export interface CanonicalChatProviderAdapter<State = unknown> {
     state: State;
     signal: AbortSignal;
   }): Promise<{
-    outcome: "completed" | "failed" | "aborted";
+    outcome: "completed" | "failed" | "aborted" | "pending";
     messages: Array<{ messageId?: string; text: string }>;
+    activities?: RecoveredControlActivity[];
   } | null>;
   start(input: CanonicalProviderRunInput<State>): AsyncIterable<CanonicalProviderRunEvent>;
   resume?(input: CanonicalProviderRunInput<State> & { resumeState: State }): AsyncIterable<CanonicalProviderRunEvent>;
@@ -139,6 +161,9 @@ export interface CanonicalChatProviderAdapter<State = unknown> {
     parts: CanonicalChatMessagePart[];
     state?: State;
   }): Promise<void>;
+  submitInput?(input: CanonicalSubmitChatInputRequest & { owner: CanonicalOwnerScope; chatId: string; runId: string; requestId: string; state?: State }): Promise<void | "queued">;
+  /** Internal acknowledgement only: the user has NOT answered or authorized anything. */
+  deferInput?(input: { owner: CanonicalOwnerScope; chatId: string; runId: string; requestId: string }): Promise<void>;
   submitApproval?(input: {
     owner: CanonicalOwnerScope;
     chatId: string;

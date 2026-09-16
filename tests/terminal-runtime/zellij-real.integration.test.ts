@@ -123,6 +123,77 @@ describe.runIf(available)("real bundled Zellij 0.44.3 integration", () => {
     expect(dump.stdout).not.toContain("rgb:1111/2222/3333");
   }, 30_000);
 
+  it("keeps simultaneous PTY attachments bound to their requested panes", async () => {
+    const firstName = `matrix-tab-${randomBytes(16).toString("hex")}`;
+    const secondName = `matrix-tab-${randomBytes(16).toString("hex")}`;
+    const first = await adapter.createTab(sessionName, { internalName: firstName, cwd: "", command: ["sh"] });
+    const second = await adapter.createTab(sessionName, { internalName: secondName, cwd: "", command: ["sh"] });
+    const firstMarker = `matrix-first-${randomBytes(8).toString("hex")}`;
+    const secondMarker = `matrix-second-${randomBytes(8).toString("hex")}`;
+    let firstOutput = "";
+    let secondOutput = "";
+    const firstReady = Promise.withResolvers<void>();
+    const secondReady = Promise.withResolvers<void>();
+    const firstAttachment = await adapter.openAttachment(sessionName, {
+      paneId: first.paneId,
+      size: { cols: 100, rows: 30 },
+      onData: (data) => {
+        firstOutput = `${firstOutput}${new TextDecoder().decode(data)}`.slice(-64 * 1024);
+        if (firstOutput.includes(firstMarker)) firstReady.resolve();
+      },
+      onExit: firstReady.reject,
+    });
+    let secondAttachment: Awaited<ReturnType<typeof adapter.openAttachment>> | undefined;
+
+    try {
+      await firstAttachment.write(new TextEncoder().encode(`printf '${firstMarker}\\n'\r`));
+      await Promise.race([
+        firstReady.promise,
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("first attachment ignored input")), 10_000)),
+      ]);
+      firstOutput = "";
+
+      secondAttachment = await adapter.openAttachment(sessionName, {
+        paneId: second.paneId,
+        size: { cols: 100, rows: 30 },
+        onData: (data) => {
+          secondOutput = `${secondOutput}${new TextDecoder().decode(data)}`.slice(-64 * 1024);
+          if (secondOutput.includes(secondMarker)) secondReady.resolve();
+        },
+        onExit: secondReady.reject,
+      });
+      await secondAttachment.write(new TextEncoder().encode(`printf '${secondMarker}\\n'\r`));
+      await Promise.race([
+        secondReady.promise,
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error(
+          `second attachment was not bound to its pane; first=${JSON.stringify(firstOutput)} second=${JSON.stringify(secondOutput)}`,
+        )), 10_000)),
+      ]);
+
+      const [firstDump, secondDump] = await Promise.all([first.paneId, second.paneId].map(async (paneId) => {
+        const result = await execFileAsync(binaryPath, [
+          "--session", sessionName, "action", "dump-screen", "--pane-id", paneId, "--full", "--ansi",
+        ], { timeout: 5_000, env: runtimeEnv });
+        return result.stdout;
+      }));
+      const liveSessions = await execFileAsync(binaryPath, ["list-sessions", "--no-formatting"], {
+        timeout: 5_000,
+        env: runtimeEnv,
+      });
+
+      expect(firstOutput).not.toContain(secondMarker);
+      expect(secondOutput).toContain(secondMarker);
+      expect(firstDump).toContain(firstMarker);
+      expect(firstDump).not.toContain(secondMarker);
+      expect(secondDump).toContain(secondMarker);
+      expect(secondDump).not.toContain(firstMarker);
+      expect(liveSessions.stdout).not.toContain("matrix-attach-");
+    } finally {
+      await secondAttachment?.close();
+      await firstAttachment.close();
+    }
+  }, 30_000);
+
   it("uses one substantially smaller Zellij server for 23 idle tabs", async () => {
     const denseSession = `matrix-w-${randomBytes(16).toString("hex")}`;
     extraSessionNames.push(denseSession);

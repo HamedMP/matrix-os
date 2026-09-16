@@ -350,6 +350,18 @@ export async function buildAppDomainProxyResponse(input: {
   platformSecret: string;
   assetRouteToken?: string | null;
 }): Promise<Response> {
+  // General fetch sanitization removes decoded wire lengths. Identity-encoded
+  // attachment streams are not rewritten, so retain their exact length for
+  // native integrity checks, browser progress, and validated range resumption.
+  if (input.path === '/api/files/media'
+    && /^attachment(?:;|$)/i.test(input.upstream.headers.get('content-disposition') ?? '')
+    && !input.upstream.headers.get('content-encoding')) {
+    const length = input.upstream.headers.get('content-length');
+    if (length !== null && /^\d+$/.test(length) && Number.isSafeInteger(Number(length))) {
+      input.responseHeaders.set('content-length', length);
+      input.responseHeaders.set('cache-control', 'private, no-store, no-transform');
+    }
+  }
   if (getViteAppHtmlSlug(input.path) && input.responseHeaders.get('content-type')?.includes('text/html')) {
     const html = await input.upstream.text();
     input.responseHeaders.delete('content-length');

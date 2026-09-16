@@ -136,7 +136,8 @@ function providerSetupActions(agent: SupportedAgent): SafeSetupAction[] {
   ]);
 }
 
-function terminalRefFor(session: { terminalRef?: unknown }) {
+function terminalRefFor(session: { terminalRef?: unknown; runtime?: { type?: string } }) {
+  if (session.runtime?.type === "background") return undefined;
   const parsed = TerminalRefSchema.safeParse(session.terminalRef);
   if (parsed.success) return parsed.data;
   throw new Error("Workspace provider terminal binding failed");
@@ -215,6 +216,7 @@ export function createWorkspaceCodingAgentProvider(
 
   return {
     providerId,
+    backgroundExecution: agent === "codex" && !!options.codexEvents && !!options.codexControl,
     async getSummary({ now, signal }) {
       const executable = runnable && (
         agent !== "codex" || !options.codexEvents || (await options.codexEvents.healthCheck(signal)).ok
@@ -250,6 +252,7 @@ export function createWorkspaceCodingAgentProvider(
           principal,
           threadId: thread.id,
           sessionId,
+          ...(options.codexControl ? { checkpoint: true } : {}),
         });
       }
       let result;
@@ -272,7 +275,7 @@ export function createWorkspaceCodingAgentProvider(
               ? "never"
               : request.approvalPolicy,
             sandboxMode: request.sandboxMode,
-            runtimePreference: "zellij",
+            runtimePreference: agent === "codex" && options.codexEvents && options.codexControl ? "background" : "zellij",
           },
         });
       } catch (error: unknown) {
@@ -292,15 +295,15 @@ export function createWorkspaceCodingAgentProvider(
           now,
           nextEventId,
         }),
-        AgentThreadEventSchema.parse({
+        ...(terminalRef ? [AgentThreadEventSchema.parse({
           type: "terminal.bound",
           eventId: nextEventId(),
           threadId: thread.id,
           occurredAt: now().toISOString(),
           terminalRef,
           terminalSessionId: `${terminalRef.workspaceId}:${terminalRef.tabId}`,
-        })],
-        resumeState: { conversationId: sessionId },
+        })] : [])],
+        resumeState: { conversationId: sessionId, ...(result.session.backgroundRef ? { backgroundRef: result.session.backgroundRef } : {}) },
       };
     },
     async resumeTurn(context) {
@@ -317,11 +320,12 @@ export function createWorkspaceCodingAgentProvider(
         if (!options.codexEvents) {
           throw new Error("Codex structured events are unavailable");
         }
-        await options.codexEvents.watch({
+        const observation = await options.codexEvents.watch({
           principal,
           threadId: thread.id,
           sessionId,
           startAtEnd: true,
+          checkpoint: true,
         });
         const prompt = workspaceTurnPrompt(turn.message, turn.attachments);
         try {
@@ -333,6 +337,7 @@ export function createWorkspaceCodingAgentProvider(
             modelOptions: turn.modelOptions ?? [],
           });
         } catch (error: unknown) {
+          signal.throwIfAborted();
           if (!(error instanceof Error) || error.name !== "CodexControlUnavailableError") {
             // An accepted frame with a lost acknowledgement must not be replayed into a new process.
             options.codexEvents.unwatch(sessionId);
@@ -345,12 +350,12 @@ export function createWorkspaceCodingAgentProvider(
           try {
             const session = await recoverCodexWorkspace(options.runtime, context, sessionId, prompt);
             const terminalRef = terminalRefFor(session);
-            return { events: [AgentThreadEventSchema.parse({
+            return { events: terminalRef ? [AgentThreadEventSchema.parse({
               type: "terminal.bound", eventId: nextEventId(), threadId: thread.id,
               occurredAt: now().toISOString(), terminalRef,
               terminalSessionId: `${terminalRef.workspaceId}:${terminalRef.tabId}`,
               terminalSessionCreatedAt: session.runtime.createdAt,
-            })], outcome: "delivered", resumeState };
+            })] : [], outcome: "delivered", resumeState: { ...resumeState, ...(session.backgroundRef ? { backgroundRef: session.backgroundRef } : {}), ...(observation.offset !== undefined ? { eventOffset: observation.offset } : {}) } };
           } catch (recoveryError: unknown) {
             options.codexEvents.unwatch(sessionId);
             throw recoveryError;
@@ -416,6 +421,10 @@ export function createWorkspaceCodingAgentProvider(
         clientRequestId: request.clientRequestId,
       });
       return [];
+    },
+    async deferInput({ thread, inputRequestId }) {
+      if (agent !== "codex" || !options.codexControl) throw new Error("Input deferral unavailable");
+      await options.codexControl.deferInput({ sessionId: sessionIdForThread(thread.id), inputRequestId, clientRequestId: `defer_${inputRequestId}` });
     },
     async submitInput({ thread, inputRequestId, request }) {
       if (agent !== "codex" || !options.codexControl || !request.structuredAnswers) {

@@ -6,6 +6,8 @@
 import { z } from "zod/v4";
 import {
   BuildSourceSchema,
+  FileDownloadRequestSchema,
+  FileDownloadResultSchema,
   ApprovalDecisionRequestSchema,
   ApprovalIdSchema,
   AgentThreadEventSchema,
@@ -246,6 +248,14 @@ export const INVOKE_CHANNELS = {
   "runtime:get-file-content": {
     request: FileReadRequestSchema,
     response: FileReadResponseSchema,
+  },
+  "runtime:download-file": {
+    request: FileDownloadRequestSchema,
+    response: FileDownloadResultSchema,
+  },
+  "runtime:cancel-file-download": {
+    request: z.object({ requestId: z.uuid() }).strict(),
+    response: z.object({ ok: z.boolean() }).strict(),
   },
   "runtime:save-file-content": {
     request: FileWriteRequestSchema,

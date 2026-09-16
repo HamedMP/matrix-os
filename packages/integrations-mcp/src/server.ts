@@ -1,4 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { registerChatAgentTools } from "./chat-agents.js";
 import {
   callServiceHandler,
   connectServiceHandler,
@@ -130,5 +131,6 @@ export function createIntegrationsMcpServer(
     async (input) => callCustomMcpToolHandler(input, fetcher),
   );
 
+  registerChatAgentTools(server, fetcher);
   return server;
 }

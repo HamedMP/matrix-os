@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdir, mkdtemp, readFile, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, stat } from "node:fs/promises";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { TerminalTabSchema } from "@matrix-os/contracts";
 import {
   createAgentSessionManager,
   hasActiveWorkspaceSessionForTerminalRef,
@@ -49,6 +50,7 @@ describe("agent-session-manager", () => {
   });
 
   function createManager(overrides: {
+    backgroundRuntime?: { start: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn>; isRunning: ReturnType<typeof vi.fn> };
     terminalRuntime?: Partial<ReturnType<typeof baseTerminalRuntime>>;
     startupRetryDelaysMs?: readonly number[];
     startupReconcileIntervalMs?: number;
@@ -64,7 +66,7 @@ describe("agent-session-manager", () => {
       buildLaunch: vi.fn((input: AgentLaunchInput): AgentLaunchSpec => ({
         command: input.agent,
         args: ["--safe-mode", input.prompt ?? ""].filter((arg) => arg.length > 0),
-        cwd: join(homePath, "projects", "repo", "worktrees", worktreeId),
+        cwd: input.cwd,
         env: {},
       })),
     };
@@ -74,6 +76,7 @@ describe("agent-session-manager", () => {
         worktreeManager,
         agentLauncher,
         terminalRuntime,
+        backgroundRuntime: overrides.backgroundRuntime,
         now,
         idGenerator: () => "sess_abc123",
         startupRetryDelaysMs: overrides.startupRetryDelaysMs ?? [],
@@ -98,6 +101,105 @@ describe("agent-session-manager", () => {
       }]),
     };
   }
+
+  it("starts background Chat without touching a full interactive Terminal workspace", async () => {
+    const backgroundRuntime = {
+      start: vi.fn(async () => ({ id: "bg_00000000000000000000000000000001" })),
+      stop: vi.fn(async () => undefined),
+      isRunning: vi.fn(async () => true),
+    };
+    const createTab = vi.fn(async () => { throw new Error("Terminal capacity reached"); });
+    const { manager, terminalRuntime, agentLauncher } = createManager({ backgroundRuntime, terminalRuntime: { createTab } });
+    const result = await manager.startSession({ kind: "agent", agent: "codex", ownerId: "user_a", runtimePreference: "background" });
+    expect(result.ok).toBe(true);
+    expect(terminalRuntime.ensureWorkspace).not.toHaveBeenCalled();
+    expect(createTab).not.toHaveBeenCalled();
+    expect(backgroundRuntime.start).toHaveBeenCalledWith(expect.objectContaining({ sessionId: "sess_abc123", launch: agentLauncher.buildLaunch.mock.results[0]!.value }));
+    if (!result.ok) throw new Error("startup failed");
+    expect(result.session.runtime.type).toBe("background");
+    expect(result.session.terminalRef).toBeUndefined();
+    await expect(manager.killSession(result.session.id)).resolves.toMatchObject({ ok: true });
+    expect(backgroundRuntime.stop).toHaveBeenCalledWith(result.session.backgroundRef);
+    expect(terminalRuntime.terminateTab).not.toHaveBeenCalled();
+    manager.shutdown();
+  });
+
+  it("retains the worktree lease on an unconfirmed background stop and reconciles without Terminal inventory", async () => {
+    const ref = { id: "bg_00000000000000000000000000000001" };
+    const backgroundRuntime = { start: vi.fn().mockResolvedValue(ref), stop: vi.fn().mockRejectedValue(new Error("bus unavailable")), isRunning: vi.fn().mockResolvedValue(true) };
+    const { manager, worktreeManager } = createManager({ backgroundRuntime, startupRetryDelaysMs: [], terminalRuntime: { listWorkspaces: vi.fn().mockRejectedValue(new Error("Terminal down")) } });
+    try {
+      expect((await manager.startSession({ kind: "agent", agent: "codex", ownerId: "user_a", projectSlug: "repo", worktreeId, runtimePreference: "background" })).ok).toBe(true);
+      expect((await manager.killSession("sess_abc123")).ok).toBe(false);
+      const contender = { projectSlug: "repo", worktreeId, holderType: "session" as const, holderId: "sess_other" };
+      expect((await worktreeManager.acquireLease(contender)).ok).toBe(false);
+      expect((await manager.reconcileStartup()).degraded).toBe(0);
+      expect((await worktreeManager.acquireLease(contender)).ok).toBe(false);
+      backgroundRuntime.isRunning.mockResolvedValue(false);
+      expect((await manager.reconcileStartup()).releasedLeases).toBe(1);
+      expect((await worktreeManager.acquireLease(contender)).ok).toBe(true);
+    } finally { manager.shutdown(); }
+  });
+
+  it("preserves the previous incarnation's lease when recovery inventory is unavailable", async () => {
+    const backgroundRuntime = { start: vi.fn().mockResolvedValue({ id: "bg_00000000000000000000000000000001" }), stop: vi.fn(), isRunning: vi.fn() };
+    const { manager, worktreeManager } = createManager({ backgroundRuntime });
+    const request = { kind: "agent", agent: "codex", ownerId: "user_a", projectSlug: "repo", worktreeId, runtimePreference: "background" };
+    try {
+      expect((await manager.startSession(request)).ok).toBe(true);
+      backgroundRuntime.start.mockRejectedValue(new Error("inventory unavailable"));
+      backgroundRuntime.isRunning.mockRejectedValue(new Error("inventory unavailable"));
+      expect((await manager.startSession(request)).ok).toBe(false);
+      expect((await worktreeManager.acquireLease({ projectSlug: "repo", worktreeId, holderType: "session", holderId: "sess_other" })).ok).toBe(false);
+      expect(backgroundRuntime.start).toHaveBeenCalledTimes(1);
+      expect(backgroundRuntime.stop).not.toHaveBeenCalled();
+    } finally { manager.shutdown(); }
+  });
+
+  it("refuses a background shell and never silently falls back to Terminal", async () => {
+    const { manager, terminalRuntime } = createManager();
+    await expect(manager.startSession({ kind: "shell", ownerId: "user_a", runtimePreference: "background" })).resolves.toMatchObject({ ok: false });
+    await expect(manager.startSession({ kind: "agent", agent: "codex", ownerId: "user_a", runtimePreference: "background" })).resolves.toMatchObject({ ok: false });
+    expect(terminalRuntime.createTab).not.toHaveBeenCalled();
+    manager.shutdown();
+  });
+
+  it.each([
+    { label: "home", request: {}, cwd: "" },
+    { label: "project", request: { projectSlug: "repo" }, cwd: "projects/repo/repo" },
+    { label: "worktree", request: { projectSlug: "repo", worktreeId }, cwd: `projects/repo/worktrees/${worktreeId}` },
+  ])("passes a valid relative Terminal cwd for $label while preserving launcher cwd", async ({ request, cwd }) => {
+    const createTab = vi.fn(async (_id: string, input: { cwd: string }) => {
+      TerminalTabSchema.shape.cwd.parse(input.cwd);
+      return { id: "tt_00000000000000000000000000000001" };
+    });
+    const { manager, agentLauncher } = createManager({ terminalRuntime: { createTab } });
+    const result = await manager.startSession({ kind: "agent", agent: "codex", ownerId: "user_a", ...request });
+    expect(result.ok).toBe(true);
+    expect(agentLauncher.buildLaunch).toHaveBeenCalledWith(expect.objectContaining({ cwd: join(homePath, cwd) }));
+    expect(createTab).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ cwd }));
+  });
+
+  it("converts internal Chat workspace roots without changing the launcher directory", async () => {
+    const { manager, terminalRuntime, agentLauncher } = createManager();
+    const workspaceRoot = join(homePath, "projects", "repo", "repo");
+    const result = await manager.startSession({ kind: "agent", agent: "codex", ownerId: "user_a", workspaceRoot });
+    expect(result.ok).toBe(true);
+    expect(agentLauncher.buildLaunch).toHaveBeenCalledWith(expect.objectContaining({ cwd: await realpath(workspaceRoot) }));
+    expect(terminalRuntime.createTab).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ cwd: "projects/repo/repo" }));
+  });
+
+  it("releases a worktree lease before returning a rejected external launch directory", async () => {
+    const { manager, agentLauncher, terminalRuntime, worktreeManager } = createManager();
+    const releaseLease = vi.spyOn(worktreeManager, "releaseLease");
+    agentLauncher.buildLaunch.mockReturnValueOnce({ command: "codex", args: [], cwd: tmpdir(), env: {} });
+    const result = await manager.startSession({ kind: "agent", agent: "codex", ownerId: "user_a", projectSlug: "repo", worktreeId });
+    expect(result.ok).toBe(false);
+    expect(terminalRuntime.ensureWorkspace).not.toHaveBeenCalled();
+    expect(terminalRuntime.createTab).not.toHaveBeenCalled();
+    expect(releaseLease).toHaveBeenCalled();
+    await expect(stat(join(homePath, "system", "sessions", "sess_abc123.json"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
 
   it("deletes only inactive project sessions owned by the requesting user", async () => {
     const { manager } = createManager();
@@ -197,6 +299,7 @@ describe("agent-session-manager", () => {
       "tws_00000000000000000000000000000001",
       expect.objectContaining({
         name: "codex",
+        cwd: `projects/repo/worktrees/${worktreeId}`,
         command: expect.arrayContaining(["codex"]),
         agent: { providerId: "codex" },
       }),
@@ -206,6 +309,17 @@ describe("agent-session-manager", () => {
     expect(record.transcriptPath).toBe(join(homePath, "system", "session-output", "sess_abc123.jsonl"));
     expect(record.writeMode).toBe("owner");
     expect(record.ownerId).toBe("user_a");
+  });
+
+  it.each([false, true])("validates the owner-relative runtime cwd (outside home: %s)", async (outside) => {
+    const { manager, terminalRuntime, agentLauncher } = createManager();
+    agentLauncher.buildLaunch.mockReturnValue({
+      command: "codex", args: [], cwd: outside ? join(homePath, "..", "outside") : homePath, env: {},
+    });
+    const result = await manager.startSession({ kind: "agent", agent: "codex", ownerId: "user_a" });
+    expect(result.ok).toBe(!outside);
+    if (outside) expect(terminalRuntime.createTab).not.toHaveBeenCalled();
+    else expect(terminalRuntime.createTab).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ cwd: "" }));
   });
 
   it("identifies active session-bound terminal refs for attachment authorization", async () => {
@@ -230,6 +344,64 @@ describe("agent-session-manager", () => {
     await manager.killSession(started.session.id);
     await expect(hasActiveWorkspaceSessionForTerminalRef(homePath, started.session.terminalRef))
       .resolves.toBe(false);
+  });
+
+  it("ignores active legacy sessions without terminal refs during attachment authorization", async () => {
+    await atomicWriteJson(join(homePath, "system", "sessions", "sess_legacy.json"), {
+      id: "sess_legacy",
+      kind: "agent",
+      runtime: {
+        type: "zellij",
+        status: "running",
+        zellijSession: "legacy-agent-session",
+      },
+      ownerId: "user_a",
+      startedAt: "2026-04-01T00:00:00.000Z",
+      lastActivityAt: "2026-04-01T00:00:00.000Z",
+    });
+
+    await expect(hasActiveWorkspaceSessionForTerminalRef(homePath, {
+      workspaceId: "tws_00000000000000000000000000000001",
+      tabId: "tt_00000000000000000000000000000001",
+    })).resolves.toBe(false);
+
+    const { manager } = createManager();
+    const started = await manager.startSession({
+      kind: "agent",
+      agent: "codex",
+      ownerId: "user_a",
+      projectSlug: "repo",
+      worktreeId,
+      prompt: "work",
+    });
+    if (!started.ok) throw new Error("Expected session startup");
+
+    await expect(hasActiveWorkspaceSessionForTerminalRef(homePath, started.session.terminalRef))
+      .resolves.toBe(true);
+  });
+
+  it("fails closed when an active session has a malformed terminal ref", async () => {
+    await atomicWriteJson(join(homePath, "system", "sessions", "sess_malformed.json"), {
+      id: "sess_malformed",
+      kind: "agent",
+      runtime: {
+        type: "zellij",
+        status: "running",
+      },
+      terminalRef: {
+        workspaceId: "tws_00000000000000000000000000000001",
+        tabId: "tt_00000000000000000000000000000001",
+        unexpected: "field",
+      },
+      ownerId: "user_a",
+      startedAt: "2026-04-01T00:00:00.000Z",
+      lastActivityAt: "2026-04-01T00:00:00.000Z",
+    });
+
+    await expect(hasActiveWorkspaceSessionForTerminalRef(homePath, {
+      workspaceId: "tws_00000000000000000000000000000001",
+      tabId: "tt_00000000000000000000000000000001",
+    })).rejects.toThrow();
   });
 
   it("includes bounded structured attachments in the agent launch prompt", async () => {

@@ -718,6 +718,40 @@ describe("user-systemd terminal runtime", () => {
     )).resolves.toContain(RUNTIME_ID);
   });
 
+  it("finishes deletion when systemd already removed the exact zellij session", async () => {
+    const runCommand = vi.fn<UserSystemdCommandRunner>(async (command, args) => {
+      if (command.endsWith("/zellij") && args[0] === "delete-session") {
+        throw Object.assign(new Error("zellij exited"), {
+          code: 1,
+          stderr: "No active Zellij sessions found.",
+        });
+      }
+      return { stdout: "", stderr: "" };
+    });
+    const runtime = createUserSystemdTerminalRuntime({
+      homePath,
+      uid: 1001,
+      generation: GENERATION,
+      runCommand,
+      readinessProbe: vi.fn(async () => true),
+      now: () => "2026-07-31T12:00:00.000Z",
+    });
+    await runtime.create({
+      runtimeId: RUNTIME_ID,
+      scope: "terminal",
+      kind: "shell",
+      displayName: "Main",
+      cwd,
+      layoutPath,
+    });
+
+    await expect(runtime.delete(RUNTIME_ID)).resolves.toEqual({ ok: true });
+    await expect(readFile(
+      join(homePath, "system", "terminal-runtimes", `${RUNTIME_ID}.json`),
+      "utf8",
+    )).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("retains cleanup metadata when a referenced launch snapshot cannot be removed", async () => {
     const environmentPath = join(homePath, "system", "terminal-runtimes", "env", `${RUNTIME_ID}-0123456789abcdef.json`);
     await mkdir(join(homePath, "system", "terminal-runtimes", "env"), { recursive: true });

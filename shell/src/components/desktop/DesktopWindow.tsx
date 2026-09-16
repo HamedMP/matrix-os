@@ -1,9 +1,11 @@
+import { useWindowManager } from "@/hooks/useWindowManager";
 import { AppWindowResizeControls } from "../window/AppWindowResizeControls";
 import type { CSSProperties, PointerEvent } from "react";
 import type { ChatState } from "@/hooks/useChatState";
 import type { AppWindow } from "@/hooks/useWindowManager";
 import type { DockConfig } from "@/stores/desktop-config";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
+import { desktopLaunchBarInset } from "@/lib/desktop-work-area";
 import { cn } from "@/lib/utils";
 import {
   Card,
@@ -85,6 +87,7 @@ export function DesktopWindow({
   onToggleFullscreen,
   topInset = 0,
 }: DesktopWindowProps) {
+  const focusedWindowId = useWindowManager((state) => state.focusedWindowId);
   const isFullscreen = win.id === fullscreenWindowId;
   const isMinimizing = minimizingIds.has(win.id);
   const isHidden = win.minimized && !isMinimizing && !isFullscreen;
@@ -111,6 +114,7 @@ export function DesktopWindow({
   const windowStyle = isFullscreen ? {
     zIndex: SHELL_Z_INDEX.fullscreenWindow,
     top: `${topInset}px`,
+    bottom: desktopLaunchBarInset(desktopParity),
     transition: "all 300ms cubic-bezier(0.22, 1, 0.36, 1)",
   } : {
     "--win-x": `${win.x}px`,
@@ -206,6 +210,12 @@ export function DesktopWindow({
           <div className="h-full overflow-hidden">
             {chat && (
               <ChatApp
+                filterUnreadOnly={chat.unreadOnly}
+                onUnreadFilterChange={chat.setUnreadOnly}
+                active={focusedWindowId === win.id && !win.minimized}
+                readState={chat.readState}
+                displayedThroughSeq={chat.displayedThroughSeq}
+                onUpdateReadState={chat.updateReadState}
                 messages={chat.messages}
                 sessionId={chat.sessionId}
                 busy={chat.busy}
@@ -216,7 +226,9 @@ export function DesktopWindow({
                 activeConversationTitle={chat.activeConversationTitle}
                 onRenameConversation={chat.renameConversation}
                 onSubmit={chat.submitMessage}
+              agentClient={chat.agentClient} queuedTurns={chat.queuedTurns} onCancelQueuedTurn={chat.cancelQueuedTurn}
                 onSubmitApproval={chat.submitApproval}
+              onSubmitInput={chat.submitInput}
                 providerSelection={chat.providerSelection}
                 composerDraftRequest={chat.composerDraftRequest}
                 onComposerDraftConsumed={chat.consumeComposerDraft}

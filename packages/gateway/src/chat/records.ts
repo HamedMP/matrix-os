@@ -32,6 +32,7 @@ import type {
 export type ChatOwner = CanonicalOwnerScope;
 
 export interface ChatRecord {
+  readState?: import("@matrix-os/contracts").CanonicalChatReadState;
   chat: CanonicalChat;
   projectId?: string;
   providerBinding?: CanonicalChatProviderBinding;
@@ -154,6 +155,8 @@ export function toChatRecord(
     id: row.id,
     ownerScope: { type: row.owner_type, ownerId: row.owner_id },
     title: row.title,
+    titleVersion: Number(row.title_version),
+    activityAt: asIso(row.activity_at),
     lifecycle: row.lifecycle,
     attention: row.attention,
     revision: Number(row.revision),
@@ -249,6 +252,7 @@ export function toRun(row: Selectable<ChatRunsTable>): CanonicalChatRun {
     ...(row.started_at === null ? {} : { startedAt: asIso(row.started_at) }),
     ...(row.completed_at === null ? {} : { completedAt: asIso(row.completed_at) }),
     historyBoundarySeq: Number(row.history_boundary_seq),
+    ...(row.context_snapshot == null ? {} : { context: parseJson(row.context_snapshot) }),
     capabilitySnapshot: parseJson(row.capability_snapshot),
     createdAt: asIso(row.created_at),
     updatedAt: asIso(row.updated_at),

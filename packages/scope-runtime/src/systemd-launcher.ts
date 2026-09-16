@@ -16,7 +16,8 @@ import {
 } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
 import { promisify } from "node:util";
-import { RuntimeHandleSchema, ScopeHandleSchema } from "./protocol.js";
+import { createConnection } from "node:net";
+import { RuntimeHandleSchema, ScopeHandleSchema, ScopeRuntimeResponseSchema } from "./protocol.js";
 import {
   FIXED_SYSTEMD_ENVIRONMENT,
   SCOPE_RUNTIME_HARNESS_VERSION,
@@ -42,6 +43,8 @@ const PROVENANCE_FILE = "provenance.json";
 const MAX_RECONCILED_ENTRIES = 128;
 const MAX_PROVENANCE_BYTES = 2_048;
 const EXECUTION_GENERATION = /^(0|[1-9][0-9]{0,19})$/;
+const WORKER_SOCKET_FILE = "worker.sock";
+const MAX_WORKER_FRAME_BYTES = 128 * 1024;
 
 export interface ScopeRuntimeCommandRunner {
   (command: string, args: readonly string[]): Promise<{ stdout: string }>;
@@ -84,6 +87,7 @@ export function buildFixedSystemdRunArgs(
     workerFile: assertTrustedAbsolutePath(paths.workerFile),
     brokerSocket: assertTrustedAbsolutePath(paths.brokerSocket),
     readinessFile: assertTrustedAbsolutePath(paths.readinessFile),
+    commandDirectory: assertTrustedAbsolutePath(paths.commandDirectory),
   });
   return [
     `--unit=${unitName(runtimeHandle)}`,
@@ -102,6 +106,7 @@ export function buildFixedSystemdRunArgs(
     input.workload,
     input.adapterId,
     input.harnessVersion,
+    input.executionGeneration,
   ];
 }
 
@@ -123,7 +128,7 @@ async function assertPrivateDirectory(path: string): Promise<void> {
 async function prepareRuntimeRoot(
   stateRoot: string,
   request: ScopeRuntimeLaunchRequest,
-): Promise<{ root: string; readinessFile: string }> {
+): Promise<{ root: string; readinessFile: string; commandDirectory: string }> {
   const runtimeHandle = RuntimeHandleSchema.parse(request.runtimeHandle);
   const suffix = RuntimeHandleSchema.parse(runtimeHandle).slice("runtime_".length);
   await mkdir(stateRoot, { recursive: true, mode: 0o700 });
@@ -138,6 +143,9 @@ async function prepareRuntimeRoot(
   const root = join(runtimeRoot, "root");
   await mkdir(root, { mode: 0o755 });
   await chmod(root, 0o755);
+  const commandDirectory = join(runtimeRoot, "command");
+  await mkdir(commandDirectory, { mode: 0o733 });
+  await chmod(commandDirectory, 0o733);
   const directories = [
     "dev",
     "lib",
@@ -199,7 +207,56 @@ async function prepareRuntimeRoot(
   const brokerTarget = join(root, "run/matrix-scope/broker.sock");
   const handle = await open(brokerTarget, "wx", 0o600);
   await handle.close();
-  return { root, readinessFile };
+  return { root, readinessFile, commandDirectory };
+}
+
+async function runWorkerChat(
+  socketPath: string,
+  input: { runtimeHandle: string; executionGeneration: string; model: string; prompt: string },
+): Promise<{ text: string }> {
+  const frame = `${JSON.stringify({ version: 1, type: "runtime.chat", ...input })}\n`;
+  if (Buffer.byteLength(frame, "utf8") > MAX_WORKER_FRAME_BYTES) {
+    throw new Error("Scope runtime Chat request exceeds capacity");
+  }
+  return new Promise((resolve, reject) => {
+    const socket = createConnection({ path: socketPath });
+    let response = "";
+    let settled = false;
+    const finish = (error?: Error, text?: string) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      if (error) reject(error);
+      else resolve({ text: text ?? "" });
+    };
+    socket.setEncoding("utf8");
+    socket.setTimeout(60_000, () => finish(new Error("Scope runtime Chat timed out")));
+    socket.once("connect", () => socket.end(frame));
+    socket.once("error", () => finish(new Error("Scope runtime worker unavailable")));
+    socket.on("data", (chunk) => {
+      response += chunk;
+      if (Buffer.byteLength(response, "utf8") > MAX_WORKER_FRAME_BYTES) {
+        finish(new Error("Scope runtime Chat response exceeds capacity"));
+      }
+    });
+    socket.once("end", () => {
+      if (settled) return;
+      try {
+        const parsed = ScopeRuntimeResponseSchema.parse(JSON.parse(response.trim()));
+        if (parsed.type !== "runtime.chat.result" || !parsed.ok
+          || parsed.runtimeHandle !== input.runtimeHandle
+          || parsed.executionGeneration !== input.executionGeneration) {
+          finish(new Error("Scope runtime Chat failed"));
+          return;
+        }
+        finish(undefined, parsed.text);
+      } catch (error: unknown) {
+        finish(new Error(error instanceof SyntaxError
+          ? "Scope runtime Chat response is invalid"
+          : "Scope runtime Chat failed"));
+      }
+    });
+  });
 }
 
 async function readRuntimeProvenance(
@@ -425,7 +482,7 @@ export function createSystemdScopeRuntimeLauncher(
       return handles;
     },
     async start(request: ScopeRuntimeLaunchRequest): Promise<void> {
-      const { root, readinessFile } = await prepareRuntimeRoot(paths.stateRoot, request);
+      const { root, readinessFile, commandDirectory } = await prepareRuntimeRoot(paths.stateRoot, request);
       let submitted = false;
       try {
         const sources = await validateRuntimeSources(paths);
@@ -436,6 +493,7 @@ export function createSystemdScopeRuntimeLauncher(
           workerFile: sources.workerFile,
           brokerSocket: paths.brokerSocket,
           readinessFile,
+          commandDirectory,
           nodeBinary: paths.nodeBinary,
         });
         submitted = true;
@@ -452,6 +510,20 @@ export function createSystemdScopeRuntimeLauncher(
         if (cleaned) await rm(dirname(root), { recursive: true, force: true });
         throw error;
       }
+    },
+    async runChat(input): Promise<{ text: string }> {
+      const handle = RuntimeHandleSchema.parse(input.runtimeHandle);
+      if (!EXECUTION_GENERATION.test(input.executionGeneration)) {
+        throw new Error("Invalid scope runtime generation");
+      }
+      const socketPath = join(
+        paths.stateRoot,
+        "runtimes",
+        handle.slice("runtime_".length),
+        "command",
+        WORKER_SOCKET_FILE,
+      );
+      return runWorkerChat(socketPath, input);
     },
     async stop(runtimeHandle: string): Promise<void> {
       const handle = RuntimeHandleSchema.parse(runtimeHandle);

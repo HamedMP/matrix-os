@@ -41,6 +41,21 @@ dmg:
       y: 322
       type: link
       path: /Applications
+win:
+  icon: build/icon.png
+  requestedExecutionLevel: asInvoker
+  verifyUpdateCodeSignature: true
+  target:
+    - target: nsis
+      arch: [x64]
+nsis:
+  oneClick: true
+  perMachine: false
+  allowElevation: true
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: Matrix OS
+  uninstallDisplayName: Matrix OS
 linux:
   category: Utility
   target:

@@ -147,6 +147,10 @@ describe("ProvidersSection", () => {
         expect.objectContaining({ command: ["sh", "-lc", "codex login"], cwd: "projects" }),
       ),
     );
+    const pendingButton = screen.getByRole("button", { name: "Open provider setup Sign in" });
+    expect((pendingButton as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(pendingButton);
+    expect(api.post).toHaveBeenCalledTimes(2);
     await act(async () => resolveSetupTab({ tab: { id: TERMINAL_TAB_ID } }));
     expect(
       useTabs.getState().tabs.some((tab) => tab.kind === "terminals" && tab.title === "Terminal"),
@@ -154,6 +158,21 @@ describe("ProvidersSection", () => {
     expect(useTabs.getState().terminalSessionRequest?.sessionName).toBe(
       `${TERMINAL_WORKSPACE_ID}:${TERMINAL_TAB_ID}`,
     );
+  });
+
+  it("refreshes auth state when returning from Terminal to Settings", async () => {
+    const settings = useTabs.getState().openTab({ kind: "settings", title: "Settings" });
+    render(<ProvidersSection />);
+    await screen.findByRole("button", { name: "Open provider setup Sign in" });
+    act(() => { useTabs.getState().openTab({ kind: "terminals", title: "Terminal" }); });
+    summaryResult = () => Promise.resolve(runtimeSummary([{ ...CODEX_AUTH_REQUIRED,
+      authStatus: "authenticated", availability: "available", setupActions: [{
+        id: "codex_disconnect", kind: "foreground_terminal", label: "Disconnect Codex", command: "codex logout",
+      }],
+    }]));
+    act(() => { useTabs.getState().focusTab(settings); });
+    await screen.findByRole("button", { name: "Open provider setup Disconnect Codex" });
+    expect(screen.queryByRole("button", { name: "Open provider setup Sign in" })).toBeNull();
   });
 
   it("shows a generic setup error when the terminal cannot be opened", async () => {

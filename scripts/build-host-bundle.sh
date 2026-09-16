@@ -154,10 +154,6 @@ printf '%s\n' "$TERMINAL_RUNTIME_GENERATION" > "$STAGE_DIR/app/TERMINAL_RUNTIME_
 # Activation follows the installed app payload so the supported updater's
 # app rollback atomically returns pre-activation bundles to dormant behavior.
 printf '1\n' > "$STAGE_DIR/app/TERMINAL_USER_SYSTEMD_ENABLED"
-# PR2 installs the rollback-safe foundation only. The inverse systemd
-# ConditionPathExists fence prevents accidental activation until PR3 removes
-# this app-owned marker while completing M2.
-printf '1\n' > "$STAGE_DIR/app/SCOPE_RUNTIME_DISABLED"
 if [ -f "$ROOT_DIR/.npmrc" ]; then
   cp -a "$ROOT_DIR/.npmrc" "$STAGE_DIR/app/.npmrc"
 fi

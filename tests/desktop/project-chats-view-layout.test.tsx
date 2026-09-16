@@ -386,6 +386,9 @@ describe("ProjectChatsView hero layout", () => {
     let conversationIndexRequests = 0;
     const api = {
       get: vi.fn((path: string) => {
+        if (path === "/api/system/info") {
+          return Promise.resolve({ runtime: { machineId: null } });
+        }
         if (path !== "/api/conversations") {
           throw new Error(`unexpected api path ${path}`);
         }

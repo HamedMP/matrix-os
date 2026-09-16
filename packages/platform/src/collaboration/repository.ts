@@ -139,11 +139,18 @@ export class PlatformCollaborationRepository {
     scopeId: string;
     runtimeId: string;
     ownerId: string;
+    kind: "chat" | "terminal" | "project";
     authorityGeneration: number;
   } | null> {
     const row = await this.db.selectFrom("collaboration_user_index as user_index")
       .innerJoin("collaboration_directory as directory", "directory.scope_id", "user_index.scope_id")
-      .select(["directory.scope_id", "directory.runtime_id", "directory.owner_id", "directory.authority_generation"])
+      .select([
+        "directory.scope_id",
+        "directory.runtime_id",
+        "directory.owner_id",
+        "directory.kind",
+        "directory.authority_generation",
+      ])
       .where("user_index.actor_id", "=", actorId)
       .where("user_index.invitation_id", "=", invitationId)
       .where("user_index.status", "=", "invited")
@@ -152,6 +159,7 @@ export class PlatformCollaborationRepository {
       scopeId: row.scope_id,
       runtimeId: row.runtime_id,
       ownerId: row.owner_id,
+      kind: row.kind,
       authorityGeneration: Number(row.authority_generation),
     } : null;
   }

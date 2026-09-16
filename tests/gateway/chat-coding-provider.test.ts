@@ -518,6 +518,18 @@ describe("canonical coding Chat Provider adapter", () => {
       expect.objectContaining({ userId: owner.ownerId }),
       "thread_native",
       "req_coding",
+      { runRequestId: "req_coding" },
+    );
+  });
+
+  it("cancels the persisted async continuation instead of the original native turn", async () => {
+    const fake = fakeStore([]);
+    const adapter = createCanonicalCodingChatProviderAdapter({ providerId: "codex", threads: fake.store });
+    await adapter.cancel!({ owner, chatId: "chat_coding", runId: "run_coding",
+      state: { conversationId: "thread_native", runId: "run_async_answer" } });
+    expect(fake.abortThread).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: owner.ownerId }), "thread_native", "req_coding",
+      { runRequestId: "req_async_answer" },
     );
   });
 
@@ -781,4 +793,37 @@ describe("canonical coding Chat Provider adapter", () => {
       }
     }).rejects.toThrow("event buffer exceeded");
   });
+});
+
+describe("canonical coding input round trip", () => {
+  it("preserves structured questions and forwards the exact native input correlation", async () => {
+    const requested = event({ type: "user_input.requested", eventId: "evt_input", request: {
+      requestId: "req_native_input", threadId: "thread_native", title: "Choose", safeDescription: "Pick a color", correlationId: "corr_native",
+      questions: [{ questionId: "color", header: "Color", question: "Which color?", options: [{ label: "Blue", description: "Ocean" }], allowOther: true, secret: false }],
+    } });
+    const store = fakeStore([requested]);
+    const submitInput = vi.fn(async () => snapshot([]));
+    Object.assign(store.store, { submitInput });
+    const adapter = createCanonicalCodingChatProviderAdapter({ providerId: "codex", threads: store.store });
+    const stream = adapter.start(input());
+    await stream.next();
+    expect((await stream.next()).value).toMatchObject({ type: "input.requested", questions: [{ questionId: "color" }], safeDescription: "Pick a color" });
+    await adapter.submitInput!({ owner, chatId: "chat_coding", runId: "run_coding", requestId: "req_native_input", clientRequestId: "req_answer", structuredAnswers: { color: ["Blue"] }, state: { conversationId: "thread_native", runId: "run_coding" } });
+    expect(submitInput).toHaveBeenCalledWith({ userId: owner.ownerId, source: "configured-container" }, "thread_native", "req_native_input", expect.objectContaining({ correlationId: "corr_native", structuredAnswers: { color: ["Blue"] } }));
+    await stream.return(undefined);
+  });
+});
+
+import { BackgroundProjectionDetached } from "../../packages/gateway/src/chat/background-run-control.js";
+
+it("detaches a live Codex projection on gateway shutdown without cancelling native work", async () => {
+  const fake = fakeStore([]);
+  const controller = new AbortController();
+  const provider = createCanonicalCodingChatProviderAdapter({ providerId: "codex", threads: fake.store });
+  const stream = provider.start(input({ signal: controller.signal }))[Symbol.asyncIterator]();
+  expect((await stream.next()).value.type).toBe("state.updated");
+  const pending = stream.next();
+  controller.abort(new BackgroundProjectionDetached());
+  expect((await pending).done).toBe(true);
+  expect(fake.abortThread).not.toHaveBeenCalled();
 });

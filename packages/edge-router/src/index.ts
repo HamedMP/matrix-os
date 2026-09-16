@@ -57,9 +57,15 @@ export async function handleEdgeRouterRequest(
   const upstreamRequest = buildPlatformRequest(request, upstreamUrl, url.host, edgeSecret, body);
 
   let response: Response;
+  const streamDownload = request.method === "GET" && url.searchParams.get("download") === "true"
+    && /^\/(?:vm\/[A-Za-z0-9_-]{1,64}\/(?:~runtime\/[A-Za-z0-9_-]{1,32}\/)?)?api\/files\/media$/.test(url.pathname);
+  const headerController = new AbortController();
+  const headerTimer = streamDownload
+    ? setTimeout(() => headerController.abort(new DOMException("Header wait expired", "TimeoutError")), UPSTREAM_TIMEOUT_MS)
+    : undefined;
   try {
     response = await fetch(upstreamRequest, {
-      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+      signal: streamDownload ? AbortSignal.any([request.signal, headerController.signal]) : AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
     });
   } catch (err: unknown) {
     const status = isTimeoutError(err) ? 504 : 502;
@@ -68,6 +74,8 @@ export async function handleEdgeRouterRequest(
       status,
       headers: noStoreTextHeaders(),
     });
+  } finally {
+    if (headerTimer !== undefined) clearTimeout(headerTimer);
   }
 
   return withEdgeHeaders(response, routeClass, url.pathname);
@@ -124,7 +132,7 @@ function withEdgeHeaders(response: Response, routeClass: EdgeRouteClass, pathnam
     const upstreamCacheControl = headers.get("cache-control");
     headers.set("cache-control", upstreamCacheControl ?? browserCacheControlForAppStaticAsset(pathname));
   } else {
-    headers.set("cache-control", "no-store");
+    headers.set("cache-control", /^attachment(?:;|$)/i.test(response.headers.get("content-disposition") ?? "") ? "no-store, no-transform" : "no-store");
   }
   headers.set("cdn-cache-control", "no-store");
   headers.set("cloudflare-cdn-cache-control", "no-store");

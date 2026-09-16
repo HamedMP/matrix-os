@@ -8,7 +8,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main, "stack/**", "codex/**"]
-    types: [labeled, ready_for_review]
+    types: [labeled, ready_for_review, synchronize]
 
 concurrency:
   group: ci-${{ github.ref }}-${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name != 'ready-for-ci' && github.run_id || 'shared' }}
@@ -70,6 +70,7 @@ jobs:
         id: changed
         env:
           PR_ACTION: ${{ github.event.action || '' }}
+          PR_HAS_READY_FOR_CI: ${{ contains(github.event.pull_request.labels.*.name, 'ready-for-ci') }}
           PR_LABEL_NAME: ${{ github.event.label.name || '' }}
           GITHUB_TOKEN: ${{ github.token }}
         run: |
@@ -96,7 +97,7 @@ jobs:
           should_run_trigger=true
           if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
             should_run_trigger=false
-            if [ "$PR_ACTION" = "ready_for_review" ] || { [ "$PR_ACTION" = "labeled" ] && [ "$PR_LABEL_NAME" = "ready-for-ci" ]; }; then
+            if [ "$PR_ACTION" = "ready_for_review" ] || { [ "$PR_ACTION" = "labeled" ] && [ "$PR_LABEL_NAME" = "ready-for-ci" ]; } || { [ "$PR_ACTION" = "synchronize" ] && [ "$PR_HAS_READY_FOR_CI" = "true" ]; }; then
               should_run_trigger=true
             fi
           fi
@@ -105,7 +106,7 @@ jobs:
             echo "should_run=false" >> "$GITHUB_OUTPUT"
             echo "docs_contract_tests=false" >> "$GITHUB_OUTPUT"
             echo "os_view_parity_tests=false" >> "$GITHUB_OUTPUT"
-            echo "CI trigger not requested; add the ready-for-ci label, mark the PR ready for review, or run manually."
+            echo "CI trigger not requested; add the ready-for-ci label, mark the PR ready for review, or run manually. Later commits rerun automatically while ready-for-ci remains applied."
             exit 0
           fi
 
@@ -410,7 +411,9 @@ jobs:
     name: Unit Tests (${{ matrix.shard }}/4)
     needs: [changes, patterns, sync-client]
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Shard 4 passed all tests at ~15 minutes including setup; allow cleanup
+    # and runner variance without cancelling an otherwise successful shard.
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -558,6 +561,42 @@ jobs:
         if: needs.changes.outputs.should_run == 'true'
         run: bun run build:desktop
 
+      - name: Run required Desktop file download regression
+        if: needs.changes.outputs.should_run == 'true'
+        env:
+          MATRIX_DESKTOP_E2E_REQUIRED: "1"
+        run: xvfb-run --auto-servernum bun run test:e2e -- tests/e2e/desktop/file-download.e2e.test.ts
+
+      - name: Run required Desktop Chat input regression
+        if: needs.changes.outputs.should_run == 'true'
+        env:
+          MATRIX_DESKTOP_E2E_REQUIRED: "1"
+        run: xvfb-run --auto-servernum bun run test:e2e -- tests/e2e/desktop/canonical-input.e2e.test.ts
+
+      - name: Upload Desktop Chat input evidence
+        if: always() && needs.changes.outputs.should_run == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: desktop-chat-input-evidence
+          path: output/playwright/om-239/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Run required Desktop provider auth Terminal regression
+        if: needs.changes.outputs.should_run == 'true'
+        env:
+          MATRIX_DESKTOP_E2E_REQUIRED: "1"
+        run: xvfb-run --auto-servernum bun run test:e2e -- tests/e2e/desktop/provider-auth-terminal.e2e.test.ts
+
+      - name: Upload Desktop provider auth evidence
+        if: always() && needs.changes.outputs.should_run == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: desktop-provider-auth-evidence
+          path: output/playwright/om-255/
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Run required MAT-335 Desktop regression
         if: needs.changes.outputs.should_run == 'true'
         env:
@@ -570,11 +609,41 @@ jobs:
           MATRIX_DESKTOP_E2E_REQUIRED: "1"
         run: xvfb-run --auto-servernum bun run test:e2e -- tests/e2e/desktop/terminal-clipboard.e2e.test.ts
 
+      - name: Run required Desktop terminal snapshot regression
+        if: needs.changes.outputs.should_run == 'true'
+        env:
+          MATRIX_DESKTOP_E2E_REQUIRED: "1"
+        run: xvfb-run --auto-servernum bun run test:e2e -- tests/e2e/desktop/terminal-snapshot.e2e.test.ts
+
+      - name: Upload Desktop terminal snapshot evidence
+        if: always() && needs.changes.outputs.should_run == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: desktop-terminal-snapshot-evidence
+          path: output/playwright/terminal-snapshot/restored.png
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Run required Desktop release alignment regression
         if: needs.changes.outputs.should_run == 'true'
         env:
           MATRIX_DESKTOP_E2E_REQUIRED: "1"
         run: xvfb-run --auto-servernum bun run test:e2e -- tests/e2e/desktop/release-alignment.e2e.test.ts
+
+      - name: Run required Desktop Chat title regression
+        if: needs.changes.outputs.should_run == 'true'
+        env:
+          MATRIX_DESKTOP_E2E_REQUIRED: "1"
+        run: xvfb-run --auto-servernum bun run test:e2e -- tests/e2e/desktop/chat-title-layout.e2e.test.ts
+
+      - name: Upload Desktop Chat title evidence
+        if: always() && needs.changes.outputs.should_run == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: desktop-chat-title-evidence
+          path: output/mat524/
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Upload Desktop release alignment evidence
         if: always() && needs.changes.outputs.should_run == 'true'

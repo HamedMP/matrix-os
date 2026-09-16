@@ -1,3 +1,4 @@
+import { setTimeout as realDelay } from "node:timers/promises";
 import { EventEmitter } from "node:events";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -156,6 +157,7 @@ function toolRunLines(sid: string, prompt: string): string[] {
 
 interface FakeScript {
   lines: string[];
+  steerLines?: string[];
   exitCode?: number | null;
   exitSignal?: string | null;
   stderrText?: string;
@@ -170,7 +172,7 @@ interface FakeScript {
 }
 
 function fakeSpawn(script: FakeScript) {
-  const calls: Array<{ command: string; args: string[]; cwd: string; env: Record<string, string> }> = [];
+  const calls: Array<{ command: string; args: string[]; cwd: string; env: Record<string, string>; prompt?: string }> = [];
   const kills: string[] = [];
   const spawnFn: PiSpawnFn = (command, args, options) => {
     calls.push({ command, args, cwd: options.cwd, env: options.env });
@@ -185,6 +187,7 @@ function fakeSpawn(script: FakeScript) {
       for (const listener of exitListeners) listener(code, signal);
     };
     const proc = {
+      stdin: { write(line: string) { const frame = JSON.parse(line); if (frame.type === "prompt") calls.at(-1)!.prompt = frame.message; if (frame.type === "steer") queueMicrotask(() => { for (const event of script.steerLines ?? []) stdout.emit("data", Buffer.from(`${event}\n`)); }); return true; } },
       stdout,
       stderr,
       kill(signal: NodeJS.Signals) {
@@ -244,7 +247,7 @@ function nextEventIdFactory() {
 
 describe("pi provider adapter — spawn contract", () => {
   it("continues the same Pi session with a steering prompt instead of failing the active Run", async () => {
-    const first = fakeSpawn({ lines: [sessionLine(SESSION_ID)], hang: true });
+    const first = fakeSpawn({ lines: [sessionLine(SESSION_ID)], hang: true, steerLines: textRunLines(SESSION_ID, "Reply 222", "222") });
     const second = fakeSpawn({ lines: textRunLines(SESSION_ID, "Reply 222", "222") });
     let spawnCount = 0;
     const provider = providerFor((command, args, options) => (
@@ -272,7 +275,8 @@ describe("pi provider adapter — spawn contract", () => {
 
     const result = await resultPromise;
     expect(first.kills).toContain("SIGTERM");
-    expect(second.calls[0]?.args.at(-1)).toBe("Reply 222");
+    expect(second.calls).toHaveLength(0);
+    expect(spawnCount).toBe(1);
     expect(parseCodingAgentProviderRunResult(result, threadSummary().id).outcome).toBeUndefined();
     expect(parseCodingAgentProviderRunResult(result, threadSummary().id).events).toContainEqual(
       expect.objectContaining({ type: "assistant.text.delta", delta: "222" }),
@@ -315,7 +319,7 @@ describe("pi provider adapter — spawn contract", () => {
     ]);
   });
 
-  it("spawns pi in json print mode with an exact session id and the prompt as trailing argv", async () => {
+  it("spawns pi RPC with an exact session id and only the OS-owned extension", async () => {
     const fake = fakeSpawn({ lines: textRunLines(SESSION_ID, "Say hi", "hello") });
     const provider = providerFor(fake.spawnFn);
 
@@ -334,18 +338,18 @@ describe("pi provider adapter — spawn contract", () => {
     // pi rejects "--" as an unknown option, so the prompt is the bare
     // trailing positional argument.
     expect(call.args).toEqual([
-      "--mode", "json",
-      "--print",
+      "--mode", "rpc",
       "--offline",
       "--no-extensions",
       "--no-skills",
       "--no-prompt-templates",
       "--no-context-files",
-      "--tools", "read",
+      "--tools", "read,ask_user",
       "--no-approve",
       "--session-id", expect.stringMatching(/^[0-9a-f-]{36}$/),
-      "Say hi",
+      "--extension", expect.stringMatching(/matrix-pi-extension-.*ask-user\.ts$/),
     ]);
+    expect(call.prompt).toBe("Say hi");
   });
 
   it("refuses a sandbox mode it cannot enforce instead of running unconfined", async () => {
@@ -396,7 +400,7 @@ describe("pi provider adapter — spawn contract", () => {
 
     const args = fake.calls[0]!.args;
     const allowlist = args[args.indexOf("--tools") + 1];
-    expect(allowlist).toBe("read");
+    expect(allowlist).toBe("read,ask_user");
     for (const mutating of ["bash", "edit", "write"]) {
       expect(allowlist).not.toContain(mutating);
     }
@@ -572,7 +576,7 @@ describe("pi provider adapter — spawn contract", () => {
       nextEventId: nextEventIdFactory(),
     });
 
-    expect(fake.calls[0]!.args.at(-1)).toBe(expected);
+    expect(fake.calls[0]!.prompt).toBe(prompt);
   });
 
   it("passes shell metacharacters through as a single prompt argument", async () => {
@@ -588,8 +592,8 @@ describe("pi provider adapter — spawn contract", () => {
       nextEventId: nextEventIdFactory(),
     });
 
-    expect(fake.calls[0]!.args.at(-1)).toBe(prompt);
-    expect(fake.calls[0]!.args.filter((arg) => arg === prompt)).toHaveLength(1);
+    expect(fake.calls[0]!.prompt).toBe(prompt);
+    expect(fake.calls[0]!.args).not.toContain(prompt);
   });
 
   it("does not add provider secrets to argv or env", async () => {
@@ -652,7 +656,7 @@ describe("pi provider adapter — spawn contract", () => {
       nextEventId: nextEventIdFactory(),
     });
 
-    expect(fake.calls[0]!.args.at(-1)).toBe(
+    expect(fake.calls[0]!.prompt).toBe(
       "Review this\n\nContext references:\n- Review hunk 1: src/auth.ts\n- Ignored file: tmp/output.txt",
     );
   });
@@ -1023,7 +1027,7 @@ describe("pi provider adapter — resume", () => {
       first.calls[0]!.args[first.calls[0]!.args.indexOf("--session-id") + 1],
     );
     expect(call.cwd).toBe("/work/repo");
-    expect(call.args.at(-1)).toBe("What word?");
+    expect(call.prompt).toBe("What word?");
     // Turn events must not include store-owned lifecycle events.
     expect(turnResult.events.some((event) =>
       event.type === "thread.completed" ||
@@ -1054,7 +1058,7 @@ describe("pi provider adapter — resume", () => {
       nextEventId: nextEventIdFactory(),
     });
 
-    expect(fake.calls[0]!.args.at(-1)).toBe(
+    expect(fake.calls[0]!.prompt).toBe(
       "Continue\n\nContext references:\n- Source thread",
     );
   });
@@ -1296,6 +1300,7 @@ describe("pi provider adapter — abort and timeout", () => {
         now: () => baseNow,
         nextEventId: nextEventIdFactory(),
       });
+      while (fake.calls.length === 0) await realDelay(1);
       await vi.advanceTimersByTimeAsync(0);
       controller.abort();
       await vi.advanceTimersByTimeAsync(31);
@@ -1328,6 +1333,7 @@ describe("pi provider adapter — abort and timeout", () => {
         now: () => baseNow,
         nextEventId: nextEventIdFactory(),
       });
+      while (fake.calls.length === 0) await realDelay(1);
       await vi.advanceTimersByTimeAsync(21);
       controller.abort();
       await vi.advanceTimersByTimeAsync(30);
