@@ -1,4 +1,5 @@
-import { canonicalChatApprovals } from "@matrix-os/contracts";
+import { chatAgentAttribution } from "@matrix-os/ui";
+import { canonicalChatApprovals, canonicalChatInputs } from "@matrix-os/contracts";
 import type {
   CanonicalChatMessage,
   CanonicalChatRun,
@@ -567,6 +568,7 @@ export function canonicalChatPresentation(input: {
     input.streamedMessageIds?.slice(-MAX_STREAMED_MESSAGE_PROJECTIONS) ?? [],
   ); // Per-detail projection, explicitly capped with the message window.
   const approvalViews = canonicalChatApprovals(input);
+  const inputViews = canonicalChatInputs(input);
   const latestTurnId = input.turns.reduce<CanonicalChatTurn | undefined>((latest, turn) => (
     latest === undefined
       || turn.baseMessageSeq > latest.baseMessageSeq
@@ -636,7 +638,10 @@ export function canonicalChatPresentation(input: {
     const seenApprovals = new Set<string>(); // Per-turn, bounded by snapshot activities/parts.
     const work = replaceThinkingPlaceholders(orderedWork, isActiveRun(run)).flatMap((item): ConversationWorkPresentation[] => {
       if (item.kind !== "request") return [item];
-      if (item.requestKind !== "approval") return [isActiveRun(run) ? item : { ...item, state: "resolved", actions: undefined }];
+      if (item.requestKind === "input") {
+        const input = inputViews.find(view => view.runId === run?.id && view.requestId === item.requestId);
+        return [{ ...item, input, state: input?.pending ? "waiting" : "resolved", actions: undefined }];
+      }
       if (seenApprovals.has(item.requestId)) return [];
       seenApprovals.add(item.requestId);
       const approval = approvalViews.find(view => view.runId === run?.id && view.approvalId === item.requestId);
@@ -665,6 +670,8 @@ export function canonicalChatPresentation(input: {
     const endedAt = Date.parse(run?.completedAt ?? run?.updatedAt ?? turn.updatedAt);
     return {
       id: turn.id,
+      ...(run?.context ? { runContext: run.context } : {}),
+      ...(chatAgentAttribution(run) ? { agentLabel: chatAgentAttribution(run) } : {}),
       startedAt,
       endedAt,
       active: isActiveRun(run),

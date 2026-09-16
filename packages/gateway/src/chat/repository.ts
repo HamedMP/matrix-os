@@ -1,3 +1,5 @@
+import { findChatTurnAdmission, findChatRetryAdmission } from "./admission-replay.js";
+import { admitChatTurn } from "./turn-admission-repository.js";
 import { randomUUID } from "node:crypto";
 import { captureChatContent } from "./content-projection.js";
 import { captureChatFailureMetadata } from "./failure-telemetry.js";
@@ -12,6 +14,7 @@ import {
   CanonicalChatRunSchema,
   CanonicalChatTurnSchema,
   CanonicalOwnerScopeSchema,
+  CollaborationIdSchema,
   TerminalSessionIdSchema,
   type CanonicalChatCollaboration,
   type CanonicalChatMessage,
@@ -25,6 +28,7 @@ import {
 import { Kysely, sql, type Dialect, type Selectable, type Transaction } from "kysely";
 import { z } from "zod/v4";
 import { bootstrapChatDatabase, type ChatDatabase, type ChatRunsTable, type ChatsTable } from "./database.js";
+import type { OwnerCollaborationDatabase } from "../collaboration/database.js";
 import { ChatDetailRepository, type ChatDetailPage } from "./detail-repository.js";
 import {
   ChatBusyError,
@@ -38,6 +42,7 @@ import {
   jsonb,
   messageAttribution,
   messageSearchText,
+  parseJson,
   toActivities,
   toChatRecord,
   toLegacyImport,
@@ -64,6 +69,9 @@ import {
   type UpdateQueuedTurnInput,
   type ClaimNextQueuedTurnInput,
   type ClaimedQueuedTurn,
+  type EnqueueSharedQueuedTurnInput,
+  type EnqueuedSharedQueuedTurn,
+  type SharedQueuedTurn,
 } from "./queue-repository.js";
 import {
   ChatSteeringRepository,
@@ -95,7 +103,11 @@ export type {
   ReorderQueuedTurnsInput,
   ClaimNextQueuedTurnInput,
   ClaimedQueuedTurn,
+  EnqueueSharedQueuedTurnInput,
+  EnqueuedSharedQueuedTurn,
+  SharedQueuedTurn,
 } from "./queue-repository.js";
+export { SharedChatQueueError } from "./queue-repository.js";
 export type { BeginSteerInput, BegunSteer } from "./steering-repository.js";
 
 type Executor = Kysely<ChatDatabase> | Transaction<ChatDatabase>;
@@ -120,6 +132,7 @@ export interface UpdateChatInput {
 }
 
 export interface AdmitTurnInput {
+  requestHash?: string;
   chatId: string;
   baseRevision: number;
   message: CanonicalChatMessage;
@@ -158,6 +171,15 @@ export interface ChatTurnRunContext {
   userMessages: CanonicalChatMessage[];
   turn: CanonicalChatTurn;
   latestRun: CanonicalChatRun;
+}
+
+export interface SharedPendingApproval {
+  approvalId: string;
+  runId: string;
+  requestId: string;
+  title: string;
+  risk: "low" | "medium" | "high";
+  allowedDecisions: Array<"approve" | "approve_for_session" | "decline" | "cancel">;
 }
 
 export interface ChatListCursor {
@@ -279,20 +301,64 @@ async function toPrincipalRecord(
   row: Selectable<ChatsTable>,
   collaborationProjection?: CanonicalChatCollaboration,
 ): Promise<ChatRecord> {
-  const [activeRun, userState, latestSuccessfulCompletion] = await Promise.all([
+  const internalScopeId = collaborationProjection ? undefined : sharedBindingScopeId(row.collaboration);
+  const [activeRun, userState, latestSuccessfulCompletion, internalProjection] = await Promise.all([
     activeRunQuery(executor, row.id),
     userStateQuery(executor, owner, row.id),
     latestSuccessfulCompletionQuery(executor, row.id),
+    internalScopeId ? ownerSharedProjection(executor, internalScopeId, row.id) : undefined,
   ]);
+  const effectiveProjection = collaborationProjection ?? internalProjection;
   return toChatRecord(
-    collaborationProjection
-      ? { ...row, collaboration: JSON.stringify(collaborationProjection) }
+    effectiveProjection
+      ? { ...row, collaboration: JSON.stringify(effectiveProjection) }
       : row,
     activeRun,
     userState ? toUserState(userState) : undefined,
     latestSuccessfulCompletion,
     userState?.attention_acknowledged_at,
   );
+}
+
+function sharedBindingScopeId(value: unknown): string | undefined {
+  if (value === null) return undefined;
+  try {
+    const parsed = typeof value === "string" ? JSON.parse(value) as unknown : value;
+    if (!parsed || typeof parsed !== "object") return undefined;
+    const binding = parsed as { scopeId?: unknown; mode?: unknown; executionFenced?: unknown };
+    return binding.mode === "shared_ai" && binding.executionFenced === true
+      ? z.uuid().safeParse(binding.scopeId).data
+      : undefined;
+  } catch (error: unknown) {
+    if (!(error instanceof SyntaxError)) {
+      console.warn("[chat/repository] collaboration binding decode failed",
+        error instanceof Error ? error.name : "UnknownError");
+    }
+    return undefined;
+  }
+}
+
+async function ownerSharedProjection(
+  executor: Executor,
+  scopeId: string,
+  chatId: string,
+): Promise<CanonicalChatCollaboration | undefined> {
+  const collaborationExecutor = executor as unknown as Kysely<OwnerCollaborationDatabase>;
+  const scope = await collaborationExecutor.selectFrom("collaboration_scopes")
+    .select("id")
+    .where("id", "=", scopeId)
+    .where("kind", "=", "chat")
+    .where("resource_id", "=", chatId)
+    .where("lifecycle", "in", ["shared", "archived"])
+    .where("deleted_at", "is", null)
+    .executeTakeFirst();
+  if (!scope) return undefined;
+  const members = await collaborationExecutor.selectFrom("collaboration_members")
+    .select(({ fn }) => fn.countAll<number>().as("count"))
+    .where("scope_id", "=", scopeId)
+    .where("status", "=", "accepted")
+    .executeTakeFirstOrThrow();
+  return { mode: "shared", membership: { role: "owner", memberCount: Number(members.count) } };
 }
 
 async function hydrateAdmission(
@@ -303,7 +369,7 @@ async function hydrateAdmission(
   const [chat, messageRow, runRow] = await Promise.all([
     hydrateRecord(executor, owner, existingTurn.chatId),
     executor.selectFrom("chat_messages").selectAll().where("id", "=", existingTurn.inputMessageId).executeTakeFirst(),
-    executor.selectFrom("chat_runs").selectAll().where("turn_id", "=", existingTurn.id).orderBy("attempt", "desc").executeTakeFirst(),
+    executor.selectFrom("chat_runs").selectAll().where("turn_id", "=", existingTurn.id).orderBy("attempt", "asc").executeTakeFirst(),
   ]);
   if (!chat || !messageRow || !runRow) throw new ChatNotFoundError(existingTurn.chatId);
   return {
@@ -434,6 +500,43 @@ export class ChatRepository {
     payload: Record<string, unknown> = {},
     collaborationProjection?: CanonicalChatCollaboration,
   ): Promise<void> {
+    if (typeof payload.runId === "string") {
+      const queuedRun = await executor.selectFrom("chat_queued_turns")
+        .select("collaboration_scope_id")
+        .where("claimed_run_id", "=", payload.runId)
+        .where("chat_id", "=", chatId)
+        .executeTakeFirst();
+      if (queuedRun?.collaboration_scope_id) {
+        const collaborationExecutor = executor as unknown as Kysely<OwnerCollaborationDatabase>;
+        const sharedRun = await collaborationExecutor.selectFrom("collaboration_scopes")
+          .select([
+            "id as scope_id",
+            "authority_generation",
+          ])
+          .where("id", "=", queuedRun.collaboration_scope_id)
+          .where("lifecycle", "=", "shared")
+          .executeTakeFirst();
+        if (sharedRun) {
+          const latest = await collaborationExecutor.selectFrom("collaboration_events")
+            .select(({ fn }) => fn.max<number>("scope_seq").as("scope_seq"))
+            .where("scope_id", "=", sharedRun.scope_id)
+            .executeTakeFirst();
+          const { messageDelta: _delta, failureDiagnostic: _diagnostic, ...metadata } = payload;
+          await collaborationExecutor.insertInto("collaboration_events").values({
+            scope_id: sharedRun.scope_id,
+            scope_seq: Number(latest?.scope_seq ?? 0) + 1,
+            event_id: randomUUID(),
+            resource_kind: "chat",
+            resource_id: chatId,
+            revision,
+            authority_generation: Number(sharedRun.authority_generation),
+            event_type: eventType,
+            payload: jsonb(metadata),
+          }).execute();
+          return;
+        }
+      }
+    }
     const captured = await captureChatContent(executor, owner, chatId, eventType, payload,
       (projectionOwner, projectionChatId) => hydrateRecord(
         executor,
@@ -879,153 +982,22 @@ export class ChatRepository {
     });
   }
 
+  async findTurnAdmission(owner: ChatOwner, chatId: string, clientRequestId: string, requestHash: string) {
+    return findChatTurnAdmission({ transact: (operation) => this.transact(operation), selectOwnedChat,
+      toPrincipalRecord }, owner, chatId, clientRequestId, requestHash);
+  }
+
+  async findRetryAdmission(owner: ChatOwner, chatId: string, turnId: string, clientRequestId: string) {
+    return findChatRetryAdmission({ transact: (operation) => this.transact(operation), selectOwnedChat,
+      toPrincipalRecord }, owner, chatId, turnId, clientRequestId);
+  }
+
   async admitTurn(ownerInput: ChatOwner, input: AdmitTurnInput): Promise<AdmittedTurn> {
-    const owner = validateOwner(ownerInput);
-    CanonicalChatIdSchema.parse(input.chatId);
-    const message = CanonicalChatMessageSchema.parse(input.message);
-    const turn = CanonicalChatTurnSchema.parse(input.turn);
-    const run = CanonicalChatRunSchema.parse(input.run);
-    if (message.chatId !== input.chatId || turn.chatId !== input.chatId || run.chatId !== input.chatId
-      || turn.inputMessageId !== message.id || message.turnId !== turn.id || message.runId !== undefined
-      || message.role !== "user" || message.state !== "committed" || run.turnId !== turn.id) {
-      throw new ChatConflictError(input.chatId, input.baseRevision);
-    }
-    if (turn.status !== "accepted" || run.status !== "accepted") throw new ChatConflictError(input.chatId, input.baseRevision);
-    const stateBytes = input.adapterState ? encoded.encode(JSON.stringify(input.adapterState.state)).byteLength : 0;
-    if (input.adapterState && (!Number.isInteger(input.adapterState.schemaVersion)
-      || input.adapterState.schemaVersion < 1 || stateBytes > 64 * 1024)) {
-      throw new ChatConflictError(input.chatId, input.baseRevision);
-    }
-
-    return this.transact(async (trx) => {
-      const current = await selectOwnedChat(trx, owner, input.chatId, true);
-      if (!current) throw new ChatNotFoundError(input.chatId);
-      const duplicate = await trx.selectFrom("chat_turns").selectAll()
-        .where("chat_id", "=", input.chatId)
-        .where("client_request_id", "=", turn.clientRequestId)
-        .executeTakeFirst();
-      if (duplicate) return hydrateAdmission(trx, owner, toTurn(duplicate));
-      if (current.lifecycle !== "active") {
-        throw new ChatConflictError(input.chatId, Number(current.revision));
-      }
-      if (current.collaboration !== null) {
-        throw new ChatConflictError(input.chatId, Number(current.revision));
-      }
-      if (Number(current.revision) !== input.baseRevision) {
-        throw new ChatConflictError(input.chatId, Number(current.revision));
-      }
-      if (await activeRunQuery(trx, input.chatId)) throw new ChatBusyError(input.chatId);
-      if (current.bound_instance_id && (current.bound_instance_id !== run.instanceId
-        || current.bound_driver_kind !== run.driverKind)) {
-        throw new ChatProviderInstanceLockedError(input.chatId);
-      }
-      const latest = await trx.selectFrom("chat_messages")
-        .select(({ fn }) => fn.max("seq").as("seq"))
-        .where("chat_id", "=", input.chatId).executeTakeFirst();
-      const lastSeq = Number(latest?.seq ?? 0);
-      if (message.seq !== lastSeq + 1 || turn.baseMessageSeq !== lastSeq) {
-        throw new ChatConflictError(input.chatId, Number(current.revision));
-      }
-
-      await trx.insertInto("chat_messages").values({
-        id: message.id,
-        chat_id: input.chatId,
-        seq: message.seq,
-        role: message.role,
-        state: message.state,
-        turn_id: message.turnId ?? null,
-        run_id: message.runId ?? null,
-        parts: jsonb(message.parts),
-        byte_count: encoded.encode(JSON.stringify(message)).byteLength,
-        search_text: messageSearchText(message),
-        ...messageAttribution(message),
-        created_at: message.createdAt,
-      }).execute();
-      for (const part of message.parts) {
-        if (part.type !== "attachment_reference") continue;
-        await trx.insertInto("chat_attachments").values({
-          id: part.attachmentId,
-          chat_id: input.chatId,
-          message_id: message.id,
-          kind: part.kind,
-          label: part.label,
-          mime_type: part.mimeType ?? null,
-          size_bytes: part.sizeBytes ?? null,
-          owner_reference: part.ownerReference ?? null,
-        }).execute();
-      }
-      await trx.insertInto("chat_turns").values({
-        id: turn.id,
-        chat_id: input.chatId,
-        client_request_id: turn.clientRequestId,
-        base_message_seq: turn.baseMessageSeq,
-        input_message_id: turn.inputMessageId,
-        status: turn.status,
-        created_at: turn.createdAt,
-        updated_at: turn.updatedAt,
-      }).execute();
-      await trx.insertInto("chat_runs").values({
-        id: run.id,
-        chat_id: input.chatId,
-        turn_id: run.turnId,
-        client_request_id: turn.clientRequestId,
-        attempt: run.attempt,
-        driver_kind: run.driverKind,
-        instance_id: run.instanceId,
-        selection: jsonb(run.selection),
-        interaction_mode: run.interactionMode,
-        permission_mode: run.permissionMode,
-        execution_root: run.executionRoot ? jsonb(run.executionRoot) : null,
-        execution_root_fingerprint: run.executionRootFingerprint ?? null,
-        status: run.status,
-        outcome: run.outcome ?? null,
-        started_at: run.startedAt ?? null,
-        completed_at: run.completedAt ?? null,
-        history_boundary_seq: run.historyBoundarySeq,
-        capability_snapshot: jsonb(run.capabilitySnapshot),
-        created_at: run.createdAt,
-        updated_at: run.updatedAt,
-      }).execute();
-      if (input.adapterState) {
-        await trx.insertInto("chat_run_adapter_state").values({
-          run_id: run.id,
-          driver_kind: run.driverKind,
-          instance_id: run.instanceId,
-          schema_version: input.adapterState.schemaVersion,
-          state: jsonb(input.adapterState.state),
-          byte_count: stateBytes,
-        }).execute();
-      }
-
-      const revision = input.baseRevision + 1;
-      const updated = await trx.updateTable("chats").set({
-        revision,
-        message_count: sql<number>`message_count + 1`,
-        last_message_preview: preview(message),
-        current_selection: jsonb(run.selection),
-        bound_driver_kind: current.bound_driver_kind ?? run.driverKind,
-        bound_instance_id: current.bound_instance_id ?? run.instanceId,
-        bound_at_turn_id: current.bound_at_turn_id ?? turn.id,
-        updated_at: sql`now()`,
-      }).where("id", "=", input.chatId).where("revision", "=", input.baseRevision)
-        .returningAll().executeTakeFirst();
-      if (!updated) throw new ChatConflictError(input.chatId, Number(current.revision));
-      await this.appendOutbox(trx, owner, input.chatId, revision, "turn.accepted", { runId: run.id, turnId: turn.id });
-      return {
-        chat: await toPrincipalRecord(trx, owner, updated),
-        message,
-        turn,
-        run,
-        alreadyAccepted: false,
-      };
-    }).catch((error: unknown) => {
-      if (error instanceof ChatNotFoundError || error instanceof ChatConflictError
-        || error instanceof ChatBusyError || error instanceof ChatProviderInstanceLockedError) throw error;
-      const constraint = postgresUniqueConstraint(error);
-      if (constraint === "idx_chat_runs_one_active") throw new ChatBusyError(input.chatId);
-      if (constraint !== null) throw new ChatConflictError(input.chatId, input.baseRevision);
-      throw error;
-    });
+    return admitChatTurn({
+      transact: (operation) => this.transact(operation),
+      appendOutbox: (...args) => this.appendOutbox(...args),
+      selectOwnedChat, hydrateAdmission, toPrincipalRecord, activeRunQuery, postgresUniqueConstraint, preview,
+    }, ownerInput, input);
   }
 
   async enqueueQueuedTurn(
@@ -1033,6 +1005,73 @@ export class ChatRepository {
     input: EnqueueQueuedTurnInput,
   ): Promise<EnqueuedQueuedTurn> {
     return this.queue.enqueue(owner, input);
+  }
+
+  async findQueuedAdmission(owner: ChatOwner, chatId: string, clientRequestId: string, requestHash?: string) {
+    return this.queue.findAdmission(owner, chatId, clientRequestId, requestHash);
+  }
+
+  async enqueueSharedQueuedTurn(
+    owner: ChatOwner,
+    input: EnqueueSharedQueuedTurnInput,
+  ): Promise<EnqueuedSharedQueuedTurn> {
+    return this.queue.enqueueShared(owner, input);
+  }
+
+  async listSharedQueuedTurns(owner: ChatOwner, chatId: string): Promise<SharedQueuedTurn[]> {
+    return this.queue.listShared(owner, chatId);
+  }
+
+  async listSharedPendingApprovals(
+    ownerInput: ChatOwner,
+    chatIdInput: string,
+    scopeIdInput: string,
+  ): Promise<SharedPendingApproval[]> {
+    const owner = validateOwner(ownerInput);
+    const chatId = CanonicalChatIdSchema.parse(chatIdInput);
+    const scopeId = CollaborationIdSchema.parse(scopeIdInput);
+    const rows = await this.kysely.selectFrom("chat_run_events as events")
+      .innerJoin("chat_runs as runs", "runs.id", "events.run_id")
+      .innerJoin("chat_queued_turns as queued", "queued.claimed_run_id", "runs.id")
+      .innerJoin("chats", "chats.id", "runs.chat_id")
+      .select(["events.event", "events.run_id", "queued.id as request_id"])
+      .where("runs.chat_id", "=", chatId)
+      .where("chats.owner_type", "=", owner.type)
+      .where("chats.owner_id", "=", owner.ownerId)
+      .where("queued.collaboration_scope_id", "=", scopeId)
+      .orderBy("events.occurred_at", "desc")
+      .orderBy("events.run_seq", "desc")
+      .limit(500)
+      .execute();
+    const pending: SharedPendingApproval[] = [];
+    for (const row of rows.reverse()) {
+      const parsed = CanonicalChatRunActivitySchema.safeParse(parseJson(row.event));
+      if (!parsed.success) {
+        console.warn("[chat/repository] invalid shared approval activity");
+        continue;
+      }
+      const activity = parsed.data;
+      if (activity.type === "approval.requested") {
+        const projected: SharedPendingApproval = {
+          approvalId: activity.approvalId,
+          runId: row.run_id,
+          requestId: row.request_id,
+          title: activity.title,
+          risk: activity.risk,
+          allowedDecisions: activity.allowedDecisions,
+        };
+        const existing = pending.findIndex((candidate) => candidate.runId === row.run_id
+          && candidate.approvalId === activity.approvalId);
+        if (existing === -1) pending.push(projected);
+        else pending[existing] = projected;
+      }
+      if (activity.type === "approval.resolved") {
+        const existing = pending.findIndex((candidate) => candidate.runId === row.run_id
+          && candidate.approvalId === activity.approvalId);
+        if (existing !== -1) pending.splice(existing, 1);
+      }
+    }
+    return pending.slice(-100);
   }
 
   async listQueuedTurns(owner: ChatOwner, chatId: string): Promise<CanonicalChatQueuedTurn[]> {
@@ -1173,7 +1212,7 @@ export class ChatRepository {
         || run.driverKind !== latest.driver_kind || run.instanceId !== latest.instance_id) {
         throw new ChatConflictError(chatId, Number(current.revision));
       }
-      if (current.bound_driver_kind !== run.driverKind || current.bound_instance_id !== run.instanceId) {
+      if (!run.context?.agent && (current.bound_driver_kind !== run.driverKind || current.bound_instance_id !== run.instanceId)) {
         throw new ChatProviderInstanceLockedError(chatId);
       }
       await trx.insertInto("chat_runs").values({
@@ -1194,6 +1233,7 @@ export class ChatRepository {
         started_at: null,
         completed_at: null,
         history_boundary_seq: run.historyBoundarySeq,
+        context_snapshot: run.context ? jsonb(run.context) : null,
         capability_snapshot: jsonb(run.capabilitySnapshot),
         created_at: run.createdAt,
         updated_at: run.updatedAt,
@@ -1213,7 +1253,7 @@ export class ChatRepository {
       const revision = input.baseRevision + 1;
       const updated = await trx.updateTable("chats").set({
         revision,
-        current_selection: jsonb(run.selection),
+        ...(!run.context?.agent ? { current_selection: jsonb(run.selection) } : {}),
         attention: "none",
         updated_at: run.updatedAt,
       }).where("id", "=", chatId).where("revision", "=", input.baseRevision)
@@ -1328,6 +1368,14 @@ export class ChatRepository {
     return this.runLifecycle.getAdapterState(ownerInput, input);
   }
 
+  async getInputState(owner: ChatOwner, input: { chatId: string; runId: string; requestId: string }) {
+    return this.runLifecycle.getInputState(owner, input);
+  }
+
+  async reopenInputSubmission(owner: ChatOwner, input: { chatId: string; runId: string; requestId: string; submissionId: string }): Promise<boolean> {
+    return this.runLifecycle.reopenInputSubmission(owner, input);
+  }
+
   async getPendingApproval(ownerInput: ChatOwner, input: {
     chatId: string;
     runId: string;
@@ -1394,6 +1442,7 @@ export class ChatRepository {
     chatId: string;
     runId: string;
     outcome: "completed" | "failed" | "aborted";
+    sharedRequestState?: "interrupted" | "unauthorized" | "unavailable";
     completedAt: string;
     diagnostic?: ChatRunFailureDiagnostic;
     output?: CanonicalChatMessage;

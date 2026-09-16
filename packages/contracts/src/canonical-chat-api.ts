@@ -1,3 +1,4 @@
+import { ChatRunContextSchema } from "#chat-agent-context";
 import { z } from "zod/v4";
 import {
   CanonicalChatMessagePartSchema,
@@ -117,10 +118,21 @@ export const CanonicalChatUserInputPartSchema = CanonicalChatMessagePartSchema
     message: "Part is not accepted as user input",
   });
 
+function validMentionCounts(parts: z.infer<typeof CanonicalChatUserInputPartSchema>[]): boolean {
+  const references = parts.flatMap((part) => part.type === "resource_reference" ? [part.resource] : []);
+  const agents = references.filter((reference) => reference.kind === "agent");
+  const chats = references.filter((reference) => reference.kind === "chat");
+  return agents.length <= 1 && chats.length <= 3
+    && new Set(chats.map((chat) => chat.id)).size === chats.length;
+}
+
+const MentionAwareInputPartsSchema = z.array(CanonicalChatUserInputPartSchema).min(1).max(64)
+  .refine(validMentionCounts, { message: "Use one Agent and up to three distinct Chats" });
+
 export const CanonicalCreateChatTurnRequestSchema = z.object({
   clientRequestId: CanonicalChatRequestIdSchema,
   baseRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
-  parts: z.array(CanonicalChatUserInputPartSchema).min(1).max(64),
+  parts: MentionAwareInputPartsSchema,
   selection: CanonicalChatModelSelectionSchema,
   interactionMode: canonicalReferenceId(80),
   permissionMode: canonicalReferenceId(80),
@@ -137,7 +149,7 @@ export const CanonicalQueueChatTurnRequestSchema = CanonicalCreateChatTurnReques
 export const CanonicalUpdateQueuedChatTurnRequestSchema = z.object({
   clientRequestId: CanonicalChatRequestIdSchema,
   baseRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
-  parts: z.array(CanonicalChatUserInputPartSchema).min(1).max(64),
+  parts: MentionAwareInputPartsSchema,
 }).strict();
 
 export const CanonicalSteerQueuedChatTurnRequestSchema = z.object({
@@ -149,7 +161,9 @@ export const CanonicalSteerQueuedChatTurnRequestSchema = z.object({
 export const CanonicalSteerChatRunRequestSchema = z.object({
   clientRequestId: CanonicalChatRequestIdSchema,
   expectedTurnId: CanonicalChatTurnSchema.shape.id,
-  parts: z.array(CanonicalChatUserInputPartSchema).min(1).max(64),
+  parts: z.array(CanonicalChatUserInputPartSchema).min(1).max(64).refine((parts) => !parts.some(
+    (part) => part.type === "resource_reference" && ["agent", "chat"].includes(part.resource.kind),
+  ), { message: "Queue Agent and Chat references as a new turn" }),
 }).strict();
 
 export const CanonicalChatRunSteeringResponseSchema = z.object({
@@ -167,6 +181,7 @@ export const CanonicalChatRunSteeringResponseSchema = z.object({
 });
 
 export const CanonicalChatQueuedTurnSchema = z.object({
+  context: ChatRunContextSchema.optional(),
   id: CanonicalChatQueuedTurnIdSchema,
   chatId: CanonicalChatSchema.shape.id,
   clientRequestId: CanonicalChatRequestIdSchema,
@@ -182,7 +197,8 @@ export const CanonicalChatQueuedTurnSchema = z.object({
 
 export const CanonicalChatQueueAdmissionResponseSchema = z.object({
   queuedTurn: CanonicalChatQueuedTurnSchema,
-  queueDepth: z.number().int().min(1).max(20),
+  queueDepth: z.number().int().min(0).max(20),
+  alreadyClaimed: z.boolean().optional(),
 }).strict();
 
 export const CanonicalChatQueueUpdateResponseSchema = z.object({
@@ -215,6 +231,20 @@ export const CanonicalChatQueueReorderResponseSchema = z.object({
 export const CanonicalCancelChatRunRequestSchema = z.object({
   clientRequestId: CanonicalChatRequestIdSchema,
 }).strict();
+
+export const CanonicalSubmitChatInputRequestSchema = z.object({
+  clientRequestId: CanonicalChatRequestIdSchema,
+  answer: z.string().trim().min(1).max(32_000).refine(value => new TextEncoder().encode(value).byteLength <= 32 * 1024).optional(),
+  structuredAnswers: z.record(canonicalReferenceId(128), z.array(z.string().trim().min(1).max(400).refine(value => new TextEncoder().encode(value).byteLength <= 700)).min(1).max(11))
+    .refine(value => Object.keys(value).length > 0 && Object.keys(value).length <= 8).optional(),
+}).strict().refine(value => value.answer !== undefined || value.structuredAnswers !== undefined)
+  .refine(value => new TextEncoder().encode(JSON.stringify(value)).byteLength <= 40 * 1024);
+export const CanonicalChatInputSubmissionResponseSchema = z.object({
+  requestId: canonicalReferenceId(128),
+  submission: z.enum(["accepted", "already_submitted"]),
+}).strict();
+export type CanonicalSubmitChatInputRequest = z.infer<typeof CanonicalSubmitChatInputRequestSchema>;
+export type CanonicalChatInputSubmissionResponse = z.infer<typeof CanonicalChatInputSubmissionResponseSchema>;
 
 export const CanonicalSubmitChatApprovalRequestSchema = z.object({
   clientRequestId: CanonicalChatRequestIdSchema,

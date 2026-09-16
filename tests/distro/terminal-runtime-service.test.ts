@@ -20,6 +20,15 @@ describe("matrix terminal runtime host service", () => {
     expect(unit).toContain("ConditionPathExists=/opt/matrix/app/TERMINAL_RUNTIME_GENERATION");
   });
 
+  it("initializes Zellij assets before migration, including ExecStartPre migrate-only", async () => {
+    const service = await readFile("packages/terminal-runtime/src/service.ts", "utf8");
+    const initialize = service.indexOf("await initializeMatrixZellijConfig(homePath)");
+    expect(initialize).toBeGreaterThan(-1);
+    expect(initialize).toBeLessThan(service.indexOf("await migrateTerminalWorkspaces("));
+    expect(initialize).toBeLessThan(service.indexOf('if (mode === "--migrate-only") return'));
+    expect(initialize).toBeLessThan(service.indexOf("await runtime.restoreAll()"));
+  });
+
   it("installs and reloads static user units without stopping live workspaces", async () => {
     const installer = await readFile("scripts/install-server.sh", "utf8");
     expect(installer).toContain("/opt/matrix/user-systemd/matrix-zellij@.service");

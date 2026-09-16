@@ -2,10 +2,10 @@ import { chmod, lstat, unlink } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import { ScopeRuntimeRequestSchema, type ScopeRuntimeRequest, type ScopeRuntimeResponse } from "./protocol.js";
 
-const MAX_FRAME_BYTES = 64 * 1024;
+const MAX_FRAME_BYTES = 128 * 1024;
 const MAX_CONNECTIONS = 64;
-const MAX_REQUEST_TIMEOUT_MS = 60_000;
-const DEFAULT_OPERATION_TIMEOUT_MS = 30_000;
+const MAX_REQUEST_TIMEOUT_MS = 90_000;
+const DEFAULT_OPERATION_TIMEOUT_MS = 60_000;
 
 interface ScopeRuntimeController {
   handle(request: ScopeRuntimeRequest): Promise<ScopeRuntimeResponse>;

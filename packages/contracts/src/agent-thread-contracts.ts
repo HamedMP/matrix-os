@@ -112,11 +112,14 @@ export const UserInputQuestionSchema = z.object({
   header: SafeDisplayStringSchema,
   question: boundedDisplayText(600, 2_400),
   options: UserInputOptionListSchema.optional(),
+  multiSelect: z.boolean().optional(),
   allowOther: z.boolean().default(false),
   secret: z.boolean().default(false),
 }).strict();
 
-const UserInputQuestionListSchema = z.array(UserInputQuestionSchema).min(1).max(8)
+export type UserInputQuestion = z.infer<typeof UserInputQuestionSchema>;
+
+export const UserInputQuestionListSchema = z.array(UserInputQuestionSchema).min(1).max(8)
   .superRefine((questions, context) => {
     const seen = new Set<string>();
     questions.forEach((question, index) => {
@@ -191,7 +194,7 @@ const CoreAgentThreadEventSchema = z.discriminatedUnion("type", [
   BaseThreadEventSchema.extend({ type: z.literal("approval.requested"), approval: AgentApprovalRequestSchema }).strict(),
   BaseThreadEventSchema.extend({ type: z.literal("approval.resolved"), approvalId: ApprovalIdSchema, decision: ApprovalDecisionSchema }).strict(),
   BaseThreadEventSchema.extend({ type: z.literal("user_input.requested"), request: UserInputRequestSchema }).strict(),
-  BaseThreadEventSchema.extend({ type: z.literal("user_input.answered"), requestId: RequestIdSchema, correlationId: CorrelationIdSchema }).strict(),
+  BaseThreadEventSchema.extend({ type: z.literal("user_input.answered"), requestId: RequestIdSchema, correlationId: CorrelationIdSchema, reason: z.enum(["answered", "cancelled", "expired"]).optional() }).strict(),
   BaseThreadEventSchema.extend({ type: z.literal("file.changed"), path: safeRelativePath(), changeKind: z.enum(["created", "updated", "deleted", "renamed"]) }).strict(),
   BaseThreadEventSchema.extend({
     type: z.literal("review.ready"),

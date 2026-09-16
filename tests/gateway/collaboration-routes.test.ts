@@ -1,13 +1,23 @@
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { bootstrapChatDatabase } from "../../packages/gateway/src/chat/database.js";
+import { CollaborationChatCommands } from "../../packages/gateway/src/chat/collaboration-commands.js";
+import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
 import { CollaborationActorProofVerifier } from "../../packages/gateway/src/collaboration/actor-proof.js";
 import { CollaborationAuthority } from "../../packages/gateway/src/collaboration/authority.js";
 import { CollaborationChatAdapter } from "../../packages/gateway/src/collaboration/chat-adapter.js";
+import { CollaborationChatExecutionAdapter } from "../../packages/gateway/src/collaboration/chat-execution-adapter.js";
 import { CollaborationChatScopeService } from "../../packages/gateway/src/collaboration/chat-scope.js";
 import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
 import { CollaborationRepository } from "../../packages/gateway/src/collaboration/repository.js";
+import { createCollaborationProjectLifecycle } from "../../packages/gateway/src/collaboration/project-lifecycle.js";
+import { CollaborationProjectScopeService } from "../../packages/gateway/src/collaboration/project-scope.js";
+import { createProjectSharingService } from "../../packages/gateway/src/collaboration/project-sharing.js";
+import { createProjectTransitionJournal } from "../../packages/gateway/src/collaboration/project-transition.js";
 import { createCollaborationRoutes } from "../../packages/gateway/src/collaboration/routes.js";
+import { CollaborationTerminalAdapter } from "../../packages/gateway/src/collaboration/terminal-adapter.js";
+import { TerminalControlCoordinator } from "../../packages/gateway/src/collaboration/terminal-control.js";
+import { CollaborationTerminalDispatcher } from "../../packages/gateway/src/collaboration/terminal-dispatcher.js";
 import { CollaborationProofSigner } from "../../packages/platform/src/collaboration/proof.js";
 import {
   collaborationActors,
@@ -21,6 +31,9 @@ const key = "0123456789abcdef0123456789abcdef";
 const invitationRequestId = "50000000-0000-4000-8000-000000000001";
 const acceptanceRequestId = "50000000-0000-4000-8000-000000000002";
 const discussionRequestId = "50000000-0000-4000-8000-000000000003";
+const terminalId = "terminal_release";
+const terminalIncarnation = `terminal-${"a".repeat(32)}`;
+const projectScopeId = "10000000-0000-4000-8000-000000000401";
 
 function request(index: number): string {
   return `50000000-0000-4000-8000-${index.toString().padStart(12, "0")}`;
@@ -60,6 +73,126 @@ describe("collaboration gateway routes", () => {
       resolveParticipant,
       now: () => now,
     });
+    const chatRepository = new ChatRepository(fixture.db);
+    const chatExecutionAdapter = new CollaborationChatExecutionAdapter({
+      repository: chatRepository,
+      commands: new CollaborationChatCommands({
+        db: fixture.db,
+        now: () => now,
+        submitApproval: async () => undefined,
+      }),
+      resolveParticipant,
+      resolveResourceRevision: async (_scopeId, chatId) => {
+        const row = await fixture.db.selectFrom("chats").select("revision")
+          .where("id", "=", chatId).executeTakeFirst();
+        return row ? Number(row.revision) : null;
+      },
+      resolveEligibility: async (scopeId) => {
+        const row = await fixture.db.selectFrom("collaboration_scopes")
+          .select("execution_eligibility").where("id", "=", scopeId).executeTakeFirst();
+        return typeof row?.execution_eligibility === "string"
+          ? JSON.parse(row.execution_eligibility) as unknown
+          : row?.execution_eligibility;
+      },
+      requestDispatch: async () => undefined,
+      now: () => now,
+      createQueuedTurnId: () => "qturn_shared_route_1",
+    });
+    const terminalSession: Record<string, unknown> = {
+      name: terminalId,
+      status: "active",
+      createdAt: now.toISOString(),
+      incarnationVerified: true,
+      creatorActorId: collaborationActors.owner,
+      sessionIncarnation: terminalIncarnation,
+      executionGeneration: 4,
+      sharedControlMode: "eligible",
+    };
+    const terminalRuntime = {
+      input: async () => undefined,
+      paste: async () => undefined,
+      resize: async () => undefined,
+      stop: async () => undefined,
+    };
+    const terminalAdapter = new CollaborationTerminalAdapter({
+      repository,
+      registry: {
+        get: async () => terminalSession,
+        bindCollaboration: async (_name, input) => {
+          terminalSession.collaborationScopeId = input.scopeId;
+          terminalSession.sharedControlMode = "shared";
+          return terminalSession;
+        },
+        unbindCollaboration: async () => undefined,
+      },
+      runtime: terminalRuntime,
+      runtimeId: collaborationIds.runtime,
+      executionEligibility: {
+        profileId: "scope-runtime-terminal-v1",
+        profileVersion: 1,
+        profileDigest: "c".repeat(64),
+        adapterId: "terminal",
+        harnessVersion: "1.0.0",
+      },
+      preflightSecret: key,
+      now: () => now,
+      createScopeId: () => collaborationIds.scope,
+    });
+    const terminalDispatcher = new CollaborationTerminalDispatcher({
+      authority,
+      terminal: terminalAdapter,
+      control: new TerminalControlCoordinator({ startTimer: false }),
+      resolveParticipant,
+    });
+    const projectLifecycle = createCollaborationProjectLifecycle({
+      db: fixture.db,
+      now: () => now,
+      stageTransfer: async () => ({
+        destinationAuthorityRuntimeId: "runtime_project_successor",
+        destinationAuthorityGeneration: 1,
+        publicationMarker: "publication_project_transfer",
+      }),
+      deleteProject: async () => undefined,
+    });
+    const projectScope = new CollaborationProjectScopeService(fixture.db, {
+      runtimeId: collaborationIds.runtime,
+      preflightSecret: key,
+      now: () => now,
+      createScopeId: () => collaborationIds.scope,
+      createEventId: () => "60000000-0000-4000-8000-000000000001",
+      source: {
+        getProject: async (ownerId, projectId) => ownerId === collaborationActors.owner && projectId === "proj_alpha"
+          ? { id: projectId, ownerId, revision: 7 }
+          : null,
+      },
+    });
+    const projectSharing = createProjectSharingService({
+      db: fixture.db,
+      inventory: {
+        preview: async ({ projectId, membershipEffects }) => ({
+          projectId,
+          projectRevision: 7,
+          ownedItems: [{ kind: "file", id: "README.md", revision: "1", compatibility: "ready" }],
+          externalReferences: [],
+          blockers: [],
+          membershipEffects,
+          inventoryHash: "a".repeat(64),
+          membershipHash: "b".repeat(64),
+          inventoryToken: "c".repeat(64),
+          expiresAt: "2026-09-11T12:10:00.000Z",
+        }),
+        verifyConfirmation: async () => undefined,
+      },
+      transitions: createProjectTransitionJournal({
+        db: fixture.db,
+        now: () => now,
+        createTransitionId: () => "70000000-0000-4000-8000-000000000001",
+      }),
+      resolveDestination: async () => ({
+        runtimeId: "runtime_project_shared",
+        authorityGeneration: 2,
+      }),
+    });
     nonce = 0;
     signer = new CollaborationProofSigner({
       activeKeyId: "collaboration-key-1",
@@ -80,6 +213,12 @@ describe("collaboration gateway routes", () => {
       repository,
       chatScope,
       chatAdapter,
+      chatExecutionAdapter,
+      terminalAdapter,
+      terminalDispatcher,
+      projectLifecycle,
+      projectScope,
+      projectSharing,
       resolveParticipant,
       now: () => now,
     }));
@@ -117,6 +256,235 @@ describe("collaboration gateway routes", () => {
       kind: "chat",
       role: "owner",
       capabilities: { discuss: true, requestAi: false },
+    });
+  });
+
+  it("prepares a private project scope only with a signed M4 policy", async () => {
+    const preflightPath = `/api/collaboration/runtimes/${collaborationIds.runtime}/scopes/preflight`;
+    const body = { kind: "project", resourceId: "proj_alpha" };
+    expect((await signedJson({
+      actorId: collaborationActors.owner,
+      method: "POST",
+      path: preflightPath,
+      body,
+    })).status).toBe(401);
+    const preflight = await signedJson({
+      actorId: collaborationActors.owner,
+      method: "POST",
+      path: preflightPath,
+      body,
+      m4Policy: true,
+    });
+    expect(preflight.status).toBe(200);
+    const eligibility = await preflight.json() as { confirmationToken: string; resourceRevision: string };
+    expect((await signedJson({
+      actorId: collaborationActors.owner,
+      method: "POST",
+      path: `/api/collaboration/runtimes/${collaborationIds.runtime}/scopes`,
+      body: {
+        ...body,
+        clientRequestId: request(92),
+        expectedRevision: eligibility.resourceRevision,
+        confirmationToken: eligibility.confirmationToken,
+      },
+    })).status).toBe(401);
+    const created = await signedJson({
+      actorId: collaborationActors.owner,
+      method: "POST",
+      path: `/api/collaboration/runtimes/${collaborationIds.runtime}/scopes`,
+      m4Policy: true,
+      body: {
+        ...body,
+        clientRequestId: request(92),
+        expectedRevision: eligibility.resourceRevision,
+        confirmationToken: eligibility.confirmationToken,
+      },
+    });
+    expect(created.status).toBe(201);
+    expect(await created.json()).toMatchObject({
+      id: collaborationIds.scope,
+      kind: "project",
+      lifecycle: "private",
+      role: "owner",
+      capabilities: { read: false, manageMembers: true },
+    });
+    const reopened = await signedJson({
+      actorId: collaborationActors.owner,
+      method: "POST",
+      path: preflightPath,
+      body,
+      m4Policy: true,
+    });
+    await expect(reopened.json()).resolves.toMatchObject({
+      existingScopeId: collaborationIds.scope,
+      existingLifecycle: "private",
+    });
+  });
+
+  it("returns one owner-derived inventory and accepts only its exact M4 confirmation", async () => {
+    const preflightPath = `/api/collaboration/runtimes/${collaborationIds.runtime}/scopes/preflight`;
+    const preflight = await signedJson({
+      actorId: collaborationActors.owner,
+      method: "POST",
+      path: preflightPath,
+      m4Policy: true,
+      body: { kind: "project", resourceId: "proj_alpha" },
+    });
+    const eligibility = await preflight.json() as { confirmationToken: string; resourceRevision: string };
+    await signedJson({
+      actorId: collaborationActors.owner,
+      method: "POST",
+      path: `/api/collaboration/runtimes/${collaborationIds.runtime}/scopes`,
+      m4Policy: true,
+      body: {
+        kind: "project",
+        resourceId: "proj_alpha",
+        clientRequestId: request(93),
+        expectedRevision: eligibility.resourceRevision,
+        confirmationToken: eligibility.confirmationToken,
+      },
+    });
+    const inventoryPath = `/api/collaboration/scopes/${collaborationIds.scope}/project/inventory`;
+    expect((await signedJson({
+      actorId: collaborationActors.owner,
+      scopeId: collaborationIds.scope,
+      method: "GET",
+      path: inventoryPath,
+    })).status).toBe(401);
+    const inventoryResponse = await signedJson({
+      actorId: collaborationActors.owner,
+      scopeId: collaborationIds.scope,
+      method: "GET",
+      path: inventoryPath,
+      m4Policy: true,
+    });
+    expect(inventoryResponse.status).toBe(200);
+    const inventory = await inventoryResponse.json() as Record<string, unknown>;
+    expect(inventory).toMatchObject({
+      scopeId: collaborationIds.scope,
+      projectId: "proj_alpha",
+      projectRevision: "7",
+      scopeRevision: "0",
+      ownedItems: [{ kind: "file", id: "README.md" }],
+    });
+    const confirmed = await signedJson({
+      actorId: collaborationActors.owner,
+      scopeId: collaborationIds.scope,
+      method: "POST",
+      path: `/api/collaboration/scopes/${collaborationIds.scope}/project/confirm`,
+      m4Policy: true,
+      body: {
+        clientRequestId: request(94),
+        expectedScopeRevision: inventory.scopeRevision,
+        expectedProjectRevision: inventory.projectRevision,
+        inventoryHash: inventory.inventoryHash,
+        membershipHash: inventory.membershipHash,
+        inventoryToken: inventory.inventoryToken,
+      },
+    });
+    expect(confirmed.status).toBe(202);
+    expect(await confirmed.json()).toMatchObject({ status: "prepared", inventoryRevision: "7" });
+
+    await fixture.db.updateTable("collaboration_scopes").set({
+      lifecycle: "shared",
+      revision: 1,
+      authority_runtime_id: collaborationIds.runtime,
+      authority_generation: 2,
+    }).where("id", "=", collaborationIds.scope).execute();
+    await fixture.db.insertInto("collaboration_resource_bindings").values({
+      id: "80000000-0000-4000-8000-000000000001",
+      project_scope_id: collaborationIds.scope,
+      resource_scope_id: null,
+      resource_kind: "file",
+      resource_id: "README.md",
+      authority_runtime_id: collaborationIds.runtime,
+      authority_generation: 2,
+      revision: 1,
+      readiness: "ready",
+      blocker: null,
+      incarnation: null,
+      created_at: now,
+      updated_at: now,
+    }).execute();
+    const project = await signedJson({
+      actorId: collaborationActors.owner,
+      scopeId: collaborationIds.scope,
+      method: "GET",
+      path: `/api/collaboration/scopes/${collaborationIds.scope}/project`,
+      m4Policy: true,
+    });
+    expect(project.status).toBe(200);
+    await expect(project.json()).resolves.toMatchObject({
+      id: "proj_alpha",
+      scopeId: collaborationIds.scope,
+      status: "active",
+      resources: [{ kind: "file", id: "README.md", readiness: "ready" }],
+    });
+  });
+
+  it("preflights, shares, reads, and controls a terminal only with signed M3 policy", async () => {
+    const preflightPath = `/api/collaboration/runtimes/${collaborationIds.runtime}/scopes/preflight`;
+    const preflight = await signedJson({
+      actorId: collaborationActors.owner,
+      method: "POST",
+      path: preflightPath,
+      body: { kind: "terminal", resourceId: terminalId },
+    });
+    const eligibility = await preflight.json() as { confirmationToken: string; resourceRevision: string };
+    expect(preflight.status).toBe(200);
+    const created = await signedJson({
+      actorId: collaborationActors.owner,
+      method: "POST",
+      path: `/api/collaboration/runtimes/${collaborationIds.runtime}/scopes`,
+      body: {
+        kind: "terminal",
+        resourceId: terminalId,
+        clientRequestId: request(90),
+        expectedRevision: eligibility.resourceRevision,
+        confirmationToken: eligibility.confirmationToken,
+      },
+    });
+    expect(created.status).toBe(201);
+    expect(await created.json()).toMatchObject({
+      kind: "terminal",
+      resourceId: terminalId,
+      capabilities: { observeTerminal: true, controlTerminal: true, stopTerminal: true },
+    });
+
+    const terminalPath = `/api/collaboration/scopes/${collaborationIds.scope}/terminal`;
+    expect((await signedJson({
+      actorId: collaborationActors.owner,
+      scopeId: collaborationIds.scope,
+      method: "GET",
+      path: terminalPath,
+    })).status).toBe(401);
+    const terminal = await signedJson({
+      actorId: collaborationActors.owner,
+      scopeId: collaborationIds.scope,
+      method: "GET",
+      path: terminalPath,
+      m3Policy: true,
+    });
+    expect(terminal.status).toBe(200);
+    expect(await terminal.json()).toMatchObject({ id: terminalId, incarnation: terminalIncarnation });
+
+    const action = await signedJson({
+      actorId: collaborationActors.owner,
+      scopeId: collaborationIds.scope,
+      method: "POST",
+      path: `${terminalPath}/actions`,
+      m3Policy: true,
+      body: {
+        type: "acquire",
+        clientRequestId: request(91),
+        incarnation: terminalIncarnation,
+        connectionId: "connection_owner",
+      },
+    });
+    expect(action.status).toBe(200);
+    expect(await action.json()).toMatchObject({
+      action: "acquired",
+      terminal: { controller: { actor: { actorId: collaborationActors.owner }, leaseEpoch: "1" } },
     });
   });
 
@@ -193,6 +561,65 @@ describe("collaboration gateway routes", () => {
     expect(history.status).toBe(200);
     expect(await history.json()).toMatchObject({
       messages: [{ purpose: "discussion", actor: { actorId: collaborationActors.editor } }],
+    });
+  });
+
+  it("admits and lists M2 AI requests only with a signed current M2 policy", async () => {
+    await shareChat();
+    await fixture.db.updateTable("collaboration_scopes").set({
+      execution_generation: 1,
+      execution_eligibility: JSON.stringify({
+        profileId: "scope-runtime-chat-v1",
+        profileVersion: 1,
+        profileDigest: "a".repeat(64),
+        adapterId: "claude-code",
+        harnessVersion: "2.1.240",
+      }),
+    }).where("id", "=", collaborationIds.scope).execute();
+    const path = `/api/collaboration/scopes/${collaborationIds.scope}/chat/requests`;
+    const body = {
+      clientRequestId: request(80),
+      expectedRevision: "2",
+      text: "Summarize our discussion",
+      selection: { instanceId: "claude_shared", model: "claude-opus-4-6" },
+    };
+    expect((await signedJson({
+      actorId: collaborationActors.owner,
+      scopeId: collaborationIds.scope,
+      method: "POST",
+      path,
+      body,
+    })).status).toBe(401);
+    const admitted = await signedJson({
+      actorId: collaborationActors.owner,
+      scopeId: collaborationIds.scope,
+      method: "POST",
+      path,
+      body,
+      m2Policy: true,
+    });
+    expect(admitted.status).toBe(201);
+    expect(await admitted.json()).toMatchObject({
+      resourceRevision: "3",
+      request: {
+        id: "qturn_shared_route_1",
+        acceptedSequence: "1",
+        actor: { actorId: collaborationActors.owner, displayName: "Nima Owner" },
+        state: "queued",
+      },
+    });
+    const listed = await signedJson({
+      actorId: collaborationActors.owner,
+      scopeId: collaborationIds.scope,
+      method: "GET",
+      path,
+      m2Policy: true,
+    });
+    const listedBody = await listed.json();
+    expect(listed.status, JSON.stringify(listedBody)).toBe(200);
+    expect(listedBody).toMatchObject({
+      requests: [{ id: "qturn_shared_route_1" }],
+      resourceRevision: "3",
     });
   });
 
@@ -340,6 +767,60 @@ describe("collaboration gateway routes", () => {
     })).status).toBe(404);
   });
 
+  it("routes project lifecycle operations through the project service", async () => {
+    await fixture.db.insertInto("collaboration_scopes").values({
+      id: projectScopeId,
+      owner_type: "personal",
+      owner_id: collaborationActors.owner,
+      kind: "project",
+      resource_id: "proj_routes",
+      parent_scope_id: null,
+      membership_mode: "direct",
+      lifecycle: "shared",
+      revision: 1,
+      auth_epoch: 1,
+      authority_runtime_id: collaborationIds.runtime,
+      authority_generation: 1,
+      execution_generation: null,
+      execution_eligibility: null,
+      created_at: now,
+      updated_at: now,
+      deleted_at: null,
+    }).execute();
+    await fixture.db.insertInto("collaboration_members").values({
+      scope_id: projectScopeId,
+      actor_id: collaborationActors.owner,
+      role: "owner",
+      status: "accepted",
+      invitation_id: null,
+      invited_by: collaborationActors.owner,
+      accepted_at: now,
+      expires_at: null,
+      revision: 1,
+      joined_at: now,
+      updated_at: now,
+    }).execute();
+
+    const archived = await signedJson({
+      actorId: collaborationActors.owner,
+      scopeId: projectScopeId,
+      method: "POST",
+      path: `/api/collaboration/scopes/${projectScopeId}/lifecycle`,
+      body: { type: "archive", clientRequestId: request(110), expectedRevision: "1" },
+    });
+
+    expect(archived.status).toBe(200);
+    expect(await archived.json()).toMatchObject({ type: "archive", status: "completed", revision: "2" });
+    const operation = await signedJson({
+      actorId: collaborationActors.owner,
+      scopeId: projectScopeId,
+      method: "GET",
+      path: `/api/collaboration/scopes/${projectScopeId}/operations/${request(110)}`,
+    });
+    expect(operation.status).toBe(200);
+    expect(await operation.json()).toMatchObject({ type: "archive", status: "completed" });
+  });
+
   it("applies downgrade immediately and revocation removes all live scope access", async () => {
     await shareChat();
     await signedJson({
@@ -480,6 +961,9 @@ describe("collaboration gateway routes", () => {
     query?: string;
     body?: unknown;
     deleteConditions?: { clientRequestId: string; expectedRevision: string; expectedMemberRevision: string };
+    m2Policy?: boolean;
+    m3Policy?: boolean;
+    m4Policy?: boolean;
   }): Promise<Response> {
     const body = input.body === undefined ? new Uint8Array() : new TextEncoder().encode(JSON.stringify(input.body));
     const proof = signer.signHttp({
@@ -493,11 +977,22 @@ describe("collaboration gateway routes", () => {
       body,
       ...(input.deleteConditions ? { conditionalHeaders: input.deleteConditions } : {}),
     });
+    const policy = input.m2Policy || input.m3Policy || input.m4Policy ? signer.signPolicy({
+      milestone: input.m4Policy ? "m4" : input.m3Policy ? "m3" : "m2",
+      revision: "1",
+      mode: "enabled",
+      cohort: [],
+      issuedAt: now.toISOString(),
+      expiresAt: new Date(now.getTime() + 30_000).toISOString(),
+    }) : undefined;
     return app.request(`${input.path}${input.query ? `?${input.query}` : ""}`, {
       method: input.method,
       headers: {
         "content-type": "application/json",
         "x-matrix-collaboration-proof": Buffer.from(JSON.stringify(proof)).toString("base64url"),
+        ...(policy ? {
+          "x-matrix-collaboration-policy": Buffer.from(JSON.stringify(policy)).toString("base64url"),
+        } : {}),
         ...(input.deleteConditions ? {
           "x-matrix-client-request-id": input.deleteConditions.clientRequestId,
           "x-matrix-expected-revision": input.deleteConditions.expectedRevision,

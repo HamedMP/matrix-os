@@ -153,15 +153,17 @@ try {
 }
 
 const configDir = join(homePath, "system", "zellij");
+// Let Zellij load the owner config when present and use defaults on first boot.
+const inheritedEnvironment = { ...process.env };
+delete inheritedEnvironment.ZELLIJ_CONFIG_FILE;
 const childOptions = {
   cwd,
   env: {
-    ...process.env,
+    ...inheritedEnvironment,
     ...launchEnvironment,
     HOME: homePath,
     MATRIX_HOME: homePath,
     ZELLIJ_CONFIG_DIR: configDir,
-    ZELLIJ_CONFIG_FILE: join(configDir, "config.kdl"),
     TERM: "xterm-256color",
     COLORTERM: "truecolor",
     XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR || `/run/user/${process.getuid()}`,

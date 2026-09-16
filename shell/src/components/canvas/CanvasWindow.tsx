@@ -483,7 +483,9 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
               activeConversationTitle={chatState.activeConversationTitle}
               onRenameConversation={chatState.renameConversation}
               onSubmit={chatState.submitMessage}
+              agentClient={chatState.agentClient} queuedTurns={chatState.queuedTurns} onCancelQueuedTurn={chatState.cancelQueuedTurn}
               onSubmitApproval={chatState.submitApproval}
+              onSubmitInput={chatState.submitInput}
               providerSelection={chatState.providerSelection}
               composerDraftRequest={chatState.composerDraftRequest}
               onComposerDraftConsumed={chatState.consumeComposerDraft}

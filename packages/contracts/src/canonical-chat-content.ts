@@ -8,7 +8,14 @@ export const CanonicalChatContentSchema = z.object({
   record: CanonicalChatRecordSchema,
   messageDelta: z.object({
     // Metadata plus ONLY the appended text, not the accumulated reply.
-    message: CanonicalChatMessageSchema.refine((m) => m.role === "assistant"
+    // A delta may be only whitespace even though a complete message may not.
+    message: CanonicalChatMessageSchema.safeExtend({
+      parts: z.array(z.object({
+        type: z.literal("text"),
+        text: z.string().min(1).max(32_000)
+          .refine((text) => new TextEncoder().encode(text).byteLength <= 96 * 1024),
+      }).strict()).length(1),
+    }).refine((m) => m.role === "assistant"
       && m.state === "pending" && m.parts.length === 1 && m.parts[0]?.type === "text"),
     partIndex: z.number().int().min(0).max(63),
     offset: z.number().int().min(0).max(1_000_000),
@@ -63,3 +70,5 @@ export function canonicalChatTerminalNotices(detail: z.infer<typeof CanonicalCha
     }];
   });
 }
+
+export { buildCanonicalChatInputAnswer, canonicalChatInputs, type CanonicalChatInputView } from "#canonical-chat-inputs";

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { isAbsolute, join, relative, sep } from "node:path";
 import { z } from "zod/v4";
@@ -26,6 +27,7 @@ import {
 const ShellPlacementSchema = z.enum(["active", "background"]);
 const ShellVisualStatusSchema = z.enum(["running", "finished", "idle", "waiting"]);
 const ShellSessionReferenceSourceSchema = z.enum(["pane", "workspace", "legacy"]);
+const SharedControlModeSchema = z.enum(["eligible", "shared"]);
 const ShellSessionReferenceSchema = z.object({
   id: z.string().min(1).max(128),
   source: ShellSessionReferenceSourceSchema,
@@ -66,7 +68,13 @@ export interface ShellRegistryAdapter {
   listSessions(): Promise<string[]>;
   getSessionCreatedAt?(name: string): Promise<string | null>;
   focusedPaneRuntime?(name: string): Promise<FocusedPaneRuntimeObservation>;
-  createSession(options: { name: string; cwd?: string; layout?: string; cmd?: string }): Promise<void>;
+  createSession(options: {
+    name: string;
+    cwd?: string;
+    layout?: string;
+    cmd?: string;
+    collaboration?: { executionGeneration: number };
+  }): Promise<void>;
   recoverSession?(options: { name: string; cwd?: string }): Promise<void>;
   deleteSession(name: string, options?: { force?: boolean }): Promise<void>;
   renameSession?(name: string, nextName: string): Promise<void>;
@@ -101,6 +109,11 @@ const ShellSessionSchema = z.object({
   agent: AgentKindSchema.optional(),
   cwd: z.string().max(4096).optional(),
   pinned: z.boolean().optional(),
+  creatorActorId: z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/).optional(),
+  collaborationScopeId: z.uuid().optional(),
+  sessionIncarnation: z.string().regex(/^terminal-[a-f0-9]{32}$/).optional(),
+  executionGeneration: z.number().int().positive().optional(),
+  sharedControlMode: SharedControlModeSchema.optional(),
 });
 
 const RegistryFileSchema = z.object({
@@ -202,9 +215,7 @@ export class ShellRegistry {
         const existing = file.sessions[name];
         const runtimeCreatedAt = await this.runtimeCreatedAt(name);
         const session: PersistedShellSession = {
-          ...(existing ?? this.adoptSession(name, now)),
-          ...(runtimeCreatedAt ? { createdAt: runtimeCreatedAt } : {}),
-          ...(runtimeCreatedAt ? { [VERIFIED_RUNTIME_INCARNATION]: true } : {}),
+          ...this.applyRuntimeIdentity(existing ?? this.adoptSession(name, now), runtimeCreatedAt),
           status: "active" as const,
           updatedAt: existing?.status === "active" ? existing.updatedAt : now,
         };
@@ -239,9 +250,7 @@ export class ShellRegistry {
       const existing = file.sessions[targetName];
       const runtimeCreatedAt = await this.runtimeCreatedAt(targetName);
       const session: PersistedShellSession = {
-        ...(existing ?? this.adoptSession(targetName, now)),
-        ...(runtimeCreatedAt ? { createdAt: runtimeCreatedAt } : {}),
-        ...(runtimeCreatedAt ? { [VERIFIED_RUNTIME_INCARNATION]: true } : {}),
+        ...this.applyRuntimeIdentity(existing ?? this.adoptSession(targetName, now), runtimeCreatedAt),
         status: "active" as const,
         updatedAt: existing?.status === "active" ? existing.updatedAt : now,
       };
@@ -284,6 +293,7 @@ export class ShellRegistry {
     cmd?: string;
     agent?: AgentKind;
     exclusive?: boolean;
+    collaboration?: { creatorActorId: string; executionGeneration: number };
   }): Promise<ShellSession> {
     return this.withMutationLock(async () => {
       const name = validateSessionName(input.name);
@@ -298,6 +308,9 @@ export class ShellRegistry {
       if (live.has(name)) {
         if (input.exclusive) {
           throw shellError("session_exists", "Session already exists", 409);
+        }
+        if (input.collaboration) {
+          throw shellError("session_not_eligible", "Existing session is not collaboration-ready", 409);
         }
         const now = new Date().toISOString();
         const session: PersistedShellSession = {
@@ -315,9 +328,29 @@ export class ShellRegistry {
       if (changed) {
         await this.write(file);
       }
-      await this.options.adapter.createSession({ name, cwd, layout: layoutName, cmd: input.cmd });
+      const collaboration = input.collaboration ? {
+        creatorActorId: z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/)
+          .parse(input.collaboration.creatorActorId),
+        executionGeneration: z.number().int().positive().parse(input.collaboration.executionGeneration),
+      } : undefined;
+      await this.options.adapter.createSession({
+        name,
+        cwd,
+        layout: layoutName,
+        cmd: input.cmd,
+        ...(collaboration ? { collaboration: { executionGeneration: collaboration.executionGeneration } } : {}),
+      });
       const now = new Date().toISOString();
       const runtimeCreatedAt = await this.runtimeCreatedAt(name);
+      if (collaboration && !runtimeCreatedAt) {
+        await this.options.adapter.deleteSession(name, { force: true }).catch((rollbackErr: unknown) => {
+          console.warn(
+            "[shell] failed to rollback unverifiable collaboration session:",
+            rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr),
+          );
+        });
+        throw shellError("session_incarnation_unverified", "Collaboration-ready session could not be verified", 503);
+      }
       const session: PersistedShellSession = {
         name,
         status: "active",
@@ -332,6 +365,12 @@ export class ShellRegistry {
         kind: "session",
         ...(agent ? { agent } : {}),
         ...(cwd ? { cwd } : {}),
+        ...(collaboration && runtimeCreatedAt ? {
+          creatorActorId: collaboration.creatorActorId,
+          sessionIncarnation: terminalIncarnation(name, runtimeCreatedAt),
+          executionGeneration: collaboration.executionGeneration,
+          sharedControlMode: "eligible" as const,
+        } : {}),
       };
       file.sessions[name] = session;
       if (file.order) {
@@ -359,6 +398,69 @@ export class ShellRegistry {
     });
   }
 
+  async bindCollaboration(name: string, input: {
+    scopeId: string;
+    sessionIncarnation: string;
+    executionGeneration: number;
+  }): Promise<ShellSession> {
+    return this.withMutationLock(async () => {
+      const safeName = validateSessionName(name);
+      const scopeId = z.uuid().parse(input.scopeId);
+      const incarnation = z.string().regex(/^terminal-[a-f0-9]{32}$/).parse(input.sessionIncarnation);
+      const executionGeneration = z.number().int().positive().parse(input.executionGeneration);
+      const file = await this.read();
+      const targetName = this.resolveSessionName(file, safeName);
+      const existing = file.sessions[targetName];
+      const live = await this.options.adapter.listSessions();
+      if (!existing || existing.status !== "active" || !live.includes(targetName)) {
+        throw shellError("session_not_found", "Session not found", 404);
+      }
+      const runtimeCreatedAt = await this.runtimeCreatedAt(targetName);
+      const session = this.applyRuntimeIdentity(existing, runtimeCreatedAt);
+      if (!runtimeCreatedAt || session.sessionIncarnation !== incarnation) {
+        throw shellError("session_incarnation_changed", "Terminal session changed", 409);
+      }
+      if (session.executionGeneration !== executionGeneration || !session.creatorActorId
+        || !session.sharedControlMode) {
+        throw shellError("session_not_eligible", "Session is not collaboration-ready", 409);
+      }
+      if (session.collaborationScopeId && session.collaborationScopeId !== scopeId) {
+        throw shellError("session_already_shared", "Session already belongs to another scope", 409);
+      }
+      const next = {
+        ...session,
+        collaborationScopeId: scopeId,
+        sharedControlMode: "shared" as const,
+        updatedAt: new Date().toISOString(),
+      };
+      file.sessions[targetName] = next;
+      await this.write(file);
+      return this.decorateSession(next, file);
+    });
+  }
+
+  async unbindCollaboration(name: string, input: {
+    scopeId: string;
+    sessionIncarnation: string;
+  }): Promise<void> {
+    return this.withMutationLock(async () => {
+      const safeName = validateSessionName(name);
+      const scopeId = z.uuid().parse(input.scopeId);
+      const incarnation = z.string().regex(/^terminal-[a-f0-9]{32}$/).parse(input.sessionIncarnation);
+      const file = await this.read();
+      const targetName = this.resolveSessionName(file, safeName);
+      const session = file.sessions[targetName];
+      if (!session || session.collaborationScopeId !== scopeId || session.sessionIncarnation !== incarnation) return;
+      file.sessions[targetName] = {
+        ...session,
+        collaborationScopeId: undefined,
+        sharedControlMode: "eligible",
+        updatedAt: new Date().toISOString(),
+      };
+      await this.write(file);
+    });
+  }
+
   async recover(name: string, input: { cwd?: string } = {}): Promise<ShellSession> {
     return this.withMutationLock(async () => {
       const safeName = validateSessionName(name);
@@ -380,11 +482,9 @@ export class ShellRegistry {
       const runtimeCreatedAt = await this.runtimeCreatedAt(safeName);
       const existing = file.sessions[safeName];
       const session: PersistedShellSession = {
-        ...(existing ?? this.adoptSession(safeName, now)),
+        ...this.applyRuntimeIdentity(existing ?? this.adoptSession(safeName, now), runtimeCreatedAt),
         name: safeName,
         status: "active",
-        createdAt: runtimeCreatedAt ?? existing?.createdAt ?? now,
-        ...(runtimeCreatedAt ? { [VERIFIED_RUNTIME_INCARNATION]: true } : {}),
         updatedAt: now,
         ...(cwd ? { cwd } : {}),
       };
@@ -589,9 +689,7 @@ export class ShellRegistry {
         const existing = file.sessions[name];
         const runtimeCreatedAt = await this.runtimeCreatedAt(name);
         const session: PersistedShellSession = {
-          ...(existing ?? this.adoptSession(name, now)),
-          ...(runtimeCreatedAt ? { createdAt: runtimeCreatedAt } : {}),
-          ...(runtimeCreatedAt ? { [VERIFIED_RUNTIME_INCARNATION]: true } : {}),
+          ...this.applyRuntimeIdentity(existing ?? this.adoptSession(name, now), runtimeCreatedAt),
           status: "active",
           updatedAt: existing?.status === "active" ? existing.updatedAt : now,
         };
@@ -650,6 +748,29 @@ export class ShellRegistry {
       );
       return null;
     }
+  }
+
+  private applyRuntimeIdentity(
+    session: PersistedShellSession,
+    runtimeCreatedAt: string | null,
+  ): PersistedShellSession {
+    if (!runtimeCreatedAt) return session;
+    if (session.createdAt === runtimeCreatedAt) {
+      const verified = { ...session };
+      Reflect.set(verified, VERIFIED_RUNTIME_INCARNATION, true);
+      return verified;
+    }
+    const next: PersistedShellSession = {
+      ...session,
+      createdAt: runtimeCreatedAt,
+    };
+    Reflect.set(next, VERIFIED_RUNTIME_INCARNATION, true);
+    delete next.creatorActorId;
+    delete next.collaborationScopeId;
+    delete next.sessionIncarnation;
+    delete next.executionGeneration;
+    delete next.sharedControlMode;
+    return next;
   }
 
   private async decorateSession(session: PersistedShellSession, file?: RegistryFile): Promise<ShellSession> {
@@ -1018,6 +1139,11 @@ export class ShellRegistry {
     );
     return run;
   }
+}
+
+function terminalIncarnation(name: string, runtimeCreatedAt: string): string {
+  const digest = createHash("sha256").update(`${name}\0${runtimeCreatedAt}`).digest("hex").slice(0, 32);
+  return `terminal-${digest}`;
 }
 
 export function inferAgentFromCommand(command: string | undefined): AgentKind | undefined {

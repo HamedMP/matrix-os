@@ -59,6 +59,31 @@ beforeEach(() => {
 });
 
 describe("createWebContentsView", () => {
+  it.each([
+    ["resource-manager", "resource-manager", true],
+    ["custom/resource-manager", "resource-manager", false],
+    ["resource-manager", "notes", false],
+    ["notes", "notes", false],
+  ])("advertises activity only for the authorized app identity %s", (appIdentity, routeSlug, allowed) => {
+    createWebContentsView({
+      window: { contentView: { addChildView: vi.fn(), removeChildView: vi.fn() } } as never,
+      partition: `persist:app-${routeSlug}`,
+      allowedOrigins: ["https://gateway.test"],
+      onState: vi.fn(),
+      appBridge: {
+        appIdentity, routeSlug, preloadPath: "/app/preload/index.cjs",
+        register: vi.fn(), unregister: vi.fn(),
+      },
+    });
+    expect(electronMock.viewOptions[0]).toEqual(expect.objectContaining({
+      webPreferences: expect.objectContaining({
+        additionalArguments: allowed
+          ? ["--matrix-app-bridge", "--matrix-app-activity-bridge"]
+          : ["--matrix-app-bridge"],
+      }),
+    }));
+  });
+
   it("captures a bounded JPEG frame for the detached renderer fallback", async () => {
     const view = createWebContentsView({
       window: {

@@ -204,7 +204,7 @@ export const CanonicalChatSnapshotSchema = z.object({
     if (bindingTurn === undefined) {
       ctx.addIssue({ code: "custom", path: ["chat", "providerBinding", "lockedAtTurnId"], message: "Provider binding Turn is not in the snapshot" });
     } else {
-      const firstTurn = [...snapshot.turns].sort((left, right) => (
+      const firstTurn = snapshot.turns.filter((turn) => snapshot.runs.some((run) => run.turnId === turn.id && !run.context?.agent)).sort((left, right) => (
         left.baseMessageSeq - right.baseMessageSeq
         || left.createdAt.localeCompare(right.createdAt)
         || left.id.localeCompare(right.id)
@@ -215,9 +215,9 @@ export const CanonicalChatSnapshotSchema = z.object({
     }
   }
   snapshot.runs.forEach((run, index) => {
-    if (binding === undefined
+    if (!run.context?.agent && (binding === undefined
       || run.driverKind !== binding.driverKind
-      || run.instanceId !== binding.instanceId) {
+      || run.instanceId !== binding.instanceId)) {
       ctx.addIssue({
         code: "custom",
         path: ["runs", index, "instanceId"],

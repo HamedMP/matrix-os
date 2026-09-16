@@ -4,12 +4,13 @@ import { chmod, lstat, mkdir, open, rm } from "node:fs/promises";
 import { createServer } from "node:net";
 import { dirname, isAbsolute, relative } from "node:path";
 import { createInterface } from "node:readline";
-import { StringDecoder } from "node:string_decoder";
+import { CodexTransportError, MAX_CODEX_TRANSPORT_BYTES, consumeCodexProviderOutput } from "./codex-provider-output.mjs";
 import { z } from "zod/v4";
 import { assertCodexProviderVersion } from "./codex-provider-version-check.mjs";
 import { createCodexSessionApprovalGrants } from "./codex-session-approvals.mjs";
 import { createCodexExecutionWatchdog } from "./codex-execution-watchdog.mjs";
 import { CodexHibernateControlSchema, createCodexIdleHibernation } from "./codex-idle-hibernation.mjs";
+import { CodexDeferredInputControlSchema, deferCodexNativeInput } from "./codex-deferred-input.mjs";
 import { createCodexMcpElicitations, rejectCodexServerRequest } from "./codex-mcp-elicitations.mjs";
 import { initializeCodexProvider, ProviderStartupCleanupUnconfirmed, signalCodexProviderChild } from "./codex-provider-startup.mjs";
 
@@ -299,6 +300,7 @@ const ControlSchema = z.discriminatedUnion("type", [
   InterruptControlSchema,
   ApprovalControlSchema,
   InputControlSchema,
+  CodexDeferredInputControlSchema,
 ]);
 
 function fail(message) {
@@ -613,7 +615,7 @@ function request(method, params, timeoutMs = RPC_TIMEOUT_MS) {
       reject(new Error("provider_request_timeout"));
     }, timeoutMs);
     timeout.unref();
-    pendingRpc.set(id, { resolve, reject, timeout });
+    pendingRpc.set(id, { resolve, reject, timeout, method });
     sendProvider({ id, method, params });
   });
 }
@@ -898,44 +900,6 @@ async function handleProviderMessage(raw) {
   }
 }
 
-async function processProviderLine(line) {
-  if (!line || Buffer.byteLength(line, "utf8") > MAX_PROVIDER_LINE_BYTES) return;
-  try {
-    await handleProviderMessage(JSON.parse(line));
-  } catch (error) {
-    if (!(error instanceof SyntaxError)) throw error;
-  }
-}
-
-async function consumeProviderOutput(stream) {
-  const decoder = new StringDecoder("utf8");
-  let pending = "";
-  let discarding = false;
-  for await (const chunk of stream) {
-    let text = decoder.write(chunk);
-    if (discarding) {
-      const newline = text.indexOf("\n");
-      if (newline < 0) continue;
-      text = text.slice(newline + 1);
-      discarding = false;
-    }
-    pending += text;
-    let newline = pending.indexOf("\n");
-    while (newline >= 0) {
-      const line = pending.slice(0, newline).replace(/\r$/, "");
-      pending = pending.slice(newline + 1);
-      await processProviderLine(line);
-      newline = pending.indexOf("\n");
-    }
-    if (Buffer.byteLength(pending, "utf8") > MAX_PROVIDER_LINE_BYTES) {
-      pending = "";
-      discarding = true;
-    }
-  }
-  pending += decoder.end();
-  if (!discarding) await processProviderLine(pending.replace(/\r$/, ""));
-}
-
 async function discardProviderErrors(stream) {
   for await (const _chunk of stream) {
     // Provider stderr can include credentials, paths, or raw failures.
@@ -1001,6 +965,8 @@ async function applyControl(control) {
   } else if (control.type === "interrupt") {
     if (!nativeThreadId || !activeNativeTurnId) return { ok: false };
     await request("turn/interrupt", { threadId: nativeThreadId, turnId: activeNativeTurnId });
+  } else if (control.type === "defer_input") {
+    if (!deferCodexNativeInput(control, pendingInputs, sendProvider)) return { ok: false };
   } else if (control.type === "approval") {
     if (!await mcpElicitations.decide(control.approvalId, control.decision)) {
       const pending = pendingApprovals.get(control.approvalId);
@@ -1305,8 +1271,18 @@ try {
     pendingRpc.clear();
     return exit;
   });
-  providerOutput = consumeProviderOutput(child.stdout).then(
-    () => ({ ok: true }), (error) => { stop(); return { ok: false, error }; },
+  providerOutput = consumeCodexProviderOutput(child.stdout, handleProviderMessage).then(
+    () => ({ ok: true }), (error) => {
+      if (error instanceof CodexTransportError) {
+        process.stderr.write(`${JSON.stringify({
+          event: "coding_transport_failed", category: error.category,
+          bytes: error.bytes, limitBytes: MAX_CODEX_TRANSPORT_BYTES,
+          pendingMethods: [...new Set([...pendingRpc.values()].map((rpc) => rpc.method))].slice(0, 8),
+        })}\n`);
+      }
+      stop();
+      return { ok: false, error };
+    },
   );
   providerErrors = discardProviderErrors(child.stderr).then(
     () => ({ ok: true }), (error) => { stop(); return { ok: false, error }; },
@@ -1319,7 +1295,8 @@ try {
   sendProvider({ method: "initialized", params: {} });
   const threadMethod = config.providerThreadId ? "thread/resume" : "thread/start";
   const started = await request(threadMethod, {
-    ...(config.providerThreadId ? { threadId: config.providerThreadId } : {}),
+    // Matrix only needs the identity; Codex retains the complete model context.
+    ...(config.providerThreadId ? { threadId: config.providerThreadId, excludeTurns: true } : {}),
     model: config.model,
     serviceTier: config.serviceTier,
     cwd: process.cwd(),

@@ -103,12 +103,18 @@ describe("Chat native session continuity", () => {
       instances: [{ ...catalog.instances[0], id: claudeSelection.instanceId, driverKind: "claude_code" }],
     });
     let launches = 0;
+    const inputFrames: Array<{ type: string; message: { role: string; content: string } }> = [];
     let resumeOutput: (() => void) | undefined;
     const provider = createClaudeChatProviderAdapter({
       homePath: "/safe/project", resolveCredentialEnv: async () => ({}),
       spawnFn() {
         const resumed = launches++ > 0;
         const process = Object.assign(new EventEmitter(), {
+          stdin: { write(frame: string, callback?: (error?: Error | null) => void) {
+            inputFrames.push(JSON.parse(frame));
+            callback?.();
+            return true;
+          } },
           stdout: new EventEmitter(), stderr: new EventEmitter(),
           kill() { queueMicrotask(() => process.emit("exit", null, "SIGTERM")); return true; },
         });
@@ -161,6 +167,10 @@ describe("Chat native session continuity", () => {
       await orchestrator.drain();
       const history = await repository.exportChat(owner, "chat_steer");
       expect(history?.runs).toMatchObject([{ id: accepted.run.id, status: "completed" }]);
+      expect(inputFrames).toEqual([
+        expect.objectContaining({ type: "user", message: { role: "user", content: "Review" } }),
+        expect.objectContaining({ type: "user", message: { role: "user", content: "Correct scope" } }),
+      ]);
       expect(history?.messages.map((message) => message.parts)).toEqual([
         [{ type: "text", text: "Review" }], [{ type: "text", text: "before steer" }],
         [{ type: "text", text: "Correct scope" }], [{ type: "text", text: "after steer" }],

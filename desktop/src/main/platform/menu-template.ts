@@ -6,6 +6,7 @@ type MenuEventSender = (channel: string, payload: unknown) => void;
 interface AppMenuTemplateOptions {
   appName: string;
   isPackaged: boolean;
+  platform?: NodeJS.Platform;
   openExternal(url: string): void;
   send: MenuEventSender;
   adjustZoom(action: ZoomAction): void;
@@ -16,26 +17,29 @@ interface AppMenuTemplateOptions {
 export function createAppMenuTemplate({
   appName,
   isPackaged,
+  platform = process.platform,
   openExternal,
   send,
   adjustZoom,
   checkForUpdates,
   quitApp,
 }: AppMenuTemplateOptions): MenuItemConstructorOptions[] {
+  const isMac = platform === "darwin";
+  const primary = (keys: string) => `${isMac ? "Cmd" : "CmdOrCtrl"}+${keys}`;
   const viewSubmenu: MenuItemConstructorOptions[] = [
     {
       label: "Command Palette",
-      accelerator: "Cmd+K",
+      accelerator: primary("K"),
       click: () => send("menu:action", { action: "palette" }),
     },
     {
       label: "Go to File",
-      accelerator: "Cmd+P",
+      accelerator: primary("P"),
       click: () => send("menu:action", { action: "quick-open" }),
     },
     {
       label: "Terminal",
-      accelerator: "Cmd+Alt+T",
+      accelerator: primary("Alt+T"),
       click: () => send("menu:navigate", { kind: "terminals" }),
     },
     {
@@ -43,13 +47,7 @@ export function createAppMenuTemplate({
       accelerator: "CmdOrCtrl+R",
       click: () => send("menu:action", { action: "refresh-home" }),
     },
-  ];
-
-  viewSubmenu.push(
     { type: "separator" },
-    // Custom click handlers instead of the zoomin/zoomout/resetzoom roles so
-    // the factor round-trips through the shared zoom step path and the
-    // renderer store hears about it via app:zoom-changed.
     {
       label: "Zoom In",
       accelerator: "CmdOrCtrl+=",
@@ -70,75 +68,93 @@ export function createAppMenuTemplate({
     ...(isPackaged
       ? []
       : ([{ type: "separator" }, { role: "toggleDevTools" }] as MenuItemConstructorOptions[])),
-  );
+  ];
+
+  const updateItem: MenuItemConstructorOptions = {
+    label: "Check for Updates…",
+    click: () => {
+      send("update:manual-check-requested", {});
+      checkForUpdates();
+    },
+  };
+  const settingsItem: MenuItemConstructorOptions = {
+    label: "Settings…",
+    accelerator: primary(","),
+    click: () => send("menu:navigate", { kind: "settings" }),
+  };
+  const newItems: MenuItemConstructorOptions[] = [
+    {
+      label: "New",
+      accelerator: primary("N"),
+      click: () => send("menu:action", { action: "new-context" }),
+    },
+    {
+      label: "New Agent Thread",
+      accelerator: primary("J"),
+      click: () => send("menu:action", { action: "new-thread" }),
+    },
+    { type: "separator" },
+    {
+      label: "New Tab",
+      accelerator: primary("T"),
+      click: () => send("menu:action", { action: "new-tab" }),
+    },
+    {
+      label: "Close Tab",
+      accelerator: primary("W"),
+      click: () => send("menu:action", { action: "close-tab" }),
+    },
+  ];
+
+  const platformMenus: MenuItemConstructorOptions[] = isMac
+    ? [
+        {
+          label: appName,
+          submenu: [
+            { role: "about" },
+            updateItem,
+            { type: "separator" },
+            settingsItem,
+            { type: "separator" },
+            { role: "services" },
+            { type: "separator" },
+            { role: "hide" },
+            { role: "hideOthers" },
+            { role: "unhide" },
+            { type: "separator" },
+            {
+              label: "Close Selected App",
+              accelerator: primary("Q"),
+              click: () => send("menu:action", { action: "close-app" }),
+            },
+            { label: `Quit ${appName}`, click: quitApp },
+          ],
+        },
+        { label: "File", submenu: newItems },
+      ]
+    : [
+        {
+          label: "File",
+          submenu: [
+            ...newItems,
+            { type: "separator" },
+            settingsItem,
+            updateItem,
+            { type: "separator" },
+            {
+              label: "Close Selected App",
+              accelerator: primary("Q"),
+              click: () => send("menu:action", { action: "close-app" }),
+            },
+            { label: "Exit", click: quitApp },
+          ],
+        },
+      ];
 
   return [
-    {
-      label: appName,
-      submenu: [
-        { role: "about" },
-        {
-          label: "Check for Updates…",
-          click: () => {
-            send("update:manual-check-requested", {});
-            checkForUpdates();
-          },
-        },
-        { type: "separator" },
-        {
-          label: "Settings…",
-          accelerator: "Cmd+,",
-          click: () => send("menu:navigate", { kind: "settings" }),
-        },
-        { type: "separator" },
-        { role: "services" },
-        { type: "separator" },
-        { role: "hide" },
-        { role: "hideOthers" },
-        { role: "unhide" },
-        { type: "separator" },
-        {
-          label: "Close Selected App",
-          accelerator: "Cmd+Q",
-          click: () => send("menu:action", { action: "close-app" }),
-        },
-        {
-          label: `Quit ${appName}`,
-          click: quitApp,
-        },
-      ],
-    },
-    {
-      label: "File",
-      submenu: [
-        {
-          label: "New",
-          accelerator: "Cmd+N",
-          click: () => send("menu:action", { action: "new-context" }),
-        },
-        {
-          label: "New Agent Thread",
-          accelerator: "Cmd+J",
-          click: () => send("menu:action", { action: "new-thread" }),
-        },
-        { type: "separator" },
-        {
-          label: "New Tab",
-          accelerator: "Cmd+T",
-          click: () => send("menu:action", { action: "new-tab" }),
-        },
-        {
-          label: "Close Tab",
-          accelerator: "Cmd+W",
-          click: () => send("menu:action", { action: "close-tab" }),
-        },
-      ],
-    },
+    ...platformMenus,
     { role: "editMenu" },
-    {
-      label: "View",
-      submenu: viewSubmenu,
-    },
+    { label: "View", submenu: viewSubmenu },
     { role: "windowMenu" },
     {
       role: "help",

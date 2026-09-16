@@ -1,5 +1,9 @@
 import {
   CollaborationActorProofSchema,
+  CollaborationAiRequestSchema,
+  CollaborationAiRequestsResponseSchema,
+  CollaborationApprovalDecisionRequestSchema,
+  CollaborationCreateAiRequestSchema,
   CollaborationCapabilityModeSchema,
   CollaborationConnectionTicketRequestSchema,
   CollaborationDiscoveryResponseSchema,
@@ -17,6 +21,9 @@ import {
   CollaborationRoleSchema,
   CollaborationScopeSchema,
   CollaborationScopePreflightRequestSchema,
+  CollaborationTerminalActionSchema,
+  CollaborationTerminalFrameSchema,
+  CollaborationTerminalSchema,
   CollaborationUserStatePatchSchema,
 } from "@matrix-os/contracts";
 import { describe, expect, it } from "vitest";
@@ -274,6 +281,81 @@ describe("collaboration contracts", () => {
     }).success).toBe(false);
   });
 
+  it("keeps shared terminal actions incarnation, connection, and lease-epoch fenced", () => {
+    const incarnation = "terminal-incarnation-7";
+    expect(CollaborationTerminalActionSchema.parse({
+      type: "input",
+      clientRequestId: requestId,
+      incarnation,
+      connectionId: "connection_editor_1",
+      leaseEpoch: "9",
+      data: "pwd\n",
+    })).toMatchObject({ type: "input", leaseEpoch: "9" });
+    expect(CollaborationTerminalActionSchema.safeParse({
+      type: "input",
+      clientRequestId: requestId,
+      incarnation,
+      connectionId: "connection_editor_1",
+      data: "pwd\n",
+    }).success).toBe(false);
+    expect(CollaborationTerminalActionSchema.safeParse({
+      type: "resize",
+      clientRequestId: requestId,
+      incarnation,
+      connectionId: "connection_editor_1",
+      leaseEpoch: "9",
+      cols: 1001,
+      rows: 40,
+    }).success).toBe(false);
+    expect(CollaborationTerminalActionSchema.safeParse({
+      type: "paste",
+      clientRequestId: requestId,
+      incarnation,
+      connectionId: "connection_editor_1",
+      leaseEpoch: "9",
+      data: "x".repeat(32 * 1024 + 1),
+      actorId: "user_owner",
+    }).success).toBe(false);
+  });
+
+  it("projects bounded terminal identity, controller state, output, and recovery frames", () => {
+    const terminal = CollaborationTerminalSchema.parse({
+      id: "terminal_release",
+      scopeId,
+      incarnation: "terminal-incarnation-7",
+      executionGeneration: "4",
+      status: "active",
+      createdBy: { actorId: "user_owner", displayName: "Nima" },
+      controller: {
+        actor: { actorId: "user_editor", displayName: "Ada" },
+        leaseEpoch: "9",
+        expiresAt: "2026-09-07T12:00:30.000Z",
+      },
+      createdAt: now,
+    });
+    expect(terminal.controller?.actor.actorId).toBe("user_editor");
+    expect(CollaborationTerminalFrameSchema.parse({
+      version: 1,
+      type: "terminal.output",
+      scopeId,
+      resourceId: "terminal_release",
+      authorityGeneration: "1",
+      incarnation: "terminal-incarnation-7",
+      sequence: "12",
+      data: "hello\r\n",
+    }).type).toBe("terminal.output");
+    expect(CollaborationTerminalFrameSchema.safeParse({
+      version: 1,
+      type: "terminal.output",
+      scopeId,
+      resourceId: "terminal_release",
+      authorityGeneration: "1",
+      incarnation: "terminal-incarnation-7",
+      sequence: "12",
+      data: "x".repeat(64 * 1024 + 1),
+    }).success).toBe(false);
+  });
+
   it("keeps lifecycle operations conditional, owner-directed, and content bounded by scope", () => {
     expect(CollaborationLifecycleRequestSchema.parse({
       type: "export",
@@ -342,11 +424,80 @@ describe("collaboration contracts", () => {
       items: [{ resource: { scope, chat } }],
     });
 
+    const terminalScope = CollaborationScopeSchema.parse({
+      ...scope,
+      kind: "terminal",
+      resourceId: "terminal_release",
+      capabilities: {
+        read: true,
+        discuss: false,
+        manageMembers: false,
+        requestAi: false,
+        observeTerminal: true,
+        controlTerminal: true,
+        stopTerminal: false,
+      },
+    });
+    expect(CollaborationDiscoveryResponseSchema.parse({ items: [{
+      scopeId, runtimeId: "runtime_owner", ownerId: "user_owner", kind: "terminal",
+      authorityGeneration: 1, status: "accepted", resource: {
+        scope: terminalScope,
+        terminal: {
+          id: "terminal_release",
+          scopeId,
+          incarnation: `terminal-${"a".repeat(32)}`,
+          executionGeneration: "4",
+          status: "active",
+          createdBy: { actorId: "user_owner", displayName: "Nima" },
+          createdAt: now,
+        },
+      },
+    }] })).toMatchObject({ items: [{ kind: "terminal", resource: { terminal: { status: "active" } } }] });
+
     expect(CollaborationSharedChatMessageSchema.parse({
       id: "msg_one", chatId: "chat_release", sequence: "1", role: "user",
       state: "committed", purpose: "discussion",
       actor: { actorId: "user_editor", displayName: "Ada" },
       parts: [{ type: "text", text: "Ship it" }], createdAt: now,
     })).toMatchObject({ actor: { displayName: "Ada" }, purpose: "discussion" });
+  });
+
+  it("keeps shared AI admission and control actor-free and scope bounded", () => {
+    expect(CollaborationCreateAiRequestSchema.parse({
+      clientRequestId: requestId,
+      expectedRevision: "4",
+      text: "Run the release checks",
+      selection: { instanceId: "claude_shared", model: "claude-opus-4-6" },
+    })).toMatchObject({ text: "Run the release checks" });
+    expect(CollaborationCreateAiRequestSchema.safeParse({
+      clientRequestId: requestId,
+      expectedRevision: "4",
+      text: "Run the release checks",
+      selection: { instanceId: "claude_shared", model: "claude-opus-4-6" },
+      actorId: "user_editor",
+    }).success).toBe(false);
+    expect(CollaborationApprovalDecisionRequestSchema.parse({
+      clientRequestId: requestId,
+      expectedRevision: "5",
+      runId: "run_shared_1",
+      decision: "approve",
+    })).toMatchObject({ decision: "approve" });
+    expect(CollaborationAiRequestSchema.parse({
+      id: "qturn_shared_1",
+      chatId: "chat_release",
+      acceptedSequence: "1",
+      actor: { actorId: "user_editor", displayName: "Ada" },
+      state: "queued",
+      text: "Run the release checks",
+      selection: { instanceId: "claude_shared", model: "claude-opus-4-6" },
+      acceptedAt: now,
+      updatedAt: now,
+    })).toMatchObject({ state: "queued", actor: { displayName: "Ada" } });
+    expect(CollaborationAiRequestsResponseSchema.parse({
+      requests: [],
+      approvals: [],
+      defaultSelection: { instanceId: "claude_shared", model: "claude-opus-4-6" },
+      resourceRevision: "6",
+    })).toMatchObject({ resourceRevision: "6" });
   });
 });

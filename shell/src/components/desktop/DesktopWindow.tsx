@@ -216,7 +216,9 @@ export function DesktopWindow({
                 activeConversationTitle={chat.activeConversationTitle}
                 onRenameConversation={chat.renameConversation}
                 onSubmit={chat.submitMessage}
+              agentClient={chat.agentClient} queuedTurns={chat.queuedTurns} onCancelQueuedTurn={chat.cancelQueuedTurn}
                 onSubmitApproval={chat.submitApproval}
+              onSubmitInput={chat.submitInput}
                 providerSelection={chat.providerSelection}
                 composerDraftRequest={chat.composerDraftRequest}
                 onComposerDraftConsumed={chat.consumeComposerDraft}

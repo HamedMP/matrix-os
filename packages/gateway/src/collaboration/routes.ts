@@ -4,8 +4,13 @@ import {
   COLLABORATION_CLIENT_REQUEST_ID_HEADER,
   COLLABORATION_EXPECTED_MEMBER_REVISION_HEADER,
   COLLABORATION_EXPECTED_REVISION_HEADER,
+  COLLABORATION_POLICY_HEADER,
   CollaborationAcceptInvitationRequestSchema,
+  CollaborationAiRequestControlSchema,
+  CollaborationAiRequestsResponseSchema,
+  CollaborationApprovalDecisionRequestSchema,
   CollaborationActorIdSchema,
+  CollaborationCreateAiRequestSchema,
   CollaborationCreateDiscussionRequestSchema,
   CollaborationCreateInvitationRequestSchema,
   CollaborationCreateScopeRequestSchema,
@@ -13,21 +18,29 @@ import {
   CollaborationInvitationSchema,
   CollaborationLifecycleRequestSchema,
   CollaborationOperationSchema,
+  CollaborationProjectSchema,
+  CollaborationProjectConfirmRequestSchema,
+  CollaborationProjectInventorySchema,
+  CollaborationProjectTransitionSchema,
   CollaborationMemberPatchRequestSchema,
   CollaborationMemberSchema,
   CollaborationRevisionSchema,
   CollaborationRevokeRequestSchema,
+  CollaborationResourceIdSchema,
   CollaborationRuntimeIdSchema,
   CollaborationScopePreflightRequestSchema,
   CollaborationScopePreflightResponseSchema,
   CollaborationScopeSchema,
   CollaborationScopeExportSchema,
+  CollaborationTerminalActionSchema,
   CollaborationUserStatePatchSchema,
   CollaborationUserStateSchema,
 } from "@matrix-os/contracts";
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
+import { CollaborationChatCommandError } from "../chat/collaboration-commands.js";
+import { SharedChatQueueError } from "../chat/repository.js";
 import { CollaborationActorProofError, type CollaborationActorProofVerifier } from "./actor-proof.js";
 import {
   CollaborationAuthorizationError,
@@ -36,7 +49,24 @@ import {
   type CollaborationAuthority,
 } from "./authority.js";
 import type { CollaborationChatAdapter } from "./chat-adapter.js";
+import type { CollaborationChatExecutionAdapter } from "./chat-execution-adapter.js";
 import { CollaborationChatScopeError, type CollaborationChatScopeService } from "./chat-scope.js";
+import type { createCollaborationProjectLifecycle } from "./project-lifecycle.js";
+import {
+  CollaborationProjectScopeError,
+  type CollaborationProjectScopeService,
+} from "./project-scope.js";
+import { ProjectSharingError, type ProjectSharingService } from "./project-sharing.js";
+import { ProjectInventoryError } from "./project-inventory.js";
+import { ProjectTransitionError } from "./project-transition.js";
+import {
+  CollaborationTerminalAdapterError,
+  type CollaborationTerminalAdapter,
+} from "./terminal-adapter.js";
+import {
+  CollaborationTerminalDispatcherError,
+  type CollaborationTerminalDispatcher,
+} from "./terminal-dispatcher.js";
 import {
   CollaborationRepositoryError,
   type CollaborationMemberRecord,
@@ -60,9 +90,19 @@ export function createCollaborationRoutes(options: {
   repository: CollaborationRepository;
   chatScope: CollaborationChatScopeService;
   chatAdapter: CollaborationChatAdapter;
+  chatExecutionAdapter?: CollaborationChatExecutionAdapter;
+  terminalAdapter?: CollaborationTerminalAdapter;
+  terminalDispatcher?: CollaborationTerminalDispatcher;
+  projectLifecycle?: Pick<
+    ReturnType<typeof createCollaborationProjectLifecycle>,
+    "apply" | "getOperation"
+  >;
+  projectScope?: CollaborationProjectScopeService;
+  projectSharing?: ProjectSharingService;
   resolveParticipant(actorId: string): Promise<Participant>;
   onScopeCommitted?(scopeId: string): Promise<void>;
   onRevoked?(scopeId: string, actorId: string): void;
+  onRoleChanged?(scopeId: string, actorId: string, role: "editor" | "viewer"): void;
   now?: () => Date;
 }): Hono {
   const routes = new Hono();
@@ -82,17 +122,28 @@ export function createCollaborationRoutes(options: {
     const proof = await verifyHttp(options.verifier, c, bytes);
     requireOwnerCreationProof(proof, CollaborationRuntimeIdSchema.parse(c.req.param("runtimeId")), options.runtimeId);
     const input = CollaborationScopePreflightRequestSchema.parse(value);
-    if (input.kind !== "chat") return c.json(CollaborationScopePreflightResponseSchema.parse({
-      eligible: false,
-      reason: "unsupported",
-      resourceRevision: "0",
-    }));
-    const result = await options.chatScope.preflight({ ownerId: proof.ownerId, chatId: input.resourceId });
+    if (input.kind === "project") requireM4Policy(options.verifier, c, proof.actorId, proof.ownerId, true);
+    const result = input.kind === "chat"
+      ? await options.chatScope.preflight({ ownerId: proof.ownerId, chatId: input.resourceId })
+      : input.kind === "terminal"
+        ? await requireTerminalAdapter(options.terminalAdapter).preflight({
+            ownerId: proof.ownerId,
+            terminalId: input.resourceId,
+          })
+        : await requireProjectScope(options.projectScope).preflight({
+            ownerId: proof.ownerId,
+            projectId: input.resourceId,
+          });
     return c.json(CollaborationScopePreflightResponseSchema.parse({
       eligible: result.eligible,
-      ...(result.reason ? { reason: result.reason } : {}),
-      resourceRevision: String(result.chatRevision),
+      ...("reason" in result && result.reason ? { reason: result.reason } : {}),
+      resourceRevision: String("chatRevision" in result
+        ? result.chatRevision
+        : "projectRevision" in result ? result.projectRevision : result.resourceRevision),
       ...(result.confirmationToken ? { confirmationToken: result.confirmationToken } : {}),
+      ...(input.kind === "project" && "existingScopeId" in result && result.existingScopeId
+        ? { existingScopeId: result.existingScopeId, existingLifecycle: result.existingLifecycle }
+        : {}),
     }));
   }));
 
@@ -101,15 +152,37 @@ export function createCollaborationRoutes(options: {
     const proof = await verifyHttp(options.verifier, c, bytes);
     requireOwnerCreationProof(proof, CollaborationRuntimeIdSchema.parse(c.req.param("runtimeId")), options.runtimeId);
     const input = CollaborationCreateScopeRequestSchema.parse(value);
-    if (input.kind !== "chat") throw new CollaborationAuthorizationError("unavailable", "Scope kind is unavailable");
-    const scope = await options.chatScope.shareChat({
-      ownerId: proof.ownerId,
-      chatId: input.resourceId,
-      clientRequestId: input.clientRequestId,
-      payloadHash: digest(bytes),
-      expectedChatRevision: Number(input.expectedRevision),
-      confirmationToken: input.confirmationToken,
-    });
+    if (input.kind === "project") requireM4Policy(options.verifier, c, proof.actorId, proof.ownerId, true);
+    const scope = input.kind === "chat"
+      ? await options.chatScope.shareChat({
+          ownerId: proof.ownerId,
+          chatId: input.resourceId,
+          clientRequestId: input.clientRequestId,
+          payloadHash: digest(bytes),
+          expectedChatRevision: Number(input.expectedRevision),
+          confirmationToken: input.confirmationToken,
+        })
+      : input.kind === "terminal"
+        ? await requireTerminalAdapter(options.terminalAdapter).shareTerminal({
+            ownerId: proof.ownerId,
+            terminalId: input.resourceId,
+            clientRequestId: input.clientRequestId,
+            payloadHash: digest(bytes),
+            expectedResourceRevision: Number(input.expectedRevision),
+            confirmationToken: input.confirmationToken,
+          })
+        : await requireProjectScope(options.projectScope).prepare({
+            ownerId: proof.ownerId,
+            projectId: input.resourceId,
+            clientRequestId: input.clientRequestId,
+            payloadHash: digest(bytes),
+            expectedProjectRevision: Number(input.expectedRevision),
+            confirmationToken: input.confirmationToken,
+          });
+    if (scope.kind === "project") {
+      await notifyScope(options, scope.id);
+      return c.json(projectPreparationProjection(scope), 201);
+    }
     const context = await options.authority.authorize({
       scopeId: scope.id,
       actorId: proof.actorId,
@@ -224,6 +297,7 @@ export function createCollaborationRoutes(options: {
       expectedMemberRevision: Number(input.expectedMemberRevision),
       payloadHash: digest(bytes),
     });
+    options.onRoleChanged?.(scopeId, result.actorId, result.role);
     await notifyScope(options, scopeId);
     return c.json(result);
   }));
@@ -294,12 +368,174 @@ export function createCollaborationRoutes(options: {
     return c.json(await options.chatAdapter.appendDiscussion(context, input), 201);
   }));
 
+  routes.get("/api/collaboration/scopes/:scopeId/chat/requests", async (c) => handle(c, async () => {
+    const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
+    const adapter = requireExecutionAdapter(options.chatExecutionAdapter);
+    const context = await authorize(options, c, new Uint8Array(), "read", scopeId, "m2");
+    const requests = await adapter.list(context);
+    return c.json(CollaborationAiRequestsResponseSchema.parse({
+      requests,
+      ...await adapter.capability(context, requests),
+      resourceRevision: await adapter.resourceRevision(context),
+    }));
+  }));
+
+  routes.post("/api/collaboration/scopes/:scopeId/chat/requests", async (c) => handle(c, async () => {
+    const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
+    const adapter = requireExecutionAdapter(options.chatExecutionAdapter);
+    const { value, bytes } = await readJson(c);
+    const context = await authorize(options, c, bytes, "request_ai", scopeId, "m2");
+    return c.json(await adapter.submit(context, CollaborationCreateAiRequestSchema.parse(value)), 201);
+  }));
+
+  routes.post("/api/collaboration/scopes/:scopeId/chat/requests/:requestId/cancel", async (c) => handle(c, async () => {
+    const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
+    const requestId = CollaborationResourceIdSchema.parse(c.req.param("requestId"));
+    const adapter = requireExecutionAdapter(options.chatExecutionAdapter);
+    const { value, bytes } = await readJson(c);
+    const context = await authorize(options, c, bytes, "control_execution", scopeId, "m2");
+    return c.json(await adapter.cancel(context, requestId, CollaborationAiRequestControlSchema.parse(value)));
+  }));
+
+  routes.post("/api/collaboration/scopes/:scopeId/chat/requests/:requestId/retry", async (c) => handle(c, async () => {
+    const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
+    const requestId = CollaborationResourceIdSchema.parse(c.req.param("requestId"));
+    const adapter = requireExecutionAdapter(options.chatExecutionAdapter);
+    const { value, bytes } = await readJson(c);
+    const context = await authorize(options, c, bytes, "control_execution", scopeId, "m2");
+    return c.json(await adapter.retry(context, requestId, CollaborationAiRequestControlSchema.parse(value)), 201);
+  }));
+
+  routes.post("/api/collaboration/scopes/:scopeId/chat/approvals/:approvalId/decision", async (c) => handle(c, async () => {
+    const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
+    const approvalId = CollaborationResourceIdSchema.parse(c.req.param("approvalId"));
+    const adapter = requireExecutionAdapter(options.chatExecutionAdapter);
+    const { value, bytes } = await readJson(c);
+    const context = await authorize(options, c, bytes, "control_execution", scopeId, "m2");
+    return c.json(await adapter.decideApproval(
+      context,
+      approvalId,
+      CollaborationApprovalDecisionRequestSchema.parse(value),
+    ));
+  }));
+
+  routes.get("/api/collaboration/scopes/:scopeId/terminal", async (c) => handle(c, async () => {
+    const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
+    const context = await authorize(options, c, new Uint8Array(), "read", scopeId, "m3");
+    return c.json(await requireTerminalDispatcher(options.terminalDispatcher).read(context));
+  }));
+
+  routes.post("/api/collaboration/scopes/:scopeId/terminal/actions", async (c) => handle(c, async () => {
+    const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
+    const { value, bytes } = await readJson(c);
+    const action = CollaborationTerminalActionSchema.parse(value);
+    const context = await authorize(options, c, bytes, "control_execution", scopeId, "m3");
+    const policy = options.verifier.verifyPolicy(decodePolicy(c));
+    const connectionId = "connectionId" in action ? action.connectionId : `http_${context.actorId}`;
+    return c.json(await requireTerminalDispatcher(options.terminalDispatcher).dispatch({
+      scopeId,
+      actorId: context.actorId,
+      connectionId,
+      policy,
+      action,
+    }));
+  }));
+
+  routes.get("/api/collaboration/scopes/:scopeId/project", async (c) => handle(c, async () => {
+    const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
+    const context = await authorize(options, c, new Uint8Array(), "read", scopeId);
+    requireM4Policy(options.verifier, c, context.actorId, context.ownerId, false);
+    return c.json(CollaborationProjectSchema.parse(
+      await requireProjectSharing(options.projectSharing).read({ scopeId }),
+    ));
+  }));
+
+  routes.get("/api/collaboration/scopes/:scopeId/project/inventory", async (c) => handle(c, async () => {
+    const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
+    const proof = await verifyHttp(options.verifier, c, new Uint8Array());
+    requireOwnerLifecycleProof(proof, scopeId);
+    requireM4Policy(options.verifier, c, proof.actorId, proof.ownerId, false);
+    const inventory = await requireProjectSharing(options.projectSharing).preview({
+      scopeId,
+      actorId: proof.actorId,
+    });
+    const membershipEffects = await Promise.all(inventory.membershipEffects.map(async (effect) => ({
+      actor: await options.resolveParticipant(effect.actorId),
+      role: effect.role,
+      effect: effect.effect,
+      ...(effect.resourceKind ? { resourceKind: effect.resourceKind } : {}),
+      ...(effect.resourceId ? { resourceId: effect.resourceId } : {}),
+    })));
+    return c.json(CollaborationProjectInventorySchema.parse({
+      ...inventory,
+      projectRevision: String(inventory.projectRevision),
+      scopeRevision: String(inventory.scopeRevision),
+      membershipEffects,
+    }));
+  }));
+
+  routes.post("/api/collaboration/scopes/:scopeId/project/confirm", async (c) => handle(c, async () => {
+    const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
+    const { value, bytes } = await readJson(c);
+    const proof = await verifyHttp(options.verifier, c, bytes);
+    requireOwnerLifecycleProof(proof, scopeId);
+    requireM4Policy(options.verifier, c, proof.actorId, proof.ownerId, true);
+    const input = CollaborationProjectConfirmRequestSchema.parse(value);
+    const transition = await requireProjectSharing(options.projectSharing).confirm({
+      scopeId,
+      actorId: proof.actorId,
+      clientRequestId: input.clientRequestId,
+      payloadHash: digest(bytes),
+      expectedScopeRevision: Number(input.expectedScopeRevision),
+      expectedProjectRevision: Number(input.expectedProjectRevision),
+      inventoryHash: input.inventoryHash,
+      membershipHash: input.membershipHash,
+      inventoryToken: input.inventoryToken,
+    });
+    return c.json(CollaborationProjectTransitionSchema.parse({
+      id: transition.id,
+      scopeId: transition.scopeId,
+      status: transition.status,
+      inventoryRevision: String(transition.inventoryRevision),
+      createdAt: transition.createdAt,
+      updatedAt: transition.updatedAt,
+      ...(transition.errorCode && ["inventory_changed", "resource_blocked", "unavailable"].includes(transition.errorCode)
+        ? { errorCode: transition.errorCode }
+        : {}),
+    }), 202);
+  }));
+
   routes.post("/api/collaboration/scopes/:scopeId/lifecycle", async (c) => handle(c, async () => {
     const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
     const { value, bytes } = await readJson(c);
     const proof = await verifyHttp(options.verifier, c, bytes);
     requireOwnerLifecycleProof(proof, scopeId);
     const input = CollaborationLifecycleRequestSchema.parse(value);
+    const scope = await options.repository.getScope(scopeId);
+    if (!scope) throw new CollaborationRepositoryError("not_found", "Collaboration scope not found");
+    if (scope.kind === "project") {
+      if (input.type === "export" || input.type === "recover") {
+        throw new CollaborationAuthorizationError("unavailable", "Lifecycle action is unavailable");
+      }
+      const lifecycle = requireProjectLifecycle(options.projectLifecycle);
+      const common = {
+        scopeId,
+        actorId: proof.actorId,
+        clientRequestId: input.clientRequestId,
+        expectedRevision: Number(input.expectedRevision),
+        payloadHash: digest(bytes),
+      };
+      const result = input.type === "transfer"
+        ? await lifecycle.apply({
+          ...common,
+          type: "transfer",
+          successorActorId: input.successorActorId,
+          expectedMemberRevision: Number(input.expectedMemberRevision),
+        })
+        : await lifecycle.apply({ ...common, type: input.type });
+      await notifyScope(options, scopeId);
+      return c.json(CollaborationOperationSchema.parse(result));
+    }
     if (["transfer", "recover"].includes(input.type)) {
       throw new CollaborationAuthorizationError("unavailable", "Lifecycle action is unavailable");
     }
@@ -320,7 +556,11 @@ export function createCollaborationRoutes(options: {
     const operationId = CollaborationIdSchema.parse(c.req.param("operationId"));
     const proof = await verifyHttp(options.verifier, c, new Uint8Array());
     requireOwnerLifecycleProof(proof, scopeId);
-    const operation = await options.repository.getLifecycleOperation(scopeId, proof.actorId, operationId);
+    const projectOperation = options.projectLifecycle
+      ? await options.projectLifecycle.getOperation(scopeId, proof.actorId, operationId)
+      : null;
+    const operation = projectOperation
+      ?? await options.repository.getLifecycleOperation(scopeId, proof.actorId, operationId);
     if (!operation) throw new CollaborationRepositoryError("not_found", "Lifecycle operation not found");
     return c.json(CollaborationOperationSchema.parse(operation));
   }));
@@ -344,7 +584,9 @@ async function authorize(
   body: Uint8Array,
   action: CollaborationAction,
   scopeId: string,
+  requiredMilestone?: "m2" | "m3",
 ): Promise<AuthorizedCollaborationContext> {
+  const executionPolicy = requiredMilestone ? options.verifier.verifyPolicy(decodePolicy(c)) : undefined;
   const context = await options.verifier.verifyAndAuthorize({
     signedProof: decodeProof(c),
     method: method(c),
@@ -353,8 +595,15 @@ async function authorize(
     body,
     conditionalHeaders: optionalDeleteConditions(c),
     action,
+    ...(executionPolicy ? { executionPolicy } : {}),
   });
   if (context.scopeId !== scopeId) throw new CollaborationAuthorizationError("forbidden", "Scope access is required");
+  if (executionPolicy && (executionPolicy.milestone !== requiredMilestone || executionPolicy.mode === "off"
+    || (executionPolicy.mode === "internal"
+      && (!executionPolicy.cohort.includes(context.actorId)
+        || !executionPolicy.cohort.includes(context.ownerId))))) {
+    throw new CollaborationAuthorizationError("unavailable", "Shared execution is unavailable");
+  }
   return context;
 }
 
@@ -401,6 +650,64 @@ function decodeProof(c: Context): unknown {
   }
 }
 
+function decodePolicy(c: Context): unknown {
+  const encoded = c.req.header(COLLABORATION_POLICY_HEADER);
+  if (!encoded || encoded.length > 8_192 || !/^[A-Za-z0-9_-]+$/.test(encoded)) {
+    throw new CollaborationActorProofError("invalid_proof", "Collaboration policy is invalid");
+  }
+  try {
+    return JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"));
+  } catch (error: unknown) {
+    if (!(error instanceof SyntaxError)) {
+      console.warn("[collaboration-routes] policy decode failed", error instanceof Error ? error.name : "UnknownError");
+    }
+    throw new CollaborationActorProofError("invalid_proof", "Collaboration policy is invalid");
+  }
+}
+
+function requireExecutionAdapter(
+  adapter: CollaborationChatExecutionAdapter | undefined,
+): CollaborationChatExecutionAdapter {
+  if (!adapter) throw new CollaborationAuthorizationError("unavailable", "Shared execution is unavailable");
+  return adapter;
+}
+
+function requireTerminalAdapter(adapter: CollaborationTerminalAdapter | undefined): CollaborationTerminalAdapter {
+  if (!adapter) throw new CollaborationAuthorizationError("unavailable", "Shared terminal is unavailable");
+  return adapter;
+}
+
+function requireTerminalDispatcher(
+  dispatcher: CollaborationTerminalDispatcher | undefined,
+): CollaborationTerminalDispatcher {
+  if (!dispatcher) throw new CollaborationAuthorizationError("unavailable", "Shared terminal is unavailable");
+  return dispatcher;
+}
+
+function requireProjectScope(service: CollaborationProjectScopeService | undefined): CollaborationProjectScopeService {
+  if (!service) throw new CollaborationAuthorizationError("unavailable", "Shared project is unavailable");
+  return service;
+}
+
+function requireProjectSharing(service: ProjectSharingService | undefined): ProjectSharingService {
+  if (!service) throw new CollaborationAuthorizationError("unavailable", "Shared project is unavailable");
+  return service;
+}
+
+function requireM4Policy(
+  verifier: CollaborationActorProofVerifier,
+  c: Context,
+  actorId: string,
+  ownerId: string,
+  mutation: boolean,
+): void {
+  const policy = verifier.verifyPolicy(decodePolicy(c));
+  if (policy.milestone !== "m4" || policy.mode === "off" || (mutation && policy.mode === "read_only")
+    || (policy.mode === "internal" && (!policy.cohort.includes(actorId) || !policy.cohort.includes(ownerId)))) {
+    throw new CollaborationAuthorizationError("unavailable", "Whole-project collaboration is unavailable");
+  }
+}
+
 async function readJson(c: Context): Promise<{ value: unknown; bytes: Uint8Array }> {
   const bytes = new Uint8Array(await c.req.arrayBuffer());
   return { value: JSON.parse(new TextDecoder().decode(bytes)) as unknown, bytes };
@@ -426,8 +733,16 @@ function requireOwnerLifecycleProof(
   }
 }
 
+function requireProjectLifecycle(
+  lifecycle: Pick<ReturnType<typeof createCollaborationProjectLifecycle>, "apply" | "getOperation"> | undefined,
+) {
+  if (!lifecycle) throw new CollaborationAuthorizationError("unavailable", "Project lifecycle is unavailable");
+  return lifecycle;
+}
+
 function scopeProjection(scope: CollaborationScopeRecord, context: AuthorizedCollaborationContext) {
   const mutable = scope.lifecycle === "shared";
+  const terminal = scope.kind === "terminal";
   return CollaborationScopeSchema.parse({
     id: scope.id,
     ownerId: scope.ownerId,
@@ -445,6 +760,33 @@ function scopeProjection(scope: CollaborationScopeRecord, context: AuthorizedCol
       discuss: context.role !== "viewer" && mutable,
       manageMembers: context.role === "owner" && scope.membershipMode === "direct" && mutable,
       requestAi: false,
+      observeTerminal: terminal && mutable,
+      controlTerminal: terminal && context.role !== "viewer" && mutable,
+      stopTerminal: terminal && context.role === "owner" && mutable,
+    },
+  });
+}
+
+function projectPreparationProjection(scope: CollaborationScopeRecord) {
+  return CollaborationScopeSchema.parse({
+    id: scope.id,
+    ownerId: scope.ownerId,
+    kind: "project",
+    resourceId: scope.resourceId,
+    membershipMode: "direct",
+    lifecycle: scope.lifecycle,
+    revision: String(scope.revision),
+    authEpoch: String(scope.authEpoch),
+    authorityGeneration: String(scope.authorityGeneration),
+    role: "owner",
+    capabilities: {
+      read: false,
+      discuss: false,
+      manageMembers: true,
+      requestAi: false,
+      observeTerminal: false,
+      controlTerminal: false,
+      stopTerminal: false,
     },
   });
 }
@@ -563,11 +905,43 @@ async function handle(c: Context, operation: () => Promise<Response>): Promise<R
           : 503;
       return c.json({ error: "Collaboration state changed", code: error.code }, status);
     }
+    if (error instanceof CollaborationProjectScopeError) {
+      const status = error.code === "not_found" ? 404
+        : error.code === "conflict" || error.code === "invalid_confirmation" ? 409 : 503;
+      return c.json({ error: "Collaboration state changed", code: error.code }, status);
+    }
+    if (error instanceof ProjectSharingError || error instanceof ProjectInventoryError
+      || error instanceof ProjectTransitionError) {
+      const code = error instanceof ProjectInventoryError
+        ? error.code === "project_changed" ? "conflict" : error.code === "invalid_confirmation" ? "conflict" : "unavailable"
+        : error.code;
+      const status = code === "not_found" ? 404
+        : code === "forbidden" ? 403
+          : code === "capacity" ? 429
+            : code === "conflict" || code === "resource_blocked" ? 409 : 503;
+      return c.json({ error: "Collaboration state changed", code }, status);
+    }
+    if (error instanceof CollaborationTerminalAdapterError
+      || error instanceof CollaborationTerminalDispatcherError) {
+      const status = error.code === "not_found" ? 404
+        : error.code === "forbidden" ? 403
+          : error.code === "capacity" ? 429
+            : error.code === "conflict" || error.code === "invalid_confirmation"
+              || error.code === "held" || error.code === "stale_lease" ? 409 : 503;
+      return c.json({ error: "Collaboration state changed", code: error.code }, status);
+    }
     if (error instanceof CollaborationRepositoryError) {
       const status = error.code === "not_found" ? 404
         : error.code === "forbidden" ? 403
           : error.code === "capacity" ? 429
             : error.code === "expired" ? 410 : 409;
+      return c.json({ error: "Collaboration state changed", code: error.code }, status);
+    }
+    if (error instanceof SharedChatQueueError || error instanceof CollaborationChatCommandError) {
+      const status = error.code === "not_found" ? 404
+        : error.code === "forbidden" ? 403
+          : error.code === "capacity" ? 429
+            : error.code === "conflict" ? 409 : 503;
       return c.json({ error: "Collaboration state changed", code: error.code }, status);
     }
     console.warn("[collaboration-routes] request failed", error instanceof Error ? error.name : "UnknownError");

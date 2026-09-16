@@ -1,6 +1,7 @@
 import { spawnIsolatedProviderProcess } from "../coding-agents/provider-process-isolation.js";
 
 export interface CanonicalCliProcess {
+  stdin?: { write(chunk: string, callback?: (error?: Error | null) => void): boolean; end?(): void; on?(event: "error", listener: (error: Error) => void): void } | null;
   stdout: { on(event: "data", listener: (chunk: Buffer) => void): void };
   stderr: { on(event: "data", listener: (chunk: Buffer) => void): void };
   once(event: "exit", listener: (code: number | null, signal: NodeJS.Signals | null) => void): void;
@@ -11,7 +12,7 @@ export interface CanonicalCliProcess {
 export type CanonicalCliSpawn = (
   command: string,
   args: string[],
-  options: { cwd: string; env: Record<string, string>; stdio: ["ignore", "pipe", "pipe"] },
+  options: { cwd: string; env: Record<string, string>; stdio: ["ignore" | "pipe", "pipe", "pipe"] },
 ) => CanonicalCliProcess;
 
 const defaultSpawn: CanonicalCliSpawn = (command, args, options) => (
@@ -62,6 +63,7 @@ export async function runCanonicalCli(options: {
   maxStdoutBytes: number;
   maxStderrBytes?: number;
   spawnFn?: CanonicalCliSpawn;
+  onStart?: (write: (frame: string) => Promise<void>, end: () => void) => void;
   onStdout: (chunk: Buffer) => void;
   onStderr?: (chunk: Buffer) => void;
 }): Promise<void> {
@@ -76,7 +78,7 @@ export async function runCanonicalCli(options: {
       env: options.replaceEnv
         ? options.env
         : { ...process.env, ...options.env } as Record<string, string>,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: [options.onStart ? "pipe" : "ignore", "pipe", "pipe"],
     });
   } catch (error: unknown) {
     console.warn(
@@ -159,6 +161,21 @@ export async function runCanonicalCli(options: {
       if (code === 0 && signal === null) finish();
       else finish(new CanonicalCliError("exit", code, signal));
     });
+    if (options.onStart) {
+      child.stdin?.on?.("error", () => terminate(new CanonicalCliError("startup")));
+      const write = (frame: string) => new Promise<void>((resolveWrite, rejectWrite) => {
+        if (settled || terminationError || !child.stdin) { rejectWrite(new CanonicalCliError("startup")); return; }
+        const timer = setTimeout(() => rejectWrite(new CanonicalCliError("timeout")), 10_000);
+        timer.unref?.();
+        try {
+          child.stdin.write(frame, error => { clearTimeout(timer); if (error) rejectWrite(error); else resolveWrite(); });
+        } catch (error) { clearTimeout(timer); rejectWrite(error); }
+      });
+      try { options.onStart(write, () => child.stdin?.end?.()); } catch (error) {
+        console.warn("[chat-cli] Provider stdin setup failed", error instanceof Error ? error.name : "UnknownError");
+        terminate(new CanonicalCliError("startup"));
+      }
+    }
   });
 }
 

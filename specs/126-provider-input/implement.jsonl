@@ -1,0 +1,4 @@
+{"file":"specs/126-provider-input/prd.md","reason":"Approved issue requirements"}
+{"file":"specs/126-provider-input/design.md","reason":"Canonical contract and control design"}
+{"file":"specs/126-provider-input/implement.md","reason":"Execution and validation plan"}
+{"file":".specify/memory/constitution.md","reason":"Repository invariants"}

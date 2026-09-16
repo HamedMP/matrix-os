@@ -20,9 +20,10 @@ it("publishes accepted Claude Steer text and tool progress over HTTP before resu
     await vi.waitFor(() => expect(h.children).toHaveLength(2));
     expect(h.children[0]!.exited).toBe(true);
     expect(h.spawn.mock.calls[1]?.[1]).toEqual(expect.arrayContaining([
-      "--resume", "claude_stream_session", "--include-partial-messages", "--", STEER_REQUEST,
+      "--resume", "claude_stream_session", "--include-partial-messages", "--input-format", "stream-json",
     ]));
     const resumed = h.children[1]!;
+    expect(resumed.inputFrames).toContainEqual(expect.objectContaining({ type: "user", message: { role: "user", content: STEER_REQUEST } }));
     resumed.text(AFTER_STEER, true);
     resumed.tool();
     await vi.waitFor(() => {

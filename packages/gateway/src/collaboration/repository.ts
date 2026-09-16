@@ -271,6 +271,7 @@ export class CollaborationRepository {
       await requireAcceptedOwner(trx, input.scopeId, input.actorId);
       const replay = await readOperationReplay<InvitationMutationResult>(trx, input, "invitation.create");
       if (replay) return replay;
+      requireInvitationMutationLifecycle(scope);
       if (Number(scope.revision) !== input.expectedRevision) {
         throw new CollaborationRepositoryError("conflict", "Scope revision changed");
       }
@@ -347,6 +348,7 @@ export class CollaborationRepository {
         action: "invitation.created",
         recipients: [{ actorId: input.targetActorId, invitationId }],
         discoveryState: "invited",
+        publishDirectory: shouldPublishMembershipDirectory(scope),
         now,
       });
       return result;
@@ -381,6 +383,7 @@ export class CollaborationRepository {
         "invitation.accept",
       );
       if (replay) return { kind: "accepted" as const, value: replay };
+      requireInvitationMutationLifecycle(scope);
       if (Number(scope.revision) !== input.expectedRevision) {
         throw new CollaborationRepositoryError("conflict", "Scope revision changed");
       }
@@ -411,6 +414,7 @@ export class CollaborationRepository {
           action: "invitation.expired",
           recipients: [{ actorId: input.actorId, invitationId: input.invitationId }],
           discoveryState: "revoked",
+          publishDirectory: shouldPublishMembershipDirectory(scope),
           now,
           reasonCode: "expired",
         });
@@ -454,6 +458,7 @@ export class CollaborationRepository {
         action: "invitation.accepted",
         recipients: [{ actorId: input.actorId, invitationId: input.invitationId }],
         discoveryState: "accepted",
+        publishDirectory: shouldPublishMembershipDirectory(scope),
         now,
       });
       return { kind: "accepted" as const, value };
@@ -473,6 +478,7 @@ export class CollaborationRepository {
       await requireAcceptedOwner(trx, input.scopeId, input.actorId);
       const replay = await readOperationReplay<MemberMutationResult>(trx, input, "invitation.revoked");
       if (replay) return replay;
+      requireInvitationMutationLifecycle(scope);
       if (Number(scope.revision) !== input.expectedRevision) {
         throw new CollaborationRepositoryError("conflict", "Scope revision changed");
       }
@@ -515,6 +521,7 @@ export class CollaborationRepository {
         action: "invitation.revoked",
         recipients: [{ actorId: member.actor_id, invitationId: input.invitationId }],
         discoveryState: "revoked",
+        publishDirectory: shouldPublishMembershipDirectory(scope),
         now,
       });
       return result;
@@ -607,6 +614,9 @@ export class CollaborationRepository {
     const operationExpiresAt = new Date(nowDate.getTime() + OPERATION_RETENTION_MS).toISOString();
     return this.db.transaction().execute(async (trx) => {
       const scope = await lockDirectScope(trx, input.scopeId);
+      if (scope.lifecycle !== "shared") {
+        throw new CollaborationRepositoryError("conflict", "Scope membership is not mutable");
+      }
       const actingMember = await trx.selectFrom("collaboration_members")
         .select(["role", "status"])
         .where("scope_id", "=", input.scopeId)
@@ -671,11 +681,22 @@ export class CollaborationRepository {
           ...(member.invitation_id ? { invitationId: member.invitation_id } : {}),
         }],
         discoveryState: status === "revoked" ? "revoked" : "accepted",
+        publishDirectory: shouldPublishMembershipDirectory(scope),
         now,
       });
       return result;
     });
   }
+}
+
+function requireInvitationMutationLifecycle(scope: ScopeRow): void {
+  if (scope.lifecycle !== "private" && scope.lifecycle !== "shared") {
+    throw new CollaborationRepositoryError("conflict", "Scope membership is not mutable");
+  }
+}
+
+function shouldPublishMembershipDirectory(scope: ScopeRow): boolean {
+  return scope.kind !== "project" || scope.lifecycle === "shared" || scope.lifecycle === "archived";
 }
 
 function toScope(row: ScopeRow): CollaborationScopeRecord {

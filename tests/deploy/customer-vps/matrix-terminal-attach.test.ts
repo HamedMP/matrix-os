@@ -74,6 +74,17 @@ describe("matrix-terminal-attach", () => {
     await expect(readFile(capturePath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("allows a fresh home with no Zellij config and ignores inherited config-file overrides", async () => {
+    await writeFile(join(runtimeRoot, "generations", GENERATION, "zellij"),
+      '#!/bin/sh\nif [ -n "${ZELLIJ_CONFIG_FILE:-}" ] && [ ! -f "$ZELLIJ_CONFIG_FILE" ]; then exit 42; fi\nprintf "%s" "$ZELLIJ_CONFIG_DIR" > "$CAPTURE_PATH"\n');
+    await execFileAsync(process.execPath, [helperPath, RUNTIME_ID], {
+      env: { ...process.env, MATRIX_HOME: homePath, MATRIX_TERMINAL_RUNTIME_ROOT: runtimeRoot,
+        CAPTURE_PATH: capturePath, ZELLIJ_CONFIG_FILE: join(fixtureRoot, "missing.kdl") },
+      timeout: 5_000,
+    });
+    await expect(readFile(capturePath, "utf8")).resolves.toBe(join(homePath, "system", "zellij"));
+  });
+
   it("rejects descriptors containing caller-selected command or unit fields", async () => {
     const descriptorPath = join(homePath, "system", "terminal-runtimes", `${RUNTIME_ID}.json`);
     const descriptor = JSON.parse(await readFile(descriptorPath, "utf8"));

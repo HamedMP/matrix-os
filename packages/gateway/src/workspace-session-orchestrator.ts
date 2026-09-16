@@ -60,7 +60,7 @@ export interface StartWorkspaceSessionRequest {
   mode?: "default" | "plan" | "review" | "full_access";
   approvalPolicy?: "untrusted" | "on_request" | "on_failure" | "never";
   sandboxMode?: "read_only" | "workspace_write" | "full_access";
-  runtimePreference?: "zellij";
+  runtimePreference?: "zellij" | "background";
   adminSandboxOverride?: boolean;
   /** Gateway-internal execution root for a Root Chat. Never accepted by public routes. */
   workspaceRoot?: string;
@@ -265,6 +265,7 @@ export function createWorkspaceSessionOrchestrator(options: {
   cleanupRootChatWorkspace?: (sessionId: string) => Promise<void>;
   sweepRootChatWorkspaces?: (activeSessionIds: ReadonlySet<string>) => Promise<void>;
   rootWorkspaceSweepIntervalMs?: number;
+  onClose?: () => void;
 }) {
   const idGenerator = options.idGenerator ?? (() => `sess_${randomUUID()}`);
   const prepareRootWorkspace = options.prepareRootChatWorkspace
@@ -438,6 +439,7 @@ export function createWorkspaceSessionOrchestrator(options: {
         sandbox,
       });
       if (!result.ok) {
+        if (result.error.code === "runtime_ownership_retained") return result;
         if (sandbox && !reuseCodexScratch) await cleanupSessionScratch(sessionId);
         if (ownsRootWorkspace) await cleanupRootWorkspace?.(sessionId);
         return result;
@@ -482,6 +484,7 @@ export function createWorkspaceSessionOrchestrator(options: {
     },
 
     async close() {
+      options.onClose?.();
       if (sweepTimer) clearInterval(sweepTimer);
       await sweepTask;
     },

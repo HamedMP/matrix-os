@@ -593,7 +593,7 @@ describe('golden snapshot host scripts', () => {
     expect(buildScript).toContain('$STAGE_DIR/bin/matrix-golden-service-diagnostics');
   });
 
-  it('redacts and bounds captured service diagnostics with fake systemd output', async () => {
+  it.each(['matrix-gateway.service', 'matrix-terminal-runtime.service'])('redacts and bounds captured %s diagnostics with fake systemd output', async (unit) => {
     const root = await mkdtemp(join(tmpdir(), 'matrix-golden-diagnostics-'));
     const fakeBin = join(root, 'bin');
     await mkdir(fakeBin);
@@ -617,7 +617,7 @@ for i in $(seq 1 45); do printf 'line-%s DATABASE_URL=postgresql://matrix:${secr
     await chmod(join(fakeBin, 'journalctl'), 0o755);
     await chmod(serviceDiagnosticsPath, 0o755);
 
-    await execFileAsync(serviceDiagnosticsPath, ['matrix-gateway.service'], {
+    await execFileAsync(serviceDiagnosticsPath, [unit], {
       env: {
         ...process.env,
         MATRIX_GOLDEN_DIAGNOSTICS_ROOT: root,
@@ -633,6 +633,25 @@ for i in $(seq 1 45); do printf 'line-%s DATABASE_URL=postgresql://matrix:${secr
     expect(diagnostics.journalTail.every((line) => line.length <= 512)).toBe(true);
     expect(diagnostics.journalTail.join('\n')).toContain('[REDACTED]');
     expect(diagnostics.journalTail.join('\n')).not.toContain(secret);
+  });
+
+  it('attributes terminal pre-start failure to terminal runtime even when gateway is active', async () => {
+    const source = await readFile(activatePath, 'utf8');
+    const functions = source.slice(source.indexOf('capture_activation_service_failure()'), source.indexOf('if [ "$mode" = validation ]'));
+    const { stdout } = await execFileAsync('bash', ['-c', `
+      set -euo pipefail
+      systemctl() { [[ "$*" != *matrix-terminal-runtime.service* ]]; }
+      set_activation_stage() { echo "stage=$1"; }
+      capture_service_diagnostics() { echo "unit=$1"; }
+      ${functions}
+      capture_activation_service_failure
+    `]);
+    expect(stdout).toBe('stage=activation_terminal_runtime_ready\nunit=matrix-terminal-runtime.service\n');
+    const [builder, platform] = await Promise.all([
+      readFile('distro/customer-vps/golden-snapshot-builder-cloud-init.yaml', 'utf8'),
+      readFile('packages/platform/src/golden-snapshot-service.ts', 'utf8'),
+    ]);
+    for (const callback of [builder, platform]) expect(callback).toContain('|activation_terminal_runtime_ready|');
   });
 
   it('bakes all clean-boot prerequisites before certifying a fast snapshot', async () => {

@@ -35,6 +35,9 @@ export * from "#billing-public";
 export * from "#agent-runtime-config";
 export * from "#agent-thread-contracts";
 export * from "#canonical-chat";
+export * from "#chat-agents";
+export * from "#chat-agent-context";
+export * from "#chat-agent-recipe";
 export * from "#canonical-chat-api";
 export * from "#canonical-chat-content";
 export {
@@ -598,7 +601,7 @@ export type ApprovalDecisionRequest = z.infer<typeof ApprovalDecisionRequestSche
 
 const StructuredUserInputAnswersSchema = z.record(
   referenceId(128),
-  z.array(boundedText(400, 700)).min(1).max(4),
+  z.array(boundedText(400, 700)).min(1).max(11),
 ).refine((answers) => Object.keys(answers).length > 0 && Object.keys(answers).length <= 8, {
   message: "Structured answers must contain between one and eight questions",
 });

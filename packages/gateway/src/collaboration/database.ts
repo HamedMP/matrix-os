@@ -105,6 +105,80 @@ export interface CollaborationSchemaMigrationsTable {
   applied_at: Timestamp;
 }
 
+export interface CollaborationTransitionsTable {
+  id: string;
+  scope_id: string;
+  source_authority_runtime_id: string;
+  source_authority_generation: number;
+  destination_authority_runtime_id: string;
+  destination_authority_generation: number;
+  requested_by: string;
+  inventory_revision: number;
+  inventory_hash: string;
+  intended_membership_hash: string;
+  status: "prepared" | "staging" | "fenced" | "committing" | "active" | "failed" | "recovering";
+  source_fence_epoch: number | null;
+  staged_manifest_ref: string | null;
+  publication_marker: string | null;
+  retry_count: ColumnType<number, number | undefined, number>;
+  error_code: string | null;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+}
+
+export interface CollaborationResourceBindingsTable {
+  id: string;
+  project_scope_id: string;
+  resource_scope_id: string | null;
+  resource_kind: "file" | "chat" | "app" | "layout" | "terminal";
+  resource_id: string;
+  authority_runtime_id: string;
+  authority_generation: number;
+  revision: ColumnType<number, number | undefined, number>;
+  readiness: "ready" | "blocked";
+  blocker: string | null;
+  incarnation: string | null;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+}
+
+export interface CollaborationLayoutNodeRevisionsTable {
+  scope_id: string;
+  canvas_id: string;
+  node_id: string;
+  revision: ColumnType<number, number | undefined, number>;
+  updated_at: Timestamp;
+}
+
+export interface CollaborationProjectViewStatesTable {
+  scope_id: string;
+  canvas_id: string;
+  actor_id: string;
+  state: JsonValue;
+  revision: ColumnType<number, number | undefined, number>;
+  updated_at: Timestamp;
+}
+
+export interface ChatCollaborationCommandsTable {
+  id: string;
+  scope_id: string;
+  chat_id: string;
+  target_request_id: string | null;
+  run_id: string | null;
+  approval_id: string | null;
+  actor_id: string;
+  client_request_id: string;
+  kind: "approval" | "cancel" | "retry";
+  payload_hash: string;
+  expected_state_revision: number;
+  decision: string | null;
+  authorized_epoch: number;
+  state: "accepted" | "completed" | "failed" | "reconciling";
+  result_ref: JsonValue | null;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+}
+
 export interface CollaborationDatabase {
   collaboration_scopes: CollaborationScopesTable;
   collaboration_members: CollaborationMembersTable;
@@ -114,6 +188,11 @@ export interface CollaborationDatabase {
   collaboration_audit: CollaborationAuditTable;
   collaboration_directory_outbox: CollaborationDirectoryOutboxTable;
   collaboration_schema_migrations: CollaborationSchemaMigrationsTable;
+  collaboration_transitions: CollaborationTransitionsTable;
+  collaboration_resource_bindings: CollaborationResourceBindingsTable;
+  collaboration_layout_node_revisions: CollaborationLayoutNodeRevisionsTable;
+  collaboration_project_view_states: CollaborationProjectViewStatesTable;
+  chat_collaboration_commands: ChatCollaborationCommandsTable;
 }
 
 export type OwnerCollaborationDatabase = ChatDatabase & CollaborationDatabase;
@@ -126,6 +205,46 @@ export async function bootstrapCollaborationDatabase(
       version INTEGER PRIMARY KEY CHECK (version > 0),
       applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
+  `.execute(db);
+  await sql`
+    CREATE TABLE IF NOT EXISTS chat_collaboration_commands (
+      id UUID PRIMARY KEY,
+      scope_id UUID NOT NULL,
+      chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+      target_request_id TEXT,
+      run_id TEXT REFERENCES chat_runs(id) ON DELETE SET NULL,
+      approval_id TEXT,
+      actor_id TEXT NOT NULL CHECK (char_length(actor_id) BETWEEN 1 AND 128),
+      client_request_id UUID NOT NULL,
+      kind TEXT NOT NULL CHECK (kind IN ('approval', 'cancel', 'retry')),
+      payload_hash TEXT NOT NULL CHECK (payload_hash ~ '^[a-f0-9]{64}$'),
+      expected_state_revision BIGINT NOT NULL CHECK (expected_state_revision >= 0),
+      decision TEXT,
+      authorized_epoch BIGINT NOT NULL,
+      state TEXT NOT NULL CHECK (state IN ('accepted', 'completed', 'failed', 'reconciling')),
+      result_ref JSONB,
+      created_at TIMESTAMPTZ NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL,
+      UNIQUE (scope_id, actor_id, client_request_id, kind)
+    )
+  `.execute(db);
+  await sql`
+    ALTER TABLE chat_collaboration_commands
+    ADD COLUMN IF NOT EXISTS expected_state_revision BIGINT
+  `.execute(db);
+  await sql`
+    UPDATE chat_collaboration_commands
+    SET expected_state_revision = 0
+    WHERE expected_state_revision IS NULL
+  `.execute(db);
+  await sql`
+    ALTER TABLE chat_collaboration_commands
+    ALTER COLUMN expected_state_revision SET NOT NULL
+  `.execute(db);
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_collaboration_one_approval_decision
+    ON chat_collaboration_commands(scope_id, approval_id)
+    WHERE kind = 'approval'
   `.execute(db);
   await sql`
     CREATE TABLE IF NOT EXISTS collaboration_scopes (
@@ -146,7 +265,7 @@ export async function bootstrapCollaborationDatabase(
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       deleted_at TIMESTAMPTZ,
-      CHECK (
+      CONSTRAINT collaboration_transitions_distinct_authority_check CHECK (
         (membership_mode = 'direct' AND parent_scope_id IS NULL)
         OR (membership_mode = 'inherited' AND parent_scope_id IS NOT NULL)
       )
@@ -245,7 +364,40 @@ export async function bootstrapCollaborationDatabase(
       CHECK (jsonb_typeof(recipient_actor_ids) = 'array')
     )
   `.execute(db);
-
+  await sql`
+    CREATE TABLE IF NOT EXISTS collaboration_transitions (
+      id UUID PRIMARY KEY,
+      scope_id UUID NOT NULL REFERENCES collaboration_scopes(id) ON DELETE CASCADE,
+      source_authority_runtime_id TEXT NOT NULL CHECK (char_length(source_authority_runtime_id) BETWEEN 1 AND 128),
+      source_authority_generation BIGINT NOT NULL CHECK (source_authority_generation > 0),
+      destination_authority_runtime_id TEXT NOT NULL CHECK (char_length(destination_authority_runtime_id) BETWEEN 1 AND 128),
+      destination_authority_generation BIGINT NOT NULL CHECK (destination_authority_generation > 0),
+      requested_by TEXT NOT NULL CHECK (char_length(requested_by) BETWEEN 1 AND 128),
+      inventory_revision BIGINT NOT NULL CHECK (inventory_revision >= 0),
+      inventory_hash TEXT NOT NULL CHECK (inventory_hash ~ '^[a-f0-9]{64}$'),
+      intended_membership_hash TEXT NOT NULL CHECK (intended_membership_hash ~ '^[a-f0-9]{64}$'),
+      status TEXT NOT NULL CHECK (status IN (
+        'prepared', 'staging', 'fenced', 'committing', 'active', 'failed', 'recovering'
+      )),
+      source_fence_epoch BIGINT CHECK (source_fence_epoch > 0),
+      staged_manifest_ref TEXT CHECK (
+        staged_manifest_ref IS NULL OR staged_manifest_ref ~ '^manifest_[A-Za-z0-9_-]{1,128}$'
+      ),
+      publication_marker TEXT CHECK (
+        publication_marker IS NULL OR publication_marker ~ '^publication_[A-Za-z0-9_-]{1,128}$'
+      ),
+      retry_count INTEGER NOT NULL DEFAULT 0 CHECK (retry_count BETWEEN 0 AND 20),
+      error_code TEXT CHECK (error_code IS NULL OR error_code ~ '^[a-z][a-z0-9_]{0,79}$'),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      CHECK (
+        source_authority_runtime_id <> destination_authority_runtime_id
+        OR source_authority_generation <> destination_authority_generation
+      ),
+      CHECK (status NOT IN ('fenced', 'committing', 'active') OR source_fence_epoch IS NOT NULL),
+      CHECK (status <> 'active' OR publication_marker IS NOT NULL)
+    )
+  `.execute(db);
   await sql`ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS actor_id TEXT`.execute(db);
   await sql`ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS purpose TEXT`.execute(db);
   await sql`
@@ -293,8 +445,129 @@ export async function bootstrapCollaborationDatabase(
     ON collaboration_exports(expires_at)
   `.execute(db);
   await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_collaboration_transition_in_progress
+    ON collaboration_transitions(scope_id)
+    WHERE status IN ('prepared', 'staging', 'fenced', 'committing', 'recovering')
+  `.execute(db);
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_collaboration_transition_recovery
+    ON collaboration_transitions(status, updated_at)
+    WHERE status IN ('prepared', 'staging', 'fenced', 'committing', 'recovering')
+  `.execute(db);
+  await sql`
     INSERT INTO collaboration_schema_migrations (version)
     VALUES (1)
     ON CONFLICT (version) DO NOTHING
   `.execute(db);
+  await sql`
+    INSERT INTO collaboration_schema_migrations (version)
+    VALUES (2)
+    ON CONFLICT (version) DO NOTHING
+  `.execute(db);
+  await db.transaction().execute(async (trx) => {
+    await sql`
+      CREATE TABLE IF NOT EXISTS collaboration_resource_bindings (
+        id UUID PRIMARY KEY,
+        project_scope_id UUID NOT NULL REFERENCES collaboration_scopes(id) ON DELETE CASCADE,
+        resource_scope_id UUID UNIQUE REFERENCES collaboration_scopes(id) ON DELETE CASCADE,
+        resource_kind TEXT NOT NULL CHECK (resource_kind IN ('file', 'chat', 'app', 'layout', 'terminal')),
+        resource_id TEXT NOT NULL CHECK (char_length(resource_id) BETWEEN 1 AND 4096),
+        authority_runtime_id TEXT NOT NULL CHECK (char_length(authority_runtime_id) BETWEEN 1 AND 128),
+        authority_generation BIGINT NOT NULL CHECK (authority_generation > 0),
+        revision BIGINT NOT NULL DEFAULT 0 CHECK (revision >= 0),
+        readiness TEXT NOT NULL CHECK (readiness IN ('ready', 'blocked')),
+        blocker TEXT CHECK (blocker IS NULL OR blocker ~ '^[a-z][a-z0-9_]{0,79}$'),
+        incarnation TEXT CHECK (
+          incarnation IS NULL OR (incarnation ~ '^[A-Za-z0-9_-]+$' AND char_length(incarnation) <= 256)
+        ),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        UNIQUE (project_scope_id, resource_kind, resource_id),
+        CHECK ((readiness = 'ready' AND blocker IS NULL) OR (readiness = 'blocked' AND blocker IS NOT NULL)),
+        CHECK ((resource_kind IN ('chat', 'terminal')) = (resource_scope_id IS NOT NULL)),
+        CHECK (resource_kind <> 'terminal' OR incarnation IS NOT NULL)
+      )
+    `.execute(trx);
+    await sql`DROP INDEX IF EXISTS idx_collaboration_resource_lookup`.execute(trx);
+    await sql`
+      CREATE INDEX IF NOT EXISTS idx_collaboration_resource_readiness
+      ON collaboration_resource_bindings(project_scope_id, readiness)
+    `.execute(trx);
+    await sql`
+      INSERT INTO collaboration_schema_migrations (version)
+      VALUES (3)
+      ON CONFLICT (version) DO NOTHING
+    `.execute(trx);
+  });
+  await db.transaction().execute(async (trx) => {
+    await sql`
+      CREATE TABLE IF NOT EXISTS collaboration_layout_node_revisions (
+        scope_id UUID NOT NULL REFERENCES collaboration_scopes(id) ON DELETE CASCADE,
+        canvas_id TEXT NOT NULL CHECK (char_length(canvas_id) BETWEEN 1 AND 256),
+        node_id TEXT NOT NULL CHECK (char_length(node_id) BETWEEN 1 AND 128),
+        revision BIGINT NOT NULL DEFAULT 0 CHECK (revision >= 0),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (scope_id, canvas_id, node_id)
+      )
+    `.execute(trx);
+    await sql`
+      CREATE TABLE IF NOT EXISTS collaboration_project_view_states (
+        scope_id UUID NOT NULL REFERENCES collaboration_scopes(id) ON DELETE CASCADE,
+        canvas_id TEXT NOT NULL CHECK (char_length(canvas_id) BETWEEN 1 AND 256),
+        actor_id TEXT NOT NULL CHECK (char_length(actor_id) BETWEEN 1 AND 128),
+        state JSONB NOT NULL CHECK (jsonb_typeof(state) = 'object'),
+        revision BIGINT NOT NULL CHECK (revision > 0),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (scope_id, canvas_id, actor_id)
+      )
+    `.execute(trx);
+    await sql`
+      CREATE INDEX IF NOT EXISTS idx_collaboration_layout_nodes
+      ON collaboration_layout_node_revisions(scope_id, canvas_id)
+    `.execute(trx);
+    await sql`
+      CREATE INDEX IF NOT EXISTS idx_collaboration_project_view_actor
+      ON collaboration_project_view_states(actor_id, updated_at DESC)
+    `.execute(trx);
+    await sql`
+      INSERT INTO collaboration_schema_migrations (version)
+      VALUES (4)
+      ON CONFLICT (version) DO NOTHING
+    `.execute(trx);
+  });
+  await db.transaction().execute(async (trx) => {
+    await sql`
+      DO $$
+      DECLARE old_constraint TEXT;
+      BEGIN
+        SELECT conname INTO old_constraint
+        FROM pg_constraint
+        WHERE conrelid = 'collaboration_transitions'::regclass
+          AND contype = 'c'
+          AND pg_get_constraintdef(oid) LIKE '%source_authority_runtime_id <> destination_authority_runtime_id%'
+          AND pg_get_constraintdef(oid) NOT LIKE '%source_authority_generation <> destination_authority_generation%'
+        LIMIT 1;
+        IF old_constraint IS NOT NULL THEN
+          EXECUTE format('ALTER TABLE collaboration_transitions DROP CONSTRAINT %I', old_constraint);
+        END IF;
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conrelid = 'collaboration_transitions'::regclass
+            AND conname = 'collaboration_transitions_distinct_authority_check'
+        ) THEN
+          ALTER TABLE collaboration_transitions
+          ADD CONSTRAINT collaboration_transitions_distinct_authority_check
+          CHECK (
+            source_authority_runtime_id <> destination_authority_runtime_id
+            OR source_authority_generation <> destination_authority_generation
+          );
+        END IF;
+      END $$
+    `.execute(trx);
+    await sql`
+      INSERT INTO collaboration_schema_migrations (version)
+      VALUES (5)
+      ON CONFLICT (version) DO NOTHING
+    `.execute(trx);
+  });
 }

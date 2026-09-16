@@ -1,3 +1,4 @@
+import { CanonicalSubmitChatInputRequestSchema, type CanonicalSubmitChatInputRequest, type CanonicalChatInputSubmissionResponse } from "@matrix-os/contracts";
 import { randomUUID } from "node:crypto";
 import {
   CanonicalChatApiCursorSchema,
@@ -132,7 +133,7 @@ export function createCanonicalChatService(
   repository: ChatServiceRepository,
   options: {
     orchestrator?: Pick<CanonicalChatOrchestrator,
-      "admitTurn" | "enqueueQueuedTurn" | "steerRun" | "steerQueuedTurn" | "cancelRun" | "submitApproval" | "retryTurn" | "reconcileActiveRuns"
+      "admitTurn" | "enqueueQueuedTurn" | "steerRun" | "steerQueuedTurn" | "cancelRun" | "submitInput" | "submitApproval" | "retryTurn" | "reconcileActiveRuns"
     >;
     executionRoots?: Pick<ChatExecutionRootResolver, "resolve">;
     collaborationGuard?: {
@@ -441,6 +442,24 @@ export function createCanonicalChatService(
       ));
     },
 
+    async submitInput(
+      owner: ChatOwner,
+      chatId: string,
+      runId: string,
+      requestId: string,
+      input: CanonicalSubmitChatInputRequest,
+    ): Promise<CanonicalChatInputSubmissionResponse> {
+      await assertPersonalExecutionAllowed(owner, chatId);
+      if (!options.orchestrator) throw new Error("Canonical Chat orchestration unavailable");
+      return options.orchestrator.submitInput(
+        owner,
+        CanonicalChatIdSchema.parse(chatId),
+        runId,
+        requestId,
+        CanonicalSubmitChatInputRequestSchema.parse(input),
+      );
+    },
+
     async submitApproval(
       owner: ChatOwner,
       chatId: string,
@@ -503,6 +522,7 @@ export function createUnavailableCanonicalChatService(): CanonicalChatRouteServi
     steerQueuedTurn: unavailable,
     steerRun: unavailable,
     cancelRun: unavailable,
+    submitInput: unavailable,
     submitApproval: unavailable,
     retryTurn: unavailable,
   };

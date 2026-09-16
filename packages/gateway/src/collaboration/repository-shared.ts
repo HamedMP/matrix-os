@@ -137,6 +137,7 @@ export async function appendMutationRecords(
     action: string;
     recipients: Array<{ actorId: string; invitationId?: string }>;
     discoveryState: "invited" | "accepted" | "revoked" | "deleted";
+    publishDirectory?: boolean;
     now: string;
     reasonCode?: string;
   },
@@ -168,6 +169,7 @@ export async function appendMutationRecords(
     reason_code: input.reasonCode ?? null,
     created_at: input.now,
   }).execute();
+  if (input.publishDirectory === false) return;
   await trx.insertInto("collaboration_directory_outbox").values({
     event_id: eventId,
     scope_id: input.scope.id,

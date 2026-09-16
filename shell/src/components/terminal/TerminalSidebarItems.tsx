@@ -16,6 +16,7 @@ import {
   Trash2Icon,
 } from "@/lib/hugeicons";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
+import { ProjectSharing } from "@/components/projects/ProjectSharing";
 import { sessionAccent } from "./terminal-session-names";
 import { NewSessionMenu } from "./NewSessionMenu";
 import { TerminalAgentLogo } from "./TerminalAgentLogo";
@@ -741,8 +742,10 @@ export function ShellSessionGroup({
               </div>
             ) : projectGroups.map(([project, projectShells]) => (
               <div key={`${label}-${project}`} data-terminal-project-group={project} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                <div style={{ color: "var(--terminal-drawer-subtle)", fontSize: 11, fontWeight: 700, letterSpacing: "0.04em" }}>
-                  {project === "main" ? "Main" : project}
+                <div className="flex items-center justify-between gap-2"
+                  style={{ color: "var(--terminal-drawer-subtle)", fontSize: 11, fontWeight: 700, letterSpacing: "0.04em" }}>
+                  <span>{project === "main" ? "Main" : project}</span>
+                  {project !== "main" ? <ProjectSharing projectId={project} projectName={project} /> : null}
                 </div>
                 {(projectShells ?? []).map((shell) => (
                   <ShellCard

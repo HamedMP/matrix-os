@@ -10,6 +10,7 @@
     "build": "tsc"
   },
   "dependencies": {
+    "@matrix-os/contracts": "workspace:*",
     "@matrix-os/kernel": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "zod": "^4.4.3"

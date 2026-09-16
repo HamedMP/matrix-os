@@ -1,5 +1,10 @@
 import {
   CollaborationChatMessagesResponseSchema,
+  CollaborationAiRequestAcceptedResponseSchema,
+  CollaborationAiRequestsResponseSchema,
+  CollaborationCreateAiRequestSchema,
+  CollaborationAiRequestControlSchema,
+  CollaborationApprovalDecisionRequestSchema,
   CollaborationChatSchema,
   CollaborationConnectionTicketResponseSchema,
   CollaborationDiscoveryResponseSchema,
@@ -7,9 +12,15 @@ import {
   CollaborationIdSchema,
   CollaborationInvitationSchema,
   CollaborationPageRequestSchema,
+  CollaborationProjectSchema,
   CollaborationRevisionSchema,
+  CollaborationResourceIdSchema,
   CollaborationScopeSchema,
+  CollaborationTerminalActionResultSchema,
+  CollaborationTerminalActionSchema,
+  CollaborationTerminalSchema,
   CollaborationUserStateSchema,
+  type CollaborationTerminalAction,
 } from "@matrix-os/contracts/collaboration";
 import { z } from "zod/v4";
 import { HOSTED_GATEWAY_URL } from "@/lib/storage";
@@ -21,6 +32,9 @@ const AcceptedSchema = z.looseObject({
   actorId: z.string().min(1).max(128),
   status: z.literal("accepted"),
   revision: CollaborationRevisionSchema,
+});
+const AiControlResponseSchema = z.looseObject({
+  state: z.enum(["accepted", "completed", "failed", "reconciling"]),
 });
 
 function url(path: string): string {
@@ -61,6 +75,16 @@ export function fetchCollaborationScope(token: string, scopeId: string) {
   return fetchAuthenticatedJson({ url: url(`/api/collaboration/scopes/${id}`), token, schema: CollaborationScopeSchema, errorMessage: ERROR });
 }
 
+export function fetchSharedProject(token: string, scopeId: string) {
+  const id = CollaborationIdSchema.parse(scopeId);
+  return fetchAuthenticatedJson({
+    url: url(`/api/collaboration/scopes/${id}/project`),
+    token,
+    schema: CollaborationProjectSchema,
+    errorMessage: ERROR,
+  });
+}
+
 export function fetchSharedChat(token: string, scopeId: string) {
   const id = CollaborationIdSchema.parse(scopeId);
   return fetchAuthenticatedJson({ url: url(`/api/collaboration/scopes/${id}/chat`), token, schema: CollaborationChatSchema, errorMessage: ERROR });
@@ -94,6 +118,78 @@ export function postSharedChatDiscussion(
   });
 }
 
+export function fetchSharedAiRequests(token: string, scopeId: string) {
+  const id = CollaborationIdSchema.parse(scopeId);
+  return fetchAuthenticatedJson({
+    url: url(`/api/collaboration/scopes/${id}/chat/requests`), token,
+    schema: CollaborationAiRequestsResponseSchema, errorMessage: ERROR,
+  });
+}
+
+export function postSharedAiRequest(
+  token: string,
+  scopeId: string,
+  expectedRevision: string,
+  text: string,
+  selection: unknown,
+  clientRequestId: string,
+) {
+  const id = CollaborationIdSchema.parse(scopeId);
+  const body = CollaborationCreateAiRequestSchema.parse({
+    clientRequestId,
+    expectedRevision,
+    text,
+    selection,
+  });
+  return fetchAuthenticatedJson({
+    url: url(`/api/collaboration/scopes/${id}/chat/requests`), token,
+    schema: CollaborationAiRequestAcceptedResponseSchema, errorMessage: ERROR,
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+}
+
+export function controlSharedAiRequest(
+  token: string,
+  scopeId: string,
+  requestId: string,
+  action: "cancel" | "retry",
+  expectedRevision: string,
+  clientRequestId: string,
+) {
+  const id = CollaborationIdSchema.parse(scopeId);
+  const request = CollaborationResourceIdSchema.parse(requestId);
+  const body = CollaborationAiRequestControlSchema.parse({ clientRequestId, expectedRevision });
+  return fetchAuthenticatedJson({
+    url: url(`/api/collaboration/scopes/${id}/chat/requests/${request}/${action}`), token,
+    schema: AiControlResponseSchema, errorMessage: ERROR,
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+}
+
+export function decideSharedAiApproval(
+  token: string,
+  scopeId: string,
+  approvalId: string,
+  runId: string,
+  decision: "approve" | "approve_for_session" | "decline" | "cancel",
+  expectedRevision: string,
+  clientRequestId: string,
+) {
+  const id = CollaborationIdSchema.parse(scopeId);
+  const approval = CollaborationResourceIdSchema.parse(approvalId);
+  const body = CollaborationApprovalDecisionRequestSchema.parse({
+    clientRequestId,
+    expectedRevision,
+    runId,
+    decision,
+  });
+  return fetchAuthenticatedJson({
+    url: url(`/api/collaboration/scopes/${id}/chat/approvals/${approval}/decision`), token,
+    schema: AiControlResponseSchema, errorMessage: ERROR,
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+}
+
 export function updateSharedChatReadState(token: string, scopeId: string, readThroughSeq: string) {
   const id = CollaborationIdSchema.parse(scopeId);
   return fetchAuthenticatedJson({
@@ -107,6 +203,7 @@ export function fetchCollaborationEventTicket(
   token: string,
   scopeId: string,
   clientRequestId: string,
+  purpose: "events" | "terminal" = "events",
 ) {
   const id = CollaborationIdSchema.parse(scopeId);
   return fetchAuthenticatedJson({
@@ -118,8 +215,36 @@ export function fetchCollaborationEventTicket(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       clientRequestId: CollaborationIdSchema.parse(clientRequestId),
-      purpose: "events",
+      purpose,
     }),
+  });
+}
+
+export function fetchSharedTerminal(token: string, scopeId: string) {
+  const id = CollaborationIdSchema.parse(scopeId);
+  return fetchAuthenticatedJson({
+    url: url(`/api/collaboration/scopes/${id}/terminal`),
+    token,
+    schema: CollaborationTerminalSchema,
+    errorMessage: ERROR,
+  });
+}
+
+export function controlSharedTerminal(
+  token: string,
+  scopeId: string,
+  action: CollaborationTerminalAction,
+) {
+  const id = CollaborationIdSchema.parse(scopeId);
+  const body = CollaborationTerminalActionSchema.parse(action);
+  return fetchAuthenticatedJson({
+    url: url(`/api/collaboration/scopes/${id}/terminal/actions`),
+    token,
+    schema: CollaborationTerminalActionResultSchema,
+    errorMessage: ERROR,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
   });
 }
 
@@ -131,5 +256,14 @@ export function collaborationEventsUrl(scopeId: string, ticket: string, after = 
   target.protocol = target.protocol === "https:" ? "wss:" : "ws:";
   target.searchParams.set("ticket", parsedTicket);
   target.searchParams.set("after", cursor);
+  return target.toString();
+}
+
+export function collaborationTerminalUrl(scopeId: string, ticket: string): string {
+  const id = CollaborationIdSchema.parse(scopeId);
+  const parsedTicket = CollaborationConnectionTicketResponseSchema.shape.ticket.parse(ticket);
+  const target = new URL(`/ws/collaboration/scopes/${id}/terminal`, HOSTED_GATEWAY_URL);
+  target.protocol = target.protocol === "https:" ? "wss:" : "ws:";
+  target.searchParams.set("ticket", parsedTicket);
   return target.toString();
 }

@@ -1,4 +1,7 @@
+import { restoreBackgroundChatThread, createBackgroundChatProjection } from "./coding-agents/background-chat-recovery.js";
+import { createBackgroundAgentRuntime } from "./background-agent-runtime.js";
 import { bootstrapChatSharing, ChatSharing } from "./chat/sharing.js";
+import { withAsyncChatInput } from "./chat/async-input-adapter.js";
 import { createChatSharingRoutes } from "./chat/sharing-routes.js";
 import { readFileSync, existsSync, statSync, readdirSync } from "node:fs";
 import {
@@ -173,6 +176,8 @@ import {
   type CanonicalChatProviderAdapter,
 } from "./chat/provider-adapter.js";
 import { CanonicalChatOrchestrator } from "./chat/orchestrator.js";
+import { createCanonicalChatRuntime } from "./chat/runtime.js";
+import { createChatAgentRoutes } from "./chat/agent-routes.js";
 import {
   createCanonicalChatService,
   createUnavailableCanonicalChatService,
@@ -183,6 +188,8 @@ import {
   loadGatewayCollaborationConfig,
   type GatewayCollaborationRuntime,
 } from "./collaboration/wiring.js";
+import { createLegacyProjectPathAdmission } from "./collaboration/project-path-admission.js";
+import { createGatewayProjectInventorySource } from "./collaboration/project-inventory-source.js";
 import { createCodingAgentFileStore } from "./coding-agents/file-read.js";
 import { createCodingAgentSourceControlStore } from "./coding-agents/source-control.js";
 import { registerCodingAgentAttentionNotifications } from "./coding-agents/attention-notifications.js";
@@ -293,7 +300,7 @@ import {
   migrateSyncTables,
   type SyncDatabase,
 } from "./sync/sharing-db.js";
-import type { Kysely } from "kysely";
+import { sql, type Kysely } from "kysely";
 import { createSocialRoutes, insertPost, bootstrapSocialSchema, type SocialRoutes } from "./social.js";
 import { createActivityService } from "./social-activity.js";
 import { CanvasRepository } from "./canvas/repository.js";
@@ -347,6 +354,7 @@ import {
   createTerminalWindowLayoutRoutes,
   TerminalWindowLayoutStore,
   createTerminalWorkspaceRoutes,
+  createTerminalWorkspaceProjectAdmission,
   terminalRuntimeRefAccess,
   shellWsMessageDataToString,
 } from "./shell/index.js";
@@ -633,6 +641,8 @@ export async function createGateway(config: GatewayConfig) {
       return providerSettingsStore.getSnapshot();
     },
   };
+  const backgroundAgentRuntime = createBackgroundAgentRuntime({ homePath });
+  const backgroundChatProjection = createBackgroundChatProjection();
   if (codingAgentWorkspaceAgents.length > 0) {
     const codingAgentProjectManager = createProjectManager({ homePath });
     codexEventBridge = codexExecutable
@@ -642,7 +652,7 @@ export async function createGateway(config: GatewayConfig) {
         isRuntimeAlive: (sessionId: string) => {
           const sessions = codingAgentWorkspaceRuntime;
           return sessions
-            ? isWorkspaceSessionRuntimeAlive(sessionId, sessions, terminalWorkspaceRuntime)
+            ? isWorkspaceSessionRuntimeAlive(sessionId, sessions, terminalWorkspaceRuntime, backgroundAgentRuntime)
             : Promise.resolve(false);
         },
       })
@@ -652,12 +662,14 @@ export async function createGateway(config: GatewayConfig) {
       worktreeManager: codingAgentWorktreeManager,
       agentLauncher: agentCredentialLauncher,
       terminalRuntime: terminalWorkspaceRuntime,
+      backgroundRuntime: backgroundAgentRuntime,
     });
     codingAgentWorkspaceRuntime = createWorkspaceSessionOrchestrator({
       homePath,
       projectManager: codingAgentProjectManager,
       worktreeManager: codingAgentWorktreeManager,
       agentSessionManager: codingAgentSessionManager,
+      onClose: () => codingAgentSessionManager.shutdown(),
       agentSandbox: createAgentSandbox({ homePath }),
       sessionRuntimeBridge: workspaceSessionRuntimeBridge,
       eventPublisher: workspaceEventPublisher,
@@ -697,6 +709,12 @@ export async function createGateway(config: GatewayConfig) {
     ? createCodingAgentThreadStore({
       homePath,
       providers: codingAgentProviders,
+      restoreProviderThread: async (thread) => {
+        const restored = !!codingAgentWorkspaceRuntime && !!codexEventBridge
+          && await restoreBackgroundChatThread({ thread, sessions: codingAgentWorkspaceRuntime, events: codexEventBridge });
+        if (restored) backgroundChatProjection.track(thread);
+        return restored;
+      },
       relationValidator: createCodingAgentThreadRelationValidator({
         projectManager: codingAgentProjectManager,
         taskManager: createTaskManager({ homePath }),
@@ -706,7 +724,10 @@ export async function createGateway(config: GatewayConfig) {
         workspaceEventPublisher.publishCodingAgentThreadProjection(change),
     })
     : undefined;
-  if (codingAgentThreadStore) codexEventBridge?.attachThreadStore(codingAgentThreadStore);
+  if (codingAgentThreadStore) {
+    codexEventBridge?.attachThreadStore(codingAgentThreadStore);
+    backgroundChatProjection.attach(codingAgentThreadStore);
+  }
   const codingAgentProviderRegistry = createCodingAgentProviderRegistry({
     providers: codingAgentRegistryProviders,
     agentCredentials: agentCredentialService,
@@ -878,6 +899,7 @@ export async function createGateway(config: GatewayConfig) {
   let chatIdleReaper: ReturnType<typeof createChatIdleReaper> | null = null;
   let canonicalChatEventStream: ReturnType<typeof createGatewayChatEventStream> | null = null;
   let canonicalChatOrchestrator: CanonicalChatOrchestrator | null = null;
+  let canonicalChatRuntime: Awaited<ReturnType<typeof createCanonicalChatRuntime>> | null = null;
   let canonicalChatExecutionRoots: ChatExecutionRootResolver | null = null;
   let canonicalChatCollaborationGuard: ReturnType<typeof createDiscussionOnlyChatExecutionGuard> | null = null;
   let gatewayCollaboration: GatewayCollaborationRuntime | null = null;
@@ -914,6 +936,74 @@ export async function createGateway(config: GatewayConfig) {
           db: chatRepository.kysely as Kysely<any>,
           chatRepository,
           config: collaborationConfig,
+          projectSource: {
+            getProject: async (ownerId, projectId) => {
+              const result = await codingAgentProjectManager.getProjectById(
+                { type: "user", id: ownerId },
+                projectId,
+              );
+              if (!result.ok) return null;
+              const revision = Date.parse(result.project.updatedAt);
+              if (!Number.isSafeInteger(revision) || revision < 0) {
+                throw new Error("ProjectRevisionUnavailable");
+              }
+              return { id: result.project.id, ownerId, revision };
+            },
+          },
+        });
+        await gatewayCollaboration.enableSharedProject({
+          homePath,
+          inventorySource: createGatewayProjectInventorySource({
+            homePath,
+            projects: {
+              get: async (ownerId, projectId) => {
+                const result = await codingAgentProjectManager.getProjectById(
+                  { type: "user", id: ownerId },
+                  projectId,
+                );
+                return result.ok ? {
+                  id: result.project.id,
+                  ownerId,
+                  rootPath: result.project.localPath,
+                  updatedAt: result.project.updatedAt,
+                } : null;
+              },
+            },
+            chats: {
+              list: async (ownerId, projectId) => chatRepository!.kysely.selectFrom("chats")
+                .select(["id", "revision"])
+                .where("owner_type", "=", "personal")
+                .where("owner_id", "=", ownerId)
+                .where("project_id", "=", projectId)
+                .orderBy("id", "asc")
+                .limit(100_001)
+                .execute(),
+            },
+            canvases: {
+              getProjectCanvas: async (ownerId, projectId) => {
+                const rows = await canvasRepository!.kysely.selectFrom("canvas_documents")
+                  .select(["id", "revision", "nodes"])
+                  .where("owner_scope", "=", "personal")
+                  .where("owner_id", "=", ownerId)
+                  .where("scope_type", "=", "project")
+                  .where("deleted_at", "is", null)
+                  .where(sql<boolean>`scope_ref ->> 'projectId' = ${projectId}`)
+                  .limit(2)
+                  .execute();
+                if (rows.length > 1) throw new Error("ProjectCanvasConflict");
+                return rows[0] ?? null;
+              },
+            },
+            apps: {
+              get: async (appId) => {
+                const app = await appRegistry!.get(appId);
+                return app ? { id: app.slug, collaborationMode: "scoped" as const } : null;
+              },
+            },
+            sessions: {
+              list: () => terminalWorkspaceRuntime.listWorkspaces(),
+            },
+          }),
         });
       }
       canonicalChatEventStream = createGatewayChatEventStream({
@@ -1892,6 +1982,19 @@ export async function createGateway(config: GatewayConfig) {
   }));
   app.use("*", securityHeadersMiddleware());
   app.use("*", authMiddleware(process.env.MATRIX_AUTH_TOKEN));
+  const legacyProjectPathAdmission = gatewayCollaboration
+    ? createLegacyProjectPathAdmission({
+        homePath,
+        projectOperationAdmission: gatewayCollaboration.projectOperationAdmission,
+        listOwnerProjects: async (ownerType, ownerId) => {
+          const result = await codingAgentProjectManager.listManagedProjects({
+            visibility: "all",
+            ownerScope: { type: ownerType === "organization" ? "org" : "user", id: ownerId },
+          });
+          return result.projects.map((project) => ({ id: project.id, localPath: project.localPath }));
+        },
+      })
+    : undefined;
   app.route("/api/onboarding", createReadinessRoutes({ service: readinessService }));
   app.route("/api/onboarding", createToolPackRoutes({ service: toolPackService }));
   app.route("/api/agents", createAgentCredentialRoutes({ service: agentCredentialService }));
@@ -1905,6 +2008,16 @@ export async function createGateway(config: GatewayConfig) {
     files: codingAgentFileStore,
     sourceControl: codingAgentSourceControlStore,
     notificationPreferences: codingAgentNotificationPreferenceStore,
+    ...(gatewayCollaboration ? {
+      projectOperationAdmission: gatewayCollaboration.projectOperationAdmission,
+      resolveProjectId: async (principal, projectSlug) => {
+        const project = await codingAgentProjectManager.getProject(
+          projectSlug,
+          { type: "user", id: principal.userId },
+        );
+        return project.ok ? project.project.id : null;
+      },
+    } : {}),
   }));
   app.route("/api/integrations", createIntegrationCapabilityRoutes({
     service: integrationCapabilityService,
@@ -2033,12 +2146,21 @@ export async function createGateway(config: GatewayConfig) {
     savePolicy: (policy) => systemActivityPolicy.save(policy),
     readHistory: (query) => systemActivityHistory.list(query),
   }));
+  const terminalWorkspaceProjectAdmission = createTerminalWorkspaceProjectAdmission({
+    runtime: terminalWorkspaceRuntime,
+    ...(gatewayCollaboration ? {
+      projectOperationAdmission: gatewayCollaboration.projectOperationAdmission,
+    } : {}),
+  });
   app.route("/api/terminal", createTerminalWorkspaceRoutes({
     runtime: terminalWorkspaceRuntime,
     homePath,
     getPrincipal: (c) => requireRequestPrincipal(c),
     terminalOwnerIds: terminalRuntimeOwnerIds,
     chatTerminals: shellRouteDeps.chatTerminals,
+    ...(gatewayCollaboration ? {
+      projectOperationAdmission: gatewayCollaboration.projectOperationAdmission,
+    } : {}),
   }));
   app.route("/api/terminal", createShellRoutes(shellRouteDeps));
   app.route(
@@ -2651,8 +2773,12 @@ export async function createGateway(config: GatewayConfig) {
         && Number.isSafeInteger(rows) && rows >= 5 && rows <= 200;
       let stream: ReturnType<TerminalRuntimeSocketClient["attach"]> | null = null;
       let attachmentMode: "owner" | "observe" | null = null;
+      let principal: RequestPrincipal | null = null;
       let closed = false;
       const pending: unknown[] = [];
+      let frameAdmissionTail = Promise.resolve();
+      let pendingFrameAdmissions = 0;
+      let sendAuthorizedFrame: ((frame: z.infer<typeof TerminalTabClientFrameSchema>) => void) | null = null;
 
       return {
         onOpen(_event, ws) {
@@ -2663,7 +2789,7 @@ export async function createGateway(config: GatewayConfig) {
             return;
           }
           void (async () => {
-            const principal = requireRequestPrincipal(c);
+            principal = requireRequestPrincipal(c);
             const refAccess = await terminalRuntimeRefAccess(
               principal,
               terminalRuntimeOwnerIds,
@@ -2703,34 +2829,73 @@ export async function createGateway(config: GatewayConfig) {
             if (closed) return;
             const mode = clientResult.data === "cli" ? "hard" as const : "soft" as const;
             captureTerminalEvent("attach-request", { client: clientResult.data, mode });
-            stream = terminalWorkspaceRuntime.attach({
-              ref: refResult.data,
-              viewerId: `${clientResult.data}:${randomUUID()}`,
-              fromSeq,
-              mode,
-              size: { cols, rows },
-              onFrame: (frame) => {
-                if (closed) return;
-                try {
-                  ws.send(JSON.stringify(terminalFrameForInputCapabilities(frame, binaryInputRequested)));
-                }
-                catch (error) { logUnexpectedWsSendFailure("Terminal tab WebSocket send failed", error); }
-              },
-              onClose: () => { if (!closed) ws.close(); },
-              onError: (error) => {
-                captureTerminalEvent("runtime-error", { client: clientResult.data });
-                logBestEffortFailure("Terminal tab runtime stream failed", error);
+            stream = await terminalWorkspaceProjectAdmission.withWorkspace(
+              principal,
+              refResult.data.workspaceId,
+              "run",
+              async () => terminalWorkspaceRuntime.attach({
+                ref: refResult.data,
+                viewerId: `${clientResult.data}:${randomUUID()}`,
+                fromSeq,
+                mode,
+                size: { cols, rows },
+                onFrame: (frame) => {
+                  if (closed) return;
+                  try {
+                    ws.send(JSON.stringify(terminalFrameForInputCapabilities(frame, binaryInputRequested)));
+                  }
+                  catch (error) { logUnexpectedWsSendFailure("Terminal tab WebSocket send failed", error); }
+                },
+                onClose: () => { if (!closed) ws.close(); },
+                onError: (error) => {
+                  captureTerminalEvent("runtime-error", { client: clientResult.data });
+                  logBestEffortFailure("Terminal tab runtime stream failed", error);
+                  if (!closed) {
+                    try { ws.send(JSON.stringify({ type: "error", code: "runtime_unavailable", message: "Terminal unavailable" })); }
+                    catch (sendError) { logUnexpectedWsSendFailure("Terminal tab WebSocket error send failed", sendError); }
+                    ws.close();
+                  }
+                },
+              }),
+            );
+            sendAuthorizedFrame = (frame) => {
+              if (pendingFrameAdmissions >= 32) {
+                ws.close();
+                return;
+              }
+              pendingFrameAdmissions += 1;
+              frameAdmissionTail = frameAdmissionTail.then(async () => {
+                if (closed || !stream || !principal) return;
+                await terminalWorkspaceProjectAdmission.withWorkspace(
+                  principal,
+                  refResult.data.workspaceId,
+                  "run",
+                  async () => {
+                    if (!closed && stream) stream.send(frame);
+                  },
+                );
+              }).catch((error: unknown) => {
+                logBestEffortFailure("Terminal tab mutation authorization failed", error);
                 if (!closed) {
-                  try { ws.send(JSON.stringify({ type: "error", code: "runtime_unavailable", message: "Terminal unavailable" })); }
-                  catch (sendError) { logUnexpectedWsSendFailure("Terminal tab WebSocket error send failed", sendError); }
+                  try {
+                    ws.send(JSON.stringify({
+                      type: "error",
+                      code: "authorization_failed",
+                      message: "Terminal operation unavailable",
+                    }));
+                  } catch (sendError: unknown) {
+                    logUnexpectedWsSendFailure("Terminal tab WebSocket error send failed", sendError);
+                  }
                   ws.close();
                 }
-              },
-            });
+              }).finally(() => {
+                pendingFrameAdmissions -= 1;
+              });
+            };
             for (const frame of pending.splice(0)) {
               const parsedFrame = TerminalTabClientFrameSchema.parse(frame);
               if (terminalAttachmentAllowsFrame(attachmentMode, parsedFrame)) {
-                stream.send(parsedFrame);
+                sendAuthorizedFrame(parsedFrame);
               } else {
                 ws.send(JSON.stringify({ type: "error", code: "read_only", message: "Terminal is read-only" }));
               }
@@ -2762,7 +2927,7 @@ export async function createGateway(config: GatewayConfig) {
           }
           if (attachmentMode && !terminalAttachmentAllowsFrame(attachmentMode, parsed.data)) {
             ws.send(JSON.stringify({ type: "error", code: "read_only", message: "Terminal is read-only" }));
-          } else if (stream) stream.send(parsed.data);
+          } else if (sendAuthorizedFrame) sendAuthorizedFrame(parsed.data);
           else if (pending.length < 32) pending.push(parsed.data);
           else ws.close();
         },
@@ -2770,6 +2935,7 @@ export async function createGateway(config: GatewayConfig) {
           if (stream) captureTerminalEvent("close", { client: clientResult.success ? clientResult.data : undefined });
           closed = true;
           pending.splice(0);
+          sendAuthorizedFrame = null;
           stream?.close();
           stream = null;
         },
@@ -3014,7 +3180,13 @@ export async function createGateway(config: GatewayConfig) {
     }),
   );
 
-  registerFileRoutes(app, { homePath });
+  registerFileRoutes(app, {
+    homePath,
+    ...(legacyProjectPathAdmission ? {
+      getOwnerId: (c) => requireRequestPrincipal(c).userId,
+      projectPathAdmission: legacyProjectPathAdmission,
+    } : {}),
+  });
 
   const apiMessageBodyLimit = bodyLimit({ maxSize: 64 * 1024 });
   const bridgeQueryBodyLimit = bodyLimit({ maxSize: 1_000_000 });
@@ -3032,6 +3204,7 @@ export async function createGateway(config: GatewayConfig) {
   const clientErrorBodyLimit = bodyLimit({ maxSize: CLIENT_ERROR_LOG_BODY_LIMIT });
   app.route("/", createWorkspaceRoutes({
     homePath,
+    backgroundRuntime: backgroundAgentRuntime,
     terminalRuntime: terminalWorkspaceRuntime,
     agentLauncher: agentCredentialLauncher,
     sessionRuntimeBridge: workspaceSessionRuntimeBridge,
@@ -3040,6 +3213,9 @@ export async function createGateway(config: GatewayConfig) {
     reviewStore,
     codingAgentThreadStore,
     getOwnerScope: (c) => ({ type: "user", id: requireRequestPrincipal(c).userId }),
+    ...(gatewayCollaboration ? {
+      projectOperationAdmission: gatewayCollaboration.projectOperationAdmission,
+    } : {}),
     ...chatBoundWorkspaceRouteDeps,
   }));
   app.route("/api", createShellRoutes(shellRouteDeps));
@@ -3048,6 +3224,7 @@ export async function createGateway(config: GatewayConfig) {
   }));
   const workspaceStartupRecoveryController = createWorkspaceStartupRecovery({
     homePath,
+    backgroundRuntime: backgroundAgentRuntime,
     eventPublisher: workspaceEventPublisher,
     codingAgentThreadStore,
   });
@@ -4114,31 +4291,48 @@ export async function createGateway(config: GatewayConfig) {
         canonicalAdapters.push(createCanonicalCodingChatProviderAdapter({
           providerId: "codex",
           threads: codingAgentThreadStore,
+          nativeInputProvider: codingAgentProviders.find(provider => provider.providerId === "codex"),
         }));
       }
       if (codingAgentProviders.some((provider) => provider.providerId === "pi")) {
         canonicalAdapters.push(createCanonicalCodingChatProviderAdapter({
           providerId: "pi",
           threads: codingAgentThreadStore,
+          nativeInputProvider: codingAgentProviders.find(provider => provider.providerId === "pi"),
         }));
       }
       if (codingAgentProviders.some((provider) => provider.providerId === "opencode")) {
         canonicalAdapters.push(createCanonicalCodingChatProviderAdapter({
           providerId: "opencode",
           threads: codingAgentThreadStore,
+          nativeInputProvider: codingAgentProviders.find(provider => provider.providerId === "opencode"),
         }));
       }
     }
-    canonicalChatOrchestrator = new CanonicalChatOrchestrator({
+    canonicalChatRuntime = await createCanonicalChatRuntime({
+      homePath,
       repository: chatRepository,
       catalog: canonicalChatProviderCatalog,
-      adapters: new CanonicalChatProviderRegistry(canonicalAdapters),
+      adapters: new CanonicalChatProviderRegistry(canonicalAdapters.map(adapter => withAsyncChatInput(adapter))),
       executionRoots: canonicalChatExecutionRoots,
       ...(canonicalChatCollaborationGuard ? { collaborationGuard: canonicalChatCollaborationGuard } : {}),
+      ...(gatewayCollaboration ? {
+        onSharedEvent: (scopeId: string) => gatewayCollaboration!.eventRegistry.broadcastScope(scopeId),
+      } : {}),
       onAiGeneration: recordAiGeneration,
     });
+    canonicalChatOrchestrator = canonicalChatRuntime.orchestrator;
+    backgroundChatProjection.setReconciler(ownerId => canonicalChatOrchestrator?.reconcileActiveRuns({ type: "personal", ownerId }) ?? Promise.resolve());
     for (const ownerId of new Set(codingAgentOwnerIds)) {
       await canonicalChatOrchestrator.reconcileActiveRuns({ type: "personal", ownerId });
+    }
+    if (gatewayCollaboration) {
+      const sharedAi = await gatewayCollaboration.enableSharedAi({
+        orchestrator: canonicalChatOrchestrator,
+        homePath,
+        ...(fundedCredentialProvider ? { fundedCredentialProvider } : {}),
+      });
+      console.log(`[collaboration] shared AI ${sharedAi.available ? "ready" : "disabled"}`);
     }
     if (codingAgentThreadStore && codingAgentWorkspaceRuntime && codexEventBridge) {
       const repository = chatRepository;
@@ -4147,6 +4341,7 @@ export async function createGateway(config: GatewayConfig) {
       chatIdleReaper = createChatIdleReaper({
         sessions: codingAgentWorkspaceRuntime,
         terminalRuntime: terminalWorkspaceRuntime,
+        backgroundRuntime: backgroundAgentRuntime,
         threads: codingAgentThreadStore,
         control: createCodexControlClient({ homePath }),
         admitCanonical: (identity, reclaim) => withCanonicalIdleChat(repository.kysely, identity, reclaim),
@@ -4180,6 +4375,17 @@ export async function createGateway(config: GatewayConfig) {
           ...(canonicalChatCollaborationGuard ? { collaborationGuard: canonicalChatCollaborationGuard } : {}),
         })
       : createUnavailableCanonicalChatService(),
+    getPrincipal: (c) => requireRequestPrincipal(c),
+  }));
+  app.route("/", createChatAgentRoutes({
+    ...(canonicalChatRuntime && chatRepository ? {
+      agents: canonicalChatRuntime.agents,
+      context: canonicalChatRuntime.context,
+      recipes: canonicalChatRuntime.recipes,
+      repository: chatRepository,
+    } : {}),
+    enabled: () => true,
+    catalog: canonicalChatProviderCatalog,
     getPrincipal: (c) => requireRequestPrincipal(c),
   }));
   app.route("/", createChatProviderRoutes({
@@ -4238,6 +4444,9 @@ export async function createGateway(config: GatewayConfig) {
       service: canvasService,
       getUserId: (c) => requireRequestPrincipal(c).userId,
       broadcastCanvasUpdate: (canvasId, message) => canvasSubscriptionHub?.broadcast(canvasId, message),
+      ...(gatewayCollaboration ? {
+        projectOperationAdmission: gatewayCollaboration.projectOperationAdmission,
+      } : {}),
     }));
 
     app.get(
@@ -4525,10 +4734,14 @@ export async function createGateway(config: GatewayConfig) {
       watchdog.stop();
       proactiveHeartbeat.stop();
       cronService.stop();
-      await gatewayCollaboration?.shutdown();
-      gatewayCollaboration = null;
+      await backgroundChatProjection.close();
       await canonicalChatOrchestrator?.close();
       canonicalChatOrchestrator = null;
+      await canonicalChatRuntime?.agents.close();
+      canonicalChatRuntime = null;
+      await gatewayCollaboration?.shutdown();
+      gatewayCollaboration = null;
+      await backgroundAgentRuntime.close();
       await codingAgentWorkspaceRuntime?.close();
       codingAgentWorkspaceRuntime = null;
       workspaceSessionRuntimeBridge.close();

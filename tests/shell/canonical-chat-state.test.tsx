@@ -47,7 +47,7 @@ describe("canonical shell Chat state", () => {
     };
     let detailCalls = 0;
     const fetchFn = vi.fn(async (url: string) => {
-      if (url.endsWith("/api/chats/events?messageVersion=2")) return streamResponse;
+      if (url.endsWith("/api/chats/events?messageVersion=2&inputVersion=1")) return streamResponse;
       if (url.includes("/api/chats?")) return Response.json({ items: [runningRecord] });
       if (url.includes("/api/chats/chat_stream?")) {
         detailCalls += 1;
@@ -111,7 +111,7 @@ describe("canonical shell Chat state", () => {
     };
     let detailCalls = 0;
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-      if (url.endsWith("/api/chats/events?messageVersion=2")) return streamResponse;
+      if (url.endsWith("/api/chats/events?messageVersion=2&inputVersion=1")) return streamResponse;
       if (url.includes("/api/chats?")) return Response.json({ items: [runningRecord] });
       if (url.includes("/api/chats/chat_fallback?")) {
         detailCalls += 1;
@@ -296,7 +296,7 @@ describe("canonical shell Chat state", () => {
         const path = parsed.searchParams.get("path")!;
         return Response.json({ ok: true, path, size: 5 });
       }
-      if (url.endsWith("/api/chats/chat_a/turns?messageVersion=2")) {
+      if (url.endsWith("/api/chats/chat_a/turns?messageVersion=2&inputVersion=1")) {
         return Response.json({ error: "conflict" }, { status: 409 });
       }
       if (url.includes("/api/files/blob?") && init?.method === "DELETE") {
@@ -311,7 +311,7 @@ describe("canonical shell Chat state", () => {
     await waitFor(() => expect(result.current.sessionId).toBe("chat_a"));
     await waitFor(() => expect(result.current.messages[0]?.content).toBe("A"));
 
-    act(() => result.current.submitMessage("Review this", [{
+    act(() => void result.current.submitMessage("Review this", [{
       name: "notes.txt",
       type: "text/plain",
       data: "data:text/plain;base64,aGVsbG8=",
@@ -358,7 +358,7 @@ describe("canonical shell Chat state", () => {
     const { result } = renderHook(() => useCanonicalChatState());
     await waitFor(() => expect(result.current.messages[0]?.content).toBe("A"));
 
-    act(() => result.current.submitMessage("Review these", [{
+    act(() => void result.current.submitMessage("Review these", [{
       name: "first.txt", type: "text/plain", data: "data:text/plain;base64,aGVsbG8=",
     }, {
       name: "second.txt", type: "text/plain", data: "data:text/plain;base64,aGVsbG8=",
@@ -369,7 +369,7 @@ describe("canonical shell Chat state", () => {
 
     await waitFor(() => expect(fetchFn.mock.calls.filter(([, init]) =>
       (init as RequestInit | undefined)?.method === "DELETE")).toHaveLength(1));
-    expect(fetchFn.mock.calls.some(([url]) => String(url).endsWith("/api/chats/chat_a/turns?messageVersion=2"))).toBe(false);
+    expect(fetchFn.mock.calls.some(([url]) => String(url).endsWith("/api/chats/chat_a/turns?messageVersion=2&inputVersion=1"))).toBe(false);
   });
 
   it("keeps uploaded files when admission outcome is ambiguous", async () => {
@@ -383,7 +383,7 @@ describe("canonical shell Chat state", () => {
         const path = new URL(url).searchParams.get("path")!;
         return Response.json({ ok: true, path, size: 5 });
       }
-      if (url.endsWith("/api/chats/chat_a/turns?messageVersion=2")) {
+      if (url.endsWith("/api/chats/chat_a/turns?messageVersion=2&inputVersion=1")) {
         return Response.json({ error: "unavailable" }, { status: 503 });
       }
       if (url.includes("/api/files/blob?") && init?.method === "DELETE") {
@@ -396,7 +396,7 @@ describe("canonical shell Chat state", () => {
     const { result } = renderHook(() => useCanonicalChatState());
     await waitFor(() => expect(result.current.messages[0]?.content).toBe("A"));
 
-    act(() => result.current.submitMessage("Review this", [{
+    act(() => void result.current.submitMessage("Review this", [{
       name: "notes.txt", type: "text/plain", data: "data:text/plain;base64,aGVsbG8=",
     }], {
       instanceId: "pi_default", model: "anthropic:claude-sonnet-5",
