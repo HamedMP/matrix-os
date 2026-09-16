@@ -28,6 +28,12 @@ describe("scroll initialization for additional terminal viewers", () => {
       buffer: "alternate",
     },
     {
+      name: "disabled mouse reporting is not re-enabled",
+      chunks: ["\x1b[?1049h\x1b[?1000h\x1b[?1006h", "\x1b[?1000l\x1b[?1006l"],
+      mouseTrackingMode: "none",
+      buffer: "alternate",
+    },
+    {
       name: "a terminal reset clears earlier mouse reporting",
       chunks: ["\x1b[?1049h\x1b[?1000h\x1b[?1006h", "\x1bc"],
       mouseTrackingMode: "none",
@@ -79,7 +85,7 @@ describe("scroll initialization for additional terminal viewers", () => {
 
       // A cold/reconnected renderer applies its screen snapshot before joining
       // the existing PTY. A screen dump does not encode Zellij client modes.
-      await new Promise<void>((resolve) => second.write("\x1bc", resolve));
+      await new Promise<void>((resolve) => second.write("\x1bcrestored prompt", resolve));
       const secondFrames: string[] = [];
       await runtime.attach(ref, {
         viewerId: "electron-desktop",
@@ -95,8 +101,10 @@ describe("scroll initialization for additional terminal viewers", () => {
       expect(firstFrames).toHaveLength(firstFrameCount);
       expect(clipboardCommand).not.toHaveBeenCalled();
       expect(secondFrames.join("")).not.toContain("stale screen text");
+      // Entering the alternate screen after the snapshot would erase it.
+      // Scroll initialization must preserve the restored presentation.
+      expect(second.buffer.active.getLine(0)?.translateToString(true)).toBe("restored prompt");
       expect(second.modes.mouseTrackingMode).toBe(mouseTrackingMode);
-      expect(second.buffer.active.type).toBe(buffer);
     } finally {
       await runtime.shutdown();
       first.dispose();
