@@ -1,7 +1,7 @@
 import { CanonicalUpdateChatReadStateRequestSchema, type CanonicalUpdateChatReadStateRequest } from "@matrix-os/contracts";
 import { createChatAgentClient, type ChatAgentClient } from "@matrix-os/ui";
 import { CanonicalSubmitChatInputRequestSchema, CanonicalChatInputSubmissionResponseSchema, type CanonicalSubmitChatInputRequest, type CanonicalChatInputSubmissionResponse } from "@matrix-os/contracts";
-import { chatMessageVersionUrl } from "@matrix-os/contracts";
+import { chatMessageVersionUrl, chatReadStateVersionUrl } from "@matrix-os/contracts";
 import {
   CanonicalAcknowledgeChatCompletionRequestSchema,
   CanonicalCancelChatRunRequestSchema,
@@ -183,11 +183,17 @@ function withQuery(path: string, values: Record<string, string | number | undefi
 }
 
 export function createCanonicalChatClient(
-  api: Pick<ApiClient, "get" | "post" | "patch" | "delete">,
+  transport: Pick<ApiClient, "get" | "post" | "patch" | "delete">,
   options: {
     trackEvent?: (detail: DesktopAnalyticsDetail) => unknown;
   } = {},
 ): CanonicalChatClient {
+  const api: Pick<ApiClient, "get" | "post" | "patch" | "delete"> = {
+    get: (path, ...args) => transport.get(chatReadStateVersionUrl(path), ...args),
+    post: (path, ...args) => transport.post(chatReadStateVersionUrl(path), ...args),
+    patch: (path, ...args) => transport.patch(chatReadStateVersionUrl(path), ...args),
+    delete: (path, ...args) => transport.delete(chatReadStateVersionUrl(path), ...args),
+  };
   const trackEvent = options.trackEvent ?? trackDesktopEvent;
   return {
     agents: createChatAgentClient((path, method, body) => method === "GET" ? api.get(path)

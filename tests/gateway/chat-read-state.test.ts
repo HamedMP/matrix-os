@@ -84,10 +84,10 @@ describe("durable chat read state", () => {
       method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
     });
     expect((await patch({ type: "mark_unread" })).status).toBe(200);
-    const list = await app.request("/api/chats?unread=true");
+    const list = await app.request("/api/chats?unread=true&readStateVersion=1");
     expect((await list.json()).items[0].readState.unread).toBe(true);
     expect((await patch({ type: "mark_read", throughSeq: 0, baseVersion: 1 })).status).toBe(200);
-    expect((await (await app.request("/api/chats?unread=true")).json()).items).toEqual([]);
+    expect((await (await app.request("/api/chats?unread=true&readStateVersion=1")).json()).items).toEqual([]);
     expect((await patch({ type: "mark_read", throughSeq: -1, baseVersion: 1 })).status).toBe(400);
     expect((await patch({ type: "mark_unread", ownerId: "other" })).status).toBe(400);
     expect((await patch({ type: "mark_unread" }, "chat_missing")).status).toBe(404);

@@ -1,5 +1,5 @@
 import type { ChatAgentDraftRequest, StartAgentChat } from "@matrix-os/ui";
-import { chatMessageVersionUrl } from "@matrix-os/contracts";
+import { chatMessageVersionUrl, chatReadStateVersionUrl } from "@matrix-os/contracts";
 import { ChatAgentsWorkspace, ChatAgentsContent, useChatAgentsNavigation } from "@matrix-os/ui";
 import { ChatSharingButton } from "../chat/ChatSharingButton";
 import { ChatFileNavigationProvider } from "./ChatFileNavigation";
@@ -271,7 +271,7 @@ function WorkTabContent({
     if (hostedRuntime || !api || !visible) return null;
     return createCanonicalChatEventSource({
       openStream({ cursor, signal }) {
-        return api.openStream(chatMessageVersionUrl("/api/chats/events"), {
+        return api.openStream(chatReadStateVersionUrl(chatMessageVersionUrl("/api/chats/events")), {
           accept: "text/event-stream",
           signal,
           timeoutMs: 5 * 60 * 1000,

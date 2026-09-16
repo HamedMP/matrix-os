@@ -1,3 +1,4 @@
+import { ChatReadStateWireVersionSchema, projectChatReadStateResponse } from "@matrix-os/contracts";
 import { ChatInputWireVersionSchema, ChatMessageWireVersionSchema, projectChatMessageFrame } from "@matrix-os/contracts";
 import { CanonicalChatEventCursorSchema, type CanonicalChatTransportFrame } from "@matrix-os/contracts";
 import { type Context, type Hono } from "hono";
@@ -59,6 +60,8 @@ export function registerCanonicalChatEventHttpRoute(options: {
     if (!messageVersion.success) return context.json({ error: "Unsupported message version" }, 400);
     const inputVersion = ChatInputWireVersionSchema.safeParse(context.req.query("inputVersion"));
     if (!inputVersion.success) return context.json({ error: "Unsupported input version" }, 400);
+    const readStateVersion = ChatReadStateWireVersionSchema.safeParse(context.req.query("readStateVersion"));
+    if (!readStateVersion.success) return context.json({ error: "Unsupported read-state version" }, 400);
     const encoder = new TextEncoder();
     const principal = options.getPrincipal(context);
     const protocol = context.req.header("x-matrix-chat-protocol");
@@ -98,7 +101,10 @@ export function registerCanonicalChatEventHttpRoute(options: {
       send(frame: CanonicalChatTransportFrame): boolean {
         if (closed || (controller.desiredSize ?? 0) <= 0) return false;
         try {
-          controller.enqueue(encodeFrame(encoder, projectChatMessageFrame(frame, messageVersion.data, inputVersion.data)));
+          const projected = projectChatMessageFrame(frame, messageVersion.data, inputVersion.data);
+          controller.enqueue(encodeFrame(encoder, projected.type === "chat.content" ? {
+            ...projected, content: projectChatReadStateResponse(projected.content, readStateVersion.data),
+          } : projected));
           return true;
         } catch (error: unknown) {
           console.warn("[chat/event-http-route] Frame enqueue failed:", error instanceof Error ? error.name : "UnknownError");

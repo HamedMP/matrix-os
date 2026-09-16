@@ -94,14 +94,22 @@ export function useCanonicalChatState({ initialDraft }: { initialDraft?: string 
   const loadList = useCallback(async () => {
     const generation = ++listGeneration.current;
     try {
-      const page = await client.list(unreadOnly ? { unreadOnly: true } : undefined);
-      if (listGeneration.current !== generation) return;
-      setRecords((current) => page.items.map((record) => {
+      const loaded: CanonicalChatRecord[] = [];
+      let cursor: string | undefined;
+      // Match the Work Rail's bounded 1,000-chat window, following server cursors.
+      for (let pageIndex = 0; pageIndex < 10; pageIndex += 1) {
+        const page = await client.list({ ...(unreadOnly ? { unreadOnly: true } : {}), ...(cursor ? { cursor } : {}) });
+        if (listGeneration.current !== generation) return;
+        loaded.push(...page.items);
+        if (!page.nextCursor || page.nextCursor === cursor) break;
+        cursor = page.nextCursor;
+      }
+      setRecords((current) => loaded.map((record) => {
         const previous = current.find((item) => item.chat.id === record.chat.id);
         return previous ? mergeChatReadState(record, previous) : record;
       }));
       if (autoRestoreChatRef.current) {
-        setActiveChatId((current) => current ?? page.items[0]?.chat.id);
+        setActiveChatId((current) => current ?? loaded[0]?.chat.id);
       }
     } catch (error: unknown) {
       if (listGeneration.current !== generation) return;

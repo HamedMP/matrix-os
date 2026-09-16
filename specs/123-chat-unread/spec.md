@@ -36,7 +36,9 @@ in-progress turn's content revision. Responses merge only their read projection
 into newer client records. Existing history starts read during the one-time
 schema upgrade; repeat bootstraps preserve user choices.
 
-Unread filtering executes before cursor pagination. UI pages and subscriptions
+Clients opt into readStateVersion=1 on HTTP requests and SSE streams. Unversioned clients receive the released strict record shape without readState.
+
+Unread filtering executes before cursor pagination. Web and Electron lists follow up to ten 100-item pages. UI pages and subscriptions
 remain bounded by the existing list limits and event-source policies.
 
 ## Auth and validation
