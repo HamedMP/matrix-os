@@ -809,11 +809,11 @@ describe("ChatRepository", () => {
       });
     }
     const tiedAt = "2026-08-25T00:10:00.123456Z";
-    await sql`UPDATE chats SET updated_at = ${tiedAt}`.execute(repository.kysely);
+    await sql`UPDATE chats SET activity_at = ${tiedAt}`.execute(repository.kysely);
 
     const firstPage = await repository.list(owner, { limit: 2 });
     expect(firstPage.nextCursor).toEqual({
-      updatedAt: tiedAt,
+      activityAt: tiedAt,
       chatId: "chat_page_b",
     });
     const secondPage = await repository.list(owner, {

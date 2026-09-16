@@ -1,6 +1,6 @@
 "use client";
 
-import { generatedChatTitle } from "@matrix-os/ui";
+import { generatedChatTitle, mergeCanonicalChatRecord } from "@matrix-os/ui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   CanonicalChatMessagePart,
@@ -39,7 +39,7 @@ function conversationMeta(record: CanonicalChatRecord) {
     preview: record.chat.lastMessagePreview ?? record.chat.title,
     messageCount: record.chat.messageCount,
     createdAt: Date.parse(record.chat.createdAt),
-    updatedAt: Date.parse(record.chat.updatedAt),
+    updatedAt: Date.parse(record.chat.activityAt ?? record.chat.createdAt),
   };
 }
 
@@ -51,6 +51,8 @@ export function useCanonicalChatState({ initialDraft }: { initialDraft?: string 
   }), [client]);
   const { connected } = useSocket();
   const [records, setRecords] = useState<CanonicalChatRecord[]>([]);
+  const recordsRef = useRef(records);
+  useEffect(() => { recordsRef.current = records; }, [records]);
   const [activeChatId, setActiveChatId] = useState<string>();
   const [detail, setDetail] = useState<CanonicalChatDetailResponse | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -91,7 +93,10 @@ export function useCanonicalChatState({ initialDraft }: { initialDraft?: string 
   const loadList = useCallback(async () => {
     try {
       const page = await client.list();
-      setRecords(page.items);
+      setRecords((current) => page.items.map((record) => {
+        const known = current.find((item) => item.chat.id === record.chat.id);
+        return known ? mergeCanonicalChatRecord(known, record) : record;
+      }));
       if (autoRestoreChatRef.current) {
         setActiveChatId((current) => current ?? page.items[0]?.chat.id);
       }
@@ -104,7 +109,7 @@ export function useCanonicalChatState({ initialDraft }: { initialDraft?: string 
   const loadDetail = useCallback(async (chatId: string) => {
     const generation = ++detailRequestGeneration.current;
     try {
-      const value = await client.detail(chatId);
+      let value = await client.detail(chatId);
       if (activeChatIdRef.current !== chatId || detailRequestGeneration.current !== generation) {
         return null;
       }
@@ -113,6 +118,13 @@ export function useCanonicalChatState({ initialDraft }: { initialDraft?: string 
         && current.record.chat.revision > value.record.chat.revision) {
         return current;
       }
+      const known = recordsRef.current.find((item) => item.chat.id === chatId);
+      const merged = known ? mergeCanonicalChatRecord(known, value.record) : value.record;
+      const titleRecord = current?.record.chat.id === chatId
+        ? mergeCanonicalChatRecord(current.record, merged) : merged;
+      value = { ...value, record: { ...value.record, chat: { ...value.record.chat,
+        title: titleRecord.chat.title, titleVersion: titleRecord.chat.titleVersion,
+      } } };
       detailRef.current = value;
       setDetail(value);
       setSafeError(null);
@@ -163,7 +175,7 @@ export function useCanonicalChatState({ initialDraft }: { initialDraft?: string 
       if (event.type === "chat.changed" && event.content) {
         const record = event.content.content.record;
         setRecords((current) => current.map((item) => item.chat.id === record.chat.id
-          && item.chat.revision < record.chat.revision ? record : item));
+          ? mergeCanonicalChatRecord(item, record) : item));
         if (event.chatId === activeChatId) {
           const current = detailRef.current;
           const next = current ? applyCanonicalChatContent(current, event.content) : null;
@@ -483,34 +495,30 @@ export function useCanonicalChatState({ initialDraft }: { initialDraft?: string 
     }
     try {
       const updated = await client.updateTitle(chatId, {
-        baseRevision: current.chat.revision,
+        expectedTitleVersion: current.chat.titleVersion ?? 0,
         title,
       });
-      const projectTitle = (record: CanonicalChatRecord) => (
-        record.chat.revision > updated.chat.revision
-          ? record
-          : {
-            ...record,
-            chat: {
-              ...record.chat,
-              title: updated.chat.title,
-              revision: updated.chat.revision,
-              updatedAt: updated.chat.updatedAt,
-            },
-          }
-      );
-      setRecords((existing) => existing.map((record) => record.chat.id === chatId ? projectTitle(record) : record));
-      setDetail((existing) => existing?.record.chat.id === chatId
-        ? { ...existing, record: projectTitle(existing.record) }
-        : existing);
+      setRecords((existing) => existing.map((record) => record.chat.id === chatId
+        ? mergeCanonicalChatRecord(record, updated) : record));
+      const active = detailRef.current;
+      if (active?.record.chat.id === chatId) {
+        const merged = mergeCanonicalChatRecord(active.record, updated);
+        const next = { ...active, record: { ...active.record, chat: { ...active.record.chat,
+          title: merged.chat.title, titleVersion: merged.chat.titleVersion,
+        } } };
+        detailRef.current = next;
+        setDetail(next);
+      }
       setSafeError(null);
       return true;
     } catch (error: unknown) {
       console.warn("[canonical-chat] Shell rename failed:", error instanceof Error ? error.name : "UnknownError");
+      await loadList();
+      await loadDetail(chatId);
       setSafeError("The Chat could not be renamed. Try again.");
       return false;
     }
-  }, [client, records]);
+  }, [client, records, loadList, loadDetail]);
 
   const messages = detail ? projectCanonicalTranscript(detail) : [];
   if (safeError) {

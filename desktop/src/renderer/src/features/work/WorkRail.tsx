@@ -1,3 +1,4 @@
+import { mergeCanonicalChatRecord } from "@matrix-os/ui";
 import type { StartAgentChat } from "@matrix-os/ui";
 import { ChatAgentsRailSection, useChatAgentsNavigation } from "@matrix-os/ui";
 import { useUi } from "../../stores/ui";
@@ -33,11 +34,12 @@ function applyProjectedChats(
   if (!projections?.length) return records;
   return records.map((record) => {
     const projection = projections.find((candidate) => candidate.chatId === record.chat.id);
-    if (!projection || record.chat.revision >= projection.revision) return record;
-    return {
+    if (!projection || ((record.chat.titleVersion ?? 0) === (projection.titleVersion ?? 0)
+      && record.chat.revision >= projection.revision)) return record;
+    return mergeCanonicalChatRecord(record, {
       ...record,
-      chat: { ...record.chat, title: projection.title, revision: projection.revision },
-    };
+      chat: { ...record.chat, title: projection.title, titleVersion: projection.titleVersion, revision: projection.revision },
+    });
   });
 }
 
@@ -98,6 +100,8 @@ export function WorkRail({
   const onNewProjectChat = (project: Project) => { agentsNavigation?.close(); newProjectChat(project); };
   const onSelectChat = (...args: Parameters<typeof selectChat>) => { agentsNavigation?.close(); selectChat(...args); };
   const [records, setRecords] = useState<CanonicalChatRecord[]>([]);
+  const recordsRef = useRef(records);
+  useEffect(() => { recordsRef.current = records; }, [records]);
   const [status, setStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [sections, setSections] = useState<Record<SectionKey, boolean>>({
     pinned: true,
@@ -157,7 +161,10 @@ export function WorkRail({
         try {
           const loaded = await loadWorkRailChats(client);
           if (!current) return;
-          setRecords(applyProjectedChats(loaded, projectedChatTitlesRef.current));
+          setRecords((previous) => applyProjectedChats(loaded.map((record) => {
+            const known = previous.find((item) => item.chat.id === record.chat.id);
+            return known ? mergeCanonicalChatRecord(known, record) : record;
+          }), projectedChatTitlesRef.current));
           setStatus("ready");
         } catch (error: unknown) {
           if (!current) return;
@@ -200,7 +207,7 @@ export function WorkRail({
     void client.updateUserState(record.chat.id, { pinned }).then((updated) => {
       if (routeScopeRef.current.generation !== requestRouteGeneration) return;
       setRecords((current) => current.map((candidate) => (
-        candidate.chat.id === updated.chat.id ? updated : candidate
+        candidate.chat.id === updated.chat.id ? mergeCanonicalChatRecord(candidate, updated) : candidate
       )));
     }).catch((error: unknown) => {
       console.warn(
@@ -260,20 +267,30 @@ export function WorkRail({
     setRenameError(null);
     try {
       const updated = await client.updateTitle(record.chat.id, {
-        baseRevision: record.chat.revision,
+        expectedTitleVersion: record.chat.titleVersion ?? 0,
         title,
       });
       if (routeScopeRef.current.generation !== requestRouteGeneration) return;
       setRecords((current) => current.map((candidate) => (
-        candidate.chat.id === updated.chat.id ? updated : candidate
+        candidate.chat.id === updated.chat.id ? mergeCanonicalChatRecord(candidate, updated) : candidate
       )));
       setRenamingChatId(null);
-      onChatRenamed?.(updated, targetProject);
+      const known = recordsRef.current.find((candidate) => candidate.chat.id === updated.chat.id);
+      onChatRenamed?.(known ? mergeCanonicalChatRecord(known, updated) : updated, targetProject);
     } catch (error: unknown) {
       console.warn("[work] Chat rename failed:", error instanceof Error ? error.name : "UnknownError");
       if (routeScopeRef.current.generation === requestRouteGeneration) {
         setRenameError("The Chat could not be renamed. Try again.");
-        setRenamingChatId(null);
+        // Refresh the title version for an explicit retry while keeping the draft.
+        try {
+          const latest = await client.getDetail(record.chat.id, { limit: 1 });
+          if (routeScopeRef.current.generation === requestRouteGeneration) {
+            setRecords((current) => current.map((candidate) => candidate.chat.id === record.chat.id
+              ? mergeCanonicalChatRecord(candidate, latest.record) : candidate));
+          }
+        } catch (refreshError: unknown) {
+          console.warn("[work] Rename refresh failed:", refreshError instanceof Error ? refreshError.name : "UnknownError");
+        }
       }
     } finally {
       if (routeScopeRef.current.generation === requestRouteGeneration) setRenamePending(false);

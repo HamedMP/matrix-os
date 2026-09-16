@@ -198,7 +198,7 @@ describe("canonical Chat routes", () => {
     const response = await app.request("/api/chats/chat_route_test/title", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ baseRevision: 0, title: "  Release plan  " }),
+      body: JSON.stringify({ expectedTitleVersion: 0, title: "  Release plan  " }),
     });
 
     expect(response.status).toBe(200);
@@ -206,20 +206,20 @@ describe("canonical Chat routes", () => {
     expect(updateTitle).toHaveBeenCalledWith(
       { type: "personal", ownerId: "owner_1" },
       "chat_route_test",
-      { baseRevision: 0, title: "Release plan" },
+      { expectedTitleVersion: 0, title: "Release plan" },
     );
 
     const invalid = await app.request("/api/chats/chat_route_test/title", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ baseRevision: 0, title: "   " }),
+      body: JSON.stringify({ expectedTitleVersion: 0, title: "   " }),
     });
     expect(invalid.status).toBe(400);
 
     const oversized = await app.request("/api/chats/chat_route_test/title", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ baseRevision: 0, title: "x".repeat(5 * 1024) }),
+      body: JSON.stringify({ expectedTitleVersion: 0, title: "x".repeat(5 * 1024) }),
     });
     expect(oversized.status).toBe(413);
   });

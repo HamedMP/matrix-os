@@ -10,7 +10,7 @@ vi.mock("@/hooks/useSocket", () => ({ useSocket: () => ({ connected: true }) }))
 function record(id: string, title: string, revision = 0) {
   return {
     chat: {
-      id, ownerScope: { type: "personal" as const, ownerId: "owner_shell" }, title,
+      id, ownerScope: { type: "personal" as const, ownerId: "owner_shell" }, title, titleVersion: revision,
       lifecycle: "active" as const, attention: "none" as const, revision, messageCount: 1,
       currentSelection: { instanceId: "pi_default", model: "anthropic:claude-sonnet-5" },
       createdAt: "2026-08-31T00:00:00.000Z", updatedAt: "2026-08-31T00:00:00.000Z",
@@ -145,7 +145,7 @@ describe("canonical shell Chat state", () => {
         return Response.json(detail("chat_a", "Old title", 3));
       }
       if (url.endsWith("/api/chats/chat_a/title") && init?.method === "PATCH") {
-        expect(JSON.parse(String(init.body))).toEqual({ baseRevision: 3, title: "New title" });
+        expect(JSON.parse(String(init.body))).toEqual({ expectedTitleVersion: 3, title: "New title" });
         return Response.json(record("chat_a", "New title", 4));
       }
       throw new Error(`Unexpected request: ${url}`);
@@ -191,6 +191,36 @@ describe("canonical shell Chat state", () => {
 
     expect(result.current.conversations[0]?.title).toBe("Newest refresh");
     expect(result.current.activeConversationTitle).toBe("Newest refresh");
+  });
+
+  it("retains a successful title when an older list and detail finish after rename", async () => {
+    let staleList!: (response: Response) => void;
+    let staleDetail!: (response: Response) => void;
+    let listCalls = 0;
+    let detailCalls = 0;
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.includes("/api/chats?")) {
+        if (++listCalls === 1) return Response.json({ items: [record("chat_a", "Initial", 3)] });
+        return new Promise<Response>((resolve) => { staleList = resolve; });
+      }
+      if (url.includes("/api/chats/chat_a?")) {
+        if (++detailCalls === 1) return Response.json(detail("chat_a", "Initial", 3));
+        return new Promise<Response>((resolve) => { staleDetail = resolve; });
+      }
+      if (url.endsWith("/title") && init?.method === "PATCH") return Response.json(record("chat_a", "Manual", 4));
+      throw new Error("Unexpected request");
+    }));
+    const { result } = renderHook(() => useCanonicalChatState());
+    await waitFor(() => expect(result.current.activeConversationTitle).toBe("Initial"));
+    act(() => window.dispatchEvent(new Event("focus")));
+    await waitFor(() => expect(staleDetail).toBeDefined());
+    await act(async () => { await result.current.renameConversation!("chat_a", "Manual"); });
+    await act(async () => {
+      staleList(Response.json({ items: [record("chat_a", "Initial", 3)] }));
+      staleDetail(Response.json(detail("chat_a", "Initial", 3)));
+    });
+    expect(result.current.activeConversationTitle).toBe("Manual");
+    expect(result.current.conversations[0].title).toBe("Manual");
   });
 
   it("ignores an out-of-order detail response after switching chats", async () => {

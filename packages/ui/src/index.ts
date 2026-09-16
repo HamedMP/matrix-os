@@ -104,3 +104,5 @@ export { useFileDownload, type FileDownloadTransport, type FileDownloadControlle
 
 export { resolveRecipeHandoff } from "./chat-agents/recipe-handoff.js";
 export { generatedChatTitle } from "./generated-chat-title";
+
+export { mergeCanonicalChatRecord, compareCanonicalChatActivity } from "./canonical-chat-record";

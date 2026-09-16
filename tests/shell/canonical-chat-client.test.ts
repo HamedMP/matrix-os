@@ -79,7 +79,7 @@ describe("canonical shell Chat client", () => {
     const client = createCanonicalShellChatClient({ gatewayUrl: "https://matrix.test", fetchFn });
 
     await expect(client.updateTitle("chat_shell_test", {
-      baseRevision: 0,
+      expectedTitleVersion: 0,
       title: "Release plan",
     })).resolves.toEqual(renamed);
     expect(fetchFn).toHaveBeenCalledWith(
@@ -87,7 +87,7 @@ describe("canonical shell Chat client", () => {
       expect.objectContaining({
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ baseRevision: 0, title: "Release plan" }),
+        body: JSON.stringify({ expectedTitleVersion: 0, title: "Release plan" }),
         signal: expect.any(AbortSignal),
       }),
     );

@@ -1,3 +1,5 @@
+import { listChats, updateChat, renameChat } from "./metadata-repository.js";
+import type { CanonicalUpdateChatTitleRequest } from "@matrix-os/contracts";
 import { findChatTurnAdmission, findChatRetryAdmission } from "./admission-replay.js";
 import { admitChatTurn } from "./turn-admission-repository.js";
 import { randomUUID } from "node:crypto";
@@ -183,7 +185,7 @@ export interface SharedPendingApproval {
 }
 
 export interface ChatListCursor {
-  updatedAt: string;
+  activityAt: string;
   chatId: string;
 }
 
@@ -571,6 +573,9 @@ export class ChatRepository {
         create_request_id: input.clientRequestId,
         project_id: input.projectId ?? null,
         title: input.title,
+        title_version: 0,
+        title_manual: false,
+        activity_at: timestamp,
         lifecycle: "active",
         attention: "none",
         revision: 0,
@@ -594,6 +599,7 @@ export class ChatRepository {
         create_request_id: input.clientRequestId,
         project_id: input.projectId ?? null,
         title: candidate.chat.title,
+        title_manual: false,
         lifecycle: candidate.chat.lifecycle,
         attention: candidate.chat.attention,
         revision: 0,
@@ -824,80 +830,29 @@ export class ChatRepository {
     return parsedIds.filter((sessionId) => bound.has(sessionId));
   }
 
-  async list(ownerInput: ChatOwner, input: {
-    limit: number;
-    lifecycle?: "active" | "archived";
-    projectId?: string | null;
-    cursor?: ChatListCursor;
-  }): Promise<ChatListPage> {
-    const owner = validateOwner(ownerInput);
-    const limit = Math.max(1, Math.min(100, Math.trunc(input.limit)));
-    let query = this.kysely.selectFrom("chats").selectAll()
-      .select(sql<string>`to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`
-        .as("cursor_updated_at"))
-      .where("owner_type", "=", owner.type)
-      .where("owner_id", "=", owner.ownerId);
-    if (input.lifecycle) query = query.where("lifecycle", "=", input.lifecycle);
-    if (input.projectId !== undefined) query = input.projectId === null
-      ? query.where("project_id", "is", null)
-      : query.where("project_id", "=", requireSafeRef(input.projectId));
-    if (input.cursor) {
-      const cursorTimestamp = z.iso.datetime({ offset: true }).parse(input.cursor.updatedAt);
-      const cursorAt = sql<Date>`${cursorTimestamp}::timestamptz`;
-      const cursorChatId = CanonicalChatIdSchema.parse(input.cursor.chatId);
-      query = query.where(({ and, eb, or }) => or([
-        eb("updated_at", "<", cursorAt),
-        and([eb("updated_at", "=", cursorAt), eb("id", ">", cursorChatId)]),
-      ]));
-    }
-    const rows = await query.orderBy("updated_at", "desc").orderBy("id").limit(limit + 1).execute();
-    const pageRows = rows.slice(0, limit);
-    const items = await Promise.all(pageRows.map((row) => toPrincipalRecord(this.kysely, owner, row)));
-    const last = rows.length > limit ? pageRows.at(-1) : undefined;
+  private metadataDependencies() {
     return {
-      items,
-      ...(last ? { nextCursor: { updatedAt: last.cursor_updated_at, chatId: last.id } } : {}),
+      kysely: this.kysely,
+      transact: <T>(fn: (trx: Executor) => Promise<T>) => this.transact(fn),
+      selectOwnedChat, toPrincipalRecord, activeRunQuery,
+      appendOutbox: this.appendOutbox.bind(this),
     };
   }
 
-  async update(ownerInput: ChatOwner, chatId: string, input: UpdateChatInput): Promise<ChatRecord> {
-    const owner = validateOwner(ownerInput);
-    CanonicalChatIdSchema.parse(chatId);
-    if (input.currentSelection) CanonicalChatModelSelectionSchema.parse(input.currentSelection);
-    if (typeof input.projectId === "string") requireSafeRef(input.projectId);
+  async list(owner: ChatOwner, input: { limit: number; lifecycle?: "active" | "archived"; projectId?: string | null; cursor?: ChatListCursor }): Promise<ChatListPage> {
+    return listChats(this.metadataDependencies(), owner, input);
+  }
 
-    return this.transact(async (trx) => {
-      const current = await selectOwnedChat(trx, owner, chatId, true);
-      if (!current) throw new ChatNotFoundError(chatId);
-      if (Number(current.revision) !== input.baseRevision) {
-        throw new ChatConflictError(chatId, Number(current.revision));
-      }
-      const contextChanges = ("projectId" in input && (input.projectId ?? null) !== current.project_id)
-        || (input.lifecycle !== undefined && input.lifecycle !== current.lifecycle);
-      if (contextChanges && await activeRunQuery(trx, chatId)) throw new ChatBusyError(chatId);
-      if (current.bound_instance_id && input.currentSelection
-        && input.currentSelection.instanceId !== current.bound_instance_id) {
-        throw new ChatProviderInstanceLockedError(chatId);
-      }
+  async update(owner: ChatOwner, chatId: string, input: UpdateChatInput): Promise<ChatRecord> {
+    return updateChat(this.metadataDependencies(), owner, chatId, input);
+  }
 
-      const revision = input.baseRevision + 1;
-      const updated = await trx.updateTable("chats").set({
-        ...(input.title === undefined ? {} : { title: input.title }),
-        ...("projectId" in input ? { project_id: input.projectId ?? null } : {}),
-        ...(input.lifecycle === undefined ? {} : { lifecycle: input.lifecycle }),
-        ...(input.currentSelection === undefined ? {} : { current_selection: jsonb(input.currentSelection) }),
-        revision,
-        updated_at: sql`now()`,
-      }).where("id", "=", chatId)
-        .where("owner_type", "=", owner.type)
-        .where("owner_id", "=", owner.ownerId)
-        .where("revision", "=", input.baseRevision)
-        .returningAll().executeTakeFirst();
-      if (!updated) throw new ChatConflictError(chatId, Number(current.revision));
-      const record = await toPrincipalRecord(trx, owner, updated);
-      await this.appendOutbox(trx, owner, chatId, record.chat.revision, "chat.updated");
-      return record;
-    });
+  async rename(owner: ChatOwner, chatId: string, input: CanonicalUpdateChatTitleRequest): Promise<ChatRecord> {
+    return renameChat(this.metadataDependencies(), owner, chatId, input);
+  }
+
+  async updateGeneratedTitle(owner: ChatOwner, chatId: string, input: CanonicalUpdateChatTitleRequest): Promise<ChatRecord> {
+    return renameChat(this.metadataDependencies(), owner, chatId, input, true);
   }
 
   async updateUserState(

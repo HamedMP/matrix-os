@@ -1128,7 +1128,7 @@ describe("WorkRail", () => {
     fireEvent.keyDown(input, { key: "Enter" });
 
     await waitFor(() => expect(client.updateTitle).toHaveBeenCalledWith("chat_recent", {
-      baseRevision: 1,
+      expectedTitleVersion: 0,
       title: "Release plan",
     }));
     expect(await screen.findByRole("button", { name: "Release plan" })).toBeTruthy();
@@ -1149,7 +1149,7 @@ describe("WorkRail", () => {
     expect(client.updateTitle).not.toHaveBeenCalled();
   });
 
-  it("commits a changed title on blur and restores the old title after a safe failure", async () => {
+  it("commits a changed title on blur and retains the draft after a safe failure", async () => {
     const { client } = setup();
     const updateTitle = client.updateTitle as ReturnType<typeof vi.fn>;
     const recentChat = await screen.findByRole("button", { name: "Recent global" });
@@ -1167,7 +1167,7 @@ describe("WorkRail", () => {
     fireEvent.keyDown(retryInput, { key: "Enter" });
 
     expect((await screen.findByRole("alert")).textContent).toBe("The Chat could not be renamed. Try again.");
-    expect(screen.getByRole("button", { name: "Blurred title" })).toBeTruthy();
+    expect((screen.getByRole("textbox", { name: "Rename Blurred title" }) as HTMLInputElement).value).toBe("Will fail");
   });
 
   it("blocks a second row from entering rename while the first rename is pending", async () => {

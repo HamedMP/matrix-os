@@ -829,7 +829,7 @@ describe("WorkTab rail integration", () => {
 
     await waitFor(() => expect(useConnection.getState().api?.patch).toHaveBeenCalledWith(
       "/api/chats/chat_global/title",
-      { baseRevision: 1, title: "Release plan" },
+      { expectedTitleVersion: 0, title: "Release plan" },
     ));
     expect(await screen.findByRole("button", { name: "Rename Release plan" })).toBeTruthy();
   });

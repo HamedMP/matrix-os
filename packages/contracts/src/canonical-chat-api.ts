@@ -98,7 +98,7 @@ export const CanonicalUpdateChatProjectRequestSchema = z.object({
 }).strict();
 
 export const CanonicalUpdateChatTitleRequestSchema = z.object({
-  baseRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  expectedTitleVersion: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
   title: z.string().trim().min(1).max(160),
 }).strict();
 
