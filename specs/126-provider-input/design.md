@@ -24,12 +24,24 @@ Answers and idle-phase corrections share a bounded FIFO continuation queue.
 Outstanding questions remain answerable; a correction is not an answer or an
 approval. Each resumed phase has a distinct continuation identity.
 
-During a live native phase, steering still uses the provider's native path.
-A rejected or uncertain native delivery is never replayed automatically as a
-continuation. Owner, Chat, Run, and Turn identity must match, and cancellation
-rejects subsequent corrections and drains pending continuations.
+During a live native phase, steering uses the provider's native path only when
+there are no earlier queued continuations. A typed, definite non-delivery from a
+released native registry may enqueue a continuation; it must wait for the phase
+to finish successfully before resuming. An uncertain native delivery is never
+replayed automatically. Continuation steering reports success only after the
+resumed provider produces response evidence, rather than at in-memory enqueue.
+Cancellation rejects unconfirmed receipts and drains pending continuations.
+Owner, Chat, Run, and Turn identity must match.
 
-Regression coverage: `tests/gateway/chat-async-steer.test.ts`. Real Hermes
+The orchestrator serializes answers and steering for the same owner/Chat/Run
+before their first asynchronous admission read, through delivery confirmation.
+Independent Runs remain concurrent. Both the per-Run queue and total active
+control queues are bounded; idle entries are evicted and shutdown rejects queued
+controls. Cancellation bypasses that queue so it can interrupt pending delivery.
+
+Regression coverage: `tests/gateway/chat-async-steer.test.ts`,
+`tests/gateway/chat-ordered-controls.test.ts`, and
+`tests/gateway/chat-control-admission.test.ts`. Real Hermes
 validation must cover native phase completion with a question still pending,
 accepted steering, and a subsequent model response to that correction without
 resolving the question as answered.

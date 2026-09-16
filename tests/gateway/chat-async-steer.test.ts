@@ -1,16 +1,19 @@
+import { ChatSteerNotDeliveredError } from "../../packages/gateway/src/chat/steer-delivery-error.js";
 import { describe, expect, it, vi } from "vitest";
 import { withAsyncChatInput } from "../../packages/gateway/src/chat/async-input-adapter.js";
 import type { CanonicalChatProviderAdapter, CanonicalProviderRunEvent, CanonicalProviderRunInput } from "../../packages/gateway/src/chat/provider-adapter.js";
 
-function fixture(active = false) {
+function fixture(active = false, closing = false, delayReceipt = false) {
   const controller = new AbortController();
   const input = { owner: { type: "personal", ownerId: "owner_1" }, chatId: "chat_1", runId: "run_1", turnId: "turn_1", prompt: "Ask a source", parts: [{ type: "text", text: "Ask a source" }], selection: { instanceId: "hermes", model: "test" }, interactionMode: "default", permissionMode: "full_access", signal: controller.signal } as CanonicalProviderRunInput;
   let live = false;
   let release!: () => void;
   const hold = new Promise<void>(resolve => { release = resolve; });
   const question = { type: "input.requested" as const, requestId: "source", title: "Source", questions: [{ questionId: "source", header: "Source", question: "Which source?", allowOther: true, multiSelect: false, secret: false }] };
-  const steer = vi.fn(async () => { if (!live) throw new Error("Hermes steering Run unavailable"); });
+  const steer = vi.fn(async () => { if (!live) throw new ChatSteerNotDeliveredError(); });
   const resume = vi.fn(async function* (next: CanonicalProviderRunInput) {
+    if (delayReceipt) await hold;
+    if (controller.signal.aborted) return;
     yield { type: "assistant.delta", messageId: "reply", delta: next.prompt } as const;
     yield { type: "run.completed", outcome: "completed" } as const;
   });
@@ -21,7 +24,8 @@ function fixture(active = false) {
       try {
         yield { type: "state.updated", state: { sessionId: "same_session" } };
         yield question;
-        if (active) await hold;
+        if (closing) live = false;
+        if (active || closing) await hold;
         yield { type: "run.completed", outcome: "completed" };
       } finally { live = false; }
     },
@@ -87,6 +91,56 @@ describe("steering between asynchronous question phases", () => {
       expect(new Set(phases.map(next => next.continuationId)).size).toBe(3);
       expect(f.events.filter(e => e.type === "input.resolved")).toHaveLength(1);
       expect(f.events.at(-1)).toMatchObject({ type: "run.completed", outcome: "completed" });
+    } finally { await f.cleanup(); }
+  });
+
+  it("does not let native steering overtake an answer queued during a live phase", async () => {
+    const f = fixture(true);
+    try {
+      await vi.waitFor(() => expect(f.events.some(e => e.type === "input.requested")).toBe(true));
+      await f.adapter.submitInput!({ owner: f.input.owner, chatId: f.input.chatId, runId: f.input.runId, requestId: "source", clientRequestId: "req_answer", structuredAnswers: { source: ["Linear"] } });
+      const sent = f.adapter.steer!(f.correction);
+      expect(f.steer).not.toHaveBeenCalled();
+      f.release(); await sent; await f.finished;
+      expect(f.resume.mock.calls.map(([next]) => next.prompt)).toEqual([
+        expect.stringContaining("answers to your earlier asynchronous questions"),
+        expect.stringContaining("use linear instead"),
+      ]);
+    } finally { await f.cleanup(); }
+  });
+
+  it("waits for native delivery before reporting a correction accepted", async () => {
+    const f = fixture(false, false, true);
+    try {
+      await f.idle();
+      let accepted = false;
+      const sent = f.adapter.steer!(f.correction).then(() => { accepted = true; });
+      await vi.waitFor(() => expect(f.resume).toHaveBeenCalledTimes(1));
+      expect(accepted).toBe(false);
+      f.release(); await sent;
+      expect(accepted).toBe(true);
+    } finally { await f.cleanup(); }
+  });
+
+  it("rejects an unconfirmed correction on cancellation rather than reporting acceptance", async () => {
+    const f = fixture(false, false, true);
+    await f.idle();
+    const sent = f.adapter.steer!(f.correction);
+    const rejected = expect(sent).rejects.toThrow();
+    await vi.waitFor(() => expect(f.resume).toHaveBeenCalledTimes(1));
+    await f.cleanup(); await rejected;
+  });
+
+  it("recovers a definite non-delivery during native cleanup before its terminal event", async () => {
+    const f = fixture(false, true);
+    try {
+      await f.idle();
+      const sent = f.adapter.steer!(f.correction);
+      // Let native.steer reject while the completed phase has not yielded its terminal event.
+      await vi.waitFor(() => expect(f.steer).toHaveBeenCalledTimes(1));
+      expect(f.resume).not.toHaveBeenCalled();
+      f.release(); await sent;
+      expect(f.resume).toHaveBeenCalledTimes(1);
     } finally { await f.cleanup(); }
   });
 

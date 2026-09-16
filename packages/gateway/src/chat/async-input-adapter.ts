@@ -1,3 +1,4 @@
+import { ChatSteerNotDeliveredError } from "./steer-delivery-error.js";
 import { ChatInputNotDeliveredError } from "./input-delivery-error.js";
 import { BackgroundProjectionDetached } from "./background-run-control.js";
 import { createHash } from "node:crypto";
@@ -11,7 +12,8 @@ const ASYNC_PROMPT = `\n\n[Matrix question delivery]\nQuestions are asynchronous
 type Question = Extract<CanonicalProviderRunEvent, { type: "input.requested" }>;
 type Answer = { request: Question; input: CanonicalSubmitChatInputRequest };
 type Steer = Parameters<NonNullable<CanonicalChatProviderAdapter["steer"]>>[0];
-type Continuation = { kind: "answer"; answer: Answer } | { kind: "steer"; input: Steer };
+type Receipt = { resolve(): void; reject(error: Error): void };
+type Continuation = { kind: "answer"; answer: Answer } | { kind: "steer"; input: Steer; receipt: Receipt };
 type Run = {
   input: CanonicalProviderRunInput;
   pending: Map<string, { request: Question; timer: ReturnType<typeof setTimeout> }>;
@@ -65,7 +67,10 @@ export function withAsyncChatInput(native: CanonicalChatProviderAdapter, options
             answersConfirmed = true;
             for (const answer of phaseAnswers) yield { type: "input.resolved", requestId: answer.request.requestId, reason: "answered" };
           }
-          if (event.type === "state.updated") state = native.parseState(event.state);
+          if (continuation?.kind === "steer" && (event.type === "assistant.delta" || event.type === "tool.progress" || event.type === "input.requested" || (event.type === "run.completed" && event.outcome === "completed"))) {
+            continuation.receipt.resolve();
+          }
+          if (event.type === "state.updated") { state = native.parseState(event.state); run.resumable = true; }
           if (event.type === "input.requested" && event.questions?.length) {
             // A resumed user prompt is persisted by coding providers. Secret answers must
             // remain on the original ephemeral native tool channel instead.
@@ -123,6 +128,9 @@ export function withAsyncChatInput(native: CanonicalChatProviderAdapter, options
       for (const requestId of run.pending.keys()) yield { type: "input.resolved", requestId, reason: "cancelled" };
       yield input.signal.aborted ? { type: "run.completed", outcome: "aborted", ...(tokenUsage ? { tokenUsage } : {}) } : lastTerminal;
     } finally {
+      const undelivered = new ChatSteerNotDeliveredError();
+      if (continuation?.kind === "steer") continuation.receipt.reject(new Error("Steering delivery was not confirmed"));
+      for (const queued of run.continuations) if (queued.kind === "steer") queued.receipt.reject(undelivered);
       for (const pending of run.pending.values()) clearTimeout(pending.timer);
       run.pending.clear(); run.deferred.clear(); run.nativeOnly.clear(); run.continuations.length = 0; run.expired.length = 0;
       input.signal.removeEventListener("abort", wake); wake(); runs.delete(input.runId);
@@ -138,10 +146,18 @@ export function withAsyncChatInput(native: CanonicalChatProviderAdapter, options
       }
       // Never replay an uncertain native delivery. Only a completed native phase
       // can accept a correction as a continuation of the canonical Run.
-      if (run.nativeActive) return native.steer!(input);
-      if (!run.resumable || run.continuations.length >= 16) throw new Error("Steering Run unavailable");
-      run.continuations.push({ kind: "steer", input });
-      run.wake?.(); run.wake = undefined;
+      if (run.nativeActive && !run.continuations.length) {
+        try { return await native.steer!(input); } catch (error: unknown) {
+          // A released registry is a definite non-delivery, unlike an RPC timeout.
+          if (!(error instanceof ChatSteerNotDeliveredError)) throw error;
+        }
+      }
+      if (runs.get(input.runId) !== run || run.input.signal.aborted || !run.resumable || run.continuations.length >= 16) throw new Error("Steering Run unavailable");
+      // Success requires evidence from the resumed provider, not an in-memory enqueue.
+      return new Promise<void>((resolve, reject) => {
+        run.continuations.push({ kind: "steer", input, receipt: { resolve, reject } });
+        run.wake?.(); run.wake = undefined;
+      });
     } } : {}),
     async submitInput(input) {
       const run = runs.get(input.runId);
