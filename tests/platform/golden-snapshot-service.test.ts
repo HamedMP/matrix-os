@@ -209,7 +209,7 @@ describe('golden snapshot build service', () => {
   afterEach(async () => destroyTestPlatformDb(db));
 
   it('binds the validated image architecture as a value in the readiness fence', async () => {
-    const source = await readFile('packages/platform/src/golden-snapshot-service.ts', 'utf8');
+    const source = await readFile('packages/platform/src/golden-snapshot-callback.ts', 'utf8');
     expect(source).not.toContain("whereRef('image_architecture', '=', 'architecture')");
     expect(source).toContain(
       ".where('image_architecture', '=', snapshot.compatibility.architecture)",
@@ -217,7 +217,7 @@ describe('golden snapshot build service', () => {
   });
 
   it('conditions quarantine writes on the lifecycle phase observed by the worker', async () => {
-    const source = await readFile('packages/platform/src/golden-snapshot-service.ts', 'utf8');
+    const source = await readFile('packages/platform/src/golden-snapshot-build-operations.ts', 'utf8');
     expect(source).toContain(".where('phase', '=', expectedPhase)");
     expect(source).toContain(".where('status', '=', 'running')");
   });
