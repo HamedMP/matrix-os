@@ -10,6 +10,7 @@ import {
   ChatRunNotAcknowledgeableError,
   ChatRunNotActiveError,
 } from "./errors.js";
+import { ChatAgentContextError } from "./agent-context.js";
 
 export class CanonicalChatOrchestrationError extends Error {
   constructor(readonly safeError: CanonicalChatSafeError, readonly status: 400 | 404 | 409 | 503) {
@@ -33,6 +34,13 @@ export function canonicalChatSafeError(
 }
 
 export function mapRepositoryError(error: unknown): never {
+  if (error instanceof ChatAgentContextError) {
+    throw new CanonicalChatOrchestrationError(error.code === "context_unavailable"
+      ? canonicalChatSafeError("resource_unavailable", "The selected Agent or Chat is unavailable.")
+      : canonicalChatSafeError("capability_mismatch", error.code === "agent_permission_required"
+        ? "This Agent requires Full access. Select it before sending."
+        : "Agents and Chat references are disabled."), 400);
+  }
   if (error instanceof ChatNotFoundError) {
     throw new CanonicalChatOrchestrationError(canonicalChatSafeError("chat_not_found", "Chat not found."), 404);
   }

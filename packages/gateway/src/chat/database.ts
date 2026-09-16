@@ -104,6 +104,8 @@ export interface ChatRunsTable {
   started_at: NullableTimestamp;
   completed_at: NullableTimestamp;
   history_boundary_seq: number;
+  context_snapshot: Generated<unknown>;
+  request_hash: Generated<string | null>;
   capability_snapshot: JsonValue;
   created_at: Timestamp;
   updated_at: Timestamp;
@@ -130,6 +132,8 @@ export interface ChatQueuedTurnsTable {
   permission_mode: string;
   execution_root: JsonValue | null;
   execution_root_fingerprint: string | null;
+  context_snapshot: Generated<unknown>;
+  request_hash: Generated<string | null>;
   capability_snapshot: JsonValue;
   claimed_turn_id: string | null;
   claimed_run_id: string | null;
@@ -402,6 +406,8 @@ export async function bootstrapChatDatabase<Database extends ChatDatabase>(
       UNIQUE (turn_id, attempt)
     )
   `.execute(db);
+  await sql`ALTER TABLE chat_runs ADD COLUMN IF NOT EXISTS context_snapshot JSONB`.execute(db);
+  await sql`ALTER TABLE chat_runs ADD COLUMN IF NOT EXISTS request_hash TEXT`.execute(db);
   await sql`
     ALTER TABLE chat_runs
     ADD COLUMN IF NOT EXISTS execution_root_fingerprint TEXT
@@ -460,6 +466,8 @@ export async function bootstrapChatDatabase<Database extends ChatDatabase>(
       UNIQUE (chat_id, client_request_id)
     )
   `.execute(db);
+  await sql`ALTER TABLE chat_queued_turns ADD COLUMN IF NOT EXISTS context_snapshot JSONB`.execute(db);
+  await sql`ALTER TABLE chat_queued_turns ADD COLUMN IF NOT EXISTS request_hash TEXT`.execute(db);
   await sql`ALTER TABLE chat_queued_turns ADD COLUMN IF NOT EXISTS actor_request_id TEXT`.execute(db);
   await sql`ALTER TABLE chat_queued_turns ADD COLUMN IF NOT EXISTS requesting_actor_id TEXT`.execute(db);
   await sql`ALTER TABLE chat_queued_turns ADD COLUMN IF NOT EXISTS collaboration_scope_id UUID`.execute(db);

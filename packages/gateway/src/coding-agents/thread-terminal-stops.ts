@@ -66,4 +66,3 @@ export function consumePendingTerminalStop(
     pendingTerminalStops: pendingTerminalStops.filter((candidate) => candidate !== pendingStop),
   };
 }
-
