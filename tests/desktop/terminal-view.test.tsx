@@ -1373,6 +1373,67 @@ describe("TerminalView session switching", () => {
     },
   );
 
+  it("keeps correcting a scaled selection drag outside Electron Desktop", () => {
+    const { container } = render(<TerminalView sessionName="alpha" visualScale={0.5} />);
+    const terminal = createdTerminals.at(-1)!;
+    const root = terminal.element!;
+    const host = container.querySelector<HTMLElement>("[data-terminal-viewport]")!;
+    vi.spyOn(root, "getBoundingClientRect").mockReturnValue({
+      left: 100,
+      top: 50,
+      right: 500,
+      bottom: 350,
+      width: 400,
+      height: 300,
+      x: 100,
+      y: 50,
+      toJSON: () => ({}),
+    });
+    const delivered: Array<[string, number, number]> = [];
+    const record = (event: MouseEvent) => {
+      if ((event as MouseEvent & { _xtermScaleCorrected?: boolean })._xtermScaleCorrected) {
+        delivered.push([event.type, event.clientX, event.clientY]);
+      }
+    };
+    document.addEventListener("mousemove", record);
+    document.addEventListener("mouseup", record);
+
+    fireEvent.mouseDown(root, {
+      button: 0,
+      buttons: 1,
+      clientX: 118,
+      clientY: 62,
+    });
+    const outsideMove = new MouseEvent("mousemove", {
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      buttons: 1,
+      clientX: 140,
+      clientY: 20,
+    });
+    fireEvent(document.body, outsideMove);
+    const outsideUp = new MouseEvent("mouseup", {
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      buttons: 0,
+      clientX: 140,
+      clientY: 20,
+    });
+    fireEvent(document.body, outsideUp);
+
+    expect(delivered).toEqual([
+      ["mousemove", 180, -10],
+      ["mouseup", 180, -10],
+    ]);
+    expect(outsideMove.defaultPrevented).toBe(true);
+    expect(outsideUp.defaultPrevented).toBe(true);
+    expect(host.contains(root)).toBe(true);
+    document.removeEventListener("mousemove", record);
+    document.removeEventListener("mouseup", record);
+  });
+
   it("updates native Canvas scale without recreating xterm", () => {
     const { rerender } = render(<TerminalView sessionName="alpha" visualScale={0.5} />);
     const terminal = createdTerminals.at(-1)!;

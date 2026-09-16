@@ -421,7 +421,13 @@ export function installMouseTrackingSelection({
 
   const onDocumentMouseMove = (event: MouseEvent) => {
     if ((event as MatrixSyntheticMouseEvent)._xtermScaleCorrected || !gesture) return;
-    if (gesture.forceSelection) stopOriginal(event);
+    const outsideHost = !event.composedPath().includes(host);
+    const rawScale = getVisualScale();
+    const replacesUnscaledEvent = outsideHost
+      && Number.isFinite(rawScale)
+      && rawScale > 0
+      && rawScale !== 1;
+    if (gesture.forceSelection || replacesUnscaledEvent) stopOriginal(event);
     const current = snapshot(event);
     if (!gesture.dragging) {
       const distance = Math.hypot(
@@ -435,7 +441,7 @@ export function installMouseTrackingSelection({
       }
     }
     const targetedCurrent = selectionTarget(current);
-    if (gesture.forceSelection || !event.composedPath().includes(host)) {
+    if (gesture.forceSelection || outsideHost) {
       dispatch(targetedCurrent, "mousemove", 0, 1, gesture.forceSelection);
     }
     updateEdgeScroll(targetedCurrent);
@@ -443,7 +449,13 @@ export function installMouseTrackingSelection({
 
   const onDocumentMouseUp = (event: MouseEvent) => {
     if ((event as MatrixSyntheticMouseEvent)._xtermScaleCorrected || !gesture) return;
-    if (gesture.forceSelection) stopOriginal(event);
+    const outsideHost = !event.composedPath().includes(host);
+    const rawScale = getVisualScale();
+    const replacesUnscaledEvent = outsideHost
+      && Number.isFinite(rawScale)
+      && rawScale > 0
+      && rawScale !== 1;
+    if (gesture.forceSelection || replacesUnscaledEvent) stopOriginal(event);
     const current = selectionTarget(snapshot(event));
     const terminal = getTerminal();
     if (pendingEdgeScrollAmount !== 0 && terminal && gesture.appOwnsSelection) {
@@ -454,7 +466,7 @@ export function installMouseTrackingSelection({
       );
     }
     if (gesture.dragging) {
-      if (gesture.forceSelection || !event.composedPath().includes(host)) {
+      if (gesture.forceSelection || outsideHost) {
         dispatch(current, "mouseup", 0, 0, gesture.forceSelection);
       }
     } else if (gesture.forceSelection) {

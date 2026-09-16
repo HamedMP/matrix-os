@@ -289,6 +289,44 @@ describe("mouse-reporting terminal selection", () => {
     remove();
   });
 
+  it("replaces unscaled document events while an ordinary scaled selection leaves the terminal", () => {
+    const { root, delivered, remove } = setup({
+      mouseTrackingMode: "none",
+      visualScale: 0.5,
+    });
+    const outside = document.createElement("div");
+    document.body.append(outside);
+
+    root.dispatchEvent(mouse("mousedown", {
+      button: 0,
+      buttons: 1,
+      clientX: 120,
+      clientY: 80,
+    }));
+    const outsideMove = mouse("mousemove", {
+      button: 0,
+      buttons: 1,
+      clientX: 130,
+      clientY: 20,
+    });
+    const outsideUp = mouse("mouseup", {
+      button: 0,
+      buttons: 0,
+      clientX: 130,
+      clientY: 20,
+    });
+    outside.dispatchEvent(outsideMove);
+    outside.dispatchEvent(outsideUp);
+
+    expect(delivered).toEqual([
+      expect.objectContaining({ type: "mousemove", clientX: 160, clientY: -10 }),
+      expect.objectContaining({ type: "mouseup", clientX: 160, clientY: -10 }),
+    ]);
+    expect(outsideMove.defaultPrevented).toBe(true);
+    expect(outsideUp.defaultPrevented).toBe(true);
+    remove();
+  });
+
   it("leaves primary pointer events untouched when mouse reporting is disabled", () => {
     const { root, delivered, onPrimaryGestureStart, remove } = setup({ mouseTrackingMode: "none" });
     const observed = vi.fn();
