@@ -35,6 +35,9 @@ export type {
   StripeRecurringPriceProjection,
   StripeWebhookEvent,
 } from './billing-route-helpers.js';
+export { MATRIX_CARD_TRIAL_DAYS } from './billing-route-helpers.js';
+export type { MarketingAttribution } from './billing-checkout-routes.js';
+export { getPublicBillingPlans } from './billing-stripe-webhook.js';
 
 function storedRecurringPrice(
   subscription: BillingSubscriptionRecord,
