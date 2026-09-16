@@ -5,6 +5,15 @@ import { constrainFloatingWindow, isPointNearWindow } from "../../packages/ui/sr
 const viewport = { width: 900, height: 600 };
 const minimum = { width: 320, height: 200 };
 describe("floating window placement", () => {
+  it("reserves the bottom boundary without changing side/top overflow", () => {
+    expect(constrainFloatingWindow({ x: -100, y: -100, width: 1000, height: 900 }, viewport, minimum, undefined, { allowBottomOverflow: false }))
+      .toEqual({ x: -32, y: -16, width: 964, height: 616 });
+  });
+  it("keeps the north edge stationary at a reserved bottom boundary", () => {
+    const initial = { x: 100, y: 100, width: 600, height: 400 };
+    expect(constrainFloatingWindow({ ...initial, height: 900 }, viewport, minimum, initial, { allowBottomOverflow: false }))
+      .toEqual({ ...initial, height: 500 });
+  });
   it("stops an east resize at the overflow limit without shifting the left edge", () => {
     const initial = { x: 100, y: 100, width: 600, height: 400 };
     expect(constrainFloatingWindow({ ...initial, width: 1000 }, viewport, minimum, initial))

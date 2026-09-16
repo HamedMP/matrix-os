@@ -35,19 +35,22 @@ function constrainAxis(
 
 /** Floating windows may cross the work-area border while remaining recoverable.
  * During a resize, retain the stationary edge when reaching the overflow limit.
+ * Desktop adapters disable bottom overflow where a visible launch bar owns the
+ * space below the work area. Other borders retain their recoverable overflow.
  */
 export function constrainFloatingWindow(
   bounds: WindowBounds,
   viewport: { width: number; height: number },
   minimum: { width: number; height: number },
   previous?: WindowBounds,
+  options: { allowBottomOverflow?: boolean } = {},
 ): WindowBounds {
   const vw = Math.max(1, finite(viewport.width, 1));
   const vh = Math.max(1, finite(viewport.height, 1));
   const [x, width] = constrainAxis(bounds.x, bounds.width, Math.min(minimum.width, vw),
     -SIDE_OVERFLOW, vw + SIDE_OVERFLOW, previous?.x, previous?.width);
   const [y, height] = constrainAxis(bounds.y, bounds.height, Math.min(minimum.height, vh),
-    -TOP_OVERFLOW, vh + SIDE_OVERFLOW, previous?.y, previous?.height);
+    -TOP_OVERFLOW, vh + (options.allowBottomOverflow === false ? 0 : SIDE_OVERFLOW), previous?.y, previous?.height);
   return { x, y, width, height };
 }
 

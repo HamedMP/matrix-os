@@ -4,6 +4,7 @@ import { resetWindowManagerLayoutPersistenceForTests, useWindowManager } from ".
 import { useDesktopMode } from "../../shell/src/stores/desktop-mode";
 import { desktopSurfaceBounds } from "../../desktop/src/renderer/src/stores/desktop-surfaces";
 import { NATIVE_DESKTOP_LAYOUT } from "../../desktop/src/renderer/src/design/layering";
+import { desktopWorkArea } from "../../shell/src/lib/desktop-work-area";
 
 // Visible launch bar with a running app: 44px icon + 2px gap + 4px indicator,
 // 8px running-section padding, 6px top padding, 2px border, 12px bottom offset.
@@ -44,6 +45,17 @@ afterEach(() => {
 });
 
 describe("visible launch bar window boundary", () => {
+  it.each([250, 400, 600])("fits a newly opened Terminal on a %ipx-high Web Desktop", (height) => {
+    viewport(900, height);
+    useWindowManager.getState().openWindow("Terminal", "__terminal__", 20);
+    expectWindowAboveLaunchBar();
+  });
+
+  it("sanitizes unavailable work-area dimensions", () => {
+    expect(desktopWorkArea({ width: NaN, height: Infinity }, true)).toEqual({ width: 1, height: 1 });
+    expect(desktopWorkArea({ width: 0, height: -20 }, false)).toEqual({ width: 1, height: 1 });
+  });
+
   it("opens a fresh Web Desktop Terminal above the launch bar on a short viewport", () => {
     useWindowManager.getState().openWindow("Terminal", "__terminal__", 20);
     expectWindowAboveLaunchBar();
