@@ -1,3 +1,5 @@
+import { ChatMetadataVersionSchema, projectChatMetadata } from "./metadata-wire.js";
+import { LegacyUpdateChatTitleRequestSchema, type LegacyUpdateChatTitleRequest } from "@matrix-os/contracts";
 import { ChatInputWireVersionSchema } from "@matrix-os/contracts";
 import { CanonicalSubmitChatInputRequestSchema, CanonicalChatInputSubmissionResponseSchema, type CanonicalSubmitChatInputRequest, type CanonicalChatInputSubmissionResponse } from "@matrix-os/contracts";
 import {
@@ -121,6 +123,7 @@ export interface CanonicalChatRouteService {
     chatId: string,
     input: CanonicalUpdateChatTitleRequest,
   ): Promise<CanonicalChatRecord>;
+  updateLegacyTitle(owner: ChatOwner, chatId: string, input: LegacyUpdateChatTitleRequest): Promise<CanonicalChatRecord>;
   updateUserState(
     owner: ChatOwner,
     chatId: string,
@@ -294,7 +297,16 @@ export function createCanonicalChatRoutes(options: {
       || !ChatInputWireVersionSchema.safeParse(context.req.query("inputVersion")).success) {
       return validationError(context);
     }
+    const metadataVersion = ChatMetadataVersionSchema.safeParse(context.req.header("x-matrix-chat-metadata"));
+    if (!metadataVersion.success) return validationError(context);
     await next();
+    context.header("Vary", "X-Matrix-Chat-Metadata", { append: true });
+    if (metadataVersion.data === "0" && context.res.headers.get("content-type")?.includes("application/json")) {
+      const payload = projectChatMetadata(await context.res.json(), "0");
+      const headers = new Headers(context.res.headers);
+      headers.delete("content-length");
+      context.res = new Response(JSON.stringify(payload), { status: context.res.status, headers });
+    }
   });
   const createBodyLimit = bodyLimit({ maxSize: CHAT_CREATE_BODY_LIMIT, onError: bodyTooLarge });
   const turnBodyLimit = bodyLimit({ maxSize: CHAT_TURN_BODY_LIMIT, onError: bodyTooLarge });
@@ -404,13 +416,12 @@ export function createCanonicalChatRoutes(options: {
   routes.patch("/api/chats/:chatId/title", updateBodyLimit, async (context) => {
     try {
       const chatId = CanonicalChatIdSchema.parse(context.req.param("chatId"));
-      const parsed = CanonicalUpdateChatTitleRequestSchema.safeParse(await context.req.json());
+      const parsed = z.union([CanonicalUpdateChatTitleRequestSchema, LegacyUpdateChatTitleRequestSchema]).safeParse(await context.req.json());
       if (!parsed.success) return validationError(context);
-      const result = await options.service.updateTitle(
-        ownerFromPrincipal(options.getPrincipal(context)),
-        chatId,
-        parsed.data,
-      );
+      const owner = ownerFromPrincipal(options.getPrincipal(context));
+      const result = "expectedTitleVersion" in parsed.data
+        ? await options.service.updateTitle(owner, chatId, parsed.data)
+        : await options.service.updateLegacyTitle(owner, chatId, parsed.data);
       return context.json(CanonicalChatRecordSchema.parse(result));
     } catch (error: unknown) {
       return handleError(context, error);

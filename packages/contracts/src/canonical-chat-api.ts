@@ -102,6 +102,13 @@ export const CanonicalUpdateChatTitleRequestSchema = z.object({
   title: z.string().trim().min(1).max(160),
 }).strict();
 
+/** Transitional write contract for released clients; retains their revision guard. */
+export const LegacyUpdateChatTitleRequestSchema = z.object({
+  baseRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  title: CanonicalUpdateChatTitleRequestSchema.shape.title,
+}).strict();
+export type LegacyUpdateChatTitleRequest = z.infer<typeof LegacyUpdateChatTitleRequestSchema>;
+
 export const CanonicalUpdateChatUserStateRequestSchema = z.object({
   pinned: z.boolean(),
 }).strict();

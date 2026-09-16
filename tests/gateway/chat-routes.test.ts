@@ -47,6 +47,7 @@ function routeService(overrides: Partial<CanonicalChatRouteService> = {}): Canon
     create: vi.fn(async () => record),
     updateProject: vi.fn(async () => record),
     updateTitle: vi.fn(async () => record),
+    updateLegacyTitle: vi.fn(async () => record),
     updateUserState: vi.fn(async () => record),
     acknowledgeCompletion: vi.fn(async () => record),
     delete: vi.fn(async () => ({ chatId: record.chat.id, deletedAt: record.chat.updatedAt })),
@@ -184,6 +185,27 @@ describe("canonical Chat routes", () => {
       body: JSON.stringify({ baseRevision: 0, projectId: null, ownerId: "other" }),
     });
     expect(invalid.status).toBe(400);
+  });
+
+  it("projects new metadata only for opted-in clients and accepts legacy rename payloads", async () => {
+    const modern = { ...record, chat: { ...record.chat, titleVersion: 4, activityAt: record.chat.createdAt } };
+    const updateLegacyTitle = vi.fn(async () => modern);
+    const app = appFor(routeService({
+      list: vi.fn(async () => ({ items: [modern] })),
+      getDetail: vi.fn(async () => ({ record: modern, messages: [], turns: [], runs: [], activities: [] })),
+      updateLegacyTitle,
+    }));
+    const oldList = await (await app.request("/api/chats")).json();
+    expect(oldList.items[0].chat).not.toHaveProperty("titleVersion");
+    expect(oldList.items[0].chat).not.toHaveProperty("activityAt");
+    expect(oldList.items[0].chat.updatedAt).toBe(modern.chat.activityAt);
+    const newList = await (await app.request("/api/chats", { headers: { "X-Matrix-Chat-Metadata": "1" } })).json();
+    expect(newList.items[0]).toEqual(modern);
+    const rename = await app.request("/api/chats/chat_route_test/title", { method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ baseRevision: 3, title: "Legacy rename" }) });
+    expect(rename.status).toBe(200);
+    expect(updateLegacyTitle).toHaveBeenCalledWith(expect.anything(), "chat_route_test", { baseRevision: 3, title: "Legacy rename" });
+    expect((await rename.json()).chat).not.toHaveProperty("titleVersion");
   });
 
   it("renames a Chat with owner-derived identity, validation, and a body limit", async () => {

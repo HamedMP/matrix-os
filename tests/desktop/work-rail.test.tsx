@@ -971,6 +971,20 @@ describe("WorkRail", () => {
     expect(screen.queryByText("Chat pin could not be updated.")).toBeNull();
   });
 
+  it("does not carry title versions across runtime clients with the same chat id", async () => {
+    const previous = { ...recent, chat: { ...recent.chat, title: "Previous computer", titleVersion: 10, revision: 100 } };
+    const replacement = { ...recent, chat: { ...recent.chat, title: "Current computer", titleVersion: 1, revision: 2 } };
+    const first = { list: vi.fn(async () => ({ items: [previous] })) } as unknown as CanonicalChatClient;
+    const second = { list: vi.fn(async () => ({ items: [replacement] })) } as unknown as CanonicalChatClient;
+    const props = { projects: [], active: true, onNewGlobalChat: vi.fn(), onCreateProject: vi.fn(),
+      onNewProjectChat: vi.fn(), onSelectChat: vi.fn(), onCollapse: vi.fn() };
+    const view = render(<WorkRail {...props} client={first} />);
+    await screen.findByRole("button", { name: "Previous computer" });
+    view.rerender(<WorkRail {...props} client={second} />);
+    expect(await screen.findByRole("button", { name: "Current computer" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Previous computer" })).toBeNull();
+  });
+
   it("does not surface a pin failure from a replaced client", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
     let rejectPin!: (error: Error) => void;

@@ -101,6 +101,7 @@ export function WorkRail({
   const onSelectChat = (...args: Parameters<typeof selectChat>) => { agentsNavigation?.close(); selectChat(...args); };
   const [records, setRecords] = useState<CanonicalChatRecord[]>([]);
   const recordsRef = useRef(records);
+  const recordsClientRef = useRef(client);
   useEffect(() => { recordsRef.current = records; }, [records]);
   const [status, setStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [sections, setSections] = useState<Record<SectionKey, boolean>>({
@@ -139,6 +140,10 @@ export function WorkRail({
   useEffect(() => {
     let current = true;
     if (!client || !active) return () => { current = false; };
+    if (recordsClientRef.current !== client) {
+      recordsClientRef.current = client;
+      setRecords([]);
+    }
     let refreshInFlight = false;
     let refreshPending = false;
     setPinError(null);

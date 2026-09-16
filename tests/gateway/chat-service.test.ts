@@ -148,6 +148,13 @@ describe("canonical Chat service", () => {
     expect(update).not.toHaveBeenCalled();
   });
 
+  it("keeps released rename requests revision guarded during transition", async () => {
+    const update = vi.fn(async () => record());
+    const service = createCanonicalChatService(repository({ update }));
+    await service.updateLegacyTitle(owner, "chat_service_test", { baseRevision: 7, title: "  Legacy  " });
+    expect(update).toHaveBeenCalledWith(owner, "chat_service_test", { baseRevision: 7, title: "Legacy" });
+  });
+
   it("round-trips opaque list cursors without exposing repository cursor fields", async () => {
     const list = vi.fn()
       .mockResolvedValueOnce({

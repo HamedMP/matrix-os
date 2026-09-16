@@ -1,3 +1,4 @@
+import { bootstrapChatMetadata } from "../../packages/gateway/src/chat/metadata-schema.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { sql, PostgresDialect } from "kysely";
 import { Pool } from "pg";
@@ -222,6 +223,7 @@ describe("Chat ordering and title versions", () => {
     const a = await admitChat(repository, "legacy");
     await sql`UPDATE chats SET created_at = '2020-01-01', updated_at = '2030-01-01'`.execute(repository.kysely);
     await sql`ALTER TABLE chats DROP COLUMN activity_at, DROP COLUMN title_version, DROP COLUMN title_manual`.execute(repository.kysely);
+    await sql`DROP TABLE chat_schema_migrations`.execute(repository.kysely);
     await repository.bootstrap();
     const migrated = (await repository.get(owner, a.chatId))!;
     expect(migrated.chat.activityAt).toBe(now);
@@ -247,6 +249,24 @@ describe("Chat ordering and title versions", () => {
     await repository.enqueueQueuedTurn(owner, request);
     await finishChat(repository, a, "completed", "2030-01-01T00:00:00.000Z");
     expect((await repository.get(owner, a.chatId))!.chat.activityAt).toBe(activityAt);
+  });
+
+  it("records the metadata migration and skips it on subsequent bootstrap", async () => {
+    const marker = await sql<{ version: number }>`SELECT version FROM chat_schema_migrations WHERE version = 1`.execute(repository.kysely);
+    expect(marker.rows).toEqual([{ version: 1 }]);
+    await repository.bootstrap();
+    expect(Number((await sql<{ count: string }>`SELECT count(*) FROM chat_schema_migrations`.execute(repository.kysely)).rows[0].count)).toBe(1);
+  });
+
+  it("serializes overlapping metadata migrations", async () => {
+    await sql`DELETE FROM chat_schema_migrations WHERE version = 1`.execute(repository.kysely);
+    if (process.env.CHAT_TEST_DATABASE_URL) {
+      await Promise.all([bootstrapChatMetadata(repository.kysely), bootstrapChatMetadata(repository.kysely)]);
+    } else {
+      await bootstrapChatMetadata(repository.kysely);
+      await bootstrapChatMetadata(repository.kysely);
+    }
+    expect(Number((await sql<{ count: string }>`SELECT count(*) FROM chat_schema_migrations`.execute(repository.kysely)).rows[0].count)).toBe(1);
   });
 
 });

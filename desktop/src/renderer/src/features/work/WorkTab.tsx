@@ -331,7 +331,7 @@ function WorkTabContent({
     setEditingChatTitle(false);
     setRenamingChatTitle(false);
     setRenameChatError(null);
-  }, [initialChatId]);
+  }, [initialChatId, client]);
 
   useLayoutEffect(() => {
     if (!active || route !== "project" || !projectSlug) return;
@@ -527,7 +527,7 @@ function WorkTabContent({
   }, [initialChatId, layout, openGlobalDraft, showChat]);
   useEffect(() => {
     if (!activeTitleRecordRef.current) setActiveChatTitle(initialChatTitle ?? "Chat");
-  }, [initialChatId, initialChatTitle]);
+  }, [initialChatId, initialChatTitle, client]);
   const applyRenamedChat = useCallback((incoming: CanonicalChatRecord) => {
     const current = activeTitleRecordRef.current;
     const record = current?.chat.id === incoming.chat.id

@@ -1,3 +1,4 @@
+import { LegacyUpdateChatTitleRequestSchema, type LegacyUpdateChatTitleRequest } from "@matrix-os/contracts";
 import { CanonicalSubmitChatInputRequestSchema, type CanonicalSubmitChatInputRequest, type CanonicalChatInputSubmissionResponse } from "@matrix-os/contracts";
 import { randomUUID } from "node:crypto";
 import {
@@ -215,6 +216,12 @@ export function createCanonicalChatService(
         owner,
         CanonicalChatIdSchema.parse(chatId),
         CanonicalUpdateChatTitleRequestSchema.parse(input),
+      ));
+    },
+
+    async updateLegacyTitle(owner: ChatOwner, chatId: string, input: LegacyUpdateChatTitleRequest): Promise<CanonicalChatRecord> {
+      return CanonicalChatRecordSchema.parse(await repository.update(
+        owner, CanonicalChatIdSchema.parse(chatId), LegacyUpdateChatTitleRequestSchema.parse(input),
       ));
     },
 
@@ -509,6 +516,7 @@ export function createUnavailableCanonicalChatService(): CanonicalChatRouteServi
     create: unavailable,
     updateProject: unavailable,
     updateTitle: unavailable,
+    updateLegacyTitle: unavailable,
     updateUserState: unavailable,
     acknowledgeCompletion: unavailable,
     delete: unavailable,

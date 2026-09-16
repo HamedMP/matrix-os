@@ -132,6 +132,9 @@ export function createCanonicalShellChatClient(options: {
   const fetchFn = options.fetchFn ?? fetch;
   const request = (path: string, init: RequestInit = {}) => fetchFn(`${options.gatewayUrl}${path}`, {
     ...init,
+    ...(/^\/api\/chats(?:[/?]|$)/.test(path) ? {
+      headers: { ...Object.fromEntries(new Headers(init.headers)), "X-Matrix-Chat-Metadata": "1" },
+    } : {}),
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   }).then(jsonResponse);
   const createId = options.createId ?? (() => globalThis.crypto.randomUUID().replaceAll("-", ""));
@@ -145,6 +148,7 @@ export function createCanonicalShellChatClient(options: {
         headers: {
           Accept: "text/event-stream",
           "X-Matrix-Chat-Protocol": "2",
+          "X-Matrix-Chat-Metadata": "1",
           ...(cursor === undefined ? {} : { "Last-Event-ID": String(cursor) }),
         },
         signal: AbortSignal.any([signal, AbortSignal.timeout(5 * 60 * 1000)]),
