@@ -1,7 +1,7 @@
 "use client";
 import type { ChatAgentDraftRequest, StartAgentChat } from "@matrix-os/ui";
 
-import { CanonicalChatInputForm } from "@matrix-os/ui";
+import { useChatReadState, CanonicalChatInputForm } from "@matrix-os/ui";
 import type { CanonicalChatInputView, CanonicalSubmitChatInputRequest } from "@matrix-os/contracts";
 
 import { useState, useMemo, useRef, useEffect } from "react";
@@ -115,6 +115,12 @@ function writeHermesSetup(channels: string[]) {
 }
 
 interface ChatAppProps {
+  filterUnreadOnly?: boolean;
+  onUnreadFilterChange?: (value: boolean) => void;
+  active?: boolean;
+  readState?: import("@matrix-os/contracts").CanonicalChatReadState;
+  displayedThroughSeq?: number;
+  onUpdateReadState?: (chatId: string, input: import("@matrix-os/contracts").CanonicalUpdateChatReadStateRequest) => Promise<boolean>;
   messages: ChatMessage[];
   sessionId: string | undefined;
   busy: boolean;
@@ -180,6 +186,8 @@ export function ChatApp(props: ChatAppProps) {
 }
 
 function ChatAppContent({
+  filterUnreadOnly, onUnreadFilterChange,
+  active = true, readState, displayedThroughSeq = 0, onUpdateReadState,
   messages,
   sessionId,
   busy,
@@ -201,6 +209,10 @@ function ChatAppContent({
   // react-doctor-disable-next-line react-doctor/prefer-useReducer -- these useState fields are independent UI concerns with separate update sites and lifecycles, not one related state machine.
 }: ChatAppProps) {
   const agentsNavigation = useChatAgentsNavigation();
+  const [localUnreadOnly, setUnreadOnly] = useState(false);
+  const unreadOnly = filterUnreadOnly ?? localUnreadOnly;
+  useChatReadState({ chatId: sessionId, state: readState, throughSeq: displayedThroughSeq,
+    active: active && !agentsNavigation?.opened, onRead: onUpdateReadState });
   const [newChatSequence, setNewChatSequence] = useState(0);
   const [agentDraftRequest, setAgentDraftRequest] = useState<ChatAgentDraftRequest | null>(null);
   const composerScope = sessionId ?? `new:${newChatSequence}`;
@@ -285,7 +297,7 @@ function ChatAppContent({
         `${c.title ?? ""}\n${c.preview ?? ""}`.toLowerCase().includes(searchQuery.toLowerCase()),
       );
 
-  const timeGroups = groupConversationsByTime(filteredConversations);
+  const timeGroups = groupConversationsByTime(unreadOnly ? filteredConversations.filter((item) => item.readState?.unread) : filteredConversations);
 
   const suggestions = getMessageSuggestions(messages);
 
@@ -376,6 +388,11 @@ function ChatAppContent({
           </div>
         </div>
 
+        <div className="flex gap-2 px-3 pb-2 text-xs">
+          <Button variant="ghost" size="sm" className="aria-pressed:bg-accent" aria-pressed={!unreadOnly} onClick={() => { setUnreadOnly(false); onUnreadFilterChange?.(false); }}>All</Button>
+          <Button variant="ghost" size="sm" className="aria-pressed:bg-accent" aria-pressed={unreadOnly} onClick={() => { setUnreadOnly(true); onUnreadFilterChange?.(true); }}>Unread</Button>
+        </div>
+        {unreadOnly && timeGroups.length === 0 ? <p className="px-3 text-xs text-muted-foreground">No unread chats.</p> : null}
         {/* Conversation list */}
         <ScrollArea className="min-w-0 flex-1 [&_[data-slot=scroll-area-viewport]>div]:!block [&_[data-slot=scroll-area-viewport]>div]:!min-w-0">
           <div className="px-2 pb-3">
@@ -388,6 +405,9 @@ function ChatAppContent({
                   <RenameableConversationRow
                     key={conv.id}
                     conversation={conv}
+                    onToggleRead={onUpdateReadState ? () => { void onUpdateReadState(conv.id, conv.readState?.unread
+                      ? { type: "mark_read", throughSeq: conv.readState.latestIncomingSeq, baseVersion: conv.readState.version }
+                      : { type: "mark_unread" }); } : undefined}
                     active={conv.id === sessionId && (!agentsNavigation?.opened || agentsNavigation.opened.client !== agentClient)}
                     mobile={mobile}
                     editing={editingChat?.source === "rail" && editingChat.id === conv.id}

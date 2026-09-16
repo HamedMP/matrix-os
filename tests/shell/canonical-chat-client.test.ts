@@ -31,7 +31,7 @@ describe("canonical shell Chat client", () => {
     expect(opened).toBe(response);
     expect(opened.bodyUsed).toBe(false);
     expect(fetchFn).toHaveBeenCalledWith(
-      "https://matrix.test/api/chats/events?messageVersion=2&inputVersion=1",
+      "https://matrix.test/api/chats/events?messageVersion=2&inputVersion=1&readStateVersion=1",
       expect.objectContaining({
         method: "GET",
         headers: { Accept: "text/event-stream", "Last-Event-ID": "12", "X-Matrix-Chat-Protocol": "2", "X-Matrix-Chat-Metadata": "1" },
@@ -45,7 +45,7 @@ describe("canonical shell Chat client", () => {
 
   it("lists and creates global Chats through the canonical routes with strict responses", async () => {
     const fetchFn = vi.fn(async (url: string, init?: RequestInit) => {
-      if (url.includes("/api/chats?")) return Response.json({ items: [record] });
+      if (url.includes("/api/chats?") && !init?.method) return Response.json({ items: [record] });
       expect(JSON.parse(String(init?.body))).toEqual({
         clientRequestId: "req_shell_create",
         title: "Shell chat",
@@ -63,12 +63,12 @@ describe("canonical shell Chat client", () => {
     })).resolves.toEqual(record);
     expect(fetchFn).toHaveBeenNthCalledWith(
       1,
-      "https://matrix.test/api/chats?limit=100&scope=global",
+      "https://matrix.test/api/chats?limit=100&scope=global&readStateVersion=1",
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     expect(fetchFn).toHaveBeenNthCalledWith(
       2,
-      "https://matrix.test/api/chats",
+      "https://matrix.test/api/chats?readStateVersion=1",
       expect.objectContaining({ method: "POST", headers: { "content-type": "application/json", "X-Matrix-Chat-Metadata": "1" } }),
     );
   });
@@ -83,7 +83,7 @@ describe("canonical shell Chat client", () => {
       title: "Release plan",
     })).resolves.toEqual(renamed);
     expect(fetchFn).toHaveBeenCalledWith(
-      "https://matrix.test/api/chats/chat_shell_test/title",
+      "https://matrix.test/api/chats/chat_shell_test/title?readStateVersion=1",
       expect.objectContaining({
         method: "PATCH",
         headers: { "content-type": "application/json", "X-Matrix-Chat-Metadata": "1" },
@@ -137,7 +137,7 @@ describe("canonical shell Chat client", () => {
     });
     await client.submitApproval("chat_shell_test", "run_shell", "approval_1", "approve", "req_shell_approval");
     expect(fetchFn).toHaveBeenCalledWith(
-      "https://matrix.test/api/chats/chat_shell_test/runs/run_shell/approvals/approval_1",
+      "https://matrix.test/api/chats/chat_shell_test/runs/run_shell/approvals/approval_1?readStateVersion=1",
       expect.objectContaining({ method: "POST", body: JSON.stringify({ clientRequestId: "req_shell_approval", decision: "approve" }) }),
     );
   });

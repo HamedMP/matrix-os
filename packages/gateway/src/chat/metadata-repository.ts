@@ -5,6 +5,7 @@ import type { ChatDatabase, ChatsTable, ChatRunsTable } from "./database.js";
 import { ChatBusyError, ChatConflictError, ChatNotFoundError, ChatProviderInstanceLockedError } from "./errors.js";
 import { jsonb, type ChatOwner, type ChatRecord, type ChatOutboxEventType } from "./records.js";
 import type { ChatListCursor, ChatListPage, UpdateChatInput } from "./repository.js";
+import { unreadChatPredicate } from "./read-state-repository.js";
 type Executor = Kysely<ChatDatabase> | Transaction<ChatDatabase>;
 interface MetadataDependencies {
   kysely: Kysely<ChatDatabase>;
@@ -18,6 +19,7 @@ const validateOwner = (owner: ChatOwner) => CanonicalOwnerScopeSchema.parse(owne
 const requireSafeRef = (value: string) => z.string().min(1).max(200).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/).parse(value);
 
 export async function listChats(deps: MetadataDependencies, ownerInput: ChatOwner, input: {
+    unreadOnly?: boolean;
     limit: number;
     lifecycle?: "active" | "archived";
     projectId?: string | null;
@@ -30,6 +32,7 @@ export async function listChats(deps: MetadataDependencies, ownerInput: ChatOwne
         .as("cursor_activity_at"))
       .where("owner_type", "=", owner.type)
       .where("owner_id", "=", owner.ownerId);
+    if (input.unreadOnly) query = query.where(unreadChatPredicate(owner.ownerId));
     if (input.lifecycle) query = query.where("lifecycle", "=", input.lifecycle);
     if (input.projectId !== undefined) query = input.projectId === null
       ? query.where("project_id", "is", null)

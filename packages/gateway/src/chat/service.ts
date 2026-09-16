@@ -1,4 +1,5 @@
 import { LegacyUpdateChatTitleRequestSchema, type LegacyUpdateChatTitleRequest } from "@matrix-os/contracts";
+import { CanonicalUpdateChatReadStateRequestSchema } from "@matrix-os/contracts";
 import { CanonicalSubmitChatInputRequestSchema, type CanonicalSubmitChatInputRequest, type CanonicalChatInputSubmissionResponse } from "@matrix-os/contracts";
 import { randomUUID } from "node:crypto";
 import {
@@ -85,6 +86,7 @@ type ChatServiceRepository = Pick<ChatRepository,
   | "create"
   | "rename"
   | "update"
+  | "updateReadState"
   | "updateUserState"
   | "acknowledgeCompletion"
   | "hardDelete"
@@ -225,6 +227,12 @@ export function createCanonicalChatService(
       ));
     },
 
+    async updateReadState(owner, chatId, input): Promise<CanonicalChatRecord> {
+      return CanonicalChatRecordSchema.parse(await repository.updateReadState(
+        owner, CanonicalChatIdSchema.parse(chatId), CanonicalUpdateChatReadStateRequestSchema.parse(input),
+      ));
+    },
+
     async updateUserState(
       owner: ChatOwner,
       chatId: string,
@@ -255,6 +263,7 @@ export function createCanonicalChatService(
     async list(owner, input): Promise<CanonicalChatListResponse> {
       await options.orchestrator?.reconcileActiveRuns(owner);
       const page = await repository.list(owner, {
+        ...(input.unreadOnly === undefined ? {} : { unreadOnly: input.unreadOnly }),
         limit: input.limit,
         ...(input.lifecycle === undefined ? {} : { lifecycle: input.lifecycle }),
         ...(input.projectId === undefined ? {} : { projectId: input.projectId }),
@@ -517,6 +526,7 @@ export function createUnavailableCanonicalChatService(): CanonicalChatRouteServi
     updateProject: unavailable,
     updateTitle: unavailable,
     updateLegacyTitle: unavailable,
+    updateReadState: unavailable,
     updateUserState: unavailable,
     acknowledgeCompletion: unavailable,
     delete: unavailable,

@@ -16,8 +16,8 @@ it.each([false, true])("renders streaming through an in-flight rename (%s) witho
   const record = { chat, activeRun: { runId: "run_content", turnId: "cturn_content", status: "running" } };
   const detail = vi.fn(async () => Response.json({ record, messages: [], runs: [], turns: [], activities: [] }));
   vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-    if (url.endsWith("/api/chats/events?messageVersion=2&inputVersion=1")) return stream;
-    if (url.endsWith("/title")) return Response.json({ ...record, chat: { ...chat, title: "Manual", titleVersion: 1, revision: 4 } });
+    if (url.endsWith("/api/chats/events?messageVersion=2&inputVersion=1&readStateVersion=1")) return stream;
+    if (url.includes("/title?")) return Response.json({ ...record, chat: { ...chat, title: "Manual", titleVersion: 1, revision: 4 } });
     if (url.includes("/api/chats?")) return Response.json({ items: [record] });
     return detail();
   }));

@@ -1,9 +1,11 @@
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
+import { mergeChatReadState } from "./chat/read-state.js";
 
-/** Title and transcript snapshots have independent clocks. */
+/** Title, read-state, and transcript snapshots have independent clocks. */
 export function mergeCanonicalChatRecord(current: CanonicalChatRecord, incoming: CanonicalChatRecord): CanonicalChatRecord {
   if (current.chat.id !== incoming.chat.id) return incoming;
-  const latest = incoming.chat.revision >= current.chat.revision ? incoming : current;
+  const snapshot = incoming.chat.revision >= current.chat.revision ? incoming : current;
+  const latest = mergeChatReadState(snapshot, snapshot === incoming ? current : incoming);
   const currentVersion = current.chat.titleVersion ?? 0;
   const incomingVersion = incoming.chat.titleVersion ?? 0;
   const title = incomingVersion > currentVersion ? incoming

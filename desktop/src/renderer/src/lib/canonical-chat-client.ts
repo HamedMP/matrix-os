@@ -1,6 +1,7 @@
+import { CanonicalUpdateChatReadStateRequestSchema, type CanonicalUpdateChatReadStateRequest } from "@matrix-os/contracts";
 import { createChatAgentClient, type ChatAgentClient } from "@matrix-os/ui";
 import { CanonicalSubmitChatInputRequestSchema, CanonicalChatInputSubmissionResponseSchema, type CanonicalSubmitChatInputRequest, type CanonicalChatInputSubmissionResponse } from "@matrix-os/contracts";
-import { chatMessageVersionUrl } from "@matrix-os/contracts";
+import { chatMessageVersionUrl, chatReadStateVersionUrl } from "@matrix-os/contracts";
 import {
   CanonicalAcknowledgeChatCompletionRequestSchema,
   CanonicalCancelChatRunRequestSchema,
@@ -83,6 +84,7 @@ import {
 export type { CanonicalChatResponseAnalytics } from "./canonical-chat-analytics";
 
 const CanonicalChatListInputSchema = z.object({
+  unreadOnly: z.boolean().optional(),
   limit: z.number().int().min(1).max(100).optional(),
   lifecycle: z.enum(["active", "archived"]).optional(),
   projectId: CanonicalCreateChatRequestSchema.shape.projectId.nullable().optional(),
@@ -109,6 +111,7 @@ export interface CanonicalChatClient {
   create(input: CanonicalCreateChatRequest): Promise<CanonicalChatRecord>;
   updateProject(chatId: string, input: CanonicalUpdateChatProjectRequest): Promise<CanonicalChatRecord>;
   updateTitle(chatId: string, input: CanonicalUpdateChatTitleRequest): Promise<CanonicalChatRecord>;
+  updateReadState(chatId: string, input: CanonicalUpdateChatReadStateRequest): Promise<CanonicalChatRecord>;
   updateUserState(chatId: string, input: CanonicalUpdateChatUserStateRequest): Promise<CanonicalChatRecord>;
   acknowledgeCompletion(
     chatId: string,
@@ -180,18 +183,25 @@ function withQuery(path: string, values: Record<string, string | number | undefi
 }
 
 export function createCanonicalChatClient(
-  api: Pick<ApiClient, "get" | "post" | "patch" | "delete">,
+  transport: Pick<ApiClient, "get" | "post" | "patch" | "delete">,
   options: {
     trackEvent?: (detail: DesktopAnalyticsDetail) => unknown;
   } = {},
 ): CanonicalChatClient {
+  const api: Pick<ApiClient, "get" | "post" | "patch" | "delete"> = {
+    get: (path, ...args) => transport.get(chatReadStateVersionUrl(path), ...args),
+    post: (path, ...args) => transport.post(chatReadStateVersionUrl(path), ...args),
+    patch: (path, ...args) => transport.patch(chatReadStateVersionUrl(path), ...args),
+    delete: (path, ...args) => transport.delete(chatReadStateVersionUrl(path), ...args),
+  };
   const trackEvent = options.trackEvent ?? trackDesktopEvent;
   return {
-    agents: createChatAgentClient((path, method, body) => method === "GET" ? api.get(path)
-      : method === "POST" ? api.post(path, body) : api.patch(path, body)),
+    agents: createChatAgentClient((path, method, body) => method === "GET" ? transport.get(path)
+      : method === "POST" ? transport.post(path, body) : transport.patch(path, body)),
     async list(input = {}) {
       const parsed = CanonicalChatListInputSchema.parse(input);
       const response = await api.get(withQuery("/api/chats", {
+        unread: parsed.unreadOnly === undefined ? undefined : String(parsed.unreadOnly),
         limit: parsed.limit,
         lifecycle: parsed.lifecycle,
         projectId: parsed.projectId ?? undefined,
@@ -236,6 +246,11 @@ export function createCanonicalChatClient(
       ));
     },
 
+    async updateReadState(chatId, input) {
+      const id = CanonicalChatIdSchema.parse(chatId);
+      const body = CanonicalUpdateChatReadStateRequestSchema.parse(input);
+      return CanonicalChatRecordSchema.parse(await api.patch(`/api/chats/${encodeURIComponent(id)}/read-state`, body));
+    },
     async updateUserState(chatId, input) {
       const parsedChatId = CanonicalChatIdSchema.parse(chatId);
       const request = CanonicalUpdateChatUserStateRequestSchema.parse(input);

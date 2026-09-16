@@ -5,6 +5,20 @@ const record = (title: string, titleVersion: number, revision: number, activityA
   chat: { id: "chat_a", title, titleVersion, revision, activityAt, createdAt: activityAt, updatedAt: activityAt },
 }) as CanonicalChatRecord;
 describe("canonical Chat metadata reconciliation", () => {
+  it("reconciles title and read-state versions independently of transcript revisions", () => {
+    const current = { ...record("Manual", 2, 20), readState: {
+      version: 3, readThroughSeq: 5, latestIncomingSeq: 5, markedUnread: true, unread: true,
+    } };
+    const incoming = { ...record("Old", 1, 21), readState: {
+      version: 2, readThroughSeq: 4, latestIncomingSeq: 6, markedUnread: false, unread: true,
+    } };
+    const merged = mergeCanonicalChatRecord(current, incoming);
+    expect(merged.chat).toMatchObject({ title: "Manual", titleVersion: 2, revision: 21 });
+    expect(merged.readState).toMatchObject({ version: 3, markedUnread: true, latestIncomingSeq: 6 });
+    expect(mergeCanonicalChatRecord(merged, { ...current, readState: {
+      ...current.readState, version: 4, readThroughSeq: 6, latestIncomingSeq: 6, markedUnread: false, unread: false,
+    } }).readState).toMatchObject({ version: 4, unread: false });
+  });
   it("preserves a newer manual title through stale list/detail/stream snapshots", () => {
     const current = record("Manual", 2, 20);
     expect(mergeCanonicalChatRecord(current, record("Old", 1, 19))).toBe(current);

@@ -1,6 +1,6 @@
 "use client";
 
-import { generatedChatTitle, mergeCanonicalChatRecord } from "@matrix-os/ui";
+import { generatedChatTitle, mergeCanonicalChatRecord, mergeChatReadState } from "@matrix-os/ui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   CanonicalChatMessagePart,
@@ -34,6 +34,7 @@ function requestId(): string {
 
 function conversationMeta(record: CanonicalChatRecord) {
   return {
+    readState: record.readState,
     id: record.chat.id,
     title: record.chat.title,
     preview: record.chat.lastMessagePreview ?? record.chat.title,
@@ -50,6 +51,7 @@ export function useCanonicalChatState({ initialDraft }: { initialDraft?: string 
     openStream: (input) => client.openEventStream(input),
   }), [client]);
   const { connected } = useSocket();
+  const [unreadOnly, setUnreadOnly] = useState(false);
   const [records, setRecords] = useState<CanonicalChatRecord[]>([]);
   const recordsRef = useRef(records);
   useEffect(() => { recordsRef.current = records; }, [records]);
@@ -90,21 +92,33 @@ export function useCanonicalChatState({ initialDraft }: { initialDraft?: string 
     setComposerDraftRequest({ id: ++composerDraftSequence.current, text: initialDraft });
   }, [initialDraft]);
 
+  const listGeneration = useRef(0);
   const loadList = useCallback(async () => {
+    const generation = ++listGeneration.current;
     try {
-      const page = await client.list();
-      setRecords((current) => page.items.map((record) => {
-        const known = current.find((item) => item.chat.id === record.chat.id);
-        return known ? mergeCanonicalChatRecord(known, record) : record;
+      const loaded: CanonicalChatRecord[] = [];
+      let cursor: string | undefined;
+      // Match the Work Rail's bounded 1,000-chat window, following server cursors.
+      for (let pageIndex = 0; pageIndex < 10; pageIndex += 1) {
+        const page = await client.list({ ...(unreadOnly ? { unreadOnly: true } : {}), ...(cursor ? { cursor } : {}) });
+        if (listGeneration.current !== generation) return;
+        loaded.push(...page.items);
+        if (!page.nextCursor || page.nextCursor === cursor) break;
+        cursor = page.nextCursor;
+      }
+      setRecords((current) => loaded.map((record) => {
+        const previous = current.find((item) => item.chat.id === record.chat.id);
+        return previous ? mergeCanonicalChatRecord(previous, record) : record;
       }));
       if (autoRestoreChatRef.current) {
-        setActiveChatId((current) => current ?? page.items[0]?.chat.id);
+        setActiveChatId((current) => current ?? loaded[0]?.chat.id);
       }
     } catch (error: unknown) {
+      if (listGeneration.current !== generation) return;
       console.warn("[canonical-chat] Shell list unavailable:", error instanceof Error ? error.name : "UnknownError");
       setSafeError("Chats could not be loaded. Try again.");
     }
-  }, [client]);
+  }, [client, unreadOnly]);
 
   const loadDetail = useCallback(async (chatId: string) => {
     const generation = ++detailRequestGeneration.current;
@@ -125,6 +139,7 @@ export function useCanonicalChatState({ initialDraft }: { initialDraft?: string 
       value = { ...value, record: { ...value.record, chat: { ...value.record.chat,
         title: titleRecord.chat.title, titleVersion: titleRecord.chat.titleVersion,
       } } };
+      if (current) value = { ...value, record: mergeChatReadState(value.record, current.record) };
       detailRef.current = value;
       setDetail(value);
       setSafeError(null);
@@ -520,6 +535,24 @@ export function useCanonicalChatState({ initialDraft }: { initialDraft?: string 
     }
   }, [client, records, loadList, loadDetail]);
 
+  const updateReadState = useCallback(async (chatId: string, input: import("@matrix-os/contracts").CanonicalUpdateChatReadStateRequest) => {
+    try {
+      const response = await client.updateReadState(chatId, input);
+      setRecords((current) => current.map((record) => mergeChatReadState(record, response)));
+      const current = detailRef.current;
+      if (current?.record.chat.id === chatId) {
+        const next = { ...current, record: mergeChatReadState(current.record, response) };
+        detailRef.current = next;
+        setDetail(next);
+      }
+      return true;
+    } catch (error: unknown) {
+      console.warn("[chat] Read state update failed:", error instanceof Error ? error.name : "UnknownError");
+      setSafeError("The Chat could not be updated. Try again.");
+      return false;
+    }
+  }, [client]);
+
   const messages = detail ? projectCanonicalTranscript(detail) : [];
   if (safeError) {
     messages.push({ id: "canonical-safe-error", role: "system", content: safeError, timestamp: Date.now() });
@@ -529,6 +562,10 @@ export function useCanonicalChatState({ initialDraft }: { initialDraft?: string 
     : records.find((record) => record.chat.id === activeChatId);
   const detailLoading = activeChatId !== undefined && detail?.record.chat.id !== activeChatId;
   return {
+    unreadOnly, setUnreadOnly,
+    readState: detail?.record.chat.id === activeChatId ? detail?.record.readState : undefined,
+    displayedThroughSeq: Math.max(0, ...(detail?.messages ?? []).filter((message) => message.role === "assistant" && message.state === "committed").map((message) => message.seq)),
+    updateReadState,
     messages,
     sessionId: activeChatId,
     busy: submitting || detailLoading || Boolean(detail?.record.activeRun),

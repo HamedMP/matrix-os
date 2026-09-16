@@ -25,6 +25,11 @@ interface QueuedMessage {
 const MAX_SEEN_REPLAY_EVENTS = 2_000;
 
 export interface ChatState {
+  unreadOnly?: boolean;
+  setUnreadOnly?: (value: boolean) => void;
+  readState?: import("@matrix-os/contracts").CanonicalChatReadState;
+  displayedThroughSeq?: number;
+  updateReadState?: (chatId: string, input: import("@matrix-os/contracts").CanonicalUpdateChatReadStateRequest) => Promise<boolean>;
   agentClient?: ChatAgentClient;
   queuedTurns?: CanonicalChatQueuedTurn[];
   cancelQueuedTurn?: (id: string) => Promise<boolean>;
