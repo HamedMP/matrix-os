@@ -249,7 +249,7 @@ describe("CanonicalChatRoute", () => {
 
     await waitFor(() => {
       expect(routeApi.delete).toHaveBeenCalledWith(
-        `/api/chats/${chat.id}/queued-turns/${queuedTurn.id}`,
+        `/api/chats/${chat.id}/queued-turns/${queuedTurn.id}?readStateVersion=1`,
         expect.objectContaining({
           clientRequestId: expect.any(String),
           baseRevision: chat.revision,
