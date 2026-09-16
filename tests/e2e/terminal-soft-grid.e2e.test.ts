@@ -41,7 +41,7 @@ describe("real terminal renderer soft-grid resizing", () => {
       { base: resolve(root, "packages/ui/src/terminal"), pattern: "**/*.tsx", negated: false },
     ] }).scan();
     const utilities = tailwind.build(candidates);
-    const html = `<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="/fixture.css"><style>body{margin:24px;background:#101310;color:#e5e7eb;font:14px system-ui}h1{font-size:16px;margin-bottom:16px}#terminal-window{border:1px solid #434e3f;border-radius:8px;overflow:hidden}</style><div id="root"></div><script src="/fixture.js"></script>`;
+    const html = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="/fixture.css"><style>body{margin:24px;background:#101310;color:#e5e7eb;font:14px system-ui}h1{font-size:16px;margin-bottom:16px}#terminal-window{border:1px solid #434e3f;border-radius:8px;overflow:hidden}</style><div id="root"></div><script src="/fixture.js"></script>`;
     server = createServer((request, response) => {
       const path = new URL(request.url!, "http://localhost").pathname;
       if (path === "/fixture.js") { response.setHeader("content-type", "text/javascript"); response.end(javascript); }
@@ -87,8 +87,10 @@ describe("real terminal renderer soft-grid resizing", () => {
 
   it.each([
     { surface: "web", zoom: 1 }, { surface: "web", zoom: 0.75 }, { surface: "electron", zoom: 1 },
+    { surface: "web-mobile", zoom: 1 },
   ].filter((entry) => !nativeElectron || entry.surface === "electron"))("keeps the final row visible in $surface at zoom $zoom", async ({ surface, zoom }) => {
-    const page = electron ? await electron.firstWindow() : await browser.newPage({ viewport: { width: 1450, height: 1050 } });
+    const page = electron ? await electron.firstWindow() : await browser.newPage({ viewport: { width: surface === "web-mobile" ? 430 : 1450, height: 1050 },
+      isMobile: surface === "web-mobile", hasTouch: surface === "web-mobile" });
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));
     try {

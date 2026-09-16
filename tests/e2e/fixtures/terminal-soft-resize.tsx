@@ -56,6 +56,7 @@ window.operator = { invoke: async () => ({}), on: () => () => undefined };
 useConnection.setState({ platformHost: window.location.origin, runtimeSlot: "primary", api: null });
 const params = new URLSearchParams(window.location.search);
 const electron = params.get("surface") === "electron";
+const mobile = params.get("surface") === "web-mobile";
 const zoom = Number(params.get("zoom") ?? "1");
 const theme = {
   name: "fixture", mode: "dark" as const, colors: {
@@ -64,10 +65,10 @@ const theme = {
 };
 createRoot(document.getElementById("root")!).render(
   <main>
-    <h1>{electron ? "Electron Desktop" : zoom === 1 ? "Web Desktop" : "Web Canvas"} — Terminal resize verification</h1>
-    <section id="terminal-window" style={{ width: 1100, height: 850, transform: `scale(${zoom})`, transformOrigin: "top left", display: "flex", flexDirection: "column", background: theme.colors.background }}>
+    <h1>{electron ? "Electron Desktop" : mobile ? "Web Mobile" : zoom === 1 ? "Web Desktop" : "Web Canvas"} — Terminal resize verification</h1>
+    <section id="terminal-window" style={{ width: mobile ? 360 : 1100, height: 850, transform: `scale(${zoom})`, transformOrigin: "top left", display: "flex", flexDirection: "column", background: theme.colors.background }}>
       {electron ? <TerminalView sessionName={`${ref.workspaceId}:${ref.tabId}`} active visualScale={zoom} />
-        : <TerminalPane paneId="browser-sizing" cwd="" theme={theme} isFocused canvasZoom={zoom}
+        : <TerminalPane paneId="browser-sizing" cwd="" theme={theme} isFocused canvasZoom={zoom} suppressNativeKeyboard={mobile}
             sessionId={`${ref.workspaceId}:${ref.tabId}`} shouldCacheOnUnmount={() => false} shouldDestroyOnUnmount={() => false} />}
     </section>
   </main>,
