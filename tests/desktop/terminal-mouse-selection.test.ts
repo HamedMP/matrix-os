@@ -319,11 +319,35 @@ describe("mouse-reporting terminal selection", () => {
     outside.dispatchEvent(outsideUp);
 
     expect(delivered).toEqual([
-      expect.objectContaining({ type: "mousemove", clientX: 160, clientY: -10 }),
-      expect.objectContaining({ type: "mouseup", clientX: 160, clientY: -10 }),
+      expect.objectContaining({ type: "mousemove", clientX: 100, clientY: -10 }),
+      expect.objectContaining({ type: "mouseup", clientX: 100, clientY: -10 }),
     ]);
     expect(outsideMove.defaultPrevented).toBe(true);
     expect(outsideUp.defaultPrevented).toBe(true);
+
+    delivered.length = 0;
+    root.dispatchEvent(mouse("mousedown", {
+      button: 0,
+      buttons: 1,
+      clientX: 120,
+      clientY: 80,
+    }));
+    outside.dispatchEvent(mouse("mousemove", {
+      button: 0,
+      buttons: 1,
+      clientX: 130,
+      clientY: 290,
+    }));
+    outside.dispatchEvent(mouse("mouseup", {
+      button: 0,
+      buttons: 0,
+      clientX: 130,
+      clientY: 290,
+    }));
+    expect(delivered).toEqual([
+      expect.objectContaining({ type: "mousemove", clientX: 900, clientY: 530 }),
+      expect.objectContaining({ type: "mouseup", clientX: 900, clientY: 530 }),
+    ]);
     remove();
   });
 

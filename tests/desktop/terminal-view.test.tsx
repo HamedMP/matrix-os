@@ -1424,8 +1424,8 @@ describe("TerminalView session switching", () => {
     fireEvent(document.body, outsideUp);
 
     expect(delivered).toEqual([
-      ["mousemove", 180, -10],
-      ["mouseup", 180, -10],
+      ["mousemove", 100, -10],
+      ["mouseup", 100, -10],
     ]);
     expect(outsideMove.defaultPrevented).toBe(true);
     expect(outsideUp.defaultPrevented).toBe(true);

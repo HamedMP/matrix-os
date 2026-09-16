@@ -274,6 +274,24 @@ export function installMouseTrackingSelection({
     return distance < 0 ? -magnitude : magnitude;
   };
 
+  const alignPointerToVerticalSelectionEdge = (
+    source: MouseSnapshot,
+  ): MouseSnapshot => {
+    const amount = edgeScrollAmount(source);
+    if (amount === 0) return source;
+    const terminal = getTerminal();
+    const coordinateElement = terminal?.element ?? host;
+    const rect = coordinateElement.getBoundingClientRect();
+    return {
+      ...source,
+      // Once a drag crosses a vertical terminal edge, xterm treats the
+      // selection endpoint as the beginning/end of that boundary row. Keep
+      // that behavior when replaying scaled document events; preserving the
+      // interior pointer column truncates the final auto-scrolled line.
+      clientX: amount < 0 ? rect.left : rect.right,
+    };
+  };
+
   const dispatchEdgeWheel = (source: MouseSnapshot, amount: number) => {
     const terminal = getTerminal();
     const coordinateElement = terminal?.element ?? host;
@@ -440,7 +458,7 @@ export function installMouseTrackingSelection({
         dispatch(gesture.start, "mousedown", 0, 1, true);
       }
     }
-    const targetedCurrent = selectionTarget(current);
+    const targetedCurrent = alignPointerToVerticalSelectionEdge(selectionTarget(current));
     if (gesture.forceSelection || outsideHost) {
       dispatch(targetedCurrent, "mousemove", 0, 1, gesture.forceSelection);
     }
@@ -456,7 +474,7 @@ export function installMouseTrackingSelection({
       && rawScale > 0
       && rawScale !== 1;
     if (gesture.forceSelection || replacesUnscaledEvent) stopOriginal(event);
-    const current = selectionTarget(snapshot(event));
+    const current = alignPointerToVerticalSelectionEdge(selectionTarget(snapshot(event)));
     const terminal = getTerminal();
     if (pendingEdgeScrollAmount !== 0 && terminal && gesture.appOwnsSelection) {
       captureExtendedSelection(
