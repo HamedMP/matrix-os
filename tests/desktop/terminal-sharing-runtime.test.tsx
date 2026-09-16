@@ -62,4 +62,13 @@ describe("DesktopTerminalSharing", () => {
     await act(async () => { await Promise.resolve(); });
     expect(sharingButton).not.toHaveBeenCalled();
   });
+
+  it("fails closed when a legacy JSON read returns no request promise", async () => {
+    useConnection.setState({ api: { get: vi.fn(() => undefined) } as never });
+
+    render(<DesktopTerminalSharing terminalId="terminal_release" />);
+
+    await act(async () => { await Promise.resolve(); });
+    expect(sharingButton).not.toHaveBeenCalled();
+  });
 });
