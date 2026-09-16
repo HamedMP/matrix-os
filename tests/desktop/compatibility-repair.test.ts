@@ -7,6 +7,7 @@ const next = "v2026.09.09-2";
 function fixture({ local = true, cloud = true, cloudBehind = false } = {}) {
   const source = { commit: "b".repeat(40), ancestors: ["a".repeat(40)] };
   const info = { version, runningVersion: version, updateChannel: "canary",
+    runtimeCompatibility: { schemaVersion: 1, minDesktopProtocol: 1, maxDesktopProtocol: 1 },
     build: { sha: cloudBehind ? "a".repeat(40) : source.commit } };
   const get = vi.fn(async (path: string) => path === "/api/system/info" ? info : {
     channel: "canary", latest: { version: cloud ? next : version }, updateAvailable: cloud,
@@ -26,11 +27,11 @@ describe("one-button update planning", () => {
       expect(plan.local.installed).toBe("0.1.0");
       expect(plan.cloud.installed).toBe(version);
     });
-  it("does not update Desktop when the missing cloud changes have no available update", async () => {
+  it("offers an independent Desktop update when cloud source differs but protocols match", async () => {
     const plan = await loadRepairPlan(fixture({ local: true, cloud: false, cloudBehind: true }));
-    expect(plan.targets).toEqual([]);
-    expect(plan.compatibilityUpdateRequired).toBe(true);
-    expect(plan.reason).toContain("matching update is not available");
+    expect(plan.targets).toEqual(["local"]);
+    expect(plan.compatibilityUpdateRequired).toBe(false);
+    expect(plan.reason).toContain("optional desktop update");
   });
   it.each([true, false])("selects only the required Desktop protocol update (available %s)", async (local) => {
     const f = fixture({ local, cloud: true, cloudBehind: true });

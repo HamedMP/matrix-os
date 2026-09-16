@@ -38,7 +38,7 @@ export default function CompatibilityUpdatePanel({ repair, close }: {
 }) {
   const { plan, loading, busy, progress, error, complete } = repair;
   const hasUpdate = Boolean(plan?.targets.length);
-  const current = plan?.local.state === "current" && plan.cloud.state === "current" && !plan.compatibilityUpdateRequired;
+  const current = plan?.local.state === "current" && plan.cloud.state === "current" && plan.compatibility === "compatible";
   const restart = plan?.targets.includes("local");
   const done = complete || (!hasUpdate && current);
   return (
@@ -48,7 +48,7 @@ export default function CompatibilityUpdatePanel({ repair, close }: {
         <div className="min-w-0 flex-1">
           <h2 className="text-lg font-semibold" style={{ color: "var(--text-primary)" }}>Update Matrix OS</h2>
           <p className="mt-1 text-sm leading-5" style={{ color: "var(--text-secondary)" }}>
-            Your desktop app connects to your cloud computer. We check both and update only what needs updating.
+            Your desktop app and cloud computer update independently. We check connection support separately from available updates.
           </p>
         </div>
       </div>
