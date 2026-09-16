@@ -11,6 +11,7 @@ import {
 import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod/v4";
 import { TerminalRuntimeError } from "./errors.js";
+import { TerminalMouseModeState } from "./mouse-mode-state.js";
 import {
   TerminalWorkspaceStore,
   type TerminalRuntimeWorkspaceState,
@@ -92,6 +93,7 @@ interface AttachmentState {
   ref: TerminalRef;
   handle: ZellijAttachment;
   viewers: Map<string, ViewerState>;
+  mouseModes: TerminalMouseModeState;
 }
 
 interface InputQueueState {
@@ -517,13 +519,17 @@ export class TerminalRuntime {
         ref,
         handle: undefined as unknown as ZellijAttachment,
         viewers: new Map(),
+        mouseModes: new TerminalMouseModeState(),
       };
       let openingExit: { exitCode: number | null; release: () => void } | undefined;
       try {
         next.handle = await this.zellij.openAttachment(workspace.zellijSessionName, {
           paneId: tab.zellijPaneId,
           size: workspace.canonicalSize,
-          onData: (data) => { void this.broadcast(key, data); },
+          onData: (data) => {
+            next.mouseModes.observe(data);
+            void this.broadcast(key, data);
+          },
           onExit: (exitCode) => {
             if (!this.attachments.has(key)) { openingExit ??= { exitCode, release: this.reservePaneClosure(key) }; return; }
             const releasePaneClosure = this.reservePaneClosure(key);
@@ -546,6 +552,18 @@ export class TerminalRuntime {
       send: input.send,
       ...(input.onExit ? { onExit: input.onExit } : {}),
     });
+    const mouseInitialization = attachment.mouseModes.bootstrap();
+    if (mouseInitialization) {
+      try {
+        // Invoke before live output can reach this viewer. A screen snapshot
+        // cannot restore the shared PTY's mouse reporting/encoding state.
+        await input.send(mouseInitialization);
+      } catch (error: unknown) {
+        attachment.viewers.delete(viewerId);
+        if (attachment.viewers.size === 0) await this.closeAttachment(key);
+        throw error;
+      }
+    }
     let detached = false;
     return {
       write: async (data) => {
