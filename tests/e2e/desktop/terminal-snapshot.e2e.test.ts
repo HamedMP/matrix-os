@@ -9,6 +9,9 @@ import { startStubGateway, type StubGateway } from "./fixtures/stub-gateway";
 const ROOT = resolve(__dirname, "../../..");
 const MAIN = join(ROOT, "desktop/out/main/index.js");
 const electronPath = createRequire(join(ROOT, "desktop/package.json"))("electron") as string;
+if (process.env.MATRIX_DESKTOP_E2E_REQUIRED === "1" && !existsSync(MAIN)) {
+  throw new Error("Required terminal snapshot E2E needs desktop/out/main/index.js; run the desktop build first");
+}
 const suite = existsSync(MAIN) ? describe : describe.skip;
 
 suite("Electron Desktop terminal snapshot recovery", () => {
