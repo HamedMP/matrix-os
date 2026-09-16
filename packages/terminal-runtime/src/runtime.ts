@@ -12,6 +12,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod/v4";
 import { TerminalRuntimeError } from "./errors.js";
 import { TerminalMouseModeState } from "./mouse-mode-state.js";
+import { createViewerOutput } from "./viewer-output.js";
 import {
   TerminalWorkspaceStore,
   type TerminalRuntimeWorkspaceState,
@@ -83,6 +84,7 @@ export interface TerminalViewer {
 }
 
 interface ViewerState {
+  disposeOutput: () => void;
   id: string;
   lastTouched: number;
   send: (data: Uint8Array) => void | Promise<void>;
@@ -546,19 +548,22 @@ export class TerminalRuntime {
     if (!attachment.viewers.has(viewerId) && attachment.viewers.size >= this.maxViewersPerTab) {
       throw new TerminalRuntimeError("capacity");
     }
+    const send = createViewerOutput(input.send);
+    attachment.viewers.get(viewerId)?.disposeOutput();
     attachment.viewers.set(viewerId, {
       id: viewerId,
       lastTouched: Date.now(),
-      send: input.send,
+      send,
+      disposeOutput: send.dispose,
       ...(input.onExit ? { onExit: input.onExit } : {}),
     });
     const mouseInitialization = attachment.mouseModes.bootstrap();
     if (mouseInitialization) {
       try {
-        // Invoke before live output can reach this viewer. A screen snapshot
-        // cannot restore the shared PTY's mouse reporting/encoding state.
-        await input.send(mouseInitialization);
+        // The same ordered sender delivers initialization and later live output.
+        await send(mouseInitialization);
       } catch (error: unknown) {
+        send.dispose();
         attachment.viewers.delete(viewerId);
         if (attachment.viewers.size === 0) await this.closeAttachment(key);
         throw error;
@@ -581,7 +586,8 @@ export class TerminalRuntime {
       detach: async () => {
         if (detached) return;
         detached = true;
-        attachment!.viewers.delete(viewerId);
+        send.dispose();
+        if (attachment!.viewers.get(viewerId)?.send === send) attachment!.viewers.delete(viewerId);
         if (attachment!.viewers.size === 0) await this.closeAttachment(key);
       },
     };
@@ -940,7 +946,7 @@ export class TerminalRuntime {
   private async broadcast(key: string, data: Uint8Array): Promise<void> {
     const attachment = this.attachments.get(key);
     if (!attachment) return;
-    const failed: string[] = [];
+    const failed: ViewerState[] = [];
     for (const viewer of attachment.viewers.values()) {
       try {
         await viewer.send(data);
@@ -949,10 +955,13 @@ export class TerminalRuntime {
           "[terminal-runtime] viewer output send failed",
           error instanceof Error ? error.name : "unknown_error",
         );
-        failed.push(viewer.id);
+        failed.push(viewer);
       }
     }
-    for (const viewerId of failed) attachment.viewers.delete(viewerId);
+    for (const viewer of failed) {
+      viewer.disposeOutput();
+      if (attachment.viewers.get(viewer.id) === viewer) attachment.viewers.delete(viewer.id);
+    }
     if (attachment.viewers.size === 0) await this.closeAttachment(key);
   }
 
@@ -965,6 +974,7 @@ export class TerminalRuntime {
       if (this.attachments.get(key) !== attachment) return;
       if (!force && attachment.viewers.size > 0) return;
       this.attachments.delete(key);
+      for (const viewer of attachment.viewers.values()) viewer.disposeOutput();
       attachment.viewers.clear();
       await attachment.handle.close();
     } finally {
@@ -1008,7 +1018,10 @@ export class TerminalRuntime {
   private async sweepStaleViewers(now = Date.now()): Promise<void> {
     for (const [key, attachment] of this.attachments) {
       for (const [viewerId, viewer] of attachment.viewers) {
-        if (now - viewer.lastTouched > this.viewerTtlMs) attachment.viewers.delete(viewerId);
+        if (now - viewer.lastTouched > this.viewerTtlMs) {
+          viewer.disposeOutput();
+          attachment.viewers.delete(viewerId);
+        }
       }
       if (attachment.viewers.size === 0) await this.closeAttachment(key);
     }

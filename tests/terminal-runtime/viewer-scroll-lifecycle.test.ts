@@ -2,6 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { Terminal } from "@xterm/xterm";
 import { TerminalRuntime, type ZellijRuntimeAdapter } from "../../packages/terminal-runtime/src/runtime.js";
 import { TerminalWorkspaceStore } from "../../packages/terminal-runtime/src/workspace-store.js";
 
@@ -79,6 +80,63 @@ describe("viewer mouse initialization lifecycle", () => {
       await fixture.runtime.attach(fixture.ref, { viewerId: "second", send: reconnected });
       expect(reconnected).toHaveBeenCalledOnce();
       expect(fixture.openAttachment).toHaveBeenCalledOnce();
+    } finally { await fixture.cleanup(); }
+  });
+
+  it("delivers a pending bootstrap before newer live mouse-mode changes", async () => {
+    const fixture = await createFixture();
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    const delivered: string[] = [];
+    const terminal = new Terminal({ allowProposedApi: true });
+    try {
+      await fixture.runtime.attach(fixture.ref, { viewerId: "first", send: () => {} });
+      let started!: () => void;
+      const sending = new Promise<void>((resolve) => { started = resolve; });
+      let initial = true;
+      const joining = fixture.runtime.attach(fixture.ref, {
+        viewerId: "second",
+        send: async (data) => {
+          if (initial) { initial = false; started(); await pending; }
+          delivered.push(new TextDecoder().decode(data));
+          await new Promise<void>((resolve) => terminal.write(data, resolve));
+        },
+      });
+      await sending;
+      fixture.emit("\x1b[?1000l");
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      const beforeRelease = [...delivered];
+      release();
+      await joining;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(beforeRelease).toEqual([]);
+      expect(delivered).toHaveLength(2);
+      expect(delivered[0]).toContain("\x1b[?1000h");
+      expect(delivered[1]).toBe("\x1b[?1000l");
+      await new Promise<void>((resolve) => terminal.write("", resolve));
+      expect(terminal.modes.mouseTrackingMode).toBe("none");
+    } finally { release(); terminal.dispose(); await fixture.cleanup(); }
+  });
+
+  it("does not evict a replacement viewer when the old sender is disposed", async () => {
+    const fixture = await createFixture();
+    let pending = false;
+    try {
+      const old = await fixture.runtime.attach(fixture.ref, {
+        viewerId: "same",
+        send: () => pending ? new Promise<void>(() => {}) : undefined,
+      });
+      pending = true;
+      fixture.emit("old output");
+      const replacementSend = vi.fn();
+      const replacement = await fixture.runtime.attach(fixture.ref, { viewerId: "same", send: replacementSend });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      await old.detach();
+      fixture.emit("new output");
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(new TextDecoder().decode(replacementSend.mock.calls.at(-1)![0])).toBe("new output");
+      await expect(replacement.write(new Uint8Array([1]))).resolves.toBeUndefined();
+      expect(fixture.close).not.toHaveBeenCalled();
     } finally { await fixture.cleanup(); }
   });
 
