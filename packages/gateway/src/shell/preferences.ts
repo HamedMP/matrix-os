@@ -79,7 +79,11 @@ export const ShellPreferencesSchema = z.preprocess((input) => {
 
 const StoredShellPreferencesSchema = z.object({
   keyboard: TerminalKeyboardPreferencesReadSchema.optional(),
-}).passthrough().pipe(ShellPreferencesSchema);
+}).passthrough();
+
+function parseStoredShellPreferences(input: unknown): ShellPreferences {
+  return ShellPreferencesSchema.parse(StoredShellPreferencesSchema.parse(input));
+}
 
 export type ShellPreferences = z.infer<typeof ShellPreferencesSchema>;
 export type ShellThemeId = z.infer<typeof ShellThemeIdSchema>;
@@ -108,7 +112,7 @@ export class ShellPreferencesStore {
     const safeName = validateSessionName(name);
     try {
       const raw = await readFile(this.pathFor(safeName), "utf-8");
-      return StoredShellPreferencesSchema.parse(JSON.parse(raw));
+      return parseStoredShellPreferences(JSON.parse(raw));
     } catch (err: unknown) {
       if (
         err instanceof Error &&
@@ -131,7 +135,7 @@ export class ShellPreferencesStore {
   async loadGlobal(): Promise<ShellPreferences> {
     try {
       const raw = await readFile(this.globalPath(), "utf-8");
-      return StoredShellPreferencesSchema.parse(JSON.parse(raw));
+      return parseStoredShellPreferences(JSON.parse(raw));
     } catch (err: unknown) {
       if (
         err instanceof Error &&
