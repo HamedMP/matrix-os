@@ -1,19 +1,25 @@
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { afterAll, beforeAll, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { _electron, type ElectronApplication, type Page } from "playwright";
 import { startProviderAuthGateway } from "./fixtures/provider-auth-gateway";
 
 const root = resolve(__dirname, "../../..");
 const output = join(root, "output/playwright/om-255");
+const hasDesktopBuild = existsSync(join(root, "desktop/out/main/index.js"));
+if (process.env.MATRIX_DESKTOP_E2E_REQUIRED === "1" && !hasDesktopBuild) {
+  throw new Error("Required Desktop E2E build is missing");
+}
+const suite = hasDesktopBuild ? describe : describe.skip;
 const executablePath = createRequire(join(root, "desktop/package.json"))("electron") as string;
 let gateway: Awaited<ReturnType<typeof startProviderAuthGateway>>;
 let app: ElectronApplication;
 let page: Page;
 let profile: string;
 
+suite("Desktop provider authentication Terminal", () => {
 beforeAll(async () => {
   mkdirSync(output, { recursive: true });
   gateway = await startProviderAuthGateway();
@@ -82,3 +88,5 @@ it("reveals a closed Terminal for Connect and Disconnect and refreshes auth on r
     throw error;
   }
 }, 60_000);
+
+});
