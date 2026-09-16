@@ -20,6 +20,7 @@ skills=(
   dev-vps
   debug-app
   landing-design
+  personal-daily-brief
 )
 
 if ! command -v "$AGENT_BIN" >/dev/null 2>&1; then

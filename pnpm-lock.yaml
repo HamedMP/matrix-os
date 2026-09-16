@@ -705,6 +705,9 @@ importers:
 
   packages/integrations-mcp:
     dependencies:
+      '@matrix-os/contracts':
+        specifier: workspace:*
+        version: link:../contracts
       '@matrix-os/kernel':
         specifier: workspace:*
         version: link:../kernel
