@@ -111,6 +111,15 @@ describe("real terminal renderer soft-grid resizing", () => {
         }
         await page.screenshot({ path: resolve(evidence, `${nativeElectron ? "native-" : ""}${surface}-${zoom}-${height}.png`) });
       }
+      // Output can arrive after the resize has settled, moving a previously
+      // visible cursor below the short viewport without another ResizeObserver.
+      await page.evaluate(() => (window as unknown as { fixtureOutput: (data: string) => void }).fixtureOutput("\x1b[2J\x1b[Hwaiting"));
+      await page.waitForTimeout(100);
+      await page.locator("#terminal-window").evaluate((element) => { (element as HTMLElement).style.height = "300px"; });
+      await expect.poll(async () => (await geometry(page)).panTop).toBe(0);
+      await page.waitForTimeout(250);
+      await page.evaluate(() => (window as unknown as { fixtureOutput: (data: string) => void }).fixtureOutput("\r\n".repeat(35) + "LATE-OUTPUT-VISIBLE$ "));
+      await expect.poll(async () => { const g = await geometry(page); return g.bottom - g.visibleBottom; }).toBeLessThanOrEqual(1);
       expect(errors).toEqual([]);
     } finally { if (!electron) await page.close(); }
   }, 30_000);

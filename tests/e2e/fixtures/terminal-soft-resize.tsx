@@ -10,6 +10,8 @@ const ref = { workspaceId: `tws_${"a".repeat(32)}`, tabId: `tt_${"b".repeat(32)}
 const canonicalSize = { cols: 120, rows: 36 };
 const proposals: unknown[] = [];
 const inputs: string[] = [];
+let latestSocket: FixtureSocket | undefined;
+let outputSequence = 1;
 class FixtureSocket {
   static CONNECTING = 0; static OPEN = 1; static CLOSING = 2; static CLOSED = 3;
   readyState = 0;
@@ -17,6 +19,7 @@ class FixtureSocket {
   onmessage: ((event: MessageEvent) => void) | null = null;
   onclose: (() => void) | null = null;
   constructor(readonly url: string) {
+    latestSocket = this;
     setTimeout(() => {
       this.readyState = 1;
       this.onopen?.(new Event("open"));
@@ -48,6 +51,7 @@ class FixtureSocket {
 Object.defineProperty(window, "WebSocket", { value: FixtureSocket });
 Object.defineProperty(window, "fixtureProposals", { value: proposals });
 Object.defineProperty(window, "fixtureInputs", { value: inputs });
+Object.defineProperty(window, "fixtureOutput", { value: (data: string) => latestSocket?.receive({ type: "output", seq: outputSequence++, data }) });
 window.operator = { invoke: async () => ({}), on: () => () => undefined };
 useConnection.setState({ platformHost: window.location.origin, runtimeSlot: "primary", api: null });
 const params = new URLSearchParams(window.location.search);

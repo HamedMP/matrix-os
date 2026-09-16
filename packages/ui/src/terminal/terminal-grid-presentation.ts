@@ -5,6 +5,7 @@ interface GridTerminal {
   cols: number;
   rows: number;
   options: { fontSize?: number; scrollback?: number; overviewRuler?: { width?: number } };
+  onWriteParsed?: (listener: () => void) => { dispose(): void };
   buffer?: { active: { baseY: number; viewportY: number; cursorX: number; cursorY: number } };
 }
 
@@ -58,6 +59,7 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
   let restoreStyle: Partial<CSSStyleDeclaration> | null = null;
   let previousPan: { top: number; left: number } | null = null;
   let presentationScale = 1;
+  let outputSubscription: { dispose(): void } | undefined;
 
   const onWheel = (event: WheelEvent & { matrixGridCorrected?: boolean }) => {
     if (event.matrixGridCorrected || !element || !(event.target instanceof Element) || !element.contains(event.target)) return;
@@ -113,6 +115,8 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
     const followX = live && (!previousPan || Math.abs(host.scrollLeft - previousPan.left) <= 1);
 
     if (!stage) {
+      // xterm emits once per parsed write batch; RAF coalesces output bursts.
+      outputSubscription = terminal.onWriteParsed?.(schedule);
       host.addEventListener("wheel", onWheel, { capture: true, passive: false });
       element = root;
       restoreStyle = {
@@ -177,6 +181,8 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
     frame = requestAnimationFrame(() => { frame = null; apply(); });
   };
   const reset = () => {
+    outputSubscription?.dispose();
+    outputSubscription = undefined;
     host.removeEventListener("wheel", onWheel, true);
     if (element && restoreStyle) Object.assign(element.style, restoreStyle);
     if (stage && element?.parentElement === stage) stage.replaceWith(element);

@@ -86,6 +86,34 @@ describe("shared terminal grid presentation", () => {
     expect({ cols: terminal.cols, rows: terminal.rows }).toEqual({ cols: 120, rows: 36 });
   });
 
+  it("follows later output in a short live viewport and disposes the subscription", () => {
+    const { host, terminal, layout, presentation } = setup();
+    const buffer = { baseY: 0, viewportY: 0, cursorY: 0, cursorX: 0 };
+    Object.defineProperty(terminal, "buffer", { value: { active: buffer } });
+    let onOutput: (() => void) | undefined;
+    const dispose = vi.fn();
+    Object.assign(terminal, { onWriteParsed: (listener: () => void) => {
+      onOutput = listener;
+      return { dispose };
+    } });
+    layout(1_600, 300);
+    expect(host.scrollTop).toBe(0);
+    buffer.cursorY = 35;
+    onOutput?.();
+    onOutput?.();
+    expect(frames).toHaveLength(1);
+    flush();
+    expect(host.scrollTop).toBeGreaterThan(200);
+    host.scrollTop = 20;
+    onOutput?.();
+    flush();
+    expect(host.scrollTop).toBe(20);
+    presentation.dispose();
+    expect(dispose).toHaveBeenCalledOnce();
+    onOutput?.();
+    expect(frames).toHaveLength(0);
+  });
+
   it("defers hidden hosts and coalesces repeated measurements", () => {
     const { host, geometry, presentation, layout } = setup();
     layout(0, 0);
