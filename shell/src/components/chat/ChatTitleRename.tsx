@@ -5,6 +5,7 @@ import { ChatContextMenu } from "@matrix-os/ui";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 
 export interface RenameableConversation {
+  readState?: import("@matrix-os/contracts").CanonicalChatReadState;
   id: string;
   title?: string;
   preview: string;
@@ -20,6 +21,9 @@ export function ChatTitleEditor({ title, pending, onCommit, onCancel }: {
 }) {
   const [value, setValue] = useState(title);
   const committedRef = useRef(false);
+  useEffect(() => {
+    if (!pending) committedRef.current = false;
+  }, [pending]);
   const commit = () => {
     if (committedRef.current || pending) return;
     const next = value.trim();
@@ -61,6 +65,7 @@ export function RenameableConversationRow({
   mobile,
   editing,
   renamePending,
+  onToggleRead,
   onSelect,
   onRenameStart,
   onRenameCommit,
@@ -71,6 +76,7 @@ export function RenameableConversationRow({
   mobile: boolean;
   editing: boolean;
   renamePending: boolean;
+  onToggleRead?: () => void;
   onSelect: () => void;
   onRenameStart?: () => void;
   onRenameCommit: (title: string) => void;
@@ -113,12 +119,13 @@ export function RenameableConversationRow({
         active ? "bg-accent/50 text-foreground" : "text-foreground/70 hover:bg-accent/30 hover:text-foreground"
       }`}
     >
-      <span className="flex-1 truncate">{title.slice(0, 40) + (title.length > 40 ? "..." : "")}</span>
+      {conversation.readState?.unread ? <span aria-label={`Unread ${title}`} className="size-2 shrink-0 rounded-full bg-primary" /> : null}
+      <span className={`flex-1 truncate ${conversation.readState?.unread ? "font-semibold" : ""}`}>{title.slice(0, 40) + (title.length > 40 ? "..." : "")}</span>
     </button>
   );
   if (editing) return row;
   return (
-    <ChatContextMenu chatId={conversation.id} zIndex={SHELL_Z_INDEX.popover} items={onRenameStart ? [{
+    <ChatContextMenu chatId={conversation.id} zIndex={SHELL_Z_INDEX.popover} primaryAction={onToggleRead ? { label: conversation.readState?.unread ? "Mark as read" : "Mark as unread", onSelect: onToggleRead } : undefined} items={onRenameStart ? [{
         label: "Rename", onSelect: () => {
           if (renameTimerRef.current !== null) window.clearTimeout(renameTimerRef.current);
           renameTimerRef.current = window.setTimeout(() => {

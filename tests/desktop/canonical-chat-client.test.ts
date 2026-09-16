@@ -146,7 +146,7 @@ describe("canonical Chat client", () => {
     });
 
     expect(get).toHaveBeenCalledWith(
-      "/api/chats?limit=25&lifecycle=active&projectId=project_1&cursor=chatcur_prev",
+      "/api/chats?limit=25&lifecycle=active&projectId=project_1&cursor=chatcur_prev&readStateVersion=1",
     );
     expect(page.items[0]?.chat.id).toBe("chat_client_test");
   });
@@ -157,7 +157,7 @@ describe("canonical Chat client", () => {
 
     await client.list({ projectId: null });
 
-    expect(get).toHaveBeenCalledWith("/api/chats?scope=global");
+    expect(get).toHaveBeenCalledWith("/api/chats?scope=global&readStateVersion=1");
   });
 
   it("searches the same Chat identity within Global or Project scope", async () => {
@@ -169,11 +169,11 @@ describe("canonical Chat client", () => {
 
     expect(get).toHaveBeenNthCalledWith(
       1,
-      "/api/chats/search?query=release+plan&limit=10&projectId=project_1",
+      "/api/chats/search?query=release+plan&limit=10&projectId=project_1&readStateVersion=1",
     );
     expect(get).toHaveBeenNthCalledWith(
       2,
-      "/api/chats/search?query=release+plan&scope=global",
+      "/api/chats/search?query=release+plan&scope=global&readStateVersion=1",
     );
   });
 
@@ -186,7 +186,7 @@ describe("canonical Chat client", () => {
       title: "Client test",
     });
 
-    expect(post).toHaveBeenCalledWith("/api/chats", {
+    expect(post).toHaveBeenCalledWith("/api/chats?readStateVersion=1", {
       clientRequestId: "req_client_create",
       title: "Client test",
     });
@@ -206,7 +206,7 @@ describe("canonical Chat client", () => {
       baseRevision: 0,
       projectId: "project_1",
     })).resolves.toEqual(movedRecord);
-    expect(patch).toHaveBeenCalledWith("/api/chats/chat_client_test/project", {
+    expect(patch).toHaveBeenCalledWith("/api/chats/chat_client_test/project?readStateVersion=1", {
       baseRevision: 0,
       projectId: "project_1",
     });
@@ -223,11 +223,11 @@ describe("canonical Chat client", () => {
     const client = createCanonicalChatClient(api({ patch }));
 
     await expect(client.updateTitle(record.chat.id, {
-      baseRevision: 0,
+      expectedTitleVersion: 0,
       title: "  Release plan  ",
     })).resolves.toEqual(renamed);
-    expect(patch).toHaveBeenCalledWith("/api/chats/chat_client_test/title", {
-      baseRevision: 0,
+    expect(patch).toHaveBeenCalledWith("/api/chats/chat_client_test/title?readStateVersion=1", {
+      expectedTitleVersion: 0,
       title: "Release plan",
     });
   });
@@ -244,7 +244,7 @@ describe("canonical Chat client", () => {
     const client = createCanonicalChatClient(api({ patch }));
 
     await expect(client.updateUserState(record.chat.id, { pinned: true })).resolves.toEqual(pinned);
-    expect(patch).toHaveBeenCalledWith("/api/chats/chat_client_test/user-state", { pinned: true });
+    expect(patch).toHaveBeenCalledWith("/api/chats/chat_client_test/user-state?readStateVersion=1", { pinned: true });
   });
 
   it("acknowledges an exact completed Run through the strict canonical path", async () => {
@@ -262,7 +262,7 @@ describe("canonical Chat client", () => {
     await expect(acknowledgeCompletion(record.chat.id, "run_client_completed"))
       .resolves.toEqual(acknowledged);
     expect(post).toHaveBeenCalledWith(
-      "/api/chats/chat_client_test/runs/run_client_completed/acknowledge",
+      "/api/chats/chat_client_test/runs/run_client_completed/acknowledge?readStateVersion=1",
       {},
     );
     await expect(acknowledgeCompletion("not-a-chat", "run_client_completed")).rejects.toThrow();
@@ -282,7 +282,7 @@ describe("canonical Chat client", () => {
       deletedAt: "2026-08-26T12:00:00.000Z",
     });
     expect(remove).toHaveBeenCalledWith(
-      "/api/chats/chat_client_test?clientRequestId=req_client_delete",
+      "/api/chats/chat_client_test?clientRequestId=req_client_delete&readStateVersion=1",
     );
   });
 
@@ -302,7 +302,7 @@ describe("canonical Chat client", () => {
       cursor: "chatcur_current",
     });
     expect(get).toHaveBeenCalledWith(
-      "/api/chats/chat_client_test?limit=100&cursor=chatcur_current&messageVersion=2&inputVersion=1",
+      "/api/chats/chat_client_test?limit=100&cursor=chatcur_current&messageVersion=2&inputVersion=1&readStateVersion=1",
     );
     expect(detail.nextCursor).toBe("chatcur_older");
 
@@ -329,7 +329,7 @@ describe("canonical Chat client", () => {
           submission: "accepted",
         };
       }
-      if (path.endsWith("/cancel")) {
+      if (path.split("?")[0]!.endsWith("/cancel")) {
         return {
           run: {
             id: "run_client",
@@ -353,7 +353,7 @@ describe("canonical Chat client", () => {
           cancellation: "aborted",
         };
       }
-      if (path.endsWith("/turns/cturn_client/runs")) {
+      if (path.split("?")[0]!.endsWith("/turns/cturn_client/runs")) {
         const admitted = admissionResponse(turnInput);
         return {
           record: admitted.record,
@@ -377,17 +377,17 @@ describe("canonical Chat client", () => {
       decision: "approve_for_session",
     });
 
-    expect(post).toHaveBeenNthCalledWith(1, "/api/chats/chat_client_test/turns?messageVersion=2&inputVersion=1", turnInput);
-    expect(post).toHaveBeenNthCalledWith(2, "/api/chats/chat_client_test/runs/run_client/cancel", {
+    expect(post).toHaveBeenNthCalledWith(1, "/api/chats/chat_client_test/turns?messageVersion=2&inputVersion=1&readStateVersion=1", turnInput);
+    expect(post).toHaveBeenNthCalledWith(2, "/api/chats/chat_client_test/runs/run_client/cancel?readStateVersion=1", {
       clientRequestId: "req_client_cancel",
     });
-    expect(post).toHaveBeenNthCalledWith(3, "/api/chats/chat_client_test/turns/cturn_client/runs", {
+    expect(post).toHaveBeenNthCalledWith(3, "/api/chats/chat_client_test/turns/cturn_client/runs?readStateVersion=1", {
       clientRequestId: "req_client_retry",
       baseRevision: 2,
     });
     expect(post).toHaveBeenNthCalledWith(
       4,
-      "/api/chats/chat_client_test/runs/run_client/approvals/appr_command",
+      "/api/chats/chat_client_test/runs/run_client/approvals/appr_command?readStateVersion=1",
       { clientRequestId: "req_client_approval", decision: "approve_for_session" },
     );
   });
@@ -428,7 +428,7 @@ describe("canonical Chat client", () => {
       ...queuedTurn,
       parts: [{ type: "text" as const, text: "Edited queue text" }],
     };
-    const patch = vi.fn(async (path: string) => path.endsWith("/order")
+    const patch = vi.fn(async (path: string) => path.split("?")[0]!.endsWith("/order")
       ? { queuedTurns: [queuedTurn] }
       : { queuedTurn: editedQueuedTurn });
     const remove = vi.fn(async () => ({
@@ -472,24 +472,24 @@ describe("canonical Chat client", () => {
       expectedTurnId: "cturn_client",
     });
 
-    expect(post).toHaveBeenNthCalledWith(1, "/api/chats/chat_client_test/queued-turns", queueInput);
-    expect(post).toHaveBeenNthCalledWith(2, "/api/chats/chat_client_test/runs/run_client/steer?messageVersion=2&inputVersion=1", {
+    expect(post).toHaveBeenNthCalledWith(1, "/api/chats/chat_client_test/queued-turns?readStateVersion=1", queueInput);
+    expect(post).toHaveBeenNthCalledWith(2, "/api/chats/chat_client_test/runs/run_client/steer?messageVersion=2&inputVersion=1&readStateVersion=1", {
       clientRequestId: "req_client_steer",
       expectedTurnId: "cturn_client",
       parts: steeringMessage.parts,
     });
-    expect(patch).toHaveBeenCalledWith("/api/chats/chat_client_test/queued-turns/order", {
+    expect(patch).toHaveBeenCalledWith("/api/chats/chat_client_test/queued-turns/order?readStateVersion=1", {
       clientRequestId: "req_client_reorder",
       baseRevision: 2,
       queuedTurnIds: [queuedTurn.id],
     });
     expect(remove).toHaveBeenCalledWith(
-      "/api/chats/chat_client_test/queued-turns/qturn_client",
+      "/api/chats/chat_client_test/queued-turns/qturn_client?readStateVersion=1",
       { clientRequestId: "req_client_cancel_queue", baseRevision: 3 },
     );
     expect(patch).toHaveBeenNthCalledWith(
       2,
-      "/api/chats/chat_client_test/queued-turns/qturn_client",
+      "/api/chats/chat_client_test/queued-turns/qturn_client?readStateVersion=1",
       {
         clientRequestId: "req_client_edit_queue",
         baseRevision: 4,
@@ -498,7 +498,7 @@ describe("canonical Chat client", () => {
     );
     expect(post).toHaveBeenNthCalledWith(
       3,
-      "/api/chats/chat_client_test/runs/run_client/queued-turns/qturn_client/steer?messageVersion=2&inputVersion=1",
+      "/api/chats/chat_client_test/runs/run_client/queued-turns/qturn_client/steer?messageVersion=2&inputVersion=1&readStateVersion=1",
       {
         clientRequestId: "req_client_steer_queue",
         baseRevision: 5,
@@ -529,7 +529,7 @@ describe("canonical Chat client", () => {
 
     await client.admitTurn(record.chat.id, turnInput);
 
-    expect(post).toHaveBeenCalledWith("/api/chats/chat_client_test/turns?messageVersion=2&inputVersion=1", turnInput);
+    expect(post).toHaveBeenCalledWith("/api/chats/chat_client_test/turns?messageVersion=2&inputVersion=1&readStateVersion=1", turnInput);
   });
 });
 

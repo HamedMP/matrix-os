@@ -3,7 +3,7 @@
 // the WebSocket factory and timers are injectable so tests never need a
 // network or real clocks.
 
-import { TerminalTabServerFrameSchema, type TerminalRef } from "@matrix-os/contracts";
+import { normalizeTerminalSnapshot, TerminalTabServerFrameSchema, type TerminalRef } from "@matrix-os/contracts";
 import { parseTerminalRefKey } from "./terminal-workspaces";
 
 export const LIVE_TAIL_FROM_SEQ = 9_007_199_254_740_991;
@@ -500,8 +500,10 @@ export class ShellSocket {
       presentationRevision,
     );
     this.receivedOutput = true;
-    this.opts.events.onGap();
-    this.opts.events.onOutput(ansi, seq);
+    // Queue the reset with the snapshot so previously queued output cannot
+    // repaint stale content after a synchronous clear/reset. A normal snapshot
+    // is not an output gap and must not insert a marker into the terminal grid.
+    this.opts.events.onOutput("\x1bc" + normalizeTerminalSnapshot(ansi), seq);
   }
 
   private handleExit(frame: Record<string, unknown>): void {

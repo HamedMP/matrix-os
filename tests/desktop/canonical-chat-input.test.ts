@@ -19,5 +19,5 @@ it("submits answers through the canonical input route with stable request identi
   const client = createCanonicalChatClient({ post } as never);
   const body = { clientRequestId: "req_submit", structuredAnswers: { q1: ["Inbox"] } };
   await client.submitInput("chat_input", "run_input", "input_q", body);
-  expect(post).toHaveBeenCalledWith("/api/chats/chat_input/runs/run_input/inputs/input_q", body);
+  expect(post).toHaveBeenCalledWith("/api/chats/chat_input/runs/run_input/inputs/input_q?readStateVersion=1", body);
 });
