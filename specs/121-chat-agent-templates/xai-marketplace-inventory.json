@@ -1,0 +1,2752 @@
+{
+  "schemaVersion": 1,
+  "scrapedAt": "2026-09-11",
+  "source": "https://x.ai/bot/marketplace",
+  "notes": [
+    "Public marketplace metadata snapshot for product research.",
+    "The public instructions field was empty for all observed bots; prompt-like material appeared in memory descriptions.",
+    "Full third-party memory, skill, routine, and integration text is intentionally not redistributed. Historical SHA-256 values are retained as unverified capture metadata, not reproducible comparison evidence."
+  ],
+  "fingerprintEvidence": {
+    "status": "historical-unverified",
+    "reproducible": false,
+    "fields": ["promptSurface.memoryContentSha256", "skills.contentSha256", "routines.summarySha256", "integrations.descriptionSha256"],
+    "limitation": "The original hash-producing capture script and raw inputs were not recovered. Exact input fields, ordering, serialization, separators, whitespace, Unicode normalization, and empty or missing value handling are unknown. These historical values cannot establish equivalence or change against a new scrape."
+  },
+  "botCount": 71,
+  "bots": [
+    {
+      "id": "account-book",
+      "name": "Account Research Desk",
+      "creatorName": "Anoop Baliga",
+      "creatorHandle": "akbaliga96",
+      "categories": ["From Grok Bot Team", "Sales"],
+      "description": "Researches the companies you sell to and writes your pre-call brief and account plan. Works from the public web and the notes you paste, and never sends without you.",
+      "summary": "Researches the companies you sell to and writes your pre-call brief and account plan. Works from the public web and the notes you paste, and never sends without you.",
+      "installCount": 0,
+      "appearance": {"color": "blue", "shape": "dome"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/account-book",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 5,
+        "memoryNames": ["memory 1", "memory 2", "memory 3", "memory 4", "memory 5"],
+        "memoryContentSha256": "d792549d4bd46df1b7ac4971f9ee471104f6224a9f801c2288173542d8942a6d"
+      },
+      "skills": {
+        "count": 11,
+        "names": [
+          "Account brief before a call",
+          "Account plan",
+          "Account signals refresh",
+          "Account usage and health",
+          "Build the account list",
+          "Getting started",
+          "Incumbent and competitor check",
+          "Open threads and next steps",
+          "Outreach and follow-up drafts",
+          "Stakeholder map",
+          "Week ahead call prep"
+        ],
+        "contentSha256": "43d399420e85be6512068fd786d70125e9214db3298de7254115618c1ebf9ca7"
+      },
+      "routines": {
+        "count": 3,
+        "names": ["Friday open threads review", "Weekday call prep", "Weekly account signals"],
+        "summarySha256": "d08398459d7c84caa7fc33011a2fb86e434f3c82ce443d7e58a80c5b8c812e0b"
+      },
+      "integrations": {
+        "count": 11,
+        "names": [
+          "Databricks SQL",
+          "Gmail",
+          "Google Calendar",
+          "Google Drive",
+          "Google Sheets",
+          "Granola",
+          "hex",
+          "linear",
+          "notion-workspace",
+          "Salesforce",
+          "slack"
+        ],
+        "descriptionSha256": "f891cb72fc0a6d83109fa1f20e224d1dc06e321fe7ee71bb8f5f919da5858dc7"
+      }
+    },
+    {
+      "id": "fuse",
+      "name": "Ad Spend Watch",
+      "creatorName": "Miguel Cruz",
+      "creatorHandle": "cruzmiguel000",
+      "categories": ["From Grok Bot Team", "Marketing"],
+      "description": "Watches your ad spend and performance and flags what's breaking before it burns budget. Works from a pasted export, and never pauses a campaign without your yes.",
+      "summary": "Watches your ad spend and performance and flags what's breaking before it burns budget. Works from a pasted export, and never pauses a campaign without your yes.",
+      "installCount": 0,
+      "appearance": {"color": "black", "shape": "blob"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/fuse",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 5,
+        "memoryNames": ["memory 1", "memory 2", "memory 3", "memory 4", "memory 5"],
+        "memoryContentSha256": "bc0b861d5299acce6104f04940e6395d357e52a27bd04d99b3d155c05070e2c9"
+      },
+      "skills": {
+        "count": 9,
+        "names": [
+          "Answer a spend question",
+          "Check budget pace",
+          "Diagnose what broke",
+          "Getting started",
+          "Pull numbers from a connected source",
+          "Read an ad platform export",
+          "Run the spend and performance check",
+          "Set accounts and thresholds",
+          "Write the fix list"
+        ],
+        "contentSha256": "66484f98c423044ba202fb86c54973d629992727d320cd12cd17ab720ac37a56"
+      },
+      "routines": {
+        "count": 3,
+        "names": ["Daily spend and performance check", "Midday burn check", "Weekly budget pace check"],
+        "summarySha256": "d95189fe4407d56d4f872ed42c52920763d73ef8d3a684c443ffa2c77503f339"
+      },
+      "integrations": {
+        "count": 9,
+        "names": ["datadog", "figma", "Gmail", "Google Sheets", "hex", "linear", "notion-workspace", "sentry", "slack"],
+        "descriptionSha256": "b7ef600173e5e27f42fdc1eca6a953b442728eacc2cacbcb5bb4eea16e2557e8"
+      }
+    },
+    {
+      "id": "ai-search-visibility",
+      "name": "AI Search Visibility",
+      "creatorName": "Adam Tanguay",
+      "creatorHandle": "adamta",
+      "categories": ["From Grok Bot Team", "Marketing"],
+      "description": "Checks whether AI assistants and Google recommend you, and who they name instead. Starts from a handful of questions your buyers actually ask.",
+      "summary": "Checks whether AI assistants and Google recommend you, and who they name instead. Starts from a handful of questions your buyers actually ask.",
+      "installCount": 0,
+      "appearance": {"color": "blue", "shape": "crystal"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/ai-search-visibility",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 5,
+        "memoryNames": ["memory 1", "memory 2", "memory 3", "memory 4", "memory 5"],
+        "memoryContentSha256": "5cceeeeb8417e7a5770753569edb1ce18eda9bb19bb750f61cb2885a9b23aefa"
+      },
+      "skills": {
+        "count": 8,
+        "names": [
+          "Build the prompt list",
+          "Capture a pasted answer",
+          "Citation source audit",
+          "Draft the fix",
+          "Getting started",
+          "Run a visibility check",
+          "Share of answer comparison",
+          "Weekly visibility brief"
+        ],
+        "contentSha256": "cbb43b690dfc2d8d339b763cbadf519340ec90f828bf69c58ed6251ebe3d2ba2"
+      },
+      "routines": {
+        "count": 2,
+        "names": ["Top prompt spot check", "Weekly visibility brief"],
+        "summarySha256": "42a563c20e8bc3aefee520f003dc5294243da49d1a60297f10a151448b8352db"
+      },
+      "integrations": {
+        "count": 6,
+        "names": ["Google Sheets", "hex", "linear", "notion-workspace", "Profound", "slack"],
+        "descriptionSha256": "714db04365ef119e9dedda5cc7bd045e99aa94d3cd8495ff7c31d97fcce5a62e"
+      }
+    },
+    {
+      "id": "alfred",
+      "name": "Alfred",
+      "creatorName": "Robin Delta",
+      "creatorHandle": "heyrobinai",
+      "categories": ["Operations"],
+      "description": "Designs, audits, and governs your Grok Bot organization so it matches real company outcomes, with clear human owners and no duplicate jobs. Recommends the smallest useful structure, defaults new bots to zero, and never creates or changes anything without your exact yes.",
+      "summary": "Designs, audits, and governs your Grok Bot organization so it matches real company outcomes, with clear human owners and no duplicate jobs. Recommends the smallest useful structure, defaults new bots to zero, and never creates or changes anything without your exact yes.",
+      "installCount": 0,
+      "appearance": {"color": "orange", "shape": "squircle"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/alfred",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 2,
+        "memoryNames": ["memory 1", "memory 2"],
+        "memoryContentSha256": "77ff1756b6eae25dce6ab8f57e90f67c45b6bcd73a2eb813ca63b460b13db4e5"
+      },
+      "skills": {
+        "count": 6,
+        "names": [
+          "Audit, Repair & Govern",
+          "Grok Bot Organization Discovery & Architecture",
+          "Grok Bot System Design",
+          "Pilot, Test & Activate",
+          "Public Share & Security Audit",
+          "Workflow & Automation Decision"
+        ],
+        "contentSha256": "efab7fd642f59408caacd20b17441d7f44bbf5832df5c2e8b6646b0918d69719"
+      },
+      "routines": {
+        "count": 3,
+        "names": ["Monthly Bot Portfolio Strategy Review", "Quarterly Company & AI Operating Model Review", "Weekly Company & Grok Bot Improvement Review"],
+        "summarySha256": "eb55c18d8e623e12767e7d46dd4a4482875d49a9ab0ae967792dd3fd45917685"
+      },
+      "integrations": {
+        "count": 0,
+        "names": [],
+        "descriptionSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    {
+      "id": "apple-search-ads-review",
+      "name": "Apple Search Ads Review",
+      "creatorName": "Chris Everett",
+      "creatorHandle": "",
+      "categories": ["From Grok Bot Team", "Marketing"],
+      "description": "Reviews your Apple Search Ads spend against your cost per install target. Drafts the keyword, bid, and budget changes, and never touches your account.",
+      "summary": "Reviews your Apple Search Ads spend against your cost per install target. Drafts the keyword, bid, and budget changes, and never touches your account.",
+      "installCount": 0,
+      "appearance": {"color": "green", "shape": "blob"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/apple-search-ads-review",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 4,
+        "memoryNames": ["memory 1", "memory 2", "memory 3", "memory 4"],
+        "memoryContentSha256": "eed5d457c831dc02ec96f7e8fdaa6769eb7ac71bd609b7bcb484cd6f6748a8c9"
+      },
+      "skills": {
+        "count": 7,
+        "names": [
+          "Bids and budgets",
+          "Change sheet",
+          "Getting started",
+          "Search terms and negatives",
+          "Set spend targets",
+          "Spend review",
+          "Weekly ad review"
+        ],
+        "contentSha256": "7957ab53474b42e2686f6d0ceb9438f5ba02e3792a547f612f0a258d98824baf"
+      },
+      "routines": {
+        "count": 2,
+        "names": ["Daily spend check", "Weekly ad review"],
+        "summarySha256": "3ee6026e1b1506a44ba0cfacfc7a4d5edd2a5649b6574a561b8cb454f1d6d04e"
+      },
+      "integrations": {
+        "count": 7,
+        "names": ["Databricks SQL", "Gmail", "Google Sheets", "hex", "linear", "notion-workspace", "slack"],
+        "descriptionSha256": "62e03c95b7ec4d944d3576494a9b282de5c6802b3dc2e2751c8f94bd4459515f"
+      }
+    },
+    {
+      "id": "call-follow-ups",
+      "name": "Call Follow-Ups",
+      "creatorName": "Daniel Brill",
+      "creatorHandle": "danielbrill_",
+      "categories": ["From Grok Bot Team", "Sales"],
+      "description": "Turns each recorded call into a follow-up email in your voice, a next-steps note, and the CRM updates, including the qualification fields your team runs on. Watches Gong and Granola for new calls, and nothing sends or saves without your yes.",
+      "summary": "Turns each recorded call into a follow-up email in your voice, a next-steps note, and the CRM updates, including the qualification fields your team runs on. Watches Gong and Granola for new calls, and nothing sends or saves without your yes.",
+      "installCount": 0,
+      "appearance": {"color": "cyan", "shape": "capsule"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/call-follow-ups",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 3,
+        "memoryNames": ["memory 1", "memory 2", "memory 3"],
+        "memoryContentSha256": "d84d9d2487db60613fea60a896d4a0b45e2c58e60e4105b062a3654324162f4f"
+      },
+      "skills": {
+        "count": 6,
+        "names": ["crm-update-proposal", "getting-started", "next-steps-note", "promise-tracker", "recap-email", "voice-profile"],
+        "contentSha256": "bed2224f7df6f740c9e1ec04aeca9c98c689e94baf18fd7bbae4547ef4412b4e"
+      },
+      "routines": {
+        "count": 1,
+        "names": ["New call watch"],
+        "summarySha256": "beceb2d87e67f3922ebd634d5c23265593ed6f1359b0158b5aa420d9a209df06"
+      },
+      "integrations": {
+        "count": 12,
+        "names": ["Attio", "Gmail", "Gong", "Google Calendar", "Granola", "Hex", "HubSpot", "Linear", "Notion", "Outlook", "Salesforce", "Slack"],
+        "descriptionSha256": "dd2b9d7870902a98ce92753fcb743a7036d501c28b27d9ccc452d8f3f8d6bfde"
+      }
+    },
+    {
+      "id": "chief-health",
+      "name": "Chief Health Officer",
+      "creatorName": "AJAC",
+      "creatorHandle": "AJA_Cortes",
+      "categories": ["Personal"],
+      "description": "You're the Chief Health Officer. Every day, ask if training happened. If it did not, rewrite the next session so the week still holds. Read whatever workout app, nutrition app, wearable, or lab source is connected. Do not invent numbers. Never diagnose, prescribe, or post.",
+      "summary": "You're the Chief Health Officer. Every day, ask if training happened. If it did not, rewrite the next session so the week still holds. Read whatever workout app, nutrition app, wearable, or lab source is connected. Do not invent numbers. Never diagnose, prescribe, or post.",
+      "installCount": 0,
+      "appearance": {"color": "magenta", "shape": "squircle"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/chief-health",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 0,
+        "memoryNames": [],
+        "memoryContentSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "skills": {
+        "count": 0,
+        "names": [],
+        "contentSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "routines": {
+        "count": 2,
+        "names": ["Daily train check", "Sunday health review"],
+        "summarySha256": "5f20f9b2cb890a3f860423748c215cdcd223e39ea377d189372471ece52c322a"
+      },
+      "integrations": {
+        "count": 0,
+        "names": [],
+        "descriptionSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    {
+      "id": "clip-bot",
+      "name": "Clip Bot",
+      "creatorName": "This Week in AI",
+      "creatorHandle": "ThisWeeknAI",
+      "categories": ["Marketing"],
+      "description": "Finds the best moments in a long recording and cuts them into short captioned clips. Works from an upload or a link, with transcript and timestamps on every clip.",
+      "summary": "Finds the best moments in a long recording and cuts them into short captioned clips. Works from an upload or a link, with transcript and timestamps on every clip.",
+      "installCount": 0,
+      "appearance": {"color": "cyan", "shape": "wedge"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/clip-bot",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 5,
+        "memoryNames": ["memory 1", "memory 2", "memory 3", "memory 4", "memory 5"],
+        "memoryContentSha256": "ab7a602c603d99bbc22c82e644a759a90ee5b369eefa9ee7ad3ce23f5f039bc2"
+      },
+      "skills": {
+        "count": 6,
+        "names": [
+          "Clip captions and post copy",
+          "Clip pack from one recording",
+          "Cut a clip",
+          "Find the clippable moments",
+          "Getting started",
+          "Transcribe a recording"
+        ],
+        "contentSha256": "68ad9f7f48a532fdeb5920edca390b528b23b0666dd7606234366169e053d1b4"
+      },
+      "routines": {
+        "count": 2,
+        "names": ["Clip queue pass", "Friday clip recap"],
+        "summarySha256": "25f776dc7525cdaeef81f5d787a4da8aca7ef695076a0cc0ec336b32d8212ccf"
+      },
+      "integrations": {
+        "count": 4,
+        "names": ["figma", "linear", "notion-workspace", "slack"],
+        "descriptionSha256": "a5045593e69beb318766fa7bbdd766d47aba2604b586a8eb4d2d359fd1f1dbab"
+      }
+    },
+    {
+      "id": "company-docs-q-a",
+      "name": "Company Docs Q&A",
+      "creatorName": "Anoop Baliga",
+      "creatorHandle": "akbaliga96",
+      "categories": ["From Grok Bot Team", "Sales"],
+      "description": "Answers product and how-to questions from live docs first, then connected knowledge sources, and always cites sources. Built for anyone who wants a trustworthy internal knowledge bot.",
+      "summary": "Answers product and how-to questions from live docs first, then connected knowledge sources, and always cites sources. Built for anyone who wants a trustworthy internal knowledge bot.",
+      "installCount": 0,
+      "appearance": {"color": "blue", "shape": "leaf"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/company-docs-q-a",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 6,
+        "memoryNames": ["memory 1", "memory 2", "memory 3", "memory 4", "memory 5", "memory 6"],
+        "memoryContentSha256": "3f77cc849fbc450021c0e901149b9d296bf75fe1af45f93e6ee5e1acd0718148"
+      },
+      "skills": {
+        "count": 0,
+        "names": [],
+        "contentSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "routines": {
+        "count": 0,
+        "names": [],
+        "summarySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "integrations": {
+        "count": 2,
+        "names": ["Notion", "Slack"],
+        "descriptionSha256": "3211ec0bc98ecaf9c767b61fac3866c8cd23d5e7a6ba7f34016325cd1c2c411c"
+      }
+    },
+    {
+      "id": "competitor-watching",
+      "name": "Competitor Watch",
+      "creatorName": "Shimecki",
+      "creatorHandle": "scheemunai",
+      "categories": ["Product"],
+      "description": "Tracks competitor pricing, product, and hiring pages and briefs you on real changes. Starts from a list of URLs you paste.",
+      "summary": "Tracks competitor pricing, product, and hiring pages and briefs you on real changes. Starts from a list of URLs you paste.",
+      "installCount": 0,
+      "appearance": {"color": "gray", "shape": "hex"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/competitor-watching",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 4,
+        "memoryNames": ["memory 1", "memory 2", "memory 3", "memory 4"],
+        "memoryContentSha256": "01e029d3969ea5f46d589f607740e5857f3e43d9832b27262aa054dda6d0a38b"
+      },
+      "skills": {
+        "count": 5,
+        "names": ["Build the watch list", "Competitor page diff", "Getting started", "Pricing and packaging comparison", "Weekly competitor brief"],
+        "contentSha256": "d7f832cc0f29fabb85a1d50fd3ae5893ff20e5a9a3e98acd301d6f03b44ed1f2"
+      },
+      "routines": {
+        "count": 2,
+        "names": ["Daily launch check", "Weekly competitor brief"],
+        "summarySha256": "47c121c937c321e155dd3110f900715ff948fd4868134cff31c75da0a8a7131d"
+      },
+      "integrations": {
+        "count": 3,
+        "names": ["linear", "notion-workspace", "slack"],
+        "descriptionSha256": "b15a3b73e6f2e80c466fc43dfe409973cf07e05601a121fcb6217bab86ac0b02"
+      }
+    },
+    {
+      "id": "cooper",
+      "name": "Cooper",
+      "creatorName": "Tommy Hansen",
+      "creatorHandle": "TommyHansenTA",
+      "categories": ["From Grok Bot Team", "Sales"],
+      "description": "News agent for AI, tech, venture capital, and business. Delivers a tight daily Slack briefing of top stories at 8am, plus weekday mid-day competitor alerts only when something truly clears the bar.",
+      "summary": "News agent for AI, tech, venture capital, and business. Delivers a tight daily Slack briefing of top stories at 8am, plus weekday mid-day competitor alerts only when something truly clears the bar.",
+      "installCount": 0,
+      "appearance": {"color": "brown", "shape": "pebble"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/cooper",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 8,
+        "memoryNames": ["memory 1", "memory 2", "memory 3", "memory 4", "memory 5", "memory 6", "memory 7", "memory 8"],
+        "memoryContentSha256": "ed64fc3f965ffa44b4f7d86bf99e2cb8fe8ee1ab092dddd82ae9cd7ce94cf55c"
+      },
+      "skills": {
+        "count": 0,
+        "names": [],
+        "contentSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "routines": {
+        "count": 3,
+        "names": ["Afternoon competitor alert", "Daily AI/tech/VC briefing", "Midday competitor alert"],
+        "summarySha256": "6325d7e315203951e34b5354a68ba2944c843de372430ceece46f1e0d395b972"
+      },
+      "integrations": {
+        "count": 1,
+        "names": ["Slack"],
+        "descriptionSha256": "b7a172e75bcbee5b4aba60984dc1e38e8c1caa1046f69cc60df11215e2b8c343"
+      }
+    },
+    {
+      "id": "human-copywriter",
+      "name": "Copy Humanizer",
+      "creatorName": "Massimo De Luisa",
+      "creatorHandle": "massimodeluisa",
+      "categories": ["Marketing"],
+      "description": "Edits and rewrites drafts, emails, and pages so they read like a person wrote them. Keeps your voice, shows every change and why, and never invents a fact.",
+      "summary": "Edits and rewrites drafts, emails, and pages so they read like a person wrote them. Keeps your voice, shows every change and why, and never invents a fact.",
+      "installCount": 0,
+      "appearance": {"color": "violet", "shape": "tablet"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/human-copywriter",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 4,
+        "memoryNames": ["memory 1", "memory 2", "memory 3", "memory 4"],
+        "memoryContentSha256": "0ee40fe86277ea66ca385c04a07d9b138cfc70ac1cf8fa01763e91ab6e218b0c"
+      },
+      "skills": {
+        "count": 7,
+        "names": [
+          "Anti-slop pass",
+          "Build the voice profile",
+          "Draft for a channel",
+          "Edit a draft",
+          "Getting started",
+          "Learn from what shipped",
+          "Rewrite a draft"
+        ],
+        "contentSha256": "db1862070bb32fac74be121734ec6e380664b202d23ff2da9298a9466eb7c8ce"
+      },
+      "routines": {
+        "count": 1,
+        "names": ["Weekly shipped check"],
+        "summarySha256": "80a2e3a0dfec74ad398504b404d6eeb8be96fb8f229bf5f953190fdcbfe9243c"
+      },
+      "integrations": {
+        "count": 5,
+        "names": ["figma", "Gmail", "linear", "notion-workspace", "slack"],
+        "descriptionSha256": "c492f68da3be4e0e1ffae1a4ef0d62c158e1110f028954a9f8798c9210d2e461"
+      }
+    },
+    {
+      "id": "credit-card-max",
+      "name": "Credit Card Max",
+      "creatorName": "Trevin Chow",
+      "creatorHandle": "trevin",
+      "categories": ["Personal"],
+      "description": "Advises which credit card to use for a given purchase to maximize points, cash back, and perks. Tracks cards, unused benefits, and misrouted recurring charges, and runs a monthly utilization review.",
+      "summary": "Advises which credit card to use for a given purchase to maximize points, cash back, and perks. Tracks cards, unused benefits, and misrouted recurring charges, and runs a monthly utilization review.",
+      "installCount": 0,
+      "appearance": {"color": "cyan", "shape": "tablet"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/credit-card-max",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 1,
+        "memoryNames": ["memory 1"],
+        "memoryContentSha256": "addc23b4507eac69d6f7541bad19ff86084a39b6caa7b429271bd42aeb1e6790"
+      },
+      "skills": {
+        "count": 0,
+        "names": [],
+        "contentSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "routines": {
+        "count": 1,
+        "names": ["Monthly card rollup"],
+        "summarySha256": "f93a0600d0262c60938bdfb8b8b3b0c0d1249edfeaeb3b29d7f33104c799fee8"
+      },
+      "integrations": {
+        "count": 0,
+        "names": [],
+        "descriptionSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    {
+      "id": "critiquito",
+      "name": "Critiquito: Design Critique",
+      "creatorName": "Manuel Muñoz Solera",
+      "creatorHandle": "mamuso",
+      "categories": ["Design", "From Grok Bot Team"],
+      "description": "Turns a screenshot or Figma link into a design critique with ranked, concrete fixes. Covers hierarchy, type, color, copy, and accessibility, and never edits your files.",
+      "summary": "Turns a screenshot or Figma link into a design critique with ranked, concrete fixes. Covers hierarchy, type, color, copy, and accessibility, and never edits your files.",
+      "installCount": 0,
+      "appearance": {"color": "black", "shape": "squircle"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/critiquito",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 4,
+        "memoryNames": ["memory 1", "memory 2", "memory 3", "memory 4"],
+        "memoryContentSha256": "ff13e82b0a592b67e6851d2f802e86ebabdf10e1dfbce7b50622ba7a31225918"
+      },
+      "skills": {
+        "count": 7,
+        "names": ["Accessibility pass", "Compare versions", "Flow critique", "Getting started", "Hand off the fixes", "Screen critique", "UI copy pass"],
+        "contentSha256": "a50211d891eb44ece5718b20e8d68c04a631a09b21fbcfd1b78d4429edfe58ca"
+      },
+      "routines": {
+        "count": 1,
+        "names": ["Weekly open fixes"],
+        "summarySha256": "831b22be0299986f91f3653aceb79febc59370075fa80a317d7771c1d19b1ae3"
+      },
+      "integrations": {
+        "count": 4,
+        "names": ["figma", "linear", "notion-workspace", "slack"],
+        "descriptionSha256": "f9dc4a9a06dc480981f8a7359eade4c7971b9273cc71aaf6bee311192c428681"
+      }
+    },
+    {
+      "id": "customer-call-coach",
+      "name": "Customer Call Coach & Assistant",
+      "creatorName": "Anoop Baliga",
+      "creatorHandle": "akbaliga96",
+      "categories": ["From Grok Bot Team", "Sales"],
+      "description": "Briefs you before customer calls and coaches you after based on your performance.",
+      "summary": "Briefs you before customer calls and coaches you after based on your performance.",
+      "installCount": 0,
+      "appearance": {"color": "cyan", "shape": "teardrop"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/customer-call-coach",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 15,
+        "memoryNames": [
+          "memory 1",
+          "memory 10",
+          "memory 11",
+          "memory 12",
+          "memory 13",
+          "memory 14",
+          "memory 15",
+          "memory 2",
+          "memory 3",
+          "memory 4",
+          "memory 5",
+          "memory 6",
+          "memory 7",
+          "memory 8",
+          "memory 9"
+        ],
+        "memoryContentSha256": "84b880044e3e91992e7c3ad96a3072baf2740658a688cbea5431686efcdf5a2c"
+      },
+      "skills": {
+        "count": 0,
+        "names": [],
+        "contentSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "routines": {
+        "count": 1,
+        "names": ["Friday Coach Refresh"],
+        "summarySha256": "25979280ca6a4de15eb50f2b30ae7760a02f58550e41c3129538814b326174ea"
+      },
+      "integrations": {
+        "count": 3,
+        "names": ["Gmail", "Granola", "Slack"],
+        "descriptionSha256": "d75c7df5ef3c3d111939fb33bb0f6ea3e1312b1026280575ab7af378dd8a6aae"
+      }
+    },
+    {
+      "id": "customer-stories",
+      "name": "Customer Proof Desk",
+      "creatorName": "Anoop Baliga",
+      "creatorHandle": "akbaliga96",
+      "categories": ["Sales"],
+      "description": "Turns call notes and transcripts into case studies, testimonials, and proof points. Quotes stay word for word from what you paste, and nothing publishes without your yes.",
+      "summary": "Turns call notes and transcripts into case studies, testimonials, and proof points. Quotes stay word for word from what you paste, and nothing publishes without your yes.",
+      "installCount": 0,
+      "appearance": {"color": "orange", "shape": "crystal"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/customer-stories",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 5,
+        "memoryNames": ["memory 1", "memory 2", "memory 3", "memory 4", "memory 5"],
+        "memoryContentSha256": "40614b1ecc8279d15ce2cbd8fffb0343047a9498ae48d558bd3947fd85da9dc3"
+      },
+      "skills": {
+        "count": 11,
+        "names": [
+          "Add sources to the proof bank",
+          "Build a deal proof one-pager",
+          "Check a draft against the bank",
+          "Get the customer's approval",
+          "Getting started",
+          "Lay out the case study",
+          "Mine a batch of calls",
+          "Pull proof for a claim",
+          "Run the case study pipeline",
+          "Testimonials and pull quotes",
+          "Write a case study"
+        ],
+        "contentSha256": "4eb274f39f764d9074e313b8d77ac93da3f111c5094bf886166d69f7e7948636"
+      },
+      "routines": {
+        "count": 2,
+        "names": ["Monthly proof refresh", "Weekly proof roundup"],
+        "summarySha256": "aa53bc9401419d63997cf3f6312d2ff6c1250599e6f8b746e6960d56c3a9c522"
+      },
+      "integrations": {
+        "count": 7,
+        "names": ["figma", "Gmail", "Granola", "hex", "linear", "notion-workspace", "slack"],
+        "descriptionSha256": "073d5cf491e9d542cb44a3b24c86a90cbfe574c1adc20b8382e9f7aef509b8ed"
+      }
+    },
+    {
+      "id": "deal-hunting",
+      "name": "Deal Hunting",
+      "creatorName": "Shimecki",
+      "creatorHandle": "scheemunai",
+      "categories": ["Personal"],
+      "description": "Landed-cost shopping: real prices, shipping and tax, preferred retailers. Watchlist optional. Never buys unless asked.",
+      "summary": "Landed-cost shopping: real prices, shipping and tax, preferred retailers. Watchlist optional. Never buys unless asked.",
+      "installCount": 0,
+      "appearance": {"color": "magenta", "shape": "hex"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/deal-hunting",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 2,
+        "memoryNames": ["memory 1", "memory 2"],
+        "memoryContentSha256": "2363a63144d6237511c01e9bdc768b3c98ec91d54915a3ae05e587a368779f7b"
+      },
+      "skills": {
+        "count": 0,
+        "names": [],
+        "contentSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "routines": {
+        "count": 2,
+        "names": ["Watchlist check", "Weekly process note"],
+        "summarySha256": "bf47dfd0ddd2fb90acbf7f0032959a2822d901c2296dbd26deb1af652dd51d8f"
+      },
+      "integrations": {
+        "count": 0,
+        "names": [],
+        "descriptionSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    {
+      "id": "deal-qualification",
+      "name": "Deal Inspector",
+      "creatorName": "Jon Grigull",
+      "creatorHandle": "",
+      "categories": ["From Grok Bot Team", "Sales"],
+      "description": "Checks every deal that moved stage against your qualification criteria using the actual call transcripts. Quotes the evidence, flags what is missing, recommends promote or close, and proposes the CRM updates for your approval.",
+      "summary": "Checks every deal that moved stage against your qualification criteria using the actual call transcripts. Quotes the evidence, flags what is missing, recommends promote or close, and proposes the CRM updates for your approval.",
+      "installCount": 0,
+      "appearance": {"color": "violet", "shape": "pebble"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/deal-qualification",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 3,
+        "memoryNames": ["memory 1", "memory 2", "memory 3"],
+        "memoryContentSha256": "cfb7126f1d78db17e357fed76853cdc4a1f481a46d67ca6a7a719dca91c6d743"
+      },
+      "skills": {
+        "count": 4,
+        "names": ["crm-writeback", "getting-started", "qualification-frameworks", "stage-gate-audit"],
+        "contentSha256": "9cd28e7d07f84f6b36818697b780e90bc06ae58cef66f2796ee02e55b8a26ef2"
+      },
+      "routines": {
+        "count": 1,
+        "names": ["Friday stage audit"],
+        "summarySha256": "56ae4fd96a4c58f90a02bd6e00f0f2f3c619b864da4b7b8816d68ba59511f432"
+      },
+      "integrations": {
+        "count": 9,
+        "names": ["Attio", "Gmail", "Gong", "Google Sheets", "Granola", "HubSpot", "Notion", "Salesforce", "Slack"],
+        "descriptionSha256": "65ecf702968cc77727ac227c0633c9e475a030e822f6129a98288b26dbf5aefe"
+      }
+    },
+    {
+      "id": "dial-bot",
+      "name": "dial bot",
+      "creatorName": "Matt Palmer",
+      "creatorHandle": "mattyp",
+      "categories": ["From Grok Bot Team", "Personal"],
+      "description": "Places outbound Bland AI phone calls when you ask, then reports what happened. On first use it asks for a Bland API key and voice.",
+      "summary": "Places outbound Bland AI phone calls when you ask, then reports what happened. On first use it asks for a Bland API key and voice.",
+      "installCount": 0,
+      "appearance": {"color": "green", "shape": "bean"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/dial-bot",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 6,
+        "memoryNames": ["memory 1", "memory 2", "memory 3", "memory 4", "memory 5", "memory 6"],
+        "memoryContentSha256": "937c4be8619a2d56d3602f2ed51d271e325d2eafab50a15de66b77ede61d35ee"
+      },
+      "skills": {
+        "count": 1,
+        "names": ["Bland phone calls"],
+        "contentSha256": "97ee8f117875d29af86b4968f643f66216f8d37acef6d268ff797c7cf531cd4a"
+      },
+      "routines": {
+        "count": 0,
+        "names": [],
+        "summarySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "integrations": {
+        "count": 0,
+        "names": [],
+        "descriptionSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    {
+      "id": "dr-eggbot-v2",
+      "name": "dr eggbot",
+      "creatorName": "Lauren Tan",
+      "creatorHandle": "poteto",
+      "categories": ["From Grok Bot Team"],
+      "description": "Designs high-quality Grok Bots. Asks a few preference questions, then creates them with CreateAgent. Coding bots get the poteto-mode bar (one job, unslopped, verified). Non-coding bots get the same tightness: one job, one voice, explicit anti-jobs, no leftover tools. Casual, a little mad-scientist, short lowercase. Bias to act once the job is clear. Does not default to shareable templates.",
+      "summary": "Designs high-quality Grok Bots. Asks a few preference questions, then creates them with CreateAgent. Coding bots get the poteto-mode bar (one job, unslopped, verified). Non-coding bots get the same tightness: one job, one voice, explicit anti-jobs, no leftover tools. Casual, a little mad-scientist, short lowercase. Bias to act once the job is clear. Does not default to shareable templates.",
+      "installCount": 0,
+      "appearance": {"color": "red", "shape": "teardrop"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/dr-eggbot-v2",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 8,
+        "memoryNames": ["memory 1", "memory 2", "memory 3", "memory 4", "memory 5", "memory 6", "memory 7", "memory 8"],
+        "memoryContentSha256": "7e053805e7fa779382e936deacb5114b4ef82c0bc3bba5e78cfd35d0473e2f2d"
+      },
+      "skills": {
+        "count": 4,
+        "names": ["Design a Grok Bot", "Make Bot UI", "Routine healthcheck", "Transcript healthcheck"],
+        "contentSha256": "c6854bd2e75a9db4fbd4e7ffdd6c16716fe86ea56467e09a125ab56e7fa0c45e"
+      },
+      "routines": {
+        "count": 2,
+        "names": ["routine-healthcheck", "transcript-healthcheck"],
+        "summarySha256": "f5ec92961268345a4ad4a8a071bfb75a4db17a91244f5cb72a692f7bd72fb484"
+      },
+      "integrations": {
+        "count": 1,
+        "names": ["pstack"],
+        "descriptionSha256": "cb5477080f0f19e90756a23a0429f460ee4acf748bc3dbc4ea33b833ad8a6bcf"
+      }
+    },
+    {
+      "id": "ebr-value-deck-builder",
+      "name": "EBR & Value Deck Builder",
+      "creatorName": "Krista Letz",
+      "creatorHandle": "kristaletz",
+      "categories": ["From Grok Bot Team", "Sales"],
+      "description": "Builds an executive business review or value deck for a named account from your CRM, call history, and usage data, on your brand, and hands you an editable file. Never invents a number, and nothing goes to the customer without your yes.",
+      "summary": "Builds an executive business review or value deck for a named account from your CRM, call history, and usage data, on your brand, and hands you an editable file. Never invents a number, and nothing goes to the customer without your yes.",
+      "installCount": 0,
+      "appearance": {"color": "green", "shape": "squircle"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/ebr-value-deck-builder",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 3,
+        "memoryNames": ["memory 1", "memory 2", "memory 3"],
+        "memoryContentSha256": "81a57ef87618ba1916b3e99b3034946a3456d36cb47439beea4ff4259b3147f2"
+      },
+      "skills": {
+        "count": 5,
+        "names": ["brand-kit", "ebr-deck", "getting-started", "pptx-compat", "three-whys"],
+        "contentSha256": "7d7e7a4f851aecba4f0c7fada7a93ef8f1d295d5c0ef0b4019d7908d021deb6c"
+      },
+      "routines": {
+        "count": 1,
+        "names": ["Renewal deck reminder"],
+        "summarySha256": "0486be500398c9ef4d31de473d7b8e1633a3008ce8fafc530f3a110fe010a7eb"
+      },
+      "integrations": {
+        "count": 7,
+        "names": ["Attio", "Gong", "Google Drive", "HubSpot", "Mixpanel", "OneDrive", "Salesforce"],
+        "descriptionSha256": "08f8a3b8ac57a4104cf9a6723996250d8b2beee873d386bc55b50a5237248b51"
+      }
+    },
+    {
+      "id": "event-producer",
+      "name": "Event Producer",
+      "creatorName": "Jenna Nanpei",
+      "creatorHandle": "jennananpei",
+      "categories": ["From Grok Bot Team", "Marketing"],
+      "description": "Turns your event details into a run of show, guest list, and day-of checklist. Tracks vendors, guests, dietary needs, and travel, and never sends a message without you.",
+      "summary": "Turns your event details into a run of show, guest list, and day-of checklist. Tracks vendors, guests, dietary needs, and travel, and never sends a message without you.",
+      "installCount": 0,
+      "appearance": {"color": "green", "shape": "cloud"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/event-producer",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 5,
+        "memoryNames": ["memory 1", "memory 2", "memory 3", "memory 4", "memory 5"],
+        "memoryContentSha256": "977a8b74f5cdd814ff3f7c060f1d4d21d4b01f96a6ca287fb21ef5e19f13ac20"
+      },
+      "skills": {
+        "count": 8,
+        "names": [
+          "Build the event brief",
+          "Day-of checklist",
+          "Getting started",
+          "Guest list and invites",
+          "Guest travel and hotels",
+          "Post-event recap",
+          "Run of show",
+          "Vendor and venue tracker"
+        ],
+        "contentSha256": "f41b77f86e1b01a47ec3d655d0cf96ad3801c7f6c09fb1e492ab35e5b445185f"
+      },
+      "routines": {
+        "count": 3,
+        "names": ["Day-of brief", "Event countdown check", "Post-event recap draft"],
+        "summarySha256": "6611dcc6b0ea889f42460837bd90b9ad6fdaa945bfc6e6d5e745178c4c039d46"
+      },
+      "integrations": {
+        "count": 7,
+        "names": ["figma", "Gmail", "Google Calendar", "Google Sheets", "linear", "notion-workspace", "slack"],
+        "descriptionSha256": "51d4484f2c812fd2c980fcc0c4050ea4f015159f196940f040d22b483212a81e"
+      }
+    },
+    {
+      "id": "event-request-desk",
+      "name": "Event Request Desk",
+      "creatorName": "Emma Weyrauch",
+      "creatorHandle": "",
+      "categories": ["From Grok Bot Team", "Operations"],
+      "description": "Scores every event, sponsorship, and speaking ask, then drafts your yes or no. Works from a Slack channel or a paste, and never sends without you.",
+      "summary": "Scores every event, sponsorship, and speaking ask, then drafts your yes or no. Works from a Slack channel or a paste, and never sends without you.",
+      "installCount": 0,
+      "appearance": {"color": "gray", "shape": "wedge"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/event-request-desk",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 5,
+        "memoryNames": ["memory 1", "memory 2", "memory 3", "memory 4", "memory 5"],
+        "memoryContentSha256": "71ab73ad48250a0b3b6026eb759ba236eab9f272855039b3728d5f0396f38a08"
+      },
+      "skills": {
+        "count": 8,
+        "names": [
+          "Draft the reply",
+          "Event spend and yes rate",
+          "Getting started",
+          "Log a new event request",
+          "Queue review",
+          "Score an event request",
+          "Track what you owe after a yes",
+          "Tune the decision rubric"
+        ],
+        "contentSha256": "8cc36105c8410fc9c80fb3a714a3514a342553037cce358430b28ae65ade3463"
+      },
+      "routines": {
+        "count": 3,
+        "names": ["Weekday intake sweep", "Weekly commitment check", "Weekly queue review"],
+        "summarySha256": "34bcd66d6b76c631ad26d5051f0faf7876cb6b49b8f1e8742078a038b8954ef2"
+      },
+      "integrations": {
+        "count": 9,
+        "names": ["figma", "Gmail", "Google Calendar", "Google Drive", "Google Sheets", "hex", "linear", "notion-workspace", "slack"],
+        "descriptionSha256": "8fbfebd26677bf45ef21a0987cdef7460ab0520a7198325f794fb277b5096be5"
+      }
+    },
+    {
+      "id": "frank",
+      "name": "Executive Assistant",
+      "creatorName": "Natasha Kuo",
+      "creatorHandle": "tashatweetss",
+      "categories": ["From Grok Bot Team", "Operations"],
+      "description": "EA chief-of-staff bot for exec support: conference rooms, interview prep, leadership outreach, Slack channel inventories, sheet↔calendar checks, and birthday/anniversary calendar loads.",
+      "summary": "EA chief-of-staff bot for exec support: conference rooms, interview prep, leadership outreach, Slack channel inventories, sheet↔calendar checks, and birthday/anniversary calendar loads.",
+      "installCount": 0,
+      "appearance": {"color": "gray", "shape": "arch"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/frank",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 14,
+        "memoryNames": [
+          "memory 1",
+          "memory 10",
+          "memory 11",
+          "memory 12",
+          "memory 13",
+          "memory 14",
+          "memory 2",
+          "memory 3",
+          "memory 4",
+          "memory 5",
+          "memory 6",
+          "memory 7",
+          "memory 8",
+          "memory 9"
+        ],
+        "memoryContentSha256": "f4b6926e76ccfb26e74a554c22202e2e66279af17d4e67a9f7853037fce759d1"
+      },
+      "skills": {
+        "count": 0,
+        "names": [],
+        "contentSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "routines": {
+        "count": 4,
+        "names": [
+          "Exec conference-room rundown (2 business days ahead)",
+          "Exec interview-prep reminder",
+          "Exec same-day conference-room check",
+          "Weekly leadership-outreach check"
+        ],
+        "summarySha256": "965149efb809e7005523b594dc6241a51d4e63388b02283d10efbe8ccce0c3a4"
+      },
+      "integrations": {
+        "count": 5,
+        "names": ["Gmail", "Google Calendar", "Google Sheets", "Notion", "Slack"],
+        "descriptionSha256": "7f2c988a3e1cfad7590dee1cae50d8cd6369311cd523b5119ec7fd4882be1901"
+      }
+    },
+    {
+      "id": "figma-bro",
+      "name": "figma bro",
+      "creatorName": "John Bai",
+      "creatorHandle": "johnbai",
+      "categories": ["Design", "From Grok Bot Team"],
+      "description": "Turns a Figma frame into a build spec, and audits your components, tokens, and motion. Builds screens from a brief too, and works from a pasted link when Figma isn't connected.",
+      "summary": "Turns a Figma frame into a build spec, and audits your components, tokens, and motion. Builds screens from a brief too, and works from a pasted link when Figma isn't connected.",
+      "installCount": 0,
+      "appearance": {"color": "magenta", "shape": "gem"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/figma-bro",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 4,
+        "memoryNames": ["memory 1", "memory 2", "memory 3", "memory 4"],
+        "memoryContentSha256": "4ce0bfcae7a11f6a9f7f5304ae4c050ead08d7ed2fdeab14c9613ee24a4b3002"
+      },
+      "skills": {
+        "count": 8,
+        "names": [
+          "Build a screen from a brief",
+          "Component library audit",
+          "Design to code handoff notes",
+          "Design token audit",
+          "File structure cleanup plan",
+          "Frame to build spec",
+          "Getting started",
+          "Motion and prototype notes"
+        ],
+        "contentSha256": "9386ec0947e16015e2e45e709dfca771254d5b8d92e03c9739cfe9e88ff0911b"
+      },
+      "routines": {
+        "count": 2,
+        "names": ["Ready for dev sweep", "Weekly library check"],
+        "summarySha256": "53aaec0c9e45904552a7c0f102e5ae3f47aab3c608b97dacf550227feb4c4435"
+      },
+      "integrations": {
+        "count": 4,
+        "names": ["figma", "linear", "notion-workspace", "slack"],
+        "descriptionSha256": "facc97c1d2014f778469a08123af74bed2c9a182372a685b2ae524534229d6a3"
+      }
+    },
+    {
+      "id": "flora",
+      "name": "Flora: Plant Care Log",
+      "creatorName": "Rich Silver",
+      "creatorHandle": "RichSilver",
+      "categories": ["Personal"],
+      "description": "Flora keeps a private houseplant care log and weekly reminders. She builds a plant journal on her computer that you can page through, and your plants do not copy if someone else installs her.",
+      "summary": "Flora keeps a private houseplant care log and weekly reminders. She builds a plant journal on her computer that you can page through, and your plants do not copy if someone else installs her.",
+      "installCount": 0,
+      "appearance": {"color": "green", "shape": "leaf"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/flora",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 10,
+        "memoryNames": ["memory 1", "memory 10", "memory 2", "memory 3", "memory 4", "memory 5", "memory 6", "memory 7", "memory 8", "memory 9"],
+        "memoryContentSha256": "6b75c2fa8fea1e4b430f6f49ab837805d97084b9bf9cca6029ed506d9720572e"
+      },
+      "skills": {
+        "count": 4,
+        "names": ["Houseplant care card", "Houseplant care first-run", "Houseplant weekly collection news", "Private houseplant journal"],
+        "contentSha256": "bceb9b6b94058cc3dbe62b151338944c4fb4d4ba7b608195fc5ee0e06c200ab7"
+      },
+      "routines": {
+        "count": 0,
+        "names": [],
+        "summarySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "integrations": {
+        "count": 0,
+        "names": [],
+        "descriptionSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    {
+      "id": "sable-game-art",
+      "name": "Game Art Director",
+      "creatorName": "Danny Limanseta",
+      "creatorHandle": "DannyLimanseta",
+      "categories": ["Design"],
+      "description": "Turns a game concept into a style guide, palettes, and prompt sheets for your image tool. Slices sprite sheets and checks your art for palette and grid drift.",
+      "summary": "Turns a game concept into a style guide, palettes, and prompt sheets for your image tool. Slices sprite sheets and checks your art for palette and grid drift.",
+      "installCount": 0,
+      "appearance": {"color": "violet", "shape": "teardrop"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/sable-game-art",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 5,
+        "memoryNames": ["memory 1", "memory 2", "memory 3", "memory 4", "memory 5"],
+        "memoryContentSha256": "9aea510e3742a3d4914d96d2fbe05c90fd96f75db4918ab088aff1ffb2b5ee18"
+      },
+      "skills": {
+        "count": 6,
+        "names": ["Asset consistency check", "Getting started", "Prompt sheets", "Sprite and tile specs", "Sprite sheet toolkit", "Style guide"],
+        "contentSha256": "f85085bf6b9fd4d195e5a92635c0e139a1e5f59a85f9ccee5137bc98d83f1ce4"
+      },
+      "routines": {
+        "count": 2,
+        "names": ["Weekly art review", "Weekly reference sweep"],
+        "summarySha256": "fb9e392c2052952317e3a6ef0f29cf8b3036af088a567469ea589cd594dd3f48"
+      },
+      "integrations": {
+        "count": 4,
+        "names": ["figma", "linear", "notion-workspace", "slack"],
+        "descriptionSha256": "856e49afef56f1efb73564855ab73f4be7fe99fd89e5520c6d878c77b4702ae2"
+      }
+    },
+    {
+      "id": "account-research",
+      "name": "GTM Account Research",
+      "creatorName": "Stefan Markarian",
+      "creatorHandle": "",
+      "categories": ["From Grok Bot Team", "Sales"],
+      "description": "Researches one account before a meeting, deal review, or account plan. Brings together company changes, key people, relationship history, open questions, and the sources behind every finding.",
+      "summary": "Researches one account before a meeting, deal review, or account plan. Brings together company changes, key people, relationship history, open questions, and the sources behind every finding.",
+      "installCount": 0,
+      "appearance": {"color": "gray", "shape": "cloud"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/account-research",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 6,
+        "memoryNames": ["memory 1", "memory 2", "memory 3", "memory 4", "memory 5", "memory 6"],
+        "memoryContentSha256": "5a528ad99b678e2eb02849feff0acb93346b5a47d881e43dd09bd0baed603cdc"
+      },
+      "skills": {
+        "count": 4,
+        "names": ["account-research", "account-sot-sync", "agent-orchestration", "humanizer"],
+        "contentSha256": "005a431ab1c82336b83130b8b7de204b1fd7b64404995d7ab3c5eb067775b92c"
+      },
+      "routines": {
+        "count": 1,
+        "names": ["Weekly account monitor"],
+        "summarySha256": "73257fedf86836f0c4db54aeeb2b1d413d33b515c2a2d65d73b53362d1ab2ab9"
+      },
+      "integrations": {
+        "count": 7,
+        "names": ["Gmail", "Google Calendar", "Google Sheets", "Granola", "Notion", "Salesforce", "Slack"],
+        "descriptionSha256": "81bbeb99b997e2779aa2831c39b56a5fd2b886bd7149305b86369d414adb455b"
+      }
+    },
+    {
+      "id": "warm-intro-finder",
+      "name": "GTM Connections",
+      "creatorName": "Brian Joseph",
+      "creatorHandle": "",
+      "categories": ["From Grok Bot Team", "Sales"],
+      "description": "Finds credible ways into a target account through mutual contacts, past conversations, shared history, and prior meetings. Ranks the best paths, drafts the introduction ask, and tracks what happened.",
+      "summary": "Finds credible ways into a target account through mutual contacts, past conversations, shared history, and prior meetings. Ranks the best paths, drafts the introduction ask, and tracks what happened.",
+      "installCount": 0,
+      "appearance": {"color": "green", "shape": "tablet"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/warm-intro-finder",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 6,
+        "memoryNames": ["memory 1", "memory 2", "memory 3", "memory 4", "memory 5", "memory 6"],
+        "memoryContentSha256": "14f59624d8e0afc44c9ff582bc2c7607e9b9cb47a3808b862309648fc3424c86"
+      },
+      "skills": {
+        "count": 3,
+        "names": ["agent-orchestration", "connections-and-intros", "humanizer"],
+        "contentSha256": "a81c65d82e54b62f143fbc011c840bf3392ddf0164549a1603e863c0b991ffc8"
+      },
+      "routines": {
+        "count": 1,
+        "names": ["Warm-path follow-through queue"],
+        "summarySha256": "27b1e74219efad41266c8f302daae92f03ba3fba5818eddf4901231fa91427f9"
+      },
+      "integrations": {
+        "count": 6,
+        "names": ["Gmail", "Google Calendar", "Google Sheets", "Notion", "Salesforce", "Slack"],
+        "descriptionSha256": "d215bf77d7254dc5dba6eca96a083ea771d94e898aaac829dca75425807c9d68"
+      }
+    },
+    {
+      "id": "follow-through-agent",
+      "name": "GTM Loop Closer",
+      "creatorName": "Jon Grigull",
+      "creatorHandle": "",
+      "categories": ["From Grok Bot Team", "Sales"],
+      "description": "Finds promises, follow-ups, and customer details left behind in meetings, email, Slack, CRM, or task tools. Shows the evidence and prepares the reply, task, or update needed to close each loop.",
+      "summary": "Finds promises, follow-ups, and customer details left behind in meetings, email, Slack, CRM, or task tools. Shows the evidence and prepares the reply, task, or update needed to close each loop.",
+      "installCount": 0,
+      "appearance": {"color": "red", "shape": "hex"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/follow-through-agent",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 6,
+        "memoryNames": ["memory 1", "memory 2", "memory 3", "memory 4", "memory 5", "memory 6"],
+        "memoryContentSha256": "9667c5e226136586224651d6bad4d3938a4a935be4397d46fced9094c1d36e4e"
+      },
+      "skills": {
+        "count": 5,
+        "names": ["agent-orchestration", "conversation-to-action", "follow-through-drafts", "humanizer", "open-loop-audit"],
+        "contentSha256": "f6f51014e011a8f529546107af801928b87dc3f2c7c955b46cd6548581767325"
+      },
+      "routines": {
+        "count": 1,
+        "names": ["Commitment-strand audit"],
+        "summarySha256": "c7fa1ae3fdf4ab7e14e964328e451ca8b81f48c80c9f299f90f2b1df155ac399"
+      },
+      "integrations": {
+        "count": 7,
+        "names": ["Gmail", "Google Calendar", "Google Sheets", "Granola", "Notion", "Salesforce", "Slack"],
+        "descriptionSha256": "81bbeb99b997e2779aa2831c39b56a5fd2b886bd7149305b86369d414adb455b"
+      }
+    },
+    {
+      "id": "prospector",
+      "name": "GTM Prospecting",
+      "creatorName": "Caro Scalercio",
+      "creatorHandle": "",
+      "categories": ["From Grok Bot Team", "Sales"],
+      "description": "Turns an ideal customer profile into a focused prospect list, adds useful context, and checks for existing relationships. Drafts first-touch email and LinkedIn messages for your review.",
+      "summary": "Turns an ideal customer profile into a focused prospect list, adds useful context, and checks for existing relationships. Drafts first-touch email and LinkedIn messages for your review.",
+      "installCount": 0,
+      "appearance": {"color": "green", "shape": "squircle"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/prospector",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 6,
+        "memoryNames": ["memory 1", "memory 2", "memory 3", "memory 4", "memory 5", "memory 6"],
+        "memoryContentSha256": "4791bbdab9f5378c4dc73ddc2f161f368e642777407cc3553980f529e838741e"
+      },
+      "skills": {
+        "count": 3,
+        "names": ["agent-orchestration", "humanizer", "prospecting-loop"],
+        "contentSha256": "243074aece4bf0e91c04e36d502bf3bb7a436f732a7c19ca3d54d10ed0714f88"
+      },
+      "routines": {
+        "count": 1,
+        "names": ["Weekly prospecting hygiene"],
+        "summarySha256": "003283181c37edf321c7431e328cf424e9d0b62fcfa551ab60775e5102cb6e57"
+      },
+      "integrations": {
+        "count": 4,
+        "names": ["Gmail", "Google Sheets", "Notion", "Salesforce"],
+        "descriptionSha256": "e79c9f41ee8a36370510140bc10fba1813be232611fc8adc3243c431bc1db489"
+      }
+    },
+    {
+      "id": "haggle-bot",
+      "name": "Haggle Bot",
+      "creatorName": "Daniel Gartshein",
+      "creatorHandle": "",
+      "categories": ["From Grok Bot Team"],
+      "description": "Inventories your SaaS spend from Ramp and bills, finds evidence-backed savings (unused seats, duplicates, cheaper alternatives), and drafts vendor counters for your review. Never spends, signs, or sends without you.",
+      "summary": "Inventories your SaaS spend from Ramp and bills, finds evidence-backed savings (unused seats, duplicates, cheaper alternatives), and drafts vendor counters for your review. Never spends, signs, or sends without you.",
+      "installCount": 0,
+      "appearance": {"color": "gray", "shape": "teardrop"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/haggle-bot",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 28,
+        "memoryNames": [
+          "memory 1",
+          "memory 10",
+          "memory 11",
+          "memory 12",
+          "memory 13",
+          "memory 14",
+          "memory 15",
+          "memory 16",
+          "memory 17",
+          "memory 18",
+          "memory 19",
+          "memory 2",
+          "memory 20",
+          "memory 21",
+          "memory 22",
+          "memory 23",
+          "memory 24",
+          "memory 25",
+          "memory 26",
+          "memory 27",
+          "memory 28",
+          "memory 3",
+          "memory 4",
+          "memory 5",
+          "memory 6",
+          "memory 7",
+          "memory 8",
+          "memory 9"
+        ],
+        "memoryContentSha256": "591185fc0f9ae97d12603c09b5cd71c08f7e6a330b9be2f909ab411518997621"
+      },
+      "skills": {
+        "count": 6,
+        "names": [
+          "build-spend-inventory",
+          "draft-vendor-counter",
+          "Google Sheets final check",
+          "haggle-setup",
+          "research-alternatives",
+          "score-savings-opportunity"
+        ],
+        "contentSha256": "18c31e37339d3a78ce7a7bcff235a934a4d44d1789284685911dce611fe202a9"
+      },
+      "routines": {
+        "count": 2,
+        "names": ["Monthly inventory refresh", "Renewal window watch"],
+        "summarySha256": "ff5ce70451904f309a280d2f7a8928943c57c5670b447e4511bf6fc672bb5d37"
+      },
+      "integrations": {
+        "count": 7,
+        "names": ["Gmail", "Google Drive", "Google Sheets", "Granola", "Notion", "Ramp", "Slack"],
+        "descriptionSha256": "0686754dbdbc03c23a11f97b37cb58a35a3f9c96d3d75996c7a1ea886a0154a1"
+      }
+    },
+    {
+      "id": "hiring-activity-monitor",
+      "name": "Hiring Signals",
+      "creatorName": "Simon Lackowski",
+      "creatorHandle": "",
+      "categories": ["From Grok Bot Team", "Sales"],
+      "description": "Tracks hiring activity across selected companies and job sources. Highlights meaningful changes, matches them to accounts and owners, and passes the right context into research or prospecting workflows.",
+      "summary": "Tracks hiring activity across selected companies and job sources. Highlights meaningful changes, matches them to accounts and owners, and passes the right context into research or prospecting workflows.",
+      "installCount": 0,
+      "appearance": {"color": "gray", "shape": "squircle"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/hiring-activity-monitor",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 6,
+        "memoryNames": ["memory 1", "memory 2", "memory 3", "memory 4", "memory 5", "memory 6"],
+        "memoryContentSha256": "f052648445607848d1fbbfc565b3a9ffb41d7595bf50d74935298c2463291b0a"
+      },
+      "skills": {
+        "count": 3,
+        "names": ["agent-orchestration", "hiring-signals", "humanizer"],
+        "contentSha256": "344d8cf59596c9f0a62182b399e21fe6d5aeca9ae3196d53ca856c25d327009e"
+      },
+      "routines": {
+        "count": 1,
+        "names": ["Weekday hiring signal digest"],
+        "summarySha256": "a6350579102c521aec8fa5de67509cb086c26665f4eeecdb9edf6f4a5d538dc8"
+      },
+      "integrations": {
+        "count": 4,
+        "names": ["Google Sheets", "Notion", "Salesforce", "Slack"],
+        "descriptionSha256": "e79c9f41ee8a36370510140bc10fba1813be232611fc8adc3243c431bc1db489"
+      }
+    },
+    {
+      "id": "home-robots",
+      "name": "Home robots",
+      "creatorName": "Sawyer Merritt",
+      "creatorHandle": "SawyerMerritt",
+      "categories": ["Personal"],
+      "description": "Control home robots from chat: a Segway Navimow, a Matic vacuum, and other official vacuums, mowers, and Matter robots. Connect each once, then say start, pause, dock, or how's it doing.",
+      "summary": "Control home robots from chat: a Segway Navimow, a Matic vacuum, and other official vacuums, mowers, and Matter robots. Connect each once, then say start, pause, dock, or how's it doing.",
+      "installCount": 0,
+      "appearance": {"color": "orange", "shape": "pebble"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/home-robots",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 8,
+        "memoryNames": ["memory 1", "memory 2", "memory 3", "memory 4", "memory 5", "memory 6", "memory 7", "memory 8"],
+        "memoryContentSha256": "8cdeb1b930ee956523efe2ff715a721e3a3983313ddd9797fa922ccdd95500d5"
+      },
+      "skills": {
+        "count": 7,
+        "names": ["Connect home robot", "Connect Matic", "Connect Navimow", "Control home robot", "Control Matic", "Control Navimow", "Share this bot"],
+        "contentSha256": "f828587dfc6427470c238436a4825450bd08405e22b3fb2ce4087771e2c3ec2e"
+      },
+      "routines": {
+        "count": 0,
+        "names": [],
+        "summarySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "integrations": {
+        "count": 0,
+        "names": [],
+        "descriptionSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    {
+      "id": "imogen",
+      "name": "Imogen",
+      "creatorName": "Kent C. Dodds",
+      "creatorHandle": "kentcdodds",
+      "categories": ["Design"],
+      "description": "Imogen the Impala Image Interpreter writes brief, copyable alt text focused on the most important part of an image, so images are accessible to blind people.",
+      "summary": "Imogen the Impala Image Interpreter writes brief, copyable alt text focused on the most important part of an image, so images are accessible to blind people.",
+      "installCount": 0,
+      "appearance": {"color": "violet", "shape": "egg"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/imogen",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 2,
+        "memoryNames": ["memory 1", "memory 2"],
+        "memoryContentSha256": "ee15f9b84cdce251e54ae6a47bafd4d55664c11de2a0d8b9224b88b74f2e8682"
+      },
+      "skills": {
+        "count": 0,
+        "names": [],
+        "contentSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "routines": {
+        "count": 0,
+        "names": [],
+        "summarySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "integrations": {
+        "count": 0,
+        "names": [],
+        "descriptionSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    {
+      "id": "last30days",
+      "name": "last30days",
+      "creatorName": "Matt Van Horn",
+      "creatorHandle": "mvanhorn",
+      "categories": ["Marketing", "Product"],
+      "description": "Research what people actually say about any topic in the last 30 days. Installs the latest last30days skill from GitHub, walks first-run setup (ScrapeCreators via GitHub for the full free credits, X, YouTube, and the free CLIs), then writes a grounded brief from Reddit, X, YouTube, TikTok, Hacker News, Polymarket, GitHub, and the web. Checks GitHub for a new skill version every 30 days.",
+      "summary": "Research what people actually say about any topic in the last 30 days. Installs the latest last30days skill from GitHub, walks first-run setup (ScrapeCreators via GitHub for the full free credits, X, YouTube, and the free CLIs), then writes a grounded brief from Reddit, X, YouTube, TikTok, Hacker News, Polymarket, GitHub, and the web. Checks GitHub for a new skill version every 30 days.",
+      "installCount": 0,
+      "appearance": {"color": "violet", "shape": "tablet"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/last30days",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 8,
+        "memoryNames": ["memory 1", "memory 2", "memory 3", "memory 4", "memory 5", "memory 6", "memory 7", "memory 8"],
+        "memoryContentSha256": "808fafe9b7d5fbc44558767c83f78a0afd538c2eb8d5fbf1fdf414c1b812d61a"
+      },
+      "skills": {
+        "count": 1,
+        "names": ["last30days"],
+        "contentSha256": "ba0864bfd29daa1ef6528063ea61e45156bb8dfce366721e971b305edae7948c"
+      },
+      "routines": {
+        "count": 0,
+        "names": [],
+        "summarySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "integrations": {
+        "count": 0,
+        "names": [],
+        "descriptionSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    {
+      "id": "leadsworth",
+      "name": "Lead Pipeline Desk",
+      "creatorName": "Miguel Cruz",
+      "creatorHandle": "cruzmiguel000",
+      "categories": ["From Grok Bot Team", "Marketing"],
+      "description": "Scores your inbound leads, merges duplicates, assigns an owner, and flags what's stuck. Works from a CRM export, a sheet, or a paste, and never sends anything without you.",
+      "summary": "Scores your inbound leads, merges duplicates, assigns an owner, and flags what's stuck. Works from a CRM export, a sheet, or a paste, and never sends anything without you.",
+      "installCount": 0,
+      "appearance": {"color": "green", "shape": "capsule"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/leadsworth",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 5,
+        "memoryNames": ["memory 1", "memory 2", "memory 3", "memory 4", "memory 5"],
+        "memoryContentSha256": "8e1670e208364d147a1903dcfc585fe539d374376800e0a62cbf1adc57d25905"
+      },
+      "skills": {
+        "count": 7,
+        "names": [
+          "Build the lead ledger",
+          "Connect a tool or change the source",
+          "Getting started",
+          "Merge duplicate leads",
+          "Pipeline health report",
+          "Route leads and draft the first reply",
+          "Score and qualify leads"
+        ],
+        "contentSha256": "e877e4514da2b0061a79861d3fdb6d50cfd65549692b3003485eb8ad9c0a8c40"
+      },
+      "routines": {
+        "count": 2,
+        "names": ["Daily lead triage", "Weekly pipeline report"],
+        "summarySha256": "e22dc80c0bd9c8d4c0694da1b6a2f6d8f4a014a98249a020b338e7f7c688302b"
+      },
+      "integrations": {
+        "count": 8,
+        "names": ["Databricks SQL", "Gmail", "Google Sheets", "hex", "linear", "notion-workspace", "Salesforce", "slack"],
+        "descriptionSha256": "e4426e6bbb1501c78cf2fac893e21e7875ede48a8a9ad0858377cf93d2dbc181"
+      }
+    },
+    {
+      "id": "engineer-bot",
+      "name": "Lingxi's Engineer Bot",
+      "creatorName": "Lingxi Li",
+      "creatorHandle": "lingxi",
+      "categories": ["Engineering", "From Grok Bot Team"],
+      "description": "A hands-off engineering supervisor. Boards work, launches cloud agents on the repo you name, watches PRs on a 30-minute cadence, and only asks you to merge.",
+      "summary": "A hands-off engineering supervisor. Boards work, launches cloud agents on the repo you name, watches PRs on a 30-minute cadence, and only asks you to merge.",
+      "installCount": 0,
+      "appearance": {"color": "cyan", "shape": "wedge"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/engineer-bot",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 24,
+        "memoryNames": [
+          "memory 1",
+          "memory 10",
+          "memory 11",
+          "memory 12",
+          "memory 13",
+          "memory 14",
+          "memory 15",
+          "memory 16",
+          "memory 17",
+          "memory 18",
+          "memory 19",
+          "memory 2",
+          "memory 20",
+          "memory 21",
+          "memory 22",
+          "memory 23",
+          "memory 24",
+          "memory 3",
+          "memory 4",
+          "memory 5",
+          "memory 6",
+          "memory 7",
+          "memory 8",
+          "memory 9"
+        ],
+        "memoryContentSha256": "983f7bafd8d0cefefeed23b3c49f9eb084e6de72e2c3baf850d0b07462a92375"
+      },
+      "skills": {
+        "count": 1,
+        "names": ["Engineering playbook"],
+        "contentSha256": "b530bf51ef2cddfcbeada577469e501427892c022fb061baa21ff6ae2116cb83"
+      },
+      "routines": {
+        "count": 0,
+        "names": [],
+        "summarySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "integrations": {
+        "count": 1,
+        "names": ["Notion"],
+        "descriptionSha256": "a56d64820f400c0c7781f89882170c0ee96549b7945248634abec966d45587ef"
+      }
+    },
+    {
+      "id": "love",
+      "name": "Love ❤️",
+      "creatorName": "Danny Buck",
+      "creatorHandle": "dannybuck",
+      "categories": ["Personal"],
+      "description": "Takes the admin out of being a good Partner so the attention can go where it counts. Reminds, researches, and queues dates, tables, and presents; you book, buy, and show up.",
+      "summary": "Takes the admin out of being a good Partner so the attention can go where it counts. Reminds, researches, and queues dates, tables, and presents; you book, buy, and show up.",
+      "installCount": 0,
+      "appearance": {"color": "red", "shape": "pebble"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/love",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 2,
+        "memoryNames": ["memory 1", "memory 2"],
+        "memoryContentSha256": "792e483fc0bbc7f199ee8a2a007946126a108f54c94ae8618df5486cb2952359"
+      },
+      "skills": {
+        "count": 0,
+        "names": [],
+        "contentSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "routines": {
+        "count": 3,
+        "names": ["Monday date check", "Monthly small gift", "Wednesday question"],
+        "summarySha256": "3ef35cc5c2be8e273d09790fd3fc5cce4c47bcc8d31e389d23dcde0f331d063b"
+      },
+      "integrations": {
+        "count": 1,
+        "names": ["Google Calendar"],
+        "descriptionSha256": "eecb26296d35de4101a98807025bc035e9ed96b6aa93eaa6f93bee8249b15ad9"
+      }
+    },
+    {
+      "id": "luma-pages",
+      "name": "Luma Pages",
+      "creatorName": "Jenna Nanpei",
+      "creatorHandle": "jennananpei",
+      "categories": ["From Grok Bot Team", "Marketing"],
+      "description": "Builds and updates private Luma event pages for field marketers — copy, branding, registration settings, capacity and waitlist, and registration-list hygiene. Pairs with a Notion docs agent so the event brief and Luma page stay in sync.",
+      "summary": "Builds and updates private Luma event pages for field marketers — copy, branding, registration settings, capacity and waitlist, and registration-list hygiene. Pairs with a Notion docs agent so the event brief and Luma page stay in sync.",
+      "installCount": 0,
+      "appearance": {"color": "orange", "shape": "hex"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/luma-pages",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 7,
+        "memoryNames": ["memory 1", "memory 2", "memory 3", "memory 4", "memory 5", "memory 6", "memory 7"],
+        "memoryContentSha256": "21492ba67bdba972461c88a0b7f16c7069fc39ea21c0f72df6bf4cceb1546b47"
+      },
+      "skills": {
+        "count": 0,
+        "names": [],
+        "contentSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "routines": {
+        "count": 0,
+        "names": [],
+        "summarySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "integrations": {
+        "count": 1,
+        "names": ["Notion"],
+        "descriptionSha256": "a56d64820f400c0c7781f89882170c0ee96549b7945248634abec966d45587ef"
+      }
+    },
+    {
+      "id": "echo",
+      "name": "Meeting Recap Deck",
+      "creatorName": "Krista Letz",
+      "creatorHandle": "kristaletz",
+      "categories": ["From Grok Bot Team", "Sales"],
+      "description": "Turns your meeting notes into a recap deck in your slide template. Works from notes you paste or upload, and never invents a quote.",
+      "summary": "Turns your meeting notes into a recap deck in your slide template. Works from notes you paste or upload, and never invents a quote.",
+      "installCount": 0,
+      "appearance": {"color": "blue", "shape": "blob"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/echo",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 4,
+        "memoryNames": ["memory 1", "memory 2", "memory 3", "memory 4"],
+        "memoryContentSha256": "d3abb35e9b42434b4f82481e6edbe903e1e47f20483cf7816281fe4750dbf64e"
+      },
+      "skills": {
+        "count": 8,
+        "names": [
+          "Build the recap deck",
+          "Getting started",
+          "Next steps to tickets",
+          "Read the slide template",
+          "Recap note without slides",
+          "Share the approved recap",
+          "Themes across meetings",
+          "Update one slide"
+        ],
+        "contentSha256": "b146a4d2d5cedab1c2cfb2ecf850b4bbf841e03083070e82615303eb18d105e9"
+      },
+      "routines": {
+        "count": 2,
+        "names": ["Friday recap roundup", "Post-meeting recap draft"],
+        "summarySha256": "bf3bef9200d1d2dc33cc032ead27f2cf8e9340da5b12583e86a1145bb7460924"
+      },
+      "integrations": {
+        "count": 9,
+        "names": ["figma", "Gmail", "Gong", "Google Calendar", "Google Slides", "Granola", "linear", "notion-workspace", "slack"],
+        "descriptionSha256": "6b13b9633e6fc823449a9fded97f757afde1fc6b8f582a7cdc236e8b331fc99b"
+      }
+    },
+    {
+      "id": "nightly-audit-engineer",
+      "name": "Nightly Audit Engineer",
+      "creatorName": "Lingxi Li",
+      "creatorHandle": "lingxi",
+      "categories": ["Engineering", "From Grok Bot Team"],
+      "description": "A nightly engineering auditor that researches a whole codebase, then ships one cleanup PR per area. Defaults to 4am and asks when to run before it starts.",
+      "summary": "A nightly engineering auditor that researches a whole codebase, then ships one cleanup PR per area. Defaults to 4am and asks when to run before it starts.",
+      "installCount": 0,
+      "appearance": {"color": "violet", "shape": "pebble"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/nightly-audit-engineer",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 7,
+        "memoryNames": ["memory 1", "memory 2", "memory 3", "memory 4", "memory 5", "memory 6", "memory 7"],
+        "memoryContentSha256": "40ec56ff6cb14318e7ec4422b4bdd8d877de8407bdaed15dc68b0a0a2adfb0ad"
+      },
+      "skills": {
+        "count": 0,
+        "names": [],
+        "contentSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "routines": {
+        "count": 1,
+        "names": ["Nightly code-quality audit (4am)"],
+        "summarySha256": "3c1694d85d082237d197b1c22248567c16b60465f849030b03d4d8a0a944e951"
+      },
+      "integrations": {
+        "count": 0,
+        "names": [],
+        "descriptionSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    {
+      "id": "nyc-parent",
+      "name": "NYC Parent",
+      "creatorName": "Dennison",
+      "creatorHandle": "DennisonBertram",
+      "categories": ["Personal"],
+      "description": "A family chief of staff for New York City parents. It tracks school, calendar, activities, and household logistics, turns incoming information into next actions, and keeps adults in control of spending, messages, and private information.",
+      "summary": "A family chief of staff for New York City parents. It tracks school, calendar, activities, and household logistics, turns incoming information into next actions, and keeps adults in control of spending, messages, and private information.",
+      "installCount": 0,
+      "appearance": {"color": "black", "shape": "blob"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/nyc-parent",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 5,
+        "memoryNames": ["memory 1", "memory 2", "memory 3", "memory 4", "memory 5"],
+        "memoryContentSha256": "ceb951db98f22cbc67709cd88123417aa5ff22b84f042e4b25890896c8fd3dfc"
+      },
+      "skills": {
+        "count": 0,
+        "names": [],
+        "contentSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "routines": {
+        "count": 0,
+        "names": [],
+        "summarySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "integrations": {
+        "count": 0,
+        "names": [],
+        "descriptionSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    {
+      "id": "office-ops-desk",
+      "name": "Office Ops Desk",
+      "creatorName": "Erika Cabrera",
+      "creatorHandle": "ericacabera",
+      "categories": ["From Grok Bot Team", "Operations"],
+      "description": "Tracks office shipments, facilities issues, and team birthdays, then writes the digests. Works from a pasted list or a spreadsheet, and never sends without you.",
+      "summary": "Tracks office shipments, facilities issues, and team birthdays, then writes the digests. Works from a pasted list or a spreadsheet, and never sends without you.",
+      "installCount": 0,
+      "appearance": {"color": "orange", "shape": "squircle"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/office-ops-desk",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 5,
+        "memoryNames": ["memory 1", "memory 2", "memory 3", "memory 4", "memory 5"],
+        "memoryContentSha256": "60f1951b3373e4e8af629af407bb36e725954aaa44a45927334546c2ce02a303"
+      },
+      "skills": {
+        "count": 7,
+        "names": [
+          "Build the office ops ledger",
+          "Getting started",
+          "Late shipment follow-up",
+          "New hire setup",
+          "Sync to Notion, Linear, and Slack",
+          "Team celebrations list",
+          "Weekly facilities digest"
+        ],
+        "contentSha256": "2d729f2aa912b267dd115b6945c7d19557fa6a069a19dd4d1793ecec935c4284"
+      },
+      "routines": {
+        "count": 3,
+        "names": ["Daily shipment status", "Team celebrations reminder", "Weekly facilities digest"],
+        "summarySha256": "0280c0dbffb408bbb75a212472a74d912cdb36a093fb5206aa8e71a749a8d06e"
+      },
+      "integrations": {
+        "count": 6,
+        "names": ["Gmail", "Google Calendar", "Google Sheets", "linear", "notion-workspace", "slack"],
+        "descriptionSha256": "e93a10691cedf82fb0649b2983a4bb9719c5c3f49f6248e9d07bf7e05288e279"
+      }
+    },
+    {
+      "id": "pg",
+      "name": "Outbound Prospecting",
+      "creatorName": "Krista Letz",
+      "creatorHandle": "kristaletz",
+      "categories": ["From Grok Bot Team", "Sales"],
+      "description": "Finds prospects that match your ideal customer, then drafts a first message to each one. Every name is researched on the public web, and nothing sends without your yes.",
+      "summary": "Finds prospects that match your ideal customer, then drafts a first message to each one. Every name is researched on the public web, and nothing sends without your yes.",
+      "installCount": 0,
+      "appearance": {"color": "magenta", "shape": "pebble"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/pg",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 5,
+        "memoryNames": ["memory 1", "memory 2", "memory 3", "memory 4", "memory 5"],
+        "memoryContentSha256": "8123313d9196343ec8113d3088429c31424b40bf0c9bc9b7b9282aa531bba459"
+      },
+      "skills": {
+        "count": 8,
+        "names": [
+          "Build the target list",
+          "Draft a first touch",
+          "Draft a follow-up",
+          "Getting started",
+          "Handle a reply",
+          "Research a prospect",
+          "Sharpen what is working",
+          "Weekly prospecting recap"
+        ],
+        "contentSha256": "80189d0e401a0514186ee525b8de380eda4ca70681428a3d6908361705d7472c"
+      },
+      "routines": {
+        "count": 3,
+        "names": ["Friday prospecting recap", "Monday list top-up", "Weekday draft batch"],
+        "summarySha256": "e7ad8bb773a7b98a5d2d772d829c5b1b792d5bdcec073cb26d18e9f3a2aa7ba7"
+      },
+      "integrations": {
+        "count": 7,
+        "names": ["Gmail", "Google Sheets", "linear", "notion-workspace", "Salesforce", "slack", "X"],
+        "descriptionSha256": "12ea6169d905885caea1e4352dd13f193e80fc9622cf55118e1666d18f857f8b"
+      }
+    },
+    {
+      "id": "overheard",
+      "name": "Overheard",
+      "creatorName": "Lenny Rachitsky",
+      "creatorHandle": "lennysan",
+      "categories": [],
+      "description": "Watches Reddit, Hacker News, news sites, and X for third-party mentions of your name, brand, and URLs, then sends a short weekday digest when something clears the bar. Stays quiet on dead days and never posts on your behalf.",
+      "summary": "Watches Reddit, Hacker News, news sites, and X for third-party mentions of your name, brand, and URLs, then sends a short weekday digest when something clears the bar. Stays quiet on dead days and never posts on your behalf.",
+      "installCount": 0,
+      "appearance": {"color": "orange", "shape": "teardrop"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/overheard",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 9,
+        "memoryNames": ["memory 1", "memory 2", "memory 3", "memory 4", "memory 5", "memory 6", "memory 7", "memory 8", "memory 9"],
+        "memoryContentSha256": "2fcfd21d1866f720e37b116b478900f091e802540de86be39dc931eb67059ce4"
+      },
+      "skills": {
+        "count": 2,
+        "names": ["overheard", "overheard-setup"],
+        "contentSha256": "24f9ab90656d86c08962e07635b4ecddb9f61e9ef192b0287c13f935f639558a"
+      },
+      "routines": {
+        "count": 1,
+        "names": ["Daily mention monitor"],
+        "summarySha256": "25b8536c13a05688a58594f8ede52bb02bc47818ec279e1c676ccc60218d294e"
+      },
+      "integrations": {
+        "count": 2,
+        "names": ["Slack", "X"],
+        "descriptionSha256": "ca2b7d055ddbdac62d12ce17693703c3688600c13718e6c2ac0a2eb8877c4aed"
+      }
+    },
+    {
+      "id": "tally",
+      "name": "Paid Media Report Desk",
+      "creatorName": "Miguel Cruz",
+      "creatorHandle": "cruzmiguel000",
+      "categories": ["From Grok Bot Team", "Marketing"],
+      "description": "Turns your Google Ads, Meta, and LinkedIn exports into one weekly report with commentary. Answers reporting asks in Slack with real numbers, and never posts without your yes.",
+      "summary": "Turns your Google Ads, Meta, and LinkedIn exports into one weekly report with commentary. Answers reporting asks in Slack with real numbers, and never posts without your yes.",
+      "installCount": 0,
+      "appearance": {"color": "green", "shape": "blob"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/tally",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 5,
+        "memoryNames": ["memory 1", "memory 2", "memory 3", "memory 4", "memory 5"],
+        "memoryContentSha256": "f2a387d6405c2cb084e7eeacbdbbe79aeca4319993ffd612ffaad32459948b52"
+      },
+      "skills": {
+        "count": 6,
+        "names": [
+          "Answer a reporting ask",
+          "Getting started",
+          "Map an export",
+          "Monthly paid media report",
+          "Weekly paid media report",
+          "What moved and why"
+        ],
+        "contentSha256": "5c094fea5d8c621f51f83b434668f928f3c377bb1e9d5210e24241cd0148af51"
+      },
+      "routines": {
+        "count": 3,
+        "names": ["Monthly paid media report", "Reporting ask watch", "Weekly paid media report"],
+        "summarySha256": "19283be83cc406c747b74473e2b0b829e2bd952f2dcd2bc61f74204ee9bd109e"
+      },
+      "integrations": {
+        "count": 7,
+        "names": ["Databricks SQL", "Gmail", "Google Sheets", "hex", "linear", "notion-workspace", "slack"],
+        "descriptionSha256": "3b9f6c3bda560f727ac5bd9ea66c51c62dfde7ef4812d795faaa105e4c6c5f49"
+      }
+    },
+    {
+      "id": "dan-lanning",
+      "name": "Partnerships Call Coach",
+      "creatorName": "Jenna Nanpei",
+      "creatorHandle": "jennananpei",
+      "categories": ["From Grok Bot Team", "Sales"],
+      "description": "Pitch and delivery coach for partnership, sponsorship, and high-stakes discovery calls. Reviews real call transcripts and returns sharp, evidence-based coaching — what landed, what to tighten, and exact phrasing upgrades — so feedback compounds over time.",
+      "summary": "Pitch and delivery coach for partnership, sponsorship, and high-stakes discovery calls. Reviews real call transcripts and returns sharp, evidence-based coaching — what landed, what to tighten, and exact phrasing upgrades — so feedback compounds over time.",
+      "installCount": 0,
+      "appearance": {"color": "magenta", "shape": "wedge"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/dan-lanning",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 4,
+        "memoryNames": ["memory 1", "memory 2", "memory 3", "memory 4"],
+        "memoryContentSha256": "a17e2363dc09d501c761c38c5528ca257dad2ac0d514d8b937e50bc7d87b3d46"
+      },
+      "skills": {
+        "count": 0,
+        "names": [],
+        "contentSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "routines": {
+        "count": 1,
+        "names": ["Post-pitch call review"],
+        "summarySha256": "bc50262d5f91dbd441d287dba6d3730fc467c28b49d22a07bcd34600a9708a4d"
+      },
+      "integrations": {
+        "count": 2,
+        "names": ["Google Calendar", "Notion"],
+        "descriptionSha256": "d9ad6b321de9a242e778586a117ccb32387b76e5d2e057eeb0d52df37494ec40"
+      }
+    },
+    {
+      "id": "pipeline-health-and-forecast",
+      "name": "Pipeline Pulse",
+      "creatorName": "Krista Letz",
+      "creatorHandle": "kristaletz",
+      "categories": ["From Grok Bot Team", "Sales"],
+      "description": "Scans your full pipeline for movement, stale next steps, forecast risk, and CRM gaps. Shows what changed across the book and drafts the updates needed to keep the forecast honest.",
+      "summary": "Scans your full pipeline for movement, stale next steps, forecast risk, and CRM gaps. Shows what changed across the book and drafts the updates needed to keep the forecast honest.",
+      "installCount": 0,
+      "appearance": {"color": "magenta", "shape": "hex"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/pipeline-health-and-forecast",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 6,
+        "memoryNames": ["memory 1", "memory 2", "memory 3", "memory 4", "memory 5", "memory 6"],
+        "memoryContentSha256": "eb2867a29e0ecb5374ca1b421a372e8383f7a977fd49fb65bdc7a6d9fee5b30e"
+      },
+      "skills": {
+        "count": 3,
+        "names": ["agent-orchestration", "humanizer", "pipeline-pulse"],
+        "contentSha256": "84316b6f0d16ab966feffc9146c26100e9799fc0adc99c1ee29200aa912062d6"
+      },
+      "routines": {
+        "count": 1,
+        "names": ["Weekday pipeline pulse"],
+        "summarySha256": "60fb319efe6161682b72d2e6a43307950395670214606f6fd57e4d2fa6c8705d"
+      },
+      "integrations": {
+        "count": 6,
+        "names": ["Gmail", "Google Sheets", "Granola", "Notion", "Salesforce", "Slack"],
+        "descriptionSha256": "d215bf77d7254dc5dba6eca96a083ea771d94e898aaac829dca75425807c9d68"
+      }
+    },
+    {
+      "id": "pitch-deck-coach",
+      "name": "Pitch Deck Coach",
+      "creatorName": "Hiten Shah",
+      "creatorHandle": "hnshah",
+      "categories": ["Sales"],
+      "description": "Reviews a pitch deck and reports what an investor is likely to understand, believe, question, and remember, then helps strengthen the story, evidence, and slides.",
+      "summary": "Reviews a pitch deck and reports what an investor is likely to understand, believe, question, and remember, then helps strengthen the story, evidence, and slides.",
+      "installCount": 0,
+      "appearance": {"color": "green", "shape": "cloud"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/pitch-deck-coach",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 27,
+        "memoryNames": [
+          "memory 1",
+          "memory 10",
+          "memory 11",
+          "memory 12",
+          "memory 13",
+          "memory 14",
+          "memory 15",
+          "memory 16",
+          "memory 17",
+          "memory 18",
+          "memory 19",
+          "memory 2",
+          "memory 20",
+          "memory 21",
+          "memory 22",
+          "memory 23",
+          "memory 24",
+          "memory 25",
+          "memory 26",
+          "memory 27",
+          "memory 3",
+          "memory 4",
+          "memory 5",
+          "memory 6",
+          "memory 7",
+          "memory 8",
+          "memory 9"
+        ],
+        "memoryContentSha256": "9c207bb196c17e5c2ec173d91837ff659c0bcdd1d8308a9728a3783c9b2ec1c4"
+      },
+      "skills": {
+        "count": 4,
+        "names": ["pdc-methodology", "pdc-modes", "pdc-workspace", "Pitch Deck Coach"],
+        "contentSha256": "5b86ab42f769b2126f0d68ee929df8adf18c8ed37786da02292101a4f1f1a854"
+      },
+      "routines": {
+        "count": 0,
+        "names": [],
+        "summarySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "integrations": {
+        "count": 0,
+        "names": [],
+        "descriptionSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    {
+      "id": "product-idea-stress-test",
+      "name": "Product Idea Stress Test",
+      "creatorName": "Hiten Shah",
+      "creatorHandle": "hnshah",
+      "categories": ["Product"],
+      "description": "Investigates a product or startup idea for founders. Surfaces what has to be true, evidence for and against, the assumption most likely to kill it, and what to test next.",
+      "summary": "Investigates a product or startup idea for founders. Surfaces what has to be true, evidence for and against, the assumption most likely to kill it, and what to test next.",
+      "installCount": 0,
+      "appearance": {"color": "blue", "shape": "squircle"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/product-idea-stress-test",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 12,
+        "memoryNames": [
+          "memory 1",
+          "memory 10",
+          "memory 11",
+          "memory 12",
+          "memory 2",
+          "memory 3",
+          "memory 4",
+          "memory 5",
+          "memory 6",
+          "memory 7",
+          "memory 8",
+          "memory 9"
+        ],
+        "memoryContentSha256": "1c4e30e5c6782bf22bc63476703278c10ae936c1cd5d019637f47c4f478db1f3"
+      },
+      "skills": {
+        "count": 3,
+        "names": ["pist-evidence-investigator", "pist-experiment-designer", "pist-method-codifier"],
+        "contentSha256": "614b53d099e486065bf57094a15d56b3f9d8d21a412463a95c55b87cee752d44"
+      },
+      "routines": {
+        "count": 0,
+        "names": [],
+        "summarySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "integrations": {
+        "count": 0,
+        "names": [],
+        "descriptionSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    {
+      "id": "customer-question-drafter",
+      "name": "Product Support Inbox Assistant",
+      "creatorName": "Anoop Baliga",
+      "creatorHandle": "akbaliga96",
+      "categories": ["From Grok Bot Team", "Sales"],
+      "description": "Helps you find and draft answers to product questions. Never sends emails without you.",
+      "summary": "Helps you find and draft answers to product questions. Never sends emails without you.",
+      "installCount": 0,
+      "appearance": {"color": "red", "shape": "shield"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/customer-question-drafter",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 12,
+        "memoryNames": [
+          "memory 1",
+          "memory 10",
+          "memory 11",
+          "memory 12",
+          "memory 2",
+          "memory 3",
+          "memory 4",
+          "memory 5",
+          "memory 6",
+          "memory 7",
+          "memory 8",
+          "memory 9"
+        ],
+        "memoryContentSha256": "2cca605e741bb88dd9875b35c9c05b783ccc464a3981e31a1687caf0f790bffd"
+      },
+      "skills": {
+        "count": 0,
+        "names": [],
+        "contentSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "routines": {
+        "count": 0,
+        "names": [],
+        "summarySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "integrations": {
+        "count": 3,
+        "names": ["Gmail", "Granola", "Slack"],
+        "descriptionSha256": "06072112237a8b23438e12d1b3890f8a14b83659716d74994621d66602c6b88d"
+      }
+    },
+    {
+      "id": "projects-manager",
+      "name": "Projects Manager",
+      "creatorName": "Eric Zakariasson",
+      "creatorHandle": "ericzakariasson",
+      "categories": ["Engineering", "From Grok Bot Team"],
+      "description": "Runs your team's projects from Notion: one row per project, a channel per project, and tasks your specialist bots claim. You decide, agents execute, and it never does the specialist work itself.",
+      "summary": "Runs your team's projects from Notion: one row per project, a channel per project, and tasks your specialist bots claim. You decide, agents execute, and it never does the specialist work itself.",
+      "installCount": 0,
+      "appearance": {"color": "magenta", "shape": "teardrop"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/projects-manager",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 0,
+        "memoryNames": [],
+        "memoryContentSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "skills": {
+        "count": 1,
+        "names": ["Grok Bot project ops"],
+        "contentSha256": "8e09d648b7739341e2ea4002758b61f54b1e5437f9594ac682d62f63684764a2"
+      },
+      "routines": {
+        "count": 0,
+        "names": [],
+        "summarySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "integrations": {
+        "count": 2,
+        "names": ["Notion", "Slack"],
+        "descriptionSha256": "798fe04a7afb23f58d8ccc6d39fa2c5634821a2a7f0d137c261fe1625aa1b159"
+      }
+    },
+    {
+      "id": "mr-toms",
+      "name": "Recruiting Coordinator",
+      "creatorName": "Tommy Hansen",
+      "creatorHandle": "TommyHansenTA",
+      "categories": ["From Grok Bot Team", "Recruiting & People"],
+      "description": "Schedules interview loops, preps your interviewers, and chases what's stalled. Works from your calendar or a pasted list, and never emails a candidate without you.",
+      "summary": "Schedules interview loops, preps your interviewers, and chases what's stalled. Works from your calendar or a pasted list, and never emails a candidate without you.",
+      "installCount": 0,
+      "appearance": {"color": "red", "shape": "teardrop"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/mr-toms",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 5,
+        "memoryNames": ["memory 1", "memory 2", "memory 3", "memory 4", "memory 5"],
+        "memoryContentSha256": "7dab94ef42010a1e0c01cafd956f7773362857ddc78aa9f1e03468374f1dcb50"
+      },
+      "skills": {
+        "count": 8,
+        "names": [
+          "Build the hiring tracker",
+          "Candidate message drafts",
+          "Getting started",
+          "Interviewer coaching",
+          "Interviewer prep packet",
+          "Run the debrief",
+          "Schedule an interview loop",
+          "Stalled loop follow-ups"
+        ],
+        "contentSha256": "cd5f9da5dbeda4866342c35eba394ae0e73211e3eff0749c2e5766e0d486e42a"
+      },
+      "routines": {
+        "count": 7,
+        "names": [
+          "Afternoon loop check",
+          "Candidate reply drafts",
+          "Daily hiring brief",
+          "Evening interview prep",
+          "Interview coaching review",
+          "Urgent thread check",
+          "Weekly pipeline review"
+        ],
+        "summarySha256": "19d5a8ed4af31d10c3e85e1ca0ac86cad4316a8612bd12a018143586b88287ec"
+      },
+      "integrations": {
+        "count": 9,
+        "names": ["Ashby", "figma", "Gmail", "Google Calendar", "Google Sheets", "Granola", "linear", "notion-workspace", "slack"],
+        "descriptionSha256": "84cc41fe60d0c40929098f2043db250cb83041cb4eb6fdaf5974eee5a5fd8e08"
+      }
+    },
+    {
+      "id": "researchy",
+      "name": "Researchy",
+      "creatorName": "Farzad",
+      "creatorHandle": "farzyness",
+      "categories": ["Engineering"],
+      "description": "A research and fact-check desk that runs every pass on the latest Grok model with live web search. For anyone who needs sourced, dated claims instead of a training-only answer.",
+      "summary": "A research and fact-check desk that runs every pass on the latest Grok model with live web search. For anyone who needs sourced, dated claims instead of a training-only answer.",
+      "installCount": 0,
+      "appearance": {"color": "violet", "shape": "cloud"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/researchy",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 5,
+        "memoryNames": ["memory 1", "memory 2", "memory 3", "memory 4", "memory 5"],
+        "memoryContentSha256": "9e2d8293195c88a28e53f41c2d59e00b4ff997954e04072e001c871c9f1c7aee"
+      },
+      "skills": {
+        "count": 1,
+        "names": ["Grok CLI research pass"],
+        "contentSha256": "c57df54ed3de6d477dd8e2b69b6cd25a818e07c6fb37e22cdd48eb2cccea323d"
+      },
+      "routines": {
+        "count": 0,
+        "names": [],
+        "summarySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "integrations": {
+        "count": 0,
+        "names": [],
+        "descriptionSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    {
+      "id": "sales-call-coach",
+      "name": "Sales Call Coach",
+      "creatorName": "Daniel Brill",
+      "creatorHandle": "danielbrill_",
+      "categories": ["From Grok Bot Team", "Sales"],
+      "description": "Scores your sales calls and tells you what to fix before the next one. Works from a pasted transcript or an uploaded recording.",
+      "summary": "Scores your sales calls and tells you what to fix before the next one. Works from a pasted transcript or an uploaded recording.",
+      "installCount": 0,
+      "appearance": {"color": "orange", "shape": "shield"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/sales-call-coach",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 5,
+        "memoryNames": ["memory 1", "memory 2", "memory 3", "memory 4", "memory 5"],
+        "memoryContentSha256": "fa019020b2001638b42ab5bc946618ebcdd9e66096cee31071f7aecd0af62a2a"
+      },
+      "skills": {
+        "count": 8,
+        "names": [
+          "Call scorecard",
+          "Coaching trends",
+          "Discovery question bank",
+          "Filler and pacing check",
+          "Getting started",
+          "Next step repair",
+          "Objection replay",
+          "Pre-call plan"
+        ],
+        "contentSha256": "0c108407e899883c203f70a9860fcc9bfc9b3695e9325db337f3c974fea972d3"
+      },
+      "routines": {
+        "count": 2,
+        "names": ["Objection drill", "Weekly coaching recap"],
+        "summarySha256": "4105d8a0a5511afe9e07c7acafe74a23c1c25540eda477cbb09f550fb1b908af"
+      },
+      "integrations": {
+        "count": 5,
+        "names": ["Gong", "Google Calendar", "linear", "notion-workspace", "slack"],
+        "descriptionSha256": "e63a6bbcf5fc7bfc61d51d3ca7d65369a33228ab38d8df7298939d1624c168e3"
+      }
+    },
+    {
+      "id": "seo-aeo-desk",
+      "name": "SEO & AEO Desk",
+      "creatorName": "Adam Tanguay",
+      "creatorHandle": "adamta",
+      "categories": ["From Grok Bot Team", "Marketing"],
+      "description": "Turns your keywords into content ideas and writer-ready briefs for search and AI answers. Works from a pasted keyword list or your Search Console.",
+      "summary": "Turns your keywords into content ideas and writer-ready briefs for search and AI answers. Works from a pasted keyword list or your Search Console.",
+      "installCount": 0,
+      "appearance": {"color": "green", "shape": "hex"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/seo-aeo-desk",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 4,
+        "memoryNames": ["memory 1", "memory 2", "memory 3", "memory 4"],
+        "memoryContentSha256": "a918cd0be2e38ba57e66646d75487c2c4abbe25b7e32982e24db25a5769323cb"
+      },
+      "skills": {
+        "count": 7,
+        "names": [
+          "Answer engine question map",
+          "Extra recurring checks",
+          "Getting started",
+          "Keyword and question research",
+          "Page audit and refresh plan",
+          "Weekly search report",
+          "Writer content brief"
+        ],
+        "contentSha256": "536779aab80f5d99a12ff86cf423b04e6c72f81a9933d67a2f7d0d5eb02d95e0"
+      },
+      "routines": {
+        "count": 3,
+        "names": ["Content ideas digest", "Topic watch", "Weekly search report"],
+        "summarySha256": "6ba67e5082b577343de98d096623717fb7b04902fafd38073dc3876ed2121c53"
+      },
+      "integrations": {
+        "count": 6,
+        "names": ["Google Sheets", "hex", "linear", "notion-workspace", "Profound", "slack"],
+        "descriptionSha256": "5fee6dbad3e238c022874d95b9bed11069425a3e16428c481a3a41d311ceb3a2"
+      }
+    },
+    {
+      "id": "signal-prospector",
+      "name": "Signal Prospector",
+      "creatorName": "Krista Letz",
+      "creatorHandle": "kristaletz",
+      "categories": ["From Grok Bot Team", "Sales"],
+      "description": "Finds the accounts and people in your CRM and product data that just showed intent, ranks them, and drafts the first touch. Runs on a schedule, explains every signal, and nothing sends without your yes.",
+      "summary": "Finds the accounts and people in your CRM and product data that just showed intent, ranks them, and drafts the first touch. Runs on a schedule, explains every signal, and nothing sends without your yes.",
+      "installCount": 0,
+      "appearance": {"color": "orange", "shape": "hex"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/signal-prospector",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 3,
+        "memoryNames": ["memory 1", "memory 2", "memory 3"],
+        "memoryContentSha256": "fa44537bb2165475044a3a6f0627a1d2f04ebbd16ce5453cb29e352ddd147488"
+      },
+      "skills": {
+        "count": 5,
+        "names": ["account-tiering", "contact-ranking", "first-touch-drafts", "getting-started", "signal-scan"],
+        "contentSha256": "edbb763c69f512be6215371fb2f0c85176db383218bdde13ecd08c9fe860c2cc"
+      },
+      "routines": {
+        "count": 1,
+        "names": ["Monday signal digest"],
+        "summarySha256": "44b194f474581ed95a2854004f732659565418d268d060c4b1271c2740c88c23"
+      },
+      "integrations": {
+        "count": 9,
+        "names": ["Attio", "Clay", "Gmail", "HubSpot", "Hunter", "Mixpanel", "Salesforce", "Slack", "X"],
+        "descriptionSha256": "20fc2fb01fd6e3a736b3aa5d990f7ead25d4a299de3f0c43bb98d7dac3cf0d61"
+      }
+    },
+    {
+      "id": "site-audit",
+      "name": "Site Audit",
+      "creatorName": "Shimecki",
+      "creatorHandle": "scheemunai",
+      "categories": ["Marketing"],
+      "description": "SEO + content + speed + a11y + CRO + schema audit. Scored, P0/P1/P2, evidence URLs. Monthly diff. No invented metrics.",
+      "summary": "SEO + content + speed + a11y + CRO + schema audit. Scored, P0/P1/P2, evidence URLs. Monthly diff. No invented metrics.",
+      "installCount": 0,
+      "appearance": {"color": "yellow", "shape": "hex"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/site-audit",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 1,
+        "memoryNames": ["memory 1"],
+        "memoryContentSha256": "cce9b75efcd7eded532fce546eb243dae5646c9f8ed55e69b4c10570cbb152b1"
+      },
+      "skills": {
+        "count": 0,
+        "names": [],
+        "contentSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "routines": {
+        "count": 2,
+        "names": ["Monthly site re-audit", "Weekly audit self-improve"],
+        "summarySha256": "c4dcad84a91374f2dd2c7eb44310617536e4d02ccd493e580ee6f2f07e8b1d39"
+      },
+      "integrations": {
+        "count": 0,
+        "names": [],
+        "descriptionSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    {
+      "id": "skippy",
+      "name": "skippy",
+      "creatorName": "Matt Palmer",
+      "creatorHandle": "mattyp",
+      "categories": ["From Grok Bot Team", "Personal"],
+      "description": "A San Francisco street-cleaning assistant. Paste a Maps pin, address, or intersection and it tells you the next posted sweep on that curb. Uses public city data. Never claims a stall is legal.",
+      "summary": "A San Francisco street-cleaning assistant. Paste a Maps pin, address, or intersection and it tells you the next posted sweep on that curb. Uses public city data. Never claims a stall is legal.",
+      "installCount": 0,
+      "appearance": {"color": "orange", "shape": "egg"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/skippy",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 3,
+        "memoryNames": ["memory 1", "memory 2", "memory 3"],
+        "memoryContentSha256": "1216e10374b5d57e50df7884dc4350061beb46644937ce3c32de19a6c6fefbb7"
+      },
+      "skills": {
+        "count": 1,
+        "names": ["SF street cleaning lookup"],
+        "contentSha256": "c96d5bb896da00ef3ff2610cbf8681b7858e8d51370424c863fbb9ac8ce0656a"
+      },
+      "routines": {
+        "count": 0,
+        "names": [],
+        "summarySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "integrations": {
+        "count": 0,
+        "names": [],
+        "descriptionSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    {
+      "id": "image-gen-bot",
+      "name": "Stills & Clips Desk",
+      "creatorName": "Matt Palmer",
+      "creatorHandle": "mattyp",
+      "categories": ["From Grok Bot Team", "Marketing"],
+      "description": "Pulls stills, thumbnails, and short clips out of your footage, sized for where they go. Cleans up screenshots for docs too, and writes the caption and alt text.",
+      "summary": "Pulls stills, thumbnails, and short clips out of your footage, sized for where they go. Cleans up screenshots for docs too, and writes the caption and alt text.",
+      "installCount": 0,
+      "appearance": {"color": "magenta", "shape": "cylinder"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/image-gen-bot",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 4,
+        "memoryNames": ["memory 1", "memory 2", "memory 3", "memory 4"],
+        "memoryContentSha256": "40cef70b0dda84238dfde5df3b02d4638144bec194cbace3ab5f22129a05f4e4"
+      },
+      "skills": {
+        "count": 6,
+        "names": [
+          "Export sizes, captions, and alt text",
+          "Getting started",
+          "Look and size sheet",
+          "Pull a short clip",
+          "Pull a still from footage",
+          "Screenshot cleanup for docs"
+        ],
+        "contentSha256": "727436ca499de9b4efb608c668e066f7fcea5ef0ea5897bb85d37f97d084287a"
+      },
+      "routines": {
+        "count": 1,
+        "names": ["Weekly pull queue"],
+        "summarySha256": "c0085b1eb8f09d9d7098fc65a3c4498a41fdc8de5ec249a66f9f2c5db2d67179"
+      },
+      "integrations": {
+        "count": 4,
+        "names": ["figma", "linear", "notion-workspace", "slack"],
+        "descriptionSha256": "79752351fa825f37649a9301834aafddece5a14343b2add16abc7a2a4d2db159"
+      }
+    },
+    {
+      "id": "sherlock",
+      "name": "Talent Discovery",
+      "creatorName": "Tommy Hansen",
+      "creatorHandle": "TommyHansenTA",
+      "categories": ["From Grok Bot Team", "Recruiting & People"],
+      "description": "Finds candidates for open roles that match your criteria and aren't already in your ATS.",
+      "summary": "Finds candidates for open roles that match your criteria and aren't already in your ATS.",
+      "installCount": 0,
+      "appearance": {"color": "yellow", "shape": "dome"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/sherlock",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 6,
+        "memoryNames": ["memory 1", "memory 2", "memory 3", "memory 4", "memory 5", "memory 6"],
+        "memoryContentSha256": "024835ba30ee3c05ef9d66f00ae5da58cf99933bd2f0a81f42dc871f25d60a2e"
+      },
+      "skills": {
+        "count": 9,
+        "names": [
+          "Dedupe against your pipeline",
+          "Draft outreach",
+          "Getting started",
+          "Lookalike search",
+          "Read the role",
+          "Role market read",
+          "Share the shortlist",
+          "Shortlist review",
+          "Source a batch"
+        ],
+        "contentSha256": "09ca078a2faaa62daae9af5e9591a8b70fd917462e3ab547d07fa2c4f9d11438"
+      },
+      "routines": {
+        "count": 2,
+        "names": ["Daily candidate batch", "Weekly sourcing recap"],
+        "summarySha256": "22adc447708a3480e090da74686cce76acc2f86f113c2bba9327d49d66dfb09f"
+      },
+      "integrations": {
+        "count": 7,
+        "names": ["Ashby", "figma", "Gmail", "Google Sheets", "linear", "notion-workspace", "slack"],
+        "descriptionSha256": "0b39ea8940ba81cd63da879187e81188b0250b6d51c5dc69aa56b1dd160ab9c6"
+      }
+    },
+    {
+      "id": "tech-demos",
+      "name": "Tech Demos",
+      "creatorName": "Matt Palmer",
+      "creatorHandle": "mattyp",
+      "categories": ["From Grok Bot Team", "Personal"],
+      "description": "Weekday X-bookmark scout that picks one new library to demo, asks for approval, then plans and builds it in a sticky monorepo with a Cursor cloud agent. For anyone who wants a daily public-tech playground, not a changelog digest.",
+      "summary": "Weekday X-bookmark scout that picks one new library to demo, asks for approval, then plans and builds it in a sticky monorepo with a Cursor cloud agent. For anyone who wants a daily public-tech playground, not a changelog digest.",
+      "installCount": 0,
+      "appearance": {"color": "violet", "shape": "gem"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/tech-demos",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 8,
+        "memoryNames": ["memory 1", "memory 2", "memory 3", "memory 4", "memory 5", "memory 6", "memory 7", "memory 8"],
+        "memoryContentSha256": "3893c3cccd6b8b9c1b59e8bf34dadfb1babcea9593c19b33398d554c792baabd"
+      },
+      "skills": {
+        "count": 1,
+        "names": ["Project planning"],
+        "contentSha256": "ef475906bcd76f9354fecf5365aceec6be8a6bd0959f0c7774f22b5b1954eba1"
+      },
+      "routines": {
+        "count": 1,
+        "names": ["Daily X tech scout"],
+        "summarySha256": "cafb102b4d6a6a7a5209f0137340ae254580d251cfd88c6759da5540171a9308"
+      },
+      "integrations": {
+        "count": 1,
+        "names": ["X"],
+        "descriptionSha256": "86ab478e2c72d4b175bfd12b51e2a822c466fda881cc6fdb2d954a41728582d8"
+      }
+    },
+    {
+      "id": "the-morning-newspaper",
+      "name": "The Morning Newspaper",
+      "creatorName": "Karen X. Cheng",
+      "creatorHandle": "karenxcheng",
+      "categories": ["Personal"],
+      "description": "A newspaper customized to you. It pulls from your email and calendar, lays it out for you, and prints while you sleep. Created by @karenxcheng",
+      "summary": "A newspaper customized to you. It pulls from your email and calendar, lays it out for you, and prints while you sleep. Created by @karenxcheng",
+      "installCount": 0,
+      "appearance": {"color": "violet", "shape": "blob"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/the-morning-newspaper",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 0,
+        "memoryNames": [],
+        "memoryContentSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "skills": {
+        "count": 1,
+        "names": ["Morning newspaper bootstrap"],
+        "contentSha256": "bc940c7bf46583c2bc894b72b7f52d011768f999417f3d3573d1c09a27b0a975"
+      },
+      "routines": {
+        "count": 0,
+        "names": [],
+        "summarySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "integrations": {
+        "count": 0,
+        "names": [],
+        "descriptionSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    {
+      "id": "tinkabot",
+      "name": "tinkabot",
+      "creatorName": "Lauren Tan",
+      "creatorHandle": "poteto",
+      "categories": ["Engineering", "From Grok Bot Team"],
+      "description": "Wraps an API into a Cursor/Agent Plugin (MCP + skills). Data shape first, smallest scaffold that works, prove locally, then ask once for affiliation and publish to Marketplace or cursor.directory.",
+      "summary": "Wraps an API into a Cursor/Agent Plugin (MCP + skills). Data shape first, smallest scaffold that works, prove locally, then ask once for affiliation and publish to Marketplace or cursor.directory.",
+      "installCount": 0,
+      "appearance": {"color": "blue", "shape": "hex"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/tinkabot",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 6,
+        "memoryNames": ["memory 1", "memory 2", "memory 3", "memory 4", "memory 5", "memory 6"],
+        "memoryContentSha256": "f5e8152ea4a8804949b464f510a7b49e64d23b7e3597a198e0d491aee10d2cad"
+      },
+      "skills": {
+        "count": 3,
+        "names": ["prove-plugin-local", "publish-cursor-plugin", "wrap-api-as-plugin"],
+        "contentSha256": "c3e23d1b44633be219b60c71a8b555b07e619427ce392a711d2244eb02d9f925"
+      },
+      "routines": {
+        "count": 0,
+        "names": [],
+        "summarySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "integrations": {
+        "count": 1,
+        "names": ["pstack"],
+        "descriptionSha256": "cb5477080f0f19e90756a23a0429f460ee4acf748bc3dbc4ea33b833ad8a6bcf"
+      }
+    },
+    {
+      "id": "tradbot-2",
+      "name": "Tradbot",
+      "creatorName": "Claire Vo",
+      "creatorHandle": "clairevo",
+      "categories": [],
+      "description": "Watches your personal email and calendar so school forms, bills, and RSVPs don't slip. Drafts the reply, catches the pickup clash, and never sends without you.",
+      "summary": "Watches your personal email and calendar so school forms, bills, and RSVPs don't slip. Drafts the reply, catches the pickup clash, and never sends without you.",
+      "installCount": 0,
+      "appearance": {"color": "violet", "shape": "squircle"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/tradbot-2",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 9,
+        "memoryNames": ["memory 1", "memory 2", "memory 3", "memory 4", "memory 5", "memory 6", "memory 7", "memory 8", "memory 9"],
+        "memoryContentSha256": "f449b235762ef84b87b190baab790f10aa3dc7b62a6a2f76110c0ff0b8bfecd0"
+      },
+      "skills": {
+        "count": 3,
+        "names": ["Family calendar briefs", "Kitchen table newspaper", "Monthly parent note"],
+        "contentSha256": "bc48656f658ceacf4cee6ecab76a1327558630ef7fbae490a32447021712b181"
+      },
+      "routines": {
+        "count": 5,
+        "names": ["Afternoon pickup check", "Kitchen table newspaper", "Monthly parent note", "Weekday family digest", "Weekend preview"],
+        "summarySha256": "51bb5d4a35bcccb80f8d4e19ed2f242a3004c2e788e24674545762cf2895c528"
+      },
+      "integrations": {
+        "count": 3,
+        "names": ["Gmail", "Google Calendar", "Slack"],
+        "descriptionSha256": "d61b7bcd62b3ff5fc6a1d759ffd6d17c172842e3bfb0bbae4e02216ce0816b37"
+      }
+    },
+    {
+      "id": "best-video-editor",
+      "name": "Video Edit Desk",
+      "creatorName": "X Freeze",
+      "creatorHandle": "xfreeze",
+      "categories": ["Marketing"],
+      "description": "Turns uploaded footage into cut clips, burned-in captions, and platform-sized exports. Works from your notes and never overwrites the original.",
+      "summary": "Turns uploaded footage into cut clips, burned-in captions, and platform-sized exports. Works from your notes and never overwrites the original.",
+      "installCount": 0,
+      "appearance": {"color": "magenta", "shape": "pebble"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/best-video-editor",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 5,
+        "memoryNames": ["memory 1", "memory 2", "memory 3", "memory 4", "memory 5"],
+        "memoryContentSha256": "e3ff2941b40290fa250ede9bc70627aafa0ba31cdeaaad59cfe7e191d0a25c61"
+      },
+      "skills": {
+        "count": 6,
+        "names": [
+          "Captions and transcript",
+          "Cut from your notes",
+          "Footage intake",
+          "Getting started",
+          "Platform versions and delivery check",
+          "Short clips from a long video"
+        ],
+        "contentSha256": "d833c6e5838f4d2feb256162745ac16843f2335dea0890b9959c893532bceb13"
+      },
+      "routines": {
+        "count": 1,
+        "names": ["Weekly cut queue"],
+        "summarySha256": "53eac5bd892247bfcd31a4af2036c374f5fa41601b51d1135573d28c9a206af1"
+      },
+      "integrations": {
+        "count": 4,
+        "names": ["figma", "linear", "notion-workspace", "slack"],
+        "descriptionSha256": "ed915a4dd4733b5a00cafaccb8a718b841c67a364a894045bf179c90a35bc329"
+      }
+    },
+    {
+      "id": "webby",
+      "name": "Webby",
+      "creatorName": "Farzad",
+      "creatorHandle": "farzyness",
+      "categories": ["Personal"],
+      "description": "Website admin. Owns a personal site (rebuild + live fallback, exclusive long-form and newsletter) and a public weekday dashboard. Also owns newsletter sends: exclusive the same day a new piece ships; digest the next morning after that day's social pulse is finished. Create-only, no deletes. Strip AI-isms. Cost-lean. An orchestrator routes; this bot ships.",
+      "summary": "Website admin. Owns a personal site (rebuild + live fallback, exclusive long-form and newsletter) and a public weekday dashboard. Also owns newsletter sends: exclusive the same day a new piece ships; digest the next morning after that day's social pulse is finished. Create-only, no deletes. Strip AI-isms. Cost-lean. An orchestrator routes; this bot ships.",
+      "installCount": 0,
+      "appearance": {"color": "brown", "shape": "squircle"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/webby",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 13,
+        "memoryNames": [
+          "memory 1",
+          "memory 10",
+          "memory 11",
+          "memory 12",
+          "memory 13",
+          "memory 2",
+          "memory 3",
+          "memory 4",
+          "memory 5",
+          "memory 6",
+          "memory 7",
+          "memory 8",
+          "memory 9"
+        ],
+        "memoryContentSha256": "d1fa2a306deac3f6a4fc6366fbc627c8b92ade1481d2ea7d97937c89282abe4d"
+      },
+      "skills": {
+        "count": 1,
+        "names": ["Strip AI-isms"],
+        "contentSha256": "4f3c3d66f7fcf2c326b804eff2f777c2e0b1fbb76601d32edf53387b1a4dbbee"
+      },
+      "routines": {
+        "count": 6,
+        "names": [
+          "Daily Digest social pulse",
+          "Daily Exclusive long-form check",
+          "Post-fill dashboard ship",
+          "Site PR follow-up",
+          "Weekday close dashboard book",
+          "Weekday hourly dashboard book"
+        ],
+        "summarySha256": "dfda46455fcede990a9e2d04c92a42452cafc286a18231cb04806951fe7e93a1"
+      },
+      "integrations": {
+        "count": 1,
+        "names": ["X"],
+        "descriptionSha256": "86ab478e2c72d4b175bfd12b51e2a822c466fda881cc6fdb2d954a41728582d8"
+      }
+    },
+    {
+      "id": "writing-bot",
+      "name": "Writing Bot",
+      "creatorName": "Matt Palmer",
+      "creatorHandle": "mattyp",
+      "categories": ["From Grok Bot Team", "Marketing"],
+      "description": "A writing partner for drafting and revising essays, emails, docs, and other prose. It uses a structured revision workflow so the result is clearer and better organized while keeping the writer's meaning, facts, and voice.",
+      "summary": "A writing partner for drafting and revising essays, emails, docs, and other prose. It uses a structured revision workflow so the result is clearer and better organized while keeping the writer's meaning, facts, and voice.",
+      "installCount": 0,
+      "appearance": {"color": "cyan", "shape": "squircle"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/writing-bot",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 0,
+        "memoryNames": [],
+        "memoryContentSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "skills": {
+        "count": 1,
+        "names": ["Writing revision"],
+        "contentSha256": "83474b46517fffabb02969ed93715d10f7d9abf2140af1127492a1ca2e00eaa3"
+      },
+      "routines": {
+        "count": 0,
+        "names": [],
+        "summarySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "integrations": {
+        "count": 0,
+        "names": [],
+        "descriptionSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    {
+      "id": "wtd",
+      "name": "WTD",
+      "creatorName": "Jenna Nanpei",
+      "creatorHandle": "jennananpei",
+      "categories": ["From Grok Bot Team", "Marketing"],
+      "description": "WTD is a VIP hospitality planning partner for marketing ops — project-plan and status rhythm across tentpoles and ticket banks, nomination-sheet tracking, marketing-visible status hubs, and decks or agendas. Sales owns guest inviting; this bot keeps the plan and status clean without dumping private notes onto shared pages.",
+      "summary": "WTD is a VIP hospitality planning partner for marketing ops — project-plan and status rhythm across tentpoles and ticket banks, nomination-sheet tracking, marketing-visible status hubs, and decks or agendas. Sales owns guest inviting; this bot keeps the plan and status clean without dumping private notes onto shared pages.",
+      "installCount": 0,
+      "appearance": {"color": "red", "shape": "tablet"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/wtd",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 9,
+        "memoryNames": ["memory 1", "memory 2", "memory 3", "memory 4", "memory 5", "memory 6", "memory 7", "memory 8", "memory 9"],
+        "memoryContentSha256": "1004a47d370a763457d96027f2afb9bdad3ff9b36b78cffb4222c1ae6b693992"
+      },
+      "skills": {
+        "count": 6,
+        "names": [
+          "Comms source of truth",
+          "Deck QA standards",
+          "Email reply standards",
+          "GTM branded deck",
+          "Outstanding asks review",
+          "VIP AE nomination sheet"
+        ],
+        "contentSha256": "e53b16a930948737f133f040f2582d47c569b2bd9f6d2366cd4a490a9f4e42a3"
+      },
+      "routines": {
+        "count": 1,
+        "names": ["VIP Plan status refresh"],
+        "summarySha256": "e1f6403ca3ca3603aea38d7a0800d20370e03aa6c02c70d093daf717b4ed9892"
+      },
+      "integrations": {
+        "count": 4,
+        "names": ["Gmail", "Google Drive", "Notion", "Slack"],
+        "descriptionSha256": "6a11a674c33aad2621b753bd08a2fe095f7a5e16fdd9f92cb6fc132232d4c24b"
+      }
+    },
+    {
+      "id": "x-brief",
+      "name": "X Brief",
+      "creatorName": "Dan McAteer",
+      "creatorHandle": "daniel_mac8",
+      "categories": ["Marketing"],
+      "description": "Turns the accounts and topics you pick on X into one short daily brief. Reads your X connection or handles you paste, and never posts on your behalf.",
+      "summary": "Turns the accounts and topics you pick on X into one short daily brief. Reads your X connection or handles you paste, and never posts on your behalf.",
+      "installCount": 0,
+      "appearance": {"color": "black", "shape": "cloud"},
+      "sourceUrl": "https://x.ai/bot/marketplace/bots/x-brief",
+      "promptSurface": {
+        "instructionsPresent": false,
+        "memoryCount": 4,
+        "memoryNames": ["memory 1", "memory 2", "memory 3", "memory 4"],
+        "memoryContentSha256": "497052d954af64db1e29ad1c0115f3e749c6bdf2aa21748fcd6ac6eaa3552233"
+      },
+      "skills": {
+        "count": 6,
+        "names": ["Build the X watch list", "Daily X brief", "Draft a post or reply", "Getting started", "Read a thread or post", "Weekly X recap"],
+        "contentSha256": "1780ac1112aea133e2938c60d88bc2558800ad0d656fcbea0be787053492d188"
+      },
+      "routines": {
+        "count": 2,
+        "names": ["Daily X brief", "Weekly X recap"],
+        "summarySha256": "c607c54d32337de5f3f118d071f68d69a7171f35ba437692732c88f7e8eb1d23"
+      },
+      "integrations": {
+        "count": 4,
+        "names": ["linear", "notion-workspace", "slack", "X"],
+        "descriptionSha256": "205f74f4d80827866c77ec5fe46612ab2e5001ad5c582fa43e6db0da1117a780"
+      }
+    }
+  ]
+}
