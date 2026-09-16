@@ -6,10 +6,12 @@ import { resolve } from "node:path";
 import { build } from "esbuild";
 import { compile } from "@tailwindcss/node";
 import { Scanner } from "@tailwindcss/oxide";
-import { chromium, _electron, type Browser, type ElectronApplication, type Page } from "playwright";
+import type { Browser, ElectronApplication, Page } from "playwright";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 const root = resolve(__dirname, "../..");
+// Resolve the declared workspace dependency, matching the CI installer.
+const { chromium, _electron } = createRequire(resolve(root, "packages/mcp-browser/package.json"))("playwright") as typeof import("playwright");
 const evidence = resolve(root, "output/playwright/terminal-soft-resize");
 const nativeElectron = process.env.MATRIX_GRID_ELECTRON === "1";
 
@@ -53,7 +55,7 @@ describe("real terminal renderer soft-grid resizing", () => {
     if (nativeElectron) {
       userData = await mkdtemp(resolve(tmpdir(), "matrix-terminal-grid-"));
       electron = await _electron.launch({
-        executablePath: createRequire(resolve(root, "package.json"))("electron"),
+        executablePath: createRequire(resolve(root, "desktop/package.json"))("electron"),
         args: [resolve(__dirname, "fixtures/terminal-soft-resize-main.cjs")],
         env: { ...process.env, MATRIX_TERMINAL_FIXTURE_USER_DATA: userData,
           MATRIX_TERMINAL_FIXTURE_URL: `${origin}/?surface=electron` },

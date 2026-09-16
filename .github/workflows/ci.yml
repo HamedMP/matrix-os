@@ -555,7 +555,7 @@ jobs:
 
       - name: Install Chromium for terminal presentation regression
         if: needs.changes.outputs.should_run == 'true'
-        run: node node_modules/playwright/cli.js install --with-deps chromium
+        run: pnpm --filter @matrix-os/mcp-browser exec playwright install --with-deps chromium
 
       - name: Run E2E tests
         if: needs.changes.outputs.should_run == 'true'
