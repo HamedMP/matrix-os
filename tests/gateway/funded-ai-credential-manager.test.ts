@@ -88,6 +88,19 @@ describe("funded AI runtime credential manager", () => {
       });
   });
 
+  it("allows a gateway-only funded control-plane origin without changing the host platform origin", () => {
+    const config = loadFundedAiRuntimeConfig(runtimeEnv({
+      MATRIX_FUNDED_AI_PLATFORM_URL: "https://funded-preview.matrix-os.com",
+    }));
+    expect(config).toMatchObject({
+      issueUrl: "https://funded-preview.matrix-os.com/internal/containers/alice/ai/funded-credential?runtimeSlot=primary",
+      fundingSummaryUrl: "https://funded-preview.matrix-os.com/internal/containers/alice/ai/funding-summary?runtimeSlot=primary",
+    });
+    expect(() => loadFundedAiRuntimeConfig(runtimeEnv({
+      MATRIX_FUNDED_AI_PLATFORM_URL: "https://user:pass@example.com",
+    }))).toThrow("Funded AI runtime is misconfigured");
+  });
+
   it("singleflights acquisition, caches only a sufficiently fresh token, and can invalidate it", async () => {
     const fetchFn = vi.fn(async () => new Response(JSON.stringify(issueResponse()), { status: 200 }));
     const config = loadFundedAiRuntimeConfig(runtimeEnv())!;

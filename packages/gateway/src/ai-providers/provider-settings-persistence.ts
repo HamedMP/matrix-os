@@ -134,31 +134,146 @@ function driverIdForHarness(kind: ProviderHarnessKind, canonical: AiProviderSnap
   });
 }
 
-function harnessKindForDriver(driverId: string): ProviderHarnessKind {
-  if (driverId === "kernel" || driverId === "claude_code") return "claude";
-  return ProviderHarnessKindSchema.catch("opencode").parse(driverId);
+function harnessKindForDriver(driverId: string): ProviderHarnessKind | null {
+  if (driverId === "claude_code") return "claude";
+  if (["hermes", "openclaw", "pi", "opencode", "codex"].includes(driverId)) {
+    return ProviderHarnessKindSchema.parse(driverId);
+  }
+  return null;
+}
+
+function defaultAccountConfigurations(canonical: AiProviderSnapshotV3): AccountConfiguration[] {
+  return canonical.accounts.flatMap((account) => {
+    if (account.authMethod === null) return [];
+    const instance = canonical.instances.find((candidate) => {
+      if (candidate.accountId !== account.id) return false;
+      const source = canonical.accessSources.find((value) => value.id === candidate.accessSourceId);
+      return account.authMethod === "api_key"
+        ? source?.fundingKind === "owner_api_key"
+        : source?.fundingKind === "owner_account";
+    });
+    if (!instance) return [];
+    return [{
+      id: account.id,
+      providerId: account.vendor,
+      displayName: account.accountLabel ?? `${account.vendor} account`,
+      authMethod: account.authMethod === "provider_profile" ? "terminal" as const
+        : account.authMethod === "oauth_pkce" ? "oauth" as const : "api_key" as const,
+      accessSourceId: instance.accessSourceId,
+    }];
+  });
+}
+
+function sourceForHarness(
+  harness: ProviderHarnessKind,
+  canonical: AiProviderSnapshotV3,
+) {
+  const candidates = canonical.accessSources.filter((source) =>
+    source.eligibleModelIds.some((modelId) => canonical.models.some((model) =>
+      model.id === modelId && model.vendor === source.vendor
+        && model.status !== "retired" && model.status !== "unavailable")));
+  if (harness === "codex") {
+    return candidates.find((source) => source.id === "owner_openai_profile") ?? null;
+  }
+  if (harness === "claude") {
+    return candidates.find((source) => source.id === canonical.active.accessSourceId
+      && source.vendor === "anthropic")
+      ?? candidates.find((source) => source.id === "owner_anthropic_profile")
+      ?? candidates.find((source) => source.id === "owner_anthropic_key")
+      ?? candidates.find((source) => source.fundingKind === "matrix_included")
+      ?? null;
+  }
+  const portableCandidates = harness === "pi" || harness === "opencode"
+    ? candidates.filter((source) => source.fundingKind === "matrix_included"
+      || source.fundingKind === "matrix_addon" || source.fundingKind === "owner_api_key")
+    : candidates;
+  return portableCandidates.find((source) => source.id === canonical.active.accessSourceId)
+    ?? portableCandidates.find((source) => source.state === "ready")
+    ?? portableCandidates.find((source) => source.fundingKind === "matrix_included")
+    ?? portableCandidates[0]
+    ?? null;
+}
+
+function defaultHarnessConfiguration(
+  driver: AiProviderSnapshotV3["drivers"][number],
+  canonical: AiProviderSnapshotV3,
+): HarnessConfiguration | null {
+  if (driver.installState !== "installed") return null;
+  const harness = harnessKindForDriver(driver.id);
+  if (harness === null) return null;
+  const source = sourceForHarness(harness, canonical);
+  if (source === null) return null;
+  const instance = canonical.instances.find((candidate) =>
+    candidate.driverId === driver.id && candidate.accessSourceId === source.id)
+    ?? canonical.instances.find((candidate) => candidate.accessSourceId === source.id);
+  const modelId = instance?.defaultModelId
+    ?? source.eligibleModelIds.find((candidate) => canonical.models.some((model) =>
+      model.id === candidate && model.vendor === source.vendor
+        && model.status !== "retired" && model.status !== "unavailable"));
+  if (!modelId) return null;
+  const accountId = source.fundingKind === "matrix_included" || source.fundingKind === "matrix_addon"
+    ? null
+    : instance?.accountId
+      ?? canonical.accounts.find((account) => account.vendor === source.vendor)?.id
+      ?? null;
+  return {
+    id: `harness_${driver.id}`,
+    driverId: driver.id,
+    harness,
+    displayName: driver.displayName,
+    accentColor: null,
+    enabled: harness === "claude" || harness === "codex",
+    selectedAccountId: accountId,
+    accessSourceId: source.id,
+    route: {
+      kind: harness === "claude" || harness === "codex" ? "fixed" : "configurable",
+      providerId: source.vendor,
+      modelId,
+    },
+  };
+}
+
+function reconcileProviderSettingsConfiguration(
+  config: ProviderSettingsConfiguration,
+  canonical: AiProviderSnapshotV3,
+): { config: ProviderSettingsConfiguration; changed: boolean } {
+  let changed = false;
+  const realClaude = canonical.drivers.find((driver) => driver.id === "claude_code");
+  const defaultClaude = realClaude && defaultHarnessConfiguration(realClaude, canonical);
+  const hasRealClaude = config.harnesses.some((harness) => harness.driverId === "claude_code");
+  let migratedClaude = false;
+  config.harnesses = config.harnesses.flatMap((harness) => {
+    if (harness.driverId !== "kernel") return [harness];
+    changed = true;
+    if (hasRealClaude || migratedClaude || !defaultClaude) return [];
+    migratedClaude = true;
+    return [{
+      ...harness,
+      driverId: defaultClaude.driverId,
+      harness: defaultClaude.harness,
+      displayName: defaultClaude.displayName,
+    }];
+  });
+  for (const driver of canonical.drivers) {
+    const fallback = defaultHarnessConfiguration(driver, canonical);
+    if (!fallback || config.harnesses.some((harness) => harness.driverId === driver.id)) continue;
+    if (config.harnesses.length >= 128) break;
+    config.harnesses.push(fallback);
+    changed = true;
+  }
+  for (const account of defaultAccountConfigurations(canonical)) {
+    if (config.accountProfiles.some((candidate) => candidate.id === account.id)) continue;
+    if (config.accountProfiles.length >= 128) break;
+    config.accountProfiles.push(account);
+    changed = true;
+  }
+  return { config, changed };
 }
 
 export function initialProviderSettingsConfiguration(canonical: AiProviderSnapshotV3): ProviderSettingsConfiguration {
-  const harnesses = canonical.drivers.flatMap((driver): HarnessConfiguration[] => {
-    const candidates = canonical.instances.filter((instance) => instance.driverId === driver.id);
-    const instance = candidates.find((candidate) => candidate.id === canonical.active.providerInstanceId)
-      ?? candidates.find((candidate) => candidate.readiness.state === "ready")
-      ?? candidates[0];
-    const modelId = instance?.defaultModelId ?? instance?.modelIds[0];
-    if (!instance || !modelId) return [];
-    const harness = harnessKindForDriver(driver.id);
-    return [{
-      id: `harness_${driver.id}`,
-      driverId: driver.id,
-      harness,
-      displayName: driver.displayName,
-      accentColor: null,
-      enabled: driver.installState === "installed",
-      selectedAccountId: instance.accountId,
-      accessSourceId: instance.accessSourceId,
-      route: { kind: harness === "claude" ? "fixed" : "configurable", providerId: instance.vendor, modelId },
-    }];
+  const harnesses = canonical.drivers.flatMap((driver) => {
+    const harness = defaultHarnessConfiguration(driver, canonical);
+    return harness ? [harness] : [];
   });
   const gateway = canonical.accessSources.find((source) =>
     source.fundingKind === "matrix_included" || source.fundingKind === "matrix_addon");
@@ -166,25 +281,7 @@ export function initialProviderSettingsConfiguration(canonical: AiProviderSnapsh
     schemaVersion: 1,
     revision: 0,
     harnesses,
-    accountProfiles: canonical.accounts.flatMap((account) => {
-      if (account.authMethod === null) return [];
-      const instance = canonical.instances.find((candidate) => {
-        if (candidate.accountId !== account.id) return false;
-        const source = canonical.accessSources.find((value) => value.id === candidate.accessSourceId);
-        return account.authMethod === "api_key"
-          ? source?.fundingKind === "owner_api_key"
-          : source?.fundingKind === "owner_account";
-      });
-      if (!instance) return [];
-      return [{
-        id: account.id,
-        providerId: account.vendor,
-        displayName: account.accountLabel ?? `${account.vendor} account`,
-        authMethod: account.authMethod === "provider_profile" ? "terminal" as const
-          : account.authMethod === "oauth_pkce" ? "oauth" as const : "api_key" as const,
-        accessSourceId: instance.accessSourceId,
-      }];
-    }),
+    accountProfiles: defaultAccountConfigurations(canonical),
     gatewayPolicy: gateway ? {
       accessSourceId: gateway.id,
       monthlyBudgetMicrousd: null,
@@ -203,10 +300,10 @@ export async function readProviderSettingsConfiguration(
   path: string,
   canonical: AiProviderSnapshotV3,
 ): Promise<ProviderSettingsConfiguration> {
+  let value: ProviderSettingsConfiguration;
   try {
-    const value = ProviderSettingsConfigurationSchema.parse(await readBoundedJson(path));
+    value = ProviderSettingsConfigurationSchema.parse(await readBoundedJson(path));
     await chmod(path, 0o600);
-    return value;
   } catch (error) {
     if (isMissing(error)) {
       const initial = initialProviderSettingsConfiguration(canonical);
@@ -215,6 +312,11 @@ export async function readProviderSettingsConfiguration(
     }
     throw error;
   }
+  const reconciled = reconcileProviderSettingsConfiguration(value, canonical);
+  if (!reconciled.changed) return reconciled.config;
+  const validated = ProviderSettingsConfigurationSchema.parse(reconciled.config);
+  await writeProviderJsonAtomic(path, validated);
+  return validated;
 }
 
 export async function readProviderSecrets(path: string): Promise<ProviderSecretDocument> {
