@@ -334,13 +334,11 @@ export function WorkRail({
       <WorkRailHeader
         onNewChat={onNewGlobalChat}
         onSearch={() => setSearchOpen(true)}
+        unreadOnly={unreadOnly}
+        onUnreadOnlyChange={setUnreadOnly}
         onCollapse={onCollapse}
         showCollapseControl={showCollapseControl}
       />
-      <div className="flex items-center gap-2 px-3 py-2 text-xs">
-        <button type="button" aria-pressed={!unreadOnly} onClick={() => setUnreadOnly(false)} className="rounded px-2 py-1 hover:bg-[var(--bg-hover)] aria-pressed:bg-[var(--bg-selected)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]">All</button>
-        <button type="button" aria-pressed={unreadOnly} onClick={() => setUnreadOnly(true)} className="rounded px-2 py-1 hover:bg-[var(--bg-hover)] aria-pressed:bg-[var(--bg-selected)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]">Unread</button>
-      </div>
       {readError ? <p role="alert" className="px-3 text-xs">{readError}</p> : null}
       {unreadOnly && !records.some(isChatUnread) ? <p className="px-3 text-xs">No unread chats.</p> : null}
       <ChatAgentsRailSection client={client?.agents} onOpen={onOpenAgents} onStartChat={onStartAgentChat} onSetup={() => { useUi.getState().requestSettingsSection("agents-providers"); useTabs.getState().openTab({ kind: "settings", title: "Settings" }); }} />
