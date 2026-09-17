@@ -5,11 +5,14 @@ import {
   CollaborationDiscoveryItemSchema,
   CollaborationDiscoveryResponseSchema,
   CollaborationDirectoryEventSchema,
+  CollaborationInvitationIdentifierRequestSchema,
   CollaborationPageRequestSchema,
 } from "@matrix-os/contracts";
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
+import { createBoundedRateLimiter } from "../request-admission.js";
+import { CollaborationIdentifierResolutionError } from "./identifier-resolver.js";
 import type { CollaborationProofSigner } from "./proof.js";
 import { parseCollaborationProxyRoute, type CollaborationProxy } from "./proxy.js";
 import {
@@ -48,6 +51,7 @@ export function createPlatformCollaborationRoutes(options: {
     bearerToken: string;
   }): Promise<{ runtimeId: string; ownerId: string } | null>;
   resolveParticipant(actorId: string): Promise<{ actorId: string; displayName: string } | null>;
+  resolveInvitationIdentifier(identifier: string): Promise<{ actorId: string; displayName: string } | null>;
   hydrate(input: {
     actorId: string;
     entry: CollaborationDirectoryEntry;
@@ -56,6 +60,7 @@ export function createPlatformCollaborationRoutes(options: {
 }): Hono {
   const app = new Hono();
   const now = options.now ?? (() => new Date());
+  const invitationResolutionRateLimiter = createBoundedRateLimiter(10);
 
   app.on(
     ["POST", "PUT", "PATCH", "DELETE"],
@@ -150,6 +155,33 @@ export function createPlatformCollaborationRoutes(options: {
       return safeJson(c, "Collaboration unavailable", 503);
     }
   });
+
+  app.post(
+    "/internal/collaboration/participants/resolve",
+    bodyLimit({ maxSize: COLLABORATION_HTTP_BODY_LIMIT, onError: (c) => safeJson(c, "Request too large", 413) }),
+    async (c) => {
+      const runtime = await requireRuntime(c, options.authenticateRuntime);
+      if (!runtime) return safeJson(c, "Unauthorized", 401);
+      if (!invitationResolutionRateLimiter.check(runtime.ownerId)) {
+        return safeJson(c, "Invitation target unavailable", 429);
+      }
+      const input = await parseJson(c, CollaborationInvitationIdentifierRequestSchema);
+      if (!input) return safeJson(c, "Invalid request", 422);
+      try {
+        const participant = await options.resolveInvitationIdentifier(input.identifier);
+        const parsed = ParticipantProjectionSchema.safeParse(participant);
+        if (!parsed.success) return safeJson(c, "Invitation target unavailable", 404);
+        c.header("Cache-Control", "private, no-store");
+        return c.json(parsed.data);
+      } catch (error: unknown) {
+        if (error instanceof CollaborationIdentifierResolutionError && error.code === "unresolved") {
+          return safeJson(c, "Invitation target unavailable", 404);
+        }
+        console.warn("[platform-collaboration] invitation identity resolution failed", error instanceof Error ? error.name : "UnknownError");
+        return safeJson(c, "Invitation target unavailable", 503);
+      }
+    },
+  );
 
   app.get("/internal/collaboration/policy", async (c) => {
     const runtime = await requireRuntime(c, options.authenticateRuntime);
@@ -347,3 +379,8 @@ function safeJson(c: RouteContext, error: string, status: 401 | 403 | 404 | 409 
   c.header("Cache-Control", "no-store");
   return c.json({ error }, status);
 }
+
+const ParticipantProjectionSchema = z.object({
+  actorId: CollaborationActorIdSchema,
+  displayName: z.string().trim().min(1).max(120),
+}).strict();
