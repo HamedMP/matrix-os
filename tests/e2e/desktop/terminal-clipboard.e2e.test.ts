@@ -80,6 +80,28 @@ suite("packaged Electron terminal clipboard", () => {
     };
   }
 
+  let lastGeometry = "";
+  let geometryChangedAt = 0;
+  async function waitForSettledGeometry(): Promise<void> {
+    await page.evaluate(() => document.fonts.ready.then(() => undefined));
+    await expect.poll(async () => {
+      const geometry = await terminalSurface().evaluate((surface) => {
+        const screen = surface.querySelector(".xterm-screen");
+        const root = surface.querySelector(".xterm");
+        return [screen?.getBoundingClientRect().toJSON(), root?.getAttribute("style")];
+      });
+      const resizes = gateway.state.terminalResizeEvents.filter(event => event.session === activeSessionName);
+      const signature = JSON.stringify([activeSessionName, geometry, resizes.length, resizes.at(-1)]);
+      if (signature !== lastGeometry) {
+        lastGeometry = signature;
+        geometryChangedAt = Date.now();
+      }
+      // The socket debounces startup resize by 220 ms. Require a quiet window
+      // beyond that boundary so both drag anchors use the acknowledged layout.
+      return resizes.length > 0 && Date.now() - geometryChangedAt >= 300;
+    }, { timeout: 10_000, intervals: [50], message: "terminal geometry did not settle before drag selection" }).toBe(true);
+  }
+
   async function selectBetween(
     startText: string,
     startIndex: number,
@@ -90,6 +112,7 @@ suite("packaged Electron terminal clipboard", () => {
     // synthetic pointer exactly at the midpoint can therefore land on either
     // side when Chromium and xterm use slightly different fractional widths.
     // Keep both anchors safely inside the intended selection halves.
+    await waitForSettledGeometry();
     const start = await terminalPoint(startText, startIndex, 0.25);
     const end = await terminalPoint(endText, Math.max(0, endIndexExclusive - 1), 0.75);
     await page.mouse.move(start.x, start.y);
