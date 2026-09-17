@@ -21,5 +21,11 @@ export function presentZellijSnapshot(ansi: string, viewportRows: number, rows: 
   // Make room for the unoccupied viewport rows, moving all preceding history
   // (including ambiguous blank history) above the viewport. IND preserves the
   // column, unlike CRLF; CUU then restores the last content row and column.
-  return content + "\x1bD".repeat(padding) + `\x1b[${padding}A`;
+  const alignment = "\x1bD".repeat(padding) + `\x1b[${padding}A`;
+  // Preserve the existing bounded replay if there is no room for alignment;
+  // never turn a valid maximum-size snapshot into a protocol rejection.
+  if (normalizeTerminalSnapshot(content).length + alignment.length > MAX_TERMINAL_SNAPSHOT_ANSI_BYTES) return content;
+  return content + alignment;
 }
+import { normalizeTerminalSnapshot } from "@matrix-os/contracts";
+import { MAX_TERMINAL_SNAPSHOT_ANSI_BYTES } from "./limits.js";

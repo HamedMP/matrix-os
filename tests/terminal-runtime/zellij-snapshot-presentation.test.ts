@@ -33,6 +33,11 @@ describe("Zellij snapshot presentation", () => {
     expect(presentZellijSnapshot("full\x1b[m\n", 10, 10)).toBe("full\x1b[m");
     expect(presentZellijSnapshot("larger\n", 12, 10)).toBe("larger\n");
   });
+
+  it("does not push an at-limit snapshot beyond the public frame allowance", () => {
+    const ansi = "x".repeat(5 * 1024 * 1024);
+    expect(presentZellijSnapshot(ansi, 1, 200)).toBe(ansi);
+  });
   it.each([
     ["unknown empty-history framing", "\x1b[m\nprompt\x1b[m\n", 1, [""]],
     ["short viewport after history", "history\n\nprompt\x1b[m\n", 1, ["history", ""]],
