@@ -173,7 +173,19 @@ export class TerminalRuntime {
 
   async restoreAll(): Promise<void> {
     for (const workspace of await this.listWorkspaces()) {
-      if (workspace.status !== "stopped") await this.reconcileWorkspace(workspace.id);
+      if (workspace.status === "stopped") continue;
+      try {
+        await this.reconcileWorkspace(workspace.id);
+      } catch (error: unknown) {
+        // One unavailable saved session must not prevent the runtime socket
+        // from starting or the remaining workspaces from being restored.
+        // Store failures and unexpected errors still fail startup.
+        if (!(error instanceof TerminalRuntimeError) || error.code !== "unavailable") throw error;
+        console.warn("[terminal-runtime] workspace restore deferred", {
+          workspaceId: workspace.id,
+          errorType: error.cause instanceof Error ? error.cause.name : error.name,
+        });
+      }
     }
   }
 
@@ -315,6 +327,13 @@ export class TerminalRuntime {
         await this.store.activateTab({ workspaceId, tabId: tab.id }, ids);
       }
       await this.restartObserver(workspaceId);
+      await this.store.setWorkspaceDegraded(workspaceId, false);
+    } catch (error: unknown) {
+      if (error instanceof TerminalRuntimeError && error.code === "unavailable") {
+        // Keep tab identities, startup intent and snapshots for a later retry.
+        await this.store.setWorkspaceDegraded(workspaceId, true);
+      }
+      throw error;
     } finally {
       releaseObserverReservation();
     }
