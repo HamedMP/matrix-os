@@ -283,7 +283,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
         path: app.path,
         kind: "app",
         icon: LayoutGrid,
-        iconUrl: appIconUrl(platformHost, app.slug, runtimeSlot) ?? undefined,
+        iconUrl: appIconUrl(platformHost, app, runtimeSlot) ?? undefined,
         name: app.name,
         color: "var(--bg-surface)",
         open: () => {

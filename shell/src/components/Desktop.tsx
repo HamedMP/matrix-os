@@ -139,7 +139,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
     () => apiApps.map((app) => ({
       name: app.name,
       path: normalizeBuiltInAppPath(app.path.replace(/^\/files\//, "")),
-      iconUrl: app.iconUrl ?? iconUrlForSlug(app.icon ?? app.slug),
+      iconUrl: gatewayAssetUrl(app.iconUrl) ?? iconUrlForSlug(app.icon ?? app.slug),
     })),
     [apiApps],
   );

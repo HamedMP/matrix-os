@@ -4,6 +4,7 @@ import { loadAppMeta, type AppMeta } from "@matrix-os/kernel";
 import { listUniqueAppManifests } from "./app-runtime/app-index.js";
 import { computeRuntimeState, type RuntimeState } from "./app-runtime/runtime-state.js";
 import { DesignIdEnum, type AppManifest, type DesignId } from "./app-runtime/manifest-schema.js";
+import { resolveSystemIconMetadata } from "./icon-metadata.js";
 
 export interface AppEntry extends AppMeta {
   slug?: string;
@@ -12,6 +13,7 @@ export interface AppEntry extends AppMeta {
   launchUrl?: string;
   file: string;
   path: string;
+  iconUrl?: string;
 }
 
 export interface ListAppsOptions {
@@ -36,7 +38,31 @@ export async function listApps(
     options.includeInactiveDesigns ?? false,
   );
 
-  return result.sort((a, b) => a.name.localeCompare(b.name));
+  return attachLocalIconUrls(homePath, result.sort((a, b) => a.name.localeCompare(b.name)));
+}
+
+const ICON_METADATA_BATCH_SIZE = 16;
+const SAFE_ICON_STEM = /^[a-zA-Z0-9_-]{1,64}$/;
+
+async function attachLocalIconUrls(homePath: string, apps: AppEntry[]): Promise<AppEntry[]> {
+  const hydrated: AppEntry[] = [];
+  for (let offset = 0; offset < apps.length; offset += ICON_METADATA_BATCH_SIZE) {
+    const batch = apps.slice(offset, offset + ICON_METADATA_BATCH_SIZE);
+    // Bounded batches prevent a large custom-app catalog from flooding the filesystem.
+    // eslint-disable-next-line no-await-in-loop -- each bounded batch must settle before the next starts
+    const entries = await Promise.all(batch.map(async (app) => {
+      const iconStem = typeof app.icon === "string" && SAFE_ICON_STEM.test(app.icon)
+        ? app.icon
+        : typeof app.slug === "string" && SAFE_ICON_STEM.test(app.slug)
+          ? app.slug
+          : null;
+      if (!iconStem) return app;
+      const icon = await resolveSystemIconMetadata(homePath, iconStem);
+      return icon ? { ...app, iconUrl: icon.versionedUrl } : app;
+    }));
+    hydrated.push(...entries);
+  }
+  return hydrated;
 }
 
 const DEFAULT_DESIGN_ID: DesignId = "flat";

@@ -1,5 +1,26 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createClerkAuth, type ClerkAuth } from "../../packages/platform/src/clerk-auth.js";
+import { applyAppDomainRuntimeAssetCacheHeaders } from "../../packages/platform/src/session-routing-proxy.js";
+
+describe("app-domain icon caching", () => {
+  it("uses a one-year private cache only when the requested icon version matches the response", () => {
+    const current = new Headers({ etag: '"mtime-size"' });
+    applyAppDomainRuntimeAssetCacheHeaders(
+      current,
+      "/icons/custom-brand.png",
+      "https://app.matrix-os.com/icons/custom-brand.png?v=mtime-size",
+    );
+    expect(current.get("cache-control")).toBe("private, max-age=31536000, immutable");
+
+    const stale = new Headers({ etag: '"new-version"' });
+    applyAppDomainRuntimeAssetCacheHeaders(
+      stale,
+      "/icons/custom-brand.png",
+      "https://app.matrix-os.com/icons/custom-brand.png?v=old-version",
+    );
+    expect(stale.get("cache-control")).toBe("private, max-age=86400");
+  });
+});
 
 describe("ClerkAuth.verify (session routing)", () => {
   let auth: ClerkAuth;

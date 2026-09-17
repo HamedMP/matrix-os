@@ -28,7 +28,7 @@ export function applyCookieRoutedShellAssetCacheHeaders(headers: Headers): void 
 }
 
 export function applyAppDomainRuntimeAssetCacheHeaders(headers: Headers, path: string, rawUrl: string): void {
-  const maxAge = getAppDomainRuntimeAssetBrowserMaxAge(path, rawUrl);
+  const maxAge = getAppDomainRuntimeAssetBrowserMaxAge(headers, path, rawUrl);
   if (maxAge === null) return;
   const immutable = maxAge === 31_536_000 ? ', immutable' : '';
   headers.set('cache-control', `private, max-age=${maxAge}${immutable}`);
@@ -37,11 +37,13 @@ export function applyAppDomainRuntimeAssetCacheHeaders(headers: Headers, path: s
   addVaryHeader(headers, ['Cookie', 'Accept-Encoding']);
 }
 
-function getAppDomainRuntimeAssetBrowserMaxAge(path: string, rawUrl: string): number | null {
+function getAppDomainRuntimeAssetBrowserMaxAge(headers: Headers, path: string, rawUrl: string): number | null {
   if (path.startsWith('/_next/static/') || isViteAppAssetPath(path)) return 31_536_000;
   if (path.startsWith('/icons/')) {
     try {
-      return new URL(rawUrl, 'https://app.matrix-os.com').searchParams.has('v') ? 31_536_000 : 86_400;
+      const requestedVersion = new URL(rawUrl, 'https://app.matrix-os.com').searchParams.get('v');
+      const responseVersion = headers.get('etag')?.replace(/^W\//, '').replace(/^"|"$/g, '');
+      return requestedVersion && requestedVersion === responseVersion ? 31_536_000 : 86_400;
     } catch (err: unknown) {
       console.warn('[platform] Failed to parse runtime asset cache URL:', err instanceof Error ? err.message : String(err));
       return 86_400;

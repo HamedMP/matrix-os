@@ -1,7 +1,7 @@
-import { readFile, stat } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { listApps, type AppEntry } from "./apps.js";
-import { resolveSystemIconPath } from "./default-icons.js";
+import { resolveSystemIconMetadata } from "./icon-metadata.js";
 
 export interface ShellBootstrapIcon {
   url: string;
@@ -18,13 +18,6 @@ export interface ShellBootstrap {
 
 const BOOTSTRAP_BUILT_IN_ICON_SLUGS = ["terminal", "workspace", "files", "chat", "chart"] as const;
 const SAFE_ICON_SLUG = /^[a-zA-Z0-9_-]{1,64}$/;
-
-function versionedIconUrl(url: string, etag: string | null): string {
-  if (!etag) return url;
-  const normalized = etag.replace(/^W\//, "").replace(/^"|"$/g, "");
-  if (!normalized) return url;
-  return `${url}${url.includes("?") ? "&" : "?"}v=${encodeURIComponent(normalized)}`;
-}
 
 async function readJsonFile(path: string): Promise<unknown | null> {
   try {
@@ -50,19 +43,7 @@ function normalizeModules(value: unknown): unknown[] {
 
 async function resolveBootstrapIcon(homePath: string, slug: string): Promise<ShellBootstrapIcon | null> {
   if (!SAFE_ICON_SLUG.test(slug)) return null;
-  const target = await resolveSystemIconPath(homePath, `${slug}.png`);
-  if (!target) return null;
-  try {
-    const iconStat = await stat(target);
-    const etag = `"${iconStat.mtimeMs.toString(36)}-${iconStat.size.toString(36)}"`;
-    const url = `/icons/${basename(target)}`;
-    return { url, etag, versionedUrl: versionedIconUrl(url, etag) };
-  } catch (err: unknown) {
-    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-      console.warn("[shell-bootstrap] failed to stat bootstrap icon:", err instanceof Error ? err.message : String(err));
-    }
-    return null;
-  }
+  return resolveSystemIconMetadata(homePath, slug);
 }
 
 export async function buildShellBootstrap(homePath: string): Promise<ShellBootstrap> {
