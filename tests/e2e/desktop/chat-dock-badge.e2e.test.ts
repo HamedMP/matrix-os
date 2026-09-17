@@ -78,17 +78,17 @@ afterAll(async () => {
   server.closeAllConnections(); await new Promise<void>(done => server.close(() => done()));
   await base?.close(); if (profile) rmSync(profile, { recursive: true, force: true });
 });
-it("clears the actual native badge when the Chat history is read", async () => {
-  await expect.poll(() => app.evaluate(({ app }) => app.getBadgeCount()), { timeout: 20_000 }).toBe(1);
+it("clears the native unread dot when the Chat history is read", async () => {
+  await expect.poll(() => app.evaluate(({ app }) => process.platform === "darwin" ? app.dock!.getBadge() : app.getBadgeCount()), { timeout: 20_000 }).toBe(process.platform === "darwin" ? " " : 1);
   if (manualReview) {
-    console.log("Human Review ready: open Chat, then Dock badge review; the native badge should clear from 1 to 0. Close the Electron app when finished.");
+    console.log("Human Review ready: open Chat, then Dock badge review; the native unread dot should disappear. Close the Electron app when finished.");
     await new Promise<void>(done => app.on("close", done));
     return;
   }
   await page.getByRole("button", { name: "Chat", exact: true }).first().dblclick({ timeout: 20_000 });
   await page.getByRole("button", { name: "Dock badge review", exact: true }).click({ timeout: 20_000 });
   await page.getByText("Opening this chat clears its unread Dock badge.", { exact: true }).waitFor({ timeout: 5000 });
-  await expect.poll(() => app.evaluate(({ app }) => app.getBadgeCount()), { timeout: 10_000 }).toBe(0);
+  await expect.poll(() => app.evaluate(({ app }) => process.platform === "darwin" ? app.dock!.getBadge() : app.getBadgeCount()), { timeout: 10_000 }).toBe(process.platform === "darwin" ? "" : 0);
   expect(unread).toBe(false);
   await page.screenshot({ path: join(output, "chat-read-badge-cleared.png") });
 }, manualReview ? 3_600_000 : 30_000);

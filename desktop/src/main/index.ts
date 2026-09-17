@@ -1,3 +1,4 @@
+import { setNativeChatBadge } from "./native-chat-badge";
 import { app, BrowserWindow, dialog, ipcMain, Notification, safeStorage, screen, session, shell } from "electron";
 import { join } from "node:path";
 import { createFileDownloadService } from "./files/file-download-service";
@@ -348,7 +349,7 @@ if (!gotLock) {
         embeds,
         openExternal: openExternalHttpUrl,
         setBadgeCount: (count) => {
-          app.setBadgeCount(count);
+          setNativeChatBadge(app, process.platform, count);
         },
         notify: ({ threadId, title, body }) => {
           if (!Notification.isSupported()) return;
