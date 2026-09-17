@@ -20,8 +20,10 @@ describe('Custom MCP isolated platform preview', () => {
     const args = result.stdout.trim().split('\n');
     const env = args[args.indexOf('--set-env-vars') + 1];
     const secrets = args[args.indexOf('--set-secrets') + 1];
-    expect(env.split(',')).toContain(`CUSTOM_MCP_ENABLED=${enabled}`);
-    expect(env.split(',')).toContain('MCP_OAUTH_CALLBACK_URL=https://pr-42---preview.example.com/api/mcp-servers/oauth/callback');
+    expect(env.slice(3).split('|')).toContain(`CUSTOM_MCP_ENABLED=${enabled}`);
+    expect(env.slice(3).split('|')).toContain('MCP_OAUTH_CALLBACK_URL=https://pr-42---preview.example.com/api/mcp-servers/oauth/callback');
+    expect(env.startsWith('^|^')).toBe(true);
+    expect(env.slice(3).split('|')).toContain('MATRIX_APP_DOMAIN_HOSTS=preview.example.com,pr-42---preview.example.com');
     expect(env).not.toContain('MCP_CREDENTIAL_ENCRYPTION_KEY=');
     expect(secrets).not.toContain('MCP_CREDENTIAL_ENCRYPTION_KEY=mcp-credential-encryption-key:');
     expect(secrets.includes('MCP_CREDENTIAL_ENCRYPTION_KEY=mcp-credential-encryption-key-preview:1')).toBe(enabled);
