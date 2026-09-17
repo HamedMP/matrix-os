@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  enrollSyncDeviceAuth,
   refreshSyncDeviceAuth,
   revokeSyncDeviceAuth,
   SyncDeviceAuthError,
@@ -15,6 +16,49 @@ const AUTH = {
 };
 
 describe("sync-device auth client", () => {
+  it("enrolls with the Desktop bearer and verifies the selected identity", async () => {
+    const fetchFn = vi.fn(async (_url: string, _init?: RequestInit) => new Response(
+      JSON.stringify(AUTH),
+      { status: 200, headers: { "content-type": "application/json" } },
+    ));
+
+    await expect(enrollSyncDeviceAuth({
+      platformUrl: "https://app.matrix-os.com",
+      desktopAccessToken: "desktop-secret",
+      deviceName: "Alice Mac",
+      expected: {
+        userId: AUTH.userId,
+        handle: AUTH.handle,
+        runtimeSlot: AUTH.runtimeSlot,
+      },
+      fetchFn,
+    })).resolves.toEqual(AUTH);
+
+    const [url, init] = fetchFn.mock.calls[0]!;
+    expect(url).toBe("https://app.matrix-os.com/api/auth/sync-device/enroll");
+    expect(init?.headers).toMatchObject({ authorization: "Bearer desktop-secret" });
+    expect(init?.body).not.toContain("desktop-secret");
+  });
+
+  it("rejects an enrollment credential for a different runtime", async () => {
+    const fetchFn = vi.fn(async () => new Response(JSON.stringify({
+      ...AUTH,
+      runtimeSlot: "other",
+    }), { status: 200 }));
+
+    await expect(enrollSyncDeviceAuth({
+      platformUrl: "https://app.matrix-os.com",
+      desktopAccessToken: "desktop-secret",
+      deviceName: "Alice Mac",
+      expected: {
+        userId: AUTH.userId,
+        handle: AUTH.handle,
+        runtimeSlot: AUTH.runtimeSlot,
+      },
+      fetchFn,
+    })).rejects.toMatchObject({ code: "invalid_response" });
+  });
+
   it("rotates the credential over a bounded request and persists the complete response", async () => {
     const rotated = { ...AUTH, accessToken: "access-new", refreshToken: AUTH.refreshToken.replace(/a+$/, "b".repeat(43)) };
     const fetchFn = vi.fn(async () => new Response(JSON.stringify(rotated), {

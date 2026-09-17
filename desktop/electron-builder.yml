@@ -10,6 +10,11 @@ files:
   - "!**/.vite/**"
   - "!**/node_modules/@matrix-os/contracts/**"
 asarUnpack: []
+extraResources:
+  - from: build/sync-helper
+    to: sync-helper
+    filter:
+      - "**/*"
 protocols:
   - name: Matrix OS
     schemes:

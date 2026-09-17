@@ -13,12 +13,24 @@ const version = process.env.MATRIX_CLI_VERSION || pkg.version;
 const outDir = resolve(repoRoot, "dist", "cli-binaries");
 const entry = resolve(pkgRoot, "src", "cli", "index.ts");
 
-const targets = [
+const allTargets = [
   { os: "linux", arch: "x64", bunTarget: "bun-linux-x64" },
   { os: "linux", arch: "arm64", bunTarget: "bun-linux-arm64" },
   { os: "darwin", arch: "x64", bunTarget: "bun-darwin-x64" },
   { os: "darwin", arch: "arm64", bunTarget: "bun-darwin-arm64" },
 ];
+const requestedTargets = new Set(
+  (process.env.MATRIX_CLI_TARGETS ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean),
+);
+const targets = requestedTargets.size === 0
+  ? allTargets
+  : allTargets.filter((target) => requestedTargets.has(`${target.os}-${target.arch}`));
+if (targets.length === 0 || targets.length !== requestedTargets.size) {
+  throw new Error(`Unknown MATRIX_CLI_TARGETS value: ${[...requestedTargets].join(",")}`);
+}
 
 function run(command, args) {
   return new Promise((resolveRun, reject) => {

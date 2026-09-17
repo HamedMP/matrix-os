@@ -13,6 +13,15 @@ describe("IPC contract", () => {
       "auth:poll",
       "auth:status",
       "auth:sign-out",
+      "sync:get-snapshot",
+      "sync:choose-folder",
+      "sync:enable",
+      "sync:add-mapping",
+      "sync:pause-mapping",
+      "sync:resume-mapping",
+      "sync:remove-mapping",
+      "sync:rescan",
+      "sync:set-enabled",
       "analytics:flush-complete",
       "support:get-identity",
       "runtime:create-thread",
@@ -65,6 +74,28 @@ describe("IPC contract", () => {
     for (const ch of expected) {
       expect(INVOKE_CHANNELS[ch], ch).toBeDefined();
     }
+  });
+
+  it("keeps Desktop sync IPC typed and credentials out of renderer payloads", () => {
+    const enable = INVOKE_CHANNELS["sync:enable"];
+    const request = {
+      selectionId: "11111111-1111-4111-8111-111111111111",
+      remotePrefix: "projects/alpha",
+      direction: "two_way",
+      propagateDeletes: false,
+      excludes: [],
+    };
+    expect(enable.request.safeParse(request).success).toBe(true);
+    expect(enable.request.safeParse({ ...request, accessToken: "secret" }).success).toBe(false);
+    expect(INVOKE_CHANNELS["sync:choose-folder"].response.safeParse({
+      selectionId: "11111111-1111-4111-8111-111111111111",
+      displayPath: "/Users/alice/Matrix",
+    }).success).toBe(true);
+    expect(INVOKE_CHANNELS["sync:choose-folder"].response.safeParse({
+      selectionId: "11111111-1111-4111-8111-111111111111",
+      displayPath: "/Users/alice/Matrix",
+      token: "secret",
+    }).success).toBe(false);
   });
 
   it("bounds the trusted native app version response", () => {

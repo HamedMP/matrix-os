@@ -80,6 +80,9 @@ describe("daemon service command rendering", () => {
       "<string>/home/User Name/.local/bin/matrix</string>",
     );
     expect(plist).toContain("<string>__daemon</string>");
+    expect(plist).toContain("<key>SuccessfulExit</key>");
+    expect(plist).toContain("<false/>");
+    expect(plist).not.toContain("<key>KeepAlive</key>\n  <true/>");
   });
 
   it("escapes standalone working directories before writing systemd units", () => {

@@ -1,5 +1,6 @@
-import { app, BrowserWindow, dialog, ipcMain, Notification, safeStorage, screen, session, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Notification, safeStorage, screen, session, shell, type IpcMainInvokeEvent } from "electron";
 import { join } from "node:path";
+import { arch, homedir, platform } from "node:os";
 import { createFileDownloadService } from "./files/file-download-service";
 import { AuthService } from "./auth/auth-service";
 import { createAnalyticsBeforeQuit } from "./analytics-quit";
@@ -60,6 +61,17 @@ import { createUpdateAwareBeforeQuit } from "./update-quit";
 import { safeExternalHttpUrl } from "./external-url";
 import { desktopDevHostResolverRules, resolveDesktopRendererUrl } from "./renderer-url";
 import { EVENT_CHANNELS, type EventChannel, type EventPayload } from "../shared/ipc-contract";
+import {
+  installPackagedSyncHelper,
+  restoreSyncHelperSelection,
+  verifySyncHelper,
+} from "./sync/sync-helper-installer";
+import {
+  createSyncHelperService,
+  fetchDesktopBackupStatus,
+  runSyncHelperCommand,
+} from "./sync/sync-helper-service";
+import { activateSyncHelperUpgrade } from "./sync/sync-helper-lifecycle";
 
 const DEFAULT_PLATFORM_HOST = "https://app.matrix-os.com";
 const DESKTOP_APP_NAME = "Matrix OS";
@@ -340,10 +352,53 @@ if (!gotLock) {
         },
       });
       const downloads = fileDownloads;
+      const syncHelperRunner = runSyncHelperCommand(verifySyncHelper);
+      const installSyncHelper = async () => {
+        const installed = await installPackagedSyncHelper({
+          resourcesPath: process.resourcesPath,
+          homeDir: homedir(),
+          platform: platform(),
+          arch: arch(),
+        });
+        await activateSyncHelperUpgrade(installed, {
+          run: syncHelperRunner,
+          restore: (previous) => restoreSyncHelperSelection(homedir(), previous),
+        });
+        return installed;
+      };
+      const sync = createSyncHelperService({
+        auth,
+        installHelper: installSyncHelper,
+        verifyHelper: verifySyncHelper,
+        run: syncHelperRunner,
+        chooseDirectory: async (suggestedName) => {
+          const options = {
+            title: "Choose a folder to sync",
+            buttonLabel: "Choose",
+            defaultPath: join(homedir(), suggestedName ?? "Matrix"),
+            properties: ["openDirectory", "createDirectory"] as Array<"openDirectory" | "createDirectory">,
+          };
+          const result = mainWindow && !mainWindow.isDestroyed()
+            ? await dialog.showOpenDialog(mainWindow, options)
+            : await dialog.showOpenDialog(options);
+          return result.canceled ? null : result.filePaths[0] ?? null;
+        },
+        fetchBackupStatus: () => fetchDesktopBackupStatus(auth),
+      });
       registerIpcHandlers(ipcMain, {
         downloadFile: (request) => downloads.download(request),
         cancelFileDownload: (requestId) => downloads.cancel(requestId),
         auth,
+        sync,
+        isTrustedSender: (event) => {
+          const invokeEvent = event as IpcMainInvokeEvent;
+          return Boolean(
+            mainWindow
+            && !mainWindow.isDestroyed()
+            && invokeEvent.sender === mainWindow.webContents
+            && invokeEvent.senderFrame === mainWindow.webContents.mainFrame
+          );
+        },
         store,
         embeds,
         openExternal: openExternalHttpUrl,

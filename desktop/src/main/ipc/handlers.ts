@@ -13,6 +13,7 @@ import { AgentThreadSnapshotSchema } from "@matrix-os/contracts";
 import { clampZoomFactor, DEFAULT_ZOOM_FACTOR } from "../platform/zoom";
 import { AppError, categoryMessage, type AppErrorCategory } from "../../shared/app-error";
 import { BuildSourceSchema, type BuildSource } from "@matrix-os/contracts";
+import type { SyncHelperService } from "../sync/sync-helper-service";
 
 interface IpcMainLike {
   handle(
@@ -23,6 +24,8 @@ interface IpcMainLike {
 
 export interface HandlerContext {
   auth: AuthService;
+  sync: SyncHelperService;
+  isTrustedSender: (event: unknown) => boolean;
   store: LocalStore;
   embeds: EmbedService;
   openExternal: (url: string) => Promise<void>;
@@ -109,6 +112,17 @@ type Handler<C extends InvokeChannel> = (
 ) => Promise<InvokeResponse<C>> | InvokeResponse<C>;
 
 const PUBLIC_IPC_ERRORS = new Set(["invalid request", "internal error", "embed unavailable"]);
+const SYNC_IPC_CHANNELS = new Set<InvokeChannel>([
+  "sync:get-snapshot",
+  "sync:choose-folder",
+  "sync:enable",
+  "sync:add-mapping",
+  "sync:pause-mapping",
+  "sync:resume-mapping",
+  "sync:remove-mapping",
+  "sync:rescan",
+  "sync:set-enabled",
+]);
 
 const THREAD_CREATE_ERROR_CODES: Record<AppErrorCategory, string> = {
   unauthorized: "thread_create_unauthorized",
@@ -177,8 +191,15 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
   if (typeof downloadFile !== "function" || typeof cancelFileDownload !== "function") {
     throw new Error("download service unavailable");
   }
+  if (!ctx.sync || typeof ctx.isTrustedSender !== "function") {
+    throw new Error("sync service unavailable");
+  }
   function handle<C extends InvokeChannel>(channel: C, handler: Handler<C>): void {
     ipcMain.handle(channel, async (_event, rawPayload) => {
+      if (SYNC_IPC_CHANNELS.has(channel) && !ctx.isTrustedSender(_event)) {
+        console.warn(`[ipc] rejected untrusted sender on ${channel}`);
+        throw new Error("invalid request");
+      }
       const parsedRequest = INVOKE_CHANNELS[channel].request.safeParse(rawPayload ?? {});
       if (!parsedRequest.success) {
         console.warn(`[ipc] rejected malformed request on ${channel}`);
@@ -214,6 +235,7 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
   handle("auth:poll", () => ctx.auth.poll());
   handle("auth:status", () => ctx.auth.getStatus());
   handle("auth:sign-out", async () => {
+    await ctx.sync.revokeDesktopGrant();
     await ctx.auth.signOut();
     return { ok: true };
   });
@@ -222,6 +244,16 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
     return { ok: true };
   });
   handle("support:get-identity", () => ctx.fetchSupportIdentity());
+
+  handle("sync:get-snapshot", () => ctx.sync.getSnapshot());
+  handle("sync:choose-folder", ({ suggestedName }) => ctx.sync.chooseFolder(suggestedName));
+  handle("sync:enable", (request) => ctx.sync.enable(request));
+  handle("sync:add-mapping", (request) => ctx.sync.addMapping(request));
+  handle("sync:pause-mapping", ({ mappingId }) => ctx.sync.pauseMapping(mappingId));
+  handle("sync:resume-mapping", ({ mappingId }) => ctx.sync.resumeMapping(mappingId));
+  handle("sync:remove-mapping", ({ mappingId }) => ctx.sync.removeMapping(mappingId));
+  handle("sync:rescan", ({ mappingId }) => ctx.sync.rescan(mappingId));
+  handle("sync:set-enabled", ({ enabled }) => ctx.sync.setEnabled(enabled));
 
   handle("app:get-version", () => ({ version: ctx.getAppVersion(), source: buildSource }));
 

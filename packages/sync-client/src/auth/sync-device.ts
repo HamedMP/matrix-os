@@ -1,5 +1,6 @@
 import {
   SyncDeviceCredentialSchema,
+  SyncDeviceEnrollmentRequestSchema,
   SyncDeviceRefreshRequestSchema,
 } from "@matrix-os/contracts";
 import type { AuthData } from "./token-store.js";
@@ -46,8 +47,53 @@ async function readBoundedJson(response: Response): Promise<unknown> {
   }
 }
 
-function endpoint(platformUrl: string, action: "refresh" | "revoke"): string {
+function endpoint(platformUrl: string, action: "enroll" | "refresh" | "revoke"): string {
   return new URL(`/api/auth/sync-device/${action}`, platformUrl).toString();
+}
+
+export async function enrollSyncDeviceAuth(options: {
+  platformUrl: string;
+  desktopAccessToken: string;
+  deviceName: string;
+  expected: Pick<AuthData, "userId" | "handle" | "runtimeSlot">;
+  fetchFn?: typeof fetch;
+}): Promise<AuthData> {
+  const fetchFn = options.fetchFn ?? fetch;
+  const token = options.desktopAccessToken;
+  if (!token || token.length > 16_384) {
+    throw new SyncDeviceAuthError("needs_sign_in");
+  }
+  let response: Response;
+  try {
+    response = await fetchFn(endpoint(options.platformUrl, "enroll"), {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(SyncDeviceEnrollmentRequestSchema.parse({
+        deviceName: options.deviceName,
+      })),
+      signal: AbortSignal.timeout(AUTH_REQUEST_TIMEOUT_MS),
+    });
+  } catch (err: unknown) {
+    if (err instanceof SyncDeviceAuthError) throw err;
+    throw new SyncDeviceAuthError("unavailable");
+  }
+  if (response.status === 401 || response.status === 403) {
+    throw new SyncDeviceAuthError("needs_sign_in");
+  }
+  if (!response.ok) throw new SyncDeviceAuthError("unavailable");
+  const parsed = SyncDeviceCredentialSchema.safeParse(await readBoundedJson(response));
+  if (!parsed.success) throw new SyncDeviceAuthError("invalid_response");
+  if (
+    parsed.data.userId !== options.expected.userId
+    || parsed.data.handle !== options.expected.handle
+    || parsed.data.runtimeSlot !== (options.expected.runtimeSlot ?? "primary")
+  ) {
+    throw new SyncDeviceAuthError("invalid_response");
+  }
+  return parsed.data;
 }
 
 function refreshBody(auth: AuthData): { refreshToken: string } {

@@ -226,6 +226,24 @@ describe("desktop release workflows", () => {
     expect(builder).toContain('- "!**/node_modules/@matrix-os/contracts/**"');
   });
 
+  it("builds and verifies the versioned sync helper for supported packaged targets", () => {
+    const workflow = readFileSync(join(root, ".github/workflows/desktop-build.yml"), "utf8");
+    const builder = readFileSync(join(root, "desktop/electron-builder.yml"), "utf8");
+
+    expect(builder).toContain("from: build/sync-helper");
+    expect(builder).toContain("to: sync-helper");
+    expect(workflow).toContain("MATRIX_CLI_TARGETS: darwin-${{ matrix.arch }}");
+    expect(workflow).toContain("MATRIX_CLI_TARGETS: linux-x64");
+    expect(workflow.match(/pnpm --filter @finnaai\/matrix build:binaries/g)).toHaveLength(2);
+    expect(workflow).toContain("prepare-sync-helper.mjs --platform darwin --arch ${{ matrix.arch }}");
+    expect(workflow).toContain("prepare-sync-helper.mjs --platform linux --arch x64");
+    expect(workflow).toContain("prepare-sync-helper.mjs --platform win32 --arch x64 --unsupported");
+    expect(workflow).toContain("Contents/Resources/sync-helper/manifest.json");
+    expect(workflow).toContain("Contents/Resources/sync-helper/matrix");
+    expect(workflow).toContain('*/resources/sync-helper/manifest.json');
+    expect(workflow).toContain('*/resources/sync-helper/matrix');
+  });
+
   it("bundles runtime schema dependencies into the Electron main process", () => {
     const config = readFileSync(join(root, "desktop/electron.vite.config.ts"), "utf8");
     const bundledMainDependencies = config.match(

@@ -20,6 +20,19 @@ function makeHarness(overrides: Partial<HandlerContext> = {}) {
       expireSession: vi.fn(),
       selectRuntime: vi.fn(),
     },
+    sync: {
+      getSnapshot: vi.fn(),
+      chooseFolder: vi.fn(),
+      enable: vi.fn(),
+      addMapping: vi.fn(),
+      pauseMapping: vi.fn(),
+      resumeMapping: vi.fn(),
+      removeMapping: vi.fn(),
+      rescan: vi.fn(),
+      setEnabled: vi.fn(),
+      revokeDesktopGrant: vi.fn(),
+    },
+    isTrustedSender: vi.fn(() => true),
     store: {
       get: vi.fn(),
       setUnknown: vi.fn(),
@@ -91,6 +104,21 @@ function makeHarness(overrides: Partial<HandlerContext> = {}) {
 describe("registerIpcHandlers", () => {
   beforeEach(() => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  it("rejects sync operations from any renderer other than the trusted main frame", async () => {
+    const harness = makeHarness({ isTrustedSender: vi.fn(() => false) });
+    await expect(harness.invoke("sync:get-snapshot")).rejects.toThrow("invalid request");
+    expect(harness.ctx.sync.getSnapshot).not.toHaveBeenCalled();
+  });
+
+  it("revokes the Desktop sync grant before clearing the Desktop session", async () => {
+    const harness = makeHarness();
+    await expect(harness.invoke("auth:sign-out")).resolves.toEqual({ ok: true });
+    expect(harness.ctx.sync.revokeDesktopGrant).toHaveBeenCalledOnce();
+    expect(harness.ctx.auth.signOut).toHaveBeenCalledOnce();
+    expect(vi.mocked(harness.ctx.sync.revokeDesktopGrant).mock.invocationCallOrder[0])
+      .toBeLessThan(vi.mocked(harness.ctx.auth.signOut).mock.invocationCallOrder[0]!);
   });
 
   it("returns a generic error when handler implementations throw raw errors", async () => {
