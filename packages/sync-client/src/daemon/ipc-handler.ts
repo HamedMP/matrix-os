@@ -37,6 +37,10 @@ export interface IpcHandlerDeps {
   peers?: () => unknown[];
   activity?: () => unknown[];
   invites?: () => unknown[];
+  mappingController?: (
+    command: string,
+    args: Record<string, unknown>,
+  ) => Promise<Record<string, unknown>>;
   shell?: {
     listWorkspaces?: () => Promise<unknown[]>;
     ensureWorkspace?: (input: { projectId?: string }) => Promise<Record<string, unknown>>;
@@ -129,6 +133,19 @@ export function createIpcHandler(deps: IpcHandlerDeps): IpcHandler {
       case "sync.resume":
         await deps.persistPauseState(deps.config, false);
         return { paused: false };
+      case "sync.mappings.list":
+      case "sync.mappings.add":
+      case "sync.mappings.pause":
+      case "sync.mappings.resume":
+      case "sync.mappings.remove":
+      case "sync.mappings.rescan":
+      case "sync.mappings.conflicts":
+        if (!deps.mappingController) {
+          throw Object.assign(new Error("sync_mapping_controller_unavailable"), {
+            code: "sync_mapping_controller_unavailable",
+          });
+        }
+        return deps.mappingController(command, args);
       case "auth.whoami": {
         const auth = await deps.loadAuth?.();
         return auth

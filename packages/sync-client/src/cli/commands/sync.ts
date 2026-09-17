@@ -1,6 +1,13 @@
 import { defineCommand } from "citty";
-import { resolve } from "node:path";
+import { randomUUID } from "node:crypto";
+import { basename, resolve } from "node:path";
 import { mkdir } from "node:fs/promises";
+import {
+  SyncMappingConfigSchema,
+  SyncMappingSchema,
+  type SyncDirection,
+  type SyncMappingConfig,
+} from "@matrix-os/contracts";
 import {
   defaultSyncPath,
   generatePeerId,
@@ -25,7 +32,16 @@ import { resolveCliProfile } from "../profiles.js";
 import { isStandaloneRuntime } from "../standalone-runtime.js";
 import { formatCliError, formatCliSuccess } from "../output.js";
 
-const SUBCOMMANDS = new Set(["status", "pause", "resume"]);
+const SUBCOMMANDS = new Set([
+  "status",
+  "pause",
+  "resume",
+  "list",
+  "add",
+  "remove",
+  "conflicts",
+  "rescan",
+]);
 type SyncDaemonRuntime = NonNullable<SyncConfig["syncDaemonRuntime"]>;
 
 function currentSyncDaemonRuntime(): SyncDaemonRuntime {
@@ -83,6 +99,132 @@ async function runStatus(json: boolean): Promise<void> {
   console.log(`  Files tracked: ${status.fileCount}`);
   if (typeof status.lastSyncAt === "number" && status.lastSyncAt > 0) {
     console.log(`  Last sync: ${new Date(status.lastSyncAt).toISOString()}`);
+  }
+}
+
+function requireMappingId(value: unknown): string {
+  const parsed = SyncMappingSchema.shape.id.safeParse(value);
+  if (!parsed.success) throw new Error("A valid --mapping UUID is required.");
+  return parsed.data;
+}
+
+async function loadMappingConfig(): Promise<SyncMappingConfig> {
+  const response = await sendCommand("sync.mappings.list");
+  const parsed = SyncMappingConfigSchema.safeParse(response.config);
+  if (!parsed.success) throw new Error("The sync daemon returned an invalid mapping configuration.");
+  return parsed.data;
+}
+
+function printMappingConfig(config: SyncMappingConfig, json: boolean): void {
+  if (json) {
+    console.log(formatCliSuccess({ config }));
+    return;
+  }
+  if (config.mappings.length === 0) {
+    console.log("No synced folders configured.");
+    return;
+  }
+  for (const mapping of config.mappings) {
+    console.log(`${mapping.id}  ${mapping.enabled ? "active" : "paused"}  ${mapping.direction}`);
+    console.log(`  ${mapping.localRoot} <-> /${mapping.remotePrefix}`);
+  }
+}
+
+async function runMappingMutation(
+  command: "pause" | "resume" | "remove",
+  args: Record<string, unknown>,
+  json: boolean,
+): Promise<void> {
+  const config = await loadMappingConfig();
+  const mappingId = requireMappingId(args.mapping);
+  const result = await sendCommand(`sync.mappings.${command}`, {
+    expectedRevision: config.revision,
+    mappingId,
+  });
+  if (json) {
+    console.log(formatCliSuccess(result));
+    return;
+  }
+  console.log(`Sync mapping ${command === "remove" ? "removed" : `${command}d`}: ${mappingId}`);
+}
+
+async function runAdd(args: Record<string, unknown>, json: boolean): Promise<void> {
+  const localRoot = resolve(
+    typeof args.path === "string" && args.path.trim() ? args.path : ".",
+  );
+  await mkdir(localRoot, { recursive: true });
+  const remotePrefix = typeof args.folder === "string"
+    ? args.folder.replace(/^\/+|\/+$/g, "")
+    : "";
+  const direction = (typeof args.direction === "string" ? args.direction : "two_way") as SyncDirection;
+  const excludes = typeof args.exclude === "string"
+    ? args.exclude.split(",").map((entry) => entry.trim()).filter(Boolean)
+    : [];
+  const mapping = SyncMappingSchema.parse({
+    id: randomUUID(),
+    label: typeof args.label === "string" && args.label.trim()
+      ? args.label.trim()
+      : remotePrefix || basename(localRoot) || "Matrix Home",
+    localRoot,
+    remotePrefix,
+    direction,
+    enabled: true,
+    propagateDeletes: args.propagateDeletes === true,
+    excludes,
+  });
+  const config = await loadMappingConfig();
+  const result = await sendCommand("sync.mappings.add", {
+    expectedRevision: config.revision,
+    mapping,
+  });
+  if (json) {
+    console.log(formatCliSuccess(result));
+    return;
+  }
+  console.log(`Sync mapping added: ${mapping.id}`);
+  console.log(`  ${mapping.localRoot} <-> /${mapping.remotePrefix}`);
+}
+
+async function runMappingSubcommand(
+  command: string,
+  args: Record<string, unknown>,
+  json: boolean,
+): Promise<void> {
+  switch (command) {
+    case "list":
+      printMappingConfig(await loadMappingConfig(), json);
+      return;
+    case "add":
+      await runAdd(args, json);
+      return;
+    case "pause":
+    case "resume":
+    case "remove":
+      if (args.mapping !== undefined) {
+        await runMappingMutation(command, args, json);
+        return;
+      }
+      await sendCommand(command);
+      console.log(json
+        ? formatCliSuccess(command === "pause" ? { paused: true } : { resumed: true })
+        : `Sync ${command === "pause" ? "paused" : "resumed"}.`);
+      return;
+    case "conflicts": {
+      const mappingId = args.mapping === undefined ? undefined : requireMappingId(args.mapping);
+      const result = await sendCommand("sync.mappings.conflicts", { mappingId });
+      if (json) console.log(formatCliSuccess(result));
+      else {
+        const conflicts = Array.isArray(result.conflicts) ? result.conflicts : [];
+        console.log(conflicts.length === 0 ? "No unresolved sync conflicts." : JSON.stringify(conflicts, null, 2));
+      }
+      return;
+    }
+    case "rescan": {
+      const mappingId = args.mapping === undefined ? undefined : requireMappingId(args.mapping);
+      const result = await sendCommand("sync.mappings.rescan", { mappingId });
+      console.log(json ? formatCliSuccess(result) : "Sync rescan requested.");
+      return;
+    }
   }
 }
 
@@ -210,6 +352,33 @@ export const syncCommand = defineCommand({
         "Gateway subtree to scope sync to. Default: \"\" (full mirror of the user's sync root).",
       required: false,
     },
+    mapping: {
+      type: "string",
+      alias: "m",
+      description: "Mapping UUID for pause, resume, remove, conflicts, or rescan",
+      required: false,
+    },
+    direction: {
+      type: "string",
+      description: "Mapping direction: two_way, to_matrix, or to_local",
+      required: false,
+    },
+    label: {
+      type: "string",
+      description: "Human-readable mapping label",
+      required: false,
+    },
+    exclude: {
+      type: "string",
+      description: "Comma-separated relative subtree exclusions",
+      required: false,
+    },
+    propagateDeletes: {
+      type: "boolean",
+      description: "Propagate confirmed tracked deletions (off by default)",
+      required: false,
+      default: false,
+    },
   },
   run: async ({ args, rawArgs }) => {
     const first = rawArgs?.find((a) => !a.startsWith("-"));
@@ -220,14 +389,8 @@ export const syncCommand = defineCommand({
         switch (first) {
           case "status":
             return await runStatus(json);
-          case "pause":
-            await sendCommand("pause");
-            console.log(json ? formatCliSuccess({ paused: true }) : "Sync paused.");
-            return;
-          case "resume":
-            await sendCommand("resume");
-            console.log(json ? formatCliSuccess({ resumed: true }) : "Sync resumed.");
-            return;
+          default:
+            return await runMappingSubcommand(first, args, json);
         }
       } catch (err: unknown) {
         writeSyncError(err, json);

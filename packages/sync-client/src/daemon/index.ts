@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile, unlink, stat } from "node:fs/promises";
+import { mkdir, readFile, realpath, writeFile, unlink, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import pino from "pino";
@@ -27,8 +27,16 @@ import { FileWatcher } from "./watcher.js";
 import { SyncWsClient } from "./ws-client.js";
 import { IpcServer } from "./ipc-server.js";
 import { createIpcHandler } from "./ipc-handler.js";
+import { createMappingControllerHandler } from "./mapping-controller.js";
 import { createDaemonShellControlClient } from "./shell-control-client.js";
 import { createRemotePrefixMapper } from "./remote-prefix.js";
+import {
+  loadSyncMappingConfig,
+  migrateLegacySyncConfig,
+  saveSyncMappingConfig,
+} from "../lib/sync-mapping-config.js";
+import { planMappingOverlaps } from "../lib/mapping-overlap.js";
+import type { SyncMappingConfig } from "@matrix-os/contracts";
 import {
   buildUnresolvedConflictCopyPathIndex,
   capLoadedSyncState,
@@ -660,6 +668,38 @@ export async function startDaemon(): Promise<void> {
     process.exit(1);
   }
 
+  const scope = {
+    ownerId: auth.userId,
+    runtimeSlot: auth.runtimeSlot ?? "primary",
+  };
+  const loadedMappingConfig = await loadSyncMappingConfig({
+    configDir,
+    profile: profileName,
+    scope,
+  });
+  let mappingConfig: SyncMappingConfig;
+  if (!loadedMappingConfig) {
+    mappingConfig = migrateLegacySyncConfig({
+      legacy: config,
+      profile: profileName,
+      ownerId: scope.ownerId,
+      runtimeSlot: scope.runtimeSlot,
+      deviceId: config.peerId,
+    });
+    await saveSyncMappingConfig({ configDir, config: mappingConfig, expectedRevision: -1 });
+  } else {
+    mappingConfig = loadedMappingConfig;
+  }
+  // Until every transfer path below is instantiated per mapping, preserve
+  // the migrated primary mapping as the compatibility runtime. The mapping
+  // config remains the sole mutation source and a restart reapplies changes.
+  const compatibilityMapping = mappingConfig.mappings[0];
+  if (compatibilityMapping) {
+    config.syncPath = compatibilityMapping.localRoot;
+    config.gatewayFolder = compatibilityMapping.remotePrefix;
+    config.pauseSync = !mappingConfig.enabled || !compatibilityMapping.enabled;
+  }
+
   try {
     await writePidFileExclusive(pidFile, process.pid);
   } catch (err) {
@@ -951,6 +991,49 @@ export async function startDaemon(): Promise<void> {
   });
 
   const authFileAccessors = createDaemonAuthFileAccessors({ profileName, source }, configDir);
+  const mappingController = createMappingControllerHandler({
+    snapshot: () => mappingConfig,
+    validate: async (next) => {
+      const existing: Parameters<typeof planMappingOverlaps>[0]["existing"] = [];
+      for (const candidate of next.mappings) {
+        const result = await planMappingOverlaps({
+          candidate: {
+            profile: next.profile,
+            ownerId: next.ownerId,
+            runtimeSlot: next.runtimeSlot,
+            mapping: candidate,
+          },
+          existing,
+          realpath,
+          caseSensitive: process.platform === "linux",
+        });
+        if (!result.ok) {
+          throw Object.assign(new Error("sync_mapping_overlap"), {
+            code: "sync_mapping_overlap",
+            conflicts: result.conflicts,
+          });
+        }
+        existing.push({
+          profile: next.profile,
+          ownerId: next.ownerId,
+          runtimeSlot: next.runtimeSlot,
+          mapping: candidate,
+        });
+      }
+    },
+    commit: async (next, expectedRevision) => {
+      await saveSyncMappingConfig({ configDir, config: next, expectedRevision });
+      mappingConfig = next;
+      // The service manager relaunches exit code 3. Delay long enough for the
+      // success envelope to leave the local socket.
+      setTimeout(() => process.exit(3), 50).unref();
+    },
+    conflicts: (mappingId) => {
+      const primaryId = mappingConfig.mappings[0]?.id;
+      if (mappingId && mappingId !== primaryId) return [];
+      return Object.values(syncState.conflicts ?? {}).filter((conflict) => !conflict.resolved);
+    },
+  });
   const ipcHandler = createIpcHandler({
     config,
     syncState,
@@ -969,6 +1052,7 @@ export async function startDaemon(): Promise<void> {
     clearAuth: authFileAccessors.clearAuth,
     loadAuth: authFileAccessors.loadAuth,
     connectionState: () => daemonConnectionState,
+    mappingController,
     shell: createDaemonShellControlClient({ config, loadAuth: authFileAccessors.loadAuth }),
     exit: (code) => process.exit(code),
   });

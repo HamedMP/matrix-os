@@ -140,12 +140,25 @@ const ALLOWED_DAEMON_COMMANDS = new Set([
   "sync.pause",
   "sync.resume",
   "sync.events",
+  "sync.mappings.list",
+  "sync.mappings.add",
+  "sync.mappings.pause",
+  "sync.mappings.resume",
+  "sync.mappings.remove",
+  "sync.mappings.rescan",
+  "sync.mappings.conflicts",
 ]);
 
 const DAEMON_ERROR_MESSAGES: Record<string, string> = {
   invalid_request: "Invalid request",
   unknown_command: "Unknown command",
   unsupported_version: "Unsupported protocol version",
+  sync_mapping_controller_unavailable: "Sync mappings are unavailable",
+  sync_config_revision_conflict: "Sync configuration changed; refresh and retry",
+  sync_config_busy: "Sync configuration is busy; retry",
+  sync_mapping_exists: "Sync mapping already exists",
+  sync_mapping_not_found: "Sync mapping was not found",
+  sync_rescan_unavailable: "Sync rescan is unavailable",
 };
 
 export function formatDaemonSuccess(
