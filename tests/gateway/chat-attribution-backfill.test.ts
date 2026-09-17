@@ -64,13 +64,22 @@ describe("canonical Chat owner attribution repair", () => {
       requestingActorId: "user_shared_editor",
       collaborationScopeId: "6aed8d12-f6c8-4c10-90b2-1e51fcc738e3",
     });
-    await seedSteer("chat_repair_owner", "owner_steer", 4, "cturn_owner_direct", "run_owner_direct");
-    await seedLooseMessage("chat_repair_owner", "ambiguous", 5, "user", "ai_request");
-    await seedLooseMessage("chat_repair_owner", "discussion", 6, "user", "discussion");
-    await seedLooseMessage("chat_repair_owner", "system_user", 7, "user", "system");
-    await seedLooseMessage("chat_repair_owner", "assistant", 8, "assistant", "assistant");
-    await seedLooseMessage("chat_repair_owner", "tool", 9, "tool", "system");
-    await seedLooseMessage("chat_repair_owner", "system", 10, "system", "system");
+    await seedTurn("chat_repair_owner", "ambiguous_shared_queue", 4, {
+      queuedTurnId: "qturn_ambiguous_shared_repair",
+      requestingActorId: null,
+      collaborationScopeId: "6aed8d12-f6c8-4c10-90b2-1e51fcc738e3",
+    });
+    await seedSteer("chat_repair_owner", "owner_steer", 5, "cturn_owner_direct", "run_owner_direct");
+    await seedSteer("chat_repair_owner", "ambiguous_shared_steer", 6, "cturn_owner_direct", "run_owner_direct", {
+      queuedTurnId: "qturn_ambiguous_shared_steer_repair",
+      collaborationScopeId: "6aed8d12-f6c8-4c10-90b2-1e51fcc738e3",
+    });
+    await seedLooseMessage("chat_repair_owner", "ambiguous", 7, "user", "ai_request");
+    await seedLooseMessage("chat_repair_owner", "discussion", 8, "user", "discussion");
+    await seedLooseMessage("chat_repair_owner", "system_user", 9, "user", "system");
+    await seedLooseMessage("chat_repair_owner", "assistant", 10, "assistant", "assistant");
+    await seedLooseMessage("chat_repair_owner", "tool", 11, "tool", "system");
+    await seedLooseMessage("chat_repair_owner", "system", 12, "system", "system");
 
     await seedTurn("chat_repair_imported", "imported", 1);
     await repository.kysely.insertInto("chat_legacy_imports").values({
@@ -111,6 +120,8 @@ describe("canonical Chat owner attribution repair", () => {
     }
     for (const id of [
       "msg_shared_editor",
+      "msg_ambiguous_shared_queue",
+      "msg_ambiguous_shared_steer",
       "msg_ambiguous",
       "msg_discussion",
       "msg_system_user",
@@ -120,7 +131,7 @@ describe("canonical Chat owner attribution repair", () => {
       "msg_imported",
       "msg_organization",
     ]) {
-      expect(byId[id]?.actor_id).toBeNull();
+      expect(byId[id]?.actor_id, id).toBeNull();
     }
     expect(byId.msg_discussion?.purpose).toBe("discussion");
     expect(byId.msg_system_user?.purpose).toBe("system");
@@ -193,12 +204,12 @@ describe("canonical Chat owner attribution repair", () => {
       id: queued.queuedTurnId,
       chat_id: chatId,
       client_request_id: `req_queue_${suffix}`,
-      actor_request_id: queued.requestingActorId ? `actor_req_${suffix}` : null,
+      actor_request_id: queued.collaborationScopeId ? `actor_req_${suffix}` : null,
       requesting_actor_id: queued.requestingActorId,
       collaboration_scope_id: queued.collaborationScopeId ?? null,
-      accepted_seq: queued.requestingActorId ? seq : null,
-      payload_hash: queued.requestingActorId ? "b".repeat(64) : null,
-      accepted_auth_epoch: queued.requestingActorId ? 1 : null,
+      accepted_seq: queued.collaborationScopeId ? seq : null,
+      payload_hash: queued.collaborationScopeId ? "b".repeat(64) : null,
+      accepted_auth_epoch: queued.collaborationScopeId ? 1 : null,
       retry_of_queued_turn_id: null,
       position: 1,
       status: "claimed",
@@ -219,7 +230,14 @@ describe("canonical Chat owner attribution repair", () => {
     }).execute();
   }
 
-  async function seedSteer(chatId: string, suffix: string, seq: number, turnId: string, runId: string) {
+  async function seedSteer(
+    chatId: string,
+    suffix: string,
+    seq: number,
+    turnId: string,
+    runId: string,
+    queued?: { queuedTurnId: string; collaborationScopeId: string },
+  ) {
     const messageId = `msg_${suffix}`;
     await repository.kysely.insertInto("chat_messages").values({
       id: messageId,
@@ -236,6 +254,36 @@ describe("canonical Chat owner attribution repair", () => {
       search_text: suffix,
       created_at: createdAt,
     }).execute();
+    if (queued) {
+      await repository.kysely.insertInto("chat_queued_turns").values({
+        id: queued.queuedTurnId,
+        chat_id: chatId,
+        client_request_id: `req_queue_${suffix}`,
+        actor_request_id: `actor_req_${suffix}`,
+        requesting_actor_id: null,
+        collaboration_scope_id: queued.collaborationScopeId,
+        accepted_seq: seq,
+        payload_hash: "c".repeat(64),
+        accepted_auth_epoch: 1,
+        retry_of_queued_turn_id: null,
+        position: 1,
+        status: "claimed",
+        parts: JSON.stringify([{ type: "text", text: suffix }]),
+        driver_kind: "codex",
+        instance_id: "codex_default",
+        selection: JSON.stringify(selection),
+        interaction_mode: "default",
+        permission_mode: "supervised",
+        execution_root: null,
+        execution_root_fingerprint: null,
+        capability_snapshot: JSON.stringify(capabilitySnapshot),
+        claimed_turn_id: turnId,
+        claimed_run_id: runId,
+        cancelled_at: null,
+        created_at: createdAt,
+        updated_at: createdAt,
+      }).execute();
+    }
     await repository.kysely.insertInto("chat_run_steers").values({
       id: `steer_${suffix}`,
       chat_id: chatId,
@@ -243,7 +291,7 @@ describe("canonical Chat owner attribution repair", () => {
       turn_id: turnId,
       client_request_id: `req_${suffix}`,
       message_id: messageId,
-      queued_turn_id: null,
+      queued_turn_id: queued?.queuedTurnId ?? null,
       parts: JSON.stringify([{ type: "text", text: suffix }]),
       status: "accepted",
       created_at: createdAt,

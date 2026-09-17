@@ -384,6 +384,7 @@ export class ChatSteeringRepository {
           seq: Number(latest?.seq ?? 0) + 1,
           role: "user",
           state: "committed",
+          actorId: chat.owner_id,
           purpose: "ai_request",
           turnId: steer.turn_id,
           runId,

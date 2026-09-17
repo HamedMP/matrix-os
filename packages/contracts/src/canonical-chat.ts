@@ -334,7 +334,7 @@ export const CanonicalChatMessageSchema = z.object({
   seq: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
   role: z.enum(["user", "assistant", "tool", "system"]),
   state: z.enum(["pending", "committed", "failed"]),
-  actorId: canonicalReferenceId(128).optional(),
+  actorId: canonicalReferenceId(160).optional(),
   purpose: z.enum(["discussion", "ai_request", "assistant", "system"]).optional(),
   turnId: CanonicalChatTurnIdSchema.optional(),
   runId: CanonicalChatRunIdSchema.optional(),

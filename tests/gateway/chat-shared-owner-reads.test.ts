@@ -13,6 +13,7 @@ import {
 const CHAT_ID = "chat_e5aca64e722f41d8b128403096c8dbd2";
 const SCOPE_ID = "6aed8d12-f6c8-4c10-90b2-1e51fcc738e3";
 const OWNER_ID = "user_shared_chat_owner";
+const createdAt = "2026-09-17T00:00:00.000Z";
 const owner = { type: "personal" as const, ownerId: OWNER_ID };
 const expectedCollaboration = {
   mode: "shared" as const,
@@ -105,7 +106,16 @@ describe("shared Chat owner list and detail reads", () => {
         },
       ]).execute();
 
+      const repositoryList = await repository.list(owner, { limit: 25 });
+      expect(repositoryList.items[0]?.chat.collaboration).toEqual(expectedCollaboration);
+      const repositoryDetail = await repository.getDetailPage(owner, CHAT_ID, { limit: 100 });
+      expect(repositoryDetail?.record.chat.collaboration).toEqual(expectedCollaboration);
+
       const service = createCanonicalChatService(repository);
+      const serviceList = await service.list(owner, { limit: 25 });
+      expect(serviceList.items[0]?.chat.collaboration).toEqual(expectedCollaboration);
+      const serviceDetail = await service.getDetail(owner, CHAT_ID, { limit: 100 });
+      expect(serviceDetail?.record.chat.collaboration).toEqual(expectedCollaboration);
       const app = new Hono().route("/", createCanonicalChatRoutes({
         service,
         getPrincipal: () => ({ userId: OWNER_ID, source: "jwt" }),
@@ -129,4 +139,133 @@ describe("shared Chat owner list and detail reads", () => {
       }
     },
   );
+
+  it("counts effective members from an inherited Project scope", async () => {
+    const parentScopeId = "6aed8d12-f6c8-4c10-90b2-1e51fcc738e4";
+    await repository.create(owner, {
+      id: CHAT_ID,
+      clientRequestId: "req_create_inherited",
+      title: "Inherited shared Chat",
+    });
+    await fixture.db.updateTable("chats").set({
+      collaboration: {
+        mode: "discussion_only",
+        scopeId: SCOPE_ID,
+        executionFenced: true,
+        authorityGeneration: 1,
+      },
+    }).where("id", "=", CHAT_ID).execute();
+    await fixture.db.insertInto("collaboration_scopes").values([
+      {
+        id: parentScopeId,
+        owner_type: "personal",
+        owner_id: OWNER_ID,
+        kind: "project",
+        resource_id: "project_shared_owner_reads",
+        parent_scope_id: null,
+        membership_mode: "direct",
+        lifecycle: "shared",
+        authority_runtime_id: "runtime_shared_chat_owner",
+        execution_generation: null,
+        execution_eligibility: null,
+        created_at: "2026-09-17T00:00:00.000Z",
+        updated_at: "2026-09-17T00:00:00.000Z",
+        deleted_at: null,
+      },
+      {
+        id: SCOPE_ID,
+        owner_type: "personal",
+        owner_id: OWNER_ID,
+        kind: "chat",
+        resource_id: CHAT_ID,
+        parent_scope_id: parentScopeId,
+        membership_mode: "inherited",
+        lifecycle: "shared",
+        authority_runtime_id: "runtime_shared_chat_owner",
+        execution_generation: null,
+        execution_eligibility: null,
+        created_at: "2026-09-17T00:00:00.000Z",
+        updated_at: "2026-09-17T00:00:00.000Z",
+        deleted_at: null,
+      },
+    ]).execute();
+    await fixture.db.insertInto("collaboration_members").values([
+      {
+        scope_id: parentScopeId,
+        actor_id: OWNER_ID,
+        role: "owner",
+        status: "accepted",
+        invitation_id: null,
+        invited_by: OWNER_ID,
+        accepted_at: createdAt,
+        expires_at: null,
+        joined_at: createdAt,
+        updated_at: createdAt,
+      },
+      {
+        scope_id: parentScopeId,
+        actor_id: "user_project_editor",
+        role: "editor",
+        status: "accepted",
+        invitation_id: null,
+        invited_by: OWNER_ID,
+        accepted_at: createdAt,
+        expires_at: null,
+        joined_at: createdAt,
+        updated_at: createdAt,
+      },
+    ]).execute();
+
+    expect((await repository.list(owner, { limit: 25 })).items[0]?.chat.collaboration)
+      .toEqual(expectedCollaboration);
+    expect((await repository.getDetailPage(owner, CHAT_ID, { limit: 100 }))?.record.chat.collaboration)
+      .toEqual(expectedCollaboration);
+  });
+
+  it("fails closed when an internal binding points at another owner's scope", async () => {
+    await repository.create(owner, {
+      id: CHAT_ID,
+      clientRequestId: "req_create_mismatched_owner",
+      title: "Mismatched shared Chat",
+    });
+    await fixture.db.updateTable("chats").set({
+      collaboration: {
+        mode: "discussion_only",
+        scopeId: SCOPE_ID,
+        executionFenced: true,
+        authorityGeneration: 1,
+      },
+    }).where("id", "=", CHAT_ID).execute();
+    await fixture.db.insertInto("collaboration_scopes").values({
+      id: SCOPE_ID,
+      owner_type: "personal",
+      owner_id: "user_other_scope_owner",
+      kind: "chat",
+      resource_id: CHAT_ID,
+      parent_scope_id: null,
+      membership_mode: "direct",
+      lifecycle: "shared",
+      authority_runtime_id: "runtime_other_scope_owner",
+      execution_generation: null,
+      execution_eligibility: null,
+      created_at: createdAt,
+      updated_at: createdAt,
+      deleted_at: null,
+    }).execute();
+    await fixture.db.insertInto("collaboration_members").values({
+      scope_id: SCOPE_ID,
+      actor_id: "user_other_scope_owner",
+      role: "owner",
+      status: "accepted",
+      invitation_id: null,
+      invited_by: "user_other_scope_owner",
+      accepted_at: createdAt,
+      expires_at: null,
+      joined_at: createdAt,
+      updated_at: createdAt,
+    }).execute();
+
+    await expect(repository.list(owner, { limit: 25 })).rejects.toBeDefined();
+    await expect(repository.getDetailPage(owner, CHAT_ID, { limit: 100 })).rejects.toBeDefined();
+  });
 });

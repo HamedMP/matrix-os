@@ -609,6 +609,14 @@ describe("canonical Chat contracts", () => {
     }).success).toBe(false);
     expect(CanonicalChatMessageSchema.safeParse({
       ...baseMessage,
+      actorId: "a".repeat(160),
+    }).success).toBe(true);
+    expect(CanonicalChatMessageSchema.safeParse({
+      ...baseMessage,
+      actorId: "a".repeat(161),
+    }).success).toBe(false);
+    expect(CanonicalChatMessageSchema.safeParse({
+      ...baseMessage,
       parts: [{
         type: "attachment_reference",
         attachmentId: "attachment_too_large",

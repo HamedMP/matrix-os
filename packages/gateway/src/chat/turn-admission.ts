@@ -135,6 +135,8 @@ export async function admitCanonicalTurn(
       seq: record.chat.messageCount + 1,
       role: "user",
       state: "committed",
+      actorId: principal.userId,
+      purpose: "ai_request",
       turnId,
       parts: input.parts,
       createdAt: timestamp,
