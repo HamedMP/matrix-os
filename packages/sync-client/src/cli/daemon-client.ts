@@ -1,4 +1,5 @@
 import { createConnection } from "node:net";
+import { lstat } from "node:fs/promises";
 import { join } from "node:path";
 import { getConfigDir } from "../lib/config.js";
 import { DAEMON_IPC_VERSION } from "../daemon/types.js";
@@ -21,6 +22,29 @@ export function isDaemonClientError(err: unknown): err is DaemonClientError {
   return err instanceof DaemonClientError;
 }
 
+export async function validateDaemonSocketIdentity(
+  sock: string,
+  expectedUid = typeof process.getuid === "function" ? process.getuid() : undefined,
+): Promise<void> {
+  try {
+    const info = await lstat(sock);
+    if (
+      !info.isSocket()
+      || info.isSymbolicLink()
+      || (info.mode & 0o077) !== 0
+      || (expectedUid !== undefined && info.uid !== expectedUid)
+    ) {
+      throw new DaemonClientError("daemon_socket_untrusted", "Sync daemon identity could not be verified.");
+    }
+  } catch (err: unknown) {
+    if (isDaemonClientError(err)) throw err;
+    if (err instanceof Error && "code" in err && err.code === "ENOENT") {
+      throw new DaemonClientError(DAEMON_UNAVAILABLE_CODE, DAEMON_UNAVAILABLE_MESSAGE);
+    }
+    throw new DaemonClientError("daemon_socket_untrusted", "Sync daemon identity could not be verified.");
+  }
+}
+
 function socketPath(): string {
   return join(getConfigDir(), "daemon.sock");
 }
@@ -29,6 +53,11 @@ export async function probeDaemonSocket(
   sock: string,
   timeout = 500,
 ): Promise<boolean> {
+  try {
+    await validateDaemonSocketIdentity(sock);
+  } catch {
+    return false;
+  }
   return new Promise((resolve) => {
     const socket = createConnection(sock);
     const timer = setTimeout(() => {
@@ -59,6 +88,8 @@ export async function sendCommand(
   timeout = 5000,
 ): Promise<Record<string, unknown>> {
   const sock = socketPath();
+
+  await validateDaemonSocketIdentity(sock);
 
   return new Promise((resolve, reject) => {
     const socket = createConnection(sock);

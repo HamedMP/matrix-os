@@ -671,6 +671,7 @@ export async function startDaemon(): Promise<void> {
   }
   let daemonAuth = auth as AuthData;
   if (isExpired(daemonAuth)) {
+    let terminalCredentialFailure = !daemonAuth.refreshToken;
     if (daemonAuth.refreshToken) {
       try {
         daemonAuth = await refreshSyncDeviceAuth({
@@ -679,6 +680,8 @@ export async function startDaemon(): Promise<void> {
           save: authFileAccessors.saveAuth,
         });
       } catch (err: unknown) {
+        terminalCredentialFailure = err instanceof SyncDeviceAuthError
+          && (err.code === "needs_sign_in" || err.code === "not_enrolled");
         logger.warn(
           { code: err instanceof SyncDeviceAuthError ? err.code : "unknown" },
           "Could not renew the background sync credential during startup",
@@ -687,7 +690,10 @@ export async function startDaemon(): Promise<void> {
     }
     if (isExpired(daemonAuth)) {
       logger.error("Background sync needs sign-in. Open Matrix OS Settings > Sync & backup.");
-      process.exit(1);
+      // A revoked/invalid grant is not a crash. Successful exit prevents
+      // launchd/systemd from relaunching in a tight loop; Desktop enrollment
+      // explicitly starts the service again after issuing a new grant.
+      process.exit(terminalCredentialFailure ? 0 : 1);
     }
   }
 

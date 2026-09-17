@@ -105,7 +105,10 @@ ${command.args.map((arg) => `    <string>${escapeXml(arg)}</string>`).join("\n")
   <key>WorkingDirectory</key>
   <string>${escapeXml(command.workingDirectory)}</string>
   <key>KeepAlive</key>
-  <true/>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
   <key>RunAtLoad</key>
   <true/>
   <key>StandardOutPath</key>

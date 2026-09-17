@@ -21,3 +21,33 @@ export function shouldRunStandaloneDaemon(
 ): boolean {
   return rawArgs[0] === "__daemon" && isStandaloneRuntime(env, versions);
 }
+
+export function shouldRunDesktopEnrollment(
+  rawArgs: string[],
+  env: NodeJS.ProcessEnv = process.env,
+  versions: RuntimeVersions = process.versions as RuntimeVersions,
+): boolean {
+  return rawArgs.length === 1
+    && rawArgs[0] === "__desktop-enroll"
+    && isStandaloneRuntime(env, versions);
+}
+
+export function shouldRunDesktopActivation(
+  rawArgs: string[],
+  env: NodeJS.ProcessEnv = process.env,
+  versions: RuntimeVersions = process.versions as RuntimeVersions,
+): boolean {
+  return rawArgs.length === 1
+    && rawArgs[0] === "__desktop-activate"
+    && isStandaloneRuntime(env, versions);
+}
+
+export function shouldRunDesktopRevocation(
+  rawArgs: string[],
+  env: NodeJS.ProcessEnv = process.env,
+  versions: RuntimeVersions = process.versions as RuntimeVersions,
+): boolean {
+  return rawArgs.length === 1
+    && rawArgs[0] === "__desktop-revoke"
+    && isStandaloneRuntime(env, versions);
+}

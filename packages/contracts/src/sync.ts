@@ -135,6 +135,69 @@ export const BackupStatusSchema = z.object({
 }).strict();
 export type BackupStatus = z.infer<typeof BackupStatusSchema>;
 
+export const DesktopSyncMappingStatusSchema = SyncMappingSchema.extend({
+  state: z.enum(["paused", "idle", "syncing", "conflict", "error", "offline"]),
+  fileCount: z.int().nonnegative(),
+  conflictCount: z.int().nonnegative(),
+  lastSuccessfulReconcileAt: z.int().nonnegative().nullable(),
+}).strict();
+export type DesktopSyncMappingStatus = z.infer<typeof DesktopSyncMappingStatusSchema>;
+
+export const DesktopSyncSnapshotSchema = z.object({
+  schemaVersion: z.literal(1),
+  capability: z.enum([
+    "available",
+    "unsupported_platform",
+    "helper_missing",
+    "helper_invalid",
+    "helper_incompatible",
+  ]),
+  helperVersion: z.string().max(64).nullable(),
+  service: z.enum(["not_configured", "stopped", "running"]),
+  profile: z.string().max(31).nullable(),
+  runtimeSlot: SyncRuntimeSlotSchema.nullable(),
+  enabled: z.boolean(),
+  paused: z.boolean(),
+  auth: z.enum(["ready", "needs_sign_in", "signed_out", "unknown"]),
+  connection: z.enum(["connecting", "online", "offline", "unknown"]),
+  status: z.enum([
+    "not_configured",
+    "paused",
+    "offline",
+    "syncing",
+    "synced",
+    "conflict",
+    "error",
+    "unavailable",
+  ]),
+  activeTransferCount: z.int().nonnegative(),
+  conflictCount: z.int().nonnegative(),
+  lastSyncAt: z.int().nonnegative().nullable(),
+  mappings: z.array(DesktopSyncMappingStatusSchema).max(32),
+  backup: BackupStatusSchema.nullable(),
+  backupState: z.enum(["available", "unavailable", "offline", "unknown"]),
+}).strict();
+export type DesktopSyncSnapshot = z.infer<typeof DesktopSyncSnapshotSchema>;
+
+export const DesktopSyncFolderSelectionSchema = z.object({
+  selectionId: z.uuid(),
+  displayPath: z.string().min(1).max(4096),
+}).strict();
+
+export const DesktopSyncMappingSetupRequestSchema = z.object({
+  selectionId: z.uuid(),
+  label: z.string().trim().min(1).max(120).optional(),
+  remotePrefix: SyncRemotePrefixSchema,
+  direction: SyncDirectionSchema,
+  propagateDeletes: z.boolean().default(false),
+  excludes: z.array(z.string().min(1).max(1024)).max(256).default([]),
+  parentMappingId: z.uuid().optional(),
+}).strict();
+
+export const DesktopSyncMappingMutationRequestSchema = z.object({
+  mappingId: z.uuid(),
+}).strict();
+
 export function deriveBackupFreshness(
   completedAt: number | null,
   now: number,

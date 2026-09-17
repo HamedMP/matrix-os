@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -9,6 +9,7 @@ import {
   IPC_MAX_RESPONSE_BYTES,
   probeDaemonSocket,
   sendCommand,
+  validateDaemonSocketIdentity,
 } from "../../src/cli/daemon-client.js";
 
 async function listen(server: Server, socketPath: string): Promise<void> {
@@ -42,9 +43,23 @@ describe("probeDaemonSocket", () => {
     const server = createServer();
 
     await listen(server, sock);
+    await chmod(sock, 0o600);
 
     await expect(probeDaemonSocket(sock)).resolves.toBe(true);
 
+    await closeServer(server);
+  });
+
+  it("rejects a socket that grants access to another local user", async () => {
+    const sock = join(tempDir, "daemon.sock");
+    const server = createServer();
+    await listen(server, sock);
+    await chmod(sock, 0o666);
+
+    await expect(validateDaemonSocketIdentity(sock)).rejects.toMatchObject({
+      code: "daemon_socket_untrusted",
+    });
+    await expect(probeDaemonSocket(sock)).resolves.toBe(false);
     await closeServer(server);
   });
 
@@ -83,6 +98,7 @@ describe("sendCommand", () => {
       });
     });
     await listen(server, sock);
+    await chmod(sock, 0o600);
 
     try {
       await expect(sendCommand("sync.status", {}, 1000)).resolves.toEqual({
@@ -109,6 +125,7 @@ describe("sendCommand", () => {
       socket.on("close", () => sockets.delete(socket));
     });
     await listen(server, sock);
+    await chmod(sock, 0o600);
 
     try {
       await expect(sendCommand("status", {}, 50)).rejects.toMatchObject({
@@ -130,6 +147,7 @@ describe("sendCommand", () => {
       socket.write("x".repeat(IPC_MAX_RESPONSE_BYTES + 1));
     });
     await listen(server, sock);
+    await chmod(sock, 0o600);
 
     try {
       await expect(sendCommand("sync.status", {}, 1000)).rejects.toThrow(

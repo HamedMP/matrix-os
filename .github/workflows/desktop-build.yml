@@ -123,6 +123,13 @@ jobs:
         run: |
           node --input-type=module -e "import { readFile, writeFile } from 'node:fs/promises'; const p='desktop/package.json'; const j=JSON.parse(await readFile(p,'utf8')); const exact=process.env.RELEASE_VERSION || ''; const suffix=process.env.VERSION_SUFFIX || ''; j.version = exact || (j.version.replace(/-.*/, '') + '-' + suffix); await writeFile(p, JSON.stringify(j, null, 2) + '\n');"
 
+      - name: Build packaged sync helper
+        env:
+          MATRIX_CLI_TARGETS: darwin-${{ matrix.arch }}
+        run: |
+          pnpm --filter @finnaai/matrix build:binaries
+          node desktop/scripts/prepare-sync-helper.mjs --platform darwin --arch ${{ matrix.arch }}
+
       - name: Build desktop app
         env:
           NODE_OPTIONS: --max-old-space-size=4096
@@ -184,6 +191,14 @@ jobs:
           fi
           if ! find desktop/dist -path "*/Matrix OS.app/Contents/Resources/app-update.yml" -type f -print -quit | grep -q .; then
             echo "Missing packaged macOS app-update.yml" >&2
+            exit 1
+          fi
+          if ! find desktop/dist -path "*/Matrix OS.app/Contents/Resources/sync-helper/manifest.json" -type f -print -quit | grep -q .; then
+            echo "Missing packaged macOS sync helper manifest" >&2
+            exit 1
+          fi
+          if ! find desktop/dist -path "*/Matrix OS.app/Contents/Resources/sync-helper/matrix" -type f -perm -111 -print -quit | grep -q .; then
+            echo "Missing packaged executable macOS sync helper" >&2
             exit 1
           fi
 
@@ -511,6 +526,13 @@ jobs:
         run: |
           node --input-type=module -e "import { readFile, writeFile } from 'node:fs/promises'; const p='desktop/package.json'; const j=JSON.parse(await readFile(p,'utf8')); const exact=process.env.RELEASE_VERSION || ''; const suffix=process.env.VERSION_SUFFIX || ''; j.version = exact || (j.version.replace(/-.*/, '') + '-' + suffix); await writeFile(p, JSON.stringify(j, null, 2) + '\n');"
 
+      - name: Build packaged sync helper
+        env:
+          MATRIX_CLI_TARGETS: linux-x64
+        run: |
+          pnpm --filter @finnaai/matrix build:binaries
+          node desktop/scripts/prepare-sync-helper.mjs --platform linux --arch x64
+
       - name: Build desktop app
         run: pnpm --filter desktop build
 
@@ -528,6 +550,14 @@ jobs:
           fi
           if [ ! -f desktop/dist/latest-linux.yml ]; then
             echo "Missing Linux update manifest: desktop/dist/latest-linux.yml" >&2
+            exit 1
+          fi
+          if ! find desktop/dist -path "*/resources/sync-helper/manifest.json" -type f -print -quit | grep -q .; then
+            echo "Missing packaged Linux sync helper manifest" >&2
+            exit 1
+          fi
+          if ! find desktop/dist -path "*/resources/sync-helper/matrix" -type f -perm -111 -print -quit | grep -q .; then
+            echo "Missing packaged executable Linux sync helper" >&2
             exit 1
           fi
 
@@ -629,6 +659,10 @@ jobs:
           VERSION_SUFFIX: ${{ inputs.version_suffix }}
         run: |
           node --input-type=module -e "import { readFile, writeFile } from 'node:fs/promises'; const p='desktop/package.json'; const j=JSON.parse(await readFile(p,'utf8')); const exact=process.env.RELEASE_VERSION || ''; const suffix=process.env.VERSION_SUFFIX || ''; j.version = exact || (j.version.replace(/-.*/, '') + '-' + suffix); await writeFile(p, JSON.stringify(j, null, 2) + '\n');"
+
+      - name: Record unsupported sync helper capability
+        shell: pwsh
+        run: node desktop/scripts/prepare-sync-helper.mjs --platform win32 --arch x64 --unsupported
 
       - name: Build desktop app
         shell: pwsh
