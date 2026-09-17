@@ -81,6 +81,14 @@ describe("published CLI package runners", () => {
     }
   });
 
+  it("declares Next's parser edge for the global virtual store", async () => {
+    const rootPackage = JSON.parse(await readFile(resolve(repoRoot, "package.json"), "utf8"));
+
+    expect(
+      rootPackage.pnpm?.packageExtensions?.["eslint-config-next@16.2.3"]?.dependencies?.next,
+    ).toBe("16.2.3");
+  });
+
   it("installs standalone binary upgrades atomically", async () => {
     const script = await readFile(resolve(repoRoot, "scripts/install.sh"), "utf8");
 
