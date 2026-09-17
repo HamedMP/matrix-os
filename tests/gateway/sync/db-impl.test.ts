@@ -21,13 +21,15 @@ describe("createManifestDb", () => {
         handle TEXT UNIQUE
       );
       CREATE TABLE sync_manifests (
-        user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        runtime_slot TEXT NOT NULL DEFAULT 'primary',
         version INTEGER NOT NULL,
         file_count INTEGER NOT NULL,
         total_size INTEGER NOT NULL,
         etag TEXT,
         accepted_manifest_key TEXT,
-        updated_at TEXT NOT NULL
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (user_id, runtime_slot)
       );
       CREATE TABLE sync_shares (
         id TEXT PRIMARY KEY,
@@ -131,6 +133,35 @@ describe("createManifestDb", () => {
       version: 4,
       accepted_manifest_key: "matrixos-sync/user1/manifests/4-" + "a".repeat(64) + ".json",
     });
+  });
+
+  it("keeps manifest metadata isolated between runtime slots", async () => {
+    const manifestDb = createManifestDb(db);
+    await ensureSyncUser(db, { id: "user1", handle: "alice" });
+
+    await manifestDb.upsertManifestMeta({ ownerId: "user1", runtimeSlot: "primary" }, {
+      version: 2,
+      file_count: 1,
+      total_size: 10n,
+      etag: '"primary"',
+      accepted_manifest_key: null,
+    });
+    await manifestDb.upsertManifestMeta({ ownerId: "user1", runtimeSlot: "studio" }, {
+      version: 8,
+      file_count: 3,
+      total_size: 30n,
+      etag: '"studio"',
+      accepted_manifest_key: null,
+    });
+
+    await expect(manifestDb.getManifestMeta({
+      ownerId: "user1",
+      runtimeSlot: "primary",
+    })).resolves.toMatchObject({ version: 2, etag: '"primary"' });
+    await expect(manifestDb.getManifestMeta({
+      ownerId: "user1",
+      runtimeSlot: "studio",
+    })).resolves.toMatchObject({ version: 8, etag: '"studio"' });
   });
 
   it("seeds sync users idempotently by id", async () => {

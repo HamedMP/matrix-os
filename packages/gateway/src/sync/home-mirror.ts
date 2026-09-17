@@ -4,6 +4,7 @@ import { lstat, mkdir, open, readdir, realpath, rename, stat, unlink, writeFile 
 import { dirname, join, relative, sep } from "node:path";
 import { watch, type FSWatcher } from "chokidar";
 import { z } from "zod/v4";
+import type { SyncScope } from "@matrix-os/contracts";
 import {
   applyCommitToManifest,
   readManifest,
@@ -18,6 +19,7 @@ import {
 } from "./r2-client.js";
 import type { Manifest, ManifestEntry } from "./types.js";
 import type { PeerRegistry, SyncPeerConnection } from "./ws-events.js";
+import { resolveSyncScope, syncScopeRegistryKey } from "./runtime-scope.js";
 
 const RECENT_WRITE_CAP = 50_000;
 const DEFAULT_MAX_PUSH_BYTES = 100 * 1024 * 1024;
@@ -72,6 +74,7 @@ export interface HomeMirrorConfig {
   manifestDb: ManifestDb;
   homeRoot: string; // /home/matrixos/home
   userId: string; // handle, e.g. "alice"
+  scope?: SyncScope;
   peerId: string; // gateway-internal peer id, e.g. `gateway-${handle}`
   /**
    * Peer registry to subscribe to `sync:change` broadcasts from other peers.
@@ -298,6 +301,8 @@ async function streamToBuffer(body: unknown, maxBytes: number): Promise<Buffer> 
 }
 
 export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
+  const scope = config.scope ?? resolveSyncScope({ ownerId: config.userId });
+  const registryKey = syncScopeRegistryKey(scope);
   const log = config.logger ?? {
     info: (msg, ...rest) => console.log(`[home-mirror] ${msg}`, ...rest),
     error: (msg, ...rest) => console.error(`[home-mirror] ${msg}`, ...rest),
@@ -385,7 +390,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
       watcher = null;
     }
     if (subscribed && config.peerRegistry) {
-      config.peerRegistry.removePeer(config.userId, config.peerId);
+      config.peerRegistry.removePeer(registryKey, config.peerId);
       subscribed = false;
     }
   }
@@ -393,7 +398,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
   async function withManifestLock<T>(
     fn: (lockedStore: typeof store & { dbExecutor: ManifestDbExecutor }) => Promise<T>,
   ): Promise<T> {
-    return config.manifestDb.withAdvisoryLock(config.userId, async (dbExecutor) =>
+    return config.manifestDb.withAdvisoryLock(scope, async (dbExecutor) =>
       fn({ ...store, dbExecutor }),
     );
   }
@@ -408,7 +413,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     manifestVersion: number,
   ): void {
     if (!config.peerRegistry) return;
-    config.peerRegistry.broadcastChange(config.userId, config.peerId, {
+    config.peerRegistry.broadcastChange(registryKey, config.peerId, {
       type: "sync:change",
       files: [file],
       peerId: config.peerId,
@@ -421,7 +426,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     manifestVersion: number,
   ): void {
     if (!config.peerRegistry || files.length === 0) return;
-    config.peerRegistry.broadcastChange(config.userId, config.peerId, {
+    config.peerRegistry.broadcastChange(registryKey, config.peerId, {
       type: "sync:change",
       files,
       peerId: config.peerId,
@@ -445,14 +450,14 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
       }
 
       await withManifestLock(async (lockedStore) => {
-        const existing = await readManifest(lockedStore, config.userId);
+        const existing = await readManifest(lockedStore, scope);
         const currentEntry = existing.manifest.files[safeRelPath];
         if (currentEntry?.hash === localFile.hash && !currentEntry.deleted) {
           // Already in manifest with same hash -- skip the upload.
           return;
         }
 
-        const key = buildFileKey(config.userId, safeRelPath);
+        const key = buildFileKey(scope, safeRelPath);
         try {
           await config.r2.putObject(key, localFile.body);
           const action = currentEntry ? "update" : "add";
@@ -463,7 +468,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
           );
 
           const newVersion = existing.manifestVersion + 1;
-          await writeManifest(lockedStore, config.userId, next, newVersion);
+          await writeManifest(lockedStore, scope, next, newVersion);
           broadcastChange({ path: safeRelPath, hash: localFile.hash, size: localFile.size, action }, newVersion);
           log.info(`pushed ${safeRelPath} (${localFile.size}B)`);
         } catch (err) {
@@ -482,7 +487,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     if (isIgnored(safeRelPath, extraIgnore)) return;
     await enqueue(async () => {
       await withManifestLock(async (lockedStore) => {
-        const existing = await readManifest(lockedStore, config.userId);
+        const existing = await readManifest(lockedStore, scope);
         const entry = existing.manifest.files[safeRelPath];
         if (!entry || entry.deleted) return;
 
@@ -493,9 +498,9 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
         );
 
         const newVersion = existing.manifestVersion + 1;
-        await writeManifest(lockedStore, config.userId, next, newVersion);
+        await writeManifest(lockedStore, scope, next, newVersion);
 
-        const key = buildFileKey(config.userId, safeRelPath);
+        const key = buildFileKey(scope, safeRelPath);
         await config.r2.deleteObject(key).catch((err: unknown) => {
           log.error(
             `delete blob failed for ${safeRelPath}:`,
@@ -530,7 +535,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
     }
 
-    const key = buildFileKey(config.userId, safeRelPath);
+    const key = buildFileKey(scope, safeRelPath);
     const obj = await config.r2.getObject(key);
     if (!obj.body) return;
 
@@ -617,7 +622,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
   }
 
   async function initialPull(): Promise<void> {
-    const existing = await readManifest(store, config.userId);
+    const existing = await readManifest(store, scope);
     const files = existing.manifest.files ?? {};
     let pulled = 0;
     for (const [relPath, entry] of Object.entries(files)) {
@@ -673,7 +678,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
   async function initialPush(): Promise<void> {
     const relPaths = await collectLocalFiles(config.homeRoot);
     if (relPaths.length === 0) return;
-    const snapshot = await readManifest(store, config.userId);
+    const snapshot = await readManifest(store, scope);
     let pushed = 0;
 
     for (let start = 0; start < relPaths.length; start += INITIAL_PUSH_CHUNK_SIZE) {
@@ -710,7 +715,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
 
       const chunkPushed = await enqueue(async () => {
         return withManifestLock(async (lockedStore) => {
-          const existing = await readManifest(lockedStore, config.userId);
+          const existing = await readManifest(lockedStore, scope);
           let nextManifest = existing.manifest;
           const changedFiles: Array<{
             path: string;
@@ -730,7 +735,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
                 continue;
               }
 
-              const key = buildFileKey(config.userId, safeRelPath);
+              const key = buildFileKey(scope, safeRelPath);
               await config.r2.putObject(key, localFile.body);
               uploadedKeys.push(key);
               const action = currentEntry ? "update" as const : "add" as const;
@@ -758,7 +763,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
             }
 
             const newVersion = existing.manifestVersion + 1;
-            await writeManifest(lockedStore, config.userId, nextManifest, newVersion);
+            await writeManifest(lockedStore, scope, nextManifest, newVersion);
             broadcastChanges(changedFiles, newVersion);
             return changedFiles.length;
           } catch (err) {
@@ -891,7 +896,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
       // handleRemoteChange and run serially via `enqueue`.
       if (config.peerRegistry) {
         config.peerRegistry.registerPeer(
-          config.userId,
+          registryKey,
           {
             peerId: config.peerId,
             hostname: "gateway",

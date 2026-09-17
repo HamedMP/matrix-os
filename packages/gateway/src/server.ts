@@ -289,7 +289,11 @@ import { createR2Client, type R2Client, type R2ClientConfig } from "./sync/r2-cl
 import { createPlatformR2Client } from "./sync/platform-r2-client.js";
 import { createManifestDb, createKyselySharingDb } from "./sync/db-impl.js";
 import { createHomeMirror, type HomeMirror } from "./sync/home-mirror.js";
-import { deriveHomeMirrorSyncIdentity } from "./sync/runtime-scope.js";
+import {
+  deriveHomeMirrorSyncIdentity,
+  resolveSyncScope,
+  syncScopeRegistryKey,
+} from "./sync/runtime-scope.js";
 import { createPeerRegistry, type PeerRegistry } from "./sync/ws-events.js";
 import { createSyncPeerLifecycle } from "./sync/ws-peer-lifecycle.js";
 import { createSharingService, type SharingService } from "./sync/sharing.js";
@@ -509,6 +513,7 @@ export async function createGateway(config: GatewayConfig) {
   const readinessCache = new ReadinessStatusCache<ReadinessResponse>({ maxEntries: 512, ttlMs: 10_000 });
   const internalPlatformUrl = process.env.PLATFORM_INTERNAL_URL;
   const internalPlatformToken = process.env.UPGRADE_TOKEN;
+  const internalSyncRuntimeToken = process.env.MATRIX_SYNC_RUNTIME_TOKEN;
   const internalHandle = process.env.MATRIX_HANDLE;
   let platformDb: PlatformDb | null = null;
   const workspaceProviderRuntime = resolveWorkspaceProviderRuntime(process.env);
@@ -1209,7 +1214,15 @@ export async function createGateway(config: GatewayConfig) {
         syncR2 = createPlatformR2Client({
           baseUrl: internalPlatformUrl!,
           handle: internalHandle!,
-          token: internalPlatformToken!,
+          token: internalSyncRuntimeToken ?? internalPlatformToken!,
+          ...(internalSyncRuntimeToken
+            && process.env.MATRIX_MACHINE_ID
+            && process.env.MATRIX_RUNTIME_SLOT
+            ? {
+                machineId: process.env.MATRIX_MACHINE_ID,
+                runtimeSlot: process.env.MATRIX_RUNTIME_SLOT,
+              }
+            : {}),
         });
       }
 
@@ -1231,7 +1244,10 @@ export async function createGateway(config: GatewayConfig) {
         // Resolve userId per request through the canonical principal seam so
         // sync storage keys follow the same source precedence as other
         // protected owner-scoped routes.
-        getUserId: (c) => requireRequestPrincipal(c).userId,
+        getScope: (c) => resolveSyncScope({
+          ownerId: requireRequestPrincipal(c).userId,
+          runtimeSlot: process.env.MATRIX_RUNTIME_SLOT,
+        }),
         getPeerId: (c) => sanitizePeerId(c.req.header("X-Peer-Id")),
       };
 
@@ -1279,7 +1295,11 @@ export async function createGateway(config: GatewayConfig) {
           "[home-mirror] MATRIX_USER_ID not set; using MATRIX_HANDLE fallback. This is dev-only behaviour.",
         );
       }
-      const { syncUserId, peerId } = deriveHomeMirrorSyncIdentity({
+      const scope = resolveSyncScope({
+        ownerId: baseUserId,
+        runtimeSlot: process.env.MATRIX_RUNTIME_SLOT,
+      });
+      const { peerId } = deriveHomeMirrorSyncIdentity({
         baseUserId,
         runtimeSlot: process.env.MATRIX_RUNTIME_SLOT,
       });
@@ -1288,7 +1308,8 @@ export async function createGateway(config: GatewayConfig) {
         r2: syncR2,
         manifestDb,
         homeRoot: homePath,
-        userId: syncUserId,
+        userId: scope.ownerId,
+        scope,
         peerId,
         // Subscribe to sync:change broadcasts from other peers so the
         // container's /home/matrixos/home/ stays in sync with what laptops
@@ -2284,11 +2305,15 @@ export async function createGateway(config: GatewayConfig) {
       let connectionOwnerId: string | undefined;
       try {
         const wsPrincipal = requireRequestPrincipal(c);
-        const wsSyncUserId = wsPrincipal.userId;
-        connectionOwnerId = wsSyncUserId;
+        const wsScope = resolveSyncScope({
+          ownerId: wsPrincipal.userId,
+          runtimeSlot: process.env.MATRIX_RUNTIME_SLOT,
+        });
+        const wsSyncScopeKey = syncScopeRegistryKey(wsScope);
+        connectionOwnerId = wsPrincipal.userId;
         conversationOwnerScope = ownerScopeFromPrincipal(wsPrincipal);
         syncPeerLifecycle = syncPeerRegistry
-          ? createSyncPeerLifecycle(syncPeerRegistry, wsSyncUserId, {
+          ? createSyncPeerLifecycle(syncPeerRegistry, wsSyncScopeKey, {
               send: (data: string) => syncPeerSocket?.send(data),
               get readyState() {
                 return syncPeerSocket?.readyState ?? 3;

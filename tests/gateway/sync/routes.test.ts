@@ -192,6 +192,24 @@ describe("POST /api/sync/presign", () => {
     expect(json.urls).toHaveLength(2);
   });
 
+  it("uses the trusted runtime scope for non-primary object keys", async () => {
+    mockR2.getPresignedGetUrl.mockResolvedValue("https://r2.example/get");
+    const app = createTestApp({
+      getUserId: undefined,
+      getScope: () => ({ ownerId: "test-user", runtimeSlot: "studio" }),
+    });
+
+    const res = await app.request(jsonRequest("/api/sync/presign", {
+      files: [{ path: "notes/studio.md", action: "get" }],
+    }));
+
+    expect(res.status).toBe(200);
+    expect(mockR2.getPresignedGetUrl).toHaveBeenCalledWith(
+      "matrixos-sync/v2/owners/test-user/runtimes/studio/files/notes/studio.md",
+      900,
+    );
+  });
+
   it("accepts PUT files with zero size", async () => {
     const app = createTestApp();
     const res = await app.request(jsonRequest("/api/sync/presign", {

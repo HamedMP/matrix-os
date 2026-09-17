@@ -55,6 +55,30 @@ describe("platform R2 client", () => {
     ).rejects.toMatchObject({ name: "NoSuchKey" });
   });
 
+  it("sends the machine identity with a runtime-scoped broker token", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ url: "https://platform.example/scoped" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    const client = createPlatformR2Client({
+      baseUrl: "http://distro-platform-1:9000",
+      handle: "alice",
+      token: "scoped-token",
+      machineId: "machine-studio",
+      runtimeSlot: "studio",
+    });
+
+    await client.getPresignedGetUrl(
+      "matrixos-sync/v2/owners/user_alice/runtimes/studio/manifest.json",
+    );
+
+    const headers = fetchMock.mock.calls[0]?.[1]?.headers as Headers;
+    expect(headers.get("x-matrix-machine-id")).toBe("machine-studio");
+    expect(headers.get("x-matrix-runtime-slot")).toBe("studio");
+  });
+
   it("writes objects through the platform internal sync route", async () => {
     const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(

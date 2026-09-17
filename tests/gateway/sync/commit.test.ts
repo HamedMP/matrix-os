@@ -272,7 +272,10 @@ describe("handleCommit", () => {
       expectedVersion: 0,
     });
 
-    expect(mockDb.withAdvisoryLock).toHaveBeenCalledWith("user1", expect.any(Function));
+    expect(mockDb.withAdvisoryLock).toHaveBeenCalledWith(
+      { ownerId: "user1", runtimeSlot: "primary" },
+      expect.any(Function),
+    );
   });
 
   it("uses the advisory-lock transaction executor for manifest metadata reads and writes", async () => {
@@ -292,9 +295,12 @@ describe("handleCommit", () => {
       expectedVersion: 0,
     });
 
-    expect(mockDb.getManifestMeta).toHaveBeenCalledWith("user1", txn);
+    expect(mockDb.getManifestMeta).toHaveBeenCalledWith(
+      { ownerId: "user1", runtimeSlot: "primary" },
+      txn,
+    );
     expect(mockDb.upsertManifestMeta).toHaveBeenCalledWith(
-      "user1",
+      { ownerId: "user1", runtimeSlot: "primary" },
       expect.objectContaining({ version: 1 }),
       txn,
     );

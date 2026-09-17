@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import {
+  buildSyncStoragePrefix,
   SyncScopeSchema,
   type SyncScope,
 } from "@matrix-os/contracts";
@@ -33,10 +34,14 @@ export function resolveSyncScope(input: {
  * confused with legacy owner identifiers.
  */
 export function buildSyncScopePrefix(scope: SyncScope): string {
+  return buildSyncStoragePrefix(scope);
+}
+
+export function syncScopeRegistryKey(scope: SyncScope): string {
   const parsed = SyncScopeSchema.parse(scope);
   return parsed.runtimeSlot === "primary"
-    ? `matrixos-sync/${parsed.ownerId}`
-    : `matrixos-sync/v2/owners/${parsed.ownerId}/runtimes/${parsed.runtimeSlot}`;
+    ? parsed.ownerId
+    : `${parsed.ownerId}\0${parsed.runtimeSlot}`;
 }
 
 export function deriveHomeMirrorSyncIdentity(input: {

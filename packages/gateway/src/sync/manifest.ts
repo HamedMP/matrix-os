@@ -1,5 +1,6 @@
 import type { Kysely, Transaction } from "kysely";
 import { createHash } from "node:crypto";
+import type { SyncScope } from "@matrix-os/contracts";
 import { ManifestSchema, type Manifest, type CommitFile } from "./types.js";
 import { buildManifestGenerationKey, buildManifestKey } from "./r2-client.js";
 import type { R2Client } from "./r2-client.js";
@@ -59,20 +60,27 @@ export interface ManifestMeta {
 }
 
 export type ManifestDbExecutor = Kysely<SyncDatabase> | Transaction<SyncDatabase>;
+export type ManifestScope = string | SyncScope;
+
+export function normalizeManifestScope(scope: ManifestScope): SyncScope {
+  return typeof scope === "string"
+    ? { ownerId: scope, runtimeSlot: "primary" }
+    : scope;
+}
 
 export interface ManifestDb {
   getManifestMeta(
-    userId: string,
+    scope: ManifestScope,
     executor?: ManifestDbExecutor,
   ): Promise<ManifestMeta | null>;
   getAggregateManifestStats?(): Promise<{ fileCount: number; totalSize: bigint }>;
   upsertManifestMeta(
-    userId: string,
+    scope: ManifestScope,
     meta: Omit<ManifestMeta, "updated_at">,
     executor?: ManifestDbExecutor,
   ): Promise<void>;
   withAdvisoryLock<T>(
-    userId: string,
+    scope: ManifestScope,
     fn: (executor: ManifestDbExecutor) => Promise<T>,
   ): Promise<T>;
 }
@@ -134,10 +142,10 @@ function liveManifestStats(manifest: Manifest): { fileCount: number; totalSize: 
 
 export async function readManifest(
   store: ManifestStore,
-  userId: string,
+  scope: ManifestScope,
 ): Promise<ReadManifestResult> {
-  const meta = await store.db.getManifestMeta(userId, store.dbExecutor);
-  const key = meta?.accepted_manifest_key ?? buildManifestKey(userId);
+  const meta = await store.db.getManifestMeta(scope, store.dbExecutor);
+  const key = meta?.accepted_manifest_key ?? buildManifestKey(scope);
   const hasAcceptedPointer = Boolean(meta?.accepted_manifest_key);
 
   let manifest: Manifest;
@@ -184,7 +192,7 @@ export async function readManifest(
 
   if (!hasAcceptedPointer && storedManifestVersion > acceptedVersion) {
     const stats = liveManifestStats(manifest);
-    await store.db.upsertManifestMeta(userId, {
+    await store.db.upsertManifestMeta(scope, {
       version: storedManifestVersion,
       file_count: stats.fileCount,
       total_size: stats.totalSize,
@@ -204,18 +212,18 @@ export async function readManifest(
 
 export async function writeManifest(
   store: ManifestStore,
-  userId: string,
+  scope: ManifestScope,
   manifest: Manifest,
   newVersion: number,
 ): Promise<void> {
-  const legacyKey = buildManifestKey(userId);
+  const legacyKey = buildManifestKey(scope);
   const { fileCount, totalSize } = liveManifestStats(manifest);
   const body = JSON.stringify({
     ...manifest,
     manifestVersion: newVersion,
   });
   const bodyHash = createHash("sha256").update(body).digest("hex");
-  const generationKey = buildManifestGenerationKey(userId, newVersion, bodyHash);
+  const generationKey = buildManifestGenerationKey(scope, newVersion, bodyHash);
 
   // The generation key is content-addressed, so retries can only replace it
   // with identical bytes. A failed metadata transaction leaves a reclaimable
@@ -226,7 +234,7 @@ export async function writeManifest(
   // transaction commit fails, readManifest() self-heals by taking
   // Math.max(db.version, manifestVersion) and repairing sync_manifests from
   // the manifest stored in R2.
-  await store.db.upsertManifestMeta(userId, {
+  await store.db.upsertManifestMeta(scope, {
     version: newVersion,
     file_count: fileCount,
     total_size: totalSize,

@@ -33,6 +33,7 @@ describe('platform/customer-vps-cloud-init', () => {
         'https://app.matrix-os.com/system-bundles/0.0.0-pr10000.abcdef012345/matrix-host-bundle.tar.gz',
       registrationToken: 'r'.repeat(64),
       platformVerificationToken: 'v'.repeat(64),
+      syncRuntimeToken: 's'.repeat(64),
       fundedAiRuntimeToken: 'f'.repeat(64),
       postgresPassword: 'p'.repeat(48),
     };
@@ -55,6 +56,7 @@ describe('platform/customer-vps-cloud-init', () => {
     platformRegisterUrl: 'https://platform.example/vps/register',
     platformInternalUrl: 'https://platform.example',
     platformVerificationToken: 'platform-verification-secret',
+    syncRuntimeToken: 'sync-runtime-verification-secret',
     fundedAiRuntimeToken: 'funded-runtime-verification-secret',
     registrationToken: 'registration-secret',
     registrationTokenExpiresAt: '2026-08-29T20:45:00.000Z',

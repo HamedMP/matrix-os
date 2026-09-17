@@ -7,8 +7,10 @@ import {
   garbageCollectTombstones,
   ManifestCapExceededError,
   type ManifestDb,
+  type ManifestScope,
+  normalizeManifestScope,
 } from "./manifest.js";
-import { resolveWithinPrefix } from "./path-validation.js";
+import { syncScopeRegistryKey } from "./runtime-scope.js";
 import type { CommitRequest } from "./types.js";
 
 export interface CommitDeps {
@@ -23,14 +25,17 @@ export type CommitResult =
 
 export async function handleCommit(
   deps: CommitDeps,
-  userId: string,
+  scopeInput: ManifestScope,
   peerId: string,
   request: CommitRequest,
 ): Promise<CommitResult> {
+  const scope = normalizeManifestScope(scopeInput);
+  const scopeKey = syncScopeRegistryKey(scope);
   // Step 0: Validate all paths before acquiring lock
   for (const file of request.files) {
-    const pathCheck = resolveWithinPrefix(userId, file.path);
-    if (!pathCheck.valid) {
+    try {
+      buildFileKey(scope, file.path);
+    } catch {
       return {
         error: "Invalid file path",
         currentVersion: 0,
@@ -39,9 +44,9 @@ export async function handleCommit(
     }
   }
 
-  const locked = await deps.db.withAdvisoryLock(userId, async (dbExecutor) => {
+  const locked = await deps.db.withAdvisoryLock(scope, async (dbExecutor) => {
     const store = { r2: deps.r2, db: deps.db, dbExecutor };
-    const { manifest, manifestVersion: currentVersion } = await readManifest(store, userId);
+    const { manifest, manifestVersion: currentVersion } = await readManifest(store, scope);
 
     if (request.expectedVersion !== currentVersion) {
       return {
@@ -75,7 +80,7 @@ export async function handleCommit(
 
     const compacted = garbageCollectTombstones(updated);
     const newVersion = currentVersion + 1;
-    await writeManifest(store, userId, compacted, newVersion);
+    await writeManifest(store, scope, compacted, newVersion);
 
     const changeFiles = request.files.map((f) => ({
       path: f.path,
@@ -86,7 +91,7 @@ export async function handleCommit(
 
     const deleteKeys = request.files
       .filter((file) => file.action === "delete")
-      .map((file) => buildFileKey(userId, file.path));
+      .map((file) => buildFileKey(scope, file.path));
 
     // Keep stale-blob deletion inside the manifest lock. File blobs are keyed
     // by user + path, not by content hash, so deleting after releasing the
@@ -118,7 +123,7 @@ export async function handleCommit(
   });
 
   if (locked.broadcastMessage) {
-    deps.broadcast(userId, peerId, locked.broadcastMessage);
+    deps.broadcast(scopeKey, peerId, locked.broadcastMessage);
   }
 
   return locked.result;

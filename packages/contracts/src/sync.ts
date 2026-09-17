@@ -24,3 +24,10 @@ export const SyncScopeSchema = z.object({
 }).strict();
 
 export type SyncScope = z.infer<typeof SyncScopeSchema>;
+
+export function buildSyncStoragePrefix(scope: SyncScope): string {
+  const parsed = SyncScopeSchema.parse(scope);
+  return parsed.runtimeSlot === "primary"
+    ? `matrixos-sync/${parsed.ownerId}`
+    : `matrixos-sync/v2/owners/${parsed.ownerId}/runtimes/${parsed.runtimeSlot}`;
+}

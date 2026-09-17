@@ -1,6 +1,12 @@
 import { sql, type Insertable, type Kysely, type Transaction } from "kysely";
 import { randomUUID } from "node:crypto";
-import type { ManifestDb, ManifestDbExecutor, ManifestMeta } from "./manifest.js";
+import {
+  normalizeManifestScope,
+  type ManifestDb,
+  type ManifestDbExecutor,
+  type ManifestMeta,
+  type ManifestScope,
+} from "./manifest.js";
 import type { SharingDb, ShareRow } from "./sharing.js";
 import type { ShareRole } from "./types.js";
 import type { SyncDatabase } from "./sharing-db.js";
@@ -12,13 +18,15 @@ export function createManifestDb(kysely: Kysely<SyncDatabase>): ManifestDb {
 
   return {
     async getManifestMeta(
-      userId: string,
+      scopeInput: ManifestScope,
       executor?: ManifestDbExecutor,
     ): Promise<ManifestMeta | null> {
+      const scope = normalizeManifestScope(scopeInput);
       const row = await getExecutor(executor)
         .selectFrom("sync_manifests")
         .selectAll()
-        .where("user_id", "=", userId)
+        .where("user_id", "=", scope.ownerId)
+        .where("runtime_slot", "=", scope.runtimeSlot)
         .executeTakeFirst();
 
       if (!row) return null;
@@ -49,14 +57,16 @@ export function createManifestDb(kysely: Kysely<SyncDatabase>): ManifestDb {
     },
 
     async upsertManifestMeta(
-      userId: string,
+      scopeInput: ManifestScope,
       meta: Omit<ManifestMeta, "updated_at">,
       executor?: ManifestDbExecutor,
     ): Promise<void> {
+      const scope = normalizeManifestScope(scopeInput);
       await getExecutor(executor)
         .insertInto("sync_manifests")
         .values({
-          user_id: userId,
+          user_id: scope.ownerId,
+          runtime_slot: scope.runtimeSlot,
           version: meta.version,
           file_count: meta.file_count,
           total_size: meta.total_size,
@@ -65,7 +75,7 @@ export function createManifestDb(kysely: Kysely<SyncDatabase>): ManifestDb {
           updated_at: sql`CURRENT_TIMESTAMP`,
         })
         .onConflict((oc) =>
-          oc.column("user_id")
+          oc.columns(["user_id", "runtime_slot"])
             .doUpdateSet({
               version: meta.version,
               file_count: meta.file_count,
@@ -83,11 +93,13 @@ export function createManifestDb(kysely: Kysely<SyncDatabase>): ManifestDb {
     },
 
     async withAdvisoryLock<T>(
-      userId: string,
+      scopeInput: ManifestScope,
       fn: (executor: ManifestDbExecutor) => Promise<T>,
     ): Promise<T> {
+      const scope = normalizeManifestScope(scopeInput);
+      const lockKey = `${scope.ownerId}\0${scope.runtimeSlot}`;
       return await kysely.transaction().execute(async (trx) => {
-        await sql`SELECT pg_advisory_xact_lock(hashtext(${userId}))`.execute(trx);
+        await sql`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`.execute(trx);
         return fn(trx);
       });
     },

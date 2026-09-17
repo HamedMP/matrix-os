@@ -1238,13 +1238,13 @@ describe("createHomeMirror", () => {
         etag: string | null;
         updated_at: Date;
       } | null = null;
-      const lockCalls: string[] = [];
+      const lockCalls: unknown[] = [];
       const getMetaExecutors: unknown[] = [];
       const upsertExecutors: unknown[] = [];
 
       db = {
-        async getManifestMeta(userId: string, executor?: unknown) {
-          lockCalls.push(`meta:${userId}`);
+        async getManifestMeta(scope: unknown, executor?: unknown) {
+          lockCalls.push({ operation: "meta", scope });
           getMetaExecutors.push(executor);
           return meta;
         },
@@ -1255,8 +1255,8 @@ describe("createHomeMirror", () => {
             updated_at: new Date(),
           };
         },
-        async withAdvisoryLock<T>(userId: string, fn: (executor: unknown) => Promise<T>) {
-          lockCalls.push(`lock:${userId}`);
+        async withAdvisoryLock<T>(scope: unknown, fn: (executor: unknown) => Promise<T>) {
+          lockCalls.push({ operation: "lock", scope });
           return fn(lockedExecutor);
         },
       } as unknown as ManifestDb;
@@ -1285,7 +1285,14 @@ describe("createHomeMirror", () => {
       await unlink(filePath);
       await mirror.pushLocalDelete("locked.txt");
 
-      expect(lockCalls.filter((entry) => entry === "lock:alice")).toHaveLength(2);
+      expect(lockCalls.filter((entry) => (
+        typeof entry === "object"
+        && entry !== null
+        && (entry as { operation?: string }).operation === "lock"
+      ))).toEqual([
+        { operation: "lock", scope: { ownerId: "alice", runtimeSlot: "primary" } },
+        { operation: "lock", scope: { ownerId: "alice", runtimeSlot: "primary" } },
+      ]);
       expect(getMetaExecutors.filter((entry) => entry === lockedExecutor)).toHaveLength(2);
       expect(upsertExecutors.filter((entry) => entry === lockedExecutor)).toHaveLength(2);
 

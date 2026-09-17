@@ -1,6 +1,6 @@
 import type { R2Client } from "./r2-client.js";
 import { buildFileKey } from "./r2-client.js";
-import { resolveWithinPrefix } from "./path-validation.js";
+import type { SyncKeyScope } from "./r2-keys.js";
 import type { PresignFile } from "./types.js";
 
 const PRESIGN_EXPIRY_SECONDS = 900; // 15 minutes
@@ -34,15 +34,16 @@ export class PresignValidationError extends Error {
 
 export async function generatePresignedUrls(
   deps: PresignDeps,
-  userId: string,
+  scope: SyncKeyScope,
   files: PresignFile[],
 ): Promise<PresignResult[]> {
   // Validate all paths first
   for (const file of files) {
-    const validation = resolveWithinPrefix(userId, file.path);
-    if (!validation.valid) {
+    try {
+      buildFileKey(scope, file.path);
+    } catch (err: unknown) {
       throw new PresignValidationError(
-        `Invalid path "${file.path}": ${validation.reason}`,
+        `Invalid path "${file.path}": ${err instanceof Error ? err.message : "validation failed"}`,
       );
     }
   }
@@ -64,7 +65,7 @@ export async function generatePresignedUrls(
   const results: PresignResult[] = [];
 
   for (const file of files) {
-    const key = buildFileKey(userId, file.path);
+    const key = buildFileKey(scope, file.path);
 
     if (file.action === "get") {
       const url = await deps.r2.getPresignedGetUrl(key, PRESIGN_EXPIRY_SECONDS);

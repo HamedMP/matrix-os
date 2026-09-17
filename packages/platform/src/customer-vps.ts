@@ -42,6 +42,7 @@ import {
 } from './customer-vps-auth.js';
 import {
   buildPlatformRuntimeVerificationToken,
+  buildPlatformSyncVerificationToken,
   buildPlatformVerificationToken,
 } from './platform-token.js';
 import type { HetznerClient } from './customer-vps-hetzner.js';
@@ -255,6 +256,7 @@ const DEFAULT_CLOUD_INIT_TEMPLATE = [
   '      PLATFORM_INTERNAL_URL={{platformInternalUrl}}',
   '      UPGRADE_TOKEN={{platformVerificationToken}}',
   '      MATRIX_AUTH_TOKEN={{platformVerificationToken}}',
+  '      MATRIX_SYNC_RUNTIME_TOKEN={{syncRuntimeToken}}',
   '      MATRIX_FUNDED_AI_RUNTIME_TOKEN={{fundedAiRuntimeToken}}',
   '      MATRIX_CODE_PROXY_TOKEN={{platformVerificationToken}}',
   '      MATRIX_FUNDED_AI_ENABLED={{fundedAiEnabled}}',
@@ -372,6 +374,11 @@ function buildHostConfig(
     platformRegisterUrl: config.platformRegisterUrl,
     platformInternalUrl: new URL(config.platformRegisterUrl).origin,
     platformVerificationToken: buildPlatformVerificationToken(input.handle, config.platformSecret),
+    syncRuntimeToken: buildPlatformSyncVerificationToken({
+      handle: input.handle,
+      machineId,
+      runtimeSlot: input.runtimeSlot,
+    }, config.platformSecret),
     fundedAiRuntimeToken: buildPlatformRuntimeVerificationToken({
       handle: input.handle,
       machineId,

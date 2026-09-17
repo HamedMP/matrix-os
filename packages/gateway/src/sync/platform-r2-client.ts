@@ -13,7 +13,12 @@ export function createPlatformR2Client(config: {
   baseUrl: string;
   handle: string;
   token: string;
+  machineId?: string;
+  runtimeSlot?: string;
 }): R2Client {
+  if (Boolean(config.machineId) !== Boolean(config.runtimeSlot)) {
+    throw new Error("Platform sync machine identity is incomplete");
+  }
   const routeBase = `${config.baseUrl}/internal/containers/${config.handle}/sync`;
 
   async function request(
@@ -23,6 +28,10 @@ export function createPlatformR2Client(config: {
   ): Promise<Response> {
     const headers = new Headers(init?.headers);
     headers.set("authorization", `Bearer ${config.token}`);
+    if (config.machineId && config.runtimeSlot) {
+      headers.set("x-matrix-machine-id", config.machineId);
+      headers.set("x-matrix-runtime-slot", config.runtimeSlot);
+    }
     const res = await fetch(`${routeBase}${path}`, {
       ...init,
       headers,
