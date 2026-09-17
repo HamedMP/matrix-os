@@ -94,6 +94,9 @@ const ROUTE_SCOPED_BEARER_PATHS = [
 const ROUTE_SCOPED_SIGNATURE_PATHS = [
   "/api/internal/terminal-acceptance/run",
 ];
+const COLLABORATION_HTTP_PREFIX = "/api/collaboration/";
+const COLLABORATION_WEBSOCKET_PATH =
+  /^\/ws\/collaboration\/scopes\/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\/(?:events|terminal)$/;
 const MESSAGE_APPSERVICE_PREFIX = "/api/messages/appservice/";
 const MESSAGE_HERMES_REPLY_PATH = /^\/api\/messages\/conversations\/[^/]+\/reply$/;
 const WS_QUERY_TOKEN_PATHS = [
@@ -168,6 +171,16 @@ const acceptanceSignatureRateLimiter = createRateLimiter({
   lockoutMs: 30_000,
 });
 
+// Collaboration requests are authenticated by short-lived actor proofs at
+// their route boundary, not by the owner's personal gateway bearer. Keep that
+// verification independently bounded so invalid proofs cannot consume
+// unbounded HMAC work or interfere with terminal-acceptance traffic.
+const collaborationProofRateLimiter = createRateLimiter({
+  maxAttempts: 120,
+  windowMs: 60_000,
+  lockoutMs: 30_000,
+});
+
 function getClientIp(c: { req: { header: (name: string) => string | undefined } }): string {
   const forwardedFor = c.req.header("x-forwarded-for")?.split(",")[0]?.trim();
   return (
@@ -231,6 +244,20 @@ export function authMiddleware(
     if (HMAC_WEBHOOK_PREFIXES.some((p) => normalizedPath.startsWith(p))) {
       const ip = getClientIp(c);
       if (!webhookRateLimiter.check(ip)) {
+        return tooManyRequests(c);
+      }
+      return nextWithReady(c, next);
+    }
+
+    // Platform-proxied collaboration routes carry a scoped, short-lived actor
+    // proof (and, where required, a signed rollout policy). Requiring the
+    // owner's MATRIX_AUTH_TOKEN here would reject every collaborator before
+    // those route-specific verifiers can run. Customer-VPS nginx overwrites
+    // X-Real-IP, so direct callers cannot rotate this limiter key themselves.
+    if (normalizedPath.startsWith(COLLABORATION_HTTP_PREFIX)
+      || COLLABORATION_WEBSOCKET_PATH.test(normalizedPath)) {
+      const ip = getTrustedProxyClientIp(c);
+      if (!collaborationProofRateLimiter.check(ip)) {
         return tooManyRequests(c);
       }
       return nextWithReady(c, next);
