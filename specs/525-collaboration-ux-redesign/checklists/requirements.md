@@ -13,8 +13,8 @@
 
 ## Requirement Completeness
 
-- [ ] No `[NEEDS CLARIFICATION]` markers remain
-- [x] Requirements are testable and unambiguous except for the three intentionally deferred presentation decisions
+- [x] No `[NEEDS CLARIFICATION]` markers remain
+- [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic
 - [x] All acceptance scenarios are defined
@@ -31,5 +31,6 @@
 
 ## Notes
 
-- Three product-significant presentation decisions remain intentionally open for the ordered `speckit-clarify` phase: discussion-layer presentation, access-control disclosure, and shell destination placement.
-- Planning MUST NOT begin until those decisions are answered, integrated into the specification, and this checklist is fully complete.
+- Clarification resolved the discussion layer as a desktop right overlay drawer and mobile full-height bottom sheet.
+- Clarification resolved access controls as a compact summary popover with owner management one level deeper.
+- Clarification resolved “Shared with me” as a permanent Chat-sidebar/navigation destination with a pending badge, not a separate app or dock item.

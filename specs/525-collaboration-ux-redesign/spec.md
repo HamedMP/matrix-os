@@ -2,7 +2,7 @@
 
 **Feature Branch**: `525-collaboration-ux-redesign`  
 **Created**: 2026-09-17  
-**Status**: Draft — pending targeted UX clarification  
+**Status**: Draft — clarified and ready for planning
 **Input**: Redesign Matrix OS collaboration so sharing feels like a capability of ordinary Chat and Terminal sessions, with unobtrusive human discussion, access management, and first-class discovery, while preserving the existing collaboration architecture and authorization model.
 **Depends on**: The behavior, authority, roles, canonical history, queue, invitation, realtime, and terminal-control contracts in `specs/121-collaboration-session-sharing/`. This specification changes their presentation and shell integration, not their security model.
 
@@ -16,9 +16,9 @@ This redesign makes collaboration a state of an existing Chat or terminal. The o
 
 ### Session 2026-09-17
 
-- Q: What transient surface should the human-only discussion layer use on desktop and mobile? → A: [NEEDS CLARIFICATION: choose the desktop and mobile discussion-layer presentation]
-- Q: How should collaboration status and member management be progressively disclosed from the session header? → A: [NEEDS CLARIFICATION: choose the compact access-control interaction]
-- Q: How should “Shared with me” appear in Canvas, Desktop/Electron, and mobile navigation? → A: [NEEDS CLARIFICATION: choose the shell-level destination model]
+- Q: What transient surface should the human-only discussion layer use on desktop and mobile? → A: Use a right-side overlay drawer contained within the session window on desktop and a full-height bottom sheet on mobile.
+- Q: How should collaboration status and member management be progressively disclosed from the session header? → A: Use one compact access icon that opens a summary popover with shared status, the current person's role, and member avatars; authorized owners open full access management from that popover. Keep human discussion as a separate control.
+- Q: How should “Shared with me” appear in Canvas, Desktop/Electron, and mobile navigation? → A: Place it as a permanent first-class destination in the existing Chat left sidebar/navigation, with a bounded pending badge. Use the corresponding Chat/navigation drawer position on mobile; do not add a separate collaboration app or dock icon.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -60,7 +60,7 @@ As a collaborator, I want a separate human-only discussion layer attached to a C
 5. **Given** an unread human note arrives while the layer is closed, **when** the recipient views the session header, **then** the discussion control shows a restrained unread indication without interrupting the AI conversation or terminal.
 6. **Given** a viewer opens discussion, **when** they read notes, **then** they may inspect the human discussion but cannot post or mutate it under the existing viewer rules.
 7. **Given** reduced motion is enabled, **when** the layer opens or closes, **then** it uses a non-spatial fade or equivalent low-motion transition.
-8. **Given** a narrow or mobile viewport, **when** discussion opens, **then** all messages, composer state, dismiss actions, focus order, and the underlying-session context remain usable without horizontal scrolling.
+8. **Given** a narrow or mobile viewport, **when** discussion opens, **then** a full-height bottom sheet keeps all messages, composer state, dismiss actions, focus order, and underlying-session context usable without horizontal scrolling.
 
 ---
 
@@ -74,11 +74,11 @@ As an owner, I want compact sharing controls in the ordinary Chat or terminal he
 
 **Acceptance Scenarios**:
 
-1. **Given** an unshared Chat or eligible terminal, **when** the owner views its header, **then** a restrained collaboration/access control is available and the rest of the session remains visually equivalent to its normal unshared state.
+1. **Given** an unshared Chat or eligible terminal, **when** the owner views its header, **then** one compact access icon is available and the rest of the session remains visually equivalent to its normal unshared state.
 2. **Given** a Chat owner opens sharing choices, **when** choices are presented, **then** “Share snapshot” and “Invite collaborators” are distinct actions with concise explanations of frozen-public-copy versus authenticated-live-access consequences.
 3. **Given** collaboration is enabled and an owner invites a person, **when** they enter a supported exact username or email and choose editor or viewer, **then** the invitation is created through the existing identity resolution and authority model with safe generic failure messages.
-4. **Given** a session is shared, **when** any member opens collaboration details, **then** they can see members, roles, invitation state where authorized, owner identity, their own role, and the scope of the share.
-5. **Given** the owner changes a role or revokes a member, **when** the operation succeeds, **then** the displayed access state and live capabilities update promptly; late or delayed client actions remain rejected.
+4. **Given** a session is shared, **when** any member activates the compact access icon, **then** a summary popover shows shared status, owner identity, their own role, the share scope, and member avatars; pending invitation detail is visible only where authorized.
+5. **Given** an owner needs to invite, change a role, or revoke a member, **when** they choose “Manage access” from the summary popover, **then** the full management surface opens as the second and final disclosure level; successful changes update the summary and live capabilities promptly while late or delayed client actions remain rejected.
 6. **Given** an editor or viewer opens collaboration details, **when** they inspect it, **then** owner-only actions are absent or disabled consistently and direct unauthorized requests remain rejected.
 7. **Given** a snapshot exists independently of live collaboration, **when** membership changes or the snapshot is revoked, **then** the other access mechanism is unchanged and the interface explains the distinction where the action occurs.
 8. **Given** the collaboration feature flag is off, **when** any Chat or terminal renders, **then** live collaboration controls, discussion controls, member management, invitations, badges, and Shared-with-me destinations are hidden while existing snapshot sharing continues under its own policy.
@@ -112,11 +112,11 @@ As a Matrix user, I want a first-class “Shared with me” destination so I can
 
 **Why this priority**: A collaboration product is incomplete if discovery depends on copied URLs or an account-menu entry.
 
-**Independent Test**: Invite a user to a Chat and terminal, verify a pending count appears in supported shell navigation, accept one and decline one, then reopen the accepted item from “Shared with me” inside the normal Chat or Terminal app in Canvas and Desktop/Electron.
+**Independent Test**: Invite a user to a Chat and terminal, verify a pending count appears beside “Shared with me” in the Chat sidebar/navigation, accept one and decline one, then reopen the accepted item inside the normal Chat or Terminal app in Canvas and Desktop/Electron.
 
 **Acceptance Scenarios**:
 
-1. **Given** collaboration is enabled, **when** the user opens Canvas, Desktop/Electron, responsive web, or an applicable native/mobile shell, **then** “Shared with me” is present in the shell's primary navigation at the clarified location.
+1. **Given** collaboration is enabled, **when** the user opens Chat in Canvas, Desktop/Electron, responsive web, or an applicable native/mobile shell, **then** “Shared with me” is a permanent first-class destination in the existing Chat left sidebar/navigation or its mobile drawer equivalent; no separate collaboration app or dock icon is added.
 2. **Given** pending invitations exist, **when** the navigation is visible, **then** it shows a clear bounded pending indication that does not disclose private resource data.
 3. **Given** the user opens “Shared with me,” **when** data loads, **then** pending invitations appear before accepted items and show owner, requested role, item type, and accept and decline actions.
 4. **Given** accepted shared items exist, **when** they are listed, **then** Chats and terminals show owner, role, item type, useful live/unavailable status, and a direct open action.
@@ -178,15 +178,15 @@ As a person who moves between Matrix surfaces, I want shared sessions to preserv
 
 - **FR-009**: Every shared Chat and shared terminal MUST provide a separate, clearly labeled human-only discussion layer opened from session chrome.
 - **FR-010**: Discussion messages MUST NOT enter the Chat AI queue, prompt the AI, write terminal input, or appear as AI-session prompts.
-- **FR-011**: The discussion layer MUST use the clarified desktop/mobile presentation, overlay the session without layout shift, and support trigger toggle, light dismiss, Escape, focus entry/return, keyboard navigation, touch targets, and reduced motion.
+- **FR-011**: The discussion layer MUST use a right-side overlay drawer contained within the session window on desktop and a full-height bottom sheet on mobile. It MUST overlay the session without layout shift and support trigger toggle, light dismiss, Escape, focus entry/return, keyboard navigation, touch targets, and reduced motion.
 - **FR-012**: Discussion drafts MUST remain private to their author, be independently scoped from the normal Chat prompt draft, and survive transient closing and safe reconnect/navigation behavior consistent with existing bounded draft policy.
 - **FR-013**: The closed discussion control MUST support a restrained unread indication and accessible announcement without interrupting the primary session.
 - **FR-014**: Viewers MUST be able to read discussion where the existing role contract allows session reads, but MUST NOT post or mutate discussion.
 
 #### Session access and sharing
 
-- **FR-015**: Ordinary Chat and terminal chrome MUST include the clarified compact collaboration/access control and a separate discussion control only when live collaboration is enabled for the user and runtime.
-- **FR-016**: Unshared sessions MUST remain visually close to their current normal state; shared status, current role, member presence, and controller state MUST use progressive disclosure and restrained indicators.
+- **FR-015**: Ordinary Chat and terminal chrome MUST include one compact access icon and a separate discussion control only when live collaboration is enabled for the user and runtime. Activating the access icon MUST open a lightweight summary popover with shared status, the current person's role, and member avatars; authorized owners MUST reach full access management from that popover as the second and final disclosure level.
+- **FR-016**: Unshared sessions MUST remain visually close to their current normal state; shared status, current role, member presence, and controller state MUST use the compact access summary and other restrained indicators rather than persistent management controls.
 - **FR-017**: Chat sharing MUST preserve distinct “Share snapshot” and “Invite collaborators” actions and MUST explain their different audience, mutability, authentication, expiry, and revocation semantics at the point of choice.
 - **FR-018**: Snapshot tokens MUST never authenticate live collaboration, and live collaboration proofs, tickets, or invitations MUST never authenticate snapshot management or public snapshot reads.
 - **FR-019**: Authorized owners MUST be able to invite by every exact identity form supported by the existing backend, including username and verified email, choose editor or viewer, inspect pending and accepted members, change roles, and revoke access.
@@ -205,7 +205,7 @@ As a person who moves between Matrix surfaces, I want shared sessions to preserv
 
 #### Shared discovery and native routing
 
-- **FR-029**: Matrix MUST provide a first-class “Shared with me” destination at the clarified shell-navigation location in Canvas first, Web Desktop, Electron Desktop, responsive web, and supported native/mobile surfaces.
+- **FR-029**: Matrix MUST provide “Shared with me” as a permanent first-class destination in the existing Chat left sidebar/navigation in Canvas first, Web Desktop, and Electron Desktop, and in the corresponding Chat/navigation drawer on responsive web and supported native/mobile surfaces. It MUST NOT create a separate collaboration app or dock icon.
 - **FR-030**: The destination MUST show a bounded pending-invitation indication and list pending invitations with owner, role, item type, accept, and decline actions.
 - **FR-031**: The destination MUST list accepted shared Chats and terminals with owner, effective role, item type, and relevant availability or live status.
 - **FR-032**: Opening an accepted item from discovery or a deep link MUST resolve into the ordinary native Chat or Terminal app and MUST NOT leave the user on standalone collaboration HTML.
