@@ -65,9 +65,12 @@ export function startSyncOrphanCollectorLifecycle(input: {
     if (stopped || active) return;
     active = input.sweep(controller.signal)
       .then(() => undefined)
-      .catch(() => {
+      .catch((err: unknown) => {
         if (!controller.signal.aborted) {
-          input.logger?.warn("Sync orphan sweep failed", { operation: "sweep" });
+          input.logger?.warn("Sync orphan sweep failed", {
+            operation: "sweep",
+            errorType: err instanceof Error ? err.name : "NonErrorThrown",
+          });
         }
       })
       .finally(() => {
@@ -176,9 +179,12 @@ export async function sweepSyncPublicationOrphans(input: {
     try {
       await input.store.deleteObject(candidate.key, signal);
       result.deleted += 1;
-    } catch {
+    } catch (err: unknown) {
       result.failed += 1;
-      input.logger?.warn("Sync orphan object cleanup failed", { operation: "delete" });
+      input.logger?.warn("Sync orphan object cleanup failed", {
+        operation: "delete",
+        errorType: err instanceof Error ? err.name : "NonErrorThrown",
+      });
     }
   }
 
@@ -201,9 +207,12 @@ export async function sweepSyncPublicationOrphans(input: {
     try {
       await input.store.abortMultipartUpload(upload.key, upload.uploadId, signal);
       result.aborted += 1;
-    } catch {
+    } catch (err: unknown) {
       result.failed += 1;
-      input.logger?.warn("Sync orphan multipart cleanup failed", { operation: "abort" });
+      input.logger?.warn("Sync orphan multipart cleanup failed", {
+        operation: "abort",
+        errorType: err instanceof Error ? err.name : "NonErrorThrown",
+      });
     }
   }
 

@@ -54,7 +54,8 @@ export function deriveHomeMirrorSyncIdentity(input: {
       ownerId: input.baseUserId,
       runtimeSlot: input.runtimeSlot,
     });
-  } catch {
+  } catch (err: unknown) {
+    if (!(err instanceof Error)) throw err;
     const runtimeSlot = input.runtimeSlot?.trim() || "primary";
     if (!/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(runtimeSlot)) {
       throw new Error("Invalid MATRIX_RUNTIME_SLOT for home mirror sync identity");

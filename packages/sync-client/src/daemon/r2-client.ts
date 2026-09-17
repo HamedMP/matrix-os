@@ -51,7 +51,8 @@ async function throwIfUpgradeRequired(res: Response): Promise<void> {
     if (typeof data.requiredProtocolVersion === "number") {
       requiredProtocolVersion = data.requiredProtocolVersion;
     }
-  } catch {
+  } catch (err: unknown) {
+    if (!(err instanceof Error)) throw err;
     // The status code remains authoritative if an older gateway omits JSON.
   }
   throw new SyncUpgradeRequiredError(requiredProtocolVersion);

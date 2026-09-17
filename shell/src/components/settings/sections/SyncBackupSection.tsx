@@ -95,7 +95,8 @@ async function fetchBoundedStatus<T>(
     if (!response.ok) return { reachable: true, data: null };
     const parsed = schema.safeParse(await readBoundedJson(response));
     return { reachable: true, data: parsed.success ? parsed.data : null };
-  } catch {
+  } catch (error: unknown) {
+    if (!(error instanceof Error)) throw error;
     return { reachable: false, data: null };
   }
 }

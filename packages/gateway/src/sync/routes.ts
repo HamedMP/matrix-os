@@ -231,7 +231,8 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
     try {
       buildFileKey(scope, parsed.data.path);
       objectKey = buildStagingKey(scope, parsed.data.stagingId);
-    } catch {
+    } catch (err: unknown) {
+      if (!(err instanceof Error)) throw err;
       return c.json({ error: "Invalid request" }, 400);
     }
     try {
@@ -272,7 +273,8 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
     try {
       buildFileKey(scope, parsed.data.path);
       objectKey = buildStagingKey(scope, parsed.data.stagingId);
-    } catch {
+    } catch (err: unknown) {
+      if (!(err instanceof Error)) throw err;
       return c.json({ error: "Invalid request" }, 400);
     }
     try {
@@ -417,7 +419,8 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
 
     try {
       buildFileKey(scope, parsed.data.path);
-    } catch {
+    } catch (err: unknown) {
+      if (!(err instanceof Error)) throw err;
       return c.json({ error: "Invalid path" }, 400);
     }
 
@@ -425,7 +428,8 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
       let conflictObjectKey: string;
       try {
         conflictObjectKey = buildFileKey(scope, parsed.data.conflictPath);
-      } catch {
+      } catch (err: unknown) {
+        if (!(err instanceof Error)) throw err;
         return c.json({ error: "Invalid conflict path" }, 400);
       }
       try {

@@ -208,7 +208,8 @@ export function SyncBackupView({
     try {
       setSnapshot(await transport.getSnapshot());
       if (!preserveError) setError(null);
-    } catch {
+    } catch (error: unknown) {
+      if (!(error instanceof Error)) throw error;
       if (!preserveError) setError("Sync status could not be refreshed. Try again.");
     } finally {
       setLoading(false);
@@ -248,7 +249,8 @@ export function SyncBackupView({
     try {
       const chosen = await chooseFolder();
       if (mode === "add" && chosen) setRemotePrefix(suggestedRemotePrefix(chosen.displayPath));
-    } catch {
+    } catch (error: unknown) {
+      if (!(error instanceof Error)) throw error;
       setError("That folder could not be selected. Choose another folder.");
     }
   };
@@ -273,7 +275,8 @@ export function SyncBackupView({
       setSnapshot(next);
       setSetupOpen(false);
       setSelection(null);
-    } catch {
+    } catch (error: unknown) {
+      if (!(error instanceof Error)) throw error;
       setError("The synced folder was not changed. Review the paths and try again.");
       await refresh(true);
     } finally {
@@ -286,7 +289,8 @@ export function SyncBackupView({
     setError(null);
     try {
       setSnapshot(await action());
-    } catch {
+    } catch (error: unknown) {
+      if (!(error instanceof Error)) throw error;
       setError("The sync change did not complete. Your folders were left unchanged.");
       await refresh(true);
     } finally {

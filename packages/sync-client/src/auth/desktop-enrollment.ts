@@ -101,6 +101,22 @@ export interface DesktopReauthorizationDependencies {
   installAndStart: () => Promise<void>;
 }
 
+async function revokeCredentialBestEffort(
+  revoke: typeof revokeSyncDeviceAuth | undefined,
+  request: Parameters<typeof revokeSyncDeviceAuth>[0],
+  operation: "new_credential_rollback" | "previous_credential_retirement",
+): Promise<void> {
+  if (!revoke) return;
+  try {
+    await revoke(request);
+  } catch (err: unknown) {
+    console.warn("[sync/enrollment] Credential cleanup failed", {
+      operation,
+      errorType: err instanceof Error ? err.name : "NonErrorThrown",
+    });
+  }
+}
+
 async function readDesktopInput<T>(
   stream: AsyncIterable<Uint8Array | string>,
   schema: z.ZodType<T>,
@@ -189,7 +205,11 @@ export async function performDesktopEnrollment(
   try {
     await deps.saveCredential(input.profile, credential);
   } catch (err: unknown) {
-    await deps.revoke?.({ platformUrl: input.platformUrl, auth: credential }).catch(() => undefined);
+    await revokeCredentialBestEffort(
+      deps.revoke,
+      { platformUrl: input.platformUrl, auth: credential },
+      "new_credential_rollback",
+    );
     throw err;
   }
 
@@ -273,14 +293,22 @@ export async function performDesktopReauthorization(
   try {
     await deps.saveCredential(input.profile, credential);
   } catch (err: unknown) {
-    await deps.revoke?.({ platformUrl: input.platformUrl, auth: credential }).catch(() => undefined);
+    await revokeCredentialBestEffort(
+      deps.revoke,
+      { platformUrl: input.platformUrl, auth: credential },
+      "new_credential_rollback",
+    );
     throw err;
   }
   if (previousCredential) {
-    await deps.revoke?.({
-      platformUrl: input.platformUrl,
-      auth: previousCredential,
-    }).catch(() => undefined);
+    await revokeCredentialBestEffort(
+      deps.revoke,
+      {
+        platformUrl: input.platformUrl,
+        auth: previousCredential,
+      },
+      "previous_credential_retirement",
+    );
   }
   await deps.installAndStart();
   return { ok: true, profile: input.profile };

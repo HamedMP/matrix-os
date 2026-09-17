@@ -115,16 +115,22 @@ describe("sync publication orphan collector", () => {
       deleteObject,
     });
 
+    const warn = vi.fn();
     const result = await sweepSyncPublicationOrphans({
       store: testStore,
       scope,
       now: () => now,
       maxActions: 2,
-      logger: { warn: vi.fn() },
+      logger: { warn },
     });
 
     expect(deleteObject).toHaveBeenCalledTimes(2);
     expect(result).toMatchObject({ deleted: 1, failed: 1, truncated: true });
+    expect(warn).toHaveBeenCalledWith("Sync orphan object cleanup failed", {
+      operation: "delete",
+      errorType: "Error",
+    });
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("provider detail must stay private");
   });
 
   it("runs lifecycle sweeps immediately, serially, and aborts on shutdown", async () => {
