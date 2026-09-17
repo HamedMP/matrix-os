@@ -116,7 +116,13 @@ export async function saveAuthToMacKeychain(
     await mkdir(dirname(filePath), { recursive: true, mode: 0o700 });
     await writeUtf8FileAtomic(filePath, JSON.stringify(reference, null, 2), 0o600);
   } catch (err: unknown) {
-    await keychain.delete(account).catch(() => undefined);
+    try {
+      await keychain.delete(account);
+    } catch (cleanupErr: unknown) {
+      console.warn("[sync/auth] Failed to roll back an unreferenced Keychain credential", {
+        errorType: cleanupErr instanceof Error ? cleanupErr.name : "NonErrorThrown",
+      });
+    }
     throw err;
   }
 }

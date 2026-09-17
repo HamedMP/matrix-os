@@ -42,7 +42,8 @@ async function readBoundedJson(response: Response): Promise<unknown> {
   }
   try {
     return JSON.parse(new TextDecoder().decode(bytes));
-  } catch {
+  } catch (err: unknown) {
+    if (!(err instanceof SyntaxError)) throw err;
     throw new SyncDeviceAuthError("invalid_response");
   }
 }

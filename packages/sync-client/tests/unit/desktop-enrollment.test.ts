@@ -113,6 +113,32 @@ describe("Desktop helper enrollment", () => {
     expect(revoke).toHaveBeenCalledWith(expect.objectContaining({ auth: CREDENTIAL }));
   });
 
+  it("reports credential rollback failures without logging credential details", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const revoke = vi.fn(async () => {
+      throw new Error(`provider rejected ${CREDENTIAL.refreshToken}`);
+    });
+
+    await expect(performDesktopEnrollment(INPUT, {
+      enroll: vi.fn(async () => CREDENTIAL),
+      revoke,
+      saveCredential: vi.fn(async () => { throw new Error("disk full"); }),
+      saveProfile: vi.fn(async () => undefined),
+      loadLegacyConfig: vi.fn(async () => null),
+      saveLegacyConfig: vi.fn(async () => undefined),
+      loadMappingConfig: vi.fn(async () => null),
+      saveMappingConfig: vi.fn(async () => undefined),
+      installAndStart: vi.fn(async () => undefined),
+    })).rejects.toThrow("disk full");
+
+    expect(warn).toHaveBeenCalledWith(
+      "[sync/enrollment] Credential cleanup failed",
+      { operation: "new_credential_rollback", errorType: "Error" },
+    );
+    expect(JSON.stringify(warn.mock.calls)).not.toContain(CREDENTIAL.refreshToken);
+    warn.mockRestore();
+  });
+
   it("renews the Desktop grant without mutating existing mappings", async () => {
     const input = DesktopReauthorizationInputSchema.parse({
       schemaVersion: 1,

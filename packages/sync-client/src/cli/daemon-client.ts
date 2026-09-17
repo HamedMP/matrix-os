@@ -55,7 +55,8 @@ export async function probeDaemonSocket(
 ): Promise<boolean> {
   try {
     await validateDaemonSocketIdentity(sock);
-  } catch {
+  } catch (err: unknown) {
+    if (!(err instanceof Error)) throw err;
     return false;
   }
   return new Promise((resolve) => {

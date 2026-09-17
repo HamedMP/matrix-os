@@ -93,7 +93,8 @@ export function createMacKeychainAuthStore(options: {
         const encoded = result.stdout.trim();
         if (!/^[A-Za-z0-9_-]{1,32768}$/.test(encoded)) throw new Error("invalid encoding");
         return AuthDataSchema.parse(JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")));
-      } catch {
+      } catch (err: unknown) {
+        if (!(err instanceof Error)) throw err;
         throw new Error("macOS Keychain credential is invalid");
       }
     },

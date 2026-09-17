@@ -122,9 +122,17 @@ if (shouldRunStandaloneDaemon(rawArgs)) {
   const { loadProfileAuth, clearProfileAuth } = await import("../auth/token-store.js");
   const { revokeSyncDeviceAuth } = await import("../auth/sync-device.js");
   const { loadProfiles } = await import("../lib/profiles.js");
-  const { sendCommand } = await import("./daemon-client.js");
+  const {
+    DAEMON_UNAVAILABLE_CODE,
+    isDaemonClientError,
+    sendCommand,
+  } = await import("./daemon-client.js");
   try {
-    await sendCommand("sync.pause").catch(() => undefined);
+    try {
+      await sendCommand("sync.pause");
+    } catch (err: unknown) {
+      if (!isDaemonClientError(err) || err.code !== DAEMON_UNAVAILABLE_CODE) throw err;
+    }
     const profiles = await loadProfiles({ migrateLegacyFiles: false });
     const profile = profiles.profiles.desktop;
     const auth = await loadProfileAuth("desktop");
@@ -133,7 +141,8 @@ if (shouldRunStandaloneDaemon(rawArgs)) {
     }
     if (auth) await clearProfileAuth("desktop");
     process.stdout.write(`${JSON.stringify({ ok: true })}\n`);
-  } catch {
+  } catch (err: unknown) {
+    if (!(err instanceof Error)) throw err;
     console.error(JSON.stringify({ ok: false, error: "desktop_revocation_failed" }));
     process.exitCode = 1;
   }

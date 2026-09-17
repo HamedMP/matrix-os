@@ -135,7 +135,13 @@ export async function finalizeStagedObject(input: {
     return { objectKey };
   } finally {
     if (timeout) clearTimeout(timeout);
-    await handle.close().catch(() => undefined);
+    try {
+      await handle.close();
+    } catch (err: unknown) {
+      console.warn("[sync/publication] Failed to close a staging validation handle", {
+        errorType: err instanceof Error ? err.name : "NonErrorThrown",
+      });
+    }
     await rm(tempDir, { recursive: true, force: true });
   }
 }

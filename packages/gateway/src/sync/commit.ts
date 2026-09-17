@@ -40,7 +40,8 @@ export async function handleCommit(
   for (const file of request.files) {
     try {
       buildFileKey(scope, file.path);
-    } catch {
+    } catch (err: unknown) {
+      if (!(err instanceof Error)) throw err;
       return {
         error: "Invalid file path",
         currentVersion: 0,
