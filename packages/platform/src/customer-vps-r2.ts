@@ -69,8 +69,8 @@ function normalizeStrictIsoDateTime(value: string): string {
 }
 
 export function validateDbLatestPointer(value: string): boolean {
-  const primarySnapshot = /^system\/db\/snapshots\/\d{4}-\d{2}-\d{2}T\d{4}Z\.dump$/.test(value);
-  const slotSnapshot = /^system\/runtime-slots\/([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)\/db\/snapshots\/\d{4}-\d{2}-\d{2}T\d{4}Z\.dump$/.exec(value);
+  const primarySnapshot = /^system\/db\/snapshots\/\d{4}-\d{2}-\d{2}T\d{4}(?:\d{2})?Z\.dump$/.test(value);
+  const slotSnapshot = /^system\/runtime-slots\/([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)\/db\/snapshots\/\d{4}-\d{2}-\d{2}T\d{4}(?:\d{2})?Z\.dump$/.exec(value);
   return (primarySnapshot || Boolean(slotSnapshot && RuntimeSlotSchema.safeParse(slotSnapshot[1]).success)) &&
     !value.includes('..') &&
     !value.includes(':') &&

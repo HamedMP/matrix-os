@@ -158,6 +158,28 @@ describe("platform/internal-sync-routes", () => {
     );
   });
 
+  it("accepts immutable backup receipts with second-resolution names", async () => {
+    r2.getPresignedPutUrl.mockResolvedValue("https://platform.example/presigned-receipt-put");
+    const app = createTestApp();
+    const key = "system/db/receipts/2026-09-17T120000Z.json";
+
+    const res = await app.request("/internal/containers/alice/sync/system/presign/put", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${bearerFor("alice", "platform-secret-123")}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ key, size: 512 }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(r2.getPresignedPutUrl).toHaveBeenCalledWith(
+      `matrixos-sync/user_alice/${key}`,
+      512,
+      300,
+    );
+  });
+
   it("checks backup existence only under the authenticated tenant prefix", async () => {
     r2.headObject.mockResolvedValue({ exists: true, etag: '"etag"' });
     const app = createTestApp();

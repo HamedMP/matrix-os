@@ -1203,7 +1203,7 @@ apply_update() {
 
   if [ -d "$extract_dir/systemd" ]; then
     sudo install -d -o root -g root -m 0755 /etc/systemd/system
-    sudo find "$extract_dir/systemd" -maxdepth 1 -name 'matrix-*.service' -exec install -o root -g root -m 0644 {} /etc/systemd/system/ \;
+    sudo find "$extract_dir/systemd" -maxdepth 1 \( -name 'matrix-*.service' -o -name 'matrix-*.timer' \) -exec install -o root -g root -m 0644 {} /etc/systemd/system/ \;
     sudo systemctl daemon-reload
     log "Installed systemd units"
     if [ -f "$extract_dir/systemd/matrix-sync-agent.service" ]; then
@@ -1211,6 +1211,17 @@ apply_update() {
         log "Sync agent service enabled"
       else
         log "WARN: failed to enable matrix-sync-agent.service"
+      fi
+    fi
+    if [ -f "$extract_dir/systemd/matrix-db-backup.timer" ]; then
+      backup_pause_marker="${MATRIX_DB_BACKUP_PAUSE_MARKER:-/etc/matrix/db-backup.paused}"
+      if [ -L "$backup_pause_marker" ]; then
+        log "WARN: invalid database backup pause marker; timer state left unchanged"
+      elif [ -f "$backup_pause_marker" ]; then
+        log "Database backup timer remains operator-paused"
+      else
+        sudo systemctl enable --now matrix-db-backup.timer
+        log "Database backup timer enabled"
       fi
     fi
     if [ -f "$extract_dir/systemd/matrix-scope-runtime.service" ]; then

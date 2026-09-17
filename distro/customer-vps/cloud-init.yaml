@@ -275,7 +275,7 @@ write_files:
       EnvironmentFile=/opt/matrix/env/host.env
       EnvironmentFile=/opt/matrix/env/postgres.env
       ExecStart=/opt/matrix/bin/matrix-db-backup.sh
-      TimeoutStartSec=600
+      TimeoutStartSec=1200
   - path: /etc/systemd/system/matrix-db-backup.timer
     owner: root:root
     permissions: "0644"

@@ -15,7 +15,8 @@ const MAX_PARTS = 10_000;
 const MAX_OBJECT_SIZE = 5 * 1024 * 1024 * 1024 * 1024;
 const SAFE_HANDLE = /^[a-z0-9][a-z0-9-]{1,62}$/;
 const SAFE_SLOT = /^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
-const SNAPSHOT_NAME = /^\d{4}-\d{2}-\d{2}T\d{4}Z\.dump$/;
+const SNAPSHOT_NAME = /^\d{4}-\d{2}-\d{2}T\d{4}(?:\d{2})?Z\.dump$/;
+const RECEIPT_NAME = /^\d{4}-\d{2}-\d{2}T\d{6}Z\.json$/;
 
 function fail(message) {
   throw new Error(message);
@@ -30,11 +31,17 @@ function storageAccess(key) {
   if (key === 'system/db/latest') return 'write';
   const primary = /^system\/db\/snapshots\/([^/]+)$/.exec(key);
   if (primary) return SNAPSHOT_NAME.test(primary[1]) ? 'write' : null;
+  const primaryReceipt = /^system\/db\/receipts\/([^/]+)$/.exec(key);
+  if (primaryReceipt) return RECEIPT_NAME.test(primaryReceipt[1]) ? 'write' : null;
   const latest = /^system\/runtime-slots\/([^/]+)\/db\/latest$/.exec(key);
   if (latest) return SAFE_SLOT.test(latest[1]) ? 'write' : null;
   const snapshot = /^system\/runtime-slots\/([^/]+)\/db\/snapshots\/([^/]+)$/.exec(key);
   if (snapshot) {
     return SAFE_SLOT.test(snapshot[1]) && SNAPSHOT_NAME.test(snapshot[2]) ? 'write' : null;
+  }
+  const receipt = /^system\/runtime-slots\/([^/]+)\/db\/receipts\/([^/]+)$/.exec(key);
+  if (receipt) {
+    return SAFE_SLOT.test(receipt[1]) && RECEIPT_NAME.test(receipt[2]) ? 'write' : null;
   }
   return null;
 }

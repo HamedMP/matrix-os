@@ -285,6 +285,7 @@ import {
   createLazyOpenClawRpc,
 } from "./agent-config/runtime-services.js";
 import { syncApp, createSyncRoutes, type SyncRouteDeps } from "./sync/routes.js";
+import { loadBackupStatus } from "./sync/backup-status.js";
 import { createR2Client, type R2Client, type R2ClientConfig } from "./sync/r2-client.js";
 import { createPlatformR2Client } from "./sync/platform-r2-client.js";
 import { createManifestDb, createKyselySharingDb } from "./sync/db-impl.js";
@@ -1249,6 +1250,7 @@ export async function createGateway(config: GatewayConfig) {
           runtimeSlot: process.env.MATRIX_RUNTIME_SLOT,
         }),
         getPeerId: (c) => sanitizePeerId(c.req.header("X-Peer-Id")),
+        getBackupStatus: () => loadBackupStatus(),
       };
 
       console.log("[sync] Sync API initialized (storage:", s3AccessKey && s3SecretKey ? (s3Endpoint ?? "R2") : "platform-internal", ")");

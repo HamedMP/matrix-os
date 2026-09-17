@@ -153,6 +153,46 @@ describe("GET /api/sync/manifest", () => {
   });
 });
 
+describe("GET /api/sync/backup-status", () => {
+  it("returns distinct scheduler, attempt, success, and freshness evidence", async () => {
+    const getBackupStatus = vi.fn().mockResolvedValue({
+      schemaVersion: 1,
+      scheduler: { enabled: true, active: true, nextDueAt: 200 },
+      lastAttempt: { attemptedAt: 100, outcome: "success", errorCode: null },
+      lastSuccess: {
+        snapshotKey: "system/db/snapshots/2026-09-17T120000Z.dump",
+        receiptKey: "system/db/receipts/2026-09-17T120000Z.json",
+        sha256: "a".repeat(64),
+        size: 42,
+        runtimeSlot: "primary",
+        completedAt: 100,
+        restoreVerifiedAt: null,
+      },
+      storageReachability: "reachable",
+      freshness: "healthy",
+      observedAt: 150,
+    });
+    const response = await createTestApp({ getBackupStatus }).request(
+      jsonRequest("/api/sync/backup-status", undefined, "GET"),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      scheduler: { enabled: true, active: true },
+      lastSuccess: { size: 42 },
+      freshness: "healthy",
+    });
+  });
+
+  it("fails closed when the local status provider is unavailable", async () => {
+    const response = await createTestApp().request(
+      jsonRequest("/api/sync/backup-status", undefined, "GET"),
+    );
+
+    expect(response.status).toBe(503);
+  });
+});
+
 describe("POST /api/sync/presign", () => {
   beforeEach(() => {
     vi.clearAllMocks();

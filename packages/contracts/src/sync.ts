@@ -81,6 +81,48 @@ export const SyncMappingConfigSchema = z.object({
 });
 export type SyncMappingConfig = z.infer<typeof SyncMappingConfigSchema>;
 
+export const BackupAttemptSchema = z.object({
+  attemptedAt: z.int().nonnegative(),
+  outcome: z.enum(["running", "success", "failed"]),
+  errorCode: z.string().regex(/^[a-z0-9_]{1,64}$/).nullable(),
+}).strict();
+
+export const BackupReceiptSchema = z.object({
+  snapshotKey: z.string().min(1).max(512),
+  receiptKey: z.string().min(1).max(512),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  size: z.int().positive(),
+  runtimeSlot: SyncRuntimeSlotSchema,
+  completedAt: z.int().nonnegative(),
+  restoreVerifiedAt: z.int().nonnegative().nullable(),
+}).strict();
+
+export const BackupStatusSchema = z.object({
+  schemaVersion: z.literal(1),
+  scheduler: z.object({
+    enabled: z.boolean().nullable(),
+    active: z.boolean().nullable(),
+    nextDueAt: z.int().nonnegative().nullable(),
+  }).strict(),
+  lastAttempt: BackupAttemptSchema.nullable(),
+  lastSuccess: BackupReceiptSchema.nullable(),
+  storageReachability: z.enum(["reachable", "unreachable", "unknown"]),
+  freshness: z.enum(["healthy", "stale", "critical", "unknown"]),
+  observedAt: z.int().nonnegative(),
+}).strict();
+export type BackupStatus = z.infer<typeof BackupStatusSchema>;
+
+export function deriveBackupFreshness(
+  completedAt: number | null,
+  now: number,
+): BackupStatus["freshness"] {
+  if (completedAt === null || completedAt > now) return "unknown";
+  const age = now - completedAt;
+  if (age <= 2 * 60 * 60 * 1000) return "healthy";
+  if (age <= 24 * 60 * 60 * 1000) return "stale";
+  return "critical";
+}
+
 export function buildSyncStoragePrefix(scope: SyncScope): string {
   const parsed = SyncScopeSchema.parse(scope);
   return parsed.runtimeSlot === "primary"

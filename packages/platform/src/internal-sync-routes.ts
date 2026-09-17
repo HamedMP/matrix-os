@@ -21,7 +21,8 @@ const INTERNAL_SYNC_OBJECT_BODY_LIMIT = 100 * 1024 * 1024;
 const SYSTEM_STORAGE_PRESIGN_TTL_SECONDS = 300;
 const SYSTEM_STORAGE_SINGLE_PUT_LIMIT = 64 * 1024 * 1024;
 const SAFE_USER_ID = /^[A-Za-z0-9_-]{1,256}$/;
-const SYSTEM_SNAPSHOT_NAME = /^\d{4}-\d{2}-\d{2}T\d{4}Z\.dump$/;
+const SYSTEM_SNAPSHOT_NAME = /^\d{4}-\d{2}-\d{2}T\d{4}(?:\d{2})?Z\.dump$/;
+const SYSTEM_RECEIPT_NAME = /^\d{4}-\d{2}-\d{2}T\d{6}Z\.json$/;
 
 interface R2Client {
   getPresignedGetUrl(key: string, expiresIn?: number): Promise<string>;
@@ -132,6 +133,12 @@ function systemStorageAccess(
       ? "write"
       : null;
   }
+  const primaryReceipt = /^system\/db\/receipts\/([^/]+)$/.exec(key);
+  if (primaryReceipt) {
+    return runtimeSlot === "primary" && SYSTEM_RECEIPT_NAME.test(primaryReceipt[1] ?? "")
+      ? "write"
+      : null;
+  }
 
   const slotLatest = /^system\/runtime-slots\/([^/]+)\/db\/latest$/.exec(key);
   if (slotLatest) {
@@ -143,6 +150,14 @@ function systemStorageAccess(
     return runtimeSlot !== "primary" && slotSnapshot[1] === runtimeSlot &&
       isValidRuntimeSlot(slotSnapshot[1] ?? "") &&
       SYSTEM_SNAPSHOT_NAME.test(slotSnapshot[2] ?? "")
+      ? "write"
+      : null;
+  }
+  const slotReceipt = /^system\/runtime-slots\/([^/]+)\/db\/receipts\/([^/]+)$/.exec(key);
+  if (slotReceipt) {
+    return runtimeSlot !== "primary" && slotReceipt[1] === runtimeSlot &&
+      isValidRuntimeSlot(slotReceipt[1] ?? "") &&
+      SYSTEM_RECEIPT_NAME.test(slotReceipt[2] ?? "")
       ? "write"
       : null;
   }
