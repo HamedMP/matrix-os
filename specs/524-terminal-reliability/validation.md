@@ -17,3 +17,7 @@ PR #1736, commit `d4f20f8f6817fed902c684ea4abe9d7bac7daa50`. Account-owned Previ
 An earlier repeated-opening pass observed one socket close/reopen before the first attached frame, after which input succeeded. Its cause is not established; final trials did not reproduce it. Retain this as an open lifecycle observation, distinct from the verified input-burst overflow. Earlier fixed-delay automation also attempted input before readiness and interacted unreliably with xterm's helper textarea; those interrupted trials are not counted as passing.
 
 The complete matrix in quickstart.md remains pending beyond the bounded checks above. Web/Canvas/mobile parity, long-duration reconnects, old processes across two upgrades, replay/snapshot restoration and all everyday interactions have not been established by this repair. Human Review and exact-head landing gates remain open. This document is evidence for a candidate, not a declaration of complete Terminal reliability.
+
+## Separate confirmed baseline defect
+
+Tab rename returned HTTP 500 while preparing review labels. Socket dispatch passes the entire RenameTab input to strict TerminalRefSchema, including name/baseRevision; the same code exists on the untouched baseline. Tracked independently in [#1738](https://github.com/HamedMP/matrix-os/issues/1738). The review environment retains two original tab names. This is not part of the startup queue repair.
