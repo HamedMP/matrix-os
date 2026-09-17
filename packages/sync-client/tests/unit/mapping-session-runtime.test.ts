@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import type { SyncMapping } from "@matrix-os/contracts";
+import type { SyncMapping } from "@matrix-os/contracts/sync";
 
 const mocks = vi.hoisted(() => {
   const watchers: Array<{ options: { onEvent: (event: unknown) => Promise<void> }; start: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn> }> = [];

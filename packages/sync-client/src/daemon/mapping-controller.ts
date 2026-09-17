@@ -4,7 +4,7 @@ import {
   SyncMappingConfigSchema,
   SyncMappingSchema,
   type SyncMappingConfig,
-} from "@matrix-os/contracts";
+} from "@matrix-os/contracts/sync";
 
 const RevisionSchema = z.int().nonnegative();
 const MappingIdSchema = z.uuid();

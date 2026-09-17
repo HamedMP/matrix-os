@@ -60,12 +60,22 @@ async function run(command, args, options = {}) {
 try {
   const packDestination = join(tempRoot, "pack");
   await mkdir(packDestination, { recursive: true });
-  const packed = await run("npm", ["pack", "--pack-destination", packDestination, "--json"], {
+  // pnpm rewrites workspace: dependencies to publishable versions. npm pack
+  // preserves workspace:* and therefore produces a tarball npm exec cannot
+  // install, which would make this validator test a different artifact from
+  // the release workflow.
+  const packed = await run("pnpm", [
+    "pack",
+    "--config.node-linker=hoisted",
+    "--pack-destination",
+    packDestination,
+    "--json",
+  ], {
     home: join(tempRoot, "npm-pack-home"),
     pnpmHome: join(tempRoot, "npm-pack-pnpm-home"),
   });
-  const [packInfo] = JSON.parse(packed.stdout);
-  const tarball = join(packDestination, packInfo.filename);
+  const packInfo = JSON.parse(packed.stdout);
+  const tarball = resolve(packDestination, packInfo.filename);
   const files = new Set(packInfo.files.map((file) => file.path));
   for (const required of [
     "package.json",
@@ -73,6 +83,8 @@ try {
     "src/cli/index.ts",
     "src/lib/find-tsx-loader.mjs",
     "src/lib/node-runtime-guard.mjs",
+    "node_modules/@matrix-os/contracts/package.json",
+    "node_modules/@matrix-os/contracts/src/sync.ts",
   ]) {
     if (!files.has(required)) {
       throw new Error(`Packed package is missing ${required}`);

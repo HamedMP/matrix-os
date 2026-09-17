@@ -2,7 +2,7 @@ import {
   SyncDeviceCredentialSchema,
   SyncDeviceEnrollmentRequestSchema,
   SyncDeviceRefreshRequestSchema,
-} from "@matrix-os/contracts";
+} from "@matrix-os/contracts/sync";
 import type { AuthData } from "./token-store.js";
 
 const AUTH_REQUEST_TIMEOUT_MS = 10_000;
