@@ -1,3 +1,4 @@
+import { APP_AI_CHANNEL, APP_AI_TIMEOUT_MS, AppAiInputSchema, AppAiResultSchema, type AppAiInput } from "@matrix-os/contracts";
 import type { IpcMain, IpcMainInvokeEvent } from "electron";
 import { z } from "zod/v4";
 import {
@@ -55,6 +56,7 @@ function isSafeAppIdentity(value: string): boolean {
 }
 
 interface NativeAppBridgeOptions {
+  aiRequest: (slug: string, input: AppAiInput) => Promise<unknown>;
   request: (slug: string, query: NativeAppQuery) => Promise<unknown>;
   gatewayRequest: (slug: string, request: NativeAppGatewayRequest) => Promise<unknown>;
   gatewayOrigin: () => string;
@@ -159,6 +161,26 @@ export function createNativeAppGatewayRequester(
   };
 }
 
+export function createNativeAppAiRequester(options: NativeAppQueryRequesterOptions) {
+  const fetchFn = options.fetchFn ?? fetch;
+  return async (slug: string, rawInput: AppAiInput) => {
+    if (!isSafeAppIdentity(slug)) throw new Error("invalid app identity");
+    const input = AppAiInputSchema.parse(rawInput);
+    const token = options.getToken();
+    if (!token) throw new Error("desktop authentication required");
+    const origin = new URL(options.getGatewayOrigin());
+    if (!["https:", "http:"].includes(origin.protocol)) throw new Error("invalid gateway origin");
+    const response = await fetchFn(new URL("/api/bridge/ai", origin).toString(), {
+      method: "POST", redirect: "error",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ app: slug, ...input }),
+      signal: AbortSignal.timeout(APP_AI_TIMEOUT_MS + 2_000),
+    });
+    if (!response.ok) throw new Error("App AI is unavailable");
+    return AppAiResultSchema.parse(await readBoundedJson(response));
+  };
+}
+
 function isSenderAtApp(sender: NativeAppSender, origin: string, slug: string): boolean {
   try {
     const url = new URL(sender.url);
@@ -175,6 +197,7 @@ export class NativeAppBridge {
   private readonly maxSenders: number;
 
   constructor(options: NativeAppBridgeOptions) {
+    if (!options.aiRequest) throw new Error("AI requester is required");
     this.options = options;
     this.maxSenders = Math.max(1, Math.min(options.maxSenders ?? DEFAULT_MAX_SENDERS, DEFAULT_MAX_SENDERS));
   }
@@ -226,7 +249,24 @@ export class NativeAppBridge {
     return this.options.gatewayRequest(identity.appIdentity, parsed.data);
   }
 
+  async aiGenerate(sender: NativeAppSender, rawInput: unknown): Promise<unknown> {
+    const identity = this.senders.get(sender.id);
+    if (!identity || !isSenderAtApp(sender, this.options.gatewayOrigin(), identity.routeSlug)) {
+      throw new Error("not authorized");
+    }
+    return this.options.aiRequest(identity.appIdentity, AppAiInputSchema.parse(rawInput));
+  }
+
   registerIpc(ipcMain: Pick<IpcMain, "handle">): void {
+    ipcMain.handle(APP_AI_CHANNEL, async (event: IpcMainInvokeEvent, rawInput: unknown) => {
+      try {
+        if (event.senderFrame !== event.sender.mainFrame) throw new Error("not authorized");
+        return await this.aiGenerate({ id: event.sender.id, url: event.sender.getURL() }, rawInput);
+      } catch (error) {
+        console.warn("[native-app-bridge] AI request failed:", error instanceof Error ? error.name : "UnknownError");
+        throw new Error("App AI is unavailable");
+      }
+    });
     ipcMain.handle(NATIVE_APP_GATEWAY_CHANNEL, async (event: IpcMainInvokeEvent, rawRequest: unknown) => {
       try {
         if (event.senderFrame !== event.sender.mainFrame) throw new Error("not authorized");

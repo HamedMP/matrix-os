@@ -15,6 +15,7 @@ import {
   NativeAppBridge,
   createNativeAppQueryRequester,
   createNativeAppGatewayRequester,
+  createNativeAppAiRequester,
 } from "./embeds/native-app-bridge";
 import {
   abortCodingAgentThread,
@@ -258,6 +259,10 @@ if (!gotLock) {
       );
 
       const nativeAppBridge = new NativeAppBridge({
+        aiRequest: createNativeAppAiRequester({
+          getGatewayOrigin: () => auth.getGatewayOrigin(),
+          getToken: () => auth.getToken(),
+        }),
         gatewayRequest: createNativeAppGatewayRequester({
           getGatewayOrigin: () => auth.getGatewayOrigin(),
           getToken: () => auth.getToken(),

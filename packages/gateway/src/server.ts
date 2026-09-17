@@ -1,3 +1,4 @@
+import { createRuntimeAppAiRoutes } from "./app-ai/runtime.js";
 import { restoreBackgroundChatThread, createBackgroundChatProjection } from "./coding-agents/background-chat-recovery.js";
 import { createBackgroundAgentRuntime } from "./background-agent-runtime.js";
 import { bootstrapChatSharing, ChatSharing } from "./chat/sharing.js";
@@ -3568,6 +3569,13 @@ export async function createGateway(config: GatewayConfig) {
     broadcast({ type: "data:change", app: safeApp, key: safeKey });
     return c.json({ ok: true });
   });
+
+  app.route("/api/bridge/ai", createRuntimeAppAiRoutes({
+    homePath,
+    ownerIds: [process.env.MATRIX_USER_ID, process.env.MATRIX_CLERK_USER_ID]
+      .filter((id): id is string => Boolean(id)),
+    fundedCredentialProvider,
+  }));
 
   app.route("/api/bridge/service", createIntegrationBridgeRoutes({
     platformDb,

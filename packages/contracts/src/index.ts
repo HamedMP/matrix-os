@@ -1406,3 +1406,5 @@ export * from "#file-download";
 export * from "#custom-mcp-availability";
 
 export { normalizeTerminalSnapshot } from "#terminal-snapshot";
+export { APP_AI_TIMEOUT_MS, APP_AI_CHANNEL, AppAiInputSchema, AppAiRequestSchema, AppAiResultSchema, createAppAiClient } from "./app-ai.js";
+export type { AppAiInput, AppAiRequest, AppAiResult } from "./app-ai.js";
