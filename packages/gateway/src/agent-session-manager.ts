@@ -1,3 +1,4 @@
+import { stopLegacySession, type LegacySessionRuntime } from "./legacy-session-stop.js";
 import { deleteProjectSessionFiles } from "./project-session-deletion.js";
 import { TerminalRuntimeError } from "@matrix-os/terminal-runtime";
 import { randomUUID } from "node:crypto";
@@ -332,6 +333,7 @@ export function createAgentSessionManager(options: {
   agentLauncher: AgentLauncher;
   terminalRuntime: TerminalRuntimeClient;
   backgroundRuntime?: BackgroundAgentRuntime;
+  legacyZellij?: LegacySessionRuntime;
   now?: () => string;
   idGenerator?: () => string;
   startupRetryDelaysMs?: readonly number[];
@@ -657,9 +659,10 @@ export function createAgentSessionManager(options: {
         if (session.runtime.type === "background") {
           if (!session.backgroundRef || !options.backgroundRuntime) throw new Error("Background runtime unavailable");
           await (lockedRuntime ?? options.backgroundRuntime).stop(session.backgroundRef);
-        } else {
-          if (!session.terminalRef) throw new Error("Terminal reference unavailable");
+        } else if (session.terminalRef) {
           await options.terminalRuntime.terminateTab(session.terminalRef);
+        } else {
+          await stopLegacySession(session.runtime.zellijSession, options.legacyZellij);
         }
       } catch (err: unknown) {
         if (!(err instanceof TerminalRuntimeError && err.code === "not_found")) {

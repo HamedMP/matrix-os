@@ -48,3 +48,39 @@ it.each(["missing", "unavailable", "running"])("cascades a %s child session with
     await rm(homePath, { recursive: true, force: true });
   }
 });
+
+it.each(["missing", "running", "unavailable"])("cleans a legacy Zellij session with no terminalRef (%s)", async (state) => {
+  const homePath = await mkdtemp(join(tmpdir(), "matrix-legacy-delete-"));
+  const deleteSession = vi.fn(async () => {
+    if (state === "unavailable") throw new Error("Runtime unavailable");
+  });
+  const manager = createAgentSessionManager({
+    homePath,
+    terminalRuntime: { terminateTab: vi.fn(), listWorkspaces: vi.fn() } as never,
+    agentLauncher: { buildLaunch: vi.fn() },
+    worktreeManager: { listWorktrees: vi.fn(), acquireLease: vi.fn(), releaseLease: vi.fn() },
+    legacyZellij: { deleteSession },
+  });
+  try {
+    await mkdir(join(homePath, "system/sessions"), { recursive: true });
+    const path = join(homePath, "system/sessions/sess_legacy.json");
+    await writeFile(path, JSON.stringify({
+      id: "sess_legacy", kind: "agent", projectSlug: "chess", ownerId: "owner_a",
+      runtime: { type: "zellij", status: "degraded", zellijSession: "matrix-rt_legacy", fallbackReason: "runtime_not_running" },
+      transcriptPath: "unused", attachedClients: 0, writeMode: "closed",
+      startedAt: "2026-08-18T00:00:00Z", lastActivityAt: "2026-08-18T00:00:00Z",
+    }));
+    const result = await manager.deleteProjectSessions({ projectSlug: "chess", ownerId: "owner_a" });
+    expect(deleteSession).toHaveBeenCalledWith("matrix-rt_legacy", { force: true });
+    if (state === "unavailable") {
+      expect(result.ok).toBe(false);
+      await expect(stat(path)).resolves.toBeDefined();
+    } else {
+      expect(result).toEqual({ ok: true, deleted: 1 });
+      await expect(stat(path)).rejects.toMatchObject({ code: "ENOENT" });
+    }
+  } finally {
+    manager.shutdown();
+    await rm(homePath, { recursive: true, force: true });
+  }
+});

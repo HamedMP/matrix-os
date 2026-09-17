@@ -16,6 +16,9 @@ explicit deletion. Archive retains its existing active-work guard.
 - Stop coding-agent provider sessions and local execution, then remove owned
   thread/event/turn records. Missing runtime sessions are an idempotent success;
   unavailable runtimes preserve state for retry.
+- Legacy Zellij sessions without a terminalRef use their validated persisted runtime
+  name and the existing force-delete adapter. Missing sessions are confirmed by
+  inventory; failed inventory or a surviving runtime keeps deletion pending.
 - Stop child workspace sessions, remove project terminal workspaces and associated
   child tabs in Main, and remove session records and managed transcript artifacts.
   Preserve unrelated tabs, other owners' state, and external source folders.
