@@ -289,20 +289,13 @@ import {
   createAgentRuntimeServices,
   createLazyOpenClawRpc,
 } from "./agent-config/runtime-services.js";
-import { syncApp, createSyncRoutes, type SyncRouteDeps } from "./sync/routes.js";
-import { createR2Client, type R2Client, type R2ClientConfig } from "./sync/r2-client.js";
-import { createPlatformR2Client } from "./sync/platform-r2-client.js";
-import { createManifestDb, createKyselySharingDb } from "./sync/db-impl.js";
+import { syncApp, createSyncRoutes } from "./sync/routes.js";
+import { initializeSyncInfrastructure } from "./sync/infrastructure.js";
+import { createManifestDb } from "./sync/db-impl.js";
 import { createHomeMirror, type HomeMirror } from "./sync/home-mirror.js";
 import { deriveHomeMirrorSyncIdentity } from "./sync/runtime-scope.js";
-import { createPeerRegistry, type PeerRegistry } from "./sync/ws-events.js";
 import { createSyncPeerLifecycle } from "./sync/ws-peer-lifecycle.js";
-import { createSharingService, type SharingService } from "./sync/sharing.js";
-import { sanitizePeerId } from "./sync/peer-id.js";
 import {
-  deriveGatewaySyncUserSeeds,
-  ensureSyncUser,
-  migrateSyncTables,
   type SyncDatabase,
 } from "./sync/sharing-db.js";
 import { sql, type Kysely } from "kysely";
@@ -1182,77 +1175,13 @@ export async function createGateway(config: GatewayConfig) {
     osViewTools,
   });
 
-  // 066: Sync infrastructure (R2/S3 + ManifestDb + PeerRegistry + Sharing)
-  let syncR2: R2Client | null = null;
-  let syncPeerRegistry: PeerRegistry | null = null;
-  let syncSharing: SharingService | null = null;
-  let syncDeps: SyncRouteDeps | null = null;
-
-  const s3Endpoint = process.env.S3_ENDPOINT ?? process.env.R2_ENDPOINT;
-  const s3AccessKey = process.env.S3_ACCESS_KEY_ID ?? process.env.R2_ACCESS_KEY_ID;
-  const s3SecretKey = process.env.S3_SECRET_ACCESS_KEY ?? process.env.R2_SECRET_ACCESS_KEY;
-  const s3Bucket = process.env.S3_BUCKET ?? process.env.R2_BUCKET ?? "matrixos-sync";
-  const s3ForcePathStyle = process.env.S3_FORCE_PATH_STYLE === "true";
+  const { syncR2, syncPeerRegistry, syncSharing, syncDeps } = await initializeSyncInfrastructure(kyselyInstance);
 
   const geminiLiveConnection: GeminiLiveConnection =
     internalPlatformUrl && internalPlatformToken && internalHandle
       ? { proxy: { platformUrl: internalPlatformUrl, token: internalPlatformToken, handle: internalHandle } }
       : process.env.GEMINI_API_KEY ?? "";
 
-  if (((s3AccessKey && s3SecretKey) || (internalPlatformUrl && internalPlatformToken && internalHandle)) && kyselyInstance) {
-    try {
-      if (s3AccessKey && s3SecretKey) {
-        const r2Config: R2ClientConfig = {
-          accessKeyId: s3AccessKey,
-          secretAccessKey: s3SecretKey,
-          bucket: s3Bucket,
-          endpoint: s3Endpoint,
-          publicEndpoint: process.env.S3_PUBLIC_ENDPOINT ?? process.env.R2_PUBLIC_ENDPOINT,
-          accountId: process.env.R2_ACCOUNT_ID,
-          forcePathStyle: s3ForcePathStyle,
-        };
-        syncR2 = await createR2Client(r2Config);
-      } else {
-        syncR2 = createPlatformR2Client({
-          baseUrl: internalPlatformUrl!,
-          handle: internalHandle!,
-          token: internalPlatformToken!,
-        });
-      }
-
-      await migrateSyncTables(kyselyInstance as Kysely<SyncDatabase>);
-      for (const seed of deriveGatewaySyncUserSeeds()) {
-        await ensureSyncUser(kyselyInstance as Kysely<SyncDatabase>, seed);
-      }
-
-      const manifestDb = createManifestDb(kyselyInstance as Kysely<SyncDatabase>);
-      syncPeerRegistry = createPeerRegistry();
-      const sharingDb = createKyselySharingDb(kyselyInstance as Kysely<SyncDatabase>);
-      syncSharing = createSharingService({ db: sharingDb, peerRegistry: syncPeerRegistry });
-
-      syncDeps = {
-        r2: syncR2,
-        db: manifestDb,
-        peerRegistry: syncPeerRegistry,
-        sharing: syncSharing,
-        // Resolve userId per request through the canonical principal seam so
-        // sync storage keys follow the same source precedence as other
-        // protected owner-scoped routes.
-        getUserId: (c) => requireRequestPrincipal(c).userId,
-        getPeerId: (c) => sanitizePeerId(c.req.header("X-Peer-Id")),
-      };
-
-      console.log("[sync] Sync API initialized (storage:", s3AccessKey && s3SecretKey ? (s3Endpoint ?? "R2") : "platform-internal", ")");
-    } catch (err) {
-      console.error("[sync] Failed to initialize sync:", (err as Error).message);
-      syncR2 = null;
-      syncPeerRegistry = null;
-      syncSharing = null;
-      syncDeps = null;
-    }
-  } else {
-    console.log("[sync] No trusted sync storage configured, sync API disabled");
-  }
 
   // Container-side home mirror: watches the user's home directory and
   // pushes changes to the same R2 bucket the user's local daemon reads.
