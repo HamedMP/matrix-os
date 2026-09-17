@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { proxyChatShare } from './chat-share-proxy.js';
+import { parseChatShareRoute, proxyChatShare } from './chat-share-proxy.js';
 import { fetchRuntimeProxy, shouldReleaseRuntimeProxyTimeout } from "./runtime-proxy-fetch.js";
 export { fetchRuntimeProxy } from "./runtime-proxy-fetch.js";
 import type { Context, MiddlewareHandler } from 'hono';
@@ -361,7 +361,9 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     // but we short-circuit explicitly so a misconfigured PLATFORM_JWT_SECRET or
     // a future refactor can't accidentally proxy them into a user container.
     const reqPath = c.req.path;
-    if (isAppDomain && reqPath.startsWith('/shared/chat/')) return proxyChatShare(c, db, customerVpsProxyDispatcher, appEnv.EDGE_ROUTER_SECRET);
+    if (isAppDomain && parseChatShareRoute(reqPath)) {
+      return proxyChatShare(c, db, customerVpsProxyDispatcher, appEnv.EDGE_ROUTER_SECRET);
+    }
     if (isAppDomain && reqPath === '/service-worker.js') {
       return appDomainServiceWorkerResponse();
     }
