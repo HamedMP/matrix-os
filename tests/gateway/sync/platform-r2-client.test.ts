@@ -107,4 +107,50 @@ describe("platform R2 client", () => {
     expect(init?.signal).toBeInstanceOf(AbortSignal);
     expect(timeoutSpy).toHaveBeenLastCalledWith(30_000);
   });
+
+  it("brokers bounded publication-maintenance listings", async () => {
+    const modified = "2026-09-01T00:00:00.000Z";
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        objects: [{ key: "matrixos-sync/user_alice/staging/object", lastModified: modified, size: 12 }],
+        isTruncated: false,
+      }), { status: 200, headers: { "content-type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        uploads: [{ key: "matrixos-sync/user_alice/staging/object", uploadId: "upload-1", initiated: modified }],
+        isTruncated: true,
+      }), { status: 200, headers: { "content-type": "application/json" } }));
+    const client = createPlatformR2Client({
+      baseUrl: "http://distro-platform-1:9000",
+      handle: "alice",
+      token: "upgrade-token",
+    });
+
+    await expect(client.listObjects!("matrixos-sync/user_alice/staging/", {
+      maxKeys: 25,
+    })).resolves.toEqual({
+      objects: [{
+        key: "matrixos-sync/user_alice/staging/object",
+        lastModified: new Date(modified),
+        size: 12,
+      }],
+      isTruncated: false,
+    });
+    await expect(client.listMultipartUploads!("matrixos-sync/user_alice/staging/", {
+      maxUploads: 25,
+    })).resolves.toEqual({
+      uploads: [{
+        key: "matrixos-sync/user_alice/staging/object",
+        uploadId: "upload-1",
+        initiated: new Date(modified),
+      }],
+      isTruncated: true,
+    });
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "http://distro-platform-1:9000/internal/containers/alice/sync/maintenance/objects",
+    );
+    expect(fetchMock.mock.calls[1]?.[0]).toBe(
+      "http://distro-platform-1:9000/internal/containers/alice/sync/maintenance/multipart",
+    );
+  });
 });

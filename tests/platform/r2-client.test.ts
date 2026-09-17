@@ -88,4 +88,56 @@ describe("platform R2 client", () => {
     });
     client.destroy();
   });
+
+  it("returns bounded object and multipart listings for maintenance", async () => {
+    const {
+      S3Client,
+      ListObjectsV2Command,
+      ListMultipartUploadsCommand,
+    } = await import("@aws-sdk/client-s3");
+    const modified = new Date("2026-09-01T00:00:00.000Z");
+    const send = vi.spyOn(S3Client.prototype, "send").mockImplementation(async (command: any) => {
+      if (command instanceof ListObjectsV2Command) {
+        return {
+          Contents: [{ Key: "matrixos-sync/user/staging/object", LastModified: modified, Size: 4 }],
+          IsTruncated: true,
+        } as any;
+      }
+      if (command instanceof ListMultipartUploadsCommand) {
+        return {
+          Uploads: [{ Key: "matrixos-sync/user/staging/object", UploadId: "upload-1", Initiated: modified }],
+          IsTruncated: false,
+        } as any;
+      }
+      throw new Error("unexpected command");
+    });
+    const client = await createR2Client({
+      endpoint: "https://r2.example.com",
+      accessKeyId: "access-key",
+      secretAccessKey: "secret-key",
+      bucket: "matrixos-sync",
+    });
+
+    await expect(client.listObjects("matrixos-sync/user/staging/", { maxKeys: 20 })).resolves.toEqual({
+      objects: [{
+        key: "matrixos-sync/user/staging/object",
+        lastModified: modified,
+        size: 4,
+      }],
+      isTruncated: true,
+    });
+    await expect(client.listMultipartUploads("matrixos-sync/user/staging/", {
+      maxUploads: 20,
+    })).resolves.toEqual({
+      uploads: [{
+        key: "matrixos-sync/user/staging/object",
+        uploadId: "upload-1",
+        initiated: modified,
+      }],
+      isTruncated: false,
+    });
+
+    expect(send).toHaveBeenCalledTimes(2);
+    client.destroy();
+  });
 });

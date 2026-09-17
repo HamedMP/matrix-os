@@ -174,6 +174,20 @@ interface GatewayR2Client {
     key: string,
     options?: { signal?: AbortSignal },
   ): Promise<{ exists: boolean; etag?: string }>;
+  listObjects(
+    prefix: string,
+    options: { maxKeys: number; signal?: AbortSignal },
+  ): Promise<{
+    objects: Array<{ key: string; lastModified?: Date; size?: number }>;
+    isTruncated?: boolean;
+  }>;
+  listMultipartUploads(
+    prefix: string,
+    options: { maxUploads: number; signal?: AbortSignal },
+  ): Promise<{
+    uploads: Array<{ key: string; uploadId: string; initiated?: Date }>;
+    isTruncated?: boolean;
+  }>;
   deleteObject(key: string, options?: { signal?: AbortSignal }): Promise<void>;
   destroy(): void;
 }

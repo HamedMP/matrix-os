@@ -289,6 +289,11 @@ import { syncApp, createSyncRoutes, type SyncRouteDeps } from "./sync/routes.js"
 import { loadBackupStatus } from "./sync/backup-status.js";
 import { createR2Client, type R2Client, type R2ClientConfig } from "./sync/r2-client.js";
 import { createPlatformR2Client } from "./sync/platform-r2-client.js";
+import {
+  startSyncOrphanCollectorLifecycle,
+  sweepSyncPublicationOrphans,
+  type SyncOrphanSweepStore,
+} from "./sync/orphan-collector.js";
 import { createManifestDb, createKyselySharingDb } from "./sync/db-impl.js";
 import { createHomeMirror, type HomeMirror } from "./sync/home-mirror.js";
 import {
@@ -1187,6 +1192,7 @@ export async function createGateway(config: GatewayConfig) {
   let syncPeerRegistry: PeerRegistry | null = null;
   let syncSharing: SharingService | null = null;
   let syncDeps: SyncRouteDeps | null = null;
+  let syncOrphanCollector: { stop(): Promise<void> } | null = null;
 
   const s3Endpoint = process.env.S3_ENDPOINT ?? process.env.R2_ENDPOINT;
   const s3AccessKey = process.env.S3_ACCESS_KEY_ID ?? process.env.R2_ACCESS_KEY_ID;
@@ -1229,7 +1235,8 @@ export async function createGateway(config: GatewayConfig) {
       }
 
       await migrateSyncTables(kyselyInstance as Kysely<SyncDatabase>);
-      for (const seed of deriveGatewaySyncUserSeeds()) {
+      const syncUserSeeds = deriveGatewaySyncUserSeeds();
+      for (const seed of syncUserSeeds) {
         await ensureSyncUser(kyselyInstance as Kysely<SyncDatabase>, seed);
       }
 
@@ -1253,6 +1260,41 @@ export async function createGateway(config: GatewayConfig) {
         getPeerId: (c) => sanitizePeerId(c.req.header("X-Peer-Id")),
         getBackupStatus: () => loadBackupStatus(),
       };
+
+      if (syncR2.listObjects && syncR2.listMultipartUploads && syncUserSeeds.length > 0) {
+        const orphanStore: SyncOrphanSweepStore = {
+          getAcceptedManifestKey: async (scope) =>
+            (await manifestDb.getManifestMeta(scope))?.accepted_manifest_key ?? null,
+          listObjects: (prefix, options) => syncR2!.listObjects!(prefix, options),
+          listMultipartUploads: (prefix, options) =>
+            syncR2!.listMultipartUploads!(prefix, options),
+          deleteObject: (key, signal) => syncR2!.deleteObject(key, { signal }),
+          abortMultipartUpload: (key, uploadId, signal) =>
+            syncR2!.abortMultipartUpload(key, uploadId, { signal }),
+        };
+        const scopes = syncUserSeeds.map((seed) => resolveSyncScope({
+          ownerId: seed.id,
+          runtimeSlot: process.env.MATRIX_RUNTIME_SLOT,
+        }));
+        syncOrphanCollector = startSyncOrphanCollectorLifecycle({
+          sweep: async (signal) => {
+            for (const scope of scopes) {
+              if (signal.aborted) break;
+              await sweepSyncPublicationOrphans({
+                store: orphanStore,
+                scope,
+                signal,
+                logger: {
+                  warn: (message, details) => console.warn(`[sync/cleanup] ${message}`, details),
+                },
+              });
+            }
+          },
+          logger: {
+            warn: (message, details) => console.warn(`[sync/cleanup] ${message}`, details),
+          },
+        });
+      }
 
       console.log("[sync] Sync API initialized (storage:", s3AccessKey && s3SecretKey ? (s3Endpoint ?? "R2") : "platform-internal", ")");
     } catch (err) {
@@ -4802,6 +4844,7 @@ export async function createGateway(config: GatewayConfig) {
       await homeMirrorStart?.catch((err: unknown) => {
         logBestEffortFailure("Home mirror startup failed during shutdown", err);
       });
+      await syncOrphanCollector?.stop();
       syncR2?.destroy();
       if (canonicalChatEventStream && chatRepository) {
         const repository = chatRepository;

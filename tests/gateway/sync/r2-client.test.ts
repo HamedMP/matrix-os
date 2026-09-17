@@ -42,6 +42,26 @@ vi.mock("@aws-sdk/client-s3", () => {
           this.Key = params.Key;
         }
       },
+      ListObjectsV2Command: class {
+        Bucket: string;
+        Prefix: string;
+        MaxKeys?: number;
+        constructor(params: { Bucket: string; Prefix: string; MaxKeys?: number }) {
+          this.Bucket = params.Bucket;
+          this.Prefix = params.Prefix;
+          this.MaxKeys = params.MaxKeys;
+        }
+      },
+      ListMultipartUploadsCommand: class {
+        Bucket: string;
+        Prefix: string;
+        MaxUploads?: number;
+        constructor(params: { Bucket: string; Prefix: string; MaxUploads?: number }) {
+          this.Bucket = params.Bucket;
+          this.Prefix = params.Prefix;
+          this.MaxUploads = params.MaxUploads;
+        }
+      },
       CreateMultipartUploadCommand: class {
         Bucket: string;
         Key: string;
@@ -254,6 +274,66 @@ describe("R2 client", () => {
       const [command, options] = mockSend.mock.calls[0]!;
       expect(command.Key).toBe("matrixos-sync/user1/files/old.txt");
       expect(options.abortSignal).toBeDefined();
+    });
+  });
+
+  describe("bounded maintenance listings", () => {
+    it("lists object timestamps beneath one prefix", async () => {
+      const modified = new Date("2026-09-01T00:00:00.000Z");
+      mockSend.mockResolvedValue({
+        Contents: [
+          { Key: "matrixos-sync/user1/staging/one", LastModified: modified, Size: 42 },
+          { LastModified: modified },
+        ],
+        IsTruncated: true,
+      });
+
+      const result = await client.listObjects!("matrixos-sync/user1/staging/", { maxKeys: 25 });
+
+      const [command, options] = mockSend.mock.calls[0]!;
+      expect(command).toMatchObject({
+        Prefix: "matrixos-sync/user1/staging/",
+        MaxKeys: 25,
+      });
+      expect(options.abortSignal).toBeInstanceOf(AbortSignal);
+      expect(result).toEqual({
+        objects: [{
+          key: "matrixos-sync/user1/staging/one",
+          lastModified: modified,
+          size: 42,
+        }],
+        isTruncated: true,
+      });
+    });
+
+    it("lists interrupted multipart uploads beneath one prefix", async () => {
+      const initiated = new Date("2026-09-01T00:00:00.000Z");
+      mockSend.mockResolvedValue({
+        Uploads: [
+          { Key: "matrixos-sync/user1/staging/one", UploadId: "upload-1", Initiated: initiated },
+          { Key: "matrixos-sync/user1/staging/missing-id" },
+        ],
+        IsTruncated: false,
+      });
+
+      const result = await client.listMultipartUploads!("matrixos-sync/user1/staging/", {
+        maxUploads: 25,
+      });
+
+      const [command, options] = mockSend.mock.calls[0]!;
+      expect(command).toMatchObject({
+        Prefix: "matrixos-sync/user1/staging/",
+        MaxUploads: 25,
+      });
+      expect(options.abortSignal).toBeInstanceOf(AbortSignal);
+      expect(result).toEqual({
+        uploads: [{
+          key: "matrixos-sync/user1/staging/one",
+          uploadId: "upload-1",
+          initiated,
+        }],
+        isTruncated: false,
+      });
     });
   });
 

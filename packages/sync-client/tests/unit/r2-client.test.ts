@@ -229,6 +229,23 @@ describe("daemon/r2-client", () => {
     expect(await readdir(join(tempDir, "notes")).catch(() => [])).toEqual([]);
   });
 
+  it("preserves an existing local file when an accepted blob is missing", async () => {
+    const finalPath = join(tempDir, "today.md");
+    await writeFile(finalPath, "local safety copy");
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("missing", { status: 404 }),
+    );
+
+    await expect(
+      downloadFile("https://example.test/missing", finalPath, HASH_A),
+    ).rejects.toThrow(/404/);
+
+    expect(await readFile(finalPath, "utf8")).toBe("local safety copy");
+    expect(
+      (await readdir(tempDir)).filter((name) => name.includes(".matrixos-")),
+    ).toEqual([]);
+  });
+
   it("writes downloads atomically through a temp file + rename", async () => {
     const finalPath = join(tempDir, "notes", "today.md");
     const body = Buffer.from("hello world");
