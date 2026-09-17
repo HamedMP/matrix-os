@@ -79,6 +79,7 @@ import { createAppSessionRoutes } from './app-session-routes.js';
 import { createComputerRoutes } from './computer-routes.js';
 import { createPlatformMcpRoutes } from './mcp-registration.js';
 import { registerCustomMcpRoutes } from './custom-mcp-route-registration.js';
+import { createUnavailableIntegrationRoutes } from './integration-route-fallback.js';
 import {
   HANDLE_PATTERN,
   describeError,
@@ -620,9 +621,7 @@ export function createApp(deps: {
     logRouteError: logPlatformRouteError,
   }));
 
-  if (deps.integrationRoutes) {
-    app.route('/api/integrations', deps.integrationRoutes);
-  }
+  app.route('/api/integrations', deps.integrationRoutes ?? createUnavailableIntegrationRoutes());
   registerCustomMcpRoutes(app, {
     db,
     platformSecret,

@@ -1,5 +1,7 @@
 "use client";
 
+import { McpServerDiagnostics } from "@matrix-os/ui";
+
 import { CUSTOM_MCP_UNAVAILABLE, CUSTOM_MCP_UNAVAILABLE_MESSAGE, rebaseCustomMcpPolicy } from "@matrix-os/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getGatewayUrl } from "@/lib/gateway";
@@ -94,6 +96,7 @@ export function CustomMcpServersPanel() {
   const [url, setUrl] = useState("");
   const [authMode, setAuthMode] = useState<AuthMode>("oauth");
   const [credential, setCredential] = useState("");
+  const [diagnosing, setDiagnosing] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -268,7 +271,7 @@ export function CustomMcpServersPanel() {
         </div>
       ) : null}
       {loading && <p role="status" className="text-sm text-muted-foreground">Loading MCP servers…</p>}
-      <fieldset disabled={!loaded || loading} className="min-w-0 space-y-4">
+      <fieldset disabled={!loaded || loading || diagnosing} className="min-w-0 space-y-4">
       <div className="grid gap-2 rounded-lg border border-border/60 bg-card/50 p-4 sm:grid-cols-2">
         <input aria-label="MCP server name" value={name} onChange={(event) => setName(event.target.value)} placeholder="Server name" maxLength={100} className="rounded-md border border-border bg-background px-3 py-2 text-sm" />
         <input aria-label="MCP server URL" value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://example.com/mcp" maxLength={2048} className="rounded-md border border-border bg-background px-3 py-2 text-sm" />
@@ -291,16 +294,23 @@ export function CustomMcpServersPanel() {
               <div><p className="text-sm font-medium">{server.name}</p><p className="text-xs text-muted-foreground">{server.status} · {server.authMode} · revision {server.revision}</p></div>
               <div className="flex gap-2">
                 {server.authMode === "oauth" && server.status === "auth_required" && <button type="button" className="text-xs underline" onClick={async () => { const result = await mutate<{ url: string }>(server.id, `/api/mcp-servers/${server.id}/connect`, "POST"); if (result?.url) window.open(result.url, "_blank", "noopener,noreferrer"); }}>Authorize</button>}
-                <button type="button" className="text-xs underline" onClick={() => mutate(server.id, `/api/mcp-servers/${server.id}/discover`, "POST")}>Discover</button>
-                <button type="button" className="text-xs underline" onClick={() => mutate(server.id, `/api/mcp-servers/${server.id}/test`, "POST")}>Test</button>
                 <button type="button" className="text-xs text-red-400 underline" onClick={() => mutate(server.id, `/api/mcp-servers/${server.id}`, "DELETE")}>Remove</button>
               </div>
             </div>
+            <McpServerDiagnostics disabled={busy !== null} onPendingChange={setDiagnosing} onDiscovered={load}
+              request={async (action) => {
+                const response = await fetch(`${GATEWAY}/api/mcp-servers/${server.id}/${action}`, {
+                  method: "POST", headers: { "content-type": "application/json" }, body: "{}",
+                  signal: AbortSignal.timeout(30_000),
+                });
+                if (!response.ok) throw new Error("MCP diagnostic failed");
+                return response.json();
+              }} />
             {server.tools.length > 0 && <div className="mt-3 space-y-2">
               {server.tools.map((tool) => <div key={tool.name} className="flex flex-wrap items-center gap-3 text-xs">
                 <label className="flex items-center gap-2"><input type="checkbox" checked={tool.enabled} onChange={(event) => queuePolicyUpdate(server.id, (current) => ({ ...current, tools: current.tools.map((candidate) => candidate.name === tool.name ? { ...candidate, enabled: event.target.checked } : candidate) }))} />{tool.name}</label>
                 {tool.description ? <span className="min-w-0 flex-1 truncate text-muted-foreground" title={tool.description}>{tool.description}</span> : null}
-                <select aria-label={`${tool.name} approval`} value={tool.approval} disabled={!tool.enabled} onChange={(event) => queuePolicyUpdate(server.id, (current) => ({ ...current, tools: current.tools.map((candidate) => candidate.name === tool.name ? { ...candidate, approval: event.target.value as McpTool["approval"] } : candidate) }))} className="rounded border border-border bg-background px-2 py-1"><option value="always_ask">Always ask</option><option value="allow">Allow</option></select>
+                <select aria-label={`${tool.name} approval`} value={tool.approval} onChange={(event) => queuePolicyUpdate(server.id, (current) => ({ ...current, tools: current.tools.map((candidate) => candidate.name === tool.name ? { ...candidate, approval: event.target.value as McpTool["approval"] } : candidate) }))} className="rounded border border-border bg-background px-2 py-1"><option value="always_ask">Always ask</option><option value="allow">Allow</option></select>
               </div>)}
               <button type="button" disabled={!server.tools.some((tool) => tool.enabled)} onClick={() => queuePolicyUpdate(server.id, (current) => ({ ...current, enabled: !current.enabled }))} className="rounded-md border border-border px-3 py-1.5 text-xs disabled:opacity-50">{server.enabled ? "Disable" : "Enable"}</button>
             </div>}
