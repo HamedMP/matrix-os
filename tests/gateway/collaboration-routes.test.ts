@@ -45,6 +45,7 @@ describe("collaboration gateway routes", () => {
   let app: Hono;
   let signer: CollaborationProofSigner;
   let nonce: number;
+  let chatScope: CollaborationChatScopeService;
 
   beforeEach(async () => {
     fixture = await createCollaborationTestDatabase();
@@ -56,7 +57,7 @@ describe("collaboration gateway routes", () => {
       createId: () => collaborationIds.invitation,
     });
     const authority = new CollaborationAuthority(repository, { now: () => now });
-    const chatScope = new CollaborationChatScopeService(fixture.db, {
+    chatScope = new CollaborationChatScopeService(fixture.db, {
       runtimeId: collaborationIds.runtime,
       preflightSecret: "0123456789abcdef0123456789abcdef",
       now: () => now,
@@ -262,6 +263,84 @@ describe("collaboration gateway routes", () => {
       role: "owner",
       capabilities: { discuss: true, requestAi: false },
     });
+  });
+
+  it("projects requestAi for the current actor, role, M2 cohort, and runtime capability", async () => {
+    const executionEligibility = {
+      profileId: "scope-runtime-chat-v1",
+      profileVersion: 1,
+      profileDigest: "a".repeat(64),
+      adapterId: "claude-code" as const,
+      harnessVersion: "2.1.240",
+    };
+    await chatScope.reconcileExecutionEligibility({ executionGeneration: 9, eligibility: executionEligibility });
+    await shareChat();
+    await fixture.db.insertInto("collaboration_members").values([
+      {
+        scope_id: collaborationIds.scope,
+        actor_id: collaborationActors.editor,
+        role: "editor",
+        status: "accepted",
+        invitation_id: null,
+        invited_by: collaborationActors.owner,
+        accepted_at: now.toISOString(),
+        expires_at: null,
+        revision: 1,
+        joined_at: now.toISOString(),
+        updated_at: now.toISOString(),
+      },
+      {
+        scope_id: collaborationIds.scope,
+        actor_id: collaborationActors.viewer,
+        role: "viewer",
+        status: "accepted",
+        invitation_id: null,
+        invited_by: collaborationActors.owner,
+        accepted_at: now.toISOString(),
+        expires_at: null,
+        revision: 1,
+        joined_at: now.toISOString(),
+        updated_at: now.toISOString(),
+      },
+    ]).execute();
+    const path = `/api/collaboration/scopes/${collaborationIds.scope}`;
+    const capability = async (
+      actorId: string,
+      policy: true | { mode: "off" | "internal" | "enabled" | "read_only"; cohort: string[] },
+    ): Promise<boolean> => {
+      const response = await signedJson({
+        actorId,
+        scopeId: collaborationIds.scope,
+        method: "GET",
+        path,
+        m2Policy: policy,
+      });
+      expect(response.status).toBe(200);
+      return ((await response.json()) as { capabilities: { requestAi: boolean } }).capabilities.requestAi;
+    };
+
+    await expect(capability(collaborationActors.owner, true)).resolves.toBe(true);
+    await expect(capability(collaborationActors.editor, true)).resolves.toBe(true);
+    await expect(capability(collaborationActors.viewer, true)).resolves.toBe(false);
+    await expect(capability(collaborationActors.editor, {
+      mode: "internal",
+      cohort: [collaborationActors.owner, collaborationActors.editor, collaborationActors.viewer],
+    })).resolves.toBe(true);
+    await expect(capability(collaborationActors.editor, {
+      mode: "internal",
+      cohort: [collaborationActors.owner, collaborationActors.editor],
+    })).resolves.toBe(false);
+    await expect(capability(collaborationActors.editor, {
+      mode: "internal",
+      cohort: [collaborationActors.editor],
+    })).resolves.toBe(false);
+    await expect(capability(collaborationActors.owner, { mode: "off", cohort: [] })).resolves.toBe(false);
+    await expect(capability(collaborationActors.owner, { mode: "read_only", cohort: [] })).resolves.toBe(false);
+
+    await fixture.db.updateTable("collaboration_scopes")
+      .set({ execution_generation: 10 })
+      .where("id", "=", collaborationIds.scope).execute();
+    await expect(capability(collaborationActors.owner, true)).resolves.toBe(false);
   });
 
   it("prepares a private project scope only with a signed M4 policy", async () => {
@@ -1109,7 +1188,10 @@ describe("collaboration gateway routes", () => {
     query?: string;
     body?: unknown;
     deleteConditions?: { clientRequestId: string; expectedRevision: string; expectedMemberRevision: string };
-    m2Policy?: boolean;
+    m2Policy?: true | {
+      mode: "off" | "internal" | "enabled" | "read_only";
+      cohort: string[];
+    };
     m3Policy?: boolean;
     m4Policy?: boolean;
   }): Promise<Response> {
@@ -1128,8 +1210,8 @@ describe("collaboration gateway routes", () => {
     const policy = input.m2Policy || input.m3Policy || input.m4Policy ? signer.signPolicy({
       milestone: input.m4Policy ? "m4" : input.m3Policy ? "m3" : "m2",
       revision: "1",
-      mode: "enabled",
-      cohort: [],
+      mode: typeof input.m2Policy === "object" ? input.m2Policy.mode : "enabled",
+      cohort: typeof input.m2Policy === "object" ? input.m2Policy.cohort : [],
       issuedAt: now.toISOString(),
       expiresAt: new Date(now.getTime() + 30_000).toISOString(),
     }) : undefined;

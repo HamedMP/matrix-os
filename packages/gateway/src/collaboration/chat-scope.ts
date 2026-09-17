@@ -38,6 +38,11 @@ export class CollaborationChatScopeError extends Error {
 export class CollaborationChatScopeService {
   private readonly now: () => Date;
   private readonly createScopeId: () => string;
+  private executionCapability: {
+    executionGeneration: number;
+    eligibility: ReturnType<typeof parseCollaborationAiEligibility>;
+  } | null = null;
+  private capabilityTransition: Promise<void> = Promise.resolve();
 
   constructor(
     public readonly db: Kysely<OwnerCollaborationDatabase>,
@@ -96,7 +101,7 @@ export class CollaborationChatScopeService {
     confirmationToken: string;
   }): Promise<CollaborationScopeRecord> {
     const now = this.now().toISOString();
-    return this.db.transaction().execute(async (trx) => {
+    return this.withCapabilityTransition(() => this.db.transaction().execute(async (trx) => {
       const chat = await trx.selectFrom("chats")
         .selectAll()
         .where("id", "=", input.chatId)
@@ -214,6 +219,10 @@ export class CollaborationChatScopeService {
         lifecycle: "shared",
         revision: 1,
         auth_epoch: 1,
+        execution_generation: this.executionCapability?.executionGeneration ?? null,
+        execution_eligibility: this.executionCapability
+          ? jsonb(this.executionCapability.eligibility)
+          : null,
         updated_at: now,
       }).where("id", "=", scope.id)
         .where("lifecycle", "=", "private")
@@ -257,7 +266,7 @@ export class CollaborationChatScopeService {
       }).execute();
       await writeCreateOperation(trx, activated, input, now);
       return scopeRecord(activated);
-    });
+    }));
   }
 
   async assertPersonalExecutionAllowed(owner: ChatOwner, chatId: string): Promise<void> {
@@ -274,6 +283,27 @@ export class CollaborationChatScopeService {
           executionGeneration: z.number().int().min(1).parse(input.executionGeneration),
           eligibility: parseCollaborationAiEligibility(input.eligibility),
         };
+    return this.withCapabilityTransition(async () => {
+      this.executionCapability = null;
+      const result = await this.reconcileExecutionEligibilityUnlocked(capability);
+      if (capability !== null) this.executionCapability = capability;
+      return result;
+    });
+  }
+
+  matchesCurrentExecutionCapability(scope: Pick<
+    CollaborationScopeRecord,
+    "executionGeneration" | "executionEligibility"
+  >): boolean {
+    return this.executionCapability !== null
+      && scope.executionGeneration === this.executionCapability.executionGeneration
+      && eligibilityMatches(scope.executionEligibility, this.executionCapability.eligibility);
+  }
+
+  private async reconcileExecutionEligibilityUnlocked(capability: {
+    executionGeneration: number;
+    eligibility: ReturnType<typeof parseCollaborationAiEligibility>;
+  } | null): Promise<{ updated: number }> {
     const candidates = await this.db.selectFrom("collaboration_scopes")
       .select("id")
       .where("authority_runtime_id", "=", this.options.runtimeId)
@@ -341,6 +371,18 @@ export class CollaborationChatScopeService {
       if (changed) updated += 1;
     }
     return { updated };
+  }
+
+  private async withCapabilityTransition<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = this.capabilityTransition;
+    let release: () => void = () => undefined;
+    this.capabilityTransition = new Promise<void>((resolve) => { release = resolve; });
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+    }
   }
 
   private verifyConfirmation(input: {
@@ -494,5 +536,7 @@ function scopeRecord(row: Awaited<ReturnType<typeof selectScope>> & {}): Collabo
     authEpoch: Number(row.auth_epoch),
     authorityRuntimeId: row.authority_runtime_id,
     authorityGeneration: Number(row.authority_generation),
+    executionGeneration: row.execution_generation === null ? null : Number(row.execution_generation),
+    executionEligibility: row.execution_eligibility,
   };
 }

@@ -233,6 +233,48 @@ describe("gateway collaboration wiring", () => {
             profileDigest: SCOPE_RUNTIME_PROFILE_DIGEST,
           },
         });
+
+      const postStartupChatId = "chat_created_after_gateway_startup";
+      await fixture.db.insertInto("chats").values({
+        id: postStartupChatId,
+        owner_type: "personal",
+        owner_id: "user_owner",
+        create_request_id: "req_post_startup_shared_chat",
+        project_id: null,
+        title: "Post-startup shared Chat",
+        lifecycle: "active",
+        attention: "none",
+        collaboration: null,
+        user_state: null,
+        shell_state: null,
+        fork_provenance: null,
+        last_message_preview: null,
+        current_selection: null,
+        bound_driver_kind: null,
+        bound_instance_id: null,
+        bound_at_turn_id: null,
+        created_at: "2026-09-10T00:00:00.000Z",
+        updated_at: "2026-09-10T00:00:00.000Z",
+      }).execute();
+      const preflight = await runtime.chatScope.preflight({ ownerId: "user_owner", chatId: postStartupChatId });
+      const created = await runtime.chatScope.shareChat({
+        ownerId: "user_owner",
+        chatId: postStartupChatId,
+        clientRequestId: "50000000-0000-4000-8000-000000000099",
+        payloadHash: "e".repeat(64),
+        expectedChatRevision: preflight.chatRevision,
+        confirmationToken: preflight.confirmationToken!,
+      });
+      await expect(fixture.db.selectFrom("collaboration_scopes")
+        .select(["execution_generation", "execution_eligibility"])
+        .where("id", "=", created.id).executeTakeFirstOrThrow())
+        .resolves.toMatchObject({
+          execution_generation: 7,
+          execution_eligibility: {
+            profileId: SCOPE_RUNTIME_PROFILE_ID,
+            profileDigest: SCOPE_RUNTIME_PROFILE_DIGEST,
+          },
+        });
     } finally {
       await runtime.shutdown();
       await new Promise<void>((resolve) => supervisor.close(() => resolve()));
