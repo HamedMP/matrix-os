@@ -8,7 +8,12 @@ import { createWorkspaceCodingAgentProvider } from "../../packages/gateway/src/c
 import { createProjectManager } from "../../packages/gateway/src/project-manager.js";
 import { createWorkspaceRoutes } from "../../packages/gateway/src/workspace-routes.js";
 
-it.each([false, true])("deletes a legacy provider session through the HTTP route (stop fails: %s)", async (stopFails) => {
+const sessionId = "sess_11111111-2222-4333-8444-555555555555";
+const legacyNames = ["matrix-rt_old", `matrix-${sessionId}`, sessionId];
+it.each(legacyNames.flatMap((name) => ["running", "completed"].flatMap((status) =>
+  [false, true].map((stopFails) => ({ name, status, stopFails })),
+)))(
+  "deletes a $status legacy provider session through HTTP ($name, stop fails: $stopFails)", async ({ name, status, stopFails }) => {
   const homePath = await mkdtemp(join(tmpdir(), "matrix-legacy-cascade-"));
   const principal = { userId: "user_diagnostic", source: "jwt" as const };
   const terminal = { listWorkspaces: vi.fn(async () => []), terminateTab: vi.fn() };
@@ -22,14 +27,14 @@ it.each([false, true])("deletes a legacy provider session through the HTTP route
     await mkdir(join(homePath, "system/coding-agents"), { recursive: true });
     await mkdir(join(homePath, "system/sessions"), { recursive: true });
     await writeFile(join(homePath, "system/coding-agents/threads.json"), JSON.stringify({
-      version: 1, threads: [{ id: "thread_legacy", ownerId: principal.userId, clientRequestId: "req_legacy",
-        providerId: "codex", projectId: "old-project", title: "Legacy run", status: "running", attention: "none",
-        terminalSessionId: "matrix-rt_old", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }],
+      version: 1, threads: [{ id: "thread_11111111-2222-4333-8444-555555555555", ownerId: principal.userId, clientRequestId: "req_legacy",
+        providerId: "codex", projectId: "old-project", title: "Legacy run", status, attention: "none",
+        terminalSessionId: name, createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }],
       events: [], turns: [], pendingTerminalStops: [],
     }));
-    const sessionPath = join(homePath, "system/sessions/sess_legacy.json");
-    await writeFile(sessionPath, JSON.stringify({ id: "sess_legacy", kind: "agent", projectSlug: "old-project",
-      ownerId: principal.userId, runtime: { type: "zellij", status: "degraded", zellijSession: "matrix-rt_old", fallbackReason: "runtime_not_running" },
+    const sessionPath = join(homePath, `system/sessions/${sessionId}.json`);
+    await writeFile(sessionPath, JSON.stringify({ id: sessionId, kind: "agent", projectSlug: "old-project",
+      ownerId: principal.userId, runtime: { type: "zellij", status: "degraded", zellijSession: name, fallbackReason: "runtime_not_running" },
       transcriptPath: "unused", attachedClients: 0, writeMode: "closed", startedAt: "2026-08-18T00:00:00Z", lastActivityAt: "2026-08-18T00:00:00Z" }));
     const provider = createWorkspaceCodingAgentProvider({ providerId: "codex", agent: "codex",
       runtime: { startSession: vi.fn(), stopSession: (id) => sessions.killSession(id) },
@@ -44,7 +49,7 @@ it.each([false, true])("deletes a legacy provider session through the HTTP route
     const response = await app.request("/api/projects/old-project/actions", { method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ type: "delete", confirmation: "Old project", confirmTerminate: true }),
     });
-    expect(deleteSession).toHaveBeenCalledWith("matrix-rt_old", { force: true });
+    expect(deleteSession).toHaveBeenCalledWith(name, { force: true });
     expect(terminal.terminateTab).not.toHaveBeenCalled();
     expect(response.status).toBe(stopFails ? 500 : 200);
     expect((await threads.getProjectLifecycleState(principal, "old-project")).threadCount).toBe(stopFails ? 1 : 0);
