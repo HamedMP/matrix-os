@@ -94,6 +94,9 @@ const ROUTE_SCOPED_BEARER_PATHS = [
 const ROUTE_SCOPED_SIGNATURE_PATHS = [
   "/api/internal/terminal-acceptance/run",
 ];
+const COLLABORATION_HTTP_PREFIX = "/api/collaboration/";
+const COLLABORATION_WEBSOCKET_PATH =
+  /^\/ws\/collaboration\/scopes\/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\/(?:events|terminal)$/;
 const MESSAGE_APPSERVICE_PREFIX = "/api/messages/appservice/";
 const MESSAGE_HERMES_REPLY_PATH = /^\/api\/messages\/conversations\/[^/]+\/reply$/;
 const WS_QUERY_TOKEN_PATHS = [
@@ -233,6 +236,17 @@ export function authMiddleware(
       if (!webhookRateLimiter.check(ip)) {
         return tooManyRequests(c);
       }
+      return nextWithReady(c, next);
+    }
+
+    // Platform-proxied collaboration routes carry a scoped, short-lived actor
+    // proof (and, where required, a signed rollout policy). Requiring the
+    // owner's MATRIX_AUTH_TOKEN here would reject every collaborator before
+    // those route-specific verifiers can run. Their bounded proof decoder and
+    // verifier rate-limit each authenticated actor independently; applying a
+    // transport-address quota here would let one collaborator block the rest.
+    if (normalizedPath.startsWith(COLLABORATION_HTTP_PREFIX)
+      || COLLABORATION_WEBSOCKET_PATH.test(normalizedPath)) {
       return nextWithReady(c, next);
     }
 
