@@ -493,6 +493,148 @@ describe("collaboration gateway routes", () => {
     });
   });
 
+  it("accepts an invitation using the revision returned by its projection", async () => {
+    await shareChat();
+    const invitation = await signedJson({
+      actorId: collaborationActors.owner,
+      scopeId: collaborationIds.scope,
+      method: "POST",
+      path: `/api/collaboration/scopes/${collaborationIds.scope}/invitations`,
+      body: {
+        targetActorId: collaborationActors.editor,
+        role: "editor",
+        clientRequestId: invitationRequestId,
+        expectedRevision: "1",
+      },
+    });
+    expect(invitation.status).toBe(201);
+    const created = await invitation.json() as { revision: string };
+    expect(created.revision).toBe("2");
+
+    const preview = await signedJson({
+      actorId: collaborationActors.editor,
+      scopeId: collaborationIds.scope,
+      method: "GET",
+      path: `/api/collaboration/invitations/${collaborationIds.invitation}`,
+    });
+    expect(preview.status).toBe(200);
+    const projection = await preview.json() as { revision: string };
+    expect(projection.revision).toBe(created.revision);
+
+    const accepted = await signedJson({
+      actorId: collaborationActors.editor,
+      scopeId: collaborationIds.scope,
+      method: "POST",
+      path: `/api/collaboration/invitations/${collaborationIds.invitation}/accept`,
+      body: { clientRequestId: acceptanceRequestId, expectedRevision: projection.revision },
+    });
+    expect(accepted.status).toBe(200);
+  });
+
+  it("rejects acceptance when the scope changes after the invitation projection", async () => {
+    await shareChat();
+    await signedJson({
+      actorId: collaborationActors.owner,
+      scopeId: collaborationIds.scope,
+      method: "POST",
+      path: `/api/collaboration/scopes/${collaborationIds.scope}/invitations`,
+      body: {
+        targetActorId: collaborationActors.editor,
+        role: "editor",
+        clientRequestId: invitationRequestId,
+        expectedRevision: "1",
+      },
+    });
+    const preview = await signedJson({
+      actorId: collaborationActors.editor,
+      scopeId: collaborationIds.scope,
+      method: "GET",
+      path: `/api/collaboration/invitations/${collaborationIds.invitation}`,
+    });
+    expect(preview.status).toBe(200);
+    const projection = await preview.json() as { revision: string };
+    await fixture.db.updateTable("collaboration_scopes")
+      .set({ revision: Number(projection.revision) + 1, updated_at: now })
+      .where("id", "=", collaborationIds.scope)
+      .execute();
+
+    const accepted = await signedJson({
+      actorId: collaborationActors.editor,
+      scopeId: collaborationIds.scope,
+      method: "POST",
+      path: `/api/collaboration/invitations/${collaborationIds.invitation}/accept`,
+      body: { clientRequestId: acceptanceRequestId, expectedRevision: projection.revision },
+    });
+    expect(accepted.status).toBe(409);
+    expect(await accepted.json()).toEqual({ error: "Collaboration state changed", code: "conflict" });
+    await expect(fixture.db.selectFrom("collaboration_members")
+      .select("status")
+      .where("invitation_id", "=", collaborationIds.invitation)
+      .executeTakeFirstOrThrow()).resolves.toEqual({ status: "pending" });
+  });
+
+  it.each([
+    { state: "revoked" as const, expectedStatus: 409, expectedCode: "conflict" },
+    { state: "expired" as const, expectedStatus: 410, expectedCode: "expired" },
+  ])("does not accept a $state invitation", async ({ state, expectedStatus, expectedCode }) => {
+    await shareChat();
+    const invitation = await signedJson({
+      actorId: collaborationActors.owner,
+      scopeId: collaborationIds.scope,
+      method: "POST",
+      path: `/api/collaboration/scopes/${collaborationIds.scope}/invitations`,
+      body: {
+        targetActorId: collaborationActors.editor,
+        role: "editor",
+        clientRequestId: invitationRequestId,
+        expectedRevision: "1",
+      },
+    });
+    expect(invitation.status).toBe(201);
+    const created = await invitation.json() as { revision: string };
+    if (state === "revoked") {
+      const revoked = await signedJson({
+        actorId: collaborationActors.owner,
+        scopeId: collaborationIds.scope,
+        method: "DELETE",
+        path: `/api/collaboration/scopes/${collaborationIds.scope}/invitations/${collaborationIds.invitation}`,
+        deleteConditions: {
+          clientRequestId: request(120),
+          expectedRevision: created.revision,
+          expectedMemberRevision: "1",
+        },
+      });
+      expect(revoked.status).toBe(200);
+    } else {
+      await fixture.db.updateTable("collaboration_members")
+        .set({ expires_at: new Date(now.getTime() - 1).toISOString(), updated_at: now })
+        .where("invitation_id", "=", collaborationIds.invitation)
+        .execute();
+    }
+    const preview = await signedJson({
+      actorId: collaborationActors.editor,
+      scopeId: collaborationIds.scope,
+      method: "GET",
+      path: `/api/collaboration/invitations/${collaborationIds.invitation}`,
+    });
+    expect(preview.status).toBe(200);
+    const projection = await preview.json() as { revision: string };
+
+    const accepted = await signedJson({
+      actorId: collaborationActors.editor,
+      scopeId: collaborationIds.scope,
+      method: "POST",
+      path: `/api/collaboration/invitations/${collaborationIds.invitation}/accept`,
+      body: { clientRequestId: acceptanceRequestId, expectedRevision: projection.revision },
+    });
+    expect(accepted.status).toBe(expectedStatus);
+    expect(await accepted.json()).toEqual({ error: "Collaboration state changed", code: expectedCode });
+    await expect(fixture.db.selectFrom("collaboration_members")
+      .select("status")
+      .where("invitation_id", "=", collaborationIds.invitation)
+      .executeTakeFirstOrThrow()).resolves.toEqual({ status: state });
+  });
+
   it("supports owner invite, exact-actor acceptance, history, and attributed discussion", async () => {
     await shareChat();
     const invitation = await signedJson({
@@ -520,14 +662,15 @@ describe("collaboration gateway routes", () => {
       path: `/api/collaboration/invitations/${collaborationIds.invitation}`,
     });
     expect(preview.status).toBe(200);
-    expect(await preview.json()).toMatchObject({ scopeKind: "chat", role: "editor", status: "pending" });
+    const previewProjection = await preview.json() as { revision: string };
+    expect(previewProjection).toMatchObject({ scopeKind: "chat", role: "editor", status: "pending" });
 
     const accepted = await signedJson({
       actorId: collaborationActors.editor,
       scopeId: collaborationIds.scope,
       method: "POST",
       path: `/api/collaboration/invitations/${collaborationIds.invitation}/accept`,
-      body: { clientRequestId: acceptanceRequestId, expectedRevision: "2" },
+      body: { clientRequestId: acceptanceRequestId, expectedRevision: previewProjection.revision },
     });
     expect(accepted.status).toBe(200);
     const chat = await signedJson({

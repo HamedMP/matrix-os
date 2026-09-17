@@ -147,7 +147,9 @@ export const CollaborationInvitationSchema = z.object({
   role: CollaborationInviteRoleSchema,
   status: CollaborationMemberStatusSchema,
   expiresAt: z.iso.datetime(),
-  revision: CollaborationRevisionSchema,
+  // Acceptance is a scope mutation, so this is the optimistic concurrency
+  // revision callers must send as expectedRevision when accepting.
+  revision: CollaborationRevisionSchema.describe("Current collaboration scope revision"),
 }).strict();
 
 const CollaborationConditionalMutationSchema = z.object({
