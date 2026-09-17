@@ -1,5 +1,5 @@
 import { relative, resolve, sep } from "node:path";
-import type { SyncMapping } from "@matrix-os/contracts";
+import type { SyncMapping } from "@matrix-os/contracts/sync";
 
 export interface ScopedSyncMapping {
   profile: string;

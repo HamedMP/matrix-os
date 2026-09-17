@@ -47,7 +47,7 @@ import {
   syncMappingStatePath,
 } from "../lib/sync-mapping-config.js";
 import { planMappingOverlaps } from "../lib/mapping-overlap.js";
-import type { SyncMappingConfig } from "@matrix-os/contracts";
+import type { SyncMappingConfig } from "@matrix-os/contracts/sync";
 import {
   reconcileRemoteFileChange,
   resolveWithinSyncRoot,

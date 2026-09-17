@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { SyncMappingConfig } from "@matrix-os/contracts";
+import type { SyncMappingConfig } from "@matrix-os/contracts/sync";
 import {
   dispatchMappingEvent,
   openMappingSessions,

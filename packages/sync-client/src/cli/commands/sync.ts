@@ -7,7 +7,7 @@ import {
   SyncMappingSchema,
   type SyncDirection,
   type SyncMappingConfig,
-} from "@matrix-os/contracts";
+} from "@matrix-os/contracts/sync";
 import {
   defaultSyncPath,
   generatePeerId,

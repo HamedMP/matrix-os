@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { stat } from "node:fs/promises";
-import type { SyncMapping, SyncMappingIssue } from "@matrix-os/contracts";
+import type { SyncMapping, SyncMappingIssue } from "@matrix-os/contracts/sync";
 import { isIgnored, loadSyncIgnore, type SyncIgnorePatterns } from "../lib/syncignore.js";
 import { FileWatcher, type WatcherEvent } from "./watcher.js";
 import { loadSyncState, saveSyncState } from "./manifest-cache.js";

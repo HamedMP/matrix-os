@@ -6,7 +6,7 @@ import {
   SyncScopeSchema,
   type SyncMappingConfig,
   type SyncScope,
-} from "@matrix-os/contracts";
+} from "@matrix-os/contracts/sync";
 import type { SyncConfig } from "./config.js";
 import { normalizeGatewayFolder } from "./config.js";
 import { profilePath } from "./profiles.js";

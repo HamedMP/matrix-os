@@ -231,7 +231,7 @@ jobs:
         working-directory: packages/sync-client
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --provenance --access public
+        run: pnpm publish --config.node-linker=hoisted --provenance --access public --no-git-checks
 
   build-binaries:
     name: Build standalone binaries

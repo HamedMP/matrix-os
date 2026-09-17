@@ -108,14 +108,14 @@ jobs:
 
       - name: Pack CLI package
         working-directory: packages/sync-client
-        run: npm pack --dry-run
+        run: pnpm pack --config.node-linker=hoisted --pack-destination "$RUNNER_TEMP"
 
       - name: Publish to npm
         if: ${{ steps.version.outputs.npm_exists != 'true' }}
         working-directory: packages/sync-client
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --provenance --access public
+        run: pnpm publish --config.node-linker=hoisted --provenance --access public --no-git-checks
 
       - name: Verify npm publish
         env:

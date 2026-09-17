@@ -1,4 +1,4 @@
-import type { SyncMappingConfig } from "@matrix-os/contracts";
+import type { SyncMappingConfig } from "@matrix-os/contracts/sync";
 import { syncMappingStatePath } from "../lib/sync-mapping-config.js";
 import {
   MappingSession,

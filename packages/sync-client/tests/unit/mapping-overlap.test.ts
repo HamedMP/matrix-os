@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { SyncMapping } from "@matrix-os/contracts";
+import type { SyncMapping } from "@matrix-os/contracts/sync";
 import { planMappingOverlaps } from "../../src/lib/mapping-overlap.js";
 
 function mapping(overrides: Partial<SyncMapping> = {}): SyncMapping {

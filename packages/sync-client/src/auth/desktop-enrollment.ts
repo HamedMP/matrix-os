@@ -9,7 +9,7 @@ import {
   SyncRemotePrefixSchema,
   SyncRuntimeSlotSchema,
   type SyncMappingConfig,
-} from "@matrix-os/contracts";
+} from "@matrix-os/contracts/sync";
 import { enrollSyncDeviceAuth, revokeSyncDeviceAuth } from "./sync-device.js";
 import {
   loadProfileAuth,

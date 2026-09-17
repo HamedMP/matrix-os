@@ -26,6 +26,7 @@ describe("published CLI package runners", () => {
       mos: "bin/matrix.mjs",
     });
     expect(packageJson.files).toEqual(expect.arrayContaining(["bin/", "src/", "README.md"]));
+    expect(packageJson.bundledDependencies).toContain("@matrix-os/contracts");
     expect(packageJson.publishConfig).toMatchObject({
       access: "public",
       registry: "https://registry.npmjs.org/",
@@ -59,8 +60,25 @@ describe("published CLI package runners", () => {
     expect(script).toContain('await mkdir(pnpmHome, { recursive: true });');
     expect(script).toContain('PNPM_HOME: pnpmHome');
     expect(script).toContain('pnpmHome: join(tempRoot, "npm-pack-pnpm-home")');
+    expect(script).toContain('const packed = await run("pnpm", [');
+    expect(script).toContain('"pack",');
+    expect(script).toContain('"--config.node-linker=hoisted"');
+    expect(script).not.toContain('run("npm", ["pack"');
     expect(script).toContain('pnpmHome: join(tempRoot, "npm-exec-pnpm-home")');
     expect(script).toContain('pnpmHome: join(tempRoot, "pnpm-dlx-pnpm-home")');
+  });
+
+  it("publishes with the linker mode required by bundled workspace contracts", async () => {
+    for (const workflowPath of [
+      ".github/workflows/cli-release.yml",
+      ".github/workflows/release.yml",
+    ]) {
+      const workflow = await readFile(resolve(repoRoot, workflowPath), "utf8");
+      expect(workflow).toContain(
+        "pnpm publish --config.node-linker=hoisted --provenance --access public --no-git-checks",
+      );
+      expect(workflow).not.toContain("run: npm publish --provenance --access public");
+    }
   });
 
   it("installs standalone binary upgrades atomically", async () => {
