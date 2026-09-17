@@ -10,3 +10,16 @@ export function decodeZellijScreenDump(stdout: string, scrollback: readonly stri
   }
   return ansi;
 }
+
+export function presentZellijSnapshot(ansi: string, viewportRows: number, rows: number): string {
+  // Imported legacy snapshots have no structured viewport. Keep their existing
+  // replay behavior rather than guessing where their current screen starts.
+  if (viewportRows === 0 || viewportRows > rows) return ansi;
+  const content = decodeZellijScreenDump(ansi, undefined);
+  const padding = rows - viewportRows;
+  if (padding === 0) return content;
+  // Make room for the unoccupied viewport rows, moving all preceding history
+  // (including ambiguous blank history) above the viewport. IND preserves the
+  // column, unlike CRLF; CUU then restores the last content row and column.
+  return content + "\x1bD".repeat(padding) + `\x1b[${padding}A`;
+}

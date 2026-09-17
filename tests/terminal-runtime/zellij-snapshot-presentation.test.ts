@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { normalizeTerminalSnapshot } from "../../packages/contracts/src/terminal-snapshot.js";
 import { ZellijCliRuntimeAdapter } from "../../packages/terminal-runtime/src/zellij-adapter.js";
 import type { ZellijObserverEvent } from "../../packages/terminal-runtime/src/runtime.js";
+import { presentZellijSnapshot } from "../../packages/terminal-runtime/src/zellij-screen-dump.js";
 
 async function capture(ansi: string, viewport: string[], scrollback?: string[]) {
   let emit = (_line: string) => {};
@@ -27,6 +28,28 @@ async function capture(ansi: string, viewport: string[], scrollback?: string[]) 
 }
 
 describe("Zellij snapshot presentation", () => {
+  it("leaves legacy snapshots and a full viewport unpadded", () => {
+    expect(presentZellijSnapshot("legacy\n", 0, 10)).toBe("legacy\n");
+    expect(presentZellijSnapshot("full\x1b[m\n", 10, 10)).toBe("full\x1b[m");
+    expect(presentZellijSnapshot("larger\n", 12, 10)).toBe("larger\n");
+  });
+  it.each([
+    ["unknown empty-history framing", "\x1b[m\nprompt\x1b[m\n", 1, [""]],
+    ["short viewport after history", "history\n\nprompt\x1b[m\n", 1, ["history", ""]],
+    ["intentional first viewport blank", "history\n\nprompt\x1b[m\n", 2, ["history"]],
+  ] as const)("restores %s at its viewport row without losing history", async (_name, dump, viewportRows, history) => {
+    const terminal = new Terminal({ cols: 40, rows: 10, allowProposedApi: true });
+    try {
+      const ansi = presentZellijSnapshot(dump, viewportRows, 10);
+      await new Promise<void>((resolve) => terminal.write("\x1bc" + normalizeTerminalSnapshot(ansi), resolve));
+      const buffer = terminal.buffer.active;
+      expect(buffer.getLine(buffer.baseY + viewportRows - 1)?.translateToString(true)).toBe("prompt");
+      expect(buffer.cursorY).toBe(viewportRows - 1);
+      expect(buffer.cursorX).toBe(6);
+      expect(Array.from({ length: buffer.baseY }, (_, row) => buffer.getLine(row)?.translateToString(true))).toEqual(history);
+    } finally { terminal.dispose(); }
+  });
+
   it("keeps a fresh prompt on the same row before and after the native redraw", async () => {
     // Zellij 0.44.3 emits an SGR-only empty history, a separator, then CLI LF.
     const prompt = "\x1b[36mreview\x1b[m:~/projects%";

@@ -15,6 +15,7 @@ import { terminalRuntimeErrorDetails } from "./errors.js";
 import type { TerminalSnapshot } from "./workspace-store.js";
 import { encodeSocketFrame, SocketFrameDecoder } from "./socket-framing.js";
 import { TerminalFrameQueue } from "./input-frame-queue.js";
+import { presentZellijSnapshot } from "./zellij-screen-dump.js";
 import {
   MAX_TERMINAL_RUNTIME_RESPONSE_FRAME_BYTES,
   TERMINAL_RUNTIME_SERVER_IDLE_TIMEOUT_MS,
@@ -262,7 +263,7 @@ export class TerminalRuntimeSocketServer {
         revision,
         presentationRevision: snapshot.presentationRevision,
         seq: snapshot.seq,
-        ansi: normalizeTerminalSnapshot(snapshot.ansi),
+        ansi: normalizeTerminalSnapshot(presentZellijSnapshot(snapshot.ansi, snapshot.viewport.length, resized.canonicalSize.rows)),
         viewport: { top: 0, rows: Math.min(snapshot.viewport.length || resized.canonicalSize.rows, 200) },
       });
     }
