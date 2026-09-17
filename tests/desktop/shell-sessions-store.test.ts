@@ -147,6 +147,32 @@ describe("useShellSessions workspace/tab contract", () => {
     expect(useShellSessions.getState().error).toBe("offline");
   });
 
+  it("keeps a deleting tab visible until acknowledgement and rejects stale list resurrection", async () => {
+    await useShellSessions.getState().load(makeApi());
+    const deletion = deferred<unknown>();
+    const pending = useShellSessions.getState().deleteSession(makeApi({ delete: vi.fn().mockReturnValue(deletion.promise) }), REF_ONE);
+    expect(useShellSessions.getState().sessions.map((entry) => entry.name)).toEqual([REF_ONE]);
+    const stale = deferred<unknown>();
+    const load = useShellSessions.getState().load(makeApi({ get: vi.fn().mockReturnValue(stale.promise) }));
+    deletion.resolve({ ok: true });
+    await expect(pending).resolves.toBe(true);
+    expect(useShellSessions.getState().sessions).toEqual([]);
+    stale.resolve(workspaces()); await load;
+    expect(useShellSessions.getState().sessions).toEqual([]);
+    expect(useShellSessions.getState().loading).toBe(false);
+  });
+
+  it("does not apply a successful old-computer deletion after a runtime switch", async () => {
+    await useShellSessions.getState().load(makeApi());
+    const deletion = deferred<unknown>();
+    const pending = useShellSessions.getState().deleteSession(makeApi({ delete: vi.fn().mockReturnValue(deletion.promise) }), REF_ONE);
+    advanceRuntimeGeneration();
+    useShellSessions.setState({ sessions: [], authoritativeRevision: 0 });
+    deletion.resolve({ ok: true });
+    await expect(pending).resolves.toBe(false);
+    expect(useShellSessions.getState().authoritativeRevision).toBe(0);
+  });
+
   it("renames by stable IDs with optimistic-concurrency revision and rolls back", async () => {
     useShellSessions.setState({ sessions: [{
       name: REF_ONE, workspaceId: WORKSPACE_ID, tabId: TAB_ONE, revision: 3, workspaceRevision: 7, cwd: "projects", subtitle: "build",

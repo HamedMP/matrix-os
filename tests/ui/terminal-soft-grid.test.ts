@@ -339,4 +339,14 @@ describe("shared terminal grid presentation", () => {
     expect(received).toHaveLength(1);
     expect(received[0]).toMatchObject({ deltaX: -10, deltaY: -20 });
   });
+  it("forwards wheel gestures over empty viewport space to the terminal", () => {
+    const { host, root, layout } = setup();
+    layout(1_600, 900);
+    const received: WheelEvent[] = [];
+    root.addEventListener("wheel", (event) => { received.push(event); event.preventDefault(); });
+    host.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: -300, clientX: 1_500, clientY: 100 }));
+    expect(received).toHaveLength(1);
+    expect(received[0].deltaY).toBe(-300);
+  });
+
 });

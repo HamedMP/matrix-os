@@ -402,23 +402,24 @@ export const useShellSessions = create<ShellSessionsState>()((set, get) => ({
 
   deleteSession: async (api, name) => {
     const generation = captureRuntimeGeneration();
-    const previous = get().sessions;
-    const deletedIndex = previous.findIndex((session) => session.name === name);
-    const deleted = deletedIndex >= 0 ? previous[deletedIndex] : undefined;
-    set({ sessions: previous.filter((session) => session.name !== name), error: null });
+    const deleted = get().sessions.find((session) => session.name === name);
+    set({ error: null });
     try {
       if (!deleted) throw new Error("Terminal tab not found");
       await api.delete(`/api/terminal/workspaces/${deleted.workspaceId}/tabs/${deleted.tabId}`);
+      if (!isCurrentRuntimeGeneration(generation)) return false;
+      set((state) => ({
+        sessions: state.sessions.filter((session) => session.name !== name),
+        // A list requested while shutdown was pending may still contain the tab.
+        loadSequence: state.loadSequence + 1,
+        authoritativeRevision: state.authoritativeRevision + 1,
+        loading: false,
+      }));
       return true;
     } catch (err: unknown) {
-      // After a computer switch the cleared list must not get the old
-      // computer's session restored into it.
       if (!isCurrentRuntimeGeneration(generation)) return false;
       console.error("[shell-sessions] Failed to delete shell session:", err);
-      set((state) => ({
-        sessions: deleted ? insertSessionAt(state.sessions, deleted, deletedIndex) : state.sessions,
-        error: errorCategory(err),
-      }));
+      set({ error: errorCategory(err) });
       return false;
     }
   },

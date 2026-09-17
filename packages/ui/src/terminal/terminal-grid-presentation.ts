@@ -76,7 +76,7 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
   let outputSubscription: { dispose(): void } | undefined;
 
   const onWheel = (event: WheelEvent & { matrixGridCorrected?: boolean }) => {
-    if (event.matrixGridCorrected || event.defaultPrevented || !element || !stage || !(event.target instanceof Element) || !element.contains(event.target)) return;
+    if (event.matrixGridCorrected || event.defaultPrevented || !element || !stage || !(event.target instanceof Element) || !host.contains(event.target)) return;
     const scale = presentationScale * (options.getParentScale?.() ?? 1);
     if (!Number.isFinite(scale) || scale <= 0) return;
     const pan = panTerminalGrid(event, host, stage, contentGrid ?? options.getTerminal());
@@ -88,12 +88,18 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
       event.stopImmediatePropagation();
       if (pan.deltaX === 0 && pan.deltaY === 0) return;
     }
-    if (scale === 1 && !pan.panned) return;
+    const overTerminal = element.contains(event.target);
+    if (scale === 1 && !pan.panned && overTerminal) return;
     const rect = element.getBoundingClientRect();
+    // Content clipping must not turn the remaining viewport into a wheel dead
+    // zone. Forward its gesture to xterm at a valid canonical-grid coordinate.
+    const x = overTerminal ? event.clientX - rect.left : Math.max(0, Math.min(rect.width - 1, event.clientX - rect.left));
+    const y = overTerminal ? event.clientY - rect.top : Math.max(0, Math.min(rect.height - 1, event.clientY - rect.top));
+    const target = overTerminal ? event.target : element.querySelector(".xterm-screen") ?? element;
     const corrected = new WheelEvent("wheel", {
       bubbles: event.bubbles, cancelable: event.cancelable, composed: event.composed,
-      clientX: rect.left + (event.clientX - rect.left) / scale,
-      clientY: rect.top + (event.clientY - rect.top) / scale,
+      clientX: rect.left + x / scale,
+      clientY: rect.top + y / scale,
       screenX: event.screenX, screenY: event.screenY,
       deltaX: pan.deltaX, deltaY: pan.deltaY, deltaZ: event.deltaZ, deltaMode: event.deltaMode,
       ctrlKey: event.ctrlKey, altKey: event.altKey, shiftKey: event.shiftKey, metaKey: event.metaKey,
@@ -101,7 +107,7 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
     });
     Object.defineProperty(corrected, "matrixGridCorrected", { value: true });
     event.stopImmediatePropagation();
-    event.target.dispatchEvent(corrected);
+    target.dispatchEvent(corrected);
     // Synthetic events have no native scrolling default. Preserve the real
     // event's default unless xterm consumed the corrected wheel report.
     if (corrected.defaultPrevented) event.preventDefault();

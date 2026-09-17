@@ -185,6 +185,33 @@ describe("TerminalApp workspace contract", () => {
     expect(vi.mocked(fetch).mock.calls.some(([input, init]) => String(input).includes("/tabs") && init?.method === "POST")).toBe(false);
   });
 
+  it("keeps a pending deletion visible and ignores an older list after confirmation", async () => {
+    const fallback = vi.mocked(fetch).getMockImplementation()!;
+    let confirm!: (response: Response) => void;
+    let stale!: (response: Response) => void;
+    let delayList = false, deleted = false;
+    vi.mocked(fetch).mockImplementation((input, init) => {
+      if (init?.method === "DELETE") return new Promise<Response>((resolve) => { confirm = resolve; });
+      if (String(input).endsWith("/api/terminal/workspaces")) {
+        if (delayList) { delayList = false; return new Promise<Response>((resolve) => { stale = resolve; }); }
+        return Promise.resolve(json({ workspaces: [workspace(deleted ? [] : [tab()])] }));
+      }
+      return fallback(input, init);
+    });
+    render(<TerminalApp initialSessionId={REF_KEY} />); await settle();
+    fireEvent.mouseEnter(screen.getByTestId(`terminal-session-card-${REF_KEY}`));
+    fireEvent.click(screen.getByRole("button", { name: "More actions for Shell" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Close" })); await settle();
+    fireEvent.click(screen.getByRole("button", { name: "Delete", exact: true })); await settle();
+    expect(screen.getByTestId(`terminal-session-card-${REF_KEY}`)).toBeTruthy();
+    delayList = true;
+    fireEvent.click(screen.getByRole("button", { name: "Refresh sessions" })); await settle();
+    deleted = true; confirm(json({ ok: true })); await settle();
+    expect(screen.queryByTestId(`terminal-session-card-${REF_KEY}`)).toBeNull();
+    stale(json({ workspaces: [workspace()] })); await settle();
+    expect(screen.queryByTestId(`terminal-session-card-${REF_KEY}`)).toBeNull();
+  });
+
   it("loads sidebar rows from workspace tabs", async () => {
     render(<TerminalApp initialSessionId={REF_KEY} />);
     await settle();

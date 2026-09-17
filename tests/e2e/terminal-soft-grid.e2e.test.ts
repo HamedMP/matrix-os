@@ -191,6 +191,17 @@ describe("real terminal renderer soft-grid resizing", () => {
         windowElement.style.height = "850px";
       }, surface === "web-mobile" ? 360 : 1_100);
       await expect.poll(async () => (await geometry(page)).scale).toBe("scale(1)");
+      // Wheel input in the unused right-hand viewport must reach xterm even
+      // when content clipping leaves no canvas under the pointer.
+      await page.evaluate(() => {
+        (window as unknown as { fixtureInputs: string[] }).fixtureInputs.length = 0;
+        (window as unknown as { fixtureOutput: (data: string) => void }).fixtureOutput("\x1b[?1000h\x1b[?1006h");
+      });
+      const blankArea = await page.locator("[data-terminal-viewport]").boundingBox();
+      if (!blankArea) throw new Error("Terminal viewport is not measurable");
+      await page.mouse.move(blankArea.x + blankArea.width - 40, blankArea.y + 80);
+      await page.mouse.wheel(0, -200);
+      await expect.poll(() => page.evaluate(() => (window as unknown as { fixtureInputs: string[] }).fixtureInputs.some((input) => /\x1b\[<64;/.test(input)))).toBe(true);
       // A short normal shell must not pan across unused canonical-grid space.
       await page.locator("#terminal-window").evaluate((element) => { (element as HTMLElement).style.height = "300px"; });
       await page.evaluate(() => (window as unknown as { fixtureOutput: (data: string) => void }).fixtureOutput("\x1bcshort\r\nresult\r\n$ "));
@@ -202,6 +213,9 @@ describe("real terminal renderer soft-grid resizing", () => {
       await page.evaluate(() => (window as unknown as { fixtureOutput: (data: string) => void }).fixtureOutput("\x1bc" + Array.from({ length: 80 }, (_, i) => `HISTORY_${i}\r\n`).join("")));
       await expect.poll(() => rail.isVisible()).toBe(true);
       expect(await rail.count()).toBe(1);
+      // Wait for the initial history write to follow the bottom before dragging.
+      // Setting scrollTop to zero while it is already zero is not a gesture.
+      await expect.poll(() => rail.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
       expect(await page.locator(".xterm .scrollbar.vertical").isVisible()).toBe(false);
       await rail.evaluate((element) => { element.scrollTop = 0; });
       await expect.poll(async () => (await geometry(page)).panTop).toBe(0);
