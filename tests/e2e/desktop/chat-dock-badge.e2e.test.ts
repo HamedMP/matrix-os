@@ -1,15 +1,20 @@
 import { createServer, request, type ServerResponse } from "node:http";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { afterAll, beforeAll, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { _electron, type ElectronApplication, type Page } from "playwright";
 import { startStubGateway, type StubGateway } from "./fixtures/stub-gateway";
 import { createCanonicalChatFixture } from "../../contracts/fixtures/canonical-chat";
 import { closeElectronApp } from "./fixtures/close-electron";
 
 const root = resolve(import.meta.dirname, "../../..");
+const hasDesktopBuild = existsSync(join(root, "desktop/out/main/index.js"));
+if (process.env.MATRIX_DESKTOP_E2E_REQUIRED === "1" && !hasDesktopBuild) {
+  throw new Error("Required Desktop E2E build is missing");
+}
+const suite = hasDesktopBuild ? describe : describe.skip;
 const executablePath = createRequire(join(root, "desktop/package.json"))("electron") as string;
 const output = join(root, "output/chat-dock-badge");
 const fixture = createCanonicalChatFixture("completed");
@@ -55,6 +60,7 @@ const server = createServer(async (req, res) => {
   upstream.on("error", () => { if (!res.headersSent) res.writeHead(502); res.end(); });
   req.pipe(upstream);
 });
+suite("Desktop canonical Chat Dock badge", () => {
 beforeAll(async () => {
   base = await startStubGateway();
   await new Promise<void>(done => server.listen(0, "127.0.0.1", done));
@@ -92,3 +98,4 @@ it("clears the actual native badge when the Chat history is read", async () => {
   expect(unread).toBe(false);
   await page.screenshot({ path: join(output, "chat-read-badge-cleared.png") });
 }, manualReview ? 3_600_000 : 30_000);
+});
