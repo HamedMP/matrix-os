@@ -142,6 +142,26 @@ describe("createIpcHandler", () => {
         connection: "online",
       });
     });
+
+    it("aggregates per-mapping counts without merging durable state", async () => {
+      const { deps } = createDeps({
+        mappingStatuses: () => [
+          { mappingId: "one", fileCount: 3, conflictCount: 0, state: "idle" },
+          { mappingId: "two", fileCount: 4, conflictCount: 2, state: "conflict" },
+        ],
+      });
+      const handler = createIpcHandler(deps);
+
+      await expect(handler("sync.status", {})).resolves.toMatchObject({
+        fileCount: 7,
+        conflictCount: 2,
+        status: "conflict",
+        mappings: [
+          expect.objectContaining({ mappingId: "one" }),
+          expect.objectContaining({ mappingId: "two" }),
+        ],
+      });
+    });
   });
 
   describe("pause / resume", () => {

@@ -63,6 +63,33 @@ describe("createMappingControllerHandler", () => {
     expect(commit).toHaveBeenCalledTimes(4);
   });
 
+  it("atomically excludes a child subtree from its parent while adding", async () => {
+    let current = config();
+    const commit = vi.fn(async (next: SyncMappingConfig) => { current = next; });
+    const handler = createMappingControllerHandler({ snapshot: () => current, commit });
+    const child = {
+      id: "2f17e3cb-e080-5a20-9ba3-d6ea45e7eac5",
+      label: "Project A",
+      localRoot: "/home/alice/Work/project-a",
+      remotePrefix: "projects/project-a",
+      direction: "two_way" as const,
+      enabled: true,
+      propagateDeletes: false,
+      excludes: [],
+    };
+
+    await handler("sync.mappings.add", {
+      expectedRevision: 4,
+      mapping: child,
+      parentMappingId: current.mappings[0]!.id,
+    });
+
+    expect(current.revision).toBe(5);
+    expect(current.mappings[0]!.excludes).toContain("projects/project-a/");
+    expect(current.mappings[1]).toEqual(child);
+    expect(commit).toHaveBeenCalledOnce();
+  });
+
   it("rejects stale revisions and missing mapping ids without committing", async () => {
     const current = config();
     const commit = vi.fn();

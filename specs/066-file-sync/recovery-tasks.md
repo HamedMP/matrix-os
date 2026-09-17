@@ -41,9 +41,9 @@ implementation and is retained as historical compatibility context.
 
 ## P4 — Multiple mappings and CLI
 
-- [ ] Add versioned mapping/session schema, migration, overlap planner, and revisions.
-- [ ] Add list/add/pause/resume/remove/status/conflicts/rescan CLI contracts.
-- [ ] Prove full-home plus custom mappings and restart/runtime isolation.
+- [x] Add versioned mapping/session schema, migration, overlap planner, and revisions.
+- [x] Add list/add/pause/resume/remove/status/conflicts/rescan CLI contracts.
+- [x] Prove full-home plus custom mappings and restart/runtime isolation with synthetic fixtures.
 
 ## P5 — Backup status and controlled activation
 

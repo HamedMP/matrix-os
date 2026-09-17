@@ -41,6 +41,7 @@ export interface IpcHandlerDeps {
     command: string,
     args: Record<string, unknown>,
   ) => Promise<Record<string, unknown>>;
+  mappingStatuses?: () => Array<Record<string, unknown>>;
   shell?: {
     listWorkspaces?: () => Promise<unknown[]>;
     ensureWorkspace?: (input: { projectId?: string }) => Promise<Record<string, unknown>>;
@@ -81,8 +82,19 @@ export function createIpcHandler(deps: IpcHandlerDeps): IpcHandler {
     switch (command) {
       case "status":
       case "sync.status": {
+        const mappingStatuses = deps.mappingStatuses?.() ?? [];
         const conflicts = Object.values(deps.syncState.conflicts ?? {})
           .filter((conflict) => !conflict.resolved);
+        const aggregateConflictCount = mappingStatuses.length > 0
+          ? mappingStatuses.reduce((total, mapping) => (
+              total + (typeof mapping.conflictCount === "number" ? mapping.conflictCount : 0)
+            ), 0)
+          : conflicts.length;
+        const aggregateFileCount = mappingStatuses.length > 0
+          ? mappingStatuses.reduce((total, mapping) => (
+              total + (typeof mapping.fileCount === "number" ? mapping.fileCount : 0)
+            ), 0)
+          : Object.keys(deps.syncState.files).length;
         const auth = await deps.loadAuth?.();
         const authState = !auth
           ? "signed_out"
@@ -93,7 +105,7 @@ export function createIpcHandler(deps: IpcHandlerDeps): IpcHandler {
         const activeTransferCount = Math.max(0, deps.activeTransferCount?.() ?? 0);
         const status = deps.config.pauseSync
           ? "paused"
-          : conflicts.length > 0
+          : aggregateConflictCount > 0
             ? "conflict"
             : connection !== "online"
               ? "offline"
@@ -111,8 +123,8 @@ export function createIpcHandler(deps: IpcHandlerDeps): IpcHandler {
           activeTransferCount,
           manifestVersion: deps.syncState.manifestVersion,
           lastSyncAt: deps.syncState.lastSyncAt,
-          fileCount: Object.keys(deps.syncState.files).length,
-          conflictCount: conflicts.length,
+          fileCount: aggregateFileCount,
+          conflictCount: aggregateConflictCount,
           syncPath: deps.config.syncPath,
           gatewayFolder: deps.config.gatewayFolder ?? "",
           gatewayUrl: deps.config.gatewayUrl,
@@ -122,6 +134,7 @@ export function createIpcHandler(deps: IpcHandlerDeps): IpcHandler {
           peers: deps.peers?.() ?? [],
           activity: deps.activity?.() ?? [],
           conflicts,
+          ...(deps.mappingStatuses ? { mappings: mappingStatuses } : {}),
           invites: deps.invites?.() ?? [],
         };
       }

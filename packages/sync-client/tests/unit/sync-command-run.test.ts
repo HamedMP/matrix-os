@@ -170,6 +170,7 @@ describe("syncCommand mapping subcommands", () => {
       direction: "to_matrix",
       label: "Project",
       exclude: "node_modules/,dist/",
+      excludeParent: mappingId,
     }, ["add"]);
 
     expect(sendCommandMock).toHaveBeenNthCalledWith(1, "sync.mappings.list");
@@ -182,6 +183,7 @@ describe("syncCommand mapping subcommands", () => {
         propagateDeletes: false,
         excludes: ["node_modules/", "dist/"],
       }),
+      parentMappingId: mappingId,
     });
   });
 
