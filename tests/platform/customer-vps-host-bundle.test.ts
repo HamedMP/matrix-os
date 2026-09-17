@@ -112,11 +112,23 @@ describe('customer VPS host bundle', () => {
     expect(script).toContain('GH_URL="https://github.com/cli/cli/releases/download/v${GH_VERSION}/${GH_ARCHIVE}"');
     expect(script).toContain('install -m 0755 "$DIST_DIR/$GH_DIST/bin/gh" "$STAGE_DIR/runtime/node/bin/gh"');
     expect(script).toContain('install -m 0755 "$DIST_DIR/$GH_DIST/bin/gh" "$STAGE_DIR/app/node_modules/.bin/gh"');
+    expect(script).not.toContain('cp -a "$ROOT_DIR/node_modules" "$STAGE_DIR/app/node_modules"');
+    expect(script).toContain(
+      'pnpm install --frozen-lockfile --ignore-scripts --config.enable-global-virtual-store=false',
+    );
+    expect(script).toContain(
+      'find "$STAGE_DIR/app/packages" "$STAGE_DIR/app/shell" "$STAGE_DIR/app/home/apps" -type d -name node_modules -prune -exec rm -rf {} +',
+    );
+    expect(script).toContain(
+      'cp -a "$ROOT_DIR/node_modules/node-pty/build/." "$STAGE_DIR/app/node_modules/node-pty/build/"',
+    );
+    expect(script).toContain(
+      '"$STAGE_DIR/runtime/node/bin/node" --import=tsx "$STAGE_DIR/app/scripts/smoke-gateway-production-loader.mjs"',
+    );
     expect(script).toContain('chmod 0755 "$STAGE_DIR/bin/matrix-owner-env" "$STAGE_DIR/bin/matrix-gateway"');
     expect(script).toContain('tar -xzf "$DIST_DIR/$ZELLIJ_ARCHIVE" -C "$STAGE_DIR/bin" zellij');
     expect(script).toContain('test -x "$STAGE_DIR/bin/zellij"');
-    expect(script).toContain('rm -rf "$STAGE_DIR/app/shell/.next/cache" "$STAGE_DIR/app/shell/e2e" "$STAGE_DIR/app/shell/node_modules"');
-    expect(script).toContain('find "$STAGE_DIR/app/home/apps" -type d -name node_modules -prune -exec rm -rf {} +');
+    expect(script).toContain('rm -rf "$STAGE_DIR/app/shell/.next/cache" "$STAGE_DIR/app/shell/e2e"');
     expect(script).toContain('matrix-update');
     expect(script).toContain('cp -a "$ROOT_DIR/distro/customer-vps/systemd/." "$STAGE_DIR/systemd/"');
     expect(script).toContain('matrix-messaging-health');

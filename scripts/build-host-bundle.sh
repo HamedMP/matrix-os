@@ -134,8 +134,6 @@ cp -a "$ROOT_DIR/distro/customer-vps/systemd-user/." "$STAGE_DIR/user-systemd/"
 # the systemd units execute these wrappers as the matrix user.
 chmod 0755 "$STAGE_DIR/bin/matrix-owner-env" "$STAGE_DIR/bin/matrix-gateway" "$STAGE_DIR/bin/matrix-register-vps" "$STAGE_DIR/bin/matrix-terminal-runtime" "$STAGE_DIR/bin/matrix-agent-bridge" "$STAGE_DIR/bin/matrix-integrations" "$STAGE_DIR/bin/matrix-integrations-mcp" "$STAGE_DIR/bin/matrix-register-integrations-mcp" "$STAGE_DIR/bin/matrix-sync-bundled-home-assets" "$STAGE_DIR/bin/matrix-shell" "$STAGE_DIR/bin/matrix-code" "$STAGE_DIR/bin/matrix-sync-agent" "$STAGE_DIR/bin/matrix-scope-runtime" "$STAGE_DIR/bin/matrix-symphony" "$STAGE_DIR/bin/matrix-symphony-control" "$STAGE_DIR/bin/matrix-update" "$STAGE_DIR/bin/matrix-ensure-swap" "$STAGE_DIR/bin/matrix-install-hermes" "$STAGE_DIR/bin/matrix-hermes-dashboard" "$STAGE_DIR/bin/matrix-install-openclaw" "$STAGE_DIR/bin/matrix-openclaw-gateway" "$STAGE_DIR/bin/matrix-agent-runtime-control" "$STAGE_DIR/bin/matrix-install-linux-tools" "$STAGE_DIR/bin/matrix-install-tool-pack" "$STAGE_DIR/bin/matrix-install-developer-tools" "$STAGE_DIR/bin/matrix-messaging-health" "$STAGE_DIR/bin/matrix-messaging-backup" "$STAGE_DIR/bin/matrix-messaging-restore" "$STAGE_DIR/bin/matrix-prepare-host-prerequisites" "$STAGE_DIR/bin/matrix-aws-cli-smoke" "$STAGE_DIR/bin/matrix-golden-service-diagnostics" "$STAGE_DIR/bin/matrix-golden-snapshot-activate" "$STAGE_DIR/bin/matrix-golden-snapshot-fast-path" "$STAGE_DIR/bin/matrix-golden-snapshot-sanitize" "$STAGE_DIR/bin/matrix-golden-snapshot-validate" "$STAGE_DIR/bin/matrix-write-bootstrap-attestation" "$STAGE_DIR/bin/zellij" "$STAGE_DIR/runtime/node/bin/gh"
 
-cp -a "$ROOT_DIR/node_modules" "$STAGE_DIR/app/node_modules"
-install -m 0755 "$DIST_DIR/$GH_DIST/bin/gh" "$STAGE_DIR/app/node_modules/.bin/gh"
 cp -a "$ROOT_DIR/packages" "$STAGE_DIR/app/packages"
 mkdir -p "$STAGE_DIR/app/packages/symphony-elixir/release"
 cp -a "$DIST_DIR/symphony-release/." "$STAGE_DIR/app/packages/symphony-elixir/release/"
@@ -143,6 +141,7 @@ cp -a "$ROOT_DIR/shell" "$STAGE_DIR/app/shell"
 cp -a "$ROOT_DIR/home" "$STAGE_DIR/app/home"
 mkdir -p "$STAGE_DIR/app/scripts"
 cp -a "$ROOT_DIR/scripts/build-default-apps.mjs" "$STAGE_DIR/app/scripts/build-default-apps.mjs"
+cp -a "$ROOT_DIR/scripts/smoke-gateway-production-loader.mjs" "$STAGE_DIR/app/scripts/smoke-gateway-production-loader.mjs"
 cp -a "$ROOT_DIR/scripts/reset-shipped-icons.mjs" "$STAGE_DIR/app/scripts/reset-shipped-icons.mjs"
 cp -a "$ROOT_DIR/scripts/install-hermes-matrix-skills.sh" "$STAGE_DIR/app/scripts/install-hermes-matrix-skills.sh"
 cp -a "$ROOT_DIR/scripts/configure-hermes-matrix-defaults.mjs" "$STAGE_DIR/app/scripts/configure-hermes-matrix-defaults.mjs"
@@ -161,8 +160,27 @@ fi
 # Keep the host bundle runtime-only. These directories are generated or
 # build-time dependency stores; carrying them to every VPS bloats R2 artifacts
 # and slows upgrades without changing runtime behavior.
-rm -rf "$STAGE_DIR/app/shell/.next/cache" "$STAGE_DIR/app/shell/e2e" "$STAGE_DIR/app/shell/node_modules"
-find "$STAGE_DIR/app/home/apps" -type d -name node_modules -prune -exec rm -rf {} +
+rm -rf "$STAGE_DIR/app/shell/.next/cache" "$STAGE_DIR/app/shell/e2e"
+find "$STAGE_DIR/app/packages" "$STAGE_DIR/app/shell" "$STAGE_DIR/app/home/apps" -type d -name node_modules -prune -exec rm -rf {} +
+
+# A development install may link through pnpm's worktree-shared global virtual
+# store. Reinstall inside the staged tree with a local virtual store so the
+# shipped dependency graph is self-contained and cannot point back at the build
+# machine. Scripts stay disabled. The pinned node-pty native build produced by
+# the verified root rebuild is copied explicitly, then its permissions are
+# repaired inside the staged tree.
+(
+  cd "$STAGE_DIR/app"
+  pnpm install --frozen-lockfile --ignore-scripts --config.enable-global-virtual-store=false
+  mkdir -p "$STAGE_DIR/app/node_modules/node-pty/build"
+  cp -a "$ROOT_DIR/node_modules/node-pty/build/." "$STAGE_DIR/app/node_modules/node-pty/build/"
+  node "$ROOT_DIR/scripts/fix-node-pty-perms.mjs"
+)
+install -m 0755 "$DIST_DIR/$GH_DIST/bin/gh" "$STAGE_DIR/app/node_modules/.bin/gh"
+(
+  cd "$STAGE_DIR/app"
+  "$STAGE_DIR/runtime/node/bin/node" --import=tsx "$STAGE_DIR/app/scripts/smoke-gateway-production-loader.mjs"
+)
 
 # Writes release.json plus the incremental app manifest before packaging, then
 # writes the bundle manifest beside the tarball.
