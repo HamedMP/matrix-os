@@ -671,8 +671,7 @@ export function CanonicalSharedChatPanel({ api, actorId, runtimeId, chatId, stor
 
 async function resolveCanonicalChatScope(api: CollaborationApi, chatId: string): Promise<string | null> {
   let cursor: string | undefined;
-  // The fixed page limit below caps this loop-local set at 100 entries.
-  const seenCursors = new Set<string>();
+  const seenCursors: string[] = [];
   for (let pageNumber = 0; pageNumber < 100; pageNumber += 1) {
     const suffix = cursor ? `&cursor=${encodeURIComponent(cursor)}` : "";
     const page = CollaborationDiscoveryResponseSchema.parse(
@@ -682,8 +681,8 @@ async function resolveCanonicalChatScope(api: CollaborationApi, chatId: string):
       && "chat" in item.resource && item.resource.chat.id === chatId);
     if (match?.status === "accepted") return match.scopeId;
     if (!page.nextCursor) return null;
-    if (seenCursors.has(page.nextCursor)) throw new Error("CollaborationDiscoveryCursorLoop");
-    seenCursors.add(page.nextCursor);
+    if (seenCursors.includes(page.nextCursor)) throw new Error("CollaborationDiscoveryCursorLoop");
+    seenCursors.push(page.nextCursor);
     cursor = page.nextCursor;
   }
   throw new Error("CollaborationDiscoveryPageLimit");
