@@ -26,8 +26,15 @@ function currentServerFrame(value: unknown): unknown {
       revision: frame.revision ?? 1,
       nextSeq: frame.nextSeq ?? frame.fromSeq ?? 0,
       ...(frame.capabilities === undefined ? {} : { capabilities: frame.capabilities }),
+      ...(frame.ownership === undefined ? {} : { ownership: frame.ownership }),
+      ...(frame.leaseEpoch === undefined ? {} : { leaseEpoch: frame.leaseEpoch }),
     };
   }
+  if (frame.type === "lease-revoked") return {
+    type: "lease-revoked",
+    terminalRef: TERMINAL_REF,
+    epoch: frame.epoch ?? null,
+  };
   if (frame.type === "exit") return {
     type: "exit",
     terminalRef: TERMINAL_REF,
@@ -139,6 +146,7 @@ interface RecordedEvents {
   canonicalSizes: Array<{ cols: number; rows: number }>;
   gaps: number;
   exits: number[];
+  ownership: Array<"writer" | "observer">;
 }
 
 interface Harness {
@@ -153,7 +161,7 @@ interface Harness {
 function createHarness(overrides: Partial<ShellSocketOptions> = {}): Harness {
   const sockets: FakeWebSocket[] = [];
   const timers = new FakeTimers();
-  const events: RecordedEvents = { states: [], outputs: [], canonicalSizes: [], gaps: 0, exits: [] };
+  const events: RecordedEvents = { states: [], outputs: [], canonicalSizes: [], gaps: 0, exits: [], ownership: [] };
   const socket = new ShellSocket({
     baseUrl: "https://app.matrix-os.com",
     sessionName: TERMINAL_REF_KEY,
@@ -167,6 +175,9 @@ function createHarness(overrides: Partial<ShellSocketOptions> = {}): Harness {
       },
       onCanonicalSize: (size) => {
         events.canonicalSizes.push(size);
+      },
+      onOwnershipChange: (role) => {
+        events.ownership.push(role);
       },
       onGap: () => {
         events.gaps += 1;
@@ -220,7 +231,7 @@ describe("ShellSocket URL building", () => {
     const h = createHarness();
     h.socket.connect();
     expect(h.latest().url).toBe(
-      `wss://app.matrix-os.com/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=electron&fromSeq=${LIVE_TAIL_FROM_SEQ}&inputCapability=binary-input-v1`,
+      `wss://app.matrix-os.com/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=electron&fromSeq=${LIVE_TAIL_FROM_SEQ}&lease=exclusive&inputCapability=binary-input-v1`,
     );
     expect(LIVE_TAIL_FROM_SEQ).toBe(9_007_199_254_740_991);
   });
@@ -244,7 +255,7 @@ describe("ShellSocket URL building", () => {
     const h = createHarness();
     h.socket.connect();
     expect(h.latest().url).toBe(
-      `wss://app.matrix-os.com/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=electron&fromSeq=${LIVE_TAIL_FROM_SEQ}&inputCapability=binary-input-v1`,
+      `wss://app.matrix-os.com/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=electron&fromSeq=${LIVE_TAIL_FROM_SEQ}&lease=exclusive&inputCapability=binary-input-v1`,
     );
     expect(h.latest().url).not.toContain("chat=");
   });
@@ -315,7 +326,7 @@ describe("ShellSocket URL building", () => {
     const h = createHarness({ baseUrl: "http://localhost:3001/" });
     h.socket.connect();
     expect(h.latest().url).toBe(
-      `ws://localhost:3001/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=electron&fromSeq=${LIVE_TAIL_FROM_SEQ}&inputCapability=binary-input-v1`,
+      `ws://localhost:3001/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=electron&fromSeq=${LIVE_TAIL_FROM_SEQ}&lease=exclusive&inputCapability=binary-input-v1`,
     );
   });
 
@@ -359,7 +370,7 @@ describe("ShellSocket URL building", () => {
     h.timers.advance(500);
     expect(h.sockets).toHaveLength(2);
     expect(h.latest().url).toBe(
-      `wss://app.matrix-os.com/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=electron&fromSeq=42&inputCapability=binary-input-v1`,
+      `wss://app.matrix-os.com/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=electron&fromSeq=42&lease=exclusive&inputCapability=binary-input-v1`,
     );
   });
 
@@ -370,7 +381,7 @@ describe("ShellSocket URL building", () => {
     h.timers.advance(500);
     expect(h.sockets).toHaveLength(2);
     expect(h.latest().url).toBe(
-      `wss://app.matrix-os.com/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=electron&fromSeq=${LIVE_TAIL_FROM_SEQ}&inputCapability=binary-input-v1`,
+      `wss://app.matrix-os.com/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=electron&fromSeq=${LIVE_TAIL_FROM_SEQ}&lease=exclusive&inputCapability=binary-input-v1`,
     );
   });
 
@@ -402,6 +413,37 @@ describe("ShellSocket server frames", () => {
     connectAndAttach(h);
     expect(h.socket.state).toBe("attached");
     expect(h.stateNames()).toEqual(["connecting", "attached"]);
+  });
+
+  it("becomes a read-only observer on lease revocation without reconnecting", () => {
+    const h = createHarness();
+    h.socket.connect();
+    h.latest().open();
+    h.latest().frame({ type: "attached", nextSeq: 0, ownership: "writer", leaseEpoch: 1 });
+    h.socket.sendInput("before");
+
+    h.latest().frame({ type: "lease-revoked", epoch: 1 });
+    h.socket.sendInput("after");
+    h.latest().frame({ type: "output", seq: 1, data: "still following" });
+    h.timers.advance(60_000);
+
+    expect(h.events.ownership).toEqual(["writer", "observer"]);
+    expect(h.latest().inputFrames()).toEqual(["before"]);
+    expect(h.events.outputs).toEqual([{ data: "still following", seq: 1 }]);
+    expect(h.socket.state).toBe("attached");
+    expect(h.sockets).toHaveLength(1);
+  });
+
+  it("reconnects a displaced device as an observer until Continue here is chosen", () => {
+    const h = createHarness();
+    connectAndAttach(h);
+    h.latest().frame({ type: "lease-revoked", epoch: 1 });
+
+    h.latest().serverClose();
+    h.timers.advance(500);
+
+    expect(h.sockets).toHaveLength(2);
+    expect(new URL(h.latest().url).searchParams.get("lease")).toBe("observe");
   });
 
   it("tracks lastSeq and emits output", () => {
@@ -708,7 +750,7 @@ describe("ShellSocket server frames", () => {
     h.timers.advance(500);
     expect(h.sockets).toHaveLength(2);
     expect(h.latest().url).toBe(
-      `wss://app.matrix-os.com/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=electron&fromSeq=${LIVE_TAIL_FROM_SEQ}&inputCapability=binary-input-v1`,
+      `wss://app.matrix-os.com/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=electron&fromSeq=${LIVE_TAIL_FROM_SEQ}&lease=exclusive&inputCapability=binary-input-v1`,
     );
   });
 

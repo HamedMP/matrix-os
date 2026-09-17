@@ -449,6 +449,21 @@ describe("TerminalView session switching", () => {
     expect(screen.getByRole("status").textContent).toContain("This session has ended on your computer.");
   });
 
+  it("offers to continue locally when another device becomes the writer", () => {
+    render(<TerminalView sessionName="alpha" />);
+    const events = attachMock.mock.calls[0]?.[1] as ShellSocketEvents;
+
+    act(() => events.onOwnershipChange?.("observer"));
+
+    expect(screen.getByRole("status").textContent).toContain("Live on another device.");
+    fireEvent.click(screen.getByRole("button", { name: "Continue here" }));
+    expect(attachMock).toHaveBeenCalledTimes(2);
+
+    const resumedEvents = attachMock.mock.calls[1]?.[1] as ShellSocketEvents;
+    act(() => resumedEvents.onOwnershipChange?.("writer"));
+    expect(screen.queryByText("Live on another device.")).toBeNull();
+  });
+
   it("clears xterm before rendering an authoritative replacement snapshot", () => {
     render(<TerminalView sessionName="alpha" />);
     const terminal = createdTerminals.at(-1)!;

@@ -1471,6 +1471,46 @@ describe("TerminalPane scrolling", () => {
     expect(url.searchParams.get("fromSeq")).not.toBe(String(Number.MAX_SAFE_INTEGER));
   });
 
+  it("claims focused writer ownership and remains attached when another device takes over", async () => {
+    render(
+      <TerminalPane
+        paneId="pane-live-ownership-test"
+        cwd=""
+        theme={theme}
+        isFocused
+        isClosing={false}
+        sessionId={TERMINAL_REF_KEY}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+
+    await waitFor(() => expect(WebSocketMock.instances).toHaveLength(1));
+    const socket = WebSocketMock.instances[0]!;
+    expect(new URL(socket.url).searchParams.get("lease")).toBe("exclusive");
+
+    await act(async () => {
+      socket.onmessage?.({ data: JSON.stringify({ ...attachedFrame(0), ownership: "writer", leaseEpoch: 1 }) });
+      socket.onmessage?.({
+        data: JSON.stringify({ type: "lease-revoked", terminalRef: TERMINAL_REF, epoch: 1 }),
+      });
+    });
+
+    expect(screen.getByText("Live on another device.")).toBeTruthy();
+    expect(WebSocketMock.instances).toHaveLength(1);
+    expect(socket.readyState).toBe(WebSocket.OPEN);
+
+    await act(async () => {
+      const onClose = socket.onclose;
+      socket.close();
+      onClose?.();
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await waitFor(() => expect(WebSocketMock.instances).toHaveLength(2));
+    expect(new URL(WebSocketMock.instances[1]!.url).searchParams.get("lease")).toBe("observe");
+  });
+
   it("renders retained output into a new xterm after a full canonical-session remount", async () => {
     const props = {
       paneId: "pane-full-remount-test",

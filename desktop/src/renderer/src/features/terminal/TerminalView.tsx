@@ -179,6 +179,8 @@ export default function TerminalView({
   const endedRef = useRef(false);
   const hoveredLinkRef = useRef<TerminalLinkEntry | null>(null);
   const [socketState, setSocketState] = useState<ShellSocketState>("connecting");
+  const [liveOwnership, setLiveOwnership] = useState<"writer" | "observer">("writer");
+  const [leaseAttempt, setLeaseAttempt] = useState(0);
   const [exitCode, setExitCode] = useState<number | null>(null);
   const [terminalContextMenu, setTerminalContextMenu] = useState<DesktopTerminalMenuState | null>(null);
   const closeTerminalContextMenu = useCallback(() => {
@@ -217,11 +219,14 @@ export default function TerminalView({
     extendedSelectionRef.current = "";
     endedRef.current = false;
     setSocketState("connecting");
+    setLiveOwnership("writer");
+    setLeaseAttempt(0);
     setExitCode(null);
   }
 
   const controls = useDesktopTerminalControls({
     api, sessionName, chatId, active, socketState,
+    writable: liveOwnership === "writer",
     isMac: navigator.platform.startsWith("Mac"),
     attachmentRef, termRef,
   });
@@ -541,6 +546,7 @@ export default function TerminalView({
         }
         gridPresentationRef.current?.schedule();
       },
+      onOwnershipChange: setLiveOwnership,
       onGap: () => {
         terminal.clear();
         terminal.write(GAP_MARKER);
@@ -568,7 +574,7 @@ export default function TerminalView({
       attachmentRef.current = null;
       if (manager.activeSessionName === sessionName) manager.detachActive();
     };
-  }, [sessionName, chatId, active]);
+  }, [sessionName, chatId, active, leaseAttempt]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -735,6 +741,12 @@ export default function TerminalView({
   }, [active, api, reportClipboardFailure, reportClipboardSuccess, sessionName]);
 
   const banner = (() => {
+    if (liveOwnership === "observer") {
+      return {
+        text: "Live on another device.",
+        action: <Button variant="primary" onClick={() => setLeaseAttempt((attempt) => attempt + 1)}>Continue here</Button>,
+      };
+    }
     if (socketState === "fatal") {
       return { text: "This session has ended on your computer.", action: onRecreate ? <Button variant="primary" onClick={onRecreate}>Start new session</Button> : null };
     }
@@ -769,7 +781,7 @@ export default function TerminalView({
           </span>
         </div>
       ) : null}
-      {active && (socketState === "connecting" || socketState === "reconnecting") ? (
+      {active && liveOwnership === "writer" && (socketState === "connecting" || socketState === "reconnecting") ? (
         <div className="pointer-events-none absolute inset-x-0 top-0 flex justify-center pt-2" role="status" aria-live="polite">
           <span className="status-pulse rounded-full px-3 py-1 text-xs" style={{ background: "var(--bg-overlay)", color: "var(--text-secondary)" }}>
             {socketState === "connecting" ? "Connecting…" : "Reconnecting…"}
