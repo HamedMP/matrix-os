@@ -223,11 +223,11 @@ describe("canonical Chat client", () => {
     const client = createCanonicalChatClient(api({ patch }));
 
     await expect(client.updateTitle(record.chat.id, {
-      baseRevision: 0,
+      expectedTitleVersion: 0,
       title: "  Release plan  ",
     })).resolves.toEqual(renamed);
     expect(patch).toHaveBeenCalledWith("/api/chats/chat_client_test/title?readStateVersion=1", {
-      baseRevision: 0,
+      expectedTitleVersion: 0,
       title: "Release plan",
     });
   });

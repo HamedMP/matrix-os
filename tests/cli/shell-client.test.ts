@@ -19,11 +19,14 @@ const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0
 const roots: string[] = [];
 
 function serverFrame(
-  type: "attached" | "output" | "exit" | "pong" | "error",
+  type: "attached" | "output" | "exit" | "pong" | "lease-revoked" | "error",
   fields: Record<string, unknown> = {},
 ): string {
   if (type === "error") {
     return JSON.stringify({ type, terminalRef: TERMINAL_REF, code: "attach_failed", message: "Terminal unavailable", ...fields });
+  }
+  if (type === "lease-revoked") {
+    return JSON.stringify({ type, terminalRef: TERMINAL_REF, epoch: null, ...fields });
   }
   const defaults = type === "attached"
     ? { canonicalSize: { cols: 80, rows: 24 }, nextSeq: 0 }
@@ -588,7 +591,7 @@ describe("shell REST client", () => {
     ControlledWebSocket.last?.emit("message", serverFrame("attached"));
     const revokedSocket = ControlledWebSocket.last!;
 
-    revokedSocket.emit("message", JSON.stringify({ type: "lease-revoked", epoch: 2 }));
+    revokedSocket.emit("message", serverFrame("lease-revoked", { epoch: 2 }));
     await expect(attached).resolves.toEqual({ detached: true, exitCode: null });
     await vi.advanceTimersByTimeAsync(50);
 

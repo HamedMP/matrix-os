@@ -418,10 +418,11 @@ function ChatAppContent({
                     onRenameCommit={(title) => {
                       if (!onRenameConversation || renamePending) return;
                       setRenamePending(true);
-                      void onRenameConversation(conv.id, title).finally(() => {
-                        setRenamePending(false);
-                        setEditingChat(null);
-                      });
+                      void onRenameConversation(conv.id, title).then((saved) => {
+                        if (saved) setEditingChat(null);
+                      }).catch((error: unknown) => {
+                        console.warn("[chat] Rename failed:", error instanceof Error ? error.name : "UnknownError");
+                      }).finally(() => setRenamePending(false));
                     }}
                   />
                 ))}
@@ -480,10 +481,11 @@ function ChatAppContent({
                     onCommit={(title) => {
                       if (!sessionId || !onRenameConversation || renamePending) return;
                       setRenamePending(true);
-                      void onRenameConversation(sessionId, title).finally(() => {
-                        setRenamePending(false);
-                        setEditingChat(null);
-                      });
+                      void onRenameConversation(sessionId, title).then((saved) => {
+                        if (saved) setEditingChat(null);
+                      }).catch((error: unknown) => {
+                        console.warn("[chat] Rename failed:", error instanceof Error ? error.name : "UnknownError");
+                      }).finally(() => setRenamePending(false));
                     }}
                   />
                 ) : (

@@ -3,6 +3,8 @@ import type { AddressInfo } from "node:net";
 import { startStubGateway } from "./stub-gateway";
 
 export const LONG_CHAT_TITLE = "我想设计一个个人主页。请先用 request_user_input 工具询问我喜欢的视觉风格，提供三个选项和简短说明。".repeat(3);
+export const SHORT_CHAT_TITLE = "Brief";
+export const FAILED_CHAT_TITLE = "Failed conversation with a long title ".repeat(4);
 export const TITLE_CHAT_ID = "chat_title_layout";
 
 export async function startChatTitleGateway() {
@@ -17,7 +19,12 @@ export async function startChatTitleGateway() {
   const server = createServer(async (req, res) => {
     const path = new URL(req.url!, base.url).pathname;
     const json = (body: unknown) => { res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify(body)); };
-    if (path === "/api/chats") return json({ items: [record()] });
+    if (path === "/api/chats") return json({ items: [record(),
+      { chat: { ...record().chat, id: "chat_short", title: SHORT_CHAT_TITLE } },
+      { chat: { ...record().chat, id: "chat_failed", title: FAILED_CHAT_TITLE, attention: "failed",
+          userState: { pinned: true, muted: false, readThroughSeq: 0 } },
+        readState: { unread: true, markedUnread: true, version: 1, readThroughSeq: 0, latestIncomingSeq: 0 } },
+    ] });
     if (path === `/api/chats/${TITLE_CHAT_ID}`) return json({ record: record(), messages: [], runs: [], turns: [], activities: [], queuedTurns: [] });
     if (path === `/api/chats/${TITLE_CHAT_ID}/title` && req.method === "PATCH") {
       const chunks: Buffer[] = [];

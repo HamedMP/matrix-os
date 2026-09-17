@@ -1,3 +1,4 @@
+import { createRuntimeAppAiRoutes } from "./app-ai/runtime.js";
 import { restoreBackgroundChatThread, createBackgroundChatProjection } from "./coding-agents/background-chat-recovery.js";
 import { createBackgroundAgentRuntime } from "./background-agent-runtime.js";
 import { bootstrapChatSharing, ChatSharing } from "./chat/sharing.js";
@@ -83,6 +84,7 @@ import {
   parseTerminalInputCapabilityRequest,
   terminalFrameForInputCapabilities,
 } from "./terminal-input-capabilities.js";
+import { createTerminalLiveOwnership } from "./terminal-live-ownership.js";
 import { createWorkspaceStartupRecovery } from "./workspace-startup-recovery.js";
 import { createChannelManager, type ChannelManager } from "./channels/manager.js";
 import { createOutboundQueue } from "./security/outbound-queue.js";
@@ -445,6 +447,7 @@ export async function createGateway(config: GatewayConfig) {
   const terminalWorkspaceRuntime = new TerminalRuntimeSocketClient({
     socketPath: process.env.MATRIX_TERMINAL_RUNTIME_SOCKET ?? "/run/matrix/terminal-runtime.sock",
   });
+  const terminalLiveOwnership = createTerminalLiveOwnership();
   const providerLoginTerminalRegistry = createProviderLoginTerminalRegistry(terminalWorkspaceRuntime);
   const workspaceSessionRuntimeBridge = createSessionRuntimeBridge();
   const shellPreferencesStore = new ShellPreferencesStore({ homePath });
@@ -2761,6 +2764,9 @@ export async function createGateway(config: GatewayConfig) {
       const attachmentTokenResult = c.req.query("attachmentToken") === undefined
         ? { success: true as const, data: undefined }
         : z.string().length(48).regex(/^[a-f0-9]+$/).safeParse(c.req.query("attachmentToken"));
+      const leaseResult = c.req.query("lease") === undefined
+        ? { success: true as const, data: undefined }
+        : z.enum(["exclusive", "observe"]).safeParse(c.req.query("lease"));
       const fromSeqRaw = c.req.query("fromSeq") ?? "0";
       const colsRaw = c.req.query("cols") ?? "120";
       const rowsRaw = c.req.query("rows") ?? "36";
@@ -2773,6 +2779,8 @@ export async function createGateway(config: GatewayConfig) {
         && Number.isSafeInteger(rows) && rows >= 5 && rows <= 200;
       let stream: ReturnType<TerminalRuntimeSocketClient["attach"]> | null = null;
       let attachmentMode: "owner" | "observe" | null = null;
+      let ownershipKey: string | null = null;
+      const ownershipViewerId = randomUUID();
       let principal: RequestPrincipal | null = null;
       let closed = false;
       const pending: unknown[] = [];
@@ -2783,7 +2791,7 @@ export async function createGateway(config: GatewayConfig) {
       return {
         onOpen(_event, ws) {
           if (!refResult.success || !clientResult.success || !chatResult.success
-            || !attachmentTokenResult.success || !validNumbers) {
+            || !attachmentTokenResult.success || !leaseResult.success || !validNumbers) {
             ws.send(JSON.stringify({ type: "error", code: "invalid_request", message: "Invalid request" }));
             ws.close();
             return;
@@ -2826,8 +2834,35 @@ export async function createGateway(config: GatewayConfig) {
               consumeSessionAttachment: workspaceSessionRuntimeBridge.consumeSessionAttachment,
               requiresAttachmentToken: (ref) => hasActiveWorkspaceSessionForTerminalRef(homePath, ref),
             });
-            if (closed) return;
-            const mode = clientResult.data === "cli" ? "hard" as const : "soft" as const;
+            ownershipKey = `${principal.userId}:${refKey}`;
+            terminalLiveOwnership.attach({
+              key: ownershipKey,
+              viewerId: ownershipViewerId,
+              exclusive: leaseResult.data === "exclusive",
+              observe: leaseResult.data === "observe",
+              onRevoked: (epoch) => {
+                if (closed) return;
+                try {
+                  ws.send(JSON.stringify({
+                    type: "lease-revoked",
+                    terminalRef: refResult.data,
+                    epoch,
+                  }));
+                } catch (error: unknown) {
+                  logUnexpectedWsSendFailure("Terminal ownership revocation send failed", error);
+                }
+              },
+            });
+            if (closed) {
+              terminalLiveOwnership.detach(ownershipKey, ownershipViewerId);
+              ownershipKey = null;
+              return;
+            }
+            const mode = clientResult.data === "cli"
+              && attachmentMode === "owner"
+              && terminalLiveOwnership.role(ownershipKey, ownershipViewerId) === "writer"
+              ? "hard" as const
+              : "soft" as const;
             captureTerminalEvent("attach-request", { client: clientResult.data, mode });
             stream = await terminalWorkspaceProjectAdmission.withWorkspace(
               principal,
@@ -2842,7 +2877,18 @@ export async function createGateway(config: GatewayConfig) {
                 onFrame: (frame) => {
                   if (closed) return;
                   try {
-                    ws.send(JSON.stringify(terminalFrameForInputCapabilities(frame, binaryInputRequested)));
+                    const capableFrame = terminalFrameForInputCapabilities(frame, binaryInputRequested);
+                    if (capableFrame.type === "attached" && ownershipKey) {
+                      const role = terminalLiveOwnership.role(ownershipKey, ownershipViewerId);
+                      const leaseEpoch = terminalLiveOwnership.leaseEpoch(ownershipKey, ownershipViewerId);
+                      ws.send(JSON.stringify({
+                        ...capableFrame,
+                        ownership: role,
+                        ...(leaseEpoch === null ? {} : { leaseEpoch }),
+                      }));
+                    } else {
+                      ws.send(JSON.stringify(capableFrame));
+                    }
                   }
                   catch (error) { logUnexpectedWsSendFailure("Terminal tab WebSocket send failed", error); }
                 },
@@ -2871,7 +2917,17 @@ export async function createGateway(config: GatewayConfig) {
                   refResult.data.workspaceId,
                   "run",
                   async () => {
-                    if (!closed && stream) stream.send(frame);
+                    if (closed || !stream || !attachmentMode || !ownershipKey) return;
+                    terminalLiveOwnership.touch(ownershipKey, ownershipViewerId);
+                    const liveOwnershipAllowsFrame = frame.type === "ping"
+                      || frame.type === "detach"
+                      || (frame.type === "resize" && frame.mode === "soft")
+                      || terminalLiveOwnership.allowsMutation(ownershipKey, ownershipViewerId);
+                    if (terminalAttachmentAllowsFrame(attachmentMode, frame) && liveOwnershipAllowsFrame) {
+                      stream.send(frame);
+                    } else {
+                      ws.send(JSON.stringify({ type: "error", code: "read_only", message: "Terminal is read-only" }));
+                    }
                   },
                 );
               }).catch((error: unknown) => {
@@ -2894,11 +2950,7 @@ export async function createGateway(config: GatewayConfig) {
             };
             for (const frame of pending.splice(0)) {
               const parsedFrame = TerminalTabClientFrameSchema.parse(frame);
-              if (terminalAttachmentAllowsFrame(attachmentMode, parsedFrame)) {
-                sendAuthorizedFrame(parsedFrame);
-              } else {
-                ws.send(JSON.stringify({ type: "error", code: "read_only", message: "Terminal is read-only" }));
-              }
+              sendAuthorizedFrame(parsedFrame);
             }
           })().catch((error: unknown) => {
             logBestEffortFailure("Terminal tab authorization failed", error);
@@ -2925,9 +2977,7 @@ export async function createGateway(config: GatewayConfig) {
             ws.close();
             return;
           }
-          if (attachmentMode && !terminalAttachmentAllowsFrame(attachmentMode, parsed.data)) {
-            ws.send(JSON.stringify({ type: "error", code: "read_only", message: "Terminal is read-only" }));
-          } else if (sendAuthorizedFrame) sendAuthorizedFrame(parsed.data);
+          if (sendAuthorizedFrame) sendAuthorizedFrame(parsed.data);
           else if (pending.length < 32) pending.push(parsed.data);
           else ws.close();
         },
@@ -2936,6 +2986,8 @@ export async function createGateway(config: GatewayConfig) {
           closed = true;
           pending.splice(0);
           sendAuthorizedFrame = null;
+          if (ownershipKey) terminalLiveOwnership.detach(ownershipKey, ownershipViewerId);
+          ownershipKey = null;
           stream?.close();
           stream = null;
         },
@@ -3568,6 +3620,13 @@ export async function createGateway(config: GatewayConfig) {
     broadcast({ type: "data:change", app: safeApp, key: safeKey });
     return c.json({ ok: true });
   });
+
+  app.route("/api/bridge/ai", createRuntimeAppAiRoutes({
+    homePath,
+    ownerIds: [process.env.MATRIX_USER_ID, process.env.MATRIX_CLERK_USER_ID]
+      .filter((id): id is string => Boolean(id)),
+    fundedCredentialProvider,
+  }));
 
   app.route("/api/bridge/service", createIntegrationBridgeRoutes({
     platformDb,
@@ -4745,6 +4804,7 @@ export async function createGateway(config: GatewayConfig) {
       await codingAgentWorkspaceRuntime?.close();
       codingAgentWorkspaceRuntime = null;
       workspaceSessionRuntimeBridge.close();
+      terminalLiveOwnership.close();
       await agentRuntimeServices.controller.close();
       aiProviderService.close();
       fundedCredentialProvider?.close();

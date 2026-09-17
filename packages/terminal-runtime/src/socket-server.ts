@@ -2,6 +2,7 @@ import { chmod, lstat, mkdir, unlink } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
 import {
+  normalizeTerminalSnapshot,
   TerminalTabClientFrameSchema,
   type TerminalPaneAction,
   type TerminalRef,
@@ -272,7 +273,7 @@ export class TerminalRuntimeSocketServer {
         revision,
         presentationRevision: snapshot.presentationRevision,
         seq: snapshot.seq,
-        ansi: snapshot.ansi,
+        ansi: normalizeTerminalSnapshot(snapshot.ansi),
         viewport: { top: 0, rows: Math.min(snapshot.viewport.length || resized.canonicalSize.rows, 200) },
       });
     }

@@ -11,7 +11,7 @@ const key = "0123456789abcdef0123456789abcdef";
 const scopeId = "10000000-0000-4000-8000-000000000001";
 const body = new TextEncoder().encode('{"text":"hello"}');
 
-function createPair() {
+function createPair(actorRateLimit?: { maxAttempts: number; windowMs: number; lockoutMs: number }) {
   let nonce = 0;
   const signer = new CollaborationProofSigner({
     activeKeyId: "collaboration-key-1",
@@ -23,6 +23,7 @@ function createPair() {
     runtimeId: "runtime_owner",
     keys: { "collaboration-key-1": key },
     now: () => now,
+    ...(actorRateLimit ? { actorRateLimit } : {}),
   });
   return { signer, verifier };
 }
@@ -164,6 +165,48 @@ describe("collaboration actor proofs", () => {
         ...request,
       })).rejects.toMatchObject({ code: "invalid_proof" });
     }
+  });
+
+  it("rate-limits authenticated actors independently", async () => {
+    const { signer, verifier } = createPair({
+      maxAttempts: 2,
+      windowMs: 60_000,
+      lockoutMs: 30_000,
+    });
+    const request = {
+      ownerId: "user_owner",
+      runtimeId: "runtime_owner",
+      scopeId,
+      method: "POST" as const,
+      path: `/api/collaboration/scopes/${scopeId}/chat/messages`,
+      query: "",
+      body,
+    };
+
+    for (let i = 0; i < 2; i++) {
+      await expect(verifier.verifyHttp({
+        signedProof: signer.signHttp({ actorId: "user_editor", ...request }),
+        method: request.method,
+        path: request.path,
+        query: request.query,
+        body: request.body,
+      })).resolves.toMatchObject({ actorId: "user_editor" });
+    }
+    await expect(verifier.verifyHttp({
+      signedProof: signer.signHttp({ actorId: "user_editor", ...request }),
+      method: request.method,
+      path: request.path,
+      query: request.query,
+      body: request.body,
+    })).rejects.toMatchObject({ code: "rate_limited" });
+
+    await expect(verifier.verifyHttp({
+      signedProof: signer.signHttp({ actorId: "user_viewer", ...request }),
+      method: request.method,
+      path: request.path,
+      query: request.query,
+      body: request.body,
+    })).resolves.toMatchObject({ actorId: "user_viewer" });
   });
 
   it("signs a short-lived content-free rollout policy independently from HTTP proofs", () => {

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   resolveTerminalShortcut,
   TerminalKeyboardPreferencesSchema,
+  TerminalKeyboardPreferencesResponseSchema,
   TerminalPaneActionSchema,
 } from "../../packages/contracts/src/terminal-keyboard";
 const event = (key: string, options = {}) => ({
@@ -173,6 +174,32 @@ describe("terminal shortcuts", () => {
     expect(
       resolveTerminalShortcut(event("ArrowLeft", { altKey: true }), p),
     ).toBeNull();
+  });
+  it("reads legacy Ctrl+V overrides without reviving defaults or losing unrelated preferences", () => {
+    const result = TerminalKeyboardPreferencesResponseSchema.parse({ preferences: { keyboard: {
+      profile: "standard",
+      overrides: { "split-right": "Ctrl+v", "split-down": "Ctrl+Shift+D", "word-left": null },
+    } } });
+    expect(result.preferences.keyboard).toEqual({
+      profile: "standard",
+      overrides: { "split-right": null, "split-down": "Ctrl+Shift+D", "word-left": null },
+    });
+  });
+  it("does not migrate an oversized Ctrl+V binding that was never valid", () => {
+    expect(TerminalKeyboardPreferencesResponseSchema.safeParse({ preferences: { keyboard: {
+      overrides: { "split-right": `${" ".repeat(65)}Ctrl+V` },
+    } } }).success).toBe(false);
+  });
+  it("does not repair other malformed fields when reading a legacy Ctrl+V override", () => {
+    expect(TerminalKeyboardPreferencesResponseSchema.safeParse({ preferences: { keyboard: {
+      profile: "standard",
+      overrides: { "split-right": "Ctrl+V", "split-down": "not a shortcut" },
+    } } }).success).toBe(false);
+  });
+  it("reserves Ctrl+V for clipboard paste instead of accepting an unreachable override", () => {
+    expect(TerminalKeyboardPreferencesSchema.safeParse({
+      overrides: { "split-right": "Ctrl+V" },
+    }).success).toBe(false);
   });
   it("rejects invalid/unbounded/colliding bindings and action payloads", () => {
     for (const overrides of [

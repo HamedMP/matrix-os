@@ -27,6 +27,9 @@ export function installTerminalPointerInterception({
   shouldCorrectPointer,
   correctPointer,
 }: TerminalPointerInterceptionOptions): () => void {
+  const ownerDocument = container.ownerDocument;
+  let correctingPrimaryDrag = false;
+
   const handler = (event: MouseEvent) => {
     if ((event as ZoomCorrectedMouseEvent)._xtermZoomCorrected) return;
 
@@ -45,18 +48,39 @@ export function installTerminalPointerInterception({
       }
     }
 
-    if (shouldCorrectPointer?.(event) ?? getVisualScale() !== 1) {
+    const shouldCorrect = shouldCorrectPointer?.(event) ?? getVisualScale() !== 1;
+    if (event.type === "mousedown" && event.button === 0 && shouldCorrect) {
+      correctingPrimaryDrag = true;
+    }
+    if (shouldCorrect) {
       correctPointer(event);
     }
+    if (event.type === "mouseup" && event.button === 0) {
+      correctingPrimaryDrag = false;
+    }
   };
+
+  const continuePrimaryDrag = (event: MouseEvent) => {
+    if (!correctingPrimaryDrag) return;
+    handler(event);
+    if (event.type === "mouseup" && event.button === 0) correctingPrimaryDrag = false;
+  };
+  const cancelPrimaryDrag = () => { correctingPrimaryDrag = false; };
 
   for (const type of TERMINAL_POINTER_EVENTS) {
     container.addEventListener(type, handler, { capture: true });
   }
+  ownerDocument.addEventListener("mousemove", continuePrimaryDrag, { capture: true });
+  ownerDocument.addEventListener("mouseup", continuePrimaryDrag, { capture: true });
+  ownerDocument.defaultView?.addEventListener("blur", cancelPrimaryDrag);
 
   return () => {
     for (const type of TERMINAL_POINTER_EVENTS) {
       container.removeEventListener(type, handler, { capture: true });
     }
+    ownerDocument.removeEventListener("mousemove", continuePrimaryDrag, { capture: true });
+    ownerDocument.removeEventListener("mouseup", continuePrimaryDrag, { capture: true });
+    ownerDocument.defaultView?.removeEventListener("blur", cancelPrimaryDrag);
+    correctingPrimaryDrag = false;
   };
 }

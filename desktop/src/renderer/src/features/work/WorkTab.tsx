@@ -1,3 +1,4 @@
+import { mergeCanonicalChatRecord } from "@matrix-os/ui";
 import type { ChatAgentDraftRequest, StartAgentChat } from "@matrix-os/ui";
 import { chatMessageVersionUrl, chatReadStateVersionUrl } from "@matrix-os/contracts";
 import { ChatAgentsWorkspace, ChatAgentsContent, useChatAgentsNavigation } from "@matrix-os/ui";
@@ -254,6 +255,7 @@ function WorkTabContent({
     chatId: string;
     session: TerminalSessionSummary;
   } | null>(null);
+  const activeTitleRecordRef = useRef<CanonicalChatRecord | null>(null);
   const [activeChatTitle, setActiveChatTitle] = useState(initialChatTitle ?? "Chat");
   const [agentDraftRequest, setAgentDraftRequest] = useState<ChatAgentDraftRequest | null>(null);
   const agentDraftSequence = useRef(0);
@@ -325,11 +327,11 @@ function WorkTabContent({
   }, [draftTerminalLaunch, initialChatId, initialChatTitle]);
 
   useEffect(() => {
-    setActiveChatTitle(initialChatTitle ?? "Chat");
+    activeTitleRecordRef.current = null;
     setEditingChatTitle(false);
     setRenamingChatTitle(false);
     setRenameChatError(null);
-  }, [initialChatId, initialChatTitle]);
+  }, [initialChatId, client]);
 
   useLayoutEffect(() => {
     if (!active || route !== "project" || !projectSlug) return;
@@ -523,13 +525,39 @@ function WorkTabContent({
     }
     openGlobalDraft();
   }, [initialChatId, layout, openGlobalDraft, showChat]);
-  const applyRenamedChat = useCallback((record: CanonicalChatRecord) => {
-    useTabs.getState().updateChatTitle(record.chat.id, record.chat.title);
-    hostedRuntime?.projectChat(record);
+  useEffect(() => {
+    if (!activeTitleRecordRef.current) setActiveChatTitle(initialChatTitle ?? "Chat");
+  }, [initialChatId, initialChatTitle, client]);
+  const applyRenamedChat = useCallback((incoming: CanonicalChatRecord) => {
+    const current = activeTitleRecordRef.current;
+    const record = current?.chat.id === incoming.chat.id
+      ? mergeCanonicalChatRecord(current, incoming) : incoming;
     if (record.chat.id === activeChatScopeRef.current.chatId) {
+      activeTitleRecordRef.current = record;
       setActiveChatTitle(record.chat.title);
     }
+    useTabs.getState().updateChatTitle(record.chat.id, record.chat.title);
+    hostedRuntime?.projectChat(record);
   }, [hostedRuntime]);
+  useEffect(() => {
+    const scope = activeChatScopeRef.current;
+    if (!scope.client || !scope.chatId || !eventSource) return;
+    let active = true;
+    const subscription = eventSource.subscribe((event) => {
+      if (event.type !== "chat.full_refresh"
+        && (event.chatId !== scope.chatId || event.eventType !== "chat.updated")) return;
+      if (event.type === "chat.changed" && event.content) {
+        applyRenamedChat(event.content.content.record);
+        return;
+      }
+      void scope.client!.getDetail(scope.chatId!, { limit: 1 }).then((detail) => {
+        if (active) applyRenamedChat(detail.record);
+      }).catch((error: unknown) => {
+        console.warn("[work] Title refresh failed:", error instanceof Error ? error.name : "UnknownError");
+      });
+    });
+    return () => { active = false; subscription.dispose(); };
+  }, [eventSource, initialChatId, applyRenamedChat]);
   const renameActiveChat = useCallback(async (title: string) => {
     const scope = activeChatScopeRef.current;
     if (!scope.client || !scope.chatId || renamingChatTitle) return;
@@ -538,7 +566,7 @@ function WorkTabContent({
     try {
       const detail = await scope.client.getDetail(scope.chatId, { limit: 200 });
       const updated = await scope.client.updateTitle(scope.chatId, {
-        baseRevision: detail.record.chat.revision,
+        expectedTitleVersion: detail.record.chat.titleVersion ?? 0,
         title,
       });
       if (activeChatScopeRef.current.client !== scope.client
@@ -550,7 +578,6 @@ function WorkTabContent({
       if (activeChatScopeRef.current.client === scope.client
         && activeChatScopeRef.current.chatId === scope.chatId) {
         setRenameChatError("The Chat could not be renamed. Try again.");
-        setEditingChatTitle(false);
       }
     } finally {
       if (activeChatScopeRef.current.client === scope.client

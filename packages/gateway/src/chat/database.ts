@@ -1,3 +1,4 @@
+import { bootstrapChatMetadata } from "./metadata-schema.js";
 import { sql, type ColumnType, type Generated, type Kysely } from "kysely";
 
 type Timestamp = ColumnType<Date | string, Date | string | undefined, Date | string>;
@@ -11,6 +12,9 @@ export interface ChatsTable {
   create_request_id: string;
   project_id: string | null;
   title: string;
+  title_version: Generated<number>;
+  title_manual: Generated<boolean>;
+  activity_at: Timestamp;
   lifecycle: "active" | "archived";
   attention: "none" | "approval_required" | "input_required" | "failed";
   revision: ColumnType<number, number | undefined, number>;
@@ -687,6 +691,8 @@ export async function bootstrapChatDatabase<Database extends ChatDatabase>(
       PRIMARY KEY (owner_type, owner_id, migration_id)
     )
   `.execute(db);
+
+  await bootstrapChatMetadata(db);
 
   await sql`CREATE INDEX IF NOT EXISTS idx_chats_owner_updated ON chats(owner_type, owner_id, lifecycle, updated_at DESC, id)`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_chats_owner_project ON chats(owner_type, owner_id, project_id)`.execute(db);

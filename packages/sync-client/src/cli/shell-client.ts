@@ -59,6 +59,8 @@ const TerminalServerFrameSchema = z.discriminatedUnion("type", [
     type: z.literal("attached"),
     canonicalSize: TerminalGridSizeSchema,
     nextSeq: z.number().int().min(0),
+    ownership: z.enum(["writer", "observer"]).optional(),
+    leaseEpoch: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
   }).strict(),
   TerminalServerEventBaseSchema.extend({
     type: z.literal("snapshot"),
@@ -96,6 +98,7 @@ const TerminalServerFrameSchema = z.discriminatedUnion("type", [
   TerminalServerEventBaseSchema.extend({ type: z.literal("exit"), exitCode: z.number().int().nullable() }).strict(),
   z.object({
     type: z.literal("lease-revoked"),
+    terminalRef: TerminalRefSchema,
     epoch: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).nullable(),
   }).strict(),
   z.object({

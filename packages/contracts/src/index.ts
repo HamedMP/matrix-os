@@ -1,3 +1,6 @@
+export { APP_GENERATE_CHANNEL, AppGenerateContextSchema, AppGenerateEventSchema, createAppGenerateClient } from "#app-ai";
+export { APP_AI_TIMEOUT_MS, APP_AI_CHANNEL, AppAiInputSchema, AppAiRequestSchema, AppAiResultSchema, createAppAiClient } from "#app-ai";
+export type { AppAiInput, AppAiRequest, AppAiResult } from "#app-ai";
 export * from "#release-alignment";
 export * from "#runtime-compatibility";
 export * from "#chat-message-wire";
@@ -726,6 +729,8 @@ export const TerminalTabServerFrameSchema = z.discriminatedUnion("type", [
     canonicalSize: TerminalGridSizeSchema,
     nextSeq: z.number().int().min(0),
     capabilities: z.array(TerminalInputCapabilitySchema).max(8).optional(),
+    ownership: z.enum(["writer", "observer"]).optional(),
+    leaseEpoch: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
   }).strict(),
   TerminalServerEventBaseSchema.extend({
     type: z.literal("snapshot"),
@@ -770,6 +775,11 @@ export const TerminalTabServerFrameSchema = z.discriminatedUnion("type", [
   }).strict(),
   TerminalServerEventBaseSchema.extend({
     type: z.literal("pong"),
+  }).strict(),
+  z.object({
+    type: z.literal("lease-revoked"),
+    terminalRef: TerminalRefSchema,
+    epoch: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).nullable(),
   }).strict(),
   TerminalServerEventBaseSchema.extend({
     type: z.literal("exit"),
@@ -1404,3 +1414,5 @@ export * from "#terminal-keyboard";
 export * from "#file-download";
 
 export * from "#custom-mcp-availability";
+
+export { normalizeTerminalSnapshot } from "#terminal-snapshot";

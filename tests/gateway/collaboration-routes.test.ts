@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { bootstrapChatDatabase } from "../../packages/gateway/src/chat/database.js";
 import { CollaborationChatCommands } from "../../packages/gateway/src/chat/collaboration-commands.js";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
+import { authMiddleware } from "../../packages/gateway/src/auth.js";
 import { CollaborationActorProofVerifier } from "../../packages/gateway/src/collaboration/actor-proof.js";
 import { CollaborationAuthority } from "../../packages/gateway/src/collaboration/authority.js";
 import { CollaborationChatAdapter } from "../../packages/gateway/src/collaboration/chat-adapter.js";
@@ -201,6 +202,10 @@ describe("collaboration gateway routes", () => {
       createNonce: () => (++nonce).toString(16).padStart(32, "0"),
     });
     app = new Hono();
+    // Production mounts the global owner bearer middleware before these
+    // routes. Collaboration must pass through to its scoped actor-proof
+    // verifier without possessing or impersonating the owner's credential.
+    app.use("*", authMiddleware("owner-gateway-token"));
     app.route("/", createCollaborationRoutes({
       runtimeId: collaborationIds.runtime,
       verifier: new CollaborationActorProofVerifier({

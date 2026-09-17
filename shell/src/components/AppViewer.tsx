@@ -1,5 +1,8 @@
 "use client";
 
+import { prepareAppAiRequest } from "./app-ai-request";
+import { APP_AI_TIMEOUT_MS } from "@matrix-os/contracts";
+
 import { useState, useEffect, useRef } from "react";
 import { useFileWatcher } from "@/hooks/useFileWatcher";
 import { useSocket } from "@/hooks/useSocket";
@@ -60,12 +63,15 @@ async function handleBridgeFetch(appName: string, payload: unknown, port: Messag
     if (typeof url !== "string" || !isAllowedBridgeFetchUrl(appName, url)) {
       throw new Error("Blocked bridge fetch URL");
     }
-    const requestInit = init && typeof init === "object" ? init as RequestInit : {};
+    let requestInit = init && typeof init === "object" ? init as RequestInit : {};
+    const isAi = url === "/api/bridge/ai";
+    if (isAi) requestInit = prepareAppAiRequest(appName, requestInit);
     const response = await fetch(`${getGatewayUrl()}${url}`, {
       method: requestInit.method,
       headers: requestInit.headers,
       body: requestInit.body,
-      signal: AbortSignal.timeout(BRIDGE_FETCH_TIMEOUT_MS),
+      signal: AbortSignal.timeout(isAi ? APP_AI_TIMEOUT_MS + 2_000 : BRIDGE_FETCH_TIMEOUT_MS),
+      redirect: "error",
     });
     const body = await response.json().catch((err: unknown) => {
       console.warn("[app-viewer] bridge fetch JSON parse failed:", err instanceof Error ? err.message : String(err));
