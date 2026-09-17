@@ -6,6 +6,8 @@ import { join } from "node:path";
 import { createProjectManager } from "../../packages/gateway/src/project-manager.js";
 import { createProjectLifecycleService } from "../../packages/gateway/src/project-lifecycle.js";
 
+import { withProjectLock } from "../../packages/gateway/src/state-ops.js";
+
 describe("project lifecycle", () => {
   let homePath: string;
   const principal = { userId: "user_123", source: "jwt" as const };
@@ -67,31 +69,36 @@ describe("project lifecycle", () => {
     expect(restored.projects[0]?.archivedAt).toBeUndefined();
   });
 
-  it("rejects archive and delete while project work is active without changing lifecycle state", async () => {
+  it("blocks archive but cascades confirmed deletion of an active project", async () => {
     const projectManager = await createScratch();
+    const cleanupRelatedState = vi.fn(async () => undefined);
     const service = createProjectLifecycleService({
       projectManager,
       findBlockers: async () => [{ type: "session", label: "Agent session" }],
-      cleanupRelatedState: async () => undefined,
+      cleanupRelatedState,
     });
-
     await expect(service.applyProjectLifecycleAction(principal, "customer-app", { type: "archive" }))
       .resolves.toMatchObject({ ok: false, status: 409, error: { code: "project_active" } });
+    expect(cleanupRelatedState).not.toHaveBeenCalled();
     await expect(service.applyProjectLifecycleAction(principal, "customer-app", {
-      type: "delete",
-      confirmation: "Customer app",
-    })).resolves.toMatchObject({ ok: false, status: 409, error: { code: "project_active" } });
-
-    const project = await projectManager.getProjectForLifecycle({
-      slug: "customer-app",
-      ownerScope: { type: "user", id: principal.userId },
-    });
-    expect(project).toMatchObject({ ok: true, project: { slug: "customer-app" } });
-    if (project.ok) {
-      expect(project.project.archivedAt).toBeUndefined();
-      expect(project.project.deletingAt).toBeUndefined();
-    }
+      type: "delete", confirmation: "Customer app",
+    })).resolves.toMatchObject({ ok: true, action: "delete" });
+    expect(cleanupRelatedState).toHaveBeenCalledOnce();
   });
+
+  it("releases the admission lock before child cleanup acquires a worktree lock", async () => {
+    const projectManager = await createScratch("Leased app", "leased-app");
+    const service = createProjectLifecycleService({
+      projectManager,
+      findBlockers: async () => [],
+      cleanupRelatedState: async () => withProjectLock("leased-app", async () => {
+        expect(await projectManager.getProject("leased-app")).toMatchObject({ ok: false });
+      }),
+    });
+    await expect(service.applyProjectLifecycleAction(principal, "leased-app", {
+      type: "delete", confirmation: "Leased app",
+    })).resolves.toMatchObject({ ok: true });
+  }, 1000);
 
   it("requires the exact project name before permanent deletion", async () => {
     const projectManager = await createScratch();

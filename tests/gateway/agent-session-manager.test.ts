@@ -201,7 +201,7 @@ describe("agent-session-manager", () => {
     await expect(stat(join(homePath, "system", "sessions", "sess_abc123.json"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("deletes only inactive project sessions owned by the requesting user", async () => {
+  it("stops and deletes project sessions owned by the requesting user", async () => {
     const { manager } = createManager();
     const baseSession = {
       id: "sess_inactive",
@@ -235,12 +235,6 @@ describe("agent-session-manager", () => {
     await expect(manager.getProjectLifecycleState({ projectSlug: "repo", ownerId: "user_a" }))
       .resolves.toEqual({ activeSessionCount: 1, sessionCount: 2 });
 
-    await expect(manager.deleteProjectSessions({ projectSlug: "repo", ownerId: "user_a" }))
-      .resolves.toMatchObject({ ok: false, status: 409, error: { code: "project_active" } });
-    await atomicWriteJson(join(homePath, "system", "sessions", "sess_active.json"), {
-      ...baseSession,
-      id: "sess_active",
-    });
     await expect(manager.deleteProjectSessions({ projectSlug: "repo", ownerId: "user_a" }))
       .resolves.toEqual({ ok: true, deleted: 2 });
 

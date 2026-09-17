@@ -124,14 +124,11 @@ describe("review-store", () => {
     await expect(stat(join(homePath, "system"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("deletes terminal project reviews but refuses to remove active review state", async () => {
+  it("deletes all project reviews after project execution cleanup", async () => {
     const store = createReviewStore({ homePath });
     await store.saveReview(record("rev_older"));
     await store.saveReview({ ...record("rev_newer"), projectSlug: "other", status: "approved" });
 
-    await expect(store.deleteProjectReviews("repo"))
-      .resolves.toMatchObject({ ok: false, status: 409, error: { code: "project_active" } });
-    await store.saveReview({ ...record("rev_older"), status: "stopped" });
     await expect(store.deleteProjectReviews("repo")).resolves.toEqual({ ok: true, deleted: 1 });
 
     await expect(stat(join(homePath, "system", "reviews", "rev_older.json"))).rejects.toMatchObject({ code: "ENOENT" });
@@ -149,9 +146,6 @@ describe("review-store", () => {
 
     await expect(store.getProjectLifecycleState("repo"))
       .resolves.toEqual({ activeReviewCount: 1, reviewCount: 101 });
-    await expect(store.deleteProjectReviews("repo"))
-      .resolves.toMatchObject({ ok: false, status: 409 });
-    await store.saveReview({ ...record("rev_bulk_100"), status: "stopped" });
     await expect(store.deleteProjectReviews("repo")).resolves.toEqual({ ok: true, deleted: 101 });
   });
 });

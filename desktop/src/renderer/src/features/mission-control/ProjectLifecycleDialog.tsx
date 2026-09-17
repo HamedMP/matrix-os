@@ -71,6 +71,9 @@ export default function ProjectLifecycleDialog({
             ? "Matrix OS will remove its project record, tasks, chats, and internal state. Your original folder and files will stay untouched."
             : "The managed workspace, tasks, chats, reviews, previews, and worktrees will be removed."}
         </p>
+        <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
+          This will stop project tasks and terminal sessions and delete all associated chats and sessions.
+        </p>
         <label className="block text-sm font-medium" style={{ color: "var(--text-primary)" }}>
           Type {project.name} to confirm
           <input

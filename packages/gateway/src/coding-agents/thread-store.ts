@@ -1,3 +1,4 @@
+import { deleteProjectThreadState } from "./project-thread-deletion.js";
 import { applyBackgroundThreadStop, withBackgroundResumeState, BackgroundThreadStopSchema, type BackgroundThreadStop } from "./background-thread-stop.js";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -1508,34 +1509,15 @@ export function createCodingAgentThreadStore(
       });
     },
     async deleteProjectThreads(principal, projectId) {
-      return mutate<{ ok: true; deleted: number } | { ok: false; activeThreadCount: number }>(async (state) => {
-        const projectThreads = state.threads.filter((thread) =>
-          thread.ownerId === principal.userId && thread.projectId === projectId
-        );
-        const activeThreadCount = projectThreads.filter(activeThread).length;
-        if (activeThreadCount > 0) {
-          return { state, result: { ok: false as const, activeThreadCount } };
-        }
-        const threadIds = new Set(projectThreads.map((thread) => thread.id));
-        const terminalRefKeys = projectThreads.flatMap((thread) => thread.terminalRef
-          ? [`${thread.terminalRef.workspaceId}:${thread.terminalRef.tabId}`]
-          : []);
-        return {
-          state: {
-            ...state,
-            threads: state.threads.filter((thread) => !threadIds.has(thread.id)),
-            events: state.events.filter((event) => !threadIds.has(event.threadId)),
-            turns: state.turns.filter((turn) => !threadIds.has(turn.threadId)),
-            pendingTerminalStops: state.pendingTerminalStops.filter((stop) =>
-              !("terminalRef" in stop) || stop.ownerId !== principal.userId || !terminalRefKeys.includes(
-                `${stop.terminalRef.workspaceId}:${stop.terminalRef.tabId}`,
-              )
-            ),
-          },
-          result: { ok: true as const, deleted: projectThreads.length },
-        };
-      });
+      return mutate(async (state) => deleteProjectThreadState({
+        state, principal, projectId, providers, now, nextEventId,
+        abortLocal: (thread) => {
+          activeInitialRuns.get(thread.id)?.controller.abort();
+          if (thread.activeTurnId) turnDispatcher.abort(thread.activeTurnId);
+        },
+      }));
     },
+
     async getProjectWorkspaceThreads(principal, projectId, query, validTaskIds) {
       const state = await readState(options.homePath);
       const projectThreads = state.threads

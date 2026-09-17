@@ -65,7 +65,7 @@ export function createProjectLifecycleService(options: {
       let recovered = 0;
       let failed = 0;
       for (const tombstone of projects) {
-        const succeeded = await withProjectLock(tombstone.slug, async () => {
+        const succeeded = await withProjectLock(`lifecycle:${tombstone.slug}`, async () => {
           const current = await options.projectManager.getProjectForLifecycle({
             slug: tombstone.slug,
             ownerScope: tombstone.ownerScope,
@@ -97,64 +97,70 @@ export function createProjectLifecycleService(options: {
       const action = parsedAction.data;
       const ownerScope = ownerScopeFromPrincipal(principal);
 
-      return withProjectLock(projectSlug, async () => {
-        const current = await options.projectManager.getProjectForLifecycle({ slug: projectSlug, ownerScope });
-        if (!current.ok) return current;
-        const project = current.project;
+      // Serialize lifecycle requests separately: child shutdown must acquire the
+      // normal project lock to release worktree leases after admission is fenced.
+      return withProjectLock(`lifecycle:${projectSlug}`, async () => {
+        const prepared = await withProjectLock<ProjectLifecycleResult | { deletingProject: ProjectConfig }>(projectSlug, async () => {
+          const current = await options.projectManager.getProjectForLifecycle({ slug: projectSlug, ownerScope });
+          if (!current.ok) return current;
+          const project = current.project;
 
-        if (project.deletingAt && action.type !== "delete") {
-          return failure(404, "not_found", "Project was not found");
-        }
-
-        if (action.type === "restore") {
-          if (!project.archivedAt) return { ok: true, action: "restore", project };
-          const updated = await options.projectManager.setProjectLifecycleState({
-            slug: projectSlug,
-            ownerScope,
-            archivedAt: null,
-          });
-          return updated.ok ? { ok: true, action: "restore", project: updated.project } : updated;
-        }
-
-        if (action.type === "delete" && action.confirmation !== project.name) {
-          return failure(400, "confirmation_mismatch", "Project name confirmation does not match");
-        }
-
-        if (!project.deletingAt) {
-          let blockers: ProjectLifecycleBlocker[];
-          try {
-            blockers = await options.findBlockers(project, principal);
-          } catch (err: unknown) {
-            console.error("[project-lifecycle] Failed to inspect project activity:", err);
-            return failure(500, "activity_check_failed", "Project activity could not be checked");
+          if (project.deletingAt && action.type !== "delete") {
+            return failure(404, "not_found", "Project was not found");
           }
-          if (blockers.length > 0) {
-            return failure(409, "project_active", "Stop active project work before continuing");
+
+          if (action.type === "restore") {
+            if (!project.archivedAt) return { ok: true, action: "restore", project };
+            const updated = await options.projectManager.setProjectLifecycleState({
+              slug: projectSlug,
+              ownerScope,
+              archivedAt: null,
+            });
+            return updated.ok ? { ok: true, action: "restore", project: updated.project } : updated;
           }
-        }
 
-        if (action.type === "archive") {
-          if (project.archivedAt) return { ok: true, action: "archive", project };
-          const updated = await options.projectManager.setProjectLifecycleState({
-            slug: projectSlug,
-            ownerScope,
-            archivedAt: now(),
-          });
-          return updated.ok ? { ok: true, action: "archive", project: updated.project } : updated;
-        }
+          if (action.type === "delete" && action.confirmation !== project.name) {
+            return failure(400, "confirmation_mismatch", "Project name confirmation does not match");
+          }
 
-        let deletingProject = project;
-        if (!project.deletingAt) {
-          const marked = await options.projectManager.setProjectLifecycleState({
-            slug: projectSlug,
-            ownerScope,
-            deletingAt: now(),
-          });
-          if (!marked.ok) return marked;
-          deletingProject = marked.project;
-        }
+          if (action.type === "archive" && !project.deletingAt) {
+            let blockers: ProjectLifecycleBlocker[];
+            try {
+              blockers = await options.findBlockers(project, principal);
+            } catch (err: unknown) {
+              console.error("[project-lifecycle] Failed to inspect project activity:", err);
+              return failure(500, "activity_check_failed", "Project activity could not be checked");
+            }
+            if (blockers.length > 0) {
+              return failure(409, "project_active", "Stop active project work before continuing");
+            }
+          }
 
-        if (!await finishDeletion(deletingProject, principal)) {
+          if (action.type === "archive") {
+            if (project.archivedAt) return { ok: true, action: "archive", project };
+            const updated = await options.projectManager.setProjectLifecycleState({
+              slug: projectSlug,
+              ownerScope,
+              archivedAt: now(),
+            });
+            return updated.ok ? { ok: true, action: "archive", project: updated.project } : updated;
+          }
+
+          let deletingProject = project;
+          if (!project.deletingAt) {
+            const marked = await options.projectManager.setProjectLifecycleState({
+              slug: projectSlug,
+              ownerScope,
+              deletingAt: now(),
+            });
+            if (!marked.ok) return marked;
+            deletingProject = marked.project;
+          }
+
+          return { deletingProject };
+        });
+        if (!("deletingProject" in prepared)) return prepared;
+        if (!await finishDeletion(prepared.deletingProject, principal)) {
           return failure(500, "delete_incomplete", "Project deletion could not be completed");
         }
         return { ok: true, action: "delete", projectSlug };

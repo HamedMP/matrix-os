@@ -1,3 +1,4 @@
+import { createProjectChatCleanup } from "./chat/project-deletion.js";
 import { createRuntimeAppAiRoutes } from "./app-ai/runtime.js";
 import { restoreBackgroundChatThread, createBackgroundChatProjection } from "./coding-agents/background-chat-recovery.js";
 import { createBackgroundAgentRuntime } from "./background-agent-runtime.js";
@@ -3262,37 +3263,6 @@ export async function createGateway(config: GatewayConfig) {
   const upgradeBodyLimit = bodyLimit({ maxSize: 4096 });
   const pushRegistrationBodyLimit = bodyLimit({ maxSize: 4096 });
   const clientErrorBodyLimit = bodyLimit({ maxSize: CLIENT_ERROR_LOG_BODY_LIMIT });
-  app.route("/", createWorkspaceRoutes({
-    homePath,
-    backgroundRuntime: backgroundAgentRuntime,
-    terminalRuntime: terminalWorkspaceRuntime,
-    agentLauncher: agentCredentialLauncher,
-    sessionRuntimeBridge: workspaceSessionRuntimeBridge,
-    eventStore: workspaceEventStore,
-    eventPublisher: workspaceEventPublisher,
-    reviewStore,
-    codingAgentThreadStore,
-    getOwnerScope: (c) => ({ type: "user", id: requireRequestPrincipal(c).userId }),
-    ...(gatewayCollaboration ? {
-      projectOperationAdmission: gatewayCollaboration.projectOperationAdmission,
-    } : {}),
-    ...chatBoundWorkspaceRouteDeps,
-  }));
-  app.route("/api", createShellRoutes(shellRouteDeps));
-  app.route("/api/symphony", createElixirSymphonyProxyRoutes({
-    upstreamOrigin: symphonyUpstreamOriginForPort(initialSymphonyPort),
-  }));
-  const workspaceStartupRecoveryController = createWorkspaceStartupRecovery({
-    homePath,
-    backgroundRuntime: backgroundAgentRuntime,
-    eventPublisher: workspaceEventPublisher,
-    codingAgentThreadStore,
-  });
-  const workspaceStartupRecovery = await workspaceStartupRecoveryController.run();
-  if (workspaceStartupRecovery.status === "degraded") {
-    console.warn("[gateway] Workspace startup recovery completed with degraded steps");
-  }
-
   app.get("/api/terminal/layout", async (c) => {
     const layoutPath = join(homePath, "system", "terminal-layout.json");
     try {
@@ -4419,6 +4389,43 @@ export async function createGateway(config: GatewayConfig) {
       });
     }
   }
+  // Bind deletion and run tombstone recovery only after Chat dependencies are ready.
+  const deleteProjectChats = chatRepository && canonicalChatOrchestrator
+    ? createProjectChatCleanup({ repository: chatRepository, orchestrator: canonicalChatOrchestrator })
+    : async () => { throw new Error("Project chat cleanup unavailable"); };
+  app.route("/", createWorkspaceRoutes({
+    homePath,
+    backgroundRuntime: backgroundAgentRuntime,
+    terminalRuntime: terminalWorkspaceRuntime,
+    agentLauncher: agentCredentialLauncher,
+    sessionRuntimeBridge: workspaceSessionRuntimeBridge,
+    eventStore: workspaceEventStore,
+    eventPublisher: workspaceEventPublisher,
+    reviewStore,
+    codingAgentThreadStore,
+    deleteProjectChats,
+    getOwnerScope: (c) => ({ type: "user", id: requireRequestPrincipal(c).userId }),
+    ...(gatewayCollaboration ? {
+      projectOperationAdmission: gatewayCollaboration.projectOperationAdmission,
+    } : {}),
+    ...chatBoundWorkspaceRouteDeps,
+  }));
+  app.route("/api", createShellRoutes(shellRouteDeps));
+  app.route("/api/symphony", createElixirSymphonyProxyRoutes({
+    upstreamOrigin: symphonyUpstreamOriginForPort(initialSymphonyPort),
+  }));
+  const workspaceStartupRecoveryController = createWorkspaceStartupRecovery({
+    deleteProjectChats,
+    homePath,
+    backgroundRuntime: backgroundAgentRuntime,
+    eventPublisher: workspaceEventPublisher,
+    codingAgentThreadStore,
+  });
+  const workspaceStartupRecovery = await workspaceStartupRecoveryController.run();
+  if (workspaceStartupRecovery.status === "degraded") {
+    console.warn("[gateway] Workspace startup recovery completed with degraded steps");
+  }
+
   if (canonicalChatEventStream) {
     registerCanonicalChatEventWebSocketRoute({
       app,
