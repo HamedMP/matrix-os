@@ -332,9 +332,18 @@ export class TerminalRuntimeSocketServer {
         { workspaceId: request.input.workspaceId, tabId: request.input.tabId },
         request.input.action,
       ).then(() => null);
-      case "WriteInput": return this.options.runtime.writeInput(request.input, request.input.data).then(() => null);
-      case "UpdateTabUiState": return this.options.runtime.updateTabUiState(request.input, request.input);
-      case "Resize": return this.options.runtime.resize(request.input, request.input);
+      case "WriteInput": return this.options.runtime.writeInput(
+        { workspaceId: request.input.workspaceId, tabId: request.input.tabId },
+        request.input.data,
+      ).then(() => null);
+      case "UpdateTabUiState": {
+        const { workspaceId, tabId, ...input } = request.input;
+        return this.options.runtime.updateTabUiState({ workspaceId, tabId }, input);
+      }
+      case "Resize": return this.options.runtime.resize(
+        { workspaceId: request.input.workspaceId, tabId: request.input.tabId },
+        { mode: request.input.mode, size: request.input.size },
+      );
       case "DeletionImpact": return this.options.runtime.deletionImpact(request.input.workspaceId);
       case "DeleteWorkspace": return this.options.runtime.deleteWorkspace(request.input.workspaceId, request.input).then(() => null);
       case "Attach": throw new Error("Attach must use stream dispatch");
