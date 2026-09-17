@@ -9,6 +9,8 @@ export interface SyncJwtClaims extends JWTPayload {
   handle: string;
   gateway_url: string;
   runtime_slot?: string;
+  token_use?: 'sync_device';
+  grant_id?: string;
   aud?: string | string[];
   iat: number;
   exp: number;
@@ -21,6 +23,8 @@ export interface IssueOpts {
   handle: string;
   gatewayUrl: string;
   runtimeSlot?: string;
+  tokenUse?: 'sync_device';
+  grantId?: string;
   expiresInSec?: number;
   now?: number; // epoch seconds; defaults to current time
 }
@@ -59,6 +63,8 @@ export async function issueSyncJwt(opts: IssueOpts): Promise<IssuedJwt> {
     handle: opts.handle,
     gateway_url: opts.gatewayUrl,
     ...(opts.runtimeSlot ? { runtime_slot: opts.runtimeSlot } : {}),
+    ...(opts.tokenUse ? { token_use: opts.tokenUse } : {}),
+    ...(opts.grantId ? { grant_id: opts.grantId } : {}),
     aud: SYNC_JWT_AUDIENCE,
     iat: now,
     exp,
@@ -98,9 +104,15 @@ export async function verifySyncJwt(
     payload.handle.length === 0 ||
     typeof payload.gateway_url !== 'string' ||
     (payload.runtime_slot !== undefined && typeof payload.runtime_slot !== 'string') ||
+    (payload.token_use !== undefined && payload.token_use !== 'sync_device') ||
+    (payload.grant_id !== undefined && typeof payload.grant_id !== 'string') ||
     typeof payload.iat !== 'number' ||
     typeof payload.exp !== 'number'
   ) {
+    throw new Error('Invalid sync JWT claims');
+  }
+
+  if (payload.token_use === 'sync_device' && typeof payload.grant_id !== 'string') {
     throw new Error('Invalid sync JWT claims');
   }
 

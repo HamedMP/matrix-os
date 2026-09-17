@@ -8,6 +8,8 @@ export interface SyncJwtClaims extends JWTPayload {
   handle: string;
   gateway_url: string;
   runtime_slot?: string;
+  token_use?: "sync_device";
+  grant_id?: string;
   aud?: string | string[];
   iat: number;
   exp: number;
@@ -75,9 +77,15 @@ export async function validateSyncJwt(
     payload.handle.length === 0 ||
     typeof payload.gateway_url !== "string" ||
     (payload.runtime_slot !== undefined && typeof payload.runtime_slot !== "string") ||
+    (payload.token_use !== undefined && payload.token_use !== "sync_device") ||
+    (payload.grant_id !== undefined && typeof payload.grant_id !== "string") ||
     typeof payload.iat !== "number" ||
     typeof payload.exp !== "number"
   ) {
+    throw new Error("Invalid sync JWT: missing required claims");
+  }
+
+  if (payload.token_use === "sync_device" && typeof payload.grant_id !== "string") {
     throw new Error("Invalid sync JWT: missing required claims");
   }
 

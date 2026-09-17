@@ -120,6 +120,7 @@ import {
 import { createProvisioner } from "./provisioner.js";
 import {
   authMiddleware,
+  JWT_CLAIMS_CONTEXT_KEY,
 } from "./auth.js";
 import {
   isRequestPrincipalError,
@@ -2303,6 +2304,9 @@ export async function createGateway(config: GatewayConfig) {
       // stashed claims if a JWT was presented.
       let syncPeerLifecycle = null;
       let syncPeerSocket: WSContext | null = null;
+      const syncDeviceOnly = (
+        c.get(JWT_CLAIMS_CONTEXT_KEY as never) as { token_use?: string } | undefined
+      )?.token_use === "sync_device";
       let conversationOwnerScope: ReturnType<typeof ownerScopeFromPrincipal> | undefined;
       let connectionOwnerId: string | undefined;
       try {
@@ -2444,6 +2448,12 @@ export async function createGateway(config: GatewayConfig) {
           }
 
           const parsed: MainWsClientMessage = parsedResult.data;
+
+          if (syncDeviceOnly && parsed.type !== "sync:subscribe" && parsed.type !== "ping") {
+            send(ws, { type: "kernel:error", message: "Unauthorized" });
+            ws.close(1008, "Unauthorized");
+            return;
+          }
 
           if (parsed.type === "ping") {
             send(ws, { type: "pong" } as ServerMessage);

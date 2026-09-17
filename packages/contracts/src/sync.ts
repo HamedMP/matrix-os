@@ -81,6 +81,29 @@ export const SyncMappingConfigSchema = z.object({
 });
 export type SyncMappingConfig = z.infer<typeof SyncMappingConfigSchema>;
 
+export const SyncDeviceNameSchema = z.string().trim().min(1).max(120);
+export const SyncDeviceRefreshTokenSchema = z.string()
+  .max(256)
+  .regex(/^sdr_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.[A-Za-z0-9_-]{43}$/);
+
+export const SyncDeviceEnrollmentRequestSchema = z.object({
+  deviceName: SyncDeviceNameSchema,
+}).strict();
+
+export const SyncDeviceRefreshRequestSchema = z.object({
+  refreshToken: SyncDeviceRefreshTokenSchema,
+}).strict();
+
+export const SyncDeviceCredentialSchema = z.object({
+  accessToken: z.string().min(1).max(16_384),
+  refreshToken: SyncDeviceRefreshTokenSchema,
+  expiresAt: z.int().positive(),
+  userId: SyncOwnerIdSchema,
+  handle: z.string().min(1).max(128),
+  runtimeSlot: SyncRuntimeSlotSchema,
+}).strict();
+export type SyncDeviceCredential = z.infer<typeof SyncDeviceCredentialSchema>;
+
 export const BackupAttemptSchema = z.object({
   attemptedAt: z.int().nonnegative(),
   outcome: z.enum(["running", "success", "failed"]),

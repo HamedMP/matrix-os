@@ -211,6 +211,41 @@ describe("validateSyncJwt", () => {
 });
 
 describe("authMiddleware: hybrid bearer + JWT acceptance", () => {
+  it("limits sync-device JWTs to sync data, backup status, and sync websocket paths", async () => {
+    const issued = await issueSyncJwt({
+      secret: JWT_SECRET,
+      clerkUserId: "user_alice",
+      handle: HANDLE,
+      gatewayUrl: "https://alice.matrix-os.com",
+      runtimeSlot: "primary",
+      tokenUse: "sync_device",
+      grantId: "18e9ee9f-ec1f-45b7-b0c2-b51a47e6da8c",
+    });
+    const mw = authMiddleware("legacy-shared-secret");
+
+    for (const path of ["/api/sync/manifest", "/api/sync/backup-status", "/ws"]) {
+      let nextCalled = false;
+      const response = await mw(
+        mockContext(path, `Bearer ${issued.token}`),
+        async () => {
+          nextCalled = true;
+        },
+      );
+      expect(response).toBeUndefined();
+      expect(nextCalled).toBe(true);
+    }
+
+    let nextCalled = false;
+    const response = await mw(
+      mockContext("/api/shell/sessions", `Bearer ${issued.token}`),
+      async () => {
+        nextCalled = true;
+      },
+    );
+    expect(nextCalled).toBe(false);
+    expect(response).toMatchObject({ status: 401 });
+  });
+
   it("rejects a same-handle JWT issued for another runtime slot", async () => {
     process.env.MATRIX_RUNTIME_SLOT = "review";
     const issued = await issueSyncJwt({

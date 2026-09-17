@@ -285,6 +285,124 @@ describe("device routes", () => {
     });
   });
 
+  describe("sync-device credentials", () => {
+    it("enrolls a runtime-scoped grant and stores only a refresh-token hash", async () => {
+      const owner = await issueSyncJwt({
+        secret: JWT_SECRET,
+        clerkUserId: "user_alice",
+        handle: "alice",
+        gatewayUrl: "https://app.matrix-os.com",
+        runtimeSlot: "primary",
+      });
+
+      const response = await app.request("/api/auth/sync-device/enroll", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${owner.token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ deviceName: "Alice MacBook" }),
+      });
+
+      expect(response.status).toBe(200);
+      const body = await response.json() as Record<string, unknown>;
+      expect(body).toMatchObject({
+        accessToken: expect.any(String),
+        refreshToken: expect.stringMatching(/^sdr_[0-9a-f-]{36}\.[A-Za-z0-9_-]{40,}$/),
+        expiresAt: expect.any(Number),
+        userId: "user_alice",
+        handle: "alice",
+        runtimeSlot: "primary",
+      });
+      const claims = await verifySyncJwt(body.accessToken as string, { secret: JWT_SECRET });
+      expect(claims).toMatchObject({
+        sub: "user_alice",
+        handle: "alice",
+        runtime_slot: "primary",
+        token_use: "sync_device",
+      });
+      const row = await db.executor
+        .selectFrom("sync_device_grants")
+        .selectAll()
+        .executeTakeFirstOrThrow();
+      expect(row.refresh_token_hash).toMatch(/^[a-f0-9]{64}$/);
+      expect(JSON.stringify(row)).not.toContain(body.refreshToken as string);
+    });
+
+    it("rotates refresh credentials atomically and revokes the grant on replay", async () => {
+      const owner = await issueSyncJwt({
+        secret: JWT_SECRET,
+        clerkUserId: "user_alice",
+        handle: "alice",
+        gatewayUrl: "https://app.matrix-os.com",
+        runtimeSlot: "primary",
+      });
+      const enrolled = await app.request("/api/auth/sync-device/enroll", {
+        method: "POST",
+        headers: { authorization: `Bearer ${owner.token}`, "content-type": "application/json" },
+        body: JSON.stringify({ deviceName: "Alice MacBook" }),
+      }).then((response) => response.json()) as { refreshToken: string };
+
+      const refreshed = await app.request("/api/auth/sync-device/refresh", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ refreshToken: enrolled.refreshToken }),
+      });
+      expect(refreshed.status).toBe(200);
+      const rotated = await refreshed.json() as { refreshToken: string };
+      expect(rotated.refreshToken).not.toBe(enrolled.refreshToken);
+
+      const replay = await app.request("/api/auth/sync-device/refresh", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ refreshToken: enrolled.refreshToken }),
+      });
+      expect(replay.status).toBe(401);
+
+      const afterReplay = await app.request("/api/auth/sync-device/refresh", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ refreshToken: rotated.refreshToken }),
+      });
+      expect(afterReplay.status).toBe(401);
+      const row = await db.executor
+        .selectFrom("sync_device_grants")
+        .select(["revoked_at"])
+        .executeTakeFirstOrThrow();
+      expect(row.revoked_at).not.toBeNull();
+    });
+
+    it("revokes by refresh credential without exposing grant existence", async () => {
+      const owner = await issueSyncJwt({
+        secret: JWT_SECRET,
+        clerkUserId: "user_alice",
+        handle: "alice",
+        gatewayUrl: "https://app.matrix-os.com",
+        runtimeSlot: "primary",
+      });
+      const enrolled = await app.request("/api/auth/sync-device/enroll", {
+        method: "POST",
+        headers: { authorization: `Bearer ${owner.token}`, "content-type": "application/json" },
+        body: JSON.stringify({ deviceName: "Alice MacBook" }),
+      }).then((response) => response.json()) as { refreshToken: string };
+
+      const revoke = await app.request("/api/auth/sync-device/revoke", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ refreshToken: enrolled.refreshToken }),
+      });
+      expect(revoke.status).toBe(200);
+      await expect(revoke.json()).resolves.toEqual({ ok: true });
+
+      const refresh = await app.request("/api/auth/sync-device/refresh", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ refreshToken: enrolled.refreshToken }),
+      });
+      expect(refresh.status).toBe(401);
+    });
+  });
+
   describe("GET /api/support/identity", () => {
     it("signs only the authenticated Sync JWT Clerk subject", async () => {
       const supportIdentitySecret = "posthog-conversations-server-secret";
