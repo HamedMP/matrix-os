@@ -6,6 +6,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { WebSocketServer, type WebSocket } from "ws";
 import { resolve } from "node:path";
 import { readBuildSource } from "../../../../scripts/release/build-source.mjs";
+import { terminalSnapshotFrame } from "./terminal-snapshot";
 import { createSystemInfoFixture } from "./system-info";
 import {
   AgentThreadSnapshotSchema,
@@ -43,6 +44,7 @@ export interface StubGateway {
 }
 
 export interface StubGatewayOptions {
+  terminalSnapshotAnsi?: string;
   rootFileEntries?: Array<{
     name: string;
     type: "directory" | "file";
@@ -1331,6 +1333,11 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
       if (activeTerminalOutputs[session] === sendOutput) delete activeTerminalOutputs[session];
     });
     sendOutput("stub-shell$ ");
+    if (options.terminalSnapshotAnsi !== undefined) {
+      seq += 1;
+      terminalOutputSequences[tabId] = seq;
+      ws.send(JSON.stringify(terminalSnapshotFrame(terminalRef, revision, seq, options.terminalSnapshotAnsi)));
+    }
     ws.on("message", (raw) => {
       let msg: Record<string, unknown>;
       try {

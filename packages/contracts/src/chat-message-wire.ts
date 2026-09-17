@@ -67,3 +67,27 @@ export function projectChatMessageFrame(
     } } : {}),
   } };
 }
+
+/** Read-state support is independent of message/activity and SSE versions. */
+export const ChatReadStateWireVersionSchema = z.enum(["0", "1"]).default("0");
+export type ChatReadStateWireVersion = z.infer<typeof ChatReadStateWireVersionSchema>;
+
+export function chatReadStateVersionUrl(path: string): string {
+  return `${path}${path.includes("?") ? "&" : "?"}readStateVersion=1`;
+}
+
+/** Only project known Chat record positions; never traverse user message data. */
+export function projectChatReadStateResponse<T>(response: T, version: ChatReadStateWireVersion): T {
+  if (version === "1" || response === null || typeof response !== "object") return response;
+  const value = response as Record<string, unknown>;
+  const stripRecord = (record: unknown): unknown => {
+    if (record === null || typeof record !== "object") return record;
+    const { readState: _readState, ...legacy } = record as Record<string, unknown>;
+    return legacy;
+  };
+  return {
+    ...("chat" in value ? stripRecord(value) as object : value),
+    ...("record" in value ? { record: stripRecord(value.record) } : {}),
+    ...(Array.isArray(value.items) ? { items: value.items.map(stripRecord) } : {}),
+  } as T;
+}

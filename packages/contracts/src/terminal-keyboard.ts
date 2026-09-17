@@ -118,6 +118,7 @@ export const TerminalKeyboardPreferencesSchema = z
       "Meta+A",
       "Ctrl+Shift+C",
       "Ctrl+Shift+V",
+      "Ctrl+V",
       "Ctrl+Shift+F",
       "Alt+Shift+C",
     ];
@@ -147,6 +148,21 @@ export const TerminalKeyboardPreferencesSchema = z
 export type TerminalKeyboardPreferences = z.infer<
   typeof TerminalKeyboardPreferencesSchema
 >;
+/** Read compatibility only: preserve preferences while disabling the former Ctrl+V binding. */
+export const TerminalKeyboardPreferencesReadSchema = z.preprocess((input) => {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return input;
+  const record = input as Record<string, unknown>;
+  const overrides = record.overrides;
+  if (!overrides || typeof overrides !== "object" || Array.isArray(overrides)) return input;
+  return {
+    ...record,
+    overrides: Object.fromEntries(Object.entries(overrides).map(([command, binding]) => [
+      command,
+      typeof binding === "string" && binding.length <= 64 && normalizeTerminalShortcut(binding) === "Ctrl+V" ? null : binding,
+    ])),
+  };
+}, TerminalKeyboardPreferencesSchema);
+
 export interface TerminalKeyboardEvent {
   type: string;
   key: string;
@@ -327,7 +343,7 @@ export function resolveTerminalShortcut(
 }
 export const TerminalKeyboardPreferencesResponseSchema = z.object({
   preferences: z.object({
-    keyboard: TerminalKeyboardPreferencesSchema.default({
+    keyboard: TerminalKeyboardPreferencesReadSchema.default({
       profile: "mac",
       overrides: {},
     }),

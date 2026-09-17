@@ -13,6 +13,26 @@ function tmpHome(): string {
 }
 
 describe("T135: System info", () => {
+  it("advertises collaboration only when the VPS flag is explicitly enabled", () => {
+    const homePath = tmpHome();
+    const previous = process.env.MATRIX_COLLABORATION_ENABLED;
+
+    try {
+      delete process.env.MATRIX_COLLABORATION_ENABLED;
+      expect(getSystemInfo(homePath).capabilities.collaboration).toBe(false);
+
+      process.env.MATRIX_COLLABORATION_ENABLED = "false";
+      expect(getSystemInfo(homePath).capabilities.collaboration).toBe(false);
+
+      process.env.MATRIX_COLLABORATION_ENABLED = "true";
+      expect(getSystemInfo(homePath).capabilities.collaboration).toBe(true);
+    } finally {
+      if (previous === undefined) delete process.env.MATRIX_COLLABORATION_ENABLED;
+      else process.env.MATRIX_COLLABORATION_ENABLED = previous;
+      rmSync(homePath, { recursive: true, force: true });
+    }
+  });
+
   it("advertises compatibility from the running code independently of release files", () => {
     const homePath = tmpHome();
     try {

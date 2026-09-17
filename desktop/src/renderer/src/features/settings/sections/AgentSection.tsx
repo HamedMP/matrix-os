@@ -6,8 +6,8 @@ import { Button, StatusDot } from "../../../design/primitives";
 import { toUserMessage } from "../../../lib/errors";
 import { invoke } from "../../../lib/operator";
 import { useConnection } from "../../../stores/connection";
-import { useTabs } from "../../../stores/tabs";
-import { openProviderSetupTerminal, providerSetupCommands, type ProviderSetupCommand } from "../../coding-agents/provider-setup-terminal";
+import { useProviderSettingsReturnSequence, useProviderTerminalAction } from "../use-provider-terminal-action";
+import { providerSetupCommands } from "../../coding-agents/provider-setup-terminal";
 import { Card, Empty, SettingsSectionHeader } from "./section-kit";
 import AgentRuntimeSettingsCard from "./AgentRuntimeSettingsCard";
 
@@ -42,9 +42,6 @@ const PROVIDER_STATUS_COLOR: Record<AgentProviderSummary["availability"], string
   unavailable: "var(--danger)",
   unknown: "var(--text-tertiary)",
 };
-
-const SETUP_DISCONNECTED_ERROR = "Connect to your Matrix computer before opening setup.";
-const SETUP_TERMINAL_ERROR = "Could not open setup terminal. Try again from Terminal.";
 
 function titleCaseStatus(value: string): string {
   const label = value.replace(/_/g, " ");
@@ -272,10 +269,10 @@ function ProvidersCard() {
 function RuntimeProvidersCard() {
   const api = useConnection((s) => s.api);
   const runtimeSlot = useConnection((s) => s.runtimeSlot);
-  const openTab = useTabs((s) => s.openTab);
+  const returnSequence = useProviderSettingsReturnSequence();
+  const { open: openSetup, pending, error: setupError } = useProviderTerminalAction("settings");
   const [summary, setSummary] = useState<RuntimeSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [setupError, setSetupError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!api) {
@@ -286,7 +283,6 @@ function RuntimeProvidersCard() {
     let cancelled = false;
     setSummary(null);
     setError(null);
-    setSetupError(null);
     invoke("runtime:get-summary", {})
       .then((nextSummary) => {
         if (cancelled) return;
@@ -300,17 +296,7 @@ function RuntimeProvidersCard() {
     return () => {
       cancelled = true;
     };
-  }, [api, runtimeSlot]);
-
-  const openSetup = async (setup: ProviderSetupCommand) => {
-    setSetupError(null);
-    if (!api) {
-      setSetupError(SETUP_DISCONNECTED_ERROR);
-      return;
-    }
-    const opened = await openProviderSetupTerminal(api, setup, openTab, "settings");
-    if (!opened) setSetupError(SETUP_TERMINAL_ERROR);
-  };
+  }, [api, runtimeSlot, returnSequence]);
 
   return (
     <Card>
@@ -344,10 +330,12 @@ function RuntimeProvidersCard() {
                         key={setup.key}
                         variant="subtle"
                         aria-label={`Open provider setup ${setup.label}`}
+                        disabled={pending}
+                        aria-busy={pending}
                         onClick={() => void openSetup(setup)}
                       >
                         <SquareTerminal size={13} />
-                        {setup.label}
+                        {pending ? "Opening Terminal…" : setup.label}
                       </Button>
                     ))}
                   </div>

@@ -84,3 +84,4 @@ export { createAuditLogger, rotateActivityLog, cleanOldLogs } from "./audit.js";
 export type { AuditLogger, AuditEntry, AuditLogEntry } from "./audit.js";
 export { detectAppType, createReactScaffold, registerModule } from "./build-pipeline.js";
 export type { ModuleEntry } from "./build-pipeline.js";
+export { generateAppText } from "./app-ai.js";

@@ -300,7 +300,7 @@ export function createTerminalWorkspaceRoutes(options: {
 
   app.delete("/workspaces/:workspaceId/tabs/:tabId", deleteLimit, async (c) => {
     try {
-      const deleteTab = options.runtime.deleteTab;
+      const deleteTab = options.runtime.deleteTab?.bind(options.runtime);
       if (!deleteTab) return c.json({ error: "Terminal operation unavailable" }, 503);
       const ref = terminalRefFromParams(c.req.param("workspaceId"), c.req.param("tabId"));
       return await projectAdmission.withWorkspace(options.getPrincipal(c), ref.workspaceId, "run", async () => {

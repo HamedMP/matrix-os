@@ -15,6 +15,7 @@ import {
   type TerminalPersistence,
 } from "@/lib/terminal-window-metadata";
 import { useDesktopMode } from "@/stores/desktop-mode";
+import { desktopWorkArea } from "@/lib/desktop-work-area";
 import { patchWebOsViewState, resetWebOsViewStateClientForTests } from "@/lib/os-view-state-client";
 
 export interface AppWindow {
@@ -51,7 +52,6 @@ export interface AppEntry {
 const MIN_WIDTH = 320;
 const MIN_HEIGHT = 200;
 const DESKTOP_WINDOW_MARGIN = 20;
-const DESKTOP_HEADER_HEIGHT = 38;
 const MAX_CLOSED_ENTRIES = 50;
 const LAYOUT_SAVE_DEBOUNCE_MS = 500;
 const LAYOUT_SAVE_RETRY_MS = 2_000;
@@ -73,11 +73,8 @@ export function getEffectiveMinimumWindowSize(path: string): { width: number; he
 
   const vw = typeof window !== "undefined" ? window.innerWidth : 1280;
   const vh = typeof window !== "undefined" ? window.innerHeight : 800;
-  const topInset = mode === "desktop" ? DESKTOP_HEADER_HEIGHT : 0;
-  const availableWidth = Math.max(1, vw);
-  const availableHeight = Math.max(
-    1,
-    vh - topInset,
+  const { width: availableWidth, height: availableHeight } = desktopWorkArea(
+    { width: vw, height: vh }, mode === "desktop",
   );
   return {
     width: Math.min(preferred.width, availableWidth),
@@ -111,10 +108,12 @@ function normalizeRestoredLayout(path: string, layout: ClosedLayout, previous?: 
 
   const vw = typeof window !== "undefined" ? window.innerWidth : 1280;
   const vh = typeof window !== "undefined" ? window.innerHeight : 800;
-  const topInset = mode === "desktop" ? DESKTOP_HEADER_HEIGHT : 0;
+  const workArea = desktopWorkArea({ width: vw, height: vh }, mode === "desktop");
   return {
     ...layout,
-    ...constrainFloatingWindow(layout, { width: vw, height: vh - topInset }, getMinimumWindowSize(path), previous),
+    ...constrainFloatingWindow(layout, workArea, getMinimumWindowSize(path), previous, {
+      allowBottomOverflow: mode !== "desktop",
+    }),
   };
 }
 
@@ -245,9 +244,10 @@ function computeDefaultWindowSize(path: string): { width: number; height: number
   const width = Math.round(Math.min(1200, Math.max(preferred.width, vw * 0.6)));
   const height = Math.round(Math.min(900, Math.max(preferred.height, vh * 0.7)));
   if (mode === "canvas") return { width, height };
+  const workArea = desktopWorkArea({ width: vw, height: vh }, mode === "desktop");
   return {
     width: Math.min(width, Math.max(1, vw - DESKTOP_WINDOW_MARGIN * 2)),
-    height: Math.min(height, Math.max(1, vh - (mode === "desktop" ? DESKTOP_HEADER_HEIGHT : 0) - DESKTOP_WINDOW_MARGIN * 2)),
+    height: Math.min(height, Math.max(1, workArea.height - DESKTOP_WINDOW_MARGIN * 2)),
   };
 }
 
@@ -257,13 +257,13 @@ function computeDefaultWindowSize(path: string): { width: number; height: number
 function centeredWindowPosition(path: string): { x: number; y: number } {
   const vw = typeof window !== "undefined" ? window.innerWidth : 1280;
   const vh = typeof window !== "undefined" ? window.innerHeight : 800;
-  const topInset = useDesktopMode.getState().mode === "desktop" ? DESKTOP_HEADER_HEIGHT : 0;
+  const workArea = desktopWorkArea({ width: vw, height: vh }, useDesktopMode.getState().mode === "desktop");
   const { width, height } = computeDefaultWindowSize(path);
   return {
     x: Math.max(DESKTOP_WINDOW_MARGIN, Math.round((vw - width) / 2)),
     y: Math.max(
       DESKTOP_WINDOW_MARGIN,
-      Math.round((vh - topInset - height) / 2),
+      Math.round((workArea.height - height) / 2),
     ),
   };
 }
@@ -288,10 +288,12 @@ function createWindowRecord(
     id: `win-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     title: name,
     path,
-    x: saved?.x ?? fallbackX,
-    y: saved?.y ?? fallbackY,
-    width: Math.max(saved?.width ?? defaultWidth, minSize.width),
-    height: Math.max(saved?.height ?? defaultHeight, minSize.height),
+    ...normalizeRestoredLayout(path, {
+      x: saved?.x ?? fallbackX,
+      y: saved?.y ?? fallbackY,
+      width: Math.max(saved?.width ?? defaultWidth, minSize.width),
+      height: Math.max(saved?.height ?? defaultHeight, minSize.height),
+    }),
     minimized: false,
     zIndex: state.nextZ,
     terminalLayoutId: terminalLayoutIdForPath(path, terminalPersistence, saved?.terminalLayoutId),

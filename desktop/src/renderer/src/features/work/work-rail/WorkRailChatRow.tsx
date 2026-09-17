@@ -7,7 +7,7 @@ import {
   PinOffIcon,
   Trash2,
 } from "@renderer/lib/hugeicons";
-import { ChatContextMenu } from "@matrix-os/ui";
+import { isChatUnread, ChatContextMenu } from "@matrix-os/ui";
 import { OverflowingChatTitle } from "../OverflowingChatTitle";
 import { ChatTitleEditor } from "../../chat/ChatTitleEditor";
 import {
@@ -28,6 +28,8 @@ export function WorkRailChatRow({
   onRenameStart,
   onRenameCommit,
   onRenameCancel,
+  onToggleRead,
+  readPending = false,
   onPin,
   onDelete,
 }: {
@@ -42,6 +44,8 @@ export function WorkRailChatRow({
   onRenameStart: () => void;
   onRenameCommit: (title: string) => void;
   onRenameCancel: () => void;
+  onToggleRead?: () => void;
+  readPending?: boolean;
   onPin: () => void;
   onDelete: () => void;
 }) {
@@ -61,7 +65,7 @@ export function WorkRailChatRow({
   const pinned = Boolean(record.chat.userState?.pinned);
   const agentState = resolveWorkRailAgentState(record);
   return (
-    <ChatContextMenu chatId={record.chat.id} items={[
+    <ChatContextMenu chatId={record.chat.id} primaryAction={onToggleRead ? { label: isChatUnread(record) ? "Mark as read" : "Mark as unread", disabled: readPending, onSelect: onToggleRead } : undefined} items={[
       {
         label: "Rename",
         disabled: renameDisabled,
@@ -122,8 +126,9 @@ export function WorkRailChatRow({
           }}
         >
           <MessageSquare size={15} aria-hidden className="shrink-0" style={{ color: active ? "var(--accent)" : "var(--text-tertiary)" }} />
-          <OverflowingChatTitle title={record.chat.title} />
-          <ChatAgentStateIndicator state={agentState} title={record.chat.title} />
+          <span className={isChatUnread(record) ? "min-w-0 flex-1 font-semibold" : "min-w-0 flex-1"}><OverflowingChatTitle title={record.chat.title} /></span>
+          {isChatUnread(record) && (record.readState || agentState !== "unseen_completion") ? <span aria-label={`Unread ${record.chat.title}`} className="size-2 shrink-0 rounded-full bg-[var(--accent)]" /> : null}
+          <ChatAgentStateIndicator state={record.readState && agentState === "unseen_completion" ? "idle" : agentState} title={record.chat.title} />
         </button>}
         {!renaming ? <div
           className="pointer-events-none absolute right-1 top-1/2 z-10 flex -translate-y-1/2 items-center gap-0.5 rounded-md opacity-0 transition-opacity group-hover/chat:pointer-events-auto group-hover/chat:opacity-100 group-focus-within/chat:pointer-events-auto group-focus-within/chat:opacity-100"

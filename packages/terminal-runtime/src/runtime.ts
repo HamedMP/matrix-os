@@ -10,7 +10,10 @@ import {
 } from "@matrix-os/contracts";
 import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod/v4";
+import { openBufferedAttachment } from "./attachment-bootstrap.js";
 import { TerminalRuntimeError } from "./errors.js";
+import { TerminalMouseModeState } from "./mouse-mode-state.js";
+import { createViewerOutput } from "./viewer-output.js";
 import {
   TerminalWorkspaceStore,
   type TerminalRuntimeWorkspaceState,
@@ -82,6 +85,7 @@ export interface TerminalViewer {
 }
 
 interface ViewerState {
+  disposeOutput: () => void;
   id: string;
   lastTouched: number;
   send: (data: Uint8Array) => void | Promise<void>;
@@ -92,6 +96,7 @@ interface AttachmentState {
   ref: TerminalRef;
   handle: ZellijAttachment;
   viewers: Map<string, ViewerState>;
+  mouseModes: TerminalMouseModeState;
 }
 
 interface InputQueueState {
@@ -508,22 +513,28 @@ export class TerminalRuntime {
     await this.sweepStaleViewers();
     const key = refKey(ref);
     let attachment = this.attachments.get(key);
+    let bootstrap: Awaited<ReturnType<typeof openBufferedAttachment>> | undefined;
     if (!attachment) {
       if (this.attachments.size >= this.maxAttachments) throw new TerminalRuntimeError("capacity");
       const workspace = await this.requireRuntimeWorkspace(ref.workspaceId);
       const tab = workspace.tabs[ref.tabId];
       if (!tab || tab.zellijPaneId === null) throw new TerminalRuntimeError("not_found");
+      const paneId = tab.zellijPaneId;
       const next: AttachmentState = {
         ref,
         handle: undefined as unknown as ZellijAttachment,
         viewers: new Map(),
+        mouseModes: new TerminalMouseModeState(),
       };
       let openingExit: { exitCode: number | null; release: () => void } | undefined;
       try {
-        next.handle = await this.zellij.openAttachment(workspace.zellijSessionName, {
-          paneId: tab.zellijPaneId,
+        bootstrap = await openBufferedAttachment((onData) => this.zellij.openAttachment(workspace.zellijSessionName, {
+          paneId,
           size: workspace.canonicalSize,
-          onData: (data) => { void this.broadcast(key, data); },
+          onData: (data) => {
+            next.mouseModes.observe(data);
+            onData(data);
+          },
           onExit: (exitCode) => {
             if (!this.attachments.has(key)) { openingExit ??= { exitCode, release: this.reservePaneClosure(key) }; return; }
             const releasePaneClosure = this.reservePaneClosure(key);
@@ -531,7 +542,8 @@ export class TerminalRuntime {
               .catch((error: unknown) => { console.error("[terminal-runtime] failed to record terminal attachment exit", error); })
               .finally(releasePaneClosure);
           },
-        });
+        }), (data) => { void this.broadcast(key, data); });
+        next.handle = bootstrap.handle;
         this.attachments.set(key, next);
         if (openingExit) { await this.handleAttachmentExit(key, openingExit.exitCode); throw new Error("Terminal tab unavailable"); }
       } finally { openingExit?.release(); }
@@ -540,12 +552,28 @@ export class TerminalRuntime {
     if (!attachment.viewers.has(viewerId) && attachment.viewers.size >= this.maxViewersPerTab) {
       throw new TerminalRuntimeError("capacity");
     }
+    const send = createViewerOutput(input.send);
+    attachment.viewers.get(viewerId)?.disposeOutput();
     attachment.viewers.set(viewerId, {
       id: viewerId,
       lastTouched: Date.now(),
-      send: input.send,
+      send,
+      disposeOutput: send.dispose,
       ...(input.onExit ? { onExit: input.onExit } : {}),
     });
+    const mouseInitialization = attachment.mouseModes.bootstrap();
+    if (mouseInitialization) {
+      try {
+        // The same ordered sender delivers initialization and later live output.
+        await send(mouseInitialization);
+      } catch (error: unknown) {
+        send.dispose();
+        attachment.viewers.delete(viewerId);
+        if (attachment.viewers.size === 0) await this.closeAttachment(key);
+        throw error;
+      }
+    }
+    bootstrap?.flush();
     let detached = false;
     return {
       write: async (data) => {
@@ -563,7 +591,8 @@ export class TerminalRuntime {
       detach: async () => {
         if (detached) return;
         detached = true;
-        attachment!.viewers.delete(viewerId);
+        send.dispose();
+        if (attachment!.viewers.get(viewerId)?.send === send) attachment!.viewers.delete(viewerId);
         if (attachment!.viewers.size === 0) await this.closeAttachment(key);
       },
     };
@@ -922,7 +951,7 @@ export class TerminalRuntime {
   private async broadcast(key: string, data: Uint8Array): Promise<void> {
     const attachment = this.attachments.get(key);
     if (!attachment) return;
-    const failed: string[] = [];
+    const failed: ViewerState[] = [];
     for (const viewer of attachment.viewers.values()) {
       try {
         await viewer.send(data);
@@ -931,10 +960,13 @@ export class TerminalRuntime {
           "[terminal-runtime] viewer output send failed",
           error instanceof Error ? error.name : "unknown_error",
         );
-        failed.push(viewer.id);
+        failed.push(viewer);
       }
     }
-    for (const viewerId of failed) attachment.viewers.delete(viewerId);
+    for (const viewer of failed) {
+      viewer.disposeOutput();
+      if (attachment.viewers.get(viewer.id) === viewer) attachment.viewers.delete(viewer.id);
+    }
     if (attachment.viewers.size === 0) await this.closeAttachment(key);
   }
 
@@ -947,6 +979,7 @@ export class TerminalRuntime {
       if (this.attachments.get(key) !== attachment) return;
       if (!force && attachment.viewers.size > 0) return;
       this.attachments.delete(key);
+      for (const viewer of attachment.viewers.values()) viewer.disposeOutput();
       attachment.viewers.clear();
       await attachment.handle.close();
     } finally {
@@ -990,7 +1023,10 @@ export class TerminalRuntime {
   private async sweepStaleViewers(now = Date.now()): Promise<void> {
     for (const [key, attachment] of this.attachments) {
       for (const [viewerId, viewer] of attachment.viewers) {
-        if (now - viewer.lastTouched > this.viewerTtlMs) attachment.viewers.delete(viewerId);
+        if (now - viewer.lastTouched > this.viewerTtlMs) {
+          viewer.disposeOutput();
+          attachment.viewers.delete(viewerId);
+        }
       }
       if (attachment.viewers.size === 0) await this.closeAttachment(key);
     }

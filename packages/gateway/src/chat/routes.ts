@@ -1,3 +1,7 @@
+import { ChatMetadataVersionSchema, projectChatMetadata } from "./metadata-wire.js";
+import { LegacyUpdateChatTitleRequestSchema, type LegacyUpdateChatTitleRequest } from "@matrix-os/contracts";
+import { ChatReadStateWireVersionSchema, projectChatReadStateResponse } from "@matrix-os/contracts";
+import { CanonicalUpdateChatReadStateRequestSchema, type CanonicalUpdateChatReadStateRequest } from "@matrix-os/contracts";
 import { ChatInputWireVersionSchema } from "@matrix-os/contracts";
 import { CanonicalSubmitChatInputRequestSchema, CanonicalChatInputSubmissionResponseSchema, type CanonicalSubmitChatInputRequest, type CanonicalChatInputSubmissionResponse } from "@matrix-os/contracts";
 import {
@@ -86,6 +90,7 @@ const CHAT_UPDATE_BODY_LIMIT = 4 * 1024;
 const CHAT_ACKNOWLEDGEMENT_BODY_LIMIT = 4 * 1024;
 
 const ChatListQuerySchema = z.object({
+  unread: z.enum(["true", "false"]).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(50),
   lifecycle: z.enum(["active", "archived"]).optional(),
   projectId: CanonicalCreateChatRequestSchema.shape.projectId.optional(),
@@ -121,6 +126,8 @@ export interface CanonicalChatRouteService {
     chatId: string,
     input: CanonicalUpdateChatTitleRequest,
   ): Promise<CanonicalChatRecord>;
+  updateLegacyTitle(owner: ChatOwner, chatId: string, input: LegacyUpdateChatTitleRequest): Promise<CanonicalChatRecord>;
+  updateReadState(owner: ChatOwner, chatId: string, input: CanonicalUpdateChatReadStateRequest): Promise<CanonicalChatRecord>;
   updateUserState(
     owner: ChatOwner,
     chatId: string,
@@ -133,6 +140,7 @@ export interface CanonicalChatRouteService {
   ): Promise<CanonicalChatRecord>;
   delete(owner: ChatOwner, chatId: string, clientRequestId: string): Promise<{ chatId: string; deletedAt: string }>;
   list(owner: ChatOwner, input: {
+    unreadOnly?: boolean;
     limit: number;
     lifecycle?: "active" | "archived";
     projectId?: string | null;
@@ -284,6 +292,11 @@ function handleError(c: Context, error: unknown) {
   }, 503);
 }
 
+function chatJson(context: Context, value: object, status: 200 | 201 | 202 = 200) {
+  return context.json(projectChatReadStateResponse(value,
+    ChatReadStateWireVersionSchema.parse(context.req.query("readStateVersion"))), status);
+}
+
 export function createCanonicalChatRoutes(options: {
   service: CanonicalChatRouteService;
   getPrincipal: (context: Context) => RequestPrincipal;
@@ -291,10 +304,20 @@ export function createCanonicalChatRoutes(options: {
   const routes = new Hono();
   routes.use("/api/chats/*", async (context, next) => {
     if (!ChatMessageWireVersionSchema.safeParse(context.req.query("messageVersion")).success
-      || !ChatInputWireVersionSchema.safeParse(context.req.query("inputVersion")).success) {
+      || !ChatInputWireVersionSchema.safeParse(context.req.query("inputVersion")).success
+      || !ChatReadStateWireVersionSchema.safeParse(context.req.query("readStateVersion")).success) {
       return validationError(context);
     }
+    const metadataVersion = ChatMetadataVersionSchema.safeParse(context.req.header("x-matrix-chat-metadata"));
+    if (!metadataVersion.success) return validationError(context);
     await next();
+    context.header("Vary", "X-Matrix-Chat-Metadata", { append: true });
+    if (metadataVersion.data === "0" && context.res.headers.get("content-type")?.includes("application/json")) {
+      const payload = projectChatMetadata(await context.res.json(), "0");
+      const headers = new Headers(context.res.headers);
+      headers.delete("content-length");
+      context.res = new Response(JSON.stringify(payload), { status: context.res.status, headers });
+    }
   });
   const createBodyLimit = bodyLimit({ maxSize: CHAT_CREATE_BODY_LIMIT, onError: bodyTooLarge });
   const turnBodyLimit = bodyLimit({ maxSize: CHAT_TURN_BODY_LIMIT, onError: bodyTooLarge });
@@ -309,7 +332,7 @@ export function createCanonicalChatRoutes(options: {
     try {
       const chatId = CanonicalChatIdSchema.parse(context.req.param("chatId"));
       const clientRequestId = z.string().trim().min(1).max(128).parse(context.req.query("clientRequestId"));
-      return context.json(await options.service.delete(
+      return chatJson(context, await options.service.delete(
         ownerFromPrincipal(options.getPrincipal(context)),
         chatId,
         clientRequestId,
@@ -327,7 +350,7 @@ export function createCanonicalChatRoutes(options: {
         ownerFromPrincipal(options.getPrincipal(context)),
         parsed.data,
       );
-      return context.json(CanonicalChatRecordSchema.parse(result), 201);
+      return chatJson(context, CanonicalChatRecordSchema.parse(result), 201);
     } catch (error: unknown) {
       return handleError(context, error);
     }
@@ -336,6 +359,7 @@ export function createCanonicalChatRoutes(options: {
   routes.get("/api/chats", async (context) => {
     try {
       const parsed = ChatListQuerySchema.safeParse({
+        unread: context.req.query("unread"),
         limit: context.req.query("limit"),
         lifecycle: context.req.query("lifecycle"),
         projectId: context.req.query("projectId"),
@@ -346,6 +370,7 @@ export function createCanonicalChatRoutes(options: {
       const result = await options.service.list(
         ownerFromPrincipal(options.getPrincipal(context)),
         {
+          ...(parsed.data.unread === undefined ? {} : { unreadOnly: parsed.data.unread === "true" }),
           limit: parsed.data.limit,
           ...(parsed.data.lifecycle === undefined ? {} : { lifecycle: parsed.data.lifecycle }),
           ...(parsed.data.scope === "global"
@@ -354,7 +379,7 @@ export function createCanonicalChatRoutes(options: {
           ...(parsed.data.cursor === undefined ? {} : { cursor: parsed.data.cursor }),
         },
       );
-      return context.json(CanonicalChatListResponseSchema.parse(result));
+      return chatJson(context, CanonicalChatListResponseSchema.parse(result));
     } catch (error: unknown) {
       return handleError(context, error);
     }
@@ -379,7 +404,7 @@ export function createCanonicalChatRoutes(options: {
             : parsed.data.projectId === undefined ? {} : { projectId: parsed.data.projectId }),
         },
       );
-      return context.json(CanonicalChatListResponseSchema.parse(result));
+      return chatJson(context, CanonicalChatListResponseSchema.parse(result));
     } catch (error: unknown) {
       return handleError(context, error);
     }
@@ -395,7 +420,7 @@ export function createCanonicalChatRoutes(options: {
         chatId,
         parsed.data,
       );
-      return context.json(CanonicalChatRecordSchema.parse(result));
+      return chatJson(context, CanonicalChatRecordSchema.parse(result));
     } catch (error: unknown) {
       return handleError(context, error);
     }
@@ -404,14 +429,27 @@ export function createCanonicalChatRoutes(options: {
   routes.patch("/api/chats/:chatId/title", updateBodyLimit, async (context) => {
     try {
       const chatId = CanonicalChatIdSchema.parse(context.req.param("chatId"));
-      const parsed = CanonicalUpdateChatTitleRequestSchema.safeParse(await context.req.json());
+      const parsed = z.union([CanonicalUpdateChatTitleRequestSchema, LegacyUpdateChatTitleRequestSchema]).safeParse(await context.req.json());
       if (!parsed.success) return validationError(context);
-      const result = await options.service.updateTitle(
-        ownerFromPrincipal(options.getPrincipal(context)),
-        chatId,
-        parsed.data,
+      const owner = ownerFromPrincipal(options.getPrincipal(context));
+      const result = "expectedTitleVersion" in parsed.data
+        ? await options.service.updateTitle(owner, chatId, parsed.data)
+        : await options.service.updateLegacyTitle(owner, chatId, parsed.data);
+      return chatJson(context, CanonicalChatRecordSchema.parse(result));
+    } catch (error: unknown) {
+      return handleError(context, error);
+    }
+  });
+
+  routes.patch("/api/chats/:chatId/read-state", updateBodyLimit, async (context) => {
+    try {
+      const chatId = CanonicalChatIdSchema.parse(context.req.param("chatId"));
+      const parsed = CanonicalUpdateChatReadStateRequestSchema.safeParse(await context.req.json());
+      if (!parsed.success) return validationError(context);
+      const result = await options.service.updateReadState(
+        ownerFromPrincipal(options.getPrincipal(context)), chatId, parsed.data,
       );
-      return context.json(CanonicalChatRecordSchema.parse(result));
+      return chatJson(context, CanonicalChatRecordSchema.parse(result));
     } catch (error: unknown) {
       return handleError(context, error);
     }
@@ -427,7 +465,7 @@ export function createCanonicalChatRoutes(options: {
         chatId,
         parsed.data,
       );
-      return context.json(CanonicalChatRecordSchema.parse(result));
+      return chatJson(context, CanonicalChatRecordSchema.parse(result));
     } catch (error: unknown) {
       return handleError(context, error);
     }
@@ -449,7 +487,7 @@ export function createCanonicalChatRoutes(options: {
           chatId,
           runId,
         );
-        return context.json(CanonicalChatRecordSchema.parse(result));
+        return chatJson(context, CanonicalChatRecordSchema.parse(result));
       } catch (error: unknown) {
         return handleError(context, error);
       }
@@ -470,7 +508,7 @@ export function createCanonicalChatRoutes(options: {
         parsed.data,
       );
       if (!result) return notFound(context);
-      return context.json(projectChatMessageResponse(
+      return chatJson(context, projectChatMessageResponse(
         CanonicalChatDetailResponseSchema.parse(result),
         ChatMessageWireVersionSchema.parse(context.req.query("messageVersion")),
         ChatInputWireVersionSchema.parse(context.req.query("inputVersion")),
@@ -492,7 +530,7 @@ export function createCanonicalChatRoutes(options: {
         chatId,
         parsed.data,
       );
-      return context.json(projectChatMessageResponse(
+      return chatJson(context, projectChatMessageResponse(
         CanonicalChatTurnAdmissionResponseSchema.parse(result),
         ChatMessageWireVersionSchema.parse(context.req.query("messageVersion")),
         ChatInputWireVersionSchema.parse(context.req.query("inputVersion")),
@@ -514,7 +552,7 @@ export function createCanonicalChatRoutes(options: {
         chatId,
         parsed.data,
       );
-      return context.json(CanonicalChatQueueAdmissionResponseSchema.parse(result), 201);
+      return chatJson(context, CanonicalChatQueueAdmissionResponseSchema.parse(result), 201);
     } catch (error: unknown) {
       return handleError(context, error);
     }
@@ -530,7 +568,7 @@ export function createCanonicalChatRoutes(options: {
         chatId,
         parsed.data,
       );
-      return context.json(CanonicalChatQueueReorderResponseSchema.parse(result));
+      return chatJson(context, CanonicalChatQueueReorderResponseSchema.parse(result));
     } catch (error: unknown) {
       return handleError(context, error);
     }
@@ -548,7 +586,7 @@ export function createCanonicalChatRoutes(options: {
         queuedTurnId,
         parsed.data,
       );
-      return context.json(CanonicalChatQueueUpdateResponseSchema.parse(result));
+      return chatJson(context, CanonicalChatQueueUpdateResponseSchema.parse(result));
     } catch (error: unknown) {
       return handleError(context, error);
     }
@@ -566,7 +604,7 @@ export function createCanonicalChatRoutes(options: {
         queuedTurnId,
         parsed.data,
       );
-      return context.json(CanonicalChatQueueCancellationResponseSchema.parse(result));
+      return chatJson(context, CanonicalChatQueueCancellationResponseSchema.parse(result));
     } catch (error: unknown) {
       return handleError(context, error);
     }
@@ -584,7 +622,7 @@ export function createCanonicalChatRoutes(options: {
         runId,
         parsed.data,
       );
-      return context.json(projectChatMessageResponse(
+      return chatJson(context, projectChatMessageResponse(
         CanonicalChatRunSteeringResponseSchema.parse(result),
         ChatMessageWireVersionSchema.parse(context.req.query("messageVersion")),
         ChatInputWireVersionSchema.parse(context.req.query("inputVersion")),
@@ -611,7 +649,7 @@ export function createCanonicalChatRoutes(options: {
           queuedTurnId,
           parsed.data,
         );
-        return context.json(projectChatMessageResponse(
+        return chatJson(context, projectChatMessageResponse(
         CanonicalChatRunSteeringResponseSchema.parse(result),
         ChatMessageWireVersionSchema.parse(context.req.query("messageVersion")),
         ChatInputWireVersionSchema.parse(context.req.query("inputVersion")),
@@ -635,7 +673,7 @@ export function createCanonicalChatRoutes(options: {
         runId,
         parsed.data,
       );
-      return context.json(CanonicalChatRunCancellationResponseSchema.parse(result));
+      return chatJson(context, CanonicalChatRunCancellationResponseSchema.parse(result));
     } catch (error: unknown) {
       return handleError(context, error);
     }
@@ -657,7 +695,7 @@ export function createCanonicalChatRoutes(options: {
         requestId,
         parsed.data,
       );
-      return context.json(CanonicalChatInputSubmissionResponseSchema.parse(result));
+      return chatJson(context, CanonicalChatInputSubmissionResponseSchema.parse(result));
     } catch (error: unknown) {
       return handleError(context, error);
     }
@@ -679,7 +717,7 @@ export function createCanonicalChatRoutes(options: {
         approvalId,
         parsed.data,
       );
-      return context.json(CanonicalChatApprovalSubmissionResponseSchema.parse(result));
+      return chatJson(context, CanonicalChatApprovalSubmissionResponseSchema.parse(result));
     } catch (error: unknown) {
       return handleError(context, error);
     }
@@ -699,7 +737,7 @@ export function createCanonicalChatRoutes(options: {
         turnId,
         parsed.data,
       );
-      return context.json(CanonicalChatRunAdmissionResponseSchema.parse(result), 202);
+      return chatJson(context, CanonicalChatRunAdmissionResponseSchema.parse(result), 202);
     } catch (error: unknown) {
       return handleError(context, error);
     }

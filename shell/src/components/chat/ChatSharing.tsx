@@ -13,8 +13,8 @@ export function ChatSharing({ chatId }: { chatId: string }) {
 }
 
 function BrowserChatSharing({ chatId, platformHost }: { chatId: string; platformHost: string }) {
-  const [runtime, setRuntime] = useState<{ handle: string | null; runtimeSlot: string; runtimeId: string | null }>({
-    handle: null, runtimeSlot: "primary", runtimeId: null,
+  const [runtime, setRuntime] = useState<{ handle: string | null; runtimeSlot: string; runtimeId: string | null; collaborationEnabled: boolean }>({
+    handle: null, runtimeSlot: "primary", runtimeId: null, collaborationEnabled: false,
   });
   const gatewayUrl = getGatewayUrl();
   const api = useMemo(() => createChatSharingApi(gatewayUrl), [gatewayUrl]);
@@ -28,7 +28,8 @@ function BrowserChatSharing({ chatId, platformHost }: { chatId: string; platform
     });
     return () => { active = false; };
   }, [api]);
-  return <ChatSharingButton api={api} collaborationApi={collaborationApi} runtimeId={runtime.runtimeId}
+  return <ChatSharingButton api={api} collaborationEnabled={runtime.collaborationEnabled}
+    collaborationApi={collaborationApi} runtimeId={runtime.runtimeId}
     chatId={chatId} handle={runtime.handle} runtimeSlot={runtime.runtimeSlot}
     platformHost={platformHost} copyText={(text) => navigator.clipboard.writeText(text)} />;
 }

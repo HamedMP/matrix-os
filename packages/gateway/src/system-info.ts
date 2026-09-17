@@ -174,6 +174,9 @@ export interface SystemInfo {
     machineId: string | null;
     runtimeSlot: string;
   };
+  capabilities: {
+    collaboration: boolean;
+  };
   build: {
     sha: string;
     ref: string;
@@ -424,6 +427,9 @@ export function getSystemInfo(
       handle: process.env.MATRIX_HANDLE ?? null,
       machineId: process.env.MATRIX_MACHINE_ID ?? null,
       runtimeSlot: process.env.MATRIX_RUNTIME_SLOT ?? "primary",
+    },
+    capabilities: {
+      collaboration: process.env.MATRIX_COLLABORATION_ENABLED === "true",
     },
     build: {
       sha: process.env.MATRIX_BUILD_SHA ?? "unknown",

@@ -6,6 +6,7 @@ import type {
 } from "@matrix-os/contracts";
 import type { ApiClient } from "../../lib/api";
 import { useTabs } from "../../stores/tabs";
+import { useDesktopSurfaces } from "../../stores/desktop-surfaces";
 import { useShellSessions } from "../../stores/shell-sessions";
 import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "../../stores/runtime-generation";
 import { providerSupportsSetupAction } from "./provider-readiness";
@@ -47,6 +48,7 @@ export async function openProviderSetupTerminal(
     const ensured = await api.post<{ workspace?: { id?: unknown } }>("/api/terminal/workspaces/ensure", {});
     const workspaceId = typeof ensured.workspace?.id === "string" ? ensured.workspace.id : "";
     if (!/^tws_[0-9a-f]{32}$/.test(workspaceId)) return false;
+    if (!isCurrentRuntimeGeneration(runtimeGeneration)) return true;
     const response = await api.post<{ tab?: { id?: unknown } }>(`/api/terminal/workspaces/${workspaceId}/tabs`, {
       name: setup.label,
       cwd: "projects",
@@ -57,7 +59,10 @@ export async function openProviderSetupTerminal(
     if (!/^tt_[0-9a-f]{32}$/.test(tabId)) return false;
     const sessionName = `${workspaceId}:${tabId}`;
     useShellSessions.getState().adoptCreatedSession(sessionName);
-    openTab({ kind: "terminals", title: "Terminal" });
+    const terminalTabId = openTab({ kind: "terminals", title: "Terminal" });
+    // Root tabs survive close and login restoration. Selecting the retained
+    // tab alone cannot revive a closed desktop surface.
+    useDesktopSurfaces.getState().activateSurface(terminalTabId);
     useTabs.getState().requestTerminalSession(sessionName);
     return true;
   } catch (err: unknown) {

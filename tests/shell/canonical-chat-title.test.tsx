@@ -8,7 +8,7 @@ it("sends a concise title when Web Chat creates a conversation", async () => {
   let created: Record<string, unknown> | undefined;
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
     if (String(url).includes("/api/chats?") && init?.method !== "POST") return Response.json({ items: [] });
-    if (String(url).endsWith("/api/chats") && init?.method === "POST") {
+    if (String(url).endsWith("/api/chats?readStateVersion=1") && init?.method === "POST") {
       created = JSON.parse(String(init.body));
       // Stop after recording creation; no provider or persistence is needed here.
       return Response.json({ error: "unavailable" }, { status: 503 });

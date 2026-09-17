@@ -88,12 +88,12 @@ describe("coding-agent provider registry", () => {
       authStatus: "authenticated",
       supportedModes: ["default", "review"],
       defaultMode: "default",
-      setupActions: [{
-        id: "codex_login",
+      setupActions: [expect.objectContaining({
+        id: "codex_disconnect",
         kind: "foreground_terminal",
-        label: "Connect Codex",
-        command: "codex login",
-      }],
+        label: "Disconnect Codex",
+        command: expect.stringContaining("codex logout"),
+      })],
       lastCheckedAt: baseNow.toISOString(),
     }]);
     expect(healthCheck).toHaveBeenCalledWith(expect.objectContaining({

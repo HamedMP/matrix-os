@@ -18,6 +18,38 @@ vi.mock("@/components/AppViewer", () => ({
 }));
 
 describe("web desktop window controls", () => {
+  it("reserves the visible launch bar below a maximized Web Desktop app", () => {
+    const win: AppWindow = {
+      id: "maximized-demo", title: "Demo", path: "apps/demo/dist/index.html",
+      x: 20, y: 20, width: 640, height: 480, minimized: false, zIndex: 10,
+    };
+    const noop = vi.fn();
+    const { container } = render(
+      <DesktopWindow
+        win={win}
+        dockPosition="bottom"
+        fullscreenWindowId={win.id}
+        interacting={false}
+        minimizingIds={new Set()}
+        onAnimateMinimize={noop}
+        onCloseWindow={noop}
+        onDragEnd={noop}
+        onDragMove={noop}
+        onDragStart={noop}
+        onFocusWindow={noop}
+        onOpenWindow={noop}
+        onResizeInteractionChange={noop}
+        onToggleFullscreen={noop}
+        topInset={38}
+      />,
+    );
+    const frame = container.querySelector<HTMLElement>("[data-window-id]")!;
+    expect(frame.style.top).toBe("38px");
+    // Tailwind inset-0 supplies bottom:0 unless the maximized frame overrides it.
+    // The visible bar occupies 66px plus its 12px bottom offset.
+    expect(Number.parseFloat(frame.style.bottom || "0")).toBeGreaterThanOrEqual(78);
+  });
+
   it("keeps floating windows below the desktop header", () => {
     expect(desktopWindowTop(20, 38)).toBe("58px");
   });

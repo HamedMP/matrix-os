@@ -1,3 +1,4 @@
+import { isChatUnread, chatReadAction } from "@matrix-os/ui";
 import type { ChatAgentDraftRequest } from "@matrix-os/ui";
 import { createChatMentionRequestTracker } from "@matrix-os/ui";
 import { ChatMentionControls, useChatMentionPermission } from "@matrix-os/ui";
@@ -689,6 +690,7 @@ export function CanonicalChatWorkspace({
     >
       {!externalNavigation && (projectId === null ? (
         <CanonicalChatIndex
+          onToggleRead={(record) => { void controller.updateReadState(record.chat.id, chatReadAction(record)); }}
           items={controller.items}
           activeChatId={controller.activeChatId}
           query={query}
@@ -751,7 +753,7 @@ export function CanonicalChatWorkspace({
         </form>
         <div className="min-h-0 flex-1 space-y-1 overflow-y-auto">
           {controller.items.map((record) => (
-            <ChatContextMenu key={record.chat.id} chatId={record.chat.id}>
+            <ChatContextMenu key={record.chat.id} chatId={record.chat.id} primaryAction={{ label: isChatUnread(record) ? "Mark as read" : "Mark as unread", onSelect: () => { void controller.updateReadState(record.chat.id, chatReadAction(record)); } }}>
             <button
               type="button"
               aria-label={record.chat.title}
@@ -760,6 +762,7 @@ export function CanonicalChatWorkspace({
               onClick={() => selectChat(record.chat.id)}
             >
               <span className="block truncate text-[14px] font-medium leading-[20px]" style={{ color: "var(--text-primary)" }}>
+                {isChatUnread(record) ? <span aria-label={`Unread ${record.chat.title}`} className="mr-2 inline-block size-2 rounded-full bg-[var(--accent)]" /> : null}
                 {record.chat.title}
               </span>
               <span className="block truncate text-[12px] leading-[16px] tracking-[0.12px]" style={{ color: "var(--text-tertiary)" }}>
