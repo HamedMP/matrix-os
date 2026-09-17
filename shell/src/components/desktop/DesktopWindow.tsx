@@ -210,6 +210,8 @@ export function DesktopWindow({
           <div className="h-full overflow-hidden">
             {chat && (
               <ChatApp
+                collaborationView={chat.collaborationView}
+                onOpenSharedChat={chat.openSharedChat}
                 filterUnreadOnly={chat.unreadOnly}
                 onUnreadFilterChange={chat.setUnreadOnly}
                 active={focusedWindowId === win.id && !win.minimized}

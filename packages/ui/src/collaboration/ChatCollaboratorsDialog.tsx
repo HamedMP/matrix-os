@@ -17,7 +17,12 @@ export interface CollaborationApi {
   post(path: string, body: unknown): Promise<unknown>;
   patch?(path: string, body: unknown): Promise<unknown>;
   delete(path: string, body?: unknown): Promise<unknown>;
-  subscribe?(scopeId: string, onEvent: () => void | Promise<void>, onUnavailable: () => void): () => void;
+  subscribe?(
+    scopeId: string,
+    onEvent: () => void | Promise<void>,
+    onUnavailable: () => void,
+    onConnectionChange?: (state: "connected" | "reconnecting") => void,
+  ): () => void;
   subscribeTerminal?(scopeId: string, handlers: {
     onReady(frame: Extract<CollaborationTerminalFrame, { type: "terminal.ready" }>): void;
     onOutput(frame: Extract<CollaborationTerminalFrame, { type: "terminal.output" }>): void;

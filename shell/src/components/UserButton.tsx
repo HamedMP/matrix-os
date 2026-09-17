@@ -17,6 +17,7 @@ import {
   PlusCircleIcon,
   ServerIcon,
   SettingsIcon,
+  UsersIcon,
   UserIcon,
 } from "@/lib/hugeicons";
 import Image from "next/image";
@@ -252,6 +253,12 @@ function MountedUserButton({
             >
               <UserIcon className="size-4 text-muted-foreground" aria-hidden="true" />
               Manage account
+            </DropdownMenuPrimitive.Item>
+            <DropdownMenuPrimitive.Item asChild>
+              <Link className={itemClass} href="/shared">
+                <UsersIcon className="size-4 text-muted-foreground" aria-hidden="true" />
+                Shared with me
+              </Link>
             </DropdownMenuPrimitive.Item>
             <DropdownMenuPrimitive.Item asChild>
               <a

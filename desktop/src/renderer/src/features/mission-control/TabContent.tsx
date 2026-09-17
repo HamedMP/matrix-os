@@ -70,6 +70,7 @@ export function TabPane({
       return <BrowserTab active={active} layoutRevision={layoutRevision} visualScale={visualScale} />;
     case "work":
       return <WorkTab
+        tabId={tab.id}
         route={tab.workRoute ?? "chat"}
         projectSlug={tab.projectSlug}
         active={active}
@@ -77,9 +78,10 @@ export function TabPane({
         initialChatId={tab.chatId}
         initialChatView={tab.chatView}
         initialChatTitle={tab.chatTitle}
+        sharedScopeId={tab.sharedScopeId}
       />;
     case "chat":
-      return <WorkTab tabId={tab.id} route="chat" active={active} visible={visible} initialChatId={tab.chatId} initialChatView={tab.chatView} initialChatTitle={tab.chatTitle} />;
+      return <WorkTab tabId={tab.id} route="chat" active={active} visible={visible} initialChatId={tab.chatId} initialChatView={tab.chatView} initialChatTitle={tab.chatTitle} sharedScopeId={tab.sharedScopeId} />;
     case "terminals":
       return <TerminalsTab active={active} visible={visible} visualScale={visualScale} />;
     case "files":

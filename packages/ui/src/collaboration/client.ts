@@ -74,7 +74,7 @@ export function createCollaborationBrowserApi(options: {
     delete: (path, body) => request(path, "DELETE", body),
   };
   if (options.webSocketFactory || typeof WebSocket !== "undefined") {
-    api.subscribe = (scopeId, onEvent, onUnavailable) => {
+    api.subscribe = (scopeId, onEvent, onUnavailable, onConnectionChange) => {
       const parsedScopeId = CollaborationIdSchema.parse(scopeId);
       let closed = false;
       let socket: WebSocket | null = null;
@@ -110,7 +110,10 @@ export function createCollaborationBrowserApi(options: {
               }
             });
           };
-          next.onopen = () => { attempt = 0; };
+          next.onopen = () => {
+            attempt = 0;
+            onConnectionChange?.("connected");
+          };
           next.onmessage = (event) => {
             if (!usable) return;
             if (typeof event.data !== "string" || event.data.length > MAX_SOCKET_FRAME_CHARS) {
@@ -145,12 +148,14 @@ export function createCollaborationBrowserApi(options: {
             usable = false;
             if (socket === next) socket = null;
             if (closed) return;
+            onConnectionChange?.("reconnecting");
             const delay = Math.min(MAX_RECONNECT_DELAY_MS, 500 * (2 ** Math.min(attempt++, 5)));
             retryTimer = setTimeout(() => { void connect(); }, delay);
           };
         } catch (error: unknown) {
           console.warn("[chat-collaboration] event connection failed", error instanceof Error ? error.name : "UnknownError");
           if (closed) return;
+          onConnectionChange?.("reconnecting");
           const delay = Math.min(MAX_RECONNECT_DELAY_MS, 500 * (2 ** Math.min(attempt++, 5)));
           retryTimer = setTimeout(() => { void connect(); }, delay);
         }

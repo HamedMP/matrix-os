@@ -473,6 +473,8 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
         <div className="h-full overflow-hidden">
           {chatState && (
             <ChatApp
+                collaborationView={chatState.collaborationView}
+                onOpenSharedChat={chatState.openSharedChat}
                 filterUnreadOnly={chatState.unreadOnly}
                 onUnreadFilterChange={chatState.setUnreadOnly}
                 active={isFocused && !win.minimized}

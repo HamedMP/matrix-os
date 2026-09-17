@@ -1,6 +1,12 @@
 "use client";
 
-import { generatedChatTitle, mergeCanonicalChatRecord, mergeChatReadState } from "@matrix-os/ui";
+import {
+  generatedChatTitle,
+  mergeCanonicalChatRecord,
+  mergeChatReadState,
+  sharedChatScopeFromProjection,
+  type ChatCollaborationView,
+} from "@matrix-os/ui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   CanonicalChatMessagePart,
@@ -44,7 +50,10 @@ function conversationMeta(record: CanonicalChatRecord) {
   };
 }
 
-export function useCanonicalChatState({ initialDraft }: { initialDraft?: string | null } = {}): ChatState {
+export function useCanonicalChatState({ initialDraft, initialCollaborationView }: {
+  initialDraft?: string | null;
+  initialCollaborationView?: ChatCollaborationView;
+} = {}): ChatState {
   const [mentionRequests] = useState(createChatMentionRequestTracker);
   const client = useMemo(() => createCanonicalShellChatClient({ gatewayUrl: getGatewayUrl() }), []);
   const eventSource = useMemo(() => createSharedCanonicalChatEventSource({
@@ -56,6 +65,9 @@ export function useCanonicalChatState({ initialDraft }: { initialDraft?: string 
   const recordsRef = useRef(records);
   useEffect(() => { recordsRef.current = records; }, [records]);
   const [activeChatId, setActiveChatId] = useState<string>();
+  const [selectedCollaborationView, setSelectedCollaborationView] = useState<ChatCollaborationView | null>(
+    initialCollaborationView ?? null,
+  );
   const [detail, setDetail] = useState<CanonicalChatDetailResponse | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
@@ -422,6 +434,7 @@ export function useCanonicalChatState({ initialDraft }: { initialDraft?: string 
     setActiveChatId(undefined);
     setDetail(null);
     setSafeError(null);
+    setSelectedCollaborationView(null);
   }, []);
 
   const switchConversation = useCallback((chatId: string) => {
@@ -429,6 +442,18 @@ export function useCanonicalChatState({ initialDraft }: { initialDraft?: string 
     setActiveChatId(chatId);
     setDetail(null);
     setSafeError(null);
+    setSelectedCollaborationView(null);
+  }, []);
+
+  const openSharedChat = useCallback((scopeId: string) => {
+    autoRestoreChatRef.current = false;
+    activeChatIdRef.current = undefined;
+    detailRef.current = null;
+    detailRequestGeneration.current += 1;
+    setActiveChatId(undefined);
+    setDetail(null);
+    setSafeError(null);
+    setSelectedCollaborationView({ kind: "chat", scopeId });
   }, []);
 
   const abortCurrent = useCallback(() => {
@@ -561,7 +586,12 @@ export function useCanonicalChatState({ initialDraft }: { initialDraft?: string 
     ? detail.record
     : records.find((record) => record.chat.id === activeChatId);
   const detailLoading = activeChatId !== undefined && detail?.record.chat.id !== activeChatId;
+  const projectedSharedChat = sharedChatScopeFromProjection(activeRecord?.chat.collaboration);
+  const collaborationView = selectedCollaborationView
+    ?? (projectedSharedChat ? { kind: "chat" as const, scopeId: projectedSharedChat.scopeId } : undefined);
   return {
+    collaborationView,
+    openSharedChat,
     unreadOnly, setUnreadOnly,
     readState: detail?.record.chat.id === activeChatId ? detail?.record.readState : undefined,
     displayedThroughSeq: Math.max(0, ...(detail?.messages ?? []).filter((message) => message.role === "assistant" && message.state === "committed").map((message) => message.seq)),

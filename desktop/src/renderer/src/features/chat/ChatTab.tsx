@@ -393,6 +393,7 @@ export default function ChatTab({
   tabId,
   initialChatId,
   initialView,
+  sharedScopeId,
   draftRequest,
   externalNavigation = false,
   renderInspector,
@@ -405,6 +406,7 @@ export default function ChatTab({
   tabId?: string;
   initialChatId?: string;
   initialView?: "index" | "draft" | "conversation";
+  sharedScopeId?: string;
   draftRequest?: ChatAgentDraftRequest | null;
   externalNavigation?: boolean;
   renderInspector?: (detail: CanonicalChatDetailResponse) => ReactNode;
@@ -422,6 +424,7 @@ export default function ChatTab({
       tabId={tabId}
       initialChatId={initialChatId}
       initialView={initialView}
+      sharedScopeId={sharedScopeId}
       draftRequest={draftRequest}
       active={active}
       live={visible}

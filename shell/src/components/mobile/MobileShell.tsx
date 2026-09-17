@@ -558,6 +558,8 @@ function MobileAppFrame({
     }
     return (
       <ChatApp
+        collaborationView={chat.collaborationView}
+        onOpenSharedChat={chat.openSharedChat}
                 filterUnreadOnly={chat.unreadOnly}
                 onUnreadFilterChange={chat.setUnreadOnly}
                 readState={chat.readState}
