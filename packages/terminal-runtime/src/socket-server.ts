@@ -321,7 +321,10 @@ export class TerminalRuntimeSocketServer {
       case "EnsureWorkspace": return this.options.runtime.ensureWorkspace(request.input);
       case "CreateTab": return this.options.runtime.createTab(request.input.workspaceId, request.input);
       case "GetSnapshot": return this.options.runtime.getSnapshot(request.input);
-      case "RenameTab": return this.options.runtime.renameTab(request.input, request.input);
+      case "RenameTab": return this.options.runtime.renameTab(
+        { workspaceId: request.input.workspaceId, tabId: request.input.tabId },
+        { name: request.input.name, baseRevision: request.input.baseRevision },
+      );
       case "ReorderTabs": return this.options.runtime.reorderTabs(request.input.workspaceId, request.input);
       case "TerminateTab": return this.options.runtime.terminateTab(request.input).then(() => null);
       case "DeleteTab": return this.options.runtime.deleteTab(request.input).then(() => null);

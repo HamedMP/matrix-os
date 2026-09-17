@@ -100,6 +100,7 @@ describe("terminal runtime Unix socket API", () => {
     };
     const paneAction = vi.fn(async () => undefined);
     const deleteTab = vi.fn(async () => undefined);
+    const renameTab = vi.fn(async (_ref, input) => ({ ...tab, name: input.name, revision: 2 }));
     const server = new TerminalRuntimeSocketServer({
       socketPath,
       runtime: {
@@ -107,6 +108,7 @@ describe("terminal runtime Unix socket API", () => {
         ensureWorkspace: async () => workspace,
         createTab: async () => tab,
         deleteTab,
+        renameTab,
         paneAction,
         getSnapshot: async () => socketSnapshot,
         resize: async () => ({ ...workspace, tabs: [tab] }),
@@ -147,6 +149,11 @@ describe("terminal runtime Unix socket API", () => {
     expect(paneAction).toHaveBeenCalledWith(
       { workspaceId: workspace.id, tabId: created.id },
       { type: "focus", direction: "right" },
+    );
+    const renamed = await client.renameTab({ workspaceId: workspace.id, tabId: created.id }, { name: "renamed", baseRevision: 1 });
+    expect(renamed.name).toBe("renamed");
+    expect(renameTab).toHaveBeenCalledWith(
+      { workspaceId: workspace.id, tabId: created.id }, { name: "renamed", baseRevision: 1 },
     );
     await client.deleteTab({ workspaceId: workspace.id, tabId: created.id });
     expect(deleteTab).toHaveBeenCalledWith({ workspaceId: workspace.id, tabId: created.id });
