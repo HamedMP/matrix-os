@@ -75,12 +75,16 @@ describe("collaboration browser client", () => {
         return socket as unknown as WebSocket;
       },
     });
+    const onConnectionChange = vi.fn();
     const unsubscribe = api.subscribe!(
       "10000000-0000-4000-8000-000000000001",
       async () => refresh,
       vi.fn(),
+      onConnectionChange,
     );
     await vi.waitFor(() => expect(sockets).toHaveLength(1));
+    sockets[0]!.onopen?.();
+    expect(onConnectionChange).toHaveBeenCalledWith("connected");
     sockets[0]!.onmessage?.({ data: JSON.stringify({
       version: 1,
       type: "refresh_required",
@@ -108,6 +112,7 @@ describe("collaboration browser client", () => {
     rejectRefresh(new Error("refresh failed"));
     await vi.waitFor(() => expect(sockets[0]!.close).toHaveBeenCalled());
     sockets[0]!.onclose?.();
+    expect(onConnectionChange).toHaveBeenCalledWith("reconnecting");
     await vi.advanceTimersByTimeAsync(500);
     await vi.waitFor(() => expect(sockets).toHaveLength(2));
     expect(new URL(urls[1]!).searchParams.get("after")).toBe("0");
