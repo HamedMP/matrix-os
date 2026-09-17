@@ -167,6 +167,30 @@ describe("createIpcHandler", () => {
     });
   });
 
+  describe("mapping commands", () => {
+    it("delegates only to the registered mapping controller", async () => {
+      const mappingController = vi.fn().mockResolvedValue({ accepted: true });
+      const { deps } = createDeps({ mappingController });
+      const handler = createIpcHandler(deps);
+
+      await expect(handler("sync.mappings.rescan", { mappingId: undefined }))
+        .resolves.toEqual({ accepted: true });
+      expect(mappingController).toHaveBeenCalledWith(
+        "sync.mappings.rescan",
+        { mappingId: undefined },
+      );
+    });
+
+    it("fails closed when mapping support is not wired", async () => {
+      const { deps } = createDeps();
+      const handler = createIpcHandler(deps);
+
+      await expect(handler("sync.mappings.list", {})).rejects.toMatchObject({
+        code: "sync_mapping_controller_unavailable",
+      });
+    });
+  });
+
   describe("getConfig", () => {
     it("returns the current persisted config without tokens", async () => {
       const { deps } = createDeps();

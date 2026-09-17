@@ -127,3 +127,97 @@ describe("syncCommand start", () => {
     );
   });
 });
+
+describe("syncCommand mapping subcommands", () => {
+  const mappingId = "11111111-1111-4111-8111-111111111111";
+  const config = {
+    schemaVersion: 2,
+    revision: 7,
+    profile: "cloud",
+    ownerId: "user_test",
+    runtimeSlot: "primary",
+    deviceId: "peer-1",
+    enabled: true,
+    mappings: [{
+      id: mappingId,
+      label: "Matrix Home",
+      localRoot: "/tmp/matrixos-sync-command-test",
+      remotePrefix: "",
+      direction: "two_way",
+      enabled: true,
+      propagateDeletes: false,
+      excludes: [],
+    }],
+  };
+
+  it("lists the daemon-owned versioned mapping config", async () => {
+    sendCommandMock.mockResolvedValueOnce({ config });
+
+    await runSync({ json: true }, ["list"]);
+
+    expect(sendCommandMock).toHaveBeenCalledWith("sync.mappings.list");
+    expect(console.log).toHaveBeenCalledWith(expect.stringContaining('"revision":7'));
+  });
+
+  it("adds a mapping with the current expected revision and safe deletion default", async () => {
+    sendCommandMock
+      .mockResolvedValueOnce({ config })
+      .mockResolvedValueOnce({ config: { ...config, revision: 8 } });
+
+    await runSync({
+      path: "/tmp/matrixos-sync-command-test/project",
+      folder: "projects/project",
+      direction: "to_matrix",
+      label: "Project",
+      exclude: "node_modules/,dist/",
+    }, ["add"]);
+
+    expect(sendCommandMock).toHaveBeenNthCalledWith(1, "sync.mappings.list");
+    expect(sendCommandMock).toHaveBeenNthCalledWith(2, "sync.mappings.add", {
+      expectedRevision: 7,
+      mapping: expect.objectContaining({
+        label: "Project",
+        remotePrefix: "projects/project",
+        direction: "to_matrix",
+        propagateDeletes: false,
+        excludes: ["node_modules/", "dist/"],
+      }),
+    });
+  });
+
+  it.each(["pause", "resume", "remove"] as const)(
+    "%s uses a mapping id and optimistic revision",
+    async (command) => {
+      sendCommandMock
+        .mockResolvedValueOnce({ config })
+        .mockResolvedValueOnce({ config: { ...config, revision: 8 } });
+
+      await runSync({ mapping: mappingId }, [command]);
+
+      expect(sendCommandMock).toHaveBeenNthCalledWith(2, `sync.mappings.${command}`, {
+        expectedRevision: 7,
+        mappingId,
+      });
+    },
+  );
+
+  it("keeps pause without --mapping backward compatible", async () => {
+    sendCommandMock.mockResolvedValueOnce({ paused: true });
+
+    await runSync({}, ["pause"]);
+
+    expect(sendCommandMock).toHaveBeenCalledWith("pause");
+  });
+
+  it.each(["conflicts", "rescan"])("routes %s through mapping IPC", async (command) => {
+    sendCommandMock.mockResolvedValueOnce(command === "conflicts"
+      ? { conflicts: [] }
+      : { accepted: true });
+
+    await runSync({ mapping: mappingId }, [command]);
+
+    expect(sendCommandMock).toHaveBeenCalledWith(`sync.mappings.${command}`, {
+      mappingId,
+    });
+  });
+});
