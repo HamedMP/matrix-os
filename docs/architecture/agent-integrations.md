@@ -49,6 +49,11 @@ The MCP and OAuth HTTPS transports pin the validated DNS address for both
 single-address and all-address lookup callbacks used by Node automatic
 address-family selection. Neither callback performs a second DNS lookup.
 
+Environments without managed-integration credentials return an authenticated
+503 for `/api/integrations`, rather than expiring a valid Desktop session with
+an unrelated admin-auth 401. This lets Custom MCP remain usable independently
+in isolated Preview environments.
+
 The Custom MCP backend is enabled with `CUSTOM_MCP_ENABLED`, independently of
 `MATRIX_MCP_ENABLED` (the hosted Matrix `/mcp` endpoint). When Custom MCP is
 disabled, authenticated `/api/mcp-servers` requests and the corresponding
