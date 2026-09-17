@@ -1,5 +1,30 @@
 # 066 File Sync — Follow-Ups
 
+## Recovery implementation status (2026-09)
+
+The recovery stack supersedes older notes that assumed one global config,
+mutable path-keyed objects, last-writer-wins reconciliation, or production
+customer containers. Completed locally: profile-safe migration, owner/runtime
+scope isolation, protocol-v3 staged publication, immutable blobs/generations,
+conservative reconciliation, bounded intents, durable conflicts, versioned
+multiple mappings, renewable device grants, verified database-backup health,
+packaged Electron helper lifecycle, and cross-surface Settings.
+
+Still gated or intentionally deferred:
+
+- real-R2 interrupted multipart, missing-blob, storage-fingerprint, and
+  grace-period orphan-collection evidence in a dedicated synthetic prefix;
+- isolated PostgreSQL restore evidence and reviewed `restoreVerifiedAt` update;
+- signed/notarized macOS packaged-install, reboot, crash, and upgrade evidence;
+- exact platform, gateway, CLI, Electron, and VPS-bundle rollout compatibility;
+- arbitrary mobile folder watchers, remote control of another device's local
+  mappings, Finder on-demand placeholders, history/versioned file backup,
+  cross-owner sharing data plane, and automatic retention pruning.
+
+Production mirror activation, release publication, deployment, backup-job
+changes, and customer-data operations require separate authorization. See
+`recovery-release-evidence.md` for the current gate matrix.
+
 State at end of session 2026-04-18 evening. Phase 9 (OAuth) is complete and merged into the working branch. Three-way sync (container ↔ R2 ↔ peer) is implemented behind `MATRIX_HOME_MIRROR=true` (default on in `docker-compose.dev.yml`), but several rough edges remain. Each item below is independently shippable.
 
 ## What works today

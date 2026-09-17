@@ -50,24 +50,26 @@ implementation and is retained as historical compatibility context.
 
 - [ ] Resolve effective storage privately with sanitized fingerprints.
 - [x] Harden backup locking/timeouts/receipts and scheduler reconciliation.
-- [ ] Expose truthful backup health and verify a synthetic disposable restore.
+- [x] Expose truthful backup health through authenticated shared contracts and Settings.
+- [ ] Verify a synthetic disposable PostgreSQL restore and record `restoreVerifiedAt`.
 - [x] Prepare, but do not perform, scoped mirror/backup rollout.
 
 ## P6 — Electron helper lifecycle and packaging
 
-- [ ] Bundle a versioned helper independent of global CLI/source checkout.
-- [ ] Add trusted typed Electron IPC and secure credential handoff.
+- [x] Bundle a versioned helper independent of global CLI/source checkout.
+- [x] Add trusted typed Electron IPC and secure credential handoff.
 - [ ] Verify packaged enable/restart/quit/update/rollback behavior.
 
 ## P7 — Settings UX and surface parity
 
-- [ ] Add shared Sync & backup components and real controller contracts.
-- [ ] Wire Web Canvas, Web Desktop, Electron Desktop, and applicable mobile health views.
+- [x] Add shared Sync & backup components and real controller contracts.
+- [x] Wire Web Canvas, Web Desktop, Electron Desktop, and applicable mobile health views.
 - [ ] Verify loading/offline/conflict/error/accessibility/theme/small-window states.
 
 ## P8 — Release evidence and documentation
 
 - [ ] Run focused, type, pattern, package, shell, desktop, and applicable mobile gates.
-- [ ] Update contracts, sync testing, CLI, deployment, backup, and public documentation.
+- [x] Update in-repository contracts, sync testing, CLI, deployment, backup, and public-safe release documentation.
+- [ ] Open the required separate `FinnaAI/matrix-os-site` documentation PR.
 - [ ] Publish reviewable Graphite stack after GitHub authentication is restored.
 - [ ] Reach Greptile 5/5 and label-gated CI without merging or deploying.

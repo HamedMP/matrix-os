@@ -1,8 +1,20 @@
 # API Contracts: Sync REST Endpoints
 
-All endpoints require `Authorization: Bearer <jwt>` header.
-All mutating endpoints have `bodyLimit({ maxSize: 65536 })`.
-All R2 operations use `AbortSignal.timeout(10_000)`.
+All endpoints require a verified bearer principal. The gateway derives
+`{ownerId, runtimeSlot}` from that principal; clients cannot select another
+scope with a header, body field, handle, or path. Sync-device grants are
+capability-restricted to the sync route family.
+
+| Route | Auth | Body cap | Notes |
+| --- | --- | --- | --- |
+| `GET /manifest`, `/status`, `/backup-status`, `/shares` | verified owner/runtime bearer | none | read only |
+| `POST /presign`, `/commit`, `/multipart/abort`, `/resolve-conflict`, `/share`, `/share/accept`; `DELETE /share` | verified owner/runtime bearer | 64 KiB | per-scope rate limits |
+| `POST /multipart/complete` | verified owner/runtime bearer | 1 MiB | bounded 10,000-part receipt |
+
+Publication endpoints require `protocolVersion: 3`; older or missing versions
+receive HTTP 426 with the required version. External storage calls are bounded.
+Client errors are generic; provider names, keys, bucket details, and raw
+failures stay server-side.
 
 Base path: `/api/sync`
 
@@ -53,11 +65,12 @@ Request presigned R2 URLs for direct file upload/download. Gateway validates aut
 **Request Body**:
 ```typescript
 {
+  protocolVersion: 3,
   files: Array<{
     path: string,              // Relative file path
     action: "put" | "get",     // Upload or download
     hash?: string,             // Required for "put" — content hash for verification
-    size?: number,             // Required for "put" — file size for quota checks
+    size?: number,             // Required for "put" — 1 GiB hard limit
   }>
 }
 ```
@@ -70,10 +83,11 @@ const PresignFileSchema = z.object({
   path: z.string().min(1).max(1024),
   action: z.enum(["put", "get"]),
   hash: z.string().regex(/^sha256:[a-f0-9]{64}$/).optional(),
-  size: z.int().nonnegative().max(100 * 1024 * 1024).optional(), // 100MB max
+  size: z.int().nonnegative().max(1024 * 1024 * 1024).optional(),
 });
 
 const PresignRequestSchema = z.object({
+  protocolVersion: z.literal(3),
   files: z.array(PresignFileSchema).min(1).max(100),
 });
 ```
@@ -85,7 +99,8 @@ const PresignRequestSchema = z.object({
     path: string,
     url: string,          // Presigned R2 URL (valid 15 min); empty for multipart PUT
     expiresIn: number,    // Seconds until expiry (900)
-    multipart?: {         // Present for PUT files >100MB
+    stagingId?: string,   // UUID for each PUT; never an accepted object key
+    multipart?: {         // Present for PUT files >100 MiB
       uploadId: string,
       partUrls: string[],
       partSize: number,
@@ -116,7 +131,9 @@ Called after the client uploads every multipart part directly to R2. Finalizes t
 **Request Body**:
 ```typescript
 {
+  protocolVersion: 3,
   path: string,
+  stagingId: string,
   uploadId: string,
   parts: Array<{
     partNumber: number,
@@ -143,7 +160,9 @@ Best-effort cleanup call used when multipart upload fails before completion.
 **Request Body**:
 ```typescript
 {
+  protocolVersion: 3,
   path: string,
+  stagingId: string,
   uploadId: string,
 }
 ```
@@ -161,15 +180,22 @@ Best-effort cleanup call used when multipart upload fails before completion.
 
 ## POST /api/sync/commit
 
-Called after client completes direct upload to R2. Updates the manifest and broadcasts change events to peers.
+Called after upload to a unique staging object. The gateway verifies staged
+hash and size, finalizes an immutable blob, publishes an immutable manifest
+generation, advances the accepted pointer under optimistic concurrency, and
+only then broadcasts. A losing writer cannot overwrite bytes referenced by an
+accepted generation.
 
 **Request Body**:
 ```typescript
 {
+  protocolVersion: 3,
   files: Array<{
     path: string,        // Relative file path (same as presign request)
     hash: string,        // SHA-256 hash of uploaded content
     size: number,        // File size in bytes
+    action?: "add" | "update" | "delete",
+    stagingId?: string,  // required unless action is delete
   }>,
   expectedVersion: number,  // Client's expected manifest version (optimistic concurrency)
 }
@@ -181,9 +207,12 @@ const CommitFileSchema = z.object({
   path: z.string().min(1).max(1024),
   hash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
   size: z.int().nonnegative(),
+  action: z.enum(["add", "update", "delete"]).optional(),
+  stagingId: z.uuid().optional(),
 });
 
 const CommitRequestSchema = z.object({
+  protocolVersion: z.literal(3),
   files: z.array(CommitFileSchema).min(1).max(100),
   expectedVersion: z.int().nonnegative(),
 });
@@ -213,15 +242,19 @@ const CommitRequestSchema = z.object({
 **Status caveat**: Shared-folder commit authorization is target behavior tracked by F19 in `../follow-ups.md`; the current commit route is caller-namespace only.
 
 **Server-side behavior**:
-1. Acquire Postgres advisory lock for user: `pg_advisory_xact_lock(hashtext(user_id))`
-2. Read current manifest version from `sync_manifests`
-3. If `expectedVersion !== currentVersion`: return 409
-4. Read manifest from R2
-5. Apply file changes (update entries with new hash/size/mtime/peerId/version)
-6. Write updated manifest to R2
-7. Update `sync_manifests` (increment version, update file_count, total_size, etag)
-8. Release lock (transaction commit)
-9. Broadcast `sync:change` events via WebSocket
+1. Validate every path, then verify each staged object's exact hash and size
+   before the database transaction. Copy valid bytes to the immutable
+   content-addressed key and best-effort remove the staging object. A zero-byte
+   object is valid.
+2. Acquire the owner/runtime-scoped Postgres advisory lock.
+3. Read the accepted pointer and current immutable generation.
+4. If `expectedVersion !== currentVersion`, return 409. The finalized blob is
+   an unreferenced, reclaimable orphan; accepted bytes remain unchanged.
+5. Write the next immutable manifest generation.
+6. Advance the accepted pointer and metadata with a compare-and-swap inside the
+   transaction. A lost CAS leaves only reclaimable immutable orphans.
+7. Commit and broadcast the accepted revision. Never broadcast before
+   acceptance.
 
 ---
 
@@ -243,8 +276,53 @@ Sync health dashboard for the authenticated user.
   totalSize: number,         // Bytes
   lastSyncAt: number,        // Unix ms
   pendingConflicts: number,
+  protocolVersion: 3,
+  capabilities: {
+    stagedUploads: true,
+    immutableBlobs: true,
+    immutableManifestGenerations: true,
+  },
 }
 ```
+
+---
+
+## GET /api/sync/backup-status
+
+Returns coarse, bounded database-backup health for the authenticated runtime.
+This endpoint does not expose provider names, credentials, or raw command
+errors.
+
+```typescript
+{
+  schemaVersion: 1,
+  scheduler: {
+    enabled: boolean | null,
+    active: boolean | null,
+    nextDueAt: number | null,
+  },
+  lastAttempt: {
+    attemptedAt: number,
+    outcome: "running" | "success" | "failed",
+    errorCode: string | null,
+  } | null,
+  lastSuccess: {
+    snapshotKey: string,
+    receiptKey: string,
+    sha256: string,
+    size: number,
+    runtimeSlot: string,
+    completedAt: number,
+    restoreVerifiedAt: number | null,
+  } | null,
+  storageReachability: "reachable" | "unreachable" | "unknown",
+  freshness: "healthy" | "stale" | "critical" | "unknown",
+  observedAt: number,
+}
+```
+
+HTTP 503 means backup status is not configured or cannot be read safely. A
+newer failed attempt does not replace `lastSuccess`.
 
 ---
 
