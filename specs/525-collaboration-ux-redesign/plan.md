@@ -124,9 +124,10 @@ apps/mobile/__tests__/
 Use a small Graphite stack because the redesign spans more than the repository's practical one-PR review limits. Do not split individual components across PRs.
 
 1. **`feat(collaboration): add discussion and invitation UX contracts`** — failing tests first; decline transition; generic discussion projection; terminal discussion/read storage; exact proxy/CLI allowlists; contract and authorization tests. No new UI is enabled.
-2. **`feat(chat): make shared sessions native`** — shared projection hook; ordinary Chat timeline/composer integration; attribution; compact queue; discussion/access layers; Chat-sidebar Shared with me; Canvas and responsive web route normalization; component and Playwright evidence.
-3. **`feat(desktop): integrate native collaboration surfaces`** — Electron/Web Desktop work rail, Chat and Terminal chrome, native routing, controller summary, common discussion/access layers; desktop tests and recordings.
-4. **`feat(mobile): align collaboration navigation and sessions`** — supported React Native navigation and shared session composition, full-height discussion sheet, decline and native open behavior; Jest evidence. Include final cross-surface regression fixes and create the separate `matrix-os-site` documentation PR.
+2. **`feat(chat): make shared sessions native`** — shared projection hook; ordinary Canvas Chat timeline/composer integration; attribution; compact queue; native route normalization; component and Playwright evidence.
+3. **`feat(collaboration): add native session layers and discovery`** — common discussion/access layers, Chat-sidebar Shared with me, invitation decline UI, responsive web behavior, and Canvas evidence.
+4. **`feat(terminal): integrate native collaboration controls`** — ordinary Canvas terminal chrome, controller summary/actions, common discussion/access layers, native terminal routing, stale-action evidence.
+5. **`feat(collaboration): align desktop and mobile surfaces`** — Electron/Web Desktop work rail and native Chat/Terminal integration; supported React Native navigation and shared session composition; full-height discussion sheet; final cross-surface regression evidence. Include the separate `matrix-os-site` documentation PR.
 
 Each PR remains independently safe: server additions are backward-compatible and dormant until a consumer uses them; UI slices are feature-flagged and preserve direct server enforcement. If the actual diff stays below limits after extraction, adjacent surface slices may be combined, but backend and user-visible evidence remain reviewable units.
 
