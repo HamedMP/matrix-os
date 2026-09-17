@@ -924,7 +924,6 @@ describe("collaboration gateway routes", () => {
       clientRequestId: request(80),
       expectedRevision: "2",
       text: "Summarize our discussion",
-      selection: { instanceId: "claude_shared", model: "claude-opus-4-6" },
     };
     expect((await signedJson({
       actorId: collaborationActors.owner,
@@ -933,6 +932,19 @@ describe("collaboration gateway routes", () => {
       path,
       body,
     })).status).toBe(401);
+    const tampered = await signedJson({
+      actorId: collaborationActors.owner,
+      scopeId: collaborationIds.scope,
+      method: "POST",
+      path,
+      body: {
+        ...body,
+        clientRequestId: request(81),
+        selection: { instanceId: "claude_shared", model: "claude-opus-4-6" },
+      },
+      m2Policy: true,
+    });
+    expect(tampered.status).toBe(400);
     const admitted = await signedJson({
       actorId: collaborationActors.owner,
       scopeId: collaborationIds.scope,
@@ -1366,7 +1378,7 @@ async function seedChat(fixture: CollaborationTestDatabase): Promise<void> {
     shell_state: null,
     fork_provenance: null,
     last_message_preview: null,
-    current_selection: null,
+    current_selection: JSON.stringify({ instanceId: "claude_shared", model: "claude-opus-4-6" }),
     bound_driver_kind: null,
     bound_instance_id: null,
     bound_at_turn_id: null,

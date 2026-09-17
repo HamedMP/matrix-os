@@ -475,13 +475,17 @@ describe("collaboration contracts", () => {
       clientRequestId: requestId,
       expectedRevision: "4",
       text: "Run the release checks",
-      selection: { instanceId: "claude_shared", model: "claude-opus-4-6" },
     })).toMatchObject({ text: "Run the release checks" });
     expect(CollaborationCreateAiRequestSchema.safeParse({
       clientRequestId: requestId,
       expectedRevision: "4",
       text: "Run the release checks",
       selection: { instanceId: "claude_shared", model: "claude-opus-4-6" },
+    }).success).toBe(false);
+    expect(CollaborationCreateAiRequestSchema.safeParse({
+      clientRequestId: requestId,
+      expectedRevision: "4",
+      text: "Run the release checks",
       actorId: "user_editor",
     }).success).toBe(false);
     expect(CollaborationApprovalDecisionRequestSchema.parse({
@@ -504,7 +508,10 @@ describe("collaboration contracts", () => {
     expect(CollaborationAiRequestsResponseSchema.parse({
       requests: [],
       approvals: [],
-      defaultSelection: { instanceId: "claude_shared", model: "claude-opus-4-6" },
+      capability: {
+        status: "available",
+        effectiveSelection: { instanceId: "claude_shared", model: "claude-opus-4-6" },
+      },
       resourceRevision: "6",
     })).toMatchObject({ resourceRevision: "6" });
   });
