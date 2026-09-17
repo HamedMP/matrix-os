@@ -826,7 +826,7 @@ async function invitationProjection(
     role: member.role,
     status: member.status,
     expiresAt: member.expiresAt,
-    revision: String(member.revision),
+    revision: String(scope.revision),
   });
 }
 

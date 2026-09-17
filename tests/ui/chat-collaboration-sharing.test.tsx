@@ -82,7 +82,7 @@ describe("Chat collaboration sharing", () => {
       id: invitationId, scopeId, owner: { actorId: "user_owner", displayName: "Nima" },
       target: { actorId: "user_editor", displayName: "Ada" }, scopeKind: "chat" as const,
       role: "editor" as const, status: "pending" as const,
-      expiresAt: "2026-09-14T12:00:00.000Z", revision: "1",
+      expiresAt: "2026-09-14T12:00:00.000Z", revision: "2",
     };
     const api = {
       baseUrl: "https://app.matrix-os.com",
@@ -107,7 +107,7 @@ describe("Chat collaboration sharing", () => {
     fireEvent.click(screen.getByRole("button", { name: "Accept invitation" }));
     await waitFor(() => expect(api.post).toHaveBeenCalledWith(
       `/api/collaboration/invitations/${invitationId}/accept`,
-      expect.objectContaining({ expectedRevision: "1" }),
+      expect.objectContaining({ expectedRevision: "2" }),
     ));
     expect(openChat).toHaveBeenCalledWith(scopeId);
   });
