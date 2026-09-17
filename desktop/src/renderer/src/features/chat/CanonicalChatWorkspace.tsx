@@ -1,8 +1,9 @@
 import {
   isChatUnread,
   chatReadAction,
+  CanonicalSharedChatPanel,
   SharedChatPanel,
-  sharedChatScopeFromProjection,
+  sharedChatMembershipFromProjection,
 } from "@matrix-os/ui";
 import type { ChatAgentDraftRequest } from "@matrix-os/ui";
 import { createChatMentionRequestTracker } from "@matrix-os/ui";
@@ -315,8 +316,7 @@ export function CanonicalChatWorkspace({
     ...controller.detail,
     streamedMessageIds: controller.streamedMessageIds,
   }) : [];
-  const projectedSharedChat = sharedChatScopeFromProjection(controller.detail?.record.chat.collaboration);
-  const activeSharedScopeId = sharedScopeId ?? projectedSharedChat?.scopeId;
+  const projectedSharedChat = sharedChatMembershipFromProjection(controller.detail?.record.chat.collaboration);
 
   useEffect(() => {
     if (!editingQueuedTurn || !controller.detail) return;
@@ -810,14 +810,12 @@ export function CanonicalChatWorkspace({
         )}
         {...attachments.paneProps}
       >
-        {activeSharedScopeId ? (
+        {sharedScopeId || projectedSharedChat ? (
           collaborationApi && actorId ? (
-            <SharedChatPanel
-              api={collaborationApi}
-              actorId={actorId}
-              runtimeId={`desktop:${runtimeSlot}`}
-              scopeId={activeSharedScopeId}
-            />
+            sharedScopeId ? <SharedChatPanel api={collaborationApi} actorId={actorId}
+              runtimeId={`desktop:${runtimeSlot}`} scopeId={sharedScopeId} />
+              : <CanonicalSharedChatPanel api={collaborationApi} actorId={actorId}
+                runtimeId={`desktop:${runtimeSlot}`} chatId={controller.detail!.record.chat.id} />
           ) : (
             <div role="alert" className="m-auto max-w-lg rounded-2xl border p-8 text-center">
               Shared Chat is unavailable. Reconnect your Matrix account and try again.

@@ -4,7 +4,7 @@ import {
   generatedChatTitle,
   mergeCanonicalChatRecord,
   mergeChatReadState,
-  sharedChatScopeFromProjection,
+  sharedChatMembershipFromProjection,
   type ChatCollaborationView,
 } from "@matrix-os/ui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -586,9 +586,11 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView }
     ? detail.record
     : records.find((record) => record.chat.id === activeChatId);
   const detailLoading = activeChatId !== undefined && detail?.record.chat.id !== activeChatId;
-  const projectedSharedChat = sharedChatScopeFromProjection(activeRecord?.chat.collaboration);
+  const projectedSharedChat = sharedChatMembershipFromProjection(activeRecord?.chat.collaboration);
   const collaborationView = selectedCollaborationView
-    ?? (projectedSharedChat ? { kind: "chat" as const, scopeId: projectedSharedChat.scopeId } : undefined);
+    ?? (projectedSharedChat && activeRecord
+      ? { kind: "canonical-chat" as const, chatId: activeRecord.chat.id }
+      : undefined);
   return {
     collaborationView,
     openSharedChat,

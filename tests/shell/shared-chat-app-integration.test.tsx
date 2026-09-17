@@ -151,4 +151,24 @@ describe("web Chat shared collaboration integration", () => {
     expect(document.querySelector('[data-slot="chat-app-collaboration"]')).toBeTruthy();
     expect(screen.getByRole("button", { name: "New chat" })).toBeVisible();
   });
+
+  it("resolves an owner's normalized canonical projection through the collaboration directory", async () => {
+    render(
+      <ChatApp
+        collaborationView={{ kind: "canonical-chat", chatId: "chat_shared" }}
+        messages={[]}
+        sessionId="chat_shared"
+        busy={false}
+        connected
+        conversations={[]}
+        onNewChat={vi.fn()}
+        onSwitchConversation={vi.fn()}
+        onSubmit={vi.fn()}
+      />,
+    );
+
+    expect(await screen.findByRole("heading", { name: "Launch plan" })).toBeVisible();
+    expect(document.querySelector('[data-slot="chat-app-collaboration"]')).toBeTruthy();
+    expect(document.querySelector('[data-slot="shared-chat-panel"]')).toBeTruthy();
+  });
 });

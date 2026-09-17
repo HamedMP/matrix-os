@@ -27,6 +27,7 @@ export type ChatCollaborationView =
   | { kind: "home" }
   | { kind: "invitation"; invitationId: string }
   | { kind: "chat"; scopeId: string }
+  | { kind: "canonical-chat"; chatId: string }
   | { kind: "terminal"; scopeId: string }
   | { kind: "project"; scopeId: string };
 
@@ -61,6 +62,8 @@ export function ChatCollaboration({
   }
   if (view.kind === "terminal") return <SharedTerminalView api={api} actorId={actorId} scopeId={view.scopeId} />;
   if (view.kind === "project") return <SharedProjectView api={api} scopeId={view.scopeId} />;
+  if (view.kind === "canonical-chat") return <CanonicalSharedChatPanel api={api} actorId={actorId}
+    runtimeId={runtimeId ?? "platform"} chatId={view.chatId} storage={storage} />;
   return <SharedChatPanel api={api} actorId={actorId} runtimeId={runtimeId ?? "platform"}
     scopeId={view.scopeId} storage={storage} />;
 }
@@ -630,6 +633,58 @@ export function SharedChatPanel(props: Parameters<typeof useSharedChatController
     {membersOpen ? <ChatCollaboratorsDialog api={props.api} scope={state.scope} members={members}
       onRefresh={refreshMembers} onClose={() => setMembersOpen(false)} /> : null}
   </main>;
+}
+
+export function CanonicalSharedChatPanel({ api, actorId, runtimeId, chatId, storage }: {
+  api: CollaborationApi;
+  actorId: string;
+  runtimeId: string;
+  chatId: string;
+  storage?: Pick<Storage, "getItem" | "setItem" | "removeItem">;
+}) {
+  const [resolution, setResolution] = useState<{
+    chatId: string;
+    scopeId: string | null;
+    loading: boolean;
+  }>(() => ({ chatId, scopeId: null, loading: true }));
+  useEffect(() => {
+    let current = true;
+    setResolution({ chatId, scopeId: null, loading: true });
+    void resolveCanonicalChatScope(api, chatId).then((scopeId) => {
+      if (current) setResolution({ chatId, scopeId, loading: false });
+    }).catch((error: unknown) => {
+      console.warn("[chat-collaboration] canonical scope resolution failed",
+        error instanceof Error ? error.name : "UnknownError");
+      if (current) setResolution({ chatId, scopeId: null, loading: false });
+    });
+    return () => { current = false; };
+  }, [api, chatId]);
+  if (resolution.chatId !== chatId || resolution.loading) {
+    return <p role="status" className="p-8">Loading shared Chat…</p>;
+  }
+  if (!resolution.scopeId) return <SafeError title="Shared Chat unavailable" />;
+  return <SharedChatPanel api={api} actorId={actorId} runtimeId={runtimeId}
+    scopeId={resolution.scopeId} storage={storage} />;
+}
+
+async function resolveCanonicalChatScope(api: CollaborationApi, chatId: string): Promise<string | null> {
+  let cursor: string | undefined;
+  // The fixed page limit below caps this loop-local set at 100 entries.
+  const seenCursors = new Set<string>();
+  for (let pageNumber = 0; pageNumber < 100; pageNumber += 1) {
+    const suffix = cursor ? `&cursor=${encodeURIComponent(cursor)}` : "";
+    const page = CollaborationDiscoveryResponseSchema.parse(
+      await api.get(`/api/collaboration/shared?limit=100${suffix}`),
+    );
+    const match = page.items.find((item) => item.status === "accepted"
+      && "chat" in item.resource && item.resource.chat.id === chatId);
+    if (match?.status === "accepted") return match.scopeId;
+    if (!page.nextCursor) return null;
+    if (seenCursors.has(page.nextCursor)) throw new Error("CollaborationDiscoveryCursorLoop");
+    seenCursors.add(page.nextCursor);
+    cursor = page.nextCursor;
+  }
+  throw new Error("CollaborationDiscoveryPageLimit");
 }
 
 function SharedChatHistory({ state, loadMoreMessages }: {

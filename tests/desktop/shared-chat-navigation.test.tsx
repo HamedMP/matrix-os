@@ -158,13 +158,12 @@ describe("Electron Shared with me navigation", () => {
       ...canonicalChatRecord,
       chat: {
         ...canonicalChatRecord.chat,
+        id: sharedChat.id,
         collaboration: {
           mode: "shared",
-          scopeId,
           membership: {
             role: "owner",
             memberCount: 2,
-            capabilities: { requestAi: false },
           },
         },
       },
@@ -182,7 +181,7 @@ describe("Electron Shared with me navigation", () => {
       <CanonicalChatWorkspace
         client={routeClient}
         projectId={null}
-        initialChatId={canonicalChatRecord.chat.id}
+        initialChatId={sharedChat.id}
         initialView="conversation"
         active
         catalog={providerCatalog}

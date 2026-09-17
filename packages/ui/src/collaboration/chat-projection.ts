@@ -1,31 +1,25 @@
-import { CollaborationIdSchema, CollaborationRoleSchema } from "@matrix-os/contracts";
+import { CollaborationRoleSchema } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 
-const SharedChatProjectionSchema = z.looseObject({
+const SharedChatProjectionSchema = z.strictObject({
   mode: z.literal("shared"),
-  scopeId: CollaborationIdSchema,
-  membership: z.looseObject({
+  membership: z.strictObject({
     role: CollaborationRoleSchema,
     memberCount: z.number().int().min(1).max(10_000),
-    capabilities: z.looseObject({ requestAi: z.boolean() }),
   }),
 });
 
-export interface SharedChatProjection {
-  scopeId: string;
+export interface SharedChatMembershipProjection {
   role: "owner" | "editor" | "viewer";
   memberCount: number;
-  requestAi: boolean;
 }
 
 /** Read only the normalized server projection; incomplete data fails closed. */
-export function sharedChatScopeFromProjection(value: unknown): SharedChatProjection | null {
+export function sharedChatMembershipFromProjection(value: unknown): SharedChatMembershipProjection | null {
   const parsed = SharedChatProjectionSchema.safeParse(value);
   if (!parsed.success) return null;
   return {
-    scopeId: parsed.data.scopeId,
     role: parsed.data.membership.role,
     memberCount: parsed.data.membership.memberCount,
-    requestAi: parsed.data.membership.capabilities.requestAi,
   };
 }

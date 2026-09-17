@@ -65,8 +65,16 @@ export { ChatContextMenu } from "./chat/ChatContextMenu.js";
 export { ChatSharingButton } from "./chat/ChatSharingButton.js";
 export { ChatAttachments, type ChatMessageAttachment } from "./chat/ChatAttachments.js";
 export { ChatCollaboratorsDialog, type CollaborationApi } from "./collaboration/ChatCollaboratorsDialog.js";
-export { ChatCollaboration, SharedChatPanel, type ChatCollaborationView } from "./collaboration/ChatCollaboration.js";
-export { sharedChatScopeFromProjection, type SharedChatProjection } from "./collaboration/chat-projection.js";
+export {
+  CanonicalSharedChatPanel,
+  ChatCollaboration,
+  SharedChatPanel,
+  type ChatCollaborationView,
+} from "./collaboration/ChatCollaboration.js";
+export {
+  sharedChatMembershipFromProjection,
+  type SharedChatMembershipProjection,
+} from "./collaboration/chat-projection.js";
 export { SharedChatControls } from "./collaboration/SharedChatControls.js";
 export { SharedTerminalControls } from "./collaboration/SharedTerminalControls.js";
 export { TerminalSharingButton } from "./collaboration/TerminalSharingButton.js";
