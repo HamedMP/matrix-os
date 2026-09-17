@@ -1,7 +1,6 @@
 # Electron Desktop Dock badge and Chat history
 
 The native Dock badge projects unread conversations from canonical Chat history,
-showing a native red indicator without a number on macOS whenever any chat is unread,
 using the same `isChatUnread` read-state interpretation as the history rail.
 Legacy kernel threads and coding-agent attention summaries do not write the badge.
 
@@ -19,6 +18,6 @@ platform-specific surface. No new API or persistence is introduced.
 
 Validation: focused badge and runtime wiring tests, legacy wiring regression,
 existing Chat rail/controller tests, Electron typecheck/build, and an isolated
-Electron fixture that checks the native badge label before and after opening Chat.
+Electron fixture that checks `app.getBadgeCount()` before and after opening Chat.
 For Human Review, start with one unread fixture conversation, open Chat and select
-“Dock badge review”; the native Dock dot should disappear after reading. macOS controls its size and shape.
+“Dock badge review”; the native Dock number should disappear after reading.
