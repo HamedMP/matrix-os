@@ -79,7 +79,14 @@ describe("createIpcHandler", () => {
       const res = await handler("status", {});
 
       expect(res).toEqual({
-        syncing: true,
+        service: "running",
+        auth: "signed_out",
+        connection: "offline",
+        status: "conflict",
+        enabled: true,
+        paused: false,
+        syncing: false,
+        activeTransferCount: 0,
         manifestVersion: 4,
         lastSyncAt: 1234,
         fileCount: 2,
@@ -90,6 +97,10 @@ describe("createIpcHandler", () => {
         platformUrl: deps.config.platformUrl,
         profile: "local",
         peerId: deps.config.peerId,
+        peers: [],
+        activity: [],
+        conflicts: [expect.objectContaining({ path: "a.md" })],
+        invites: [],
       });
     });
 
@@ -100,7 +111,7 @@ describe("createIpcHandler", () => {
 
       const res = await handler("status", {});
 
-      expect(res.syncing).toBe(false);
+      expect(res).toMatchObject({ paused: true, syncing: false, status: "paused" });
     });
 
     it("reports zero conflicts when the state has no conflict registry", async () => {
@@ -112,6 +123,24 @@ describe("createIpcHandler", () => {
       const res = await handler("sync.status", {});
 
       expect(res.conflictCount).toBe(0);
+    });
+
+    it("reports expired auth as needs_sign_in instead of a connection failure", async () => {
+      const { deps } = createDeps({
+        loadAuth: vi.fn().mockResolvedValue({
+          accessToken: "expired",
+          expiresAt: 1,
+          userId: "user_test",
+          handle: "test",
+        }),
+        connectionState: () => "online",
+      });
+      const handler = createIpcHandler(deps);
+
+      await expect(handler("status", {})).resolves.toMatchObject({
+        auth: "needs_sign_in",
+        connection: "online",
+      });
     });
   });
 

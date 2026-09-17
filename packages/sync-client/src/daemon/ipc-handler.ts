@@ -32,6 +32,11 @@ export interface IpcHandlerDeps {
   clearAuth: () => Promise<void>;
   loadAuth?: () => Promise<AuthData | null>;
   refreshAuth?: () => Promise<AuthData | null>;
+  connectionState?: () => "connecting" | "online" | "offline";
+  activeTransferCount?: () => number;
+  peers?: () => unknown[];
+  activity?: () => unknown[];
+  invites?: () => unknown[];
   shell?: {
     listWorkspaces?: () => Promise<unknown[]>;
     ensureWorkspace?: (input: { projectId?: string }) => Promise<Record<string, unknown>>;
@@ -71,20 +76,51 @@ export function createIpcHandler(deps: IpcHandlerDeps): IpcHandler {
   return async (command, args) => {
     switch (command) {
       case "status":
-      case "sync.status":
+      case "sync.status": {
+        const conflicts = Object.values(deps.syncState.conflicts ?? {})
+          .filter((conflict) => !conflict.resolved);
+        const auth = await deps.loadAuth?.();
+        const authState = !auth
+          ? "signed_out"
+          : auth.expiresAt <= Date.now()
+            ? "needs_sign_in"
+            : "ready";
+        const connection = deps.connectionState?.() ?? "offline";
+        const activeTransferCount = Math.max(0, deps.activeTransferCount?.() ?? 0);
+        const status = deps.config.pauseSync
+          ? "paused"
+          : conflicts.length > 0
+            ? "conflict"
+            : connection !== "online"
+              ? "offline"
+              : activeTransferCount > 0
+                ? "syncing"
+                : "synced";
         return {
-          syncing: !deps.config.pauseSync,
+          service: "running",
+          auth: authState,
+          connection,
+          status,
+          enabled: true,
+          paused: deps.config.pauseSync,
+          syncing: activeTransferCount > 0,
+          activeTransferCount,
           manifestVersion: deps.syncState.manifestVersion,
           lastSyncAt: deps.syncState.lastSyncAt,
           fileCount: Object.keys(deps.syncState.files).length,
-          conflictCount: Object.keys(deps.syncState.conflicts ?? {}).length,
+          conflictCount: conflicts.length,
           syncPath: deps.config.syncPath,
           gatewayFolder: deps.config.gatewayFolder ?? "",
           gatewayUrl: deps.config.gatewayUrl,
           platformUrl: deps.config.platformUrl,
           profile: deps.config.profile,
           peerId: deps.config.peerId,
+          peers: deps.peers?.() ?? [],
+          activity: deps.activity?.() ?? [],
+          conflicts,
+          invites: deps.invites?.() ?? [],
         };
+      }
       case "pause":
       case "sync.pause":
         await deps.persistPauseState(deps.config, true);

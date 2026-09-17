@@ -17,7 +17,7 @@ afterEach(async () => {
 });
 
 describe("legacy CLI profile migration", () => {
-  it("migrates legacy auth/config into the cloud profile idempotently", async () => {
+  it("migrates legacy auth without moving daemon config as a profile-loading side effect", async () => {
     const configDir = await tempConfig();
     await writeFile(join(configDir, "auth.json"), JSON.stringify({ accessToken: "tok" }), { flag: "wx" }).catch(async (err) => {
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
@@ -32,7 +32,10 @@ describe("legacy CLI profile migration", () => {
     expect(first.active).toBe("cloud");
     expect(second.active).toBe("cloud");
     await expect(readFile(join(configDir, "profiles", "cloud", "auth.json"), "utf-8")).resolves.toContain("tok");
-    await expect(readFile(join(configDir, "profiles", "cloud", "config.json"), "utf-8")).resolves.toContain("http://local");
+    await expect(readFile(join(configDir, "config.json"), "utf-8")).resolves.toContain("http://local");
+    await expect(readFile(join(configDir, "profiles", "cloud", "config.json"), "utf-8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 
   it("ignores read-only legacy migration errors after profile files already exist", async () => {

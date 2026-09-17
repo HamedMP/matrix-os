@@ -5,11 +5,14 @@ import { dirname, extname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import pino from "pino";
 import {
-  loadConfig,
   saveConfig,
   getConfigDir,
   type SyncConfig,
 } from "../lib/config.js";
+import {
+  loadProfileSyncConfig,
+  saveProfileSyncConfig,
+} from "../lib/profile-sync-config.js";
 import {
   clearAuth,
   clearProfileAuth,
@@ -1133,11 +1136,12 @@ export async function startDaemon(): Promise<void> {
     },
   });
 
-  const config = await loadConfig();
-  if (!config) {
+  const configResolution = await loadProfileSyncConfig({ configDir });
+  if (!configResolution) {
     logger.error("No config found. Run 'matrixos sync <path>' first.");
     process.exit(1);
   }
+  const config = configResolution.config;
 
   const { auth, profileName, source } = await resolveDaemonAuth(config);
   if (!auth) {
@@ -1328,6 +1332,7 @@ export async function startDaemon(): Promise<void> {
     }),
   });
 
+  let daemonConnectionState: "connecting" | "online" | "offline" = "connecting";
   const wsClient = new SyncWsClient({
     gatewayUrl: config.gatewayUrl,
     token: auth.accessToken,
@@ -1422,8 +1427,14 @@ export async function startDaemon(): Promise<void> {
         () => saveSyncState(stateFile, syncState),
       );
     }),
-    onConnect: () => logger.info("Connected to gateway"),
-    onDisconnect: () => logger.info("Disconnected from gateway"),
+    onConnect: () => {
+      daemonConnectionState = "online";
+      logger.info("Connected to gateway");
+    },
+    onDisconnect: () => {
+      daemonConnectionState = "offline";
+      logger.info("Disconnected from gateway");
+    },
     onError: (err) => logger.error({ err }, "WebSocket error"),
   });
 
@@ -1432,10 +1443,20 @@ export async function startDaemon(): Promise<void> {
     config,
     syncState,
     logger: { info: (msg) => logger.info(msg) },
-    saveConfig: (next) => saveConfig(next),
-    persistPauseState,
+    saveConfig: (next) => saveProfileSyncConfig(next, {
+      configDir,
+      profileName: configResolution.profileName,
+    }),
+    persistPauseState: async (next, paused) => {
+      next.pauseSync = paused;
+      await saveProfileSyncConfig(next, {
+        configDir,
+        profileName: configResolution.profileName,
+      });
+    },
     clearAuth: authFileAccessors.clearAuth,
     loadAuth: authFileAccessors.loadAuth,
+    connectionState: () => daemonConnectionState,
     shell: createDaemonShellControlClient({ config, loadAuth: authFileAccessors.loadAuth }),
     exit: (code) => process.exit(code),
   });

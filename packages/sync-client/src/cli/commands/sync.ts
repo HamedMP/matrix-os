@@ -2,12 +2,14 @@ import { defineCommand } from "citty";
 import { resolve } from "node:path";
 import { mkdir } from "node:fs/promises";
 import {
-  loadConfig,
-  saveConfig,
   defaultSyncPath,
   generatePeerId,
   type SyncConfig,
 } from "../../lib/config.js";
+import {
+  loadProfileSyncConfig,
+  saveProfileSyncConfig,
+} from "../../lib/profile-sync-config.js";
 import {
   isDaemonClientError,
   sendCommand,
@@ -92,9 +94,9 @@ async function runStart(
   const syncPath = rawPath ? resolve(rawPath) : defaultSyncPath();
   await mkdir(syncPath, { recursive: true });
 
-  const previous = await loadConfig();
-  const currentRuntime = currentSyncDaemonRuntime();
   const profile = await resolveCliProfile(args);
+  const previous = (await loadProfileSyncConfig({ profileName: profile.name }))?.config ?? null;
+  const currentRuntime = currentSyncDaemonRuntime();
   const gatewayFolder = folder ?? previous?.gatewayFolder ?? "";
   const config = previous
     ? {
@@ -132,7 +134,7 @@ async function runStart(
       currentRuntime,
     })
   ) {
-    await saveConfig({ ...config, syncDaemonRuntime: currentRuntime });
+    await saveProfileSyncConfig({ ...config, syncDaemonRuntime: currentRuntime });
     console.log(`Sync already running for: ${syncPath}`);
     console.log(`Peer ID: ${config.peerId}`);
     if (gatewayFolder) console.log(`Gateway folder: ${gatewayFolder}`);
@@ -141,7 +143,7 @@ async function runStart(
 
   await installService(serviceCommand);
   const installedConfig = { ...config, syncDaemonRuntime: currentRuntime };
-  await saveConfig(installedConfig);
+  await saveProfileSyncConfig(installedConfig);
   await startService();
 
   console.log(`Sync started for: ${syncPath}`);

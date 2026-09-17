@@ -1,0 +1,243 @@
+import { createHash } from "node:crypto";
+import { mkdir, open, readFile, stat, unlink, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
+import { z } from "zod/v4";
+import {
+  loadConfig,
+  SyncConfigSchema,
+  type SyncConfig,
+} from "./config.js";
+import {
+  loadProfiles,
+  profileConfigPath,
+} from "./profiles.js";
+import { writeUtf8FileAtomic } from "./atomic-write.js";
+
+const PROFILE_SLUG = /^[A-Za-z][A-Za-z0-9_-]{0,30}$/;
+const SyncConfigBindingSchema = z.object({
+  version: z.literal(1),
+  profile: z.string().regex(PROFILE_SLUG),
+});
+
+export interface ProfileSyncConfigResolution {
+  config: SyncConfig;
+  profileName: string;
+  configPath: string;
+  source: "profile" | "legacy_migrated";
+}
+
+export interface ProfileSyncConfigOptions {
+  configDir?: string;
+  profileName?: string;
+}
+
+function defaultConfigDir(): string {
+  return join(homedir(), ".matrixos");
+}
+
+export function syncConfigBindingPath(configDir = defaultConfigDir()): string {
+  return join(configDir, "sync-profile.json");
+}
+
+function migrationLockPath(configDir: string): string {
+  return join(configDir, ".sync-config-migration.lock");
+}
+
+function codedError(code: string): Error & { code: string } {
+  return Object.assign(new Error(code), { code });
+}
+
+async function readBinding(configDir: string): Promise<string | undefined> {
+  try {
+    const parsed: unknown = JSON.parse(await readFile(syncConfigBindingPath(configDir), "utf-8"));
+    return SyncConfigBindingSchema.parse(parsed).profile;
+  } catch (err: unknown) {
+    if (
+      err instanceof Error &&
+      "code" in err &&
+      (err as NodeJS.ErrnoException).code === "ENOENT"
+    ) {
+      return undefined;
+    }
+    throw err;
+  }
+}
+
+async function writeBinding(configDir: string, profile: string): Promise<void> {
+  await mkdir(configDir, { recursive: true, mode: 0o700 });
+  await writeUtf8FileAtomic(
+    syncConfigBindingPath(configDir),
+    JSON.stringify({ version: 1, profile }, null, 2),
+    0o600,
+  );
+}
+
+function normalizedConfig(config: SyncConfig, profile: string): SyncConfig {
+  return SyncConfigSchema.parse({ ...config, profile });
+}
+
+function configsMatch(left: SyncConfig, right: SyncConfig, profile: string): boolean {
+  return JSON.stringify(normalizedConfig(left, profile)) ===
+    JSON.stringify(normalizedConfig(right, profile));
+}
+
+async function migrateLegacyConfig(
+  configDir: string,
+  profileName: string,
+  legacy: SyncConfig,
+): Promise<SyncConfig> {
+  await mkdir(configDir, { recursive: true, mode: 0o700 });
+  const lockPath = migrationLockPath(configDir);
+  let lock: Awaited<ReturnType<typeof open>>;
+  try {
+    lock = await open(lockPath, "wx", 0o600);
+  } catch (err: unknown) {
+    if (
+      err instanceof Error &&
+      "code" in err &&
+      (err as NodeJS.ErrnoException).code === "EEXIST"
+    ) {
+      throw codedError("sync_config_migration_busy");
+    }
+    throw err;
+  }
+
+  try {
+    const destination = profileConfigPath(profileName, configDir);
+    const existing = await loadConfig(destination);
+    if (existing) {
+      if (!configsMatch(existing, legacy, profileName)) {
+        throw codedError("sync_config_ambiguous");
+      }
+      return normalizedConfig(existing, profileName);
+    }
+
+    const legacyPath = join(configDir, "config.json");
+    const legacyRaw = await readFile(legacyPath, "utf-8");
+    const legacyStat = await stat(legacyPath);
+    const migrated = normalizedConfig(legacy, profileName);
+    const migrationDir = join(configDir, "migrations", "sync-config-v1");
+    await mkdir(migrationDir, { recursive: true, mode: 0o700 });
+    const backupPath = join(migrationDir, "legacy-config.json");
+    try {
+      await writeFile(backupPath, legacyRaw, {
+        encoding: "utf-8",
+        flag: "wx",
+        mode: legacyStat.mode & 0o777,
+      });
+    } catch (err: unknown) {
+      if (
+        !(err instanceof Error) ||
+        !("code" in err) ||
+        (err as NodeJS.ErrnoException).code !== "EEXIST"
+      ) {
+        throw err;
+      }
+    }
+
+    await mkdir(dirname(destination), { recursive: true, mode: 0o700 });
+    await writeFile(destination, JSON.stringify(migrated, null, 2), {
+      encoding: "utf-8",
+      flag: "wx",
+      mode: legacyStat.mode & 0o777,
+    });
+    await writeUtf8FileAtomic(
+      join(migrationDir, "journal.json"),
+      JSON.stringify({
+        version: 1,
+        profile: profileName,
+        sourceSha256: createHash("sha256").update(legacyRaw).digest("hex"),
+        migratedAt: new Date().toISOString(),
+      }, null, 2),
+      0o600,
+    );
+    return migrated;
+  } finally {
+    await lock.close();
+    try {
+      await unlink(lockPath);
+    } catch (err: unknown) {
+      if (
+        !(err instanceof Error) ||
+        !("code" in err) ||
+        (err as NodeJS.ErrnoException).code !== "ENOENT"
+      ) {
+        throw err;
+      }
+    }
+  }
+}
+
+export async function loadProfileSyncConfig(
+  options: ProfileSyncConfigOptions = {},
+): Promise<ProfileSyncConfigResolution | null> {
+  const configDir = options.configDir ?? defaultConfigDir();
+  const profiles = await loadProfiles({ configDir, migrateLegacyFiles: false });
+  const binding = await readBinding(configDir);
+  const legacy = await loadConfig(join(configDir, "config.json"));
+  const profileName = options.profileName ?? binding ?? legacy?.profile ?? profiles.active;
+  if (!profiles.profiles[profileName]) {
+    throw codedError("profile_not_found");
+  }
+
+  const destination = profileConfigPath(profileName, configDir);
+  const profileConfig = await loadConfig(destination);
+  const legacyBelongsToProfile = Boolean(
+    legacy && (
+      legacy.profile === profileName ||
+      (!legacy.profile && profileName === profiles.active)
+    ),
+  );
+
+  if (profileConfig) {
+    if (
+      legacyBelongsToProfile &&
+      !binding &&
+      options.profileName === undefined &&
+      !configsMatch(profileConfig, legacy!, profileName)
+    ) {
+      throw codedError("sync_config_ambiguous");
+    }
+    if (options.profileName === undefined) {
+      await writeBinding(configDir, profileName);
+    }
+    return {
+      config: normalizedConfig(profileConfig, profileName),
+      profileName,
+      configPath: destination,
+      source: "profile",
+    };
+  }
+
+  if (!legacy || !legacyBelongsToProfile) {
+    return null;
+  }
+
+  const migrated = await migrateLegacyConfig(configDir, profileName, legacy);
+  await writeBinding(configDir, profileName);
+  return {
+    config: migrated,
+    profileName,
+    configPath: destination,
+    source: "legacy_migrated",
+  };
+}
+
+export async function saveProfileSyncConfig(
+  config: SyncConfig,
+  options: ProfileSyncConfigOptions = {},
+): Promise<void> {
+  const configDir = options.configDir ?? defaultConfigDir();
+  const profiles = await loadProfiles({ configDir, migrateLegacyFiles: false });
+  const profileName = options.profileName ?? config.profile ?? profiles.active;
+  if (!profiles.profiles[profileName]) {
+    throw codedError("profile_not_found");
+  }
+  const parsed = normalizedConfig(config, profileName);
+  const destination = profileConfigPath(profileName, configDir);
+  await mkdir(dirname(destination), { recursive: true, mode: 0o700 });
+  await writeUtf8FileAtomic(destination, JSON.stringify(parsed, null, 2), 0o600);
+  await writeBinding(configDir, profileName);
+}
+

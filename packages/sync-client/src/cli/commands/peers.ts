@@ -4,6 +4,8 @@ import { formatCliError, formatCliSuccess } from "../output.js";
 import { resolveCliProfile } from "../profiles.js";
 
 interface PeerStatus {
+  connectedPeers?: { peerId: string; hostname: string; connectedAt: number }[];
+  /** Legacy compatibility for gateways published before the status rename. */
   peers?: { peerId: string; hostname: string; connectedAt: number }[];
 }
 
@@ -44,7 +46,7 @@ export const peersCommand = defineCommand({
       }
 
       const data = (await res.json()) as PeerStatus;
-      const peers = data.peers ?? [];
+      const peers = data.connectedPeers ?? data.peers ?? [];
 
       if (json) {
         console.log(formatCliSuccess({
