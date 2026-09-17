@@ -1,4 +1,5 @@
 import { computeSoftGridLayout } from "./terminal-soft-grid.js";
+import { panTerminalGrid } from "./terminal-grid-wheel.js";
 
 interface GridTerminal {
   element?: HTMLElement | null;
@@ -58,21 +59,32 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
   let element: HTMLElement | null = null;
   let restoreStyle: Partial<CSSStyleDeclaration> | null = null;
   let previousPan: { top: number; left: number } | null = null;
+  let wheelPannedAway = false;
   let presentationScale = 1;
   let settledLayout: { metrics: number[]; layout: ReturnType<typeof computeSoftGridLayout> } | null = null;
   let outputSubscription: { dispose(): void } | undefined;
 
   const onWheel = (event: WheelEvent & { matrixGridCorrected?: boolean }) => {
-    if (event.matrixGridCorrected || !element || !(event.target instanceof Element) || !element.contains(event.target)) return;
+    if (event.matrixGridCorrected || event.defaultPrevented || !element || !stage || !(event.target instanceof Element) || !element.contains(event.target)) return;
     const scale = presentationScale * (options.getParentScale?.() ?? 1);
-    if (!Number.isFinite(scale) || scale <= 0 || scale === 1) return;
+    if (!Number.isFinite(scale) || scale <= 0) return;
+    const pan = panTerminalGrid(event, host, stage, options.getTerminal());
+    if (pan.verticalPanned) {
+      wheelPannedAway = true;
+    }
+    if (pan.panned) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (pan.deltaX === 0 && pan.deltaY === 0) return;
+    }
+    if (scale === 1 && !pan.panned) return;
     const rect = element.getBoundingClientRect();
     const corrected = new WheelEvent("wheel", {
       bubbles: event.bubbles, cancelable: event.cancelable, composed: event.composed,
       clientX: rect.left + (event.clientX - rect.left) / scale,
       clientY: rect.top + (event.clientY - rect.top) / scale,
       screenX: event.screenX, screenY: event.screenY,
-      deltaX: event.deltaX, deltaY: event.deltaY, deltaZ: event.deltaZ, deltaMode: event.deltaMode,
+      deltaX: pan.deltaX, deltaY: pan.deltaY, deltaZ: event.deltaZ, deltaMode: event.deltaMode,
       ctrlKey: event.ctrlKey, altKey: event.altKey, shiftKey: event.shiftKey, metaKey: event.metaKey,
       button: event.button, buttons: event.buttons,
     });
@@ -118,7 +130,14 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
       });
     const buffer = terminal.buffer?.active;
     const live = buffer && buffer.viewportY >= buffer.baseY;
-    const followY = live && (!previousPan || Math.abs(host.scrollTop - previousPan.top) <= 1);
+    // Resume following at the bottom only when the cursor is already visible.
+    // A native redraw with a prompt above the viewport must not undo a pan.
+    const cursorTop = buffer && stage ? buffer.cursorY * Number.parseFloat(stage.style.height) / terminal.rows : -1;
+    if (wheelPannedAway && host.scrollTop >= host.scrollHeight - host.clientHeight - 0.01 && cursorTop >= host.scrollTop) {
+      wheelPannedAway = false;
+      if (previousPan) previousPan.top = host.scrollTop;
+    }
+    const followY = live && !wheelPannedAway && (!previousPan || Math.abs(host.scrollTop - previousPan.top) <= 1);
 
     if (!stage) {
       // xterm emits once per parsed write batch; RAF coalesces output bursts.
@@ -199,6 +218,7 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
     element = null;
     restoreStyle = null;
     previousPan = null;
+    wheelPannedAway = false;
     settledLayout = null;
     host.style.overflowX = "hidden";
     host.style.overflowY = "hidden";

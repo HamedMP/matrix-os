@@ -102,7 +102,19 @@ describe("real terminal renderer soft-grid resizing", () => {
         await expect.poll(async () => { const g = await geometry(page); return g.bottom - g.visibleBottom; }, { timeout: 5_000 }).toBeLessThanOrEqual(1);
         const measured = await geometry(page);
         expect(measured.scrollHeight).toBeLessThanOrEqual(Math.max(measured.stageHeight, measured.clientHeight) + 1);
-        if (height === 300) expect(measured.panTop).toBeGreaterThan(0);
+        if (height === 300) {
+          expect(measured.panTop).toBeGreaterThan(0);
+          const box = await page.locator("[data-terminal-viewport]").boundingBox();
+          if (!box) throw new Error("Terminal viewport is not measurable");
+          await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+          // Mouse reporting is enabled in the fixture, as it is for Zellij.
+          // Pixel wheel gestures must still expose both ends of a clipped grid.
+          await page.mouse.wheel(0, -2_000);
+          await expect.poll(async () => (await geometry(page)).panTop).toBe(0);
+          await page.mouse.wheel(0, 2_000);
+          await expect.poll(async () => { const g = await geometry(page); return g.scrollHeight - g.clientHeight - g.panTop; })
+            .toBeLessThanOrEqual(1);
+        }
         if (height === 850) expect(measured.scale).toBe("scale(1)");
         if (height === 600) {
           const point = await page.locator(".xterm-screen").evaluate((screen) => {
@@ -125,6 +137,16 @@ describe("real terminal renderer soft-grid resizing", () => {
       await page.waitForTimeout(250);
       await page.evaluate(() => (window as unknown as { fixtureOutput: (data: string) => void }).fixtureOutput("\r\n".repeat(35) + "LATE-OUTPUT-VISIBLE$ "));
       await expect.poll(async () => { const g = await geometry(page); return g.bottom - g.visibleBottom; }).toBeLessThanOrEqual(1);
+      await page.evaluate(() => (window as unknown as { fixtureOutput: (data: string) => void }).fixtureOutput("\x1b[Htop prompt"));
+      await expect.poll(async () => (await geometry(page)).panTop).toBe(0);
+      const panBox = await page.locator("[data-terminal-viewport]").boundingBox();
+      if (!panBox) throw new Error("Terminal viewport is not measurable");
+      await page.mouse.move(panBox.x + panBox.width / 2, panBox.y + panBox.height / 2);
+      await page.mouse.wheel(0, 2_000);
+      await expect.poll(async () => { const g = await geometry(page); return g.scrollHeight - g.clientHeight - g.panTop; }).toBeLessThanOrEqual(1);
+      await page.evaluate(() => (window as unknown as { fixtureOutput: (data: string) => void }).fixtureOutput("\x1b[Hredrawn prompt"));
+      await page.waitForTimeout(100);
+      expect((await geometry(page)).panTop).toBeGreaterThan(0);
       // Native browser selection defaults must stay suppressed when xterm
       // cancels a forwarded event, including a double click with no movement.
       const shortGridHeight = (await geometry(page)).stageHeight;
