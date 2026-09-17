@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtemp, readFile, rm, stat, writeFile, mkdir, unlink } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, stat, writeFile, mkdir, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { createHomeMirror as createHomeMirrorImpl } from "../../../packages/gateway/src/sync/home-mirror.js";
@@ -100,10 +100,10 @@ async function settle(ms = 30) {
   await new Promise((r) => setTimeout(r, ms));
 }
 
-async function waitFor(check: () => boolean, timeoutMs = 15_000): Promise<void> {
+async function waitFor(check: () => boolean | Promise<boolean>, timeoutMs = 15_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (check()) return;
+    if (await check()) return;
     await settle(50);
   }
   throw new Error("Timed out waiting for condition");
@@ -132,6 +132,38 @@ describe("createHomeMirror", () => {
     const mirror = createHomeMirrorImpl(...args);
     activeMirrors.push(mirror);
     return mirror;
+  }
+
+  async function seedLegacyRemoteFile(
+    path: string,
+    body: Buffer,
+    version: number,
+    peerId = "laptop-1",
+  ): Promise<void> {
+    r2.store.set(`matrixos-sync/alice/files/${path}`, body);
+    r2.store.set(
+      "matrixos-sync/alice/manifest.json",
+      Buffer.from(JSON.stringify({
+        version: 2,
+        manifestVersion: version,
+        files: {
+          [path]: {
+            hash: sha256(body),
+            size: body.length,
+            mtime: Date.now(),
+            peerId,
+            version,
+          },
+        },
+      })),
+    );
+    await db.upsertManifestMeta("alice", {
+      version,
+      file_count: 1,
+      total_size: BigInt(body.length),
+      etag: `"manifest-${version}"`,
+      accepted_manifest_key: null,
+    });
   }
 
   beforeEach(async () => {
@@ -232,6 +264,167 @@ describe("createHomeMirror", () => {
       );
 
       await mirror.stop();
+    });
+
+    it("preserves both files when the VPS and accepted remote bytes diverge on startup", async () => {
+      const local = Buffer.from("local offline edit");
+      const remote = Buffer.from("remote offline edit");
+      await writeFile(join(tmpRoot, "shared.md"), local);
+      r2.store.set("matrixos-sync/alice/files/shared.md", remote);
+      r2.store.set(
+        "matrixos-sync/alice/manifest.json",
+        Buffer.from(JSON.stringify({
+          version: 2,
+          manifestVersion: 1,
+          files: {
+            "shared.md": {
+              hash: sha256(remote),
+              size: remote.length,
+              mtime: Date.now(),
+              peerId: "laptop-1",
+              version: 1,
+            },
+          },
+        })),
+      );
+      await db.upsertManifestMeta("alice", {
+        version: 1,
+        file_count: 1,
+        total_size: BigInt(remote.length),
+        etag: '"manifest-1"',
+        accepted_manifest_key: null,
+      });
+
+      const mirror = createHomeMirror({
+        r2,
+        manifestDb: db,
+        homeRoot: tmpRoot,
+        userId: "alice",
+        peerId: "gateway-alice",
+        peerRegistry: registry,
+        logger: { info: () => {}, error: () => {} },
+        watchLocalChanges: false,
+      });
+      await mirror.start();
+
+      expect(await readFile(join(tmpRoot, "shared.md"))).toEqual(local);
+      const conflictName = (await readdir(tmpRoot)).find((name) =>
+        /^shared \(conflict - laptop-1 - \d{4}-\d{2}-\d{2}\)\.md$/.test(name),
+      );
+      expect(conflictName).toBeDefined();
+      expect(await readFile(join(tmpRoot, conflictName!))).toEqual(remote);
+
+      await mirror.stop();
+    });
+
+    it("persists a common base and uploads a one-sided offline VPS edit on restart", async () => {
+      const original = Buffer.from("shared base");
+      await writeFile(join(tmpRoot, "shared.md"), original);
+      await seedLegacyRemoteFile("shared.md", original, 1);
+
+      const first = createHomeMirror({
+        r2,
+        manifestDb: db,
+        homeRoot: tmpRoot,
+        userId: "alice",
+        peerId: "gateway-alice",
+        logger: { info: () => {}, error: () => {} },
+        watchLocalChanges: false,
+      });
+      await first.start();
+      await first.stop();
+
+      const localEdit = Buffer.from("VPS-only offline edit");
+      await writeFile(join(tmpRoot, "shared.md"), localEdit);
+      const restarted = createHomeMirror({
+        r2,
+        manifestDb: db,
+        homeRoot: tmpRoot,
+        userId: "alice",
+        peerId: "gateway-alice",
+        logger: { info: () => {}, error: () => {} },
+        watchLocalChanges: false,
+      });
+      await restarted.start();
+
+      expect(storedManifest(r2)?.files["shared.md"]?.hash).toBe(sha256(localEdit));
+      expect(await readFile(join(tmpRoot, "shared.md"))).toEqual(localEdit);
+      await restarted.stop();
+    });
+
+    it("uses the durable common base to accept a one-sided remote edit on restart", async () => {
+      const original = Buffer.from("shared base");
+      await writeFile(join(tmpRoot, "shared.md"), original);
+      await seedLegacyRemoteFile("shared.md", original, 1);
+
+      const first = createHomeMirror({
+        r2,
+        manifestDb: db,
+        homeRoot: tmpRoot,
+        userId: "alice",
+        peerId: "gateway-alice",
+        logger: { info: () => {}, error: () => {} },
+        watchLocalChanges: false,
+      });
+      await first.start();
+      await first.stop();
+
+      const remoteEdit = Buffer.from("remote-only offline edit");
+      await seedLegacyRemoteFile("shared.md", remoteEdit, 2);
+      const restarted = createHomeMirror({
+        r2,
+        manifestDb: db,
+        homeRoot: tmpRoot,
+        userId: "alice",
+        peerId: "gateway-alice",
+        logger: { info: () => {}, error: () => {} },
+        watchLocalChanges: false,
+      });
+      await restarted.start();
+
+      expect(await readFile(join(tmpRoot, "shared.md"))).toEqual(remoteEdit);
+      await restarted.stop();
+    });
+
+    it("uses the durable common base to preserve both offline edits on restart", async () => {
+      const original = Buffer.from("shared base");
+      await writeFile(join(tmpRoot, "shared.md"), original);
+      await seedLegacyRemoteFile("shared.md", original, 1);
+
+      const first = createHomeMirror({
+        r2,
+        manifestDb: db,
+        homeRoot: tmpRoot,
+        userId: "alice",
+        peerId: "gateway-alice",
+        logger: { info: () => {}, error: () => {} },
+        watchLocalChanges: false,
+      });
+      await first.start();
+      await first.stop();
+
+      const localEdit = Buffer.from("VPS offline edit");
+      const remoteEdit = Buffer.from("laptop offline edit");
+      await writeFile(join(tmpRoot, "shared.md"), localEdit);
+      await seedLegacyRemoteFile("shared.md", remoteEdit, 2);
+      const restarted = createHomeMirror({
+        r2,
+        manifestDb: db,
+        homeRoot: tmpRoot,
+        userId: "alice",
+        peerId: "gateway-alice",
+        logger: { info: () => {}, error: () => {} },
+        watchLocalChanges: false,
+      });
+      await restarted.start();
+
+      expect(await readFile(join(tmpRoot, "shared.md"))).toEqual(localEdit);
+      const conflictName = (await readdir(tmpRoot)).find((name) =>
+        /^shared \(conflict - laptop-1 - \d{4}-\d{2}-\d{2}\)\.md$/.test(name),
+      );
+      expect(conflictName).toBeDefined();
+      expect(await readFile(join(tmpRoot, conflictName!))).toEqual(remoteEdit);
+      await restarted.stop();
     });
 
     it("logs non-Error failures during initial pull without losing the reason", async () => {
@@ -889,6 +1082,58 @@ describe("createHomeMirror", () => {
       await mirror.stop();
     });
 
+    it("captures local files created while the startup scan is publishing", async () => {
+      await writeFile(join(tmpRoot, "scan-trigger.md"), "present before startup");
+      const originalPutObject = r2.putObject.bind(r2);
+      let createdDuringStartup = false;
+      vi.spyOn(r2, "putObject").mockImplementation(async (key, body) => {
+        const result = await originalPutObject(key, body);
+        if (!createdDuringStartup && key.includes("/staging/")) {
+          createdDuringStartup = true;
+          await writeFile(join(tmpRoot, "created-during-startup.md"), "must not be missed");
+        }
+        return result;
+      });
+
+      const mirror = createHomeMirror({
+        r2,
+        manifestDb: db,
+        homeRoot: tmpRoot,
+        userId: "alice",
+        peerId: "gateway-alice",
+        peerRegistry: registry,
+        logger: { info: () => {}, error: () => {} },
+        rescanIntervalMs: false,
+      });
+      await mirror.start();
+
+      await waitFor(() => Boolean(storedManifest(r2)?.files["created-during-startup.md"]));
+      await mirror.stop();
+    });
+
+    it("periodically reconciles a remote commit when its broadcast was missed", async () => {
+      await seedLegacyRemoteFile("missed.md", Buffer.from("before"), 1);
+      const mirror = createHomeMirror({
+        r2,
+        manifestDb: db,
+        homeRoot: tmpRoot,
+        userId: "alice",
+        peerId: "gateway-alice",
+        peerRegistry: registry,
+        logger: { info: () => {}, error: () => {} },
+        rescanIntervalMs: 20,
+      });
+      await mirror.start();
+      expect(await readFile(join(tmpRoot, "missed.md"), "utf8")).toBe("before");
+
+      await seedLegacyRemoteFile("missed.md", Buffer.from("after"), 2);
+
+      await waitFor(async () => (
+        await readFile(join(tmpRoot, "missed.md"), "utf8")
+      ) === "after");
+      await mirror.stop();
+    });
+
     it("keeps browser profile files out of startup and explicit local pushes", async () => {
       await mkdir(join(tmpRoot, "data/browser-profiles/default"), { recursive: true });
       await writeFile(join(tmpRoot, "data/browser-profiles/default/Cookies"), "login state");
@@ -1099,6 +1344,7 @@ describe("createHomeMirror", () => {
         peerId: "gateway-alice",
         peerRegistry: registry,
         logger,
+        propagateDeletes: true,
       });
       await mirror.start();
 
@@ -1118,6 +1364,36 @@ describe("createHomeMirror", () => {
 
       expect(deleteSpy).not.toHaveBeenCalled();
       expect(r2.store.get(objectKey!)).toBeDefined();
+      await mirror.stop();
+    });
+
+    it("does not publish a local deletion unless deletion propagation is enabled", async () => {
+      const mirror = createHomeMirror({
+        r2,
+        manifestDb: db,
+        homeRoot: tmpRoot,
+        userId: "alice",
+        peerId: "gateway-alice",
+        peerRegistry: registry,
+        logger: { info: () => {}, error: () => {} },
+        watchLocalChanges: false,
+        rescanIntervalMs: false,
+      });
+      await mirror.start();
+      const filePath = join(tmpRoot, "keep-remote.txt");
+      await writeFile(filePath, "retain destination copy");
+      await mirror.pushLocalFile("keep-remote.txt");
+      const beforeDelete = storedManifest(r2);
+
+      await unlink(filePath);
+      await mirror.pushLocalDelete("keep-remote.txt");
+
+      const afterDelete = storedManifest(r2);
+      expect(afterDelete?.manifestVersion).toBe(beforeDelete?.manifestVersion);
+      expect(afterDelete?.files["keep-remote.txt"]?.hash).toBe(
+        sha256(Buffer.from("retain destination copy")),
+      );
+      expect(afterDelete?.files["keep-remote.txt"]).not.toHaveProperty("deleted", true);
       await mirror.stop();
     });
 
@@ -1307,6 +1583,7 @@ describe("createHomeMirror", () => {
         peerRegistry: registry,
         logger: { info: () => {}, error: () => {} },
         watchLocalChanges: false,
+        propagateDeletes: true,
       });
       await mirror.start();
       lockCalls.length = 0;

@@ -94,6 +94,7 @@ describe("ManifestSchema", () => {
 describe("PresignRequestSchema", () => {
   it("accepts a valid presign request", () => {
     const req = {
+      protocolVersion: 3 as const,
       files: [
         { path: "apps/test.txt", action: "put" as const, hash: "sha256:" + "d".repeat(64), size: 100 },
       ],
@@ -113,20 +114,28 @@ describe("PresignRequestSchema", () => {
     expect(() => PresignRequestSchema.parse({ files })).toThrow();
   });
 
-  it("rejects zero-byte PUT uploads at the schema boundary", () => {
-    expect(() => PresignRequestSchema.parse({
+  it("accepts zero-byte PUT uploads at the schema boundary", () => {
+    const req = {
+      protocolVersion: 3 as const,
       files: [
         { path: "apps/test.txt", action: "put" as const, hash: "sha256:" + "d".repeat(64), size: 0 },
       ],
-    })).toThrow();
+    };
+    expect(PresignRequestSchema.parse(req)).toEqual(req);
   });
 });
 
 describe("CommitRequestSchema", () => {
   it("accepts a valid commit request", () => {
     const req = {
+      protocolVersion: 3 as const,
       files: [
-        { path: "apps/test.txt", hash: "sha256:" + "e".repeat(64), size: 200 },
+        {
+          path: "apps/test.txt",
+          hash: "sha256:" + "e".repeat(64),
+          size: 200,
+          stagingId: "5ae47e38-2480-4cf7-bc5b-8b3aa967e982",
+        },
       ],
       expectedVersion: 5,
     };

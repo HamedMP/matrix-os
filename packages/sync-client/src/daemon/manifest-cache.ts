@@ -1,4 +1,4 @@
-import { readFile, mkdir, readdir, unlink } from "node:fs/promises";
+import { readFile, lstat, mkdir, readdir, rename, unlink } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { basename, dirname, join } from "node:path";
 import { SyncStateSchema } from "./types.js";
@@ -6,6 +6,7 @@ import type { SyncState, Manifest, ManifestEntry } from "./types.js";
 import { writeUtf8FileAtomic } from "../lib/atomic-write.js";
 
 const MAX_CORRUPT_BACKUPS = 3;
+const DEFAULT_SYNC_STATE_MAX_BYTES = 32 * 1024 * 1024;
 
 export type { SyncState };
 
@@ -34,7 +35,28 @@ const DEFAULT_STATE: SyncState = {
   files: {},
 };
 
-export async function loadSyncState(filePath: string): Promise<SyncState> {
+export async function loadSyncState(
+  filePath: string,
+  options: { maxBytes?: number } = {},
+): Promise<SyncState> {
+  let fileStat;
+  try {
+    fileStat = await lstat(filePath);
+  } catch (err: unknown) {
+    if (isENOENT(err)) {
+      return { ...DEFAULT_STATE, files: {} };
+    }
+    throw err;
+  }
+  if (fileStat.isSymbolicLink()) {
+    throw new Error("Refusing to load symlinked sync state");
+  }
+  const maxBytes = options.maxBytes ?? DEFAULT_SYNC_STATE_MAX_BYTES;
+  if (fileStat.size > maxBytes) {
+    await quarantineOversizedState(filePath, fileStat.size, maxBytes);
+    return { ...DEFAULT_STATE, files: {} };
+  }
+
   let raw: string;
   try {
     raw = await readFile(filePath, "utf-8");
@@ -65,6 +87,25 @@ export async function loadSyncState(filePath: string): Promise<SyncState> {
     return { ...DEFAULT_STATE, files: {} };
   }
   return result.data;
+}
+
+async function quarantineOversizedState(
+  filePath: string,
+  size: number,
+  maxBytes: number,
+): Promise<void> {
+  const backupPath = `${filePath}.corrupt-${Date.now()}-${randomUUID().slice(0, 8)}`;
+  try {
+    await pruneOldCorruptBackups(filePath, MAX_CORRUPT_BACKUPS - 1);
+    await rename(filePath, backupPath);
+    console.warn(
+      `[manifest-cache] oversized: quarantined ${filePath} (${size} bytes, max ${maxBytes}) as ${backupPath} and reset state.`,
+    );
+  } catch (err: unknown) {
+    console.warn(
+      `[manifest-cache] oversized: could not quarantine ${filePath}; resetting state anyway. Cause: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
 }
 
 async function backupCorruptState(

@@ -54,20 +54,20 @@ describe("parseSyncIgnore", () => {
   });
 
   it("ignores empty lines", () => {
-    const content = "*.log\n\n\ntemp/\n";
+    const content = "*.trace\n\n\ntemp/\n";
     const result = parseSyncIgnore(content);
 
     expect(result.patterns).toHaveLength(DEFAULT_PATTERNS.length + 2);
   });
 
   it("ignores comment lines starting with #", () => {
-    const content = "# this is a comment\n*.log\n# another comment\n";
+    const content = "# this is a comment\n*.trace\n# another comment\n";
     const result = parseSyncIgnore(content);
 
     const nonDefault = result.patterns.filter(
       (p) => !DEFAULT_PATTERNS.includes(p),
     );
-    expect(nonDefault).toEqual(["*.log"]);
+    expect(nonDefault).toEqual(["*.trace"]);
   });
 
   it("trims whitespace from patterns", () => {
@@ -180,6 +180,19 @@ describe("isIgnored", () => {
 
   it("ignores __pycache__/ directory", () => {
     expect(isIgnored("__pycache__/module.pyc", defaultPatterns)).toBe(true);
+  });
+
+  it("uses the same secret and runtime exclusions for local and VPS adapters", () => {
+    for (const path of [
+      ".env",
+      ".env.production",
+      "logs/gateway.log",
+      ".matrixos/sync/home-mirror-primary.json",
+      "data/browser-profiles/default/Cookies",
+      ".pnpm-store/v3/index.json",
+    ]) {
+      expect(isIgnored(path, defaultPatterns), path).toBe(true);
+    }
   });
 
   it("does NOT ignore normal files", () => {

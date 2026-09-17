@@ -131,6 +131,7 @@ describe("runInitialPull", () => {
       downloadFile,
       saveSyncState,
       refreshConflictCopyPathIndex,
+      localFileExists: async () => true,
     });
 
     expect(result).toMatchObject({ pulled: 1, skipped: 1, failed: 1 });
@@ -141,5 +142,45 @@ describe("runInitialPull", () => {
       expect.objectContaining({ path: "bad.txt" }),
       "Initial-pull failed",
     );
+  });
+
+  it("re-downloads a cached remote revision when the local file disappeared", async () => {
+    const syncState: SyncState = {
+      manifestVersion: 1,
+      lastSyncAt: 0,
+      files: {
+        "missing.txt": {
+          hash: HASH_A,
+          mtime: Date.now(),
+          size: 10,
+          lastSyncedHash: HASH_A,
+        },
+      },
+    };
+    const reconcileRemoteFileChange = vi.fn(async () => ({ status: "downloaded" as const }));
+    const requestPresignedUrls = vi.fn(async (_client, files) => files.map((file) => ({
+      path: file.path,
+      url: `https://r2.example.test/${file.path}`,
+      expiresIn: 900,
+    })));
+
+    const result = await runInitialPull({
+      gatewayClient: { gatewayUrl: "https://app.matrix-os.com", token: "token" },
+      syncRoot: "/sync",
+      syncState,
+      remoteFiles: { "missing.txt": entry(HASH_A) },
+      toLocal: (remotePath) => remotePath,
+      toRemote: (localPath) => localPath,
+      logger: logger(),
+      requestPresignedUrls,
+      reconcileRemoteFileChange,
+      downloadFile: vi.fn(),
+      saveSyncState: vi.fn(),
+      refreshConflictCopyPathIndex: vi.fn(),
+      localFileExists: async () => false,
+    });
+
+    expect(result).toMatchObject({ pulled: 1, skipped: 0, failed: 0 });
+    expect(reconcileRemoteFileChange).toHaveBeenCalledTimes(1);
   });
 });

@@ -31,6 +31,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./mcp": "./src/mcp/hosted.ts",
+    "./reconciliation": "./src/reconciliation.ts",
     "./shell-protocol": {
       "types": "./src/protocol/shell.d.ts",
       "import": "./src/protocol/shell.js",

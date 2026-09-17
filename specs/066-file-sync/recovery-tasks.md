@@ -11,8 +11,8 @@ implementation and is retained as historical compatibility context.
 - [x] Install the workspace from the frozen lockfile with pinned pnpm 10.33.4.
 - [x] Add deterministic profile migration/restart and Swift IPC reproductions.
 - [x] Add publication race, scope isolation, missing manifest, and zero-byte reproductions.
-- [ ] Add the startup mirror-divergence reproduction before changing reconciliation.
-- [ ] Record sanitized local capability/operational evidence without customer identifiers.
+- [x] Add the startup mirror-divergence reproduction before changing reconciliation.
+- [x] Record sanitized local capability/operational evidence without customer identifiers.
 
 ## P1 — Profile/config and protocol repair
 
@@ -34,10 +34,10 @@ implementation and is retained as historical compatibility context.
 
 ## P3 — Shared reconciliation and VPS mirror safety
 
-- [ ] Extract shared file policy and reconciliation semantics.
-- [ ] Preserve divergent edits/deletes and block unsafe bootstrap deletion.
+- [x] Extract shared file policy and reconciliation semantics.
+- [x] Preserve divergent edits/deletes and block unsafe bootstrap deletion.
 - [ ] Add bounded queues/transfers/events/temp cleanup and common scenario tests.
-- [ ] Keep production mirror activation gated.
+- [x] Keep production mirror activation gated.
 
 ## P4 — Multiple mappings and CLI
 
