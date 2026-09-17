@@ -98,7 +98,7 @@ export function switchKernelSession(
 }
 
 export function wireKernel(): () => void {
-  const { platformHost, runtimeSlot } = useConnection.getState();
+  const { platformHost, runtimeSlot, authGeneration } = useConnection.getState();
   if (cleanupKernel) {
     cleanupKernel();
     cleanupKernel = null;
@@ -210,6 +210,19 @@ export function wireKernel(): () => void {
     void openCodingAgentThread(route.select);
   });
 
+  const offAppGenerate = onEvent("app:generate", (request) => {
+    // Events from a closing app must never reach a newly selected computer.
+    const current = useConnection.getState();
+    if (request.runtimeSlot !== runtimeSlot || current.runtimeSlot !== runtimeSlot
+      || request.authGeneration !== authGeneration || current.authGeneration !== authGeneration
+      || current.status !== "signed-in") return;
+    const text = `[App: ${request.app}] ${request.context}`;
+    const requestId = crypto.randomUUID();
+    // Register before dispatch so kernel:init cannot bind to another pending run.
+    useThreads.getState().startThread({ text, requestId, title: `App: ${request.app}` });
+    activeSocket.send({ type: "message", text, requestId });
+  });
+
   activeSocket.connect();
 
   let cleaned = false;
@@ -221,6 +234,7 @@ export function wireKernel(): () => void {
     unsubscribeBadge();
     unsubscribeCodingAgentBadge();
     offNotificationClick();
+    offAppGenerate();
     activeSocket.dispose();
     if (socket === activeSocket) socket = null;
     if (cleanupKernel === cleanup) cleanupKernel = null;

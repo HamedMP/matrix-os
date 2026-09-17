@@ -8,7 +8,7 @@ function setup() {
   const gatewayRequest = createNativeAppGatewayRequester({
     getGatewayOrigin: () => "https://gateway.test", getToken: () => "desktop-token", fetchFn,
   });
-  const bridge = new NativeAppBridge({
+  const bridge = new NativeAppBridge({ authGeneration: () => 0, generate: vi.fn(), aiRequest: vi.fn(),
     request: vi.fn(), gatewayRequest, gatewayOrigin: () => "https://gateway.test",
   });
   bridge.register(42, "resource-manager");
