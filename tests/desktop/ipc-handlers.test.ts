@@ -22,6 +22,7 @@ function makeHarness(overrides: Partial<HandlerContext> = {}) {
     },
     sync: {
       getSnapshot: vi.fn(),
+      reauthorize: vi.fn(),
       chooseFolder: vi.fn(),
       enable: vi.fn(),
       addMapping: vi.fn(),
@@ -110,6 +111,34 @@ describe("registerIpcHandlers", () => {
     const harness = makeHarness({ isTrustedSender: vi.fn(() => false) });
     await expect(harness.invoke("sync:get-snapshot")).rejects.toThrow("invalid request");
     expect(harness.ctx.sync.getSnapshot).not.toHaveBeenCalled();
+  });
+
+  it("routes credential recovery only through trusted empty-payload IPC", async () => {
+    const harness = makeHarness();
+    const snapshot = {
+      schemaVersion: 1 as const,
+      capability: "available" as const,
+      helperVersion: "0.3.16",
+      service: "running" as const,
+      profile: "desktop",
+      runtimeSlot: "primary",
+      enabled: true,
+      paused: false,
+      auth: "ready" as const,
+      connection: "online" as const,
+      status: "synced" as const,
+      activeTransferCount: 0,
+      conflictCount: 0,
+      lastSyncAt: null,
+      mappings: [],
+      backup: null,
+      backupState: "unknown" as const,
+    };
+    vi.mocked(harness.ctx.sync.reauthorize).mockResolvedValue(snapshot);
+
+    await expect(harness.invoke("sync:reauthorize")).resolves.toEqual(snapshot);
+    expect(harness.ctx.sync.reauthorize).toHaveBeenCalledOnce();
+    await expect(harness.invoke("sync:reauthorize", { token: "secret" })).rejects.toThrow("invalid request");
   });
 
   it("revokes the Desktop sync grant before clearing the Desktop session", async () => {

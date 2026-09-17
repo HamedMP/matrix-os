@@ -46,6 +46,8 @@ export {
 } from "./terminals";
 export {
   createMobileBillingPortal,
+  fetchMobileBackupStatus,
+  fetchMobileSyncStatus,
   fetchMobileBillingStatus,
   fetchMobileSystemInfo,
   updatePushRegistration,

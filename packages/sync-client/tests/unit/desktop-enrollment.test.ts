@@ -2,7 +2,9 @@ import { Readable } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
 import {
   DesktopEnrollmentInputSchema,
+  DesktopReauthorizationInputSchema,
   performDesktopEnrollment,
+  performDesktopReauthorization,
   readDesktopEnrollmentInput,
 } from "../../src/auth/desktop-enrollment.js";
 
@@ -30,6 +32,12 @@ const CREDENTIAL = {
   userId: "user_alice",
   handle: "alice",
   runtimeSlot: "studio",
+};
+
+const OLD_CREDENTIAL = {
+  ...CREDENTIAL,
+  accessToken: "old-sync-access-secret",
+  refreshToken: `sdr_28e9ee9f-ec1f-45b7-b0c2-b51a47e6da8c.${"b".repeat(43)}`,
 };
 
 describe("Desktop helper enrollment", () => {
@@ -103,5 +111,40 @@ describe("Desktop helper enrollment", () => {
       randomId: () => "11111111-1111-4111-8111-111111111111",
     })).rejects.toThrow("disk full");
     expect(revoke).toHaveBeenCalledWith(expect.objectContaining({ auth: CREDENTIAL }));
+  });
+
+  it("renews the Desktop grant without mutating existing mappings", async () => {
+    const input = DesktopReauthorizationInputSchema.parse({
+      schemaVersion: 1,
+      profile: "desktop",
+      platformUrl: INPUT.platformUrl,
+      desktopAccessToken: INPUT.desktopAccessToken,
+      deviceName: INPUT.deviceName,
+      expectedIdentity: INPUT.expectedIdentity,
+    });
+    const enroll = vi.fn(async () => CREDENTIAL);
+    const saveCredential = vi.fn(async () => undefined);
+    const loadCredential = vi.fn(async () => OLD_CREDENTIAL);
+    const revoke = vi.fn(async () => undefined);
+    const installAndStart = vi.fn(async () => undefined);
+
+    await expect(performDesktopReauthorization(input, {
+      enroll,
+      loadCredential,
+      saveCredential,
+      revoke,
+      installAndStart,
+    })).resolves.toEqual({ ok: true, profile: "desktop" });
+    expect(enroll).toHaveBeenCalledWith(expect.objectContaining({
+      desktopAccessToken: INPUT.desktopAccessToken,
+      expected: INPUT.expectedIdentity,
+    }));
+    expect(saveCredential).toHaveBeenCalledWith("desktop", CREDENTIAL);
+    expect(loadCredential).toHaveBeenCalledWith("desktop");
+    expect(revoke).toHaveBeenCalledWith({
+      platformUrl: INPUT.platformUrl,
+      auth: OLD_CREDENTIAL,
+    });
+    expect(installAndStart).toHaveBeenCalledOnce();
   });
 });

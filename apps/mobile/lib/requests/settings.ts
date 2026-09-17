@@ -2,7 +2,12 @@ import { z } from "zod/v4";
 import {
   MatrixBillingStatusSchema,
   type MatrixBillingStatus,
-} from "@matrix-os/contracts";
+} from "@matrix-os/contracts/billing";
+import { BackupStatusSchema, type BackupStatus } from "@matrix-os/contracts/sync";
+import {
+  SyncRemoteStatusResponseSchema,
+  type SyncRemoteStatusResponse,
+} from "@matrix-os/contracts/sync";
 
 import { HOSTED_GATEWAY_URL } from "@/lib/storage";
 import { buildGatewayRequestUrl, fetchAuthenticatedJson } from "./http";
@@ -21,6 +26,32 @@ const BillingPortalSchema = z.object({ url: z.url() }).strict();
 
 export type MobileSystemInfo = z.infer<typeof SystemInfoSchema>;
 export type MobileBillingStatus = MatrixBillingStatus;
+
+export function fetchMobileBackupStatus(
+  clerkToken: string,
+  gatewayUrl: string,
+): Promise<BackupStatus> {
+  return fetchAuthenticatedJson({
+    url: buildGatewayRequestUrl(gatewayUrl, "/api/sync/backup-status"),
+    token: clerkToken,
+    schema: BackupStatusSchema,
+    errorMessage: "Backup health unavailable. Try again.",
+    maxResponseBytes: 32 * 1024,
+  });
+}
+
+export function fetchMobileSyncStatus(
+  clerkToken: string,
+  gatewayUrl: string,
+): Promise<SyncRemoteStatusResponse> {
+  return fetchAuthenticatedJson({
+    url: buildGatewayRequestUrl(gatewayUrl, "/api/sync/status"),
+    token: clerkToken,
+    schema: SyncRemoteStatusResponseSchema,
+    errorMessage: "Sync health unavailable. Try again.",
+    maxResponseBytes: 32 * 1024,
+  });
+}
 
 export function fetchMobileSystemInfo(
   clerkToken: string,

@@ -101,6 +101,8 @@ export { constrainFloatingWindow, isPointNearWindow, WINDOW_BACKGROUND_CLICK_BUF
 export { CanonicalChatInputForm, type CanonicalChatInputFormProps } from "./chat/CanonicalChatInputForm.js";
 
 export { useFileDownload, type FileDownloadTransport, type FileDownloadController } from "./files/use-file-download.js";
+export { SyncBackupView } from "./sync/SyncBackupView.js";
+export type { SyncBackupTransport, SyncBackupViewProps } from "./sync/SyncBackupView.js";
 
 export { resolveRecipeHandoff } from "./chat-agents/recipe-handoff.js";
 export { generatedChatTitle } from "./generated-chat-title";

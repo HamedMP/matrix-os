@@ -5,7 +5,9 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./collaboration": "./src/collaboration.ts"
+    "./billing": "./src/billing-public.ts",
+    "./collaboration": "./src/collaboration.ts",
+    "./sync": "./src/sync.ts"
   },
   "imports": {
     "#file-download": "./src/file-download.ts",

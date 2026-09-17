@@ -8,7 +8,8 @@
     ".": "./src/index.ts",
     "./styles.css": "./src/styles.css",
     "./agents-providers.css": "./src/agents-providers/agents-providers.css",
-    "./chat-agents.css": "./src/chat-agents/chat-agents.css"
+    "./chat-agents.css": "./src/chat-agents/chat-agents.css",
+    "./sync-backup.css": "./src/sync/sync-backup.css"
   },
   "dependencies": {
     "@matrix-os/contracts": "workspace:*",

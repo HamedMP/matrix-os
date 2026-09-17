@@ -60,6 +60,9 @@ vi.mock("../../shell/src/components/settings/sections/BillingSection.js", () => 
     <div>Billing settings {mode ?? "settings"}</div>
   ),
 }));
+vi.mock("../../shell/src/components/settings/sections/SyncBackupSection.js", () => ({
+  SyncBackupSection: () => <div>Sync and backup settings</div>,
+}));
 
 describe("Settings panel", () => {
   beforeEach(() => {
@@ -92,6 +95,17 @@ describe("Settings panel", () => {
     expect(screen.getByText("Agents and providers settings").isConnected).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "Identity & personality" }));
     expect(screen.getByText("Identity and personality settings").isConnected).toBe(true);
+  });
+
+  it("shows the shared Sync & backup surface in browser Settings", async () => {
+    const { Settings } = await import("../../shell/src/components/Settings.js");
+
+    render(<Settings open onOpenChange={() => {}} />);
+
+    const syncButton = await screen.findByRole("button", { name: "Sync & backup" });
+    fireEvent.click(syncButton);
+    expect(screen.getByText("Sync and backup settings").isConnected).toBe(true);
+    expect(syncButton.getAttribute("aria-current")).toBe("page");
   });
 
   it.each(["agent", "providers"] as const)("maps the legacy %s deep link to Agents & providers", async (legacySection) => {

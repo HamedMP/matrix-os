@@ -76,6 +76,40 @@ describe("SettingsView", () => {
     expect(useUi.getState().requestedSettingsSection).toBeNull();
   });
 
+  it("opens Sync & backup as a first-class machine section", async () => {
+    window.operator.invoke = vi.fn(async (channel: string) => {
+      if (channel === "sync:get-snapshot") {
+        return {
+          schemaVersion: 1,
+          capability: "available",
+          helperVersion: "0.3.16",
+          service: "running",
+          profile: "desktop",
+          runtimeSlot: "primary",
+          enabled: true,
+          paused: false,
+          auth: "ready",
+          connection: "online",
+          status: "synced",
+          activeTransferCount: 0,
+          conflictCount: 0,
+          lastSyncAt: null,
+          mappings: [],
+          backup: null,
+          backupState: "unknown",
+        };
+      }
+      return {};
+    });
+    useUi.getState().requestSettingsSection("sync-backup");
+
+    render(<SettingsView />);
+
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Sync & backup" })).not.toBeNull());
+    expect(useUi.getState().requestedSettingsSection).toBeNull();
+    expect(window.operator.invoke).toHaveBeenCalledWith("sync:get-snapshot", {});
+  });
+
   it("keeps the selected navigation highlight in sync with the visible section", () => {
     render(<SettingsView />);
     const providers = screen.getByRole("button", { name: "Agents & providers" });
@@ -111,6 +145,7 @@ describe("SettingsView", () => {
     expect(screen.getByRole("button", { name: "MCPs" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "Skills" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "CLI" })).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Sync & backup" })).not.toBeNull();
     expect(sidebar.textContent).not.toContain("Integration categories");
   });
 

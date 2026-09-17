@@ -4,6 +4,7 @@ import {
   Clock,
   CreditCard,
   Cpu,
+  HardDrive,
   Palette,
   Server,
   Settings as SettingsIcon,
@@ -25,6 +26,7 @@ import McpServersSection from "../plugins/McpServersSection";
 import SkillsSection from "../plugins/SkillsSection";
 import CronSection from "./sections/CronSection";
 import SystemSection from "./sections/SystemSection";
+import SyncBackupSection from "./sections/SyncBackupSection";
 import { useUi } from "../../stores/ui";
 
 export type SettingsSectionId =
@@ -32,6 +34,7 @@ export type SettingsSectionId =
   | "appearance"
   | "billing"
   | "runtime"
+  | "sync-backup"
   | "agents-providers"
   | "identity-personality"
   | "services"
@@ -52,6 +55,7 @@ const SECTIONS: { id: SettingsSectionId; label: string; icon: React.ReactNode; g
   { id: "agents-providers", label: "Agents & providers", icon: <Bot size={15} />, group: "Machine" },
   { id: "identity-personality", label: "Identity & personality", icon: <Sparkles size={15} />, group: "Machine" },
   { id: "runtime", label: "Computers", icon: <Server size={15} />, group: "Machine" },
+  { id: "sync-backup", label: "Sync & backup", icon: <HardDrive size={15} />, group: "Machine" },
   { id: "cron", label: "Schedules", icon: <Clock size={15} />, group: "Machine" },
   { id: "system", label: "System", icon: <Cpu size={15} />, group: "Machine" },
 ];
@@ -156,6 +160,7 @@ export default function SettingsView({
           {section === "billing" ? <BillingSection /> : null}
           {section === "appearance" ? <AppearanceSection /> : null}
           {section === "runtime" ? <RuntimeSection /> : null}
+          {section === "sync-backup" ? <SyncBackupSection /> : null}
           {section === "agents-providers" ? <LegacyAgentsProvidersSettings /> : null}
           {section === "identity-personality" ? <IdentityPersonalitySection /> : null}
           {section === "services" ? <IntegrationsSettingsSection /> : null}
