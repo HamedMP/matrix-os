@@ -325,6 +325,54 @@ describe("CollaborationRepository", () => {
     })).rejects.toMatchObject({ code: "conflict" });
   });
 
+  it("rejects pending or accepted duplicates and renews revoked membership with a new invitation", async () => {
+    let invitationSequence = 70;
+    repository = new CollaborationRepository(fixture.db, {
+      now: () => instant,
+      createId: () => uuid(invitationSequence++),
+    });
+    const scope = await createScope();
+    const create = (clientRequestId: string, expectedRevision: number) => repository.createInvitation({
+      scopeId: scope.id,
+      actorId: collaborationActors.owner,
+      targetActorId: collaborationActors.editor,
+      role: "editor",
+      clientRequestId,
+      expectedRevision,
+      payloadHash: clientRequestId.replaceAll("-", "").padEnd(64, "0").slice(0, 64),
+      expiresAt: future,
+    });
+
+    const pending = await create(uuid(71), 0);
+    await expect(create(uuid(72), 1)).rejects.toMatchObject({ code: "conflict" });
+    await repository.acceptInvitation({
+      invitationId: pending.invitationId,
+      actorId: collaborationActors.editor,
+      clientRequestId: uuid(73),
+      expectedRevision: 1,
+      payloadHash: "d".repeat(64),
+    });
+    await expect(create(uuid(74), 2)).rejects.toMatchObject({ code: "conflict" });
+    await fixture.db.updateTable("collaboration_scopes").set({ lifecycle: "shared" })
+      .where("id", "=", scope.id).execute();
+    await repository.revokeMember({
+      scopeId: scope.id,
+      actorId: collaborationActors.owner,
+      targetActorId: collaborationActors.editor,
+      clientRequestId: uuid(75),
+      expectedRevision: 2,
+      expectedMemberRevision: 2,
+      payloadHash: "e".repeat(64),
+    });
+
+    const renewed = await create(uuid(76), 3);
+    expect(renewed.invitationId).not.toBe(pending.invitationId);
+    await expect(repository.getMember(scope.id, collaborationActors.editor)).resolves.toMatchObject({
+      invitationId: renewed.invitationId,
+      status: "pending",
+    });
+  });
+
   it("keeps read, pin, mute, and opened state local to each Chat participant", async () => {
     await fixture.db.insertInto("chats").values({
       id: collaborationIds.chat,

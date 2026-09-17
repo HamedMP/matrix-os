@@ -12,7 +12,6 @@ import {
   CollaborationActorIdSchema,
   CollaborationCreateAiRequestSchema,
   CollaborationCreateDiscussionRequestSchema,
-  CollaborationCreateInvitationRequestSchema,
   CollaborationCreateScopeRequestSchema,
   CollaborationIdSchema,
   CollaborationInvitationSchema,
@@ -42,6 +41,7 @@ import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
 import { CollaborationChatCommandError } from "../chat/collaboration-commands.js";
 import { SharedChatQueueError } from "../chat/repository.js";
+import type { RateLimiter } from "../security/rate-limiter.js";
 import { CollaborationActorProofError, type CollaborationActorProofVerifier } from "./actor-proof.js";
 import {
   CollaborationAuthorizationError,
@@ -60,6 +60,7 @@ import {
 import { ProjectSharingError, type ProjectSharingService } from "./project-sharing.js";
 import { ProjectInventoryError } from "./project-inventory.js";
 import { ProjectTransitionError } from "./project-transition.js";
+import { createInvitationCreationHandler } from "./invitation-creation-route.js";
 import {
   CollaborationTerminalAdapterError,
   type CollaborationTerminalAdapter,
@@ -76,7 +77,6 @@ import {
 } from "./repository.js";
 
 const PROOF_HEADER = "x-matrix-collaboration-proof";
-const INVITATION_LIFETIME_MS = 7 * 24 * 60 * 60 * 1_000;
 const MessageQuerySchema = z.object({
   after: CollaborationRevisionSchema.default("0"),
   limit: z.coerce.number().int().min(1).max(100).default(50),
@@ -101,6 +101,8 @@ export function createCollaborationRoutes(options: {
   projectScope?: CollaborationProjectScopeService;
   projectSharing?: ProjectSharingService;
   resolveParticipant(actorId: string): Promise<Participant>;
+  resolveInvitationIdentifier(identifier: string): Promise<Participant>;
+  invitationResolutionRateLimiter?: RateLimiter;
   onScopeCommitted?(scopeId: string): Promise<void>;
   onRevoked?(scopeId: string, actorId: string): void;
   onRoleChanged?(scopeId: string, actorId: string, role: "editor" | "viewer"): void;
@@ -221,25 +223,15 @@ export function createCollaborationRoutes(options: {
     return c.json({ members: await Promise.all(members.map((member) => memberProjection(options, member))) });
   }));
 
-  routes.post("/api/collaboration/scopes/:scopeId/invitations", async (c) => handle(c, async () => {
-    const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
-    const { value, bytes } = await readJson(c);
-    const context = await authorize(options, c, bytes, "manage_members", scopeId);
-    const input = CollaborationCreateInvitationRequestSchema.parse(value);
-    await options.resolveParticipant(input.targetActorId);
-    const result = await options.repository.createInvitation({
-      scopeId,
-      actorId: context.actorId,
-      targetActorId: input.targetActorId,
-      role: input.role,
-      clientRequestId: input.clientRequestId,
-      expectedRevision: Number(input.expectedRevision),
-      payloadHash: digest(bytes),
-      expiresAt: new Date(now().getTime() + INVITATION_LIFETIME_MS).toISOString(),
-    });
-    const member = await requireInvitation(options.repository, result.invitationId);
-    await notifyScope(options, scopeId);
-    return c.json(await invitationProjection(options, member), 201);
+  routes.post("/api/collaboration/scopes/:scopeId/invitations", createInvitationCreationHandler({
+    repository: options.repository,
+    resolveInvitationIdentifier: options.resolveInvitationIdentifier,
+    invitationResolutionRateLimiter: options.invitationResolutionRateLimiter,
+    authorize: (c, bytes, scopeId) => authorize(options, c, bytes, "manage_members", scopeId),
+    projectInvitation: (member) => invitationProjection(options, member),
+    notifyScope: (scopeId) => notifyScope(options, scopeId),
+    handle,
+    now,
   }));
 
   routes.get("/api/collaboration/invitations/:invitationId", async (c) => handle(c, async () => {

@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { bootstrapPlatformCollaborationDatabase } from "../../packages/platform/src/collaboration/database.js";
 import { CollaborationProofSigner } from "../../packages/platform/src/collaboration/proof.js";
 import { PlatformCollaborationRepository } from "../../packages/platform/src/collaboration/repository.js";
@@ -22,6 +22,7 @@ describe("platform collaboration routes", () => {
   let repository: PlatformCollaborationRepository;
   let app: Hono;
   let hydrate: Parameters<typeof createPlatformCollaborationRoutes>[0]["hydrate"];
+  let resolveInvitationIdentifier: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
     fixture = await createPlatformCollaborationTestDatabase();
@@ -63,6 +64,9 @@ describe("platform collaboration routes", () => {
         revision: "2", messageCount: "1",
       },
     });
+    resolveInvitationIdentifier = vi.fn(async (identifier: string) => identifier === "nimanaderi"
+      ? { actorId: platformCollaborationActors.recipientWithoutComputer, displayName: "Recipient" }
+      : null);
     app = new Hono();
     app.route("/", createPlatformCollaborationRoutes({
       repository,
@@ -74,6 +78,7 @@ describe("platform collaboration routes", () => {
           ? { runtimeId, ownerId: platformCollaborationActors.owner }
           : null,
       resolveParticipant: async (actorId) => ({ actorId, displayName: `Name ${actorId}` }),
+      resolveInvitationIdentifier,
       hydrate: (input) => hydrate(input),
       now: () => now,
     }));
@@ -221,6 +226,57 @@ describe("platform collaboration routes", () => {
       actorId: platformCollaborationActors.recipientWithoutComputer,
       displayName: `Name ${platformCollaborationActors.recipientWithoutComputer}`,
     });
+  });
+
+  it("resolves an invitation identifier only for an authenticated owner runtime", async () => {
+    const denied = await app.request("/internal/collaboration/participants/resolve", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ identifier: "nimanaderi" }),
+    });
+    expect(denied.status).toBe(401);
+    expect(resolveInvitationIdentifier).not.toHaveBeenCalled();
+
+    const response = await app.request("/internal/collaboration/participants/resolve", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${runtimeSecret}`,
+        "content-type": "application/json",
+        "x-matrix-runtime-id": "runtime_owner",
+      },
+      body: JSON.stringify({ identifier: "nimanaderi" }),
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      actorId: platformCollaborationActors.recipientWithoutComputer,
+      displayName: "Recipient",
+    });
+    expect(resolveInvitationIdentifier).toHaveBeenCalledWith("nimanaderi");
+
+    for (let index = 0; index < 9; index += 1) {
+      const unresolved = await app.request("/internal/collaboration/participants/resolve", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${runtimeSecret}`,
+          "content-type": "application/json",
+          "x-matrix-runtime-id": "runtime_owner",
+        },
+        body: JSON.stringify({ identifier: `unknown-${index}` }),
+      });
+      expect(unresolved.status).toBe(404);
+      expect(await unresolved.json()).toEqual({ error: "Invitation target unavailable" });
+    }
+    const limited = await app.request("/internal/collaboration/participants/resolve", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${runtimeSecret}`,
+        "content-type": "application/json",
+        "x-matrix-runtime-id": "runtime_owner",
+      },
+      body: JSON.stringify({ identifier: "unknown-limited" }),
+    });
+    expect(limited.status).toBe(429);
+    expect(resolveInvitationIdentifier).toHaveBeenCalledTimes(10);
   });
 
   it("serves a short-lived signed rollout policy only to an authenticated runtime", async () => {

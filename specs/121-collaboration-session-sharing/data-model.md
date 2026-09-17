@@ -39,7 +39,7 @@ A direct Chat scope may exist inside a private project without granting project 
 | invited_by / accepted_at / expires_at | Verified inviter, explicit acceptance, bounded expiry |
 | revision / joined_at / updated_at | Conditional role changes and preserved original join history |
 
-The owner has exactly one accepted owner row in the initial model. Transfer cannot remove the final owner before the successor is committed. Owner+pending+accepted slots cannot exceed eight; lock the scope row before counting/upserting. A renewal of a revoked/expired invitation uses a new invitation ID, so accepting an old link cannot reactivate access. Target account is immutable for that invitation.
+The owner has exactly one accepted owner row in the initial model. Transfer cannot remove the final owner before the successor is committed. Owner+pending+accepted slots cannot exceed eight; lock the scope row before counting/upserting. A renewal of a revoked/expired invitation uses a new invitation ID, so accepting an old link cannot reactivate access. Target account is immutable for that invitation. User-entered email/username identifiers are resolved by platform before this transaction; only the canonical actor ID is stored. Owner collaboration tables, events, proofs, audit rows and directory metadata never store the submitted email address.
 
 For inherited children, resolve the project member row inside the authorizing operation. Do not copy memberships into child grant tables. Existing `chat_members` may remain a compatibility projection maintained from the common authority, but shared authorization must never consult it as an independent fallback. Private Chats retain existing owner semantics.
 

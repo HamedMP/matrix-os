@@ -1,5 +1,6 @@
+import { createHash } from "node:crypto";
 import { Hono } from "hono";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { bootstrapChatDatabase } from "../../packages/gateway/src/chat/database.js";
 import { CollaborationChatCommands } from "../../packages/gateway/src/chat/collaboration-commands.js";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
@@ -11,6 +12,7 @@ import { CollaborationChatExecutionAdapter } from "../../packages/gateway/src/co
 import { CollaborationChatScopeService } from "../../packages/gateway/src/collaboration/chat-scope.js";
 import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
 import { CollaborationRepository } from "../../packages/gateway/src/collaboration/repository.js";
+import { CollaborationParticipantResolverError } from "../../packages/gateway/src/collaboration/participant-resolver.js";
 import { createCollaborationProjectLifecycle } from "../../packages/gateway/src/collaboration/project-lifecycle.js";
 import { CollaborationProjectScopeService } from "../../packages/gateway/src/collaboration/project-scope.js";
 import { createProjectSharingService } from "../../packages/gateway/src/collaboration/project-sharing.js";
@@ -46,6 +48,7 @@ describe("collaboration gateway routes", () => {
   let signer: CollaborationProofSigner;
   let nonce: number;
   let chatScope: CollaborationChatScopeService;
+  let resolveInvitationIdentifier: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
     fixture = await createCollaborationTestDatabase();
@@ -68,6 +71,19 @@ describe("collaboration gateway routes", () => {
       displayName: actorId === collaborationActors.owner
         ? "Nima Owner"
         : actorId === collaborationActors.editor ? "Ada Editor" : "Vi Viewer",
+    });
+    resolveInvitationIdentifier = vi.fn(async (identifier: string) => {
+      const normalized = identifier.trim().replace(/^@/, "").toLowerCase();
+      if ([collaborationActors.editor.toLowerCase(), "nimanaderi", "person@example.com"].includes(normalized)) {
+        return resolveParticipant(collaborationActors.editor);
+      }
+      if ([collaborationActors.viewer.toLowerCase(), "viewer"].includes(normalized)) {
+        return resolveParticipant(collaborationActors.viewer);
+      }
+      if ([collaborationActors.owner.toLowerCase(), "owner"].includes(normalized)) {
+        return resolveParticipant(collaborationActors.owner);
+      }
+      throw new CollaborationParticipantResolverError();
     });
     const chatAdapter = new CollaborationChatAdapter({
       db: fixture.db,
@@ -226,6 +242,7 @@ describe("collaboration gateway routes", () => {
       projectScope,
       projectSharing,
       resolveParticipant,
+      resolveInvitationIdentifier,
       now: () => now,
     }));
   });
@@ -580,7 +597,7 @@ describe("collaboration gateway routes", () => {
       method: "POST",
       path: `/api/collaboration/scopes/${collaborationIds.scope}/invitations`,
       body: {
-        targetActorId: collaborationActors.editor,
+        identifier: collaborationActors.editor,
         role: "editor",
         clientRequestId: invitationRequestId,
         expectedRevision: "1",
@@ -618,7 +635,7 @@ describe("collaboration gateway routes", () => {
       method: "POST",
       path: `/api/collaboration/scopes/${collaborationIds.scope}/invitations`,
       body: {
-        targetActorId: collaborationActors.editor,
+        identifier: collaborationActors.editor,
         role: "editor",
         clientRequestId: invitationRequestId,
         expectedRevision: "1",
@@ -663,7 +680,7 @@ describe("collaboration gateway routes", () => {
       method: "POST",
       path: `/api/collaboration/scopes/${collaborationIds.scope}/invitations`,
       body: {
-        targetActorId: collaborationActors.editor,
+        identifier: collaborationActors.editor,
         role: "editor",
         clientRequestId: invitationRequestId,
         expectedRevision: "1",
@@ -722,7 +739,7 @@ describe("collaboration gateway routes", () => {
       method: "POST",
       path: `/api/collaboration/scopes/${collaborationIds.scope}/invitations`,
       body: {
-        targetActorId: collaborationActors.editor,
+        identifier: "nimanaderi",
         role: "editor",
         clientRequestId: invitationRequestId,
         expectedRevision: "1",
@@ -734,6 +751,7 @@ describe("collaboration gateway routes", () => {
       target: { actorId: collaborationActors.editor, displayName: "Ada Editor" },
       status: "pending",
     });
+    expect(resolveInvitationIdentifier).toHaveBeenCalledWith("nimanaderi");
     const preview = await signedJson({
       actorId: collaborationActors.editor,
       scopeId: collaborationIds.scope,
@@ -789,6 +807,104 @@ describe("collaboration gateway routes", () => {
     expect(await history.json()).toMatchObject({
       messages: [{ purpose: "discussion", actor: { actorId: collaborationActors.editor } }],
     });
+  });
+
+  it("does not persist an email identifier or a digest derived from the raw invitation body", async () => {
+    await shareChat();
+    const body = {
+      identifier: "person@example.com",
+      role: "editor" as const,
+      clientRequestId: request(69),
+      expectedRevision: "1",
+    };
+    const response = await signedJson({
+      actorId: collaborationActors.owner,
+      scopeId: collaborationIds.scope,
+      method: "POST",
+      path: `/api/collaboration/scopes/${collaborationIds.scope}/invitations`,
+      body,
+    });
+    expect(response.status).toBe(201);
+
+    const operation = await fixture.db.selectFrom("collaboration_operations")
+      .select(["payload_hash", "result_ref"])
+      .where("client_request_id", "=", body.clientRequestId)
+      .executeTakeFirstOrThrow();
+    const rawBodyHash = createHash("sha256").update(JSON.stringify(body)).digest("hex");
+    expect(operation.payload_hash).not.toBe(rawBodyHash);
+    expect(JSON.stringify(operation)).not.toContain(body.identifier);
+    await expect(fixture.db.selectFrom("collaboration_members")
+      .select("actor_id")
+      .where("scope_id", "=", collaborationIds.scope)
+      .where("actor_id", "=", collaborationActors.editor)
+      .executeTakeFirst()).resolves.toEqual({ actor_id: collaborationActors.editor });
+  });
+
+  it("authorizes before lookup and creates no partial row for unavailable or self identifiers", async () => {
+    await shareChat();
+    const path = `/api/collaboration/scopes/${collaborationIds.scope}/invitations`;
+    const unauthorized = await signedJson({
+      actorId: collaborationActors.editor,
+      scopeId: collaborationIds.scope,
+      method: "POST",
+      path,
+      body: {
+        identifier: "nimanaderi",
+        role: "editor",
+        clientRequestId: request(70),
+        expectedRevision: "1",
+      },
+    });
+    expect([403, 404]).toContain(unauthorized.status);
+    expect(resolveInvitationIdentifier).not.toHaveBeenCalled();
+
+    for (const [identifier, expectedStatus] of [["missing-person", 503], ["@owner", 409]] as const) {
+      const response = await signedJson({
+        actorId: collaborationActors.owner,
+        scopeId: collaborationIds.scope,
+        method: "POST",
+        path,
+        body: {
+          identifier,
+          role: "editor",
+          clientRequestId: request(identifier === "missing-person" ? 71 : 72),
+          expectedRevision: "1",
+        },
+      });
+      expect(response.status).toBe(expectedStatus);
+    }
+    expect(await fixture.db.selectFrom("collaboration_members").select("actor_id").execute())
+      .toEqual([{ actor_id: collaborationActors.owner }]);
+  });
+
+  it("returns one generic failure for unresolved identities and rate limits enumeration", async () => {
+    await shareChat();
+    const path = `/api/collaboration/scopes/${collaborationIds.scope}/invitations`;
+    const responses: Response[] = [];
+    for (let index = 0; index < 11; index += 1) {
+      responses.push(await signedJson({
+        actorId: collaborationActors.owner,
+        scopeId: collaborationIds.scope,
+        method: "POST",
+        path,
+        body: {
+          identifier: `unknown-${index}`,
+          role: "viewer",
+          clientRequestId: request(200 + index),
+          expectedRevision: "1",
+        },
+      }));
+    }
+    expect(responses.slice(0, 10).map((response) => response.status)).toEqual(Array(10).fill(503));
+    for (const response of responses.slice(0, 10)) {
+      expect(await response.json()).toEqual({
+        error: "Invitation could not be created",
+        code: "unavailable",
+      });
+    }
+    expect(responses[10]!.status).toBe(429);
+    expect(await fixture.db.selectFrom("collaboration_members").select("actor_id").execute())
+      .toEqual([{ actor_id: collaborationActors.owner }]);
   });
 
   it("admits and lists M2 AI requests only with a signed current M2 policy", async () => {
@@ -858,7 +974,7 @@ describe("collaboration gateway routes", () => {
       method: "POST",
       path: `/api/collaboration/scopes/${collaborationIds.scope}/invitations`,
       body: {
-        targetActorId: collaborationActors.viewer,
+        identifier: "viewer",
         role: "viewer",
         clientRequestId: invitationRequestId,
         expectedRevision: "1",
@@ -1056,7 +1172,7 @@ describe("collaboration gateway routes", () => {
       method: "POST",
       path: `/api/collaboration/scopes/${collaborationIds.scope}/invitations`,
       body: {
-        targetActorId: collaborationActors.editor,
+        identifier: "person@example.com",
         role: "editor",
         clientRequestId: invitationRequestId,
         expectedRevision: "1",
