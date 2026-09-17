@@ -12,7 +12,7 @@ const TERMINAL_REF = {
 const TERMINAL_REF_KEY = `${TERMINAL_REF.workspaceId}:${TERMINAL_REF.tabId}`;
 
 describe("terminal soft-client canonical grid", () => {
-  it("fits a 140x40 logical grid without horizontal panning in a 70-column viewport", () => {
+  it("keeps a 140x40 logical grid readable and horizontally pannable in a 70-column viewport", () => {
     const layout = computeSoftGridLayout({
       viewportWidth: 700,
       viewportHeight: 800,
@@ -24,10 +24,11 @@ describe("terminal soft-client canonical grid", () => {
     });
 
     expect(layout.fontSize).toBe(10);
-    expect(layout.scale).toBeCloseTo(0.65);
-    expect(layout.visualWidth).toBeCloseTo(700);
-    expect(layout.visualHeight).toBeCloseTo(400);
-    expect(layout.panX).toBe(false);
+    expect(layout.scale).toBe(1);
+    expect(layout.fontSize * layout.scale).toBeGreaterThanOrEqual(10);
+    expect(layout.visualWidth).toBeCloseTo(1_400 * (10 / 13));
+    expect(layout.visualHeight).toBeCloseTo(800 * (10 / 13));
+    expect(layout.panX).toBe(true);
     expect(layout.panY).toBe(false);
   });
 

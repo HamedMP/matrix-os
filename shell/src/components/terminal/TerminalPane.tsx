@@ -1822,7 +1822,7 @@ export function TerminalPane({
           {connectionNotice === "reconnecting"
             ? "Reconnecting terminal..."
             : connectionNotice === "elsewhere"
-              ? <><span>Live on another device.</span><button type="button" onClick={() => resumeLeaseRef.current()}>Resume here</button></>
+              ? <><span>Live on another device.</span><button type="button" onClick={() => resumeLeaseRef.current()}>Continue here</button></>
               : "Terminal disconnected"}
         </div>
       )}

@@ -675,7 +675,7 @@ describe("TerminalPane scrolling", () => {
     expect(socketHealthConfigs.at(-1)?.pingIntervalMs).toBe(10_000);
   });
 
-  it("keeps the first automatic reconnect silent", async () => {
+  it("keeps the first automatic reconnect silent, then warns after the retry fails", async () => {
     const view = render(
       <TerminalPane
         paneId="pane-quiet-reconnect"
@@ -692,10 +692,20 @@ describe("TerminalPane scrolling", () => {
 
     await waitFor(() => expect(WebSocketMock.instances).toHaveLength(1));
     const nativeSetTimeout = window.setTimeout.bind(window);
+    let runReconnect: (() => void) | null = null;
+    let runReconnectBanner: (() => void) | null = null;
     const setTimeoutSpy = vi.spyOn(window, "setTimeout").mockImplementation((handler, timeout, ...args) => {
       if (timeout === 750) {
-        if (typeof handler === "function") handler();
+        runReconnectBanner = () => {
+          if (typeof handler === "function") handler(...args);
+        };
         return 750 as unknown as ReturnType<typeof window.setTimeout>;
+      }
+      if (typeof timeout === "number" && timeout >= 800 && timeout <= 1_200) {
+        runReconnect = () => {
+          if (typeof handler === "function") handler(...args);
+        };
+        return 1_000 as unknown as ReturnType<typeof window.setTimeout>;
       }
       return nativeSetTimeout(handler, timeout, ...args);
     });
@@ -705,6 +715,23 @@ describe("TerminalPane scrolling", () => {
         WebSocketMock.instances[0]!.onclose?.();
       });
       expect(view.queryByText("Reconnecting terminal...")).toBeNull();
+      expect(runReconnectBanner).toBeNull();
+      expect(runReconnect).not.toBeNull();
+
+      await act(async () => {
+        runReconnect?.();
+      });
+      await waitFor(() => expect(WebSocketMock.instances).toHaveLength(2));
+
+      await act(async () => {
+        WebSocketMock.instances[1]!.onclose?.();
+      });
+      expect(runReconnectBanner).not.toBeNull();
+
+      await act(async () => {
+        runReconnectBanner?.();
+      });
+      expect(view.getByText("Reconnecting terminal...")).toBeTruthy();
     } finally {
       setTimeoutSpy.mockRestore();
     }
@@ -946,11 +973,10 @@ describe("TerminalPane scrolling", () => {
 
     await waitFor(() => expect(terminal.resize).toHaveBeenLastCalledWith(140, 40));
     await waitFor(() => expect(terminal.options.fontSize).toBe(10));
-    await waitFor(() => expect(terminal.element?.style.transform).toMatch(/^scale\(/));
-    const softScale = Number.parseFloat(terminal.element!.style.transform.slice(6, -1));
-    expect(softScale).toBeLessThan(1);
-    expect(pane.style.overflowX).toBe("hidden");
-    expect(pane.scrollLeft).toBe(0);
+    await waitFor(() => expect(terminal.element?.style.transform).toBe("scale(1)"));
+    expect((terminal.options.fontSize as number)).toBeGreaterThanOrEqual(10);
+    expect(pane.style.overflowX).toBe("auto");
+    expect(pane.scrollLeft).toBe(100);
     expect(terminal.cols).toBe(140);
     expect(terminal.rows).toBe(40);
     expect(fitAddon.fit).not.toHaveBeenCalled();
@@ -1498,6 +1524,7 @@ describe("TerminalPane scrolling", () => {
     });
 
     expect(screen.getByText("Live on another device.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Continue here" })).toBeTruthy();
     expect(WebSocketMock.instances).toHaveLength(1);
     expect(socket.readyState).toBe(WebSocket.OPEN);
 

@@ -159,7 +159,7 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
     });
     stage.style.width = `${visualWidth}px`;
     stage.style.height = `${visualHeight}px`;
-    host.style.overflowX = "hidden";
+    host.style.overflowX = visualWidth > viewportWidth + 0.5 ? "auto" : "hidden";
     host.style.overflowY = visualHeight > viewportHeight + 0.5 ? "auto" : "hidden";
     options.onScale?.(scale);
     presentationScale = scale;
@@ -174,10 +174,12 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
       host.scrollTop = panToCell(host.scrollTop, buffer.cursorY * cell, (buffer.cursorY + 1) * cell,
         visibleHeight, Math.max(0, visualHeight - visibleHeight));
     } else if (visualHeight <= visibleHeight) host.scrollTop = 0;
-    host.scrollLeft = 0;
+    if (visualWidth <= visibleWidth) host.scrollLeft = 0;
     previousPan = {
       top: followY || visualHeight <= visibleHeight ? host.scrollTop : previousPan?.top ?? host.scrollTop,
-      left: 0,
+      // Horizontal movement is always deliberate. Never chase the live cursor,
+      // which made narrow observers appear to drift sideways as output arrived.
+      left: host.scrollLeft,
     };
     if (visibleWidth !== viewportWidth || visibleHeight !== viewportHeight) schedule();
   };
