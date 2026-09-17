@@ -258,7 +258,7 @@ export function createWorkspaceStartupRecovery(options: {
     findBlockers: async () => [],
     cleanupRelatedState: createProjectDeletionCleanup({
       sessions: agentSessionManager, reviews: reviewStore, threads: options.codingAgentThreadStore,
-      terminal: terminalRuntime, deleteChats: options.deleteProjectChats,
+      terminal: terminalRuntime, deleteChats: options.deleteProjectChats, worktrees: worktreeManager,
     }),
   });
 

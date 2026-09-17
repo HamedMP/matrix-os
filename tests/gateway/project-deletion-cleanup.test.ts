@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { TerminalRuntimeError } from "@matrix-os/terminal-runtime";
 import { createProjectDeletionCleanup } from "../../packages/gateway/src/project-deletion-cleanup.js";
 import { createProjectChatCleanup } from "../../packages/gateway/src/chat/project-deletion.js";
 import type { ProjectConfig } from "../../packages/gateway/src/project-manager.js";
@@ -20,6 +21,8 @@ function fixture() {
       order.push("delete-sessions");
       return { ok: true as const, deleted: 1 };
     }) },
+    worktrees: { listWorktrees: vi.fn().mockResolvedValue({ ok: true, worktrees: [{ id: "wt_owned" }] }),
+      deleteWorktree: vi.fn().mockResolvedValue({ ok: true }) },
     reviews: { deleteProjectReviews: vi.fn(async () => ({ ok: true as const, deleted: 1 })) },
     terminal: {
       listWorkspaces: vi.fn().mockResolvedValue([
@@ -52,6 +55,30 @@ describe("project cascade cleanup", () => {
     expect(f.options.reviews.deleteProjectReviews).not.toHaveBeenCalled();
     await f.cleanup(project, principal);
     expect(f.order).toContain("delete-sessions");
+  });
+
+  it.each(["deleteWorkspace", "deleteTab"] as const)("accepts %s already removed after inventory was read", async (method) => {
+    const f = fixture();
+    f.options.terminal[method].mockRejectedValueOnce(new TerminalRuntimeError("not_found"));
+    await expect(f.cleanup(project, principal)).resolves.toBeUndefined();
+    expect(f.order).toContain("delete-sessions");
+  });
+
+  it("retains a failed worktree cleanup for retry and passes the project owner scope", async () => {
+    const f = fixture();
+    f.options.worktrees.deleteWorktree.mockResolvedValueOnce({ ok: false, status: 409, error: { code: "worktree_locked" } });
+    await expect(f.cleanup(project, principal)).rejects.toThrow("Project worktree cleanup failed");
+    await expect(f.cleanup(project, principal)).resolves.toBeUndefined();
+    expect(f.options.worktrees.deleteWorktree).toHaveBeenCalledWith({ projectSlug: "repo", worktreeId: "wt_owned",
+      ownerScope: project.ownerScope, confirmDirtyDelete: true });
+  });
+
+  it("accepts an already removed worktree but propagates inventory outages", async () => {
+    const f = fixture();
+    f.options.worktrees.deleteWorktree.mockResolvedValueOnce({ ok: false, status: 404, error: { code: "not_found" } });
+    await expect(f.cleanup(project, principal)).resolves.toBeUndefined();
+    f.options.worktrees.listWorktrees.mockResolvedValueOnce({ ok: false, status: 503, error: { code: "unavailable" } });
+    await expect(f.cleanup(project, principal)).rejects.toThrow("Project worktree inventory failed");
   });
 
   it("stops on thread cleanup failure", async () => {

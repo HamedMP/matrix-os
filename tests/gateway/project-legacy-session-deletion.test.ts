@@ -9,7 +9,7 @@ import { createProjectManager } from "../../packages/gateway/src/project-manager
 import { createWorkspaceRoutes } from "../../packages/gateway/src/workspace-routes.js";
 
 const sessionId = "sess_11111111-2222-4333-8444-555555555555";
-const legacyNames = ["matrix-rt_old", `matrix-${sessionId}`, sessionId];
+const legacyNames = ["matrix-rt_old", `matrix-${sessionId}`, sessionId, undefined];
 it.each(legacyNames.flatMap((name) => ["running", "completed"].flatMap((status) =>
   [false, true].map((stopFails) => ({ name, status, stopFails })),
 )))(
@@ -34,7 +34,7 @@ it.each(legacyNames.flatMap((name) => ["running", "completed"].flatMap((status) 
     }));
     const sessionPath = join(homePath, `system/sessions/${sessionId}.json`);
     await writeFile(sessionPath, JSON.stringify({ id: sessionId, kind: "agent", projectSlug: "old-project",
-      ownerId: principal.userId, runtime: { type: "zellij", status: "degraded", zellijSession: name, fallbackReason: "runtime_not_running" },
+      ownerId: principal.userId, runtime: { type: "zellij", status: name === undefined ? "exited" : "degraded", zellijSession: name, fallbackReason: "runtime_not_running" },
       transcriptPath: "unused", attachedClients: 0, writeMode: "closed", startedAt: "2026-08-18T00:00:00Z", lastActivityAt: "2026-08-18T00:00:00Z" }));
     const provider = createWorkspaceCodingAgentProvider({ providerId: "codex", agent: "codex",
       runtime: { startSession: vi.fn(), stopSession: (id) => sessions.killSession(id) },
@@ -49,11 +49,13 @@ it.each(legacyNames.flatMap((name) => ["running", "completed"].flatMap((status) 
     const response = await app.request("/api/projects/old-project/actions", { method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ type: "delete", confirmation: "Old project", confirmTerminate: true }),
     });
-    expect(deleteSession).toHaveBeenCalledWith(name, { force: true });
+    if (name === undefined) expect(deleteSession).not.toHaveBeenCalled();
+    else expect(deleteSession).toHaveBeenCalledWith(name, { force: true });
+    const failed = stopFails && name !== undefined;
     expect(terminal.terminateTab).not.toHaveBeenCalled();
-    expect(response.status).toBe(stopFails ? 500 : 200);
-    expect((await threads.getProjectLifecycleState(principal, "old-project")).threadCount).toBe(stopFails ? 1 : 0);
-    if (stopFails) await expect(stat(sessionPath)).resolves.toBeDefined();
+    expect(response.status).toBe(failed ? 500 : 200);
+    expect((await threads.getProjectLifecycleState(principal, "old-project")).threadCount).toBe(failed ? 1 : 0);
+    if (failed) await expect(stat(sessionPath)).resolves.toBeDefined();
     else await expect(stat(sessionPath)).rejects.toMatchObject({ code: "ENOENT" });
   } finally { sessions.shutdown(); await rm(homePath, { recursive: true, force: true }); }
 });

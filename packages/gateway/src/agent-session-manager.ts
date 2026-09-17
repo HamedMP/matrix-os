@@ -656,7 +656,10 @@ export function createAgentSessionManager(options: {
       }
       let killFailed = false;
       try {
-        if (session.runtime.type === "background") {
+        if (session.runtime.status === "exited") {
+          // Already stopped sessions may predate all current runtime references.
+          // Continue to lease release, without trying to stop a recycled runtime.
+        } else if (session.runtime.type === "background") {
           if (!session.backgroundRef || !options.backgroundRuntime) throw new Error("Background runtime unavailable");
           await (lockedRuntime ?? options.backgroundRuntime).stop(session.backgroundRef);
         } else if (session.terminalRef) {
