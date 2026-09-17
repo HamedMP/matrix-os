@@ -21,11 +21,72 @@ const repoRoot = resolve(desktopRoot, "..");
 const VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 const SUPPORTED_PLATFORMS = new Set(["darwin", "linux"]);
 const SUPPORTED_ARCHES = new Set(["x64", "arm64"]);
+const LINUX_ELF_TARGETS = {
+  x64: { machine: 62, interpreter: "/lib64/ld-linux-x86-64.so.2" },
+  arm64: { machine: 183, interpreter: "/lib/ld-linux-aarch64.so.1" },
+};
 
 function assertTarget(platform, arch, cliVersion) {
   if (!SUPPORTED_PLATFORMS.has(platform)) throw new Error(`unsupported helper platform: ${platform}`);
   if (!SUPPORTED_ARCHES.has(arch)) throw new Error(`unsupported helper architecture: ${arch}`);
   if (!VERSION_PATTERN.test(cliVersion)) throw new Error("invalid helper version");
+}
+
+function readElfUint64(bytes, offset) {
+  const value = bytes.readBigUInt64LE(offset);
+  if (value > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error("invalid Linux helper ELF metadata");
+  return Number(value);
+}
+
+function readLinuxElfInterpreter(bytes, expectedMachine) {
+  if (
+    bytes.byteLength < 64
+    || bytes[0] !== 0x7f
+    || bytes[1] !== 0x45
+    || bytes[2] !== 0x4c
+    || bytes[3] !== 0x46
+    || bytes[4] !== 2
+    || bytes[5] !== 1
+    || bytes.readUInt16LE(18) !== expectedMachine
+  ) {
+    throw new Error("invalid Linux helper ELF target");
+  }
+  const programHeaderOffset = readElfUint64(bytes, 32);
+  const programHeaderSize = bytes.readUInt16LE(54);
+  const programHeaderCount = bytes.readUInt16LE(56);
+  if (programHeaderSize < 56 || programHeaderCount < 1 || programHeaderCount > 1_024) {
+    throw new Error("invalid Linux helper ELF metadata");
+  }
+  for (let index = 0; index < programHeaderCount; index += 1) {
+    const headerOffset = programHeaderOffset + index * programHeaderSize;
+    if (headerOffset < 0 || headerOffset + 56 > bytes.byteLength) {
+      throw new Error("invalid Linux helper ELF metadata");
+    }
+    if (bytes.readUInt32LE(headerOffset) !== 3) continue;
+    const interpreterOffset = readElfUint64(bytes, headerOffset + 8);
+    const interpreterSize = readElfUint64(bytes, headerOffset + 32);
+    if (
+      interpreterSize < 2
+      || interpreterSize > 4_096
+      || interpreterOffset < 0
+      || interpreterOffset + interpreterSize > bytes.byteLength
+    ) {
+      throw new Error("invalid Linux helper ELF interpreter");
+    }
+    const encoded = bytes.subarray(interpreterOffset, interpreterOffset + interpreterSize);
+    if (encoded.at(-1) !== 0) throw new Error("invalid Linux helper ELF interpreter");
+    return encoded.subarray(0, -1).toString("utf8");
+  }
+  throw new Error("missing Linux helper ELF interpreter");
+}
+
+function assertPortableExecutable(sourceBytes, platform, arch) {
+  if (platform !== "linux") return;
+  const target = LINUX_ELF_TARGETS[arch];
+  const interpreter = readLinuxElfInterpreter(sourceBytes, target.machine);
+  if (interpreter !== target.interpreter) {
+    throw new Error("non-portable Linux helper interpreter");
+  }
 }
 
 async function replaceDirectoryAtomically(stagingDir, outputDir) {
@@ -42,11 +103,23 @@ async function replaceDirectoryAtomically(stagingDir, outputDir) {
     if (movedExisting) await rm(backupDir, { recursive: true, force: true });
   } catch (err) {
     if (movedExisting) {
-      await rename(backupDir, outputDir).catch(() => undefined);
+      try {
+        await rename(backupDir, outputDir);
+      } catch (rollbackErr) {
+        console.warn("[sync-helper] Failed to restore the previous packaged helper", {
+          errorType: rollbackErr instanceof Error ? rollbackErr.name : "NonErrorThrown",
+        });
+      }
     }
     throw err;
   } finally {
-    await rm(stagingDir, { recursive: true, force: true }).catch(() => undefined);
+    try {
+      await rm(stagingDir, { recursive: true, force: true });
+    } catch (cleanupErr) {
+      console.warn("[sync-helper] Failed to remove a helper staging directory", {
+        errorType: cleanupErr instanceof Error ? cleanupErr.name : "NonErrorThrown",
+      });
+    }
   }
 }
 
@@ -66,6 +139,7 @@ export async function prepareSyncHelper(options) {
   const sourceBytes = await readFile(sourcePath);
   const sha256 = createHash("sha256").update(sourceBytes).digest("hex");
   if (sha256 !== expectedMatch[1]) throw new Error("helper digest mismatch");
+  assertPortableExecutable(sourceBytes, platform, arch);
 
   await mkdir(dirname(outputDir), { recursive: true });
   const stagingDir = await mkdtemp(join(dirname(outputDir), ".sync-helper-"));
