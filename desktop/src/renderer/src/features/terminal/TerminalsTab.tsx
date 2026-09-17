@@ -480,7 +480,9 @@ export default function TerminalsTab({
 
       <Dialog
         open={deleteTarget !== null}
-        onClose={() => setDeleteTarget(null)}
+        onClose={() => {
+          if (!deleteTarget || !isShellBusy(deleteTarget.name)) setDeleteTarget(null);
+        }}
         width={360}
         placement="center"
       >
@@ -494,7 +496,7 @@ export default function TerminalsTab({
             </p>
           </div>
           <div className="flex justify-end gap-2">
-            <Button variant="ghost" onClick={() => setDeleteTarget(null)}>Cancel</Button>
+            <Button variant="ghost" disabled={!!deleteTarget && isShellBusy(deleteTarget.name)} onClick={() => setDeleteTarget(null)}>Cancel</Button>
             <Button variant="danger" disabled={!deleteTarget || isShellBusy(deleteTarget.name)} onClick={() => void confirmDelete()}>
               {deleteTarget && isShellBusy(deleteTarget.name) ? "Deleting…" : "Delete"}
             </Button>
