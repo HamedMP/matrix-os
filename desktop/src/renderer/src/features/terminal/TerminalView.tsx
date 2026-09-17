@@ -1,7 +1,7 @@
 import { Terminal } from "@xterm/xterm";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import { createPortal } from "react-dom";
-import { TerminalControls } from "@matrix-os/ui";
+import { TerminalControls, createTerminalGridPresentation, measureTerminalViewport } from "@matrix-os/ui";
 import {
   resolveTerminalClipboardKeyEvent,
   classifyTerminalPointerEvent,
@@ -43,11 +43,12 @@ import { useDesktopTerminalControls } from "./use-desktop-terminal-controls";
 
 const GAP_MARKER = "\r\n\x1b[2m── output gap ──\x1b[0m\r\n";
 
-function proposedTerminalDimensions(fit: FitAddon | null, terminal: Terminal): { cols: number; rows: number } {
+function proposedTerminalDimensions(fit: FitAddon | null, terminal: Terminal, host: HTMLElement | null): { cols: number; rows: number } {
   // The production add-on exposes proposeDimensions(). Keep a safe fallback
   // for a temporarily unmeasurable host (and lightweight renderer test mocks).
   if (fit && typeof fit.proposeDimensions === "function") {
-    return fit.proposeDimensions() ?? { cols: terminal.cols, rows: terminal.rows };
+    return (host ? measureTerminalViewport(host, terminal.element, () => fit.proposeDimensions()) : fit.proposeDimensions())
+      ?? { cols: terminal.cols, rows: terminal.rows };
   }
   return { cols: terminal.cols, rows: terminal.rows };
 }
@@ -158,6 +159,8 @@ export default function TerminalView({
   const [stateSessionName, setStateSessionName] = useState(sessionName);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
+  const gridPresentationRef = useRef<ReturnType<typeof createTerminalGridPresentation> | null>(null);
+  const gridScaleRef = useRef(1);
   const serializeRef = useRef<SerializeAddon | null>(null);
   const attachmentRef = useRef<ActiveAttachment | null>(null);
   const pasteClipboardRef = useRef<() => Promise<void>>(async () => undefined);
@@ -373,7 +376,7 @@ export default function TerminalView({
         return;
       }
       const scale = Number.isFinite(visualScaleRef.current) && visualScaleRef.current > 0
-        ? visualScaleRef.current
+        ? visualScaleRef.current * gridScaleRef.current
         : 1;
       if (scale === 1) return;
 
@@ -400,6 +403,8 @@ export default function TerminalView({
       });
       Object.defineProperty(synthetic, "_xtermScaleCorrected", { value: true });
       target.dispatchEvent(synthetic);
+      // Preserve xterm's suppression of native DOM selection on the real event.
+      if (synthetic.defaultPrevented) event.preventDefault();
     };
     const onTerminalContextMenu = (event: MouseEvent) => {
       const link = linkAtPointer(event);
@@ -416,7 +421,7 @@ export default function TerminalView({
     const removeMouseTrackingSelection = installMouseTrackingSelection({
       host,
       getTerminal: () => terminal,
-      getVisualScale: () => visualScaleRef.current,
+      getVisualScale: () => visualScaleRef.current * gridScaleRef.current,
       isMac: navigator.platform.startsWith("Mac"),
       onPrimaryGestureStart: () => {
         confirmedSelectionRef.current = "";
@@ -443,19 +448,32 @@ export default function TerminalView({
     termRef.current = terminal;
     fitRef.current = fit;
     serializeRef.current = serialize;
+    const presentation = createTerminalGridPresentation({
+      host, getTerminal: () => terminal, getConfiguredFontSize: () => 13,
+      onScale: (scale) => { gridScaleRef.current = scale; },
+      getParentScale: () => visualScaleRef.current,
+    });
+    gridPresentationRef.current = presentation;
+    const onFontMetricsChange = () => presentation.schedule();
+    document.fonts?.addEventListener("loadingdone", onFontMetricsChange);
+    void document.fonts?.ready.then(onFontMetricsChange);
 
     let rafId: number | null = null;
     const observer = new ResizeObserver(() => {
       if (rafId !== null) cancelAnimationFrame(rafId);
       rafId = window.requestAnimationFrame(() => {
         rafId = null;
-        const proposed = proposedTerminalDimensions(fit, terminal);
+        const proposed = proposedTerminalDimensions(fit, terminal, host);
         attachmentRef.current?.resize(proposed.cols, proposed.rows);
+        presentation.schedule();
       });
     });
     observer.observe(host);
 
     return () => {
+      document.fonts?.removeEventListener("loadingdone", onFontMetricsChange);
+      presentation.dispose();
+      gridPresentationRef.current = null;
       setTerminalContextMenu(null);
       hoveredLinkRef.current = null;
       removeMouseTrackingSelection();
@@ -494,6 +512,7 @@ export default function TerminalView({
     const theme = getDesktopTerminalXtermTheme(terminalThemeId);
     terminal.options.theme = theme;
     applyTerminalSurfaceTheme(terminal.element, theme.background);
+    gridPresentationRef.current?.schedule();
   }, [terminalThemeId]);
 
   // Attach lifecycle — only the active tab holds the live socket (L4).
@@ -517,6 +536,7 @@ export default function TerminalView({
         if (terminal.cols !== size.cols || terminal.rows !== size.rows) {
           terminal.resize(size.cols, size.rows);
         }
+        gridPresentationRef.current?.schedule();
       },
       onGap: () => {
         terminal.clear();
@@ -535,7 +555,7 @@ export default function TerminalView({
     const binaryDisposable = terminal.onBinary((data) => {
       attachment.writeBinary(data);
     });
-    const proposed = proposedTerminalDimensions(fit, terminal);
+    const proposed = proposedTerminalDimensions(fit, terminal, hostRef.current);
     attachment.resize(proposed.cols, proposed.rows);
     terminal.focus();
 
