@@ -28,7 +28,7 @@ app.whenReady().then(async () => {
   const preload = join(__dirname, "preload.cjs");
   const shell = new BrowserWindow({ show: false, webPreferences: { preload, sandbox: true, contextIsolation: true, nodeIntegration: false } });
   ipcMain.handle("badge:set", () => ({ ok: true }));
-  const bridge = new NativeAppBridge({
+  const bridge = new NativeAppBridge({ authGeneration: () => 0,
     gatewayOrigin: () => origin,
     generate: (app, context) => shell.webContents.send("app:generate", { app, context, runtimeSlot: "primary", authGeneration: 1 }),
     aiRequest: createNativeAppAiRequester({ getGatewayOrigin: () => origin, getToken: () => "synthetic" }),

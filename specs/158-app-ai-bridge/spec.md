@@ -20,6 +20,8 @@ Preserve `MatrixOS.generate(context): void` in Web and restore it in Electron.
 It submits `[App: <trusted identity>] <context>` through the shell's existing
 kernel WebSocket dispatcher. It does not return text and is not an alias for
 `ai.generate`. Electron binds identity to the registered top-level app view,
+binds each registration to the main-process authentication generation (all app
+capabilities reject stale registrations after logout/expiry/reauthentication),
 validates a nonempty context of at most 32K characters, and caps submissions at
 10 per minute per desktop bridge. Main forwards a typed event only to the trusted
 shell. Shell rejects events for a different selected runtime and unsubscribes

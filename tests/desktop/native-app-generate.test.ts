@@ -6,7 +6,7 @@ import { APP_GENERATE_CHANNEL, createAppGenerateClient } from "@matrix-os/contra
 const sender = { id: 1, url: "https://gateway.test/apps/brain/" };
 function fixture() {
   const generate = vi.fn();
-  const bridge = new NativeAppBridge({ generate, aiRequest: vi.fn(), request: vi.fn(), gatewayRequest: vi.fn(), gatewayOrigin: () => "https://gateway.test" });
+  const bridge = new NativeAppBridge({ authGeneration: () => 0, generate, aiRequest: vi.fn(), request: vi.fn(), gatewayRequest: vi.fn(), gatewayOrigin: () => "https://gateway.test" });
   bridge.register(1, "owner/brain", "brain");
   return { bridge, generate };
 }
@@ -57,4 +57,24 @@ it("handles asynchronous rejection without changing the legacy void return", asy
   expect(generate("hello")).toBeUndefined();
   await Promise.resolve();
   expect(warning).toHaveBeenCalledWith("[app-generate] App task is unavailable", "Error");
+});
+
+it("revokes every app capability when the authenticated account generation changes", async () => {
+  let generation = 1;
+  const generate = vi.fn();
+  const aiRequest = vi.fn();
+  const request = vi.fn();
+  const bridge = new NativeAppBridge({ generate, aiRequest, request, gatewayRequest: vi.fn(), gatewayOrigin: () => "https://gateway.test", authGeneration: () => generation });
+  bridge.register(1, "brain");
+  bridge.generate(sender, "original account");
+  generation = 2;
+  expect(() => bridge.generate(sender, "another account")).toThrow();
+  await expect(bridge.aiGenerate(sender, { prompt: "another account" })).rejects.toThrow();
+  await expect(bridge.query(sender, { action: "count", table: "notes" })).rejects.toThrow();
+  expect(generate).toHaveBeenCalledTimes(1);
+  expect(aiRequest).not.toHaveBeenCalled();
+  expect(request).not.toHaveBeenCalled();
+  bridge.register(1, "brain");
+  bridge.generate(sender, "newly registered account");
+  expect(generate).toHaveBeenCalledTimes(2);
 });

@@ -259,6 +259,7 @@ if (!gotLock) {
       );
 
       const nativeAppBridge = new NativeAppBridge({
+        authGeneration: () => auth.getStatus().authGeneration,
         generate: (app, context) => {
           const status = auth.getStatus();
           if (!status.signedIn || !mainWindow || mainWindow.isDestroyed()) throw new Error("App task is unavailable");

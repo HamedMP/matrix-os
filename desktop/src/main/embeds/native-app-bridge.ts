@@ -56,6 +56,7 @@ function isSafeAppIdentity(value: string): boolean {
 }
 
 interface NativeAppBridgeOptions {
+  authGeneration: () => number;
   generate: (app: string, context: string) => void;
   aiRequest: (slug: string, input: AppAiInput) => Promise<unknown>;
   request: (slug: string, query: NativeAppQuery) => Promise<unknown>;
@@ -193,13 +194,14 @@ function isSenderAtApp(sender: NativeAppSender, origin: string, slug: string): b
 }
 
 export class NativeAppBridge {
-  private readonly senders = new Map<number, { appIdentity: string; routeSlug: string }>();
+  private readonly senders = new Map<number, { appIdentity: string; routeSlug: string; authGeneration: number }>();
   private generateWindow = 0;
   private generateCount = 0;
   private readonly options: NativeAppBridgeOptions;
   private readonly maxSenders: number;
 
   constructor(options: NativeAppBridgeOptions) {
+    if (!options.authGeneration) throw new Error("Authentication scope is required");
     if (!options.generate) throw new Error("Kernel task dispatcher is required");
     if (!options.aiRequest) throw new Error("AI requester is required");
     this.options = options;
@@ -216,7 +218,7 @@ export class NativeAppBridge {
       throw new Error("invalid app bridge identity");
     }
     this.senders.delete(senderId);
-    this.senders.set(senderId, { appIdentity, routeSlug });
+    this.senders.set(senderId, { appIdentity, routeSlug, authGeneration: this.options.authGeneration() });
     while (this.senders.size > this.maxSenders) {
       const oldest = this.senders.keys().next().value as number | undefined;
       if (oldest === undefined) break;
@@ -234,7 +236,7 @@ export class NativeAppBridge {
 
   async query(sender: NativeAppSender, rawQuery: unknown): Promise<unknown> {
     const identity = this.senders.get(sender.id);
-    if (!identity || !isSenderAtApp(sender, this.options.gatewayOrigin(), identity.routeSlug)) {
+    if (!identity || identity.authGeneration !== this.options.authGeneration() || !isSenderAtApp(sender, this.options.gatewayOrigin(), identity.routeSlug)) {
       throw new Error("not authorized");
     }
     const parsed = NativeAppQuerySchema.safeParse(rawQuery);
@@ -245,7 +247,7 @@ export class NativeAppBridge {
   async gatewayFetch(sender: NativeAppSender, rawRequest: unknown): Promise<unknown> {
     const identity = this.senders.get(sender.id);
     if (
-      !identity || !isNativeAppActivityIdentity(identity.appIdentity, identity.routeSlug)
+      !identity || identity.authGeneration !== this.options.authGeneration() || !isNativeAppActivityIdentity(identity.appIdentity, identity.routeSlug)
       || !isSenderAtApp(sender, this.options.gatewayOrigin(), identity.routeSlug)
     ) throw new Error("not authorized");
     const parsed = NativeAppGatewayRequestSchema.safeParse(rawRequest);
@@ -255,7 +257,7 @@ export class NativeAppBridge {
 
   async aiGenerate(sender: NativeAppSender, rawInput: unknown): Promise<unknown> {
     const identity = this.senders.get(sender.id);
-    if (!identity || !isSenderAtApp(sender, this.options.gatewayOrigin(), identity.routeSlug)) {
+    if (!identity || identity.authGeneration !== this.options.authGeneration() || !isSenderAtApp(sender, this.options.gatewayOrigin(), identity.routeSlug)) {
       throw new Error("not authorized");
     }
     return this.options.aiRequest(identity.appIdentity, AppAiInputSchema.parse(rawInput));
@@ -263,7 +265,7 @@ export class NativeAppBridge {
 
   generate(sender: NativeAppSender, rawContext: unknown): void {
     const identity = this.senders.get(sender.id);
-    if (!identity || !isSenderAtApp(sender, this.options.gatewayOrigin(), identity.routeSlug)) {
+    if (!identity || identity.authGeneration !== this.options.authGeneration() || !isSenderAtApp(sender, this.options.gatewayOrigin(), identity.routeSlug)) {
       throw new Error("not authorized");
     }
     const context = AppGenerateContextSchema.parse(rawContext);
