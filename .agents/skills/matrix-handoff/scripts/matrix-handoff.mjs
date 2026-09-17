@@ -595,15 +595,35 @@ async function main() {
     const prompt = "Continue this task from the Matrix handoff. First read .matrix-handoff/README.md and .matrix-handoff/manifest.json, inspect the working tree, then proceed from the continuation brief. Ask before any destructive or external action.";
     const sessionName = `${options.agent}-${base}-${suffix}`.slice(0, 60);
     const command = `${options.agent} ${shellQuote(prompt)}`;
-    await run(matrix, ["shell", "new", sessionName, "--cwd", projectDir, "--cmd", command, ...profileArgs], { timeout: 120_000 });
+    await run(matrix, [
+      "shell",
+      "new",
+      "--project",
+      "main",
+      "--name",
+      sessionName,
+      "--cwd",
+      projectDir,
+      "--cmd",
+      command,
+      ...profileArgs,
+    ], { timeout: 120_000 });
 
     console.log("\nHandoff ready.");
     console.log(`  Session: ${sessionName}`);
     console.log(`  Project: ~/${projectDir}`);
     console.log("  Open: https://app.matrix-os.com/?launch=__terminal__");
-    console.log(`  CLI attach: matrix shell attach ${sessionName}`);
+    console.log(`  CLI attach: matrix shell connect --project main --tab ${sessionName}`);
     if (options.attach) {
-      await execFileAsync(matrix, ["shell", "attach", sessionName, ...profileArgs], { env: process.env });
+      await execFileAsync(matrix, [
+        "shell",
+        "connect",
+        "--project",
+        "main",
+        "--tab",
+        sessionName,
+        ...profileArgs,
+      ], { env: process.env });
     }
   } finally {
     await rm(temp, { recursive: true, force: true });
