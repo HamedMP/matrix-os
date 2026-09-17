@@ -671,7 +671,7 @@ export function CanonicalSharedChatPanel({ api, actorId, runtimeId, chatId, stor
 
 async function resolveCanonicalChatScope(api: CollaborationApi, chatId: string): Promise<string | null> {
   let cursor: string | undefined;
-  const seenCursors: string[] = [];
+  const seenCursors = Object.create(null) as Record<string, true | undefined>;
   for (let pageNumber = 0; pageNumber < 100; pageNumber += 1) {
     const suffix = cursor ? `&cursor=${encodeURIComponent(cursor)}` : "";
     const page = CollaborationDiscoveryResponseSchema.parse(
@@ -681,8 +681,8 @@ async function resolveCanonicalChatScope(api: CollaborationApi, chatId: string):
       && "chat" in item.resource && item.resource.chat.id === chatId);
     if (match?.status === "accepted") return match.scopeId;
     if (!page.nextCursor) return null;
-    if (seenCursors.includes(page.nextCursor)) throw new Error("CollaborationDiscoveryCursorLoop");
-    seenCursors.push(page.nextCursor);
+    if (seenCursors[page.nextCursor]) throw new Error("CollaborationDiscoveryCursorLoop");
+    seenCursors[page.nextCursor] = true;
     cursor = page.nextCursor;
   }
   throw new Error("CollaborationDiscoveryPageLimit");
