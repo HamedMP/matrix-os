@@ -24,26 +24,26 @@
 
 ### Failing tests
 
-- [ ] T005 [P] Add failing strict Zod tests for invitation decline, discussion message/page, and discussion user-state contracts in `tests/contracts/collaboration.test.ts`
-- [ ] T006 [P] Add failing database-bootstrap tests for terminal discussion messages, per-actor read state, constraints, authoritative deletion, bounded export inclusion, and idempotent migration in `tests/gateway/collaboration-database.test.ts`
-- [ ] T007 [P] Add failing invitee-decline repository tests for target-only authorization inputs, revision races, expiry, audit, idempotency, and outbox state in `tests/gateway/collaboration-repository.test.ts` and `tests/gateway/collaboration-repository-postgres.test.ts`
-- [ ] T008 [P] Add failing discussion adapter tests proving Chat uses a database-filtered bounded `purpose=discussion` query, terminal notes stay scope-local, terminal messages export, and personal read state does not export in `tests/gateway/collaboration-chat-discussion.test.ts` and `tests/gateway/collaboration-terminal-discussion.test.ts`
-- [ ] T009 [P] Add failing route/lifecycle tests for decline and discussion owner/editor/viewer/pending/revoked matrices, body limits, exact queries, stale revisions, export/delete/retry behavior, and generic errors in `tests/gateway/collaboration-routes.test.ts` and `tests/gateway/collaboration-lifecycle.test.ts`
-- [ ] T010 [P] Add failing platform tests for exact proxy allowlists, proof method/path/body binding, feature modes, directory invalidation, and snapshot-token rejection in `tests/platform/collaboration-proxy.test.ts`, `tests/platform/collaboration-proof.test.ts`, and `tests/platform/collaboration-routes.test.ts`
-- [ ] T011 [P] Add failing startup/shutdown wiring and CLI exact-path tests in `tests/gateway/collaboration-wiring.test.ts`, `tests/platform/collaboration-wiring.test.ts`, and `tests/cli/collaboration-terminal.test.ts`
+- [x] T005 [P] Add failing strict Zod tests for invitation decline, discussion message/page, and discussion user-state contracts in `tests/contracts/collaboration.test.ts`
+- [x] T006 [P] Add failing database-bootstrap tests for terminal discussion messages, per-actor read state, constraints, authoritative deletion, bounded export inclusion, and idempotent migration in `tests/gateway/collaboration-database.test.ts`
+- [x] T007 [P] Add failing invitee-decline repository tests for target-only authorization inputs, revision races, expiry, audit, idempotency, and outbox state in `tests/gateway/collaboration-repository.test.ts` and `tests/gateway/collaboration-repository-postgres.test.ts`
+- [x] T008 [P] Add failing discussion adapter tests proving Chat uses a database-filtered bounded `purpose=discussion` query, terminal notes stay scope-local, terminal messages export, and personal read state does not export in `tests/gateway/collaboration-chat-discussion.test.ts` and `tests/gateway/collaboration-terminal-discussion.test.ts`
+- [x] T009 [P] Add failing route/lifecycle tests for decline and discussion owner/editor/viewer/pending/revoked matrices, body limits, exact queries, stale revisions, export/delete/retry behavior, and generic errors in `tests/gateway/collaboration-routes.test.ts` and `tests/gateway/collaboration-lifecycle.test.ts`
+- [x] T010 [P] Add failing platform tests for exact proxy allowlists, proof method/path/body binding, feature modes, directory invalidation, and snapshot-token rejection in `tests/platform/collaboration-proxy.test.ts`, `tests/platform/collaboration-proof.test.ts`, and `tests/platform/collaboration-routes.test.ts`
+- [x] T011 [P] Add failing startup/shutdown wiring and CLI exact-path tests in `tests/gateway/collaboration-wiring.test.ts`, `tests/platform/collaboration-wiring.test.ts`, and `tests/cli/collaboration-terminal.test.ts`
 
 ### Implementation
 
-- [ ] T012 Implement Zod 4 decline/discussion request and response schemas with bounded UTF-8 text and inferred types in `packages/contracts/src/collaboration.ts`
-- [ ] T013 Implement additive terminal discussion and discussion-user-state tables, indexes, Kysely types, authoritative deletion behavior, and idempotent bootstrap in `packages/gateway/src/collaboration/database.ts`
-- [ ] T014 Implement pending-to-revoked invitee decline with scope/member locks, write-enforced revision, idempotency, audit, event, and outbox in `packages/gateway/src/collaboration/repository.ts`
-- [ ] T015 Implement a scope-kind discussion adapter with bounded database-filtered Chat reads, terminal storage, bounded terminal export projection, and personal-state exclusion in `packages/gateway/src/collaboration/discussion-adapter.ts`
-- [ ] T016 Register exact decline and discussion routes with existing authorization actions, body limits, query parsing, and safe error mapping in `packages/gateway/src/collaboration/routes.ts`
-- [ ] T017 Extend dependency injection and event notification for the discussion adapter without adding pool/timer ownership in `packages/gateway/src/collaboration/wiring.ts`
-- [ ] T018 Extend only exact invitation/discussion proxy patterns and milestone classification in `packages/platform/src/collaboration/proxy.ts`
-- [ ] T019 Update invited-directory reconciliation after decline without storing content or adding authority in `packages/platform/src/collaboration/repository.ts` and `packages/platform/src/collaboration/routes.ts`
-- [ ] T020 Extend the CLI collaboration path allowlist and typed decline/discussion commands in `packages/sync-client/src/cli/commands/collaboration.ts`
-- [ ] T021 Run all Phase 2 red-to-green suites and record commands, results, backend invariants, diff-size check, and Stack PR 1 evidence in `specs/525-collaboration-ux-redesign/implementation-log.md`
+- [x] T012 Implement Zod 4 decline/discussion request and response schemas with bounded UTF-8 text and inferred types in `packages/contracts/src/collaboration.ts`
+- [x] T013 Implement additive terminal discussion and discussion-user-state tables, indexes, Kysely types, authoritative deletion behavior, and idempotent bootstrap in `packages/gateway/src/collaboration/database.ts`
+- [x] T014 Implement pending-to-revoked invitee decline with scope/member locks, write-enforced revision, idempotency, audit, event, and outbox in `packages/gateway/src/collaboration/repository.ts`
+- [x] T015 Implement a scope-kind discussion adapter with bounded database-filtered Chat reads, terminal storage, bounded terminal export projection, and personal-state exclusion in `packages/gateway/src/collaboration/discussion-adapter.ts`
+- [x] T016 Register exact decline and discussion routes with existing authorization actions, body limits, query parsing, and safe error mapping in `packages/gateway/src/collaboration/routes.ts`
+- [x] T017 Extend dependency injection and event notification for the discussion adapter without adding pool/timer ownership in `packages/gateway/src/collaboration/wiring.ts`
+- [x] T018 Extend only exact invitation/discussion proxy patterns and milestone classification in `packages/platform/src/collaboration/proxy.ts`
+- [x] T019 Update invited-directory reconciliation after decline without storing content or adding authority in `packages/platform/src/collaboration/repository.ts` and `packages/platform/src/collaboration/routes.ts`
+- [x] T020 Extend the CLI collaboration path allowlist and typed decline/discussion commands in `packages/sync-client/src/cli/commands/collaboration.ts`
+- [x] T021 Run all Phase 2 red-to-green suites and record commands, results, backend invariants, diff-size check, and Stack PR 1 evidence in `specs/525-collaboration-ux-redesign/implementation-log.md`
 
 **Checkpoint**: The additive backend is independently usable by old and new clients; existing Chat discussion/history, membership, queue, terminal control, and snapshots remain unchanged.
 

@@ -97,6 +97,8 @@ export interface AcceptInvitationInput {
   payloadHash: string;
 }
 
+export interface DeclineInvitationInput extends AcceptInvitationInput {}
+
 export interface MemberMutationInput {
   scopeId: string;
   actorId: string;
@@ -469,6 +471,82 @@ export class CollaborationRepository {
       throw new CollaborationRepositoryError("expired", "Invitation expired");
     }
     return result.value;
+  }
+
+  async declineInvitation(input: DeclineInvitationInput): Promise<MemberMutationResult> {
+    const nowDate = this.now();
+    const now = nowDate.toISOString();
+    const operationExpiresAt = new Date(nowDate.getTime() + OPERATION_RETENTION_MS).toISOString();
+    return this.db.transaction().execute(async (trx) => {
+      const invitation = await trx.selectFrom("collaboration_members")
+        .select("scope_id")
+        .where("invitation_id", "=", input.invitationId)
+        .where("actor_id", "=", input.actorId)
+        .executeTakeFirst();
+      if (!invitation) throw new CollaborationRepositoryError("not_found", "Invitation not found");
+      const scope = await lockDirectScope(trx, invitation.scope_id);
+      const member = await trx.selectFrom("collaboration_members")
+        .selectAll()
+        .where("scope_id", "=", invitation.scope_id)
+        .where("invitation_id", "=", input.invitationId)
+        .where("actor_id", "=", input.actorId)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!member) throw new CollaborationRepositoryError("not_found", "Invitation not found");
+      const scopedInput = { ...input, scopeId: member.scope_id };
+      const replay = await readOperationReplay<MemberMutationResult>(
+        trx,
+        scopedInput,
+        "invitation.declined",
+      );
+      if (replay) return replay;
+      requireInvitationMutationLifecycle(scope);
+      if (Number(scope.revision) !== input.expectedRevision) {
+        throw new CollaborationRepositoryError("conflict", "Scope revision changed");
+      }
+      if (member.status !== "pending") {
+        throw new CollaborationRepositoryError(
+          member.status === "expired" ? "expired" : "conflict",
+          "Invitation is not pending",
+        );
+      }
+      if (!member.expires_at || new Date(member.expires_at).getTime() <= nowDate.getTime()) {
+        throw new CollaborationRepositoryError("expired", "Invitation expired");
+      }
+      const memberRevision = Number(member.revision) + 1;
+      const updated = await trx.updateTable("collaboration_members").set({
+        status: "revoked",
+        revision: memberRevision,
+        updated_at: now,
+      }).where("scope_id", "=", member.scope_id)
+        .where("actor_id", "=", input.actorId)
+        .where("status", "=", "pending")
+        .where("revision", "=", Number(member.revision))
+        .returning("actor_id")
+        .executeTakeFirst();
+      if (!updated) throw new CollaborationRepositoryError("conflict", "Invitation state changed");
+      const nextRevision = input.expectedRevision + 1;
+      await updateScopeRevision(trx, member.scope_id, input.expectedRevision, nextRevision, now);
+      const result: MemberMutationResult = {
+        scopeId: member.scope_id,
+        actorId: member.actor_id,
+        role: member.role as "editor" | "viewer",
+        status: "revoked",
+        scopeRevision: nextRevision,
+        memberRevision,
+      };
+      await writeOperation(trx, scopedInput, "invitation.declined", scope, result, now, operationExpiresAt);
+      await appendMutationRecords(trx, {
+        scope: { ...scope, revision: nextRevision, auth_epoch: Number(scope.auth_epoch) + 1 },
+        actorId: input.actorId,
+        action: "invitation.declined",
+        recipients: [{ actorId: input.actorId, invitationId: input.invitationId }],
+        discoveryState: "revoked",
+        publishDirectory: shouldPublishMembershipDirectory(scope),
+        now,
+      });
+      return result;
+    });
   }
 
   async revokeInvitation(input: RevokeInvitationInput): Promise<MemberMutationResult> {

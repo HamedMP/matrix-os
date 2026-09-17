@@ -8,6 +8,11 @@ import {
   CollaborationConnectionTicketRequestSchema,
   CollaborationDiscoveryResponseSchema,
   CollaborationCreateDiscussionRequestSchema,
+  CollaborationDeclineInvitationRequestSchema,
+  CollaborationDiscussionMessageSchema,
+  CollaborationDiscussionMessagesResponseSchema,
+  CollaborationDiscussionUserStatePatchSchema,
+  CollaborationDiscussionUserStateSchema,
   CollaborationCreateInvitationRequestSchema,
   CollaborationCreateScopeRequestSchema,
   CollaborationEventFrameSchema,
@@ -193,6 +198,57 @@ describe("collaboration contracts", () => {
       mode: "ai",
       actorId: "user_owner",
     }).success).toBe(false);
+  });
+
+  it("keeps invitation decline conditional and free of client authority", () => {
+    expect(CollaborationDeclineInvitationRequestSchema.parse({
+      clientRequestId: requestId,
+      expectedRevision: "4",
+    })).toEqual({ clientRequestId: requestId, expectedRevision: "4" });
+    expect(CollaborationDeclineInvitationRequestSchema.safeParse({
+      clientRequestId: requestId,
+      expectedRevision: "4",
+      actorId: "user_owner",
+      status: "revoked",
+    }).success).toBe(false);
+  });
+
+  it("projects bounded scope discussion without executable content", () => {
+    const message = CollaborationDiscussionMessageSchema.parse({
+      id: "discussion_1",
+      scopeId,
+      sequence: "12",
+      actor: { actorId: "user_editor", displayName: "Ada" },
+      text: "Human-only note",
+      createdAt: now,
+    });
+    expect(CollaborationDiscussionMessagesResponseSchema.parse({
+      messages: [message],
+      latestSequence: "12",
+    }).messages).toEqual([message]);
+    expect(CollaborationDiscussionMessageSchema.safeParse({
+      ...message,
+      terminalInput: "rm -rf /",
+    }).success).toBe(false);
+    expect(CollaborationDiscussionMessagesResponseSchema.safeParse({
+      messages: Array.from({ length: 101 }, () => message),
+      latestSequence: "12",
+    }).success).toBe(false);
+  });
+
+  it("keeps discussion read state actor-local and monotonic at the service boundary", () => {
+    expect(CollaborationDiscussionUserStateSchema.parse({
+      readThroughSeq: "12",
+      lastOpenedAt: now,
+    })).toEqual({ readThroughSeq: "12", lastOpenedAt: now });
+    expect(CollaborationDiscussionUserStatePatchSchema.parse({
+      readThroughSeq: "12",
+    })).toEqual({ readThroughSeq: "12" });
+    expect(CollaborationDiscussionUserStatePatchSchema.safeParse({
+      readThroughSeq: "12",
+      actorId: "user_other",
+    }).success).toBe(false);
+    expect(CollaborationDiscussionUserStatePatchSchema.safeParse({}).success).toBe(false);
   });
 
   it("binds actor proofs to exact transport facts", () => {

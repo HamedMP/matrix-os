@@ -33,3 +33,12 @@ Each layer must remain at or below 3,000 additions and 50 files, include current
 ## Red/Green and Validation Record
 
 Commands and results are appended here as tasks complete. No production implementation begins before its paired failing test has been observed failing for the intended missing behavior.
+
+### Phase 2 — foundational contracts
+
+- Red: the initial 9-file Vitest batch failed in 12 intended places because the decline schemas/repository method, scope discussion adapter/routes/tables, proxy/CLI patterns, and migration version did not exist. Existing wiring tests also hit the expected sandbox-only Unix-socket restriction.
+- Green: the 10-file Phase 2 Vitest command passed 99 tests across 9 files; the 6 real-PostgreSQL cases were skipped because no PostgreSQL test URL was configured. A supplemental terminal export/deletion test passed, bringing that focused file to 3 passing cases.
+- Types: contracts, gateway, platform, and sync-client TypeScript checks passed.
+- Pattern scan: `pnpm check:patterns:diff` passed with zero violations; reported warnings were repository-wide review reminders and no new unsafe pattern was introduced.
+- Backend invariants: the owner runtime remains authoritative; decline is target-only and revision-locked; discussion reauthorizes in the write/read transaction; Chat notes remain canonical `purpose=discussion` rows; terminal notes are owner-local and cascade with their scope; terminal export projection is bounded and excludes actor-local read state; snapshots cannot authenticate live routes; directory outbox remains content-free; queue and terminal-control authority are unchanged.
+- Size at verification: 18 changed files and roughly 650 additions, below the Stack PR 1 limits.
