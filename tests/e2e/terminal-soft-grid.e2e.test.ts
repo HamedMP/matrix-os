@@ -210,6 +210,14 @@ describe("real terminal renderer soft-grid resizing", () => {
       await page.evaluate(() => (window as unknown as { fixtureOutput: (data: string) => void }).fixtureOutput("\x1bcshort\r\nresult\r\n$ "));
       await expect.poll(async () => page.locator("[data-terminal-viewport]").evaluate((host) =>
         host.scrollHeight - host.clientHeight + host.scrollWidth - host.clientWidth)).toBe(0);
+      // The clipped grid is larger than its short content. Browser focus and
+      // scrollIntoView must never pan this internal layer behind the host rail.
+      const internalPan = await page.locator("[data-terminal-grid-stage]").evaluate((stage) => {
+        stage.scrollLeft = 100;
+        stage.scrollTop = 100;
+        return { left: stage.scrollLeft, top: stage.scrollTop };
+      });
+      expect(internalPan).toEqual({ left: 0, top: 0 });
       const rail = page.locator('[data-terminal-scrollbar="content"]');
       await expect.poll(() => rail.isVisible()).toBe(false);
       // History and clipped live rows use this same edge-aligned rail.

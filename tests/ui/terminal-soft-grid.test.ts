@@ -62,7 +62,7 @@ describe("shared terminal grid presentation", () => {
     const { host, root, geometry, layout } = setup();
     layout(1_600, 600);
     const stage = host.querySelector<HTMLElement>("[data-terminal-grid-stage]")!;
-    expect(stage.style.overflow).toBe("hidden");
+    expect(stage.style.overflow).toBe("clip");
     expect(root.style.position).toBe("absolute");
     expect(Number.parseFloat(stage.style.height)).toBeCloseTo(geometry.visualHeight());
     expect(geometry.visualHeight()).toBeLessThanOrEqual(600.5);

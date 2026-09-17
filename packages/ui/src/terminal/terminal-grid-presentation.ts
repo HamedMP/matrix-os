@@ -181,7 +181,9 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
       stage.dataset.terminalGridStage = "true";
       // Transforms do not shrink layout overflow. Clip the unscaled box inside
       // a stage whose real dimensions match the visual grid, so pan limits do.
-      Object.assign(stage.style, { position: "relative", overflow: "hidden", flexShrink: "0" });
+      // Unlike hidden, clip cannot scroll when Chromium reveals xterm's
+      // focused textarea; all deliberate panning belongs to the outer host.
+      Object.assign(stage.style, { position: "relative", overflow: "clip", flexShrink: "0" });
       root.before(stage);
       stage.append(root);
     }
