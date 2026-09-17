@@ -93,13 +93,13 @@ export type TerminalRuntimeRefAccess = TerminalRuntimeOwnerAccess | "chat_requir
 
 export interface TerminalWorkspaceProjectAdmission {
   withProject<T>(
-    principal: RequestPrincipal,
+    ownerId: string,
     projectId: string | undefined,
     kind: "write" | "run",
     operation: () => Promise<T>,
   ): Promise<T>;
   withWorkspace<T>(
-    principal: RequestPrincipal,
+    ownerId: string,
     workspaceId: string,
     kind: "write" | "run",
     operation: () => Promise<T>,
@@ -111,7 +111,7 @@ export function createTerminalWorkspaceProjectAdmission(options: {
   projectOperationAdmission?: LegacyProjectOperationAdmission;
 }): TerminalWorkspaceProjectAdmission {
   async function withProject<T>(
-    principal: RequestPrincipal,
+    ownerId: string,
     projectId: string | undefined,
     kind: "write" | "run",
     operation: () => Promise<T>,
@@ -119,7 +119,7 @@ export function createTerminalWorkspaceProjectAdmission(options: {
     if (!projectId || !options.projectOperationAdmission) return operation();
     return options.projectOperationAdmission.withLegacyAdmission({
       ownerType: "personal",
-      ownerId: principal.userId,
+      ownerId,
       projectId,
       kind,
     }, operation);
@@ -128,7 +128,7 @@ export function createTerminalWorkspaceProjectAdmission(options: {
   return {
     withProject,
     async withWorkspace<T>(
-      principal: RequestPrincipal,
+      ownerId: string,
       workspaceId: string,
       kind: "write" | "run",
       operation: () => Promise<T>,
@@ -138,20 +138,27 @@ export function createTerminalWorkspaceProjectAdmission(options: {
         .find((candidate) => candidate.id === workspaceId);
       if (!workspace) throw new TerminalRuntimeError("not_found");
       const projectId = workspace.scope === "project" ? workspace.projectId : undefined;
-      return withProject(principal, projectId, kind, operation);
+      return withProject(ownerId, projectId, kind, operation);
     },
   };
+}
+
+/** Canonical terminal ownership only; authentication and Chat scopes keep the actor. */
+export function terminalResourceOwnerId(principal: RequestPrincipal, previewOwnerId?: string): string {
+  return previewOwnerId ?? principal.userId;
 }
 
 export function terminalRuntimeOwnerAccess(
   principal: RequestPrincipal,
   terminalOwnerIds: readonly string[],
+  previewOwnerId?: string,
 ): TerminalRuntimeOwnerAccess {
   const configuredOwners = terminalOwnerIds
     .map((ownerId) => ownerId.trim())
     .filter((ownerId, index, ownerIds) => Boolean(ownerId) && ownerIds.indexOf(ownerId) === index);
   if (configuredOwners.length !== 1) return "unavailable";
-  return configuredOwners[0] === principal.userId ? "allowed" : "not_found";
+  if (configuredOwners[0] === principal.userId) return "allowed";
+  return previewOwnerId === configuredOwners[0] ? "allowed" : "not_found";
 }
 
 export async function terminalRuntimeRefAccess(
@@ -159,8 +166,9 @@ export async function terminalRuntimeRefAccess(
   terminalOwnerIds: readonly string[],
   runtime: Pick<TerminalWorkspaceRouteRuntime, "listWorkspaces">,
   refInput: TerminalRef,
+  previewOwnerId?: string,
 ): Promise<TerminalRuntimeRefAccess> {
-  const ownerAccess = terminalRuntimeOwnerAccess(principal, terminalOwnerIds);
+  const ownerAccess = terminalRuntimeOwnerAccess(principal, terminalOwnerIds, previewOwnerId);
   if (ownerAccess !== "allowed") return ownerAccess;
   const ref = TerminalRefSchema.parse(refInput);
   const workspace = (await runtime.listWorkspaces())
@@ -176,6 +184,7 @@ export function createTerminalWorkspaceRoutes(options: {
   runtime: TerminalWorkspaceRouteRuntime;
   homePath?: string;
   getPrincipal: (context: Context) => RequestPrincipal;
+  getPreviewTerminalOwner?: (context: Context) => string | undefined;
   terminalOwnerIds: readonly string[];
   projectOperationAdmission?: LegacyProjectOperationAdmission;
   chatTerminals?: {
@@ -205,9 +214,17 @@ export function createTerminalWorkspaceRoutes(options: {
   const mutationLimit = bodyLimit({ maxSize: 16 * 1024 });
   const deleteLimit = bodyLimit({ maxSize: 1024 });
   const pasteLimit = bodyLimit({ maxSize: TERMINAL_PASTE_ASSET_JSON_LIMIT });
+  const getResourceOwnerId = (c: Context, principal: RequestPrincipal) => (
+    terminalResourceOwnerId(principal, options.getPreviewTerminalOwner?.(c))
+  );
 
   app.use("*", async (c, next) => {
-    const access = terminalRuntimeOwnerAccess(options.getPrincipal(c), options.terminalOwnerIds);
+    const principal = options.getPrincipal(c);
+    const access = terminalRuntimeOwnerAccess(
+      principal,
+      options.terminalOwnerIds,
+      options.getPreviewTerminalOwner?.(c),
+    );
     if (access === "unavailable") return c.json({ error: "Terminal operation unavailable" }, 503);
     if (access === "not_found") return c.json({ error: "Terminal operation failed" }, 404);
     await next();
@@ -222,7 +239,7 @@ export function createTerminalWorkspaceRoutes(options: {
     try {
       const body = EnsureWorkspaceSchema.parse(await c.req.json());
       const principal = options.getPrincipal(c);
-      return await projectAdmission.withProject(principal, body.projectId, "run", async () => (
+      return await projectAdmission.withProject(getResourceOwnerId(c, principal), body.projectId, "run", async () => (
         c.json({ workspace: await options.runtime.ensureWorkspace(body) })
       ));
     } catch (error) { return requestFailure(c, error); }
@@ -239,7 +256,7 @@ export function createTerminalWorkspaceRoutes(options: {
       const binding = body.chatId && principal && options.chatTerminals
         ? await options.chatTerminals.prepare(principal, body.chatId)
         : null;
-      return await projectAdmission.withWorkspace(principal, workspaceId, "run", async () => {
+      return await projectAdmission.withWorkspace(getResourceOwnerId(c, principal), workspaceId, "run", async () => {
         const tab = await options.runtime.createTab(workspaceId, {
           ...(body.tabId ? { tabId: body.tabId } : {}),
           name: body.name,
@@ -272,7 +289,8 @@ export function createTerminalWorkspaceRoutes(options: {
       if (!options.runtime.renameTab) return c.json({ error: "Terminal operation unavailable" }, 503);
       const ref = terminalRefFromParams(c.req.param("workspaceId"), c.req.param("tabId"));
       const input = RenameTabSchema.parse(await c.req.json());
-      return await projectAdmission.withWorkspace(options.getPrincipal(c), ref.workspaceId, "write", async () => (
+      const principal = options.getPrincipal(c);
+      return await projectAdmission.withWorkspace(getResourceOwnerId(c, principal), ref.workspaceId, "write", async () => (
         c.json({ tab: await options.runtime.renameTab!(ref, input) })
       ));
     } catch (error) { return requestFailure(c, error); }
@@ -283,7 +301,8 @@ export function createTerminalWorkspaceRoutes(options: {
       if (!options.runtime.reorderTabs) return c.json({ error: "Terminal operation unavailable" }, 503);
       const workspaceId = TerminalWorkspaceIdSchema.parse(c.req.param("workspaceId"));
       const input = ReorderTabsSchema.parse(await c.req.json());
-      return await projectAdmission.withWorkspace(options.getPrincipal(c), workspaceId, "write", async () => (
+      const principal = options.getPrincipal(c);
+      return await projectAdmission.withWorkspace(getResourceOwnerId(c, principal), workspaceId, "write", async () => (
         c.json({ workspace: await options.runtime.reorderTabs!(workspaceId, input) })
       ));
     } catch (error) { return requestFailure(c, error); }
@@ -294,7 +313,8 @@ export function createTerminalWorkspaceRoutes(options: {
       const deleteTab = options.runtime.deleteTab?.bind(options.runtime);
       if (!deleteTab) return c.json({ error: "Terminal operation unavailable" }, 503);
       const ref = terminalRefFromParams(c.req.param("workspaceId"), c.req.param("tabId"));
-      return await projectAdmission.withWorkspace(options.getPrincipal(c), ref.workspaceId, "run", async () => {
+      const principal = options.getPrincipal(c);
+      return await projectAdmission.withWorkspace(getResourceOwnerId(c, principal), ref.workspaceId, "run", async () => {
         await deleteTab(ref);
         return c.body(null, 204);
       });
@@ -329,7 +349,7 @@ export function createTerminalWorkspaceRoutes(options: {
         const bound = await options.chatTerminals.listBoundSessionIds(principal, [sessionId]);
         if (bound.includes(sessionId)) return c.json({ error: "Terminal operation failed" }, 404);
       }
-      return await projectAdmission.withWorkspace(principal, ref.workspaceId, "run", async () => {
+      return await projectAdmission.withWorkspace(getResourceOwnerId(c, principal), ref.workspaceId, "run", async () => {
         await options.runtime.paneAction!(ref, action);
         return c.json({ ok: true });
       });
@@ -341,7 +361,8 @@ export function createTerminalWorkspaceRoutes(options: {
       if (!options.runtime.updateTabUiState) return c.json({ error: "Terminal operation unavailable" }, 503);
       const ref = terminalRefFromParams(c.req.param("workspaceId"), c.req.param("tabId"));
       const input = UiStateSchema.parse(await c.req.json());
-      return await projectAdmission.withWorkspace(options.getPrincipal(c), ref.workspaceId, "write", async () => (
+      const principal = options.getPrincipal(c);
+      return await projectAdmission.withWorkspace(getResourceOwnerId(c, principal), ref.workspaceId, "write", async () => (
         c.json({ tab: await options.runtime.updateTabUiState!(ref, input) })
       ));
     } catch (error) { return requestFailure(c, error); }
@@ -352,7 +373,8 @@ export function createTerminalWorkspaceRoutes(options: {
       if (!options.homePath) return c.json({ error: "Terminal operation unavailable" }, 503);
       const ref = terminalRefFromParams(c.req.param("workspaceId"), c.req.param("tabId"));
       const input = PasteAssetsSchema.parse(await c.req.json());
-      return await projectAdmission.withWorkspace(options.getPrincipal(c), ref.workspaceId, "write", async () => {
+      const principal = options.getPrincipal(c);
+      return await projectAdmission.withWorkspace(getResourceOwnerId(c, principal), ref.workspaceId, "write", async () => {
         const workspace = (await options.runtime.listWorkspaces()).find((candidate) => candidate.id === ref.workspaceId);
         const tab = workspace?.tabs.find((candidate) => candidate.id === ref.tabId);
         if (!tab) return c.json({ error: "Terminal operation failed" }, 404);
@@ -383,7 +405,8 @@ export function createTerminalWorkspaceRoutes(options: {
     try {
       const workspaceId = TerminalWorkspaceIdSchema.parse(c.req.param("workspaceId"));
       const body = DeleteWorkspaceSchema.parse(await c.req.json());
-      return await projectAdmission.withWorkspace(options.getPrincipal(c), workspaceId, "run", async () => {
+      const principal = options.getPrincipal(c);
+      return await projectAdmission.withWorkspace(getResourceOwnerId(c, principal), workspaceId, "run", async () => {
         const impact = await options.runtime.deletionImpact(workspaceId);
         if (impact.runningTabs > 0 && !body.confirmTerminate) {
           return c.json({ error: "terminal_termination_confirmation_required", ...impact }, 409);

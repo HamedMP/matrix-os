@@ -4352,6 +4352,36 @@ describe("platform proxy routing", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("issues explicit preview websocket tokens as the real collaborator", async () => {
+    process.env.PLATFORM_JWT_SECRET = JWT_SECRET;
+    await insertUserMachine(db, {
+      machineId: "9f05824c-8d0a-4d83-9cb4-b312d43ff139",
+      clerkUserId: "user_owner",
+      handle: "pr-1644",
+      runtimeSlot: "pr-1644",
+      provisioningClass: "preview",
+      accessClerkUserIds: ["user_alice"],
+      status: "running",
+      publicIPv4: "203.0.113.39",
+      imageVersion: "test",
+      provisionedAt: "2026-09-15T00:00:00.000Z",
+    });
+    const app = createApp({
+      db, orchestrator: stubOrchestrator(),
+      clerkAuth: createClerkAuth({ verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }) }),
+      platformSecret: "platform-secret-123",
+    });
+    const response = await app.request("/vm/pr-1644/api/auth/ws-token", {
+      headers: { host: "app.matrix-os.com", authorization: "Bearer clerk-session" },
+    });
+    expect(response.status).toBe(200);
+    const { token } = await response.json();
+    const claims = await syncJwt.verifySyncJwt(token, { secret: JWT_SECRET });
+    expect(claims.sub).toBe("user_alice");
+    expect(claims.handle).toBe("pr-1644");
+    expect(claims.runtime_slot).toBe("pr-1644");
+  });
+
   it("routes an explicitly shared preview to a collaborator but never shares customer machines", async () => {
     await deleteContainer(db, "alice");
     await insertUserMachine(db, {

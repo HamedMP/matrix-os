@@ -1,3 +1,4 @@
+import { buildPreviewTerminalAccess } from "./preview-terminal-access.js";
 import { createConnection, type Socket } from 'node:net';
 import { connect as createTlsConnection } from 'node:tls';
 import type { IncomingMessage, Server } from 'node:http';
@@ -321,6 +322,10 @@ export function registerPlatformWebSocketUpgradeHandler(
         platformSecret,
         includePlatformProof: includePlatformProof && identity.source !== 'static-route',
         isCodeDomain,
+        previewTerminalAccess: runningMachine && identity.source !== 'static-route'
+          ? buildPreviewTerminalAccess({ machine: runningMachine, actorId: identity.userId,
+              path: new URL(webSocketProxyPath, 'https://app.matrix-os.com').pathname, platformSecret })
+          : undefined,
       })
     );
 

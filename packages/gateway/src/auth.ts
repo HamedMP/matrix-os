@@ -1,5 +1,10 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { Context, MiddlewareHandler } from "hono";
+import {
+  PREVIEW_TERMINAL_ACCESS_HEADER,
+  PREVIEW_TERMINAL_OWNER_CONTEXT_KEY,
+  verifyPreviewTerminalAccess,
+} from "./preview-terminal-access.js";
 import { createRateLimiter } from "./security/rate-limiter.js";
 import {
   looksLikeJwt,
@@ -141,6 +146,14 @@ function readPlatformVerifiedUserId(c: Context, token: string): string | undefin
   return timingSafeCompare(proof, expected) ? userId : undefined;
 }
 
+function isPreviewTerminalPath(path: string): boolean {
+  return path.startsWith("/api/terminal/") || path === "/ws/terminal/tab";
+}
+
+export function readPreviewTerminalOwner(c: Pick<Context, "get">): string | undefined {
+  return c.get(PREVIEW_TERMINAL_OWNER_CONTEXT_KEY as never) as string | undefined;
+}
+
 const rateLimiter = createRateLimiter({
   maxAttempts: 10,
   windowMs: 60_000,
@@ -195,6 +208,17 @@ export function authMiddleware(
   const webhookProviders = options?.webhookProviders ?? new Set<string>();
 
   return async (c, next) => {
+    const setTerminalAccess = (actorId: string) => {
+      if (!token || !isPreviewTerminalPath(c.req.path)) return;
+      const ownerId = verifyPreviewTerminalAccess({
+        value: c.req.header(PREVIEW_TERMINAL_ACCESS_HEADER),
+        key: token,
+        actorId,
+        configuredOwnerIds: [process.env.MATRIX_USER_ID, process.env.MATRIX_CLERK_USER_ID],
+        runtimeSlot: process.env.MATRIX_RUNTIME_SLOT,
+      });
+      if (ownerId) c.set(PREVIEW_TERMINAL_OWNER_CONTEXT_KEY, ownerId);
+    };
     // Read JWT config + handle per-call so env-var changes during tests
     // are picked up without recreating the middleware.
     const jwtKey = await readJwtKeyConfig();
@@ -327,6 +351,7 @@ export function authMiddleware(
         // Stash claims on the Hono context so downstream handlers can
         // resolve the authenticated Clerk userId through the request principal.
         c.set(JWT_CLAIMS_CONTEXT_KEY, claims);
+        setTerminalAccess(claims.sub);
         return nextWithReady(c, next);
       } catch (err) {
         // Fall through. We don't expose JWT failure reasons to the client,
@@ -352,7 +377,10 @@ export function authMiddleware(
 
     if (legacyHeaderOk) {
       const platformUserId = readPlatformVerifiedUserId(c, token);
-      if (platformUserId) setPlatformVerifiedPrincipal(c, platformUserId);
+      if (platformUserId) {
+        setPlatformVerifiedPrincipal(c, platformUserId);
+        setTerminalAccess(platformUserId);
+      }
       return nextWithReady(c, next);
     }
 
