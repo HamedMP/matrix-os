@@ -135,6 +135,63 @@ describe("createManifestDb", () => {
     });
   });
 
+  it("advances the accepted generation only from the expected version", async () => {
+    const manifestDb = createManifestDb(db);
+    await ensureSyncUser(db, { id: "user1", handle: "alice" });
+    await manifestDb.upsertManifestMeta("user1", {
+      version: 4,
+      file_count: 1,
+      total_size: 42n,
+      etag: '"etag-4"',
+      accepted_manifest_key: "generation-4",
+    });
+
+    await expect(manifestDb.advanceManifestMeta("user1", 3, {
+      version: 5,
+      file_count: 2,
+      total_size: 84n,
+      etag: '"etag-5-stale"',
+      accepted_manifest_key: "generation-5-stale",
+    })).resolves.toBe(false);
+    await expect(manifestDb.getManifestMeta("user1")).resolves.toMatchObject({
+      version: 4,
+      accepted_manifest_key: "generation-4",
+    });
+
+    await expect(manifestDb.advanceManifestMeta("user1", 4, {
+      version: 5,
+      file_count: 2,
+      total_size: 84n,
+      etag: '"etag-5"',
+      accepted_manifest_key: "generation-5",
+    })).resolves.toBe(true);
+    await expect(manifestDb.getManifestMeta("user1")).resolves.toMatchObject({
+      version: 5,
+      accepted_manifest_key: "generation-5",
+    });
+  });
+
+  it("creates revision one only when no accepted metadata row exists", async () => {
+    const manifestDb = createManifestDb(db);
+    await ensureSyncUser(db, { id: "user1", handle: "alice" });
+    const revisionOne = {
+      version: 1,
+      file_count: 1,
+      total_size: 42n,
+      etag: '"etag-1"',
+      accepted_manifest_key: "generation-1",
+    };
+
+    await expect(manifestDb.advanceManifestMeta("user1", 0, revisionOne)).resolves.toBe(true);
+    await expect(manifestDb.advanceManifestMeta("user1", 0, {
+      ...revisionOne,
+      accepted_manifest_key: "generation-1-race",
+    })).resolves.toBe(false);
+    await expect(manifestDb.getManifestMeta("user1")).resolves.toMatchObject({
+      accepted_manifest_key: "generation-1",
+    });
+  });
+
   it("keeps manifest metadata isolated between runtime slots", async () => {
     const manifestDb = createManifestDb(db);
     await ensureSyncUser(db, { id: "user1", handle: "alice" });

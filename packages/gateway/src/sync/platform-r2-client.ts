@@ -1,4 +1,5 @@
 import type { R2Client } from "./r2-client.js";
+import { Readable } from "node:stream";
 
 const INTERNAL_SYNC_READ_TIMEOUT_MS = 10_000;
 const INTERNAL_SYNC_WRITE_TIMEOUT_MS = 30_000;
@@ -133,14 +134,19 @@ export function createPlatformR2Client(config: {
 
     async putObject(
       key: string,
-      body: string | Uint8Array | ReadableStream<Uint8Array>,
+      body: string | Uint8Array | ReadableStream<Uint8Array> | Readable,
       options?: { signal?: AbortSignal },
     ): Promise<{ etag?: string }> {
       const res = await request(`/object?key=${encodeURIComponent(key)}`, {
         method: "PUT",
-        body: body instanceof Uint8Array ? Buffer.from(body) : body,
+        body: body instanceof Uint8Array
+          ? Buffer.from(body)
+          : body instanceof Readable
+            ? Readable.toWeb(body) as BodyInit
+            : body,
         signal: options?.signal,
-      }, INTERNAL_SYNC_WRITE_TIMEOUT_MS);
+        ...(body instanceof Readable ? { duplex: "half" } : {}),
+      } as RequestInit & { duplex?: "half" }, INTERNAL_SYNC_WRITE_TIMEOUT_MS);
       const data = await expectJson<{ etag: string | null }>(res);
       return { etag: data.etag ?? undefined };
     },

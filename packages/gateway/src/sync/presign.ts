@@ -1,6 +1,8 @@
 import type { R2Client } from "./r2-client.js";
 import { buildFileKey } from "./r2-client.js";
 import type { SyncKeyScope } from "./r2-keys.js";
+import { buildStagingKey } from "./r2-keys.js";
+import { randomUUID } from "node:crypto";
 import type { PresignFile } from "./types.js";
 
 const PRESIGN_EXPIRY_SECONDS = 900; // 15 minutes
@@ -10,6 +12,8 @@ const MULTIPART_PART_SIZE = 64 * 1024 * 1024; // 64MB per part
 
 export interface PresignDeps {
   r2: R2Client;
+  stagingIdFactory?: () => string;
+  resolveDownloadKey?: (path: string) => Promise<string>;
 }
 
 export interface MultipartInfo {
@@ -23,6 +27,7 @@ export interface PresignResult {
   url: string;
   expiresIn: number;
   multipart?: MultipartInfo;
+  stagingId?: string;
 }
 
 export class PresignValidationError extends Error {
@@ -65,7 +70,14 @@ export async function generatePresignedUrls(
   const results: PresignResult[] = [];
 
   for (const file of files) {
-    const key = buildFileKey(scope, file.path);
+    const stagingId = file.action === "put"
+      ? (deps.stagingIdFactory ?? randomUUID)()
+      : undefined;
+    const key = file.action === "put"
+      ? buildStagingKey(scope, stagingId!)
+      : deps.resolveDownloadKey
+        ? await deps.resolveDownloadKey(file.path)
+        : buildFileKey(scope, file.path);
 
     if (file.action === "get") {
       const url = await deps.r2.getPresignedGetUrl(key, PRESIGN_EXPIRY_SECONDS);
@@ -88,6 +100,7 @@ export async function generatePresignedUrls(
         url: "", // no single PUT URL for multipart
         expiresIn: PRESIGN_EXPIRY_SECONDS,
         multipart: { uploadId, partUrls, partSize: MULTIPART_PART_SIZE },
+        stagingId,
       });
     } else {
       const url = await deps.r2.getPresignedPutUrl(
@@ -95,7 +108,7 @@ export async function generatePresignedUrls(
         file.size,
         PRESIGN_EXPIRY_SECONDS,
       );
-      results.push({ path: file.path, url, expiresIn: PRESIGN_EXPIRY_SECONDS });
+      results.push({ path: file.path, url, expiresIn: PRESIGN_EXPIRY_SECONDS, stagingId });
     }
   }
 

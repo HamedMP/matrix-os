@@ -50,6 +50,16 @@ export class ManifestVersionMismatchError extends Error {
   }
 }
 
+export class ManifestAdvanceConflictError extends Error {
+  constructor(
+    readonly expectedVersion: number,
+    readonly attemptedVersion: number,
+  ) {
+    super("Accepted sync manifest changed during publication");
+    this.name = "ManifestAdvanceConflictError";
+  }
+}
+
 export interface ManifestMeta {
   version: number;
   file_count: number;
@@ -79,6 +89,12 @@ export interface ManifestDb {
     meta: Omit<ManifestMeta, "updated_at">,
     executor?: ManifestDbExecutor,
   ): Promise<void>;
+  advanceManifestMeta(
+    scope: ManifestScope,
+    expectedVersion: number,
+    meta: Omit<ManifestMeta, "updated_at">,
+    executor?: ManifestDbExecutor,
+  ): Promise<boolean>;
   withAdvisoryLock<T>(
     scope: ManifestScope,
     fn: (executor: ManifestDbExecutor) => Promise<T>,
@@ -216,7 +232,6 @@ export async function writeManifest(
   manifest: Manifest,
   newVersion: number,
 ): Promise<void> {
-  const legacyKey = buildManifestKey(scope);
   const { fileCount, totalSize } = liveManifestStats(manifest);
   const body = JSON.stringify({
     ...manifest,
@@ -230,27 +245,29 @@ export async function writeManifest(
   // orphan and cannot change the previously accepted generation.
   const { etag } = await store.r2.putObject(generationKey, body);
 
-  // Write R2 first, then advance the DB metadata. If the later DB write or
-  // transaction commit fails, readManifest() self-heals by taking
-  // Math.max(db.version, manifestVersion) and repairing sync_manifests from
-  // the manifest stored in R2.
-  await store.db.upsertManifestMeta(scope, {
+  const nextMeta = {
     version: newVersion,
     file_count: fileCount,
     total_size: totalSize,
     etag: etag ?? null,
     accepted_manifest_key: generationKey,
-  }, store.dbExecutor);
+  };
+  const expectedVersion = newVersion - 1;
+  const advanced = await store.db.advanceManifestMeta(
+    scope,
+    expectedVersion,
+    nextMeta,
+    store.dbExecutor,
+  );
+  if (!advanced) {
+    throw new ManifestAdvanceConflictError(expectedVersion, newVersion);
+  }
 
-  // Compatibility export for clients that have not negotiated immutable
-  // generations yet. It is never consulted once the DB accepted pointer is
-  // present, so it cannot become an authority after a rollback.
-  await store.r2.putObject(legacyKey, body);
 }
 
 export function applyCommitToManifest(
   manifest: Manifest,
-  files: CommitFile[],
+  files: Array<CommitFile & { objectKey?: string }>,
   peerId: string,
 ): Manifest {
   const updated: Manifest = {
@@ -279,6 +296,7 @@ export function applyCommitToManifest(
         mtime: Date.now(),
         peerId,
         version: currentVersion + 1,
+        ...(file.objectKey ? { objectKey: file.objectKey } : {}),
       };
     }
   }

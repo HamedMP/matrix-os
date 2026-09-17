@@ -101,8 +101,10 @@ vi.mock("@aws-sdk/s3-request-presigner", () => {
 import {
   createR2Client,
   buildFileKey,
+  buildBlobKey,
   buildManifestGenerationKey,
   buildManifestKey,
+  buildStagingKey,
   type R2Client,
 } from "../../../packages/gateway/src/sync/r2-client.js";
 
@@ -328,6 +330,16 @@ describe("key builders", () => {
   it("builds content-addressed immutable manifest generation keys", () => {
     expect(buildManifestGenerationKey("hamed", 7, "a".repeat(64))).toBe(
       `matrixos-sync/hamed/manifests/7-${"a".repeat(64)}.json`,
+    );
+  });
+
+  it("builds scoped staging and immutable blob keys", () => {
+    const stagingId = "11111111-1111-4111-8111-111111111111";
+    expect(buildStagingKey("hamed", stagingId)).toBe(
+      `matrixos-sync/hamed/staging/${stagingId}`,
+    );
+    expect(buildBlobKey("hamed", `sha256:${"b".repeat(64)}`)).toBe(
+      `matrixos-sync/hamed/objects/sha256/${"b".repeat(64)}`,
     );
   });
 

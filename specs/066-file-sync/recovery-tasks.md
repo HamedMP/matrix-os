@@ -10,7 +10,8 @@ implementation and is retained as historical compatibility context.
 - [x] Verify isolated worktree/branch and current `origin/main` baseline.
 - [x] Install the workspace from the frozen lockfile with pinned pnpm 10.33.4.
 - [x] Add deterministic profile migration/restart and Swift IPC reproductions.
-- [ ] Add publication race, mirror divergence, scope isolation, missing manifest, and zero-byte reproductions.
+- [x] Add publication race, scope isolation, missing manifest, and zero-byte reproductions.
+- [ ] Add the startup mirror-divergence reproduction before changing reconciliation.
 - [ ] Record sanitized local capability/operational evidence without customer identifiers.
 
 ## P1 — Profile/config and protocol repair
@@ -19,14 +20,17 @@ implementation and is retained as historical compatibility context.
 - [x] Bind daemon restarts to the configured profile instead of the mutable active CLI profile.
 - [x] Make local status fields coherent and distinguish expired auth from connection state.
 - [x] Repair the native Swift IPC envelope, typed errors, and awaited actions.
-- [ ] Pass legacy/profile/both-files, permissions, stale service state, and restart tests.
+- [x] Pass legacy/profile/both-files, permissions, stale service state, and restart tests.
 
 ## P2 — Scope, auth, and immutable publication
 
-- [ ] Land shared scope/status contracts and owner/runtime isolation.
+- [x] Land shared scope/status contracts and owner/runtime isolation.
 - [ ] Add scoped renewable background sync-device credentials.
-- [ ] Stage uploads, finalize immutable blobs, and CAS accepted manifest generations.
-- [ ] Prove interrupted/concurrent/replay/hash/rollback/revocation failure cases.
+- [x] Stage uploads, finalize immutable blobs, and CAS accepted manifest generations.
+- [x] Prove concurrent same-path, staging replay, hash mismatch, metadata-CAS rollback,
+  missing accepted manifest, and runtime isolation cases with synthetic fixtures.
+- [ ] Prove interrupted multipart, missing committed blob, credential rotation/revocation,
+  and an isolated real-R2 primitive fixture; add grace-period orphan collection.
 
 ## P3 — Shared reconciliation and VPS mirror safety
 

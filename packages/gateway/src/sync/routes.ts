@@ -23,7 +23,7 @@ import {
   PresignValidationError,
 } from "./presign.js";
 import { handleCommit, type CommitDeps } from "./commit.js";
-import { buildFileKey } from "./r2-keys.js";
+import { buildFileKey, buildStagingKey } from "./r2-keys.js";
 import {
   buildSyncScopePrefix,
   resolveSyncScope,
@@ -53,9 +53,11 @@ import {
 import { createSyncRateLimiter } from "./rate-limiter.js";
 import { MissingSyncUserIdentityError } from "../auth.js";
 import { RequestPrincipalMisconfiguredError, isRequestPrincipalError } from "../request-principal.js";
+import { StagedObjectValidationError } from "./blob-publication.js";
 
 const SYNC_BODY_LIMIT = 65536;
 const MULTIPART_COMPLETE_BODY_LIMIT = 1024 * 1024;
+const SYNC_PUBLICATION_PROTOCOL_VERSION = 3;
 
 export interface SyncRouteDeps {
   r2: R2Client;
@@ -65,6 +67,7 @@ export interface SyncRouteDeps {
   getScope?: (c: any) => SyncScope;
   getUserId?: (c: any) => string;
   getPeerId: (c: any) => string;
+  finalizeStagedObject?: CommitDeps["finalizeStagedObject"];
 }
 
 export function createSyncRoutes(deps: SyncRouteDeps): Hono {
@@ -111,6 +114,22 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
     return c.json({ error: "Validation error" }, 400);
   }
 
+  function requiresProtocolUpgrade(body: unknown): boolean {
+    return (
+      typeof body !== "object"
+      || body === null
+      || !("protocolVersion" in body)
+      || (body as { protocolVersion?: unknown }).protocolVersion !== SYNC_PUBLICATION_PROTOCOL_VERSION
+    );
+  }
+
+  function protocolUpgradeRequired(c: Parameters<Hono["request"]>[0] extends never ? never : any) {
+    return c.json({
+      error: "sync_upgrade_required",
+      requiredProtocolVersion: SYNC_PUBLICATION_PROTOCOL_VERSION,
+    }, 426);
+  }
+
   // GET /manifest
   app.get("/manifest", async (c) => {
     const scope = getScope(c);
@@ -144,6 +163,9 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
       return c.json({ error: "Invalid JSON" }, 400);
     }
     const body = json.body;
+    if (requiresProtocolUpgrade(body)) {
+      return protocolUpgradeRequired(c);
+    }
     const parsed = PresignRequestSchema.safeParse(body);
 
     if (!parsed.success) {
@@ -152,7 +174,19 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
 
     const timer = syncPresignDuration.startTimer();
     try {
-      const urls = await generatePresignedUrls({ r2: deps.r2 }, scope, parsed.data.files);
+      let manifestPromise: ReturnType<typeof readManifest> | undefined;
+      const urls = await generatePresignedUrls({
+        r2: deps.r2,
+        resolveDownloadKey: async (path) => {
+          manifestPromise ??= readManifest(store, scope);
+          const current = await manifestPromise;
+          const entry = current.manifest.files[path];
+          if (!entry || entry.deleted) {
+            throw new PresignValidationError("File is not present in the accepted manifest");
+          }
+          return entry.objectKey ?? buildFileKey(scope, path);
+        },
+      }, scope, parsed.data.files);
 
       for (const file of parsed.data.files) {
         syncPresignRequestsTotal.inc({ action: file.action });
@@ -185,13 +219,17 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
     if (!json.ok) {
       return c.json({ error: "Invalid JSON" }, 400);
     }
+    if (requiresProtocolUpgrade(json.body)) {
+      return protocolUpgradeRequired(c);
+    }
     const parsed = CompleteMultipartRequestSchema.safeParse(json.body);
     if (!parsed.success) {
       return validationError(c);
     }
     let objectKey: string;
     try {
-      objectKey = buildFileKey(scope, parsed.data.path);
+      buildFileKey(scope, parsed.data.path);
+      objectKey = buildStagingKey(scope, parsed.data.stagingId);
     } catch {
       return c.json({ error: "Invalid request" }, 400);
     }
@@ -222,13 +260,17 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
     if (!json.ok) {
       return c.json({ error: "Invalid JSON" }, 400);
     }
+    if (requiresProtocolUpgrade(json.body)) {
+      return protocolUpgradeRequired(c);
+    }
     const parsed = AbortMultipartRequestSchema.safeParse(json.body);
     if (!parsed.success) {
       return validationError(c);
     }
     let objectKey: string;
     try {
-      objectKey = buildFileKey(scope, parsed.data.path);
+      buildFileKey(scope, parsed.data.path);
+      objectKey = buildStagingKey(scope, parsed.data.stagingId);
     } catch {
       return c.json({ error: "Invalid request" }, 400);
     }
@@ -257,6 +299,9 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
       return c.json({ error: "Invalid JSON" }, 400);
     }
     const body = json.body;
+    if (requiresProtocolUpgrade(body)) {
+      return protocolUpgradeRequired(c);
+    }
     const parsed = CommitRequestSchema.safeParse(body);
 
     if (!parsed.success) {
@@ -269,6 +314,7 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
         r2: deps.r2,
         db: deps.db,
         broadcast: (uid, sender, msg) => deps.peerRegistry.broadcastChange(uid, sender, msg),
+        ...(deps.finalizeStagedObject ? { finalizeStagedObject: deps.finalizeStagedObject } : {}),
       };
 
       const result = await handleCommit(commitDeps, scope, peerId, parsed.data);
@@ -291,6 +337,9 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
       return c.json(result);
     } catch (err: unknown) {
       timer();
+      if (err instanceof StagedObjectValidationError) {
+        return c.json({ error: "Staged upload validation failed" }, 400);
+      }
       console.error("[sync/commit] Commit failed:", err instanceof Error ? err.message : String(err));
       return c.json({ error: "Commit failed" }, 500);
     }
@@ -320,6 +369,12 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
       totalSize: Number(meta?.total_size ?? 0),
       lastSyncAt: meta?.updated_at?.getTime() ?? 0,
       pendingConflicts: 0,
+      protocolVersion: 3,
+      capabilities: {
+        stagedUploads: true,
+        immutableBlobs: true,
+        immutableManifestGenerations: true,
+      },
     });
   });
 

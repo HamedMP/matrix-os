@@ -30,6 +30,7 @@ const mockDb = {
   getManifestMeta: vi.fn(),
   getAggregateManifestStats: vi.fn(),
   upsertManifestMeta: vi.fn(),
+  advanceManifestMeta: vi.fn().mockResolvedValue(true),
   withAdvisoryLock: vi.fn(),
 };
 
@@ -60,6 +61,9 @@ function createTestApp(overrides?: Partial<SyncRouteDeps>) {
     sharing: mockSharing,
     getUserId: () => "test-user",
     getPeerId: () => "test-peer",
+    finalizeStagedObject: vi.fn(async ({ expectedHash }) => ({
+      objectKey: `matrixos-sync/test-user/objects/sha256/${expectedHash.slice("sha256:".length)}`,
+    })),
     ...overrides,
   };
   const syncApp = createSyncRoutes(deps);
@@ -71,7 +75,31 @@ function createTestApp(overrides?: Partial<SyncRouteDeps>) {
 function jsonRequest(path: string, body?: unknown, method = "POST") {
   const init: RequestInit = { method, headers: { "Content-Type": "application/json" } };
   if (body !== undefined) {
-    init.body = JSON.stringify(body);
+    let payload = body;
+    if (body && typeof body === "object" && (
+      path === "/api/sync/presign"
+      || path === "/api/sync/commit"
+      || path.startsWith("/api/sync/multipart/")
+    )) {
+      payload = { ...body as Record<string, unknown>, protocolVersion: 3 };
+      if (path === "/api/sync/commit" && Array.isArray((payload as { files?: unknown }).files)) {
+        payload = {
+          ...payload as Record<string, unknown>,
+          files: ((payload as { files: Array<Record<string, unknown>> }).files).map((file) => (
+            file.action === "delete"
+              ? file
+              : { stagingId: "11111111-1111-4111-8111-111111111111", ...file }
+          )),
+        };
+      }
+      if (path.startsWith("/api/sync/multipart/")) {
+        payload = {
+          stagingId: "11111111-1111-4111-8111-111111111111",
+          ...payload as Record<string, unknown>,
+        };
+      }
+    }
+    init.body = JSON.stringify(payload);
   }
   return new Request(`http://localhost${path}`, init);
 }
@@ -130,6 +158,26 @@ describe("POST /api/sync/presign", () => {
     vi.clearAllMocks();
     mockR2.getPresignedGetUrl.mockResolvedValue("https://r2.example.com/get");
     mockR2.getPresignedPutUrl.mockResolvedValue("https://r2.example.com/put");
+    mockR2.getObject.mockResolvedValue({
+      body: {
+        text: async () => JSON.stringify({
+          version: 2,
+          files: Object.fromEntries([
+            "readme.md",
+            "download.txt",
+            "notes/studio.md",
+          ].map((path) => [path, {
+            hash: HASH_A,
+            size: 1,
+            mtime: 1,
+            peerId: "peer",
+            version: 1,
+          }])),
+        }),
+      },
+      etag: '"manifest"',
+    });
+    mockDb.getManifestMeta.mockResolvedValue(null);
   });
 
   it("returns presigned URLs for valid files", async () => {
@@ -144,6 +192,24 @@ describe("POST /api/sync/presign", () => {
     expect(json.urls[0].path).toBe("readme.md");
     expect(json.urls[0].url).toBe("https://r2.example.com/get");
     expect(json.urls[0].expiresIn).toBe(900);
+  });
+
+  it("requires the immutable-publication protocol before issuing upload URLs", async () => {
+    const app = createTestApp();
+    const res = await app.request("/api/sync/presign", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        files: [{ path: "legacy.txt", action: "put", hash: HASH_A, size: 1 }],
+      }),
+    });
+
+    expect(res.status).toBe(426);
+    await expect(res.json()).resolves.toEqual({
+      error: "sync_upgrade_required",
+      requiredProtocolVersion: 3,
+    });
+    expect(mockR2.getPresignedPutUrl).not.toHaveBeenCalled();
   });
 
   it("returns 400 for empty files array", async () => {
@@ -218,7 +284,7 @@ describe("POST /api/sync/presign", () => {
 
     expect(res.status).toBe(200);
     expect(mockR2.getPresignedPutUrl).toHaveBeenCalledWith(
-      "matrixos-sync/test-user/files/upload.txt",
+      expect.stringMatching(/^matrixos-sync\/test-user\/staging\/[0-9a-f-]{36}$/),
       0,
       900,
     );
@@ -231,14 +297,14 @@ describe("POST /api/sync/presign", () => {
     // Send 100 requests (at limit)
     for (let i = 0; i < 100; i++) {
       const res = await app.request(jsonRequest("/api/sync/presign", {
-        files: [{ path: `file-${i}.txt`, action: "get" }],
+        files: [{ path: `file-${i}.txt`, action: "put", hash: HASH_A, size: 1 }],
       }));
       expect(res.status).toBe(200);
     }
 
     // 101st should be rate limited
     const res = await app.request(jsonRequest("/api/sync/presign", {
-      files: [{ path: "one-too-many.txt", action: "get" }],
+      files: [{ path: "one-too-many.txt", action: "put", hash: HASH_A, size: 1 }],
     }));
     expect(res.status).toBe(429);
     const json = await res.json();
@@ -279,13 +345,29 @@ describe("POST /api/sync/multipart/complete", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ etag: '"complete-etag"' });
     expect(mockR2.completeMultipartUpload).toHaveBeenCalledWith(
-      "matrixos-sync/test-user/files/videos/large.mov",
+      "matrixos-sync/test-user/staging/11111111-1111-4111-8111-111111111111",
       "upload-123",
       [
         { partNumber: 1, etag: '"etag-1"' },
         { partNumber: 2, etag: '"etag-2"' },
       ],
     );
+  });
+
+  it("requires protocol 3 before completing a legacy live-path upload", async () => {
+    const app = createTestApp();
+    const res = await app.request("/api/sync/multipart/complete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        path: "videos/legacy.mov",
+        uploadId: "upload-legacy",
+        parts: [{ partNumber: 1, etag: '"etag"' }],
+      }),
+    });
+
+    expect(res.status).toBe(426);
+    expect(mockR2.completeMultipartUpload).not.toHaveBeenCalled();
   });
 
   it("rejects invalid complete payloads before calling storage", async () => {
@@ -325,7 +407,9 @@ describe("POST /api/sync/multipart/complete", () => {
       etag: `"${String(index + 1).padStart(5, "0")}-${"e".repeat(490)}"`,
     }));
     const body = JSON.stringify({
+      protocolVersion: 3,
       path: "videos/large.mov",
+      stagingId: "11111111-1111-4111-8111-111111111111",
       uploadId: "upload-123",
       parts,
     });
@@ -342,7 +426,7 @@ describe("POST /api/sync/multipart/complete", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ etag: '"complete-etag"' });
     expect(mockR2.completeMultipartUpload).toHaveBeenCalledWith(
-      "matrixos-sync/test-user/files/videos/large.mov",
+      "matrixos-sync/test-user/staging/11111111-1111-4111-8111-111111111111",
       "upload-123",
       parts,
     );
@@ -388,7 +472,7 @@ describe("POST /api/sync/multipart/abort", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
     expect(mockR2.abortMultipartUpload).toHaveBeenCalledWith(
-      "matrixos-sync/test-user/files/videos/large.mov",
+      "matrixos-sync/test-user/staging/11111111-1111-4111-8111-111111111111",
       "upload-123",
     );
   });
@@ -413,7 +497,7 @@ describe("POST /api/sync/multipart/abort", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
     expect(mockR2.abortMultipartUpload).toHaveBeenCalledWith(
-      "matrixos-sync/test-user/files/videos/large.mov",
+      "matrixos-sync/test-user/staging/11111111-1111-4111-8111-111111111111",
       "upload-123",
     );
   });
@@ -443,6 +527,25 @@ describe("POST /api/sync/commit", () => {
     const json = await res.json();
     expect(json.manifestVersion).toBe(1);
     expect(json.committed).toBe(1);
+  });
+
+  it("rejects legacy commits with an actionable upgrade response", async () => {
+    const app = createTestApp();
+    const res = await app.request("/api/sync/commit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        files: [{ path: "legacy.txt", hash: HASH_A, size: 1 }],
+        expectedVersion: 0,
+      }),
+    });
+
+    expect(res.status).toBe(426);
+    await expect(res.json()).resolves.toEqual({
+      error: "sync_upgrade_required",
+      requiredProtocolVersion: 3,
+    });
+    expect(mockDb.withAdvisoryLock).not.toHaveBeenCalled();
   });
 
   it("returns 409 on version conflict", async () => {
@@ -664,7 +767,7 @@ describe("POST /api/sync/resolve-conflict", () => {
     }));
 
     expect(res.status).toBe(200);
-    expect(mockR2.putObject).toHaveBeenCalledTimes(2);
+    expect(mockR2.putObject).toHaveBeenCalledTimes(1);
     expect(mockR2.deleteObject).toHaveBeenCalledWith(
       "matrixos-sync/test-user/files/readme (conflict - peer1 - 2026-04-14).md",
     );

@@ -92,6 +92,48 @@ export function createManifestDb(kysely: Kysely<SyncDatabase>): ManifestDb {
         .execute();
     },
 
+    async advanceManifestMeta(
+      scopeInput: ManifestScope,
+      expectedVersion: number,
+      meta: Omit<ManifestMeta, "updated_at">,
+      executor?: ManifestDbExecutor,
+    ): Promise<boolean> {
+      const scope = normalizeManifestScope(scopeInput);
+      const db = getExecutor(executor);
+      const values = {
+        version: meta.version,
+        file_count: meta.file_count,
+        total_size: meta.total_size,
+        etag: meta.etag,
+        accepted_manifest_key: meta.accepted_manifest_key ?? null,
+        updated_at: sql<Date>`CURRENT_TIMESTAMP`,
+      };
+      const updated = await db
+        .updateTable("sync_manifests")
+        .set(values)
+        .where("user_id", "=", scope.ownerId)
+        .where("runtime_slot", "=", scope.runtimeSlot)
+        .where("version", "=", expectedVersion)
+        .executeTakeFirst();
+      if (Number(updated.numUpdatedRows) === 1) {
+        return true;
+      }
+      if (expectedVersion !== 0) {
+        return false;
+      }
+
+      const inserted = await db
+        .insertInto("sync_manifests")
+        .values({
+          user_id: scope.ownerId,
+          runtime_slot: scope.runtimeSlot,
+          ...values,
+        })
+        .onConflict((oc) => oc.columns(["user_id", "runtime_slot"]).doNothing())
+        .executeTakeFirst();
+      return Number(inserted.numInsertedOrUpdatedRows ?? 0n) === 1;
+    },
+
     async withAdvisoryLock<T>(
       scopeInput: ManifestScope,
       fn: (executor: ManifestDbExecutor) => Promise<T>,

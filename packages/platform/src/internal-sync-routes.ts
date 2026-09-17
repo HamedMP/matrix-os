@@ -102,7 +102,9 @@ function keyAllowedForScope(key: string, scope: SyncScope): boolean {
   const prefix = buildSyncStoragePrefix(scope);
   return key === buildManifestKey(scope)
     || key.startsWith(`${prefix}/files/`)
-    || key.startsWith(`${prefix}/manifests/`);
+    || key.startsWith(`${prefix}/manifests/`)
+    || key.startsWith(`${prefix}/staging/`)
+    || key.startsWith(`${prefix}/objects/sha256/`);
 }
 
 const SystemStorageKeyInputSchema = z.object({

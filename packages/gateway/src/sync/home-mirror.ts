@@ -15,11 +15,13 @@ import {
 import { resolveWithinPrefix } from "./path-validation.js";
 import {
   buildFileKey,
+  buildStagingKey,
   type R2Client,
 } from "./r2-client.js";
 import type { Manifest, ManifestEntry } from "./types.js";
 import type { PeerRegistry, SyncPeerConnection } from "./ws-events.js";
 import { resolveSyncScope, syncScopeRegistryKey } from "./runtime-scope.js";
+import { finalizeStagedObject } from "./blob-publication.js";
 
 const RECENT_WRITE_CAP = 50_000;
 const DEFAULT_MAX_PUSH_BYTES = 100 * 1024 * 1024;
@@ -368,22 +370,6 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     assertWithinResolvedHomeRoot(await realpath(parentDir));
   }
 
-  async function cleanupUploadedBlobs(
-    keys: Iterable<string>,
-    reason: string,
-  ): Promise<void> {
-    for (const key of keys) {
-      try {
-        await config.r2.deleteObject(key);
-      } catch (err: unknown) {
-        log.error(
-          `${reason}:`,
-          err instanceof Error ? err.message : String(err),
-        );
-      }
-    }
-  }
-
   async function releaseResources(): Promise<void> {
     if (watcher) {
       await watcher.close();
@@ -449,6 +435,16 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
         return;
       }
 
+      const stagingId = randomUUID();
+      await config.r2.putObject(buildStagingKey(scope, stagingId), localFile.body);
+      const { objectKey } = await finalizeStagedObject({
+        r2: config.r2,
+        scope,
+        stagingId,
+        expectedHash: localFile.hash,
+        expectedSize: localFile.size,
+      });
+
       await withManifestLock(async (lockedStore) => {
         const existing = await readManifest(lockedStore, scope);
         const currentEntry = existing.manifest.files[safeRelPath];
@@ -457,27 +453,17 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
           return;
         }
 
-        const key = buildFileKey(scope, safeRelPath);
-        try {
-          await config.r2.putObject(key, localFile.body);
-          const action = currentEntry ? "update" : "add";
-          const next: Manifest = applyCommitToManifest(
-            existing.manifest,
-            [{ path: safeRelPath, hash: localFile.hash, size: localFile.size, action }],
-            config.peerId,
-          );
+        const action = currentEntry ? "update" : "add";
+        const next: Manifest = applyCommitToManifest(
+          existing.manifest,
+          [{ path: safeRelPath, hash: localFile.hash, size: localFile.size, action, objectKey }],
+          config.peerId,
+        );
 
-          const newVersion = existing.manifestVersion + 1;
-          await writeManifest(lockedStore, scope, next, newVersion);
-          broadcastChange({ path: safeRelPath, hash: localFile.hash, size: localFile.size, action }, newVersion);
-          log.info(`pushed ${safeRelPath} (${localFile.size}B)`);
-        } catch (err) {
-          await cleanupUploadedBlobs(
-            [key],
-            `cleanup failed for orphaned upload ${safeRelPath}`,
-          );
-          throw err;
-        }
+        const newVersion = existing.manifestVersion + 1;
+        await writeManifest(lockedStore, scope, next, newVersion);
+        broadcastChange({ path: safeRelPath, hash: localFile.hash, size: localFile.size, action }, newVersion);
+        log.info(`pushed ${safeRelPath} (${localFile.size}B)`);
       });
     });
   }
@@ -500,13 +486,6 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
         const newVersion = existing.manifestVersion + 1;
         await writeManifest(lockedStore, scope, next, newVersion);
 
-        const key = buildFileKey(scope, safeRelPath);
-        await config.r2.deleteObject(key).catch((err: unknown) => {
-          log.error(
-            `delete blob failed for ${safeRelPath}:`,
-            err instanceof Error ? err.message : String(err),
-          );
-        });
         broadcastChange(
           { path: safeRelPath, hash: entry.hash, size: 0, action: "delete" },
           newVersion,
@@ -535,7 +514,12 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
     }
 
-    const key = buildFileKey(scope, safeRelPath);
+    let key = entry.objectKey;
+    if (!key) {
+      const current = await readManifest(store, scope);
+      key = current.manifest.files[safeRelPath]?.objectKey
+        ?? buildFileKey(scope, safeRelPath);
+    }
     const obj = await config.r2.getObject(key);
     if (!obj.body) return;
 
@@ -714,6 +698,19 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
       }
 
       const chunkPushed = await enqueue(async () => {
+        const finalizedFiles: Array<(typeof localFiles)[number] & { objectKey: string }> = [];
+        for (const local of localFiles) {
+          const stagingId = randomUUID();
+          await config.r2.putObject(buildStagingKey(scope, stagingId), local.file.body);
+          const finalized = await finalizeStagedObject({
+            r2: config.r2,
+            scope,
+            stagingId,
+            expectedHash: local.file.hash,
+            expectedSize: local.file.size,
+          });
+          finalizedFiles.push({ ...local, objectKey: finalized.objectKey });
+        }
         return withManifestLock(async (lockedStore) => {
           const existing = await readManifest(lockedStore, scope);
           let nextManifest = existing.manifest;
@@ -723,21 +720,12 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
             size: number;
             action: "add" | "update";
           }> = [];
-          const uploadedKeys: string[] = [];
-
-          try {
-            // Blob keys are per-user/per-path, not content-addressed. Uploading
-            // outside the manifest lock would let a concurrent write to the same
-            // path race with this chunk and overwrite newer content in R2.
-            for (const { path: safeRelPath, file: localFile } of localFiles) {
+          for (const { path: safeRelPath, file: localFile, objectKey } of finalizedFiles) {
               const currentEntry = nextManifest.files[safeRelPath];
               if (currentEntry?.hash === localFile.hash && !currentEntry.deleted) {
                 continue;
               }
 
-              const key = buildFileKey(scope, safeRelPath);
-              await config.r2.putObject(key, localFile.body);
-              uploadedKeys.push(key);
               const action = currentEntry ? "update" as const : "add" as const;
               nextManifest = applyCommitToManifest(
                 nextManifest,
@@ -746,6 +734,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
                   hash: localFile.hash,
                   size: localFile.size,
                   action,
+                  objectKey,
                 }],
                 config.peerId,
               );
@@ -756,23 +745,16 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
                 size: localFile.size,
                 action,
               });
-            }
-
-            if (changedFiles.length === 0) {
-              return 0;
-            }
-
-            const newVersion = existing.manifestVersion + 1;
-            await writeManifest(lockedStore, scope, nextManifest, newVersion);
-            broadcastChanges(changedFiles, newVersion);
-            return changedFiles.length;
-          } catch (err) {
-            await cleanupUploadedBlobs(
-              uploadedKeys,
-              "cleanup failed for orphaned startup upload",
-            );
-            throw err;
           }
+
+          if (changedFiles.length === 0) {
+            return 0;
+          }
+
+          const newVersion = existing.manifestVersion + 1;
+          await writeManifest(lockedStore, scope, nextManifest, newVersion);
+          broadcastChanges(changedFiles, newVersion);
+          return changedFiles.length;
         });
       });
 

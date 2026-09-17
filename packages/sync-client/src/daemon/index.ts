@@ -1281,7 +1281,12 @@ export async function startDaemon(): Promise<void> {
               gatewayClient,
             );
             const result = await commitFiles(gatewayClient, [
-              { path: remotePath, hash: event.hash, size: event.size },
+              {
+                path: remotePath,
+                hash: event.hash,
+                size: event.size,
+                stagingId: urls[0].stagingId,
+              },
             ], syncState.manifestVersion);
             syncState.files[remotePath]!.lastSyncedHash = event.hash;
             syncState.manifestVersion = result.manifestVersion;

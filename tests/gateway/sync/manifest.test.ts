@@ -33,6 +33,7 @@ const mockR2 = {
 const mockDb = {
   getManifestMeta: vi.fn(),
   upsertManifestMeta: vi.fn(),
+  advanceManifestMeta: vi.fn(),
   withAdvisoryLock: vi.fn(),
 };
 
@@ -44,6 +45,7 @@ import {
   AcceptedManifestMissingError,
   ManifestVersionMismatchError,
   ManifestTooLargeError,
+  ManifestAdvanceConflictError,
   MANIFEST_JSON_MAX_BYTES,
   type ManifestStore,
 } from "../../../packages/gateway/src/sync/manifest.js";
@@ -148,21 +150,23 @@ describe("writeManifest", () => {
   it("writes manifest to R2 and updates Postgres metadata", async () => {
     const manifest = makeManifest({ "file.txt": { hash: HASH_A, size: 200 } });
     mockR2.putObject.mockResolvedValue({ etag: '"new-etag"' });
-    mockDb.upsertManifestMeta.mockResolvedValue(undefined);
+    mockDb.advanceManifestMeta.mockResolvedValue(true);
 
     await writeManifest(store, "user1", manifest, 5);
 
-    expect(mockR2.putObject).toHaveBeenCalledTimes(2);
+    expect(mockR2.putObject).toHaveBeenCalledTimes(1);
     const [generationKey, manifestBody] = mockR2.putObject.mock.calls[0]!;
     expect(generationKey).toMatch(
       /^matrixos-sync\/user1\/manifests\/5-[a-f0-9]{64}\.json$/,
     );
     expect(JSON.parse(String(manifestBody))).toMatchObject({ manifestVersion: 5 });
-    expect(mockR2.putObject.mock.calls[1]?.[0]).toBe(
+    expect(mockR2.putObject).not.toHaveBeenCalledWith(
       "matrixos-sync/user1/manifest.json",
+      expect.anything(),
     );
-    expect(mockDb.upsertManifestMeta).toHaveBeenCalledWith(
+    expect(mockDb.advanceManifestMeta).toHaveBeenCalledWith(
       "user1",
+      4,
       expect.objectContaining({
         version: 5,
         file_count: 1,
@@ -173,8 +177,20 @@ describe("writeManifest", () => {
       undefined,
     );
     expect(mockR2.putObject.mock.invocationCallOrder[0]).toBeLessThan(
-      mockDb.upsertManifestMeta.mock.invocationCallOrder[0],
+      mockDb.advanceManifestMeta.mock.invocationCallOrder[0],
     );
+  });
+
+  it("leaves a reclaimable generation orphan when accepted-pointer CAS loses", async () => {
+    const manifest = makeManifest({ "file.txt": { hash: HASH_A, size: 200 } });
+    mockR2.putObject.mockResolvedValue({ etag: '"new-etag"' });
+    mockDb.advanceManifestMeta.mockResolvedValue(false);
+
+    await expect(writeManifest(store, "user1", manifest, 5)).rejects.toThrow(
+      ManifestAdvanceConflictError,
+    );
+
+    expect(mockR2.putObject).toHaveBeenCalledTimes(1);
   });
 
   it("computes correct file_count excluding tombstones", async () => {
@@ -186,12 +202,13 @@ describe("writeManifest", () => {
     manifest.files["dead.txt"]!.deletedAt = Date.now();
 
     mockR2.putObject.mockResolvedValue({ etag: '"e"' });
-    mockDb.upsertManifestMeta.mockResolvedValue(undefined);
+    mockDb.advanceManifestMeta.mockResolvedValue(true);
 
     await writeManifest(store, "user1", manifest, 1);
 
-    expect(mockDb.upsertManifestMeta).toHaveBeenCalledWith(
+    expect(mockDb.advanceManifestMeta).toHaveBeenCalledWith(
       "user1",
+      0,
       expect.objectContaining({ file_count: 1, total_size: 100n }),
       undefined,
     );
