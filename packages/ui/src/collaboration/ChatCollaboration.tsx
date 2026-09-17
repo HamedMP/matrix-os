@@ -521,7 +521,8 @@ function useSharedChatController({ api, actorId, runtimeId, scopeId, storage }: 
   useEffect(() => {
     if (!state.scope) return;
     const key = collaborationDraftKey({ actorId, runtimeId, scopeId, chatId: state.scope.resourceId });
-    dispatch({ type: "draft_changed", draft: draftStore.load(key) });
+    const mode = draftStore.loadSelectedMode(key);
+    dispatch({ type: "draft_changed", draft: draftStore.load(collaborationDraftModeKey(key, mode), mode) });
   }, [actorId, draftStore, runtimeId, state.scope, scopeId]);
   useEffect(() => api.subscribe?.(
     scopeId,
@@ -535,6 +536,7 @@ function useSharedChatController({ api, actorId, runtimeId, scopeId, storage }: 
     if (state.scope) draftStore.save(collaborationDraftModeKey(draftKey, mode), next);
   };
   const changeDraftMode = (mode: CollaborationDraft["mode"]) => {
+    draftStore.saveSelectedMode(draftKey, mode);
     dispatch({ type: "draft_changed", draft: draftStore.load(collaborationDraftModeKey(draftKey, mode), mode) });
   };
   const send = async () => {

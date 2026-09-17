@@ -61,9 +61,11 @@ describe("shared Chat client state", () => {
 
     drafts.save(base, { text: "for people", mode: "discussion" });
     drafts.save(aiKey, { text: "for AI", mode: "ai" });
+    drafts.saveSelectedMode(base, "ai");
 
     expect(drafts.load(base, "discussion")).toEqual({ text: "for people", mode: "discussion" });
     expect(drafts.load(aiKey, "ai")).toEqual({ text: "for AI", mode: "ai" });
+    expect(drafts.loadSelectedMode(base)).toBe("ai");
   });
 
   it("caps retained draft records and rejects oversized draft content", () => {

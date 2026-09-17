@@ -145,11 +145,17 @@ test("shared Chat stays inside Web Desktop and Web Canvas", async ({ page }) => 
   await expect(page.getByRole("button", { name: "Discussion" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Ask AI" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Manage access" })).toBeVisible();
-  await page.screenshot({ path: "../output/playwright/shared-chat/web-desktop.png", fullPage: true });
+  await page.screenshot({ path: "../output/playwright/shared-chat/web-desktop-discussion.png", fullPage: true });
+
+  await page.getByRole("button", { name: "Ask AI" }).click();
+  await expect(page.getByRole("region", { name: "Shared AI queue" })).toBeVisible();
+  await expect(page.getByTitle("Turn our decisions into a final checklist.")).toBeVisible();
+  await page.screenshot({ path: "../output/playwright/shared-chat/web-desktop-ai.png", fullPage: true });
 
   await page.keyboard.press("Meta+k");
   await page.keyboard.type("Mode: Canvas");
   await page.keyboard.press("Enter");
   await expect(page.getByRole("heading", { name: "Launch plan" })).toBeVisible();
-  await page.screenshot({ path: "../output/playwright/shared-chat/web-canvas.png", fullPage: true });
+  await expect(page.getByRole("region", { name: "Shared AI queue" })).toBeVisible();
+  await page.screenshot({ path: "../output/playwright/shared-chat/web-canvas-ai.png", fullPage: true });
 });

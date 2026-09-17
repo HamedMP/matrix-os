@@ -210,5 +210,8 @@ describe("shared Chat two-account lifecycle", () => {
     );
     expect(await within(reconnectedEditor.container).findByText("Ada joined the discussion")).toBeVisible();
     expect(within(reconnectedEditor.container).getByText("Shared answer for everyone")).toBeVisible();
+    await waitFor(() => expect(
+      within(reconnectedEditor.container).getByRole("button", { name: "Ask AI" }),
+    ).toHaveAttribute("aria-pressed", "true"));
   });
 });

@@ -247,7 +247,7 @@ suite("Electron shared Chat presentation", () => {
     await app.close();
     app = await launch();
     page = await app.firstWindow();
-    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.setViewportSize({ width: 1440, height: 900 });
   }, 60_000);
 
   afterAll(async () => {
@@ -261,8 +261,7 @@ suite("Electron shared Chat presentation", () => {
   });
 
   it("opens Shared with me inside the canonical Chat workspace", async () => {
-    const gettingStarted = page.getByRole("button", { name: /Getting started —/ });
-    if (await gettingStarted.isVisible()) await gettingStarted.click();
+    await page.keyboard.press("Escape");
     await page.getByRole("button", { name: "Open account menu" }).first().click();
     await page.getByText("Shared with me", { exact: true }).click();
     await page.getByRole("button", { name: "Open Chat" }).click();
@@ -272,6 +271,14 @@ suite("Electron shared Chat presentation", () => {
     expect(await page.locator('[data-slot="shared-chat-panel"]').count()).toBe(1);
     expect(await page.getByRole("button", { name: "Discussion" }).isVisible()).toBe(true);
     expect(await page.getByRole("button", { name: "Ask AI" }).isVisible()).toBe(true);
+    expect(await page.getByRole("button", { name: "Manage access" }).isVisible()).toBe(true);
+    await page.getByRole("button", { name: "Ask AI" }).click();
+    await page.getByRole("region", { name: "Shared AI queue" }).waitFor();
+    const gettingStarted = page.getByRole("heading", { name: "Getting started" });
+    if (await gettingStarted.isVisible()) {
+      await page.getByRole("button", { name: /Getting started —/ }).click();
+      await gettingStarted.waitFor({ state: "hidden" });
+    }
     await page.screenshot({ path: join(output, "electron-desktop.png") });
   }, 40_000);
 });
