@@ -890,6 +890,9 @@ async function handle(c: Context, operation: () => Promise<Response>): Promise<R
     return await operation();
   } catch (error: unknown) {
     if (error instanceof CollaborationActorProofError) {
+      if (error.code === "rate_limited") {
+        return c.json({ error: "Try again later", code: "rate_limited" }, 429);
+      }
       return c.json({ error: "Collaboration authentication failed", code: "unauthorized" }, 401);
     }
     if (error instanceof z.ZodError || error instanceof SyntaxError) {

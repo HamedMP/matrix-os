@@ -171,16 +171,6 @@ const acceptanceSignatureRateLimiter = createRateLimiter({
   lockoutMs: 30_000,
 });
 
-// Collaboration requests are authenticated by short-lived actor proofs at
-// their route boundary, not by the owner's personal gateway bearer. Keep that
-// verification independently bounded so invalid proofs cannot consume
-// unbounded HMAC work or interfere with terminal-acceptance traffic.
-const collaborationProofRateLimiter = createRateLimiter({
-  maxAttempts: 120,
-  windowMs: 60_000,
-  lockoutMs: 30_000,
-});
-
 function getClientIp(c: { req: { header: (name: string) => string | undefined } }): string {
   const forwardedFor = c.req.header("x-forwarded-for")?.split(",")[0]?.trim();
   return (
@@ -252,14 +242,11 @@ export function authMiddleware(
     // Platform-proxied collaboration routes carry a scoped, short-lived actor
     // proof (and, where required, a signed rollout policy). Requiring the
     // owner's MATRIX_AUTH_TOKEN here would reject every collaborator before
-    // those route-specific verifiers can run. Customer-VPS nginx overwrites
-    // X-Real-IP, so direct callers cannot rotate this limiter key themselves.
+    // those route-specific verifiers can run. Their bounded proof decoder and
+    // verifier rate-limit each authenticated actor independently; applying a
+    // transport-address quota here would let one collaborator block the rest.
     if (normalizedPath.startsWith(COLLABORATION_HTTP_PREFIX)
       || COLLABORATION_WEBSOCKET_PATH.test(normalizedPath)) {
-      const ip = getTrustedProxyClientIp(c);
-      if (!collaborationProofRateLimiter.check(ip)) {
-        return tooManyRequests(c);
-      }
       return nextWithReady(c, next);
     }
 

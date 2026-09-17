@@ -293,26 +293,19 @@ describe("T133: Auth token middleware", () => {
     expect(unknown?.status).toBe(401);
   });
 
-  it("rate-limits collaboration proof verification independently", async () => {
+  it("does not share a collaboration quota across a platform transport peer", async () => {
     const mw = authMiddleware("secret-token");
     const testIp = "10.66.2.1";
     const path = "/api/collaboration/runtimes/vps:10000000-0000-4000-8000-000000000001/scopes/preflight";
-    for (let i = 0; i < 120; i++) {
+    for (let i = 0; i < 121; i++) {
       let nextCalled = false;
-      await mw(
+      const result = await mw(
         mockContext(path, undefined, undefined, undefined, { "x-real-ip": testIp }),
         async () => { nextCalled = true; },
       );
       expect(nextCalled).toBe(true);
+      expect(result?.status).not.toBe(429);
     }
-
-    let nextCalled = false;
-    const limited = await mw(
-      mockContext(path, undefined, undefined, undefined, { "x-real-ip": testIp }),
-      async () => { nextCalled = true; },
-    );
-    expect(nextCalled).toBe(false);
-    expect(limited?.status).toBe(429);
   });
 
   it("cannot bypass signed terminal acceptance limits by rotating CF-Connecting-IP", async () => {
