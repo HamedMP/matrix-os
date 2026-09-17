@@ -3,6 +3,7 @@ import {
   isStandaloneRuntime,
   shouldRunDesktopActivation,
   shouldRunDesktopEnrollment,
+  shouldRunDesktopReauthorization,
   shouldRunDesktopRevocation,
   shouldRunStandaloneDaemon,
 } from "../../src/cli/standalone-runtime.js";
@@ -114,6 +115,21 @@ describe("shouldRunDesktopEnrollment", () => {
     )).toBe(true);
     expect(shouldRunDesktopEnrollment(
       ["__desktop-enroll"],
+      {},
+      { bun: "1.3.13" },
+    )).toBe(false);
+  });
+});
+
+describe("shouldRunDesktopReauthorization", () => {
+  it("keeps the credential renewal entrypoint unavailable to source runtimes", () => {
+    expect(shouldRunDesktopReauthorization(
+      ["__desktop-reauthorize"],
+      { MATRIX_CLI_STANDALONE: "1" },
+      { bun: "1.3.13" },
+    )).toBe(true);
+    expect(shouldRunDesktopReauthorization(
+      ["__desktop-reauthorize"],
       {},
       { bun: "1.3.13" },
     )).toBe(false);

@@ -189,6 +189,7 @@ export const INVOKE_CHANNELS = {
   "auth:sign-out": { request: Empty, response: Ok },
   "auth:session-expired": { request: Empty, response: Ok },
   "sync:get-snapshot": { request: Empty, response: DesktopSyncSnapshotSchema },
+  "sync:reauthorize": { request: Empty, response: DesktopSyncSnapshotSchema },
   "sync:choose-folder": {
     request: z.object({ suggestedName: z.string().trim().min(1).max(120).optional() }).strict(),
     response: DesktopSyncFolderSelectionSchema.nullable(),

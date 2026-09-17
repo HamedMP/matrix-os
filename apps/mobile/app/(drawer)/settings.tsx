@@ -3,6 +3,7 @@ import { useAuth } from "@clerk/clerk-expo";
 import { useRouter } from "expo-router";
 import ComputerSettingsIcon from "@hugeicons/core-free-icons/ComputerSettingsIcon";
 import CreditCardIcon from "@hugeicons/core-free-icons/CreditCardIcon";
+import DatabaseBackupIcon from "@hugeicons/core-free-icons/DatabaseBackupIcon";
 import HelpCircleIcon from "@hugeicons/core-free-icons/HelpCircleIcon";
 import Logout01Icon from "@hugeicons/core-free-icons/Logout01Icon";
 import Settings02Icon from "@hugeicons/core-free-icons/Settings02Icon";
@@ -60,6 +61,13 @@ export default function SettingsScreen() {
           detail="Theme, security, and notifications"
           icon={Settings02Icon}
           onPress={() => router.push("/settings-detail/app-settings" as never)}
+        />
+        <SettingsRow
+          card
+          title="Sync & backup"
+          detail="Remote sync and recovery health"
+          icon={DatabaseBackupIcon}
+          onPress={() => router.push("/settings-detail/sync-backup" as never)}
         />
         <SettingsRow
           card

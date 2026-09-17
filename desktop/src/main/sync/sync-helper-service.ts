@@ -45,6 +45,7 @@ const DaemonStatusSchema = z.object({
     fileCount: z.int().nonnegative(),
     conflictCount: z.int().nonnegative(),
     lastSuccessfulReconcileAt: z.number().nonnegative().nullable(),
+    lastIssue: z.enum(["permission", "disk_full", "oversized", "network", "unknown"]).nullable().optional(),
   }).strip()).max(32).optional(),
 }).strip();
 
@@ -74,6 +75,7 @@ export interface SyncHelperServiceDependencies {
 
 export interface SyncHelperService {
   getSnapshot(): Promise<DesktopSyncSnapshot>;
+  reauthorize(): Promise<DesktopSyncSnapshot>;
   chooseFolder(suggestedName?: string): Promise<{ selectionId: string; displayPath: string } | null>;
   enable(request: z.infer<typeof DesktopSyncMappingSetupRequestSchema>): Promise<DesktopSyncSnapshot>;
   addMapping(request: z.infer<typeof DesktopSyncMappingSetupRequestSchema>): Promise<DesktopSyncSnapshot>;
@@ -193,14 +195,33 @@ export function createSyncHelperService(
     }
     const authStatus = deps.auth.getStatus();
     if (!daemon.running) {
+      let config: z.infer<typeof SyncMappingConfigSchema> | null = null;
+      try {
+        const list = await runCli(["sync", "list", "--json", "--profile", "desktop"]);
+        config = SyncMappingConfigSchema.parse(list.config);
+      } catch {
+        // A missing profile is distinct from an unavailable helper. Preserve
+        // the stopped state while enrollment remains the recovery action.
+      }
+      const mappings = (config?.mappings ?? []).map((mapping) => ({
+        ...mapping,
+        state: "offline" as const,
+        fileCount: 0,
+        conflictCount: 0,
+        lastSuccessfulReconcileAt: null,
+      }));
       return DesktopSyncSnapshotSchema.parse({
         ...emptySnapshot("available", backupResult.backup, backupResult.state),
         helperVersion: installed.cliVersion,
         service: "stopped",
-        runtimeSlot: authStatus.runtimeSlot,
+        profile: config?.profile ?? null,
+        runtimeSlot: config?.runtimeSlot ?? authStatus.runtimeSlot,
+        enabled: config?.enabled ?? false,
+        paused: config ? !config.enabled : false,
         auth: authStatus.signedIn ? "unknown" : "signed_out",
         connection: "offline",
         status: "offline",
+        mappings,
       });
     }
 
@@ -217,6 +238,7 @@ export function createSyncHelperService(
         fileCount: status?.fileCount ?? 0,
         conflictCount: status?.conflictCount ?? 0,
         lastSuccessfulReconcileAt: status?.lastSuccessfulReconcileAt ?? null,
+        lastIssue: status?.lastIssue ?? null,
       };
     });
     return DesktopSyncSnapshotSchema.parse({
@@ -247,6 +269,25 @@ export function createSyncHelperService(
 
   return {
     getSnapshot,
+
+    async reauthorize() {
+      const token = deps.auth.getToken();
+      const status = deps.auth.getStatus();
+      if (!token || !status.signedIn) throw new Error("sync_sign_in_required");
+      await deps.run(await helper(), ["__desktop-reauthorize"], JSON.stringify({
+        schemaVersion: 1,
+        profile: "desktop",
+        platformUrl: status.platformHost,
+        desktopAccessToken: token,
+        deviceName: (deps.deviceName ?? hostname)(),
+        expectedIdentity: {
+          userId: status.userId,
+          handle: status.handle,
+          runtimeSlot: status.runtimeSlot,
+        },
+      }));
+      return getSnapshot();
+    },
 
     async chooseFolder(suggestedName) {
       const selected = await deps.chooseDirectory(suggestedName);
@@ -294,7 +335,10 @@ export function createSyncHelperService(
     async addMapping(rawRequest) {
       const request = DesktopSyncMappingSetupRequestSchema.parse(rawRequest);
       const localRoot = consumeSelection(request.selectionId);
-      const label = (request.label ?? request.remotePrefix) || basename(localRoot) || "Synced folder";
+      const label = request.label ?? (
+        (request.remotePrefix ? basename(request.remotePrefix) : basename(localRoot))
+        || "Synced folder"
+      );
       return mutate([
         "sync", "add",
         "--path", localRoot,

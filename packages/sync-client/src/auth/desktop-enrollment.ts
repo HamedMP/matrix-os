@@ -12,6 +12,7 @@ import {
 } from "@matrix-os/contracts";
 import { enrollSyncDeviceAuth, revokeSyncDeviceAuth } from "./sync-device.js";
 import {
+  loadProfileAuth,
   saveProfileAuth,
   saveProfileAuthToMacKeychain,
   type AuthData,
@@ -45,19 +46,12 @@ const TrustedSyncOriginSchema = z.url().refine((value) => {
     || (url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname));
 }, "Sync endpoints must use HTTPS (or localhost HTTP for development)");
 
-export const DesktopEnrollmentInputSchema = z.object({
+const DesktopCredentialInputSchema = z.object({
   schemaVersion: z.literal(1),
   profile: ProfileNameSchema,
   platformUrl: TrustedSyncOriginSchema,
-  gatewayUrl: TrustedSyncOriginSchema,
   desktopAccessToken: z.string().min(1).max(16_384),
   deviceName: z.string().trim().min(1).max(120),
-  localRoot: z.string().min(1).max(4096).refine(isAbsolute, "Local root must be absolute"),
-  label: z.string().trim().min(1).max(120).optional(),
-  remotePrefix: SyncRemotePrefixSchema,
-  direction: SyncDirectionSchema,
-  propagateDeletes: z.boolean().default(false),
-  excludes: z.array(z.string().min(1).max(1024)).max(256).default([]),
   expectedIdentity: z.object({
     userId: SyncOwnerIdSchema,
     handle: z.string().min(1).max(128),
@@ -65,7 +59,20 @@ export const DesktopEnrollmentInputSchema = z.object({
   }).strict(),
 }).strict();
 
+export const DesktopReauthorizationInputSchema = DesktopCredentialInputSchema;
+
+export const DesktopEnrollmentInputSchema = DesktopCredentialInputSchema.extend({
+  gatewayUrl: TrustedSyncOriginSchema,
+  localRoot: z.string().min(1).max(4096).refine(isAbsolute, "Local root must be absolute"),
+  label: z.string().trim().min(1).max(120).optional(),
+  remotePrefix: SyncRemotePrefixSchema,
+  direction: SyncDirectionSchema,
+  propagateDeletes: z.boolean().default(false),
+  excludes: z.array(z.string().min(1).max(1024)).max(256).default([]),
+}).strict();
+
 export type DesktopEnrollmentInput = z.infer<typeof DesktopEnrollmentInputSchema>;
+export type DesktopReauthorizationInput = z.infer<typeof DesktopReauthorizationInputSchema>;
 
 export interface DesktopEnrollmentDependencies {
   enroll: typeof enrollSyncDeviceAuth;
@@ -86,9 +93,18 @@ export interface DesktopEnrollmentDependencies {
   randomId?: () => string;
 }
 
-export async function readDesktopEnrollmentInput(
+export interface DesktopReauthorizationDependencies {
+  enroll: typeof enrollSyncDeviceAuth;
+  revoke?: typeof revokeSyncDeviceAuth;
+  loadCredential: (profile: string) => Promise<AuthData | null>;
+  saveCredential: (profile: string, credential: AuthData) => Promise<void>;
+  installAndStart: () => Promise<void>;
+}
+
+async function readDesktopInput<T>(
   stream: AsyncIterable<Uint8Array | string>,
-): Promise<DesktopEnrollmentInput> {
+  schema: z.ZodType<T>,
+): Promise<T> {
   const chunks: Buffer[] = [];
   let total = 0;
   for await (const chunk of stream) {
@@ -100,11 +116,23 @@ export async function readDesktopEnrollmentInput(
     chunks.push(bytes);
   }
   try {
-    return DesktopEnrollmentInputSchema.parse(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+    return schema.parse(JSON.parse(Buffer.concat(chunks).toString("utf8")));
   } catch (err: unknown) {
     if (err instanceof Error && err.message === "desktop_enrollment_input_too_large") throw err;
     throw new Error("desktop_enrollment_input_invalid");
   }
+}
+
+export async function readDesktopEnrollmentInput(
+  stream: AsyncIterable<Uint8Array | string>,
+): Promise<DesktopEnrollmentInput> {
+  return readDesktopInput(stream, DesktopEnrollmentInputSchema);
+}
+
+export function readDesktopReauthorizationInput(
+  stream: AsyncIterable<Uint8Array | string>,
+): Promise<DesktopReauthorizationInput> {
+  return readDesktopInput(stream, DesktopReauthorizationInputSchema);
 }
 
 function buildMappingConfig(
@@ -230,6 +258,34 @@ export async function performDesktopEnrollment(
   };
 }
 
+export async function performDesktopReauthorization(
+  rawInput: DesktopReauthorizationInput,
+  deps: DesktopReauthorizationDependencies,
+): Promise<{ ok: true; profile: string }> {
+  const input = DesktopReauthorizationInputSchema.parse(rawInput);
+  const previousCredential = await deps.loadCredential(input.profile);
+  const credential = await deps.enroll({
+    platformUrl: input.platformUrl,
+    desktopAccessToken: input.desktopAccessToken,
+    deviceName: input.deviceName,
+    expected: input.expectedIdentity,
+  });
+  try {
+    await deps.saveCredential(input.profile, credential);
+  } catch (err: unknown) {
+    await deps.revoke?.({ platformUrl: input.platformUrl, auth: credential }).catch(() => undefined);
+    throw err;
+  }
+  if (previousCredential) {
+    await deps.revoke?.({
+      platformUrl: input.platformUrl,
+      auth: previousCredential,
+    }).catch(() => undefined);
+  }
+  await deps.installAndStart();
+  return { ok: true, profile: input.profile };
+}
+
 export async function runDesktopEnrollmentFromStdin(): Promise<void> {
   const input = await readDesktopEnrollmentInput(process.stdin);
   const configDir = process.env.MATRIXOS_CONFIG_DIR ?? getConfigDir();
@@ -271,6 +327,25 @@ export async function runDesktopEnrollmentFromStdin(): Promise<void> {
       configDir,
       ...value,
     }),
+    installAndStart: async () => {
+      await installService(createStandaloneDaemonServiceCommand());
+      await startService();
+    },
+  });
+  process.stdout.write(`${JSON.stringify(result)}\n`);
+}
+
+export async function runDesktopReauthorizationFromStdin(): Promise<void> {
+  const input = await readDesktopReauthorizationInput(process.stdin);
+  const configDir = process.env.MATRIXOS_CONFIG_DIR ?? getConfigDir();
+  const saveCredential = hostPlatform() === "darwin"
+    ? (profile: string, credential: AuthData) => saveProfileAuthToMacKeychain(profile, credential, configDir)
+    : (profile: string, credential: AuthData) => saveProfileAuth(profile, credential, configDir);
+  const result = await performDesktopReauthorization(input, {
+    enroll: enrollSyncDeviceAuth,
+    revoke: revokeSyncDeviceAuth,
+    loadCredential: (profile) => loadProfileAuth(profile, configDir),
+    saveCredential,
     installAndStart: async () => {
       await installService(createStandaloneDaemonServiceCommand());
       await startService();

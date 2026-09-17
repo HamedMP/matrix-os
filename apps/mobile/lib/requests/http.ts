@@ -11,6 +11,7 @@ interface AuthenticatedJsonRequest<T> {
   method?: string;
   headers?: Record<string, string>;
   body?: string;
+  maxResponseBytes?: number;
 }
 
 interface AuthenticatedRequest {
@@ -47,11 +48,26 @@ export async function fetchAuthenticatedJson<T>({
   method,
   headers,
   body,
+  maxResponseBytes,
 }: AuthenticatedJsonRequest<T>): Promise<T> {
   return fetchAuthenticatedResponse(
     { url, token, errorMessage, timeoutMs, method, headers, body },
-    async (response) => schema.parse(await response.json()),
+    async (response) => schema.parse(maxResponseBytes === undefined
+      ? await response.json()
+      : await readBoundedJson(response, maxResponseBytes)),
   );
+}
+
+async function readBoundedJson(response: Response, maxBytes: number): Promise<unknown> {
+  const declaredLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+    throw new Error("Response exceeded its size limit");
+  }
+  const text = await response.text();
+  if (new TextEncoder().encode(text).byteLength > maxBytes) {
+    throw new Error("Response exceeded its size limit");
+  }
+  return JSON.parse(text);
 }
 
 export async function fetchAuthenticatedResponse<T>(

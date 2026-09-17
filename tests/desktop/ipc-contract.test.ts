@@ -14,6 +14,7 @@ describe("IPC contract", () => {
       "auth:status",
       "auth:sign-out",
       "sync:get-snapshot",
+      "sync:reauthorize",
       "sync:choose-folder",
       "sync:enable",
       "sync:add-mapping",
@@ -87,6 +88,8 @@ describe("IPC contract", () => {
     };
     expect(enable.request.safeParse(request).success).toBe(true);
     expect(enable.request.safeParse({ ...request, accessToken: "secret" }).success).toBe(false);
+    expect(INVOKE_CHANNELS["sync:reauthorize"].request.safeParse({}).success).toBe(true);
+    expect(INVOKE_CHANNELS["sync:reauthorize"].request.safeParse({ accessToken: "secret" }).success).toBe(false);
     expect(INVOKE_CHANNELS["sync:choose-folder"].response.safeParse({
       selectionId: "11111111-1111-4111-8111-111111111111",
       displayPath: "/Users/alice/Matrix",

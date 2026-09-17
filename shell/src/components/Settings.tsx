@@ -16,6 +16,7 @@ import {
   CreditCardIcon,
   DownloadIcon,
   CheckCircle2Icon,
+  HardDriveIcon,
 } from "@/lib/hugeicons";
 import { AppearanceSection } from "./settings/sections/AppearanceSection";
 import { AgentSection } from "./settings/sections/AgentSection";
@@ -28,6 +29,7 @@ import { SecuritySection } from "./settings/sections/SecuritySection";
 import { PluginsSection } from "./settings/sections/PluginsSection";
 import { SystemSection } from "./settings/sections/SystemSection";
 import { BillingSection } from "./settings/sections/BillingSection";
+import { SyncBackupSection } from "./settings/sections/SyncBackupSection";
 import type { ComputerSetupSelection } from "./settings/sections/BillingPanel";
 import { useMatrixBillingAccess } from "@/hooks/useMatrixBillingAccess";
 import { UserButton as AccountButton } from "./UserButton";
@@ -50,6 +52,7 @@ const sections = [
   { id: "appearance", label: "Appearance", icon: PaletteIcon },
   { id: "agents-providers", label: "Agents & providers", icon: SparklesIcon },
   { id: "identity-personality", label: "Identity & personality", icon: UserIcon },
+  { id: "sync-backup", label: "Sync & backup", icon: HardDriveIcon },
   { id: "channels", label: "Channels", icon: MessageSquareIcon },
   { id: "integrations", label: "Services", icon: CableIcon },
   { id: "skills", label: "Skills", icon: SparklesIcon },
@@ -408,6 +411,7 @@ function SettingsFrame({
                 <AgentSection onOpenTerminal={onOpenProviderTerminalSession} />
               )}
               {activeSection === "identity-personality" && <IdentityPersonalitySection />}
+              {activeSection === "sync-backup" && <SyncBackupSection />}
               {activeSection === "channels" && <ChannelsSection />}
               {activeSection === "integrations" && <IntegrationsSection />}
               {activeSection === "skills" && <SkillsSection />}

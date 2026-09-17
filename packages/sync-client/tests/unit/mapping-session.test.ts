@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { SyncStateSchema, type LocalFileState } from "../../src/daemon/types.js";
-import { mappingCapabilities } from "../../src/daemon/mapping-session.js";
+import {
+  classifyMappingIssue,
+  mappingCapabilities,
+} from "../../src/daemon/mapping-session.js";
 
 const base = {
   id: "11111111-1111-4111-8111-111111111111",
@@ -35,5 +38,15 @@ describe("mapping session policy", () => {
       lastSyncAt: 1,
       files: { "file.txt": file },
     }).files["file.txt"]?.retainedDeletion).toBe("local");
+  });
+
+  it.each([
+    [Object.assign(new Error("permission denied"), { code: "EACCES" }), "permission"],
+    [Object.assign(new Error("disk quota"), { code: "EDQUOT" }), "disk_full"],
+    [new Error("Presign request failed: 413"), "oversized"],
+    [Object.assign(new Error("request timed out"), { code: "ETIMEDOUT" }), "network"],
+    [new Error("unexpected"), "unknown"],
+  ] as const)("classifies a bounded mapping issue without exposing raw errors", (error, expected) => {
+    expect(classifyMappingIssue(error)).toBe(expected);
   });
 });

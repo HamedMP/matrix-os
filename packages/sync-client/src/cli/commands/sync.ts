@@ -11,6 +11,7 @@ import {
 import {
   defaultSyncPath,
   generatePeerId,
+  getConfigDir,
   type SyncConfig,
 } from "../../lib/config.js";
 import {
@@ -31,6 +32,8 @@ import {
 import { resolveCliProfile } from "../profiles.js";
 import { isStandaloneRuntime } from "../standalone-runtime.js";
 import { formatCliError, formatCliSuccess } from "../output.js";
+import { loadProfileAuth } from "../../auth/token-store.js";
+import { loadSyncMappingConfig } from "../../lib/sync-mapping-config.js";
 
 const SUBCOMMANDS = new Set([
   "status",
@@ -115,6 +118,32 @@ async function loadMappingConfig(): Promise<SyncMappingConfig> {
   return parsed.data;
 }
 
+async function loadStoredMappingConfig(
+  args: Record<string, unknown>,
+): Promise<SyncMappingConfig> {
+  const profile = await resolveCliProfile(args);
+  const auth = await loadProfileAuth(profile.name);
+  if (!auth) throw new Error("No stored sync identity is available for this profile.");
+  const config = await loadSyncMappingConfig({
+    configDir: getConfigDir(),
+    profile: profile.name,
+    scope: {
+      ownerId: auth.userId,
+      runtimeSlot: auth.runtimeSlot ?? "primary",
+    },
+  });
+  if (!config) throw new Error("No synced folders are configured for this profile.");
+  return config;
+}
+
+async function loadReadableMappingConfig(
+  args: Record<string, unknown>,
+): Promise<SyncMappingConfig> {
+  return (await isDaemonRunning())
+    ? loadMappingConfig()
+    : loadStoredMappingConfig(args);
+}
+
 function printMappingConfig(config: SyncMappingConfig, json: boolean): void {
   if (json) {
     console.log(formatCliSuccess({ config }));
@@ -195,7 +224,7 @@ async function runMappingSubcommand(
 ): Promise<void> {
   switch (command) {
     case "list":
-      printMappingConfig(await loadMappingConfig(), json);
+      printMappingConfig(await loadReadableMappingConfig(args), json);
       return;
     case "add":
       await runAdd(args, json);

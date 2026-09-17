@@ -114,6 +114,7 @@ type Handler<C extends InvokeChannel> = (
 const PUBLIC_IPC_ERRORS = new Set(["invalid request", "internal error", "embed unavailable"]);
 const SYNC_IPC_CHANNELS = new Set<InvokeChannel>([
   "sync:get-snapshot",
+  "sync:reauthorize",
   "sync:choose-folder",
   "sync:enable",
   "sync:add-mapping",
@@ -246,6 +247,7 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
   handle("support:get-identity", () => ctx.fetchSupportIdentity());
 
   handle("sync:get-snapshot", () => ctx.sync.getSnapshot());
+  handle("sync:reauthorize", () => ctx.sync.reauthorize());
   handle("sync:choose-folder", ({ suggestedName }) => ctx.sync.chooseFolder(suggestedName));
   handle("sync:enable", (request) => ctx.sync.enable(request));
   handle("sync:add-mapping", (request) => ctx.sync.addMapping(request));

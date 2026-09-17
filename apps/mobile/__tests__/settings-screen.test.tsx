@@ -33,6 +33,7 @@ describe("drawer settings hub", () => {
     ["System", "/settings-detail/system"],
     ["Account", "/settings-detail/account"],
     ["App settings", "/settings-detail/app-settings"],
+    ["Sync & backup", "/settings-detail/sync-backup"],
     ["Billing", "/settings-detail/billing"],
     ["Help", "/settings-detail/help"],
   ])("opens %s in the settings modal stack", (label, route) => {

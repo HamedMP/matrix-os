@@ -32,6 +32,16 @@ export function shouldRunDesktopEnrollment(
     && isStandaloneRuntime(env, versions);
 }
 
+export function shouldRunDesktopReauthorization(
+  rawArgs: string[],
+  env: NodeJS.ProcessEnv = process.env,
+  versions: RuntimeVersions = process.versions as RuntimeVersions,
+): boolean {
+  return rawArgs.length === 1
+    && rawArgs[0] === "__desktop-reauthorize"
+    && isStandaloneRuntime(env, versions);
+}
+
 export function shouldRunDesktopActivation(
   rawArgs: string[],
   env: NodeJS.ProcessEnv = process.env,

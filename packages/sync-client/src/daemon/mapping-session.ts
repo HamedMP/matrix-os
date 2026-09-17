@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { stat } from "node:fs/promises";
-import type { SyncMapping } from "@matrix-os/contracts";
+import type { SyncMapping, SyncMappingIssue } from "@matrix-os/contracts";
 import { isIgnored, loadSyncIgnore, type SyncIgnorePatterns } from "../lib/syncignore.js";
 import { FileWatcher, type WatcherEvent } from "./watcher.js";
 import { loadSyncState, saveSyncState } from "./manifest-cache.js";
@@ -59,6 +59,23 @@ export interface MappingSessionStatus {
   fileCount: number;
   conflictCount: number;
   lastSuccessfulReconcileAt: number | null;
+  lastIssue: SyncMappingIssue | null;
+}
+
+export function classifyMappingIssue(err: unknown): SyncMappingIssue {
+  const code = err instanceof Error && "code" in err
+    ? String((err as NodeJS.ErrnoException).code ?? "").toUpperCase()
+    : "";
+  const message = err instanceof Error ? err.message.toLowerCase() : "";
+  if (["EACCES", "EPERM", "EROFS"].includes(code)) return "permission";
+  if (["ENOSPC", "EDQUOT"].includes(code)) return "disk_full";
+  if (code === "EFBIG" || /(?:too large|exceeded .*bytes|failed: 413)/.test(message)) {
+    return "oversized";
+  }
+  if (["ECONNRESET", "ECONNREFUSED", "ENETUNREACH", "EHOSTUNREACH", "ETIMEDOUT"].includes(code)) {
+    return "network";
+  }
+  return "unknown";
 }
 
 export function mappingCapabilities(mapping: SyncMapping): {
@@ -77,7 +94,7 @@ export class MappingSession {
   private readonly watcher: FileWatcher;
   private state: SyncState;
   private conflictCopyPathIndex: ConflictCopyPathIndex;
-  private lastError = false;
+  private lastIssue: SyncMappingIssue | null = null;
 
   private constructor(
     private readonly options: MappingSessionOptions,
@@ -105,7 +122,10 @@ export class MappingSession {
     const watcher = new FileWatcher({
       syncRoot: options.mapping.localRoot,
       ignorePatterns,
-      onError: (err) => options.logger.error({ err, mappingId: options.mapping.id }, "Watcher event handling failed"),
+      onError: (err) => {
+        session.recordWatcherError(err);
+        options.logger.error({ err, mappingId: options.mapping.id }, "Watcher event handling failed");
+      },
       onEvent: (event) => options.enqueue(() => session.handleWatcherEvent(event)),
     });
     session = new MappingSession(options, state, watcher, ignorePatterns);
@@ -126,7 +146,7 @@ export class MappingSession {
       mappingId: this.mapping.id,
       state: !this.mapping.enabled
         ? "paused"
-        : this.lastError
+        : this.lastIssue
           ? "error"
           : conflictCount > 0
             ? "conflict"
@@ -134,6 +154,7 @@ export class MappingSession {
       fileCount: Object.keys(this.state.files).length,
       conflictCount,
       lastSuccessfulReconcileAt: this.state.lastSyncAt || null,
+      lastIssue: this.lastIssue,
     };
   }
 
@@ -213,6 +234,7 @@ export class MappingSession {
         }
         this.refreshConflictIndex();
         await this.save();
+        this.lastIssue = null;
       } catch (err: unknown) {
         complete = false;
         this.handleError(err, file.path, "Remote mapping apply failed");
@@ -222,6 +244,7 @@ export class MappingSession {
       this.options.revision.value = Math.max(this.options.revision.value, event.manifestVersion);
       this.state.manifestVersion = this.options.revision.value;
       await this.save();
+      this.lastIssue = null;
     }
     return complete;
   }
@@ -257,6 +280,7 @@ export class MappingSession {
         delete this.state.files[remotePath];
         this.setRevision(result.manifestVersion);
         await this.save();
+        this.lastIssue = null;
       } catch (err: unknown) {
         await this.adoptConflictRevision(err);
         this.handleError(err, remotePath, "Delete commit failed");
@@ -310,6 +334,7 @@ export class MappingSession {
       this.state.files[remotePath]!.lastSyncedHash = event.hash;
       this.setRevision(result.manifestVersion);
       await this.save();
+      this.lastIssue = null;
     } catch (err: unknown) {
       if (previous) this.state.files[remotePath] = previous;
       else delete this.state.files[remotePath];
@@ -319,6 +344,7 @@ export class MappingSession {
   }
 
   private async pull(remoteFiles: Record<string, ManifestEntry>): Promise<void> {
+    let hadError = false;
     for (const [remotePath, entry] of Object.entries(remoteFiles)) {
       if (entry.deleted || !entry.hash) continue;
       const localRel = this.mapper.toLocal(remotePath);
@@ -353,11 +379,13 @@ export class MappingSession {
         });
         this.refreshConflictIndex();
       } catch (err: unknown) {
+        hadError = true;
         this.handleError(err, remotePath, "Initial mapping pull failed");
       }
     }
     this.state.lastSyncAt = Date.now();
     await this.save();
+    if (!hadError) this.lastIssue = null;
   }
 
   private setRevision(version: number): void {
@@ -373,9 +401,13 @@ export class MappingSession {
   }
 
   private handleError(err: unknown, path: string, message: string): void {
-    this.lastError = true;
+    this.lastIssue = classifyMappingIssue(err);
     if (err instanceof AuthRejectedError) this.options.onAuthRejected(err);
     this.options.logger.error({ err, path, mappingId: this.mapping.id }, message);
+  }
+
+  private recordWatcherError(err: unknown): void {
+    this.lastIssue = classifyMappingIssue(err);
   }
 
   private refreshConflictIndex(): void {

@@ -7,7 +7,9 @@ const {
   installServiceMock,
   isDaemonRunningMock,
   isStandaloneRuntimeMock,
+  loadProfileAuthMock,
   loadProfileSyncConfigMock,
+  loadSyncMappingConfigMock,
   resolveCliProfileMock,
   saveProfileSyncConfigMock,
   sendCommandMock,
@@ -26,7 +28,9 @@ const {
   installServiceMock: vi.fn().mockResolvedValue("/service/path"),
   isDaemonRunningMock: vi.fn().mockResolvedValue(true),
   isStandaloneRuntimeMock: vi.fn(() => false),
+  loadProfileAuthMock: vi.fn(),
   loadProfileSyncConfigMock: vi.fn(),
+  loadSyncMappingConfigMock: vi.fn(),
   resolveCliProfileMock: vi.fn().mockResolvedValue({
     name: "cloud",
     platformUrl: "https://platform.example",
@@ -40,11 +44,20 @@ const {
 vi.mock("../../src/lib/config.js", () => ({
   defaultSyncPath: () => "/tmp/matrixos-sync-command-test",
   generatePeerId: () => "peer-generated",
+  getConfigDir: () => "/tmp/.matrixos",
 }));
 
 vi.mock("../../src/lib/profile-sync-config.js", () => ({
   loadProfileSyncConfig: loadProfileSyncConfigMock,
   saveProfileSyncConfig: saveProfileSyncConfigMock,
+}));
+
+vi.mock("../../src/auth/token-store.js", () => ({
+  loadProfileAuth: loadProfileAuthMock,
+}));
+
+vi.mock("../../src/lib/sync-mapping-config.js", () => ({
+  loadSyncMappingConfig: loadSyncMappingConfigMock,
 }));
 
 vi.mock("../../src/cli/daemon-client.js", () => ({
@@ -96,9 +109,18 @@ beforeEach(() => {
   isDaemonRunningMock.mockResolvedValue(true);
   isStandaloneRuntimeMock.mockClear();
   isStandaloneRuntimeMock.mockReturnValue(false);
+  loadProfileAuthMock.mockClear();
+  loadProfileAuthMock.mockResolvedValue({
+    accessToken: "stored-token",
+    expiresAt: Date.now() - 1,
+    userId: "user_test",
+    handle: "test",
+    runtimeSlot: "primary",
+  });
   loadProfileSyncConfigMock.mockClear();
   loadProfileSyncConfigMock.mockResolvedValue({ config: previousConfig() });
   resolveCliProfileMock.mockClear();
+  loadSyncMappingConfigMock.mockClear();
   saveProfileSyncConfigMock.mockClear();
   sendCommandMock.mockClear();
   startServiceMock.mockClear();
@@ -157,6 +179,27 @@ describe("syncCommand mapping subcommands", () => {
 
     expect(sendCommandMock).toHaveBeenCalledWith("sync.mappings.list");
     expect(console.log).toHaveBeenCalledWith(expect.stringContaining('"revision":7'));
+  });
+
+  it("lists the stored mapping config when the daemon is stopped", async () => {
+    isDaemonRunningMock.mockResolvedValueOnce(false);
+    resolveCliProfileMock.mockResolvedValueOnce({
+      name: "desktop",
+      platformUrl: "https://platform.example",
+      gatewayUrl: "https://gateway.example",
+    });
+    loadSyncMappingConfigMock.mockResolvedValueOnce({ ...config, profile: "desktop" });
+
+    await runSync({ json: true, profile: "desktop" }, ["list"]);
+
+    expect(sendCommandMock).not.toHaveBeenCalled();
+    expect(loadProfileAuthMock).toHaveBeenCalledWith("desktop");
+    expect(loadSyncMappingConfigMock).toHaveBeenCalledWith({
+      configDir: expect.stringContaining(".matrixos"),
+      profile: "desktop",
+      scope: { ownerId: "user_test", runtimeSlot: "primary" },
+    });
+    expect(console.log).toHaveBeenCalledWith(expect.stringContaining('"profile":"desktop"'));
   });
 
   it("adds a mapping with the current expected revision and safe deletion default", async () => {

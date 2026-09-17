@@ -109,6 +109,7 @@ describe("Desktop sync helper service", () => {
           fileCount: 12,
           conflictCount: 0,
           lastSuccessfulReconcileAt: 1_800_000_000_000,
+          lastIssue: "permission",
         }],
       } };
       if (args.includes("list")) return { v: 1, ok: true, data: { config: {
@@ -156,8 +157,77 @@ describe("Desktop sync helper service", () => {
       runtimeSlot: "studio",
       status: "synced",
       backupState: "available",
-      mappings: [{ ...mapping, state: "idle", fileCount: 12 }],
+      mappings: [{ ...mapping, state: "idle", fileCount: 12, lastIssue: "permission" }],
     });
     expect(JSON.stringify(snapshot)).not.toContain("desktop-session-secret");
+  });
+
+  it("keeps configured mappings visible when the daemon is stopped", async () => {
+    const mapping = {
+      id: "11111111-1111-4111-8111-111111111111",
+      label: "Recovery",
+      localRoot: "/Users/alice/Recovery",
+      remotePrefix: "projects/recovery",
+      direction: "two_way",
+      enabled: true,
+      propagateDeletes: false,
+      excludes: ["node_modules/"],
+    };
+    const run = vi.fn(async (_helper, args: string[]) => {
+      if (args.includes("status")) return { v: 1, ok: true, data: { running: false } };
+      if (args.includes("list")) return { v: 1, ok: true, data: { config: {
+        schemaVersion: 2,
+        revision: 4,
+        profile: "desktop",
+        ownerId: "user_alice",
+        runtimeSlot: "studio",
+        deviceId: "alice-mac",
+        enabled: true,
+        mappings: [mapping],
+      } } };
+      throw new Error("unexpected command");
+    });
+    const service = createSyncHelperService({
+      auth: auth(),
+      installHelper: vi.fn(async () => HELPER),
+      verifyHelper: vi.fn(async () => undefined),
+      run,
+      chooseDirectory: vi.fn(async () => null),
+      fetchBackupStatus: vi.fn(async () => null),
+    });
+
+    await expect(service.getSnapshot()).resolves.toMatchObject({
+      service: "stopped",
+      connection: "offline",
+      status: "offline",
+      profile: "desktop",
+      runtimeSlot: "studio",
+      enabled: true,
+      mappings: [{ ...mapping, state: "offline", fileCount: 0 }],
+    });
+  });
+
+  it("reauthorizes the existing Desktop profile with the session token only on stdin", async () => {
+    const run = vi.fn(async (_helper, args: string[], input?: string) => {
+      if (args[0] === "__desktop-reauthorize") return { ok: true, profile: "desktop" };
+      if (args.includes("status")) return { v: 1, ok: true, data: { running: false } };
+      throw new Error(`unexpected ${args.join(" ")} ${input ?? ""}`);
+    });
+    const service = createSyncHelperService({
+      auth: auth(),
+      installHelper: vi.fn(async () => HELPER),
+      verifyHelper: vi.fn(async () => undefined),
+      run,
+      chooseDirectory: vi.fn(async () => null),
+      fetchBackupStatus: vi.fn(async () => null),
+      deviceName: () => "Alice Mac",
+    });
+
+    await service.reauthorize();
+
+    const call = run.mock.calls.find((candidate) => candidate[1][0] === "__desktop-reauthorize")!;
+    expect(call[1]).toEqual(["__desktop-reauthorize"]);
+    expect(call[2]).toContain("desktop-session-secret");
+    expect(JSON.stringify(call[1])).not.toContain("desktop-session-secret");
   });
 });

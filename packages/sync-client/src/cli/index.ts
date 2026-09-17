@@ -22,6 +22,7 @@ import { normalizeLeadingGlobalFlags } from "./global-flags.js";
 import {
   shouldRunDesktopActivation,
   shouldRunDesktopEnrollment,
+  shouldRunDesktopReauthorization,
   shouldRunDesktopRevocation,
   shouldRunStandaloneDaemon,
 } from "./standalone-runtime.js";
@@ -80,6 +81,22 @@ if (shouldRunStandaloneDaemon(rawArgs)) {
       ].includes(err.message)
         ? err.message
         : "desktop_enrollment_failed",
+    }));
+    process.exitCode = 1;
+  }
+} else if (shouldRunDesktopReauthorization(rawArgs)) {
+  const { runDesktopReauthorizationFromStdin } = await import("../auth/desktop-enrollment.js");
+  try {
+    await runDesktopReauthorizationFromStdin();
+  } catch (err: unknown) {
+    console.error(JSON.stringify({
+      ok: false,
+      error: err instanceof Error && [
+        "desktop_enrollment_input_invalid",
+        "desktop_enrollment_input_too_large",
+      ].includes(err.message)
+        ? err.message
+        : "desktop_reauthorization_failed",
     }));
     process.exitCode = 1;
   }

@@ -74,6 +74,20 @@ export const mobileQueryKeys = {
     userId,
     computerKey,
   ] as const,
+  syncBackup: (userId: string, computerKey: string) => [
+    "mobile",
+    "settings",
+    "sync-backup",
+    userId,
+    computerKey,
+  ] as const,
+  syncStatus: (userId: string, computerKey: string) => [
+    "mobile",
+    "settings",
+    "sync-status",
+    userId,
+    computerKey,
+  ] as const,
   billing: (userId: string, runtimeSlot: string) => [
     "mobile",
     "settings",

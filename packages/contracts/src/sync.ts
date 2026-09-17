@@ -135,11 +135,52 @@ export const BackupStatusSchema = z.object({
 }).strict();
 export type BackupStatus = z.infer<typeof BackupStatusSchema>;
 
+export const SyncRemoteStatusResponseSchema = z.object({
+  connectedPeers: z.array(z.object({
+    peerId: z.string().min(1).max(128),
+    hostname: z.string().min(1).max(255),
+    platform: z.string().min(1).max(64),
+    connectedAt: z.int().nonnegative(),
+  }).strict()).max(128),
+  manifestVersion: z.int().nonnegative(),
+  fileCount: z.int().nonnegative(),
+  totalSize: z.number().nonnegative(),
+  lastSyncAt: z.int().nonnegative(),
+  pendingConflicts: z.int().nonnegative(),
+  protocolVersion: z.int().positive(),
+  capabilities: z.object({
+    stagedUploads: z.boolean(),
+    immutableBlobs: z.boolean(),
+    immutableManifestGenerations: z.boolean(),
+  }).strict(),
+}).strict();
+export type SyncRemoteStatusResponse = z.infer<typeof SyncRemoteStatusResponseSchema>;
+
+export const DesktopRemoteSyncStatusSchema = z.object({
+  manifestVersion: z.int().nonnegative(),
+  fileCount: z.int().nonnegative(),
+  totalSize: z.number().nonnegative(),
+  lastSyncAt: z.int().nonnegative().nullable(),
+  pendingConflicts: z.int().nonnegative(),
+  connectedPeerCount: z.int().nonnegative(),
+}).strict();
+export type DesktopRemoteSyncStatus = z.infer<typeof DesktopRemoteSyncStatusSchema>;
+
+export const SyncMappingIssueSchema = z.enum([
+  "permission",
+  "disk_full",
+  "oversized",
+  "network",
+  "unknown",
+]);
+export type SyncMappingIssue = z.infer<typeof SyncMappingIssueSchema>;
+
 export const DesktopSyncMappingStatusSchema = SyncMappingSchema.extend({
   state: z.enum(["paused", "idle", "syncing", "conflict", "error", "offline"]),
   fileCount: z.int().nonnegative(),
   conflictCount: z.int().nonnegative(),
   lastSuccessfulReconcileAt: z.int().nonnegative().nullable(),
+  lastIssue: SyncMappingIssueSchema.nullable().optional(),
 }).strict();
 export type DesktopSyncMappingStatus = z.infer<typeof DesktopSyncMappingStatusSchema>;
 
@@ -176,6 +217,7 @@ export const DesktopSyncSnapshotSchema = z.object({
   mappings: z.array(DesktopSyncMappingStatusSchema).max(32),
   backup: BackupStatusSchema.nullable(),
   backupState: z.enum(["available", "unavailable", "offline", "unknown"]),
+  remoteStatus: DesktopRemoteSyncStatusSchema.nullable().optional(),
 }).strict();
 export type DesktopSyncSnapshot = z.infer<typeof DesktopSyncSnapshotSchema>;
 
