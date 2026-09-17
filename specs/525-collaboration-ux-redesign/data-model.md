@@ -160,4 +160,4 @@ Opening/closing the drawer is not a shared transition. The UI updates read state
 - No Chat data backfill and no platform content migration.
 - Existing clients and `/chat/messages` remain valid during rollout.
 - Rollback stops using new terminal discussion routes but retains their rows; it does not delete or reinterpret data.
-- Terminal discussion rows follow the owning scope's delete/export policy only when explicitly wired and tested. Standalone scope export must not silently omit newly user-authored terminal discussion; implementation either includes a bounded terminal-discussion section in the existing owner export or blocks final enablement until that export is covered.
+- Terminal discussion messages are included in the owning scope's bounded owner export and are removed by the authoritative scope-deletion transaction. Personal discussion read-state rows are removed with the scope but excluded from shared-resource exports. Final enablement is blocked until export, deletion, rollback, and retry behavior have real-Postgres coverage.

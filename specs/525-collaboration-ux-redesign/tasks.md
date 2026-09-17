@@ -9,10 +9,10 @@
 
 **Purpose**: Freeze the approved interaction model, current-main evidence, and delivery boundaries before production edits.
 
-- [ ] T001 Record the user's interaction-model confirmation and any approved refinements in `specs/525-collaboration-ux-redesign/implementation-log.md`
-- [ ] T002 Record baseline commit, current-UI Playwright result, screenshot paths, and dirty-original-worktree protection in `specs/525-collaboration-ux-redesign/implementation-log.md`
-- [ ] T003 Record the five-layer Graphite stack names, base relationships, PR size checks, and no-merge-without-approval gate in `specs/525-collaboration-ux-redesign/implementation-log.md`
-- [ ] T004 [P] Add a reusable evidence manifest for Canvas, responsive web, Electron, and mobile captures in `specs/525-collaboration-ux-redesign/evidence/README.md`
+- [x] T001 Record the user's interaction-model confirmation and any approved refinements in `specs/525-collaboration-ux-redesign/implementation-log.md`
+- [x] T002 Record baseline commit, current-UI Playwright result, screenshot paths, and dirty-original-worktree protection in `specs/525-collaboration-ux-redesign/implementation-log.md`
+- [x] T003 Record the five-layer Graphite stack names, base relationships, PR size checks, and no-merge-without-approval gate in `specs/525-collaboration-ux-redesign/implementation-log.md`
+- [x] T004 [P] Add a reusable evidence manifest for Canvas, responsive web, Electron, and mobile captures in `specs/525-collaboration-ux-redesign/evidence/README.md`
 
 ---
 
@@ -25,19 +25,19 @@
 ### Failing tests
 
 - [ ] T005 [P] Add failing strict Zod tests for invitation decline, discussion message/page, and discussion user-state contracts in `tests/contracts/collaboration.test.ts`
-- [ ] T006 [P] Add failing database-bootstrap tests for terminal discussion messages, per-actor read state, constraints, and idempotent migration in `tests/gateway/collaboration-database.test.ts`
+- [ ] T006 [P] Add failing database-bootstrap tests for terminal discussion messages, per-actor read state, constraints, authoritative deletion, bounded export inclusion, and idempotent migration in `tests/gateway/collaboration-database.test.ts`
 - [ ] T007 [P] Add failing invitee-decline repository tests for target-only authorization inputs, revision races, expiry, audit, idempotency, and outbox state in `tests/gateway/collaboration-repository.test.ts` and `tests/gateway/collaboration-repository-postgres.test.ts`
-- [ ] T008 [P] Add failing discussion adapter tests proving Chat delegates only canonical `purpose=discussion` rows and terminal notes stay scope-local in `tests/gateway/collaboration-chat-discussion.test.ts` and `tests/gateway/collaboration-terminal-discussion.test.ts`
-- [ ] T009 [P] Add failing route tests for decline and discussion owner/editor/viewer/pending/revoked matrices, body limits, exact queries, stale revisions, and generic errors in `tests/gateway/collaboration-routes.test.ts`
+- [ ] T008 [P] Add failing discussion adapter tests proving Chat uses a database-filtered bounded `purpose=discussion` query, terminal notes stay scope-local, terminal messages export, and personal read state does not export in `tests/gateway/collaboration-chat-discussion.test.ts` and `tests/gateway/collaboration-terminal-discussion.test.ts`
+- [ ] T009 [P] Add failing route/lifecycle tests for decline and discussion owner/editor/viewer/pending/revoked matrices, body limits, exact queries, stale revisions, export/delete/retry behavior, and generic errors in `tests/gateway/collaboration-routes.test.ts` and `tests/gateway/collaboration-lifecycle.test.ts`
 - [ ] T010 [P] Add failing platform tests for exact proxy allowlists, proof method/path/body binding, feature modes, directory invalidation, and snapshot-token rejection in `tests/platform/collaboration-proxy.test.ts`, `tests/platform/collaboration-proof.test.ts`, and `tests/platform/collaboration-routes.test.ts`
 - [ ] T011 [P] Add failing startup/shutdown wiring and CLI exact-path tests in `tests/gateway/collaboration-wiring.test.ts`, `tests/platform/collaboration-wiring.test.ts`, and `tests/cli/collaboration-terminal.test.ts`
 
 ### Implementation
 
 - [ ] T012 Implement Zod 4 decline/discussion request and response schemas with bounded UTF-8 text and inferred types in `packages/contracts/src/collaboration.ts`
-- [ ] T013 Implement additive terminal discussion and discussion-user-state tables, indexes, Kysely types, and idempotent bootstrap in `packages/gateway/src/collaboration/database.ts`
+- [ ] T013 Implement additive terminal discussion and discussion-user-state tables, indexes, Kysely types, authoritative deletion behavior, and idempotent bootstrap in `packages/gateway/src/collaboration/database.ts`
 - [ ] T014 Implement pending-to-revoked invitee decline with scope/member locks, write-enforced revision, idempotency, audit, event, and outbox in `packages/gateway/src/collaboration/repository.ts`
-- [ ] T015 Implement a scope-kind discussion adapter that delegates Chat to canonical history/user state and terminal to the new tables in `packages/gateway/src/collaboration/discussion-adapter.ts`
+- [ ] T015 Implement a scope-kind discussion adapter with bounded database-filtered Chat reads, terminal storage, bounded terminal export projection, and personal-state exclusion in `packages/gateway/src/collaboration/discussion-adapter.ts`
 - [ ] T016 Register exact decline and discussion routes with existing authorization actions, body limits, query parsing, and safe error mapping in `packages/gateway/src/collaboration/routes.ts`
 - [ ] T017 Extend dependency injection and event notification for the discussion adapter without adding pool/timer ownership in `packages/gateway/src/collaboration/wiring.ts`
 - [ ] T018 Extend only exact invitation/discussion proxy patterns and milestone classification in `packages/platform/src/collaboration/proxy.ts`
@@ -142,10 +142,10 @@
 
 ### Failing tests
 
-- [ ] T059 [P] [US4] Add failing terminal-chrome tests for compact role/controller status, owner takeover, editor request/wait/release, viewer restrictions, and feature-off absence in `tests/shell/terminal-collaboration-controls.test.tsx`
+- [ ] T059 [P] [US4] Add failing terminal-chrome tests for compact role/controller status, owner takeover, editor request/wait/release, viewer restrictions, ineligible-sharing preservation, and feature-off absence in `tests/shell/terminal-collaboration-controls.test.tsx`
 - [ ] T060 [P] [US4] Add failing terminal discussion integration tests for overlay/no-reflow, two-account notes, private drafts, unread state, and zero input side effects in `tests/ui/shared-terminal-discussion.test.tsx`
 - [ ] T061 [P] [US4] Extend failing authorization tests for delayed input, paste, resize, renew, and release after transfer/downgrade/revoke in `tests/gateway/collaboration-terminal-authorization.test.ts` and `tests/gateway/collaboration-terminal-control.test.ts`
-- [ ] T062 [P] [US4] Add failing native shared-terminal route tests for Canvas normal-terminal selection and safe unavailable states in `tests/shell/shared-terminal-route.test.tsx`
+- [ ] T062 [P] [US4] Add failing native shared-terminal route tests for Canvas normal-terminal selection, ineligible preflight leaving the process unchanged, and safe unavailable states in `tests/shell/shared-terminal-route.test.tsx`
 
 ### Implementation
 
@@ -155,7 +155,7 @@
 - [ ] T066 [US4] Normalize legacy shared-terminal entry into the native Terminal app and keep revoked/unavailable results inside its frame in `shell/src/app/shared/terminal/[scopeId]/page.tsx` and `shell/src/components/ShellHome.tsx`
 - [ ] T067 [US4] Retain the standalone terminal component only as a compatibility adapter over the native controller hook in `packages/ui/src/collaboration/SharedTerminalControls.tsx`
 - [ ] T068 [US4] Verify authoritative rejection produces no optimistic input/control success in `packages/ui/src/collaboration/useSharedTerminalSession.ts` and `shell/src/components/terminal/TerminalApp.tsx`
-- [ ] T069 [US4] Add Canvas terminal Playwright coverage for shared output, control handoff, discussion, viewer, revoke, and delayed input/paste/resize in `shell/e2e/shared-terminal.spec.ts`
+- [ ] T069 [US4] Add Canvas terminal Playwright coverage for shared output, control handoff, discussion, viewer, revoke, ineligible sharing, and delayed input/paste/resize in `shell/e2e/shared-terminal.spec.ts`
 - [ ] T070 [US4] Capture current-head Canvas terminal evidence in `specs/525-collaboration-ux-redesign/evidence/canvas-terminal/README.md`
 - [ ] T071 [US4] Run US4 gateway/UI/shell tests, typecheck, react-doctor, and Stack PR 4 diff-size checks and record results in `specs/525-collaboration-ux-redesign/implementation-log.md`
 
@@ -163,7 +163,7 @@
 
 ---
 
-## Phase 7: User Story 5 — Find Invitations and Shared Sessions (Priority: P1, Stack PR 3)
+## Phase 7: User Story 5 — Find Invitations and Shared Sessions (Priority: P1, Stack PR 4)
 
 **Goal**: Put Shared with me and a bounded pending badge in Chat navigation, support accept/decline, and open accepted resources directly in native apps.
 
@@ -186,7 +186,7 @@
 - [ ] T081 [US5] Convert standalone home/invitation pages into compatibility resolvers/content hosted inside native Chat navigation in `shell/src/components/collaboration/CollaborationPage.tsx` and `shell/src/app/shared/invitations/[invitationId]/page.tsx`
 - [ ] T082 [US5] Add Canvas Playwright coverage for badge, pending/accepted lists, accept/decline, native Chat/Terminal open, empty/error/revoked/unavailable, and feature-off in `shell/e2e/shared-with-me.spec.ts`
 - [ ] T083 [US5] Capture current-head Canvas and responsive discovery/routing evidence in `specs/525-collaboration-ux-redesign/evidence/canvas-shared-with-me/README.md`
-- [ ] T084 [US5] Run US5 targeted tests, typecheck, react-doctor, and shared Stack PR 3 PR gates and record results in `specs/525-collaboration-ux-redesign/implementation-log.md`
+- [ ] T084 [US5] Run US5 targeted tests, typecheck, react-doctor, and shared Stack PR 4 PR gates and record results in `specs/525-collaboration-ux-redesign/implementation-log.md`
 
 **Checkpoint**: Invitations and accepted resources are discoverable without copied links and always enter a native app surface.
 
@@ -249,7 +249,7 @@
 - US2 (Phase 4) depends on Phase 2 and consumes the native Chat chrome from US1 for Canvas integration.
 - US3 (Phase 5) can build its shared component after Phase 2, but final Chat placement depends on US1.
 - US4 (Phase 6) depends on Phase 2 and the shared layer primitives from US2/US3.
-- US5 (Phase 7) can build discovery components after Phase 2; its native open acceptance depends on US1 and US4 route normalization.
+- US5 (Phase 7) follows US4 in the same stack layer so native terminal open acceptance uses the completed route normalization.
 - US6 (Phase 8) depends on the relevant shared components and Canvas reference implementations from US1–US5.
 - Phase 9 depends on all selected user stories.
 
@@ -269,8 +269,8 @@ US2, US3, US4, and the component portion of US5 are independently testable after
 
 1. **Stack PR 1 — `feat(collaboration): add discussion and invitation UX contracts`**: T005–T021.
 2. **Stack PR 2 — `feat(chat): make shared sessions native`**: T022–T036.
-3. **Stack PR 3 — `feat(collaboration): add native session layers and discovery`**: T037–T058 and T072–T084.
-4. **Stack PR 4 — `feat(terminal): integrate native collaboration controls`**: T059–T071.
+3. **Stack PR 3 — `feat(collaboration): add native session layers`**: T037–T058.
+4. **Stack PR 4 — `feat(collaboration): complete native terminal and discovery`**: T059–T084.
 5. **Stack PR 5 — `feat(collaboration): align desktop and mobile surfaces`**: T085–T108.
 
 If any layer exceeds repository limits, split only at a coherent surface boundary and update `plan.md`, this stack map, and the implementation log before opening PRs.

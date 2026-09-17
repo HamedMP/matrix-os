@@ -87,7 +87,7 @@ Success `200`:
 }
 ```
 
-For Chat scopes, the adapter reads canonical rows after the supplied sequence and returns only `purpose=discussion`, continuing until it has a bounded page or reaches the current canonical end. It must not leak AI request, assistant, tool, system, or owner-only attachment data through this route. For terminal scopes, it reads the additive terminal discussion table. Project scopes return safe `not_found`/`unavailable` unless explicitly enabled by the existing project contract; this feature does not add project discussion.
+For Chat scopes, the adapter performs one database-level query filtered to `purpose=discussion`, `sequence > after`, ordered ascending, and capped by `limit`; it never scans unrelated canonical messages in application code. It must not leak AI request, assistant, tool, system, or owner-only attachment data through this route. For terminal scopes, it reads the additive terminal discussion table with the same bounded query shape. Project scopes return safe `not_found`/`unavailable` unless explicitly enabled by the existing project contract; this feature does not add project discussion.
 
 ### `POST /api/collaboration/scopes/:scopeId/discussion/messages`
 
@@ -188,3 +188,4 @@ PATCH /api/collaboration/scopes/{uuid}/discussion/user-state
 6. No discussion operation creates AI requests or terminal actions.
 7. Proxy/CLI exact-path allowlisting and capability-mode behavior.
 8. Startup integration test proves route registration, adapters, migrations, event notification, and safe shutdown.
+9. Terminal discussion messages are present in bounded owner export, removed by authoritative scope deletion, and never confused with personal read state during retry or rollback.

@@ -167,7 +167,7 @@ As a person who moves between Matrix surfaces, I want shared sessions to preserv
 
 - **FR-001**: A shared Chat MUST use the ordinary Matrix Chat timeline, message presentation, composer, AI response rendering, tool/approval rendering, keyboard behavior, and responsive frame rather than a separate collaboration page or replacement Chat UI.
 - **FR-002**: The ordinary Chat composer MUST submit AI prompts for owners and editors in shared Chats; no prominent “Ask AI” mode or discussion/AI mode switch may be required.
-- **FR-003**: Prompts from every authorized human MUST use the normal human/right-side presentation and include subtle display-name and avatar attribution with an accessible text equivalent.
+- **FR-003**: Prompts from every authorized human MUST use the normal human/right-side presentation and include subtle display-name attribution plus an avatar when safely available or a deterministic initials/icon fallback, with an accessible text equivalent.
 - **FR-004**: AI output MUST use the normal AI/left-side presentation and existing rendering for streaming, rich content, tools, approvals, and recoverable errors.
 - **FR-005**: The shared AI session MUST continue to execute on the owner runtime through the owner's existing gateway, workspace/runtime context, AI account, authorized credentials, canonical history, and execution policy while preserving the authenticated initiating actor at every authorization boundary.
 - **FR-006**: Queue admission, accepted order, single-active execution, cancellation, retry, approval, and reauthorization behavior MUST remain governed by the existing collaboration contracts.
@@ -185,7 +185,7 @@ As a person who moves between Matrix surfaces, I want shared sessions to preserv
 
 #### Session access and sharing
 
-- **FR-015**: Ordinary Chat and terminal chrome MUST include one compact access icon and a separate discussion control only when live collaboration is enabled for the user and runtime. Activating the access icon MUST open a lightweight summary popover with shared status, the current person's role, and member avatars; authorized owners MUST reach full access management from that popover as the second and final disclosure level.
+- **FR-015**: Ordinary Chat and terminal chrome MUST include one compact access icon and a separate discussion control only when live collaboration is enabled for the user and runtime. Activating the access icon MUST open a lightweight summary popover with shared status, the current person's role, and member avatars or deterministic fallbacks; authorized owners MUST reach full access management from that popover as the second and final disclosure level.
 - **FR-016**: Unshared sessions MUST remain visually close to their current normal state; shared status, current role, member presence, and controller state MUST use the compact access summary and other restrained indicators rather than persistent management controls.
 - **FR-017**: Chat sharing MUST preserve distinct “Share snapshot” and “Invite collaborators” actions and MUST explain their different audience, mutability, authentication, expiry, and revocation semantics at the point of choice.
 - **FR-018**: Snapshot tokens MUST never authenticate live collaboration, and live collaboration proofs, tickets, or invitations MUST never authenticate snapshot management or public snapshot reads.
@@ -246,6 +246,7 @@ As a person who moves between Matrix surfaces, I want shared sessions to preserv
 - Standalone Chat or terminal sharing MUST not grant parent-project, sibling-resource, owner-home, separate attachment-destination, or personal-system access.
 - Snapshot publication MUST remain a frozen, separately authorized feature and MUST not become live history or membership.
 - Private drafts, view preferences, focus, read position, and presentation state MUST remain private to the person.
+- Newly persisted terminal discussion messages MUST participate in owner export and authoritative scope deletion; personal discussion read state MUST remain excluded from shared-resource exports.
 
 ### Assumptions and Dependencies
 
@@ -254,7 +255,7 @@ As a person who moves between Matrix surfaces, I want shared sessions to preserv
 - Existing human attribution is sufficient at the contract boundary; historical entries without a known actor use the existing safe unknown-author treatment.
 - The redesign may add the smallest safe read projection needed for navigation badges or discussion unread state only if current contracts cannot supply it without broad fetching. Any such gap must be documented before backend work.
 - “Chat” remains capitalized when referring to the Matrix app/session concept, matching current product language.
-- Current public documentation under `www/content/docs/` will be updated as an implementation deliverable.
+- A separate documentation PR will update the private `FinnaAI/matrix-os-site` repository under `content/docs/`; this monorepo will not recreate the retired local `www/content/docs/` source tree.
 
 ### Explicitly Out of Scope
 
@@ -270,7 +271,7 @@ As a person who moves between Matrix surfaces, I want shared sessions to preserv
 
 ### Measurable Outcomes
 
-- **SC-001**: In usability verification, at least 9 of 10 participants correctly use the ordinary shared-Chat composer to ask the AI on their first attempt without looking for an “Ask AI” mode.
+- **SC-001**: Every supported shared-Chat surface exposes exactly one primary conversation composer, and 100% of its authorized submissions enter the existing AI flow without a mode-selection step.
 - **SC-002**: In automated and manual comparison, unshared Chat and terminal primary layouts show zero unintended position or size changes when live collaboration is enabled but unused.
 - **SC-003**: In all tested shared-Chat messages, 100% of human prompts appear on the human/right side with an accessible author label and 100% of AI responses remain on the AI/left side.
 - **SC-004**: In all discussion-layer tests, opening and closing causes no measured reflow of the underlying Chat composer or terminal viewport, and all three dismiss mechanisms succeed where supported.
