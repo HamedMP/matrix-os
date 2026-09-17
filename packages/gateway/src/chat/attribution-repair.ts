@@ -68,11 +68,7 @@ export async function bootstrapChatAttribution<Database extends ChatDatabase>(
                     FROM chat_queued_turns AS queued
                     WHERE queued.chat_id = turn_record.chat_id
                       AND queued.claimed_turn_id = turn_record.id
-                      AND NOT EXISTS (
-                        SELECT 1
-                        FROM chat_run_steers AS queued_steer
-                        WHERE queued_steer.queued_turn_id = queued.id
-                      )
+                      AND queued.client_request_id = turn_record.client_request_id
                       AND NOT (
                         (
                           queued.requesting_actor_id IS NOT NULL

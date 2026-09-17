@@ -104,6 +104,18 @@ describe("shared Chat owner list and detail reads", () => {
           joined_at: null,
           updated_at: "2026-09-17T00:00:00.000Z",
         },
+        {
+          scope_id: SCOPE_ID,
+          actor_id: "user_shared_chat_expired",
+          role: "viewer",
+          status: "accepted",
+          invitation_id: null,
+          invited_by: OWNER_ID,
+          accepted_at: "2025-09-17T00:00:00.000Z",
+          expires_at: "2025-09-18T00:00:00.000Z",
+          joined_at: "2025-09-17T00:00:00.000Z",
+          updated_at: "2025-09-18T00:00:00.000Z",
+        },
       ]).execute();
 
       const repositoryList = await repository.list(owner, { limit: 25 });
@@ -213,6 +225,18 @@ describe("shared Chat owner list and detail reads", () => {
         expires_at: null,
         joined_at: createdAt,
         updated_at: createdAt,
+      },
+      {
+        scope_id: parentScopeId,
+        actor_id: "user_project_expired",
+        role: "viewer",
+        status: "accepted",
+        invitation_id: null,
+        invited_by: OWNER_ID,
+        accepted_at: "2025-09-17T00:00:00.000Z",
+        expires_at: "2025-09-18T00:00:00.000Z",
+        joined_at: "2025-09-17T00:00:00.000Z",
+        updated_at: "2025-09-18T00:00:00.000Z",
       },
     ]).execute();
 

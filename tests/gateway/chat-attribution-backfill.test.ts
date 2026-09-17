@@ -64,6 +64,19 @@ describe("canonical Chat owner attribution repair", () => {
       requestingActorId: "user_shared_editor",
       collaborationScopeId: "6aed8d12-f6c8-4c10-90b2-1e51fcc738e3",
     });
+    await repository.kysely.insertInto("chat_run_steers").values({
+      id: "steer_failed_before_shared_editor_claim",
+      chat_id: "chat_repair_owner",
+      run_id: "run_owner_direct",
+      turn_id: "cturn_owner_direct",
+      client_request_id: "req_failed_before_shared_editor_claim",
+      message_id: "msg_failed_before_shared_editor_claim",
+      queued_turn_id: "qturn_editor_repair",
+      parts: JSON.stringify([{ type: "text", text: "failed before later claim" }]),
+      status: "failed",
+      created_at: createdAt,
+      updated_at: createdAt,
+    }).execute();
     await seedTurn("chat_repair_owner", "ambiguous_shared_queue", 4, {
       queuedTurnId: "qturn_ambiguous_shared_repair",
       requestingActorId: null,
@@ -203,7 +216,7 @@ describe("canonical Chat owner attribution repair", () => {
     await repository.kysely.insertInto("chat_queued_turns").values({
       id: queued.queuedTurnId,
       chat_id: chatId,
-      client_request_id: `req_queue_${suffix}`,
+      client_request_id: `req_${suffix}`,
       actor_request_id: queued.collaborationScopeId ? `actor_req_${suffix}` : null,
       requesting_actor_id: queued.requestingActorId,
       collaboration_scope_id: queued.collaborationScopeId ?? null,

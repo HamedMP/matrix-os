@@ -391,12 +391,20 @@ async function ownerSharedProjection(
     .where("actor_id", "=", owner.ownerId)
     .where("role", "=", "owner")
     .where("status", "=", "accepted")
+    .where((eb) => eb.or([
+      eb("expires_at", "is", null),
+      eb("expires_at", ">", sql<Date | string>`clock_timestamp()`),
+    ]))
     .executeTakeFirst();
   if (!ownerMember) return undefined;
   const members = await collaborationExecutor.selectFrom("collaboration_members")
     .select(({ fn }) => fn.countAll<number>().as("count"))
     .where("scope_id", "=", membershipScopeId)
     .where("status", "=", "accepted")
+    .where((eb) => eb.or([
+      eb("expires_at", "is", null),
+      eb("expires_at", ">", sql<Date | string>`clock_timestamp()`),
+    ]))
     .executeTakeFirstOrThrow();
   return { mode: "shared", membership: { role: "owner", memberCount: Number(members.count) } };
 }
