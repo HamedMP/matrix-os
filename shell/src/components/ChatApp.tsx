@@ -1,5 +1,5 @@
 "use client";
-import type { ChatAgentDraftRequest, StartAgentChat } from "@matrix-os/ui";
+import type { ChatAgentDraftRequest, ChatCollaborationView, StartAgentChat } from "@matrix-os/ui";
 
 import { useChatReadState, CanonicalChatInputForm } from "@matrix-os/ui";
 import type { CanonicalChatInputView, CanonicalSubmitChatInputRequest } from "@matrix-os/contracts";
@@ -13,6 +13,7 @@ import { useChatComposerDraft } from "./chat/useChatComposerDraft";
 import { ChatAgentsRailSection, ChatAgentsWorkspace, ChatAgentsContent, useChatAgentsNavigation, type ChatAgentClient } from "@matrix-os/ui";
 import type { ChatSubmitOptions } from "@/hooks/useChatState";
 import { ChatSharing } from "./chat/ChatSharing";
+import { ShellChatCollaboration } from "./chat/ShellChatCollaboration";
 import { ChatAttachments, ChatContextMenu } from "@matrix-os/ui";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { resolveChatMessageLink } from "@matrix-os/contracts";
@@ -115,6 +116,8 @@ function writeHermesSetup(channels: string[]) {
 }
 
 interface ChatAppProps {
+  collaborationView?: ChatCollaborationView;
+  onOpenSharedChat?: (scopeId: string) => void;
   filterUnreadOnly?: boolean;
   onUnreadFilterChange?: (value: boolean) => void;
   active?: boolean;
@@ -186,6 +189,7 @@ export function ChatApp(props: ChatAppProps) {
 }
 
 function ChatAppContent({
+  collaborationView, onOpenSharedChat,
   filterUnreadOnly, onUnreadFilterChange,
   active = true, readState, displayedThroughSeq = 0, onUpdateReadState,
   messages,
@@ -356,6 +360,7 @@ function ChatAppContent({
           <Button
             variant="ghost"
             size="icon"
+            aria-label="Close Chat sidebar"
             className={`${touchIcon} text-muted-foreground hover:text-foreground`}
             onClick={() => setSidebarOpen(false)}
           >
@@ -451,6 +456,7 @@ function ChatAppContent({
               <Button
                 variant="ghost"
                 size="icon"
+                aria-label="Open Chat sidebar"
                 className={`${touchIcon} text-muted-foreground hover:text-foreground`}
                 onClick={() => setSidebarOpen(true)}
               >
@@ -473,7 +479,11 @@ function ChatAppContent({
                 <BotIcon className="size-3.5" aria-hidden="true" />
               </span>
               <div className="min-w-0 flex-1 text-center">
-                {editingChat?.source === "header" && editingChat.id === sessionId && activeConversationTitle ? (
+                {collaborationView ? (
+                  <span className="block truncate px-1 text-sm font-semibold leading-4 text-foreground">
+                    Shared Chat
+                  </span>
+                ) : editingChat?.source === "header" && editingChat.id === sessionId && activeConversationTitle ? (
                   <ChatTitleEditor
                     title={activeConversationTitle}
                     pending={renamePending}
@@ -501,12 +511,14 @@ function ChatAppContent({
                   </button>
                 )}
                 <p className="truncate text-[10px] leading-3 text-muted-foreground">
-                  {providerState.selected?.modelLabel ?? (providerState.loading ? "Loading AI access" : "AI access unavailable")}
+                  {collaborationView
+                    ? "Live shared collaboration"
+                    : providerState.selected?.modelLabel ?? (providerState.loading ? "Loading AI access" : "AI access unavailable")}
                 </p>
               </div>
             </div>
           </div>
-          <Button
+          {!collaborationView ? <Button
             variant={setupOpen ? "secondary" : "ghost"}
             size="sm"
             className="h-8 gap-1.5 px-2.5 text-xs"
@@ -514,12 +526,12 @@ function ChatAppContent({
           >
             <Settings2Icon className="size-3.5" aria-hidden="true" />
             Setup
-          </Button>
+          </Button> : null}
           {!connected && (
             <span className="text-[10px] text-destructive font-medium">Offline</span>
           )}
         </header>
-        {setupOpen && (
+        {!collaborationView && setupOpen && (
           <ChatProviderSetupPanel
             catalog={providerState.catalog}
             choices={providerState.choices}
@@ -545,6 +557,9 @@ function ChatAppContent({
           />
         )}
 
+        {collaborationView ? (
+          <ShellChatCollaboration view={collaborationView} onOpenChat={onOpenSharedChat} />
+        ) : <>
         <ChatQueuedRequests key={`queue:${sessionId ?? "new"}`} turns={queuedTurns} onCancel={onCancelQueuedTurn} />
         {/* Empty state or conversation */}
         {isEmpty ? (
@@ -652,6 +667,7 @@ function ChatAppContent({
             </div>
           </div>
         )}
+        </>}
       </main>
       {previewFile && previewFile.chatId === sessionId ? <ChatFilePanel key={`${sessionId}:${previewFile.path}`} path={previewFile.path} onClose={() => {
         setPreviewFile(null);

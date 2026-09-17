@@ -2,12 +2,14 @@ import { ChatCollaboration, type ChatCollaborationView } from "@matrix-os/ui";
 import { useMemo, useState } from "react";
 import { createDesktopCollaborationApi } from "../../lib/collaboration";
 import { useConnection } from "../../stores/connection";
+import { useTabs } from "../../stores/tabs";
 
 export default function DesktopChatCollaboration() {
   const actorId = useConnection((state) => state.userId);
   const platformHost = useConnection((state) => state.platformHost);
   const api = useMemo(() => createDesktopCollaborationApi(platformHost), [platformHost]);
   const [view, setView] = useState<ChatCollaborationView>({ kind: "home" });
+  const openTab = useTabs((state) => state.openTab);
   if (!actorId || !api) return <div role="alert" className="m-auto max-w-lg rounded-xl border p-8 text-center">
     Shared Chats are unavailable. Reconnect your Matrix account and try again.
   </div>;
@@ -16,7 +18,14 @@ export default function DesktopChatCollaboration() {
       onClick={() => setView({ kind: "home" })}>Back to Shared with me</button> : null}
     <ChatCollaboration view={view} api={api} actorId={actorId}
       openInvitation={(invitationId) => setView({ kind: "invitation", invitationId })}
-      openChat={(scopeId) => setView({ kind: "chat", scopeId })}
+      openChat={(scopeId, _chatId, title) => openTab({
+        kind: "chat",
+        title: title ?? "Shared Chat",
+        chatTitle: title ?? "Shared Chat",
+        chatView: "conversation",
+        sharedScopeId: scopeId,
+        closable: false,
+      })}
       openTerminal={(scopeId) => setView({ kind: "terminal", scopeId })}
       openProject={(scopeId) => setView({ kind: "project", scopeId })} />
   </div>;
