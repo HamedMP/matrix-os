@@ -20,41 +20,37 @@ import {
   type AuthData,
 } from "../auth/token-store.js";
 import { loadProfiles } from "../lib/profiles.js";
-import { loadSyncIgnore } from "../lib/syncignore.js";
 import { cleanupStaleMatrixosTempFiles } from "../lib/temp-files.js";
-import { loadSyncState, saveSyncState } from "./manifest-cache.js";
-import { FileWatcher } from "./watcher.js";
+import { saveSyncState } from "./manifest-cache.js";
 import { SyncWsClient } from "./ws-client.js";
 import { IpcServer } from "./ipc-server.js";
 import { createIpcHandler } from "./ipc-handler.js";
 import { createMappingControllerHandler } from "./mapping-controller.js";
+import type { ScopeRevision } from "./mapping-session.js";
+import {
+  dispatchMappingEvent,
+  openMappingSessions,
+  startMappingSessions,
+  stopMappingSessions,
+} from "./mapping-supervisor.js";
 import { createDaemonShellControlClient } from "./shell-control-client.js";
-import { createRemotePrefixMapper } from "./remote-prefix.js";
 import {
   loadSyncMappingConfig,
+  listSyncMappingConfigs,
+  migrateLegacySyncStateFile,
   migrateLegacySyncConfig,
   saveSyncMappingConfig,
+  syncMappingStatePath,
 } from "../lib/sync-mapping-config.js";
 import { planMappingOverlaps } from "../lib/mapping-overlap.js";
 import type { SyncMappingConfig } from "@matrix-os/contracts";
 import {
-  buildUnresolvedConflictCopyPathIndex,
-  capLoadedSyncState,
-  capSyncStateFiles,
-  hasUnresolvedConflictCopyPath,
-  reconcileMissingConflictCopies,
-  reconcileRemoteDelete,
   reconcileRemoteFileChange,
-  resolveConflictCopyPath,
   resolveWithinSyncRoot,
-  shouldCommitWatcherDelete,
-  shouldSkipWatcherUpload,
 } from "./reconciliation.js";
 import {
   requestPresignedUrls,
-  uploadFile,
   downloadFile,
-  commitFiles,
   fetchManifest,
   AuthRejectedError,
   VersionConflictError,
@@ -678,6 +674,7 @@ export async function startDaemon(): Promise<void> {
     scope,
   });
   let mappingConfig: SyncMappingConfig;
+  let migratedLegacyMappingConfig = false;
   if (!loadedMappingConfig) {
     mappingConfig = migrateLegacySyncConfig({
       legacy: config,
@@ -687,6 +684,7 @@ export async function startDaemon(): Promise<void> {
       deviceId: config.peerId,
     });
     await saveSyncMappingConfig({ configDir, config: mappingConfig, expectedRevision: -1 });
+    migratedLegacyMappingConfig = true;
   } else {
     mappingConfig = loadedMappingConfig;
   }
@@ -707,7 +705,10 @@ export async function startDaemon(): Promise<void> {
     process.exit(1);
   }
 
-  for (const root of [configDir, config.syncPath]) {
+  for (const root of [
+    configDir,
+    ...new Set(mappingConfig.mappings.map((mapping) => mapping.localRoot)),
+  ]) {
     try {
       await cleanupStaleMatrixosTempFiles(root, {
         olderThanMs: 60_000,
@@ -726,25 +727,6 @@ export async function startDaemon(): Promise<void> {
     }
   }
 
-  const ignorePatterns = await loadSyncIgnore(config.syncPath);
-  let syncState = await loadSyncState(stateFile);
-  if (capLoadedSyncState(syncState)) {
-    await saveSyncState(stateFile, syncState);
-  }
-
-  // `gatewayFolder` scopes this daemon to a subtree of the gateway. An empty
-  // string (the default) = full mirror: local syncPath maps 1:1 to the
-  // user's sync root. A value like "audit" = scoped mode, where local paths
-  // get prefixed with `audit/` on the remote and incoming events outside
-  // that subtree are ignored. See specs/066-file-sync/follow-ups.md F1.
-  const { toRemote, toLocal } = createRemotePrefixMapper(config.gatewayFolder ?? "");
-  if (await reconcileMissingConflictCopies(syncState, {
-    syncRoot: config.syncPath,
-    toLocalPath: toLocal,
-  })) {
-    await saveSyncState(stateFile, syncState);
-  }
-
   const gatewayClient = {
     gatewayUrl: config.gatewayUrl,
     token: auth.accessToken,
@@ -757,132 +739,35 @@ export async function startDaemon(): Promise<void> {
   const enqueue = createSerialTaskQueue((err) => {
     logger.error({ err }, "Serialized sync task failed");
   });
-  let conflictCopyPathIndex = buildUnresolvedConflictCopyPathIndex(syncState);
-  const refreshConflictCopyPathIndex = () => {
-    conflictCopyPathIndex = buildUnresolvedConflictCopyPathIndex(syncState);
-  };
-
-  const watcher = new FileWatcher({
-    syncRoot: config.syncPath,
-    ignorePatterns,
-    onError: (err) => logger.error({ err }, "Watcher event handling failed"),
-    onEvent: async (event) => enqueue(async () => {
-      if (config.pauseSync) return;
-
-      // Stored under remote-prefixed keys so syncState matches what the
-      // gateway sees. Two daemons watching `~/foo` and `~/bar` then write
-      // disjoint key spaces (`foo/...` vs `bar/...`).
-      const remotePath = toRemote(event.path);
-      const isUnresolvedConflictCopy = hasUnresolvedConflictCopyPath(
-        conflictCopyPathIndex,
-        remotePath,
-      );
-
-      if (event.type === "change") {
-        const existing = syncState.files[remotePath];
-        // Skip remote-synced files on watcher replay and local-only conflict
-        // copies that should never be uploaded to the remote manifest.
-        if (shouldSkipWatcherUpload(existing, event.hash, isUnresolvedConflictCopy)) {
-          if (
-            existing &&
-            (existing.hash !== event.hash ||
-              existing.mtime !== event.mtime ||
-              existing.size !== event.size)
-          ) {
-            existing.hash = event.hash;
-            existing.mtime = event.mtime;
-            existing.size = event.size;
-            await saveSyncState(stateFile, syncState);
-          }
-          if (isUnresolvedConflictCopy && !existing) {
-            syncState.files[remotePath] = {
-              hash: event.hash,
-              mtime: event.mtime,
-              size: event.size,
-              lastSyncedHash: event.hash,
-              localOnly: true,
-            };
-            capSyncStateFiles(syncState);
-            await saveSyncState(stateFile, syncState);
-          }
-          return;
-        }
-
-        const nextState = {
-          hash: event.hash,
-          mtime: event.mtime,
-          size: event.size,
-          lastSyncedHash: existing?.lastSyncedHash,
-        };
-        syncState.files[remotePath] = nextState;
-        capSyncStateFiles(syncState);
-
-        try {
-          const urls = await requestPresignedUrls(gatewayClient, [
-            { path: remotePath, action: "put", hash: event.hash, size: event.size },
-          ]);
-          if (urls[0]) {
-            await uploadFile(
-              urls[0],
-              join(config.syncPath, event.path),
-              gatewayClient,
-            );
-            const result = await commitFiles(gatewayClient, [
-              {
-                path: remotePath,
-                hash: event.hash,
-                size: event.size,
-                stagingId: urls[0].stagingId,
-              },
-            ], syncState.manifestVersion);
-            syncState.files[remotePath]!.lastSyncedHash = event.hash;
-            syncState.manifestVersion = result.manifestVersion;
-            await saveSyncState(stateFile, syncState);
-          }
-        } catch (err) {
-          if (existing) {
-            syncState.files[remotePath] = existing;
-          } else {
-            delete syncState.files[remotePath];
-          }
-          if (exitOnAuthFailure(err, logger)) return;
-          await adoptRemoteManifestVersion(syncState, err, async () => {
-            await saveSyncState(stateFile, syncState);
-          });
-          logger.error({ err, path: remotePath }, "Upload failed");
-        }
-      } else if (event.type === "unlink") {
-        const entry = syncState.files[remotePath];
-        if (shouldCommitWatcherDelete(entry, isUnresolvedConflictCopy)) {
-          try {
-            const deleteResult = await commitFiles(gatewayClient, [
-              {
-                path: remotePath,
-                hash: entry.hash,
-                size: 0,
-                action: "delete",
-              },
-            ], syncState.manifestVersion);
-            delete syncState.files[remotePath];
-            syncState.manifestVersion = deleteResult.manifestVersion;
-            await saveSyncState(stateFile, syncState);
-          } catch (err) {
-            if (exitOnAuthFailure(err, logger)) return;
-            await adoptRemoteManifestVersion(syncState, err, async () => {
-              await saveSyncState(stateFile, syncState);
-            });
-            logger.error({ err, path: remotePath }, "Delete commit failed");
-          }
-        } else if (entry?.localOnly || isUnresolvedConflictCopy) {
-          delete syncState.files[remotePath];
-          if (isUnresolvedConflictCopy) {
-            resolveConflictCopyPath(syncState, conflictCopyPathIndex, remotePath);
-          }
-          await saveSyncState(stateFile, syncState);
-        }
-      }
-    }),
+  if (migratedLegacyMappingConfig && mappingConfig.mappings[0]) {
+    await migrateLegacySyncStateFile({
+      legacyStateFile: stateFile,
+      targetStateFile: syncMappingStatePath(
+        configDir,
+        mappingConfig,
+        mappingConfig.mappings[0].id,
+      ),
+    });
+  }
+  const revision: ScopeRevision = { value: 0 };
+  const mappingSessions = await openMappingSessions({
+    configDir,
+    config: mappingConfig,
+    gatewayClient,
+    revision,
+    logger,
+    enqueue,
+    onAuthRejected: (err) => exitOnAuthFailure(err, logger),
   });
+  revision.value = mappingSessions.reduce(
+    (version, session) => Math.max(version, session.syncState.manifestVersion),
+    revision.value,
+  );
+  const syncState = mappingSessions[0]?.syncState ?? {
+    manifestVersion: 0,
+    lastSyncAt: 0,
+    files: {},
+  };
 
   let daemonConnectionState: "connecting" | "online" | "offline" = "connecting";
   const wsClient = new SyncWsClient({
@@ -890,94 +775,12 @@ export async function startDaemon(): Promise<void> {
     token: auth.accessToken,
     peerId: config.peerId,
     onEvent: async (event) => enqueue(async () => {
-      if (config.pauseSync) return;
+      if (!mappingConfig.enabled) return;
       if (event.type !== "sync:change") return;
-
-      let shouldAdvanceManifestVersion = true;
-
-      for (const file of event.files) {
-        // Only react to events for files inside our prefix. A daemon syncing
-        // `~/audit` (prefix "audit") ignores changes another peer made to
-        // `notes/foo.md`.
-        const localRel = toLocal(file.path);
-        if (!localRel) continue;
-
-        if (file.action !== "delete") {
-          try {
-            const urls = await requestPresignedUrls(gatewayClient, [
-              { path: file.path, action: "get" },
-            ]);
-            if (!urls[0]) {
-              shouldAdvanceManifestVersion = false;
-              continue;
-            }
-            const result = await reconcileRemoteFileChange(syncState, {
-              syncRoot: config.syncPath,
-              localRel,
-              remotePath: file.path,
-              remoteHash: file.hash,
-              remoteSize: file.size,
-              remotePeerId: event.peerId,
-              toRemotePath: toRemote,
-              onConflictCleanupError: (cleanupErr, conflictPath) => {
-                logger.warn(
-                  { err: cleanupErr, path: conflictPath },
-                  "Failed to clean up reserved conflict path after download error",
-                );
-              },
-              downloadRemote: (targetPath) => downloadFile(
-                urls[0]!.url,
-                targetPath,
-                file.hash,
-              ),
-            });
-            if (result.status === "conflict-created") {
-              logger.warn(
-                { path: file.path, conflictPath: result.conflictPath },
-                "Remote change conflicted with local edits; preserved both files",
-              );
-            }
-            refreshConflictCopyPathIndex();
-            await saveSyncState(stateFile, syncState);
-          } catch (err) {
-            shouldAdvanceManifestVersion = false;
-            if (exitOnAuthFailure(err, logger)) return;
-            logger.error({ err, path: file.path }, "Download failed");
-          }
-        } else {
-          try {
-            const result = await reconcileRemoteDelete(syncState, {
-              syncRoot: config.syncPath,
-              localRel,
-              remotePath: file.path,
-              remoteHash: file.hash,
-              remotePeerId: event.peerId,
-              toRemotePath: toRemote,
-            });
-            if (result.status === "delete-skipped-conflict") {
-              logger.warn(
-                { path: file.path, conflictPath: result.conflictPath },
-                "Remote delete conflicted with local edits; kept local file",
-              );
-            }
-            refreshConflictCopyPathIndex();
-            await saveSyncState(stateFile, syncState);
-          } catch (err) {
-            shouldAdvanceManifestVersion = false;
-            logger.error(
-              { err, path: file.path },
-              "Local delete failed",
-            );
-          }
-        }
+      await dispatchMappingEvent(mappingSessions, event);
+      if (event.manifestVersion !== undefined) {
+        revision.value = Math.max(revision.value, event.manifestVersion);
       }
-
-      await adoptSyncChangeManifestVersion(
-        syncState,
-        event,
-        shouldAdvanceManifestVersion,
-        () => saveSyncState(stateFile, syncState),
-      );
     }),
     onConnect: () => {
       daemonConnectionState = "online";
@@ -994,7 +797,19 @@ export async function startDaemon(): Promise<void> {
   const mappingController = createMappingControllerHandler({
     snapshot: () => mappingConfig,
     validate: async (next) => {
-      const existing: Parameters<typeof planMappingOverlaps>[0]["existing"] = [];
+      const storedConfigs = await listSyncMappingConfigs(configDir);
+      const existing: Parameters<typeof planMappingOverlaps>[0]["existing"] = storedConfigs
+        .filter((stored) => !(
+          stored.profile === next.profile
+          && stored.ownerId === next.ownerId
+          && stored.runtimeSlot === next.runtimeSlot
+        ))
+        .flatMap((stored) => stored.mappings.map((mapping) => ({
+          profile: stored.profile,
+          ownerId: stored.ownerId,
+          runtimeSlot: stored.runtimeSlot,
+          mapping,
+        })));
       for (const candidate of next.mappings) {
         const result = await planMappingOverlaps({
           candidate: {
@@ -1029,9 +844,24 @@ export async function startDaemon(): Promise<void> {
       setTimeout(() => process.exit(3), 50).unref();
     },
     conflicts: (mappingId) => {
-      const primaryId = mappingConfig.mappings[0]?.id;
-      if (mappingId && mappingId !== primaryId) return [];
-      return Object.values(syncState.conflicts ?? {}).filter((conflict) => !conflict.resolved);
+      return mappingSessions
+        .filter((session) => !mappingId || session.mapping.id === mappingId)
+        .flatMap((session) => session.conflicts());
+    },
+    rescan: async (mappingId) => {
+      const remote = parseRemoteManifestEnvelope((await fetchManifest(gatewayClient)).manifest);
+      revision.value = Math.max(revision.value, remote.manifestVersion);
+      const sessions = mappingSessions.filter((session) => (
+        !mappingId || session.mapping.id === mappingId
+      ));
+      if (mappingId && sessions.length === 0) {
+        throw Object.assign(new Error("sync_mapping_not_found"), {
+          code: "sync_mapping_not_found",
+        });
+      }
+      for (const session of sessions) {
+        await session.rescan(remote.manifest.files);
+      }
     },
   });
   const ipcHandler = createIpcHandler({
@@ -1048,11 +878,31 @@ export async function startDaemon(): Promise<void> {
         configDir,
         profileName: configResolution.profileName,
       });
+      const updated = {
+        ...mappingConfig,
+        revision: mappingConfig.revision + 1,
+        enabled: !paused,
+      };
+      await saveSyncMappingConfig({
+        configDir,
+        config: updated,
+        expectedRevision: mappingConfig.revision,
+      });
+      mappingConfig = updated;
+      setTimeout(() => process.exit(3), 50).unref();
     },
     clearAuth: authFileAccessors.clearAuth,
     loadAuth: authFileAccessors.loadAuth,
     connectionState: () => daemonConnectionState,
     mappingController,
+    mappingStatuses: () => mappingSessions.map((session) => ({
+      ...session.status(),
+      label: session.mapping.label,
+      localRoot: session.mapping.localRoot,
+      remotePrefix: session.mapping.remotePrefix,
+      direction: session.mapping.direction,
+      propagateDeletes: session.mapping.propagateDeletes,
+    })),
     shell: createDaemonShellControlClient({ config, loadAuth: authFileAccessors.loadAuth }),
     exit: (code) => process.exit(code),
   });
@@ -1060,7 +910,7 @@ export async function startDaemon(): Promise<void> {
 
   const shutdown = async () => {
     logger.info("Shutting down daemon");
-    await watcher.stop();
+    await stopMappingSessions(mappingSessions);
     wsClient.close();
     await ipcServer.stop();
     try {
@@ -1107,31 +957,19 @@ export async function startDaemon(): Promise<void> {
   //  2. Initial-pull: download every file in the manifest that's missing
   //     locally (or stale) so a fresh daemon on a new machine actually
   //     materializes the user's existing files.
+  let sessionsStarted = false;
   try {
     const remote = await fetchManifest(gatewayClient);
     const remoteEnvelope = parseRemoteManifestEnvelope(remote.manifest);
     const remoteVersion = remoteEnvelope.manifestVersion;
-    if (remoteVersion > syncState.manifestVersion) {
-      syncState.manifestVersion = remoteVersion;
-      await saveSyncState(stateFile, syncState);
-      logger.info(
-        { manifestVersion: remoteVersion },
-        "Synced remote manifest version on startup",
-      );
-    }
-
-    const remoteFiles = remoteEnvelope.manifest.files;
-    await runInitialPull({
-      gatewayClient,
-      syncRoot: config.syncPath,
-      syncState,
-      remoteFiles,
-      toLocal,
-      toRemote,
-      logger,
-      saveSyncState: () => saveSyncState(stateFile, syncState),
-      refreshConflictCopyPathIndex,
-    });
+    revision.value = Math.max(revision.value, remoteVersion);
+    for (const session of mappingSessions) session.syncState.manifestVersion = revision.value;
+    await startMappingSessions(mappingSessions, remoteEnvelope.manifest.files);
+    sessionsStarted = true;
+    logger.info(
+      { manifestVersion: remoteVersion, mappingCount: mappingSessions.length },
+      "Started mapping sessions from remote manifest",
+    );
   } catch (err) {
     if (exitOnAuthFailure(err, logger)) return;
     logger.warn(
@@ -1140,11 +978,14 @@ export async function startDaemon(): Promise<void> {
     );
   }
 
-  watcher.start();
+  if (!sessionsStarted) {
+    await startMappingSessions(mappingSessions, {});
+  }
+
   wsClient.connect();
 
   logger.info(
-    { syncPath: config.syncPath, peerId: config.peerId },
+    { mappingCount: mappingSessions.length, peerId: config.peerId },
     "Daemon started",
   );
 }

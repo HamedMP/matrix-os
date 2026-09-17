@@ -176,6 +176,9 @@ async function runAdd(args: Record<string, unknown>, json: boolean): Promise<voi
   const result = await sendCommand("sync.mappings.add", {
     expectedRevision: config.revision,
     mapping,
+    ...(typeof args.excludeParent === "string"
+      ? { parentMappingId: requireMappingId(args.excludeParent) }
+      : {}),
   });
   if (json) {
     console.log(formatCliSuccess(result));
@@ -378,6 +381,11 @@ export const syncCommand = defineCommand({
       description: "Propagate confirmed tracked deletions (off by default)",
       required: false,
       default: false,
+    },
+    excludeParent: {
+      type: "string",
+      description: "Parent mapping UUID to exclude atomically during add",
+      required: false,
     },
   },
   run: async ({ args, rawArgs }) => {

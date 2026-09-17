@@ -31,6 +31,7 @@ export const LocalFileStateSchema = z.object({
   size: z.int().nonnegative(),
   lastSyncedHash: Sha256HashSchema.optional(),
   localOnly: z.boolean().optional(),
+  retainedDeletion: z.enum(["local", "remote"]).optional(),
 });
 export type LocalFileState = z.infer<typeof LocalFileStateSchema>;
 

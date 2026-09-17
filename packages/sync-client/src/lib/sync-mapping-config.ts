@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, open, readFile, unlink } from "node:fs/promises";
+import { lstat, mkdir, open, readFile, readdir, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
   SyncMappingConfigSchema,
@@ -45,6 +45,21 @@ export function syncMappingConfigPath(
   scope: SyncScope,
 ): string {
   return join(profilePath(profile, configDir), "sync", deriveSyncScopeId(scope), "config.json");
+}
+
+export function syncMappingStatePath(
+  configDir: string,
+  config: Pick<SyncMappingConfig, "profile" | "ownerId" | "runtimeSlot">,
+  mappingId: string,
+): string {
+  const id = SyncMappingConfigSchema.shape.mappings.element.shape.id.parse(mappingId);
+  return join(
+    profilePath(config.profile, configDir),
+    "sync",
+    deriveSyncScopeId({ ownerId: config.ownerId, runtimeSlot: config.runtimeSlot }),
+    "state",
+    `${id}.json`,
+  );
 }
 
 export function migrateLegacySyncConfig(input: {
@@ -106,6 +121,81 @@ export async function loadSyncMappingConfig(
       && (err as NodeJS.ErrnoException).code === "ENOENT"
     ) {
       return null;
+    }
+    throw err;
+  }
+}
+
+export async function listSyncMappingConfigs(
+  configDir: string,
+): Promise<SyncMappingConfig[]> {
+  const profilesDir = join(configDir, "profiles");
+  let profiles;
+  try {
+    profiles = await readdir(profilesDir, { withFileTypes: true });
+  } catch (err: unknown) {
+    if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") {
+      return [];
+    }
+    throw err;
+  }
+  const configs: SyncMappingConfig[] = [];
+  for (const profile of profiles.slice(0, 64)) {
+    if (!profile.isDirectory() || profile.isSymbolicLink()) continue;
+    const syncDir = join(profilesDir, profile.name, "sync");
+    let scopes;
+    try {
+      scopes = await readdir(syncDir, { withFileTypes: true });
+    } catch (err: unknown) {
+      if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw err;
+    }
+    for (const scope of scopes.slice(0, 64)) {
+      if (!scope.isDirectory() || scope.isSymbolicLink() || !scope.name.startsWith("scope-")) continue;
+      const path = join(syncDir, scope.name, "config.json");
+      try {
+        if ((await lstat(path)).isSymbolicLink()) throw codedError("sync_config_symlink");
+        configs.push(SyncMappingConfigSchema.parse(JSON.parse(await readFile(path, "utf8"))));
+      } catch (err: unknown) {
+        if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") continue;
+        throw err;
+      }
+    }
+  }
+  return configs.slice(0, 256);
+}
+
+export async function migrateLegacySyncStateFile(input: {
+  legacyStateFile: string;
+  targetStateFile: string;
+  maxBytes?: number;
+}): Promise<"copied" | "source_missing" | "target_exists"> {
+  const maxBytes = input.maxBytes ?? 32 * 1024 * 1024;
+  let sourceStat;
+  try {
+    sourceStat = await lstat(input.legacyStateFile);
+  } catch (err: unknown) {
+    if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") {
+      return "source_missing";
+    }
+    throw err;
+  }
+  if (!sourceStat.isFile() || sourceStat.isSymbolicLink() || sourceStat.size > maxBytes) {
+    throw codedError("sync_legacy_state_unsafe");
+  }
+  await mkdir(dirname(input.targetStateFile), { recursive: true, mode: 0o700 });
+  const bytes = await readFile(input.legacyStateFile);
+  try {
+    const target = await open(input.targetStateFile, "wx", 0o600);
+    try {
+      await target.writeFile(bytes);
+    } finally {
+      await target.close();
+    }
+    return "copied";
+  } catch (err: unknown) {
+    if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "EEXIST") {
+      return "target_exists";
     }
     throw err;
   }

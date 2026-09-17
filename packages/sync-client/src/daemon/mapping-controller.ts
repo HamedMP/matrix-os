@@ -1,4 +1,5 @@
 import { z } from "zod/v4";
+import { relative, sep } from "node:path";
 import {
   SyncMappingConfigSchema,
   SyncMappingSchema,
@@ -10,6 +11,7 @@ const MappingIdSchema = z.uuid();
 const AddArgsSchema = z.object({
   expectedRevision: RevisionSchema,
   mapping: SyncMappingSchema,
+  parentMappingId: MappingIdSchema.optional(),
 }).strict();
 const MutationArgsSchema = z.object({
   expectedRevision: RevisionSchema,
@@ -27,6 +29,27 @@ export interface MappingControllerDeps {
 
 function codedError(code: string): Error & { code: string } {
   return Object.assign(new Error(code), { code });
+}
+
+function childExclusions(
+  parent: z.infer<typeof SyncMappingSchema>,
+  child: z.infer<typeof SyncMappingSchema>,
+): string[] {
+  const exclusions: string[] = [];
+  const localRelative = relative(parent.localRoot, child.localRoot).replaceAll(sep, "/");
+  if (localRelative && localRelative !== ".." && !localRelative.startsWith("../")) {
+    exclusions.push(`${localRelative.replace(/\/$/, "")}/`);
+  }
+  if (
+    child.remotePrefix !== parent.remotePrefix
+    && (parent.remotePrefix === "" || child.remotePrefix.startsWith(`${parent.remotePrefix}/`))
+  ) {
+    const remoteRelative = parent.remotePrefix === ""
+      ? child.remotePrefix
+      : child.remotePrefix.slice(parent.remotePrefix.length + 1);
+    if (remoteRelative) exclusions.push(`${remoteRelative}/`);
+  }
+  return [...new Set(exclusions)];
 }
 
 function parse<T extends z.ZodType>(schema: T, args: Record<string, unknown>): z.infer<T> {
@@ -66,7 +89,20 @@ export function createMappingControllerHandler(deps: MappingControllerDeps): (
           if (current.mappings.some((mapping) => mapping.id === parsed.mapping.id)) {
             throw codedError("sync_mapping_exists");
           }
-          return { ...current, mappings: [...current.mappings, parsed.mapping] };
+          let mappings = current.mappings;
+          if (parsed.parentMappingId) {
+            const parentIndex = mappings.findIndex((mapping) => mapping.id === parsed.parentMappingId);
+            if (parentIndex < 0) throw codedError("sync_mapping_not_found");
+            const parent = mappings[parentIndex]!;
+            const exclusions = childExclusions(parent, parsed.mapping);
+            if (exclusions.length === 0) throw codedError("sync_mapping_parent_invalid");
+            mappings = [...mappings];
+            mappings[parentIndex] = {
+              ...parent,
+              excludes: [...new Set([...parent.excludes, ...exclusions])],
+            };
+          }
+          return { ...current, mappings: [...mappings, parsed.mapping] };
         });
       }
       case "sync.mappings.pause":
