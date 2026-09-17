@@ -216,11 +216,11 @@ export function wireKernel(): () => void {
     if (request.runtimeSlot !== runtimeSlot || current.runtimeSlot !== runtimeSlot
       || request.authGeneration !== authGeneration || current.authGeneration !== authGeneration
       || current.status !== "signed-in") return;
-    activeSocket.send({
-      type: "message",
-      text: `[App: ${request.app}] ${request.context}`,
-      requestId: crypto.randomUUID(),
-    });
+    const text = `[App: ${request.app}] ${request.context}`;
+    const requestId = crypto.randomUUID();
+    // Register before dispatch so kernel:init cannot bind to another pending run.
+    useThreads.getState().startThread({ text, requestId, title: `App: ${request.app}` });
+    activeSocket.send({ type: "message", text, requestId });
   });
 
   activeSocket.connect();
