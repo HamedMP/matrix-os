@@ -597,7 +597,7 @@ describe("collaboration gateway routes", () => {
       method: "POST",
       path: `/api/collaboration/scopes/${collaborationIds.scope}/invitations`,
       body: {
-        targetActorId: collaborationActors.editor,
+        identifier: collaborationActors.editor,
         role: "editor",
         clientRequestId: invitationRequestId,
         expectedRevision: "1",
@@ -635,7 +635,7 @@ describe("collaboration gateway routes", () => {
       method: "POST",
       path: `/api/collaboration/scopes/${collaborationIds.scope}/invitations`,
       body: {
-        targetActorId: collaborationActors.editor,
+        identifier: collaborationActors.editor,
         role: "editor",
         clientRequestId: invitationRequestId,
         expectedRevision: "1",
@@ -680,7 +680,7 @@ describe("collaboration gateway routes", () => {
       method: "POST",
       path: `/api/collaboration/scopes/${collaborationIds.scope}/invitations`,
       body: {
-        targetActorId: collaborationActors.editor,
+        identifier: collaborationActors.editor,
         role: "editor",
         clientRequestId: invitationRequestId,
         expectedRevision: "1",
