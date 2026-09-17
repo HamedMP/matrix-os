@@ -161,6 +161,64 @@ describe("canonical Chat routes", () => {
     expect(oversized.status).toBe(413);
   });
 
+  it.each([
+    {
+      path: "/api/chats/chat_route_test/turns",
+      body: {
+        clientRequestId: "req_spoof_turn",
+        baseRevision: 0,
+        parts: [{ type: "text", text: "spoof" }],
+        selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+        interactionMode: "default",
+        permissionMode: "supervised",
+        actorId: "other_user",
+      },
+    },
+    {
+      path: "/api/chats/chat_route_test/queued-turns",
+      body: {
+        clientRequestId: "req_spoof_queue",
+        baseRevision: 0,
+        parts: [{ type: "text", text: "spoof" }],
+        selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+        interactionMode: "default",
+        permissionMode: "supervised",
+        purpose: "discussion",
+      },
+    },
+    {
+      path: "/api/chats/chat_route_test/runs/run_route/steer",
+      body: {
+        clientRequestId: "req_spoof_steer",
+        expectedTurnId: "cturn_route",
+        parts: [{ type: "text", text: "spoof" }],
+        actorId: "other_user",
+      },
+    },
+    {
+      path: "/api/chats/chat_route_test/runs/run_route/queued-turns/qturn_route/steer",
+      body: {
+        clientRequestId: "req_spoof_queued_steer",
+        baseRevision: 1,
+        expectedTurnId: "cturn_route",
+        purpose: "discussion",
+      },
+    },
+  ])("rejects client-supplied human identity on $path", async ({ path, body }) => {
+    const service = routeService();
+    const response = await appFor(service).request(path, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+    expect(response.status).toBe(400);
+    expect(service.admitTurn).not.toHaveBeenCalled();
+    expect(service.enqueueQueuedTurn).not.toHaveBeenCalled();
+    expect(service.steerRun).not.toHaveBeenCalled();
+    expect(service.steerQueuedTurn).not.toHaveBeenCalled();
+  });
+
   it("moves a Chat with owner-derived identity and a strict revision-guarded body", async () => {
     const moved = { ...record, projectId: "project_1" };
     const updateProject = vi.fn(async () => moved);

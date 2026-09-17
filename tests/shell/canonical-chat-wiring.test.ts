@@ -8,9 +8,15 @@ describe("Canvas and web desktop canonical Chat wiring", () => {
     const canonicalState = readFileSync(join(process.cwd(), "shell/src/hooks/useCanonicalChatState.ts"), "utf8");
     const providerState = readFileSync(join(process.cwd(), "shell/src/components/chat-app-provider-setup.tsx"), "utf8");
     const desktop = readFileSync(join(process.cwd(), "shell/src/components/Desktop.tsx"), "utf8");
+    const mobile = readFileSync(join(process.cwd(), "shell/src/components/mobile/MobileShell.tsx"), "utf8");
+    const userButton = readFileSync(join(process.cwd(), "shell/src/components/UserButton.tsx"), "utf8");
 
-    expect(shellHome).toContain("useCanonicalChatState({ initialDraft: recipePrompt })");
+    expect(shellHome).toContain("const desktopCollaborationView = isMobile ? undefined : initialCollaborationView");
+    expect(shellHome).toContain("useCanonicalChatState({ initialDraft: recipePrompt, initialCollaborationView: desktopCollaborationView })");
     expect(shellHome).not.toContain("useChatState()");
+    expect(mobile).not.toContain("collaborationView={chat.collaborationView}");
+    expect(mobile).not.toContain("onOpenSharedChat={chat.openSharedChat}");
+    expect(userButton).toContain("showSharedWithMe={!isMobile}");
     expect(canonicalState).toContain("client.admitTurn(");
     expect(canonicalState).toContain("client.uploadAttachment(");
     expect(canonicalState).toContain("activeChatId && detailRef.current?.record.chat.id !== activeChatId");

@@ -52,6 +52,8 @@ export interface CollaborationScopeRecord {
   authEpoch: number;
   authorityRuntimeId: string;
   authorityGeneration: number;
+  executionGeneration: number | null;
+  executionEligibility: unknown | null;
 }
 
 export interface CollaborationMemberRecord {
@@ -712,6 +714,8 @@ function toScope(row: ScopeRow): CollaborationScopeRecord {
     authEpoch: Number(row.auth_epoch),
     authorityRuntimeId: row.authority_runtime_id,
     authorityGeneration: Number(row.authority_generation),
+    executionGeneration: row.execution_generation === null ? null : Number(row.execution_generation),
+    executionEligibility: row.execution_eligibility,
   };
 }
 

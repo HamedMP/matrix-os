@@ -390,7 +390,7 @@ export function createWorkspaceCodingAgentProvider(
         await boundedOperation(() => options.codexControl!.interruptTurn({ sessionId, clientRequestId }), 5_000);
       } else {
         const result = await boundedOperation(() => options.runtime.stopSession(sessionId), 5_000);
-        if (!result.ok) {
+        if (!result.ok && !(requireRuntimeStop && result.status === 404 && result.error.code === "not_found")) {
           throw new Error("Workspace provider abort failed");
         }
         options.codexEvents?.markStopped(sessionId);

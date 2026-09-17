@@ -65,7 +65,16 @@ export { ChatContextMenu } from "./chat/ChatContextMenu.js";
 export { ChatSharingButton } from "./chat/ChatSharingButton.js";
 export { ChatAttachments, type ChatMessageAttachment } from "./chat/ChatAttachments.js";
 export { ChatCollaboratorsDialog, type CollaborationApi } from "./collaboration/ChatCollaboratorsDialog.js";
-export { ChatCollaboration, type ChatCollaborationView } from "./collaboration/ChatCollaboration.js";
+export {
+  CanonicalSharedChatPanel,
+  ChatCollaboration,
+  SharedChatPanel,
+  type ChatCollaborationView,
+} from "./collaboration/ChatCollaboration.js";
+export {
+  sharedChatMembershipFromProjection,
+  type SharedChatMembershipProjection,
+} from "./collaboration/chat-projection.js";
 export { SharedChatControls } from "./collaboration/SharedChatControls.js";
 export { SharedTerminalControls } from "./collaboration/SharedTerminalControls.js";
 export { TerminalSharingButton } from "./collaboration/TerminalSharingButton.js";
@@ -111,3 +120,5 @@ export { isChatUnread, chatReadAction, mergeChatReadState } from "./chat/read-st
 
 export { computeSoftGridLayout, type SoftGridLayout, type SoftGridLayoutInput } from "./terminal/terminal-soft-grid.js";
 export { createTerminalGridPresentation, measureTerminalViewport } from "./terminal/terminal-grid-presentation.js";
+
+export { McpServerDiagnostics } from "./McpServerDiagnostics.js";

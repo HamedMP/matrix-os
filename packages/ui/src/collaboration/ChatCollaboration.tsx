@@ -4,6 +4,7 @@ import {
   CollaborationDiscoveryResponseSchema,
   CollaborationDiscoveryItemSchema,
   CollaborationInvitationSchema,
+  CollaborationMemberSchema,
   CollaborationProjectSchema,
   CollaborationScopeSchema,
   CollaborationSharedChatMessageSchema,
@@ -13,7 +14,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { z } from "zod/v4";
 import { ChatAttachments, type ChatMessageAttachment } from "../chat/ChatAttachments.js";
-import type { CollaborationApi } from "./ChatCollaboratorsDialog.js";
+import { ChatCollaboratorsDialog, type CollaborationApi } from "./ChatCollaboratorsDialog.js";
 import { collaborationDraftKey, collaborationDraftModeKey, createCollaborationDraftStore, type CollaborationDraft } from "./chat-state.js";
 import { deriveChatPermissions } from "./permissions.js";
 import { SharedChatControls } from "./SharedChatControls.js";
@@ -26,6 +27,7 @@ export type ChatCollaborationView =
   | { kind: "home" }
   | { kind: "invitation"; invitationId: string }
   | { kind: "chat"; scopeId: string }
+  | { kind: "canonical-chat"; chatId: string }
   | { kind: "terminal"; scopeId: string }
   | { kind: "project"; scopeId: string };
 
@@ -46,7 +48,7 @@ export function ChatCollaboration({
   runtimeId?: string;
   storage?: Pick<Storage, "getItem" | "setItem" | "removeItem">;
   openInvitation?: (invitationId: string) => void;
-  openChat?: (scopeId: string) => void;
+  openChat?: (scopeId: string, chatId?: string, title?: string) => void;
   openTerminal?: (scopeId: string) => void;
   openProject?: (scopeId: string) => void;
 }) {
@@ -60,14 +62,16 @@ export function ChatCollaboration({
   }
   if (view.kind === "terminal") return <SharedTerminalView api={api} actorId={actorId} scopeId={view.scopeId} />;
   if (view.kind === "project") return <SharedProjectView api={api} scopeId={view.scopeId} />;
-  return <SharedChatView api={api} actorId={actorId} runtimeId={runtimeId ?? "platform"}
+  if (view.kind === "canonical-chat") return <CanonicalSharedChatPanel api={api} actorId={actorId}
+    runtimeId={runtimeId ?? "platform"} chatId={view.chatId} storage={storage} />;
+  return <SharedChatPanel api={api} actorId={actorId} runtimeId={runtimeId ?? "platform"}
     scopeId={view.scopeId} storage={storage} />;
 }
 
 function CollaborationHome({ api, openInvitation, openChat, openTerminal, openProject }: {
   api: CollaborationApi;
   openInvitation: (invitationId: string) => void;
-  openChat: (scopeId: string) => void;
+  openChat: (scopeId: string, chatId?: string, title?: string) => void;
   openTerminal: (scopeId: string) => void;
   openProject: (scopeId: string) => void;
 }) {
@@ -158,7 +162,7 @@ function CollaborationHome({ api, openInvitation, openChat, openTerminal, openPr
             <p className="text-sm" style={{ color: "var(--text-secondary)" }}>Shared {kindLabel(item.kind)} · {roleLabel(item.resource.scope.role)}</p>
           </div>
           {"chat" in item.resource
-            ? <button type="button" className={buttonClass} onClick={() => openChat(item.scopeId)}>Open Chat</button>
+            ? <button type="button" className={buttonClass} onClick={() => openAcceptedChat(item, openChat)}>Open Chat</button>
             : "terminal" in item.resource
               ? <button type="button" className={buttonClass} onClick={() => openTerminal(item.scopeId)}>Open terminal</button>
               : <button type="button" className={buttonClass} onClick={() => openProject(item.scopeId)}>Open project</button>}
@@ -267,10 +271,18 @@ function discoveryKey(item: DiscoveryItem): string {
   return item.status === "invited" ? `invite:${item.invitationId}` : `scope:${item.scopeId}`;
 }
 
+function openAcceptedChat(
+  item: DiscoveryItem,
+  openChat: (scopeId: string, chatId?: string, title?: string) => void,
+): void {
+  if (item.status !== "accepted" || !("chat" in item.resource)) return;
+  openChat(item.scopeId, item.resource.chat.id, item.resource.chat.title);
+}
+
 function InvitationView({ api, invitationId, openChat, openTerminal, openProject }: {
   api: CollaborationApi;
   invitationId: string;
-  openChat: (scopeId: string) => void;
+  openChat: (scopeId: string, chatId?: string, title?: string) => void;
   openTerminal: (scopeId: string) => void;
   openProject: (scopeId: string) => void;
 }) {
@@ -355,6 +367,7 @@ interface SharedChatState {
   loading: boolean;
   sending: boolean;
   error: SharedChatError;
+  connection: "connecting" | "connected" | "reconnecting";
   refreshVersion: number;
 }
 
@@ -371,6 +384,7 @@ type SharedChatAction =
   | { type: "send_started" }
   | { type: "send_finished" }
   | { type: "send_failed" }
+  | { type: "connection_changed"; connection: SharedChatState["connection"] }
   | { type: "unavailable" };
 
 const initialSharedChatState: SharedChatState = {
@@ -384,6 +398,7 @@ const initialSharedChatState: SharedChatState = {
   loading: true,
   sending: false,
   error: null,
+  connection: "connecting",
   refreshVersion: 0,
 };
 
@@ -407,6 +422,7 @@ function reduceSharedChat(state: SharedChatState, action: SharedChatAction): Sha
     case "send_started": return { ...state, sending: true, error: null };
     case "send_finished": return { ...state, sending: false };
     case "send_failed": return { ...state, sending: false, error: "send" };
+    case "connection_changed": return { ...state, connection: action.connection };
     case "unavailable": return { ...state, error: "unavailable" };
   }
 }
@@ -508,15 +524,22 @@ function useSharedChatController({ api, actorId, runtimeId, scopeId, storage }: 
   useEffect(() => {
     if (!state.scope) return;
     const key = collaborationDraftKey({ actorId, runtimeId, scopeId, chatId: state.scope.resourceId });
-    dispatch({ type: "draft_changed", draft: draftStore.load(key) });
+    const mode = draftStore.loadSelectedMode(key);
+    dispatch({ type: "draft_changed", draft: draftStore.load(collaborationDraftModeKey(key, mode), mode) });
   }, [actorId, draftStore, runtimeId, state.scope, scopeId]);
-  useEffect(() => api.subscribe?.(scopeId, recoverCanonical, () => dispatch({ type: "unavailable" })), [api, recoverCanonical, scopeId]);
+  useEffect(() => api.subscribe?.(
+    scopeId,
+    recoverCanonical,
+    () => dispatch({ type: "unavailable" }),
+    (connection) => dispatch({ type: "connection_changed", connection }),
+  ), [api, recoverCanonical, scopeId]);
   const updateDraft = (text: string, mode: CollaborationDraft["mode"] = state.draft.mode) => {
     const next = { text, mode };
     dispatch({ type: "draft_changed", draft: next });
     if (state.scope) draftStore.save(collaborationDraftModeKey(draftKey, mode), next);
   };
   const changeDraftMode = (mode: CollaborationDraft["mode"]) => {
+    draftStore.saveSelectedMode(draftKey, mode);
     dispatch({ type: "draft_changed", draft: draftStore.load(collaborationDraftModeKey(draftKey, mode), mode) });
   };
   const send = async () => {
@@ -546,20 +569,62 @@ function useSharedChatController({ api, actorId, runtimeId, scopeId, storage }: 
   return { state, loadMoreMessages, updateDraft, changeDraftMode, send };
 }
 
-function SharedChatView(props: Parameters<typeof useSharedChatController>[0]) {
+export function SharedChatPanel(props: Parameters<typeof useSharedChatController>[0]) {
   const { state, loadMoreMessages, updateDraft, changeDraftMode, send } = useSharedChatController(props);
+  const [members, setMembers] = useState<Array<z.infer<typeof CollaborationMemberSchema>>>([]);
+  const [membersOpen, setMembersOpen] = useState(false);
+  const [membersPending, setMembersPending] = useState(false);
+  const [membersError, setMembersError] = useState(false);
+  const refreshMembers = useCallback(async () => {
+    if (!state.scope) throw new Error("CollaborationUnavailable");
+    const [scopeValue, membersValue] = await Promise.all([
+      props.api.get(`/api/collaboration/scopes/${state.scope.id}`),
+      props.api.get(`/api/collaboration/scopes/${state.scope.id}/members`),
+    ]);
+    const scope = CollaborationScopeSchema.parse(scopeValue);
+    const nextMembers = z.object({
+      members: z.array(CollaborationMemberSchema).max(8),
+    }).parse(membersValue).members;
+    setMembers(nextMembers);
+    return { scope, members: nextMembers };
+  }, [props.api, state.scope]);
+  const openMembers = async () => {
+    if (membersPending) return;
+    setMembersPending(true);
+    setMembersError(false);
+    try {
+      await refreshMembers();
+      setMembersOpen(true);
+    } catch (failure: unknown) {
+      console.warn("[chat-collaboration] member load failed", failure instanceof Error ? failure.name : "UnknownError");
+      setMembersError(true);
+    } finally {
+      setMembersPending(false);
+    }
+  };
   if (state.loading) return <p role="status" className="p-8">Loading shared Chat…</p>;
   if (!state.scope || !state.chat || state.error === "load" || state.error === "unavailable") {
     return <SafeError title="Shared Chat unavailable" />;
   }
   const permissions = deriveChatPermissions(state.scope);
-  return <main className="mx-auto flex h-full min-h-[32rem] w-full max-w-4xl flex-col">
+  return <main data-slot="shared-chat-panel" className="mx-auto flex h-full min-h-0 w-full max-w-4xl flex-col">
     <header className="border-b p-4 sm:px-6">
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0"><h1 className="truncate text-lg font-semibold">{state.chat.title}</h1>
           <p className="text-xs" style={{ color: "var(--text-secondary)" }}>Shared Chat · {permissions.roleLabel}</p></div>
-        <span className="rounded-full border px-2.5 py-1 text-xs">Live collaboration</span>
+        <div className="flex items-center gap-2">
+          <span role="status" className="rounded-full border px-2.5 py-1 text-xs">
+            {state.connection === "connected"
+              ? "Live collaboration"
+              : state.connection === "reconnecting" ? "Reconnecting…" : "Connecting…"}
+          </span>
+          {permissions.canManageMembers ? <button type="button" className={buttonClass}
+            disabled={membersPending} onClick={() => void openMembers()}>
+            {membersPending ? "Loading access…" : "Manage access"}
+          </button> : null}
+        </div>
       </div>
+      {membersError ? <p role="alert" className="mt-2 text-sm">Member controls are unavailable. Try again.</p> : null}
     </header>
     <SharedChatHistory state={state} loadMoreMessages={loadMoreMessages} />
     <SharedChatControls key={state.scope.id} api={props.api} scope={state.scope} actorId={props.actorId}
@@ -567,7 +632,60 @@ function SharedChatView(props: Parameters<typeof useSharedChatController>[0]) {
       changeDraftMode={changeDraftMode}
       discussionSending={state.sending} discussionError={state.error === "send"}
       sendDiscussion={send} refreshVersion={state.refreshVersion} />
+    {membersOpen ? <ChatCollaboratorsDialog api={props.api} scope={state.scope} members={members}
+      onRefresh={refreshMembers} onClose={() => setMembersOpen(false)} /> : null}
   </main>;
+}
+
+export function CanonicalSharedChatPanel({ api, actorId, runtimeId, chatId, storage }: {
+  api: CollaborationApi;
+  actorId: string;
+  runtimeId: string;
+  chatId: string;
+  storage?: Pick<Storage, "getItem" | "setItem" | "removeItem">;
+}) {
+  const [resolution, setResolution] = useState<{
+    chatId: string;
+    scopeId: string | null;
+    loading: boolean;
+  }>(() => ({ chatId, scopeId: null, loading: true }));
+  useEffect(() => {
+    let current = true;
+    setResolution({ chatId, scopeId: null, loading: true });
+    void resolveCanonicalChatScope(api, chatId).then((scopeId) => {
+      if (current) setResolution({ chatId, scopeId, loading: false });
+    }).catch((error: unknown) => {
+      console.warn("[chat-collaboration] canonical scope resolution failed",
+        error instanceof Error ? error.name : "UnknownError");
+      if (current) setResolution({ chatId, scopeId: null, loading: false });
+    });
+    return () => { current = false; };
+  }, [api, chatId]);
+  if (resolution.chatId !== chatId || resolution.loading) {
+    return <p role="status" className="p-8">Loading shared Chat…</p>;
+  }
+  if (!resolution.scopeId) return <SafeError title="Shared Chat unavailable" />;
+  return <SharedChatPanel api={api} actorId={actorId} runtimeId={runtimeId}
+    scopeId={resolution.scopeId} storage={storage} />;
+}
+
+async function resolveCanonicalChatScope(api: CollaborationApi, chatId: string): Promise<string | null> {
+  let cursor: string | undefined;
+  const seenCursors = Object.create(null) as Record<string, true | undefined>;
+  for (let pageNumber = 0; pageNumber < 100; pageNumber += 1) {
+    const suffix = cursor ? `&cursor=${encodeURIComponent(cursor)}` : "";
+    const page = CollaborationDiscoveryResponseSchema.parse(
+      await api.get(`/api/collaboration/shared?limit=100${suffix}`),
+    );
+    const match = page.items.find((item) => item.status === "accepted"
+      && "chat" in item.resource && item.resource.chat.id === chatId);
+    if (match?.status === "accepted") return match.scopeId;
+    if (!page.nextCursor) return null;
+    if (seenCursors[page.nextCursor]) throw new Error("CollaborationDiscoveryCursorLoop");
+    seenCursors[page.nextCursor] = true;
+    cursor = page.nextCursor;
+  }
+  throw new Error("CollaborationDiscoveryPageLimit");
 }
 
 function SharedChatHistory({ state, loadMoreMessages }: {

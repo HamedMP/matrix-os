@@ -35,6 +35,7 @@ import {
   CollaborationTerminalActionSchema,
   CollaborationUserStatePatchSchema,
   CollaborationUserStateSchema,
+  type CollaborationPolicy,
 } from "@matrix-os/contracts";
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
@@ -189,14 +190,26 @@ export function createCollaborationRoutes(options: {
       action: "read",
     });
     await notifyScope(options, scope.id);
-    return c.json(scopeProjection(scope, context), 201);
+    return c.json(await scopeProjection(
+      scope,
+      context,
+      options.authority,
+      options.chatScope,
+      projectionM2Policy(options.verifier, c),
+    ), 201);
   }));
 
   routes.get("/api/collaboration/scopes/:scopeId", async (c) => handle(c, async () => {
     const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
     const context = await authorize(options, c, new Uint8Array(), "read", scopeId);
     const scope = await requireScope(options.repository, scopeId);
-    return c.json(scopeProjection(scope, context));
+    return c.json(await scopeProjection(
+      scope,
+      context,
+      options.authority,
+      options.chatScope,
+      projectionM2Policy(options.verifier, c),
+    ));
   }));
 
   routes.get("/api/collaboration/scopes/:scopeId/members", async (c) => handle(c, async () => {
@@ -740,9 +753,24 @@ function requireProjectLifecycle(
   return lifecycle;
 }
 
-function scopeProjection(scope: CollaborationScopeRecord, context: AuthorizedCollaborationContext) {
+async function scopeProjection(
+  scope: CollaborationScopeRecord,
+  context: AuthorizedCollaborationContext,
+  authority: CollaborationAuthority,
+  chatScope: CollaborationChatScopeService,
+  executionPolicy?: CollaborationPolicy,
+): Promise<ReturnType<typeof CollaborationScopeSchema.parse>> {
   const mutable = scope.lifecycle === "shared";
   const terminal = scope.kind === "terminal";
+  const requestAi = scope.kind === "chat"
+    && chatScope.matchesCurrentExecutionCapability(scope)
+    && await authority.canRequestAi({
+      kind: scope.kind,
+      lifecycle: scope.lifecycle,
+      owner_id: scope.ownerId,
+      execution_generation: scope.executionGeneration,
+      execution_eligibility: scope.executionEligibility,
+    }, context.actorId, context.role, context.membershipScopeId, executionPolicy);
   return CollaborationScopeSchema.parse({
     id: scope.id,
     ownerId: scope.ownerId,
@@ -759,12 +787,21 @@ function scopeProjection(scope: CollaborationScopeRecord, context: AuthorizedCol
       read: true,
       discuss: context.role !== "viewer" && mutable,
       manageMembers: context.role === "owner" && scope.membershipMode === "direct" && mutable,
-      requestAi: false,
+      requestAi,
       observeTerminal: terminal && mutable,
       controlTerminal: terminal && context.role !== "viewer" && mutable,
       stopTerminal: terminal && context.role === "owner" && mutable,
     },
   });
+}
+
+function projectionM2Policy(
+  verifier: CollaborationActorProofVerifier,
+  c: Context,
+): CollaborationPolicy | undefined {
+  if (!c.req.header(COLLABORATION_POLICY_HEADER)) return undefined;
+  const policy = verifier.verifyPolicy(decodePolicy(c));
+  return policy.milestone === "m2" ? policy : undefined;
 }
 
 function projectPreparationProjection(scope: CollaborationScopeRecord) {
@@ -826,7 +863,7 @@ async function invitationProjection(
     role: member.role,
     status: member.status,
     expiresAt: member.expiresAt,
-    revision: String(member.revision),
+    revision: String(scope.revision),
   });
 }
 

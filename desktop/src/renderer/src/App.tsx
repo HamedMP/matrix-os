@@ -1,3 +1,4 @@
+import { NativeChatBadge } from "./features/chat/NativeChatBadge";
 import RuntimeCompatibilityGate from "./features/updates/RuntimeCompatibilityGate";
 import { MatrixBootScreen } from "@matrix-os/brand";
 import { GettingStartedVisibilityProvider } from "@matrix-os/ui";
@@ -37,6 +38,7 @@ export default function App() {
           <RuntimeCompatibilityGate key={scope}><MissionControl /></RuntimeCompatibilityGate>
         )}
       </div>
+      <NativeChatBadge />
       <DesktopSupportWidget />
       <DesktopUpdateExperience />
       <Toaster

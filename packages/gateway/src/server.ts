@@ -1,3 +1,4 @@
+import { createProjectChatCleanup } from "./chat/project-deletion.js";
 import { createRuntimeAppAiRoutes } from "./app-ai/runtime.js";
 import { restoreBackgroundChatThread, createBackgroundChatProjection } from "./coding-agents/background-chat-recovery.js";
 import { createBackgroundAgentRuntime } from "./background-agent-runtime.js";
@@ -122,6 +123,7 @@ import {
 import { createProvisioner } from "./provisioner.js";
 import {
   authMiddleware,
+  readPreviewTerminalOwner,
 } from "./auth.js";
 import {
   isRequestPrincipalError,
@@ -357,6 +359,7 @@ import {
   TerminalWindowLayoutStore,
   createTerminalWorkspaceRoutes,
   createTerminalWorkspaceProjectAdmission,
+  terminalResourceOwnerId,
   terminalRuntimeRefAccess,
   shellWsMessageDataToString,
 } from "./shell/index.js";
@@ -2159,6 +2162,7 @@ export async function createGateway(config: GatewayConfig) {
     runtime: terminalWorkspaceRuntime,
     homePath,
     getPrincipal: (c) => requireRequestPrincipal(c),
+    getPreviewTerminalOwner: readPreviewTerminalOwner,
     terminalOwnerIds: terminalRuntimeOwnerIds,
     chatTerminals: shellRouteDeps.chatTerminals,
     ...(gatewayCollaboration ? {
@@ -2818,21 +2822,23 @@ export async function createGateway(config: GatewayConfig) {
           }
           void (async () => {
             principal = requireRequestPrincipal(c);
+            const resourceOwnerId = terminalResourceOwnerId(principal, readPreviewTerminalOwner(c));
             const refAccess = await terminalRuntimeRefAccess(
               principal,
               terminalRuntimeOwnerIds,
               terminalWorkspaceRuntime,
               refResult.data,
+              readPreviewTerminalOwner(c),
             );
             if (refAccess === "not_found" || refAccess === "unavailable") {
               throw new Error("Terminal runtime reference denied");
             }
-            const owner = { type: "personal" as const, ownerId: principal.userId };
+            const actorOwner = { type: "personal" as const, ownerId: principal.userId };
             const refKey = `${refResult.data.workspaceId}:${refResult.data.tabId}`;
             const terminalAuthorizationRepository = chatRepository;
             if (chatResult.data) {
               if (!terminalAuthorizationRepository) throw new Error("Terminal attachment authorization unavailable");
-              const binding = await terminalAuthorizationRepository.getTerminalBinding(owner, chatResult.data, refKey);
+              const binding = await terminalAuthorizationRepository.getTerminalBinding(actorOwner, chatResult.data, refKey);
               if (!binding) throw new Error("Chat terminal attachment denied");
             } else {
               if (refAccess === "chat_required") throw new Error("Chat terminal attachment requires Chat context");
@@ -2840,7 +2846,10 @@ export async function createGateway(config: GatewayConfig) {
                 throw new Error("Terminal attachment authorization unavailable");
               }
               if (terminalAuthorizationRepository) {
-                const bound = await terminalAuthorizationRepository.listBoundTerminalSessionIds(owner, [refKey]);
+                const bound = await terminalAuthorizationRepository.listBoundTerminalSessionIds(
+                  { type: "personal", ownerId: resourceOwnerId },
+                  [refKey],
+                );
                 if (bound.includes(refKey)) throw new Error("Chat terminal attachment requires Chat context");
               }
             }
@@ -2848,7 +2857,7 @@ export async function createGateway(config: GatewayConfig) {
               ...(attachmentTokenResult.data
                 ? { attachmentToken: attachmentTokenResult.data }
                 : {}),
-              ownerId: principal.userId,
+              ownerId: resourceOwnerId,
               terminalRef: refResult.data,
             }, {
               consumeSessionAttachment: workspaceSessionRuntimeBridge.consumeSessionAttachment,
@@ -2885,7 +2894,7 @@ export async function createGateway(config: GatewayConfig) {
               : "soft" as const;
             captureTerminalEvent("attach-request", { client: clientResult.data, mode });
             stream = await terminalWorkspaceProjectAdmission.withWorkspace(
-              principal,
+              resourceOwnerId,
               refResult.data.workspaceId,
               "run",
               async () => terminalWorkspaceRuntime.attach({
@@ -2928,7 +2937,7 @@ export async function createGateway(config: GatewayConfig) {
             inputQueue?.resume(async (frame) => {
               if (closed || !stream || !principal) return;
               await terminalWorkspaceProjectAdmission.withWorkspace(
-                principal,
+                resourceOwnerId,
                 refResult.data.workspaceId,
                 "run",
                 async () => {
@@ -3246,37 +3255,6 @@ export async function createGateway(config: GatewayConfig) {
   const upgradeBodyLimit = bodyLimit({ maxSize: 4096 });
   const pushRegistrationBodyLimit = bodyLimit({ maxSize: 4096 });
   const clientErrorBodyLimit = bodyLimit({ maxSize: CLIENT_ERROR_LOG_BODY_LIMIT });
-  app.route("/", createWorkspaceRoutes({
-    homePath,
-    backgroundRuntime: backgroundAgentRuntime,
-    terminalRuntime: terminalWorkspaceRuntime,
-    agentLauncher: agentCredentialLauncher,
-    sessionRuntimeBridge: workspaceSessionRuntimeBridge,
-    eventStore: workspaceEventStore,
-    eventPublisher: workspaceEventPublisher,
-    reviewStore,
-    codingAgentThreadStore,
-    getOwnerScope: (c) => ({ type: "user", id: requireRequestPrincipal(c).userId }),
-    ...(gatewayCollaboration ? {
-      projectOperationAdmission: gatewayCollaboration.projectOperationAdmission,
-    } : {}),
-    ...chatBoundWorkspaceRouteDeps,
-  }));
-  app.route("/api", createShellRoutes(shellRouteDeps));
-  app.route("/api/symphony", createElixirSymphonyProxyRoutes({
-    upstreamOrigin: symphonyUpstreamOriginForPort(initialSymphonyPort),
-  }));
-  const workspaceStartupRecoveryController = createWorkspaceStartupRecovery({
-    homePath,
-    backgroundRuntime: backgroundAgentRuntime,
-    eventPublisher: workspaceEventPublisher,
-    codingAgentThreadStore,
-  });
-  const workspaceStartupRecovery = await workspaceStartupRecoveryController.run();
-  if (workspaceStartupRecovery.status === "degraded") {
-    console.warn("[gateway] Workspace startup recovery completed with degraded steps");
-  }
-
   app.get("/api/terminal/layout", async (c) => {
     const layoutPath = join(homePath, "system", "terminal-layout.json");
     try {
@@ -4403,6 +4381,43 @@ export async function createGateway(config: GatewayConfig) {
       });
     }
   }
+  // Bind deletion and run tombstone recovery only after Chat dependencies are ready.
+  const deleteProjectChats = chatRepository && canonicalChatOrchestrator
+    ? createProjectChatCleanup({ repository: chatRepository, orchestrator: canonicalChatOrchestrator })
+    : async () => { throw new Error("Project chat cleanup unavailable"); };
+  app.route("/", createWorkspaceRoutes({
+    homePath,
+    backgroundRuntime: backgroundAgentRuntime,
+    terminalRuntime: terminalWorkspaceRuntime,
+    agentLauncher: agentCredentialLauncher,
+    sessionRuntimeBridge: workspaceSessionRuntimeBridge,
+    eventStore: workspaceEventStore,
+    eventPublisher: workspaceEventPublisher,
+    reviewStore,
+    codingAgentThreadStore,
+    deleteProjectChats,
+    getOwnerScope: (c) => ({ type: "user", id: requireRequestPrincipal(c).userId }),
+    ...(gatewayCollaboration ? {
+      projectOperationAdmission: gatewayCollaboration.projectOperationAdmission,
+    } : {}),
+    ...chatBoundWorkspaceRouteDeps,
+  }));
+  app.route("/api", createShellRoutes(shellRouteDeps));
+  app.route("/api/symphony", createElixirSymphonyProxyRoutes({
+    upstreamOrigin: symphonyUpstreamOriginForPort(initialSymphonyPort),
+  }));
+  const workspaceStartupRecoveryController = createWorkspaceStartupRecovery({
+    deleteProjectChats,
+    homePath,
+    backgroundRuntime: backgroundAgentRuntime,
+    eventPublisher: workspaceEventPublisher,
+    codingAgentThreadStore,
+  });
+  const workspaceStartupRecovery = await workspaceStartupRecoveryController.run();
+  if (workspaceStartupRecovery.status === "degraded") {
+    console.warn("[gateway] Workspace startup recovery completed with degraded steps");
+  }
+
   if (canonicalChatEventStream) {
     registerCanonicalChatEventWebSocketRoute({
       app,
