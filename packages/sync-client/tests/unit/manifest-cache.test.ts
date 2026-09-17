@@ -156,6 +156,20 @@ describe("loadSyncState", () => {
     expect(backups.length).toBeGreaterThan(0);
   });
 
+  it("bounds state-file reads and quarantines oversized cache data", async () => {
+    await writeFile(STATE_PATH, "x".repeat(65));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const state = await loadSyncState(STATE_PATH, { maxBytes: 64 });
+
+    expect(state).toMatchObject({ manifestVersion: 0, files: {} });
+    await expect(stat(STATE_PATH)).rejects.toThrow(/ENOENT/);
+    const entries = await readdir(TEST_DIR);
+    expect(entries.filter((entry) => entry.startsWith("sync-state.json.corrupt-")))
+      .toHaveLength(1);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("oversized"));
+  });
+
   // Regression: a daemon shipped before mtime was tightened from z.number()
   // to z.int() wrote floating-point millisecond timestamps into sync-state.json.
   // The 0.2.4 schema rejected them and the daemon crash-looped on every
