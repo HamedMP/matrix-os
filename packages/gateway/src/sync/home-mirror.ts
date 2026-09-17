@@ -40,6 +40,7 @@ import type { Manifest, ManifestEntry } from "./types.js";
 import type { PeerRegistry, SyncPeerConnection } from "./ws-events.js";
 import { resolveSyncScope, syncScopeRegistryKey } from "./runtime-scope.js";
 import { finalizeStagedObject } from "./blob-publication.js";
+import { createBoundedPathIntentQueue } from "./path-intent-queue.js";
 
 const RECENT_WRITE_CAP = 50_000;
 const DEFAULT_MAX_PUSH_BYTES = 100 * 1024 * 1024;
@@ -47,6 +48,7 @@ const INITIAL_PUSH_CHUNK_SIZE = 50;
 const LOCAL_WALK_FILE_CAP = 50_000;
 const LOCAL_WALK_DEPTH_CAP = 64;
 const DEFAULT_RESCAN_INTERVAL_MS = 5 * 60_000;
+const DEFAULT_PATH_INTENT_CAP = 10_000;
 
 const HOME_MIRROR_TMP_SUFFIX = /\.(?:\d+|matrixos-[0-9a-f-]{36})\.tmp$/i;
 const RemoteChangeFileSchema = z.object({
@@ -91,6 +93,8 @@ export interface HomeMirrorConfig {
   propagateDeletes?: boolean;
   /** Periodic full reconciliation interval. Set false for one-shot/test flows. */
   rescanIntervalMs?: number | false;
+  /** Maximum distinct active/pending watcher paths before falling back to a rescan. */
+  maxPendingPathIntents?: number;
 }
 
 export interface HomeMirror {
@@ -285,10 +289,15 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
   ) {
     throw new Error("rescanIntervalMs must be a positive finite number or false");
   }
+  const maxPendingPathIntents = config.maxPendingPathIntents ?? DEFAULT_PATH_INTENT_CAP;
+  if (!Number.isInteger(maxPendingPathIntents) || maxPendingPathIntents < 1) {
+    throw new Error("maxPendingPathIntents must be a positive integer");
+  }
 
   let watcher: FSWatcher | null = null;
   let rescanTimer: NodeJS.Timeout | null = null;
   let rescanRunning = false;
+  let rescanNeeded = false;
   let stopRequested = false;
   let subscribed = false;
   let resolvedHomeRoot = config.homeRoot;
@@ -568,6 +577,34 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
       });
     });
   }
+
+  const watcherIntentQueue = createBoundedPathIntentQueue<"push" | "delete">({
+    maxSize: maxPendingPathIntents,
+    async process(relPath, intent) {
+      if (intent === "delete") {
+        await pushDelete(relPath);
+      } else {
+        await pushFile(relPath);
+      }
+    },
+    onError(err, relPath) {
+      log.error(`watcher intent failed for ${relPath}: ${errorMessage(err)}`);
+    },
+    onOverflow(_relPath) {
+      if (!rescanNeeded) {
+        log.error(
+          `watcher intent queue reached ${maxPendingPathIntents} paths; scheduling a full rescan`,
+        );
+      }
+      rescanNeeded = true;
+    },
+    onIdle() {
+      if (rescanNeeded && !rescanRunning && !stopRequested) {
+        rescanNeeded = false;
+        void runPeriodicReconciliation();
+      }
+    },
+  });
 
   async function downloadEntryToPath(
     safeRelPath: string,
@@ -1012,17 +1049,17 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     activeWatcher.on("add", (absPath) => {
       const rel = relative(config.homeRoot, absPath);
       if (wasJustWritten(rel)) return;
-      pushFile(rel).catch((err: unknown) => log.error(`push failed for ${rel}: ${errorMessage(err)}`));
+      watcherIntentQueue.enqueue(rel, "push");
     });
     activeWatcher.on("change", (absPath) => {
       const rel = relative(config.homeRoot, absPath);
       if (wasJustWritten(rel)) return;
-      pushFile(rel).catch((err: unknown) => log.error(`push failed for ${rel}: ${errorMessage(err)}`));
+      watcherIntentQueue.enqueue(rel, "push");
     });
     activeWatcher.on("unlink", (absPath) => {
       const rel = relative(config.homeRoot, absPath);
       if (wasJustWritten(rel)) return;
-      pushDelete(rel).catch((err: unknown) => log.error(`delete failed for ${rel}: ${errorMessage(err)}`));
+      watcherIntentQueue.enqueue(rel, "delete");
     });
     activeWatcher.on("error", (err: unknown) => {
       log.error(`home mirror watcher error: ${errorMessage(err)}`);
@@ -1060,21 +1097,29 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     }
   }
 
+  async function runPeriodicReconciliation(): Promise<void> {
+    if (stopRequested || rescanRunning) return;
+    rescanRunning = true;
+    try {
+      await enqueue(() => cleanupTempFiles(config.homeRoot));
+      if (stopRequested) return;
+      await enqueue(initialPull);
+      if (!stopRequested) await initialPush();
+    } catch (err: unknown) {
+      log.error("periodic reconciliation failed:", errorMessage(err));
+    } finally {
+      rescanRunning = false;
+      if (rescanNeeded && !stopRequested) {
+        rescanNeeded = false;
+        queueMicrotask(() => void runPeriodicReconciliation());
+      }
+    }
+  }
+
   function schedulePeriodicRescan(): void {
     if (rescanIntervalMs === false || rescanTimer) return;
     rescanTimer = setInterval(() => {
-      if (stopRequested || rescanRunning) return;
-      rescanRunning = true;
-      void (async () => {
-        try {
-          await enqueue(initialPull);
-          if (!stopRequested) await initialPush();
-        } catch (err: unknown) {
-          log.error("periodic reconciliation failed:", errorMessage(err));
-        } finally {
-          rescanRunning = false;
-        }
-      })();
+      void runPeriodicReconciliation();
     }, rescanIntervalMs);
     rescanTimer.unref();
   }
@@ -1162,6 +1207,7 @@ export function createHomeMirror(config: HomeMirrorConfig): HomeMirror {
     async stop(): Promise<void> {
       stopRequested = true;
       await releaseResources();
+      await watcherIntentQueue.drain();
       await queue.drain();
     },
 

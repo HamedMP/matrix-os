@@ -36,7 +36,7 @@ implementation and is retained as historical compatibility context.
 
 - [x] Extract shared file policy and reconciliation semantics.
 - [x] Preserve divergent edits/deletes and block unsafe bootstrap deletion.
-- [ ] Add bounded queues/transfers/events/temp cleanup and common scenario tests.
+- [x] Add bounded queues/transfers/events/temp cleanup and common scenario tests.
 - [x] Keep production mirror activation gated.
 
 ## P4 — Multiple mappings and CLI

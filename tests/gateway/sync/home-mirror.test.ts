@@ -1127,10 +1127,20 @@ describe("createHomeMirror", () => {
       expect(await readFile(join(tmpRoot, "missed.md"), "utf8")).toBe("before");
 
       await seedLegacyRemoteFile("missed.md", Buffer.from("after"), 2);
+      const orphanedTemp = join(tmpRoot, "missed.md.12345.tmp");
+      await writeFile(orphanedTemp, "stale transfer");
 
       await waitFor(async () => (
         await readFile(join(tmpRoot, "missed.md"), "utf8")
       ) === "after");
+      await waitFor(async () => {
+        try {
+          await stat(orphanedTemp);
+          return false;
+        } catch (err: unknown) {
+          return (err as NodeJS.ErrnoException).code === "ENOENT";
+        }
+      });
       await mirror.stop();
     });
 
@@ -1394,6 +1404,33 @@ describe("createHomeMirror", () => {
         sha256(Buffer.from("retain destination copy")),
       );
       expect(afterDelete?.files["keep-remote.txt"]).not.toHaveProperty("deleted", true);
+      await mirror.stop();
+    });
+
+    it("retains all accepted files when the watched home root disappears", async () => {
+      await writeFile(join(tmpRoot, "first.txt"), "first");
+      await writeFile(join(tmpRoot, "second.txt"), "second");
+      const mirror = createHomeMirror({
+        r2,
+        manifestDb: db,
+        homeRoot: tmpRoot,
+        userId: "alice",
+        peerId: "gateway-alice",
+        peerRegistry: registry,
+        logger: { info: () => {}, error: () => {} },
+        rescanIntervalMs: false,
+      });
+      await mirror.start();
+      const before = storedManifest(r2);
+      expect(Object.keys(before?.files ?? {}).sort()).toEqual(["first.txt", "second.txt"]);
+
+      await rm(tmpRoot, { recursive: true, force: true });
+      await settle(500);
+
+      const after = storedManifest(r2);
+      expect(after?.manifestVersion).toBe(before?.manifestVersion);
+      expect(after?.files["first.txt"]).not.toHaveProperty("deleted", true);
+      expect(after?.files["second.txt"]).not.toHaveProperty("deleted", true);
       await mirror.stop();
     });
 
