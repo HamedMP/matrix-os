@@ -1025,7 +1025,7 @@ function ShellCard({
       cancelRename();
       return;
     }
-    if (renameSaving || renameCommittingRef.current) return;
+    if (deleting || renameSaving || renameCommittingRef.current) return;
     if (nextName === displayName) {
       setRenaming(false);
       return;
@@ -1043,7 +1043,7 @@ function ShellCard({
     }
     renameCommittingRef.current = false;
     setRenameSaving(false);
-  }, [cancelRename, displayName, onRename, renameDraft, renameSaving]);
+  }, [cancelRename, deleting, displayName, onRename, renameDraft, renameSaving]);
 
   const finishRename = useCallback(() => {
     if (renameCommittingRef.current) return;
@@ -1056,6 +1056,7 @@ function ShellCard({
   }, [cancelRename, commitRename, displayName, renameDraft]);
 
   const beginRename = () => {
+    if (deleting) return;
     cancelHoverCardOpen();
     setRenameDraft(displayName);
     setRenaming(true);
@@ -1192,6 +1193,7 @@ function ShellCard({
         <button
           type="button"
           aria-label={`Drag ${displayName} session`}
+          disabled={deleting}
           draggable={!renaming && !deleting}
           onClick={(event) => event.stopPropagation()}
           onPointerDown={(event) => event.stopPropagation()}
@@ -1248,7 +1250,7 @@ function ShellCard({
                 ref={renameInputRef}
                 aria-label={`Session name for ${displayName}`}
                 value={renameDraft}
-                disabled={renameSaving}
+                disabled={deleting || renameSaving}
                 onChange={(event) => setRenameDraft(event.target.value)}
                 onClick={(event) => event.stopPropagation()}
                 onPointerDown={(event) => event.stopPropagation()}
@@ -1273,6 +1275,7 @@ function ShellCard({
                   data-session-name={shell.name}
                   data-testid={`terminal-session-name-${shell.name}`}
                   aria-label={`Open ${displayName}`}
+                  disabled={deleting}
                   className="min-w-0 truncate"
                   onClick={(event) => {
                     event.stopPropagation();
@@ -1294,11 +1297,12 @@ function ShellCard({
                 >
                   {displayName}
                 </button>
+                {deleting ? <span role="status" className="shrink-0 text-xs">Deleting…</span> : null}
                 <button
                   type="button"
                   aria-label={renameControlLabel}
                   title={renameControlLabel}
-                  disabled={renameSaving}
+                  disabled={deleting || renameSaving}
                   tabIndex={showActions ? 0 : -1}
                   onClick={(event) => {
                     event.stopPropagation();
@@ -1355,6 +1359,7 @@ function ShellCard({
                   ref={moreButtonRef}
                   type="button"
                   aria-label={`More actions for ${displayName}`}
+                  disabled={deleting}
                   aria-haspopup="menu"
                   aria-expanded={contextMenuOpen}
                   tabIndex={showActions ? 0 : -1}
@@ -1389,6 +1394,7 @@ function ShellCard({
                   >
                     <SessionContextMenuItem
                       label="Copy Connect Command"
+                      disabled={deleting}
                       onClick={() => {
                         void copyAttachCommand();
                         closeContextMenuWithFocusReturn();
@@ -1398,6 +1404,7 @@ function ShellCard({
                     </SessionContextMenuItem>
                     <SessionContextMenuItem
                       label={toggleMenuLabel}
+                      disabled={deleting}
                       onClick={() => {
                         closeContextMenuWithFocusReturn();
                         onToggle();
@@ -1407,6 +1414,7 @@ function ShellCard({
                     </SessionContextMenuItem>
                     <SessionContextMenuItem
                       label={shell.pinned ? "Unpin" : "Pin"}
+                      disabled={deleting}
                       onClick={() => {
                         closeContextMenuWithFocusReturn();
                         onPin();

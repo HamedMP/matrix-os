@@ -1,12 +1,20 @@
 import { computeSoftGridLayout } from "./terminal-soft-grid.js";
+import { createTerminalScrollbar } from "./terminal-scrollbar.js";
+import { terminalContentExtent } from "./terminal-content-extent.js";
+import { panTerminalGrid } from "./terminal-grid-wheel.js";
 
 interface GridTerminal {
   element?: HTMLElement | null;
+  focus?: () => void;
   cols: number;
   rows: number;
   options: { fontSize?: number; scrollback?: number; overviewRuler?: { width?: number } };
   onWriteParsed?: (listener: () => void) => { dispose(): void };
-  buffer?: { active: { baseY: number; viewportY: number; cursorX: number; cursorY: number } };
+  onScroll?: (listener: () => void) => { dispose(): void };
+  scrollToLine?: (line: number) => void;
+  buffer?: { active: { type?: string; baseY: number; viewportY: number; cursorX: number; cursorY: number;
+    getLine?: (row: number) => { getCell(column: number): { getChars(): string; getWidth(): number; isBgDefault(): boolean; isInverse?: () => number } | undefined } | undefined;
+  } };
 }
 
 interface GridPresentationOptions {
@@ -58,27 +66,57 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
   let element: HTMLElement | null = null;
   let restoreStyle: Partial<CSSStyleDeclaration> | null = null;
   let previousPan: { top: number; left: number } | null = null;
+  let wheelPannedAway = false;
   let presentationScale = 1;
   let settledLayout: { metrics: number[]; layout: ReturnType<typeof computeSoftGridLayout> } | null = null;
+  let scrollbar: ReturnType<typeof createTerminalScrollbar> | undefined;
+  let scrollSubscription: { dispose(): void } | undefined;
+  let visualCellHeight = 0;
+  let liveContentHeight = 0;
+  let contentGrid: { cols: number; rows: number } | undefined;
   let outputSubscription: { dispose(): void } | undefined;
 
+  const onBlankMouseDown = (event: MouseEvent) => {
+    if (event.button !== 0 || event.defaultPrevented || !element ||
+      (event.target !== host && event.target !== stage)) return;
+    options.getTerminal().focus?.();
+    // Keep the browser's default focus action from blurring xterm afterward.
+    event.preventDefault();
+  };
+
   const onWheel = (event: WheelEvent & { matrixGridCorrected?: boolean }) => {
-    if (event.matrixGridCorrected || !element || !(event.target instanceof Element) || !element.contains(event.target)) return;
+    if (event.matrixGridCorrected || event.defaultPrevented || !element || !stage || !(event.target instanceof Element) || !host.contains(event.target)) return;
     const scale = presentationScale * (options.getParentScale?.() ?? 1);
-    if (!Number.isFinite(scale) || scale <= 0 || scale === 1) return;
+    if (!Number.isFinite(scale) || scale <= 0) return;
+    const pan = panTerminalGrid(event, host, stage, contentGrid ?? options.getTerminal());
+    if (pan.verticalPanned) {
+      wheelPannedAway = true;
+    }
+    if (pan.panned) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (pan.deltaX === 0 && pan.deltaY === 0) return;
+    }
+    const overTerminal = element.contains(event.target);
+    if (scale === 1 && !pan.panned && overTerminal) return;
     const rect = element.getBoundingClientRect();
+    // Content clipping must not turn the remaining viewport into a wheel dead
+    // zone. Forward its gesture to xterm at a valid canonical-grid coordinate.
+    const x = overTerminal ? event.clientX - rect.left : Math.max(0, Math.min(rect.width - 1, event.clientX - rect.left));
+    const y = overTerminal ? event.clientY - rect.top : Math.max(0, Math.min(rect.height - 1, event.clientY - rect.top));
+    const target = overTerminal ? event.target : element.querySelector(".xterm-screen") ?? element;
     const corrected = new WheelEvent("wheel", {
       bubbles: event.bubbles, cancelable: event.cancelable, composed: event.composed,
-      clientX: rect.left + (event.clientX - rect.left) / scale,
-      clientY: rect.top + (event.clientY - rect.top) / scale,
+      clientX: rect.left + x / scale,
+      clientY: rect.top + y / scale,
       screenX: event.screenX, screenY: event.screenY,
-      deltaX: event.deltaX, deltaY: event.deltaY, deltaZ: event.deltaZ, deltaMode: event.deltaMode,
+      deltaX: pan.deltaX, deltaY: pan.deltaY, deltaZ: event.deltaZ, deltaMode: event.deltaMode,
       ctrlKey: event.ctrlKey, altKey: event.altKey, shiftKey: event.shiftKey, metaKey: event.metaKey,
       button: event.button, buttons: event.buttons,
     });
     Object.defineProperty(corrected, "matrixGridCorrected", { value: true });
     event.stopImmediatePropagation();
-    event.target.dispatchEvent(corrected);
+    target.dispatchEvent(corrected);
     // Synthetic events have no native scrolling default. Preserve the real
     // event's default unless xterm consumed the corrected wheel report.
     if (corrected.defaultPrevented) event.preventDefault();
@@ -101,7 +139,7 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
     const viewportHeight = host.clientHeight - pixels(style.paddingTop) - pixels(style.paddingBottom);
     if (viewportWidth <= 0 || viewportHeight <= 0) return;
     // xterm reserves this gutter beside its screen for native scrollback.
-    const gutter = terminal.options.scrollback === 0 ? 0 : terminal.options.overviewRuler?.width || 14;
+    const gutter = terminal.scrollToLine && terminal.onScroll ? 0 : terminal.options.scrollback === 0 ? 0 : terminal.options.overviewRuler?.width || 14;
     const metrics = [viewportWidth, viewportHeight, width, height, fontSize, configured, gutter, window.devicePixelRatio];
     // Cell metrics are quantized: extrapolating the configured font from the
     // last fitted font can alternate between two sizes on every output batch.
@@ -118,11 +156,20 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
       });
     const buffer = terminal.buffer?.active;
     const live = buffer && buffer.viewportY >= buffer.baseY;
-    const followY = live && (!previousPan || Math.abs(host.scrollTop - previousPan.top) <= 1);
+    // Resume following at the bottom only when the cursor is already visible.
+    // A native redraw with a prompt above the viewport must not undo a pan.
+    const cursorTop = buffer && stage ? buffer.cursorY * visualCellHeight : -1;
+    if (wheelPannedAway && host.scrollTop >= host.scrollHeight - host.clientHeight - 0.01 && cursorTop >= host.scrollTop) {
+      wheelPannedAway = false;
+      if (previousPan) previousPan.top = host.scrollTop;
+    }
+    const followY = live && !wheelPannedAway && (!previousPan || Math.abs(host.scrollTop - previousPan.top) <= 1);
 
     if (!stage) {
       // xterm emits once per parsed write batch; RAF coalesces output bursts.
       outputSubscription = terminal.onWriteParsed?.(schedule);
+      scrollSubscription = terminal.onScroll?.(schedule);
+      host.addEventListener("mousedown", onBlankMouseDown);
       host.addEventListener("wheel", onWheel, { capture: true, passive: false });
       element = root;
       restoreStyle = {
@@ -134,7 +181,9 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
       stage.dataset.terminalGridStage = "true";
       // Transforms do not shrink layout overflow. Clip the unscaled box inside
       // a stage whose real dimensions match the visual grid, so pan limits do.
-      Object.assign(stage.style, { position: "relative", overflow: "hidden", flexShrink: "0" });
+      // Unlike hidden, clip cannot scroll when Chromium reveals xterm's
+      // focused textarea; all deliberate panning belongs to the outer host.
+      Object.assign(stage.style, { position: "relative", overflow: "clip", flexShrink: "0" });
       root.before(stage);
       stage.append(root);
     }
@@ -151,8 +200,13 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
       Math.min(1, viewportWidth / gridWidth, viewportHeight / gridHeight),
       Math.min(configured, 10) / layout.fontSize,
     ));
-    const visualWidth = gridWidth * scale;
-    const visualHeight = gridHeight * scale;
+    visualCellHeight = gridHeight * scale / terminal.rows;
+    const content = terminalContentExtent(terminal);
+    contentGrid = content;
+    liveContentHeight = visualCellHeight * (buffer && buffer.viewportY !== buffer.baseY
+      ? terminalContentExtent(terminal, buffer.baseY).rows : content.rows);
+    const visualWidth = ((gridWidth - gutter) * content.cols / terminal.cols + gutter) * scale;
+    const visualHeight = visualCellHeight * content.rows;
     Object.assign(root.style, {
       position: "absolute", top: "0", left: "0", width: `${gridWidth}px`, height: `${gridHeight}px`,
       transformOrigin: "top left", transform: `scale(${scale})`,
@@ -170,7 +224,7 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
     const panToCell = (position: number, start: number, end: number, viewport: number, max: number) =>
       Math.max(0, Math.min(max, end > position + viewport ? end - viewport : start < position ? start : position));
     if (followY && buffer) {
-      const cell = visualHeight / terminal.rows;
+      const cell = visualCellHeight;
       host.scrollTop = panToCell(host.scrollTop, buffer.cursorY * cell, (buffer.cursorY + 1) * cell,
         visibleHeight, Math.max(0, visualHeight - visibleHeight));
     } else if (visualHeight <= visibleHeight) host.scrollTop = 0;
@@ -181,6 +235,12 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
       // which made narrow observers appear to drift sideways as output arrived.
       left: host.scrollLeft,
     };
+    if (!scrollbar && terminal.buffer && terminal.scrollToLine && terminal.onScroll && host.parentElement) {
+      scrollbar = createTerminalScrollbar({ host, root, terminal: {
+        buffer: terminal.buffer, scrollToLine: terminal.scrollToLine.bind(terminal), onScroll: terminal.onScroll.bind(terminal),
+      }, getCellHeight: () => visualCellHeight, getTailHeight: () => liveContentHeight, onPan: () => { wheelPannedAway = true; } });
+    }
+    scrollbar?.sync();
     if (visibleWidth !== viewportWidth || visibleHeight !== viewportHeight) schedule();
   };
 
@@ -189,8 +249,13 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
     frame = requestAnimationFrame(() => { frame = null; apply(); });
   };
   const reset = () => {
+    scrollbar?.dispose();
+    scrollbar = undefined;
+    scrollSubscription?.dispose();
+    scrollSubscription = undefined;
     outputSubscription?.dispose();
     outputSubscription = undefined;
+    host.removeEventListener("mousedown", onBlankMouseDown);
     host.removeEventListener("wheel", onWheel, true);
     if (element && restoreStyle) Object.assign(element.style, restoreStyle);
     if (stage && element?.parentElement === stage) stage.replaceWith(element);
@@ -199,6 +264,7 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
     element = null;
     restoreStyle = null;
     previousPan = null;
+    wheelPannedAway = false;
     settledLayout = null;
     host.style.overflowX = "hidden";
     host.style.overflowY = "hidden";

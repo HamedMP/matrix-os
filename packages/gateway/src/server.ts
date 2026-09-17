@@ -19,7 +19,7 @@ import { bodyLimit } from "hono/body-limit";
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
 import { installPostHogHonoErrorTracking, resolveOwnerTelemetryDistinctId } from "@matrix-os/observability";
-import { TerminalRuntimeSocketClient } from "@matrix-os/terminal-runtime";
+import { TerminalRuntimeSocketClient, TerminalFrameQueue } from "@matrix-os/terminal-runtime";
 import { CanonicalChatIdSchema, TerminalRefSchema, TerminalTabClientFrameSchema } from "@matrix-os/contracts";
 import { createDispatcher, type Dispatcher, type BatchEntry, type DispatchContext } from "./dispatcher.js";
 import {
@@ -2787,13 +2787,33 @@ export async function createGateway(config: GatewayConfig) {
       const ownershipViewerId = randomUUID();
       let principal: RequestPrincipal | null = null;
       let closed = false;
-      const pending: unknown[] = [];
-      let frameAdmissionTail = Promise.resolve();
-      let pendingFrameAdmissions = 0;
-      let sendAuthorizedFrame: ((frame: z.infer<typeof TerminalTabClientFrameSchema>) => void) | null = null;
+      let inputQueue: TerminalFrameQueue | null = null;
 
       return {
         onOpen(_event, ws) {
+          inputQueue = new TerminalFrameQueue({
+            onOverflow: () => {
+              captureTerminalEvent("input-overflow", { client: clientResult.success ? clientResult.data : undefined });
+              closed = true;
+              ws.close(1013, "Terminal input queue full");
+            },
+            onError: (error) => {
+              logBestEffortFailure("Terminal tab mutation authorization failed", error);
+              if (!closed) {
+                try {
+                  ws.send(JSON.stringify({
+                    type: "error",
+                    code: "authorization_failed",
+                    message: "Terminal operation unavailable",
+                  }));
+                } catch (sendError: unknown) {
+                  logUnexpectedWsSendFailure("Terminal tab WebSocket error send failed", sendError);
+                }
+                closed = true;
+                ws.close();
+              }
+            },
+          });
           if (!refResult.success || !clientResult.success || !chatResult.success
             || !attachmentTokenResult.success || !leaseResult.success || !validNumbers) {
             ws.send(JSON.stringify({ type: "error", code: "invalid_request", message: "Invalid request" }));
@@ -2913,54 +2933,28 @@ export async function createGateway(config: GatewayConfig) {
                 },
               }),
             );
-            sendAuthorizedFrame = (frame) => {
-              if (pendingFrameAdmissions >= 32) {
-                ws.close();
-                return;
-              }
-              pendingFrameAdmissions += 1;
-              frameAdmissionTail = frameAdmissionTail.then(async () => {
-                if (closed || !stream || !principal) return;
-                await terminalWorkspaceProjectAdmission.withWorkspace(
-                  resourceOwnerId,
-                  refResult.data.workspaceId,
-                  "run",
-                  async () => {
-                    if (closed || !stream || !attachmentMode || !ownershipKey) return;
-                    terminalLiveOwnership.touch(ownershipKey, ownershipViewerId);
-                    const liveOwnershipAllowsFrame = frame.type === "ping"
-                      || frame.type === "detach"
-                      || (frame.type === "resize" && frame.mode === "soft")
-                      || terminalLiveOwnership.allowsMutation(ownershipKey, ownershipViewerId);
-                    if (terminalAttachmentAllowsFrame(attachmentMode, frame) && liveOwnershipAllowsFrame) {
-                      stream.send(frame);
-                    } else {
-                      ws.send(JSON.stringify({ type: "error", code: "read_only", message: "Terminal is read-only" }));
-                    }
-                  },
-                );
-              }).catch((error: unknown) => {
-                logBestEffortFailure("Terminal tab mutation authorization failed", error);
-                if (!closed) {
-                  try {
-                    ws.send(JSON.stringify({
-                      type: "error",
-                      code: "authorization_failed",
-                      message: "Terminal operation unavailable",
-                    }));
-                  } catch (sendError: unknown) {
-                    logUnexpectedWsSendFailure("Terminal tab WebSocket error send failed", sendError);
+            if (closed) { stream.close(); stream = null; return; }
+            inputQueue?.resume(async (frame) => {
+              if (closed || !stream || !principal) return;
+              await terminalWorkspaceProjectAdmission.withWorkspace(
+                resourceOwnerId,
+                refResult.data.workspaceId,
+                "run",
+                async () => {
+                  if (closed || !stream || !attachmentMode || !ownershipKey) return;
+                  terminalLiveOwnership.touch(ownershipKey, ownershipViewerId);
+                  const liveOwnershipAllowsFrame = frame.type === "ping"
+                    || frame.type === "detach"
+                    || (frame.type === "resize" && frame.mode === "soft")
+                    || terminalLiveOwnership.allowsMutation(ownershipKey, ownershipViewerId);
+                  if (terminalAttachmentAllowsFrame(attachmentMode, frame) && liveOwnershipAllowsFrame) {
+                    stream.send(frame);
+                  } else {
+                    ws.send(JSON.stringify({ type: "error", code: "read_only", message: "Terminal is read-only" }));
                   }
-                  ws.close();
-                }
-              }).finally(() => {
-                pendingFrameAdmissions -= 1;
-              });
-            };
-            for (const frame of pending.splice(0)) {
-              const parsedFrame = TerminalTabClientFrameSchema.parse(frame);
-              sendAuthorizedFrame(parsedFrame);
-            }
+                },
+              );
+            });
           })().catch((error: unknown) => {
             logBestEffortFailure("Terminal tab authorization failed", error);
             if (!closed) {
@@ -2986,15 +2980,13 @@ export async function createGateway(config: GatewayConfig) {
             ws.close();
             return;
           }
-          if (sendAuthorizedFrame) sendAuthorizedFrame(parsed.data);
-          else if (pending.length < 32) pending.push(parsed.data);
-          else ws.close();
+          if (!closed) inputQueue?.enqueue(parsed.data);
         },
         onClose() {
           if (stream) captureTerminalEvent("close", { client: clientResult.success ? clientResult.data : undefined });
           closed = true;
-          pending.splice(0);
-          sendAuthorizedFrame = null;
+          inputQueue?.close();
+          inputQueue = null;
           if (ownershipKey) terminalLiveOwnership.detach(ownershipKey, ownershipViewerId);
           ownershipKey = null;
           stream?.close();

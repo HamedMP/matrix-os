@@ -17,6 +17,7 @@ import {
   TERMINAL_RUNTIME_CONTROL_OPERATION_TIMEOUT_MS,
 } from "./limits.js";
 import { createTerminalRuntimeEnvironment } from "./runtime-environment.js";
+import { decodeZellijScreenDump } from "./zellij-screen-dump.js";
 
 const MAX_COMMAND_OUTPUT_BYTES = 5 * 1024 * 1024;
 const MAX_SUBSCRIPTION_LINE_BYTES = 1024 * 1024;
@@ -618,9 +619,10 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
           input.onEvent({ type: "pane-closed", paneId: parsed.data.pane_id });
           return;
         }
-        const ansi = await this.run([
+        const dump = await this.run([
           "--session", sessionName, "action", "dump-screen", "--pane-id", parsed.data.pane_id, "--full", "--ansi",
         ], binaryPath);
+        const ansi = decodeZellijScreenDump(dump, parsed.data.scrollback);
         const fullLines = ansi.split(/\r?\n/);
         const scrollback = parsed.data.scrollback ?? fullLines.slice(0, Math.max(0, fullLines.length - parsed.data.viewport.length));
         input.onEvent({

@@ -14,6 +14,8 @@ import type { z } from "zod/v4";
 import { terminalRuntimeErrorDetails } from "./errors.js";
 import type { TerminalSnapshot } from "./workspace-store.js";
 import { encodeSocketFrame, SocketFrameDecoder } from "./socket-framing.js";
+import { TerminalFrameQueue } from "./input-frame-queue.js";
+import { presentZellijSnapshot } from "./zellij-screen-dump.js";
 import {
   MAX_TERMINAL_RUNTIME_RESPONSE_FRAME_BYTES,
   TERMINAL_RUNTIME_SERVER_IDLE_TIMEOUT_MS,
@@ -143,8 +145,16 @@ export class TerminalRuntimeSocketServer {
     );
     const decoder = new SocketFrameDecoder();
     let handled = false;
-    let streamMessage: ((raw: unknown) => Promise<void>) | null = null;
-    const pendingStreamFrames: unknown[] = [];
+    const inputQueue = new TerminalFrameQueue({
+      onOverflow: () => {
+        console.warn("[terminal-runtime] input queue full");
+        socket.destroy();
+      },
+      onError: (error) => {
+        console.error("[terminal-runtime] stream frame failed", error instanceof Error ? error.name : "unknown_error");
+        socket.destroy();
+      },
+    });
     socket.on("data", (chunk) => {
       try {
         const frames = decoder.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
@@ -152,17 +162,7 @@ export class TerminalRuntimeSocketServer {
           if (!handled) {
             handled = true;
             void this.handle(socket, frame).then((handler) => {
-              streamMessage = handler;
-              if (!handler) return;
-              for (const pending of pendingStreamFrames.splice(0)) {
-                void handler(pending).catch((error: unknown) => {
-                  console.error(
-                    "[terminal-runtime] buffered stream frame failed",
-                    error instanceof Error ? error.name : "unknown_error",
-                  );
-                  socket.destroy();
-                });
-              }
+              if (handler) inputQueue.resume(handler);
             }).catch((error: unknown) => {
               console.error("[terminal-runtime] attach request failed", error);
               socket.end(encodeSocketResponseFrame({
@@ -171,18 +171,8 @@ export class TerminalRuntimeSocketServer {
                 error: { code: "failed", message: "Terminal operation failed" },
               } satisfies TerminalRuntimeResponse));
             });
-          } else if (streamMessage) {
-            void streamMessage(frame).catch((error: unknown) => {
-              console.error(
-                "[terminal-runtime] stream frame failed",
-                error instanceof Error ? error.name : "unknown_error",
-              );
-              socket.destroy();
-            });
-          } else if (pendingStreamFrames.length < 32) {
-            pendingStreamFrames.push(frame);
           } else {
-            socket.destroy();
+            inputQueue.enqueue(TerminalTabClientFrameSchema.parse(frame));
           }
         }
       } catch (error) {
@@ -198,8 +188,8 @@ export class TerminalRuntimeSocketServer {
         } satisfies TerminalRuntimeResponse));
       }
     });
-    socket.once("close", () => this.connections.delete(socket));
-    socket.once("error", () => this.connections.delete(socket));
+    socket.once("close", () => { inputQueue.close(); this.connections.delete(socket); });
+    socket.once("error", () => { inputQueue.close(); this.connections.delete(socket); });
   }
 
   private async handle(socket: Socket, raw: unknown): Promise<((raw: unknown) => Promise<void>) | null> {
@@ -273,7 +263,7 @@ export class TerminalRuntimeSocketServer {
         revision,
         presentationRevision: snapshot.presentationRevision,
         seq: snapshot.seq,
-        ansi: normalizeTerminalSnapshot(snapshot.ansi),
+        ansi: normalizeTerminalSnapshot(presentZellijSnapshot(snapshot.ansi, snapshot.viewport.length, resized.canonicalSize.rows)),
         viewport: { top: 0, rows: Math.min(snapshot.viewport.length || resized.canonicalSize.rows, 200) },
       });
     }
@@ -298,7 +288,10 @@ export class TerminalRuntimeSocketServer {
       detached = true;
       await viewer.detach();
     };
-    socket.once("close", () => { void detach(); });
+    if (socket.destroyed) await detach();
+    else socket.once("close", () => { void detach().catch((error: unknown) => {
+      console.error("[terminal-runtime] detach failed", error instanceof Error ? error.name : "unknown_error");
+    }); });
     return async (raw) => {
       const frame = TerminalTabClientFrameSchema.parse(raw);
       if (frame.terminalRef.workspaceId !== ref.workspaceId || frame.terminalRef.tabId !== ref.tabId) {
@@ -328,7 +321,10 @@ export class TerminalRuntimeSocketServer {
       case "EnsureWorkspace": return this.options.runtime.ensureWorkspace(request.input);
       case "CreateTab": return this.options.runtime.createTab(request.input.workspaceId, request.input);
       case "GetSnapshot": return this.options.runtime.getSnapshot(request.input);
-      case "RenameTab": return this.options.runtime.renameTab(request.input, request.input);
+      case "RenameTab": return this.options.runtime.renameTab(
+        { workspaceId: request.input.workspaceId, tabId: request.input.tabId },
+        { name: request.input.name, baseRevision: request.input.baseRevision },
+      );
       case "ReorderTabs": return this.options.runtime.reorderTabs(request.input.workspaceId, request.input);
       case "TerminateTab": return this.options.runtime.terminateTab(request.input).then(() => null);
       case "DeleteTab": return this.options.runtime.deleteTab(request.input).then(() => null);
@@ -336,9 +332,18 @@ export class TerminalRuntimeSocketServer {
         { workspaceId: request.input.workspaceId, tabId: request.input.tabId },
         request.input.action,
       ).then(() => null);
-      case "WriteInput": return this.options.runtime.writeInput(request.input, request.input.data).then(() => null);
-      case "UpdateTabUiState": return this.options.runtime.updateTabUiState(request.input, request.input);
-      case "Resize": return this.options.runtime.resize(request.input, request.input);
+      case "WriteInput": return this.options.runtime.writeInput(
+        { workspaceId: request.input.workspaceId, tabId: request.input.tabId },
+        request.input.data,
+      ).then(() => null);
+      case "UpdateTabUiState": {
+        const { workspaceId, tabId, ...input } = request.input;
+        return this.options.runtime.updateTabUiState({ workspaceId, tabId }, input);
+      }
+      case "Resize": return this.options.runtime.resize(
+        { workspaceId: request.input.workspaceId, tabId: request.input.tabId },
+        { mode: request.input.mode, size: request.input.size },
+      );
       case "DeletionImpact": return this.options.runtime.deletionImpact(request.input.workspaceId);
       case "DeleteWorkspace": return this.options.runtime.deleteWorkspace(request.input.workspaceId, request.input).then(() => null);
       case "Attach": throw new Error("Attach must use stream dispatch");
