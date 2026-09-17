@@ -628,6 +628,7 @@ describe("Chat collaboration sharing", () => {
     };
     render(<ChatCollaboration view={{ kind: "chat", scopeId }} api={api} actorId="user_editor" runtimeId="runtime_owner" />);
     expect(await screen.findByRole("heading", { name: "Reconnect Chat" })).toBeVisible();
+    expect(screen.getByText("Connecting…")).toHaveAttribute("role", "status");
 
     act(() => connectionChange("reconnecting"));
 

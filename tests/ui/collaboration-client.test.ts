@@ -84,7 +84,7 @@ describe("collaboration browser client", () => {
     );
     await vi.waitFor(() => expect(sockets).toHaveLength(1));
     sockets[0]!.onopen?.();
-    expect(onConnectionChange).toHaveBeenCalledWith("connected");
+    expect(onConnectionChange).not.toHaveBeenCalledWith("connected");
     sockets[0]!.onmessage?.({ data: JSON.stringify({
       version: 1,
       type: "refresh_required",
@@ -109,6 +109,7 @@ describe("collaboration browser client", () => {
       authorityGeneration: "1",
       sequence: "105",
     }) });
+    await vi.waitFor(() => expect(onConnectionChange).toHaveBeenCalledWith("connected"));
     rejectRefresh(new Error("refresh failed"));
     await vi.waitFor(() => expect(sockets[0]!.close).toHaveBeenCalled());
     sockets[0]!.onclose?.();

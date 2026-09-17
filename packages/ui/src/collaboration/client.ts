@@ -112,7 +112,6 @@ export function createCollaborationBrowserApi(options: {
           };
           next.onopen = () => {
             attempt = 0;
-            onConnectionChange?.("connected");
           };
           next.onmessage = (event) => {
             if (!usable) return;
@@ -127,6 +126,7 @@ export function createCollaborationBrowserApi(options: {
                 next.send(JSON.stringify({ version: 1, type: "heartbeat" }));
                 enqueueAfterRecovery(() => { sequence = frame.sequence; });
               } else if (frame.type === "ready") {
+                onConnectionChange?.("connected");
                 enqueueAfterRecovery(() => { sequence = frame.sequence; });
               } else if (frame.type === "unavailable") {
                 closed = true;

@@ -60,14 +60,15 @@ export function ShellHome({ initialCollaborationView }: { initialCollaborationVi
 
   const runtimeSlot = useSyncExternalStore(subscribeLaunchPathNoop, readRuntimeSlotFromLocation, getLaunchPathServerSnapshot);
   const recipePrompt = useSyncExternalStore(subscribeLaunchPathNoop, readRecipePromptFromLocation, getLaunchPathServerSnapshot);
-  const chat = useCanonicalChatState({ initialDraft: recipePrompt, initialCollaborationView });
+  const desktopCollaborationView = isMobile ? undefined : initialCollaborationView;
+  const chat = useCanonicalChatState({ initialDraft: recipePrompt, initialCollaborationView: desktopCollaborationView });
   const [paletteOpen, setPaletteOpen] = useState(false);
   const locationLaunchAppPath = useSyncExternalStore(
     subscribeLaunchPathNoop,
     readLaunchPathFromLocation,
     getLaunchPathServerSnapshot,
   );
-  const launchAppPath = initialCollaborationView ? "__chat__" : locationLaunchAppPath;
+  const launchAppPath = desktopCollaborationView ? "__chat__" : locationLaunchAppPath;
   const shellLoadedCaptured = useRef(false);
 
   useGlobalShortcuts(

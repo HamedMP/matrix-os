@@ -8,12 +8,13 @@ import {
   type ChatCollaborationView,
 } from "@matrix-os/ui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type {
-  CanonicalChatMessagePart,
-  CanonicalChatApprovalDecision,
-  CanonicalSubmitChatInputRequest,
-  CanonicalChatDetailResponse,
-  CanonicalChatRecord,
+import {
+  CollaborationIdSchema,
+  type CanonicalChatMessagePart,
+  type CanonicalChatApprovalDecision,
+  type CanonicalSubmitChatInputRequest,
+  type CanonicalChatDetailResponse,
+  type CanonicalChatRecord,
 } from "@matrix-os/contracts";
 import {
   createChatMentionRequestTracker,
@@ -48,6 +49,26 @@ function conversationMeta(record: CanonicalChatRecord) {
     createdAt: Date.parse(record.chat.createdAt),
     updatedAt: Date.parse(record.chat.activityAt ?? record.chat.createdAt),
   };
+}
+
+function collaborationViewFromPathname(pathname: string): ChatCollaborationView | null {
+  if (pathname === "/shared" || pathname === "/shared/") return { kind: "home" };
+  const match = /^\/shared\/chat\/([^/]+)\/?$/.exec(pathname);
+  if (!match) return null;
+  const scopeId = CollaborationIdSchema.safeParse(match[1]);
+  return scopeId.success ? { kind: "chat", scopeId: scopeId.data } : null;
+}
+
+function pushShellChatPath(pathname: string): void {
+  if (typeof window !== "undefined" && window.location.pathname !== pathname) {
+    window.history.pushState(null, "", pathname);
+  }
+}
+
+function leaveSharedChatPath(): void {
+  if (typeof window !== "undefined" && /^\/shared(?:\/|$)/.test(window.location.pathname)) {
+    window.history.pushState(null, "", "/");
+  }
 }
 
 export function useCanonicalChatState({ initialDraft, initialCollaborationView }: {
@@ -91,6 +112,24 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView }
   const initialDraftConsumed = useRef(false);
   detailRef.current = detail;
   activeChatIdRef.current = activeChatId;
+
+  useEffect(() => {
+    const synchronizeFromHistory = () => {
+      const view = collaborationViewFromPathname(window.location.pathname);
+      if (view) {
+        autoRestoreChatRef.current = false;
+        activeChatIdRef.current = undefined;
+        detailRef.current = null;
+        detailRequestGeneration.current += 1;
+        setActiveChatId(undefined);
+        setDetail(null);
+        setSafeError(null);
+      }
+      setSelectedCollaborationView(view);
+    };
+    window.addEventListener("popstate", synchronizeFromHistory);
+    return () => window.removeEventListener("popstate", synchronizeFromHistory);
+  }, []);
 
   useEffect(() => {
     if (!initialDraft || initialDraftConsumed.current) return;
@@ -435,6 +474,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView }
     setDetail(null);
     setSafeError(null);
     setSelectedCollaborationView(null);
+    leaveSharedChatPath();
   }, []);
 
   const switchConversation = useCallback((chatId: string) => {
@@ -443,6 +483,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView }
     setDetail(null);
     setSafeError(null);
     setSelectedCollaborationView(null);
+    leaveSharedChatPath();
   }, []);
 
   const openSharedChat = useCallback((scopeId: string) => {
@@ -454,6 +495,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView }
     setDetail(null);
     setSafeError(null);
     setSelectedCollaborationView({ kind: "chat", scopeId });
+    pushShellChatPath(`/shared/chat/${encodeURIComponent(scopeId)}`);
   }, []);
 
   const abortCurrent = useCallback(() => {

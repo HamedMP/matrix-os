@@ -48,5 +48,5 @@ xvfb-run --auto-servernum pnpm exec vitest run --config vitest.e2e.config.ts \
 | Web Canvas | pass | pass | pass | pass | pass: `web-canvas-ai.png` |
 | Web Desktop | pass | pass | pass | pass | pass: `web-desktop-discussion.png`, `web-desktop-ai.png` |
 | Electron Desktop | pass | pass | pass | pass | pass: actual Electron capture `electron-desktop.png` |
-| Web Mobile | N/A: Shared with me is not exposed | N/A | N/A | shared-controller coverage | N/A: reviewer approval requested |
-| Native Mobile | N/A: Shared with me is not exposed | N/A | N/A | shared-controller coverage | N/A: reviewer approval requested |
+| Web Mobile | N/A: intentionally gated to the desktop-width shell; shared URLs bootstrap the normal mobile shell without exposing collaboration | N/A | N/A | desktop-gating contract coverage | N/A: outside the requested Canvas/Desktop surfaces |
+| Native Mobile | N/A: no Shared with me entry point or shared-Chat route exists in the native client | N/A | N/A | shared-controller coverage | N/A: outside the requested Canvas/Desktop surfaces |

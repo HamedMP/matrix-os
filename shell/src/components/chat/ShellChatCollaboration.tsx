@@ -42,7 +42,6 @@ export function ShellChatCollaboration({
       openInvitation={(invitationId) => router.push(`/shared/invitations/${encodeURIComponent(invitationId)}`)}
       openChat={(scopeId) => {
         onOpenChat?.(scopeId);
-        window.history.pushState(null, "", `/shared/chat/${encodeURIComponent(scopeId)}`);
       }}
       openTerminal={(scopeId) => router.push(`/shared/terminal/${encodeURIComponent(scopeId)}`)}
       openProject={(scopeId) => router.push(`/shared/project/${encodeURIComponent(scopeId)}`)}

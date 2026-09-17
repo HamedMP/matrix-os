@@ -614,7 +614,9 @@ export function SharedChatPanel(props: Parameters<typeof useSharedChatController
           <p className="text-xs" style={{ color: "var(--text-secondary)" }}>Shared Chat · {permissions.roleLabel}</p></div>
         <div className="flex items-center gap-2">
           <span role="status" className="rounded-full border px-2.5 py-1 text-xs">
-            {state.connection === "reconnecting" ? "Reconnecting…" : "Live collaboration"}
+            {state.connection === "connected"
+              ? "Live collaboration"
+              : state.connection === "reconnecting" ? "Reconnecting…" : "Connecting…"}
           </span>
           {permissions.canManageMembers ? <button type="button" className={buttonClass}
             disabled={membersPending} onClick={() => void openMembers()}>
