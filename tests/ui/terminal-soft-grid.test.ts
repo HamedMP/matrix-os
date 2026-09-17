@@ -63,6 +63,24 @@ describe("shared terminal grid presentation", () => {
     expect(host.scrollTop).toBe(20);
   });
 
+  it("preserves readable horizontal panning without following the live cursor", () => {
+    const { host, root, terminal, presentation, layout } = setup();
+    const buffer = { baseY: 0, viewportY: 0, cursorY: 0, cursorX: 119 };
+    Object.defineProperty(terminal, "buffer", { value: { active: buffer } });
+
+    layout(600, 900);
+
+    expect(terminal.options.fontSize).toBe(10);
+    expect(root.style.transform).toBe("scale(1)");
+    expect(host.style.overflowX).toBe("auto");
+
+    host.scrollLeft = 120;
+    presentation.schedule();
+    flush();
+
+    expect(host.scrollLeft).toBe(120);
+  });
+
   it("keeps quantized font metrics stable across output-only layout passes", () => {
     const { root, terminal, layout, presentation } = setup();
     const screen = root.querySelector<HTMLElement>(".xterm-screen")!;

@@ -163,6 +163,23 @@ describe("real terminal renderer soft-grid resizing", () => {
       await page.mouse.dblclick(word.x, word.y);
       await page.keyboard.press("Control+Shift+C");
       await expect.poll(() => page.locator("body").getAttribute("data-copied")).toBe("targetword");
+      await page.locator("#terminal-window").evaluate((element, width) => {
+        const windowElement = element as HTMLElement;
+        windowElement.style.width = `${width}px`;
+        windowElement.style.height = "850px";
+      }, surface === "web-mobile" ? 360 : 1_100);
+      await expect.poll(async () => (await geometry(page)).scale).toBe("scale(1)");
+      await page.evaluate(() => (window as unknown as { fixtureObserve: () => void }).fixtureObserve());
+      await expect.poll(() => page.getByText("Live on another device.").isVisible()).toBe(true);
+      await expect.poll(() => page.getByRole("button", { name: "Continue here" }).isVisible()).toBe(true);
+      const actionBox = await page.getByRole("button", { name: "Continue here" }).boundingBox();
+      if (!actionBox) throw new Error("Continue here action is not measurable");
+      expect(actionBox.x).toBeGreaterThanOrEqual(0);
+      const viewportWidth = page.viewportSize()?.width ?? await page.evaluate(() => window.innerWidth);
+      expect(actionBox.x + actionBox.width).toBeLessThanOrEqual(viewportWidth);
+      await page.screenshot({
+        path: resolve(evidence, `${nativeElectron ? "native-" : ""}${surface}-${zoom}-observer.png`),
+      });
       expect(errors).toEqual([]);
     } finally { if (!electron) await page.close(); }
   }, 30_000);

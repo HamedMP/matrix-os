@@ -25,6 +25,7 @@ describe("terminal soft-client canonical grid", () => {
 
     expect(layout.fontSize).toBe(10);
     expect(layout.scale).toBe(1);
+    expect(layout.fontSize * layout.scale).toBeGreaterThanOrEqual(10);
     expect(layout.visualWidth).toBeCloseTo(1_400 * (10 / 13));
     expect(layout.visualHeight).toBeCloseTo(800 * (10 / 13));
     expect(layout.panX).toBe(true);
@@ -98,6 +99,8 @@ describe("terminal soft-client canonical grid", () => {
       fromSeq: 0,
       canonicalSize: { cols: 140, rows: 40 },
       capabilities: [],
+      ownership: "writer",
+      leaseEpoch: null,
     });
     expect(parseTerminalServerMessage(JSON.stringify({
       type: "canonical-size",
@@ -122,8 +125,16 @@ describe("terminal soft-client canonical grid", () => {
     }))).toBeNull();
   });
 
-  it("rejects retired exclusive-lease frames", () => {
-    expect(parseTerminalServerMessage(JSON.stringify({ type: "lease-revoked", epoch: 7 }))).toBeNull();
+  it("accepts live-ownership revocation while rejecting retired presentation resets", () => {
+    expect(parseTerminalServerMessage(JSON.stringify({
+      type: "lease-revoked",
+      terminalRef: TERMINAL_REF,
+      epoch: 7,
+    }))).toEqual({
+      type: "lease-revoked",
+      sessionId: `${TERMINAL_REF.workspaceId}:${TERMINAL_REF.tabId}`,
+      epoch: 7,
+    });
     expect(parseTerminalServerMessage(JSON.stringify({ type: "presentation-reset" }))).toBeNull();
   });
 });

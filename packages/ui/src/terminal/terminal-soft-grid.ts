@@ -64,4 +64,3 @@ export function computeSoftGridLayout(input: SoftGridLayoutInput): SoftGridLayou
     panY: visualHeight - viewportHeight > DIMENSION_EPSILON,
   };
 }
-
