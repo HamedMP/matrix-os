@@ -12,13 +12,15 @@ const baseEnv = Object.fromEntries([
   'MATRIX_COLLABORATION_ACTIVE_KEY_ID', 'MATRIX_COLLABORATION_ALLOWED_ORIGINS',
   'MATRIX_APP_URL', 'MATRIX_APP_DOMAIN_HOSTS', 'MATRIX_CODE_DOMAIN_HOSTS',
 ].map((name) => [name, 'fixture']));
+baseEnv.PLATFORM_PUBLIC_URL = 'https://app.example.com';
+baseEnv.MATRIX_API_ORIGIN = 'https://api.example.com';
 
 function validate(overrides: Record<string, string>) {
   return spawnSync('bash', ['-c', step('Validate deployment configuration')], {
     encoding: 'utf8', env: { PATH: process.env.PATH, ...baseEnv,
       DEPLOY_ENVIRONMENT: 'staging', GOLDEN_SNAPSHOT_BUILDS_ENABLED: 'false',
       MATRIX_CARD_TRIALS_ENABLED: 'true', MATRIX_CARD_TRIAL_DAYS: '3',
-      MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE: '4', CUSTOM_MCP_ENABLED: 'false', ...overrides },
+      MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE: '4', CUSTOM_MCP_ENABLED: 'false', MCP_CREDENTIAL_ENCRYPTION_KEY_VERSION: '1', ...overrides },
   });
 }
 
@@ -29,7 +31,7 @@ function deploy(enabled: boolean) {
     encoding: 'utf8', env: { PATH: process.env.PATH, ...Object.fromEntries(
       Object.keys(workflow.jobs.deploy.env).map((key) => [key, 'fixture'])),
       DEPLOY_ENVIRONMENT: 'staging', IMAGE_DIGEST: 'image@sha256:fixture',
-      CUSTOM_MCP_ENABLED: String(enabled), MCP_OAUTH_CLIENT_ID: '',
+      CUSTOM_MCP_ENABLED: String(enabled), MCP_OAUTH_CLIENT_ID: '', MCP_CREDENTIAL_ENCRYPTION_KEY_VERSION: '1',
       MCP_OAUTH_CALLBACK_URL: 'https://app.example.com/api/mcp-servers/oauth/callback' },
   });
 }
@@ -41,10 +43,16 @@ describe('Custom MCP Cloud Run deployment', () => {
     }
     const result = deploy(true);
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toContain('CUSTOM_MCP_ENABLED=true');
+    const args = result.stdout.trim().split('\n');
+    const env = args[args.indexOf('--set-env-vars') + 1];
+    const secrets = args[args.indexOf('--set-secrets') + 1];
+    expect(env.startsWith('^|^')).toBe(true);
+    expect(env.slice(3).split('|')).toContain('CUSTOM_MCP_ENABLED=true');
+    expect(env).not.toContain('MCP_CREDENTIAL_ENCRYPTION_KEY=');
+    expect(secrets.split(',')).toContain('MCP_CREDENTIAL_ENCRYPTION_KEY=mcp-credential-encryption-key:1');
     expect(result.stdout).toContain('MCP_OAUTH_CALLBACK_URL=https://app.example.com/api/mcp-servers/oauth/callback');
     expect(result.stdout).toContain('MCP_OAUTH_CLIENT_ID=');
-    expect(result.stdout).toContain('MCP_CREDENTIAL_ENCRYPTION_KEY=mcp-credential-encryption-key:latest');
+    expect(result.stdout).toContain('MCP_CREDENTIAL_ENCRYPTION_KEY=mcp-credential-encryption-key:1');
   });
 
   it('does not require or bind an encryption secret when explicitly disabled', () => {
@@ -60,6 +68,8 @@ describe('Custom MCP Cloud Run deployment', () => {
     { CUSTOM_MCP_ENABLED: 'true', MCP_OAUTH_CALLBACK_URL: '' },
     { CUSTOM_MCP_ENABLED: 'true', MCP_OAUTH_CALLBACK_URL: 'http://app.example.com/api/mcp-servers/oauth/callback' },
     { MCP_OAUTH_CLIENT_ID: 'client|INJECTED=true' },
+    { CUSTOM_MCP_ENABLED: 'true', MCP_OAUTH_CALLBACK_URL: 'https://wrong.example.com/api/mcp-servers/oauth/callback' },
+    { CUSTOM_MCP_ENABLED: 'true', MCP_OAUTH_CALLBACK_URL: 'https://app.example.com/api/mcp-servers/oauth/callback', MCP_CREDENTIAL_ENCRYPTION_KEY_VERSION: 'latest' },
   ])('rejects invalid broker deployment configuration: %j', (env) => {
     expect(validate(env).status).not.toBe(0);
   });
@@ -79,7 +89,7 @@ describe('Custom MCP Cloud Run deployment', () => {
       }
       ${verification!.run}
     `], { encoding: 'utf8', env: { PATH: process.env.PATH, ...baseEnv,
-      TEST_STATE: String(state), TEST_MEMBER: String(member) } });
+      MCP_CREDENTIAL_ENCRYPTION_KEY_VERSION: '1', TEST_STATE: String(state), TEST_MEMBER: String(member) } });
     expect(result.status, result.stderr).toBe(status);
   });
 

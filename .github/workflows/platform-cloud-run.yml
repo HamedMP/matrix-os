@@ -55,6 +55,7 @@ jobs:
       CUSTOM_MCP_ENABLED: ${{ vars.CUSTOM_MCP_ENABLED || 'false' }}
       MCP_OAUTH_CALLBACK_URL: ${{ vars.MCP_OAUTH_CALLBACK_URL }}
       MCP_OAUTH_CLIENT_ID: ${{ vars.MCP_OAUTH_CLIENT_ID }}
+      MCP_CREDENTIAL_ENCRYPTION_KEY_VERSION: ${{ vars.MCP_CREDENTIAL_ENCRYPTION_KEY_VERSION || '1' }}
       MATRIX_MCP_ENABLED: ${{ vars.MATRIX_MCP_ENABLED || 'false' }}
       MATRIX_MCP_RESOURCE_URL: ${{ vars.MATRIX_MCP_RESOURCE_URL }}
       MATRIX_MCP_OAUTH_ISSUER: ${{ vars.MATRIX_MCP_OAUTH_ISSUER }}
@@ -88,7 +89,7 @@ jobs:
           set -euo pipefail
           missing=()
           # gcloud uses | as the separator so comma-separated browser origins remain one value.
-          for name in CUSTOM_MCP_ENABLED MCP_OAUTH_CALLBACK_URL MCP_OAUTH_CLIENT_ID MATRIX_MCP_ENABLED MATRIX_MCP_RESOURCE_URL MATRIX_MCP_OAUTH_ISSUER MATRIX_MCP_OAUTH_JWKS_URL MATRIX_MCP_ALLOWED_ORIGINS MATRIX_COLLABORATION_ACTIVE_KEY_ID MATRIX_COLLABORATION_ALLOWED_ORIGINS; do
+          for name in CUSTOM_MCP_ENABLED MCP_OAUTH_CALLBACK_URL MCP_OAUTH_CLIENT_ID MCP_CREDENTIAL_ENCRYPTION_KEY_VERSION MATRIX_MCP_ENABLED MATRIX_MCP_RESOURCE_URL MATRIX_MCP_OAUTH_ISSUER MATRIX_MCP_OAUTH_JWKS_URL MATRIX_MCP_ALLOWED_ORIGINS MATRIX_COLLABORATION_ACTIVE_KEY_ID MATRIX_COLLABORATION_ALLOWED_ORIGINS; do
             if [[ "${!name:-}" == *"|"* ]]; then
               echo "MCP configuration cannot contain the deployment delimiter" >&2
               exit 1
@@ -122,6 +123,15 @@ jobs:
             true)
               if ! [[ "$MCP_OAUTH_CALLBACK_URL" =~ ^https://[^/?#[:space:]]+/api/mcp-servers/oauth/callback$ ]]; then
                 echo "Custom MCP requires an HTTPS MCP_OAUTH_CALLBACK_URL ending in /api/mcp-servers/oauth/callback." >&2
+                exit 1
+              fi
+              if [ "$MCP_OAUTH_CALLBACK_URL" != "${PLATFORM_PUBLIC_URL%/}/api/mcp-servers/oauth/callback" ] &&
+                 [ "$MCP_OAUTH_CALLBACK_URL" != "${MATRIX_API_ORIGIN%/}/api/mcp-servers/oauth/callback" ]; then
+                echo "Custom MCP callback must use the configured public platform or API origin." >&2
+                exit 1
+              fi
+              if ! [[ "$MCP_CREDENTIAL_ENCRYPTION_KEY_VERSION" =~ ^[1-9][0-9]*$ ]]; then
+                echo "Custom MCP encryption key must use a pinned numeric secret version." >&2
                 exit 1
               fi
               ;;
@@ -171,7 +181,7 @@ jobs:
           set -euo pipefail
           secret_name=mcp-credential-encryption-key
           # Keep the existing encryption key across deploys; never generate or rotate it here.
-          state="$(gcloud secrets versions describe latest --secret "$secret_name" \
+          state="$(gcloud secrets versions describe "$MCP_CREDENTIAL_ENCRYPTION_KEY_VERSION" --secret "$secret_name" \
             --project "$GCP_PROJECT_ID" --quiet --format='value(state)')"
           if [ "$state" != "ENABLED" ]; then
             echo "Custom MCP requires an enabled credential encryption secret version." >&2
@@ -648,7 +658,7 @@ jobs:
           reddit_secret_bindings=""
           custom_mcp_secret_bindings=""
           if [ "$CUSTOM_MCP_ENABLED" = "true" ]; then
-            custom_mcp_secret_bindings=",MCP_CREDENTIAL_ENCRYPTION_KEY=mcp-credential-encryption-key:latest"
+            custom_mcp_secret_bindings=",MCP_CREDENTIAL_ENCRYPTION_KEY=mcp-credential-encryption-key:${MCP_CREDENTIAL_ENCRYPTION_KEY_VERSION}"
           fi
           if [ "$DEPLOY_ENVIRONMENT" = "production" ]; then
             ats_env_bindings="|ATS_BOOKING_BASE_URL=${ATS_BOOKING_BASE_URL}"

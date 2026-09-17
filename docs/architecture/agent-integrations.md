@@ -64,13 +64,13 @@ does not enable personal servers. To enable personal servers, set the flag to
 `/api/mcp-servers/oauth/callback`. An empty client ID allows dynamic OAuth
 registration. Provision a dedicated 32-byte encryption key in Secret Manager as
 `mcp-credential-encryption-key` and grant the runtime identity secret accessor
-access before enabling the flag. The deployment binds its latest enabled version
+access before enabling the flag. The deployment binds the numeric version in `MCP_CREDENTIAL_ENCRYPTION_KEY_VERSION` (default `1`)
 to `MCP_CREDENTIAL_ENCRYPTION_KEY`; never rotate or regenerate this key during a
 routine deployment, since existing credentials depend on it. Startup validates
 the key format and rejects reuse of platform/provider secrets.
 
 The deployment preflight rejects malformed flags, missing/non-HTTPS callbacks,
-unsafe deployment delimiters, unavailable secret versions, and missing runtime
+callbacks outside the configured platform/API origins, unsafe deployment delimiters, unavailable secret versions, and missing runtime
 access. Both `--set-env-vars` and `--set-secrets` replace the previous bindings,
 so these settings must remain in the workflow on every release. A healthy
 platform alone does not establish MCP availability: after enabling and deploying,
