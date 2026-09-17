@@ -24,7 +24,7 @@ export function WorkRailHeader({
         </h2>
         <button
           type="button"
-          aria-label="Show unread chats only"
+          aria-label={unreadOnly ? "Show all chats" : "Show unread chats only"}
           aria-pressed={unreadOnly}
           title={unreadOnly ? "Show all chats" : "Show unread chats only"}
           className="flex size-9 shrink-0 items-center justify-center rounded-md outline-none transition-colors duration-100 hover:bg-[var(--bg-hover)] aria-pressed:bg-[var(--bg-selected)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"

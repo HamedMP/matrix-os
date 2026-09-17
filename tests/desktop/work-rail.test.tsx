@@ -304,11 +304,13 @@ describe("WorkRail", () => {
 
     fireEvent.click(unreadToggle);
     expect(unreadToggle.getAttribute("aria-pressed")).toBe("true");
+    expect(unreadToggle.getAttribute("aria-label")).toBe("Show all chats");
     expect(unreadToggle.getAttribute("title")).toBe("Show all chats");
     await waitFor(() => expect(client.list).toHaveBeenLastCalledWith({ unreadOnly: true, limit: 100 }));
 
     fireEvent.click(unreadToggle);
     expect(unreadToggle.getAttribute("aria-pressed")).toBe("false");
+    expect(unreadToggle.getAttribute("aria-label")).toBe("Show unread chats only");
     expect(unreadToggle.getAttribute("title")).toBe("Show unread chats only");
     await waitFor(() => expect(client.list).toHaveBeenLastCalledWith({ limit: 100 }));
   });
