@@ -1,0 +1,59 @@
+import { Terminal } from "@xterm/xterm";
+import { describe, expect, it, vi } from "vitest";
+import { normalizeTerminalSnapshot } from "../../packages/contracts/src/terminal-snapshot.js";
+import { ZellijCliRuntimeAdapter } from "../../packages/terminal-runtime/src/zellij-adapter.js";
+import type { ZellijObserverEvent } from "../../packages/terminal-runtime/src/runtime.js";
+
+async function capture(ansi: string, viewport: string[], scrollback?: string[]) {
+  let emit = (_line: string) => {};
+  const ready = Promise.withResolvers<ZellijObserverEvent>();
+  const adapter = new ZellijCliRuntimeAdapter({
+    homePath: "/home/matrix",
+    run: vi.fn(async () => ansi),
+    spawnSubscription: (_args, onLine) => {
+      emit = onLine;
+      return { close: async () => {} };
+    },
+  });
+  const observer = await adapter.subscribeWorkspace("matrix-w-0123456789abcdef0123456789abcdef", {
+    paneIds: ["terminal_12"],
+    onEvent: ready.resolve,
+  });
+  emit(JSON.stringify({ event: "pane_update", pane_id: "terminal_12", viewport, scrollback, is_initial: true }));
+  const event = await ready.promise;
+  await observer.close();
+  if (event.type !== "pane-update") throw new Error("Expected snapshot");
+  return event;
+}
+
+describe("Zellij snapshot presentation", () => {
+  it("keeps a fresh prompt on the same row before and after the native redraw", async () => {
+    // Zellij 0.44.3 emits an SGR-only empty history, a separator, then CLI LF.
+    const prompt = "\x1b[36mreview\x1b[m:~/projects%";
+    const snapshot = await capture(`\x1b[m\n${prompt}\x1b[m\n`, [prompt], []);
+    const terminal = new Terminal({ cols: 80, rows: 10, allowProposedApi: true });
+    try {
+      await new Promise<void>((resolve) => terminal.write("\x1bc" + normalizeTerminalSnapshot(snapshot.ansi), resolve));
+      const before = terminal.buffer.active.getLine(0)?.translateToString(true);
+      expect(before).toBe("review:~/projects%");
+      expect(terminal.buffer.active.cursorY).toBe(0);
+      await new Promise<void>((resolve) => terminal.write(`\x1b[2J\x1b[1;1H${prompt}`, resolve));
+      expect(terminal.buffer.active.getLine(0)?.translateToString(true)).toBe(before);
+    } finally { terminal.dispose(); }
+  });
+
+  it("preserves intentional leading blank viewport rows", async () => {
+    const snapshot = await capture("\x1b[m\n\n\x1b[31mprompt\x1b[m\n", ["", "\x1b[31mprompt\x1b[m"], []);
+    expect(snapshot.ansi).toBe("\n\x1b[31mprompt\x1b[m");
+  });
+
+  it("preserves real blank history and trailing blank viewport rows", async () => {
+    const snapshot = await capture("\x1b[m\nprompt\n\n\x1b[m\n", ["prompt", "", ""], [""]);
+    expect(snapshot.ansi).toBe("\x1b[m\nprompt\n\n\x1b[m");
+  });
+
+  it("does not guess whether a leading blank is history when metadata is absent", async () => {
+    const snapshot = await capture("\x1b[m\nprompt\x1b[m\n", ["prompt"]);
+    expect(snapshot.ansi).toBe("\x1b[m\nprompt\x1b[m");
+  });
+});
