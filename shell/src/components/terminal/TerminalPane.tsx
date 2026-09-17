@@ -207,6 +207,9 @@ export function TerminalPane({
   const onDataDisposableRef = useRef<{ dispose: () => void } | null>(null);
   const onBinaryDisposableRef = useRef<{ dispose: () => void } | null>(null);
   const binaryInputSupportedRef = useRef(false);
+  const hasWriteOwnershipRef = useRef(false);
+  const hasExclusiveOwnershipRef = useRef(false);
+  const requestedOwnershipRef = useRef<"exclusive" | "observe" | null>(isFocused ? "exclusive" : null);
   const onResizeDisposableRef = useRef<{ dispose: () => void } | null>(null);
   const initialStartupCommandRef = useRef(startupCommand);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -497,7 +500,9 @@ export function TerminalPane({
       }
       if (!detail.data) return;
       const ws = wsRef.current;
-      if (ws) sendTerminalInputFrame(ws, sessionIdRef.current, detail.data);
+      if (ws && hasWriteOwnershipRef.current) {
+        sendTerminalInputFrame(ws, sessionIdRef.current, detail.data);
+      }
     };
     window.addEventListener(TERMINAL_INPUT_EVENT, onKey as EventListener);
     return () => window.removeEventListener(TERMINAL_INPUT_EVENT, onKey as EventListener);
@@ -939,6 +944,8 @@ export function TerminalPane({
         const generation = options.generation ?? wsGenerationRef.current + 1;
         wsGenerationRef.current = generation;
         wsRef.current = ws;
+        hasWriteOwnershipRef.current = options.alreadyAttached === true;
+        hasExclusiveOwnershipRef.current = false;
         // Revisions are connection-scoped watermarks. A replacement runtime
         // may start its authoritative stream below the previous socket's last
         // revision, so carrying that value across reconnects would reject the
@@ -1063,6 +1070,8 @@ export function TerminalPane({
             return;
           }
           wsRef.current = null;
+          hasWriteOwnershipRef.current = false;
+          hasExclusiveOwnershipRef.current = false;
           setControlsConnection({ sessionName: null, connected: false });
           heartbeatRef.current?.stop();
           log("ws-close", {
@@ -1088,17 +1097,19 @@ export function TerminalPane({
             track("schedule-reconnect", { delayMs: delay, nextAttempt: reconnectAttemptRef.current });
             clearPendingReconnectBanner();
             setConnectionNotice(null);
-            pendingReconnectBannerTimerRef.current = setTimeout(() => {
-              pendingReconnectBannerTimerRef.current = null;
-              if (isCurrentWs() || (
-                wsGenerationRef.current === generation
-                && !disposed
-                && !isClosingRef.current
-                && wsRef.current === null
-              )) {
-                setConnectionNotice("reconnecting");
-              }
-            }, 750);
+            if (attempt > 0) {
+              pendingReconnectBannerTimerRef.current = setTimeout(() => {
+                pendingReconnectBannerTimerRef.current = null;
+                if (isCurrentWs() || (
+                  wsGenerationRef.current === generation
+                  && !disposed
+                  && !isClosingRef.current
+                  && wsRef.current === null
+                )) {
+                  setConnectionNotice("reconnecting");
+                }
+              }, 750);
+            }
             reconnectTimerRef.current = setTimeout(() => {
               reconnectTimerRef.current = null;
               if (!disposed && !isClosingRef.current) {
@@ -1129,6 +1140,14 @@ export function TerminalPane({
           switch (msg.type) {
             case "attached":
               binaryInputSupportedRef.current = msg.capabilities.includes("binary-input-v1");
+              hasWriteOwnershipRef.current = msg.ownership === "writer";
+              hasExclusiveOwnershipRef.current = msg.leaseEpoch !== null;
+              requestedOwnershipRef.current = hasExclusiveOwnershipRef.current
+                ? "exclusive"
+                : msg.ownership === "observer"
+                  ? "observe"
+                  : null;
+              setConnectionNotice(msg.ownership === "observer" ? "elsewhere" : null);
               log("attached", {
                 attachedSessionId: msg.sessionId,
                 state: msg.state,
@@ -1147,7 +1166,7 @@ export function TerminalPane({
               sessionIdRef.current = msg.sessionId;
               setControlsConnection({
                 sessionName: isCanonicalShellSessionId(msg.sessionId) ? msg.sessionId : null,
-                connected: msg.state === "running",
+                connected: msg.state === "running" && msg.ownership === "writer",
               });
               if (msg.canonicalSize) {
                 applyCanonicalGridSize(msg.canonicalSize);
@@ -1157,6 +1176,14 @@ export function TerminalPane({
                 hasReplayCursorRef.current = true;
               }
               onSessionAttachedRef.current?.(paneId, msg.sessionId);
+              break;
+
+            case "lease-revoked":
+              hasWriteOwnershipRef.current = false;
+              hasExclusiveOwnershipRef.current = false;
+              requestedOwnershipRef.current = "observe";
+              setControlsConnection((current) => ({ ...current, connected: false }));
+              setConnectionNotice("elsewhere");
               break;
 
             case "canonical-size":
@@ -1314,6 +1341,7 @@ export function TerminalPane({
           fromSeq: String(replayRequest?.requestedSeq ?? 0),
           client: suppressNativeKeyboard ? "mobile" : "browser",
           inputCapability: "binary-input-v1",
+          ...(requestedOwnershipRef.current ? { lease: requestedOwnershipRef.current } : {}),
           ...(declaredSize ? { cols: String(declaredSize.cols), rows: String(declaredSize.rows) } : {}),
         };
         log("connect-ws", {
@@ -1373,6 +1401,8 @@ export function TerminalPane({
 
       resumeLeaseRef.current = () => {
         if (disposed || isClosingRef.current) return;
+        if (hasExclusiveOwnershipRef.current) return;
+        requestedOwnershipRef.current = "exclusive";
         if (webSocketConnectPending) {
           // The pending URL was built with the focus state captured when the
           // request started. Invalidate it before reconnecting so a pane that
@@ -1389,6 +1419,8 @@ export function TerminalPane({
           existing.onmessage = null;
           existing.close();
           wsRef.current = null;
+          hasWriteOwnershipRef.current = false;
+          hasExclusiveOwnershipRef.current = false;
           setControlsConnection({ sessionName: null, connected: false });
           heartbeatRef.current?.stop();
         }
@@ -1455,7 +1487,7 @@ export function TerminalPane({
       onDataDisposableRef.current?.dispose();
       onDataDisposableRef.current = term.onData((data: string) => {
         const ws = wsRef.current;
-        if (ws && ws.readyState === WebSocket.OPEN) {
+        if (hasWriteOwnershipRef.current && ws && ws.readyState === WebSocket.OPEN) {
           sendTerminalInputFrame(ws, sessionIdRef.current, data);
         }
       });
@@ -1463,7 +1495,7 @@ export function TerminalPane({
       onBinaryDisposableRef.current?.dispose();
       onBinaryDisposableRef.current = term.onBinary((data: string) => {
         const ws = wsRef.current;
-        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+        if (!hasWriteOwnershipRef.current || !ws || ws.readyState !== WebSocket.OPEN) return;
         if ([...data].some((value) => value.charCodeAt(0) > 0xff)) {
           console.warn("[terminal] Rejected invalid binary terminal input");
           return;
@@ -1790,7 +1822,7 @@ export function TerminalPane({
           {connectionNotice === "reconnecting"
             ? "Reconnecting terminal..."
             : connectionNotice === "elsewhere"
-              ? <><span>Live on another device.</span><button type="button" onClick={() => resumeLeaseRef.current()}>Resume here</button></>
+              ? <><span>Live on another device.</span><button type="button" onClick={() => resumeLeaseRef.current()}>Continue here</button></>
               : "Terminal disconnected"}
         </div>
       )}

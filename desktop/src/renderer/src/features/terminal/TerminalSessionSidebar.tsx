@@ -40,6 +40,7 @@ export function TerminalSessionSidebar({
   showHeader = true,
   sessions,
   selectedName,
+  deletingName = null,
   creating,
   disabled,
   agentStatuses = UNKNOWN_TERMINAL_AGENT_STATUSES,
@@ -65,6 +66,7 @@ export function TerminalSessionSidebar({
   showHeader?: boolean;
   sessions: ShellSessionSummary[];
   selectedName: string | null;
+  deletingName?: string | null;
   creating: boolean;
   disabled: boolean;
   agentStatuses: Record<TerminalAgentId, TerminalAgentInstallState>;
@@ -99,6 +101,7 @@ export function TerminalSessionSidebar({
         <ul aria-label="Terminal sessions" className="min-h-0 flex-1 overflow-y-auto pb-4">
           {[...sessions].sort((left, right) => Number(Boolean(right.pinned)) - Number(Boolean(left.pinned))).map((session) => {
             const label = displayName(session);
+            const deleting = deletingName === session.name;
             const selected = selectedName === session.name;
             const metadata = agentMetadata(session);
             const title = sessionTitle(session);
@@ -134,6 +137,7 @@ export function TerminalSessionSidebar({
                   <>
                     <button
                       type="button"
+                      disabled={deleting}
                       aria-label={`Open ${label}`}
                       aria-current={selected || undefined}
                       className="flex min-h-16 w-full min-w-0 items-start px-4 py-3 pr-10 text-left hover:bg-[var(--bg-hover)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"
@@ -160,7 +164,7 @@ export function TerminalSessionSidebar({
                           </span>
                           <span className="flex shrink-0 items-center gap-1 text-[10px]" style={{ color: "var(--text-tertiary)" }}>
                             {session.pinned ? <PinIcon size={11} aria-label="Pinned" /> : null}
-                            {relativeSessionActivity(session.updatedAt)}
+                            {deleting ? <span role="status">Deleting…</span> : relativeSessionActivity(session.updatedAt)}
                           </span>
                         </span>
                         {session.cwd || (metadata && session.agent) ? (
@@ -195,7 +199,7 @@ export function TerminalSessionSidebar({
                     </button>
                     <SessionActions
                       session={session}
-                      disabled={disabled}
+                      disabled={disabled || deleting}
                       open={actionsName === session.name}
                       onOpenChange={(open) => setActionsName(open ? session.name : null)}
                       onRename={() => onRename(session)}

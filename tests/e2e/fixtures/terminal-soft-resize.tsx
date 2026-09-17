@@ -23,7 +23,14 @@ class FixtureSocket {
     setTimeout(() => {
       this.readyState = 1;
       this.onopen?.(new Event("open"));
-      this.receive({ type: "attached", canonicalSize, nextSeq: 0, capabilities: ["binary-input-v1"] });
+      this.receive({
+        type: "attached",
+        canonicalSize,
+        nextSeq: 0,
+        capabilities: ["binary-input-v1"],
+        ownership: "writer",
+        leaseEpoch: 1,
+      });
       this.receive({ type: "replay-start", fromSeq: 0 });
       const data = "\x1b[?1000h\x1b[?1006h\x1b[2J\x1b[H" + Array.from({ length: 35 }, (_, index) =>
         `row ${String(index + 1).padStart(2, "0")}  synthetic terminal output\r\n`).join("") + "LAST-ROW-VISIBLE$ ";
@@ -32,7 +39,10 @@ class FixtureSocket {
     }, 10);
   }
   receive(frame: Record<string, unknown>) {
-    this.onmessage?.(new MessageEvent("message", { data: JSON.stringify({ terminalRef: ref, revision: 1, ...frame }) }));
+    const identity = frame.type === "lease-revoked"
+      ? { terminalRef: ref }
+      : { terminalRef: ref, revision: 1 };
+    this.onmessage?.(new MessageEvent("message", { data: JSON.stringify({ ...identity, ...frame }) }));
   }
   send(raw: string) {
     const frame = JSON.parse(raw);
@@ -52,6 +62,7 @@ Object.defineProperty(window, "WebSocket", { value: FixtureSocket });
 Object.defineProperty(window, "fixtureProposals", { value: proposals });
 Object.defineProperty(window, "fixtureInputs", { value: inputs });
 Object.defineProperty(window, "fixtureOutput", { value: (data: string) => latestSocket?.receive({ type: "output", seq: outputSequence++, data }) });
+Object.defineProperty(window, "fixtureObserve", { value: () => latestSocket?.receive({ type: "lease-revoked", epoch: 1 }) });
 window.operator = { invoke: async () => ({}), on: () => () => undefined };
 useConnection.setState({ platformHost: window.location.origin, runtimeSlot: "primary", api: null });
 const params = new URLSearchParams(window.location.search);

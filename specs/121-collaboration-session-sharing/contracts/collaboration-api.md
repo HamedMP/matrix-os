@@ -24,7 +24,7 @@ All paths are under `/api/collaboration`. `S` means `/scopes/:scopeId`. Every ro
 | POST `/runtimes/:runtimeId/scopes` | Verified runtime owner | Idempotent creation bound to preflight token and expected revision. M4 prepares an unpublished project scope; project publication uses confirm below. |
 | GET `S` | Member | Scope, role, participants, lifecycle, capabilities and safe unavailable reasons. |
 | GET `S/members` | Member | Accepted participant labels/roles; pending invite details owner-only. |
-| POST `S/invitations` | Owner | Verified target account ID and editor/viewer role; reserve capacity transactionally. No implicit contact creation or external email sending. |
+| POST `S/invitations` | Owner | Bounded `identifier` (internal actor ID, exact verified email, or exact username with optional leading `@`) and editor/viewer role; resolve to one canonical actor before reserving capacity transactionally. No implicit contact creation or external email sending. |
 | GET `/invitations/:invitationId` | Exact invited actor or inviter | Bounded inviter/target-kind/role/implications preview; no content access. |
 | POST `/invitations/:invitationId/accept` | Exact invited actor | Explicit acceptance; recheck expiry, scope state, cohort and current reservation. |
 | DELETE `S/invitations/:invitationId` | Owner | Revoke pending invitation; old accept links remain invalid. |
@@ -59,6 +59,10 @@ All paths are under `/api/collaboration`. `S` means `/scopes/:scopeId`. Every ro
 Project child Chat/terminal operations use that child's scope ID, whose binding resolves effective membership to the parent. No project ID supplied by the client can redirect an unrelated child's authority. Owner-only preparation routes deliberately permit an unpublished preparing scope; member/content routes do not.
 
 Internal service routes are separate: `PUT /internal/collaboration/directory` accepts idempotent metadata from the authenticated registered runtime for its own owner/generation only; `GET /internal/collaboration/policy` returns signed capability policy to an authenticated registered runtime. Both require service authentication and are not public or reachable using participant proofs/tickets. Policy changes use existing authenticated platform operator configuration, not a new customer endpoint. Directory repair cannot change owner membership.
+
+`POST /internal/collaboration/participants/resolve` is an authenticated runtime-only platform route used during invitation creation. The gateway first authenticates the signed actor and authorizes `manage_members`, then sends only the bounded identifier to platform. Platform trims surrounding whitespace, removes one optional leading `@` for usernames, normalizes username casing, and exact-matches an active Matrix account. Email resolution uses the identity provider's exact verified canonical email and fails closed on partial, duplicate, ambiguous, malformed, oversized, unavailable, or timed-out results. The public invitation response collapses all resolution failures to one generic error. Both gateway and platform apply bounded per-owner rate limits; there is no public search or autocomplete endpoint.
+
+Resolution finishes before the owner-database transaction. The transaction locks the scope, reauthorizes the current owner and revision, and remains authoritative for self-invites, capacity, pending/accepted duplicates, revoked/expired renewal, idempotency, and races. Only the canonical actor ID crosses into owner persistence, directory events, audit records, and proofs. Clerk administrative credentials and email addresses never reach the owner gateway or collaboration storage.
 
 ## Existing snapshot routes: preserved, not collaboration credentials
 

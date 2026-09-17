@@ -729,6 +729,8 @@ export const TerminalTabServerFrameSchema = z.discriminatedUnion("type", [
     canonicalSize: TerminalGridSizeSchema,
     nextSeq: z.number().int().min(0),
     capabilities: z.array(TerminalInputCapabilitySchema).max(8).optional(),
+    ownership: z.enum(["writer", "observer"]).optional(),
+    leaseEpoch: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
   }).strict(),
   TerminalServerEventBaseSchema.extend({
     type: z.literal("snapshot"),
@@ -773,6 +775,11 @@ export const TerminalTabServerFrameSchema = z.discriminatedUnion("type", [
   }).strict(),
   TerminalServerEventBaseSchema.extend({
     type: z.literal("pong"),
+  }).strict(),
+  z.object({
+    type: z.literal("lease-revoked"),
+    terminalRef: TerminalRefSchema,
+    epoch: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).nullable(),
   }).strict(),
   TerminalServerEventBaseSchema.extend({
     type: z.literal("exit"),

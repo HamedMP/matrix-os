@@ -80,7 +80,7 @@ describe("real terminal renderer soft-grid resizing", () => {
       const content = screen.getBoundingClientRect();
       return { bottom: content.bottom, visibleBottom: outer.bottom,
         panTop: viewport.scrollTop, scrollHeight: viewport.scrollHeight,
-        stageHeight: stage.offsetHeight, clientHeight: viewport.clientHeight,
+        stageHeight: stage.offsetHeight, screenHeight: screen.offsetHeight, clientHeight: viewport.clientHeight,
         scale: xterm.style.transform, stageBottom: stage.getBoundingClientRect().bottom };
     });
   }
@@ -102,7 +102,19 @@ describe("real terminal renderer soft-grid resizing", () => {
         await expect.poll(async () => { const g = await geometry(page); return g.bottom - g.visibleBottom; }, { timeout: 5_000 }).toBeLessThanOrEqual(1);
         const measured = await geometry(page);
         expect(measured.scrollHeight).toBeLessThanOrEqual(Math.max(measured.stageHeight, measured.clientHeight) + 1);
-        if (height === 300) expect(measured.panTop).toBeGreaterThan(0);
+        if (height === 300) {
+          expect(measured.panTop).toBeGreaterThan(0);
+          const box = await page.locator("[data-terminal-viewport]").boundingBox();
+          if (!box) throw new Error("Terminal viewport is not measurable");
+          await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+          // Mouse reporting is enabled in the fixture, as it is for Zellij.
+          // Pixel wheel gestures must still expose both ends of a clipped grid.
+          await page.mouse.wheel(0, -2_000);
+          await expect.poll(async () => (await geometry(page)).panTop).toBe(0);
+          await page.mouse.wheel(0, 2_000);
+          await expect.poll(async () => { const g = await geometry(page); return g.scrollHeight - g.clientHeight - g.panTop; })
+            .toBeLessThanOrEqual(1);
+        }
         if (height === 850) expect(measured.scale).toBe("scale(1)");
         if (height === 600) {
           const point = await page.locator(".xterm-screen").evaluate((screen) => {
@@ -125,9 +137,19 @@ describe("real terminal renderer soft-grid resizing", () => {
       await page.waitForTimeout(250);
       await page.evaluate(() => (window as unknown as { fixtureOutput: (data: string) => void }).fixtureOutput("\r\n".repeat(35) + "LATE-OUTPUT-VISIBLE$ "));
       await expect.poll(async () => { const g = await geometry(page); return g.bottom - g.visibleBottom; }).toBeLessThanOrEqual(1);
+      await page.evaluate(() => (window as unknown as { fixtureOutput: (data: string) => void }).fixtureOutput("\x1b[Htop prompt"));
+      await expect.poll(async () => (await geometry(page)).panTop).toBe(0);
+      const panBox = await page.locator("[data-terminal-viewport]").boundingBox();
+      if (!panBox) throw new Error("Terminal viewport is not measurable");
+      await page.mouse.move(panBox.x + panBox.width / 2, panBox.y + panBox.height / 2);
+      await page.mouse.wheel(0, 2_000);
+      await expect.poll(async () => { const g = await geometry(page); return g.scrollHeight - g.clientHeight - g.panTop; }).toBeLessThanOrEqual(1);
+      await page.evaluate(() => (window as unknown as { fixtureOutput: (data: string) => void }).fixtureOutput("\x1b[Hredrawn prompt"));
+      await page.waitForTimeout(100);
+      expect((await geometry(page)).panTop).toBeGreaterThan(0);
       // Native browser selection defaults must stay suppressed when xterm
       // cancels a forwarded event, including a double click with no movement.
-      const shortGridHeight = (await geometry(page)).stageHeight;
+      const shortGridHeight = (await geometry(page)).screenHeight;
       await page.evaluate(() => {
         Object.defineProperty(navigator, "clipboard", { configurable: true, value: {
           writeText: async (text: string) => { document.body.dataset.copied = text; },
@@ -138,7 +160,7 @@ describe("real terminal renderer soft-grid resizing", () => {
         (window as unknown as { fixtureOutput: (data: string) => void })
           .fixtureOutput("\x1bcDOUBLECLICK prefix targetword suffix");
       });
-      await expect.poll(async () => (await geometry(page)).stageHeight).toBeGreaterThan(shortGridHeight);
+      await expect.poll(async () => (await geometry(page)).screenHeight).toBeGreaterThan(shortGridHeight);
       await expect.poll(async () => (await geometry(page)).scale).toBe("scale(1)");
       // Font metrics differ between Chromium and native Electron hosts. Derive
       // a small shrink from the restored grid, above the readable font floor.
@@ -163,6 +185,64 @@ describe("real terminal renderer soft-grid resizing", () => {
       await page.mouse.dblclick(word.x, word.y);
       await page.keyboard.press("Control+Shift+C");
       await expect.poll(() => page.locator("body").getAttribute("data-copied")).toBe("targetword");
+      await page.locator("#terminal-window").evaluate((element, width) => {
+        const windowElement = element as HTMLElement;
+        windowElement.style.width = `${width}px`;
+        windowElement.style.height = "850px";
+      }, surface === "web-mobile" ? 360 : 1_100);
+      await expect.poll(async () => (await geometry(page)).scale).toBe("scale(1)");
+      // Wheel input in the unused right-hand viewport must reach xterm even
+      // when content clipping leaves no canvas under the pointer.
+      await page.evaluate(() => {
+        (window as unknown as { fixtureInputs: string[] }).fixtureInputs.length = 0;
+        (window as unknown as { fixtureOutput: (data: string) => void }).fixtureOutput("\x1b[?1000h\x1b[?1006h");
+      });
+      const blankArea = await page.locator("[data-terminal-viewport]").boundingBox();
+      if (!blankArea) throw new Error("Terminal viewport is not measurable");
+      await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
+      await page.mouse.click(blankArea.x + blankArea.width - 40, blankArea.y + 80);
+      await expect.poll(() => page.evaluate(() => document.activeElement?.classList.contains("xterm-helper-textarea"))).toBe(true);
+      await page.mouse.move(blankArea.x + blankArea.width - 40, blankArea.y + 80);
+      await page.mouse.wheel(0, -200);
+      await expect.poll(() => page.evaluate(() => (window as unknown as { fixtureInputs: string[] }).fixtureInputs.some((input) => /\x1b\[<64;/.test(input)))).toBe(true);
+      // A short normal shell must not pan across unused canonical-grid space.
+      await page.locator("#terminal-window").evaluate((element) => { (element as HTMLElement).style.height = "300px"; });
+      await page.evaluate(() => (window as unknown as { fixtureOutput: (data: string) => void }).fixtureOutput("\x1bcshort\r\nresult\r\n$ "));
+      await expect.poll(async () => page.locator("[data-terminal-viewport]").evaluate((host) =>
+        host.scrollHeight - host.clientHeight + host.scrollWidth - host.clientWidth)).toBe(0);
+      // The clipped grid is larger than its short content. Browser focus and
+      // scrollIntoView must never pan this internal layer behind the host rail.
+      const internalPan = await page.locator("[data-terminal-grid-stage]").evaluate((stage) => {
+        stage.scrollLeft = 100;
+        stage.scrollTop = 100;
+        return { left: stage.scrollLeft, top: stage.scrollTop };
+      });
+      expect(internalPan).toEqual({ left: 0, top: 0 });
+      const rail = page.locator('[data-terminal-scrollbar="content"]');
+      await expect.poll(() => rail.isVisible()).toBe(false);
+      // History and clipped live rows use this same edge-aligned rail.
+      await page.evaluate(() => (window as unknown as { fixtureOutput: (data: string) => void }).fixtureOutput("\x1bc" + Array.from({ length: 80 }, (_, i) => `HISTORY_${i}\r\n`).join("")));
+      await expect.poll(() => rail.isVisible()).toBe(true);
+      expect(await rail.count()).toBe(1);
+      // Wait for the initial history write to follow the bottom before dragging.
+      // Setting scrollTop to zero while it is already zero is not a gesture.
+      await expect.poll(() => rail.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+      expect(await page.locator(".xterm .scrollbar.vertical").isVisible()).toBe(false);
+      await rail.evaluate((element) => { element.scrollTop = 0; });
+      await expect.poll(async () => (await geometry(page)).panTop).toBe(0);
+      await rail.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+      await expect.poll(async () => { const g = await geometry(page); return g.scrollHeight - g.clientHeight - g.panTop; }).toBeLessThanOrEqual(1);
+      await page.evaluate(() => (window as unknown as { fixtureObserve: () => void }).fixtureObserve());
+      await expect.poll(() => page.getByText("Live on another device.").isVisible()).toBe(true);
+      await expect.poll(() => page.getByRole("button", { name: "Continue here" }).isVisible()).toBe(true);
+      const actionBox = await page.getByRole("button", { name: "Continue here" }).boundingBox();
+      if (!actionBox) throw new Error("Continue here action is not measurable");
+      expect(actionBox.x).toBeGreaterThanOrEqual(0);
+      const viewportWidth = page.viewportSize()?.width ?? await page.evaluate(() => window.innerWidth);
+      expect(actionBox.x + actionBox.width).toBeLessThanOrEqual(viewportWidth);
+      await page.screenshot({
+        path: resolve(evidence, `${nativeElectron ? "native-" : ""}${surface}-${zoom}-observer.png`),
+      });
       expect(errors).toEqual([]);
     } finally { if (!electron) await page.close(); }
   }, 30_000);

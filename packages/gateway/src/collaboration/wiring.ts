@@ -93,6 +93,7 @@ export async function createGatewayCollaboration(options: {
   chatRepository: ChatRepository;
   config: GatewayCollaborationConfig;
   resolveParticipant?(actorId: string): Promise<{ actorId: string; displayName: string }>;
+  resolveInvitationIdentifier?(identifier: string): Promise<{ actorId: string; displayName: string }>;
   outboxFetch?: typeof fetch;
   projectLifecycleDrivers?: {
     stageTransfer: ProjectTransferStager;
@@ -104,13 +105,17 @@ export async function createGatewayCollaboration(options: {
   await bootstrapCollaborationDatabase(options.db);
   await cleanupExpiredArtifacts(options.db, new Date());
   const repository = new CollaborationRepository(options.db, { chatRepository: options.chatRepository });
-  const participantResolver = options.resolveParticipant ? undefined : new CollaborationParticipantResolver({
-    platformBaseUrl: options.config.platformBaseUrl,
-    runtimeId: options.config.runtimeId,
-    serviceToken: options.config.serviceToken,
-  });
+  const participantResolver = options.resolveParticipant && options.resolveInvitationIdentifier
+    ? undefined
+    : new CollaborationParticipantResolver({
+      platformBaseUrl: options.config.platformBaseUrl,
+      runtimeId: options.config.runtimeId,
+      serviceToken: options.config.serviceToken,
+    });
   const resolveParticipant = options.resolveParticipant
     ?? ((actorId: string) => participantResolver!.resolve(actorId));
+  const resolveInvitationIdentifier = options.resolveInvitationIdentifier
+    ?? ((identifier: string) => participantResolver!.resolveInvitationIdentifier(identifier));
   const authority = new CollaborationAuthority(repository);
   const verifier = new CollaborationActorProofVerifier({
     runtimeId: options.config.runtimeId,
@@ -321,6 +326,7 @@ export async function createGatewayCollaboration(options: {
         ...(projectScope ? { projectScope } : {}),
         ...(projectSharing ? { projectSharing } : {}),
         resolveParticipant,
+        resolveInvitationIdentifier,
         onScopeCommitted: (scopeId) => eventRegistry.broadcastScope(scopeId),
         onRevoked: (scopeId, actorId) => {
           eventRegistry.notifyRevoked(scopeId, actorId);

@@ -82,6 +82,9 @@ export class AttachManager {
       onCanonicalSize: (size) => {
         if (this.isLive(generation)) events.onCanonicalSize?.(size);
       },
+      onOwnershipChange: (role) => {
+        if (this.isLive(generation)) events.onOwnershipChange?.(role);
+      },
       onGap: () => {
         if (this.isLive(generation)) events.onGap();
       },

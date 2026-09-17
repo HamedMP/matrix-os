@@ -1,6 +1,7 @@
 import { chmod, mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Terminal } from "@xterm/xterm";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TerminalRuntimeSocketClient } from "../../packages/terminal-runtime/src/socket-client.js";
 import { TerminalRuntimeError } from "../../packages/terminal-runtime/src/errors.js";
@@ -99,6 +100,7 @@ describe("terminal runtime Unix socket API", () => {
     };
     const paneAction = vi.fn(async () => undefined);
     const deleteTab = vi.fn(async () => undefined);
+    const renameTab = vi.fn(async (_ref, input) => ({ ...tab, name: input.name, revision: 2 }));
     const server = new TerminalRuntimeSocketServer({
       socketPath,
       runtime: {
@@ -106,6 +108,7 @@ describe("terminal runtime Unix socket API", () => {
         ensureWorkspace: async () => workspace,
         createTab: async () => tab,
         deleteTab,
+        renameTab,
         paneAction,
         getSnapshot: async () => socketSnapshot,
         resize: async () => ({ ...workspace, tabs: [tab] }),
@@ -146,6 +149,11 @@ describe("terminal runtime Unix socket API", () => {
     expect(paneAction).toHaveBeenCalledWith(
       { workspaceId: workspace.id, tabId: created.id },
       { type: "focus", direction: "right" },
+    );
+    const renamed = await client.renameTab({ workspaceId: workspace.id, tabId: created.id }, { name: "renamed", baseRevision: 1 });
+    expect(renamed.name).toBe("renamed");
+    expect(renameTab).toHaveBeenCalledWith(
+      { workspaceId: workspace.id, tabId: created.id }, { name: "renamed", baseRevision: 1 },
     );
     await client.deleteTab({ workspaceId: workspace.id, tabId: created.id });
     expect(deleteTab).toHaveBeenCalledWith({ workspaceId: workspace.id, tabId: created.id });
@@ -213,9 +221,9 @@ describe("terminal runtime Unix socket API", () => {
       revision: 1,
       presentationRevision: 0,
       seq: 41,
-      ansi: "checkpoint\nsecond row\r\nthird row",
-      viewport: [],
-      scrollback: [],
+      ansi: "history\ncheckpoint\nsecond row\r\nthird row",
+      viewport: ["checkpoint", "second row", "third row"],
+      scrollback: ["history"],
       updatedAt: tab.updatedAt,
     };
     let emitOutput: ((data: Uint8Array) => void | Promise<void>) | undefined;
@@ -242,7 +250,7 @@ describe("terminal runtime Unix socket API", () => {
     });
     await server.start();
     const client = new TerminalRuntimeSocketClient({ socketPath });
-    const frames: Array<{ type: string; seq?: number; nextSeq?: number }> = [];
+    const frames: Array<{ type: string; seq?: number; nextSeq?: number; ansi?: string }> = [];
     const outputsReady = Promise.withResolvers<void>();
     const stream = client.attach({
       ref: terminalRef,
@@ -269,9 +277,16 @@ describe("terminal runtime Unix socket API", () => {
       nextSeq: 42,
       capabilities: ["binary-input-v1"],
     });
-    expect(frames.find((frame) => frame.type === "snapshot")).toMatchObject({
-      ansi: "checkpoint\r\nsecond row\r\nthird row",
-    });
+    const screen = frames.find((frame) => frame.type === "snapshot");
+    expect(screen?.ansi).toBeDefined();
+    const terminal = new Terminal({ cols: 120, rows: 36, allowProposedApi: true });
+    try {
+      await new Promise<void>((resolve) => terminal.write("\x1bc" + screen!.ansi!, resolve));
+      const buffer = terminal.buffer.active;
+      expect(buffer.getLine(0)?.translateToString(true)).toBe("history");
+      expect(buffer.getLine(buffer.baseY)?.translateToString(true)).toBe("checkpoint");
+      expect(buffer.cursorY).toBe(2);
+    } finally { terminal.dispose(); }
     expect(frames.filter((frame) => frame.type === "output").map((frame) => frame.seq))
       .toEqual([42, 43]);
     stream.close();

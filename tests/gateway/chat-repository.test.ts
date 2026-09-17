@@ -1238,7 +1238,13 @@ describe("ChatRepository", () => {
     expect(claims.filter((claim) => claim !== null)).toHaveLength(1);
     expect(claimed).toMatchObject({
       queuedTurn: { id: "qturn_queue_claim_1", position: 1 },
-      message: { role: "user", state: "committed", parts: [{ type: "text", text: "first queued" }] },
+      message: {
+        role: "user",
+        state: "committed",
+        actorId: owner.ownerId,
+        purpose: "ai_request",
+        parts: [{ type: "text", text: "first queued" }],
+      },
       turn: { status: "accepted", clientRequestId: "req_queue_claim_1" },
       run: { status: "accepted", driverKind: "codex", attempt: 1 },
     });
@@ -1292,7 +1298,12 @@ describe("ChatRepository", () => {
       clientRequestId: input.clientRequestId,
       acceptedAt: "2026-08-25T00:00:11.000Z",
     });
-    expect(accepted).toMatchObject({ id: input.messageId, state: "committed" });
+    expect(accepted).toMatchObject({
+      id: input.messageId,
+      state: "committed",
+      actorId: owner.ownerId,
+      purpose: "ai_request",
+    });
     await expect(repository.acceptSteer(owner, {
       chatId: admitted.chatId,
       runId: admitted.runId,
@@ -1381,6 +1392,8 @@ describe("ChatRepository", () => {
     expect(accepted).toMatchObject({
       id: "msg_queued_steer_retry",
       runId: admitted.runId,
+      actorId: owner.ownerId,
+      purpose: "ai_request",
       parts: [{ type: "text", text: "steer this now" }],
     });
     expect(await repository.listQueuedTurns(owner, admitted.chatId)).toEqual([]);

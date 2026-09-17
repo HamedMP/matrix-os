@@ -310,7 +310,7 @@ async function toPrincipalRecord(
     activeRunQuery(executor, row.id),
     userStateQuery(executor, owner, row.id),
     latestSuccessfulCompletionQuery(executor, row.id),
-    internalScopeId ? ownerSharedProjection(executor, internalScopeId, row.id) : undefined,
+    internalScopeId ? ownerSharedProjection(executor, owner, internalScopeId, row.id) : undefined,
   ]);
   const effectiveProjection = collaborationProjection ?? internalProjection;
   const record = toChatRecord(
@@ -331,7 +331,8 @@ function sharedBindingScopeId(value: unknown): string | undefined {
     const parsed = typeof value === "string" ? JSON.parse(value) as unknown : value;
     if (!parsed || typeof parsed !== "object") return undefined;
     const binding = parsed as { scopeId?: unknown; mode?: unknown; executionFenced?: unknown };
-    return binding.mode === "shared_ai" && binding.executionFenced === true
+    return (binding.mode === "discussion_only" || binding.mode === "shared_ai")
+      && binding.executionFenced === true
       ? z.uuid().safeParse(binding.scopeId).data
       : undefined;
   } catch (error: unknown) {
@@ -345,23 +346,65 @@ function sharedBindingScopeId(value: unknown): string | undefined {
 
 async function ownerSharedProjection(
   executor: Executor,
+  owner: ChatOwner,
   scopeId: string,
   chatId: string,
 ): Promise<CanonicalChatCollaboration | undefined> {
   const collaborationExecutor = executor as unknown as Kysely<OwnerCollaborationDatabase>;
   const scope = await collaborationExecutor.selectFrom("collaboration_scopes")
-    .select("id")
+    .select(["id", "parent_scope_id", "membership_mode", "lifecycle", "authority_runtime_id"])
     .where("id", "=", scopeId)
+    .where("owner_type", "=", owner.type)
+    .where("owner_id", "=", owner.ownerId)
     .where("kind", "=", "chat")
     .where("resource_id", "=", chatId)
     .where("lifecycle", "in", ["shared", "archived"])
     .where("deleted_at", "is", null)
     .executeTakeFirst();
   if (!scope) return undefined;
+
+  let membershipScopeId: string;
+  if (scope.membership_mode === "direct") {
+    if (scope.parent_scope_id !== null) return undefined;
+    membershipScopeId = scope.id;
+  } else {
+    if (!scope.parent_scope_id) return undefined;
+    const parent = await collaborationExecutor.selectFrom("collaboration_scopes")
+      .select("id")
+      .where("id", "=", scope.parent_scope_id)
+      .where("owner_type", "=", owner.type)
+      .where("owner_id", "=", owner.ownerId)
+      .where("kind", "=", "project")
+      .where("membership_mode", "=", "direct")
+      .where("parent_scope_id", "is", null)
+      .where("lifecycle", "=", scope.lifecycle)
+      .where("authority_runtime_id", "=", scope.authority_runtime_id)
+      .where("deleted_at", "is", null)
+      .executeTakeFirst();
+    if (!parent) return undefined;
+    membershipScopeId = parent.id;
+  }
+
+  const ownerMember = await collaborationExecutor.selectFrom("collaboration_members")
+    .select("actor_id")
+    .where("scope_id", "=", membershipScopeId)
+    .where("actor_id", "=", owner.ownerId)
+    .where("role", "=", "owner")
+    .where("status", "=", "accepted")
+    .where((eb) => eb.or([
+      eb("expires_at", "is", null),
+      eb("expires_at", ">", sql<Date | string>`clock_timestamp()`),
+    ]))
+    .executeTakeFirst();
+  if (!ownerMember) return undefined;
   const members = await collaborationExecutor.selectFrom("collaboration_members")
     .select(({ fn }) => fn.countAll<number>().as("count"))
-    .where("scope_id", "=", scopeId)
+    .where("scope_id", "=", membershipScopeId)
     .where("status", "=", "accepted")
+    .where((eb) => eb.or([
+      eb("expires_at", "is", null),
+      eb("expires_at", ">", sql<Date | string>`clock_timestamp()`),
+    ]))
     .executeTakeFirstOrThrow();
   return { mode: "shared", membership: { role: "owner", memberCount: Number(members.count) } };
 }

@@ -29,6 +29,7 @@ export interface ShellSocketEvents {
   onState(state: ShellSocketState, detail?: { code?: string }): void;
   onOutput(data: string, seq: number): void;
   onCanonicalSize?(size: { cols: number; rows: number }): void;
+  onOwnershipChange?(role: "writer" | "observer"): void;
   onGap(): void;
   onExit(code: number): void;
 }
@@ -127,6 +128,8 @@ export class ShellSocket {
     | { type: "binary"; data: string }
   > = [];
   private binaryInputSupported = false;
+  private hasWriteOwnership = false;
+  private requestedOwnership: "exclusive" | "observe" = "exclusive";
   private lastKnownDims: Dims | null = null;
   private lastSentDims: Dims | null = null;
   private resizeSentSinceAttach = false;
@@ -172,9 +175,9 @@ export class ShellSocket {
       const end = nextChunkEnd(data, offset);
       const chunk = data.slice(offset, end);
       offset = end;
-      if (this.currentState === "attached" && this.socket !== null) {
+      if (this.currentState === "attached" && this.socket !== null && this.hasWriteOwnership) {
         this.sendFrame({ type: "input", terminalRef: this.terminalRef, data: chunk });
-      } else {
+      } else if (this.currentState !== "attached") {
         this.pendingInput.push({ type: "input", data: chunk });
         if (this.pendingInput.length > PENDING_INPUT_MAX_CHUNKS) {
           this.pendingInput.shift();
@@ -192,9 +195,9 @@ export class ShellSocket {
     }
     for (let offset = 0; offset < data.length; offset += INPUT_CHUNK_CHARS) {
       const chunk = data.slice(offset, offset + INPUT_CHUNK_CHARS);
-      if (this.currentState === "attached" && this.socket !== null) {
+      if (this.currentState === "attached" && this.socket !== null && this.hasWriteOwnership) {
         this.sendBinaryChunk(chunk);
-      } else {
+      } else if (this.currentState !== "attached") {
         this.pendingInput.push({ type: "binary", data: chunk });
         if (this.pendingInput.length > PENDING_INPUT_MAX_CHUNKS) this.pendingInput.shift();
       }
@@ -246,6 +249,7 @@ export class ShellSocket {
   private openSocket(isReconnect: boolean): void {
     if (this.disposed) return;
     this.binaryInputSupported = false;
+    this.hasWriteOwnership = false;
     // Per-connection resize bookkeeping: a fresh attach starts a new startup
     // window and may need the last known dims resent.
     this.lastSentDims = null;
@@ -311,7 +315,8 @@ export class ShellSocket {
       : LIVE_TAIL_FROM_SEQ;
     const size = this.lastKnownDims;
     const sizingSuffix = size ? `&cols=${size.cols}&rows=${size.rows}` : "";
-    return `${base}/ws/terminal/tab?workspaceId=${encodeURIComponent(this.terminalRef.workspaceId)}&tabId=${encodeURIComponent(this.terminalRef.tabId)}&client=electron&fromSeq=${fromSeq}${chatSuffix}${runtimeSuffix}${sizingSuffix}&inputCapability=binary-input-v1`;
+    const leaseSuffix = `&lease=${this.requestedOwnership}`;
+    return `${base}/ws/terminal/tab?workspaceId=${encodeURIComponent(this.terminalRef.workspaceId)}&tabId=${encodeURIComponent(this.terminalRef.tabId)}&client=electron&fromSeq=${fromSeq}${chatSuffix}${runtimeSuffix}${sizingSuffix}${leaseSuffix}&inputCapability=binary-input-v1`;
   }
 
   private scheduleReconnect(): void {
@@ -396,6 +401,12 @@ export class ShellSocket {
       case "attached":
         this.handleAttached(frame);
         return;
+      case "lease-revoked":
+        this.hasWriteOwnership = false;
+        this.requestedOwnership = "observe";
+        this.pendingInput = [];
+        this.opts.events.onOwnershipChange?.("observer");
+        return;
       case "output":
         if (this.currentState !== "attached") return;
         this.handleOutput(frame);
@@ -442,13 +453,17 @@ export class ShellSocket {
     this.failedAttempts = 0;
     this.binaryInputSupported = Array.isArray(frame.capabilities)
       && frame.capabilities.includes("binary-input-v1");
+    this.hasWriteOwnership = frame.ownership !== "observer";
+    this.requestedOwnership = this.hasWriteOwnership ? "exclusive" : "observe";
     this.handleCanonicalSize(frame.canonicalSize && typeof frame.canonicalSize === "object"
       ? frame.canonicalSize as Record<string, unknown>
       : {});
-    this.flushPendingInput();
+    if (this.hasWriteOwnership) this.flushPendingInput();
+    else this.pendingInput = [];
     this.scheduleAttachTimers();
     this.scheduleHeartbeat();
     this.setState("attached");
+    this.opts.events.onOwnershipChange?.(this.hasWriteOwnership ? "writer" : "observer");
   }
 
   private handleCanonicalSize(frame: Record<string, unknown>): void {

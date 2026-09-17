@@ -43,11 +43,26 @@ describe("shared terminal grid presentation", () => {
     return { host, root, terminal, geometry, onScale, presentation, layout };
   }
 
+  it("focuses on blank viewport clicks without intercepting text selection or context clicks", () => {
+    const { host, root, terminal, presentation, layout } = setup();
+    const focus = vi.fn();
+    Object.assign(terminal, { focus });
+    layout(1600, 900);
+    host.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }));
+    expect(focus).toHaveBeenCalledOnce();
+    root.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
+    host.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 2 }));
+    expect(focus).toHaveBeenCalledOnce();
+    presentation.dispose();
+    host.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
+    expect(focus).toHaveBeenCalledOnce();
+  });
+
   it("gives the pan stage exactly the visual extent and clips unscaled layout overflow", () => {
     const { host, root, geometry, layout } = setup();
     layout(1_600, 600);
     const stage = host.querySelector<HTMLElement>("[data-terminal-grid-stage]")!;
-    expect(stage.style.overflow).toBe("hidden");
+    expect(stage.style.overflow).toBe("clip");
     expect(root.style.position).toBe("absolute");
     expect(Number.parseFloat(stage.style.height)).toBeCloseTo(geometry.visualHeight());
     expect(geometry.visualHeight()).toBeLessThanOrEqual(600.5);
@@ -61,6 +76,24 @@ describe("shared terminal grid presentation", () => {
     layout(1_600, 320);
     layout(1_600, 340);
     expect(host.scrollTop).toBe(20);
+  });
+
+  it("preserves readable horizontal panning without following the live cursor", () => {
+    const { host, root, terminal, presentation, layout } = setup();
+    const buffer = { baseY: 0, viewportY: 0, cursorY: 0, cursorX: 119 };
+    Object.defineProperty(terminal, "buffer", { value: { active: buffer } });
+
+    layout(600, 900);
+
+    expect(terminal.options.fontSize).toBe(10);
+    expect(root.style.transform).toBe("scale(1)");
+    expect(host.style.overflowX).toBe("auto");
+
+    host.scrollLeft = 120;
+    presentation.schedule();
+    flush();
+
+    expect(host.scrollLeft).toBe(120);
   });
 
   it("keeps quantized font metrics stable across output-only layout passes", () => {
@@ -215,4 +248,120 @@ describe("shared terminal grid presentation", () => {
     root.dispatchEvent(new WheelEvent("wheel", { clientX: 40, bubbles: true }));
     expect(received[0].clientX).toBe(40);
   });
+
+  it("lets pixel wheel gestures reach both outer edges before scrolling the terminal", () => {
+    const { host, root, layout } = setup();
+    layout(1_600, 300);
+    Object.defineProperty(host, "scrollHeight", { get: () => Number.parseFloat(root.parentElement!.style.height) });
+    const max = host.scrollHeight - host.clientHeight;
+    const received: number[] = [];
+    root.addEventListener("wheel", (event) => { received.push(event.deltaY); event.preventDefault(); });
+    const wheel = (deltaY: number) => root.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY }));
+    wheel(-max);
+    expect(host.scrollTop).toBe(0);
+    expect(received).toEqual([]);
+    wheel(-15);
+    expect(received).toEqual([-15]);
+    wheel(max);
+    expect(host.scrollTop).toBe(max);
+    expect(received).toEqual([-15]);
+    wheel(15);
+    expect(received).toEqual([-15, 15]);
+  });
+
+  it("forwards only the unconsumed part of an edge-crossing wheel gesture", () => {
+    const { host, root, layout } = setup(0.5);
+    layout(1_600, 300);
+    Object.defineProperty(host, "scrollHeight", { get: () => Number.parseFloat(root.parentElement!.style.height) });
+    host.scrollTop = 20;
+    const received: WheelEvent[] = [];
+    root.addEventListener("wheel", (event) => { received.push(event); event.preventDefault(); });
+    const wheel = new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: -50, clientY: 60 });
+    root.dispatchEvent(wheel);
+    expect(host.scrollTop).toBe(0);
+    expect(received).toHaveLength(1);
+    expect(received[0]).toMatchObject({ deltaY: -30, clientY: 120 });
+    expect(wheel.defaultPrevented).toBe(true);
+  });
+
+  it.each([1, 2])("converts wheel delta mode %s while retaining terminal units", (deltaMode) => {
+    const { host, root, terminal, layout } = setup();
+    layout(1_600, 300);
+    Object.defineProperty(host, "scrollHeight", { get: () => Number.parseFloat(root.parentElement!.style.height) });
+    const unit = deltaMode === 1 ? host.scrollHeight / terminal.rows : host.clientHeight;
+    host.scrollTop = unit / 2;
+    const received: number[] = [];
+    root.addEventListener("wheel", (event) => { received.push(event.deltaY); event.preventDefault(); });
+    root.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaMode, deltaY: -1 }));
+    expect(host.scrollTop).toBe(0);
+    expect(received).toEqual([-0.5]);
+  });
+
+  it("preserves fractional trackpad movement during output and resumes following at the bottom", () => {
+    const { host, root, layout, presentation } = setup();
+    layout(1_600, 300);
+    Object.defineProperty(host, "scrollHeight", { get: () => Number.parseFloat(root.parentElement!.style.height) });
+    const bottom = host.scrollTop;
+    root.addEventListener("wheel", (event) => event.preventDefault());
+    root.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: -0.25 }));
+    presentation.schedule();
+    flush();
+    expect(host.scrollTop).toBeCloseTo(bottom - 0.25);
+    root.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: 0.25 }));
+    presentation.schedule();
+    flush();
+    expect(host.scrollTop).toBeCloseTo(bottom);
+  });
+
+  it("does not pull a deliberate bottom pan back to a prompt near the top", () => {
+    const { host, root, terminal, layout, presentation } = setup();
+    Object.defineProperty(terminal, "buffer", { value: { active: { baseY: 0, viewportY: 0, cursorY: 0, cursorX: 0 } } });
+    layout(1_600, 300);
+    Object.defineProperty(host, "scrollHeight", { get: () => Number.parseFloat(root.parentElement!.style.height) });
+    root.addEventListener("wheel", (event) => event.preventDefault());
+    root.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: 2_000 }));
+    const bottom = host.scrollHeight - host.clientHeight;
+    expect(host.scrollTop).toBe(bottom);
+    presentation.schedule();
+    flush();
+    expect(host.scrollTop).toBe(bottom);
+  });
+
+  it.each(["ctrlKey", "metaKey", "altKey", "shiftKey"])("preserves modified wheel gestures with %s", (modifier) => {
+    const { host, root, layout } = setup();
+    layout(1_600, 300);
+    Object.defineProperty(host, "scrollHeight", { get: () => Number.parseFloat(root.parentElement!.style.height) });
+    const before = host.scrollTop;
+    const received: WheelEvent[] = [];
+    root.addEventListener("wheel", (event) => { received.push(event); event.preventDefault(); });
+    const event = new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: -50, [modifier]: true });
+    root.dispatchEvent(event);
+    expect(host.scrollTop).toBe(before);
+    expect(received).toEqual([event]);
+  });
+
+  it("retains both axes when a diagonal gesture crosses the grid edges", () => {
+    const { host, root, layout } = setup();
+    layout(600, 300);
+    Object.defineProperty(host, "scrollHeight", { get: () => Number.parseFloat(root.parentElement!.style.height) });
+    Object.defineProperty(host, "scrollWidth", { get: () => Number.parseFloat(root.parentElement!.style.width) });
+    host.scrollLeft = 5;
+    host.scrollTop = 10;
+    const received: WheelEvent[] = [];
+    root.addEventListener("wheel", (event) => { received.push(event); event.preventDefault(); });
+    root.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaX: -15, deltaY: -30 }));
+    expect({ left: host.scrollLeft, top: host.scrollTop }).toEqual({ left: 0, top: 0 });
+    expect(received).toHaveLength(1);
+    expect(received[0]).toMatchObject({ deltaX: -10, deltaY: -20 });
+  });
+  it("forwards wheel gestures over empty viewport space to the terminal", () => {
+    const { host, root, layout } = setup();
+    layout(1_600, 900);
+    const received: WheelEvent[] = [];
+    root.addEventListener("wheel", (event) => { received.push(event); event.preventDefault(); });
+    host.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: -300, clientX: 1_500, clientY: 100 }));
+    expect(received).toHaveLength(1);
+    expect(received[0].deltaY).toBe(-300);
+  });
+
 });

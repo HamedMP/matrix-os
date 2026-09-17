@@ -212,6 +212,7 @@ function WorkTabContent({
   initialChatId,
   initialChatView,
   initialChatTitle,
+  sharedScopeId,
 }: {
   tabId?: string;
   route: WorkRoute;
@@ -221,6 +222,7 @@ function WorkTabContent({
   initialChatId?: string;
   initialChatView?: "index" | "draft" | "conversation";
   initialChatTitle?: string;
+  sharedScopeId?: string;
 }) {
   const api = useConnection((state) => state.api);
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
@@ -692,7 +694,7 @@ function WorkTabContent({
   ) : null;
   const canonicalInspector = initialChatId ? renderInspector : undefined;
   const content = route === "chat"
-    ? <ChatTab tabId={tabId} active={active} visible={visible} initialChatId={initialChatId} initialView={initialChatView} draftRequest={hostedRuntime ? hostedRuntime.agentDraftRequest : agentDraftRequest} eventSource={eventSource ?? undefined} externalNavigation renderInspector={canonicalInspector} inspectorExclusive={inspectorExclusive} allowLegacyFallback={false} />
+    ? <ChatTab tabId={tabId} active={active} visible={visible} initialChatId={initialChatId} initialView={initialChatView} sharedScopeId={sharedScopeId} draftRequest={hostedRuntime ? hostedRuntime.agentDraftRequest : agentDraftRequest} eventSource={eventSource ?? undefined} externalNavigation renderInspector={canonicalInspector} inspectorExclusive={inspectorExclusive} allowLegacyFallback={false} />
     : route === "projects"
       ? <ProjectsIndex />
       : projectSlug

@@ -1,8 +1,10 @@
+import { createHash } from "node:crypto";
 import { Hono } from "hono";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { bootstrapChatDatabase } from "../../packages/gateway/src/chat/database.js";
 import { CollaborationChatCommands } from "../../packages/gateway/src/chat/collaboration-commands.js";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
+import { authMiddleware } from "../../packages/gateway/src/auth.js";
 import { CollaborationActorProofVerifier } from "../../packages/gateway/src/collaboration/actor-proof.js";
 import { CollaborationAuthority } from "../../packages/gateway/src/collaboration/authority.js";
 import { CollaborationChatAdapter } from "../../packages/gateway/src/collaboration/chat-adapter.js";
@@ -10,6 +12,7 @@ import { CollaborationChatExecutionAdapter } from "../../packages/gateway/src/co
 import { CollaborationChatScopeService } from "../../packages/gateway/src/collaboration/chat-scope.js";
 import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
 import { CollaborationRepository } from "../../packages/gateway/src/collaboration/repository.js";
+import { CollaborationParticipantResolverError } from "../../packages/gateway/src/collaboration/participant-resolver.js";
 import { createCollaborationProjectLifecycle } from "../../packages/gateway/src/collaboration/project-lifecycle.js";
 import { CollaborationProjectScopeService } from "../../packages/gateway/src/collaboration/project-scope.js";
 import { createProjectSharingService } from "../../packages/gateway/src/collaboration/project-sharing.js";
@@ -44,6 +47,8 @@ describe("collaboration gateway routes", () => {
   let app: Hono;
   let signer: CollaborationProofSigner;
   let nonce: number;
+  let chatScope: CollaborationChatScopeService;
+  let resolveInvitationIdentifier: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
     fixture = await createCollaborationTestDatabase();
@@ -55,7 +60,7 @@ describe("collaboration gateway routes", () => {
       createId: () => collaborationIds.invitation,
     });
     const authority = new CollaborationAuthority(repository, { now: () => now });
-    const chatScope = new CollaborationChatScopeService(fixture.db, {
+    chatScope = new CollaborationChatScopeService(fixture.db, {
       runtimeId: collaborationIds.runtime,
       preflightSecret: "0123456789abcdef0123456789abcdef",
       now: () => now,
@@ -66,6 +71,19 @@ describe("collaboration gateway routes", () => {
       displayName: actorId === collaborationActors.owner
         ? "Nima Owner"
         : actorId === collaborationActors.editor ? "Ada Editor" : "Vi Viewer",
+    });
+    resolveInvitationIdentifier = vi.fn(async (identifier: string) => {
+      const normalized = identifier.trim().replace(/^@/, "").toLowerCase();
+      if ([collaborationActors.editor.toLowerCase(), "nimanaderi", "person@example.com"].includes(normalized)) {
+        return resolveParticipant(collaborationActors.editor);
+      }
+      if ([collaborationActors.viewer.toLowerCase(), "viewer"].includes(normalized)) {
+        return resolveParticipant(collaborationActors.viewer);
+      }
+      if ([collaborationActors.owner.toLowerCase(), "owner"].includes(normalized)) {
+        return resolveParticipant(collaborationActors.owner);
+      }
+      throw new CollaborationParticipantResolverError();
     });
     const chatAdapter = new CollaborationChatAdapter({
       db: fixture.db,
@@ -201,6 +219,10 @@ describe("collaboration gateway routes", () => {
       createNonce: () => (++nonce).toString(16).padStart(32, "0"),
     });
     app = new Hono();
+    // Production mounts the global owner bearer middleware before these
+    // routes. Collaboration must pass through to its scoped actor-proof
+    // verifier without possessing or impersonating the owner's credential.
+    app.use("*", authMiddleware("owner-gateway-token"));
     app.route("/", createCollaborationRoutes({
       runtimeId: collaborationIds.runtime,
       verifier: new CollaborationActorProofVerifier({
@@ -220,6 +242,7 @@ describe("collaboration gateway routes", () => {
       projectScope,
       projectSharing,
       resolveParticipant,
+      resolveInvitationIdentifier,
       now: () => now,
     }));
   });
@@ -257,6 +280,84 @@ describe("collaboration gateway routes", () => {
       role: "owner",
       capabilities: { discuss: true, requestAi: false },
     });
+  });
+
+  it("projects requestAi for the current actor, role, M2 cohort, and runtime capability", async () => {
+    const executionEligibility = {
+      profileId: "scope-runtime-chat-v1",
+      profileVersion: 1,
+      profileDigest: "a".repeat(64),
+      adapterId: "claude-code" as const,
+      harnessVersion: "2.1.240",
+    };
+    await chatScope.reconcileExecutionEligibility({ executionGeneration: 9, eligibility: executionEligibility });
+    await shareChat();
+    await fixture.db.insertInto("collaboration_members").values([
+      {
+        scope_id: collaborationIds.scope,
+        actor_id: collaborationActors.editor,
+        role: "editor",
+        status: "accepted",
+        invitation_id: null,
+        invited_by: collaborationActors.owner,
+        accepted_at: now.toISOString(),
+        expires_at: null,
+        revision: 1,
+        joined_at: now.toISOString(),
+        updated_at: now.toISOString(),
+      },
+      {
+        scope_id: collaborationIds.scope,
+        actor_id: collaborationActors.viewer,
+        role: "viewer",
+        status: "accepted",
+        invitation_id: null,
+        invited_by: collaborationActors.owner,
+        accepted_at: now.toISOString(),
+        expires_at: null,
+        revision: 1,
+        joined_at: now.toISOString(),
+        updated_at: now.toISOString(),
+      },
+    ]).execute();
+    const path = `/api/collaboration/scopes/${collaborationIds.scope}`;
+    const capability = async (
+      actorId: string,
+      policy: true | { mode: "off" | "internal" | "enabled" | "read_only"; cohort: string[] },
+    ): Promise<boolean> => {
+      const response = await signedJson({
+        actorId,
+        scopeId: collaborationIds.scope,
+        method: "GET",
+        path,
+        m2Policy: policy,
+      });
+      expect(response.status).toBe(200);
+      return ((await response.json()) as { capabilities: { requestAi: boolean } }).capabilities.requestAi;
+    };
+
+    await expect(capability(collaborationActors.owner, true)).resolves.toBe(true);
+    await expect(capability(collaborationActors.editor, true)).resolves.toBe(true);
+    await expect(capability(collaborationActors.viewer, true)).resolves.toBe(false);
+    await expect(capability(collaborationActors.editor, {
+      mode: "internal",
+      cohort: [collaborationActors.owner, collaborationActors.editor, collaborationActors.viewer],
+    })).resolves.toBe(true);
+    await expect(capability(collaborationActors.editor, {
+      mode: "internal",
+      cohort: [collaborationActors.owner, collaborationActors.editor],
+    })).resolves.toBe(false);
+    await expect(capability(collaborationActors.editor, {
+      mode: "internal",
+      cohort: [collaborationActors.editor],
+    })).resolves.toBe(false);
+    await expect(capability(collaborationActors.owner, { mode: "off", cohort: [] })).resolves.toBe(false);
+    await expect(capability(collaborationActors.owner, { mode: "read_only", cohort: [] })).resolves.toBe(false);
+
+    await fixture.db.updateTable("collaboration_scopes")
+      .set({ execution_generation: 10 })
+      .where("id", "=", collaborationIds.scope).execute();
+    await expect(capability(collaborationActors.owner, true)).resolves.toBe(false);
   });
 
   it("prepares a private project scope only with a signed M4 policy", async () => {
@@ -488,6 +589,148 @@ describe("collaboration gateway routes", () => {
     });
   });
 
+  it("accepts an invitation using the revision returned by its projection", async () => {
+    await shareChat();
+    const invitation = await signedJson({
+      actorId: collaborationActors.owner,
+      scopeId: collaborationIds.scope,
+      method: "POST",
+      path: `/api/collaboration/scopes/${collaborationIds.scope}/invitations`,
+      body: {
+        identifier: collaborationActors.editor,
+        role: "editor",
+        clientRequestId: invitationRequestId,
+        expectedRevision: "1",
+      },
+    });
+    expect(invitation.status).toBe(201);
+    const created = await invitation.json() as { revision: string };
+    expect(created.revision).toBe("2");
+
+    const preview = await signedJson({
+      actorId: collaborationActors.editor,
+      scopeId: collaborationIds.scope,
+      method: "GET",
+      path: `/api/collaboration/invitations/${collaborationIds.invitation}`,
+    });
+    expect(preview.status).toBe(200);
+    const projection = await preview.json() as { revision: string };
+    expect(projection.revision).toBe(created.revision);
+
+    const accepted = await signedJson({
+      actorId: collaborationActors.editor,
+      scopeId: collaborationIds.scope,
+      method: "POST",
+      path: `/api/collaboration/invitations/${collaborationIds.invitation}/accept`,
+      body: { clientRequestId: acceptanceRequestId, expectedRevision: projection.revision },
+    });
+    expect(accepted.status).toBe(200);
+  });
+
+  it("rejects acceptance when the scope changes after the invitation projection", async () => {
+    await shareChat();
+    await signedJson({
+      actorId: collaborationActors.owner,
+      scopeId: collaborationIds.scope,
+      method: "POST",
+      path: `/api/collaboration/scopes/${collaborationIds.scope}/invitations`,
+      body: {
+        identifier: collaborationActors.editor,
+        role: "editor",
+        clientRequestId: invitationRequestId,
+        expectedRevision: "1",
+      },
+    });
+    const preview = await signedJson({
+      actorId: collaborationActors.editor,
+      scopeId: collaborationIds.scope,
+      method: "GET",
+      path: `/api/collaboration/invitations/${collaborationIds.invitation}`,
+    });
+    expect(preview.status).toBe(200);
+    const projection = await preview.json() as { revision: string };
+    await fixture.db.updateTable("collaboration_scopes")
+      .set({ revision: Number(projection.revision) + 1, updated_at: now })
+      .where("id", "=", collaborationIds.scope)
+      .execute();
+
+    const accepted = await signedJson({
+      actorId: collaborationActors.editor,
+      scopeId: collaborationIds.scope,
+      method: "POST",
+      path: `/api/collaboration/invitations/${collaborationIds.invitation}/accept`,
+      body: { clientRequestId: acceptanceRequestId, expectedRevision: projection.revision },
+    });
+    expect(accepted.status).toBe(409);
+    expect(await accepted.json()).toEqual({ error: "Collaboration state changed", code: "conflict" });
+    await expect(fixture.db.selectFrom("collaboration_members")
+      .select("status")
+      .where("invitation_id", "=", collaborationIds.invitation)
+      .executeTakeFirstOrThrow()).resolves.toEqual({ status: "pending" });
+  });
+
+  it.each([
+    { state: "revoked" as const, expectedStatus: 409, expectedCode: "conflict" },
+    { state: "expired" as const, expectedStatus: 410, expectedCode: "expired" },
+  ])("does not accept a $state invitation", async ({ state, expectedStatus, expectedCode }) => {
+    await shareChat();
+    const invitation = await signedJson({
+      actorId: collaborationActors.owner,
+      scopeId: collaborationIds.scope,
+      method: "POST",
+      path: `/api/collaboration/scopes/${collaborationIds.scope}/invitations`,
+      body: {
+        identifier: collaborationActors.editor,
+        role: "editor",
+        clientRequestId: invitationRequestId,
+        expectedRevision: "1",
+      },
+    });
+    expect(invitation.status).toBe(201);
+    const created = await invitation.json() as { revision: string };
+    if (state === "revoked") {
+      const revoked = await signedJson({
+        actorId: collaborationActors.owner,
+        scopeId: collaborationIds.scope,
+        method: "DELETE",
+        path: `/api/collaboration/scopes/${collaborationIds.scope}/invitations/${collaborationIds.invitation}`,
+        deleteConditions: {
+          clientRequestId: request(120),
+          expectedRevision: created.revision,
+          expectedMemberRevision: "1",
+        },
+      });
+      expect(revoked.status).toBe(200);
+    } else {
+      await fixture.db.updateTable("collaboration_members")
+        .set({ expires_at: new Date(now.getTime() - 1).toISOString(), updated_at: now })
+        .where("invitation_id", "=", collaborationIds.invitation)
+        .execute();
+    }
+    const preview = await signedJson({
+      actorId: collaborationActors.editor,
+      scopeId: collaborationIds.scope,
+      method: "GET",
+      path: `/api/collaboration/invitations/${collaborationIds.invitation}`,
+    });
+    expect(preview.status).toBe(200);
+    const projection = await preview.json() as { revision: string };
+
+    const accepted = await signedJson({
+      actorId: collaborationActors.editor,
+      scopeId: collaborationIds.scope,
+      method: "POST",
+      path: `/api/collaboration/invitations/${collaborationIds.invitation}/accept`,
+      body: { clientRequestId: acceptanceRequestId, expectedRevision: projection.revision },
+    });
+    expect(accepted.status).toBe(expectedStatus);
+    expect(await accepted.json()).toEqual({ error: "Collaboration state changed", code: expectedCode });
+    await expect(fixture.db.selectFrom("collaboration_members")
+      .select("status")
+      .where("invitation_id", "=", collaborationIds.invitation)
+      .executeTakeFirstOrThrow()).resolves.toEqual({ status: state });
+  });
+
   it("supports owner invite, exact-actor acceptance, history, and attributed discussion", async () => {
     await shareChat();
     const invitation = await signedJson({
@@ -496,7 +739,7 @@ describe("collaboration gateway routes", () => {
       method: "POST",
       path: `/api/collaboration/scopes/${collaborationIds.scope}/invitations`,
       body: {
-        targetActorId: collaborationActors.editor,
+        identifier: "nimanaderi",
         role: "editor",
         clientRequestId: invitationRequestId,
         expectedRevision: "1",
@@ -508,6 +751,7 @@ describe("collaboration gateway routes", () => {
       target: { actorId: collaborationActors.editor, displayName: "Ada Editor" },
       status: "pending",
     });
+    expect(resolveInvitationIdentifier).toHaveBeenCalledWith("nimanaderi");
     const preview = await signedJson({
       actorId: collaborationActors.editor,
       scopeId: collaborationIds.scope,
@@ -515,14 +759,15 @@ describe("collaboration gateway routes", () => {
       path: `/api/collaboration/invitations/${collaborationIds.invitation}`,
     });
     expect(preview.status).toBe(200);
-    expect(await preview.json()).toMatchObject({ scopeKind: "chat", role: "editor", status: "pending" });
+    const previewProjection = await preview.json() as { revision: string };
+    expect(previewProjection).toMatchObject({ scopeKind: "chat", role: "editor", status: "pending" });
 
     const accepted = await signedJson({
       actorId: collaborationActors.editor,
       scopeId: collaborationIds.scope,
       method: "POST",
       path: `/api/collaboration/invitations/${collaborationIds.invitation}/accept`,
-      body: { clientRequestId: acceptanceRequestId, expectedRevision: "2" },
+      body: { clientRequestId: acceptanceRequestId, expectedRevision: previewProjection.revision },
     });
     expect(accepted.status).toBe(200);
     const chat = await signedJson({
@@ -562,6 +807,104 @@ describe("collaboration gateway routes", () => {
     expect(await history.json()).toMatchObject({
       messages: [{ purpose: "discussion", actor: { actorId: collaborationActors.editor } }],
     });
+  });
+
+  it("does not persist an email identifier or a digest derived from the raw invitation body", async () => {
+    await shareChat();
+    const body = {
+      identifier: "person@example.com",
+      role: "editor" as const,
+      clientRequestId: request(69),
+      expectedRevision: "1",
+    };
+    const response = await signedJson({
+      actorId: collaborationActors.owner,
+      scopeId: collaborationIds.scope,
+      method: "POST",
+      path: `/api/collaboration/scopes/${collaborationIds.scope}/invitations`,
+      body,
+    });
+    expect(response.status).toBe(201);
+
+    const operation = await fixture.db.selectFrom("collaboration_operations")
+      .select(["payload_hash", "result_ref"])
+      .where("client_request_id", "=", body.clientRequestId)
+      .executeTakeFirstOrThrow();
+    const rawBodyHash = createHash("sha256").update(JSON.stringify(body)).digest("hex");
+    expect(operation.payload_hash).not.toBe(rawBodyHash);
+    expect(JSON.stringify(operation)).not.toContain(body.identifier);
+    await expect(fixture.db.selectFrom("collaboration_members")
+      .select("actor_id")
+      .where("scope_id", "=", collaborationIds.scope)
+      .where("actor_id", "=", collaborationActors.editor)
+      .executeTakeFirst()).resolves.toEqual({ actor_id: collaborationActors.editor });
+  });
+
+  it("authorizes before lookup and creates no partial row for unavailable or self identifiers", async () => {
+    await shareChat();
+    const path = `/api/collaboration/scopes/${collaborationIds.scope}/invitations`;
+    const unauthorized = await signedJson({
+      actorId: collaborationActors.editor,
+      scopeId: collaborationIds.scope,
+      method: "POST",
+      path,
+      body: {
+        identifier: "nimanaderi",
+        role: "editor",
+        clientRequestId: request(70),
+        expectedRevision: "1",
+      },
+    });
+    expect([403, 404]).toContain(unauthorized.status);
+    expect(resolveInvitationIdentifier).not.toHaveBeenCalled();
+
+    for (const [identifier, expectedStatus] of [["missing-person", 503], ["@owner", 409]] as const) {
+      const response = await signedJson({
+        actorId: collaborationActors.owner,
+        scopeId: collaborationIds.scope,
+        method: "POST",
+        path,
+        body: {
+          identifier,
+          role: "editor",
+          clientRequestId: request(identifier === "missing-person" ? 71 : 72),
+          expectedRevision: "1",
+        },
+      });
+      expect(response.status).toBe(expectedStatus);
+    }
+    expect(await fixture.db.selectFrom("collaboration_members").select("actor_id").execute())
+      .toEqual([{ actor_id: collaborationActors.owner }]);
+  });
+
+  it("returns one generic failure for unresolved identities and rate limits enumeration", async () => {
+    await shareChat();
+    const path = `/api/collaboration/scopes/${collaborationIds.scope}/invitations`;
+    const responses: Response[] = [];
+    for (let index = 0; index < 11; index += 1) {
+      responses.push(await signedJson({
+        actorId: collaborationActors.owner,
+        scopeId: collaborationIds.scope,
+        method: "POST",
+        path,
+        body: {
+          identifier: `unknown-${index}`,
+          role: "viewer",
+          clientRequestId: request(200 + index),
+          expectedRevision: "1",
+        },
+      }));
+    }
+    expect(responses.slice(0, 10).map((response) => response.status)).toEqual(Array(10).fill(503));
+    for (const response of responses.slice(0, 10)) {
+      expect(await response.json()).toEqual({
+        error: "Invitation could not be created",
+        code: "unavailable",
+      });
+    }
+    expect(responses[10]!.status).toBe(429);
+    expect(await fixture.db.selectFrom("collaboration_members").select("actor_id").execute())
+      .toEqual([{ actor_id: collaborationActors.owner }]);
   });
 
   it("admits and lists M2 AI requests only with a signed current M2 policy", async () => {
@@ -631,7 +974,7 @@ describe("collaboration gateway routes", () => {
       method: "POST",
       path: `/api/collaboration/scopes/${collaborationIds.scope}/invitations`,
       body: {
-        targetActorId: collaborationActors.viewer,
+        identifier: "viewer",
         role: "viewer",
         clientRequestId: invitationRequestId,
         expectedRevision: "1",
@@ -829,7 +1172,7 @@ describe("collaboration gateway routes", () => {
       method: "POST",
       path: `/api/collaboration/scopes/${collaborationIds.scope}/invitations`,
       body: {
-        targetActorId: collaborationActors.editor,
+        identifier: "person@example.com",
         role: "editor",
         clientRequestId: invitationRequestId,
         expectedRevision: "1",
@@ -961,7 +1304,10 @@ describe("collaboration gateway routes", () => {
     query?: string;
     body?: unknown;
     deleteConditions?: { clientRequestId: string; expectedRevision: string; expectedMemberRevision: string };
-    m2Policy?: boolean;
+    m2Policy?: true | {
+      mode: "off" | "internal" | "enabled" | "read_only";
+      cohort: string[];
+    };
     m3Policy?: boolean;
     m4Policy?: boolean;
   }): Promise<Response> {
@@ -980,8 +1326,8 @@ describe("collaboration gateway routes", () => {
     const policy = input.m2Policy || input.m3Policy || input.m4Policy ? signer.signPolicy({
       milestone: input.m4Policy ? "m4" : input.m3Policy ? "m3" : "m2",
       revision: "1",
-      mode: "enabled",
-      cohort: [],
+      mode: typeof input.m2Policy === "object" ? input.m2Policy.mode : "enabled",
+      cohort: typeof input.m2Policy === "object" ? input.m2Policy.cohort : [],
       issuedAt: now.toISOString(),
       expiresAt: new Date(now.getTime() + 30_000).toISOString(),
     }) : undefined;

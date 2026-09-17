@@ -65,12 +65,15 @@ describe("Chat collaboration sharing", () => {
     fireEvent.click(screen.getByRole("button", { name: "Share" }));
     fireEvent.click(screen.getByRole("button", { name: "Invite collaborators" }));
     await screen.findByRole("dialog", { name: "Invite collaborators" });
-    fireEvent.change(screen.getByLabelText("Matrix user ID"), { target: { value: "user_editor" } });
+    expect(screen.getByText(/must already have a Matrix account/i)).toBeVisible();
+    const identifier = screen.getByLabelText("Email or username");
+    expect(identifier).toHaveAttribute("placeholder", "name@example.com or @username");
+    fireEvent.change(identifier, { target: { value: "@nimanaderi" } });
     fireEvent.change(screen.getByLabelText("Role"), { target: { value: "editor" } });
     fireEvent.click(screen.getByRole("button", { name: "Send invitation" }));
     await waitFor(() => expect(collaborationApi.post).toHaveBeenCalledWith(
       `/api/collaboration/scopes/${scopeId}/invitations`,
-      expect.objectContaining({ targetActorId: "user_editor", role: "editor", expectedRevision: "1" }),
+      expect.objectContaining({ identifier: "@nimanaderi", role: "editor", expectedRevision: "1" }),
     ));
     expect(screen.getByText(/Invitation sent/i)).toBeVisible();
     expect(snapshotApi.post).not.toHaveBeenCalled();
@@ -82,7 +85,7 @@ describe("Chat collaboration sharing", () => {
       id: invitationId, scopeId, owner: { actorId: "user_owner", displayName: "Nima" },
       target: { actorId: "user_editor", displayName: "Ada" }, scopeKind: "chat" as const,
       role: "editor" as const, status: "pending" as const,
-      expiresAt: "2026-09-14T12:00:00.000Z", revision: "1",
+      expiresAt: "2026-09-14T12:00:00.000Z", revision: "2",
     };
     const api = {
       baseUrl: "https://app.matrix-os.com",
@@ -107,7 +110,7 @@ describe("Chat collaboration sharing", () => {
     fireEvent.click(screen.getByRole("button", { name: "Accept invitation" }));
     await waitFor(() => expect(api.post).toHaveBeenCalledWith(
       `/api/collaboration/invitations/${invitationId}/accept`,
-      expect.objectContaining({ expectedRevision: "1" }),
+      expect.objectContaining({ expectedRevision: "2" }),
     ));
     expect(openChat).toHaveBeenCalledWith(scopeId);
   });
@@ -603,6 +606,40 @@ describe("Chat collaboration sharing", () => {
     expect(await screen.findByLabelText("Message everyone")).toBeDisabled();
     expect(screen.getByText(/Viewers can read this Chat/i)).toBeVisible();
     expect(api.post).not.toHaveBeenCalled();
+  });
+
+  it("shows scoped realtime reconnect state without taking discussion offline", async () => {
+    let connectionChange!: (state: "connected" | "reconnecting") => void;
+    const api = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async (path: string) => {
+        if (path.includes("messages")) return { messages: [] };
+        if (path.endsWith("/chat")) return {
+          id: chatId, scopeId, title: "Reconnect Chat", lifecycle: "active", revision: "1", messageCount: "0",
+        };
+        if (path.endsWith("/chat/requests")) throw new Error("SharedAiUnavailable");
+        return { id: scopeId, ownerId: "user_owner", kind: "chat", resourceId: chatId, membershipMode: "direct", lifecycle: "shared",
+          revision: "1", authEpoch: "1", authorityGeneration: "1", role: "editor",
+          capabilities: { read: true, discuss: true, manageMembers: false, requestAi: false } };
+      }),
+      post: vi.fn(), delete: vi.fn(),
+      subscribe: vi.fn((_scopeId: string, _onEvent: () => Promise<void>, _onUnavailable: () => void,
+        onConnectionChange?: (state: "connected" | "reconnecting") => void) => {
+        connectionChange = onConnectionChange!;
+        return () => undefined;
+      }),
+    };
+    render(<ChatCollaboration view={{ kind: "chat", scopeId }} api={api} actorId="user_editor" runtimeId="runtime_owner" />);
+    expect(await screen.findByRole("heading", { name: "Reconnect Chat" })).toBeVisible();
+    expect(screen.getByText("Connecting…")).toHaveAttribute("role", "status");
+
+    act(() => connectionChange("reconnecting"));
+
+    expect(screen.getByText("Reconnecting…")).toHaveAttribute("role", "status");
+    expect(screen.getByLabelText("Message everyone")).toBeEnabled();
+
+    act(() => connectionChange("connected"));
+    expect(screen.getByText("Live collaboration")).toBeVisible();
   });
 
   it("paginates canonical history instead of treating the first page as complete", async () => {

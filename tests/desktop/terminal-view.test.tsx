@@ -276,7 +276,9 @@ describe("TerminalView session switching", () => {
     expect(root.style.height).toBe("100%");
     expect(root.style.backgroundColor).toBe(colorProbe.style.backgroundColor);
     expect(viewport.style.backgroundColor).toBe(colorProbe.style.backgroundColor);
+    expect(viewport.style.overscrollBehavior).toBe("none");
     expect(scrollable.style.backgroundColor).toBe(colorProbe.style.backgroundColor);
+    expect(scrollable.style.overscrollBehavior).toBe("none");
   });
 
   it("keeps the last canonical row accessible after soft viewport resizing", async () => {
@@ -445,6 +447,21 @@ describe("TerminalView session switching", () => {
 
     act(() => events.onState("fatal"));
     expect(screen.getByRole("status").textContent).toContain("This session has ended on your computer.");
+  });
+
+  it("offers to continue locally when another device becomes the writer", () => {
+    render(<TerminalView sessionName="alpha" />);
+    const events = attachMock.mock.calls[0]?.[1] as ShellSocketEvents;
+
+    act(() => events.onOwnershipChange?.("observer"));
+
+    expect(screen.getByRole("status").textContent).toContain("Live on another device.");
+    fireEvent.click(screen.getByRole("button", { name: "Continue here" }));
+    expect(attachMock).toHaveBeenCalledTimes(2);
+
+    const resumedEvents = attachMock.mock.calls[1]?.[1] as ShellSocketEvents;
+    act(() => resumedEvents.onOwnershipChange?.("writer"));
+    expect(screen.queryByText("Live on another device.")).toBeNull();
   });
 
   it("clears xterm before rendering an authoritative replacement snapshot", () => {
