@@ -16,6 +16,21 @@ export function buildManifestKey(userId: string): string {
   return `matrixos-sync/${userId}/manifest.json`;
 }
 
+export function buildManifestGenerationKey(
+  userId: string,
+  version: number,
+  sha256: string,
+): string {
+  assertSafeUserId(userId);
+  if (!Number.isSafeInteger(version) || version <= 0) {
+    throw new Error("Invalid sync manifest version");
+  }
+  if (!/^[a-f0-9]{64}$/.test(sha256)) {
+    throw new Error("Invalid sync manifest hash");
+  }
+  return `matrixos-sync/${userId}/manifests/${version}-${sha256}.json`;
+}
+
 export function assertSafeUserId(userId: string): void {
   if (!SAFE_USER_ID.test(userId)) {
     throw new Error("Invalid sync user id");

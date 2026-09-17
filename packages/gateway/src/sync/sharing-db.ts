@@ -13,6 +13,7 @@ export interface SyncManifestsTable {
   file_count: number;
   total_size: bigint;
   etag: string | null;
+  accepted_manifest_key: string | null;
   updated_at: Date;
 }
 
@@ -55,8 +56,14 @@ export async function migrateSyncTables(db: Kysely<SyncDatabase>): Promise<void>
       file_count INTEGER NOT NULL DEFAULT 0,
       total_size BIGINT NOT NULL DEFAULT 0,
       etag TEXT,
+      accepted_manifest_key TEXT,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
+  `.execute(db);
+
+  await sql`
+    ALTER TABLE sync_manifests
+    ADD COLUMN IF NOT EXISTS accepted_manifest_key TEXT
   `.execute(db);
 
   await sql`

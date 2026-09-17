@@ -28,6 +28,7 @@ export function createManifestDb(kysely: Kysely<SyncDatabase>): ManifestDb {
         file_count: row.file_count,
         total_size: BigInt(row.total_size),
         etag: row.etag,
+        accepted_manifest_key: row.accepted_manifest_key,
         updated_at: row.updated_at,
       };
     },
@@ -60,6 +61,7 @@ export function createManifestDb(kysely: Kysely<SyncDatabase>): ManifestDb {
           file_count: meta.file_count,
           total_size: meta.total_size,
           etag: meta.etag,
+          accepted_manifest_key: meta.accepted_manifest_key ?? null,
           updated_at: sql`CURRENT_TIMESTAMP`,
         })
         .onConflict((oc) =>
@@ -69,6 +71,7 @@ export function createManifestDb(kysely: Kysely<SyncDatabase>): ManifestDb {
               file_count: meta.file_count,
               total_size: meta.total_size,
               etag: meta.etag,
+              accepted_manifest_key: meta.accepted_manifest_key ?? null,
               updated_at: sql`CURRENT_TIMESTAMP`,
             })
             // readManifest() may repair stale DB metadata without holding the

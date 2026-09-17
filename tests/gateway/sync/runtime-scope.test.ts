@@ -1,5 +1,39 @@
 import { describe, expect, it } from "vitest";
-import { deriveHomeMirrorSyncIdentity } from "../../../packages/gateway/src/sync/runtime-scope.js";
+import {
+  buildSyncScopePrefix,
+  deriveHomeMirrorSyncIdentity,
+  resolveSyncScope,
+} from "../../../packages/gateway/src/sync/runtime-scope.js";
+
+describe("resolveSyncScope", () => {
+  it("keeps the primary runtime on the compatible owner prefix", () => {
+    const scope = resolveSyncScope({ ownerId: "user_123", runtimeSlot: "primary" });
+
+    expect(scope).toEqual({ ownerId: "user_123", runtimeSlot: "primary" });
+    expect(buildSyncScopePrefix(scope)).toBe("matrixos-sync/user_123");
+  });
+
+  it("uses a versioned namespace for a non-primary runtime", () => {
+    const scope = resolveSyncScope({ ownerId: "user_123", runtimeSlot: "staging" });
+
+    expect(buildSyncScopePrefix(scope)).toBe(
+      "matrixos-sync/v2/owners/user_123/runtimes/staging",
+    );
+  });
+
+  it("does not merge two slots owned by the same account", () => {
+    const primary = buildSyncScopePrefix(resolveSyncScope({
+      ownerId: "user_123",
+      runtimeSlot: "primary",
+    }));
+    const secondary = buildSyncScopePrefix(resolveSyncScope({
+      ownerId: "user_123",
+      runtimeSlot: "studio",
+    }));
+
+    expect(primary).not.toBe(secondary);
+  });
+});
 
 describe("deriveHomeMirrorSyncIdentity", () => {
   it("keeps primary home mirror state on the existing owner key", () => {

@@ -101,6 +101,7 @@ vi.mock("@aws-sdk/s3-request-presigner", () => {
 import {
   createR2Client,
   buildFileKey,
+  buildManifestGenerationKey,
   buildManifestKey,
   type R2Client,
 } from "../../../packages/gateway/src/sync/r2-client.js";
@@ -311,6 +312,12 @@ describe("key builders", () => {
 
   it("buildManifestKey constructs correct manifest key", () => {
     expect(buildManifestKey("hamed")).toBe("matrixos-sync/hamed/manifest.json");
+  });
+
+  it("builds content-addressed immutable manifest generation keys", () => {
+    expect(buildManifestGenerationKey("hamed", 7, "a".repeat(64))).toBe(
+      `matrixos-sync/hamed/manifests/7-${"a".repeat(64)}.json`,
+    );
   });
 
   it("rejects unsafe user ids", () => {

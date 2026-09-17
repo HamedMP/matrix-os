@@ -1,6 +1,7 @@
 import type { Kysely, Transaction } from "kysely";
+import { createHash } from "node:crypto";
 import { ManifestSchema, type Manifest, type CommitFile } from "./types.js";
-import { buildManifestKey } from "./r2-client.js";
+import { buildManifestGenerationKey, buildManifestKey } from "./r2-client.js";
 import type { R2Client } from "./r2-client.js";
 import type { SyncDatabase } from "./sharing-db.js";
 
@@ -31,11 +32,29 @@ export class ManifestTooLargeError extends Error {
   }
 }
 
+export class AcceptedManifestMissingError extends Error {
+  constructor(readonly acceptedVersion: number) {
+    super("Accepted sync manifest is unavailable");
+    this.name = "AcceptedManifestMissingError";
+  }
+}
+
+export class ManifestVersionMismatchError extends Error {
+  constructor(
+    readonly acceptedVersion: number,
+    readonly storedVersion: number,
+  ) {
+    super("Stored sync manifest does not match the accepted revision");
+    this.name = "ManifestVersionMismatchError";
+  }
+}
+
 export interface ManifestMeta {
   version: number;
   file_count: number;
   total_size: bigint;
   etag: string | null;
+  accepted_manifest_key?: string | null;
   updated_at: Date;
 }
 
@@ -118,15 +137,18 @@ export async function readManifest(
   userId: string,
 ): Promise<ReadManifestResult> {
   const meta = await store.db.getManifestMeta(userId, store.dbExecutor);
-  const key = buildManifestKey(userId);
+  const key = meta?.accepted_manifest_key ?? buildManifestKey(userId);
+  const hasAcceptedPointer = Boolean(meta?.accepted_manifest_key);
 
   let manifest: Manifest;
   let etag = "";
   let storedManifestVersion = 0;
+  let objectFound = false;
 
   try {
     const result = await store.r2.getObject(key);
     if (result.body) {
+      objectFound = true;
       if (typeof result.contentLength === "number") {
         ensureManifestSize(result.contentLength);
       }
@@ -152,20 +174,30 @@ export async function readManifest(
     }
   }
 
-  const manifestVersion = Math.max(meta?.version ?? 0, storedManifestVersion);
-  if (manifestVersion > (meta?.version ?? 0)) {
+  const acceptedVersion = meta?.version ?? 0;
+  if (hasAcceptedPointer && !objectFound) {
+    throw new AcceptedManifestMissingError(acceptedVersion);
+  }
+  if (hasAcceptedPointer && objectFound && storedManifestVersion !== acceptedVersion) {
+    throw new ManifestVersionMismatchError(acceptedVersion, storedManifestVersion);
+  }
+
+  if (!hasAcceptedPointer && storedManifestVersion > acceptedVersion) {
     const stats = liveManifestStats(manifest);
     await store.db.upsertManifestMeta(userId, {
-      version: manifestVersion,
+      version: storedManifestVersion,
       file_count: stats.fileCount,
       total_size: stats.totalSize,
       etag: etag || null,
+      accepted_manifest_key: null,
     }, store.dbExecutor);
   }
 
   return {
     manifest,
-    manifestVersion,
+    manifestVersion: hasAcceptedPointer
+      ? acceptedVersion
+      : Math.max(acceptedVersion, storedManifestVersion),
     etag,
   };
 }
@@ -176,14 +208,19 @@ export async function writeManifest(
   manifest: Manifest,
   newVersion: number,
 ): Promise<void> {
-  const key = buildManifestKey(userId);
+  const legacyKey = buildManifestKey(userId);
   const { fileCount, totalSize } = liveManifestStats(manifest);
   const body = JSON.stringify({
     ...manifest,
     manifestVersion: newVersion,
   });
+  const bodyHash = createHash("sha256").update(body).digest("hex");
+  const generationKey = buildManifestGenerationKey(userId, newVersion, bodyHash);
 
-  const { etag } = await store.r2.putObject(key, body);
+  // The generation key is content-addressed, so retries can only replace it
+  // with identical bytes. A failed metadata transaction leaves a reclaimable
+  // orphan and cannot change the previously accepted generation.
+  const { etag } = await store.r2.putObject(generationKey, body);
 
   // Write R2 first, then advance the DB metadata. If the later DB write or
   // transaction commit fails, readManifest() self-heals by taking
@@ -194,7 +231,13 @@ export async function writeManifest(
     file_count: fileCount,
     total_size: totalSize,
     etag: etag ?? null,
+    accepted_manifest_key: generationKey,
   }, store.dbExecutor);
+
+  // Compatibility export for clients that have not negotiated immutable
+  // generations yet. It is never consulted once the DB accepted pointer is
+  // present, so it cannot become an authority after a rollback.
+  await store.r2.putObject(legacyKey, body);
 }
 
 export function applyCommitToManifest(

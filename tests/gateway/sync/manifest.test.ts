@@ -41,6 +41,8 @@ import {
   writeManifest,
   applyCommitToManifest,
   garbageCollectTombstones,
+  AcceptedManifestMissingError,
+  ManifestVersionMismatchError,
   ManifestTooLargeError,
   MANIFEST_JSON_MAX_BYTES,
   type ManifestStore,
@@ -63,6 +65,19 @@ describe("readManifest", () => {
     expect(result.manifest.version).toBe(2);
     expect(Object.keys(result.manifest.files)).toHaveLength(0);
     expect(result.manifestVersion).toBe(0);
+  });
+
+  it("does not synthesize an empty home when accepted metadata has a revision", async () => {
+    mockR2.getObject.mockRejectedValue(Object.assign(new Error("NoSuchKey"), { name: "NoSuchKey" }));
+    mockDb.getManifestMeta.mockResolvedValue({
+      version: 3,
+      etag: '"etag3"',
+      accepted_manifest_key: "matrixos-sync/user1/manifests/v3.json",
+    });
+
+    await expect(readManifest(store, "user1")).rejects.toThrow(
+      AcceptedManifestMissingError,
+    );
   });
 
   it("reads and parses manifest from R2", async () => {
@@ -91,26 +106,21 @@ describe("readManifest", () => {
     expect(result.etag).toBe('"etag2"');
   });
 
-  it("reconciles to the embedded manifestVersion when R2 is ahead of DB metadata", async () => {
+  it("does not promote an unaccepted manifest generation when R2 is ahead", async () => {
     const manifest = makeManifest({ "ahead.txt": { hash: HASH_A, size: 100 } });
     const body = { text: () => Promise.resolve(JSON.stringify({ ...manifest, manifestVersion: 7 })) };
     mockR2.getObject.mockResolvedValue({ body, etag: '"etag7"' });
-    mockDb.getManifestMeta.mockResolvedValue({ version: 5, etag: '"etag5"' });
+    mockDb.getManifestMeta.mockResolvedValue({
+      version: 5,
+      etag: '"etag5"',
+      accepted_manifest_key: "matrixos-sync/user1/manifests/v5.json",
+    });
     mockDb.upsertManifestMeta.mockResolvedValue(undefined);
 
-    const result = await readManifest(store, "user1");
-
-    expect(result.manifestVersion).toBe(7);
-    expect(mockDb.upsertManifestMeta).toHaveBeenCalledWith(
-      "user1",
-      expect.objectContaining({
-        version: 7,
-        file_count: 1,
-        total_size: 100n,
-        etag: '"etag7"',
-      }),
-      undefined,
+    await expect(readManifest(store, "user1")).rejects.toThrow(
+      ManifestVersionMismatchError,
     );
+    expect(mockDb.upsertManifestMeta).not.toHaveBeenCalled();
   });
 
   it("rejects oversized manifest JSON before buffering the body", async () => {
@@ -142,9 +152,15 @@ describe("writeManifest", () => {
 
     await writeManifest(store, "user1", manifest, 5);
 
-    expect(mockR2.putObject).toHaveBeenCalledOnce();
-    const [, manifestBody] = mockR2.putObject.mock.calls[0]!;
+    expect(mockR2.putObject).toHaveBeenCalledTimes(2);
+    const [generationKey, manifestBody] = mockR2.putObject.mock.calls[0]!;
+    expect(generationKey).toMatch(
+      /^matrixos-sync\/user1\/manifests\/5-[a-f0-9]{64}\.json$/,
+    );
     expect(JSON.parse(String(manifestBody))).toMatchObject({ manifestVersion: 5 });
+    expect(mockR2.putObject.mock.calls[1]?.[0]).toBe(
+      "matrixos-sync/user1/manifest.json",
+    );
     expect(mockDb.upsertManifestMeta).toHaveBeenCalledWith(
       "user1",
       expect.objectContaining({
@@ -152,6 +168,7 @@ describe("writeManifest", () => {
         file_count: 1,
         total_size: 200n,
         etag: '"new-etag"',
+        accepted_manifest_key: generationKey,
       }),
       undefined,
     );

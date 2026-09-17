@@ -55,6 +55,19 @@ describe("generatePresignedUrls", () => {
     );
   });
 
+  it("generates PUT presigned URLs for zero-byte files", async () => {
+    const result = await generatePresignedUrls(deps, "user1", [
+      { path: "empty.txt", action: "put" as const, hash: HASH_A, size: 0 },
+    ]);
+
+    expect(result).toHaveLength(1);
+    expect(mockR2.getPresignedPutUrl).toHaveBeenCalledWith(
+      "matrixos-sync/user1/files/empty.txt",
+      0,
+      900,
+    );
+  });
+
   it("validates all paths and rejects traversal attempts", async () => {
     await expect(
       generatePresignedUrls(deps, "user1", [

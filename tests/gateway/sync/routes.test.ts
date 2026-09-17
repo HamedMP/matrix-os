@@ -192,16 +192,18 @@ describe("POST /api/sync/presign", () => {
     expect(json.urls).toHaveLength(2);
   });
 
-  it("returns 400 for PUT files with zero size", async () => {
+  it("accepts PUT files with zero size", async () => {
     const app = createTestApp();
     const res = await app.request(jsonRequest("/api/sync/presign", {
       files: [{ path: "upload.txt", action: "put", hash: HASH_A, size: 0 }],
     }));
 
-    expect(res.status).toBe(400);
-    await expect(res.json()).resolves.toMatchObject({
-      error: "Validation error",
-    });
+    expect(res.status).toBe(200);
+    expect(mockR2.getPresignedPutUrl).toHaveBeenCalledWith(
+      "matrixos-sync/test-user/files/upload.txt",
+      0,
+      900,
+    );
   });
 
   it("returns 429 when rate limit exceeded", async () => {
@@ -644,7 +646,7 @@ describe("POST /api/sync/resolve-conflict", () => {
     }));
 
     expect(res.status).toBe(200);
-    expect(mockR2.putObject).toHaveBeenCalledOnce();
+    expect(mockR2.putObject).toHaveBeenCalledTimes(2);
     expect(mockR2.deleteObject).toHaveBeenCalledWith(
       "matrixos-sync/test-user/files/readme (conflict - peer1 - 2026-04-14).md",
     );

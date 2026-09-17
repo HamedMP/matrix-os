@@ -228,4 +228,8 @@ export async function createR2Client(config: R2ClientConfig): Promise<R2Client> 
   };
 }
 
-export { buildFileKey, buildManifestKey } from "./r2-keys.js";
+export {
+  buildFileKey,
+  buildManifestGenerationKey,
+  buildManifestKey,
+} from "./r2-keys.js";

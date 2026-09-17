@@ -26,6 +26,7 @@ describe("createManifestDb", () => {
         file_count INTEGER NOT NULL,
         total_size INTEGER NOT NULL,
         etag TEXT,
+        accepted_manifest_key TEXT,
         updated_at TEXT NOT NULL
       );
       CREATE TABLE sync_shares (
@@ -111,6 +112,24 @@ describe("createManifestDb", () => {
       file_count: 1,
       total_size: 42,
       etag: '"etag-1"',
+    });
+  });
+
+  it("persists the accepted immutable manifest generation pointer", async () => {
+    const manifestDb = createManifestDb(db);
+    await ensureSyncUser(db, { id: "user1", handle: "alice" });
+
+    await manifestDb.upsertManifestMeta("user1", {
+      version: 4,
+      file_count: 1,
+      total_size: 42n,
+      etag: '"etag-4"',
+      accepted_manifest_key: "matrixos-sync/user1/manifests/4-" + "a".repeat(64) + ".json",
+    });
+
+    await expect(manifestDb.getManifestMeta("user1")).resolves.toMatchObject({
+      version: 4,
+      accepted_manifest_key: "matrixos-sync/user1/manifests/4-" + "a".repeat(64) + ".json",
     });
   });
 
