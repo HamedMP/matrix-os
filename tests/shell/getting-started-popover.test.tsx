@@ -93,6 +93,7 @@ describe("web getting started status", () => {
     expect(resolveDesktopDownloadSuggestion({ platform: "Win32", userAgent: "Windows NT 10.0" })).toEqual({
       href: "https://matrix-os.com/api/desktop-release?platform=windowsX64",
       label: "Download for Windows",
+      guidance: "SmartScreen: select More info, verify Finna Labs Inc., then select Run anyway. Run as administrator does not bypass it.",
     });
     expect(resolveDesktopDownloadSuggestion({ platform: "Linux x86_64", userAgent: "X11; Linux x86_64" })).toEqual({
       href: "https://matrix-os.com/api/desktop-release?platform=linuxX64",
@@ -152,6 +153,7 @@ describe("web getting started status", () => {
     expect(download.getAttribute("href")).toBe("https://matrix-os.com/api/desktop-release?platform=windowsX64");
     expect(download.getAttribute("target")).toBe("_blank");
     expect(download.getAttribute("rel")).toBe("noopener noreferrer");
+    expect(screen.getByText("SmartScreen: select More info, verify Finna Labs Inc., then select Run anyway. Run as administrator does not bypass it.")).toBeTruthy();
     const dialogActions = screen
       .getByRole("dialog", { name: "Getting started" })
       .querySelectorAll("a, button");

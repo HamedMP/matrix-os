@@ -32,6 +32,7 @@ type DesktopNavigatorIdentity = {
 type DesktopDownloadSuggestion = {
   href: string;
   label: string;
+  guidance?: string;
 };
 
 function directDesktopDownload(platform: "macArm64" | "macX64" | "windowsX64" | "linuxX64"): string {
@@ -53,7 +54,11 @@ export function resolveDesktopDownloadSuggestion(
 
   if (platform.includes("win")) {
     if (isArm) return fallback;
-    return { href: directDesktopDownload("windowsX64"), label: "Download for Windows" };
+    return {
+      href: directDesktopDownload("windowsX64"),
+      label: "Download for Windows",
+      guidance: "SmartScreen: select More info, verify Finna Labs Inc., then select Run anyway. Run as administrator does not bypass it.",
+    };
   }
 
   if (platform.includes("mac")) {
@@ -359,7 +364,17 @@ function GettingStartedPopoverContent({
               style={{ color: BRAND_COLORS.text, fontSize: 11 }}
             >
               <DownloadIcon className="size-4 shrink-0" aria-hidden="true" />
-              <span className="min-w-0 flex-1">{downloadSuggestion.label}</span>
+              <span className="min-w-0 flex-1">
+                <span className="block">{downloadSuggestion.label}</span>
+                {downloadSuggestion.guidance ? (
+                  <span
+                    className="mt-1 block leading-snug"
+                    style={{ color: BRAND_COLORS.subtleText, fontSize: 10 }}
+                  >
+                    {downloadSuggestion.guidance}
+                  </span>
+                ) : null}
+              </span>
             </a>
             {snapshot.steps.map((step) => {
               const complete = step.status === "complete";
