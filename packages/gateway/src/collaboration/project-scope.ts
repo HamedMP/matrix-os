@@ -338,6 +338,8 @@ function scopeRecord(row: Awaited<ReturnType<typeof findProjectScope>> & {}): Co
     authEpoch: Number(row.auth_epoch),
     authorityRuntimeId: row.authority_runtime_id,
     authorityGeneration: Number(row.authority_generation),
+    executionGeneration: row.execution_generation === null ? null : Number(row.execution_generation),
+    executionEligibility: row.execution_eligibility,
   };
 }
 
