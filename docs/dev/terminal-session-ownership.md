@@ -46,6 +46,40 @@ renderer takes over while mobile is visible, mobile keeps the displaced socket
 as a read-only output observer and requires an explicit **Continue here**
 action before it requests a new exclusive lease.
 
+## Startup input bursts and admission
+
+Terminal startup can produce hundreds of legitimate xterm protocol replies,
+including the 256 indexed-color replies. These travel through the same input
+path as typing. Closing a connection merely because 33 replies arrive before
+asynchronous admission finishes creates a reconnect/redraw loop.
+
+Gateway and runtime socket admission use a shared bounded FIFO. Adjacent text
+or binary input for the same terminal reference may coalesce into batches of
+at most 64 KiB of input bytes. Batches never cross input encoding, terminal
+reference, resize, ping, or detach boundaries. The queue retains at most 32
+batches (including the in-flight batch) and 1 MiB of serialized frames. Overflow
+still closes the connection; gateway telemetry records `input-overflow` without
+input content, and the WebSocket closes with status 1013.
+
+Coalescing is not an authorization shortcut. Every gateway batch passes the
+existing project admission and current live-ownership checks immediately before
+forwarding. Disconnect, overflow, or admission failure clears pending work;
+queued input cannot migrate to a replacement connection. The runtime also
+buffers startup replies until native attachment is ready, then processes frames
+in order. A client disconnect during attachment must release the late viewer.
+
+Regression checks:
+
+```bash
+TMPDIR=/tmp pnpm exec vitest run tests/terminal-runtime/input-frame-queue.test.ts tests/terminal-runtime/startup-input-burst.test.ts tests/terminal-runtime/socket-api.test.ts
+```
+
+For live verification, repeatedly create a Terminal, type immediately after the
+prompt appears, paste text, switch tabs, and transfer ownership between clients.
+Capture startup reply frames without terminal contents; 33 and 259 legitimate
+small replies must preserve attachment and subsequent keyboard input. Verify
+that an observer still cannot type and control-frame/byte floods remain bounded.
+
 ## Compatibility with tabs created before an update
 
 The terminal runtime's Zellij adapter attaches with `options --default-mode normal`.
