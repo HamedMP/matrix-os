@@ -4,7 +4,7 @@
 
 ## Summary
 
-Audit Terminal against a single behavior contract, reproduce each failure at its actual boundary, and land narrow repairs with independent evidence. Preserve workspace/tab identity and current authorization. PR #1736 is the first bounded repair, for legitimate startup replies exceeding raw pending-frame limits. It does not establish completion of the broader audit.
+Audit Terminal against a single behavior contract, reproduce each failure at its actual boundary, and land narrow repairs with independent evidence. Preserve workspace/tab identity and current authorization. PR #1736 is the first bounded repair, covering legitimate startup replies exceeding raw pending-frame limits and startup snapshot row alignment. It does not establish completion of the broader audit.
 
 ## Technical Context
 
@@ -25,7 +25,7 @@ Audit Terminal against a single behavior contract, reproduce each failure at its
 - Resource limits: retain bounded queues, output history, subscriber lifecycle and shutdown cleanup. Measure overload independently from legitimate bursts.
 - TDD: each defect requires a failing reproduction before a narrow repair. Existing passing tests do not substitute for the incident reproduction.
 - Worktree/PR: isolated worktrees and draft PRs; exact-head review and Human Review before landing. No merge or fleet deployment is implied.
-- Documentation: update relevant public-safe developer contracts. Any user-visible behavior change needs a companion documentation PR in the private website repository; no website content change is needed merely to repair existing promised behavior.
+- Documentation: update relevant public-safe developer contracts. Deliver a separate documentation PR in `FinnaAI/matrix-os-site` under `content/docs/` for verified Terminal connection, ownership, and recovery behavior. Keep unverified audit expectations out of user-facing guarantees.
 
 Post-design check: no new owner, storage, protocol endpoint, or unbounded resource is introduced by the first repair. Broader stages are diagnostic until a separate failing reproduction identifies a change.
 
@@ -67,3 +67,5 @@ Produce a separate narrow PR when a new cause requires independent changes. Do n
 ## Verification and delivery
 
 Use quickstart.md and the surface matrix. For each requirement record automated evidence, real runtime evidence, and Human Review separately. Capture content-free event counts and app-only screenshots. Check exact SHA and installed/running version after deployment. Preserve the Preview and matching Electron for user testing. Record all failed baseline tests rather than declaring a green suite. Land only after authorized Human Review and repository review gates; production promotion requires separate explicit authorization.
+
+Planned documentation deliverable: a separate `FinnaAI/matrix-os-site` PR updating the canonical Terminal guide with verified connection/recovery behavior and actionable user steps, reviewed alongside the corresponding implementation slices.
