@@ -12,7 +12,6 @@ import {
   CollaborationActorIdSchema,
   CollaborationCreateAiRequestSchema,
   CollaborationCreateDiscussionRequestSchema,
-  CollaborationCreateInvitationRequestSchema,
   CollaborationCreateScopeRequestSchema,
   CollaborationIdSchema,
   CollaborationInvitationSchema,
@@ -42,7 +41,7 @@ import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
 import { CollaborationChatCommandError } from "../chat/collaboration-commands.js";
 import { SharedChatQueueError } from "../chat/repository.js";
-import { createRateLimiter, type RateLimiter } from "../security/rate-limiter.js";
+import type { RateLimiter } from "../security/rate-limiter.js";
 import { CollaborationActorProofError, type CollaborationActorProofVerifier } from "./actor-proof.js";
 import {
   CollaborationAuthorizationError,
@@ -61,6 +60,7 @@ import {
 import { ProjectSharingError, type ProjectSharingService } from "./project-sharing.js";
 import { ProjectInventoryError } from "./project-inventory.js";
 import { ProjectTransitionError } from "./project-transition.js";
+import { createInvitationCreationHandler } from "./invitation-creation-route.js";
 import {
   CollaborationTerminalAdapterError,
   type CollaborationTerminalAdapter,
@@ -75,16 +75,8 @@ import {
   type CollaborationRepository,
   type CollaborationScopeRecord,
 } from "./repository.js";
-import { CollaborationParticipantResolverError } from "./participant-resolver.js";
 
 const PROOF_HEADER = "x-matrix-collaboration-proof";
-const INVITATION_LIFETIME_MS = 7 * 24 * 60 * 60 * 1_000;
-const INVITATION_RESOLUTION_RATE_LIMIT = {
-  maxAttempts: 10,
-  windowMs: 60_000,
-  lockoutMs: 60_000,
-  maxKeys: 10_000,
-};
 const MessageQuerySchema = z.object({
   after: CollaborationRevisionSchema.default("0"),
   limit: z.coerce.number().int().min(1).max(100).default(50),
@@ -118,8 +110,6 @@ export function createCollaborationRoutes(options: {
 }): Hono {
   const routes = new Hono();
   const now = options.now ?? (() => new Date());
-  const invitationResolutionRateLimiter = options.invitationResolutionRateLimiter
-    ?? createRateLimiter(INVITATION_RESOLUTION_RATE_LIMIT);
   const mutationLimit = bodyLimit({
     maxSize: COLLABORATION_HTTP_BODY_LIMIT,
     onError: (c) => c.json({ error: "Collaboration request too large", code: "invalid_request" }, 413),
@@ -233,32 +223,15 @@ export function createCollaborationRoutes(options: {
     return c.json({ members: await Promise.all(members.map((member) => memberProjection(options, member))) });
   }));
 
-  routes.post("/api/collaboration/scopes/:scopeId/invitations", async (c) => handle(c, async () => {
-    const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
-    const { value, bytes } = await readJson(c);
-    const context = await authorize(options, c, bytes, "manage_members", scopeId);
-    const input = CollaborationCreateInvitationRequestSchema.parse(value);
-    if (!invitationResolutionRateLimiter.check(context.actorId)) {
-      return c.json({ error: "Try again later", code: "rate_limited" }, 429);
-    }
-    const target = await options.resolveInvitationIdentifier(input.identifier);
-    const result = await options.repository.createInvitation({
-      scopeId,
-      actorId: context.actorId,
-      targetActorId: target.actorId,
-      role: input.role,
-      clientRequestId: input.clientRequestId,
-      expectedRevision: Number(input.expectedRevision),
-      payloadHash: digest(new TextEncoder().encode(JSON.stringify({
-        targetActorId: target.actorId,
-        role: input.role,
-        expectedRevision: input.expectedRevision,
-      }))),
-      expiresAt: new Date(now().getTime() + INVITATION_LIFETIME_MS).toISOString(),
-    });
-    const member = await requireInvitation(options.repository, result.invitationId);
-    await notifyScope(options, scopeId);
-    return c.json(await invitationProjection(options, member), 201);
+  routes.post("/api/collaboration/scopes/:scopeId/invitations", createInvitationCreationHandler({
+    repository: options.repository,
+    resolveInvitationIdentifier: options.resolveInvitationIdentifier,
+    invitationResolutionRateLimiter: options.invitationResolutionRateLimiter,
+    authorize: (c, bytes, scopeId) => authorize(options, c, bytes, "manage_members", scopeId),
+    projectInvitation: (member) => invitationProjection(options, member),
+    notifyScope: (scopeId) => notifyScope(options, scopeId),
+    handle,
+    now,
   }));
 
   routes.get("/api/collaboration/invitations/:invitationId", async (c) => handle(c, async () => {
@@ -995,9 +968,6 @@ async function handle(c: Context, operation: () => Promise<Response>): Promise<R
           : error.code === "capacity" ? 429
             : error.code === "expired" ? 410 : 409;
       return c.json({ error: "Collaboration state changed", code: error.code }, status);
-    }
-    if (error instanceof CollaborationParticipantResolverError) {
-      return c.json({ error: "Invitation could not be created", code: "unavailable" }, 503);
     }
     if (error instanceof SharedChatQueueError || error instanceof CollaborationChatCommandError) {
       const status = error.code === "not_found" ? 404
