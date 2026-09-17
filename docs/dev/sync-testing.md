@@ -14,6 +14,9 @@ local fixtures only.
   manifest generation, and advances the accepted pointer with optimistic
   concurrency. A failed pointer CAS may leave a reclaimable orphan but may not
   change accepted bytes.
+- A six-hourly bounded collector deletes staging objects, interrupted staging
+  multipart uploads, and unaccepted manifest generations only after a seven-day
+  grace period. It never scans or deletes immutable blobs.
 - Local mapping configuration is versioned and owner/runtime-scoped. A full
   Matrix Home mapping can coexist with child mappings only when the parent's
   exclusions transfer those subtrees explicitly.

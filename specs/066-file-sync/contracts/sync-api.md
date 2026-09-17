@@ -16,6 +16,12 @@ receive HTTP 426 with the required version. External storage calls are bounded.
 Client errors are generic; provider names, keys, bucket details, and raw
 failures stay server-side.
 
+The platform-internal storage broker additionally exposes authenticated,
+owner/runtime-derived maintenance listings for the exact `staging/` and
+`manifests/` prefixes. Each response is capped at 1,000 entries and every
+provider call has a ten-second timeout. Arbitrary prefixes and immutable blob
+listing are forbidden.
+
 Base path: `/api/sync`
 
 ---

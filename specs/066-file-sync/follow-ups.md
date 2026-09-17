@@ -13,13 +13,14 @@ packaged Electron helper lifecycle, and cross-surface Settings.
 Still gated or intentionally deferred:
 
 - real-R2 interrupted multipart, missing-blob, storage-fingerprint, and
-  grace-period orphan-collection evidence in a dedicated synthetic prefix;
-- isolated PostgreSQL restore evidence and reviewed `restoreVerifiedAt` update;
+  grace-period collector evidence in a dedicated synthetic prefix;
+- exact release-backup restore evidence and reviewed `restoreVerifiedAt` update;
 - signed/notarized macOS packaged-install, reboot, crash, and upgrade evidence;
 - exact platform, gateway, CLI, Electron, and VPS-bundle rollout compatibility;
 - arbitrary mobile folder watchers, remote control of another device's local
   mappings, Finder on-demand placeholders, history/versioned file backup,
-  cross-owner sharing data plane, and automatic retention pruning.
+  cross-owner sharing data plane, immutable-blob collection after an in-flight
+  publication lease exists, and automatic retention pruning.
 
 Production mirror activation, release publication, deployment, backup-job
 changes, and customer-data operations require separate authorization. See

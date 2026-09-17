@@ -12,8 +12,11 @@ or incident commands.
 - Lock/concurrency scope: mapping file exclusive lock plus expected revision;
   owner/runtime Postgres advisory transaction plus accepted-pointer CAS.
 - Acceptable orphans: unique staging objects and immutable blob/manifest
-  generations may survive a failed publication. They are never accepted state
-  and require a grace-period collector before production activation.
+  generations may survive a failed publication and are never accepted state.
+  The bounded collector removes old staging objects, interrupted staging
+  multipart uploads, and unaccepted manifest generations after a seven-day
+  grace period. Immutable blobs remain retained until an in-flight publication
+  lease can prove deletion cannot race a paused commit.
 - Auth source: verified interactive bearer for Settings; renewable,
   capability-restricted sync-device grant for the helper. Browser WebSocket
   query-token registration remains explicit.
@@ -58,6 +61,13 @@ Mobile.
 | Packaged helper | `2232e507b` | deterministic manifest/digest, installer rollback, IPC and release-workflow tests |
 | Settings parity | `a219c41f1` | 478 sync-client, 133 shared/Desktop/web, and 12 native-mobile focused tests; strict package types |
 
+At `2026-09-17T07:32:06Z`, a custom-format dump containing an isolated schema
+and two fixture rows was hashed, restored into a separately named disposable
+PostgreSQL 16 database, and queried successfully (`2|alpha, beta`). The source
+database, restore database, dump, and checksum file were then verified absent.
+This records the synthetic restore-test time only; it does not mutate a live
+backup receipt or claim a customer restore.
+
 ## Artifact gates
 
 - Standalone CLI: build binaries; run package-runner validation and the exact
@@ -82,8 +92,9 @@ Mobile.
 3. Run dedicated real-R2 primitive tests in a synthetic prefix, including
    interrupted multipart, missing accepted blob, orphan grace, and storage
    fingerprint checks.
-4. Restore a synthetic fixture into disposable PostgreSQL and record schema/row
-   evidence. Do not download or restore a production database.
+4. Repeat the isolated restore against the exact release backup format and
+   record the reviewed receipt's `restoreVerifiedAt`. Do not download or restore
+   a production database without separate authorization.
 5. Produce and test exact CLI, Electron, platform, gateway, and host-bundle
    versions. Publish/deploy only after separate authorization.
 6. Enable mirroring only on a reviewed disposable runtime, observe bounded
@@ -91,6 +102,6 @@ Mobile.
 
 Current blockers: GitHub credentials are not authenticated in this environment;
 Swift/signing tools are unavailable on this Linux host; external storage and a
-disposable restore target are not currently authorized/available. No release,
+reviewed release backup receipt are not currently available. No release,
 deployment, production mirroring, backup-job change, or customer-data operation
-is evidence-backed by local source tests alone.
+is evidence-backed by local source and synthetic tests alone.

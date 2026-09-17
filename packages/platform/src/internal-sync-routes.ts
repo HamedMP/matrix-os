@@ -49,6 +49,20 @@ interface R2Client {
     key: string,
     body: string | Uint8Array | ReadableStream<Uint8Array>,
   ): Promise<{ etag?: string }>;
+  listObjects(
+    prefix: string,
+    options: { maxKeys: number; signal?: AbortSignal },
+  ): Promise<{
+    objects: Array<{ key: string; lastModified?: Date; size?: number }>;
+    isTruncated?: boolean;
+  }>;
+  listMultipartUploads(
+    prefix: string,
+    options: { maxUploads: number; signal?: AbortSignal },
+  ): Promise<{
+    uploads: Array<{ key: string; uploadId: string; initiated?: Date }>;
+    isTruncated?: boolean;
+  }>;
   deleteObject(key: string): Promise<void>;
 }
 
@@ -115,6 +129,26 @@ const SystemStorageKeyInputSchema = z.object({
 const SystemStoragePutInputSchema = SystemStorageKeyInputSchema.extend({
   size: z.number().int().nonnegative().max(SYSTEM_STORAGE_SINGLE_PUT_LIMIT),
 }).strict();
+
+const MaintenanceObjectsInputSchema = z.object({
+  prefix: z.string().min(1).max(512),
+  maxKeys: z.number().int().positive().max(1_000),
+}).strict();
+
+const MaintenanceMultipartInputSchema = z.object({
+  prefix: z.string().min(1).max(512),
+  maxUploads: z.number().int().positive().max(1_000),
+}).strict();
+
+function maintenancePrefixAllowed(
+  prefix: string,
+  scope: SyncScope,
+  kind: "objects" | "multipart",
+): boolean {
+  const scopePrefix = buildSyncStoragePrefix(scope);
+  return prefix === `${scopePrefix}/staging/`
+    || (kind === "objects" && prefix === `${scopePrefix}/manifests/`);
+}
 
 function isValidRuntimeSlot(value: string): boolean {
   return RuntimeSlotSchema.safeParse(value).success;
@@ -391,6 +425,60 @@ export function createInternalSyncRoutes(opts: {
       parsed.expiresIn,
     );
     return c.json({ url });
+  });
+
+  app.post("/maintenance/objects", bodyLimit({ maxSize: INTERNAL_SYNC_BODY_LIMIT }), async (c) => {
+    const parsed = MaintenanceObjectsInputSchema.safeParse(await parseJsonBody(c));
+    if (!parsed.success) {
+      return c.json({ error: "Validation error" }, 400);
+    }
+    if (!maintenancePrefixAllowed(parsed.data.prefix, c.get("internalSyncScope"), "objects")) {
+      return c.json({ error: "Forbidden prefix" }, 403);
+    }
+    try {
+      const result = await opts.r2.listObjects(parsed.data.prefix, {
+        maxKeys: parsed.data.maxKeys,
+        signal: AbortSignal.timeout(10_000),
+      });
+      return c.json({
+        objects: result.objects.map((object) => ({
+          key: object.key,
+          ...(object.lastModified ? { lastModified: object.lastModified.toISOString() } : {}),
+          ...(typeof object.size === "number" ? { size: object.size } : {}),
+        })),
+        isTruncated: result.isTruncated ?? false,
+      });
+    } catch (err: unknown) {
+      console.error("[internal-sync] Maintenance object listing failed:", err instanceof Error ? err.message : String(err));
+      return c.json({ error: "Storage listing failed" }, 502);
+    }
+  });
+
+  app.post("/maintenance/multipart", bodyLimit({ maxSize: INTERNAL_SYNC_BODY_LIMIT }), async (c) => {
+    const parsed = MaintenanceMultipartInputSchema.safeParse(await parseJsonBody(c));
+    if (!parsed.success) {
+      return c.json({ error: "Validation error" }, 400);
+    }
+    if (!maintenancePrefixAllowed(parsed.data.prefix, c.get("internalSyncScope"), "multipart")) {
+      return c.json({ error: "Forbidden prefix" }, 403);
+    }
+    try {
+      const result = await opts.r2.listMultipartUploads(parsed.data.prefix, {
+        maxUploads: parsed.data.maxUploads,
+        signal: AbortSignal.timeout(10_000),
+      });
+      return c.json({
+        uploads: result.uploads.map((upload) => ({
+          key: upload.key,
+          uploadId: upload.uploadId,
+          ...(upload.initiated ? { initiated: upload.initiated.toISOString() } : {}),
+        })),
+        isTruncated: result.isTruncated ?? false,
+      });
+    } catch (err: unknown) {
+      console.error("[internal-sync] Maintenance multipart listing failed:", err instanceof Error ? err.message : String(err));
+      return c.json({ error: "Storage listing failed" }, 502);
+    }
   });
 
   app.post("/system/exists", bodyLimit({ maxSize: INTERNAL_SYNC_BODY_LIMIT }), async (c) => {

@@ -30,8 +30,9 @@ implementation and is retained as historical compatibility context.
 - [x] Prove concurrent same-path, staging replay, hash mismatch, metadata-CAS rollback,
   missing accepted manifest, and runtime isolation cases with synthetic fixtures.
 - [x] Prove credential rotation, replay revocation, and background renewal.
-- [ ] Prove interrupted multipart, missing committed blob, and an isolated real-R2
-  primitive fixture; add grace-period orphan collection.
+- [x] Prove interrupted multipart cleanup and missing committed-blob local preservation
+  with synthetic fixtures; add bounded grace-period orphan collection.
+- [ ] Prove the publication primitives against an isolated real-R2 prefix.
 
 ## P3 — Shared reconciliation and VPS mirror safety
 
@@ -51,7 +52,7 @@ implementation and is retained as historical compatibility context.
 - [ ] Resolve effective storage privately with sanitized fingerprints.
 - [x] Harden backup locking/timeouts/receipts and scheduler reconciliation.
 - [x] Expose truthful backup health through authenticated shared contracts and Settings.
-- [ ] Verify a synthetic disposable PostgreSQL restore and record `restoreVerifiedAt`.
+- [x] Verify a synthetic disposable PostgreSQL restore and record public-safe evidence.
 - [x] Prepare, but do not perform, scoped mirror/backup rollout.
 
 ## P6 — Electron helper lifecycle and packaging

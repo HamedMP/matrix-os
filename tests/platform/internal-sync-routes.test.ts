@@ -23,6 +23,8 @@ describe("platform/internal-sync-routes", () => {
     getObject: vi.fn(),
     putObject: vi.fn(),
     deleteObject: vi.fn(),
+    listObjects: vi.fn(),
+    listMultipartUploads: vi.fn(),
     completeMultipartUpload: vi.fn(),
     abortMultipartUpload: vi.fn(),
     destroy: vi.fn(),
@@ -110,6 +112,76 @@ describe("platform/internal-sync-routes", () => {
       123,
       undefined,
     );
+  });
+
+  it("lists only bounded publication-maintenance prefixes for the authenticated scope", async () => {
+    const modified = new Date("2026-09-01T00:00:00.000Z");
+    r2.listObjects.mockResolvedValue({
+      objects: [{
+        key: "matrixos-sync/user_alice/staging/00000000-0000-4000-8000-000000000001",
+        lastModified: modified,
+        size: 12,
+      }],
+      isTruncated: false,
+    });
+    r2.listMultipartUploads.mockResolvedValue({
+      uploads: [{
+        key: "matrixos-sync/user_alice/staging/00000000-0000-4000-8000-000000000001",
+        uploadId: "upload-1",
+        initiated: modified,
+      }],
+      isTruncated: true,
+    });
+    const app = createTestApp();
+    const headers = {
+      authorization: `Bearer ${bearerFor("alice", "platform-secret-123")}`,
+      "content-type": "application/json",
+    };
+
+    const objects = await app.request("/internal/containers/alice/sync/maintenance/objects", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ prefix: "matrixos-sync/user_alice/staging/", maxKeys: 25 }),
+    });
+    const uploads = await app.request("/internal/containers/alice/sync/maintenance/multipart", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ prefix: "matrixos-sync/user_alice/staging/", maxUploads: 25 }),
+    });
+
+    expect(objects.status).toBe(200);
+    expect(await objects.json()).toEqual({
+      objects: [{
+        key: "matrixos-sync/user_alice/staging/00000000-0000-4000-8000-000000000001",
+        lastModified: modified.toISOString(),
+        size: 12,
+      }],
+      isTruncated: false,
+    });
+    expect(uploads.status).toBe(200);
+    expect(await uploads.json()).toEqual({
+      uploads: [{
+        key: "matrixos-sync/user_alice/staging/00000000-0000-4000-8000-000000000001",
+        uploadId: "upload-1",
+        initiated: modified.toISOString(),
+      }],
+      isTruncated: true,
+    });
+  });
+
+  it("rejects maintenance listing outside staging and manifest-generation prefixes", async () => {
+    const app = createTestApp();
+    const response = await app.request("/internal/containers/alice/sync/maintenance/objects", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${bearerFor("alice", "platform-secret-123")}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ prefix: "matrixos-sync/user_alice/objects/sha256/", maxKeys: 25 }),
+    });
+
+    expect(response.status).toBe(403);
+    expect(r2.listObjects).not.toHaveBeenCalled();
   });
 
   it("presigns customer database backup reads from a server-derived tenant prefix", async () => {

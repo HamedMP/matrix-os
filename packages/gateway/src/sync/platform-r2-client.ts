@@ -4,6 +4,16 @@ import { Readable } from "node:stream";
 const INTERNAL_SYNC_READ_TIMEOUT_MS = 10_000;
 const INTERNAL_SYNC_WRITE_TIMEOUT_MS = 30_000;
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" ? value as Record<string, unknown> : null;
+}
+
+function parseDate(value: unknown): Date | undefined {
+  if (typeof value !== "string") return undefined;
+  const parsed = new Date(value);
+  return Number.isFinite(parsed.getTime()) ? parsed : undefined;
+}
+
 function noSuchKey(): Error {
   const err = new Error("NoSuchKey");
   err.name = "NoSuchKey";
@@ -105,11 +115,16 @@ export function createPlatformR2Client(config: {
       return { etag: data.etag ?? undefined };
     },
 
-    async abortMultipartUpload(key: string, uploadId: string): Promise<void> {
+    async abortMultipartUpload(
+      key: string,
+      uploadId: string,
+      options?: { signal?: AbortSignal },
+    ): Promise<void> {
       const res = await request("/multipart/abort", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ key, uploadId }),
+        signal: options?.signal,
       }, INTERNAL_SYNC_WRITE_TIMEOUT_MS);
       await expectJson<{ ok: true }>(res);
     },
@@ -151,9 +166,74 @@ export function createPlatformR2Client(config: {
       return { etag: data.etag ?? undefined };
     },
 
-    async deleteObject(key: string): Promise<void> {
+    async listObjects(
+      prefix: string,
+      options: { maxKeys: number; signal?: AbortSignal },
+    ) {
+      const res = await request("/maintenance/objects", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ prefix, maxKeys: options.maxKeys }),
+        signal: options.signal,
+      });
+      const data = asRecord(await expectJson<unknown>(res));
+      if (!data || !Array.isArray(data.objects)) {
+        throw new Error("Invalid internal sync listing response");
+      }
+      const objects = data.objects.flatMap((value) => {
+        const object = asRecord(value);
+        if (!object || typeof object.key !== "string" || object.key.length > 768) return [];
+        const lastModified = parseDate(object.lastModified);
+        const size = typeof object.size === "number" && Number.isSafeInteger(object.size) && object.size >= 0
+          ? object.size
+          : undefined;
+        return [{
+          key: object.key,
+          ...(lastModified ? { lastModified } : {}),
+          ...(size !== undefined ? { size } : {}),
+        }];
+      });
+      return { objects, isTruncated: data.isTruncated === true };
+    },
+
+    async listMultipartUploads(
+      prefix: string,
+      options: { maxUploads: number; signal?: AbortSignal },
+    ) {
+      const res = await request("/maintenance/multipart", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ prefix, maxUploads: options.maxUploads }),
+        signal: options.signal,
+      });
+      const data = asRecord(await expectJson<unknown>(res));
+      if (!data || !Array.isArray(data.uploads)) {
+        throw new Error("Invalid internal sync listing response");
+      }
+      const uploads = data.uploads.flatMap((value) => {
+        const upload = asRecord(value);
+        if (
+          !upload
+          || typeof upload.key !== "string"
+          || upload.key.length > 768
+          || typeof upload.uploadId !== "string"
+          || upload.uploadId.length === 0
+          || upload.uploadId.length > 512
+        ) return [];
+        const initiated = parseDate(upload.initiated);
+        return [{
+          key: upload.key,
+          uploadId: upload.uploadId,
+          ...(initiated ? { initiated } : {}),
+        }];
+      });
+      return { uploads, isTruncated: data.isTruncated === true };
+    },
+
+    async deleteObject(key: string, options?: { signal?: AbortSignal }): Promise<void> {
       const res = await request(`/object?key=${encodeURIComponent(key)}`, {
         method: "DELETE",
+        signal: options?.signal,
       });
       if (!res.ok && res.status !== 404) {
         throw new Error(`Internal sync request failed: ${res.status}`);

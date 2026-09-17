@@ -8,6 +8,18 @@ export interface MultipartUploadedPart {
   etag: string;
 }
 
+export interface R2ListedObject {
+  key: string;
+  lastModified?: Date;
+  size?: number;
+}
+
+export interface R2ListedMultipartUpload {
+  key: string;
+  uploadId: string;
+  initiated?: Date;
+}
+
 async function loadS3() {
   const [s3, presigner] = await Promise.all([
     import("@aws-sdk/client-s3"),
@@ -39,7 +51,11 @@ export interface R2Client {
     uploadId: string,
     parts: MultipartUploadedPart[],
   ): Promise<{ etag?: string }>;
-  abortMultipartUpload(key: string, uploadId: string): Promise<void>;
+  abortMultipartUpload(
+    key: string,
+    uploadId: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<void>;
   getObject(
     key: string,
     options?: { signal?: AbortSignal },
@@ -49,7 +65,15 @@ export interface R2Client {
     body: string | Uint8Array | ReadableStream<Uint8Array> | Readable,
     options?: { signal?: AbortSignal },
   ): Promise<{ etag?: string }>;
-  deleteObject(key: string): Promise<void>;
+  listObjects?(
+    prefix: string,
+    options: { maxKeys: number; signal?: AbortSignal },
+  ): Promise<{ objects: R2ListedObject[]; isTruncated?: boolean }>;
+  listMultipartUploads?(
+    prefix: string,
+    options: { maxUploads: number; signal?: AbortSignal },
+  ): Promise<{ uploads: R2ListedMultipartUpload[]; isTruncated?: boolean }>;
+  deleteObject(key: string, options?: { signal?: AbortSignal }): Promise<void>;
   destroy(): void;
 }
 
@@ -65,6 +89,8 @@ export async function createR2Client(config: R2ClientConfig): Promise<R2Client> 
     GetObjectCommand,
     PutObjectCommand,
     DeleteObjectCommand,
+    ListObjectsV2Command,
+    ListMultipartUploadsCommand,
     CreateMultipartUploadCommand,
     UploadPartCommand,
     CompleteMultipartUploadCommand,
@@ -174,14 +200,18 @@ export async function createR2Client(config: R2ClientConfig): Promise<R2Client> 
       return { etag: response.ETag ?? undefined };
     },
 
-    async abortMultipartUpload(key: string, uploadId: string): Promise<void> {
+    async abortMultipartUpload(
+      key: string,
+      uploadId: string,
+      options?: { signal?: AbortSignal },
+    ): Promise<void> {
       const command = new AbortMultipartUploadCommand({
         Bucket: bucket,
         Key: key,
         UploadId: uploadId,
       });
       await s3.send(command, {
-        abortSignal: AbortSignal.timeout(R2_WRITE_TIMEOUT_MS),
+        abortSignal: options?.signal ?? AbortSignal.timeout(R2_WRITE_TIMEOUT_MS),
       });
     },
 
@@ -216,10 +246,58 @@ export async function createR2Client(config: R2ClientConfig): Promise<R2Client> 
       return { etag: response.ETag ?? undefined };
     },
 
-    async deleteObject(key: string): Promise<void> {
+    async listObjects(
+      prefix: string,
+      options: { maxKeys: number; signal?: AbortSignal },
+    ): Promise<{ objects: R2ListedObject[]; isTruncated?: boolean }> {
+      const command = new ListObjectsV2Command({
+        Bucket: bucket,
+        Prefix: prefix,
+        MaxKeys: options.maxKeys,
+      });
+      const response = await s3.send(command, {
+        abortSignal: options.signal ?? AbortSignal.timeout(R2_READ_TIMEOUT_MS),
+      });
+      return {
+        objects: (response.Contents ?? []).flatMap((object) => object.Key
+          ? [{
+              key: object.Key,
+              ...(object.LastModified ? { lastModified: object.LastModified } : {}),
+              ...(typeof object.Size === "number" ? { size: object.Size } : {}),
+            }]
+          : []),
+        isTruncated: response.IsTruncated ?? false,
+      };
+    },
+
+    async listMultipartUploads(
+      prefix: string,
+      options: { maxUploads: number; signal?: AbortSignal },
+    ): Promise<{ uploads: R2ListedMultipartUpload[]; isTruncated?: boolean }> {
+      const command = new ListMultipartUploadsCommand({
+        Bucket: bucket,
+        Prefix: prefix,
+        MaxUploads: options.maxUploads,
+      });
+      const response = await s3.send(command, {
+        abortSignal: options.signal ?? AbortSignal.timeout(R2_READ_TIMEOUT_MS),
+      });
+      return {
+        uploads: (response.Uploads ?? []).flatMap((upload) => upload.Key && upload.UploadId
+          ? [{
+              key: upload.Key,
+              uploadId: upload.UploadId,
+              ...(upload.Initiated ? { initiated: upload.Initiated } : {}),
+            }]
+          : []),
+        isTruncated: response.IsTruncated ?? false,
+      };
+    },
+
+    async deleteObject(key: string, options?: { signal?: AbortSignal }): Promise<void> {
       const command = new DeleteObjectCommand({ Bucket: bucket, Key: key });
       await s3.send(command, {
-        abortSignal: AbortSignal.timeout(R2_READ_TIMEOUT_MS),
+        abortSignal: options?.signal ?? AbortSignal.timeout(R2_READ_TIMEOUT_MS),
       });
     },
 
