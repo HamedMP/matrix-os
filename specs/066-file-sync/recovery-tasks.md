@@ -59,18 +59,25 @@ implementation and is retained as historical compatibility context.
 
 - [x] Bundle a versioned helper independent of global CLI/source checkout.
 - [x] Add trusted typed Electron IPC and secure credential handoff.
-- [ ] Verify packaged enable/restart/quit/update/rollback behavior.
+- [x] Verify automated helper install/upgrade/rollback/lifecycle contracts and
+  Linux AppImage manifest, digest, executable, and target-loader portability.
+- [ ] Verify signed macOS enable/restart/reboot/quit/update/rollback behavior on macOS.
 
 ## P7 — Settings UX and surface parity
 
 - [x] Add shared Sync & backup components and real controller contracts.
 - [x] Wire Web Canvas, Web Desktop, Electron Desktop, and applicable mobile health views.
-- [ ] Verify loading/offline/conflict/error/accessibility/theme/small-window states.
+- [x] Verify automated loading/offline/conflict/error/accessibility/theme/small-window contracts.
+- [ ] Capture real screenshot and keyboard evidence in the specified surface order.
 
 ## P8 — Release evidence and documentation
 
-- [ ] Run focused, type, pattern, package, shell, desktop, and applicable mobile gates.
+- [x] Run focused, type, pattern, package, shell, desktop, and applicable mobile gates;
+  record pre-existing whole-repository baseline failures separately.
+- [x] Build and verify the standalone CLI, production shell, Electron/Linux AppImage,
+  and synthetic exact-version host bundle without publishing them.
 - [x] Update in-repository contracts, sync testing, CLI, deployment, backup, and public-safe release documentation.
 - [ ] Open the required separate `FinnaAI/matrix-os-site` documentation PR.
-- [ ] Publish reviewable Graphite stack after GitHub authentication is restored.
+- [x] Publish the reviewable dependency-ordered stack (PRs #1713-#1729;
+  Graphite local topology with explicit GitHub parent bases after remote Graphite auth blocked submission).
 - [ ] Reach Greptile 5/5 and label-gated CI without merging or deploying.
