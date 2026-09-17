@@ -66,6 +66,10 @@ function tooManyRequests(c: Context) {
   return c.json({ error: "Too many requests" }, 429);
 }
 
+function syncDevicePathAllowed(path: string): boolean {
+  return path === "/ws" || path.startsWith("/api/sync/");
+}
+
 const PUBLIC_PATHS = ["/health", "/api/integrations/available"];
 const PUBLIC_PREFIXES = [
   "/icons/",
@@ -310,6 +314,11 @@ export function authMiddleware(
           expectedHandle,
           expectedRuntimeSlot,
         });
+        if (claims.token_use === "sync_device" && !syncDevicePathAllowed(normalizedPath)) {
+          const ip = getClientIp(c);
+          if (!rateLimiter.check(ip)) return tooManyRequests(c);
+          return unauthorized(c);
+        }
         // Stash claims on the Hono context so downstream handlers can
         // resolve the authenticated Clerk userId through the request principal.
         c.set(JWT_CLAIMS_CONTEXT_KEY, claims);

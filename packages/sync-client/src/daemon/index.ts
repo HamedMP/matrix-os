@@ -5,6 +5,7 @@ import pino from "pino";
 import {
   saveConfig,
   getConfigDir,
+  defaultPlatformUrl,
   type SyncConfig,
 } from "../lib/config.js";
 import {
@@ -17,8 +18,11 @@ import {
   isExpired,
   loadAuth,
   loadProfileAuth,
+  saveAuth,
+  saveProfileAuth,
   type AuthData,
 } from "../auth/token-store.js";
+import { refreshSyncDeviceAuth, SyncDeviceAuthError } from "../auth/sync-device.js";
 import { loadProfiles } from "../lib/profiles.js";
 import { cleanupStaleMatrixosTempFiles } from "../lib/temp-files.js";
 import { saveSyncState } from "./manifest-cache.js";
@@ -592,6 +596,7 @@ export interface DaemonAuthResolution {
 
 export interface DaemonAuthFileAccessors {
   loadAuth: () => Promise<AuthData | null>;
+  saveAuth: (auth: AuthData) => Promise<void>;
   clearAuth: () => Promise<void>;
 }
 
@@ -603,12 +608,14 @@ export function createDaemonAuthFileAccessors(
     const legacyAuthPath = join(authConfigDir, "auth.json");
     return {
       loadAuth: () => loadAuth(legacyAuthPath),
+      saveAuth: (auth) => saveAuth(auth, legacyAuthPath),
       clearAuth: () => clearAuth(legacyAuthPath),
     };
   }
 
   return {
     loadAuth: () => loadProfileAuth(resolution.profileName, authConfigDir),
+    saveAuth: (auth) => saveProfileAuth(resolution.profileName, auth, authConfigDir),
     clearAuth: () => clearProfileAuth(resolution.profileName, authConfigDir),
   };
 }
@@ -654,19 +661,39 @@ export async function startDaemon(): Promise<void> {
   }
   const config = configResolution.config;
 
-  const { auth, profileName, source } = await resolveDaemonAuth(config);
+  const authResolution = await resolveDaemonAuth(config);
+  let { auth } = authResolution;
+  const { profileName, source } = authResolution;
+  const authFileAccessors = createDaemonAuthFileAccessors({ profileName, source }, configDir);
   if (!auth) {
     logger.error(`Not logged in for profile "${profileName}". Run 'matrixos login' first.`);
     process.exit(1);
   }
-  if (isExpired(auth)) {
-    logger.error("Auth token rejected or expired. Re-run `matrixos login`.");
-    process.exit(1);
+  let daemonAuth = auth as AuthData;
+  if (isExpired(daemonAuth)) {
+    if (daemonAuth.refreshToken) {
+      try {
+        daemonAuth = await refreshSyncDeviceAuth({
+          platformUrl: config.platformUrl ?? defaultPlatformUrl(),
+          auth: daemonAuth,
+          save: authFileAccessors.saveAuth,
+        });
+      } catch (err: unknown) {
+        logger.warn(
+          { code: err instanceof SyncDeviceAuthError ? err.code : "unknown" },
+          "Could not renew the background sync credential during startup",
+        );
+      }
+    }
+    if (isExpired(daemonAuth)) {
+      logger.error("Background sync needs sign-in. Open Matrix OS Settings > Sync & backup.");
+      process.exit(1);
+    }
   }
 
   const scope = {
-    ownerId: auth.userId,
-    runtimeSlot: auth.runtimeSlot ?? "primary",
+    ownerId: daemonAuth.userId,
+    runtimeSlot: daemonAuth.runtimeSlot ?? "primary",
   };
   const loadedMappingConfig = await loadSyncMappingConfig({
     configDir,
@@ -729,7 +756,7 @@ export async function startDaemon(): Promise<void> {
 
   const gatewayClient = {
     gatewayUrl: config.gatewayUrl,
-    token: auth.accessToken,
+    token: daemonAuth.accessToken,
   };
 
   // Serial commit queue -- the gateway uses optimistic concurrency on
@@ -750,6 +777,9 @@ export async function startDaemon(): Promise<void> {
     });
   }
   const revision: ScopeRevision = { value: 0 };
+  let requestCredentialRefresh = (_reason: string): void => {
+    logger.error("Background sync credential renewal is not ready");
+  };
   const mappingSessions = await openMappingSessions({
     configDir,
     config: mappingConfig,
@@ -757,7 +787,7 @@ export async function startDaemon(): Promise<void> {
     revision,
     logger,
     enqueue,
-    onAuthRejected: (err) => exitOnAuthFailure(err, logger),
+    onAuthRejected: () => requestCredentialRefresh("gateway_rejected"),
   });
   revision.value = mappingSessions.reduce(
     (version, session) => Math.max(version, session.syncState.manifestVersion),
@@ -772,7 +802,7 @@ export async function startDaemon(): Promise<void> {
   let daemonConnectionState: "connecting" | "online" | "offline" = "connecting";
   const wsClient = new SyncWsClient({
     gatewayUrl: config.gatewayUrl,
-    token: auth.accessToken,
+    token: daemonAuth.accessToken,
     peerId: config.peerId,
     onEvent: async (event) => enqueue(async () => {
       if (!mappingConfig.enabled) return;
@@ -793,7 +823,6 @@ export async function startDaemon(): Promise<void> {
     onError: (err) => logger.error({ err }, "WebSocket error"),
   });
 
-  const authFileAccessors = createDaemonAuthFileAccessors({ profileName, source }, configDir);
   const mappingController = createMappingControllerHandler({
     snapshot: () => mappingConfig,
     validate: async (next) => {
@@ -908,7 +937,15 @@ export async function startDaemon(): Promise<void> {
   });
   const ipcServer = new IpcServer({ socketPath, handler: ipcHandler });
 
-  const shutdown = async () => {
+  let credentialRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+  let credentialRefreshInFlight: Promise<void> | null = null;
+  let syncSuspendedForAuth = false;
+  let shuttingDown = false;
+
+  const shutdown = async (exitCode = 0) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    if (credentialRefreshTimer) clearTimeout(credentialRefreshTimer);
     logger.info("Shutting down daemon");
     await stopMappingSessions(mappingSessions);
     wsClient.close();
@@ -924,13 +961,60 @@ export async function startDaemon(): Promise<void> {
         logger.warn({ err }, "Failed to remove daemon pid file during shutdown");
       }
     }
-    process.exit(0);
+    process.exit(exitCode);
   };
 
-  process.on("SIGTERM", shutdown);
-  process.on("SIGINT", shutdown);
+  const scheduleCredentialRefresh = (delayMs?: number) => {
+    if (credentialRefreshTimer) clearTimeout(credentialRefreshTimer);
+    const untilRefresh = delayMs ?? Math.max(1_000, daemonAuth.expiresAt - Date.now() - 5 * 60_000);
+    credentialRefreshTimer = setTimeout(
+      () => requestCredentialRefresh("scheduled"),
+      Math.min(untilRefresh, 2_147_000_000),
+    );
+    credentialRefreshTimer.unref();
+  };
+
+  requestCredentialRefresh = (reason: string) => {
+    if (credentialRefreshInFlight || shuttingDown || syncSuspendedForAuth) return;
+    credentialRefreshInFlight = (async () => {
+      try {
+        const next = await refreshSyncDeviceAuth({
+          platformUrl: config.platformUrl ?? defaultPlatformUrl(),
+          auth: daemonAuth,
+          save: authFileAccessors.saveAuth,
+        });
+        daemonAuth = next;
+        logger.info({ reason }, "Background sync credential renewed; restarting safely");
+        await shutdown(3);
+      } catch (err: unknown) {
+        if (err instanceof SyncDeviceAuthError && (
+          err.code === "needs_sign_in" || err.code === "not_enrolled"
+        )) {
+          syncSuspendedForAuth = true;
+          daemonAuth = { ...daemonAuth, expiresAt: 0 };
+          await authFileAccessors.saveAuth(daemonAuth);
+          await stopMappingSessions(mappingSessions);
+          wsClient.close();
+          daemonConnectionState = "offline";
+          logger.error("Background sync credential was revoked. Sign in again in Sync & backup.");
+          return;
+        }
+        logger.warn(
+          { reason, code: err instanceof SyncDeviceAuthError ? err.code : "unknown" },
+          "Background sync credential renewal is temporarily unavailable",
+        );
+        scheduleCredentialRefresh(60_000);
+      } finally {
+        credentialRefreshInFlight = null;
+      }
+    })();
+  };
+
+  process.on("SIGTERM", () => { void shutdown(); });
+  process.on("SIGINT", () => { void shutdown(); });
 
   await ipcServer.start();
+  scheduleCredentialRefresh();
 
   // Wait for the gateway's manifest to be populated before we start pushing
   // local files up. On first provisioning the container may still be seeding
@@ -939,7 +1023,7 @@ export async function startDaemon(): Promise<void> {
   try {
     await waitForManifest({
       gatewayUrl: config.gatewayUrl,
-      token: auth.accessToken,
+      token: daemonAuth.accessToken,
       logger: {
         info: (msg) => logger.info(msg),
         warn: (msg) => logger.warn(msg),
@@ -971,7 +1055,10 @@ export async function startDaemon(): Promise<void> {
       "Started mapping sessions from remote manifest",
     );
   } catch (err) {
-    if (exitOnAuthFailure(err, logger)) return;
+    if (err instanceof AuthRejectedError) {
+      requestCredentialRefresh("startup_rejected");
+      return;
+    }
     logger.warn(
       { err },
       "Could not fetch remote manifest on startup -- continuing with cached version",

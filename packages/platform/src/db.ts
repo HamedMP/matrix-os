@@ -578,6 +578,22 @@ interface DeviceCodesTable {
   created_at: number;
 }
 
+export interface SyncDeviceGrantsTable {
+  id: string;
+  clerk_user_id: string;
+  runtime_slot: string;
+  handle: string;
+  device_name: string;
+  refresh_token_hash: string;
+  previous_refresh_token_hash: string | null;
+  generation: number;
+  expires_at: number;
+  created_at: number;
+  updated_at: number;
+  last_used_at: number | null;
+  revoked_at: number | null;
+}
+
 interface MatrixUsersTable {
   handle: string;
   human_matrix_id: string;
@@ -765,6 +781,7 @@ export interface PlatformDatabase {
   billing_runtime_actions: BillingRuntimeActionsTable;
   port_assignments: PortAssignmentsTable;
   device_codes: DeviceCodesTable;
+  sync_device_grants: SyncDeviceGrantsTable;
   matrix_users: MatrixUsersTable;
   apps_registry: AppsRegistryTable;
   app_ratings: AppRatingsTable;
@@ -2512,6 +2529,33 @@ async function migrateSchema(db: Executor): Promise<void> {
   await sql`ALTER TABLE device_codes ADD COLUMN IF NOT EXISTS runtime_handle TEXT`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_device_codes_user_code ON device_codes(user_code)`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_device_codes_expires_at ON device_codes(expires_at)`.execute(db);
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS sync_device_grants (
+      id TEXT PRIMARY KEY,
+      clerk_user_id TEXT NOT NULL,
+      runtime_slot TEXT NOT NULL,
+      handle TEXT NOT NULL,
+      device_name TEXT NOT NULL,
+      refresh_token_hash TEXT NOT NULL UNIQUE CHECK (length(refresh_token_hash) = 64),
+      previous_refresh_token_hash TEXT CHECK (previous_refresh_token_hash IS NULL OR length(previous_refresh_token_hash) = 64),
+      generation INTEGER NOT NULL DEFAULT 0,
+      expires_at BIGINT NOT NULL,
+      created_at BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL,
+      last_used_at BIGINT,
+      revoked_at BIGINT
+    )
+  `.execute(db);
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_sync_device_grants_previous_refresh
+    ON sync_device_grants(previous_refresh_token_hash)
+    WHERE previous_refresh_token_hash IS NOT NULL
+  `.execute(db);
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_sync_device_grants_owner_runtime
+    ON sync_device_grants(clerk_user_id, runtime_slot)
+  `.execute(db);
 
   await sql`
     CREATE TABLE IF NOT EXISTS matrix_users (

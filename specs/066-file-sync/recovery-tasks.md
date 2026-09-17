@@ -25,12 +25,13 @@ implementation and is retained as historical compatibility context.
 ## P2 — Scope, auth, and immutable publication
 
 - [x] Land shared scope/status contracts and owner/runtime isolation.
-- [ ] Add scoped renewable background sync-device credentials.
+- [x] Add scoped renewable background sync-device credentials.
 - [x] Stage uploads, finalize immutable blobs, and CAS accepted manifest generations.
 - [x] Prove concurrent same-path, staging replay, hash mismatch, metadata-CAS rollback,
   missing accepted manifest, and runtime isolation cases with synthetic fixtures.
-- [ ] Prove interrupted multipart, missing committed blob, credential rotation/revocation,
-  and an isolated real-R2 primitive fixture; add grace-period orphan collection.
+- [x] Prove credential rotation, replay revocation, and background renewal.
+- [ ] Prove interrupted multipart, missing committed blob, and an isolated real-R2
+  primitive fixture; add grace-period orphan collection.
 
 ## P3 — Shared reconciliation and VPS mirror safety
 

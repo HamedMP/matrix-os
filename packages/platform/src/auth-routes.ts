@@ -4,6 +4,9 @@ import { bodyLimit } from 'hono/body-limit';
 import {
   MatrixComputerRuntimeSlotSchema,
   SupportIdentityResponseSchema,
+  SyncDeviceCredentialSchema,
+  SyncDeviceEnrollmentRequestSchema,
+  SyncDeviceRefreshRequestSchema,
 } from '@matrix-os/contracts';
 import {
   createDeviceFlow,
@@ -18,6 +21,11 @@ import {
   type SyncJwtClaims,
 } from './sync-jwt.js';
 import { timingSafeTokenEquals } from './platform-token.js';
+import {
+  createSyncDeviceGrantStore,
+  SyncDeviceGrantError,
+  type SyncDeviceGrantCredential,
+} from './sync-device-grants.js';
 import type { PlatformDB } from './db.js';
 import {
   getActiveUserMachineByClerkId,
@@ -38,6 +46,7 @@ function isSyncJwtConfigError(err: unknown): boolean {
 
 const DEVICE_BODY_LIMIT = 4096;
 const DEVICE_EXPIRES_IN_SEC = 2700;
+const SYNC_DEVICE_ACCESS_EXPIRES_IN_SEC = 15 * 60;
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX = 100;
 const RATE_LIMIT_MAX_KEYS = 10_000;
@@ -276,6 +285,129 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
       };
     },
   });
+  const syncDeviceGrants = createSyncDeviceGrantStore({ db: config.db, now: config.now });
+
+  async function issueSyncDeviceCredential(
+    credential: SyncDeviceGrantCredential,
+  ) {
+    const issued = await issueSyncJwt({
+      secret: config.jwtSecret,
+      clerkUserId: credential.grant.clerk_user_id,
+      handle: credential.grant.handle,
+      gatewayUrl: config.gatewayUrlForHandle(credential.grant.handle),
+      runtimeSlot: credential.grant.runtime_slot,
+      expiresInSec: SYNC_DEVICE_ACCESS_EXPIRES_IN_SEC,
+      tokenUse: 'sync_device',
+      grantId: credential.grant.id,
+      ...(config.now ? { now: Math.floor(config.now() / 1000) } : {}),
+    });
+    return SyncDeviceCredentialSchema.parse({
+      accessToken: issued.token,
+      refreshToken: credential.refreshToken,
+      expiresAt: issued.expiresAt,
+      userId: credential.grant.clerk_user_id,
+      handle: credential.grant.handle,
+      runtimeSlot: credential.grant.runtime_slot,
+    });
+  }
+
+  async function parseBoundedJson(c: import('hono').Context): Promise<unknown | null> {
+    try {
+      return await c.req.json();
+    } catch (err: unknown) {
+      if (!(err instanceof SyntaxError)) {
+        console.error('[sync-device] request parse failed');
+      }
+      return null;
+    }
+  }
+
+  async function verifyOwnerRuntime(c: import('hono').Context): Promise<SyncJwtClaims | null> {
+    const authorization = c.req.header('authorization');
+    if (!authorization?.startsWith('Bearer ')) return null;
+    let claims: SyncJwtClaims;
+    try {
+      claims = await verifySyncJwt(authorization.slice(7), { secret: config.jwtSecret });
+    } catch (err: unknown) {
+      if (isSyncJwtConfigError(err)) throw err;
+      return null;
+    }
+    if (claims.token_use === 'sync_device') return null;
+    const container = claims.runtime_slot && claims.runtime_slot !== 'primary'
+      ? undefined
+      : await getContainer(config.db, claims.handle);
+    const machine = container
+      ? undefined
+      : await getActiveUserMachineByHandle(config.db, claims.handle, claims.runtime_slot);
+    const ownerClerkUserId = container?.clerkUserId ?? machine?.clerkUserId;
+    if (ownerClerkUserId !== claims.sub) return null;
+    return {
+      ...claims,
+      runtime_slot: machine?.runtimeSlot ?? claims.runtime_slot ?? 'primary',
+    };
+  }
+
+  app.post(
+    '/api/auth/sync-device/enroll',
+    bodyLimit({ maxSize: DEVICE_BODY_LIMIT }),
+    async (c) => {
+      if (!rateLimit.check(clientIp(c))) return c.json({ error: 'too_many_requests' }, 429);
+      const claims = await verifyOwnerRuntime(c);
+      if (!claims) return c.json({ error: 'unauthorized' }, 401);
+      const body = SyncDeviceEnrollmentRequestSchema.safeParse(await parseBoundedJson(c));
+      if (!body.success) return c.json({ error: 'invalid_request' }, 400);
+      try {
+        const grant = await syncDeviceGrants.enroll({
+          clerkUserId: claims.sub,
+          runtimeSlot: claims.runtime_slot ?? 'primary',
+          handle: claims.handle,
+          deviceName: body.data.deviceName,
+        });
+        return c.json(await issueSyncDeviceCredential(grant));
+      } catch (err: unknown) {
+        console.error('[sync-device/enroll] failed:', err instanceof Error ? err.message : String(err));
+        return c.json({ error: 'server_error' }, 500);
+      }
+    },
+  );
+
+  app.post(
+    '/api/auth/sync-device/refresh',
+    bodyLimit({ maxSize: DEVICE_BODY_LIMIT }),
+    async (c) => {
+      if (!rateLimit.check(clientIp(c))) return c.json({ error: 'too_many_requests' }, 429);
+      const body = SyncDeviceRefreshRequestSchema.safeParse(await parseBoundedJson(c));
+      if (!body.success) return c.json({ error: 'invalid_request' }, 400);
+      try {
+        return c.json(await issueSyncDeviceCredential(
+          await syncDeviceGrants.rotate(body.data.refreshToken),
+        ));
+      } catch (err: unknown) {
+        if (err instanceof SyncDeviceGrantError) {
+          return c.json({ error: 'invalid_grant' }, 401);
+        }
+        console.error('[sync-device/refresh] failed:', err instanceof Error ? err.message : String(err));
+        return c.json({ error: 'server_error' }, 500);
+      }
+    },
+  );
+
+  app.post(
+    '/api/auth/sync-device/revoke',
+    bodyLimit({ maxSize: DEVICE_BODY_LIMIT }),
+    async (c) => {
+      if (!rateLimit.check(clientIp(c))) return c.json({ error: 'too_many_requests' }, 429);
+      const body = SyncDeviceRefreshRequestSchema.safeParse(await parseBoundedJson(c));
+      if (!body.success) return c.json({ error: 'invalid_request' }, 400);
+      try {
+        await syncDeviceGrants.revoke(body.data.refreshToken);
+        return c.json({ ok: true as const });
+      } catch (err: unknown) {
+        console.error('[sync-device/revoke] failed:', err instanceof Error ? err.message : String(err));
+        return c.json({ error: 'server_error' }, 500);
+      }
+    },
+  );
 
   // POST /api/auth/device/code -- public
   app.post(
@@ -521,6 +653,9 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
       if (isSyncJwtConfigError(err)) throw err;
       return c.json({ error: 'unauthorized' }, 401);
     }
+    if (claims.token_use === 'sync_device') {
+      return c.json({ error: 'unauthorized' }, 401);
+    }
 
     if (!config.supportIdentitySecret) {
       return c.json(SupportIdentityResponseSchema.parse({ status: 'unavailable' }), 503);
@@ -552,6 +687,9 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
       if (isSyncJwtConfigError(err)) {
         throw err;
       }
+      return c.json({ error: 'unauthorized' }, 401);
+    }
+    if (claims.token_use === 'sync_device') {
       return c.json({ error: 'unauthorized' }, 401);
     }
     if (!claims.sub || !claims.handle) {
