@@ -43,6 +43,21 @@ describe("shared terminal grid presentation", () => {
     return { host, root, terminal, geometry, onScale, presentation, layout };
   }
 
+  it("focuses on blank viewport clicks without intercepting text selection or context clicks", () => {
+    const { host, root, terminal, presentation, layout } = setup();
+    const focus = vi.fn();
+    Object.assign(terminal, { focus });
+    layout(1600, 900);
+    host.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }));
+    expect(focus).toHaveBeenCalledOnce();
+    root.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
+    host.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 2 }));
+    expect(focus).toHaveBeenCalledOnce();
+    presentation.dispose();
+    host.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
+    expect(focus).toHaveBeenCalledOnce();
+  });
+
   it("gives the pan stage exactly the visual extent and clips unscaled layout overflow", () => {
     const { host, root, geometry, layout } = setup();
     layout(1_600, 600);

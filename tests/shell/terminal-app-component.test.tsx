@@ -204,6 +204,7 @@ describe("TerminalApp workspace contract", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: "Close" })); await settle();
     fireEvent.click(screen.getByRole("button", { name: "Delete", exact: true })); await settle();
     expect(screen.getByTestId(`terminal-session-card-${REF_KEY}`)).toBeTruthy();
+    expect(screen.getByText("Deleting…")).toBeTruthy();
     delayList = true;
     fireEvent.click(screen.getByRole("button", { name: "Refresh sessions" })); await settle();
     deleted = true; confirm(json({ ok: true })); await settle();

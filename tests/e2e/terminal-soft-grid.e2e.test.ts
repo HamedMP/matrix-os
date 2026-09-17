@@ -199,6 +199,9 @@ describe("real terminal renderer soft-grid resizing", () => {
       });
       const blankArea = await page.locator("[data-terminal-viewport]").boundingBox();
       if (!blankArea) throw new Error("Terminal viewport is not measurable");
+      await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
+      await page.mouse.click(blankArea.x + blankArea.width - 40, blankArea.y + 80);
+      await expect.poll(() => page.evaluate(() => document.activeElement?.classList.contains("xterm-helper-textarea"))).toBe(true);
       await page.mouse.move(blankArea.x + blankArea.width - 40, blankArea.y + 80);
       await page.mouse.wheel(0, -200);
       await expect.poll(() => page.evaluate(() => (window as unknown as { fixtureInputs: string[] }).fixtureInputs.some((input) => /\x1b\[<64;/.test(input)))).toBe(true);

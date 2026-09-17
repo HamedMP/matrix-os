@@ -5,6 +5,7 @@ import { panTerminalGrid } from "./terminal-grid-wheel.js";
 
 interface GridTerminal {
   element?: HTMLElement | null;
+  focus?: () => void;
   cols: number;
   rows: number;
   options: { fontSize?: number; scrollback?: number; overviewRuler?: { width?: number } };
@@ -74,6 +75,14 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
   let liveContentHeight = 0;
   let contentGrid: { cols: number; rows: number } | undefined;
   let outputSubscription: { dispose(): void } | undefined;
+
+  const onBlankMouseDown = (event: MouseEvent) => {
+    if (event.button !== 0 || event.defaultPrevented || !element ||
+      (event.target !== host && event.target !== stage)) return;
+    options.getTerminal().focus?.();
+    // Keep the browser's default focus action from blurring xterm afterward.
+    event.preventDefault();
+  };
 
   const onWheel = (event: WheelEvent & { matrixGridCorrected?: boolean }) => {
     if (event.matrixGridCorrected || event.defaultPrevented || !element || !stage || !(event.target instanceof Element) || !host.contains(event.target)) return;
@@ -160,6 +169,7 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
       // xterm emits once per parsed write batch; RAF coalesces output bursts.
       outputSubscription = terminal.onWriteParsed?.(schedule);
       scrollSubscription = terminal.onScroll?.(schedule);
+      host.addEventListener("mousedown", onBlankMouseDown);
       host.addEventListener("wheel", onWheel, { capture: true, passive: false });
       element = root;
       restoreStyle = {
@@ -243,6 +253,7 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
     scrollSubscription = undefined;
     outputSubscription?.dispose();
     outputSubscription = undefined;
+    host.removeEventListener("mousedown", onBlankMouseDown);
     host.removeEventListener("wheel", onWheel, true);
     if (element && restoreStyle) Object.assign(element.style, restoreStyle);
     if (stage && element?.parentElement === stage) stage.replaceWith(element);

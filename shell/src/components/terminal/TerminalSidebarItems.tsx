@@ -1294,6 +1294,7 @@ function ShellCard({
                 >
                   {displayName}
                 </button>
+                {deleting ? <span role="status" className="shrink-0 text-xs">Deleting…</span> : null}
                 <button
                   type="button"
                   aria-label={renameControlLabel}
