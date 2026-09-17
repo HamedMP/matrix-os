@@ -1,5 +1,5 @@
 import {
-  CollaborationActorIdSchema,
+  CollaborationInvitationIdentifierSchema,
   CollaborationMemberSchema,
   CollaborationScopeSchema,
   type CollaborationTerminalFrame,
@@ -45,7 +45,7 @@ export function ChatCollaboratorsDialog({ api, scope, members, onRefresh, onClos
   const resourceLabel = scope.kind === "chat" ? "Chat" : scope.kind === "terminal" ? "terminal" : "project";
   const currentScope = useRef(scope);
   const [currentMembers, setCurrentMembers] = useState(members);
-  const [targetActorId, setTargetActorId] = useState("");
+  const [identifier, setIdentifier] = useState("");
   const [role, setRole] = useState<"editor" | "viewer">("editor");
   const [pending, setPending] = useState(false);
   const [feedback, setFeedback] = useState("");
@@ -67,15 +67,15 @@ export function ChatCollaboratorsDialog({ api, scope, members, onRefresh, onClos
   const invite = async () => {
     beginAction();
     try {
-      const actorId = CollaborationActorIdSchema.parse(targetActorId.trim());
+      const targetIdentifier = CollaborationInvitationIdentifierSchema.parse(identifier);
       await api.post(`/api/collaboration/scopes/${currentScope.current.id}/invitations`, {
-        targetActorId: actorId,
+        identifier: targetIdentifier,
         role,
         clientRequestId: crypto.randomUUID(),
         expectedRevision: currentScope.current.revision,
       });
       await refresh();
-      setTargetActorId("");
+      setIdentifier("");
       setFeedback("Invitation sent. Access begins only after acceptance.");
     } catch (failure: unknown) {
       failAction(failure);
@@ -139,9 +139,10 @@ export function ChatCollaboratorsDialog({ api, scope, members, onRefresh, onClos
     <section aria-labelledby="invite-person-heading" className="rounded-xl border p-4">
       <h3 id="invite-person-heading" className="font-medium">Invite a person</h3>
       <div className="mt-3 grid gap-3 sm:grid-cols-[1fr_9rem_auto]">
-        <label className="grid gap-1 text-sm">Matrix user ID
-          <input value={targetActorId} disabled={pending} onChange={(event) => setTargetActorId(event.target.value)}
-            placeholder="user_…" className="min-w-0 rounded-lg border bg-transparent px-3 py-2" />
+        <label className="grid gap-1 text-sm">Email or username
+          <input value={identifier} disabled={pending} onChange={(event) => setIdentifier(event.target.value)}
+            placeholder="name@example.com or @username" autoComplete="off"
+            className="min-w-0 rounded-lg border bg-transparent px-3 py-2" />
         </label>
         <label className="grid gap-1 text-sm">Role
           <select value={role} disabled={pending} onChange={(event) => setRole(event.target.value as "editor" | "viewer")}
@@ -150,10 +151,13 @@ export function ChatCollaboratorsDialog({ api, scope, members, onRefresh, onClos
             <option value="viewer">Viewer</option>
           </select>
         </label>
-        <button type="button" className={`${buttonClass} self-end`} disabled={pending || !targetActorId.trim()} onClick={() => void invite()}>
+        <button type="button" className={`${buttonClass} self-end`} disabled={pending || !identifier.trim()} onClick={() => void invite()}>
           {pending ? "Sending…" : "Send invitation"}
         </button>
       </div>
+      <p className="mt-3 text-xs" style={{ color: "var(--text-secondary)" }}>
+        The person must already have a Matrix account. Enter their exact email address or username.
+      </p>
       <p className="mt-3 text-xs" style={{ color: "var(--text-secondary)" }}>
         {scope.kind === "terminal"
           ? "Editors can watch and request input control. Viewers watch only. Owners may take over control."

@@ -65,12 +65,15 @@ describe("Chat collaboration sharing", () => {
     fireEvent.click(screen.getByRole("button", { name: "Share" }));
     fireEvent.click(screen.getByRole("button", { name: "Invite collaborators" }));
     await screen.findByRole("dialog", { name: "Invite collaborators" });
-    fireEvent.change(screen.getByLabelText("Matrix user ID"), { target: { value: "user_editor" } });
+    expect(screen.getByText(/must already have a Matrix account/i)).toBeVisible();
+    const identifier = screen.getByLabelText("Email or username");
+    expect(identifier).toHaveAttribute("placeholder", "name@example.com or @username");
+    fireEvent.change(identifier, { target: { value: "@nimanaderi" } });
     fireEvent.change(screen.getByLabelText("Role"), { target: { value: "editor" } });
     fireEvent.click(screen.getByRole("button", { name: "Send invitation" }));
     await waitFor(() => expect(collaborationApi.post).toHaveBeenCalledWith(
       `/api/collaboration/scopes/${scopeId}/invitations`,
-      expect.objectContaining({ targetActorId: "user_editor", role: "editor", expectedRevision: "1" }),
+      expect.objectContaining({ identifier: "@nimanaderi", role: "editor", expectedRevision: "1" }),
     ));
     expect(screen.getByText(/Invitation sent/i)).toBeVisible();
     expect(snapshotApi.post).not.toHaveBeenCalled();

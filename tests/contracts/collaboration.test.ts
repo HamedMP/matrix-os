@@ -81,25 +81,33 @@ describe("collaboration contracts", () => {
     }).success).toBe(false);
   });
 
-  it("accepts only editor or viewer invitations and rejects identity injection", () => {
-    expect(CollaborationCreateInvitationRequestSchema.parse({
-      targetActorId: "user_editor",
-      role: "editor",
-      clientRequestId: requestId,
-      expectedRevision: "4",
-    })).toMatchObject({ role: "editor" });
+  it("accepts a bounded identifier and rejects client-supplied actor authority", () => {
+    for (const identifier of ["user_editor", "person@example.com", "nimanaderi", "@nimanaderi"]) {
+      expect(CollaborationCreateInvitationRequestSchema.parse({
+        identifier: `  ${identifier}  `,
+        role: "editor",
+        clientRequestId: requestId,
+        expectedRevision: "4",
+      })).toMatchObject({ identifier, role: "editor" });
+    }
     expect(CollaborationCreateInvitationRequestSchema.safeParse({
-      targetActorId: "user_editor",
+      identifier: "nimanaderi",
       role: "owner",
       clientRequestId: requestId,
       expectedRevision: "4",
     }).success).toBe(false);
     expect(CollaborationCreateInvitationRequestSchema.safeParse({
-      targetActorId: "user_editor",
+      identifier: "nimanaderi",
+      targetActorId: "user_attacker",
       role: "viewer",
       clientRequestId: requestId,
       expectedRevision: "4",
-      invitedBy: "user_attacker",
+    }).success).toBe(false);
+    expect(CollaborationCreateInvitationRequestSchema.safeParse({
+      identifier: "x".repeat(321),
+      role: "viewer",
+      clientRequestId: requestId,
+      expectedRevision: "4",
     }).success).toBe(false);
   });
 

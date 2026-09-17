@@ -731,7 +731,7 @@ describe("TerminalPane scrolling", () => {
       await act(async () => {
         runReconnectBanner?.();
       });
-      expect(view.getByText("Reconnecting terminal...")).toBeTruthy();
+      await waitFor(() => expect(view.getByText("Reconnecting terminal...")).toBeTruthy());
     } finally {
       setTimeoutSpy.mockRestore();
     }

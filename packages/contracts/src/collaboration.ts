@@ -22,6 +22,14 @@ export const CollaborationActorIdSchema = z.string()
   .min(1)
   .max(128)
   .regex(/^[A-Za-z0-9_-]+$/, "Invalid actor identifier");
+export const CollaborationInvitationIdentifierSchema = z.string()
+  .trim()
+  .min(1)
+  .max(320)
+  .regex(/^[^\u0000-\u001F\u007F]+$/, "Invalid invitation identifier");
+export const CollaborationInvitationIdentifierRequestSchema = z.object({
+  identifier: CollaborationInvitationIdentifierSchema,
+}).strict();
 export const CollaborationRuntimeIdSchema = referenceId(128);
 export const CollaborationResourceIdSchema = referenceId(160);
 export const CollaborationRevisionSchema = z.string()
@@ -158,7 +166,7 @@ const CollaborationConditionalMutationSchema = z.object({
 }).strict();
 
 export const CollaborationCreateInvitationRequestSchema = z.object({
-  targetActorId: CollaborationActorIdSchema,
+  identifier: CollaborationInvitationIdentifierSchema,
   role: CollaborationInviteRoleSchema,
   clientRequestId: CollaborationIdSchema,
   expectedRevision: CollaborationRevisionSchema,

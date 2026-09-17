@@ -6,6 +6,7 @@ import {
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
+import { registerInvitationIdentifierResolutionRoute } from "./identifier-resolution-route.js";
 import {
   PlatformCollaborationRepositoryError,
   type PlatformCollaborationRepository,
@@ -21,6 +22,7 @@ export function createInternalCollaborationRoutes(options: {
     bearerToken: string;
   }): Promise<{ runtimeId: string; ownerId: string } | null>;
   resolveParticipant(actorId: string): Promise<{ actorId: string; displayName: string } | null>;
+  resolveInvitationIdentifier(identifier: string): Promise<{ actorId: string; displayName: string } | null>;
 }): Hono {
   const app = new Hono();
   const mutationLimit = bodyLimit({
@@ -80,6 +82,8 @@ export function createInternalCollaborationRoutes(options: {
     }
   });
 
+  registerInvitationIdentifierResolutionRoute(app, options);
+
   return app;
 }
 
@@ -104,7 +108,7 @@ async function requireRuntime(
 function safeJson(
   c: import("hono").Context,
   error: string,
-  status: 401 | 403 | 404 | 409 | 413 | 422 | 503,
+  status: 401 | 403 | 404 | 409 | 413 | 422 | 429 | 503,
 ) {
   c.header("Cache-Control", "no-store");
   return c.json({ error }, status);
