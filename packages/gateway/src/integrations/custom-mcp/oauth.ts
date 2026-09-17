@@ -4,7 +4,7 @@ import {
   timingSafeEqual,
 } from "node:crypto";
 import { request as httpsRequest } from "node:https";
-import type { LookupFunction } from "node:net";
+import { createPinnedCustomMcpLookup } from "./pinned-lookup.js";
 import type { PlatformDb, CustomMcpServerBrokerRow } from "../../platform-db.js";
 import {
   decryptCustomMcpCredential,
@@ -54,9 +54,7 @@ async function pinnedRequest(input: {
   body?: string;
 }): Promise<{ status: number; body: unknown }> {
   const target = await validateCustomMcpUrl(input.url);
-  const lookup: LookupFunction = ((_hostname, _options, callback) => {
-    callback(null, target.address, target.family);
-  }) as LookupFunction;
+  const lookup = createPinnedCustomMcpLookup(target);
   return new Promise((resolve, reject) => {
     const request = httpsRequest(target.url, {
       method: input.method,
