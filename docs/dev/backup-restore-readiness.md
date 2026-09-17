@@ -42,3 +42,43 @@ the Docker socket world-writable.
 
 The platform's stale-provisioning/failure presentation is a separate concern;
 this fix does not claim to add automatic reconciliation or error UI.
+
+## Customer database backup contract
+
+`matrix-db-backup.timer` runs the customer database backup as the unprivileged
+`matrix` user. The job takes an exclusive lock, checks bounded local free space,
+creates a custom-format PostgreSQL dump, hashes it, uploads the dump and an
+immutable receipt through the platform storage broker, verifies both objects,
+updates the runtime-scoped `latest` pointer, and reads that pointer back. Only
+then does it atomically replace `last-success.json`.
+
+`last-attempt.json` is separate and may report a newer failed run. A failed run
+must never erase or refresh the last verified success. Status files live under
+`/var/lib/matrix/db/backup-status`, are bounded regular files, reject symlinks,
+and expose only allowlisted error codes through `/api/sync/backup-status`.
+
+Settings derives freshness from the verified completion time:
+
+- `healthy`: at most two hours old;
+- `stale`: older than two hours and at most 24 hours old;
+- `critical`: older than 24 hours;
+- `unknown`: no trustworthy completion timestamp.
+
+Timer enabled/active state, next due time, latest verified backup, latest
+attempt, storage reachability, and last restore-test time are independent facts.
+Do not collapse them into a single green check.
+
+## Restore-test gate
+
+Restore testing is an operator-controlled recovery operation. Download the
+exact dump named by the verified receipt into an isolated fixture, verify its
+SHA-256 and size, restore it into a disposable PostgreSQL database, and compare
+expected schemas plus fixture rows. Do not stop or overwrite the live customer
+database, and do not write `restoreVerifiedAt` until the isolated query evidence
+passes. Production download/restore needs separate authorization.
+
+Required failure exercises are: enabled-but-inactive timer, dump failure,
+upload failure, missing snapshot object, receipt failure, latest-pointer
+mismatch, stale success, low disk, and overlapping invocation. The synthetic
+script fixtures cover these without external storage; a real-R2 fingerprint and
+restore probe remain rollout gates.

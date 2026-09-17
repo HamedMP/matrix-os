@@ -36,6 +36,10 @@ curl -sL get.matrix-os.com | sh
 ```bash
 matrix login              # device-code flow against app.matrix-os.com
 matrix sync ~/matrixos    # start the sync daemon against the logged-in instance
+matrix sync list          # list configured folder mappings
+matrix sync add --path ~/work --folder projects/work --direction two_way
+matrix sync pause --mapping <mapping-id>
+matrix sync rescan --mapping <mapping-id>
 matrix run -it -- claude  # attach local TTY to Claude on your Matrix VPS
 matrix run -it -- codex   # creates a tab in the current project's workspace
 matrix run -it --project main -- gh auth login
@@ -48,6 +52,30 @@ matrix logout             # clear local credentials
 ```
 
 All three bin entries are installed: `matrix`, `matrixos`, `mos`.
+
+## Sync and recovery behavior
+
+Electron Desktop Settings > Sync & backup is the recommended setup surface.
+The CLI controls the same background service and owner/runtime-scoped mapping
+configuration. Enabled sync continues after Desktop closes and after a normal
+login/reboot.
+
+Mapping directions are `two_way`, `to_matrix`, and `to_local`. Deletion
+propagation is off by default; removing a mapping does not delete either folder.
+Full-home mappings exclude credentials, sync internals, symlinks, generated
+trees, and configured subtrees. A child mapping must be paired with an explicit
+parent exclusion so overlapping watchers cannot write the same remote path.
+
+Concurrent edits preserve both versions as durable conflicts. Use `matrix sync
+conflicts` to inspect them and `matrix sync rescan` after resolving the files.
+Permission, disk-full, oversize, network, offline, and reconnect-required states
+are reported with bounded messages rather than raw provider or filesystem
+errors.
+
+Database backups are independent of file sync. Syncing Matrix Home is not a
+whole-machine backup and does not replace a verified PostgreSQL restore test.
+Browser and mobile Settings can monitor remote sync/backup health, but arbitrary
+local-directory background sync requires Matrix Desktop.
 
 Use `matrix shell connect --project <project> --tab <tab-id>` rather than
 running `zellij attach` directly when handing a live tab between Matrix OS

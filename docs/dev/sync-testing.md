@@ -1,9 +1,91 @@
 # Sync Testing Guide (066)
 
-How to verify the file sync feature works end-to-end -- from raw HTTP probes
-to running the macOS menu bar app.
+How to verify file sync and database-backup recovery without touching customer
+data. Production is VPS-native; Docker/MinIO instructions in this guide are
+local fixtures only.
 
-## What's Running
+## Current recovery contract
+
+- Sync identity is the verified owner ID plus `runtimeSlot`. Profiles, local
+  state, manifests, accepted generations, immutable blobs, peers, and backup
+  keys must not cross that boundary.
+- Uploads first land under a random staging ID. Commit validates the staged
+  bytes, finalizes an immutable hash-addressed blob, writes an immutable
+  manifest generation, and advances the accepted pointer with optimistic
+  concurrency. A failed pointer CAS may leave a reclaimable orphan but may not
+  change accepted bytes.
+- Local mapping configuration is versioned and owner/runtime-scoped. A full
+  Matrix Home mapping can coexist with child mappings only when the parent's
+  exclusions transfer those subtrees explicitly.
+- Deletes are retained by default. Explicit propagation applies only to files
+  that were tracked and have not diverged. An unavailable root is never treated
+  as an empty tree.
+- Database backups are separate from file sync. A backup is successful only
+  after the dump, immutable receipt, object-existence checks, latest-pointer
+  update, and latest-pointer readback all succeed.
+
+## Supported verification commands
+
+From the repository root:
+
+```bash
+# Sync client unit/integration coverage and strict types
+pnpm --filter @finnaai/matrix test
+pnpm --filter @finnaai/matrix build
+
+# Gateway contracts and synthetic object-store publication
+pnpm exec vitest run \
+  tests/gateway/sync/routes.test.ts \
+  tests/gateway/sync/commit.test.ts \
+  tests/gateway/sync/blob-publication.test.ts \
+  tests/gateway/sync/manifest.test.ts \
+  tests/gateway/sync/home-mirror.test.ts
+
+# Backup status, timer reconciliation, and real script fixtures
+pnpm exec vitest run \
+  tests/gateway/sync-backup-status.test.ts \
+  tests/platform/db-backup-script.test.ts \
+  tests/platform/customer-vps-cloud-init.test.ts
+```
+
+The object-store suites use synthetic isolated files. A real-R2 primitive test
+must use a dedicated test prefix and reviewed credentials. Never use a customer
+prefix. A database restore test must target a disposable Postgres database and
+compare schema plus fixture rows before recording `restoreVerifiedAt`.
+
+## Settings and CLI checks
+
+Electron Desktop Settings > Sync & backup is the native control surface. Web
+Canvas, Web Desktop, Web Mobile, and Native Mobile show remote sync and backup
+health but cannot watch arbitrary local directories. That limitation must stay
+visible rather than hiding the section.
+
+The CLI and Electron operate the same service and mapping config:
+
+```bash
+matrix sync status --json --profile desktop
+matrix sync list --json --profile desktop
+matrix sync add --path ./notes --folder notes --direction two_way
+matrix sync pause --mapping <mapping-id>
+matrix sync resume --mapping <mapping-id>
+matrix sync conflicts --mapping <mapping-id>
+matrix sync rescan --mapping <mapping-id>
+matrix sync remove --mapping <mapping-id>
+```
+
+`sync list` remains readable from the scoped on-disk config while the daemon is
+stopped. Mutations still require the daemon. Verify that stopped/crashed state
+shows existing mappings as offline rather than pretending setup was lost.
+
+For each failure injection, record input hashes, manifest revision, durable
+intent/conflict state, resulting UI/CLI state, and authorization scope. Required
+cases include a zero-byte file, same-path concurrent writers, interrupted
+multipart upload, missing accepted blob, offline root, permission denial, disk
+full, oversize file, queue pressure, expired/revoked grant, and helper restart.
+
+## Local Docker fixture
+
+### What's running
 
 `bun run docker` brings up the full sync stack:
 
@@ -268,10 +350,10 @@ sleep 3
 cat ~/matrixos-bob/hello.txt
 ```
 
-(Currently the daemon hardcodes `~/.matrixos` as its config dir; respecting
-`MATRIXOS_CONFIG_DIR` is a small pending change.)
+Each fixture must set a distinct `MATRIXOS_CONFIG_DIR`; the daemon, socket,
+profile, mapping state, and credentials all honor it.
 
-## Installing the macOS Menu Bar App
+## Legacy standalone macOS menu-bar client
 
 Source: `packages/sync-client/macos/MatrixSync.xcodeproj`
 
@@ -295,7 +377,7 @@ cp -R ./build/Build/Products/Release/MatrixSync.app /Applications/
 open /Applications/MatrixSync.app
 ```
 
-### What the app shows
+### What the compatibility app shows
 
 - **Menu bar icon**: spinning if syncing, checkmark if up-to-date, dashed
   circle if the daemon isn't running
@@ -308,10 +390,14 @@ open /Applications/MatrixSync.app
 
 ### How it talks to the daemon
 
-The app connects to `~/.matrixos/daemon.sock` over a Unix domain socket and
+The compatibility app connects to `~/.matrixos/daemon.sock` over a Unix domain socket and
 sends JSON commands (`{"command":"status"}`, `{"command":"pause"}`, etc.).
 If the daemon isn't running, the app shows "Daemon not running" with a hint
 to run `matrixos sync`.
+
+New installs use the versioned helper bundled with Electron Desktop. Retain the
+standalone client only for migration compatibility until its retirement is
+separately documented and reviewed.
 
 ## Troubleshooting
 

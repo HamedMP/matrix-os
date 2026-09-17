@@ -1,10 +1,21 @@
 # Data Model: 066 File Sync
 
+> Recovery update: all manifest, blob, peer, local-config, and backup identities
+> are scoped by verified `{ownerId, runtimeSlot}`. The legacy single-user paths
+> below describe schema ancestry, not the current object layout. Current writes
+> use immutable manifest generations plus an accepted pointer, immutable
+> hash-addressed blobs, unique staging objects, and profile/scope-specific local
+> mapping/state files.
+
 ## Entities
 
 ### 1. Manifest (R2 JSON)
 
-The central metadata structure. One per user, stored at `matrixos-sync/{userId}/manifest.json` in R2.
+The central metadata structure. One accepted stream exists per verified
+owner/runtime scope. New publications are immutable objects under
+`<scope>/manifests/<version>-<sha256>.json`; Postgres stores the accepted key.
+`<scope>/manifest.json` is read only for legacy migration when no accepted
+pointer exists.
 
 ```typescript
 // Zod schema (zod/v4)
@@ -38,7 +49,7 @@ export type Manifest = z.infer<typeof ManifestSchema>;
 **Validation rules**:
 - File paths must be relative (no leading `/`), no `..` segments, max 1024 chars
 - Hash must be valid SHA-256 hex
-- Manifest must have fewer than 10,000 entries (enforced at gateway)
+- Manifest must have at most 50,000 live entries (enforced at gateway)
 
 ---
 
@@ -49,16 +60,20 @@ Tracks manifest version for optimistic concurrency (since R2 doesn't support con
 ```typescript
 // Kysely table definition
 export interface SyncManifestsTable {
-  user_id: string;       // FK to users.id, PRIMARY KEY
+  user_id: string;       // verified owner ID, composite PRIMARY KEY
+  runtime_slot: string;  // verified runtime slot, composite PRIMARY KEY
   version: number;       // Monotonic version counter
   file_count: number;    // Cached count of files in manifest
   total_size: bigint;    // Cached total size in bytes
   etag: string | null;   // R2 ETag for read caching
+  accepted_manifest_key: string | null; // immutable generation pointer
   updated_at: Date;
 }
 ```
 
-**State transitions**: `version` increments on every manifest write. Never decrements.
+**State transitions**: `version` increments only when the accepted pointer CAS
+succeeds. It never decrements. A generation written before a failed CAS is an
+unaccepted orphan and must never be selected by scanning for the highest key.
 
 ---
 
@@ -132,7 +147,10 @@ Peers are tracked in-memory at the gateway (with a bounded Map, max 100 peers pe
 
 ---
 
-### 5. Sync State (Local — `~/.matrixos/sync-state.json`)
+### 5. Sync state (local)
+
+Current state is stored beneath the same profile/scope directory as mapping
+configuration. Legacy `~/.matrixos/sync-state.json` is migration input only.
 
 Cached manifest + local file state on the client side.
 
@@ -167,19 +185,40 @@ conflict      = localChanged && remoteChanged && file.hash !== manifest[path].ha
 
 ---
 
-### 6. Sync Config (Local — `~/.matrixos/config.json`)
+### 6. Sync mapping config (local)
+
+Current location:
+`~/.matrixos/profiles/<profile>/sync/<scope-id>/config.json`. The scope ID is a
+deterministic digest of owner and runtime slot and is never supplied by an
+unverified remote input.
 
 ```typescript
-export const SyncConfigSchema = z.object({
-  gatewayUrl: z.url(),
-  syncPath: z.string().min(1),         // Local folder to sync (default: ~/matrixos/)
-  peerId: z.string().min(1).max(128),
-  folders: z.array(z.string()).optional(),   // Selective sync: which folders to include
-  exclude: z.array(z.string()).optional(),   // Additional exclude patterns
-  pauseSync: z.boolean().default(false),
+export const SyncMappingConfigSchema = z.object({
+  schemaVersion: z.literal(2),
+  revision: z.int().nonnegative(),
+  profile: z.string(),
+  ownerId: z.string(),
+  runtimeSlot: z.string(),
+  deviceId: z.string(),
+  enabled: z.boolean(),
+  mappings: z.array(z.object({
+    id: z.uuid(),
+    label: z.string(),
+    localRoot: z.string(),
+    remotePrefix: z.string(),
+    direction: z.enum(["two_way", "to_matrix", "to_local"]),
+    enabled: z.boolean(),
+    propagateDeletes: z.boolean(),
+    excludes: z.array(z.string()),
+  })).max(32),
 });
-export type SyncConfig = z.infer<typeof SyncConfigSchema>;
+export type SyncMappingConfig = z.infer<typeof SyncMappingConfigSchema>;
 ```
+
+Mutations carry `expectedRevision`; saving requires exactly
+`revision === expectedRevision + 1` under an exclusive lock. Legacy
+`config.json` remains only as the daemon/service compatibility projection and
+is migrated idempotently into this source of truth.
 
 ---
 

@@ -1162,39 +1162,39 @@ ssh matrix@<customer-vps-ip> 'curl -fsSI http://127.0.0.1:3000'
 
 ## Backup
 
-### Quick Backup
+Customer VPS database backup is owned by
+`matrix-db-backup.service`/`.timer`; do not add a second cron job. The timer is
+hourly, persistent across downtime, and randomized to avoid fleet spikes. The
+service runs as `matrix`, reads the local Postgres environment, and sends only
+allowlisted runtime-scoped objects through `matrixctl r2` and the platform
+storage broker. Bucket credentials must remain absent from customer VPSes.
+
+Safe read-only checks on a reviewed disposable or customer VPS are:
 
 ```bash
-# Platform + proxy DBs
-pg_dump --format=custom --file=/backups/platform-$(date +%Y%m%d).dump "$PLATFORM_DATABASE_URL"
-cp /mnt/data/proxy/proxy.db /backups/proxy-$(date +%Y%m%d).db
-
-# All user data
-tar czf /backups/users-$(date +%Y%m%d).tar.gz /mnt/data/users/
+systemctl is-enabled matrix-db-backup.timer
+systemctl is-active matrix-db-backup.timer
+systemctl list-timers matrix-db-backup.timer --no-pager
+sudo -u matrix test -r /var/lib/matrix/db/backup-status/last-attempt.json
+sudo -u matrix test -r /var/lib/matrix/db/backup-status/last-success.json
 ```
 
-### Automated Backup Script
+An operator may run the oneshot service only with explicit authorization for
+that machine. Success means all of the following agree: non-empty custom dump,
+receipt hash and size, snapshot existence, receipt existence, runtime-scoped
+latest pointer, latest-pointer readback, and atomic `last-success.json`. A newer
+failed `last-attempt.json` must remain visible without destroying the previous
+success.
 
-```bash
-#!/bin/bash
-DATE=$(date +%Y%m%d)
-BACKUP_DIR=/backups/matrix-os/$DATE
-mkdir -p $BACKUP_DIR
+The backup does not include arbitrary Matrix Home files and file sync does not
+back up PostgreSQL. A recovery claim requires an isolated restore into a
+disposable database, schema/fixture-row comparison, and a reviewed update to
+`restoreVerifiedAt`. Never restore over a live customer database as a smoke
+test. See [Backup restore and startup readiness](backup-restore-readiness.md).
 
-pg_dump --format=custom --file=$BACKUP_DIR/platform.dump "$PLATFORM_DATABASE_URL"
-cp /mnt/data/proxy/proxy.db $BACKUP_DIR/
-tar czf $BACKUP_DIR/users.tar.gz /mnt/data/users/
-
-# Keep last 30 days
-find /backups/matrix-os -maxdepth 1 -mtime +30 -exec rm -rf {} +
-
-echo "Backup complete: $BACKUP_DIR"
-```
-
-Add to cron:
-```bash
-echo "0 3 * * * /root/matrix-os/scripts/backup.sh" | crontab -
-```
+Platform-control-plane PostgreSQL uses its own managed backup/restore policy.
+Keep its credentials and evidence in the private operator system; do not copy
+platform dumps or identifiers into public docs or PRs.
 
 ## Migrating Platform Postgres To Managed Postgres
 
