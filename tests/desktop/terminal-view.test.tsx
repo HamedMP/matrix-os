@@ -276,7 +276,9 @@ describe("TerminalView session switching", () => {
     expect(root.style.height).toBe("100%");
     expect(root.style.backgroundColor).toBe(colorProbe.style.backgroundColor);
     expect(viewport.style.backgroundColor).toBe(colorProbe.style.backgroundColor);
+    expect(viewport.style.overscrollBehavior).toBe("none");
     expect(scrollable.style.backgroundColor).toBe(colorProbe.style.backgroundColor);
+    expect(scrollable.style.overscrollBehavior).toBe("none");
   });
 
   it("keeps the last canonical row accessible after soft viewport resizing", async () => {

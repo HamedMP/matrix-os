@@ -110,6 +110,13 @@ export function createSessionSizing(options: SessionSizingOptions) {
     },
     detach(id: string): void {
       if (clients.delete(id)) {
+        // A replacement attachment starts a fresh pty bridge at its declared
+        // size before the debounce settles. Once every classified client has
+        // gone, the last applied value no longer describes that future bridge,
+        // so it must not suppress the replacement client's correction.
+        if (classifiedCount() === 0) {
+          applied = null;
+        }
         scheduleApply();
       }
     },

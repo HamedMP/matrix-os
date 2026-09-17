@@ -675,6 +675,41 @@ describe("TerminalPane scrolling", () => {
     expect(socketHealthConfigs.at(-1)?.pingIntervalMs).toBe(10_000);
   });
 
+  it("keeps the first automatic reconnect silent", async () => {
+    const view = render(
+      <TerminalPane
+        paneId="pane-quiet-reconnect"
+        cwd=""
+        theme={theme}
+        isFocused
+        sessionId={TERMINAL_REF_KEY}
+        isClosing={false}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+
+    await waitFor(() => expect(WebSocketMock.instances).toHaveLength(1));
+    const nativeSetTimeout = window.setTimeout.bind(window);
+    const setTimeoutSpy = vi.spyOn(window, "setTimeout").mockImplementation((handler, timeout, ...args) => {
+      if (timeout === 750) {
+        if (typeof handler === "function") handler();
+        return 750 as unknown as ReturnType<typeof window.setTimeout>;
+      }
+      return nativeSetTimeout(handler, timeout, ...args);
+    });
+
+    try {
+      await act(async () => {
+        WebSocketMock.instances[0]!.onclose?.();
+      });
+      expect(view.queryByText("Reconnecting terminal...")).toBeNull();
+    } finally {
+      setTimeoutSpy.mockRestore();
+    }
+  });
+
   it("renders the durable observer snapshot for a terminal tab", async () => {
     render(
       <TerminalPane
@@ -896,6 +931,7 @@ describe("TerminalPane scrolling", () => {
     const pane = container.querySelector("[data-terminal-viewport]") as HTMLElement;
     Object.defineProperty(pane, "clientWidth", { configurable: true, value: 700 });
     Object.defineProperty(pane, "clientHeight", { configurable: true, value: 800 });
+    pane.scrollLeft = 100;
 
     expect(buildAuthenticatedWebSocketUrl).toHaveBeenCalledWith(
       "/ws/terminal/tab",
@@ -910,7 +946,11 @@ describe("TerminalPane scrolling", () => {
 
     await waitFor(() => expect(terminal.resize).toHaveBeenLastCalledWith(140, 40));
     await waitFor(() => expect(terminal.options.fontSize).toBe(10));
-    await waitFor(() => expect(terminal.element?.style.transform).toBe("scale(1)"));
+    await waitFor(() => expect(terminal.element?.style.transform).toMatch(/^scale\(/));
+    const softScale = Number.parseFloat(terminal.element!.style.transform.slice(6, -1));
+    expect(softScale).toBeLessThan(1);
+    expect(pane.style.overflowX).toBe("hidden");
+    expect(pane.scrollLeft).toBe(0);
     expect(terminal.cols).toBe(140);
     expect(terminal.rows).toBe(40);
     expect(fitAddon.fit).not.toHaveBeenCalled();

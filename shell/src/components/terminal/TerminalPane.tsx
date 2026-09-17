@@ -1088,17 +1088,19 @@ export function TerminalPane({
             track("schedule-reconnect", { delayMs: delay, nextAttempt: reconnectAttemptRef.current });
             clearPendingReconnectBanner();
             setConnectionNotice(null);
-            pendingReconnectBannerTimerRef.current = setTimeout(() => {
-              pendingReconnectBannerTimerRef.current = null;
-              if (isCurrentWs() || (
-                wsGenerationRef.current === generation
-                && !disposed
-                && !isClosingRef.current
-                && wsRef.current === null
-              )) {
-                setConnectionNotice("reconnecting");
-              }
-            }, 750);
+            if (attempt > 0) {
+              pendingReconnectBannerTimerRef.current = setTimeout(() => {
+                pendingReconnectBannerTimerRef.current = null;
+                if (isCurrentWs() || (
+                  wsGenerationRef.current === generation
+                  && !disposed
+                  && !isClosingRef.current
+                  && wsRef.current === null
+                )) {
+                  setConnectionNotice("reconnecting");
+                }
+              }, 750);
+            }
             reconnectTimerRef.current = setTimeout(() => {
               reconnectTimerRef.current = null;
               if (!disposed && !isClosingRef.current) {

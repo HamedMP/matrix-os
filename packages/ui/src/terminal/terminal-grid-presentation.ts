@@ -119,7 +119,6 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
     const buffer = terminal.buffer?.active;
     const live = buffer && buffer.viewportY >= buffer.baseY;
     const followY = live && (!previousPan || Math.abs(host.scrollTop - previousPan.top) <= 1);
-    const followX = live && (!previousPan || Math.abs(host.scrollLeft - previousPan.left) <= 1);
 
     if (!stage) {
       // xterm emits once per parsed write batch; RAF coalesces output bursts.
@@ -160,7 +159,7 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
     });
     stage.style.width = `${visualWidth}px`;
     stage.style.height = `${visualHeight}px`;
-    host.style.overflowX = visualWidth > viewportWidth + 0.5 ? "auto" : "hidden";
+    host.style.overflowX = "hidden";
     host.style.overflowY = visualHeight > viewportHeight + 0.5 ? "auto" : "hidden";
     options.onScale?.(scale);
     presentationScale = scale;
@@ -175,14 +174,10 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
       host.scrollTop = panToCell(host.scrollTop, buffer.cursorY * cell, (buffer.cursorY + 1) * cell,
         visibleHeight, Math.max(0, visualHeight - visibleHeight));
     } else if (visualHeight <= visibleHeight) host.scrollTop = 0;
-    if (followX && buffer) {
-      const cell = dimension(screen, "width") * scale / terminal.cols;
-      host.scrollLeft = panToCell(host.scrollLeft, buffer.cursorX * cell, (buffer.cursorX + 1) * cell,
-        visibleWidth, Math.max(0, visualWidth - visibleWidth));
-    } else if (visualWidth <= visibleWidth) host.scrollLeft = 0;
+    host.scrollLeft = 0;
     previousPan = {
       top: followY || visualHeight <= visibleHeight ? host.scrollTop : previousPan?.top ?? host.scrollTop,
-      left: followX || visualWidth <= visibleWidth ? host.scrollLeft : previousPan?.left ?? host.scrollLeft,
+      left: 0,
     };
     if (visibleWidth !== viewportWidth || visibleHeight !== viewportHeight) schedule();
   };

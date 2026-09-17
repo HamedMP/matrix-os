@@ -25,8 +25,9 @@ function positiveFinite(value: number, fallback: number): number {
 
 /**
  * Computes presentation-only scaling for a server-sized terminal grid.
- * The readable floor wins over fit, after which overflow becomes pan instead
- * of shrinking glyphs further. The logical xterm cols/rows are never involved.
+ * The readable floor wins over vertical fit, after which vertical overflow can
+ * pan. Width fit always wins so a terminal can never drift sideways. The
+ * logical xterm cols/rows are never involved.
  */
 export function computeSoftGridLayout(input: SoftGridLayoutInput): SoftGridLayout {
   const viewportWidth = positiveFinite(input.viewportWidth, input.gridWidth);
@@ -39,9 +40,10 @@ export function computeSoftGridLayout(input: SoftGridLayoutInput): SoftGridLayou
     positiveFinite(input.minimumReadableFontSize, configuredFontSize),
   );
   const devicePixelRatio = positiveFinite(input.devicePixelRatio ?? 1, 1);
-  const fitScale = Math.min(1, viewportWidth / gridWidth, viewportHeight / gridHeight);
+  const widthScale = Math.min(1, viewportWidth / gridWidth);
+  const heightScale = Math.min(1, viewportHeight / gridHeight);
   const readableScale = minimumReadableFontSize / configuredFontSize;
-  const overallScale = Math.max(fitScale, readableScale);
+  const overallScale = Math.min(widthScale, Math.max(heightScale, readableScale));
   const desiredFontSize = configuredFontSize * overallScale;
   const fontSize = Math.min(
     configuredFontSize,
@@ -64,4 +66,3 @@ export function computeSoftGridLayout(input: SoftGridLayoutInput): SoftGridLayou
     panY: visualHeight - viewportHeight > DIMENSION_EPSILON,
   };
 }
-

@@ -60,7 +60,10 @@ function applyTerminalSurfaceTheme(element: HTMLElement | undefined, background:
   element.style.backgroundColor = background;
   for (const selector of [".xterm-viewport", ".xterm-scrollable-element"]) {
     const surface = element.querySelector<HTMLElement>(selector);
-    if (surface) surface.style.backgroundColor = background;
+    if (surface) {
+      surface.style.backgroundColor = background;
+      surface.style.overscrollBehavior = "none";
+    }
   }
 }
 
