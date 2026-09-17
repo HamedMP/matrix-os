@@ -1,4 +1,5 @@
 import { bootstrapChatMetadata } from "./metadata-schema.js";
+import { bootstrapChatAttribution } from "./attribution-repair.js";
 import { sql, type ColumnType, type Generated, type Kysely } from "kysely";
 
 type Timestamp = ColumnType<Date | string, Date | string | undefined, Date | string>;
@@ -693,6 +694,7 @@ export async function bootstrapChatDatabase<Database extends ChatDatabase>(
   `.execute(db);
 
   await bootstrapChatMetadata(db);
+  await bootstrapChatAttribution(db);
 
   await sql`CREATE INDEX IF NOT EXISTS idx_chats_owner_updated ON chats(owner_type, owner_id, lifecycle, updated_at DESC, id)`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_chats_owner_project ON chats(owner_type, owner_id, project_id)`.execute(db);
