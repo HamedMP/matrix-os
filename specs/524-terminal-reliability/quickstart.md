@@ -20,3 +20,7 @@
 | Project isolation and deleted references | Pending | Pending | Pending | Pending | Pending | Pending |
 
 A platform's unsupported action is recorded with its existing limitation, not silently counted as passing. Unit/integration proof, actual runtime evidence and Human Review are separate columns in the execution record. The pending matrix is intentional: this planning artifact does not claim the complete audit has run.
+
+## Scroll follow-up acceptance
+
+On the exact repair head, compare a short normal-shell prompt with a long numbered history in a small window. Short content must have no empty horizontal/vertical pan. Long content must have one vertical rail anchored to the viewport edge, reaching oldest history and the final prompt. Repeat with pixel-wheel input, scrollbar dragging, window resize, tab switching, and Canvas zoom. Confirm real wide output remains reachable, native TUI mouse-wheel input still arrives, and selection/copy works. Do not equate synthetic pixel-wheel events with physical trackpad Human Review.

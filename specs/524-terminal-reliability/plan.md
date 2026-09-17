@@ -4,7 +4,7 @@
 
 ## Summary
 
-Audit Terminal against a single behavior contract, reproduce each failure at its actual boundary, and land narrow repairs with independent evidence. Preserve workspace/tab identity and current authorization. PR #1736 is the first bounded repair, covering legitimate startup replies exceeding raw pending-frame limits and startup snapshot row alignment. It does not establish completion of the broader audit.
+Audit Terminal against a single behavior contract, reproduce each failure at its actual boundary, and land narrow repairs with independent evidence. Preserve workspace/tab identity and current authorization. PR #1736 is the first bounded repair, covering legitimate startup replies exceeding raw pending-frame limits startup snapshot row alignment, and the Human Review scrolling follow-up (one history rail, trackpad edge access, and unused-grid clipping). It does not establish completion of the broader audit.
 
 ## Technical Context
 

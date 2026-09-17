@@ -52,6 +52,9 @@ The user sees the prompt and final output lines, can scroll deliberately, paste 
 2. Given content changes or the cursor moves, then the viewport does not unexpectedly pan horizontally.
 3. Given a narrow observing device cannot preserve both readable text and the controller's width, then explicit horizontal panning may remain available; this does not grant resize authority.
 4. Given valid text, Unicode, binary input, paste, or shortcuts, then ordering and existing meanings are preserved.
+5. Given history and clipped live rows, then one viewport-edge vertical scrollbar reaches both ends; no floating inner scrollbar competes with it. Trackpad input reaches the same content without requiring a scrollbar drag.
+6. Given a short normal-shell prompt, unused canonical rows/columns do not create scrollable blank margins. Real long lines, cursor cells, painted backgrounds and alternate-screen applications remain accessible.
+7. Given a deliberate scroll position, native redraws do not pull it back to a cursor outside the viewport. History navigation alone does not change the scrollbar range.
 
 ### Edge Cases
 
@@ -90,4 +93,4 @@ Terminal identity; runtime incarnation; viewer attachment; controller lease; can
 
 ## Assumptions and Scope
 
-This is a reliability audit and staged repair plan, not a terminal redesign or a claim that all reported defects share one cause. Existing intentional readable-width panning and single-controller semantics are retained unless separately approved. PR #1736 addresses only the reproduced startup-input overflow; other acceptance criteria remain open until measured. Performance trials use a healthy disposable VPS and documented network conditions; no universal latency guarantee is inferred from those trials. Production users' commands and data are not altered for testing.
+This is a reliability audit and staged repair plan, not a terminal redesign or a claim that all reported defects share one cause. Existing intentional readable-width panning and single-controller semantics are retained unless separately approved. PR #1736 addresses reproduced startup-input overflow, snapshot row alignment, and the explicitly approved scrolling follow-up; other acceptance criteria remain open until measured. Performance trials use a healthy disposable VPS and documented network conditions; no universal latency guarantee is inferred from those trials. Production users' commands and data are not altered for testing.
