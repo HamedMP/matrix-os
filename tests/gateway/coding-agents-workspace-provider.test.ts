@@ -69,6 +69,22 @@ function workspaceSession(overrides: Record<string, unknown> = {}) {
 }
 
 describe("coding agent workspace provider", () => {
+  it.each([404, 503])("project deletion accepts only missing sessions, not runtime failure (%s)", async (status) => {
+    const provider = createWorkspaceCodingAgentProvider({
+      providerId: "codex", agent: "codex",
+      runtime: { startSession: vi.fn(), stopSession: vi.fn(async () => ({
+        ok: false as const, status, error: { code: status === 404 ? "not_found" : "unavailable", message: "Session unavailable" },
+      })) },
+    });
+    const result = provider.abortThread!({
+      principal: ownerPrincipal,
+      thread: AgentThreadSummarySchema.parse({ id: "thread_delete", providerId: "codex", title: "Delete", status: "running", attention: "none", createdAt: baseNow.toISOString(), updatedAt: baseNow.toISOString() }),
+      requireRuntimeStop: true, clientRequestId: "req_delete", now: () => baseNow, nextEventId: () => "evt_delete",
+    });
+    if (status === 404) await expect(result).resolves.toHaveLength(2);
+    else await expect(result).rejects.toThrow("Workspace provider abort failed");
+  });
+
   it("bounds a hung cancellation without claiming the remote tool stopped", async () => {
     vi.useFakeTimers();
     const provider = createWorkspaceCodingAgentProvider({

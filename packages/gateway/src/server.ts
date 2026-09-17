@@ -1,3 +1,4 @@
+import { createProjectChatCleanup } from "./chat/project-deletion.js";
 import { createRuntimeAppAiRoutes } from "./app-ai/runtime.js";
 import { restoreBackgroundChatThread, createBackgroundChatProjection } from "./coding-agents/background-chat-recovery.js";
 import { createBackgroundAgentRuntime } from "./background-agent-runtime.js";
@@ -3254,6 +3255,9 @@ export async function createGateway(config: GatewayConfig) {
   const upgradeBodyLimit = bodyLimit({ maxSize: 4096 });
   const pushRegistrationBodyLimit = bodyLimit({ maxSize: 4096 });
   const clientErrorBodyLimit = bodyLimit({ maxSize: CLIENT_ERROR_LOG_BODY_LIMIT });
+  const deleteProjectChats = chatRepository && canonicalChatOrchestrator
+    ? createProjectChatCleanup({ repository: chatRepository, orchestrator: canonicalChatOrchestrator })
+    : async () => { throw new Error("Project chat cleanup unavailable"); };
   app.route("/", createWorkspaceRoutes({
     homePath,
     backgroundRuntime: backgroundAgentRuntime,
@@ -3264,6 +3268,7 @@ export async function createGateway(config: GatewayConfig) {
     eventPublisher: workspaceEventPublisher,
     reviewStore,
     codingAgentThreadStore,
+    deleteProjectChats,
     getOwnerScope: (c) => ({ type: "user", id: requireRequestPrincipal(c).userId }),
     ...(gatewayCollaboration ? {
       projectOperationAdmission: gatewayCollaboration.projectOperationAdmission,
@@ -3275,6 +3280,7 @@ export async function createGateway(config: GatewayConfig) {
     upstreamOrigin: symphonyUpstreamOriginForPort(initialSymphonyPort),
   }));
   const workspaceStartupRecoveryController = createWorkspaceStartupRecovery({
+    deleteProjectChats,
     homePath,
     backgroundRuntime: backgroundAgentRuntime,
     eventPublisher: workspaceEventPublisher,

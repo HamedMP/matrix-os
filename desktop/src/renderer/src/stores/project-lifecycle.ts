@@ -12,7 +12,7 @@ import { useTabs } from "./tabs";
 type LifecycleAction =
   | { type: "archive" }
   | { type: "restore" }
-  | { type: "delete"; confirmation: string };
+  | { type: "delete"; confirmation: string; confirmTerminate: true };
 
 const SAFE_ACTION_ERRORS: Record<string, string> = {
   project_active: "Stop active project work before continuing.",
@@ -125,6 +125,6 @@ export const useProjectLifecycle = create<ProjectLifecycleState>()((set, get) =>
     loadArchivedProjects,
     archiveProject: (api, slug) => applyAction(api, slug, { type: "archive" }),
     restoreProject: (api, slug) => applyAction(api, slug, { type: "restore" }),
-    deleteProject: (api, slug, confirmation) => applyAction(api, slug, { type: "delete", confirmation }),
+    deleteProject: (api, slug, confirmation) => applyAction(api, slug, { type: "delete", confirmation, confirmTerminate: true }),
   };
 });

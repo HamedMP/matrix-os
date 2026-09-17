@@ -1,3 +1,7 @@
+> Updated deletion behavior: see [cascade deletion](stale-activity-repair-plan.md).
+> Confirmed delete stops and removes child sessions/chats; only archive retains
+> the active-work rejection. This supersedes the original deletion guard below.
+
 # Desktop Project Lifecycle Implementation Plan
 
 > **For Codex:** REQUIRED SUB-SKILL: Use `superpowers:executing-plans` to execute this plan task by task, and `superpowers:test-driven-development` for every behavior change.

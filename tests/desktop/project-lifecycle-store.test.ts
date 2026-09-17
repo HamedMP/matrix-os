@@ -232,6 +232,7 @@ describe("project lifecycle store", () => {
     expect(post).toHaveBeenCalledWith("/api/projects/repo/actions", {
       type: "delete",
       confirmation: "Repo",
+      confirmTerminate: true,
     });
   });
 
