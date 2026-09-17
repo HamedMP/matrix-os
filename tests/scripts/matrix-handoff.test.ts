@@ -189,8 +189,20 @@ appendFileSync(process.env.MATRIX_CALL_LOG, JSON.stringify(process.argv.slice(2)
     expect(calls.some((args) =>
       args[0] === "run" && args.some((arg: unknown) => typeof arg === "string" && arg.includes("tar -xzf - -C")),
     )).toBe(true);
-    expect(calls.some((args) => args[0] === "shell" && args[1] === "new")).toBe(true);
+    expect(calls).toContainEqual(expect.arrayContaining([
+      "shell",
+      "new",
+      "--project",
+      "main",
+      "--name",
+      expect.stringMatching(/^codex-demo-project-/),
+      "--cwd",
+      expect.stringMatching(/^projects\/demo-project-handoff-/),
+      "--cmd",
+      expect.stringContaining("codex"),
+    ]));
     expect(stdout).toContain("Handoff ready.");
     expect(stdout).toContain("~/projects/demo-project-handoff-");
+    expect(stdout).toContain("matrix shell connect --project main --tab");
   });
 });

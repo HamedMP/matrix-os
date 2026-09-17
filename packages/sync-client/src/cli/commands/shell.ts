@@ -9,6 +9,7 @@ const TERMINAL_WORKSPACE_ID = /^tws_[0-9a-f]{32}$/;
 const TERMINAL_TAB_ID = /^tt_[0-9a-f]{32}$/;
 const PROJECT_ID = /^proj_[0-9a-f]{16,64}$/;
 const SHELL_USAGE = "Usage: matrix shell list|new|connect|rm [--project <project>] [--tab <tab>]";
+const MAX_STARTUP_COMMAND_LENGTH = 4096;
 
 const commonArgs = {
   profile: { type: "string", required: false },
@@ -35,6 +36,19 @@ async function clientFromArgs(args: Record<string, unknown>): Promise<ShellClien
 
 function codedError(message: string, code = "invalid_request"): Error {
   return Object.assign(new Error(message), { code });
+}
+
+function parseStartupCommand(value: unknown): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (
+    typeof value !== "string"
+    || value.length === 0
+    || value.length > MAX_STARTUP_COMMAND_LENGTH
+    || value.includes("\0")
+  ) {
+    throw codedError("--cmd must contain between 1 and 4096 safe characters");
+  }
+  return ["sh", "-lc", value];
 }
 
 function writeError(err: unknown, json: boolean): void {
@@ -182,6 +196,11 @@ const newCommand = defineCommand({
     project: { type: "string", required: false },
     name: { type: "string", required: false },
     cwd: { type: "string", required: false },
+    cmd: {
+      type: "string",
+      required: false,
+      description: "Command to start in the new tab through sh -lc",
+    },
     attach: { type: "boolean", required: false, default: false },
     ...commonArgs,
   },
@@ -191,9 +210,11 @@ const newCommand = defineCommand({
       const client = await clientFromArgs(args);
       const { workspace, project } = await resolveWorkspace(client, args.project);
       const name = typeof args.name === "string" && args.name.trim() ? args.name.trim() : "Shell";
+      const startupCommand = parseStartupCommand(args.cmd);
       const response = await client.createTab(workspace.id, {
         name,
         cwd: typeof args.cwd === "string" ? args.cwd : project ? `projects/${project.label}` : "",
+        ...(startupCommand ? { command: startupCommand } : {}),
       });
       const tab = response.tab as TabRecord | undefined;
       if (!tab || !TERMINAL_TAB_ID.test(tab.id)) throw codedError("Invalid terminal tab response", "request_failed");
