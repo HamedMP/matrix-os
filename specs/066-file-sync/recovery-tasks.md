@@ -48,9 +48,9 @@ implementation and is retained as historical compatibility context.
 ## P5 — Backup status and controlled activation
 
 - [ ] Resolve effective storage privately with sanitized fingerprints.
-- [ ] Harden backup locking/timeouts/receipts and scheduler reconciliation.
+- [x] Harden backup locking/timeouts/receipts and scheduler reconciliation.
 - [ ] Expose truthful backup health and verify a synthetic disposable restore.
-- [ ] Prepare, but do not perform, scoped mirror/backup rollout.
+- [x] Prepare, but do not perform, scoped mirror/backup rollout.
 
 ## P6 — Electron helper lifecycle and packaging
 

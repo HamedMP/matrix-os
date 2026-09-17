@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  BackupStatusSchema,
   SyncMappingConfigSchema,
   SyncMappingSchema,
   SyncRuntimeSlotSchema,
   SyncScopeSchema,
+  deriveBackupFreshness,
 } from "../../packages/contracts/src/index.js";
 
 describe("sync contracts", () => {
@@ -106,5 +108,38 @@ describe("sync contracts", () => {
       ...base,
       mappings: [mapping, { ...mapping, label: "Duplicate" }],
     }).success).toBe(false);
+  });
+});
+
+describe("backup status contracts", () => {
+  it("derives the documented hourly freshness windows", () => {
+    const now = Date.UTC(2026, 8, 17, 12);
+    expect(deriveBackupFreshness(now - 2 * 60 * 60 * 1000, now)).toBe("healthy");
+    expect(deriveBackupFreshness(now - 3 * 60 * 60 * 1000, now)).toBe("stale");
+    expect(deriveBackupFreshness(now - 25 * 60 * 60 * 1000, now)).toBe("critical");
+    expect(deriveBackupFreshness(null, now)).toBe("unknown");
+  });
+
+  it("keeps attempt, success, scheduler, storage, and restore evidence distinct", () => {
+    expect(BackupStatusSchema.parse({
+      schemaVersion: 1,
+      scheduler: { enabled: true, active: false, nextDueAt: 10 },
+      lastAttempt: { attemptedAt: 5, outcome: "failed", errorCode: "upload_failed" },
+      lastSuccess: {
+        snapshotKey: "system/db/snapshots/2026-09-17T120000Z.dump",
+        receiptKey: "system/db/receipts/2026-09-17T120000Z.json",
+        sha256: "a".repeat(64),
+        size: 42,
+        runtimeSlot: "primary",
+        completedAt: 1,
+        restoreVerifiedAt: null,
+      },
+      storageReachability: "unreachable",
+      freshness: "stale",
+      observedAt: 10,
+    })).toMatchObject({
+      lastAttempt: { outcome: "failed" },
+      lastSuccess: { size: 42 },
+    });
   });
 });

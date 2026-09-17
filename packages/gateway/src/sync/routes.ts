@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import type { SyncScope } from "@matrix-os/contracts";
+import type { BackupStatus, SyncScope } from "@matrix-os/contracts";
 import { bodyLimit } from "hono/body-limit";
 import { HTTPException } from "hono/http-exception";
 import {
@@ -68,6 +68,7 @@ export interface SyncRouteDeps {
   getUserId?: (c: any) => string;
   getPeerId: (c: any) => string;
   finalizeStagedObject?: CommitDeps["finalizeStagedObject"];
+  getBackupStatus?: () => Promise<BackupStatus>;
 }
 
 export function createSyncRoutes(deps: SyncRouteDeps): Hono {
@@ -378,6 +379,22 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
     });
   });
 
+  app.get("/backup-status", async (c) => {
+    getScope(c);
+    if (!deps.getBackupStatus) {
+      return c.json({ error: "Backup status unavailable" }, 503);
+    }
+    try {
+      return c.json(await deps.getBackupStatus());
+    } catch (err: unknown) {
+      console.error(
+        "[sync/backup-status] Status read failed:",
+        err instanceof Error ? err.message : String(err),
+      );
+      return c.json({ error: "Backup status unavailable" }, 503);
+    }
+  });
+
   // POST /resolve-conflict
   app.post("/resolve-conflict", mutatingBodyLimit, async (c) => {
     const scope = getScope(c);
@@ -606,6 +623,7 @@ syncApp.post("/multipart/complete", (c) => c.json({ error: "Not configured" }, 5
 syncApp.post("/multipart/abort", (c) => c.json({ error: "Not configured" }, 503));
 syncApp.post("/commit", (c) => c.json({ error: "Not configured" }, 503));
 syncApp.get("/status", (c) => c.json({ error: "Not configured" }, 503));
+syncApp.get("/backup-status", (c) => c.json({ error: "Not configured" }, 503));
 syncApp.post("/resolve-conflict", (c) => c.json({ error: "Not configured" }, 503));
 syncApp.post("/share", (c) => c.json({ error: "Not configured" }, 503));
 syncApp.delete("/share", (c) => c.json({ error: "Not configured" }, 503));

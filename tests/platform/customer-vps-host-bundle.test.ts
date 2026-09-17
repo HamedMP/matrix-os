@@ -1262,7 +1262,7 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(syncAgent).toContain('/opt/matrix/env/symphony.env');
     expect(syncAgent).toContain('sudo install -o root -g matrix -m 0640 "$temp_file" "$SYMPHONY_ENV_FILE" || status=$?');
     expect(syncAgent).toContain('rm -f "$temp_file"');
-    expect(syncAgent).toContain("sudo find \"$extract_dir/systemd\" -maxdepth 1 -name 'matrix-*.service'");
+    expect(syncAgent).toContain("sudo find \"$extract_dir/systemd\" -maxdepth 1 \\( -name 'matrix-*.service' -o -name 'matrix-*.timer' \\)");
     expect(syncAgent).toContain('sudo systemctl daemon-reload');
     expect(syncAgent).toContain([
       'if [ -f "$extract_dir/systemd/matrix-sync-agent.service" ]; then',
@@ -1274,6 +1274,9 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
       '    fi',
     ].join('\n'));
     expect(syncAgent).toContain('sudo systemctl enable matrix-code-server.service');
+    expect(syncAgent).toContain('MATRIX_DB_BACKUP_PAUSE_MARKER:-/etc/matrix/db-backup.paused');
+    expect(syncAgent).toContain('sudo systemctl enable --now matrix-db-backup.timer');
+    expect(syncAgent).toContain('Database backup timer remains operator-paused');
     expect(syncAgent).toContain('sudo systemctl start --no-block matrix-code-server.service || true');
     expect(syncAgent).toContain('sudo systemctl enable matrix-developer-tools.service');
     expect(syncAgent).toContain('sudo systemctl start --no-block matrix-developer-tools.service || true');
@@ -1303,6 +1306,8 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
 
     expect(matrixctl).toContain('MATRIX_R2_BROKER_HELPER');
     expect(broker).toContain('/internal/containers/${encodeURIComponent(handle)}/sync/system');
+    expect(broker).toContain("system\\/db\\/receipts");
+    expect(broker).toContain("T\\d{6}Z\\.json");
     expect(broker).toContain('authorization: `Bearer ${token}`');
     expect(matrixctl).not.toContain('AWS_ACCESS_KEY_ID');
     expect(matrixctl).not.toContain('AWS_SECRET_ACCESS_KEY');

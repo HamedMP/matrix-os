@@ -807,14 +807,18 @@ exit 99
     const root = process.cwd();
     const backup = readFileSync(join(root, 'distro/customer-vps/matrix-db-backup.sh'), 'utf8');
 
-    expect(backup.indexOf('/opt/matrix/bin/matrixctl r2 put "$snapshot_path" "$snapshot_key"')).toBeLessThan(
-      backup.indexOf('/opt/matrix/bin/matrixctl r2 put-latest "$snapshot_key"'),
+    expect(backup.indexOf('"$matrixctl_bin" r2 put "$snapshot_path" "$snapshot_key"')).toBeLessThan(
+      backup.indexOf('"$matrixctl_bin" r2 put-latest "$snapshot_key"'),
     );
     expect(backup).not.toContain('matrixctl r2 prune system/db/snapshots/');
     expect(backup).toContain('--format=custom');
     expect(backup).toContain('.dump');
     expect(backup).toContain('timeout');
     expect(backup).toContain('system/runtime-slots/${runtime_slot}/db/snapshots/${snapshot_name}');
+    expect(backup).toContain('system/runtime-slots/${runtime_slot}/db/receipts/${receipt_name}');
+    expect(backup).toContain('flock -n 9');
+    expect(backup).toContain('last-success.json');
+    expect(backup).toContain('storage_pointer_verify_failed');
   });
 
   it('keeps restore as a boot gate and refuses failed restores', () => {
