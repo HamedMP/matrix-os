@@ -21,3 +21,11 @@ The complete matrix in quickstart.md remains pending beyond the bounded checks a
 ## Separate confirmed baseline defect
 
 Tab rename returned HTTP 500 while preparing review labels. Socket dispatch passes the entire RenameTab input to strict TerminalRefSchema, including name/baseRevision; the same code exists on the untouched baseline. Tracked independently in [#1738](https://github.com/HamedMP/matrix-os/issues/1738). The review environment retains two original tab names. This is not part of the startup queue repair.
+
+## Human Review follow-up — startup snapshot row alignment
+
+The reviewer observed text moving down and returning on new/opened terminals. Electron tracing showed stable host geometry, a snapshot with an extra initial row, and a subsequent native redraw at row zero. The Zellij 0.44.3 ANSI dump implementation serializes empty history as an SGR reset and then adds a separator; the CLI adds a final newline. Short viewports also need to be positioned after their history, rather than replayed as an undifferentiated text stream.
+
+PR #1736 commits `0e7e5621a` and `eec0fca19` decode the known CLI framing and restore unused viewport rows while retaining ambiguous blank history above the current screen. No whitespace trimming, connection-banner delay, or hidden initial text is used. Imported snapshots without viewport metadata keep existing behavior. Seven new failing-first regressions cover the row defect; a compatibility guard covers full and legacy viewports, and the socket test renders the actual emitted snapshot through xterm. Runtime suite: 184 passed, 5 opt-in skips before the final compatibility guard; final focused set: 16 passed. Runtime TypeScript and Electron build passed. Exact-head live Preview validation is pending.
+
+The visual trace also captured an independent native attach failure: runtime `attachNow` observed the native client exit while its attachment was opening, reporting `Terminal tab unavailable`; the gateway exposed `runtime_unavailable` and reconnected. This is concrete evidence for the previously unexplained pre-attachment reconnect. Its underlying native-client exit cause remains unknown and is not fixed by snapshot alignment.
