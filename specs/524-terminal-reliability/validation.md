@@ -20,7 +20,7 @@ The complete matrix in quickstart.md remains pending beyond the bounded checks a
 
 ## Separate confirmed baseline defect
 
-Tab rename returned HTTP 500 while preparing review labels. Socket dispatch passes the entire RenameTab input to strict TerminalRefSchema, including name/baseRevision; the same code exists on the untouched baseline. Tracked independently in [#1738](https://github.com/HamedMP/matrix-os/issues/1738). The review environment retains two original tab names. This is not part of the startup queue repair.
+Tab rename returned HTTP 500 while preparing review labels. Socket dispatch passes the entire RenameTab input to strict TerminalRefSchema, including name/baseRevision; the same code exists on the untouched baseline. Tracked independently in [#1738](https://github.com/HamedMP/matrix-os/issues/1738). The review environment retains two original tab names. This was separate from the startup queue cause and is now repaired in the follow-up recorded below.
 
 ## Human Review follow-up — startup snapshot row alignment
 
@@ -51,3 +51,16 @@ Deletion previously removed a row optimistically while shutdown was pending, all
 147 focused tests pass; four browser renderer cases and one native Electron fixture pass. Desktop and Web TypeScript, exact-head Electron production build, and the pattern scan pass (zero violations, five pre-existing warnings). Exact-head Preview deployment and latest Human Review remain pending.
 
 Latest candidate `bf9b6d506` explicitly labels pending deletion as `Deleting…` and focuses xterm when the user clicks unused viewport space. Two new failing-first tests reproduced missing label/focus behavior. 88 related tests, four browser renderer cases, and one native Electron case pass; existing selection assertions remain green. Desktop and Web type checks pass. Preview publication is being refreshed for this head.
+
+
+## Follow-up — strict control references and native history evidence
+
+Candidate `11dda0084` separates rename payload fields from the strict terminal reference at the socket boundary. The exact Preview bundle was verified installed/running, live rename succeeded and persisted on readback, and gateway/shell/sync/runtime health passed. A transient revision conflict immediately after tab creation was respected; verification waited for activation and read the current revision before renaming.
+
+The reviewer then reported Pin failure. Candidate `7ebaabe32` fixes the same mixed-reference defect in UpdateTabUiState, WriteInput, and Resize. Four new tests fail on the old dispatcher. The repaired boundary passes 65 runtime/socket/store tests plus 23 Desktop store/sidebar tests. Pin/unpin tests use the actual durable store over a Unix socket, instantiate a new store to verify persistence, and reject stale revisions. Runtime TypeScript, pattern scan (zero violations), and Electron production build pass. Exact-head Preview live Pin verification remains pending publication.
+
+The reviewer also reproduced incorrect scrollbar position and thumb length. This invalidates any interpretation of earlier local-rail fixtures as proving native-history synchronization. Zellij processes native mouse-wheel reports and redraws its viewport without updating xterm's local history offset. Therefore the existing rail can disagree with the actual history being displayed. Track this unresolved defect in [#1745](https://github.com/HamedMP/matrix-os/issues/1745).
+
+An isolated Zellij 0.44.3 plugin experiment read native pane contents above and below the viewport: the synthetic fixture reported 70 above / 0 below at bottom, 0 above / 70 below at top, then 70 above / 0 below again. Each query took roughly 78 ms. The CLI subscriber only includes above-viewport history on its initial event, and full screen dumps omit below-viewport history; neither alone supplies an authoritative scrolling range. The plugin required an attached native client and explicit pane-read/CLI-pipe permissions. This is feasibility evidence only, not production implementation or an approved permission/deployment design.
+
+A follow-up implementation must use authoritative native position/range for wheel and dragging, retain full-screen application mouse input and observer/writer rules, handle wrapping/blank rows/resize, bound requests and cleanup, and preserve existing sessions across upgrade. Do not infer position from wheel counts or claim a constant/local-only thumb fixes this defect. Human Review of these remaining changes is open.
