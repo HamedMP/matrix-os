@@ -80,7 +80,7 @@ describe("real terminal renderer soft-grid resizing", () => {
       const content = screen.getBoundingClientRect();
       return { bottom: content.bottom, visibleBottom: outer.bottom,
         panTop: viewport.scrollTop, scrollHeight: viewport.scrollHeight,
-        stageHeight: stage.offsetHeight, clientHeight: viewport.clientHeight,
+        stageHeight: stage.offsetHeight, screenHeight: screen.offsetHeight, clientHeight: viewport.clientHeight,
         scale: xterm.style.transform, stageBottom: stage.getBoundingClientRect().bottom };
     });
   }
@@ -149,7 +149,7 @@ describe("real terminal renderer soft-grid resizing", () => {
       expect((await geometry(page)).panTop).toBeGreaterThan(0);
       // Native browser selection defaults must stay suppressed when xterm
       // cancels a forwarded event, including a double click with no movement.
-      const shortGridHeight = (await geometry(page)).stageHeight;
+      const shortGridHeight = (await geometry(page)).screenHeight;
       await page.evaluate(() => {
         Object.defineProperty(navigator, "clipboard", { configurable: true, value: {
           writeText: async (text: string) => { document.body.dataset.copied = text; },
@@ -160,7 +160,7 @@ describe("real terminal renderer soft-grid resizing", () => {
         (window as unknown as { fixtureOutput: (data: string) => void })
           .fixtureOutput("\x1bcDOUBLECLICK prefix targetword suffix");
       });
-      await expect.poll(async () => (await geometry(page)).stageHeight).toBeGreaterThan(shortGridHeight);
+      await expect.poll(async () => (await geometry(page)).screenHeight).toBeGreaterThan(shortGridHeight);
       await expect.poll(async () => (await geometry(page)).scale).toBe("scale(1)");
       // Font metrics differ between Chromium and native Electron hosts. Derive
       // a small shrink from the restored grid, above the readable font floor.
@@ -191,6 +191,22 @@ describe("real terminal renderer soft-grid resizing", () => {
         windowElement.style.height = "850px";
       }, surface === "web-mobile" ? 360 : 1_100);
       await expect.poll(async () => (await geometry(page)).scale).toBe("scale(1)");
+      // A short normal shell must not pan across unused canonical-grid space.
+      await page.locator("#terminal-window").evaluate((element) => { (element as HTMLElement).style.height = "300px"; });
+      await page.evaluate(() => (window as unknown as { fixtureOutput: (data: string) => void }).fixtureOutput("\x1bcshort\r\nresult\r\n$ "));
+      await expect.poll(async () => page.locator("[data-terminal-viewport]").evaluate((host) =>
+        host.scrollHeight - host.clientHeight + host.scrollWidth - host.clientWidth)).toBe(0);
+      const rail = page.locator('[data-terminal-scrollbar="content"]');
+      await expect.poll(() => rail.isVisible()).toBe(false);
+      // History and clipped live rows use this same edge-aligned rail.
+      await page.evaluate(() => (window as unknown as { fixtureOutput: (data: string) => void }).fixtureOutput("\x1bc" + Array.from({ length: 80 }, (_, i) => `HISTORY_${i}\r\n`).join("")));
+      await expect.poll(() => rail.isVisible()).toBe(true);
+      expect(await rail.count()).toBe(1);
+      expect(await page.locator(".xterm .scrollbar.vertical").isVisible()).toBe(false);
+      await rail.evaluate((element) => { element.scrollTop = 0; });
+      await expect.poll(async () => (await geometry(page)).panTop).toBe(0);
+      await rail.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+      await expect.poll(async () => { const g = await geometry(page); return g.scrollHeight - g.clientHeight - g.panTop; }).toBeLessThanOrEqual(1);
       await page.evaluate(() => (window as unknown as { fixtureObserve: () => void }).fixtureObserve());
       await expect.poll(() => page.getByText("Live on another device.").isVisible()).toBe(true);
       await expect.poll(() => page.getByRole("button", { name: "Continue here" }).isVisible()).toBe(true);
