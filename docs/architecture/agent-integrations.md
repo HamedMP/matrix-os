@@ -56,6 +56,28 @@ Electron Desktop and the shared Web Desktop/Web Canvas Settings panel show
 and disable management until loading succeeds. This does not expire the
 Matrix session or close open windows. Invalid credentials still fail authentication.
 
+Cloud Run deploys must forward `CUSTOM_MCP_ENABLED`, `MCP_OAUTH_CALLBACK_URL`,
+and the optional `MCP_OAUTH_CLIENT_ID` from the selected GitHub environment.
+The flag defaults to `false`; enabling the hosted Matrix MCP endpoint alone
+does not enable personal servers. To enable personal servers, set the flag to
+`true` and the callback to the public HTTPS platform origin followed by
+`/api/mcp-servers/oauth/callback`. An empty client ID allows dynamic OAuth
+registration. Provision a dedicated 32-byte encryption key in Secret Manager as
+`mcp-credential-encryption-key` and grant the runtime identity secret accessor
+access before enabling the flag. The deployment binds its latest enabled version
+to `MCP_CREDENTIAL_ENCRYPTION_KEY`; never rotate or regenerate this key during a
+routine deployment, since existing credentials depend on it. Startup validates
+the key format and rejects reuse of platform/provider secrets.
+
+The deployment preflight rejects malformed flags, missing/non-HTTPS callbacks,
+unsafe deployment delimiters, unavailable secret versions, and missing runtime
+access. Both `--set-env-vars` and `--set-secrets` replace the previous bindings,
+so these settings must remain in the workflow on every release. A healthy
+platform alone does not establish MCP availability: after enabling and deploying,
+verify an authenticated Settings list request succeeds before testing OAuth,
+tool discovery, and a policy-approved call. Keep the unavailable fallback for
+intentionally disabled environments.
+
 The boundary is a local stdio MCP server at
 `/opt/matrix/bin/matrix-integrations-mcp`. The MCP process calls only the
 authenticated loopback gateway at `http://127.0.0.1:4000`. On a customer VPS,
