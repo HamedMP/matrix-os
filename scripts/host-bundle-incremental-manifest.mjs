@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
-import { createReadStream } from "node:fs";
+import { constants, createReadStream } from "node:fs";
 import { copyFile, lstat, mkdir, readdir, readlink, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -33,6 +33,10 @@ function compareStablePath(a, b) {
 }
 
 function isExcludedPath(manifestPath, excludedPrefixes) {
+  // Dependency stores are part of the full bundle only. Workspace-local
+  // node_modules directories can contain pnpm links and must never be walked
+  // into the content-addressed app manifest.
+  if (manifestPath.split("/").includes("node_modules")) return true;
   return excludedPrefixes.some((prefix) => (
     manifestPath === prefix.slice(0, -1) ||
     manifestPath.startsWith(prefix)
@@ -73,7 +77,19 @@ async function writeObjectFile(objectDir, sha256, sourcePath) {
   if (!objectDir) return;
   const target = join(objectDir, "sha256", sha256);
   await mkdir(dirname(target), { recursive: true });
-  await copyFile(sourcePath, target);
+  try {
+    await copyFile(sourcePath, target, constants.COPYFILE_EXCL);
+    return;
+  } catch (error) {
+    if (!error || typeof error !== "object" || error.code !== "EEXIST") {
+      throw error;
+    }
+  }
+
+  const targetStat = await lstat(target);
+  if (!targetStat.isFile() || await sha256File(target) !== sha256) {
+    throw new Error(`existing host bundle object hash mismatch: ${sha256}`);
+  }
 }
 
 async function walkAppTree(appRoot, current, entries) {

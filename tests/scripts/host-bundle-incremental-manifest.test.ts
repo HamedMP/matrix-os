@@ -81,7 +81,12 @@ describe("host bundle incremental manifest", () => {
     const { dir, appDir } = await tempAppDir();
     const objectDir = join(dir, "objects");
     await mkdir(join(appDir, "node_modules", "huge-package"), { recursive: true });
+    await mkdir(join(appDir, "packages", "gateway", "node_modules"), { recursive: true });
     await writeFile(join(appDir, "node_modules", "huge-package", "index.js"), "dependency");
+    await symlink(
+      "../../../../outside-store",
+      join(appDir, "packages", "gateway", "node_modules", "external-dependency"),
+    );
     await writeFile(join(appDir, "runtime.js"), "runtime");
 
     const manifest = await buildIncrementalManifest({
@@ -91,6 +96,7 @@ describe("host bundle incremental manifest", () => {
     });
 
     expect(manifest.files.map((file) => file.path)).toEqual(["runtime.js"]);
+    expect(manifest.symlinks).toEqual([]);
     await expect(readFile(join(objectDir, "sha256", sha256("runtime")), "utf8")).resolves.toBe("runtime");
     await expect(readFile(join(objectDir, "sha256", sha256("dependency")), "utf8")).rejects.toMatchObject({
       code: "ENOENT",
@@ -107,6 +113,27 @@ describe("host bundle incremental manifest", () => {
     expect(json).toContain('"manifestVersion": 1,\n  "version": "v1"');
     expect(json).toContain(`"url": "system-bundles/objects/sha256/${sha256("hello")}"`);
     expect(json.endsWith("\n")).toBe(true);
+  });
+
+  it("reuses immutable objects only when their existing bytes match", async () => {
+    const { dir, appDir } = await tempAppDir();
+    const objectDir = join(dir, "objects");
+    const sourcePath = join(appDir, "runtime.js");
+    await writeFile(sourcePath, "runtime");
+
+    await buildIncrementalManifest({ appDir, objectDir, version: "v1" });
+    const objectPath = join(objectDir, "sha256", sha256("runtime"));
+    await chmod(objectPath, 0o444);
+
+    await expect(buildIncrementalManifest({ appDir, objectDir, version: "v2" })).resolves.toMatchObject({
+      version: "v2",
+    });
+
+    await chmod(objectPath, 0o644);
+    await writeFile(objectPath, "corrupt");
+    await expect(buildIncrementalManifest({ appDir, objectDir, version: "v3" })).rejects.toThrow(
+      "existing host bundle object hash mismatch",
+    );
   });
 
   it("rejects symlink targets that escape the staged app tree", async () => {
