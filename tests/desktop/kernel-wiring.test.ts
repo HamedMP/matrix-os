@@ -439,45 +439,11 @@ describe("kernel wiring", () => {
     cleanup();
   });
 
-  it("includes gateway-owned coding-agent attention in the desktop badge count", () => {
+  it("does not let legacy task attention overwrite the Chat Dock badge", () => {
     const cleanup = wireKernel();
     const invoke = window.operator.invoke as ReturnType<typeof vi.fn>;
-
-    useCodingAgentWorkspace.setState({
-      summary: codingAgentAttentionSummaryFixture(),
-    });
-
-    expect(invoke).toHaveBeenLastCalledWith("badge:set", { count: 2 });
-
-    useCodingAgentWorkspace.setState({
-      summary: {
-        ...codingAgentAttentionSummaryFixture(),
-        attentionThreads: { items: [], hasMore: false, limit: 20 },
-      },
-    });
-
-    expect(invoke).toHaveBeenLastCalledWith("badge:set", { count: 0 });
-
-    cleanup();
-  });
-
-  it("uses the desktop badge cap for truncated coding-agent attention summaries", () => {
-    const cleanup = wireKernel();
-    const invoke = window.operator.invoke as ReturnType<typeof vi.fn>;
-    const summary = codingAgentAttentionSummaryFixture();
-
-    useCodingAgentWorkspace.setState({
-      summary: {
-        ...summary,
-        attentionThreads: {
-          ...summary.attentionThreads,
-          hasMore: true,
-        },
-      },
-    });
-
-    expect(invoke).toHaveBeenLastCalledWith("badge:set", { count: 999 });
-
+    useCodingAgentWorkspace.setState({ summary: codingAgentAttentionSummaryFixture() });
+    expect(invoke.mock.calls.some(([channel]) => channel === "badge:set")).toBe(false);
     cleanup();
   });
 });

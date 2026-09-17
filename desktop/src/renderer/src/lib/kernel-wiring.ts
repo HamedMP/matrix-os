@@ -1,6 +1,6 @@
 import { RUNTIME_RECONNECTED_EVENT } from "./runtime-compatibility";
 // Wires the singleton kernel socket into the stores: thread routing, board
-// task events, native notifications, dock badge.
+// task events and native notifications.
 import { invoke, onEvent } from "./operator";
 import { KernelSocket, type KernelServerMessage } from "./kernel-socket";
 import { createDefaultOsViewDesktopIcons } from "@matrix-os/contracts";
@@ -13,11 +13,10 @@ import {
 } from "../stores/board";
 import { useConnection } from "../stores/connection";
 import { useHermesChat } from "../stores/hermes-chat";
-import { useCodingAgentWorkspace } from "../stores/coding-agent-workspace";
 import { isWorkRoute, useTabs } from "../stores/tabs";
 import { useThreads } from "../stores/threads";
 import { openCodingAgentThread } from "./project-chat";
-import { routeThreadNotification, unifiedAttentionCount } from "../stores/unified-threads";
+import { routeThreadNotification } from "../stores/unified-threads";
 
 const KERNEL_CHAT_EVENT_TYPES = new Set([
   "kernel:init",
@@ -174,26 +173,6 @@ export function wireKernel(): () => void {
     }
   });
 
-  let lastBadge = -1;
-  const updateBadge = () => {
-    const count = unifiedAttentionCount(
-      useThreads.getState().threads,
-      useCodingAgentWorkspace.getState().summary,
-    );
-    if (count !== lastBadge) {
-      lastBadge = count;
-      void invoke("badge:set", { count: Math.min(count, 999) }).catch((err: unknown) => {
-        console.warn(
-          "[kernel-wiring] badge update failed:",
-          err instanceof Error ? err.message : String(err),
-        );
-      });
-    }
-  };
-  const unsubscribeBadge = useThreads.subscribe(updateBadge);
-  const unsubscribeCodingAgentBadge = useCodingAgentWorkspace.subscribe(updateBadge);
-  updateBadge();
-
   // Clicking a native notification focuses the thread on its own surface:
   // kernel threads render in the Chat tab, coding-agent threads open inside
   // their project tab's Chats view. Never select across store namespaces.
@@ -231,8 +210,6 @@ export function wireKernel(): () => void {
     cleaned = true;
     unsubscribeMessages();
     unsubscribeState();
-    unsubscribeBadge();
-    unsubscribeCodingAgentBadge();
     offNotificationClick();
     offAppGenerate();
     activeSocket.dispose();
