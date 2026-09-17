@@ -34,6 +34,18 @@ describe("canonical Chat Dock badge", () => {
     expect(state.setBadge).toHaveBeenLastCalledWith(0);
     state.cleanup();
   });
+  it("keeps an explicitly read Chat clear even when its completion is unacknowledged", async () => {
+    const readChat: CanonicalChatRecord = {
+      ...record("chat_read", false),
+      latestSuccessfulCompletion: {
+        runId: "run_completed", completedAt: "2026-09-17T00:00:00.000Z", unacknowledged: true,
+      },
+    };
+    const state = setup(vi.fn(async () => ({ items: [readChat] })));
+    await settle();
+    expect(state.setBadge).toHaveBeenLastCalledWith(0);
+    state.cleanup();
+  });
   it("deduplicates paginated history and counts unread conversations only", async () => {
     const list = vi.fn().mockResolvedValueOnce({ items: [record("chat_a")], nextCursor: "page2" })
       .mockResolvedValueOnce({ items: [record("chat_a"), record("chat_b"), record("chat_c", false)] });
@@ -74,6 +86,22 @@ describe("canonical Chat Dock badge", () => {
     expect(list).toHaveBeenCalledTimes(2);
     expect(state.setBadge).toHaveBeenLastCalledWith(0);
     state.cleanup();
+  });
+  it("clears an in-flight native write on teardown before its acknowledgement arrives", async () => {
+    let resolveWrite!: () => void;
+    const setBadge = vi.fn((count: number) => count === 1
+      ? new Promise<void>((resolve) => { resolveWrite = resolve; })
+      : Promise.resolve());
+    const cleanup = wireCanonicalChatBadge({
+      client: { list: vi.fn(async () => ({ items: [record("chat_a")] })) },
+      eventSource: null, setBadge,
+    });
+    await settle();
+    cleanup();
+    expect(setBadge.mock.calls.map(([count]) => count)).toEqual([0, 1, 0]);
+    resolveWrite();
+    await settle();
+    expect(setBadge).toHaveBeenLastCalledWith(0);
   });
   it("retries failed reads without replacing a known count with a false zero", async () => {
     vi.useFakeTimers();

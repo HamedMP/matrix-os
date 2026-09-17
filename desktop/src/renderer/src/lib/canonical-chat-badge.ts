@@ -14,13 +14,18 @@ export function wireCanonicalChatBadge({ client, eventSource, setBadge }: {
   let current = true;
   let inFlight = false;
   let pending = false;
-  let lastCount = -1;
+  let lastRequestedCount: number | undefined;
+  let writeSequence = 0;
   const write = async (count: number) => {
-    if (count === lastCount) return;
+    if (count === lastRequestedCount) return;
+    // IPC applies the badge before its promise resolves. Track the request now
+    // so teardown can clear a write whose acknowledgement is still in flight.
+    const sequence = ++writeSequence;
+    lastRequestedCount = count;
     try {
       await setBadge(count);
-      lastCount = count;
     } catch (error: unknown) {
+      if (sequence === writeSequence) lastRequestedCount = undefined;
       console.warn("[chat-badge] badge update failed:", error instanceof Error ? error.name : "UnknownError");
     }
   };
