@@ -6,6 +6,7 @@ const owner = { type: "personal" as const, ownerId: "owner_attribution_repair" }
 const importedOwner = { type: "personal" as const, ownerId: "owner_imported" };
 const organization = { type: "organization" as const, ownerId: "org_attribution" };
 const createdAt = "2026-09-17T00:00:00.000Z";
+const sharedScopeId = "11111111-2222-4333-8444-555555555555";
 const selection = { instanceId: "codex_default", model: "gpt-5.6-sol" };
 const capabilitySnapshot = {
   revision: "catalog_repair",
@@ -62,7 +63,7 @@ describe("canonical Chat owner attribution repair", () => {
     await seedTurn("chat_repair_owner", "shared_editor", 3, {
       queuedTurnId: "qturn_editor_repair",
       requestingActorId: "user_shared_editor",
-      collaborationScopeId: "6aed8d12-f6c8-4c10-90b2-1e51fcc738e3",
+      collaborationScopeId: sharedScopeId,
     });
     await repository.kysely.insertInto("chat_run_steers").values({
       id: "steer_failed_before_shared_editor_claim",
@@ -80,12 +81,12 @@ describe("canonical Chat owner attribution repair", () => {
     await seedTurn("chat_repair_owner", "ambiguous_shared_queue", 4, {
       queuedTurnId: "qturn_ambiguous_shared_repair",
       requestingActorId: null,
-      collaborationScopeId: "6aed8d12-f6c8-4c10-90b2-1e51fcc738e3",
+      collaborationScopeId: sharedScopeId,
     });
     await seedSteer("chat_repair_owner", "owner_steer", 5, "cturn_owner_direct", "run_owner_direct");
     await seedSteer("chat_repair_owner", "ambiguous_shared_steer", 6, "cturn_owner_direct", "run_owner_direct", {
       queuedTurnId: "qturn_ambiguous_shared_steer_repair",
-      collaborationScopeId: "6aed8d12-f6c8-4c10-90b2-1e51fcc738e3",
+      collaborationScopeId: sharedScopeId,
     });
     await seedLooseMessage("chat_repair_owner", "ambiguous", 7, "user", "ai_request");
     await seedLooseMessage("chat_repair_owner", "discussion", 8, "user", "discussion");
@@ -112,7 +113,7 @@ describe("canonical Chat owner attribution repair", () => {
     await repository.kysely.updateTable("chats").set({
       collaboration: {
         mode: "discussion_only",
-        scopeId: "6aed8d12-f6c8-4c10-90b2-1e51fcc738e3",
+        scopeId: sharedScopeId,
         executionFenced: true,
         authorityGeneration: 1,
       },

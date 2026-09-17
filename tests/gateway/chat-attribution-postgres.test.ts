@@ -9,6 +9,7 @@ import {
 
 const realDescribe = process.env.MATRIX_TEST_POSTGRES_URL ? describe : describe.skip;
 const createdAt = "2026-09-17T00:00:00.000Z";
+const sharedScopeId = "11111111-2222-4333-8444-555555555555";
 
 realDescribe("canonical Chat attribution repair on PostgreSQL", () => {
   let fixture: CollaborationTestDatabase;
@@ -48,7 +49,7 @@ realDescribe("canonical Chat attribution repair on PostgreSQL", () => {
     await fixture.db.updateTable("chats").set({
       collaboration: {
         mode: "discussion_only",
-        scopeId: "6aed8d12-f6c8-4c10-90b2-1e51fcc738e3",
+        scopeId: sharedScopeId,
         executionFenced: true,
         authorityGeneration: 1,
       },

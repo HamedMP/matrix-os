@@ -10,8 +10,8 @@ import {
   type CollaborationTestDatabase,
 } from "./collaboration-test-support.js";
 
-const CHAT_ID = "chat_e5aca64e722f41d8b128403096c8dbd2";
-const SCOPE_ID = "6aed8d12-f6c8-4c10-90b2-1e51fcc738e3";
+const CHAT_ID = "chat_11111111222243338444555555555555";
+const SCOPE_ID = "11111111-2222-4333-8444-555555555555";
 const OWNER_ID = "user_shared_chat_owner";
 const createdAt = "2026-09-17T00:00:00.000Z";
 const owner = { type: "personal" as const, ownerId: OWNER_ID };
