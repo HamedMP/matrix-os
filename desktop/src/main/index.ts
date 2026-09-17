@@ -259,6 +259,11 @@ if (!gotLock) {
       );
 
       const nativeAppBridge = new NativeAppBridge({
+        generate: (app, context) => {
+          const status = auth.getStatus();
+          if (!status.signedIn || !mainWindow || mainWindow.isDestroyed()) throw new Error("App task is unavailable");
+          sendEvent("app:generate", { app, context, runtimeSlot: status.runtimeSlot, authGeneration: status.authGeneration });
+        },
         aiRequest: createNativeAppAiRequester({
           getGatewayOrigin: () => auth.getGatewayOrigin(),
           getToken: () => auth.getToken(),

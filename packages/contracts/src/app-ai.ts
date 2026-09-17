@@ -28,3 +28,20 @@ export function createAppAiClient(invoke: (input: AppAiInput) => Promise<unknown
     },
   });
 }
+
+// Legacy API submits a kernel task; it has never returned generated text.
+export const APP_GENERATE_CHANNEL = "native-app:generate";
+export const AppGenerateContextSchema = z.string().min(1).max(32_000).refine((value) => value.trim().length > 0);
+export const AppGenerateEventSchema = z.strictObject({
+  app: AppAiRequestSchema.shape.app,
+  context: AppGenerateContextSchema,
+  runtimeSlot: z.string().min(1).max(64),
+  authGeneration: z.number().int().nonnegative(),
+});
+export function createAppGenerateClient(invoke: (context: string) => Promise<unknown>) {
+  return (context: string): void => {
+    const parsed = AppGenerateContextSchema.safeParse(context);
+    if (!parsed.success) throw new Error("Invalid app task");
+    void invoke(parsed.data).catch((error: unknown) => console.warn("[app-generate] App task is unavailable", error instanceof Error ? error.name : "UnknownError"));
+  };
+}

@@ -1,6 +1,7 @@
+"use client";
+
 import { prepareAppAiRequest } from "./app-ai-request";
 import { APP_AI_TIMEOUT_MS } from "@matrix-os/contracts";
-"use client";
 
 import { useState, useEffect, useRef } from "react";
 import { useFileWatcher } from "@/hooks/useFileWatcher";

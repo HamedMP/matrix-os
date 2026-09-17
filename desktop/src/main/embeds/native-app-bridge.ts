@@ -1,4 +1,4 @@
-import { APP_AI_CHANNEL, APP_AI_TIMEOUT_MS, AppAiInputSchema, AppAiResultSchema, type AppAiInput } from "@matrix-os/contracts";
+import { APP_GENERATE_CHANNEL, AppGenerateContextSchema, APP_AI_CHANNEL, APP_AI_TIMEOUT_MS, AppAiInputSchema, AppAiResultSchema, type AppAiInput } from "@matrix-os/contracts";
 import type { IpcMain, IpcMainInvokeEvent } from "electron";
 import { z } from "zod/v4";
 import {
@@ -56,6 +56,7 @@ function isSafeAppIdentity(value: string): boolean {
 }
 
 interface NativeAppBridgeOptions {
+  generate: (app: string, context: string) => void;
   aiRequest: (slug: string, input: AppAiInput) => Promise<unknown>;
   request: (slug: string, query: NativeAppQuery) => Promise<unknown>;
   gatewayRequest: (slug: string, request: NativeAppGatewayRequest) => Promise<unknown>;
@@ -193,10 +194,13 @@ function isSenderAtApp(sender: NativeAppSender, origin: string, slug: string): b
 
 export class NativeAppBridge {
   private readonly senders = new Map<number, { appIdentity: string; routeSlug: string }>();
+  private generateWindow = 0;
+  private generateCount = 0;
   private readonly options: NativeAppBridgeOptions;
   private readonly maxSenders: number;
 
   constructor(options: NativeAppBridgeOptions) {
+    if (!options.generate) throw new Error("Kernel task dispatcher is required");
     if (!options.aiRequest) throw new Error("AI requester is required");
     this.options = options;
     this.maxSenders = Math.max(1, Math.min(options.maxSenders ?? DEFAULT_MAX_SENDERS, DEFAULT_MAX_SENDERS));
@@ -257,7 +261,30 @@ export class NativeAppBridge {
     return this.options.aiRequest(identity.appIdentity, AppAiInputSchema.parse(rawInput));
   }
 
+  generate(sender: NativeAppSender, rawContext: unknown): void {
+    const identity = this.senders.get(sender.id);
+    if (!identity || !isSenderAtApp(sender, this.options.gatewayOrigin(), identity.routeSlug)) {
+      throw new Error("not authorized");
+    }
+    const context = AppGenerateContextSchema.parse(rawContext);
+    const now = Date.now();
+    if (now - this.generateWindow >= 60_000) { this.generateWindow = now; this.generateCount = 0; }
+    if (this.generateCount >= 10) throw new Error("App task rate limit exceeded");
+    this.generateCount++;
+    this.options.generate(identity.appIdentity, context);
+  }
+
   registerIpc(ipcMain: Pick<IpcMain, "handle">): void {
+    ipcMain.handle(APP_GENERATE_CHANNEL, (event: IpcMainInvokeEvent, rawContext: unknown) => {
+      try {
+        if (event.senderFrame !== event.sender.mainFrame) throw new Error("not authorized");
+        this.generate({ id: event.sender.id, url: event.sender.getURL() }, rawContext);
+        return { ok: true };
+      } catch (error) {
+        console.warn("[native-app-bridge] task failed:", error instanceof Error ? error.name : "UnknownError");
+        throw new Error("App task is unavailable");
+      }
+    });
     ipcMain.handle(APP_AI_CHANNEL, async (event: IpcMainInvokeEvent, rawInput: unknown) => {
       try {
         if (event.senderFrame !== event.sender.mainFrame) throw new Error("not authorized");

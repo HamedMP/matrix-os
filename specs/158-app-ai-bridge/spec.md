@@ -1,4 +1,4 @@
-# App AI text bridge
+# App kernel compatibility and AI text bridge
 
 ## Problem and scope
 
@@ -12,7 +12,23 @@ This change supports the existing Matrix kernel credential chain: owner API key,
 owner Claude login profile, or Matrix-funded access. It does not expose Codex,
 Hermes, OpenCode, Pi, or OpenClaw agent sessions as text-completion APIs. It does
 not fix file sync or grant file access. Customer app source is unavailable; its
-Refresh action must be migrated to this API before end-to-end recovery is claimed.
+Refresh action and installed version must be verified before customer recovery is claimed.
+
+## Legacy kernel task compatibility
+
+Preserve `MatrixOS.generate(context): void` in Web and restore it in Electron.
+It submits `[App: <trusted identity>] <context>` through the shell's existing
+kernel WebSocket dispatcher. It does not return text and is not an alias for
+`ai.generate`. Electron binds identity to the registered top-level app view,
+validates a nonempty context of at most 32K characters, and caps submissions at
+10 per minute per desktop bridge. Main forwards a typed event only to the trusted
+shell. Shell rejects events for a different selected runtime and unsubscribes
+when the kernel connection is disposed. Runtime changes close app views.
+
+The legacy path retains existing authenticated kernel task semantics, including
+tools and kernel configuration, independently of the new text API's opt-in policy.
+No arbitrary gateway access or credentials are exposed. Each Electron app task
+starts a separate kernel request without taking over the currently selected chat.
 
 ## Owner grant and model selection
 

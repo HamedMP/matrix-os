@@ -3,7 +3,7 @@ import { NativeAppBridge, createNativeAppAiRequester } from "../../desktop/src/m
 
 it("binds AI requests to the registered app and rejects another origin", async () => {
   const aiRequest = vi.fn(async () => ({ text: "done" }));
-  const bridge = new NativeAppBridge({ request: vi.fn(), gatewayRequest: vi.fn(), aiRequest, gatewayOrigin: () => "https://gateway.test" });
+  const bridge = new NativeAppBridge({ generate: vi.fn(), request: vi.fn(), gatewayRequest: vi.fn(), aiRequest, gatewayOrigin: () => "https://gateway.test" });
   bridge.register(1, "brain");
   const sender = { id: 1, url: "https://gateway.test/apps/brain/" };
   await expect(bridge.aiGenerate(sender, { prompt: "hello" })).resolves.toEqual({ text: "done" });

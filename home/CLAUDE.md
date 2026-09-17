@@ -239,3 +239,9 @@ Skills are directory-based Agent Skills in `~/.agents/skills/<name>/SKILL.md` wi
 Knowledge files in `~/agents/knowledge/` provide persistent context the agent can reference -- user preferences, project notes, domain expertise. These are injected at prompt time when relevant.
 
 To create a skill: add `~/.agents/skills/<slug>/SKILL.md` with a descriptive name and frontmatter. The kernel's skill loader will discover it automatically. Matrix-shipped coding skills are synced from the canonical `skills/matrix/` pack into Matrix, Claude, Codex, and Hermes skill locations.
+
+Legacy app tasks: `MatrixOS.generate(context)` submits a task through the shell
+to the Matrix kernel and returns `undefined`. It is available in Web and Electron
+app windows. Keep using it for existing kernel workflows. For text-only inference,
+use `await MatrixOS.ai.generate({ prompt })` (explicit owner grant required). These
+APIs have different contracts; do not treat legacy `generate` as a text Promise.

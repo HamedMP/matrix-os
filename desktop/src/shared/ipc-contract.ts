@@ -5,6 +5,7 @@
 // credentials are accepted only by the bounded write-only setter request.
 import { z } from "zod/v4";
 import {
+  AppGenerateEventSchema,
   BuildSourceSchema,
   FileDownloadRequestSchema,
   FileDownloadResultSchema,
@@ -470,6 +471,7 @@ export const INVOKE_CHANNELS = {
 } as const;
 
 export const EVENT_CHANNELS = {
+  "app:generate": AppGenerateEventSchema,
   "analytics:capture": DesktopAnalyticsDetailSchema,
   "analytics:flush-requested": Empty,
   "auth:changed": z

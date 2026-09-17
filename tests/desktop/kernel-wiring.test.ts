@@ -143,6 +143,23 @@ describe("kernel wiring", () => {
     vi.restoreAllMocks();
   });
 
+  it("routes app tasks through the kernel socket without changing the active chat", () => {
+    const cleanup = wireKernel();
+    const handler = vi.mocked(window.operator.on).mock.calls.find(([channel]) => channel === "app:generate")?.[1];
+    expect(handler).toBeTypeOf("function");
+    const before = useHermesChat.getState();
+    handler!({ app: "brain", context: "Read my notes", authGeneration: 0, runtimeSlot: "primary" });
+    const sent = kernelSocketMocks.instances[0].send;
+    expect(sent).toHaveBeenCalledWith({ type: "message", text: "[App: brain] Read my notes", requestId: expect.any(String) });
+    expect(useHermesChat.getState()).toBe(before);
+    handler!({ app: "brain", context: "wrong computer", authGeneration: 0, runtimeSlot: "other" });
+    useConnection.setState({ runtimeSlot: "other" });
+    handler!({ app: "brain", context: "retired computer", authGeneration: 0, runtimeSlot: "primary" });
+    handler!({ app: "brain", context: "retired account", authGeneration: 1, runtimeSlot: "primary" });
+    expect(sent).toHaveBeenCalledTimes(1);
+    cleanup();
+  });
+
   it("opens the notified coding-agent thread inside its project tab", async () => {
     const loadThreadSnapshot = vi.fn().mockResolvedValue(undefined);
     useCodingAgentWorkspace.setState({ loadThreadSnapshot });
