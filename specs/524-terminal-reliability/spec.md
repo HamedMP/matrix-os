@@ -29,6 +29,7 @@ A user switches tabs, hides a window, changes presentation, or briefly loses con
 2. Given a recoverable transport interruption, when the first automatic retry succeeds, then no persistent reconnect warning remains.
 3. Given retries fail, when the connection cannot recover, then the view shows an actionable connection state and does not appear ready for input.
 4. Given a session has exited or was explicitly deleted, when an old view is restored, then it is not silently recreated or represented as running.
+5. Given deletion is still pending, the row remains visibly busy until the server confirms success. Older list responses cannot restore it afterward; failure keeps the session available with an error.
 
 ### User Story 3 — Use the same terminal from multiple devices (Priority: P1)
 
@@ -52,7 +53,7 @@ The user sees the prompt and final output lines, can scroll deliberately, paste 
 2. Given content changes or the cursor moves, then the viewport does not unexpectedly pan horizontally.
 3. Given a narrow observing device cannot preserve both readable text and the controller's width, then explicit horizontal panning may remain available; this does not grant resize authority.
 4. Given valid text, Unicode, binary input, paste, or shortcuts, then ordering and existing meanings are preserved.
-5. Given history and clipped live rows, then one viewport-edge vertical scrollbar reaches both ends; no floating inner scrollbar competes with it. Trackpad input reaches the same content without requiring a scrollbar drag.
+5. Given history and clipped live rows, then one viewport-edge vertical scrollbar reaches both ends; no floating inner scrollbar competes with it. Trackpad input reaches the same content without requiring a scrollbar drag, including gestures over the blank area beside short text.
 6. Given a short normal-shell prompt, unused canonical rows/columns do not create scrollable blank margins. Real long lines, cursor cells, painted backgrounds and alternate-screen applications remain accessible.
 7. Given a deliberate scroll position, native redraws do not pull it back to a cursor outside the viewport. History navigation alone does not change the scrollbar range.
 
