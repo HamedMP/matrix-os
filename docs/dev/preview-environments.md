@@ -83,31 +83,29 @@ and `accessClerkUserIds`. The machine retains one canonical owner. Each browser
 request and WebSocket token retains the authenticated collaborator's Clerk ID.
 No allowlist is copied into VPS configuration.
 
-For `/api/terminal/*` and `/ws/terminal/tab`, the platform adds a 30-second,
-HMAC-SHA256 signed `x-platform-preview-terminal` delegation only after checking
-the current preview classification and allowlist. Its versioned, terminal-only
-scope binds the actor, canonical owner, handle, runtime slot, role, and expiry.
-The signing key is the existing per-handle platform verification token; signing
-uses a separate `preview-terminal-v1:` domain. HTTP and WebSocket proxies strip
-incoming platform identity and delegation headers before creating their own.
-The gateway verifies the signature, bounded schema/lifetime, authenticated actor,
-configured owner, and exact `MATRIX_HANDLE` / `MATRIX_RUNTIME_SLOT`. Preview
-classification is a signed platform attestation, not a client header or a
-classification inferred solely from a `pr-*` name. Customer records cannot issue
-delegations, including customer records with preview-shaped names.
+For `/api/terminal/*` and `/ws/terminal/tab`, the platform adds a compact,
+HMAC-SHA256 signed `x-platform-preview-terminal` access decision only after checking
+the current preview classification and allowlist. The existing verified identity
+headers continue to carry the real actor. The terminal access signature binds that
+actor to the canonical owner and runtime slot; its existing per-handle signing key
+also binds it to the exact preview handle. HTTP and WebSocket proxies strip incoming
+platform identity and terminal-access headers before creating their own. The
+gateway verifies the signature, authenticated actor, configured owner, and exact
+runtime slot. Preview classification remains a server-side platform decision, not
+a client header or a classification inferred solely from a `pr-*` name. Customer
+records cannot issue terminal access, including records with preview-shaped names.
 
 Terminal workspaces, project fences, and attachment capabilities continue to use
 canonical resource ownership. Authentication, Chat authorization, and terminal
-attachment audit properties retain the real actor. The same gateway owner/delegation
+audit data retain the real actor. The same gateway owner/access
 guard protects HTTP discovery/mutations and WebSocket attachment. Invalid proofs
 provide no additional authority and retain the generic denial behavior. The
 browser keeps the `/vm/pr-<N>` prefix on API, token, and WebSocket URLs.
 
-Allowlist changes apply on the next proxied request or handshake. The delegation
-is an admission proof; its expiry does not interrupt an established terminal
-stream. Active-stream revocation, changes to Chat permissions, and delegation of
+Allowlist changes apply on the next proxied request or handshake. Active-stream
+revocation, changes to Chat permissions, and sharing of
 other owner-only APIs are outside this fix. There are no new DB writes, caches,
-background timers, or persisted delegation state. Existing terminal lifecycle,
+clocks, background timers, or persisted authorization state. Existing terminal lifecycle,
 project transaction/fencing, and shutdown behavior remain in effect.
 
 Rollout requires both the platform routing service and the preview VPS gateway

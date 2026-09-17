@@ -22,7 +22,6 @@ describe('golden snapshot developer gate', () => {
   it('leaves enough CI time for a completed unit shard to run post-job cleanup', async () => {
     const workflow = await readFile('.github/workflows/ci.yml', 'utf8');
     const unitJob = workflow.slice(workflow.indexOf('\n  unit:'), workflow.indexOf('\n  docs-contract:'));
-    const timeoutMinutes = Number(unitJob.match(/timeout-minutes: (\d+)/)?.[1]);
-    expect(timeoutMinutes).toBeGreaterThanOrEqual(20);
+    expect(unitJob).toContain('timeout-minutes: 20');
   });
 });

@@ -121,6 +121,7 @@ import {
 import { createProvisioner } from "./provisioner.js";
 import {
   authMiddleware,
+  readPreviewTerminalOwner,
 } from "./auth.js";
 import {
   isRequestPrincipalError,
@@ -356,6 +357,7 @@ import {
   TerminalWindowLayoutStore,
   createTerminalWorkspaceRoutes,
   createTerminalWorkspaceProjectAdmission,
+  terminalResourceOwnerId,
   terminalRuntimeRefAccess,
   shellWsMessageDataToString,
 } from "./shell/index.js";
@@ -2157,6 +2159,7 @@ export async function createGateway(config: GatewayConfig) {
     runtime: terminalWorkspaceRuntime,
     homePath,
     getPrincipal: (c) => requireRequestPrincipal(c),
+    getPreviewTerminalOwner: readPreviewTerminalOwner,
     terminalOwnerIds: terminalRuntimeOwnerIds,
     chatTerminals: shellRouteDeps.chatTerminals,
     ...(gatewayCollaboration ? {
@@ -2791,21 +2794,23 @@ export async function createGateway(config: GatewayConfig) {
           }
           void (async () => {
             principal = requireRequestPrincipal(c);
+            const resourceOwnerId = terminalResourceOwnerId(principal, readPreviewTerminalOwner(c));
             const refAccess = await terminalRuntimeRefAccess(
               principal,
               terminalRuntimeOwnerIds,
               terminalWorkspaceRuntime,
               refResult.data,
+              readPreviewTerminalOwner(c),
             );
             if (refAccess === "not_found" || refAccess === "unavailable") {
               throw new Error("Terminal runtime reference denied");
             }
-            const owner = { type: "personal" as const, ownerId: principal.userId };
+            const actorOwner = { type: "personal" as const, ownerId: principal.userId };
             const refKey = `${refResult.data.workspaceId}:${refResult.data.tabId}`;
             const terminalAuthorizationRepository = chatRepository;
             if (chatResult.data) {
               if (!terminalAuthorizationRepository) throw new Error("Terminal attachment authorization unavailable");
-              const binding = await terminalAuthorizationRepository.getTerminalBinding(owner, chatResult.data, refKey);
+              const binding = await terminalAuthorizationRepository.getTerminalBinding(actorOwner, chatResult.data, refKey);
               if (!binding) throw new Error("Chat terminal attachment denied");
             } else {
               if (refAccess === "chat_required") throw new Error("Chat terminal attachment requires Chat context");
@@ -2813,7 +2818,10 @@ export async function createGateway(config: GatewayConfig) {
                 throw new Error("Terminal attachment authorization unavailable");
               }
               if (terminalAuthorizationRepository) {
-                const bound = await terminalAuthorizationRepository.listBoundTerminalSessionIds(owner, [refKey]);
+                const bound = await terminalAuthorizationRepository.listBoundTerminalSessionIds(
+                  { type: "personal", ownerId: resourceOwnerId },
+                  [refKey],
+                );
                 if (bound.includes(refKey)) throw new Error("Chat terminal attachment requires Chat context");
               }
             }
@@ -2821,7 +2829,7 @@ export async function createGateway(config: GatewayConfig) {
               ...(attachmentTokenResult.data
                 ? { attachmentToken: attachmentTokenResult.data }
                 : {}),
-              ownerId: principal.userId,
+              ownerId: resourceOwnerId,
               terminalRef: refResult.data,
             }, {
               consumeSessionAttachment: workspaceSessionRuntimeBridge.consumeSessionAttachment,
@@ -2831,7 +2839,7 @@ export async function createGateway(config: GatewayConfig) {
             const mode = clientResult.data === "cli" ? "hard" as const : "soft" as const;
             captureTerminalEvent("attach-request", { client: clientResult.data, mode });
             stream = await terminalWorkspaceProjectAdmission.withWorkspace(
-              principal,
+              resourceOwnerId,
               refResult.data.workspaceId,
               "run",
               async () => terminalWorkspaceRuntime.attach({
@@ -2868,7 +2876,7 @@ export async function createGateway(config: GatewayConfig) {
               frameAdmissionTail = frameAdmissionTail.then(async () => {
                 if (closed || !stream || !principal) return;
                 await terminalWorkspaceProjectAdmission.withWorkspace(
-                  principal,
+                  resourceOwnerId,
                   refResult.data.workspaceId,
                   "run",
                   async () => {

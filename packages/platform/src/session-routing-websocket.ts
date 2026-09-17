@@ -1,4 +1,3 @@
-import { PREVIEW_TERMINAL_HEADER } from "@matrix-os/contracts";
 import { createHmac } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
 import {
@@ -11,6 +10,7 @@ import {
   buildPlatformVerificationToken,
   timingSafeTokenEquals,
 } from './platform-token.js';
+import { PREVIEW_TERMINAL_ACCESS_HEADER } from './preview-terminal-access.js';
 
 type HeaderValue = string | string[] | undefined;
 
@@ -81,13 +81,13 @@ export function buildPlatformWebSocketUpgradeHeaders(opts: {
   platformSecret: string;
   includePlatformProof: boolean;
   isCodeDomain: boolean;
-  previewTerminalDelegation?: string;
+  previewTerminalAccess?: string;
 }): string {
   return Object.entries(opts.incomingHeaders)
     .filter(([k]) => (
       k.toLowerCase() !== 'x-platform-user-id' &&
       k.toLowerCase() !== 'x-platform-verified' &&
-      k.toLowerCase() !== PREVIEW_TERMINAL_HEADER &&
+      k.toLowerCase() !== PREVIEW_TERMINAL_ACCESS_HEADER &&
       k !== 'host' &&
       k !== 'authorization' &&
       k !== 'cookie' &&
@@ -111,8 +111,8 @@ export function buildPlatformWebSocketUpgradeHeaders(opts: {
           ]
         : [],
     )
-    .concat(opts.includePlatformProof && opts.platformSecret && opts.previewTerminalDelegation
-      ? [`${PREVIEW_TERMINAL_HEADER}: ${opts.previewTerminalDelegation}`] : [])
+    .concat(opts.includePlatformProof && opts.platformSecret && opts.previewTerminalAccess
+      ? [`${PREVIEW_TERMINAL_ACCESS_HEADER}: ${opts.previewTerminalAccess}`] : [])
     .concat(
       opts.platformSecret && opts.isCodeDomain
         ? [`x-matrix-code-proxy-token: ${buildPlatformVerificationToken(opts.handle, opts.platformSecret)}`]

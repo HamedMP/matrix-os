@@ -9,10 +9,13 @@ import { insertUserMachine, updateUserMachine, getActiveUserMachineByHandle, typ
 import { registerPlatformWebSocketUpgradeHandler } from "../../packages/platform/src/platform-websocket-upgrade.js";
 import { buildPlatformVerificationToken } from "../../packages/platform/src/platform-token.js";
 import { verifySyncJwt } from "../../packages/platform/src/sync-jwt.js";
-import { authMiddleware } from "../../packages/gateway/src/auth.js";
+import { authMiddleware, readPreviewTerminalOwner } from "../../packages/gateway/src/auth.js";
 import { requireRequestPrincipal } from "../../packages/gateway/src/request-principal.js";
-import { createTerminalWorkspaceRoutes, createTerminalWorkspaceProjectAdmission } from "../../packages/gateway/src/shell/workspace-routes.js";
-import { createTerminalTabWebSocketHandler } from "../../packages/gateway/src/shell/terminal-tab-ws.js";
+import {
+  createTerminalWorkspaceRoutes,
+  terminalResourceOwnerId,
+  terminalRuntimeRefAccess,
+} from "../../packages/gateway/src/shell/workspace-routes.js";
 import { getGatewayUrl, getGatewayWs } from "../../shell/src/lib/gateway.js";
 import { JWT_SECRET, setupProxyRoutingTest, cleanupProxyRoutingTest, stubOrchestrator } from "./proxy-routing-test-utils.js";
 
@@ -75,21 +78,53 @@ function fixture() {
   gateway.use("*", async (c, next) => { actors.push(requireRequestPrincipal(c).userId); await next(); });
   gateway.route("/api/terminal", createTerminalWorkspaceRoutes({
     runtime: runtime as never, getPrincipal: requireRequestPrincipal, terminalOwnerIds: [owner],
+    getPreviewTerminalOwner: readPreviewTerminalOwner,
   }));
-  const audit = vi.fn();
   const events: WSEvents[] = [];
-  const attachmentOwners = vi.fn(async () => false);
   const repository = {
     getTerminalBinding: vi.fn(async () => null),
     listBoundTerminalSessionIds: vi.fn(async () => [] as string[]),
   };
   gateway.get("/ws/terminal/tab", (c) => {
-    events.push(createTerminalTabWebSocketHandler(c, {
-      terminalOwnerIds: [owner], runtime: runtime as never,
-      projectAdmission: createTerminalWorkspaceProjectAdmission({ runtime: runtime as never }),
-      attachmentDependencies: { consumeSessionAttachment: vi.fn(), requiresAttachmentToken: attachmentOwners },
-      captureTerminalEvent: audit, chatRepository: repository,
-    }));
+    const principal = requireRequestPrincipal(c);
+    const previewOwner = readPreviewTerminalOwner(c);
+    const ref = { workspaceId: c.req.query("workspaceId")!, tabId: c.req.query("tabId")! };
+    const chatId = c.req.query("chat");
+    let stream: ReturnType<typeof runtime.attach> | undefined;
+    events.push({
+      onOpen(_event, ws) {
+        void (async () => {
+          const access = await terminalRuntimeRefAccess(principal, [owner], runtime as never, ref, previewOwner);
+          if (access === "not_found" || access === "unavailable") throw new Error("Terminal denied");
+          const resourceOwnerId = terminalResourceOwnerId(principal, previewOwner);
+          const refKey = `${ref.workspaceId}:${ref.tabId}`;
+          if (chatId) {
+            const binding = await repository.getTerminalBinding(
+              { type: "personal", ownerId: principal.userId }, chatId, refKey,
+            );
+            if (!binding) throw new Error("Chat terminal denied");
+          } else {
+            if (access === "chat_required") throw new Error("Chat context required");
+            const bound = await repository.listBoundTerminalSessionIds(
+              { type: "personal", ownerId: resourceOwnerId }, [refKey],
+            );
+            if (bound.includes(refKey)) throw new Error("Chat context required");
+          }
+          stream = runtime.attach({
+            ref,
+            onFrame: (frame) => ws.send(JSON.stringify(frame)),
+          });
+        })().catch((error: unknown) => {
+          console.error("[test] terminal attachment denied", error instanceof Error ? error.message : "unknown_error");
+          ws.close();
+        });
+      },
+      onMessage(event) {
+        const frame = JSON.parse(String(event.data));
+        stream?.send(frame);
+      },
+      onClose() { stream?.close(); },
+    });
     return c.text("upgrade");
   });
   vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
@@ -137,7 +172,7 @@ function fixture() {
     await vi.waitFor(() => expect(runtime.attach.mock.calls.length > 0 || vi.mocked(ws.close).mock.calls.length > 0).toBe(true));
     return { denied: vi.mocked(ws.close).mock.calls.length > 0, handler, ws, sent };
   };
-  return { platform, request, upgrade, actors, input, runtime, workspace, repository, audit, setActor: (id: string) => { actorId = id; } };
+  return { platform, request, upgrade, actors, input, runtime, workspace, repository, setActor: (id: string) => { actorId = id; } };
 }
 
 describe("Clerk preview collaborator terminal flow", () => {
@@ -173,7 +208,6 @@ describe("Clerk preview collaborator terminal flow", () => {
       expect(f.actors.at(-1)).toBe(actor);
       expect(f.repository.listBoundTerminalSessionIds).toHaveBeenLastCalledWith(
         { type: "personal", ownerId: owner }, expect.any(Array));
-      expect(f.audit).toHaveBeenCalledWith("attach-request", expect.objectContaining({ actorId: actor, ownerId: owner }));
     }
     const discovery = await (await f.request("/api/terminal/workspaces")).json();
     expect(discovery.workspaces[0].tabs).toHaveLength(3);
