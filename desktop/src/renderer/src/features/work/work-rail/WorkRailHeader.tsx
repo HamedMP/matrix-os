@@ -1,28 +1,43 @@
-import { MessageSquare, PanelLeftOpenIcon, Plus, Search } from "@renderer/lib/hugeicons";
+import { Filter, MessageSquare, PanelLeftOpenIcon, Plus, Search } from "@renderer/lib/hugeicons";
 
 export function WorkRailHeader({
   onNewChat,
   onSearch,
+  unreadOnly,
+  onUnreadOnlyChange,
   onCollapse,
   showCollapseControl,
 }: {
   onNewChat: () => void;
   onSearch: () => void;
+  unreadOnly: boolean;
+  onUnreadOnlyChange: (unreadOnly: boolean) => void;
   onCollapse: () => void;
   showCollapseControl: boolean;
 }) {
   return (
     <>
-      <div data-chat-sidebar-title className="relative">
-        <h2 className="flex items-center gap-2 px-2.5 py-2 pr-10 text-lg font-semibold" style={{ color: "var(--text-primary)" }}>
+      <div data-chat-sidebar-title className="flex items-center gap-0.5">
+        <h2 className="flex min-w-0 items-center gap-2 px-2.5 py-2 pr-0 text-lg font-semibold" style={{ color: "var(--text-primary)" }}>
           <MessageSquare size={18} aria-hidden="true" />
           Chats
         </h2>
         <button
           type="button"
+          aria-label="Show unread chats only"
+          aria-pressed={unreadOnly}
+          title={unreadOnly ? "Show all chats" : "Show unread chats only"}
+          className="flex size-9 shrink-0 items-center justify-center rounded-md outline-none transition-colors duration-100 hover:bg-[var(--bg-hover)] aria-pressed:bg-[var(--bg-selected)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"
+          style={{ color: unreadOnly ? "var(--text-primary)" : "var(--text-tertiary)" }}
+          onClick={() => onUnreadOnlyChange(!unreadOnly)}
+        >
+          <Filter size={14} aria-hidden />
+        </button>
+        <button
+          type="button"
           aria-label="Search chats"
           title="Search chats"
-          className="absolute right-1.5 top-1/2 flex size-7 -translate-y-1/2 items-center justify-center rounded-md outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"
+          className="ml-auto flex size-9 shrink-0 items-center justify-center rounded-md outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"
           style={{ color: "var(--text-tertiary)" }}
           onClick={onSearch}
         >

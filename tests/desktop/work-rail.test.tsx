@@ -292,6 +292,27 @@ describe("WorkRail", () => {
     }
   });
 
+  it("keeps the unread filter as a compact toggle beside the Chats title", async () => {
+    const { client } = setup();
+
+    const title = screen.getByRole("heading", { name: "Chats" });
+    const unreadToggle = screen.getByRole("button", { name: "Show unread chats only" });
+    expect(unreadToggle.closest("[data-chat-sidebar-title]")).toBe(title.closest("[data-chat-sidebar-title]"));
+    expect(unreadToggle.getAttribute("aria-pressed")).toBe("false");
+    expect(screen.queryByRole("button", { name: "All" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Unread" })).toBeNull();
+
+    fireEvent.click(unreadToggle);
+    expect(unreadToggle.getAttribute("aria-pressed")).toBe("true");
+    expect(unreadToggle.getAttribute("title")).toBe("Show all chats");
+    await waitFor(() => expect(client.list).toHaveBeenLastCalledWith({ unreadOnly: true, limit: 100 }));
+
+    fireEvent.click(unreadToggle);
+    expect(unreadToggle.getAttribute("aria-pressed")).toBe("false");
+    expect(unreadToggle.getAttribute("title")).toBe("Show unread chats only");
+    await waitFor(() => expect(client.list).toHaveBeenLastCalledWith({ limit: 100 }));
+  });
+
   it("converges two Chat rows from the shared event source without adding WorkRail polling", async () => {
     const events = eventHarness();
     const at = "2026-08-29T01:00:00.000Z";
