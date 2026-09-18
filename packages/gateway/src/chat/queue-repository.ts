@@ -31,7 +31,7 @@ import type {
   ChatRunsTable,
   ChatsTable,
 } from "./database.js";
-import { ChatBusyError, ChatConflictError, ChatNotFoundError } from "./errors.js";
+import { ChatBusyError, ChatConflictError, ChatNotFoundError, ChatProviderInstanceLockedError } from "./errors.js";
 import {
   asIso,
   jsonb,
@@ -475,7 +475,7 @@ export class ChatQueueRepository {
         throw new ChatConflictError(chatId, Number(chat.revision));
       }
       if (!context?.agent && chat.bound_instance_id && (chat.bound_instance_id !== selection.instanceId
-        || chat.bound_driver_kind !== input.driverKind)) throw new ChatConflictError(chatId, Number(chat.revision));
+        || chat.bound_driver_kind !== input.driverKind)) throw new ChatProviderInstanceLockedError(chatId);
       const activeRun = await trx.selectFrom("chat_runs").select("id")
         .where("chat_id", "=", chatId)
         .where("status", "in", [...ACTIVE_RUNS])

@@ -319,16 +319,48 @@ async function toPrincipalRecord(
     internalScopeId ? ownerSharedProjection(executor, owner, internalScopeId, row.id) : undefined,
   ]);
   const effectiveProjection = collaborationProjection ?? internalProjection;
+  const providerConsistentRow = await projectPersonalProviderSelection(executor, row);
   const record = toChatRecord(
     effectiveProjection
-      ? { ...row, collaboration: JSON.stringify(effectiveProjection) }
-      : row,
+      ? { ...providerConsistentRow, collaboration: JSON.stringify(effectiveProjection) }
+      : providerConsistentRow,
     activeRun,
     userState ? toUserState(userState) : undefined,
     latestSuccessfulCompletion,
     userState?.attention_acknowledged_at,
   );
   return { ...record, readState: await projectChatReadState(executor, owner, row.id) };
+}
+
+/**
+ * The immutable binding is authoritative for an ordinary Chat. Older or stale
+ * metadata can disagree with it, so read the accepted binding Run rather than
+ * returning a self-contradictory canonical record. Shared Chat reconciliation
+ * is owned by the collaboration lifecycle and deliberately remains untouched.
+ */
+async function projectPersonalProviderSelection(
+  executor: Executor,
+  row: Selectable<ChatsTable>,
+): Promise<Selectable<ChatsTable>> {
+  if (row.collaboration !== null || !row.bound_driver_kind || !row.bound_instance_id || !row.bound_at_turn_id) {
+    return row;
+  }
+  const currentSelection = row.current_selection === null
+    ? undefined
+    : CanonicalChatModelSelectionSchema.safeParse(parseJson(row.current_selection)).data;
+  if (currentSelection?.instanceId === row.bound_instance_id) return row;
+  const bindingRun = await executor.selectFrom("chat_runs")
+    .select(["selection", "driver_kind", "instance_id"])
+    .where("chat_id", "=", row.id)
+    .where("turn_id", "=", row.bound_at_turn_id)
+    .where("driver_kind", "=", row.bound_driver_kind)
+    .where("instance_id", "=", row.bound_instance_id)
+    .orderBy("attempt", "asc")
+    .executeTakeFirst();
+  if (!bindingRun) return row;
+  const bindingSelection = CanonicalChatModelSelectionSchema.safeParse(parseJson(bindingRun.selection)).data;
+  if (bindingSelection?.instanceId !== row.bound_instance_id) return row;
+  return { ...row, current_selection: bindingRun.selection };
 }
 
 function sharedBindingScopeId(value: unknown): string | undefined {

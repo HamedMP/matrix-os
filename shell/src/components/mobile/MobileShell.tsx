@@ -576,8 +576,9 @@ function MobileAppFrame({
         onSubmit={chat.submitMessage}
               agentClient={chat.agentClient} queuedTurns={chat.queuedTurns} onCancelQueuedTurn={chat.cancelQueuedTurn}
         onSubmitApproval={chat.submitApproval}
-              onSubmitInput={chat.submitInput}
+        onSubmitInput={chat.submitInput}
         providerSelection={chat.providerSelection}
+        boundProviderInstanceId={chat.boundProviderInstanceId}
         composerDraftRequest={chat.composerDraftRequest}
         onComposerDraftConsumed={chat.consumeComposerDraft}
       />

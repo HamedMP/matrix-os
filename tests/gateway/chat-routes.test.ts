@@ -19,6 +19,7 @@ import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
 import {
   ChatBusyError,
   ChatConflictError,
+  ChatProviderInstanceLockedError,
   ChatRunNotAcknowledgeableError,
 } from "../../packages/gateway/src/chat/errors.js";
 import {
@@ -159,6 +160,37 @@ describe("canonical Chat routes", () => {
       }),
     });
     expect(oversized.status).toBe(413);
+  });
+
+  it("returns the immutable Provider conflict for a direct API bypass attempt", async () => {
+    const admitTurn = vi.fn(async () => {
+      throw new ChatProviderInstanceLockedError("chat_route_test");
+    });
+    const response = await appFor(routeService({ admitTurn })).request(
+      "/api/chats/chat_route_test/turns",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          clientRequestId: "req_route_provider_bypass",
+          baseRevision: 1,
+          parts: [{ type: "text", text: "switch provider" }],
+          selection: { instanceId: "claude_default", model: "claude-opus-5" },
+          interactionMode: "default",
+          permissionMode: "supervised",
+        }),
+      },
+    );
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      error: {
+        code: "provider_instance_locked",
+        safeMessage: "This Chat is already bound to another Provider instance.",
+        retryable: false,
+        recoveryActions: ["fork_chat", "start_new_chat"],
+      },
+    });
   });
 
   it.each([

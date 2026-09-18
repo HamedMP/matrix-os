@@ -261,7 +261,7 @@ export function ProviderModelPicker({
             </label>
             {instanceLocked ? (
               <div className="flex items-center justify-between gap-2 px-2 pt-2 text-[11px]" style={{ color: "var(--text-tertiary)" }}>
-                <span>Provider Instance is locked after the first Turn.</span>
+                <span>This Chat is bound to its Provider. Start or fork a new Chat to use another Provider.</span>
                 {onNewChat ? (
                   <button
                     type="button"

@@ -93,6 +93,9 @@ describe("Chat native session continuity", () => {
     const history = await repository.exportChat(owner, "chat_recovery");
     expect(history?.messages.at(-1)?.parts).toEqual([{ type: "text", text: "RECOVERY_OK 40" }]);
     expect(history?.runs.map((run) => run.status)).toEqual([outcome, "completed"]);
+    expect(history?.runs.map((run) => run.instanceId)).toEqual([selection.instanceId, selection.instanceId]);
+    expect(history?.chat.providerBinding?.instanceId).toBe(selection.instanceId);
+    expect(history?.chat.chat.currentSelection?.instanceId).toBe(selection.instanceId);
   });
 
   it.each([false, true])("completes Claude Steer with distinct messages and persisted activities (thinking=%s)", async (thinking) => {

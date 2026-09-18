@@ -1,6 +1,6 @@
 import type { CanonicalChatModelSelection, CanonicalProviderCatalog } from "@matrix-os/contracts";
 import { Host, Picker } from "@expo/ui";
-import { View } from "react-native";
+import { Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
 const MODEL_VALUE_SEPARATOR = "::";
@@ -24,16 +24,21 @@ function parseModelKey(key: string): { instanceId: string; modelId: string } | n
 export function ModelPicker({
   catalog,
   selection,
+  lockedInstanceId,
   onSelectionChange,
 }: {
   catalog: CanonicalProviderCatalog | null;
   selection: CanonicalChatModelSelection | null;
+  lockedInstanceId?: string;
   onSelectionChange: (selection: CanonicalChatModelSelection) => void;
 }) {
   const { theme } = useUnistyles();
   if (!catalog) return null;
-  const availableInstances = catalog.instances.filter((instance) => instance.availability === "available");
-  if (availableInstances.length === 0) return null;
+  const availableInstances = catalog.instances.filter((instance) => (
+    instance.availability === "available"
+    && (!lockedInstanceId || instance.id === lockedInstanceId)
+  ));
+  if (availableInstances.length === 0 && !lockedInstanceId) return null;
 
   const selectedInstance = selection
     ? availableInstances.find((instance) => instance.id === selection.instanceId)
@@ -67,46 +72,64 @@ export function ModelPicker({
   // text (SwiftUI .pickerStyle(.menu) / Material3 dropdown convention), so
   // no separate caption is rendered here — just the model's short name.
   return (
-    <View style={styles.row}>
-      <Host matchContents seedColor={theme.v2.appColors.muted}>
-        <Picker
-          appearance="menu"
-          selectedValue={modelValue}
-          onValueChange={handleModelChange}
-          testID="model-picker"
-        >
-          {availableInstances.flatMap((instance) => (
-            instance.models
-              .filter((model) => model.availability === "available")
-              .map((model) => (
-                <Picker.Item
-                  key={modelKey(instance.id, model.id)}
-                  label={model.displayName}
-                  value={modelKey(instance.id, model.id)}
-                />
-              ))
-          ))}
-        </Picker>
-      </Host>
-      {composerOption && composerOption.kind === "enum" && composerOption.values ? (
-        <Host matchContents seedColor={theme.v2.appColors.muted}>
-          <Picker
-            appearance="menu"
-            selectedValue={typeof optionValue === "string" ? optionValue : ""}
-            onValueChange={handleOptionChange}
-            testID="model-option-picker"
-          >
-            {composerOption.values.map((value) => (
-              <Picker.Item key={value.value} label={value.label} value={value.value} />
-            ))}
-          </Picker>
-        </Host>
+    <View style={styles.container}>
+      {lockedInstanceId ? (
+        <Text style={[styles.lockedHint, { color: theme.v2.appColors.muted }]}>
+          Provider locked. Start or fork a new Chat to use another Provider.
+        </Text>
+      ) : null}
+      {availableInstances.length > 0 ? (
+        <View style={styles.row}>
+          <Host matchContents seedColor={theme.v2.appColors.muted}>
+            <Picker
+              appearance="menu"
+              selectedValue={modelValue}
+              onValueChange={handleModelChange}
+              testID="model-picker"
+            >
+              {availableInstances.flatMap((instance) => (
+                instance.models
+                  .filter((model) => model.availability === "available")
+                  .map((model) => (
+                    <Picker.Item
+                      key={modelKey(instance.id, model.id)}
+                      label={model.displayName}
+                      value={modelKey(instance.id, model.id)}
+                    />
+                  ))
+              ))}
+            </Picker>
+          </Host>
+          {composerOption && composerOption.kind === "enum" && composerOption.values ? (
+            <Host matchContents seedColor={theme.v2.appColors.muted}>
+              <Picker
+                appearance="menu"
+                selectedValue={typeof optionValue === "string" ? optionValue : ""}
+                onValueChange={handleOptionChange}
+                testID="model-option-picker"
+              >
+                {composerOption.values.map((value) => (
+                  <Picker.Item key={value.value} label={value.label} value={value.value} />
+                ))}
+              </Picker>
+            </Host>
+          ) : null}
+        </View>
       ) : null}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  container: {
+    alignItems: "flex-end",
+    gap: 4,
+  },
+  lockedHint: {
+    maxWidth: 240,
+    fontSize: 11,
+    textAlign: "right",
+  },
   row: {
     flexDirection: "row",
     alignItems: "center",
