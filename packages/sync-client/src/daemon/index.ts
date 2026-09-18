@@ -26,12 +26,13 @@ import { loadSyncIgnore } from "../lib/syncignore.js";
 import { cleanupStaleMatrixosTempFiles } from "../lib/temp-files.js";
 import { hashFile } from "../lib/hash.js";
 import { loadSyncState, saveSyncState } from "./manifest-cache.js";
-import { FileWatcher } from "./watcher.js";
+import { FileWatcher, type WatcherEvent } from "./watcher.js";
 import { SyncWsClient } from "./ws-client.js";
 import { IpcServer } from "./ipc-server.js";
 import { createIpcHandler } from "./ipc-handler.js";
 import { createSyncActivity } from "./sync-activity.js";
 import { createLiveStatus } from "./live-status.js";
+import { createOutgoingRetry } from "./outgoing-retry.js";
 import { createDaemonShellControlClient } from "./shell-control-client.js";
 import { createRemotePrefixMapper } from "./remote-prefix.js";
 import { generateConflictPath } from "./conflict-resolver.js";
@@ -909,6 +910,7 @@ export interface InitialPullOptions {
   concurrency?: number;
   presignBatchSize?: number;
   progressEvery?: number;
+  onRecovered?: (path: string) => void;
 }
 
 export interface InitialPullResult {
@@ -969,6 +971,7 @@ export async function runInitialPull(
   const result: InitialPullResult = { pulled: 0, skipped: 0, failed: 0 };
   let completed = 0;
   const filesToPull: InitialPullFile[] = [];
+  const recoveredPaths: string[] = [];
   const recordCompleted = () => {
     completed++;
     if (progressEvery > 0 && completed % progressEvery === 0) {
@@ -1055,6 +1058,7 @@ export async function runInitialPull(
         }
         options.refreshConflictCopyPathIndex();
         result.pulled++;
+        if (recoveredPaths.length < SYNC_STATE_FILE_CAP) recoveredPaths.push(remotePath);
       } catch (err: unknown) {
         if (err instanceof AuthRejectedError) {
           throw err;
@@ -1069,6 +1073,7 @@ export async function runInitialPull(
 
   if (result.pulled > 0 || result.skipped > 0) {
     await options.saveSyncState();
+    for (const path of recoveredPaths) options.onRecovered?.(path);
     options.logger.info(result, "Initial pull complete");
   }
 
@@ -1226,11 +1231,13 @@ export async function startDaemon(): Promise<void> {
     conflictCopyPathIndex = buildUnresolvedConflictCopyPathIndex(syncState);
   };
 
-  const watcher = new FileWatcher({
+  const outgoingRetry = createOutgoingRetry({
     syncRoot: config.syncPath,
-    ignorePatterns,
-    onError: (err) => logger.error({ err }, "Watcher event handling failed"),
-    onEvent: async (event) => enqueue([toRemote(event.path)], async () => {
+    replay: handleLocalEvent,
+    onError: (err, path) => { syncActivity.failed(toRemote(path)); logger.error({ err, path }, "Outgoing retry failed"); },
+    onOverflow: () => syncActivity.failed("\0outgoing-overflow"),
+  });
+  async function handleLocalEvent(event: WatcherEvent) {
       if (config.pauseSync) return;
 
       // Stored under remote-prefixed keys so syncState matches what the
@@ -1269,6 +1276,10 @@ export async function startDaemon(): Promise<void> {
             capSyncStateFiles(syncState);
             await saveSyncState(stateFile, syncState);
           }
+          if (existing?.lastSyncedHash === event.hash) {
+            outgoingRetry.succeeded(event.path);
+            syncActivity.succeeded(remotePath);
+          }
           return;
         }
 
@@ -1302,12 +1313,14 @@ export async function startDaemon(): Promise<void> {
             syncState.manifestVersion = result.manifestVersion;
             await saveSyncState(stateFile, syncState);
             syncActivity.succeeded(remotePath);
+            outgoingRetry.succeeded(event.path);
             syncActivity.record(remotePath, "update", config.peerId);
           } else {
             throw new Error("Upload authorization missing");
           }
         } catch (err) {
           syncActivity.failed(remotePath);
+          outgoingRetry.failed(event.path);
           if (existing) {
             syncState.files[remotePath] = existing;
           } else {
@@ -1335,9 +1348,11 @@ export async function startDaemon(): Promise<void> {
             syncState.manifestVersion = deleteResult.manifestVersion;
             await saveSyncState(stateFile, syncState);
             syncActivity.succeeded(remotePath);
+            outgoingRetry.succeeded(event.path);
             syncActivity.record(remotePath, "delete", config.peerId);
           } catch (err) {
             syncActivity.failed(remotePath);
+            outgoingRetry.failed(event.path);
             if (exitOnAuthFailure(err, logger)) return;
             await adoptRemoteManifestVersion(syncState, err, async () => {
               await saveSyncState(stateFile, syncState);
@@ -1352,6 +1367,14 @@ export async function startDaemon(): Promise<void> {
           await saveSyncState(stateFile, syncState);
         }
       }
+  }
+  const watcher = new FileWatcher({
+    syncRoot: config.syncPath,
+    ignorePatterns,
+    onError: (err) => logger.error({ err }, "Watcher event handling failed"),
+    onEvent: (event) => enqueue([toRemote(event.path)], async () => {
+      try { await handleLocalEvent(event); }
+      catch (err: unknown) { outgoingRetry.failed(event.path); throw err; }
     }),
   });
 
@@ -1571,11 +1594,24 @@ export async function startDaemon(): Promise<void> {
           syncRoot: config.syncPath,
           syncState,
           remoteFiles,
-          toLocal,
+          toLocal: (path) => {
+            const local = toLocal(path);
+            if (!local) return null;
+            // Preserve local delete/edit intent when the remote is unchanged.
+            // Divergent remote edits must reconcile (and preserve conflicts)
+            // before we permit any outgoing retry against the new revision.
+            return outgoingRetry.has(local) && remoteFiles[path]?.hash === syncState.files[path]?.lastSyncedHash
+              ? null : local;
+          },
           toRemote,
           logger,
           saveSyncState: () => saveSyncState(stateFile, syncState),
           refreshConflictCopyPathIndex,
+          onRecovered: (path) => syncActivity.succeeded(path),
+        });
+        await outgoingRetry.retry((local) => {
+          const path = toRemote(local);
+          return !remoteFiles[path] || remoteFiles[path].hash === syncState.files[path]?.lastSyncedHash;
         });
         if (result.failed > 0) throw new Error("Initial reconciliation incomplete");
       });
