@@ -120,7 +120,6 @@ export async function saveProfiles(
 
 async function migrateLegacyProfileFiles(configDir: string): Promise<void> {
   await moveIfPresent(join(configDir, "auth.json"), profileAuthPath("cloud", configDir));
-  await moveIfPresent(join(configDir, "config.json"), profileConfigPath("cloud", configDir));
 }
 
 async function moveIfPresent(from: string, to: string): Promise<void> {

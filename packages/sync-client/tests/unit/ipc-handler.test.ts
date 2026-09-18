@@ -72,6 +72,10 @@ function createDeps(overrides: Partial<Parameters<typeof createIpcHandler>[0]> =
 
 describe("createIpcHandler", () => {
   describe("status", () => {
+    it("does not report synced while failed work remains", async () => {
+      const { deps } = createDeps({ syncState: { ...baseState(), conflicts: {} }, connectionState: () => "online", pendingFailureCount: () => 1 });
+      expect(await createIpcHandler(deps)("status", {})).toMatchObject({ status: "error", pendingFailureCount: 1 });
+    });
     it("returns a token-free snapshot of config + syncState", async () => {
       const { deps } = createDeps();
       const handler = createIpcHandler(deps);
@@ -79,7 +83,15 @@ describe("createIpcHandler", () => {
       const res = await handler("status", {});
 
       expect(res).toEqual({
-        syncing: true,
+        service: "running",
+        auth: "signed_out",
+        connection: "offline",
+        status: "conflict",
+        enabled: true,
+        paused: false,
+        syncing: false,
+        activeTransferCount: 0,
+        pendingFailureCount: 0,
         manifestVersion: 4,
         lastSyncAt: 1234,
         fileCount: 2,
@@ -90,6 +102,10 @@ describe("createIpcHandler", () => {
         platformUrl: deps.config.platformUrl,
         profile: "local",
         peerId: deps.config.peerId,
+        peers: [],
+        activity: [],
+        conflicts: [expect.objectContaining({ path: "a.md" })],
+        invites: [],
       });
     });
 
@@ -100,7 +116,7 @@ describe("createIpcHandler", () => {
 
       const res = await handler("status", {});
 
-      expect(res.syncing).toBe(false);
+      expect(res).toMatchObject({ paused: true, syncing: false, status: "paused" });
     });
 
     it("reports zero conflicts when the state has no conflict registry", async () => {
@@ -112,6 +128,24 @@ describe("createIpcHandler", () => {
       const res = await handler("sync.status", {});
 
       expect(res.conflictCount).toBe(0);
+    });
+
+    it("reports expired auth as needs_sign_in instead of a connection failure", async () => {
+      const { deps } = createDeps({
+        loadAuth: vi.fn().mockResolvedValue({
+          accessToken: "expired",
+          expiresAt: 1,
+          userId: "user_test",
+          handle: "test",
+        }),
+        connectionState: () => "online",
+      });
+      const handler = createIpcHandler(deps);
+
+      await expect(handler("status", {})).resolves.toMatchObject({
+        auth: "needs_sign_in",
+        connection: "online",
+      });
     });
   });
 
@@ -147,6 +181,7 @@ describe("createIpcHandler", () => {
 
       expect(res).toEqual({
         syncPath: deps.config.syncPath,
+        syncDaemonRuntime: "source",
         gatewayFolder: "",
         gatewayUrl: deps.config.gatewayUrl,
         platformUrl: deps.config.platformUrl,

@@ -7,9 +7,9 @@ const {
   installServiceMock,
   isDaemonRunningMock,
   isStandaloneRuntimeMock,
-  loadConfigMock,
+  loadProfileSyncConfigMock,
   resolveCliProfileMock,
-  saveConfigMock,
+  saveProfileSyncConfigMock,
   sendCommandMock,
   startServiceMock,
 } = vi.hoisted(() => ({
@@ -26,13 +26,13 @@ const {
   installServiceMock: vi.fn().mockResolvedValue("/service/path"),
   isDaemonRunningMock: vi.fn().mockResolvedValue(true),
   isStandaloneRuntimeMock: vi.fn(() => false),
-  loadConfigMock: vi.fn(),
+  loadProfileSyncConfigMock: vi.fn(),
   resolveCliProfileMock: vi.fn().mockResolvedValue({
     name: "cloud",
     platformUrl: "https://platform.example",
     gatewayUrl: "https://gateway.example",
   }),
-  saveConfigMock: vi.fn().mockResolvedValue(undefined),
+  saveProfileSyncConfigMock: vi.fn().mockResolvedValue(undefined),
   sendCommandMock: vi.fn(),
   startServiceMock: vi.fn().mockResolvedValue(undefined),
 }));
@@ -40,8 +40,11 @@ const {
 vi.mock("../../src/lib/config.js", () => ({
   defaultSyncPath: () => "/tmp/matrixos-sync-command-test",
   generatePeerId: () => "peer-generated",
-  loadConfig: loadConfigMock,
-  saveConfig: saveConfigMock,
+}));
+
+vi.mock("../../src/lib/profile-sync-config.js", () => ({
+  loadProfileSyncConfig: loadProfileSyncConfigMock,
+  saveProfileSyncConfig: saveProfileSyncConfigMock,
 }));
 
 vi.mock("../../src/cli/daemon-client.js", () => ({
@@ -93,11 +96,12 @@ beforeEach(() => {
   isDaemonRunningMock.mockResolvedValue(true);
   isStandaloneRuntimeMock.mockClear();
   isStandaloneRuntimeMock.mockReturnValue(false);
-  loadConfigMock.mockClear();
-  loadConfigMock.mockResolvedValue(previousConfig());
+  loadProfileSyncConfigMock.mockClear();
+  loadProfileSyncConfigMock.mockResolvedValue({ config: previousConfig() });
   resolveCliProfileMock.mockClear();
-  saveConfigMock.mockClear();
+  saveProfileSyncConfigMock.mockClear();
   sendCommandMock.mockClear();
+  sendCommandMock.mockResolvedValue(previousConfig({ profile: "cloud", gatewayUrl: "https://gateway.example", platformUrl: "https://platform.example" }));
   startServiceMock.mockClear();
   vi.spyOn(console, "log").mockImplementation(() => {});
   vi.spyOn(console, "error").mockImplementation(() => {});
@@ -108,13 +112,27 @@ afterEach(() => {
 });
 
 describe("syncCommand start", () => {
+  it("restarts when the live daemon belongs to another profile despite a matching saved target", async () => {
+    loadProfileSyncConfigMock.mockResolvedValue({ config: previousConfig({ profile: "cloud" }) });
+    sendCommandMock.mockResolvedValue(previousConfig({ profile: "local" }));
+    await runSync();
+    expect(installServiceMock).toHaveBeenCalledOnce();
+    expect(startServiceMock).toHaveBeenCalledOnce();
+  });
+
+  it("renders idle sync separately from a paused daemon", async () => {
+    sendCommandMock.mockResolvedValue({ syncing: false, paused: false, status: "synced", manifestVersion: 2, fileCount: 3 });
+    await runSync({}, ["status"]);
+    expect(console.log).toHaveBeenCalledWith("  Status: synced");
+    expect(console.log).not.toHaveBeenCalledWith("  Syncing: paused");
+  });
   it("persists refreshed config before returning when the correct daemon is already running", async () => {
     await runSync();
 
     expect(installServiceMock).not.toHaveBeenCalled();
     expect(startServiceMock).not.toHaveBeenCalled();
-    expect(saveConfigMock).toHaveBeenCalledTimes(1);
-    expect(saveConfigMock).toHaveBeenCalledWith(
+    expect(saveProfileSyncConfigMock).toHaveBeenCalledTimes(1);
+    expect(saveProfileSyncConfigMock).toHaveBeenCalledWith(
       expect.objectContaining({
         gatewayUrl: "https://gateway.example",
         platformUrl: "https://platform.example",

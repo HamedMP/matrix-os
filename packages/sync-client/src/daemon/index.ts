@@ -5,11 +5,14 @@ import { dirname, extname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import pino from "pino";
 import {
-  loadConfig,
   saveConfig,
   getConfigDir,
   type SyncConfig,
 } from "../lib/config.js";
+import {
+  loadProfileSyncConfig,
+  saveProfileSyncConfig,
+} from "../lib/profile-sync-config.js";
 import {
   clearAuth,
   clearProfileAuth,
@@ -27,6 +30,7 @@ import { FileWatcher } from "./watcher.js";
 import { SyncWsClient } from "./ws-client.js";
 import { IpcServer } from "./ipc-server.js";
 import { createIpcHandler } from "./ipc-handler.js";
+import { createSyncActivity } from "./sync-activity.js";
 import { createDaemonShellControlClient } from "./shell-control-client.js";
 import { createRemotePrefixMapper } from "./remote-prefix.js";
 import { generateConflictPath } from "./conflict-resolver.js";
@@ -1133,11 +1137,12 @@ export async function startDaemon(): Promise<void> {
     },
   });
 
-  const config = await loadConfig();
-  if (!config) {
+  const configResolution = await loadProfileSyncConfig({ configDir });
+  if (!configResolution) {
     logger.error("No config found. Run 'matrixos sync <path>' first.");
     process.exit(1);
   }
+  const config = configResolution.config;
 
   const { auth, profileName, source } = await resolveDaemonAuth(config);
   if (!auth) {
@@ -1203,9 +1208,17 @@ export async function startDaemon(): Promise<void> {
   // manifest writes, so 13 parallel onEvent calls all racing with the same
   // expectedVersion produce 12 conflicts and a 10s timeout per loser.
   // Serializing makes each commit pick up the prior commit's new version.
-  const enqueue = createSerialTaskQueue((err) => {
+  const syncActivity = createSyncActivity();
+  const serialQueue = createSerialTaskQueue((err) => {
+    syncActivity.failed("\0queue");
     logger.error({ err }, "Serialized sync task failed");
   });
+  const enqueue = (task: () => Promise<void>) => {
+    const end = syncActivity.begin();
+    return serialQueue(async () => {
+      try { await task(); } finally { end(); }
+    });
+  };
   let conflictCopyPathIndex = buildUnresolvedConflictCopyPathIndex(syncState);
   const refreshConflictCopyPathIndex = () => {
     conflictCopyPathIndex = buildUnresolvedConflictCopyPathIndex(syncState);
@@ -1277,13 +1290,22 @@ export async function startDaemon(): Promise<void> {
               gatewayClient,
             );
             const result = await commitFiles(gatewayClient, [
-              { path: remotePath, hash: event.hash, size: event.size },
+              {
+                path: remotePath,
+                hash: event.hash,
+                size: event.size,
+                stagingId: urls[0].stagingId,
+              },
             ], syncState.manifestVersion);
             syncState.files[remotePath]!.lastSyncedHash = event.hash;
             syncState.manifestVersion = result.manifestVersion;
             await saveSyncState(stateFile, syncState);
+            syncActivity.succeeded(remotePath);
+          } else {
+            throw new Error("Upload authorization missing");
           }
         } catch (err) {
+          syncActivity.failed(remotePath);
           if (existing) {
             syncState.files[remotePath] = existing;
           } else {
@@ -1310,7 +1332,9 @@ export async function startDaemon(): Promise<void> {
             delete syncState.files[remotePath];
             syncState.manifestVersion = deleteResult.manifestVersion;
             await saveSyncState(stateFile, syncState);
+            syncActivity.succeeded(remotePath);
           } catch (err) {
+            syncActivity.failed(remotePath);
             if (exitOnAuthFailure(err, logger)) return;
             await adoptRemoteManifestVersion(syncState, err, async () => {
               await saveSyncState(stateFile, syncState);
@@ -1328,6 +1352,7 @@ export async function startDaemon(): Promise<void> {
     }),
   });
 
+  let daemonConnectionState: "connecting" | "online" | "offline" = "connecting";
   const wsClient = new SyncWsClient({
     gatewayUrl: config.gatewayUrl,
     token: auth.accessToken,
@@ -1351,6 +1376,7 @@ export async function startDaemon(): Promise<void> {
               { path: file.path, action: "get" },
             ]);
             if (!urls[0]) {
+              syncActivity.failed(file.path);
               shouldAdvanceManifestVersion = false;
               continue;
             }
@@ -1382,7 +1408,9 @@ export async function startDaemon(): Promise<void> {
             }
             refreshConflictCopyPathIndex();
             await saveSyncState(stateFile, syncState);
+            syncActivity.succeeded(file.path);
           } catch (err) {
+            syncActivity.failed(file.path);
             shouldAdvanceManifestVersion = false;
             if (exitOnAuthFailure(err, logger)) return;
             logger.error({ err, path: file.path }, "Download failed");
@@ -1405,7 +1433,9 @@ export async function startDaemon(): Promise<void> {
             }
             refreshConflictCopyPathIndex();
             await saveSyncState(stateFile, syncState);
+            syncActivity.succeeded(file.path);
           } catch (err) {
+            syncActivity.failed(file.path);
             shouldAdvanceManifestVersion = false;
             logger.error(
               { err, path: file.path },
@@ -1422,8 +1452,14 @@ export async function startDaemon(): Promise<void> {
         () => saveSyncState(stateFile, syncState),
       );
     }),
-    onConnect: () => logger.info("Connected to gateway"),
-    onDisconnect: () => logger.info("Disconnected from gateway"),
+    onConnect: () => {
+      daemonConnectionState = "online";
+      logger.info("Connected to gateway");
+    },
+    onDisconnect: () => {
+      daemonConnectionState = "offline";
+      logger.info("Disconnected from gateway");
+    },
     onError: (err) => logger.error({ err }, "WebSocket error"),
   });
 
@@ -1432,10 +1468,22 @@ export async function startDaemon(): Promise<void> {
     config,
     syncState,
     logger: { info: (msg) => logger.info(msg) },
-    saveConfig: (next) => saveConfig(next),
-    persistPauseState,
+    saveConfig: (next) => saveProfileSyncConfig(next, {
+      configDir,
+      profileName: configResolution.profileName,
+    }),
+    persistPauseState: async (next, paused) => {
+      next.pauseSync = paused;
+      await saveProfileSyncConfig(next, {
+        configDir,
+        profileName: configResolution.profileName,
+      });
+    },
     clearAuth: authFileAccessors.clearAuth,
     loadAuth: authFileAccessors.loadAuth,
+    connectionState: () => daemonConnectionState,
+    activeTransferCount: syncActivity.activeTransferCount,
+    pendingFailureCount: syncActivity.pendingFailureCount,
     shell: createDaemonShellControlClient({ config, loadAuth: authFileAccessors.loadAuth }),
     exit: (code) => process.exit(code),
   });
@@ -1490,6 +1538,7 @@ export async function startDaemon(): Promise<void> {
   //  2. Initial-pull: download every file in the manifest that's missing
   //     locally (or stale) so a fresh daemon on a new machine actually
   //     materializes the user's existing files.
+  const endInitialPull = syncActivity.begin();
   try {
     const remote = await fetchManifest(gatewayClient);
     const remoteEnvelope = parseRemoteManifestEnvelope(remote.manifest);
@@ -1511,7 +1560,14 @@ export async function startDaemon(): Promise<void> {
       remoteFiles,
       toLocal,
       toRemote,
-      logger,
+      logger: {
+        ...logger,
+        error: (obj, msg) => {
+          const path = obj && typeof obj === "object" && "path" in obj && typeof obj.path === "string" ? obj.path : "\0initial-pull";
+          syncActivity.failed(path);
+          logger.error(obj, msg);
+        },
+      },
       saveSyncState: () => saveSyncState(stateFile, syncState),
       refreshConflictCopyPathIndex,
     });
@@ -1521,6 +1577,9 @@ export async function startDaemon(): Promise<void> {
       { err },
       "Could not fetch remote manifest on startup -- continuing with cached version",
     );
+    syncActivity.failed("\0initial-pull");
+  } finally {
+    endInitialPull();
   }
 
   watcher.start();
