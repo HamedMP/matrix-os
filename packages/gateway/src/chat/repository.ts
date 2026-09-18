@@ -65,6 +65,10 @@ import {
 } from "./records.js";
 import { ChatRunLifecycleRepository } from "./run-lifecycle-repository.js";
 import {
+  reconcileProviderBindings,
+  type ProviderBindingReconciliationResult,
+} from "./provider-binding-reconciliation.js";
+import {
   ChatQueueRepository,
   type EnqueueQueuedTurnInput,
   type EnqueuedQueuedTurn,
@@ -76,6 +80,7 @@ import {
   type EnqueueSharedQueuedTurnInput,
   type EnqueuedSharedQueuedTurn,
   type SharedQueuedTurn,
+  type SharedAiCapability,
 } from "./queue-repository.js";
 import {
   ChatSteeringRepository,
@@ -110,6 +115,7 @@ export type {
   EnqueueSharedQueuedTurnInput,
   EnqueuedSharedQueuedTurn,
   SharedQueuedTurn,
+  SharedAiCapability,
 } from "./queue-repository.js";
 export { SharedChatQueueError } from "./queue-repository.js";
 export type { BeginSteerInput, BegunSteer } from "./steering-repository.js";
@@ -488,6 +494,11 @@ export class ChatRepository {
 
   async bootstrap(): Promise<void> {
     await bootstrapChatDatabase(this.kysely);
+    await this.reconcileProviderBindings();
+  }
+
+  async reconcileProviderBindings(): Promise<ProviderBindingReconciliationResult> {
+    return reconcileProviderBindings(this.kysely);
   }
 
   async release(): Promise<void> {
@@ -1031,6 +1042,13 @@ export class ChatRepository {
 
   async listSharedQueuedTurns(owner: ChatOwner, chatId: string): Promise<SharedQueuedTurn[]> {
     return this.queue.listShared(owner, chatId);
+  }
+
+  async getSharedAiCapability(
+    owner: ChatOwner,
+    input: { chatId: string; scopeId: string; actorId: string },
+  ): Promise<SharedAiCapability> {
+    return this.queue.getSharedAiCapability(owner, input);
   }
 
   async listSharedPendingApprovals(

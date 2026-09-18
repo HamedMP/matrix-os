@@ -15,7 +15,7 @@ type SharedAiState = {
   availability: AiAvailability;
   requests: CollaborationAiRequest[];
   approvals: CollaborationApproval[];
-  defaultSelection: CollaborationAiRequest["selection"] | null;
+  effectiveSelection: CollaborationAiRequest["selection"] | null;
   pendingAction: string | null;
   error: SharedAiError;
 };
@@ -31,7 +31,7 @@ const initialSharedAiState: SharedAiState = {
   availability: "checking",
   requests: [],
   approvals: [],
-  defaultSelection: null,
+  effectiveSelection: null,
   pendingAction: null,
   error: null,
 };
@@ -96,7 +96,7 @@ function sharedComposerPresentation(
   const writableRole = scope.role === "owner" || scope.role === "editor";
   const canDiscuss = scope.lifecycle === "shared" && writableRole && scope.capabilities.discuss;
   const canRequestAi = scope.lifecycle === "shared" && writableRole
-    && scope.capabilities.requestAi && state.availability === "available" && state.defaultSelection !== null;
+    && scope.capabilities.requestAi && state.availability === "available";
   const aiMode = draft.mode === "ai";
   const canCompose = aiMode ? canRequestAi : canDiscuss;
   const sending = discussionSending || state.pendingAction === "submit";
@@ -184,17 +184,16 @@ function useSharedAiController({ api, scope, actorId, resourceRevision, draft, u
 
   const writableRole = scope.role === "owner" || scope.role === "editor";
   const canRequestAi = scope.lifecycle === "shared" && writableRole
-    && scope.capabilities.requestAi && state.availability === "available" && state.defaultSelection !== null;
+    && scope.capabilities.requestAi && state.availability === "available";
 
   const submitAi = async () => {
-    if (!canRequestAi || !state.defaultSelection || !draft.text.trim() || state.pendingAction) return;
+    if (!canRequestAi || !draft.text.trim() || state.pendingAction) return;
     dispatch({ type: "action_started", key: "submit" });
     try {
       const accepted = CollaborationAiRequestAcceptedResponseSchema.parse(await api.post(`${endpoint}/requests`, {
         clientRequestId: crypto.randomUUID(),
         expectedRevision: latestResourceRevision.current,
         text: draft.text.trim(),
-        selection: state.defaultSelection,
       }));
       latestResourceRevision.current = accepted.resourceRevision;
       dispatch({ type: "request_accepted", request: accepted.request });
@@ -255,10 +254,10 @@ function reduceSharedAi(state: SharedAiState, action: SharedAiAction): SharedAiS
     case "loaded":
       return {
         ...state,
-        availability: "available",
+        availability: action.response.capability.status === "available" ? "available" : "unavailable",
         requests: action.response.requests,
         approvals: action.response.approvals,
-        defaultSelection: action.response.defaultSelection,
+        effectiveSelection: action.response.capability.effectiveSelection ?? null,
         error: null,
       };
     case "unavailable":

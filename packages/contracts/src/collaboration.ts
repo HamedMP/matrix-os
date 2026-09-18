@@ -448,7 +448,6 @@ export const CollaborationCreateAiRequestSchema = z.object({
   clientRequestId: CollaborationIdSchema,
   expectedRevision: CollaborationRevisionSchema,
   text: boundedText(65_536, COLLABORATION_MESSAGE_BYTE_LIMIT),
-  selection: CanonicalChatModelSelectionSchema,
 }).strict();
 
 export const CollaborationAiRequestControlSchema = z.object({
@@ -493,7 +492,10 @@ export const CollaborationApprovalSchema = z.object({
 export const CollaborationAiRequestsResponseSchema = z.object({
   requests: z.array(CollaborationAiRequestSchema).max(COLLABORATION_PAGE_LIMIT),
   approvals: z.array(CollaborationApprovalSchema).max(COLLABORATION_PAGE_LIMIT),
-  defaultSelection: CanonicalChatModelSelectionSchema,
+  capability: z.object({
+    status: z.enum(["available", "unavailable", "owner_binding_required"]),
+    effectiveSelection: CanonicalChatModelSelectionSchema.optional(),
+  }).strict(),
   resourceRevision: CollaborationRevisionSchema,
 }).strict();
 

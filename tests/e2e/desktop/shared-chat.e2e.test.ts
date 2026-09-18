@@ -197,7 +197,10 @@ suite("Electron shared Chat presentation", () => {
           updatedAt: now,
         }],
         approvals: [],
-        defaultSelection: { instanceId: "claude_shared", model: "claude-opus-4-6" },
+        capability: {
+          status: "available",
+          effectiveSelection: { instanceId: "claude_shared", model: "claude-opus-4-6" },
+        },
         resourceRevision: "4",
       });
       return;
