@@ -31,6 +31,7 @@ import { SyncWsClient } from "./ws-client.js";
 import { IpcServer } from "./ipc-server.js";
 import { createIpcHandler } from "./ipc-handler.js";
 import { createSyncActivity } from "./sync-activity.js";
+import { createLiveStatus } from "./live-status.js";
 import { createDaemonShellControlClient } from "./shell-control-client.js";
 import { createRemotePrefixMapper } from "./remote-prefix.js";
 import { generateConflictPath } from "./conflict-resolver.js";
@@ -1210,13 +1211,14 @@ export async function startDaemon(): Promise<void> {
   // Serializing makes each commit pick up the prior commit's new version.
   const syncActivity = createSyncActivity();
   const serialQueue = createSerialTaskQueue((err) => {
-    syncActivity.failed("\0queue");
     logger.error({ err }, "Serialized sync task failed");
   });
-  const enqueue = (task: () => Promise<void>) => {
+  const enqueue = (paths: string[], task: () => Promise<void>) => {
     const end = syncActivity.begin();
     return serialQueue(async () => {
-      try { await task(); } finally { end(); }
+      try { await task(); }
+      catch (err: unknown) { paths.forEach((path) => syncActivity.failed(path)); throw err; }
+      finally { end(); }
     });
   };
   let conflictCopyPathIndex = buildUnresolvedConflictCopyPathIndex(syncState);
@@ -1228,7 +1230,7 @@ export async function startDaemon(): Promise<void> {
     syncRoot: config.syncPath,
     ignorePatterns,
     onError: (err) => logger.error({ err }, "Watcher event handling failed"),
-    onEvent: async (event) => enqueue(async () => {
+    onEvent: async (event) => enqueue([toRemote(event.path)], async () => {
       if (config.pauseSync) return;
 
       // Stored under remote-prefixed keys so syncState matches what the
@@ -1294,13 +1296,13 @@ export async function startDaemon(): Promise<void> {
                 path: remotePath,
                 hash: event.hash,
                 size: event.size,
-                stagingId: urls[0].stagingId,
               },
             ], syncState.manifestVersion);
             syncState.files[remotePath]!.lastSyncedHash = event.hash;
             syncState.manifestVersion = result.manifestVersion;
             await saveSyncState(stateFile, syncState);
             syncActivity.succeeded(remotePath);
+            syncActivity.record(remotePath, "update", config.peerId);
           } else {
             throw new Error("Upload authorization missing");
           }
@@ -1333,6 +1335,7 @@ export async function startDaemon(): Promise<void> {
             syncState.manifestVersion = deleteResult.manifestVersion;
             await saveSyncState(stateFile, syncState);
             syncActivity.succeeded(remotePath);
+            syncActivity.record(remotePath, "delete", config.peerId);
           } catch (err) {
             syncActivity.failed(remotePath);
             if (exitOnAuthFailure(err, logger)) return;
@@ -1357,7 +1360,7 @@ export async function startDaemon(): Promise<void> {
     gatewayUrl: config.gatewayUrl,
     token: auth.accessToken,
     peerId: config.peerId,
-    onEvent: async (event) => enqueue(async () => {
+    onEvent: async (event) => enqueue(event.type === "sync:change" ? event.files.map((file) => file.path) : [], async () => {
       if (config.pauseSync) return;
       if (event.type !== "sync:change") return;
 
@@ -1409,6 +1412,7 @@ export async function startDaemon(): Promise<void> {
             refreshConflictCopyPathIndex();
             await saveSyncState(stateFile, syncState);
             syncActivity.succeeded(file.path);
+            syncActivity.record(file.path, file.action, event.peerId);
           } catch (err) {
             syncActivity.failed(file.path);
             shouldAdvanceManifestVersion = false;
@@ -1434,6 +1438,7 @@ export async function startDaemon(): Promise<void> {
             refreshConflictCopyPathIndex();
             await saveSyncState(stateFile, syncState);
             syncActivity.succeeded(file.path);
+            syncActivity.record(file.path, "delete", event.peerId);
           } catch (err) {
             syncActivity.failed(file.path);
             shouldAdvanceManifestVersion = false;
@@ -1455,6 +1460,9 @@ export async function startDaemon(): Promise<void> {
     onConnect: () => {
       daemonConnectionState = "online";
       logger.info("Connected to gateway");
+      if (syncActivity.pendingFailureCount() > 0 && !config.pauseSync) {
+        void enqueue([], reconcileInitialPull);
+      }
     },
     onDisconnect: () => {
       daemonConnectionState = "offline";
@@ -1464,6 +1472,7 @@ export async function startDaemon(): Promise<void> {
   });
 
   const authFileAccessors = createDaemonAuthFileAccessors({ profileName, source }, configDir);
+  const liveStatus = createLiveStatus(gatewayClient, (err) => logger.warn({ err }, "Live peer status unavailable"));
   const ipcHandler = createIpcHandler({
     config,
     syncState,
@@ -1478,12 +1487,15 @@ export async function startDaemon(): Promise<void> {
         configDir,
         profileName: configResolution.profileName,
       });
+      if (!paused) void enqueue([], reconcileInitialPull);
     },
     clearAuth: authFileAccessors.clearAuth,
     loadAuth: authFileAccessors.loadAuth,
     connectionState: () => daemonConnectionState,
     activeTransferCount: syncActivity.activeTransferCount,
     pendingFailureCount: syncActivity.pendingFailureCount,
+    activity: syncActivity.recent,
+    peers: liveStatus.peers,
     shell: createDaemonShellControlClient({ config, loadAuth: authFileAccessors.loadAuth }),
     exit: (code) => process.exit(code),
   });
@@ -1538,49 +1550,44 @@ export async function startDaemon(): Promise<void> {
   //  2. Initial-pull: download every file in the manifest that's missing
   //     locally (or stale) so a fresh daemon on a new machine actually
   //     materializes the user's existing files.
-  const endInitialPull = syncActivity.begin();
-  try {
-    const remote = await fetchManifest(gatewayClient);
-    const remoteEnvelope = parseRemoteManifestEnvelope(remote.manifest);
-    const remoteVersion = remoteEnvelope.manifestVersion;
-    if (remoteVersion > syncState.manifestVersion) {
-      syncState.manifestVersion = remoteVersion;
-      await saveSyncState(stateFile, syncState);
-      logger.info(
-        { manifestVersion: remoteVersion },
-        "Synced remote manifest version on startup",
+  async function reconcileInitialPull() {
+    try {
+      await syncActivity.run("\0initial-pull", async () => {
+        const remote = await fetchManifest(gatewayClient);
+        const remoteEnvelope = parseRemoteManifestEnvelope(remote.manifest);
+        const remoteVersion = remoteEnvelope.manifestVersion;
+        if (remoteVersion > syncState.manifestVersion) {
+          syncState.manifestVersion = remoteVersion;
+          await saveSyncState(stateFile, syncState);
+          logger.info(
+            { manifestVersion: remoteVersion },
+            "Synced remote manifest version on startup",
+          );
+        }
+
+        const remoteFiles = remoteEnvelope.manifest.files;
+        const result = await runInitialPull({
+          gatewayClient,
+          syncRoot: config.syncPath,
+          syncState,
+          remoteFiles,
+          toLocal,
+          toRemote,
+          logger,
+          saveSyncState: () => saveSyncState(stateFile, syncState),
+          refreshConflictCopyPathIndex,
+        });
+        if (result.failed > 0) throw new Error("Initial reconciliation incomplete");
+      });
+    } catch (err) {
+      if (exitOnAuthFailure(err, logger)) return;
+      logger.warn(
+        { err },
+        "Could not fetch remote manifest on startup -- continuing with cached version",
       );
     }
-
-    const remoteFiles = remoteEnvelope.manifest.files;
-    await runInitialPull({
-      gatewayClient,
-      syncRoot: config.syncPath,
-      syncState,
-      remoteFiles,
-      toLocal,
-      toRemote,
-      logger: {
-        ...logger,
-        error: (obj, msg) => {
-          const path = obj && typeof obj === "object" && "path" in obj && typeof obj.path === "string" ? obj.path : "\0initial-pull";
-          syncActivity.failed(path);
-          logger.error(obj, msg);
-        },
-      },
-      saveSyncState: () => saveSyncState(stateFile, syncState),
-      refreshConflictCopyPathIndex,
-    });
-  } catch (err) {
-    if (exitOnAuthFailure(err, logger)) return;
-    logger.warn(
-      { err },
-      "Could not fetch remote manifest on startup -- continuing with cached version",
-    );
-    syncActivity.failed("\0initial-pull");
-  } finally {
-    endInitialPull();
   }
+  await reconcileInitialPull();
 
   watcher.start();
   wsClient.connect();

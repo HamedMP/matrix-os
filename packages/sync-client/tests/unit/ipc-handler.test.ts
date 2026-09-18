@@ -102,10 +102,10 @@ describe("createIpcHandler", () => {
         platformUrl: deps.config.platformUrl,
         profile: "local",
         peerId: deps.config.peerId,
-        peers: [],
+        peers: null,
         activity: [],
         conflicts: [expect.objectContaining({ path: "a.md" })],
-        invites: [],
+        invites: null,
       });
     });
 

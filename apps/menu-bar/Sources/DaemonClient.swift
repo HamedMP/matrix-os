@@ -3,9 +3,11 @@ import Foundation
 struct DaemonState: Sendable {
     let status: SyncStatusModel.Status
     let peers: [PeerInfo]
+    let peersAvailable: Bool
     let activity: [ActivityItem]
     let conflicts: [ConflictItem]
     let invites: [ShareInvite]
+    let invitesAvailable: Bool
 }
 
 actor DaemonClient {
@@ -32,9 +34,11 @@ actor DaemonClient {
         return DaemonState(
             status: status,
             peers: peers,
+            peersAvailable: result["peers"] is [[String: Any]],
             activity: activity,
             conflicts: conflicts,
-            invites: invites
+            invites: invites,
+            invitesAvailable: result["invites"] is [[String: Any]]
         )
     }
 
