@@ -89,6 +89,18 @@ apps/mobile/__tests__/
 
 **Structure Decision**: Put semantics and accessible transient-surface behavior in focused shared UI modules, then integrate them into each existing native shell. Keep ordinary Chat and Terminal renderers as the dominant composition roots. Backend additions stay in the existing collaboration registration, repository, event, and proxy seams; no new service, authority, route namespace, or standalone application is introduced.
 
+### Collaboration route extraction plan
+
+`packages/gateway/src/collaboration/routes.ts` crossed 1,000 lines while registering the discussion and terminal-export endpoints required by this feature. Before another collaboration endpoint or mutation is added, extract the discussion HTTP adapters into `packages/gateway/src/collaboration/discussion-routes.ts` with this boundary:
+
+- move only discussion query/body parsing, response validation, safe error mapping, and route registration;
+- retain the existing authenticated principal, policy lookup, body-limit middleware, repository authority, and transaction ownership unchanged;
+- inject the existing repository/adapter dependencies from the collaboration route composition root rather than creating a second service or authorization seam;
+- move the associated route tests with the extracted registration and preserve the current Chat/terminal authorization, revision, pagination, and safe-error cases;
+- verify the extraction with the collaboration route suite, gateway typecheck, and pattern scan before adding further behavior.
+
+This is a file-ownership extraction only. It must not change live-collaboration authority, snapshot separation, or owner-runtime execution.
+
 ## Architecture
 
 ### Native Chat composition
