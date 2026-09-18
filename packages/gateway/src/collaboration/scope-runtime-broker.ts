@@ -322,6 +322,9 @@ export function createScopeRuntimeBroker(options: {
           "content-type": "application/json",
           ...identity.headers,
         });
+        if (identity.url === "https://chatgpt.com/backend-api/codex/responses") {
+          headers.set("originator", "codex_cli_rs");
+        }
         return fetchImpl(identity.url, {
           method: "POST",
           headers,

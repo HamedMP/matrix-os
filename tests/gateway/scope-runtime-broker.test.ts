@@ -154,6 +154,7 @@ describe("scope runtime broker", () => {
       expect(String(url)).toBe("https://chatgpt.com/backend-api/codex/responses");
       expect(new Headers(init?.headers).get("authorization")).toBe("Bearer owner-oauth-secret");
       expect(new Headers(init?.headers).get("chatgpt-account-id")).toBe("acct_owner");
+      expect(new Headers(init?.headers).get("originator")).toBe("codex_cli_rs");
       return new Response("event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\"}}\n\n", {
         status: 200,
         headers: { "content-type": "text/event-stream" },
