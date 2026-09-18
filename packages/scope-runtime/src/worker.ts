@@ -1,11 +1,15 @@
 import { randomUUID } from "node:crypto";
+import { spawn } from "node:child_process";
 import { access, constants, lstat, open, unlink } from "node:fs/promises";
 import { createServer as createHttpServer, type Server as HttpServer } from "node:http";
 import { connect, createServer, type Server, type Socket } from "node:net";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { createInterface } from "node:readline";
 
-export const SCOPE_RUNTIME_WORKER_HARNESS_VERSION = "2.1.240";
+export const SCOPE_RUNTIME_CLAUDE_HARNESS_VERSION = "2.1.240";
+export const SCOPE_RUNTIME_CODEX_HARNESS_VERSION = "0.154.0";
+export const SCOPE_RUNTIME_WORKER_HARNESS_VERSION = SCOPE_RUNTIME_CLAUDE_HARNESS_VERSION;
 
 const RUNTIME_HANDLE = /^runtime_[a-f0-9]{32}$/;
 const SCOPE_HANDLE = /^scope_[a-f0-9]{32}$/;
@@ -16,6 +20,25 @@ const NATIVE_EXECUTABLE = "/opt/matrix/scope-sdk/native/claude";
 const BROKER_SOCKET = "/run/matrix-scope/broker.sock";
 const MAX_CHAT_FRAME_BYTES = 128 * 1024;
 const CHAT_TIMEOUT_MS = 50_000;
+const CODEX_EXECUTABLE = "/opt/matrix/runtime/node/bin/codex";
+const MAX_CODEX_EVENT_LINE_BYTES = 1024 * 1024;
+const MAX_CODEX_EVENTS = 2_048;
+const CODEX_DISABLED_FEATURES = [
+  "shell_tool",
+  "unified_exec",
+  "view_image",
+  "sleep_tool",
+  "code_mode",
+  "code_mode_host",
+  "multi_agent",
+  "multi_agent_v2",
+  "apps",
+  "plugins",
+  "tool_suggest",
+  "goals",
+  "standalone_web_search",
+  "image_generation",
+] as const;
 
 const SENSITIVE_ENVIRONMENT_KEY = /(?:^|_)(?:API_?KEY|AUTH_?TOKEN|TOKEN|SECRET|PASSWORD|CREDENTIAL|DATABASE_URL)(?:$|_)/i;
 const FORBIDDEN_PATHS = [
@@ -59,8 +82,8 @@ export function parseScopeRuntimeWorkerArguments(input: readonly string[]) {
     || typeof runtimeHandle !== "string" || !RUNTIME_HANDLE.test(runtimeHandle)
     || typeof scopeHandle !== "string" || !SCOPE_HANDLE.test(scopeHandle)
     || workload !== "chat_ai"
-    || adapterId !== "claude-code"
-    || harnessVersion !== SCOPE_RUNTIME_WORKER_HARNESS_VERSION
+    || !((adapterId === "claude-code" && harnessVersion === SCOPE_RUNTIME_CLAUDE_HARNESS_VERSION)
+      || (adapterId === "codex" && harnessVersion === SCOPE_RUNTIME_CODEX_HARNESS_VERSION))
     || typeof executionGeneration !== "string" || !EXECUTION_GENERATION.test(executionGeneration)) {
     throw workerFailure("ScopeRuntimeInvocationError", "Invalid scope runtime worker invocation");
   }
@@ -235,6 +258,139 @@ export function parseScopeRuntimeChatRequest(
   return { requestId: randomUUID(), model: value.model, prompt: value.prompt };
 }
 
+export interface ScopeCodexExecLaunch {
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+}
+
+export function buildScopeCodexExecLaunch(input: {
+  bridgePort: number;
+  model: string;
+  prompt: string;
+}): ScopeCodexExecLaunch {
+  if (!Number.isSafeInteger(input.bridgePort) || input.bridgePort < 1 || input.bridgePort > 65_535
+    || !/^[A-Za-z0-9._:/-]{1,256}$/.test(input.model)
+    || input.prompt.length < 1 || Buffer.byteLength(input.prompt, "utf8") > 64 * 1024) {
+    throw workerFailure("ScopeRuntimeInvocationError", "Invalid Codex scope execution");
+  }
+  const provider = [
+    "{ name = \"Matrix scope broker\"",
+    `base_url = \"http://127.0.0.1:${input.bridgePort}/v1\"`,
+    "wire_api = \"responses\"",
+    "request_max_retries = 0",
+    "stream_max_retries = 0",
+    "stream_idle_timeout_ms = 30000",
+    "supports_websockets = false }",
+  ].join(", ");
+  return {
+    command: CODEX_EXECUTABLE,
+    args: [
+      "--ask-for-approval", "never",
+      "--sandbox", "read-only",
+      "--strict-config",
+      ...CODEX_DISABLED_FEATURES.flatMap((feature) => ["--disable", feature]),
+      "--config", `model_providers.matrix_scope=${provider}`,
+      "--config", "model_provider=\"matrix_scope\"",
+      "--config", "disable_response_storage=true",
+      "--config", "web_search=\"disabled\"",
+      "--config", "tools.update_plan.enabled=false",
+      "--config", "tools.experimental_request_user_input.enabled=false",
+      "exec",
+      "--ephemeral",
+      "--ignore-user-config",
+      "--ignore-rules",
+      "--json",
+      "--skip-git-repo-check",
+      "--model", input.model,
+      "--", input.prompt,
+    ],
+    env: {
+      HOME: "/workspace",
+      PATH: "/opt/matrix/runtime/node/bin",
+      NO_COLOR: "1",
+      MATRIX_SCOPE_RUNTIME: "1",
+    },
+  };
+}
+
+export function parseScopeCodexJsonEvents(lines: readonly string[]): string {
+  if (lines.length > MAX_CODEX_EVENTS) throw new Error("Codex result unavailable");
+  let completed = false;
+  let failed = false;
+  let text: string | undefined;
+  for (const line of lines) {
+    if (Buffer.byteLength(line, "utf8") > MAX_CODEX_EVENT_LINE_BYTES) {
+      throw new Error("Codex result unavailable");
+    }
+    let value: unknown;
+    try {
+      value = JSON.parse(line);
+    } catch (error: unknown) {
+      if (!(error instanceof Error)) throw new Error("Codex result unavailable");
+      throw new Error("Codex result unavailable");
+    }
+    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+    const event = value as Record<string, unknown>;
+    if (event.type === "turn.failed" || event.type === "error") failed = true;
+    if (event.type === "turn.completed") completed = true;
+    if (event.type === "item.completed" && event.item && typeof event.item === "object") {
+      const item = event.item as Record<string, unknown>;
+      if (item.type === "agent_message" && typeof item.text === "string") text = item.text;
+    }
+  }
+  if (failed || !completed || text === undefined || Buffer.byteLength(text, "utf8") > 96 * 1024) {
+    throw new Error("Codex result unavailable");
+  }
+  return text;
+}
+
+async function runScopeCodexExec(input: {
+  bridgePort: number;
+  model: string;
+  prompt: string;
+  signal: AbortSignal;
+}): Promise<string> {
+  input.signal.throwIfAborted();
+  const launch = buildScopeCodexExecLaunch(input);
+  const child = spawn(launch.command, launch.args, {
+    cwd: "/workspace",
+    env: launch.env,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const lines: string[] = [];
+  let stderrBytes = 0;
+  const abort = () => child.kill("SIGTERM");
+  input.signal.addEventListener("abort", abort, { once: true });
+  const stdout = createInterface({ input: child.stdout, crlfDelay: Infinity });
+  stdout.on("line", (line) => {
+    if (lines.length >= MAX_CODEX_EVENTS || Buffer.byteLength(line, "utf8") > MAX_CODEX_EVENT_LINE_BYTES) {
+      child.kill("SIGTERM");
+      return;
+    }
+    lines.push(line);
+  });
+  child.stderr.on("data", (chunk: Buffer | string) => {
+    stderrBytes += Buffer.byteLength(chunk);
+    if (stderrBytes > MAX_CODEX_EVENT_LINE_BYTES) child.kill("SIGTERM");
+  });
+  try {
+    const exit = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
+      child.once("error", reject);
+      child.once("close", (code, signal) => resolve({ code, signal }));
+    });
+    input.signal.throwIfAborted();
+    if (exit.code !== 0 || exit.signal !== null || stderrBytes > MAX_CODEX_EVENT_LINE_BYTES) {
+      throw new Error("Codex result unavailable");
+    }
+    return parseScopeCodexJsonEvents(lines);
+  } finally {
+    input.signal.removeEventListener("abort", abort);
+    stdout.close();
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+  }
+}
+
 function brokerRequest(frame: Record<string, unknown>): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
     const socket = connect({ path: BROKER_SOCKET });
@@ -293,7 +449,7 @@ async function startInferenceBridge(
       const body = await readHttpBody(request);
       const brokerResponse = await brokerRequest({
         version: 1,
-        action: "inference.messages",
+        action: invocation.adapterId === "codex" ? "inference.responses" : "inference.messages",
         requestId: randomUUID(),
         runtimeHandle: invocation.runtimeHandle,
         executionGeneration: invocation.executionGeneration,
@@ -342,6 +498,20 @@ async function executeChat(
   const request = parseScopeRuntimeChatRequest(input, invocation);
   const bridge = await startInferenceBridge(invocation);
   try {
+    if (invocation.adapterId === "codex") {
+      const abortController = new AbortController();
+      const timeout = setTimeout(() => abortController.abort(), CHAT_TIMEOUT_MS);
+      try {
+        return await runScopeCodexExec({
+          bridgePort: bridge.port,
+          model: request.model,
+          prompt: request.prompt,
+          signal: abortController.signal,
+        });
+      } finally {
+        clearTimeout(timeout);
+      }
+    }
     const runtime = await import(pathToFileURL(`${SDK_DIRECTORY}/sdk.mjs`).href) as {
       query?: (input: unknown) => AsyncIterable<Record<string, unknown>>;
     };

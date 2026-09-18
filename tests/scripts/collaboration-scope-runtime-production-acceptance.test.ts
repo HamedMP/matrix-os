@@ -85,10 +85,13 @@ describe("collaboration production scope-runtime acceptance", () => {
   it("runs the installed Agent SDK worker through a bounded fake inference broker", async () => {
     const source = await readFile(acceptancePath, "utf8");
 
-    expect(source).toContain('action !== "inference.messages"');
+    expect(source).toContain('["inference.messages", "inference.responses"]');
     expect(source).toContain('request.method === "HEAD"');
     expect(source).toContain('request.method !== "POST"');
     expect(source).toContain("scope-sdk-ok");
+    expect(source).toContain("scope-codex-ok");
+    expect(source).toContain("scope_runtime_codex_chat=passed");
+    expect(source).toContain("body.tools.length !== 0");
     expect(source).toContain("scope_runtime_chat=passed");
     expect(source).toContain("MAX_BROKER_REQUEST_BYTES");
     expect(source).toContain("BROKER_SOCKET_TIMEOUT_MS");

@@ -18,8 +18,7 @@ const executionEligibility = {
   profileId: "scope-runtime-chat-v1",
   profileVersion: 1,
   profileDigest: "b".repeat(64),
-  adapterId: "claude-code" as const,
-  harnessVersion: "2.1.240",
+  adapters: [{ adapterId: "claude-code" as const, harnessVersion: "2.1.240" }],
 };
 
 describe("CollaborationChatScopeService", () => {

@@ -31,6 +31,34 @@ const InferenceRequestSchema = z.object({
   if (!valid) context.addIssue({ code: "custom", message: "Invalid inference route" });
 });
 
+const CodexResponsesBodySchema = z.string().refine((body) => {
+  try {
+    const value: unknown = JSON.parse(body);
+    return value !== null && typeof value === "object" && !Array.isArray(value)
+      && typeof (value as { model?: unknown }).model === "string"
+      && /^[A-Za-z0-9._:/-]{1,256}$/.test((value as { model: string }).model)
+      && (value as { stream?: unknown }).stream === true
+      && Array.isArray((value as { input?: unknown }).input)
+      && (!("tools" in value) || (Array.isArray((value as { tools?: unknown }).tools)
+        && (value as { tools: unknown[] }).tools.length === 0));
+  } catch (error: unknown) {
+    if (!(error instanceof Error)) throw new Error("Invalid Codex Responses body");
+    return false;
+  }
+}, "Invalid Codex Responses body");
+
+const ResponsesRequestSchema = z.object({
+  version: z.literal(1),
+  action: z.literal("inference.responses"),
+  requestId: RequestIdSchema,
+  runtimeHandle: RuntimeHandleSchema,
+  executionGeneration: GenerationSchema,
+  method: z.literal("POST"),
+  path: z.literal("/v1/responses"),
+  headers: z.object({}).strict(),
+  body: BoundedBodySchema.and(CodexResponsesBodySchema),
+}).strict();
+
 const EgressRequestSchema = z.object({
   version: z.literal(1),
   action: z.literal("egress.fetch"),
@@ -44,6 +72,7 @@ const EgressRequestSchema = z.object({
 
 export const ScopeRuntimeBrokerRequestSchema = z.union([
   InferenceRequestSchema,
+  ResponsesRequestSchema,
   EgressRequestSchema,
 ]);
 

@@ -8,6 +8,7 @@ import { createScopeRuntimeBroker } from "../../packages/gateway/src/collaborati
 const REQUEST_ID = "018f0ce5-7b4a-7f95-a7c8-acae0dc5c5d1";
 const RUNTIME_HANDLE = "runtime_22222222222222222222222222222222";
 const MODEL = "claude-haiku-4-5-20251001";
+const CODEX_MODEL = "gpt-5.6-sol";
 
 const inferenceRequest = {
   version: 1 as const,
@@ -37,6 +38,39 @@ describe("scope runtime broker protocol", () => {
     ]) {
       expect(ScopeRuntimeBrokerRequestSchema.safeParse({ ...inferenceRequest, ...injected }).success).toBe(false);
     }
+  });
+
+  it("accepts only the fixed Codex Responses route without caller credentials", () => {
+    const request = {
+      version: 1 as const,
+      action: "inference.responses" as const,
+      requestId: REQUEST_ID,
+      runtimeHandle: RUNTIME_HANDLE,
+      executionGeneration: "7",
+      method: "POST" as const,
+      path: "/v1/responses" as const,
+      headers: {},
+      body: JSON.stringify({
+        model: CODEX_MODEL,
+        stream: true,
+        input: [{ role: "user", content: [] }],
+        tools: [],
+      }),
+    };
+    expect(ScopeRuntimeBrokerRequestSchema.parse(request)).toEqual(request);
+    for (const injected of [
+      { path: "/v1/models" },
+      { method: "GET" },
+      { headers: { authorization: "Bearer stolen" } },
+      { accessToken: "stolen" },
+      { body: JSON.stringify({ model: CODEX_MODEL, stream: false, input: [] }) },
+      { body: JSON.stringify({
+        model: CODEX_MODEL,
+        stream: true,
+        input: [],
+        tools: [{ type: "function", name: "exec_command" }],
+      }) },
+    ]) expect(ScopeRuntimeBrokerRequestSchema.safeParse({ ...request, ...injected }).success).toBe(false);
   });
 });
 
@@ -88,6 +122,104 @@ describe("scope runtime broker", () => {
       body: "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
     });
     expect(JSON.stringify(result)).not.toContain("owner-secret");
+    await broker.close();
+  });
+
+  it("injects the owner Codex identity only after exact runtime and model authorization", async () => {
+    const request: ScopeRuntimeBrokerRequest = ScopeRuntimeBrokerRequestSchema.parse({
+      version: 1,
+      action: "inference.responses",
+      requestId: REQUEST_ID,
+      runtimeHandle: RUNTIME_HANDLE,
+      executionGeneration: "7",
+      method: "POST",
+      path: "/v1/responses",
+      headers: {},
+      body: JSON.stringify({ model: CODEX_MODEL, stream: true, input: [{ role: "user", content: [] }] }),
+    });
+    const authorize = vi.fn(async () => ({
+      allowed: true as const,
+      providerIdentity: { driverKind: "codex" as const, instanceId: "codex_default" as const },
+      allowedModelIds: [CODEX_MODEL],
+      allowedEgressOrigins: [],
+    }));
+    const resolveCodexIdentity = vi.fn(async () => ({
+      url: "https://chatgpt.com/backend-api/codex/responses",
+      headers: {
+        authorization: "Bearer owner-oauth-secret",
+        "chatgpt-account-id": "acct_owner",
+      },
+    }));
+    const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      expect(String(url)).toBe("https://chatgpt.com/backend-api/codex/responses");
+      expect(new Headers(init?.headers).get("authorization")).toBe("Bearer owner-oauth-secret");
+      expect(new Headers(init?.headers).get("chatgpt-account-id")).toBe("acct_owner");
+      return new Response("event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\"}}\n\n", {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      });
+    });
+    const broker = createScopeRuntimeBroker({
+      homePath: "/home/matrix/home",
+      authorize,
+      resolveCodexIdentity,
+      fetchImpl,
+    });
+
+    const result = await broker.handle(request);
+    expect(authorize).toHaveBeenCalledWith(expect.objectContaining({
+      action: "inference.responses",
+      modelId: CODEX_MODEL,
+    }));
+    expect(resolveCodexIdentity).toHaveBeenCalledWith(expect.any(AbortSignal));
+    expect(result).toMatchObject({ ok: true, status: 200 });
+    expect(JSON.stringify(result)).not.toContain("owner-oauth-secret");
+    await broker.close();
+  });
+
+  it("refreshes trusted ChatGPT identity once on unauthorized without exposing it", async () => {
+    const request = ScopeRuntimeBrokerRequestSchema.parse({
+      version: 1,
+      action: "inference.responses",
+      requestId: REQUEST_ID,
+      runtimeHandle: RUNTIME_HANDLE,
+      executionGeneration: "7",
+      method: "POST",
+      path: "/v1/responses",
+      headers: {},
+      body: JSON.stringify({ model: CODEX_MODEL, stream: true, input: [], tools: [] }),
+    });
+    const resolveCodexIdentity = vi.fn(async (_signal: AbortSignal, forceRefresh = false) => ({
+      url: "https://chatgpt.com/backend-api/codex/responses",
+      headers: {
+        authorization: forceRefresh ? "Bearer rotated-secret" : "Bearer stale-secret",
+        "chatgpt-account-id": "acct_owner",
+      },
+    }));
+    const fetchImpl = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const authorization = new Headers(init?.headers).get("authorization");
+      if (authorization === "Bearer stale-secret") return new Response("", { status: 401 });
+      return new Response("event: response.completed\ndata: {}\n\n", {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      });
+    });
+    const broker = createScopeRuntimeBroker({
+      homePath: "/home/matrix/home",
+      authorize: async () => ({
+        allowed: true,
+        providerIdentity: { driverKind: "codex", instanceId: "codex_default" },
+        allowedModelIds: [CODEX_MODEL],
+        allowedEgressOrigins: [],
+      }),
+      resolveCodexIdentity,
+      fetchImpl,
+    });
+
+    await expect(broker.handle(request)).resolves.toMatchObject({ ok: true });
+    expect(resolveCodexIdentity).toHaveBeenNthCalledWith(1, expect.any(AbortSignal));
+    expect(resolveCodexIdentity).toHaveBeenNthCalledWith(2, expect.any(AbortSignal), true);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
     await broker.close();
   });
 
