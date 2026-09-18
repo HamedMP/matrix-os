@@ -22,6 +22,7 @@ interface GridPresentationOptions {
   getTerminal: () => GridTerminal;
   getConfiguredFontSize: () => number;
   enabled?: () => boolean;
+  allowScaling?: () => boolean;
   onScale?: (scale: number) => void;
   getParentScale?: () => number;
 }
@@ -54,6 +55,19 @@ export function measureTerminalViewport<T>(host: HTMLElement, root: HTMLElement 
     // Measuring a smaller parent can synchronously clamp its scroll offsets.
     host.scrollTop = scrollTop;
     host.scrollLeft = scrollLeft;
+  }
+}
+
+/** Measure writable viewport proposals at the configured font, not an observer's fitted font. */
+export function measureTerminalGridDimensions<T>(
+  host: HTMLElement, terminal: GridTerminal, configuredFontSize: number, measure: () => T,
+): T | undefined {
+  const previousFontSize = terminal.options.fontSize;
+  try {
+    if (previousFontSize !== configuredFontSize) terminal.options.fontSize = configuredFontSize;
+    return measureTerminalViewport(host, terminal.element, measure);
+  } finally {
+    if (previousFontSize !== configuredFontSize) terminal.options.fontSize = previousFontSize;
   }
 }
 
@@ -140,14 +154,16 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
     if (viewportWidth <= 0 || viewportHeight <= 0) return;
     // xterm reserves this gutter beside its screen for native scrollback.
     const gutter = terminal.scrollToLine && terminal.onScroll ? 0 : terminal.options.scrollback === 0 ? 0 : terminal.options.overviewRuler?.width || 14;
-    const metrics = [viewportWidth, viewportHeight, width, height, fontSize, configured, gutter, window.devicePixelRatio];
+    const allowScaling = options.allowScaling?.() !== false;
+    const metrics = [viewportWidth, viewportHeight, width, height, fontSize, configured, gutter, window.devicePixelRatio, Number(allowScaling)];
     // Cell metrics are quantized: extrapolating the configured font from the
     // last fitted font can alternate between two sizes on every output batch.
     // Reuse the fitted result until the viewport, grid, or font metrics change.
     const layout = settledLayout?.metrics.every((value, index) => value === metrics[index])
       ? settledLayout.layout
       : computeSoftGridLayout({
-        viewportWidth, viewportHeight,
+        viewportWidth: allowScaling ? viewportWidth : Math.max(viewportWidth, width * configured / fontSize + gutter),
+        viewportHeight: allowScaling ? viewportHeight : Math.max(viewportHeight, height * configured / fontSize),
         gridWidth: width * configured / fontSize + gutter,
         gridHeight: height * configured / fontSize,
         configuredFontSize: configured,
@@ -193,7 +209,7 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
     const gridWidth = dimension(screen, "width") + gutter;
     const gridHeight = dimension(screen, "height");
     settledLayout = {
-      metrics: [viewportWidth, viewportHeight, gridWidth - gutter, gridHeight, layout.fontSize, configured, gutter, window.devicePixelRatio],
+      metrics: [viewportWidth, viewportHeight, gridWidth - gutter, gridHeight, layout.fontSize, configured, gutter, window.devicePixelRatio, Number(allowScaling)],
       layout,
     };
     const scale = Math.min(layout.scale, Math.max(

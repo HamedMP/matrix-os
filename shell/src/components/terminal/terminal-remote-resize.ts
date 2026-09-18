@@ -15,6 +15,7 @@ export function sendTerminalResize(
   term: TerminalResizeTarget,
   allowRemoteResize: boolean,
   terminalKey?: string | null,
+  mode: "hard" | "soft" = "soft",
 ): boolean {
   if (!allowRemoteResize || !ws || ws.readyState !== WEBSOCKET_OPEN) {
     return false;
@@ -28,7 +29,7 @@ export function sendTerminalResize(
   ws.send(JSON.stringify({
     type: "resize",
     terminalRef,
-    mode: "soft",
+    mode,
     size: { cols: term.cols, rows: term.rows },
   }));
   return true;

@@ -13,6 +13,7 @@ import { z } from "zod/v4";
 import { openBufferedAttachment } from "./attachment-bootstrap.js";
 import { TerminalRuntimeError } from "./errors.js";
 import { TerminalMouseModeState } from "./mouse-mode-state.js";
+import { applyWorkspaceResize, type TerminalSizeListener } from "./workspace-resize.js";
 import { createViewerOutput } from "./viewer-output.js";
 import {
   TerminalWorkspaceStore,
@@ -84,7 +85,7 @@ export interface TerminalViewer {
   detach(): Promise<void>;
 }
 
-interface ViewerState {
+interface ViewerState extends TerminalSizeListener {
   disposeOutput: () => void;
   id: string;
   lastTouched: number;
@@ -343,20 +344,24 @@ export class TerminalRuntime {
     return this.store.updateTabUiState(ref, input);
   }
 
-  async resize(refInput: TerminalRef, input: {
+  resize(refInput: TerminalRef, input: {
     mode: "hard" | "soft";
     size: { cols: number; rows: number };
   }): Promise<TerminalWorkspace> {
-    const ref = TerminalRefSchema.parse(refInput);
-    const workspace = await this.requireRuntimeWorkspace(ref.workspaceId);
-    if (!workspace.tabs[ref.tabId]) throw new TerminalRuntimeError("not_found");
-    if (input.mode === "soft") return (await this.listWorkspaces()).find((item) => item.id === ref.workspaceId)!;
-    const updated = await this.store.updateCanonicalSize(ref.workspaceId, input.size);
-    await this.zellij.resizeSession?.(workspace.zellijSessionName, updated.canonicalSize);
-    await Promise.all([...this.attachments.values()]
-      .filter((attachment) => attachment.ref.workspaceId === ref.workspaceId)
-      .map((attachment) => attachment.handle.resize(updated.canonicalSize.cols, updated.canonicalSize.rows)));
-    return updated;
+    return this.runWorkspaceMutation(async () => {
+      const ref = TerminalRefSchema.parse(refInput);
+      const workspace = await this.requireRuntimeWorkspace(ref.workspaceId);
+      if (!workspace.tabs[ref.tabId]) throw new TerminalRuntimeError("not_found");
+      if (input.mode === "soft") return (await this.listWorkspaces()).find((item) => item.id === ref.workspaceId)!;
+      const updated = await this.store.updateCanonicalSize(ref.workspaceId, input.size);
+      await applyWorkspaceResize({
+        workspace: updated,
+        resizeSession: async () => { await this.zellij.resizeSession?.(workspace.zellijSessionName, updated.canonicalSize); },
+        attachments: this.attachments.values(),
+        closeEmpty: (attachmentRef) => this.closeAttachment(refKey(attachmentRef)),
+      });
+      return updated;
+    });
   }
 
   async terminateTab(refInput: TerminalRef): Promise<void> {
@@ -495,7 +500,7 @@ export class TerminalRuntime {
     });
   }
 
-  attach(refInput: TerminalRef, input: {
+  attach(refInput: TerminalRef, input: TerminalSizeListener & {
     viewerId: string;
     send: (data: Uint8Array) => void | Promise<void>;
     onExit?: (exitCode: number | null) => void | Promise<void>;
@@ -503,7 +508,7 @@ export class TerminalRuntime {
     return this.runWorkspaceMutation(() => this.attachNow(refInput, input));
   }
 
-  private async attachNow(refInput: TerminalRef, input: {
+  private async attachNow(refInput: TerminalRef, input: TerminalSizeListener & {
     viewerId: string;
     send: (data: Uint8Array) => void | Promise<void>;
     onExit?: (exitCode: number | null) => void | Promise<void>;
@@ -560,6 +565,7 @@ export class TerminalRuntime {
       send,
       disposeOutput: send.dispose,
       ...(input.onExit ? { onExit: input.onExit } : {}),
+      ...(input.onCanonicalSize ? { onCanonicalSize: input.onCanonicalSize } : {}),
     });
     const mouseInitialization = attachment.mouseModes.bootstrap();
     if (mouseInitialization) {
