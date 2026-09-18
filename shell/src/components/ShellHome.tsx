@@ -18,7 +18,6 @@ import { CommandPalette } from "@/components/CommandPalette";
 import { ApprovalDialog } from "@/components/ApprovalDialog";
 import { useMobileViewport } from "@/hooks/useMobileViewport";
 import { createShellSnapshotScope } from "@/lib/shell-snapshot-cache";
-import { sharedTerminalAppPath } from "@/lib/shared-terminal-route";
 
 const LAUNCHABLE_BUILT_IN_PATHS = new Set([
   "__terminal__",
@@ -70,9 +69,9 @@ export function ShellHome({ initialCollaborationView }: { initialCollaborationVi
     readLaunchPathFromLocation,
     getLaunchPathServerSnapshot,
   );
-  const launchAppPath = terminalCollaborationView
-    ? sharedTerminalAppPath(terminalCollaborationView.scopeId)
+  const launchAppPath = terminalCollaborationView ? "__terminal__"
     : chatCollaborationView ? "__chat__" : locationLaunchAppPath;
+  const sharedTerminalScopeId = terminalCollaborationView?.scopeId ?? null;
   const shellLoadedCaptured = useRef(false);
 
   useGlobalShortcuts(
@@ -114,12 +113,14 @@ export function ShellHome({ initialCollaborationView }: { initialCollaborationVi
             {isMobile ? (
               <MobileShell
                 launchAppPath={launchAppPath}
+                sharedTerminalScopeId={sharedTerminalScopeId}
                 onOpenCommandPalette={() => setPaletteOpen(true)}
                 cacheScope={cacheScope}
               />
             ) : (
               <Desktop
                 launchAppPath={launchAppPath}
+                sharedTerminalScopeId={sharedTerminalScopeId}
                 onOpenCommandPalette={() => setPaletteOpen(true)}
                 chat={chat}
                 cacheScope={cacheScope}

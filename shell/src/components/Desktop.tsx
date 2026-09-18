@@ -103,13 +103,14 @@ const EMPTY_PINNED_APPS: string[] = [];
 
 interface DesktopProps {
   launchAppPath?: string | null;
+  sharedTerminalScopeId?: string | null;
   onOpenCommandPalette?: () => void;
   chat?: import("@/hooks/useChatState").ChatState;
   cacheScope?: ShellSnapshotScope | null;
 }
 
 // react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/prefer-useReducer -- no-giant-component: cohesive root shell component; extraction tracked separately. prefer-useReducer: the state values here (interacting, settingsOpen, minimizingIds, firstRunStatus, vocalMounted, plus mode flags) are independent shell concerns, not one related state machine; collapsing them into a reducer would couple unrelated transitions and obscure behavior in the core shell component
-export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope }: DesktopProps) {
+export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPalette, chat, cacheScope }: DesktopProps) {
   useCanvasTransformPersistence(GATEWAY_URL);
   const windows = useWindowManager((s) => s.windows);
   const wmCloseWindow = useWindowManager((s) => s.closeWindow);
@@ -419,7 +420,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
   const focusTerminalForHandoff = useCallback((handoff: (targetId?: string) => void) => {
     const windows = useWindowManager.getState().windows;
     const setupTerminal = windows.find((w) => (
-      w.path === "__terminal__" && w.terminalPersistence === "ephemeral"
+      w.path === "__terminal__" && w.terminalPersistence === "ephemeral" && !w.sharedTerminalScopeId
     ));
     if (setupTerminal) {
       wmRestoreAndFocusWindow(setupTerminal.id);
@@ -430,7 +431,7 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
       setupTerminal
         ? useWindowManager.getState().getWindow(setupTerminal.id)
         : useWindowManager.getState().windows.find((w) => (
-            w.path === "__terminal__" && w.terminalPersistence === "ephemeral"
+            w.path === "__terminal__" && w.terminalPersistence === "ephemeral" && !w.sharedTerminalScopeId
           ))
     );
 
@@ -492,17 +493,41 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
   };
 
   useEffect(() => {
-    if (!launchAppPath || launchPathConsumedRef.current === launchAppPath) return;
-    if (launchAppPath.startsWith("__terminal__:shared:")) {
-      launchPathConsumedRef.current = launchAppPath;
-      focusOrOpen("Shared Terminal", launchAppPath);
+    if (!launchAppPath) return;
+    const launchRequestKey = sharedTerminalScopeId
+      ? `${launchAppPath}?sharedScope=${encodeURIComponent(sharedTerminalScopeId)}`
+      : launchAppPath;
+    if (launchPathConsumedRef.current === launchRequestKey) return;
+    if (sharedTerminalScopeId) {
+      launchPathConsumedRef.current = launchRequestKey;
+      const existing = useWindowManager.getState().windows.find((windowRecord) => (
+        windowRecord.path === "__terminal__"
+        && windowRecord.sharedTerminalScopeId === sharedTerminalScopeId
+      ));
+      if (existing) {
+        wmRestoreAndFocusWindow(existing.id);
+        focusCanvasWindow(existing.id);
+      } else {
+        wmOpenWindow("Shared Terminal", "__terminal__", dockXOffset, {
+          terminalPersistence: "ephemeral",
+          sharedTerminalScopeId,
+        });
+        requestAnimationFrame(() => {
+          const opened = useWindowManager.getState().windows.find((windowRecord) => (
+            windowRecord.path === "__terminal__"
+            && windowRecord.sharedTerminalScopeId === sharedTerminalScopeId
+          ));
+          if (opened) focusCanvasWindow(opened.id);
+        });
+      }
       return;
     }
     const match = apps.find((app) => app.path === launchAppPath);
     if (!match) return;
-    launchPathConsumedRef.current = launchAppPath;
+    launchPathConsumedRef.current = launchRequestKey;
     openAppOrFocus(match.path, match.name);
-  }, [apps, focusOrOpen, launchAppPath, openAppOrFocus]);
+  }, [apps, dockXOffset, focusCanvasWindow, launchAppPath, openAppOrFocus,
+    sharedTerminalScopeId, wmOpenWindow, wmRestoreAndFocusWindow]);
 
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- identity consumed by the module-load useEffect dependency array (L~1070); a fresh function each render would re-run the layout/modules/apps fetch on every render
   const loadModules = useCallback(async (signal?: AbortSignal) => {

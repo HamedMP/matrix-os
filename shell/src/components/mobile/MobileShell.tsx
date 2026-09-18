@@ -57,7 +57,6 @@ import {
   createTerminalLayoutId,
   type TerminalPersistence,
 } from "@/lib/terminal-window-metadata";
-import { sharedTerminalScopeIdFromPath } from "@/lib/shared-terminal-route";
 
 interface OpenApp {
   id: string;
@@ -65,6 +64,7 @@ interface OpenApp {
   openedAt: number;
   terminalLayoutId?: string;
   terminalPersistence?: TerminalPersistence;
+  sharedTerminalScopeId?: string;
 }
 
 const FETCH_TIMEOUT_MS = 10_000;
@@ -138,12 +138,13 @@ const SWITCHER_RESUME_BUTTON_STYLE: CSSProperties = {
 
 interface MobileShellProps {
   launchAppPath?: string | null;
+  sharedTerminalScopeId?: string | null;
   onOpenCommandPalette?: () => void;
   cacheScope?: ShellSnapshotScope | null;
 }
 
 // react-doctor-disable-next-line react-doctor/prefer-useReducer -- the five states (apps, openStack, view, settingsOpen, time) are independent concerns with separate update sites and lifecycles (registry load, foreground stack, view mode, settings dialog, clock tick), not one related state machine; collapsing them into a reducer would couple unrelated transitions and is not a mechanical, behavior-identical change.
-export function MobileShell({ launchAppPath, onOpenCommandPalette, cacheScope }: MobileShellProps) {
+export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenCommandPalette, cacheScope }: MobileShellProps) {
   const chat = useChatContext();
 
   const [apps, setApps] = useState<MobileApp[]>(() => mergeMobileApps(
@@ -230,7 +231,7 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette, cacheScope }:
   });
 
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity is consumed by the launch-path useEffect dependency array below; removing useCallback would re-run that effect on every render and could re-open the launch app.
-  const openApp = useCallback((app: MobileApp) => {
+  const openApp = useCallback((app: MobileApp, options?: { sharedTerminalScopeId?: string }) => {
     setOpenStack((prev) => {
       // Bring existing instance to the front rather than open a duplicate
       // (terminals are the only deliberately-multi-instance case and we
@@ -246,8 +247,9 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette, cacheScope }:
           id,
           app,
           openedAt: Date.now(),
-          terminalLayoutId: createTerminalLayoutId(),
-          terminalPersistence: "durable",
+          ...(options?.sharedTerminalScopeId
+            ? { terminalPersistence: "ephemeral" as const, sharedTerminalScopeId: options.sharedTerminalScopeId }
+            : { terminalLayoutId: createTerminalLayoutId(), terminalPersistence: "durable" as const }),
         }];
       }
       const existing = prev.findIndex((o) => o.app.path === app.path);
@@ -267,7 +269,9 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette, cacheScope }:
     const terminal = BUILT_IN_APPS.find((app) => app.path === "__terminal__");
     if (!terminal) return;
     const terminals = stackRef.current.filter((entry) => entry.app.path === "__terminal__");
-    const reusable = terminals.find((entry) => entry.terminalPersistence === "ephemeral");
+    const reusable = terminals.find((entry) => (
+      entry.terminalPersistence === "ephemeral" && !entry.sharedTerminalScopeId
+    ));
     if (!reusable && terminals.length >= MAX_TERMINAL_INSTANCES) {
       toast("Close a Terminal before starting setup");
       return;
@@ -292,7 +296,9 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette, cacheScope }:
   const openExistingProviderTerminal = useCallback((sessionId: string) => {
     const terminal = BUILT_IN_APPS.find((app) => app.path === "__terminal__");
     if (!terminal) return;
-    const terminals = stackRef.current.filter((entry) => entry.app.path === "__terminal__");
+    const terminals = stackRef.current.filter((entry) => (
+      entry.app.path === "__terminal__" && !entry.sharedTerminalScopeId
+    ));
     const reusable = terminals[terminals.length - 1];
     const id = reusable?.id ?? `term:${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
     setOpenStack((previous) => reusable
@@ -304,15 +310,20 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette, cacheScope }:
   }, []);
 
   useEffect(() => {
-    if (!launchAppPath || launchPathConsumedRef.current === launchAppPath) return;
-    const app = launchAppPath.startsWith("__terminal__:shared:")
-      ? { ...BUILT_IN_APPS[0]!, name: "Shared Terminal", path: launchAppPath }
-      : apps.find((candidate) => candidate.path === launchAppPath);
+    if (!launchAppPath) return;
+    const launchRequestKey = sharedTerminalScopeId
+      ? `${launchAppPath}?sharedScope=${encodeURIComponent(sharedTerminalScopeId)}`
+      : launchAppPath;
+    if (launchPathConsumedRef.current === launchRequestKey) return;
+    const app = apps.find((candidate) => candidate.path === launchAppPath);
     if (!app) return;
-    launchPathConsumedRef.current = launchAppPath;
+    launchPathConsumedRef.current = launchRequestKey;
     // react-doctor-disable-next-line react-hooks-js/set-state-in-effect, react-doctor/no-derived-state, react-doctor/no-adjust-state-on-prop-change -- imperative side effect, not derived state: opening an app in response to a one-shot `launchAppPath` request. The launchPathConsumedRef dedupe ensures it fires once per distinct path; `openStack` is genuine foreground-app state that the user mutates afterward, so it cannot be recomputed from `launchAppPath` in render.
-    openApp(app);
-  }, [apps, launchAppPath, openApp]);
+    openApp(
+      sharedTerminalScopeId ? { ...app, name: "Shared Terminal" } : app,
+      sharedTerminalScopeId ? { sharedTerminalScopeId } : undefined,
+    );
+  }, [apps, launchAppPath, openApp, sharedTerminalScopeId]);
 
   const closeApp = (openId: string) => {
     const closed = stackRef.current.find((o) => o.id === openId);
@@ -537,7 +548,7 @@ function MobileAppFrame({
   if (app.path.startsWith("__terminal__")) {
     return (
       <TerminalApp
-        sharedScopeId={sharedTerminalScopeIdFromPath(app.path)}
+        sharedScopeId={openApp.sharedTerminalScopeId ?? null}
         key={openId}
         mobile
         launchTargetId={openId}

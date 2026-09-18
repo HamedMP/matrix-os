@@ -17,7 +17,6 @@ import { useChatContext } from "@/stores/chat-context";
 import { TrafficLights } from "../window/TrafficLights";
 import { useThemeStyle } from "../window/useThemeStyle";
 import { resolveTitleBarVariant } from "../window/title-bar-variant";
-import { sharedTerminalScopeIdFromPath } from "@/lib/shared-terminal-route";
 import {
   MacGlassTitleBarChrome,
   MacTitleBarChrome,
@@ -445,7 +444,7 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
     <>
       {win.path.startsWith("__terminal__") ? (
         <TerminalApp
-          sharedScopeId={sharedTerminalScopeIdFromPath(win.path)}
+          sharedScopeId={win.sharedTerminalScopeId ?? null}
           mobile={isMobile}
           launchTargetId={win.id}
           layoutId={win.terminalLayoutId}

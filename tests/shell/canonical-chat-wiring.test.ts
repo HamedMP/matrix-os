@@ -26,5 +26,8 @@ describe("Canvas and web desktop canonical Chat wiring", () => {
     expect(providerState).toContain("onSetupAction(instance, action)");
     expect(desktop).toContain("OPEN_PROVIDER_SETTINGS_EVENT");
     expect(desktop).toContain("OPEN_PROVIDER_TERMINAL_EVENT");
+    expect(shellHome).toContain('terminalCollaborationView ? "__terminal__"');
+    expect(desktop).not.toContain("__terminal__:shared:");
+    expect(mobile).not.toContain("__terminal__:shared:");
   });
 });

@@ -1,8 +1,14 @@
+// @vitest-environment jsdom
+
 import React, { type ReactElement, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 import SharedChatPage from "../../shell/src/app/shared/chat/[scopeId]/page";
 import SharedTerminalPage from "../../shell/src/app/shared/terminal/[scopeId]/page";
 import SharedInvitationPage from "../../shell/src/app/shared/invitations/[invitationId]/page";
+import {
+  resetWindowManagerLayoutPersistenceForTests,
+  useWindowManager,
+} from "../../shell/src/hooks/useWindowManager";
 
 vi.mock("next/headers", () => ({ headers: vi.fn(async () => new Headers()) }));
 vi.mock("next/navigation", () => ({
@@ -52,6 +58,31 @@ describe("shared Terminal deep link", () => {
     await expect(SharedTerminalPage({
       params: Promise.resolve({ scopeId: "../../not-a-scope" }),
     })).rejects.toThrow("NEXT_NOT_FOUND");
+  });
+
+  it("keeps the validated shared scope in metadata on the canonical Terminal path", () => {
+    resetWindowManagerLayoutPersistenceForTests();
+    useWindowManager.setState({
+      windows: [],
+      nextZ: 1,
+      closedPaths: new Set(),
+      closedLayouts: new Map(),
+      focusedWindowId: null,
+      fullscreenWindowId: null,
+    });
+
+    try {
+      useWindowManager.getState().openWindow("Shared Terminal", "__terminal__", 80, {
+        terminalPersistence: "ephemeral",
+        sharedTerminalScopeId: scopeId,
+      });
+      const opened = useWindowManager.getState().windows[0];
+      expect(opened.path).toBe("__terminal__");
+      expect(opened.sharedTerminalScopeId).toBe(scopeId);
+      expect(opened.terminalLayoutId).toBeUndefined();
+    } finally {
+      resetWindowManagerLayoutPersistenceForTests();
+    }
   });
 });
 

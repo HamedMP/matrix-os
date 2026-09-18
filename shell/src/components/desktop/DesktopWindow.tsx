@@ -20,7 +20,6 @@ import { FileBrowser } from "@/components/file-browser/FileBrowser";
 import { PreviewWindow } from "@/components/preview-window/PreviewWindow";
 import { TerminalApp } from "@/components/terminal/TerminalApp";
 import { TrafficLights } from "./DesktopDockControls";
-import { sharedTerminalScopeIdFromPath } from "@/lib/shared-terminal-route";
 
 export function hasActiveWindowInteraction(
   drag: unknown | null,
@@ -185,7 +184,7 @@ export function DesktopWindow({
       <CardContent className="relative flex-1 p-0 min-h-0">
         {win.path.startsWith("__terminal__") ? (
           <TerminalApp
-            sharedScopeId={sharedTerminalScopeIdFromPath(win.path)}
+            sharedScopeId={win.sharedTerminalScopeId ?? null}
             launchTargetId={win.id}
             layoutId={win.terminalLayoutId}
             persistence={win.terminalPersistence ?? "durable"}
