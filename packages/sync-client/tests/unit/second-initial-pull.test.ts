@@ -95,6 +95,7 @@ describe("runInitialPull", () => {
     const testLogger = logger();
     const saveSyncState = vi.fn();
     const refreshConflictCopyPathIndex = vi.fn();
+    const onRecovered = vi.fn();
     const requestPresignedUrls = vi.fn(async (_client, files) =>
       files.map((file) => ({
         path: file.path,
@@ -131,9 +132,12 @@ describe("runInitialPull", () => {
       downloadFile,
       saveSyncState,
       refreshConflictCopyPathIndex,
+      onRecovered,
     });
 
     expect(result).toMatchObject({ pulled: 1, skipped: 1, failed: 1 });
+    expect(onRecovered).toHaveBeenCalledWith("ok.txt");
+    expect(onRecovered).not.toHaveBeenCalledWith("bad.txt");
     expect(downloadFile).toHaveBeenCalledTimes(2);
     expect(saveSyncState).toHaveBeenCalledTimes(1);
     expect(refreshConflictCopyPathIndex).toHaveBeenCalledTimes(1);
