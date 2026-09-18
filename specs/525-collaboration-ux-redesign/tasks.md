@@ -1,7 +1,7 @@
 # Tasks: Native Collaboration UX Redesign
 
-**Input**: Design documents in `specs/525-collaboration-ux-redesign/`  
-**Prerequisites**: [spec.md](spec.md), [plan.md](plan.md), [research.md](research.md), [data-model.md](data-model.md), [contracts/collaboration-ux-api.md](contracts/collaboration-ux-api.md), [quickstart.md](quickstart.md)
+**Input**: Design documents in `specs/525-collaboration-ux-redesign/`
+**Prerequisites**: [spec.md](spec.md), [plan.md](plan.md), [data-model.md](data-model.md), and [contracts/collaboration-ux-api.md](contracts/collaboration-ux-api.md). Stack PR 2 adds `research.md` and `quickstart.md`; those guides are required before the cross-surface acceptance task T102 runs.
 
 **TDD rule**: Every test task below is completed and observed failing for the intended reason before its paired implementation task begins. Record red/green commands and results in `specs/525-collaboration-ux-redesign/implementation-log.md`.
 
@@ -229,7 +229,7 @@
 
 - [ ] T100 [P] Add/extend two-account realtime E2E for attributed prompts, AI output, notes, queue changes, roles, terminal controller changes, and revocation in `tests/e2e/collaboration-native-sessions.spec.ts`
 - [ ] T101 [P] Add route/security regression coverage for feature-off, snapshot/live separation, no parent/sibling/owner-home access, and unavailable owner runtime in `tests/e2e/collaboration-native-sessions.spec.ts` and `tests/platform/collaboration-proof.test.ts`
-- [ ] T102 Run the complete quickstart acceptance matrix and record exact commands, failures/fixes, timings, and evidence links in `specs/525-collaboration-ux-redesign/implementation-log.md`
+- [ ] T102 After applying Stack PR 2, run the complete `quickstart.md` acceptance matrix and record exact commands, failures/fixes, timings, and evidence links in `specs/525-collaboration-ux-redesign/implementation-log.md`
 - [ ] T103 Run all required affected/full tests, typechecks, builds, pattern scan, and react-doctor checks and record final results in `specs/525-collaboration-ux-redesign/implementation-log.md`
 - [ ] T104 Audit every changed file against `AGENTS.md`, `.specify/memory/constitution.md`, and `specs/quality-gates.md`, recording any explicit deferrals with linked issues in `specs/525-collaboration-ux-redesign/implementation-log.md`
 - [ ] T105 Create the separate private `FinnaAI/matrix-os-site` documentation worktree/PR under `content/docs/` and record its URL and validation in `specs/525-collaboration-ux-redesign/implementation-log.md`

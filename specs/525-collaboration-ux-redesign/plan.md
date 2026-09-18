@@ -45,9 +45,9 @@ Pre-research and post-design result: **PASS**. No constitutional exception is re
 specs/525-collaboration-ux-redesign/
 ├── spec.md
 ├── plan.md
-├── research.md
+├── research.md                         # added by Stack PR 2
 ├── data-model.md
-├── quickstart.md
+├── quickstart.md                       # added by Stack PR 2
 ├── contracts/
 │   └── collaboration-ux-api.md
 └── checklists/
@@ -163,8 +163,8 @@ Each PR remains independently safe: server additions are backward-compatible and
 
 ## Phase Outputs and Readiness
 
-- Phase 0: [research.md](research.md) records inspected current behavior, backend gaps, decisions, and rejected alternatives.
-- Phase 1: [data-model.md](data-model.md), [contracts/collaboration-ux-api.md](contracts/collaboration-ux-api.md), and [quickstart.md](quickstart.md) define the implementation boundary and verification journey.
+- Phase 0: Stack PR 2 adds `research.md`, recording inspected current behavior, backend gaps, decisions, and rejected alternatives.
+- Phase 1: [data-model.md](data-model.md) and [contracts/collaboration-ux-api.md](contracts/collaboration-ux-api.md) define the backend boundary; Stack PR 2 adds `quickstart.md` before cross-surface acceptance runs.
 - Phase 2: `tasks.md` will map TDD work to the four coherent stack slices.
 - Before implementation: present the concise interaction model/wireframe to the user and wait for confirmation.
 
