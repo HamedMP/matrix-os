@@ -119,7 +119,7 @@ export const loginCommand = defineCommand({
           exclude: existingDev?.exclude,
           pauseSync: existingDev?.pauseSync ?? false,
         };
-        await saveProfileSyncConfig(next);
+        await saveProfileSyncConfig(next, { bindDaemon: false });
 
         getCliTelemetry().captureLoggedIn();
 
@@ -248,7 +248,7 @@ export const loginCommand = defineCommand({
       exclude: existing?.exclude,
       pauseSync: existing?.pauseSync ?? false,
     };
-    await saveProfileSyncConfig(next);
+    await saveProfileSyncConfig(next, { bindDaemon: false });
     await saveProfile(profiles, profileName, {
       platformUrl,
       gatewayUrl: next.gatewayUrl,

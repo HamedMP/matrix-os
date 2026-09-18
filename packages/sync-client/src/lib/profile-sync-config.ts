@@ -139,6 +139,14 @@ export async function loadProfileSyncConfig(
   const configDir = options.configDir ?? defaultConfigDir();
   const profiles = await loadProfiles({ configDir, migrateLegacyFiles: false });
   const binding = await readBinding(configDir);
+  // Explicit selection and a durable daemon binding outrank rollback data.
+  const selected = options.profileName ?? binding;
+  if (selected) {
+    if (!profiles.profiles[selected]) throw codedError("profile_not_found");
+    const configPath = profileConfigPath(selected, configDir);
+    const saved = await loadConfig(configPath);
+    if (saved) return { config: normalizedConfig(saved, selected), profileName: selected, configPath, source: "profile" };
+  }
   const legacy = await loadConfig(join(configDir, "config.json"));
   const profileName = options.profileName ?? binding ?? legacy?.profile ?? profiles.active;
   if (!profiles.profiles[profileName]) {
@@ -179,7 +187,7 @@ export async function loadProfileSyncConfig(
   }
 
   const migrated = await migrateLegacyConfig(configDir, profileName, legacy);
-  await writeBinding(configDir, profileName);
+  if (options.profileName === undefined) await writeBinding(configDir, profileName);
   return {
     config: migrated,
     profileName,
@@ -190,7 +198,7 @@ export async function loadProfileSyncConfig(
 
 export async function saveProfileSyncConfig(
   config: SyncConfig,
-  options: ProfileSyncConfigOptions = {},
+  options: ProfileSyncConfigOptions & { bindDaemon?: boolean } = {},
 ): Promise<void> {
   const configDir = options.configDir ?? defaultConfigDir();
   const profiles = await loadProfiles({ configDir, migrateLegacyFiles: false });
@@ -202,5 +210,5 @@ export async function saveProfileSyncConfig(
   const destination = profileConfigPath(profileName, configDir);
   await mkdir(dirname(destination), { recursive: true, mode: 0o700 });
   await writeUtf8FileAtomic(destination, JSON.stringify(parsed, null, 2), 0o600);
-  await writeBinding(configDir, profileName);
+  if (options.bindDaemon !== false) await writeBinding(configDir, profileName);
 }

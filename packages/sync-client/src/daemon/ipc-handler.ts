@@ -35,7 +35,7 @@ export interface IpcHandlerDeps {
   connectionState?: () => "connecting" | "online" | "offline";
   activeTransferCount?: () => number;
   pendingFailureCount?: () => number;
-  peers?: () => unknown[];
+  peers?: () => unknown[] | null | Promise<unknown[] | null>;
   activity?: () => unknown[];
   invites?: () => unknown[];
   shell?: {
@@ -120,10 +120,11 @@ export function createIpcHandler(deps: IpcHandlerDeps): IpcHandler {
           platformUrl: deps.config.platformUrl,
           profile: deps.config.profile,
           peerId: deps.config.peerId,
-          peers: deps.peers?.() ?? [],
+          peers: deps.peers ? await deps.peers() : null,
           activity: deps.activity?.() ?? [],
           conflicts,
-          invites: deps.invites?.() ?? [],
+          // The current gateway has active shares, but no pending-invite API.
+          invites: deps.invites?.() ?? null,
         };
       }
       case "pause":

@@ -3,6 +3,11 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 describe("Matrix Sync Swift daemon IPC compatibility", () => {
+  it("renders connected transfer failures separately from offline", async () => {
+    const source = await readFile(resolve(process.cwd(), "apps/menu-bar/Sources/MatrixSyncApp.swift"), "utf-8");
+    expect(source).toContain("case error");
+    expect(source).toContain('return "Sync needs attention"');
+  });
   it("does not interpolate arbitrary daemon codes into user-visible errors", async () => {
     const source = await readFile(resolve(process.cwd(), "apps/menu-bar/Sources/DaemonClient.swift"), "utf-8");
     expect(source).not.toContain('request failed (\\(code))');

@@ -64,6 +64,21 @@ afterEach(async () => {
 });
 
 describe("profile-aware sync config", () => {
+  it("does not rebind the daemon when saving login configuration", async () => {
+    const configDir = await tempConfigDir();
+    await seedProfiles(configDir);
+    await saveProfileSyncConfig(config(), { configDir });
+    await saveProfileSyncConfig(config({ profile: "local" }), { configDir, bindDaemon: false });
+    expect((await loadProfileSyncConfig({ configDir }))?.profileName).toBe("cloud");
+  });
+
+  it("ignores malformed legacy rollback state when a bound profile is valid", async () => {
+    const configDir = await tempConfigDir();
+    await seedProfiles(configDir);
+    await saveProfileSyncConfig(config(), { configDir });
+    await writeFile(join(configDir, "config.json"), "{");
+    expect((await loadProfileSyncConfig({ configDir }))?.config.peerId).toBe("peer-one");
+  });
   it("recovers after an abandoned migration lock", async () => {
     const configDir = await tempConfigDir();
     await seedProfiles(configDir);

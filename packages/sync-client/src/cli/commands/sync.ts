@@ -128,7 +128,12 @@ async function runStart(
   // Bouncing for no reason creates a race where `matrix sync status`
   // immediately after returns "not running" while the socket is being
   // recreated.
-  const live = await isDaemonRunning() ? await sendCommand("getConfig") : null;
+  let live: Record<string, unknown> | null = null;
+  try {
+    live = await isDaemonRunning() ? await sendCommand("getConfig") : null;
+  } catch (err: unknown) {
+    console.warn("[sync] Live daemon probe failed; repairing service", err instanceof Error ? err.name : "unknown");
+  }
   if (
     live?.profile === profile.name &&
     live.gatewayUrl === config.gatewayUrl &&

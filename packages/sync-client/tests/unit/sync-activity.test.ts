@@ -2,6 +2,20 @@ import { describe, expect, it } from "vitest";
 import { createSyncActivity } from "../../src/daemon/sync-activity.js";
 
 describe("sync activity", () => {
+  it("clears an operation failure only when that operation successfully retries", async () => {
+    const activity = createSyncActivity();
+    await expect(activity.run("startup", async () => { throw new Error("offline"); })).rejects.toThrow("offline");
+    expect(activity.pendingFailureCount()).toBe(1);
+    await activity.run("startup", async () => {});
+    expect(activity.pendingFailureCount()).toBe(0);
+    expect(activity.activeTransferCount()).toBe(0);
+  });
+  it("keeps bounded real activity records", () => {
+    const activity = createSyncActivity();
+    for (let i = 0; i < 200; i++) activity.record(String(i), "update", "peer");
+    expect(activity.recent()).toHaveLength(100);
+    expect(activity.recent()[0]).toMatchObject({ path: "199", action: "update", peerId: "peer" });
+  });
   it("counts queued and active work until completion", async () => {
     const activity = createSyncActivity();
     const done = activity.begin();

@@ -112,6 +112,12 @@ afterEach(() => {
 });
 
 describe("syncCommand start", () => {
+  it("repairs the service when the live configuration probe fails", async () => {
+    sendCommandMock.mockRejectedValueOnce(new Error("IPC unavailable"));
+    await runSync();
+    expect(installServiceMock).toHaveBeenCalledOnce();
+    expect(startServiceMock).toHaveBeenCalledOnce();
+  });
   it("restarts when the live daemon belongs to another profile despite a matching saved target", async () => {
     loadProfileSyncConfigMock.mockResolvedValue({ config: previousConfig({ profile: "cloud" }) });
     sendCommandMock.mockResolvedValue(previousConfig({ profile: "local" }));
