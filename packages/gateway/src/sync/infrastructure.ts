@@ -8,10 +8,12 @@ import { createPeerRegistry, type PeerRegistry } from "./ws-events.js";
 import { createSharingService, type SharingService } from "./sharing.js";
 import { sanitizePeerId } from "./peer-id.js";
 import { deriveGatewaySyncUserSeeds, ensureSyncUser, migrateSyncTables, type SyncDatabase } from "./sharing-db.js";
+import { resolveSyncScope } from "./runtime-scope.js";
 
 export async function initializeSyncInfrastructure(kyselyInstance: Kysely<SyncDatabase> | null) {
   const internalPlatformUrl = process.env.PLATFORM_INTERNAL_URL;
   const internalPlatformToken = process.env.UPGRADE_TOKEN;
+  const internalSyncRuntimeToken = process.env.MATRIX_SYNC_RUNTIME_TOKEN;
   const internalHandle = process.env.MATRIX_HANDLE;
   // 066: Sync infrastructure (R2/S3 + ManifestDb + PeerRegistry + Sharing)
   let syncR2: R2Client | null = null;
@@ -40,10 +42,21 @@ export async function initializeSyncInfrastructure(kyselyInstance: Kysely<SyncDa
         };
         syncR2 = await createR2Client(r2Config);
       } else {
+        if (internalSyncRuntimeToken && (!process.env.MATRIX_MACHINE_ID || !process.env.MATRIX_RUNTIME_SLOT)) {
+          throw new Error("Scoped sync runtime identity is incomplete");
+        }
         syncR2 = createPlatformR2Client({
           baseUrl: internalPlatformUrl!,
           handle: internalHandle!,
-          token: internalPlatformToken!,
+          token: internalSyncRuntimeToken ?? internalPlatformToken!,
+          ...(internalSyncRuntimeToken
+            && process.env.MATRIX_MACHINE_ID
+            && process.env.MATRIX_RUNTIME_SLOT
+            ? {
+                machineId: process.env.MATRIX_MACHINE_ID,
+                runtimeSlot: process.env.MATRIX_RUNTIME_SLOT,
+              }
+            : {}),
         });
       }
 
@@ -65,7 +78,10 @@ export async function initializeSyncInfrastructure(kyselyInstance: Kysely<SyncDa
         // Resolve userId per request through the canonical principal seam so
         // sync storage keys follow the same source precedence as other
         // protected owner-scoped routes.
-        getUserId: (c) => requireRequestPrincipal(c).userId,
+        getScope: (c) => resolveSyncScope({
+          ownerId: requireRequestPrincipal(c).userId,
+          runtimeSlot: process.env.MATRIX_RUNTIME_SLOT,
+        }),
         getPeerId: (c) => sanitizePeerId(c.req.header("X-Peer-Id")),
       };
 

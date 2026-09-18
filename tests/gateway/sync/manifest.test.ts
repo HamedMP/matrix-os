@@ -33,6 +33,7 @@ const mockR2 = {
 const mockDb = {
   getManifestMeta: vi.fn(),
   upsertManifestMeta: vi.fn(),
+  advanceManifestMeta: vi.fn(),
   withAdvisoryLock: vi.fn(),
 };
 
@@ -41,7 +42,10 @@ import {
   writeManifest,
   applyCommitToManifest,
   garbageCollectTombstones,
+  AcceptedManifestMissingError,
+  ManifestVersionMismatchError,
   ManifestTooLargeError,
+  ManifestAdvanceConflictError,
   MANIFEST_JSON_MAX_BYTES,
   type ManifestStore,
 } from "../../../packages/gateway/src/sync/manifest.js";
@@ -65,6 +69,19 @@ describe("readManifest", () => {
     expect(result.manifestVersion).toBe(0);
   });
 
+  it("does not synthesize an empty home when accepted metadata has a revision", async () => {
+    mockR2.getObject.mockRejectedValue(Object.assign(new Error("NoSuchKey"), { name: "NoSuchKey" }));
+    mockDb.getManifestMeta.mockResolvedValue({
+      version: 3,
+      etag: '"etag3"',
+      accepted_manifest_key: "matrixos-sync/user1/manifests/v3.json",
+    });
+
+    await expect(readManifest(store, "user1")).rejects.toThrow(
+      AcceptedManifestMissingError,
+    );
+  });
+
   it("reads and parses manifest from R2", async () => {
     const manifest = makeManifest({ "test.txt": { hash: HASH_A, size: 100 } });
     const body = { text: () => Promise.resolve(JSON.stringify({ ...manifest, manifestVersion: 3 })) };
@@ -76,6 +93,13 @@ describe("readManifest", () => {
     expect(result.manifest.files["test.txt"]!.hash).toBe(HASH_A);
     expect(result.manifestVersion).toBe(3);
     expect(result.etag).toBe('"etag1"');
+  });
+
+  it.each([null, undefined])("rejects a missing legacy manifest at a nonzero revision (%s pointer)", async (pointer) => {
+    mockR2.getObject.mockRejectedValue(Object.assign(new Error("NoSuchKey"), { name: "NoSuchKey" }));
+    mockDb.getManifestMeta.mockResolvedValue({ version: 7, accepted_manifest_key: pointer });
+    await expect(readManifest(store, "user1")).rejects.toThrow(AcceptedManifestMissingError);
+    expect(mockDb.upsertManifestMeta).not.toHaveBeenCalled();
   });
 
   it("supports AWS SDK bodies that expose transformToString()", async () => {
@@ -91,26 +115,21 @@ describe("readManifest", () => {
     expect(result.etag).toBe('"etag2"');
   });
 
-  it("reconciles to the embedded manifestVersion when R2 is ahead of DB metadata", async () => {
+  it("does not promote an unaccepted manifest generation when R2 is ahead", async () => {
     const manifest = makeManifest({ "ahead.txt": { hash: HASH_A, size: 100 } });
     const body = { text: () => Promise.resolve(JSON.stringify({ ...manifest, manifestVersion: 7 })) };
     mockR2.getObject.mockResolvedValue({ body, etag: '"etag7"' });
-    mockDb.getManifestMeta.mockResolvedValue({ version: 5, etag: '"etag5"' });
+    mockDb.getManifestMeta.mockResolvedValue({
+      version: 5,
+      etag: '"etag5"',
+      accepted_manifest_key: "matrixos-sync/user1/manifests/v5.json",
+    });
     mockDb.upsertManifestMeta.mockResolvedValue(undefined);
 
-    const result = await readManifest(store, "user1");
-
-    expect(result.manifestVersion).toBe(7);
-    expect(mockDb.upsertManifestMeta).toHaveBeenCalledWith(
-      "user1",
-      expect.objectContaining({
-        version: 7,
-        file_count: 1,
-        total_size: 100n,
-        etag: '"etag7"',
-      }),
-      undefined,
+    await expect(readManifest(store, "user1")).rejects.toThrow(
+      ManifestVersionMismatchError,
     );
+    expect(mockDb.upsertManifestMeta).not.toHaveBeenCalled();
   });
 
   it("rejects oversized manifest JSON before buffering the body", async () => {
@@ -138,26 +157,47 @@ describe("writeManifest", () => {
   it("writes manifest to R2 and updates Postgres metadata", async () => {
     const manifest = makeManifest({ "file.txt": { hash: HASH_A, size: 200 } });
     mockR2.putObject.mockResolvedValue({ etag: '"new-etag"' });
-    mockDb.upsertManifestMeta.mockResolvedValue(undefined);
+    mockDb.advanceManifestMeta.mockResolvedValue(true);
 
     await writeManifest(store, "user1", manifest, 5);
 
-    expect(mockR2.putObject).toHaveBeenCalledOnce();
-    const [, manifestBody] = mockR2.putObject.mock.calls[0]!;
+    expect(mockR2.putObject).toHaveBeenCalledTimes(1);
+    const [generationKey, manifestBody] = mockR2.putObject.mock.calls[0]!;
+    expect(generationKey).toMatch(
+      /^matrixos-sync\/user1\/manifests\/5-[a-f0-9]{64}\.json$/,
+    );
     expect(JSON.parse(String(manifestBody))).toMatchObject({ manifestVersion: 5 });
-    expect(mockDb.upsertManifestMeta).toHaveBeenCalledWith(
+    expect(mockR2.putObject).not.toHaveBeenCalledWith(
+      "matrixos-sync/user1/manifest.json",
+      expect.anything(),
+    );
+    expect(mockDb.advanceManifestMeta).toHaveBeenCalledWith(
       "user1",
+      4,
       expect.objectContaining({
         version: 5,
         file_count: 1,
         total_size: 200n,
         etag: '"new-etag"',
+        accepted_manifest_key: generationKey,
       }),
       undefined,
     );
     expect(mockR2.putObject.mock.invocationCallOrder[0]).toBeLessThan(
-      mockDb.upsertManifestMeta.mock.invocationCallOrder[0],
+      mockDb.advanceManifestMeta.mock.invocationCallOrder[0],
     );
+  });
+
+  it("leaves a reclaimable generation orphan when accepted-pointer CAS loses", async () => {
+    const manifest = makeManifest({ "file.txt": { hash: HASH_A, size: 200 } });
+    mockR2.putObject.mockResolvedValue({ etag: '"new-etag"' });
+    mockDb.advanceManifestMeta.mockResolvedValue(false);
+
+    await expect(writeManifest(store, "user1", manifest, 5)).rejects.toThrow(
+      ManifestAdvanceConflictError,
+    );
+
+    expect(mockR2.putObject).toHaveBeenCalledTimes(1);
   });
 
   it("computes correct file_count excluding tombstones", async () => {
@@ -169,12 +209,13 @@ describe("writeManifest", () => {
     manifest.files["dead.txt"]!.deletedAt = Date.now();
 
     mockR2.putObject.mockResolvedValue({ etag: '"e"' });
-    mockDb.upsertManifestMeta.mockResolvedValue(undefined);
+    mockDb.advanceManifestMeta.mockResolvedValue(true);
 
     await writeManifest(store, "user1", manifest, 1);
 
-    expect(mockDb.upsertManifestMeta).toHaveBeenCalledWith(
+    expect(mockDb.advanceManifestMeta).toHaveBeenCalledWith(
       "user1",
+      0,
       expect.objectContaining({ file_count: 1, total_size: 100n }),
       undefined,
     );

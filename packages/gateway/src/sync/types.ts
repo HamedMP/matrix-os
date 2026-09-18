@@ -10,6 +10,7 @@ export const ManifestEntrySchema = z.object({
   mtime: z.int().nonnegative(),
   peerId: z.string().min(1).max(128),
   version: z.int().nonnegative(),
+  objectKey: z.string().min(1).max(768).optional(),
   deleted: z.boolean().optional(),
   deletedAt: z.int().nonnegative().optional(),
 });
@@ -97,7 +98,7 @@ const PresignPutFileSchema = z.object({
   path: z.string().min(1).max(1024),
   action: z.literal("put"),
   hash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
-  size: z.int().positive().max(1024 * 1024 * 1024), // 1GB max (multipart for >100MB)
+  size: z.int().nonnegative().max(1024 * 1024 * 1024), // 1GB max (multipart for >100MB)
 });
 
 export const PresignFileSchema = z.discriminatedUnion("action", [
@@ -107,8 +108,9 @@ export const PresignFileSchema = z.discriminatedUnion("action", [
 export type PresignFile = z.infer<typeof PresignFileSchema>;
 
 export const PresignRequestSchema = z.object({
+  protocolVersion: z.literal(3),
   files: z.array(PresignFileSchema).min(1).max(100),
-});
+}).strict();
 export type PresignRequest = z.infer<typeof PresignRequestSchema>;
 
 export const MultipartUploadedPartSchema = z.object({
@@ -118,7 +120,9 @@ export const MultipartUploadedPartSchema = z.object({
 export type MultipartUploadedPart = z.infer<typeof MultipartUploadedPartSchema>;
 
 export const CompleteMultipartRequestSchema = z.object({
+  protocolVersion: z.literal(3),
   path: z.string().min(1).max(1024),
+  stagingId: z.uuid(),
   uploadId: z.string().min(1).max(1024),
   parts: z.array(MultipartUploadedPartSchema).min(1).max(10_000),
 }).refine((request) => {
@@ -131,7 +135,9 @@ export const CompleteMultipartRequestSchema = z.object({
 export type CompleteMultipartRequest = z.infer<typeof CompleteMultipartRequestSchema>;
 
 export const AbortMultipartRequestSchema = z.object({
+  protocolVersion: z.literal(3),
   path: z.string().min(1).max(1024),
+  stagingId: z.uuid(),
   uploadId: z.string().min(1).max(1024),
 });
 export type AbortMultipartRequest = z.infer<typeof AbortMultipartRequestSchema>;
@@ -145,13 +151,23 @@ export const CommitFileSchema = z.object({
   hash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
   size: z.int().nonnegative(),
   action: z.enum(["add", "update", "delete"]).optional(),
+  stagingId: z.uuid().optional(),
+}).superRefine((file, ctx) => {
+  if (file.action !== "delete" && !file.stagingId) {
+    ctx.addIssue({
+      code: "custom",
+      message: "stagingId is required for file publication",
+      path: ["stagingId"],
+    });
+  }
 });
 export type CommitFile = z.infer<typeof CommitFileSchema>;
 
 export const CommitRequestSchema = z.object({
+  protocolVersion: z.literal(3),
   files: z.array(CommitFileSchema).min(1).max(100),
   expectedVersion: z.int().nonnegative(),
-});
+}).strict();
 export type CommitRequest = z.infer<typeof CommitRequestSchema>;
 
 // ---------------------------------------------------------------------------
