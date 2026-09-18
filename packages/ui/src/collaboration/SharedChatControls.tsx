@@ -15,7 +15,6 @@ type SharedAiState = {
   availability: AiAvailability;
   requests: CollaborationAiRequest[];
   approvals: CollaborationApproval[];
-  effectiveSelection: CollaborationAiRequest["selection"] | null;
   pendingAction: string | null;
   error: SharedAiError;
 };
@@ -31,7 +30,6 @@ const initialSharedAiState: SharedAiState = {
   availability: "checking",
   requests: [],
   approvals: [],
-  effectiveSelection: null,
   pendingAction: null,
   error: null,
 };
@@ -90,7 +88,7 @@ function sharedComposerPresentation(
 ): SharedComposerPresentation {
   const writableRole = scope.role === "owner" || scope.role === "editor";
   const canRequestAi = scope.lifecycle === "shared" && writableRole
-    && scope.capabilities.requestAi && state.availability === "available" && state.effectiveSelection !== null;
+    && scope.capabilities.requestAi && state.availability === "available";
   const sending = state.pendingAction === "submit";
   const status = !writableRole ? "Viewers can read this Chat but cannot post messages or request AI."
     : state.availability === "checking" ? "Checking shared AI…"
@@ -154,7 +152,7 @@ function useSharedAiController({ api, scope, actorId, resourceRevision, draft, u
     try {
       const response = CollaborationAiRequestsResponseSchema.parse(await api.get(`${endpoint}/requests`));
       latestResourceRevision.current = response.resourceRevision;
-      hadAvailable.current = true;
+      hadAvailable.current = response.capability.status === "available";
       dispatch({ type: "loaded", response });
     } catch (failure: unknown) {
       console.warn("[chat-collaboration] shared AI recovery failed",
@@ -246,7 +244,6 @@ function reduceSharedAi(state: SharedAiState, action: SharedAiAction): SharedAiS
         availability: action.response.capability.status === "available" ? "available" : "unavailable",
         requests: action.response.requests,
         approvals: action.response.approvals,
-        effectiveSelection: action.response.capability.effectiveSelection ?? null,
         error: null,
       };
     case "unavailable":

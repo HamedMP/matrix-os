@@ -15,7 +15,7 @@ Adds the smallest backend capabilities required by the native collaboration UX: 
 - Acceptable orphan state: platform discovery may temporarily lag owner authority and reconciles through the existing outbox; it cannot grant access.
 - Deferred: no new roles, partial-project sharing, alternate execution authority, snapshot authentication, or personal layouts.
 
-Validation: focused backend suites passed 148 tests after rebase; two resource-contended hooks were rerun individually (23/23 and 20/20). Contracts, gateway, platform, sync-client types, and pattern scan pass. PostgreSQL-only cases remain environment-skipped where no test URL is configured.
+Validation: focused backend suites passed 148 tests after rebase; two resource-contended hooks were rerun individually (24/24 and 20/20). Contracts, gateway, platform, sync-client types, and pattern scan pass. PostgreSQL-only cases remain environment-skipped where no test URL is configured.
 
 ## Stack 2 — `feat(collaboration): integrate native web session UX`
 
@@ -23,15 +23,15 @@ Makes collaboration a capability of normal Canvas/Web Desktop Chat and Terminal 
 
 The change preserves owner/editor/viewer enforcement, queue ordering, terminal-control fencing, snapshot/live separation, private drafts, personal presentation state, and feature-flag-off absence. No second authority or copied live history is introduced.
 
-Validation: shared UI/shell focused suites, route tests, two-account component tests, all changed-project typechecks, and pattern scan pass. Current-head Playwright verifies Shared with me, native open, Web Desktop, Canvas, access, and 390×844 Chat/discussion. Evidence manifests are under `specs/525-collaboration-ux-redesign/evidence/`.
+Validation: shared UI/shell focused suites, route tests, two-account component tests, all changed-project typechecks, and pattern scan pass. Current-head Playwright passes both cases and verifies Shared with me, native open, Web Desktop, Canvas, access, 390×844 Chat/discussion, and the provider-unavailable state. Evidence manifests are under `specs/525-collaboration-ux-redesign/evidence/`.
 
 ## Stack 3 — `feat(collaboration): align desktop and mobile session UX`
 
 Extends the confirmed native-session model to Electron and supported React Native integration points. Electron opens accepted resources in canonical Chat/Terminal tabs and places title/discussion/access in native chrome. Mobile adds feature-gated discovery, invitation actions, ordinary shared-AI composition, private discussion sheets, access management, and terminal collaboration.
 
-Validation: Electron focused suites pass (45-test work/native group plus the final Xvfb journey), desktop typecheck/build pass, and 8 mobile suites pass 45/45. Mobile's app-wide typecheck still reports only pre-existing dependency JSX incompatibilities outside changed collaboration files. React Doctor ran for every changed React project; final score upload was blocked by its remote service, while local diagnostics were reviewed and new ref/effect issues were fixed.
+Validation: Electron focused suites pass (45-test work/native group plus the final Xvfb journey), desktop typecheck/build pass, and 8 mobile suites pass 46/46. The final provider-ownership rebase is covered: participant clients consume the owner-derived capability and never submit a model selection. Mobile's app-wide typecheck still reports only pre-existing dependency JSX incompatibilities outside changed collaboration files. React Doctor ran for every changed React project; final score upload was blocked by its remote service, while local diagnostics were reviewed and new ref/effect issues were fixed.
 
-Evidence: `output/playwright/shared-chat/electron-desktop.png`, `electron-discussion.png`, and the cross-surface manifest. A physical Expo device is not attached to this runner, so native-device capture remains a review gate before publishing this draft.
+Evidence: `output/playwright/shared-chat/electron-desktop.png`, `electron-discussion.png`, and the cross-surface manifest. A physical Expo device is not attached to this runner, so native-device capture remains a review gate before taking the PR out of draft.
 
 ## Documentation — `docs(collaboration): explain native shared sessions`
 

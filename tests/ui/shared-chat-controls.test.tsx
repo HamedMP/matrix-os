@@ -100,21 +100,22 @@ describe("shared Chat AI controls", () => {
     expect(api.post).not.toHaveBeenCalled();
   });
 
-  it("keeps the ordinary composer clear when the Chat's bound Provider is unsupported", async () => {
+  it("disables the ordinary AI composer when the Chat's bound Provider is unsupported", async () => {
+    const unavailableResponse = {
+      requests: [],
+      approvals: [],
+      capability: {
+        status: "unavailable" as const,
+        effectiveSelection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      },
+      resourceRevision: "4",
+    };
     const api = {
       baseUrl: "https://app.matrix-os.com",
-      get: vi.fn(async () => ({
-        requests: [],
-        approvals: [],
-        capability: {
-          status: "unavailable",
-          effectiveSelection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
-        },
-        resourceRevision: "4",
-      })),
+      get: vi.fn().mockResolvedValueOnce(unavailableResponse).mockRejectedValueOnce(new Error("offline")),
       post: vi.fn(), delete: vi.fn(),
     };
-    render(<SharedChatControls api={api} scope={baseScope} actorId="user_editor"
+    const { rerender } = render(<SharedChatControls api={api} scope={baseScope} actorId="user_editor"
       resourceRevision="4" draft={{ text: "Human update", mode: "discussion" }} updateDraft={vi.fn()}
       changeDraftMode={vi.fn()}
       discussionSending={false} discussionError={false} sendDiscussion={vi.fn()} refreshVersion={0} />);
@@ -122,6 +123,14 @@ describe("shared Chat AI controls", () => {
     expect(await screen.findByLabelText("Message Chat")).toBeDisabled();
     expect(screen.queryByRole("button", { name: "Ask AI" })).toBeNull();
     expect(screen.getByRole("status")).toHaveTextContent("AI requests are unavailable");
+    expect(screen.getByLabelText("Message Chat")).toHaveAttribute("placeholder", "AI is unavailable");
+    expect(screen.queryByLabelText("Message everyone")).toBeNull();
+    rerender(<SharedChatControls api={api} scope={baseScope} actorId="user_editor"
+      resourceRevision="4" draft={{ text: "Human update", mode: "discussion" }} updateDraft={vi.fn()}
+      changeDraftMode={vi.fn()}
+      discussionSending={false} discussionError={false} sendDiscussion={vi.fn()} refreshVersion={1} />);
+    await waitFor(() => expect(api.get).toHaveBeenCalledTimes(2));
+    expect(screen.getByLabelText("Message Chat")).toBeDisabled();
   });
 
   it("renders immutable queue order and scopes editor controls to their own requests", async () => {

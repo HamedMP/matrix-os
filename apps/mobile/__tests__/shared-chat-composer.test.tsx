@@ -2,6 +2,8 @@ import React from "react";
 import { fireEvent, render, screen } from "@testing-library/react-native";
 import { SharedChatComposer, type SharedChatComposerState } from "@/components/collaboration/SharedChatComposer";
 
+const selection = { instanceId: "claude_shared", model: "claude-opus-4-6" };
+
 const state: SharedChatComposerState = {
   scope: {
     id: "10000000-0000-4000-8000-000000000001",
@@ -20,7 +22,6 @@ const state: SharedChatComposerState = {
     },
   },
   aiAvailability: "available",
-  defaultSelection: { instanceId: "claude_shared", model: "claude-opus-4-6" },
   aiRequests: [],
   approvals: [],
   aiDraft: "",
@@ -59,7 +60,7 @@ describe("SharedChatComposer", () => {
       actor: { actorId: "user_editor", displayName: "Ada" },
       state: "running",
       text: "First",
-      selection: state.defaultSelection!,
+      selection,
       acceptedAt: "2026-09-17T12:00:00.000Z",
       updatedAt: "2026-09-17T12:00:00.000Z",
     }] }} {...props} />);
@@ -69,12 +70,12 @@ describe("SharedChatComposer", () => {
       {
         id: "request_one", chatId: "chat_one", acceptedSequence: "1",
         actor: { actorId: "user_editor", displayName: "Ada" }, state: "running", text: "First",
-        selection: state.defaultSelection!, acceptedAt: "2026-09-17T12:00:00.000Z", updatedAt: "2026-09-17T12:00:00.000Z",
+        selection, acceptedAt: "2026-09-17T12:00:00.000Z", updatedAt: "2026-09-17T12:00:00.000Z",
       },
       {
         id: "request_two", chatId: "chat_one", acceptedSequence: "2",
         actor: { actorId: "user_owner", displayName: "Nima" }, state: "queued", text: "Second",
-        selection: state.defaultSelection!, acceptedAt: "2026-09-17T12:01:00.000Z", updatedAt: "2026-09-17T12:01:00.000Z",
+        selection, acceptedAt: "2026-09-17T12:01:00.000Z", updatedAt: "2026-09-17T12:01:00.000Z",
       },
     ] }} {...props} />);
     expect(screen.getByLabelText("Shared AI queue")).toBeTruthy();
@@ -82,7 +83,7 @@ describe("SharedChatComposer", () => {
     rerender(<SharedChatComposer state={{ ...state, aiRequests: [{
       id: "request_retry", chatId: "chat_one", acceptedSequence: "3",
       actor: { actorId: "user_editor", displayName: "Ada" }, state: "interrupted", text: "Retry me",
-      selection: state.defaultSelection!, acceptedAt: "2026-09-17T12:02:00.000Z", updatedAt: "2026-09-17T12:02:00.000Z",
+      selection, acceptedAt: "2026-09-17T12:02:00.000Z", updatedAt: "2026-09-17T12:02:00.000Z",
     }] }} {...props} />);
     expect(screen.getByLabelText("Shared AI queue")).toBeTruthy();
     expect(screen.getByLabelText("Retry request 3")).toBeTruthy();

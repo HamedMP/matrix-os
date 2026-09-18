@@ -13,7 +13,7 @@ Confirmed by the product owner on 2026-09-17.
 ## Baseline
 
 - Original baseline: `origin/main` at `8b36039aa` (`feat(collaboration): resolve invitation identifiers (#1741)`).
-- Rebased source: `origin/main` at `b1fd8ed37`, including the subsequently merged collaboration realtime and terminal fixes.
+- Rebased source: `origin/main` at `9d46c4428`, including the subsequently merged collaboration realtime, terminal, and immutable provider-ownership fixes.
 - Manual worktree: `/home/nima/matrix-os-collaboration-ux-redesign` on branch `525-collaboration-ux-redesign`.
 - Original checkout `/home/nima/matrix-os` contained unrelated user changes and remains untouched.
 - Dependencies installed with the frozen lockfile using the existing offline store.
@@ -25,7 +25,7 @@ Confirmed by the product owner on 2026-09-17.
 
 1. `feat(collaboration): add discussion and invitation UX contracts` — 29 files, 2,650 additions.
 2. `feat(collaboration): integrate native web session UX` — 39 files, 1,304 additions.
-3. `feat(collaboration): align desktop and mobile session UX` — 25 files, 1,436 additions before final verification-only edits.
+3. `feat(collaboration): align desktop and mobile session UX` — 48 files, 1,852 additions after final verification and provider-ownership alignment.
 
 Each layer must remain at or below 3,000 additions and 50 files, include current-head evidence for visible changes, pass its relevant checks, use `$worktree-pr-monitor`, reach Greptile 5/5, and stay unmerged until explicit product-owner approval.
 
@@ -47,7 +47,7 @@ Commands and results are appended here as tasks complete. No production implemen
 ### Native web and shared layers
 
 - Red/green: projection, two-account, private-draft, access, discussion, normal-Chat, deep-link, native terminal-route, and sharing suites were introduced or extended before their paired implementations. The focused current-head rerun passed 9 discussion/access/shell tests and the broader shared UI/desktop rerun passed 63 tests.
-- Canvas/browser: `PLAYWRIGHT_DEV_SERVER=1 PLAYWRIGHT_PORT=3017 ... playwright test e2e/shared-chat.spec.ts` passed at current head and captured Web Desktop, Canvas, Shared with me discovery/pending/native-open, and 390×844 responsive Chat, discussion, and access states under `output/playwright/collaboration-ux/`.
+- Canvas/browser: `PLAYWRIGHT_DEV_SERVER=1 PLAYWRIGHT_PORT=3017 ... playwright test e2e/shared-chat.spec.ts` passed both current-head cases and captured Web Desktop, Canvas, Shared with me discovery/pending/native-open, 390×844 responsive Chat/discussion/access, and provider-unavailable states under `output/playwright/collaboration-ux/`.
 - Presentation: shared prompts use the normal right-side human presentation with attribution; AI remains left; the ordinary `Message Chat` composer creates shared AI requests; human discussion is excluded from the AI timeline; queue detail is progressive; the responsive discussion layer overlays without resizing the session.
 - Routing/discovery: legacy shared URLs resolve into Chat or Terminal shell state; Shared with me is in Chat navigation with pending invalidation; snapshot and live-invite entry points remain distinct; feature-off tests prove controls are absent.
 - Types: `packages/ui` and `shell` TypeScript checks passed. The shell production build compiled and typechecked but cannot complete prerender in this environment without a real Clerk publishable key.
@@ -55,9 +55,9 @@ Commands and results are appended here as tasks complete. No production implemen
 
 ### Electron and mobile parity
 
-- Electron: 45 focused native routing/work-surface tests passed; the desktop TypeScript check and production Electron build passed. The Xvfb Electron journey passed and captured the native Chat header plus opaque discussion drawer under `output/playwright/shared-chat/`.
+- Electron: 45 focused native routing/work-surface tests passed; the desktop TypeScript check and production Electron build passed. After the final rebase, the Xvfb Electron journey passed again and captured the native Chat header plus opaque discussion drawer under `output/playwright/shared-chat/`.
 - A visual verification cycle found and fixed three issues beyond selector assertions: missing shared title, collaboration utilities omitted from Desktop Tailwind source discovery, and discussion state resetting when a metadata callback changed identity.
-- Mobile: 8 Jest suites passed 45 tests for discovery, feature gating, invitation actions, ordinary shared AI composition, discussion drafts/sheet behavior, access, and terminal collaboration. Async close/unmount guards and stable effect dependencies were added after React Doctor findings.
+- Mobile: 8 Jest suites passed 46 tests for discovery, feature gating, invitation actions, ordinary shared AI composition, owner-runtime unavailability, discussion drafts/sheet behavior, access, and terminal collaboration. Async close/unmount guards and stable effect dependencies were added after React Doctor findings. The final provider-ownership rebase also removed participant-supplied model selection from mobile requests and consumes the owner-derived capability projection.
 - Mobile static check: the app-wide TypeScript check still reports the repository's existing React Native dependency JSX incompatibilities; no changed collaboration file appeared in the diagnostics. React Doctor ran and scored 49 after the new dependency warnings were corrected.
 - Physical-device evidence is not claimable from this Linux worktree. T098 and review-ready status remain open until an Expo device capture is attached.
 

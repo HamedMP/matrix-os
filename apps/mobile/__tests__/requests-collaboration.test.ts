@@ -208,7 +208,11 @@ describe("mobile collaboration requests", () => {
     const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({
       ok: true,
       json: jest.fn()
-        .mockResolvedValueOnce({ requests: [], approvals: [], defaultSelection, resourceRevision: "4" })
+        .mockResolvedValueOnce({
+          requests: [], approvals: [],
+          capability: { status: "available", effectiveSelection: defaultSelection },
+          resourceRevision: "4",
+        })
         .mockResolvedValueOnce({
           resourceRevision: "5",
           request: {
@@ -220,7 +224,7 @@ describe("mobile collaboration requests", () => {
         .mockResolvedValue({ state: "accepted" }),
     } as unknown as Response);
     await fetchSharedAiRequests("clerk-token", scopeId);
-    await postSharedAiRequest("clerk-token", scopeId, "1", "Summarize", defaultSelection,
+    await postSharedAiRequest("clerk-token", scopeId, "1", "Summarize",
       "40000000-0000-4000-8000-000000000020");
     await controlSharedAiRequest("clerk-token", scopeId, "qturn_one", "cancel", "4",
       "40000000-0000-4000-8000-000000000021");

@@ -330,7 +330,6 @@ export function postSharedAiRequest(
   scopeId: string,
   expectedRevision: string,
   text: string,
-  selection: unknown,
   clientRequestId: string,
 ) {
   const id = CollaborationIdSchema.parse(scopeId);
@@ -338,7 +337,6 @@ export function postSharedAiRequest(
     clientRequestId,
     expectedRevision,
     text,
-    selection,
   });
   return fetchAuthenticatedJson({
     url: url(`/api/collaboration/scopes/${id}/chat/requests`), token,

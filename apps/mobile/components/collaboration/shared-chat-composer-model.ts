@@ -3,7 +3,7 @@ import type { SharedChatComposerState } from "./SharedChatComposer";
 
 export function deriveSharedChatComposerPresentation(state: SharedChatComposerState) {
   const viewer = state.scope?.role === "viewer";
-  const aiAvailable = state.aiAvailability === "available" && state.defaultSelection !== null;
+  const aiAvailable = state.aiAvailability === "available";
   const canRequestAi = !viewer && aiAvailable && state.scope?.lifecycle === "shared"
     && state.scope.capabilities.requestAi;
   const canWrite = canRequestAi;

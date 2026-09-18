@@ -68,7 +68,6 @@ type ScreenState = {
   aiAvailability: "checking" | "available" | "unavailable";
   aiRequests: CollaborationAiRequest[];
   approvals: CollaborationApproval[];
-  defaultSelection: CollaborationAiRequest["selection"] | null;
   aiError: string;
   loading: boolean;
   sending: boolean;
@@ -91,7 +90,6 @@ const initialState: ScreenState = {
   aiAvailability: "checking",
   aiRequests: [],
   approvals: [],
-  defaultSelection: null,
   aiError: "",
   loading: true,
   sending: false,
@@ -205,7 +203,6 @@ export default function SharedScreen() {
       aiAvailability: "checking",
       aiRequests: [],
       approvals: [],
-      defaultSelection: null,
       aiError: "",
       sending: false,
       hasMoreMessages: false,
@@ -236,12 +233,13 @@ export default function SharedScreen() {
       try {
         const ai = CollaborationAiRequestsResponseSchema.parse(await fetchSharedAiRequests(actorToken, scopeId));
         if (generation === chatLoadGeneration.current) {
-          aiWasAvailableRef.current = true;
+          aiWasAvailableRef.current = ai.capability.status === "available";
           const refreshedChat = { ...nextChat, revision: ai.resourceRevision };
           chatRef.current = refreshedChat;
           dispatch({ type: "patch", patch: {
-            aiAvailability: "available", aiRequests: ai.requests, approvals: ai.approvals,
-            defaultSelection: ai.defaultSelection, aiError: "", chat: refreshedChat,
+            aiAvailability: ai.capability.status === "available" ? "available" : "unavailable",
+            aiRequests: ai.requests, approvals: ai.approvals,
+            aiError: "", chat: refreshedChat,
           } });
         }
       } catch (failure: unknown) {
@@ -323,12 +321,13 @@ export default function SharedScreen() {
     try {
       const ai = CollaborationAiRequestsResponseSchema.parse(await fetchSharedAiRequests(actorToken, scopeId));
       if (generation === chatLoadGeneration.current && eventScopeRef.current === scopeId) {
-        aiWasAvailableRef.current = true;
+        aiWasAvailableRef.current = ai.capability.status === "available";
         const refreshedChat = { ...nextChat, revision: ai.resourceRevision };
         chatRef.current = refreshedChat;
         dispatch({ type: "patch", patch: {
-          aiAvailability: "available", aiRequests: ai.requests, approvals: ai.approvals,
-          defaultSelection: ai.defaultSelection, aiError: "", chat: refreshedChat,
+          aiAvailability: ai.capability.status === "available" ? "available" : "unavailable",
+          aiRequests: ai.requests, approvals: ai.approvals,
+          aiError: "", chat: refreshedChat,
         } });
       }
     } catch (failure: unknown) {
@@ -428,7 +427,6 @@ export default function SharedScreen() {
                 aiDraft: "",
                 aiRequests: [],
                 approvals: [],
-                defaultSelection: null,
                 aiAvailability: "unavailable",
                 aiError: "",
                 loading: false,
@@ -511,7 +509,7 @@ export default function SharedScreen() {
     });
   };
   const requestAi = async () => {
-    if (!scope || !chat || view.kind !== "chat" || !state.aiDraft.trim() || !state.defaultSelection
+    if (!scope || !chat || view.kind !== "chat" || !state.aiDraft.trim()
       || state.aiAvailability !== "available" || scope.role === "viewer" || !scope.capabilities.requestAi) return;
     const generation = chatLoadGeneration.current;
     const requestScopeId = view.scopeId;
@@ -521,7 +519,7 @@ export default function SharedScreen() {
     dispatch({ type: "patch", patch: { sending: true, aiError: "" } });
     try {
       const accepted = await postSharedAiRequest(
-        await token(), requestScopeId, chat.revision, state.aiDraft.trim(), state.defaultSelection, randomUuid(),
+        await token(), requestScopeId, chat.revision, state.aiDraft.trim(), randomUuid(),
       );
       await saveCollaborationDraft(AsyncStorage, {
         actorId: userId, scopeId: requestScopeId, chatId: requestChatId, mode: "ai", text: "",
@@ -547,13 +545,14 @@ export default function SharedScreen() {
   const refreshAiRequests = async (scopeId: string) => {
     const ai = CollaborationAiRequestsResponseSchema.parse(await fetchSharedAiRequests(await token(), scopeId));
     if (eventScopeRef.current !== scopeId) return;
-    aiWasAvailableRef.current = true;
+    aiWasAvailableRef.current = ai.capability.status === "available";
     const currentChat = chatRef.current;
     const refreshedChat = currentChat ? { ...currentChat, revision: ai.resourceRevision } : null;
     if (refreshedChat) chatRef.current = refreshedChat;
     dispatch({ type: "patch", patch: {
-      aiAvailability: "available", aiRequests: ai.requests, approvals: ai.approvals,
-      defaultSelection: ai.defaultSelection, aiError: "", ...(refreshedChat ? { chat: refreshedChat } : {}),
+      aiAvailability: ai.capability.status === "available" ? "available" : "unavailable",
+      aiRequests: ai.requests, approvals: ai.approvals,
+      aiError: "", ...(refreshedChat ? { chat: refreshedChat } : {}),
     } });
   };
   const controlAi = async (request: CollaborationAiRequest, action: "cancel" | "retry") => {

@@ -123,7 +123,10 @@ describe("native shared Chat screen", () => {
     mockUpdateDiscussionState.mockResolvedValue({ readThroughSeq: "0" });
     mockFetchAiRequests.mockResolvedValue({
       requests: [], approvals: [],
-      defaultSelection: { instanceId: "claude_shared", model: "claude-opus-4-6" },
+      capability: {
+        status: "available",
+        effectiveSelection: { instanceId: "claude_shared", model: "claude-opus-4-6" },
+      },
       resourceRevision: "1",
     });
     mockPostAiRequest.mockResolvedValue({
@@ -156,8 +159,7 @@ describe("native shared Chat screen", () => {
     fireEvent.changeText(screen.getByLabelText("Message Chat"), "Ready");
     fireEvent.press(screen.getByLabelText("Send"));
     await waitFor(() => expect(mockPostAiRequest).toHaveBeenCalledWith(
-      "clerk-token", scopeId, "1", "Ready",
-      { instanceId: "claude_shared", model: "claude-opus-4-6" }, expect.any(String),
+      "clerk-token", scopeId, "1", "Ready", expect.any(String),
     ));
   });
 
@@ -310,7 +312,10 @@ describe("native shared Chat screen", () => {
         selection: { instanceId: "claude_shared", model: "claude-opus-4-6" },
         acceptedAt: "2026-09-07T12:00:00.000Z", updatedAt: "2026-09-07T12:00:00.000Z",
       }], approvals: [], resourceRevision: "4",
-      defaultSelection: { instanceId: "claude_shared", model: "claude-opus-4-6" },
+      capability: {
+        status: "available",
+        effectiveSelection: { instanceId: "claude_shared", model: "claude-opus-4-6" },
+      },
     });
     mockPostAiRequest.mockRejectedValueOnce(new Error("offline"));
 
@@ -324,8 +329,7 @@ describe("native shared Chat screen", () => {
 
     fireEvent.press(screen.getByLabelText("Send"));
     await waitFor(() => expect(mockPostAiRequest).toHaveBeenLastCalledWith(
-      "clerk-token", scopeId, "4", "Summarize",
-      { instanceId: "claude_shared", model: "claude-opus-4-6" }, expect.any(String),
+      "clerk-token", scopeId, "4", "Summarize", expect.any(String),
     ));
     expect(await screen.findByText("1 · Ada")).toBeTruthy();
     expect(screen.getByText(/queued · Summarize/)).toBeTruthy();
@@ -370,6 +374,25 @@ describe("native shared Chat screen", () => {
     render(<SharedScreen />);
     fireEvent.press(await screen.findByLabelText("Open Launch plan"));
     expect((await screen.findByLabelText("Message Chat")).props.editable).toBe(false);
+    expect(mockPostAiRequest).not.toHaveBeenCalled();
+  });
+
+  it("keeps the ordinary composer disabled while the owner's runtime capability is unavailable", async () => {
+    mockFetchInbox.mockResolvedValue({ items: [] });
+    mockFetchShared.mockResolvedValue({ items: [{
+      scopeId, runtimeId: "runtime_owner", ownerId: "user_owner", kind: "chat", authorityGeneration: 1,
+      status: "accepted", resource: { scope: await mockFetchScope(), chat: await mockFetchChat() },
+    }] });
+    mockFetchAiRequests.mockResolvedValue({
+      requests: [], approvals: [],
+      capability: { status: "unavailable" },
+      resourceRevision: "1",
+    });
+
+    render(<SharedScreen />);
+    fireEvent.press(await screen.findByLabelText("Open Launch plan"));
+    expect((await screen.findByLabelText("Message Chat")).props.editable).toBe(false);
+    expect(screen.getByText("Messages are unavailable while the owner's runtime is offline.")).toBeTruthy();
     expect(mockPostAiRequest).not.toHaveBeenCalled();
   });
 

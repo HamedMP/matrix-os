@@ -286,15 +286,19 @@ test("Codex-bound shared Chat keeps discussion available without advertising Cla
   });
   await page.goto(`/shared/chat/${scopeId}`, { waitUntil: "domcontentloaded" });
 
-  await expect(page.getByRole("button", { name: "Ask AI" })).toBeDisabled();
-  await expect(page.getByText("AI requests are unavailable; discussion still works.")).toBeVisible();
-  const discussion = page.getByRole("textbox", { name: "Message everyone" });
+  await expect(page.getByRole("button", { name: "Ask AI" })).toHaveCount(0);
+  await expect(page.getByLabel("Message Chat")).toBeDisabled();
+  await expect(page.getByLabel("Message Chat")).toHaveAttribute("placeholder", "AI is unavailable");
+  await page.getByRole("button", { name: "Open discussion" }).click();
+  const discussionLayer = page.getByRole("dialog", { name: "Discussion" });
+  const discussion = discussionLayer.getByRole("textbox", { name: "Add a discussion note" });
   await expect(discussion).toBeEnabled();
   await discussion.fill("Human discussion remains available.");
-  await expect(page.getByRole("button", { name: "Send message" })).toBeEnabled();
+  await expect(discussionLayer.getByRole("button", { name: "Post note" })).toBeEnabled();
+  await expect(page.getByText(/Claude/i)).toHaveCount(0);
   await page.addStyleTag({ content: "nextjs-portal { display: none !important; }" });
   await page.screenshot({
-    path: "../specs/121-collaboration-session-sharing/evidence/immutable-codex-shared-ai-unavailable.png",
+    path: "../output/playwright/collaboration-ux/immutable-codex-shared-ai-unavailable.png",
     fullPage: true,
   });
 });
