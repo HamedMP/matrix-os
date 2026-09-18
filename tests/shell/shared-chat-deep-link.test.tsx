@@ -120,6 +120,12 @@ describe("shared Terminal deep link", () => {
     ));
     expect(screen.getAllByTestId("mobile-terminal")).toHaveLength(5);
     expect(document.querySelector(`[data-shared-scope="${requestedScopeId}"]`)).toBeNull();
+
+    fireEvent.click(screen.getByLabelText("Open"));
+    fireEvent.click(await screen.findAllByRole("button", { name: "Close Terminal" }).then((buttons) => buttons[0]!));
+    await waitFor(() => expect(document.querySelector(
+      `[data-shared-scope="${requestedScopeId}"]`,
+    )).not.toBeNull());
   });
 });
 

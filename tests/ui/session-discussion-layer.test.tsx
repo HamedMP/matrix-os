@@ -6,6 +6,7 @@ import "@testing-library/jest-dom/vitest";
 import { describe, expect, it, vi } from "vitest";
 import { SessionDiscussionLayer } from "../../packages/ui/src/collaboration/SessionDiscussionLayer";
 import { useSessionDiscussion } from "../../packages/ui/src/collaboration/useSessionDiscussion";
+import { discussionDraftKey } from "../../packages/ui/src/collaboration/discussion-drafts";
 
 const discussion = {
   messages: [{
@@ -173,5 +174,59 @@ describe("SessionDiscussionLayer", () => {
       expect.stringContaining(scopeA.id),
       expect.anything(),
     );
+  });
+
+  it("never renders one identity's private draft under another identity", async () => {
+    const scopeA = {
+      id: "10000000-0000-4000-8000-000000000001",
+      ownerId: "user_owner",
+      kind: "chat" as const,
+      resourceId: "chat_a",
+      membershipMode: "direct" as const,
+      lifecycle: "shared" as const,
+      revision: "1",
+      authEpoch: "1",
+      authorityGeneration: "1",
+      role: "editor" as const,
+      capabilities: { read: true, discuss: true, manageMembers: false, requestAi: true,
+        observeTerminal: false, controlTerminal: false, stopTerminal: false },
+    };
+    const scopeB = { ...scopeA, id: "20000000-0000-4000-8000-000000000002", resourceId: "chat_b" };
+    const draftA = discussionDraftKey({ actorId: "ada", runtimeId: "owner-vps", scopeId: scopeA.id });
+    const draftB = discussionDraftKey({ actorId: "ada", runtimeId: "owner-vps", scopeId: scopeB.id });
+    const persisted = new Map([
+      [draftA, JSON.stringify({ text: "Scope A private draft" })],
+      [draftB, JSON.stringify({ text: "Scope B private draft" })],
+    ]);
+    const storage = {
+      getItem: (key: string) => persisted.get(key) ?? null,
+      setItem: (key: string, value: string) => { persisted.set(key, value); },
+      removeItem: (key: string) => { persisted.delete(key); },
+    };
+    const api = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async () => ({ messages: [], latestSequence: "0" })),
+      post: vi.fn(),
+      patch: vi.fn(),
+      delete: vi.fn(),
+    };
+    const renderedDrafts: { scopeId: string; draft: string }[] = [];
+    function Harness({ scope }: { scope: typeof scopeA }) {
+      const value = useSessionDiscussion({
+        api, scope, actorId: "ada", runtimeId: "owner-vps", open: true, storage,
+      });
+      renderedDrafts.push({ scopeId: scope.id, draft: value.draft });
+      return <SessionDiscussionLayer open onClose={vi.fn()} discussion={value} />;
+    }
+
+    const view = render(<Harness scope={scopeA} />);
+    expect(await screen.findByDisplayValue("Scope A private draft")).toBeVisible();
+    renderedDrafts.length = 0;
+    view.rerender(<Harness scope={scopeB} />);
+    expect(await screen.findByDisplayValue("Scope B private draft")).toBeVisible();
+    expect(renderedDrafts).not.toContainEqual({
+      scopeId: scopeB.id,
+      draft: "Scope A private draft",
+    });
   });
 });

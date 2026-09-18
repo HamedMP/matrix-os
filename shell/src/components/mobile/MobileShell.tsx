@@ -250,12 +250,12 @@ export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenComman
   });
 
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity is consumed by the launch-path useEffect dependency array below; removing useCallback would re-run that effect on every render and could re-open the launch app.
-  const openApp = useCallback((app: MobileApp, options?: { sharedTerminalScopeId?: string }) => {
+  const openApp = useCallback((app: MobileApp, options?: { sharedTerminalScopeId?: string }): boolean => {
     if (app.path.startsWith("__terminal__") && options?.sharedTerminalScopeId) {
       const currentTerminals = stackRef.current.filter((entry) => entry.app.path.startsWith("__terminal__"));
       if (mobileTerminalCapacityAction(currentTerminals, options.sharedTerminalScopeId).kind === "reject") {
         toast("Close a Terminal before opening this shared session");
-        return;
+        return false;
       }
     }
     setOpenStack((prev) => {
@@ -290,6 +290,7 @@ export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenComman
       return [...prev, { id, app, openedAt: Date.now() }];
     });
     setView("app");
+    return true;
   }, []);
 
   const openAgentSetupTerminal = useCallback((action: TerminalLaunchAction) => {
@@ -336,6 +337,10 @@ export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenComman
     enqueueExistingTerminalSession(sessionId, id);
   }, []);
 
+  const terminalInstanceCount = openStack.reduce((count, entry) => (
+    entry.app.path.startsWith("__terminal__") ? count + 1 : count
+  ), 0);
+
   useEffect(() => {
     if (!launchAppPath) return;
     const launchRequestKey = sharedTerminalScopeId
@@ -344,13 +349,13 @@ export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenComman
     if (launchPathConsumedRef.current === launchRequestKey) return;
     const app = apps.find((candidate) => candidate.path === launchAppPath);
     if (!app) return;
-    launchPathConsumedRef.current = launchRequestKey;
     // react-doctor-disable-next-line react-hooks-js/set-state-in-effect, react-doctor/no-derived-state, react-doctor/no-adjust-state-on-prop-change -- imperative side effect, not derived state: opening an app in response to a one-shot `launchAppPath` request. The launchPathConsumedRef dedupe ensures it fires once per distinct path; `openStack` is genuine foreground-app state that the user mutates afterward, so it cannot be recomputed from `launchAppPath` in render.
-    openApp(
+    const opened = openApp(
       sharedTerminalScopeId ? { ...app, name: "Shared Terminal" } : app,
       sharedTerminalScopeId ? { sharedTerminalScopeId } : undefined,
     );
-  }, [apps, launchAppPath, openApp, sharedTerminalScopeId]);
+    if (opened) launchPathConsumedRef.current = launchRequestKey;
+  }, [apps, launchAppPath, openApp, sharedTerminalScopeId, terminalInstanceCount]);
 
   const closeApp = (openId: string) => {
     const closed = stackRef.current.find((o) => o.id === openId);

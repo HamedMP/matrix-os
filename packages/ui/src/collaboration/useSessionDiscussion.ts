@@ -20,21 +20,22 @@ export function useSessionDiscussion(input: {
   open: boolean;
   storage?: Pick<Storage, "getItem" | "setItem" | "removeItem">;
 }) {
-  const [messages, setMessages] = useState<CollaborationDiscussionMessage[]>([]);
-  const [latestSequence, setLatestSequence] = useState("0");
-  const [draft, setDraftState] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [sending, setSending] = useState(false);
-  const [error, setError] = useState(false);
-  const [hasMore, setHasMore] = useState(false);
-  const messagesRef = useRef<CollaborationDiscussionMessage[]>([]);
-  const loadingRef = useRef(false);
   const store = useMemo(() => createDiscussionDraftStore(input.storage ?? browserStorage()), [input.storage]);
   const key = useMemo(() => discussionDraftKey({
     actorId: input.actorId,
     runtimeId: input.runtimeId,
     scopeId: input.scope.id,
   }), [input.actorId, input.runtimeId, input.scope.id]);
+  const [messages, setMessages] = useState<CollaborationDiscussionMessage[]>([]);
+  const [latestSequence, setLatestSequence] = useState("0");
+  const [draftRecord, setDraftRecord] = useState(() => ({ key, text: store.load(key) }));
+  const draft = draftRecord.key === key ? draftRecord.text : store.load(key);
+  const [loading, setLoading] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
+  const messagesRef = useRef<CollaborationDiscussionMessage[]>([]);
+  const loadingRef = useRef(false);
   const base = `/api/collaboration/scopes/${encodeURIComponent(input.scope.id)}/discussion`;
   const identityRef = useRef(key);
   const identityGenerationRef = useRef(0);
@@ -78,12 +79,13 @@ export function useSessionDiscussion(input: {
     }
   }, [base, input.api, input.open, key]);
 
-  useEffect(() => { setDraftState(store.load(key)); }, [key, store]);
   useLayoutEffect(() => {
     identityRef.current = key;
     identityGenerationRef.current += 1;
     messagesRef.current = [];
     loadingRef.current = false;
+    // react-doctor-disable-next-line react-doctor/no-adjust-state-on-prop-change -- private draft identity is a confidentiality boundary; synchronously adopt only the newly keyed persisted value before paint.
+    setDraftRecord({ key, text: store.load(key) });
     // react-doctor-disable-next-line react-doctor/no-adjust-state-on-prop-change -- author/runtime/scope identity is the persistence boundary; old private notes must be cleared synchronously before the newly keyed async page is displayed.
     setMessages([]);
     // react-doctor-disable-next-line react-doctor/no-adjust-state-on-prop-change -- sequence belongs to the same identity boundary and is not derivable until the next validated page arrives.
@@ -93,7 +95,7 @@ export function useSessionDiscussion(input: {
     setLoading(false);
     setSending(false);
     setError(false);
-  }, [key]);
+  }, [key, store]);
   useEffect(() => { if (input.open) void load(); }, [input.open, load]);
   useEffect(() => {
     if (!input.open) return;
@@ -110,7 +112,7 @@ export function useSessionDiscussion(input: {
   }, [input.api, input.open, input.scope.id, key, load]);
 
   const setDraft = (text: string) => {
-    setDraftState(text);
+    setDraftRecord({ key, text });
     store.save(key, text);
   };
   const send = async () => {
@@ -139,7 +141,7 @@ export function useSessionDiscussion(input: {
       setMessages(next);
       setLatestSequence(message.sequence);
       setHasMore(BigInt(next.at(-1)?.sequence ?? "0") < messageSequence);
-      setDraftState("");
+      setDraftRecord({ key: requestKey, text: "" });
     } catch (failure: unknown) {
       if (!isCurrent()) return;
       console.warn("[collaboration-discussion] send failed", failure instanceof Error ? failure.name : "UnknownError");
