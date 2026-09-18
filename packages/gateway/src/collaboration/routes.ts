@@ -611,7 +611,7 @@ export function createCollaborationRoutes(options: {
         clientRequestId: input.clientRequestId,
         expectedRevision: Number(input.expectedRevision),
         payloadHash: digest(bytes),
-      }, () => options.discussionAdapter.exportTerminalDiscussion(scopeId));
+      }, () => options.discussionAdapter.prepareTerminalDiscussionExport(scopeId));
       await notifyScope(options, scopeId);
       return c.json(CollaborationOperationSchema.parse(result));
     }

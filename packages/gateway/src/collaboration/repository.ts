@@ -682,7 +682,9 @@ export class CollaborationRepository {
 
   async applyTerminalExport(
     input: TerminalExportInput,
-    loadDiscussion: () => Promise<CollaborationDiscussionMessage[]>,
+    prepareDiscussion: () => Promise<(
+      trx: Transaction<OwnerCollaborationDatabase>,
+    ) => Promise<CollaborationDiscussionMessage[]>>,
   ): Promise<CollaborationOperation> {
     const nowDate = this.now();
     const now = nowDate.toISOString();
@@ -701,7 +703,7 @@ export class CollaborationRepository {
       }
       return CollaborationOperationSchema.parse(parseJson(existing.result_ref));
     }
-    const discussion = await loadDiscussion();
+    const loadDiscussion = await prepareDiscussion();
     return this.db.transaction().execute(async (trx) => {
       const replay = await readOperationReplay<CollaborationOperation>(trx, input, operationKind);
       if (replay) return CollaborationOperationSchema.parse(replay);
@@ -713,6 +715,7 @@ export class CollaborationRepository {
       if (scope.lifecycle !== "shared" || Number(scope.revision) !== input.expectedRevision) {
         throw new CollaborationRepositoryError("conflict", "Scope revision changed");
       }
+      const discussion = await loadDiscussion(trx);
       if (discussion.some((message) => message.scopeId !== scope.id)) {
         throw new CollaborationRepositoryError("conflict", "Terminal discussion scope changed");
       }

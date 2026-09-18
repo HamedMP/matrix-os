@@ -273,8 +273,31 @@ export class CollaborationDiscussionAdapter {
    * Builds the bounded shared-content fragment consumed by an owner-authorized
    * terminal export. Personal read state is intentionally not queried.
    */
-  async exportTerminalDiscussion(scopeId: string): Promise<CollaborationDiscussionMessage[]> {
-    const aggregate = await this.options.db.selectFrom("collaboration_discussion_messages")
+  async prepareTerminalDiscussionExport(scopeId: string): Promise<(
+    trx: Transaction<OwnerCollaborationDatabase>,
+  ) => Promise<CollaborationDiscussionMessage[]>> {
+    const members = await this.options.db.selectFrom("collaboration_members")
+      .select("actor_id")
+      .where("scope_id", "=", scopeId)
+      .where("status", "in", ["accepted", "pending"])
+      .limit(9)
+      .execute();
+    if (members.length > 8) {
+      throw new CollaborationRepositoryError("capacity", "Terminal discussion export exceeds safe limits");
+    }
+    const participants = new Map<string, Participant>();
+    for (const member of members) {
+      participants.set(member.actor_id, await this.resolveParticipant(member.actor_id));
+    }
+    return (trx) => this.exportTerminalDiscussion(scopeId, trx, participants);
+  }
+
+  async exportTerminalDiscussion(
+    scopeId: string,
+    executor: Kysely<OwnerCollaborationDatabase> | Transaction<OwnerCollaborationDatabase> = this.options.db,
+    preparedParticipants?: ReadonlyMap<string, Participant>,
+  ): Promise<CollaborationDiscussionMessage[]> {
+    const aggregate = await executor.selectFrom("collaboration_discussion_messages")
       .select(({ fn }) => [
         fn.countAll<string>().as("count"),
         sql<string>`COALESCE(SUM(octet_length(text)), 0)::text`.as("text_bytes"),
@@ -285,7 +308,7 @@ export class CollaborationDiscussionAdapter {
       || BigInt(aggregate.text_bytes) > BigInt(MAX_TERMINAL_DISCUSSION_EXPORT_BYTES)) {
       throw new CollaborationRepositoryError("capacity", "Terminal discussion export exceeds safe limits");
     }
-    const rows = await this.options.db.selectFrom("collaboration_discussion_messages")
+    const rows = await executor.selectFrom("collaboration_discussion_messages")
       .selectAll()
       .where("scope_id", "=", scopeId)
       .orderBy("sequence", "asc")
@@ -294,17 +317,19 @@ export class CollaborationDiscussionAdapter {
     if (rows.length > MAX_TERMINAL_DISCUSSION_EXPORT_MESSAGES) {
       throw new CollaborationRepositoryError("capacity", "Terminal discussion export exceeds safe limits");
     }
-    const participants = new Map<string, Participant>();
-    for (const row of rows) {
-      if (!participants.has(row.actor_id)) {
-        participants.set(row.actor_id, await this.resolveParticipant(row.actor_id));
+    const participants = new Map(preparedParticipants);
+    if (!preparedParticipants) {
+      for (const row of rows) {
+        if (!participants.has(row.actor_id)) {
+          participants.set(row.actor_id, await this.resolveParticipant(row.actor_id));
+        }
       }
     }
     return rows.map((row) => CollaborationDiscussionMessageSchema.parse({
       id: row.id,
       scopeId: row.scope_id,
       sequence: String(row.sequence),
-      actor: participants.get(row.actor_id),
+      actor: participants.get(row.actor_id) ?? { actorId: row.actor_id, displayName: "Unknown participant" },
       text: row.text,
       createdAt: toIso(row.created_at),
     }));

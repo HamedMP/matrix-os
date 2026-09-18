@@ -130,7 +130,7 @@ At least one supported field is required; this feature supports only `readThroug
 
 ### Existing owner lifecycle export for terminal scopes
 
-`POST /api/collaboration/scopes/:scopeId/lifecycle` with `type: "export"` remains owner-only and uses the existing signed proof, idempotent operation, audit, expiring export storage, and `GET .../exports/:exportId` retrieval path. For a terminal scope, the artifact contains the bounded shared `discussion` message projection and excludes `collaboration_discussion_user_state`. Participant metadata resolution and artifact projection happen without holding the authoritative scope row lock; the persistence transaction rechecks current owner membership, scope kind, lifecycle, revision, and payload hash. Snapshot tokens remain invalid.
+`POST /api/collaboration/scopes/:scopeId/lifecycle` with `type: "export"` remains owner-only and uses the existing signed proof, idempotent operation, audit, expiring export storage, and `GET .../exports/:exportId` retrieval path. For a terminal scope, the artifact contains the bounded shared `discussion` message projection and excludes `collaboration_discussion_user_state`. Bounded participant metadata is prepared before locking; the authoritative message read and artifact write share the scope-locking transaction, which rechecks current owner membership, scope kind, lifecycle, revision, and payload hash. Snapshot tokens remain invalid.
 
 ## Existing Route Compatibility
 

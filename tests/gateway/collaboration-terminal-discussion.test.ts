@@ -17,6 +17,7 @@ const requestId = "50000000-0000-4000-8000-000000000011";
 
 describe("CollaborationDiscussionAdapter terminal discussion", () => {
   let fixture: CollaborationTestDatabase;
+  let repository: CollaborationRepository;
   let authority: CollaborationAuthority;
   let adapter: CollaborationDiscussionAdapter;
   const committedScopes: string[] = [];
@@ -26,7 +27,7 @@ describe("CollaborationDiscussionAdapter terminal discussion", () => {
     await bootstrapChatDatabase(fixture.db);
     await bootstrapCollaborationDatabase(fixture.db);
     await seedTerminalScope(fixture);
-    const repository = new CollaborationRepository(fixture.db, { now: () => new Date(now) });
+    repository = new CollaborationRepository(fixture.db, { now: () => new Date(now) });
     authority = new CollaborationAuthority(repository, { now: () => new Date(now) });
     const chatAdapter = new CollaborationChatAdapter({
       db: fixture.db,
@@ -160,6 +161,40 @@ describe("CollaborationDiscussionAdapter terminal discussion", () => {
       .resolves.toEqual([]);
     await expect(fixture.db.selectFrom("collaboration_discussion_user_state").selectAll().execute())
       .resolves.toEqual([]);
+  });
+
+  it("includes notes committed after export preparation but before the scope lock", async () => {
+    const editor = await authority.authorize({
+      scopeId: collaborationIds.scope,
+      actorId: collaborationActors.editor,
+      action: "discuss",
+    });
+    const operation = await repository.applyTerminalExport({
+      scopeId: collaborationIds.scope,
+      actorId: collaborationActors.owner,
+      type: "export",
+      clientRequestId: "50000000-0000-4000-8000-000000000012",
+      expectedRevision: 1,
+      payloadHash: "a".repeat(64),
+    }, async () => {
+      const projection = await adapter.prepareTerminalDiscussionExport(collaborationIds.scope);
+      await adapter.append(editor, {
+        clientRequestId: requestId,
+        expectedRevision: "1",
+        text: "Committed before the export lock",
+      });
+      return projection;
+    });
+
+    const exported = await repository.getScopeExport(
+      collaborationIds.scope,
+      collaborationActors.owner,
+      operation.exportId!,
+    );
+    expect(exported).toMatchObject({
+      scope: { kind: "terminal" },
+      discussion: [{ text: "Committed before the export lock" }],
+    });
   });
 });
 
