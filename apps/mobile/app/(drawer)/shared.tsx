@@ -11,19 +11,24 @@ import {
   type CollaborationAiRequest,
   type CollaborationApproval,
 } from "@matrix-os/contracts/collaboration";
-import { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { ActivityIndicator, FlatList, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, View,
   type ListRenderItemInfo } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import type { z } from "zod/v4";
 import { renderChatMarkdown, type ChatMarkdownTheme } from "@/lib/chat-markdown";
 import { loadCollaborationDraft, saveCollaborationDraft } from "@/lib/collaboration-drafts";
-import { SharedChatComposer, canControlSharedAiRequest } from "@/components/collaboration/SharedChatComposer";
+import { notifyCollaborationDiscoveryChanged } from "@/lib/collaboration-events";
+import { SharedChatComposer } from "@/components/collaboration/SharedChatComposer";
+import { canControlSharedAiRequest } from "@/components/collaboration/shared-chat-composer-model";
+import { SessionDiscussionSheet } from "@/components/collaboration/SessionDiscussionSheet";
+import { SessionAccessControl } from "@/components/collaboration/SessionAccessControl";
 import { SharedTerminalScreen } from "@/components/collaboration/SharedTerminalScreen";
 import { SharedProjectScreen } from "@/components/collaboration/SharedProjectScreen";
 import { CollaborationRecoverySupersededError } from "@/components/collaboration/useSharedProjectWorkflow";
 import {
   acceptCollaborationInvitation,
+  declineCollaborationInvitation,
   collaborationEventsUrl,
   fetchCollaborationInbox,
   fetchCollaborationInvitation,
@@ -33,7 +38,6 @@ import {
   fetchSharedChatMessages,
   fetchSharedAiRequests,
   fetchSharedCollaborations,
-  postSharedChatDiscussion,
   postSharedAiRequest,
   controlSharedAiRequest,
   decideSharedAiApproval,
@@ -60,9 +64,7 @@ type ScreenState = {
   messages: Message[];
   hasMoreMessages: boolean;
   loadingMoreMessages: boolean;
-  draft: string;
   aiDraft: string;
-  composerMode: "discussion" | "ai";
   aiAvailability: "checking" | "available" | "unavailable";
   aiRequests: CollaborationAiRequest[];
   approvals: CollaborationApproval[];
@@ -85,9 +87,7 @@ const initialState: ScreenState = {
   messages: [],
   hasMoreMessages: false,
   loadingMoreMessages: false,
-  draft: "",
   aiDraft: "",
-  composerMode: "discussion",
   aiAvailability: "checking",
   aiRequests: [],
   approvals: [],
@@ -201,9 +201,7 @@ export default function SharedScreen() {
       scope: null,
       chat: null,
       messages: [],
-      draft: "",
       aiDraft: "",
-      composerMode: "discussion",
       aiAvailability: "checking",
       aiRequests: [],
       approvals: [],
@@ -220,10 +218,10 @@ export default function SharedScreen() {
         fetchSharedChat(actorToken, scopeId),
         fetchSharedChatMessages(actorToken, scopeId),
       ]);
-      const [nextDraft, nextAiDraft] = await Promise.all([
-        loadCollaborationDraft(AsyncStorage, { actorId: userId, scopeId, chatId: nextChat.id }),
-        loadCollaborationDraft(AsyncStorage, { actorId: userId, scopeId, chatId: nextChat.id, mode: "ai" }),
-      ]);
+      const nextAiDraft = await loadCollaborationDraft(
+        AsyncStorage,
+        { actorId: userId, scopeId, chatId: nextChat.id, mode: "ai" },
+      );
       if (generation !== chatLoadGeneration.current) return;
       chatRef.current = nextChat;
       messagesRef.current = history.messages;
@@ -233,7 +231,6 @@ export default function SharedScreen() {
         chat: nextChat,
         messages: history.messages,
         hasMoreMessages: BigInt(nextChat.messageCount) > BigInt(history.messages.length),
-        draft: nextDraft,
         aiDraft: nextAiDraft,
       } });
       try {
@@ -428,7 +425,6 @@ export default function SharedScreen() {
                 messages: [],
                 hasMoreMessages: false,
                 loadingMoreMessages: false,
-                draft: "",
                 aiDraft: "",
                 aiRequests: [],
                 approvals: [],
@@ -483,6 +479,7 @@ export default function SharedScreen() {
     dispatch({ type: "patch", patch: { loading: true, error: "" } });
     try {
       const result = await acceptCollaborationInvitation(await token(), invitation.id, invitation.revision, randomUuid());
+      notifyCollaborationDiscoveryChanged();
       if (invitation.scopeKind === "chat") await loadChat(result.scopeId);
       else if (invitation.scopeKind === "terminal") {
         dispatch({ type: "patch", patch: { view: { kind: "terminal", scopeId: result.scopeId }, loading: false } });
@@ -492,28 +489,26 @@ export default function SharedScreen() {
       dispatch({ type: "patch", patch: { error: "Invitation could not be accepted. Try again.", loading: false } });
     }
   };
+  const decline = async (invitation: Invitation) => {
+    dispatch({ type: "patch", patch: { loading: true, error: "" } });
+    try {
+      await declineCollaborationInvitation(await token(), invitation.id, invitation.revision, randomUuid());
+      notifyCollaborationDiscoveryChanged();
+      dispatch({ type: "patch", patch: { view: { kind: "home" }, loading: false } });
+      await loadHome();
+    } catch (failure: unknown) {
+      console.warn("[mobile-collaboration] invitation decline failed", failure instanceof Error ? failure.name : "UnknownError");
+      dispatch({ type: "patch", patch: { error: "Invitation could not be declined. Try again.", loading: false } });
+    }
+  };
   const updateDraft = (text: string) => {
-    const mode = state.composerMode;
-    dispatch({ type: "patch", patch: mode === "ai" ? { aiDraft: text } : { draft: text } });
+    dispatch({ type: "patch", patch: { aiDraft: text } });
     if (!chat || view.kind !== "chat") return;
     void saveCollaborationDraft(AsyncStorage, {
-      actorId: userId, scopeId: view.scopeId, chatId: chat.id, mode, text,
+      actorId: userId, scopeId: view.scopeId, chatId: chat.id, mode: "ai", text,
     }).catch((failure: unknown) => {
       console.warn("[mobile-collaboration] draft save failed", failure instanceof Error ? failure.name : "UnknownError");
     });
-  };
-  const send = async () => {
-    if (!scope || !chat || view.kind !== "chat" || !state.draft.trim() || !scope.capabilities.discuss) return;
-    dispatch({ type: "patch", patch: { sending: true, error: "" } });
-    try {
-      await postSharedChatDiscussion(await token(), view.scopeId, scope.revision, state.draft.trim(), randomUuid());
-      await saveCollaborationDraft(AsyncStorage, { actorId: userId, scopeId: view.scopeId, chatId: chat.id, text: "" });
-      dispatch({ type: "patch", patch: { draft: "" } });
-      await loadChat(view.scopeId);
-    } catch (failure: unknown) {
-      console.warn("[mobile-collaboration] discussion send failed", failure instanceof Error ? failure.name : "UnknownError");
-      dispatch({ type: "patch", patch: { error: "Message was not sent. Your draft is still here—try again." } });
-    } finally { dispatch({ type: "patch", patch: { sending: false } }); }
   };
   const requestAi = async () => {
     if (!scope || !chat || view.kind !== "chat" || !state.aiDraft.trim() || !state.defaultSelection
@@ -596,7 +591,8 @@ export default function SharedScreen() {
   }), [theme]);
 
   if (view.kind === "invitation") return <InvitationScreen invitation={view.invitation} state={state}
-    onBack={() => dispatch({ type: "patch", patch: { view: { kind: "home" } } })} onAccept={accept} />;
+    onBack={() => dispatch({ type: "patch", patch: { view: { kind: "home" } } })}
+    onAccept={accept} onDecline={decline} />;
 
   if (view.kind === "chat") {
     return <SharedChatScreen state={state} actorId={userId ?? ""} markdownTheme={markdownTheme}
@@ -609,8 +605,7 @@ export default function SharedScreen() {
         dispatch({ type: "patch", patch: { view: { kind: "home" }, loadingMoreMessages: false } });
         void loadHome();
       }}
-      onLoadMore={loadMoreMessages} onDraftChange={updateDraft} onSend={send}
-      onModeChange={(composerMode) => dispatch({ type: "patch", patch: { composerMode } })}
+      getToken={token} onLoadMore={loadMoreMessages} onDraftChange={updateDraft}
       onRequestAi={requestAi} onControlAi={controlAi} onDecideApproval={decideApproval} />;
   }
 
@@ -629,7 +624,7 @@ export default function SharedScreen() {
     }} />;
   }
 
-  return <CollaborationHomeScreen state={state} onReview={review}
+  return <CollaborationHomeScreen state={state} onReview={review} onAccept={accept} onDecline={decline}
     onOpen={(item) => item.kind === "terminal"
       ? Promise.resolve(dispatch({ type: "patch", patch: { view: { kind: "terminal", scopeId: item.scopeId } } }))
       : item.kind === "project"
@@ -637,11 +632,12 @@ export default function SharedScreen() {
         : loadChat(item.scopeId)} onLoadMore={loadMoreItems} />;
 }
 
-function InvitationScreen({ invitation, state, onBack, onAccept }: {
+function InvitationScreen({ invitation, state, onBack, onAccept, onDecline }: {
   invitation: Invitation;
   state: ScreenState;
   onBack: () => void;
   onAccept: (invitation: Invitation) => Promise<void>;
+  onDecline: (invitation: Invitation) => Promise<void>;
 }) {
   return <ScrollView contentContainerStyle={styles.page}>
     <Back onPress={onBack} />
@@ -661,50 +657,67 @@ function InvitationScreen({ invitation, state, onBack, onAccept }: {
       : "Editors can discuss and request AI. Viewers have read-only access."}</Text>
     {state.error ? <Text accessibilityRole="alert" style={styles.error}>{state.error}</Text> : null}
     <Action label={state.loading ? "Accepting…" : "Accept invitation"} disabled={state.loading} onPress={() => void onAccept(invitation)} />
+    <SecondaryAction label="Decline invitation" disabled={state.loading} onPress={() => void onDecline(invitation)} />
   </ScrollView>;
 }
 
-function SharedChatScreen({ state, actorId, markdownTheme, onBack, onLoadMore, onDraftChange, onSend,
-  onModeChange, onRequestAi, onControlAi, onDecideApproval }: {
+function SharedChatScreen({ state, actorId, markdownTheme, getToken, onBack, onLoadMore, onDraftChange,
+  onRequestAi, onControlAi, onDecideApproval }: {
   state: ScreenState;
   actorId: string;
   markdownTheme: ChatMarkdownTheme;
+  getToken: () => Promise<string>;
   onBack: () => void;
   onLoadMore: () => Promise<void>;
   onDraftChange: (text: string) => void;
-  onSend: () => Promise<void>;
-  onModeChange: (mode: "discussion" | "ai") => void;
   onRequestAi: () => Promise<void>;
   onControlAi: (request: CollaborationAiRequest, action: "cancel" | "retry") => Promise<void>;
   onDecideApproval: (approval: CollaborationApproval, decision: "approve" | "approve_for_session" | "decline" | "cancel") => Promise<void>;
 }) {
-  const canDiscuss = state.scope?.capabilities.discuss === true;
+  const [discussionOpen, setDiscussionOpen] = useState(false);
+  const visibleMessages = useMemo(
+    () => state.messages.filter((message) => message.purpose !== "discussion"),
+    [state.messages],
+  );
   const renderMessage = useCallback(({ item }: ListRenderItemInfo<Message>) => (
     <ChatMessageCard message={item} markdownTheme={markdownTheme} />
   ), [markdownTheme]);
   return <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-    <SharedChatHeader state={state} onBack={onBack} />
+    <SharedChatHeader state={state} getToken={getToken} onBack={onBack} onOpenDiscussion={() => setDiscussionOpen(true)} />
     {state.loading ? <ActivityIndicator accessibilityLabel="Loading shared Chat" /> : null}
-    <FlatList data={state.messages} keyExtractor={(message) => message.id} contentContainerStyle={styles.history}
+    <FlatList data={visibleMessages} keyExtractor={(message) => message.id} contentContainerStyle={styles.history}
       renderItem={renderMessage}
-      ListEmptyComponent={!state.loading ? <Text style={styles.muted}>Start the discussion. Messages are visible to everyone in this Chat.</Text> : null}
+      ListEmptyComponent={!state.loading ? <Text style={styles.emptyHistory}>Message Matrix to start this Chat.</Text> : null}
       ListFooterComponent={state.hasMoreMessages ? <Action label={state.loadingMoreMessages ? "Loading…" : "Load more messages"}
         disabled={state.loadingMoreMessages} onPress={() => void onLoadMore()} /> : null} />
-    <SharedChatComposer state={state} actorId={actorId} canDiscuss={canDiscuss} onDraftChange={onDraftChange} onSend={onSend}
-      onModeChange={onModeChange} onRequestAi={onRequestAi} onControlAi={onControlAi} onDecideApproval={onDecideApproval} />
+    <SharedChatComposer state={state} actorId={actorId} onDraftChange={onDraftChange}
+      onRequestAi={onRequestAi} onControlAi={onControlAi} onDecideApproval={onDecideApproval} />
+    {state.scope ? <SessionDiscussionSheet open={discussionOpen} scope={state.scope} actorId={actorId}
+      getToken={getToken} onClose={() => setDiscussionOpen(false)} /> : null}
   </KeyboardAvoidingView>;
 }
 
-function SharedChatHeader({ state, onBack }: { state: ScreenState; onBack: () => void }) {
-  return <View style={styles.header}><Back onPress={onBack} />
-    <Text style={styles.title}>{state.chat?.title ?? "Shared Chat"}</Text>
-    <Text style={styles.muted}>{state.scope ? `${roleLabel(state.scope.role)} · Live collaboration` : "Loading…"}</Text>
+function SharedChatHeader({ state, getToken, onBack, onOpenDiscussion }: {
+  state: ScreenState;
+  getToken: () => Promise<string>;
+  onBack: () => void;
+  onOpenDiscussion: () => void;
+}) {
+  return <View style={styles.header}>
+    <View style={styles.headerTop}><Back onPress={onBack} />
+      <View style={styles.headerActions}>
+        <SecondaryAction label="Open discussion" onPress={onOpenDiscussion} compact />
+        {state.scope ? <SessionAccessControl key={state.scope.id} scope={state.scope} getToken={getToken} /> : null}
+      </View>
+    </View>
+    <Text style={styles.title}>{state.chat?.title ?? "Chat"}</Text>
   </View>;
 }
 
 function ChatMessageCard({ message, markdownTheme }: { message: Message; markdownTheme: ChatMarkdownTheme }) {
-  return <View style={styles.message}>
-    <Text style={styles.cardTitle}>{message.actor.displayName}</Text>
+  const human = message.role === "user";
+  return <View style={[styles.message, human ? styles.humanMessage : styles.aiMessage]}>
+    <Text style={styles.messageAuthor}>{human ? message.actor.displayName : "Matrix"}</Text>
     {keyedMessageParts(message).map(({ key, part }) => <View key={key}>
       {part.type === "text" || part.type === "summary" ? renderChatMarkdown(part.text, markdownTheme) : null}
       {part.type === "attachment_reference" ? <Text style={styles.muted}>Attachment: {part.label}</Text> : null}
@@ -712,15 +725,17 @@ function ChatMessageCard({ message, markdownTheme }: { message: Message; markdow
   </View>;
 }
 
-function CollaborationHomeScreen({ state, onReview, onOpen, onLoadMore }: {
+function CollaborationHomeScreen({ state, onReview, onAccept, onDecline, onOpen, onLoadMore }: {
   state: ScreenState;
   onReview: (invitationId: string) => Promise<void>;
+  onAccept: (invitation: Invitation) => Promise<void>;
+  onDecline: (invitation: Invitation) => Promise<void>;
   onOpen: (item: Extract<DiscoveryItem, { status: "accepted" }>) => Promise<void>;
   onLoadMore: () => Promise<void>;
 }) {
   const renderDiscovery = useCallback(({ item }: ListRenderItemInfo<DiscoveryItem>) => (
-    <DiscoveryCard item={item} onReview={onReview} onOpen={onOpen} />
-  ), [onOpen, onReview]);
+    <DiscoveryCard item={item} onReview={onReview} onAccept={onAccept} onDecline={onDecline} onOpen={onOpen} />
+  ), [onAccept, onDecline, onOpen, onReview]);
   return <FlatList data={state.items} keyExtractor={discoveryKey} contentContainerStyle={styles.page}
     ListHeaderComponent={<>
       <Text style={styles.title}>Shared with me</Text>
@@ -739,15 +754,21 @@ function CollaborationHomeScreen({ state, onReview, onOpen, onLoadMore }: {
     </>} />;
 }
 
-function DiscoveryCard({ item, onReview, onOpen }: {
+function DiscoveryCard({ item, onReview, onAccept, onDecline, onOpen }: {
   item: DiscoveryItem;
   onReview: (invitationId: string) => Promise<void>;
+  onAccept: (invitation: Invitation) => Promise<void>;
+  onDecline: (invitation: Invitation) => Promise<void>;
   onOpen: (item: Extract<DiscoveryItem, { status: "accepted" }>) => Promise<void>;
 }) {
   if (item.status === "invited") return <View style={styles.card}>
     <Text style={styles.cardTitle}>{item.resource.owner.displayName} invited you</Text>
     <Text style={styles.muted}>Shared {item.kind === "terminal" ? "terminal" : item.kind === "project" ? "project" : "Chat"} · {roleLabel(item.resource.role)}</Text>
-    <Action label={`Review invitation from ${item.resource.owner.displayName}`} onPress={() => void onReview(item.invitationId)} />
+    <View style={styles.invitationActions}>
+      <Action label={`Accept invitation from ${item.resource.owner.displayName}`} onPress={() => void onAccept(item.resource)} />
+      <SecondaryAction label={`Decline invitation from ${item.resource.owner.displayName}`} onPress={() => void onDecline(item.resource)} />
+    </View>
+    <SecondaryAction label={`View invitation details from ${item.resource.owner.displayName}`} onPress={() => void onReview(item.invitationId)} />
   </View>;
   if ("terminal" in item.resource) return <View style={styles.card}>
     <Text style={styles.cardTitle}>Shared terminal</Text>
@@ -792,6 +813,18 @@ function Action({ label, onPress, disabled = false }: { label: string; onPress: 
     style={({ pressed }) => [styles.action, (pressed || disabled) && styles.faded]}><Text style={styles.actionText}>{label}</Text></Pressable>;
 }
 
+function SecondaryAction({ label, onPress, disabled = false, compact = false }: {
+  label: string;
+  onPress: () => void;
+  disabled?: boolean;
+  compact?: boolean;
+}) {
+  return <Pressable accessibilityRole="button" accessibilityLabel={label} disabled={disabled} onPress={onPress}
+    style={({ pressed }) => [styles.secondaryAction, compact && styles.compactAction, (pressed || disabled) && styles.faded]}>
+    <Text style={styles.secondaryActionText}>{compact && label === "Open discussion" ? "Discussion" : label}</Text>
+  </Pressable>;
+}
+
 function Back({ onPress }: { onPress: () => void }) {
   return <Pressable accessibilityRole="button" accessibilityLabel="Back to Shared with me" onPress={onPress}><Text style={styles.back}>‹ Shared with me</Text></Pressable>;
 }
@@ -816,7 +849,9 @@ function randomUuid(): string {
 const styles = StyleSheet.create((theme) => ({
   screen: { flex: 1, backgroundColor: theme.v2.appColors.canvas },
   page: { flexGrow: 1, gap: 16, padding: 20, backgroundColor: theme.v2.appColors.canvas },
-  header: { gap: 6, paddingHorizontal: 20, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: theme.v2.colors.borderSubtle },
+  header: { gap: 8, paddingHorizontal: 16, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: theme.v2.colors.borderSubtle },
+  headerTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
+  headerActions: { flexDirection: "row", alignItems: "center", gap: 6 },
   title: { fontFamily: theme.v2.fonts.display, fontSize: 26, color: theme.v2.appColors.ink },
   body: { fontFamily: theme.v2.fonts.body, fontSize: 15, lineHeight: 22, color: theme.v2.appColors.ink },
   muted: { fontFamily: theme.v2.fonts.body, fontSize: 13, lineHeight: 19, color: theme.v2.appColors.muted },
@@ -825,9 +860,17 @@ const styles = StyleSheet.create((theme) => ({
   cardTitle: { fontFamily: theme.v2.fonts.semibold, fontSize: 15, color: theme.v2.appColors.ink },
   empty: { alignItems: "center", gap: 6, padding: 32, borderWidth: 1, borderColor: theme.v2.colors.borderSubtle, borderRadius: 16 },
   history: { flexGrow: 1, gap: 12, padding: 16 },
-  message: { gap: 8, padding: 14, borderWidth: 1, borderColor: theme.v2.colors.borderSubtle, borderRadius: 16, backgroundColor: theme.v2.appColors.surface },
+  emptyHistory: { paddingVertical: 48, textAlign: "center", fontFamily: theme.v2.fonts.body, color: theme.v2.appColors.muted },
+  message: { maxWidth: "88%", gap: 6, padding: 14, borderRadius: 16 },
+  humanMessage: { alignSelf: "flex-end", backgroundColor: theme.v2.appColors.soft },
+  aiMessage: { alignSelf: "flex-start", borderWidth: 1, borderColor: theme.v2.colors.borderSubtle, backgroundColor: theme.v2.appColors.surface },
+  messageAuthor: { fontFamily: theme.v2.fonts.semibold, fontSize: 12, color: theme.v2.appColors.muted },
+  invitationActions: { flexDirection: "row", gap: 8 },
   action: { alignItems: "center", borderRadius: 12, paddingHorizontal: 14, paddingVertical: 11, backgroundColor: theme.v2.palette.green[800] },
   actionText: { fontFamily: theme.v2.fonts.semibold, color: theme.v2.colors.textInverse },
+  secondaryAction: { alignItems: "center", borderWidth: 1, borderColor: theme.v2.colors.borderSubtle, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10 },
+  compactAction: { paddingHorizontal: 9, paddingVertical: 7, borderRadius: 10 },
+  secondaryActionText: { fontFamily: theme.v2.fonts.semibold, fontSize: 13, color: theme.v2.appColors.ink },
   faded: { opacity: 0.55 },
   back: { fontFamily: theme.v2.fonts.semibold, color: theme.v2.colors.action },
 }));

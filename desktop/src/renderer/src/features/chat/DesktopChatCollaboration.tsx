@@ -26,7 +26,12 @@ export default function DesktopChatCollaboration() {
         sharedScopeId: scopeId,
         closable: false,
       })}
-      openTerminal={(scopeId) => setView({ kind: "terminal", scopeId })}
+      openTerminal={(scopeId) => openTab({
+        kind: "terminal",
+        title: "Shared Terminal",
+        sessionName: `shared:${scopeId}`,
+        sharedScopeId: scopeId,
+      })}
       openProject={(scopeId) => setView({ kind: "project", scopeId })} />
   </div>;
 }

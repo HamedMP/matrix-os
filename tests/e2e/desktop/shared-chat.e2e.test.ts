@@ -205,6 +205,39 @@ suite("Electron shared Chat presentation", () => {
       });
       return;
     }
+    if (path === `/api/collaboration/scopes/${scopeId}/discussion/messages`) {
+      json(res, {
+        messages: [{
+          id: "msg_discussion_1",
+          scopeId,
+          sequence: "1",
+          actor: { actorId: "user_ada", displayName: "Ada" },
+          text: "I moved the launch review to Thursday at 10:00.",
+          createdAt: now,
+        }],
+        latestSequence: "1",
+      });
+      return;
+    }
+    if (path === `/api/collaboration/scopes/${scopeId}/discussion/user-state`) {
+      json(res, { readThroughSeq: "1", lastOpenedAt: now });
+      return;
+    }
+    if (path === `/api/collaboration/scopes/${scopeId}/members`) {
+      json(res, {
+        members: [
+          {
+            actor: { actorId: "user-1", displayName: "Nima" },
+            role: "owner", status: "accepted", revision: "1", joinedAt: now, updatedAt: now,
+          },
+          {
+            actor: { actorId: "user_ada", displayName: "Ada" },
+            role: "editor", status: "accepted", revision: "1", joinedAt: now, updatedAt: now,
+          },
+        ],
+      });
+      return;
+    }
     if (path === `/api/collaboration/scopes/${scopeId}/connection-tickets`) {
       json(res, { ticket: "a".repeat(43), actorId: "user-1", expiresAt: "2026-09-17T13:00:00.000Z" });
       return;
@@ -265,23 +298,27 @@ suite("Electron shared Chat presentation", () => {
 
   it("opens Shared with me inside the canonical Chat workspace", async () => {
     await page.keyboard.press("Escape");
-    await page.getByRole("button", { name: "Open account menu" }).first().click();
-    await page.getByText("Shared with me", { exact: true }).click();
+    await page.getByRole("button", { name: "Shared with me" }).click();
     await page.getByRole("button", { name: "Open Chat" }).click();
 
-    await page.getByRole("heading", { name: "Launch plan" }).waitFor();
+    await page.getByText("Launch plan", { exact: true }).first().waitFor();
     expect(await page.locator('[data-slot="canonical-chat-workspace"]').count()).toBe(1);
-    expect(await page.locator('[data-slot="shared-chat-panel"]').count()).toBe(1);
-    expect(await page.getByRole("button", { name: "Discussion" }).isVisible()).toBe(true);
-    expect(await page.getByRole("button", { name: "Ask AI" }).isVisible()).toBe(true);
-    expect(await page.getByRole("button", { name: "Manage access" }).isVisible()).toBe(true);
-    await page.getByRole("button", { name: "Ask AI" }).click();
-    await page.getByRole("region", { name: "Shared AI queue" }).waitFor();
+    expect(await page.locator('[data-slot="native-shared-chat"]').count()).toBe(1);
+    expect(await page.getByLabel("Message Chat").isVisible()).toBe(true);
+    expect(await page.getByRole("button", { name: "Ask AI" }).count()).toBe(0);
+    expect(await page.getByRole("button", { name: "Open discussion" }).isVisible()).toBe(true);
+    expect(await page.getByRole("button", { name: "Collaboration access" }).isVisible()).toBe(true);
+    expect(await page.getByRole("region", { name: "Chat history" }).innerText()).not.toContain("moved the launch review");
     const gettingStarted = page.getByRole("heading", { name: "Getting started" });
     if (await gettingStarted.isVisible()) {
       await page.getByRole("button", { name: /Getting started —/ }).click();
       await gettingStarted.waitFor({ state: "hidden" });
     }
     await page.screenshot({ path: join(output, "electron-desktop.png") });
+
+    await page.getByRole("button", { name: "Open discussion" }).click();
+    await page.getByRole("dialog", { name: "Discussion" }).waitFor();
+    expect(await page.getByRole("dialog", { name: "Discussion" }).innerText()).toContain("moved the launch review");
+    await page.screenshot({ path: join(output, "electron-discussion.png") });
   }, 40_000);
 });

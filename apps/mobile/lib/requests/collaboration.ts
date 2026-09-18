@@ -1,16 +1,29 @@
 import {
+  COLLABORATION_CLIENT_REQUEST_ID_HEADER,
+  COLLABORATION_EXPECTED_MEMBER_REVISION_HEADER,
+  COLLABORATION_EXPECTED_REVISION_HEADER,
+  CollaborationActorIdSchema,
   CollaborationChatMessagesResponseSchema,
   CollaborationAiRequestAcceptedResponseSchema,
   CollaborationAiRequestsResponseSchema,
   CollaborationCreateAiRequestSchema,
+  CollaborationCreateInvitationRequestSchema,
   CollaborationAiRequestControlSchema,
   CollaborationApprovalDecisionRequestSchema,
   CollaborationChatSchema,
   CollaborationConnectionTicketResponseSchema,
+  CollaborationCreateDiscussionRequestSchema,
+  CollaborationDeclineInvitationRequestSchema,
+  CollaborationDiscussionMessageSchema,
+  CollaborationDiscussionMessagesResponseSchema,
+  CollaborationDiscussionUserStatePatchSchema,
+  CollaborationDiscussionUserStateSchema,
   CollaborationDiscoveryResponseSchema,
   CollaborationHumanMessageSchema,
   CollaborationIdSchema,
   CollaborationInvitationSchema,
+  CollaborationMemberPatchRequestSchema,
+  CollaborationMemberSchema,
   CollaborationPageRequestSchema,
   CollaborationProjectSchema,
   CollaborationRevisionSchema,
@@ -35,6 +48,22 @@ const AcceptedSchema = z.looseObject({
 });
 const AiControlResponseSchema = z.looseObject({
   state: z.enum(["accepted", "completed", "failed", "reconciling"]),
+});
+const DeclinedSchema = z.looseObject({
+  scopeId: CollaborationIdSchema,
+  actorId: z.string().min(1).max(128),
+  status: z.literal("revoked"),
+  scopeRevision: z.number().int().nonnegative(),
+  memberRevision: z.number().int().nonnegative(),
+});
+const MembersSchema = z.strictObject({ members: z.array(CollaborationMemberSchema).max(8) });
+const MemberMutationSchema = z.looseObject({
+  scopeId: CollaborationIdSchema,
+  actorId: CollaborationActorIdSchema,
+  role: z.enum(["owner", "editor", "viewer"]),
+  status: z.enum(["pending", "accepted", "revoked", "expired"]),
+  scopeRevision: z.number().int().nonnegative(),
+  memberRevision: z.number().int().nonnegative(),
 });
 
 function url(path: string): string {
@@ -70,9 +99,120 @@ export function acceptCollaborationInvitation(token: string, invitationId: strin
   });
 }
 
+export function declineCollaborationInvitation(
+  token: string,
+  invitationId: string,
+  expectedRevision: string,
+  clientRequestId: string,
+) {
+  const id = CollaborationIdSchema.parse(invitationId);
+  const body = CollaborationDeclineInvitationRequestSchema.parse({ clientRequestId, expectedRevision });
+  return fetchAuthenticatedJson({
+    url: url(`/api/collaboration/invitations/${id}/decline`),
+    token,
+    schema: DeclinedSchema,
+    errorMessage: ERROR,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
 export function fetchCollaborationScope(token: string, scopeId: string) {
   const id = CollaborationIdSchema.parse(scopeId);
   return fetchAuthenticatedJson({ url: url(`/api/collaboration/scopes/${id}`), token, schema: CollaborationScopeSchema, errorMessage: ERROR });
+}
+
+export function fetchCollaborationMembers(token: string, scopeId: string) {
+  const id = CollaborationIdSchema.parse(scopeId);
+  return fetchAuthenticatedJson({
+    url: url(`/api/collaboration/scopes/${id}/members`),
+    token,
+    schema: MembersSchema,
+    errorMessage: ERROR,
+  });
+}
+
+export function inviteCollaborationMember(
+  token: string,
+  scopeId: string,
+  identifier: string,
+  role: "editor" | "viewer",
+  expectedRevision: string,
+  clientRequestId: string,
+) {
+  const id = CollaborationIdSchema.parse(scopeId);
+  const body = CollaborationCreateInvitationRequestSchema.parse({ identifier, role, expectedRevision, clientRequestId });
+  return fetchAuthenticatedJson({
+    url: url(`/api/collaboration/scopes/${id}/invitations`), token,
+    schema: CollaborationInvitationSchema, errorMessage: ERROR,
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+}
+
+export function changeCollaborationMemberRole(
+  token: string,
+  scopeId: string,
+  actorId: string,
+  role: "editor" | "viewer",
+  expectedRevision: string,
+  expectedMemberRevision: string,
+  clientRequestId: string,
+) {
+  const id = CollaborationIdSchema.parse(scopeId);
+  const actor = CollaborationActorIdSchema.parse(actorId);
+  const body = CollaborationMemberPatchRequestSchema.parse({
+    role, expectedRevision, expectedMemberRevision, clientRequestId,
+  });
+  return fetchAuthenticatedJson({
+    url: url(`/api/collaboration/scopes/${id}/members/${encodeURIComponent(actor)}`), token,
+    schema: MemberMutationSchema, errorMessage: ERROR,
+    method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+}
+
+export function removeCollaborationMember(
+  token: string,
+  scopeId: string,
+  actorId: string,
+  expectedRevision: string,
+  expectedMemberRevision: string,
+  clientRequestId: string,
+) {
+  const id = CollaborationIdSchema.parse(scopeId);
+  const actor = CollaborationActorIdSchema.parse(actorId);
+  return fetchAuthenticatedJson({
+    url: url(`/api/collaboration/scopes/${id}/members/${encodeURIComponent(actor)}`), token,
+    schema: MemberMutationSchema, errorMessage: ERROR,
+    method: "DELETE",
+    headers: {
+      [COLLABORATION_CLIENT_REQUEST_ID_HEADER]: CollaborationIdSchema.parse(clientRequestId),
+      [COLLABORATION_EXPECTED_REVISION_HEADER]: CollaborationRevisionSchema.parse(expectedRevision),
+      [COLLABORATION_EXPECTED_MEMBER_REVISION_HEADER]: CollaborationRevisionSchema.parse(expectedMemberRevision),
+    },
+  });
+}
+
+export function revokeCollaborationInvitation(
+  token: string,
+  scopeId: string,
+  invitationId: string,
+  expectedRevision: string,
+  expectedMemberRevision: string,
+  clientRequestId: string,
+) {
+  const id = CollaborationIdSchema.parse(scopeId);
+  const invitation = CollaborationIdSchema.parse(invitationId);
+  return fetchAuthenticatedJson({
+    url: url(`/api/collaboration/scopes/${id}/invitations/${invitation}`), token,
+    schema: MemberMutationSchema, errorMessage: ERROR,
+    method: "DELETE",
+    headers: {
+      [COLLABORATION_CLIENT_REQUEST_ID_HEADER]: CollaborationIdSchema.parse(clientRequestId),
+      [COLLABORATION_EXPECTED_REVISION_HEADER]: CollaborationRevisionSchema.parse(expectedRevision),
+      [COLLABORATION_EXPECTED_MEMBER_REVISION_HEADER]: CollaborationRevisionSchema.parse(expectedMemberRevision),
+    },
+  });
 }
 
 export function fetchSharedProject(token: string, scopeId: string) {
@@ -115,6 +255,65 @@ export function postSharedChatDiscussion(
       expectedRevision: CollaborationRevisionSchema.parse(expectedRevision),
       text: z.string().trim().min(1).max(65_536).parse(text),
     }),
+  });
+}
+
+export function fetchSessionDiscussion(token: string, scopeId: string, after = "0") {
+  const id = CollaborationIdSchema.parse(scopeId);
+  const cursor = CollaborationRevisionSchema.parse(after);
+  return fetchAuthenticatedJson({
+    url: url(`/api/collaboration/scopes/${id}/discussion/messages?after=${cursor}&limit=100`),
+    token,
+    schema: CollaborationDiscussionMessagesResponseSchema,
+    errorMessage: ERROR,
+  });
+}
+
+export function postSessionDiscussion(
+  token: string,
+  scopeId: string,
+  expectedRevision: string,
+  text: string,
+  clientRequestId: string,
+) {
+  const id = CollaborationIdSchema.parse(scopeId);
+  const body = CollaborationCreateDiscussionRequestSchema.parse({
+    clientRequestId,
+    expectedRevision,
+    text,
+  });
+  return fetchAuthenticatedJson({
+    url: url(`/api/collaboration/scopes/${id}/discussion/messages`),
+    token,
+    schema: CollaborationDiscussionMessageSchema,
+    errorMessage: ERROR,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export function fetchSessionDiscussionUserState(token: string, scopeId: string) {
+  const id = CollaborationIdSchema.parse(scopeId);
+  return fetchAuthenticatedJson({
+    url: url(`/api/collaboration/scopes/${id}/discussion/user-state`),
+    token,
+    schema: CollaborationDiscussionUserStateSchema,
+    errorMessage: ERROR,
+  });
+}
+
+export function updateSessionDiscussionReadState(token: string, scopeId: string, readThroughSeq: string) {
+  const id = CollaborationIdSchema.parse(scopeId);
+  const body = CollaborationDiscussionUserStatePatchSchema.parse({ readThroughSeq });
+  return fetchAuthenticatedJson({
+    url: url(`/api/collaboration/scopes/${id}/discussion/user-state`),
+    token,
+    schema: CollaborationDiscussionUserStateSchema,
+    errorMessage: ERROR,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
   });
 }
 
