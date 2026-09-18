@@ -74,6 +74,18 @@ describe("SessionAccessControl", () => {
     await waitFor(() => expect(trigger).toHaveFocus());
   });
 
+  it("light-dismisses the access summary and returns focus to its trigger", async () => {
+    render(<SessionAccessControl api={api()} scope={scope} />);
+    const trigger = screen.getByRole("button", { name: "Collaboration access" });
+    fireEvent.click(trigger);
+    expect(await screen.findByRole("dialog", { name: "Collaboration access summary" })).toBeVisible();
+
+    fireEvent.pointerDown(document.body);
+
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Collaboration access summary" })).toBeNull());
+    await waitFor(() => expect(trigger).toHaveFocus());
+  });
+
   it("uses the refreshed scope revision for member management", async () => {
     const currentScope = { ...scope, revision: "3" };
     const collaborationApi = api();

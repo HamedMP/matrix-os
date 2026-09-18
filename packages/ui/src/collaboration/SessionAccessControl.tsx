@@ -16,6 +16,7 @@ export function SessionAccessControl({ api, scope }: {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
   const effectiveScope = BigInt(currentScope.revision) >= BigInt(scope.revision) ? currentScope : scope;
+  const containerRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const refresh = useCallback(async () => {
@@ -49,8 +50,15 @@ export function SessionAccessControl({ api, scope }: {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") closeSummary();
     };
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.target instanceof Node && !containerRef.current?.contains(event.target)) closeSummary();
+    };
     window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("pointerdown", onPointerDown);
+    };
   }, [closeSummary, open]);
   const toggle = () => {
     const next = !open;
@@ -60,7 +68,7 @@ export function SessionAccessControl({ api, scope }: {
     });
   };
   const accepted = members.filter((member) => member.status === "accepted");
-  return <div className="relative">
+  return <div ref={containerRef} className="relative">
     <button ref={triggerRef} type="button" aria-label="Collaboration access" aria-expanded={open}
       onClick={toggle} className="inline-flex min-h-9 items-center gap-1.5 rounded-lg px-2 text-xs hover:bg-[var(--bg-hover)]">
       <span aria-hidden className="flex -space-x-1">{accepted.length ? accepted.slice(0, 3).map((member) =>
