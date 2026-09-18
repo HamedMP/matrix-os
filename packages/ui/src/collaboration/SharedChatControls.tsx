@@ -65,6 +65,9 @@ export function SharedChatControls({
     <OptionalSharedAiQueue visible={presentation.showQueue} requests={relevantRequests} approvals={state.approvals}
       actorId={actorId} role={scope.role} pendingAction={state.pendingAction} control={control} decide={decide} />
     <SharedAiErrors discussionError={false} error={state.error} />
+    {!presentation.canCompose ? <p role="status" className="mb-2 text-xs text-muted-foreground">
+      {presentation.status}
+    </p> : null}
     <SharedComposerInput presentation={presentation} draft={{ ...draft, mode: "ai" }}
       updateDraft={(text) => updateDraft(text, "ai")} submit={submitAi} />
   </footer>;

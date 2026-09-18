@@ -77,10 +77,13 @@ describe("shared Chat two-account lifecycle", () => {
           revision: "1",
         };
         if (path.endsWith("/chat/messages?after=0&limit=100")) return { messages };
-        if (path.endsWith("/discussion/messages?after=0&limit=100")) return {
-          messages: discussionMessages,
-          latestSequence: String(discussionMessages.length),
-        };
+        if (path.includes("/discussion/messages?")) {
+          const after = BigInt(new URL(path, "https://matrix.invalid").searchParams.get("after") ?? "0");
+          return {
+            messages: discussionMessages.filter((message) => BigInt(String(message.sequence)) > after),
+            latestSequence: String(discussionMessages.length),
+          };
+        }
         if (path.endsWith("/chat/requests")) return {
           requests,
           approvals: [],

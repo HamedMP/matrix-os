@@ -664,8 +664,8 @@ function NativeSharedChatPanel({ api, actorId, runtimeId, storage, state, loadMo
       {state.connection !== "connected" ? <span role="status" className="sr-only sm:not-sr-only sm:px-2 sm:text-xs sm:text-muted-foreground">
         {state.connection === "reconnecting" ? "Reconnecting…" : "Connecting…"}
       </span> : null}
-      <button ref={discussionTrigger} type="button" aria-label="Open discussion" aria-expanded={discussionOpen}
-        onClick={() => setDiscussionOpen(true)} className="rounded-lg px-2.5 py-2 text-xs hover:bg-[var(--bg-hover)]">
+      <button ref={discussionTrigger} type="button" aria-label={discussionOpen ? "Close discussion" : "Open discussion"} aria-expanded={discussionOpen}
+        onClick={() => setDiscussionOpen((current) => !current)} className="rounded-lg px-2.5 py-2 text-xs hover:bg-[var(--bg-hover)]">
         <span className="hidden sm:inline">Discussion</span><span aria-hidden className="sm:hidden">Notes</span>
         {BigInt(discussion.latestSequence) > BigInt(0) ? <span className="ml-1" aria-label="Discussion has notes">•</span> : null}
       </button>

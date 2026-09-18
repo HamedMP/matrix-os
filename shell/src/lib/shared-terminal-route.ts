@@ -10,7 +10,8 @@ export function sharedTerminalScopeIdFromPath(path: string): string | null {
   if (!encoded) return null;
   try {
     return decodeURIComponent(encoded);
-  } catch {
+  } catch (error: unknown) {
+    console.warn("[terminal-collaboration] invalid shared terminal route", error instanceof Error ? error.name : "UnknownError");
     return null;
   }
 }

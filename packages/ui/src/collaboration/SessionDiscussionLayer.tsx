@@ -52,6 +52,12 @@ export function SessionDiscussionLayer({ open, onClose, discussion }: {
           </header>
           <p className="whitespace-pre-wrap text-sm">{message.text}</p>
         </article>)}
+        {discussion.hasMore ? <div className="text-center"><button type="button"
+          aria-label="Load more discussion notes" disabled={discussion.loading}
+          onClick={() => void discussion.loadMore()}
+          className="rounded-xl border px-4 py-2 text-sm font-medium disabled:opacity-50">
+          {discussion.loading ? "Loading…" : "Load more notes"}
+        </button></div> : null}
       </div>
       <footer className="border-t p-4">
         {discussion.error ? <p role="alert" className="mb-2 text-xs text-destructive">Discussion is unavailable. Try again.</p> : null}

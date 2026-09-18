@@ -11,9 +11,11 @@ export function SessionAccessControl({ api, scope }: {
 }) {
   const [open, setOpen] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
+  const [currentScope, setCurrentScope] = useState(scope);
   const [members, setMembers] = useState<Member[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
+  const effectiveScope = BigInt(currentScope.revision) >= BigInt(scope.revision) ? currentScope : scope;
   const triggerRef = useRef<HTMLButtonElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const refresh = useCallback(async () => {
@@ -21,11 +23,12 @@ export function SessionAccessControl({ api, scope }: {
     setError(false);
     try {
       const [scopeValue, memberValue] = await Promise.all([
-        api.get(`/api/collaboration/scopes/${scope.id}`),
-        api.get(`/api/collaboration/scopes/${scope.id}/members`),
+        api.get(`/api/collaboration/scopes/${encodeURIComponent(scope.id)}`),
+        api.get(`/api/collaboration/scopes/${encodeURIComponent(scope.id)}/members`),
       ]);
       const currentScope = CollaborationScopeSchema.parse(scopeValue);
       const currentMembers = z.strictObject({ members: z.array(CollaborationMemberSchema).max(8) }).parse(memberValue).members;
+      setCurrentScope(currentScope);
       setMembers(currentMembers);
       return { scope: currentScope, members: currentMembers };
     } catch (failure: unknown) {
@@ -64,13 +67,13 @@ export function SessionAccessControl({ api, scope }: {
         <span key={member.actor.actorId} className="grid size-5 place-items-center rounded-full border bg-[var(--bg-surface,var(--background))] text-[9px] font-semibold">
           {member.actor.displayName.slice(0, 1).toUpperCase()}
         </span>) : <span className="grid size-5 place-items-center rounded-full border bg-[var(--bg-surface,var(--background))] text-[9px] font-semibold">S</span>}</span>
-      <span className="hidden sm:inline">{scope.membershipMode === "inherited" ? "Project access" : "Shared"}</span>
+      <span className="hidden sm:inline">{effectiveScope.membershipMode === "inherited" ? "Project access" : "Shared"}</span>
     </button>
     {open ? <section role="dialog" aria-label="Collaboration access summary"
       className="absolute right-0 top-full z-40 mt-2 w-80 max-w-[calc(100vw-2rem)] rounded-2xl border bg-background p-4 shadow-xl">
       <div className="flex items-start justify-between gap-3"><div>
         <h2 className="font-semibold">Access</h2>
-        <p className="text-xs text-muted-foreground">You are {scope.role === "owner" ? "the owner" : `an ${scope.role}`}.</p>
+        <p className="text-xs text-muted-foreground">You are {effectiveScope.role === "owner" ? "the owner" : `an ${effectiveScope.role}`}.</p>
       </div><button ref={closeRef} type="button" aria-label="Close access summary"
         className="rounded-lg px-2 py-1 text-xs hover:bg-[var(--bg-hover)]" onClick={closeSummary}>Close</button></div>
       {loading ? <p role="status" className="mt-4 text-sm">Loading people…</p> : null}
@@ -79,10 +82,10 @@ export function SessionAccessControl({ api, scope }: {
         <span aria-hidden className="grid size-8 place-items-center rounded-full bg-[var(--bg-hover)] text-xs font-semibold">{member.actor.displayName.slice(0, 1).toUpperCase()}</span>
         <span className="min-w-0 flex-1 truncate text-sm">{member.actor.displayName}</span><span className="text-xs capitalize text-muted-foreground">{member.role}</span>
       </li>)}</ul> : null}
-      {scope.capabilities.manageMembers && scope.membershipMode === "direct" ? <button type="button" className="mt-4 w-full rounded-xl border px-3 py-2 text-sm font-medium"
+      {effectiveScope.capabilities.manageMembers && effectiveScope.membershipMode === "direct" ? <button type="button" className="mt-4 w-full rounded-xl border px-3 py-2 text-sm font-medium"
         onClick={() => { setOpen(false); setManageOpen(true); }}>Manage access</button> : null}
     </section> : null}
-    {manageOpen ? <ChatCollaboratorsDialog api={api} scope={scope} members={members}
+    {manageOpen ? <ChatCollaboratorsDialog api={api} scope={effectiveScope} members={members}
       onRefresh={refresh} onClose={() => { setManageOpen(false); triggerRef.current?.focus(); }} /> : null}
   </div>;
 }

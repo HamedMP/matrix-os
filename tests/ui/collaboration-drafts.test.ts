@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createDiscussionDraftStore, discussionDraftKey } from "../../packages/ui/src/collaboration/discussion-drafts";
 
 function memoryStorage(initial: Record<string, string> = {}) {
@@ -35,5 +35,22 @@ describe("private collaboration discussion drafts", () => {
     const unicodeDraft = store.load(key);
     expect(unicodeDraft.length).toBeGreaterThan(0);
     expect(new TextEncoder().encode(unicodeDraft).byteLength).toBeLessThanOrEqual(16 * 1024);
+  });
+
+  it("does not let storage cleanup failures escape and reports them safely", () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const storage = {
+      getItem: () => "{",
+      setItem: () => undefined,
+      removeItem: () => { throw new TypeError("private storage details"); },
+    };
+    const store = createDiscussionDraftStore(storage);
+
+    expect(() => store.load("draft-key")).not.toThrow();
+    expect(() => store.clear("draft-key")).not.toThrow();
+    expect(warning).toHaveBeenCalledWith("[collaboration-discussion] invalid draft discarded", "SyntaxError");
+    expect(warning).toHaveBeenCalledWith("[collaboration-discussion] draft cleanup unavailable", "TypeError");
+    expect(warning.mock.calls.flat().join(" ")).not.toContain("private storage details");
+    warning.mockRestore();
   });
 });

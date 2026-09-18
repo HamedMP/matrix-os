@@ -83,7 +83,7 @@ describe("shared Chat AI controls", () => {
     ));
   });
 
-  it("keeps Ask AI disabled when current scope capabilities deny requests", async () => {
+  it("keeps the ordinary composer disabled when current scope capabilities deny requests", async () => {
     const api = {
       baseUrl: "https://app.matrix-os.com",
       get: vi.fn(async () => ({ requests: [], approvals: [], capability, resourceRevision: "4" })),
@@ -100,8 +100,7 @@ describe("shared Chat AI controls", () => {
     expect(api.post).not.toHaveBeenCalled();
   });
 
-  it("keeps discussion usable when the Chat's bound Provider is unsupported", async () => {
-    const sendDiscussion = vi.fn(async () => undefined);
+  it("keeps the ordinary composer clear when the Chat's bound Provider is unsupported", async () => {
     const api = {
       baseUrl: "https://app.matrix-os.com",
       get: vi.fn(async () => ({
@@ -118,13 +117,11 @@ describe("shared Chat AI controls", () => {
     render(<SharedChatControls api={api} scope={baseScope} actorId="user_editor"
       resourceRevision="4" draft={{ text: "Human update", mode: "discussion" }} updateDraft={vi.fn()}
       changeDraftMode={vi.fn()}
-      discussionSending={false} discussionError={false} sendDiscussion={sendDiscussion} refreshVersion={0} />);
+      discussionSending={false} discussionError={false} sendDiscussion={vi.fn()} refreshVersion={0} />);
 
-    expect(await screen.findByRole("button", { name: "Ask AI" })).toBeDisabled();
-    expect(screen.getByLabelText("Message everyone")).toBeEnabled();
-    expect(screen.getByText("AI requests are unavailable; discussion still works.")).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
-    expect(sendDiscussion).toHaveBeenCalledOnce();
+    expect(await screen.findByLabelText("Message Chat")).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Ask AI" })).toBeNull();
+    expect(screen.getByRole("status")).toHaveTextContent("AI requests are unavailable");
   });
 
   it("renders immutable queue order and scopes editor controls to their own requests", async () => {
@@ -163,7 +160,7 @@ describe("shared Chat AI controls", () => {
     const api = {
       baseUrl: "https://app.matrix-os.com",
       get: vi.fn(async () => ({
-        defaultSelection,
+        capability,
         resourceRevision: "8",
         approvals: [],
         requests: [

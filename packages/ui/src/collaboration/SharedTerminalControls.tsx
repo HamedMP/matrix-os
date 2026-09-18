@@ -180,8 +180,9 @@ export function SharedTerminalControls({ api, scope, actorId }: {
         <p className="mt-0.5 text-sm font-medium">{controlLabel}</p>
       </div>
       <div className="flex flex-wrap gap-2">
-        <button ref={discussionTrigger} type="button" className={buttonClass} aria-label="Open terminal discussion"
-          aria-expanded={discussionOpen} onClick={() => setDiscussionOpen(true)}>Discussion</button>
+        <button ref={discussionTrigger} type="button" className={buttonClass}
+          aria-label={discussionOpen ? "Close terminal discussion" : "Open terminal discussion"}
+          aria-expanded={discussionOpen} onClick={() => setDiscussionOpen((current) => !current)}>Discussion</button>
         <SessionAccessControl key={scope.id} api={api} scope={scope} />
         {canControl && !holdsControl && !controller ? <button type="button" className={buttonClass}
           disabled={state.pending || !state.connectionId} onClick={() => void sendAction({ type: "acquire" })}>

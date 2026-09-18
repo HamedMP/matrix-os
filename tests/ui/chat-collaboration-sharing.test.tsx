@@ -628,6 +628,29 @@ describe("Chat collaboration sharing", () => {
     expect(api.post).not.toHaveBeenCalled();
   });
 
+  it("toggles the discussion layer from the Chat header", async () => {
+    const api = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async (path: string) => {
+        if (path.includes("/discussion/messages")) return { messages: [], latestSequence: "0" };
+        if (path.includes("messages")) return { messages: [] };
+        if (path.endsWith("/chat")) return { id: chatId, scopeId, title: "Toggle Chat", lifecycle: "active", revision: "1", messageCount: "0" };
+        if (path.endsWith("/chat/requests")) throw new Error("SharedAiUnavailable");
+        return { id: scopeId, ownerId: "user_owner", kind: "chat", resourceId: chatId, membershipMode: "direct", lifecycle: "shared",
+          revision: "1", authEpoch: "1", authorityGeneration: "1", role: "viewer",
+          capabilities: { read: true, discuss: false, manageMembers: false, requestAi: false } };
+      }),
+      post: vi.fn(), delete: vi.fn(),
+    };
+    render(<ChatCollaboration view={{ kind: "chat", scopeId }} api={api} actorId="user_viewer" runtimeId="runtime_owner" />);
+    const trigger = await screen.findByRole("button", { name: "Open discussion" });
+
+    fireEvent.click(trigger);
+    expect(await screen.findByRole("dialog", { name: "Discussion" })).toBeVisible();
+    fireEvent.click(trigger);
+    expect(screen.queryByRole("dialog", { name: "Discussion" })).toBeNull();
+  });
+
   it("shows scoped realtime reconnect state without taking discussion offline", async () => {
     let connectionChange!: (state: "connected" | "reconnecting") => void;
     const api = {

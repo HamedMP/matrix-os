@@ -6,6 +6,9 @@ import "@testing-library/jest-dom/vitest";
 import { describe, expect, it, vi } from "vitest";
 import { SessionAccessControl } from "../../packages/ui/src/collaboration/SessionAccessControl";
 
+HTMLDialogElement.prototype.showModal = vi.fn(function (this: HTMLDialogElement) { this.open = true; });
+HTMLDialogElement.prototype.close = vi.fn(function (this: HTMLDialogElement) { this.open = false; });
+
 const scope = {
   id: "10000000-0000-4000-8000-000000000001",
   ownerId: "user_owner",
@@ -50,8 +53,12 @@ describe("SessionAccessControl", () => {
   });
 
   it("does not offer management to viewers or inherited members", async () => {
-    render(<SessionAccessControl api={api()} scope={{ ...scope, role: "viewer", membershipMode: "inherited",
-      capabilities: { ...scope.capabilities, discuss: false, manageMembers: false, requestAi: false } }} />);
+    const viewerScope = { ...scope, role: "viewer" as const, membershipMode: "inherited" as const,
+      parentScopeId: "20000000-0000-4000-8000-000000000001",
+      capabilities: { ...scope.capabilities, discuss: false, manageMembers: false, requestAi: false } };
+    const viewerApi = api();
+    viewerApi.get.mockImplementation(async (path: string) => path.endsWith("/members") ? { members } : viewerScope);
+    render(<SessionAccessControl api={viewerApi} scope={viewerScope} />);
     fireEvent.click(screen.getByRole("button", { name: "Collaboration access" }));
     expect(await screen.findByText("Project access")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Manage access" })).toBeNull();
@@ -65,5 +72,24 @@ describe("SessionAccessControl", () => {
     await waitFor(() => expect(close).toHaveFocus());
     fireEvent.click(close);
     await waitFor(() => expect(trigger).toHaveFocus());
+  });
+
+  it("uses the refreshed scope revision for member management", async () => {
+    const currentScope = { ...scope, revision: "3" };
+    const collaborationApi = api();
+    collaborationApi.get.mockImplementation(async (path: string) => path.endsWith("/members")
+      ? { members }
+      : currentScope);
+    render(<SessionAccessControl api={collaborationApi} scope={scope} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Collaboration access" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Manage access" }));
+    fireEvent.change(screen.getByLabelText("Email or username"), { target: { value: "ada@example.com" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send invitation" }));
+
+    await waitFor(() => expect(collaborationApi.post).toHaveBeenCalledWith(
+      `/api/collaboration/scopes/${scope.id}/invitations`,
+      expect.objectContaining({ expectedRevision: "3" }),
+    ));
   });
 });

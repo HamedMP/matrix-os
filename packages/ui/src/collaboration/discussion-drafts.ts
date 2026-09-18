@@ -1,6 +1,18 @@
 const PREFIX = "matrix:collaboration:discussion-draft:v1";
 const MAX_DRAFT_BYTES = 16 * 1024;
 
+function errorKind(error: unknown): string {
+  return error instanceof Error ? error.name : "UnknownError";
+}
+
+function removeDraft(storage: Pick<Storage, "removeItem">, key: string): void {
+  try {
+    storage.removeItem(key);
+  } catch (error: unknown) {
+    console.warn("[collaboration-discussion] draft cleanup unavailable", errorKind(error));
+  }
+}
+
 function truncateUtf8(value: string): string {
   const encoder = new TextEncoder();
   if (encoder.encode(value).byteLength <= MAX_DRAFT_BYTES) return value;
@@ -35,8 +47,9 @@ export function createDiscussionDraftStore(
         return typeof parsed.text === "string" && new TextEncoder().encode(parsed.text).byteLength <= MAX_DRAFT_BYTES
           ? parsed.text
           : "";
-      } catch {
-        storage.removeItem(key);
+      } catch (error: unknown) {
+        console.warn("[collaboration-discussion] invalid draft discarded", errorKind(error));
+        removeDraft(storage, key);
         return "";
       }
     },
@@ -46,11 +59,11 @@ export function createDiscussionDraftStore(
       try {
         storage.setItem(key, JSON.stringify({ text: bounded }));
       } catch (error: unknown) {
-        console.warn("[collaboration-discussion] draft persistence unavailable", error instanceof Error ? error.name : "UnknownError");
+        console.warn("[collaboration-discussion] draft persistence unavailable", errorKind(error));
       }
     },
     clear(key: string): void {
-      try { storage?.removeItem(key); } catch { /* best-effort personal state */ }
+      if (storage) removeDraft(storage, key);
     },
   };
 }
