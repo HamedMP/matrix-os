@@ -123,6 +123,91 @@ describe("Codex owner provider identity", () => {
     expect((await stat(authPath)).mode & 0o777).toBe(0o600);
   });
 
+  it("keeps a shared refresh alive when its first caller cancels", async () => {
+    const now = Date.UTC(2026, 8, 18, 12, 0, 0);
+    const homePath = await homeWithAuth({
+      auth_mode: "chatgpt",
+      tokens: {
+        access_token: jwt(Math.floor(now / 1000) + 60),
+        refresh_token: "refresh-owner",
+        account_id: "acct_owner",
+      },
+      last_refresh: new Date(now).toISOString(),
+    });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const fetchImpl = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      await new Promise<void>((resolve, reject) => {
+        const signal = init?.signal;
+        const abort = () => reject(signal?.reason ?? new Error("refresh aborted"));
+        signal?.addEventListener("abort", abort, { once: true });
+        void gate.then(() => {
+          signal?.removeEventListener("abort", abort);
+          resolve();
+        });
+      });
+      return new Response(JSON.stringify({
+        access_token: jwt(Math.floor(now / 1000) + 3_600),
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    });
+    const resolve = createCodexOwnerIdentityResolver({ homePath, fetchImpl, now: () => now });
+    const firstController = new AbortController();
+    const secondController = new AbortController();
+    const first = resolve(firstController.signal).then(
+      () => "resolved",
+      (error: unknown) => error instanceof Error ? error.message : "rejected",
+    );
+    const second = resolve(secondController.signal);
+    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(1));
+
+    firstController.abort(new Error("first caller cancelled"));
+    await expect(first).resolves.toBe("first caller cancelled");
+    release();
+    await expect(second).resolves.toMatchObject({
+      headers: { "chatgpt-account-id": "acct_owner" },
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("lets a later refresh waiter observe only its own cancellation", async () => {
+    const now = Date.UTC(2026, 8, 18, 12, 0, 0);
+    const homePath = await homeWithAuth({
+      auth_mode: "chatgpt",
+      tokens: {
+        access_token: jwt(Math.floor(now / 1000) + 60),
+        refresh_token: "refresh-owner",
+        account_id: "acct_owner",
+      },
+      last_refresh: new Date(now).toISOString(),
+    });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const fetchImpl = vi.fn(async () => {
+      await gate;
+      return new Response(JSON.stringify({
+        access_token: jwt(Math.floor(now / 1000) + 3_600),
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    });
+    const resolve = createCodexOwnerIdentityResolver({ homePath, fetchImpl, now: () => now });
+    const healthy = resolve(new AbortController().signal);
+    const cancelledController = new AbortController();
+    const cancelled = resolve(cancelledController.signal).then(
+      () => "resolved",
+      (error: unknown) => error instanceof Error ? error.message : "rejected",
+    );
+    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(1));
+
+    cancelledController.abort(new Error("later caller cancelled"));
+    await expect(Promise.race([
+      cancelled,
+      new Promise<string>((resolveTimeout) => setTimeout(() => resolveTimeout("pending"), 100)),
+    ])).resolves.toBe("later caller cancelled");
+    release();
+    await expect(healthy).resolves.toMatchObject({
+      headers: { "chatgpt-account-id": "acct_owner" },
+    });
+  });
+
   it("can force one refresh after an upstream unauthorized response", async () => {
     const now = Date.UTC(2026, 8, 18, 12, 0, 0);
     const homePath = await homeWithAuth({

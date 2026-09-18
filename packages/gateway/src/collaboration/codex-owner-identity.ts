@@ -5,6 +5,7 @@ import { z } from "zod/v4";
 
 const MAX_AUTH_BYTES = 1024 * 1024;
 const MAX_REFRESH_BYTES = 64 * 1024;
+const REFRESH_TIMEOUT_MS = 30_000;
 const REFRESH_WINDOW_MS = 5 * 60 * 1000;
 const FALLBACK_REFRESH_AGE_MS = 8 * 24 * 60 * 60 * 1000;
 const REFRESH_URL = "https://auth.openai.com/oauth/token";
@@ -127,6 +128,25 @@ async function writeAuth(path: string, value: Record<string, unknown>): Promise<
   }
 }
 
+function waitForCaller<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
+  signal.throwIfAborted();
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", abort);
+      callback();
+    };
+    const abort = () => finish(() => reject(signal.reason));
+    signal.addEventListener("abort", abort, { once: true });
+    void operation.then(
+      (value) => finish(() => resolve(value)),
+      (error: unknown) => finish(() => reject(error)),
+    );
+  });
+}
+
 export type ResolveCodexOwnerIdentity = (
   signal: AbortSignal,
   forceRefresh?: boolean,
@@ -192,8 +212,9 @@ export function createCodexOwnerIdentityResolver(options: {
       let chatgpt = ChatGptAuthSchema.parse(raw);
       if (raw.auth_mode !== "chatgpt" && raw.auth_mode !== undefined) throw unavailable();
       if (forceRefresh || needsRefresh(chatgpt, now())) {
-        refreshInFlight ??= refresh(chatgpt, signal).finally(() => { refreshInFlight = undefined; });
-        raw = await refreshInFlight;
+        refreshInFlight ??= refresh(chatgpt, AbortSignal.timeout(REFRESH_TIMEOUT_MS))
+          .finally(() => { refreshInFlight = undefined; });
+        raw = await waitForCaller(refreshInFlight, signal);
         chatgpt = ChatGptAuthSchema.parse(raw);
       }
       signal.throwIfAborted();
