@@ -31,4 +31,3 @@ export function buildSyncStoragePrefix(scope: SyncScope): string {
     ? `matrixos-sync/${parsed.ownerId}`
     : `matrixos-sync/v2/owners/${parsed.ownerId}/runtimes/${parsed.runtimeSlot}`;
 }
-

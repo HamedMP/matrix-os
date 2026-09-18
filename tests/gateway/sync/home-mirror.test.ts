@@ -15,6 +15,18 @@ function sha256(buf: Buffer): string {
   return "sha256:" + createHash("sha256").update(buf).digest("hex");
 }
 
+function storedManifest(r2: { store: Map<string, Buffer> }, owner = "alice") {
+  const prefix = `matrixos-sync/${owner}/manifests/`;
+  const candidates = [...r2.store.entries()]
+    .filter(([key]) => key.startsWith(prefix))
+    .map(([, raw]) => JSON.parse(raw.toString("utf8")) as {
+      manifestVersion?: number;
+      files: Record<string, { hash: string; size: number; objectKey?: string }>;
+    })
+    .sort((left, right) => (right.manifestVersion ?? 0) - (left.manifestVersion ?? 0));
+  return candidates[0] ?? null;
+}
+
 // Minimal in-memory R2 stub -- we only exercise getObject/putObject/deleteObject
 // since home-mirror routes everything through those.
 function createFakeR2(): R2Client & { store: Map<string, Buffer> } {
@@ -36,8 +48,16 @@ function createFakeR2(): R2Client & { store: Map<string, Buffer> } {
         etag: `"etag-${key}"`,
       };
     },
-    async putObject(key: string, body: string | Uint8Array) {
-      store.set(key, typeof body === "string" ? Buffer.from(body) : Buffer.from(body));
+    async putObject(key: string, body: string | Uint8Array | AsyncIterable<Uint8Array>) {
+      let bytes: Buffer;
+      if (typeof body === "string" || body instanceof Uint8Array) {
+        bytes = Buffer.from(body);
+      } else {
+        const chunks: Buffer[] = [];
+        for await (const chunk of body) chunks.push(Buffer.from(chunk));
+        bytes = Buffer.concat(chunks);
+      }
+      store.set(key, bytes);
       return { etag: `"etag-${key}-${store.size}"` };
     },
     async deleteObject(key: string) {
@@ -54,12 +74,18 @@ function createFakeR2(): R2Client & { store: Map<string, Buffer> } {
 }
 
 function createFakeManifestDb(): ManifestDb {
+  let meta: Awaited<ReturnType<ManifestDb["getManifestMeta"]>> = null;
   return {
     async getManifestMeta() {
-      return null;
+      return meta;
     },
-    async upsertManifestMeta() {
-      /* no-op */
+    async upsertManifestMeta(_scope, next) {
+      meta = { ...next, updated_at: new Date() };
+    },
+    async advanceManifestMeta(_scope, expectedVersion, next) {
+      if ((meta?.version ?? 0) !== expectedVersion) return false;
+      meta = { ...next, updated_at: new Date() };
+      return true;
     },
     async withAdvisoryLock<T>(
       _userId: string,
@@ -857,7 +883,7 @@ describe("createHomeMirror", () => {
       });
       await mirror.start();
 
-      await waitFor(() => r2.store.has("matrixos-sync/alice/files/preexisting.md"));
+      await waitFor(() => Boolean(storedManifest(r2)?.files["preexisting.md"]?.objectKey));
 
       expect(laptopSends.some((s) => s.includes("preexisting.md"))).toBe(true);
       await mirror.stop();
@@ -880,7 +906,7 @@ describe("createHomeMirror", () => {
       });
       await mirror.start();
 
-      await waitFor(() => r2.store.has("matrixos-sync/alice/files/preexisting.md"));
+      await waitFor(() => Boolean(storedManifest(r2)?.files["preexisting.md"]?.objectKey));
       expect(r2.store.has("matrixos-sync/alice/files/data/browser-profiles/default/Cookies")).toBe(false);
 
       await writeFile(join(tmpRoot, "data/browser-profiles/default/Local State"), "more profile state");
@@ -889,7 +915,9 @@ describe("createHomeMirror", () => {
       await mirror.pushLocalFile("after-start.md");
 
       expect(r2.store.has("matrixos-sync/alice/files/data/browser-profiles/default/Local State")).toBe(false);
-      expect(r2.store.has("matrixos-sync/alice/files/after-start.md")).toBe(true);
+      const afterStartKey = storedManifest(r2)?.files["after-start.md"]?.objectKey;
+      expect(afterStartKey).toBeDefined();
+      expect(r2.store.has(afterStartKey!)).toBe(true);
       await mirror.stop();
     });
 
@@ -1061,7 +1089,7 @@ describe("createHomeMirror", () => {
       await mirror.stop();
     });
 
-    it("logs blob-delete failures instead of swallowing them", async () => {
+    it("retains immutable blob bytes after publishing a local deletion", async () => {
       const logger = { info: vi.fn(), error: vi.fn() };
       const mirror = createHomeMirror({
         r2,
@@ -1075,34 +1103,29 @@ describe("createHomeMirror", () => {
       await mirror.start();
 
       await writeFile(join(tmpRoot, "notes.txt"), "hello");
-      await waitFor(() => r2.store.has("matrixos-sync/alice/files/notes.txt"));
+      await waitFor(() => Boolean(storedManifest(r2)?.files["notes.txt"]?.objectKey));
       await waitFor(() =>
         logger.info.mock.calls.some(([message]) =>
           String(message).startsWith("pushed notes.txt"),
         ),
       );
 
-      const deleteSpy = vi.spyOn(r2, "deleteObject").mockRejectedValueOnce(new Error("r2 unavailable"));
+      const objectKey = storedManifest(r2)?.files["notes.txt"]?.objectKey;
+      expect(objectKey).toBeDefined();
+      const deleteSpy = vi.spyOn(r2, "deleteObject");
       await unlink(join(tmpRoot, "notes.txt"));
-      await waitFor(() =>
-        logger.error.mock.calls.some(([message]) =>
-          String(message).startsWith("delete blob failed for notes.txt:"),
-        ),
-      );
+      await mirror.pushLocalDelete("notes.txt");
 
-      expect(deleteSpy).toHaveBeenCalled();
-      expect(logger.error).toHaveBeenCalledWith(
-        expect.stringContaining("delete blob failed for notes.txt:"),
-        "r2 unavailable",
-      );
+      expect(deleteSpy).not.toHaveBeenCalled();
+      expect(r2.store.get(objectKey!)).toBeDefined();
       await mirror.stop();
     });
 
-    it("cleans up uploaded blobs when a local manifest write fails", async () => {
+    it("leaves an immutable blob orphan for grace-period cleanup when a manifest write fails", async () => {
       const logger = { info: vi.fn(), error: vi.fn() };
       const originalPutObject = r2.putObject.bind(r2);
       vi.spyOn(r2, "putObject").mockImplementation(async (key, body) => {
-        if (key === "matrixos-sync/alice/manifest.json") {
+        if (key.startsWith("matrixos-sync/alice/manifests/")) {
           throw new Error("manifest write failed");
         }
         return originalPutObject(key, body as Buffer);
@@ -1123,15 +1146,17 @@ describe("createHomeMirror", () => {
       await writeFile(join(tmpRoot, "orphan.txt"), "hello");
       await expect(mirror.pushLocalFile("orphan.txt")).rejects.toThrow("manifest write failed");
 
-      expect(r2.store.has("matrixos-sync/alice/files/orphan.txt")).toBe(false);
+      expect(
+        [...r2.store.keys()].some((key) => key.startsWith("matrixos-sync/alice/objects/sha256/")),
+      ).toBe(true);
 
       await mirror.stop();
     });
 
-    it("cleans up uploaded startup blobs when the initial manifest write fails", async () => {
+    it("leaves startup blob orphans for grace-period cleanup when manifest publication fails", async () => {
       const originalPutObject = r2.putObject.bind(r2);
       vi.spyOn(r2, "putObject").mockImplementation(async (key, body) => {
-        if (key === "matrixos-sync/alice/manifest.json") {
+        if (key.startsWith("matrixos-sync/alice/manifests/")) {
           throw new Error("manifest write failed");
         }
         return originalPutObject(key, body as Buffer);
@@ -1148,7 +1173,9 @@ describe("createHomeMirror", () => {
       });
 
       await expect(mirror.start()).rejects.toThrow("manifest write failed");
-      expect(r2.store.has("matrixos-sync/alice/files/startup-orphan.txt")).toBe(false);
+      expect(
+        [...r2.store.keys()].some((key) => key.startsWith("matrixos-sync/alice/objects/sha256/")),
+      ).toBe(true);
       await mirror.stop();
     });
 
@@ -1159,6 +1186,9 @@ describe("createHomeMirror", () => {
           return null;
         },
         async upsertManifestMeta() {
+          throw new Error("manifest db down");
+        },
+        async advanceManifestMeta() {
           throw new Error("manifest db down");
         },
         async withAdvisoryLock<T>(_userId: string, fn: (executor: unknown) => Promise<T>) {
@@ -1195,7 +1225,7 @@ describe("createHomeMirror", () => {
       const originalPutObject = r2.putObject.bind(r2);
       vi.spyOn(r2, "putObject").mockImplementation(async (key, body) => {
         const result = await originalPutObject(key, body as Buffer);
-        if (key === "matrixos-sync/alice/files/race.txt") {
+        if (key.includes("/staging/")) {
           await writeFile(filePath, "new bytes that should not affect the uploaded hash");
         }
         return result;
@@ -1215,16 +1245,12 @@ describe("createHomeMirror", () => {
       await writeFile(filePath, "old bytes");
       await mirror.pushLocalFile("race.txt");
 
-      const uploaded = r2.store.get("matrixos-sync/alice/files/race.txt");
-      const manifestBuf = r2.store.get("matrixos-sync/alice/manifest.json");
+      const manifest = storedManifest(r2);
+      expect(manifest).toBeDefined();
+      const uploaded = r2.store.get(manifest!.files["race.txt"]!.objectKey!);
       expect(uploaded).toBeDefined();
-      expect(manifestBuf).toBeDefined();
-
-      const manifest = JSON.parse(manifestBuf!.toString("utf8")) as {
-        files: Record<string, { hash: string; size: number }>;
-      };
-      expect(manifest.files["race.txt"]?.hash).toBe(sha256(uploaded!));
-      expect(manifest.files["race.txt"]?.size).toBe(uploaded!.length);
+      expect(manifest!.files["race.txt"]?.hash).toBe(sha256(uploaded!));
+      expect(manifest!.files["race.txt"]?.size).toBe(uploaded!.length);
 
       await mirror.stop();
     });
@@ -1238,13 +1264,13 @@ describe("createHomeMirror", () => {
         etag: string | null;
         updated_at: Date;
       } | null = null;
-      const lockCalls: string[] = [];
+      const lockCalls: unknown[] = [];
       const getMetaExecutors: unknown[] = [];
       const upsertExecutors: unknown[] = [];
 
       db = {
-        async getManifestMeta(userId: string, executor?: unknown) {
-          lockCalls.push(`meta:${userId}`);
+        async getManifestMeta(scope: unknown, executor?: unknown) {
+          lockCalls.push({ operation: "meta", scope });
           getMetaExecutors.push(executor);
           return meta;
         },
@@ -1255,8 +1281,17 @@ describe("createHomeMirror", () => {
             updated_at: new Date(),
           };
         },
-        async withAdvisoryLock<T>(userId: string, fn: (executor: unknown) => Promise<T>) {
-          lockCalls.push(`lock:${userId}`);
+        async advanceManifestMeta(_userId: string, expectedVersion, nextMeta, executor?: unknown) {
+          upsertExecutors.push(executor);
+          if ((meta?.version ?? 0) !== expectedVersion) return false;
+          meta = {
+            ...nextMeta,
+            updated_at: new Date(),
+          };
+          return true;
+        },
+        async withAdvisoryLock<T>(scope: unknown, fn: (executor: unknown) => Promise<T>) {
+          lockCalls.push({ operation: "lock", scope });
           return fn(lockedExecutor);
         },
       } as unknown as ManifestDb;
@@ -1285,14 +1320,21 @@ describe("createHomeMirror", () => {
       await unlink(filePath);
       await mirror.pushLocalDelete("locked.txt");
 
-      expect(lockCalls.filter((entry) => entry === "lock:alice")).toHaveLength(2);
+      expect(lockCalls.filter((entry) => (
+        typeof entry === "object"
+        && entry !== null
+        && (entry as { operation?: string }).operation === "lock"
+      ))).toEqual([
+        { operation: "lock", scope: { ownerId: "alice", runtimeSlot: "primary" } },
+        { operation: "lock", scope: { ownerId: "alice", runtimeSlot: "primary" } },
+      ]);
       expect(getMetaExecutors.filter((entry) => entry === lockedExecutor)).toHaveLength(2);
       expect(upsertExecutors.filter((entry) => entry === lockedExecutor)).toHaveLength(2);
 
       await mirror.stop();
     });
 
-    it("uploads startup files only after acquiring the manifest advisory lock", async () => {
+    it("finalizes startup files before acquiring the short manifest lock", async () => {
       const order: string[] = [];
       await writeFile(join(tmpRoot, "preexisting.md"), "present before watcher starts");
 
@@ -1302,6 +1344,9 @@ describe("createHomeMirror", () => {
         },
         async upsertManifestMeta() {
           /* no-op */
+        },
+        async advanceManifestMeta() {
+          return true;
         },
         async withAdvisoryLock<T>(_userId: string, fn: (executor: unknown) => Promise<T>) {
           order.push("lock");
@@ -1327,7 +1372,7 @@ describe("createHomeMirror", () => {
       await mirror.start();
 
       expect(order.indexOf("lock")).toBeGreaterThanOrEqual(0);
-      expect(order.indexOf("put")).toBeGreaterThan(order.indexOf("lock"));
+      expect(order.indexOf("put")).toBeLessThan(order.indexOf("lock"));
 
       await mirror.stop();
     });
@@ -1390,6 +1435,7 @@ describe("createHomeMirror", () => {
       await writeFile(join(tmpRoot, "one.md"), "one");
       await writeFile(join(tmpRoot, "two.md"), "two");
       const upsertMeta = vi.fn(async () => {});
+      const advanceMeta = vi.fn(async () => true);
       const lockSpy = vi.fn(async (_userId: string, fn: (executor: unknown) => Promise<unknown>) => fn(undefined));
 
       db = {
@@ -1397,6 +1443,7 @@ describe("createHomeMirror", () => {
           return null;
         },
         upsertManifestMeta: upsertMeta,
+        advanceManifestMeta: advanceMeta,
         withAdvisoryLock: lockSpy,
       } as unknown as ManifestDb;
 
@@ -1412,7 +1459,7 @@ describe("createHomeMirror", () => {
       await mirror.start();
 
       expect(lockSpy).toHaveBeenCalledTimes(1);
-      expect(upsertMeta).toHaveBeenCalledTimes(1);
+      expect(advanceMeta).toHaveBeenCalledTimes(1);
 
       await mirror.stop();
     });
@@ -1422,6 +1469,7 @@ describe("createHomeMirror", () => {
         await writeFile(join(tmpRoot, `batch-${i}.md`), `file-${i}`);
       }
       const upsertMeta = vi.fn(async () => {});
+      const advanceMeta = vi.fn(async () => true);
       const lockSpy = vi.fn(async (_userId: string, fn: (executor: unknown) => Promise<unknown>) => fn(undefined));
 
       db = {
@@ -1429,6 +1477,7 @@ describe("createHomeMirror", () => {
           return null;
         },
         upsertManifestMeta: upsertMeta,
+        advanceManifestMeta: advanceMeta,
         withAdvisoryLock: lockSpy,
       } as unknown as ManifestDb;
 
@@ -1444,7 +1493,7 @@ describe("createHomeMirror", () => {
       await mirror.start();
 
       expect(lockSpy).toHaveBeenCalledTimes(2);
-      expect(upsertMeta).toHaveBeenCalledTimes(3);
+      expect(advanceMeta).toHaveBeenCalledTimes(2);
 
       await mirror.stop();
     });

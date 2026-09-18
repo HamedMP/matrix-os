@@ -232,7 +232,6 @@ export interface CustomerVpsServiceDeps {
   ) => Promise<BillingEntitlement | null | undefined>;
 }
 
-
 const PROVIDER_DELETION_RETRY_BASE_MS = 60_000;
 const PROVIDER_DELETION_RETRY_MAX_MS = 60 * 60_000;
 const RESIZE_STATUS_POLL_INTERVAL_MS = 1_000;
@@ -303,7 +302,6 @@ function statusResponse(row: UserMachineRecord): StatusResponse {
 function toFailureCode(err: unknown): CustomerVpsFailureCode {
   return err instanceof CustomerVpsError ? err.code : genericProviderError(err).code;
 }
-
 
 const MAX_LOCAL_PROVISION_LOCKS = 1_024;
 const MAX_LOCAL_PROVISION_QUEUE_DEPTH = 20;

@@ -41,7 +41,13 @@ function storageAccess(key) {
 
 function config() {
   const handle = process.env.MATRIX_HANDLE ?? '';
-  const token = process.env.UPGRADE_TOKEN ?? '';
+  const runtimeToken = process.env.MATRIX_SYNC_RUNTIME_TOKEN;
+  const machineId = process.env.MATRIX_MACHINE_ID;
+  const runtimeSlot = process.env.MATRIX_RUNTIME_SLOT;
+  if (runtimeToken && (!machineId || !SAFE_SLOT.test(runtimeSlot ?? ''))) {
+    fail('broker configuration invalid');
+  }
+  const token = runtimeToken ?? process.env.UPGRADE_TOKEN ?? '';
   const rawBase = process.env.PLATFORM_INTERNAL_URL ?? '';
   if (!SAFE_HANDLE.test(handle) || token.length < 16 || token.length > 4096 || rawBase.length > 2048) {
     fail('broker configuration invalid');
@@ -57,6 +63,7 @@ function config() {
   }
   return {
     token,
+    scopeHeaders: runtimeToken ? { 'x-matrix-machine-id': machineId, 'x-matrix-runtime-slot': runtimeSlot } : {},
     route: `${base.toString().replace(/\/$/, '')}/internal/containers/${encodeURIComponent(handle)}/sync/system`,
   };
 }
@@ -91,10 +98,11 @@ async function readJsonLimited(response) {
 }
 
 async function brokerRequest(path, payload) {
-  const { route, token } = config();
+  const { route, token, scopeHeaders } = config();
   const response = await fetch(`${route}${path}`, {
     method: 'POST',
     headers: {
+      ...scopeHeaders,
       authorization: `Bearer ${token}`,
       'content-type': 'application/json',
     },

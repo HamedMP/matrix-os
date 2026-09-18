@@ -290,7 +290,11 @@ import { syncApp, createSyncRoutes } from "./sync/routes.js";
 import { initializeSyncInfrastructure } from "./sync/infrastructure.js";
 import { createManifestDb } from "./sync/db-impl.js";
 import { createHomeMirror, type HomeMirror } from "./sync/home-mirror.js";
-import { deriveHomeMirrorSyncIdentity } from "./sync/runtime-scope.js";
+import {
+  deriveHomeMirrorSyncIdentity,
+  resolveSyncScope,
+  syncScopeRegistryKey,
+} from "./sync/runtime-scope.js";
 import { createSyncPeerLifecycle } from "./sync/ws-peer-lifecycle.js";
 import {
   type SyncDatabase,
@@ -1211,7 +1215,11 @@ export async function createGateway(config: GatewayConfig) {
           "[home-mirror] MATRIX_USER_ID not set; using MATRIX_HANDLE fallback. This is dev-only behaviour.",
         );
       }
-      const { syncUserId, peerId } = deriveHomeMirrorSyncIdentity({
+      const scope = resolveSyncScope({
+        ownerId: baseUserId,
+        runtimeSlot: process.env.MATRIX_RUNTIME_SLOT,
+      });
+      const { peerId } = deriveHomeMirrorSyncIdentity({
         baseUserId,
         runtimeSlot: process.env.MATRIX_RUNTIME_SLOT,
       });
@@ -1220,7 +1228,8 @@ export async function createGateway(config: GatewayConfig) {
         r2: syncR2,
         manifestDb,
         homeRoot: homePath,
-        userId: syncUserId,
+        userId: scope.ownerId,
+        scope,
         peerId,
         // Subscribe to sync:change broadcasts from other peers so the
         // container's /home/matrixos/home/ stays in sync with what laptops
@@ -2216,11 +2225,15 @@ export async function createGateway(config: GatewayConfig) {
       let connectionOwnerId: string | undefined;
       try {
         const wsPrincipal = requireRequestPrincipal(c);
-        const wsSyncUserId = wsPrincipal.userId;
-        connectionOwnerId = wsSyncUserId;
+        const wsScope = resolveSyncScope({
+          ownerId: wsPrincipal.userId,
+          runtimeSlot: process.env.MATRIX_RUNTIME_SLOT,
+        });
+        const wsSyncScopeKey = syncScopeRegistryKey(wsScope);
+        connectionOwnerId = wsPrincipal.userId;
         conversationOwnerScope = ownerScopeFromPrincipal(wsPrincipal);
         syncPeerLifecycle = syncPeerRegistry
-          ? createSyncPeerLifecycle(syncPeerRegistry, wsSyncUserId, {
+          ? createSyncPeerLifecycle(syncPeerRegistry, wsSyncScopeKey, {
               send: (data: string) => syncPeerSocket?.send(data),
               get readyState() {
                 return syncPeerSocket?.readyState ?? 3;
