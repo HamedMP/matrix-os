@@ -467,6 +467,25 @@ describe("collaboration contracts", () => {
       },
     });
     expect(JSON.stringify(exported)).not.toContain("draft");
+
+    expect(CollaborationScopeExportSchema.parse({
+      version: 1,
+      id: requestId,
+      scopeId,
+      exportedAt: now,
+      expiresAt: "2026-09-14T12:00:00.000Z",
+      scope: { kind: "terminal", resourceId: "terminal_release", lifecycle: "shared", revision: "4" },
+      members: [{ actorId: "user_owner", role: "owner", status: "accepted", revision: "1" }],
+      audit: [{ actorId: "user_owner", action: "scope.exported", outcome: "completed", revision: "4", createdAt: now }],
+      discussion: [{
+        id: "discussion_1",
+        scopeId,
+        sequence: "1",
+        actor: { actorId: "user_owner", displayName: "Owner" },
+        text: "Shared terminal note",
+        createdAt: now,
+      }],
+    })).toMatchObject({ scope: { kind: "terminal" }, discussion: [{ text: "Shared terminal note" }] });
   });
 
   it("validates hydrated discovery and safe attributed history projections", () => {

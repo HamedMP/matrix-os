@@ -598,6 +598,66 @@ describe("collaboration gateway routes", () => {
     });
   });
 
+  it("exports terminal discussion through the owner lifecycle route", async () => {
+    const preflightPath = `/api/collaboration/runtimes/${collaborationIds.runtime}/scopes/preflight`;
+    const preflight = await signedJson({
+      actorId: collaborationActors.owner,
+      method: "POST",
+      path: preflightPath,
+      body: { kind: "terminal", resourceId: terminalId },
+    });
+    const eligibility = await preflight.json() as { confirmationToken: string; resourceRevision: string };
+    const created = await signedJson({
+      actorId: collaborationActors.owner,
+      method: "POST",
+      path: `/api/collaboration/runtimes/${collaborationIds.runtime}/scopes`,
+      body: {
+        kind: "terminal",
+        resourceId: terminalId,
+        clientRequestId: request(92),
+        expectedRevision: eligibility.resourceRevision,
+        confirmationToken: eligibility.confirmationToken,
+      },
+    });
+    expect(created.status).toBe(201);
+
+    const discussion = await signedJson({
+      actorId: collaborationActors.owner,
+      scopeId: collaborationIds.scope,
+      method: "POST",
+      path: `/api/collaboration/scopes/${collaborationIds.scope}/discussion/messages`,
+      body: {
+        clientRequestId: request(93),
+        expectedRevision: "1",
+        text: "Shared terminal export note",
+      },
+    });
+    expect(discussion.status).toBe(201);
+
+    const lifecyclePath = `/api/collaboration/scopes/${collaborationIds.scope}/lifecycle`;
+    const exported = await signedJson({
+      actorId: collaborationActors.owner,
+      scopeId: collaborationIds.scope,
+      method: "POST",
+      path: lifecyclePath,
+      body: { type: "export", clientRequestId: request(94), expectedRevision: "1" },
+    });
+    expect(exported.status).toBe(200);
+    expect(await exported.json()).toMatchObject({ exportId: request(94), status: "completed" });
+
+    const artifact = await signedJson({
+      actorId: collaborationActors.owner,
+      scopeId: collaborationIds.scope,
+      method: "GET",
+      path: `/api/collaboration/scopes/${collaborationIds.scope}/exports/${request(94)}`,
+    });
+    expect(artifact.status).toBe(200);
+    expect(await artifact.json()).toMatchObject({
+      scope: { kind: "terminal", resourceId: terminalId },
+      discussion: [{ text: "Shared terminal export note" }],
+    });
+  });
+
   it("accepts an invitation using the revision returned by its projection", async () => {
     await shareChat();
     const invitation = await signedJson({

@@ -21,20 +21,13 @@ import {
   parseJson,
   toIso,
 } from "./repository-shared.js";
+import { CollaborationDiscussionError } from "./discussion-error.js";
+
+export { CollaborationDiscussionError } from "./discussion-error.js";
 
 type Participant = { actorId: string; displayName: string };
 const MAX_TERMINAL_DISCUSSION_EXPORT_MESSAGES = 100_000;
 const MAX_TERMINAL_DISCUSSION_EXPORT_BYTES = 16 * 1024 * 1024;
-
-export class CollaborationDiscussionError extends Error {
-  constructor(
-    public readonly code: "invalid_request",
-    message: string,
-  ) {
-    super(message);
-    this.name = "CollaborationDiscussionError";
-  }
-}
 
 export class CollaborationDiscussionAdapter {
   private readonly now: () => Date;
@@ -81,6 +74,7 @@ export class CollaborationDiscussionAdapter {
     const nowDate = this.now();
     const now = nowDate.toISOString();
     const payloadHash = createHash("sha256").update(JSON.stringify(request)).digest("hex");
+    const participant = await this.resolveParticipant(context.actorId);
     const result = await this.options.db.transaction().execute(async (trx) => {
       const current = await this.lockAndReauthorize(trx, context, "discuss", nowDate);
       const existing = await trx.selectFrom("collaboration_operations")
@@ -108,7 +102,7 @@ export class CollaborationDiscussionAdapter {
         id: this.createId(),
         scopeId: current.scopeId,
         sequence: String(sequence),
-        actor: await this.resolveParticipant(current.actorId),
+        actor: participant,
         text: request.text,
         createdAt: now,
       });
@@ -205,11 +199,7 @@ export class CollaborationDiscussionAdapter {
 
   async getUserState(context: AuthorizedCollaborationContext): Promise<CollaborationDiscussionUserState> {
     if (context.resourceKind === "chat") {
-      const state = await this.options.chatAdapter.getUserState(context);
-      return CollaborationDiscussionUserStateSchema.parse({
-        readThroughSeq: state.readThroughSeq,
-        ...(state.lastOpenedAt ? { lastOpenedAt: state.lastOpenedAt } : {}),
-      });
+      return this.options.chatAdapter.getDiscussionUserState(context);
     }
     this.requireTerminal(context);
     const current = await this.options.authority.authorize({
@@ -237,11 +227,7 @@ export class CollaborationDiscussionAdapter {
   ): Promise<CollaborationDiscussionUserState> {
     const patch = CollaborationDiscussionUserStatePatchSchema.parse(input);
     if (context.resourceKind === "chat") {
-      const state = await this.options.chatAdapter.updateUserState(context, patch);
-      return CollaborationDiscussionUserStateSchema.parse({
-        readThroughSeq: state.readThroughSeq,
-        ...(state.lastOpenedAt ? { lastOpenedAt: state.lastOpenedAt } : {}),
-      });
+      return this.options.chatAdapter.updateDiscussionUserState(context, patch);
     }
     this.requireTerminal(context);
     const readThroughSeq = safeSequence(patch.readThroughSeq);
@@ -374,7 +360,10 @@ export class CollaborationDiscussionAdapter {
 
   private async resolveParticipant(actorId: string): Promise<Participant> {
     try {
-      return await this.options.resolveParticipant(actorId);
+      const participant = await this.options.resolveParticipant(actorId);
+      return participant.actorId === actorId
+        ? participant
+        : { actorId, displayName: "Unknown participant" };
     } catch (error: unknown) {
       console.warn(
         "[collaboration-discussion] participant lookup failed",

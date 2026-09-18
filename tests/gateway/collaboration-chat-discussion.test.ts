@@ -276,6 +276,74 @@ describe("CollaborationChatAdapter discussion", () => {
     });
   });
 
+  it("keeps discussion read state independent from ordinary Chat messages", async () => {
+    await fixture.db.insertInto("chat_messages").values({
+      id: "msg_ai_only",
+      chat_id: collaborationIds.chat,
+      seq: 1,
+      role: "assistant",
+      state: "committed",
+      turn_id: null,
+      run_id: null,
+      actor_id: null,
+      purpose: "assistant",
+      parts: JSON.stringify([{ type: "text", text: "AI response" }]),
+      byte_count: 20,
+      search_text: "AI response",
+      created_at: now,
+    }).execute();
+    await fixture.db.updateTable("chats").set({ message_count: 1 }).where("id", "=", collaborationIds.chat).execute();
+    await fixture.db.insertInto("chat_user_state").values({
+      chat_id: collaborationIds.chat,
+      principal_id: collaborationActors.editor,
+      read_through_seq: 1,
+      pinned: false,
+      muted: false,
+      attention_acknowledged_at: null,
+      last_opened_at: now,
+      updated_at: now,
+    }).execute();
+    const discussion = new CollaborationDiscussionAdapter({
+      db: fixture.db,
+      authority,
+      chatAdapter: adapter,
+      now: () => new Date(now),
+      resolveParticipant: async (actorId) => ({ actorId, displayName: "Participant" }),
+    });
+    const reader = await authority.authorize({
+      scopeId: collaborationIds.scope,
+      actorId: collaborationActors.editor,
+      action: "read",
+    });
+
+    await expect(discussion.getUserState(reader)).resolves.toEqual({ readThroughSeq: "0" });
+    await expect(discussion.updateUserState(reader, { readThroughSeq: "1" }))
+      .rejects.toMatchObject({ code: "invalid_request" });
+
+    const writer = await authority.authorize({
+      scopeId: collaborationIds.scope,
+      actorId: collaborationActors.editor,
+      action: "discuss",
+    });
+    await discussion.append(writer, {
+      clientRequestId: requestId,
+      expectedRevision: "1",
+      text: "Discussion note",
+    });
+    await expect(discussion.updateUserState(reader, { readThroughSeq: "2" }))
+      .resolves.toMatchObject({ readThroughSeq: "2" });
+    await expect(fixture.db.selectFrom("chat_user_state")
+      .select("read_through_seq")
+      .where("chat_id", "=", collaborationIds.chat)
+      .where("principal_id", "=", collaborationActors.editor)
+      .executeTakeFirstOrThrow()).resolves.toEqual({ read_through_seq: 1 });
+    await expect(fixture.db.selectFrom("collaboration_discussion_user_state")
+      .select("read_through_seq")
+      .where("scope_id", "=", collaborationIds.scope)
+      .where("actor_id", "=", collaborationActors.editor)
+      .executeTakeFirstOrThrow()).resolves.toEqual({ read_through_seq: 2 });
+  });
+
   it("keeps committed discussion and history available when participant lookup fails", async () => {
     const resilient = new CollaborationChatAdapter({
       db: fixture.db,

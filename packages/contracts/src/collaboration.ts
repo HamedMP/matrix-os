@@ -338,20 +338,23 @@ const CollaborationExportChatMessageSchema = z.object({
   });
 });
 
-export const CollaborationScopeExportSchema = z.object({
+const CollaborationScopeExportBaseSchema = z.object({
   version: z.literal(1),
   id: CollaborationIdSchema,
   scopeId: CollaborationIdSchema,
   exportedAt: z.iso.datetime(),
   expiresAt: z.iso.datetime(),
+  members: z.array(CollaborationExportMemberSchema).max(8),
+  audit: z.array(CollaborationExportAuditSchema).max(10_000),
+});
+
+const CollaborationChatScopeExportSchema = CollaborationScopeExportBaseSchema.extend({
   scope: z.object({
     kind: z.literal("chat"),
     resourceId: CollaborationResourceIdSchema,
     lifecycle: CollaborationLifecycleSchema,
     revision: CollaborationRevisionSchema,
   }).strict(),
-  members: z.array(CollaborationExportMemberSchema).max(8),
-  audit: z.array(CollaborationExportAuditSchema).max(10_000),
   chat: z.object({
     id: CollaborationResourceIdSchema,
     title: boundedDisplayText(200, 1_024),
@@ -368,6 +371,28 @@ export const CollaborationScopeExportSchema = z.object({
     }).strict()).max(100_000),
   }).strict(),
 }).strict();
+
+const CollaborationTerminalScopeExportSchema = CollaborationScopeExportBaseSchema.extend({
+  scope: z.object({
+    kind: z.literal("terminal"),
+    resourceId: CollaborationResourceIdSchema,
+    lifecycle: CollaborationLifecycleSchema,
+    revision: CollaborationRevisionSchema,
+  }).strict(),
+  discussion: z.array(z.object({
+    id: CollaborationResourceIdSchema,
+    scopeId: CollaborationIdSchema,
+    sequence: CollaborationRevisionSchema,
+    actor: CollaborationParticipantSchema,
+    text: boundedText(65_536, COLLABORATION_MESSAGE_BYTE_LIMIT),
+    createdAt: z.iso.datetime(),
+  }).strict()).max(100_000),
+}).strict();
+
+export const CollaborationScopeExportSchema = z.union([
+  CollaborationChatScopeExportSchema,
+  CollaborationTerminalScopeExportSchema,
+]);
 
 export const CollaborationUserStateSchema = z.object({
   readThroughSeq: CollaborationRevisionSchema,

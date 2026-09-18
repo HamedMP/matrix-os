@@ -46,17 +46,17 @@ Primary key: `(scope_id, sequence)`. Unique key: `(scope_id, id)`. Append happen
 
 ### `collaboration_discussion_user_state`
 
-Used for terminal discussion only. Chat discussion read state delegates to existing `chat_user_state`.
+Used for per-scope discussion read state for both Chat and Terminal. Normal Chat read state remains in `chat_user_state`; discussion cannot advance or be advanced by AI/system-message reads.
 
 | Field | Type / constraint | Meaning |
 | --- | --- | --- |
-| `scope_id` | UUID FK collaboration scope | Terminal discussion thread |
+| `scope_id` | UUID FK collaboration scope | Chat or Terminal discussion thread |
 | `actor_id` | existing actor ID constraints | State owner |
 | `read_through_seq` | BIGINT, nonnegative | Greatest discussion sequence acknowledged |
 | `last_opened_at` | TIMESTAMPTZ nullable | Personal presentation metadata |
 | `updated_at` | TIMESTAMPTZ | Last authoritative update |
 
-Primary key: `(scope_id, actor_id)`. Updates use `GREATEST(existing, submitted)` and reject a cursor beyond the current terminal-discussion sequence. These rows are personal state and are excluded from exports and directory events unless a future explicit contract says otherwise.
+Primary key: `(scope_id, actor_id)`. Updates use `GREATEST(existing, submitted)`. Terminal cursors cannot exceed the current terminal-discussion sequence; Chat cursors must identify a canonical `purpose=discussion` message. These rows are personal state and are excluded from exports and directory events unless a future explicit contract says otherwise.
 
 ## Shared Projection Types
 

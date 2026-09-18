@@ -1,5 +1,8 @@
 import { randomUUID } from "node:crypto";
 import {
+  CollaborationOperationSchema,
+  CollaborationScopeExportSchema,
+  type CollaborationDiscussionMessage,
   type CollaborationOperation,
   type CollaborationScopeExport,
 } from "@matrix-os/contracts";
@@ -146,10 +149,15 @@ export interface CollaborationRepositoryOptions {
   maxExportBytes?: number;
 }
 
+export interface TerminalExportInput extends Omit<ChatLifecycleInput, "type"> {
+  type: "export";
+}
+
 export class CollaborationRepository {
   private readonly now: () => Date;
   private readonly createId: () => string;
   private readonly chatLifecycle: ChatLifecycleRepository;
+  private readonly maxExportBytes: number;
 
   constructor(
     public readonly db: Kysely<OwnerCollaborationDatabase>,
@@ -157,10 +165,14 @@ export class CollaborationRepository {
   ) {
     this.now = options.now ?? (() => new Date());
     this.createId = options.createId ?? randomUUID;
+    this.maxExportBytes = Math.max(
+      1,
+      Math.min(options.maxExportBytes ?? MAX_COLLABORATION_EXPORT_BYTES, MAX_COLLABORATION_EXPORT_BYTES),
+    );
     this.chatLifecycle = new ChatLifecycleRepository(db, {
       now: this.now,
       ...(options.chatRepository ? { chatRepository: options.chatRepository } : {}),
-      maxExportBytes: options.maxExportBytes ?? MAX_COLLABORATION_EXPORT_BYTES,
+      maxExportBytes: this.maxExportBytes,
     });
   }
 
@@ -666,6 +678,124 @@ export class CollaborationRepository {
 
   async applyChatLifecycle(input: ChatLifecycleInput): Promise<CollaborationOperation> {
     return this.chatLifecycle.apply(input);
+  }
+
+  async applyTerminalExport(
+    input: TerminalExportInput,
+    loadDiscussion: () => Promise<CollaborationDiscussionMessage[]>,
+  ): Promise<CollaborationOperation> {
+    const nowDate = this.now();
+    const now = nowDate.toISOString();
+    const operationKind = "lifecycle.export";
+    const existing = await this.db.selectFrom("collaboration_operations")
+      .select(["payload_hash", "status", "result_ref"])
+      .where("scope_id", "=", input.scopeId)
+      .where("actor_id", "=", input.actorId)
+      .where("client_request_id", "=", input.clientRequestId)
+      .where("operation_kind", "=", operationKind)
+      .executeTakeFirst();
+    if (existing) {
+      if (existing.payload_hash !== input.payloadHash
+        || existing.status !== "completed" || existing.result_ref === null) {
+        throw new CollaborationRepositoryError("conflict", "Operation key payload changed");
+      }
+      return CollaborationOperationSchema.parse(parseJson(existing.result_ref));
+    }
+    const discussion = await loadDiscussion();
+    return this.db.transaction().execute(async (trx) => {
+      const replay = await readOperationReplay<CollaborationOperation>(trx, input, operationKind);
+      if (replay) return CollaborationOperationSchema.parse(replay);
+      const scope = await lockDirectScope(trx, input.scopeId);
+      await requireAcceptedOwner(trx, input.scopeId, input.actorId);
+      if (scope.kind !== "terminal" || scope.owner_id !== input.actorId) {
+        throw new CollaborationRepositoryError("forbidden", "Owner terminal lifecycle access required");
+      }
+      if (scope.lifecycle !== "shared" || Number(scope.revision) !== input.expectedRevision) {
+        throw new CollaborationRepositoryError("conflict", "Scope revision changed");
+      }
+      if (discussion.some((message) => message.scopeId !== scope.id)) {
+        throw new CollaborationRepositoryError("conflict", "Terminal discussion scope changed");
+      }
+      await trx.insertInto("collaboration_audit").values({
+        scope_id: scope.id,
+        actor_id: input.actorId,
+        action: "scope.exported",
+        outcome: "completed",
+        revision: Number(scope.revision),
+        reason_code: null,
+        created_at: now,
+      }).execute();
+      const [members, audit] = await Promise.all([
+        trx.selectFrom("collaboration_members").selectAll().where("scope_id", "=", scope.id)
+          .orderBy("updated_at", "asc").limit(MAX_SCOPE_PARTICIPANTS + 1).execute(),
+        trx.selectFrom("collaboration_audit").selectAll().where("scope_id", "=", scope.id)
+          .orderBy("created_at", "asc").orderBy("id", "asc").limit(10_001).execute(),
+      ]);
+      if (members.length > MAX_SCOPE_PARTICIPANTS || audit.length > 10_000) {
+        throw new CollaborationRepositoryError("capacity", "Scope export exceeds safe limits");
+      }
+      const exportId = input.clientRequestId;
+      const expiresAt = new Date(nowDate.getTime() + OPERATION_RETENTION_MS).toISOString();
+      const payload = CollaborationScopeExportSchema.parse({
+        version: 1,
+        id: exportId,
+        scopeId: scope.id,
+        exportedAt: now,
+        expiresAt,
+        scope: {
+          kind: "terminal",
+          resourceId: scope.resource_id,
+          lifecycle: scope.lifecycle,
+          revision: String(scope.revision),
+        },
+        members: members.map((member) => ({
+          actorId: member.actor_id,
+          role: member.role,
+          status: member.status,
+          revision: String(member.revision),
+          ...(member.joined_at === null ? {} : { joinedAt: toIso(member.joined_at) }),
+        })),
+        audit: audit.map((record) => ({
+          actorId: record.actor_id,
+          action: record.action,
+          outcome: record.outcome,
+          revision: String(record.revision),
+          ...(record.reason_code === null ? {} : { reasonCode: record.reason_code }),
+          createdAt: toIso(record.created_at),
+        })),
+        discussion,
+      });
+      if (new TextEncoder().encode(JSON.stringify(payload)).byteLength > this.maxExportBytes) {
+        throw new CollaborationRepositoryError("capacity", "Scope export exceeds safe limits");
+      }
+      await trx.insertInto("collaboration_exports").values({
+        id: exportId,
+        scope_id: scope.id,
+        owner_id: scope.owner_id,
+        payload: jsonb(payload),
+        created_at: now,
+        expires_at: expiresAt,
+      }).execute();
+      const result = CollaborationOperationSchema.parse({
+        id: input.clientRequestId,
+        scopeId: scope.id,
+        type: "export",
+        status: "completed",
+        revision: String(scope.revision),
+        exportId,
+        createdAt: now,
+      });
+      await writeOperation(
+        trx,
+        input,
+        operationKind,
+        scope,
+        result,
+        now,
+        new Date(nowDate.getTime() + OPERATION_RETENTION_MS).toISOString(),
+      );
+      return result;
+    });
   }
 
   async getLifecycleOperation(

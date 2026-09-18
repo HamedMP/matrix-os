@@ -65,13 +65,13 @@ Terminal sharing already preserves terminal authority, incarnation, execution ge
 
 ### D6. A generic discussion projection, not a second Chat store
 
-**Decision**: Add scope-level discussion endpoints. For Chat, delegate to canonical `chat_messages` and `chat_user_state`, filtering `purpose=discussion`. For Terminal, add bounded owner-local discussion message and read-state tables. Both emit the existing scoped `changed` event.
+**Decision**: Add scope-level discussion endpoints. For Chat, delegate message content to canonical `chat_messages`, filtering `purpose=discussion`, while keeping its discussion cursor in the scope-level personal-state table so ordinary AI/system reads cannot affect it. For Terminal, add bounded owner-local discussion messages and use the same personal-state table. Both emit the existing scoped `changed` event.
 
 **Rationale**: A shared UI needs one semantic interface, but Chat history must remain canonical. Terminal has no safe canonical text thread to reuse, so a terminal-only table is the smallest necessary backend addition.
 
 **Rejected**:
 
-- A generic discussion table for both Chat and Terminal: duplicates/migrates Chat history and creates a second source of truth.
+- A generic message table for both Chat and Terminal: duplicates/migrates Chat history and creates a second source of truth.
 - A hidden Chat attached to each terminal: grants the wrong resource semantics and complicates lifecycle/authorization.
 - Client-only terminal notes: not shared, durable, or multi-account.
 

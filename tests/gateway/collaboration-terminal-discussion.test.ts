@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { bootstrapChatDatabase } from "../../packages/gateway/src/chat/database.js";
 import { CollaborationAuthority } from "../../packages/gateway/src/collaboration/authority.js";
 import { CollaborationChatAdapter } from "../../packages/gateway/src/collaboration/chat-adapter.js";
@@ -78,6 +78,46 @@ describe("CollaborationDiscussionAdapter terminal discussion", () => {
       messages: [{ text: "Do not paste this into the terminal." }],
     });
     expect(committedScopes).toEqual([collaborationIds.scope]);
+  });
+
+  it("resolves participant metadata before opening the scope-locking transaction", async () => {
+    const editor = await authority.authorize({
+      scopeId: collaborationIds.scope,
+      actorId: collaborationActors.editor,
+      action: "discuss",
+    });
+    let participantResolved = false;
+    const transaction = fixture.db.transaction.bind(fixture.db);
+    const transactionSpy = vi.spyOn(fixture.db, "transaction").mockImplementation(() => {
+      expect(participantResolved).toBe(true);
+      return transaction();
+    });
+    const lockSafeAdapter = new CollaborationDiscussionAdapter({
+      db: fixture.db,
+      authority,
+      chatAdapter: new CollaborationChatAdapter({
+        db: fixture.db,
+        authority,
+        now: () => new Date(now),
+        resolveParticipant,
+      }),
+      now: () => new Date(now),
+      createId: () => "discussion_terminal_lock_safe",
+      resolveParticipant: async (actorId) => {
+        participantResolved = true;
+        return resolveParticipant(actorId);
+      },
+    });
+
+    try {
+      await expect(lockSafeAdapter.append(editor, {
+        clientRequestId: requestId,
+        expectedRevision: "1",
+        text: "Resolve me before taking the row lock.",
+      })).resolves.toMatchObject({ id: "discussion_terminal_lock_safe" });
+    } finally {
+      transactionSpy.mockRestore();
+    }
   });
 
   it("keeps viewers read-only and read state actor-local", async () => {

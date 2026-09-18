@@ -600,6 +600,21 @@ export function createCollaborationRoutes(options: {
       await notifyScope(options, scopeId);
       return c.json(CollaborationOperationSchema.parse(result));
     }
+    if (scope.kind === "terminal") {
+      if (input.type !== "export") {
+        throw new CollaborationAuthorizationError("unavailable", "Lifecycle action is unavailable");
+      }
+      const result = await options.repository.applyTerminalExport({
+        scopeId,
+        actorId: proof.actorId,
+        type: "export",
+        clientRequestId: input.clientRequestId,
+        expectedRevision: Number(input.expectedRevision),
+        payloadHash: digest(bytes),
+      }, () => options.discussionAdapter.exportTerminalDiscussion(scopeId));
+      await notifyScope(options, scopeId);
+      return c.json(CollaborationOperationSchema.parse(result));
+    }
     if (["transfer", "recover"].includes(input.type)) {
       throw new CollaborationAuthorizationError("unavailable", "Lifecycle action is unavailable");
     }

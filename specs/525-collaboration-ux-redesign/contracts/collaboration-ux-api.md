@@ -114,7 +114,7 @@ Success `200`:
 }
 ```
 
-Chat delegates to the current actor's canonical Chat user state. Terminal reads its current actor/scope row or returns `readThroughSeq: "0"`.
+Chat and Terminal both read the current actor's scope-level discussion-state row or return `readThroughSeq: "0"`. Normal Chat presentation state remains in `chat_user_state` and cannot mark discussion read (or be marked read by discussion).
 
 ### `PATCH /api/collaboration/scopes/:scopeId/discussion/user-state`
 
@@ -126,7 +126,11 @@ Request:
 }
 ```
 
-At least one supported field is required; this feature supports only `readThroughSeq`. The adapter validates the cursor is not beyond the latest discussion sequence and monotonically advances only the authenticated actor's row. Success `200` uses the same shape as `GET`.
+At least one supported field is required; this feature supports only `readThroughSeq`. The adapter validates a nonzero Chat cursor identifies a canonical `purpose=discussion` message, validates a terminal cursor is not beyond the latest terminal-discussion sequence, and monotonically advances only the authenticated actor's row. Success `200` uses the same shape as `GET`.
+
+### Existing owner lifecycle export for terminal scopes
+
+`POST /api/collaboration/scopes/:scopeId/lifecycle` with `type: "export"` remains owner-only and uses the existing signed proof, idempotent operation, audit, expiring export storage, and `GET .../exports/:exportId` retrieval path. For a terminal scope, the artifact contains the bounded shared `discussion` message projection and excludes `collaboration_discussion_user_state`. Participant metadata resolution and artifact projection happen without holding the authoritative scope row lock; the persistence transaction rechecks current owner membership, scope kind, lifecycle, revision, and payload hash. Snapshot tokens remain invalid.
 
 ## Existing Route Compatibility
 
