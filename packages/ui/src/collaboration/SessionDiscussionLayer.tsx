@@ -1,10 +1,16 @@
 import { useEffect, useRef } from "react";
 import type { ReturnTypeOfUseSessionDiscussion } from "./session-discussion-types.js";
 
-export function SessionDiscussionLayer({ open, onClose, discussion }: {
+export type CollaborationOverlayLayers = {
+  dialog: number;
+  popover: number;
+};
+
+export function SessionDiscussionLayer({ open, onClose, discussion, zIndex }: {
   open: boolean;
   onClose(): void;
   discussion: ReturnTypeOfUseSessionDiscussion;
+  zIndex?: number;
 }) {
   const closeRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLElement>(null);
@@ -32,7 +38,7 @@ export function SessionDiscussionLayer({ open, onClose, discussion }: {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [onClose, open]);
   if (!open) return null;
-  return <div className="absolute inset-0 z-30" data-slot="session-discussion-layer">
+  return <div className="absolute inset-0" style={{ zIndex }} data-slot="session-discussion-layer">
     <button type="button" aria-label="Close discussion" className="absolute inset-0 bg-black/20" onClick={onClose} />
     <section ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="session-discussion-title"
       className="absolute inset-y-0 right-0 flex w-full flex-col border-l bg-background shadow-2xl motion-safe:animate-in motion-safe:slide-in-from-right sm:w-96 max-sm:border-l-0">

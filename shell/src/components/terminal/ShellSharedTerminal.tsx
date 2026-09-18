@@ -5,8 +5,10 @@ import { ChatCollaboration } from "@matrix-os/ui";
 import { useMemo } from "react";
 import { useBrowserOrigin } from "@/hooks/useBrowserOrigin";
 import { createShellCollaborationApi } from "@/lib/collaboration";
+import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 
 const e2eBypass = process.env.NEXT_PUBLIC_E2E_TEST_BYPASS === "1";
+const COLLABORATION_LAYERS = { dialog: SHELL_Z_INDEX.appDialog, popover: SHELL_Z_INDEX.popover };
 
 export function ShellSharedTerminal({ scopeId }: { scopeId: string }) {
   const { isLoaded, userId } = useAuth();
@@ -26,6 +28,6 @@ export function ShellSharedTerminal({ scopeId }: { scopeId: string }) {
     </div>;
   }
   return <div data-slot="native-shared-terminal" className="flex min-h-0 flex-1 overflow-hidden">
-    <ChatCollaboration view={{ kind: "terminal", scopeId }} api={api} actorId={actorId} />
+    <ChatCollaboration view={{ kind: "terminal", scopeId }} api={api} actorId={actorId} layers={COLLABORATION_LAYERS} />
   </div>;
 }

@@ -9,6 +9,8 @@ describe("Canvas and web desktop canonical Chat wiring", () => {
     const providerState = readFileSync(join(process.cwd(), "shell/src/components/chat-app-provider-setup.tsx"), "utf8");
     const desktop = readFileSync(join(process.cwd(), "shell/src/components/Desktop.tsx"), "utf8");
     const mobile = readFileSync(join(process.cwd(), "shell/src/components/mobile/MobileShell.tsx"), "utf8");
+    const sharedChat = readFileSync(join(process.cwd(), "shell/src/components/chat/ShellChatCollaboration.tsx"), "utf8");
+    const sharedTerminal = readFileSync(join(process.cwd(), "shell/src/components/terminal/ShellSharedTerminal.tsx"), "utf8");
     const userButton = readFileSync(join(process.cwd(), "shell/src/components/UserButton.tsx"), "utf8");
 
     expect(shellHome).toContain("const chatCollaborationView = terminalCollaborationView ? undefined : initialCollaborationView");
@@ -29,5 +31,9 @@ describe("Canvas and web desktop canonical Chat wiring", () => {
     expect(shellHome).toContain('terminalCollaborationView ? "__terminal__"');
     expect(desktop).not.toContain("__terminal__:shared:");
     expect(mobile).not.toContain("__terminal__:shared:");
+    expect(sharedChat).toContain("SHELL_Z_INDEX.appDialog");
+    expect(sharedChat).toContain("SHELL_Z_INDEX.popover");
+    expect(sharedTerminal).toContain("SHELL_Z_INDEX.appDialog");
+    expect(sharedTerminal).toContain("SHELL_Z_INDEX.popover");
   });
 });

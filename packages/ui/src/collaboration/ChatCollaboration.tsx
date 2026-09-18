@@ -22,7 +22,7 @@ import { SharedChatControls } from "./SharedChatControls.js";
 import { SharedTerminalControls } from "./SharedTerminalControls.js";
 import { projectSharedChatTimeline } from "./chat-projection.js";
 import { SessionAccessControl } from "./SessionAccessControl.js";
-import { SessionDiscussionLayer } from "./SessionDiscussionLayer.js";
+import { SessionDiscussionLayer, type CollaborationOverlayLayers } from "./SessionDiscussionLayer.js";
 import { useSessionDiscussion } from "./useSessionDiscussion.js";
 import { notifyCollaborationDiscoveryChanged } from "./discovery-events.js";
 
@@ -49,6 +49,7 @@ export function ChatCollaboration({
   openProject = () => undefined,
   onChatMetadata,
   headerContainer,
+  layers,
 }: {
   view: ChatCollaborationView;
   api: CollaborationApi;
@@ -61,6 +62,7 @@ export function ChatCollaboration({
   openProject?: (scopeId: string) => void;
   onChatMetadata?: (metadata: { title: string; role: "owner" | "editor" | "viewer" }) => void;
   headerContainer?: HTMLElement | null;
+  layers?: CollaborationOverlayLayers;
 }) {
   if (view.kind === "home") {
     return <CollaborationHome api={api} openInvitation={openInvitation} openChat={openChat}
@@ -70,13 +72,13 @@ export function ChatCollaboration({
     return <InvitationView api={api} invitationId={view.invitationId} openChat={openChat}
       openTerminal={openTerminal} openProject={openProject} />;
   }
-  if (view.kind === "terminal") return <SharedTerminalView api={api} actorId={actorId} scopeId={view.scopeId} />;
+  if (view.kind === "terminal") return <SharedTerminalView api={api} actorId={actorId} scopeId={view.scopeId} layers={layers} />;
   if (view.kind === "project") return <SharedProjectView api={api} scopeId={view.scopeId} />;
   if (view.kind === "canonical-chat") return <CanonicalSharedChatPanel api={api} actorId={actorId}
     runtimeId={runtimeId ?? "platform"} chatId={view.chatId} storage={storage} onMetadata={onChatMetadata}
-    headerContainer={headerContainer} />;
+    headerContainer={headerContainer} layers={layers} />;
   return <SharedChatPanel api={api} actorId={actorId} runtimeId={runtimeId ?? "platform"}
-    scopeId={view.scopeId} storage={storage} onMetadata={onChatMetadata} headerContainer={headerContainer} />;
+    scopeId={view.scopeId} storage={storage} onMetadata={onChatMetadata} headerContainer={headerContainer} layers={layers} />;
 }
 
 function CollaborationHome({ api, openInvitation, openChat, openTerminal, openProject }: {
@@ -219,10 +221,11 @@ function CollaborationHome({ api, openInvitation, openChat, openTerminal, openPr
   </main>;
 }
 
-function SharedTerminalView({ api, actorId, scopeId }: {
+function SharedTerminalView({ api, actorId, scopeId, layers }: {
   api: CollaborationApi;
   actorId: string;
   scopeId: string;
+  layers?: CollaborationOverlayLayers;
 }) {
   const [scope, setScope] = useState<SharedScope | null>(null);
   const [failed, setFailed] = useState(false);
@@ -244,7 +247,7 @@ function SharedTerminalView({ api, actorId, scopeId }: {
   }, [api, scopeId]);
   if (failed) return <SafeError title="Shared terminal unavailable" />;
   if (!scope) return <p role="status" className="p-8">Loading shared terminal…</p>;
-  return <SharedTerminalControls api={api} scope={scope} actorId={actorId} />;
+  return <SharedTerminalControls api={api} scope={scope} actorId={actorId} layers={layers} />;
 }
 
 function SharedProjectView({ api, scopeId }: { api: CollaborationApi; scopeId: string }) {
@@ -629,6 +632,7 @@ function useSharedChatController({ api, actorId, runtimeId, scopeId, storage, on
 export function SharedChatPanel(props: Parameters<typeof useSharedChatController>[0] & {
   onMetadata?: (metadata: { title: string; role: "owner" | "editor" | "viewer" }) => void;
   headerContainer?: HTMLElement | null;
+  layers?: CollaborationOverlayLayers;
 }) {
   const { state, loadMoreMessages, updateDraft, changeDraftMode, send } = useSharedChatController(props);
   if (state.loading) return <p role="status" className="p-8">Loading shared Chat…</p>;
@@ -640,7 +644,7 @@ export function SharedChatPanel(props: Parameters<typeof useSharedChatController
 }
 
 function NativeSharedChatPanel({ api, actorId, runtimeId, storage, state, loadMoreMessages, updateDraft, changeDraftMode, send,
-  headerContainer }: {
+  headerContainer, layers }: {
   api: CollaborationApi;
   actorId: string;
   runtimeId: string;
@@ -652,6 +656,7 @@ function NativeSharedChatPanel({ api, actorId, runtimeId, storage, state, loadMo
   changeDraftMode(mode: CollaborationDraft["mode"]): void;
   send(): Promise<void>;
   headerContainer?: HTMLElement | null;
+  layers?: CollaborationOverlayLayers;
 }) {
   const [discussionOpen, setDiscussionOpen] = useState(false);
   const discussionTrigger = useRef<HTMLButtonElement>(null);
@@ -669,7 +674,7 @@ function NativeSharedChatPanel({ api, actorId, runtimeId, storage, state, loadMo
         <span className="hidden sm:inline">Discussion</span><span aria-hidden className="sm:hidden">Notes</span>
         {BigInt(discussion.latestSequence) > BigInt(0) ? <span className="ml-1" aria-label="Discussion has notes">•</span> : null}
       </button>
-      <SessionAccessControl key={state.scope.id} api={api} scope={state.scope} />
+      <SessionAccessControl key={state.scope.id} api={api} scope={state.scope} zIndex={layers?.popover} />
     </div>;
   return <main data-slot="native-shared-chat" className="relative mx-auto flex h-full min-h-0 w-full max-w-4xl flex-col overflow-hidden">
     {headerContainer
@@ -682,11 +687,11 @@ function NativeSharedChatPanel({ api, actorId, runtimeId, storage, state, loadMo
       resourceRevision={state.chat.revision} draft={state.draft} updateDraft={updateDraft}
       changeDraftMode={changeDraftMode} discussionSending={state.sending} discussionError={state.error === "send"}
       sendDiscussion={send} refreshVersion={state.refreshVersion} />
-    <SessionDiscussionLayer open={discussionOpen} onClose={closeDiscussion} discussion={discussion} />
+    <SessionDiscussionLayer open={discussionOpen} onClose={closeDiscussion} discussion={discussion} zIndex={layers?.dialog} />
   </main>;
 }
 
-export function CanonicalSharedChatPanel({ api, actorId, runtimeId, chatId, storage, onMetadata, headerContainer }: {
+export function CanonicalSharedChatPanel({ api, actorId, runtimeId, chatId, storage, onMetadata, headerContainer, layers }: {
   api: CollaborationApi;
   actorId: string;
   runtimeId: string;
@@ -694,6 +699,7 @@ export function CanonicalSharedChatPanel({ api, actorId, runtimeId, chatId, stor
   storage?: Pick<Storage, "getItem" | "setItem" | "removeItem">;
   onMetadata?: (metadata: { title: string; role: "owner" | "editor" | "viewer" }) => void;
   headerContainer?: HTMLElement | null;
+  layers?: CollaborationOverlayLayers;
 }) {
   const [resolution, setResolution] = useState<{
     chatId: string;
@@ -717,7 +723,7 @@ export function CanonicalSharedChatPanel({ api, actorId, runtimeId, chatId, stor
   }
   if (!resolution.scopeId) return <SafeError title="Shared Chat unavailable" />;
   return <SharedChatPanel api={api} actorId={actorId} runtimeId={runtimeId}
-    scopeId={resolution.scopeId} storage={storage} onMetadata={onMetadata} headerContainer={headerContainer} />;
+    scopeId={resolution.scopeId} storage={storage} onMetadata={onMetadata} headerContainer={headerContainer} layers={layers} />;
 }
 
 async function resolveCanonicalChatScope(api: CollaborationApi, chatId: string): Promise<string | null> {

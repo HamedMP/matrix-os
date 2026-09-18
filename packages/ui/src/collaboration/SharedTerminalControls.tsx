@@ -9,7 +9,7 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "r
 import type { z } from "zod/v4";
 import type { CollaborationApi } from "./ChatCollaboratorsDialog.js";
 import { SessionAccessControl } from "./SessionAccessControl.js";
-import { SessionDiscussionLayer } from "./SessionDiscussionLayer.js";
+import { SessionDiscussionLayer, type CollaborationOverlayLayers } from "./SessionDiscussionLayer.js";
 import { useSessionDiscussion } from "./useSessionDiscussion.js";
 
 const MAX_OUTPUT_BYTES = 2 * 1024 * 1024;
@@ -53,10 +53,11 @@ const initialState: State = {
 };
 
 // react-doctor-disable-next-line react-doctor/no-high-complexity-react-function -- This is one lease-bound UI state machine: its branches are role, connection, and epoch guards covered by shared-terminal-controls tests. Splitting them would duplicate security-sensitive derived authority across components.
-export function SharedTerminalControls({ api, scope, actorId }: {
+export function SharedTerminalControls({ api, scope, actorId, layers }: {
   api: CollaborationApi;
   scope: Scope;
   actorId: string;
+  layers?: CollaborationOverlayLayers;
 }) {
   const [state, dispatch] = useReducer(reduce, initialState);
   const [input, setInput] = useState("");
@@ -183,7 +184,7 @@ export function SharedTerminalControls({ api, scope, actorId }: {
         <button ref={discussionTrigger} type="button" className={buttonClass}
           aria-label={discussionOpen ? "Close terminal discussion" : "Open terminal discussion"}
           aria-expanded={discussionOpen} onClick={() => setDiscussionOpen((current) => !current)}>Discussion</button>
-        <SessionAccessControl key={scope.id} api={api} scope={scope} />
+        <SessionAccessControl key={scope.id} api={api} scope={scope} zIndex={layers?.popover} />
         {canControl && !holdsControl && !controller ? <button type="button" className={buttonClass}
           disabled={state.pending || !state.connectionId} onClick={() => void sendAction({ type: "acquire" })}>
           Request control
@@ -220,7 +221,7 @@ export function SharedTerminalControls({ api, scope, actorId }: {
       <button type="button" className={buttonClass} disabled={!holdsControl || !input || state.pending}
         onClick={() => submitText("paste")}>Paste text</button>
     </div>
-    <SessionDiscussionLayer open={discussionOpen} onClose={closeDiscussion} discussion={discussion} />
+    <SessionDiscussionLayer open={discussionOpen} onClose={closeDiscussion} discussion={discussion} zIndex={layers?.dialog} />
   </section>;
 }
 

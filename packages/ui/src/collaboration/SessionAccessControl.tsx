@@ -5,9 +5,10 @@ import { ChatCollaboratorsDialog, type CollaborationApi } from "./ChatCollaborat
 
 type Member = z.infer<typeof CollaborationMemberSchema>;
 
-export function SessionAccessControl({ api, scope }: {
+export function SessionAccessControl({ api, scope, zIndex }: {
   api: CollaborationApi;
   scope: ReturnType<typeof CollaborationScopeSchema.parse>;
+  zIndex?: number;
 }) {
   const [open, setOpen] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
@@ -77,8 +78,8 @@ export function SessionAccessControl({ api, scope }: {
         </span>) : <span className="grid size-5 place-items-center rounded-full border bg-[var(--bg-surface,var(--background))] text-[9px] font-semibold">S</span>}</span>
       <span className="hidden sm:inline">{effectiveScope.membershipMode === "inherited" ? "Project access" : "Shared"}</span>
     </button>
-    {open ? <section role="dialog" aria-label="Collaboration access summary"
-      className="absolute right-0 top-full z-40 mt-2 w-80 max-w-[calc(100vw-2rem)] rounded-2xl border bg-background p-4 shadow-xl">
+    {open ? <section role="dialog" aria-label="Collaboration access summary" style={{ zIndex }}
+      className="absolute right-0 top-full mt-2 w-80 max-w-[calc(100vw-2rem)] rounded-2xl border bg-background p-4 shadow-xl">
       <div className="flex items-start justify-between gap-3"><div>
         <h2 className="font-semibold">Access</h2>
         <p className="text-xs text-muted-foreground">You are {effectiveScope.role === "owner" ? "the owner" : `an ${effectiveScope.role}`}.</p>

@@ -31,10 +31,12 @@ const discussion = {
 describe("SessionDiscussionLayer", () => {
   it("is an overlay dialog, explains AI isolation, and supports light dismiss", () => {
     const close = vi.fn();
-    render(<SessionDiscussionLayer open onClose={close} discussion={discussion} />);
+    render(<SessionDiscussionLayer open onClose={close} discussion={discussion} zIndex={620} />);
     expect(screen.getByRole("dialog", { name: "Discussion" })).toHaveAttribute("aria-modal", "true");
     expect(screen.getByText(/not prompts for AI/i)).toBeVisible();
     expect(document.querySelector('[data-slot="session-discussion-layer"]')).toHaveClass("absolute", "inset-0");
+    expect(document.querySelector('[data-slot="session-discussion-layer"]')).toHaveStyle({ zIndex: "620" });
+    expect(document.querySelector('[data-slot="session-discussion-layer"]')).not.toHaveClass("z-30");
     fireEvent.click(screen.getByRole("button", { name: "Close discussion" }));
     expect(close).toHaveBeenCalledOnce();
   });
