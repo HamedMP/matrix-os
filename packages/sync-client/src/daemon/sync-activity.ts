@@ -1,4 +1,4 @@
-/** Process-local activity. Overflow stays degraded until a full startup reconciliation. */
+/** Process-local activity. Forgotten failures keep a conservative warning until restart. */
 export function createSyncActivity() {
   let active = 0;
   let overflow = false;
@@ -24,8 +24,15 @@ export function createSyncActivity() {
       return () => { if (!ended) { ended = true; active--; } };
     },
     failed(key: string) {
-      if (failures.size < 1000 || failures.has(key)) failures.add(key);
-      else overflow = true;
+      // Refresh insertion order, evict oldest at capacity, and retain evidence
+      // of forgotten failures rather than treating eviction as successful work.
+      failures.delete(key);
+      if (failures.size >= 1000) {
+        const oldest = failures.values().next().value;
+        if (oldest !== undefined) failures.delete(oldest);
+        overflow = true;
+      }
+      failures.add(key);
     },
     succeeded(key: string) { failures.delete(key); },
   };

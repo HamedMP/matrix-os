@@ -36,4 +36,12 @@ describe("sync activity", () => {
     for (let i = 0; i < 2000; i++) activity.failed(String(i));
     expect(activity.pendingFailureCount()).toBe(1001);
   });
+  it("evicts the oldest failure while keeping newer failures recoverable", () => {
+    const activity = createSyncActivity();
+    for (let i = 0; i < 1001; i++) activity.failed(String(i));
+    activity.succeeded("0");
+    expect(activity.pendingFailureCount()).toBe(1001);
+    activity.succeeded("1000");
+    expect(activity.pendingFailureCount()).toBe(1000);
+  });
 });
