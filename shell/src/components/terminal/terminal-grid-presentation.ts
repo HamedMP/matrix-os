@@ -1,13 +1,13 @@
 import type { Terminal } from "@xterm/xterm";
 import type { FitAddon } from "@xterm/addon-fit";
-import { createTerminalGridPresentation, measureTerminalViewport } from "@matrix-os/ui";
+import { createTerminalGridPresentation, measureTerminalGridDimensions } from "@matrix-os/ui";
 import { isCanonicalShellSessionId } from "./terminal-session-id";
 import { sendTerminalResize } from "./terminal-remote-resize";
 import { TERMINAL_CANONICAL_MAX_COLS, TERMINAL_CANONICAL_MAX_ROWS } from "./terminal-xterm-runtime";
 
 export function createWebTerminalGridPresentation({
   container, getTerm, getFitAddon, getSessionId, getSocket, getFontSize,
-  nativeHistory, isDisposed, allowRemoteResize, suppressNativeKeyboard, connectWs, onScale, getParentScale, log,
+  nativeHistory, isDisposed, allowRemoteResize, hasWriteOwnership, suppressNativeKeyboard, connectWs, onScale, getParentScale, log,
 }: {
   container: HTMLElement;
   nativeHistory?: { getState(): import("@matrix-os/contracts").TerminalScrollState | null; scrollTo(line: number): void };
@@ -18,6 +18,7 @@ export function createWebTerminalGridPresentation({
   getFontSize: () => number;
   isDisposed: () => boolean;
   allowRemoteResize: () => boolean;
+  hasWriteOwnership: () => boolean;
   suppressNativeKeyboard: boolean;
   connectWs: () => void;
   onScale: (scale: number) => void;
@@ -37,6 +38,7 @@ export function createWebTerminalGridPresentation({
     getTerminal: getTerm,
     getConfiguredFontSize: getFontSize,
     enabled: usesCanonicalGrid,
+    allowScaling: () => suppressNativeKeyboard || !allowRemoteResize() || !hasWriteOwnership(),
     onScale,
     getParentScale,
   });
@@ -62,7 +64,7 @@ export function createWebTerminalGridPresentation({
     }
     let proposed: { cols: number; rows: number } | undefined;
     try {
-      proposed = measureTerminalViewport(container, getTerm().element, () => proposeDimensions.call(getFitAddon()));
+      proposed = measureTerminalGridDimensions(container, getTerm(), getFontSize(), () => proposeDimensions.call(getFitAddon()));
     } catch (err: unknown) {
       log("dimension-proposal-failed", {
         message: err instanceof Error ? err.message : String(err),
@@ -107,10 +109,10 @@ export function createWebTerminalGridPresentation({
       }
       return;
     }
-    if (!allowRemoteResize() || !rememberViewportDeclaration(proposed)) {
+    if (!allowRemoteResize() || !hasWriteOwnership() || !rememberViewportDeclaration(proposed)) {
       return;
     }
-    sendTerminalResize(ws, proposed, true, getSessionId());
+    sendTerminalResize(ws, proposed, true, getSessionId(), "hard");
   };
 
   const scheduleViewportMeasurement = () => {
@@ -138,6 +140,7 @@ export function createWebTerminalGridPresentation({
     proposeViewportDimensions, rememberViewportDeclaration,
     scheduleSoftGridLayout, scheduleViewportMeasurement,
     applyCanonicalGridSize,
+    resetViewportDeclaration() { lastDeclaredSize = null; },
     dispose() {
       presentation.dispose();
       if (viewportMeasureFrame !== null) cancelAnimationFrame(viewportMeasureFrame);

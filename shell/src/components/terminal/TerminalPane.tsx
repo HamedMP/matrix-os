@@ -518,6 +518,7 @@ export function TerminalPane({
   useEffect(() => {
     let disposed = false;
     let lastRevision = -1;
+    let lastWorkspaceRevision = -1;
     let destroyRequested = false;
     const destroyIfRequested = (): boolean => {
       const destroyDecision = shouldDestroyOnUnmountRef.current?.(paneId) ?? false;
@@ -650,14 +651,15 @@ export function TerminalPane({
         container, nativeHistory, getTerm: () => term, getFitAddon: () => fitAddon,
         getSessionId: () => sessionIdRef.current, getSocket: () => wsRef.current,
         getFontSize: () => terminalFontSizeRef.current, isDisposed: () => disposed,
-        allowRemoteResize: () => allowRemoteResizeRef.current, suppressNativeKeyboard,
+        allowRemoteResize: () => allowRemoteResizeRef.current,
+        hasWriteOwnership: () => hasWriteOwnershipRef.current, suppressNativeKeyboard,
         connectWs, onScale: (scale) => { softGridScaleRef.current = scale; },
         getParentScale: () => canvasZoomRef.current, log,
       });
       const {
         usesCanonicalGrid, declaresViewportSize, proposeViewportDimensions,
         rememberViewportDeclaration, scheduleSoftGridLayout, scheduleViewportMeasurement,
-        applyCanonicalGridSize,
+        applyCanonicalGridSize, resetViewportDeclaration,
       } = gridPresentation;
 
       const focusIfAllowed = () => {
@@ -961,6 +963,7 @@ export function TerminalPane({
         // revision, so carrying that value across reconnects would reject the
         // new attached/snapshot/output stream indefinitely.
         lastRevision = -1;
+        lastWorkspaceRevision = -1;
         const alreadyAttached = options.alreadyAttached === true;
         setControlsConnection({
           sessionName: alreadyAttached && sessionIdRef.current && isCanonicalShellSessionId(sessionIdRef.current) ? sessionIdRef.current : null,
@@ -1144,12 +1147,19 @@ export function TerminalPane({
           }
           if ("sessionId" in msg && msg.sessionId && msg.sessionId !== sessionIdRef.current) return;
           if ("revision" in msg) {
-            if (msg.revision < lastRevision) return;
-            lastRevision = msg.revision;
+            // Workspace geometry and tab output have independent revision streams.
+            if (msg.type === "canonical-size") {
+              if (msg.revision < lastWorkspaceRevision) return;
+              lastWorkspaceRevision = msg.revision;
+            } else {
+              if (msg.revision < lastRevision) return;
+              lastRevision = msg.revision;
+            }
           }
 
           switch (msg.type) {
             case "attached":
+              resetViewportDeclaration();
               binaryInputSupportedRef.current = msg.capabilities.includes("binary-input-v1");
               hasWriteOwnershipRef.current = msg.ownership === "writer";
               nativeHistory.attach(msg.capabilities.includes("native-scroll-v1"));
@@ -1196,6 +1206,8 @@ export function TerminalPane({
               requestedOwnershipRef.current = "observe";
               setControlsConnection((current) => ({ ...current, connected: false }));
               setConnectionNotice("elsewhere");
+              resetViewportDeclaration();
+              scheduleSoftGridLayout();
               break;
 
             case "scroll-state":
@@ -1341,7 +1353,7 @@ export function TerminalPane({
         const replayRequest = getCanonicalReplayRequest();
         const declaredSize = declaresViewportSize() ? proposeViewportDimensions() : null;
         // Defer an initially hidden pane until its viewport can be measured.
-        // These dimensions remain a soft proposal, never shared-grid authority.
+        // The handshake is a proposal; only the acknowledged writer sends a hard resize.
         if (declaresViewportSize() && !declaredSize) {
           return;
         }

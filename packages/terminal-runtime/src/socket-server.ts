@@ -56,6 +56,7 @@ export interface TerminalRuntimeControlApi {
   deletionImpact(workspaceId: string): Promise<{ runningTabs: number; tabs: TerminalTab[] }>;
   deleteWorkspace(workspaceId: string, input: { confirmTerminate: boolean }): Promise<void>;
   attach(ref: TerminalRef, input: {
+    onCanonicalSize?: (size: { cols: number; rows: number }, revision: number) => void | Promise<void>;
     viewerId: string;
     send(data: Uint8Array): void | Promise<void>;
     onExit(exitCode: number | null): void | Promise<void>;
@@ -277,6 +278,9 @@ export class TerminalRuntimeSocketServer {
         const text = decoder.decode(data, { stream: true });
         if (!text) return;
         send({ type: "output", terminalRef: ref, revision, seq: nextSeq++, data: text });
+      },
+      onCanonicalSize: (canonicalSize, workspaceRevision) => {
+        send({ type: "canonical-size", terminalRef: ref, revision: workspaceRevision, canonicalSize });
       },
       onExit: (exitCode) => {
         revision += 1;

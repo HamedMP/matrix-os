@@ -11,6 +11,7 @@ const canonicalSize = { cols: 120, rows: 36 };
 const nativeScroll = new URLSearchParams(window.location.search).has("nativeScroll");
 let nativeState = { above: 100, below: 0, rows: 36 };
 const scrollFrames: unknown[] = [];
+const fitViewport = new URLSearchParams(window.location.search).get("sizing") === "viewport";
 const proposals: unknown[] = [];
 const inputs: string[] = [];
 let latestSocket: FixtureSocket | undefined;
@@ -31,7 +32,7 @@ class FixtureSocket {
         canonicalSize,
         nextSeq: 0,
         capabilities: ["binary-input-v1", ...(nativeScroll ? ["native-scroll-v1"] : [])],
-        ownership: "writer",
+        ownership: fitViewport || nativeScroll ? "writer" : "observer",
         leaseEpoch: 1,
       });
       this.receive({ type: "replay-start", fromSeq: 0 });
@@ -56,8 +57,16 @@ class FixtureSocket {
     }
     if (frame.type === "resize") {
       if (proposals.length < 100) proposals.push(frame);
-      // The actual runtime ignores soft proposals. Never echo requested sizes.
+      // Match runtime semantics: only a hard resize changes the canonical grid.
+      if (fitViewport && frame.mode === "hard") Object.assign(canonicalSize, frame.size);
       this.receive({ type: "canonical-size", canonicalSize });
+      if (fitViewport && frame.mode === "hard") {
+        const { cols, rows } = canonicalSize;
+        this.receive({ type: "output", seq: outputSequence++, data:
+          `\x1b[2J\x1b[HGrid: ${cols} columns x ${rows} rows\r\n` +
+          "Synthetic terminal resize verification" +
+          `\x1b[${rows};1HFINAL ROW${" ".repeat(Math.max(0, cols - 20))}RIGHT EDGE` });
+      }
     }
     if (frame.type === "ping") this.receive({ type: "pong" });
     if ((frame.type === "input" || frame.type === "binary") && inputs.length < 100) {
@@ -70,6 +79,7 @@ Object.defineProperty(window, "WebSocket", { value: FixtureSocket });
 Object.defineProperty(window, "fixtureScrollFrames", { value: scrollFrames });
 Object.defineProperty(window, "fixtureNativeWheel", { value: () => { nativeState = { above: 20, below: 80, rows: 36 }; } });
 Object.defineProperty(window, "fixtureProposals", { value: proposals });
+Object.defineProperty(window, "fixtureGrid", { value: canonicalSize });
 Object.defineProperty(window, "fixtureInputs", { value: inputs });
 Object.defineProperty(window, "fixtureOutput", { value: (data: string) => latestSocket?.receive({ type: "output", seq: outputSequence++, data }) });
 Object.defineProperty(window, "fixtureObserve", { value: () => latestSocket?.receive({ type: "lease-revoked", epoch: 1 }) });
