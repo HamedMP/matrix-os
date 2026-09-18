@@ -290,10 +290,23 @@ jobs:
               ($root + "/matrix-scope-native-acceptance.sh")],timeoutMs:180000
           }')"
           native_response="$RUNNER_TEMP/scope-runtime-native-run.json"
+          jq -cn '{status:"native-command-not-returned"}' >"$native_response"
           if ! send_signed_command "$run_body" "$native_response"; then
-            cp "$native_response" "$evidence" 2>/dev/null || true
+            if ! jq -e . "$native_response" >/dev/null 2>&1; then
+              jq -cn '{status:"native-command-transport-failed"}' >"$native_response"
+            fi
+            jq -cn --arg head "$HEAD_SHA" --arg version "$PREVIEW_VERSION" \
+              --slurpfile native "$native_response" '{
+                head:$head, previewVersion:$version,
+                nativeProof:$native[0], productionSupervisor:null
+              }' >"$evidence"
             exit 1
           fi
+          jq -cn --arg head "$HEAD_SHA" --arg version "$PREVIEW_VERSION" \
+            --slurpfile native "$native_response" '{
+              head:$head, previewVersion:$version,
+              nativeProof:$native[0], productionSupervisor:null
+            }' >"$evidence"
           if ! jq -e 'select(.exitCode == 0 and .timedOut == false and
             .truncated == false and .signal == null)' "$native_response" >/dev/null; then
             echo "The native proof command failed; inspect the bounded evidence artifact." >&2

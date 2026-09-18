@@ -63,6 +63,7 @@ describe("collaboration scope-runtime production acceptance workflow", () => {
     expect(workflow).toContain('production_expected_head="MATRIX_SCOPE_EXPECTED_HEAD=$HEAD_SHA"');
     expect(workflow).toContain("scope_runtime_production_acceptance=passed");
     expect(workflow).toContain("scope-runtime-native-evidence-");
+    expect(workflow).toContain("nativeProof:$native[0], productionSupervisor:null");
     expect(workflow).toContain("retention-days: 7");
   });
 
