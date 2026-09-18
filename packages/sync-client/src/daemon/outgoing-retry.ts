@@ -10,26 +10,33 @@ export function createOutgoingRetry(options: {
   onError: (error: unknown, path: string) => void;
   onOverflow: () => void;
 }) {
-  const pending = new Set<string>();
+  const pending = new Map<string, WatcherEvent["type"]>();
   return {
     has: (path: string) => pending.has(path),
+    isDeletion: (path: string) => pending.get(path) === "unlink",
+    shouldPull: (path: string, remoteHash: string | undefined, lastSyncedHash: string | undefined) =>
+      pending.get(path) !== "unlink" && (!pending.has(path) || remoteHash !== lastSyncedHash),
     succeeded: (path: string) => { pending.delete(path); },
-    failed(path: string) {
+    failed(path: string, type: WatcherEvent["type"] = "change") {
       pending.delete(path);
       if (pending.size >= 1000) {
-        const oldest = pending.values().next().value;
+        const oldest = pending.keys().next().value;
         if (oldest !== undefined) pending.delete(oldest);
         options.onOverflow();
       }
-      pending.add(path);
+      pending.set(path, type);
     },
     async retry(shouldReplay: (path: string) => boolean = () => true) {
-      for (const path of [...pending]) {
+      for (const [path, type] of [...pending]) {
         if (!shouldReplay(path)) continue;
         try {
           const absolute = resolve(options.syncRoot, path);
           const rel = relative(resolve(options.syncRoot), absolute);
           if (!rel || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) throw new Error("Invalid retry path");
+          if (type === "unlink") {
+            await options.replay({ type, path });
+            continue;
+          }
           let event: WatcherEvent;
           try {
             const info = await lstat(absolute);

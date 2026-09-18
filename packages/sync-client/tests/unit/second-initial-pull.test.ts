@@ -28,6 +28,45 @@ function logger(): InitialPullLogger {
 }
 
 describe("runInitialPull", () => {
+  it("does not clear recovery failures when the batch cannot be persisted", async () => {
+    const onRecovered = vi.fn();
+    await expect(runInitialPull({
+      gatewayClient: { gatewayUrl: "https://app.matrix-os.com", token: "token" },
+      syncRoot: "/sync",
+      syncState: { manifestVersion: 1, lastSyncAt: 0, files: {} },
+      remoteFiles: { file: entry(HASH_A) },
+      toLocal: (path) => path,
+      toRemote: (path) => path,
+      logger: logger(),
+      requestPresignedUrls: async () => [{ path: "file", url: "https://r2.example.test/file", expiresIn: 900 }],
+      reconcileRemoteFileChange: async () => ({ status: "downloaded" as const }),
+      saveSyncState: async () => { throw new Error("disk full"); },
+      refreshConflictCopyPathIndex: () => {},
+      onRecovered,
+    })).rejects.toThrow("disk full");
+    expect(onRecovered).not.toHaveBeenCalled();
+  });
+  it("acknowledges recoveries past the state cap only after persisting each bounded batch", async () => {
+    let persisted = 0;
+    let reconciled = 0;
+    let recovered = 0;
+    const total = 50_001;
+    await runInitialPull({
+      gatewayClient: { gatewayUrl: "https://app.matrix-os.com", token: "token" },
+      syncRoot: "/sync",
+      syncState: { manifestVersion: 1, lastSyncAt: 0, files: {} },
+      remoteFiles: Object.fromEntries(Array.from({ length: total }, (_, i) => [String(i), entry(HASH_A)])),
+      toLocal: (path) => path,
+      toRemote: (path) => path,
+      logger: logger(),
+      requestPresignedUrls: async (_client, files) => files.map(({ path }) => ({ path, url: "https://r2.example.test/file", expiresIn: 900 })),
+      reconcileRemoteFileChange: async () => { reconciled++; return { status: "downloaded" as const }; },
+      saveSyncState: async () => { persisted = reconciled; },
+      refreshConflictCopyPathIndex: () => {},
+      onRecovered: () => { recovered++; expect(persisted).toBeGreaterThanOrEqual(recovered); },
+    });
+    expect(recovered).toBe(total);
+  });
   it("batches presign requests and downloads with bounded concurrency", async () => {
     const remoteFiles = Object.fromEntries(
       Array.from({ length: 105 }, (_, i) => [`file-${i}.txt`, entry(HASH_A, i + 1)]),

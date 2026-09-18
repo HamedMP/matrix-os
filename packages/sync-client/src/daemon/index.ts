@@ -966,12 +966,11 @@ export async function runInitialPull(
   const reconcileRemote = options.reconcileRemoteFileChange ?? reconcileRemoteFileChange;
   const downloadRemoteFile = options.downloadFile ?? downloadFile;
   const concurrency = options.concurrency ?? INITIAL_PULL_CONCURRENCY;
-  const presignBatchSize = options.presignBatchSize ?? INITIAL_PULL_PRESIGN_BATCH_SIZE;
+  const presignBatchSize = Math.min(options.presignBatchSize ?? INITIAL_PULL_PRESIGN_BATCH_SIZE, 1000);
   const progressEvery = options.progressEvery ?? INITIAL_PULL_PROGRESS_EVERY;
   const result: InitialPullResult = { pulled: 0, skipped: 0, failed: 0 };
   let completed = 0;
   const filesToPull: InitialPullFile[] = [];
-  const recoveredPaths: string[] = [];
   const recordCompleted = () => {
     completed++;
     if (progressEvery > 0 && completed % progressEvery === 0) {
@@ -995,6 +994,7 @@ export async function runInitialPull(
   }
 
   for (const batch of chunkInitialPullFiles(filesToPull, presignBatchSize)) {
+    const recoveredPaths: string[] = [];
     let urls: PresignedUrl[];
     try {
       urls = await requestPresign(
@@ -1058,7 +1058,7 @@ export async function runInitialPull(
         }
         options.refreshConflictCopyPathIndex();
         result.pulled++;
-        if (recoveredPaths.length < SYNC_STATE_FILE_CAP) recoveredPaths.push(remotePath);
+        recoveredPaths.push(remotePath);
       } catch (err: unknown) {
         if (err instanceof AuthRejectedError) {
           throw err;
@@ -1069,11 +1069,16 @@ export async function runInitialPull(
         recordCompleted();
       }
     });
+    // Acknowledge every successful recovery after durable persistence, with
+    // memory bounded by the presign batch rather than the total file count.
+    if (recoveredPaths.length > 0) {
+      await options.saveSyncState();
+      for (const path of recoveredPaths) options.onRecovered?.(path);
+    }
   }
 
   if (result.pulled > 0 || result.skipped > 0) {
-    await options.saveSyncState();
-    for (const path of recoveredPaths) options.onRecovered?.(path);
+    if (result.pulled === 0) await options.saveSyncState();
     options.logger.info(result, "Initial pull complete");
   }
 
@@ -1320,7 +1325,7 @@ export async function startDaemon(): Promise<void> {
           }
         } catch (err) {
           syncActivity.failed(remotePath);
-          outgoingRetry.failed(event.path);
+          outgoingRetry.failed(event.path, event.type);
           if (existing) {
             syncState.files[remotePath] = existing;
           } else {
@@ -1352,7 +1357,7 @@ export async function startDaemon(): Promise<void> {
             syncActivity.record(remotePath, "delete", config.peerId);
           } catch (err) {
             syncActivity.failed(remotePath);
-            outgoingRetry.failed(event.path);
+            outgoingRetry.failed(event.path, event.type);
             if (exitOnAuthFailure(err, logger)) return;
             await adoptRemoteManifestVersion(syncState, err, async () => {
               await saveSyncState(stateFile, syncState);
@@ -1374,7 +1379,7 @@ export async function startDaemon(): Promise<void> {
     onError: (err) => logger.error({ err }, "Watcher event handling failed"),
     onEvent: (event) => enqueue([toRemote(event.path)], async () => {
       try { await handleLocalEvent(event); }
-      catch (err: unknown) { outgoingRetry.failed(event.path); throw err; }
+      catch (err: unknown) { outgoingRetry.failed(event.path, event.type); throw err; }
     }),
   });
 
@@ -1397,6 +1402,12 @@ export async function startDaemon(): Promise<void> {
         if (!localRel) continue;
 
         if (file.action !== "delete") {
+          if (outgoingRetry.isDeletion(localRel)) {
+            syncActivity.failed(file.path);
+            shouldAdvanceManifestVersion = false;
+            logger.warn({ path: file.path }, "Remote update conflicts with pending local deletion; retaining deletion for resolution");
+            continue;
+          }
           try {
             const urls = await requestPresignedUrls(gatewayClient, [
               { path: file.path, action: "get" },
@@ -1597,11 +1608,18 @@ export async function startDaemon(): Promise<void> {
           toLocal: (path) => {
             const local = toLocal(path);
             if (!local) return null;
+            if (outgoingRetry.isDeletion(local)) {
+              if (remoteFiles[path]?.hash !== syncState.files[path]?.lastSyncedHash) {
+                syncActivity.failed(path);
+                logger.warn({ path }, "Remote update conflicts with pending local deletion; retaining deletion for resolution");
+              }
+              return null;
+            }
             // Preserve local delete/edit intent when the remote is unchanged.
             // Divergent remote edits must reconcile (and preserve conflicts)
             // before we permit any outgoing retry against the new revision.
-            return outgoingRetry.has(local) && remoteFiles[path]?.hash === syncState.files[path]?.lastSyncedHash
-              ? null : local;
+            return outgoingRetry.shouldPull(local, remoteFiles[path]?.hash, syncState.files[path]?.lastSyncedHash)
+              ? local : null;
           },
           toRemote,
           logger,

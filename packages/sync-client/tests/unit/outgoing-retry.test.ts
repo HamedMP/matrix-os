@@ -6,6 +6,22 @@ import { createOutgoingRetry } from "../../src/daemon/outgoing-retry.js";
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map((path) => rm(path, { recursive: true, force: true }))); });
 describe("outgoing retry", () => {
+  it("retains deletion intent if reconciliation recreates the local file", async () => {
+    const root = await mkdtemp(join(tmpdir(), "matrix-retry-")); roots.push(root);
+    const replay = vi.fn(async () => {});
+    const retry = createOutgoingRetry({ syncRoot: root, replay, onError: vi.fn(), onOverflow: vi.fn() });
+    retry.failed("deleted", "unlink");
+    await writeFile(join(root, "deleted"), "remote update");
+    expect(retry.isDeletion("deleted")).toBe(true);
+    expect(retry.shouldPull("deleted", "remote-new", "remote-old")).toBe(false);
+    expect(retry.shouldPull("deleted", "remote-old", "remote-old")).toBe(false);
+    await retry.retry();
+    expect(replay).toHaveBeenCalledWith({ type: "unlink", path: "deleted" });
+    retry.failed("deleted", "change");
+    expect(retry.isDeletion("deleted")).toBe(false);
+    expect(retry.shouldPull("deleted", "remote-new", "remote-old")).toBe(true);
+    expect(retry.shouldPull("deleted", "remote-old", "remote-old")).toBe(false);
+  });
   it("rejects escaped and symlinked targets without replaying them", async () => {
     const root = await mkdtemp(join(tmpdir(), "matrix-retry-")); roots.push(root);
     await writeFile(join(root, "file"), "bytes");
