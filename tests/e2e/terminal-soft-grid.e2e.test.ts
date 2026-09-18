@@ -111,7 +111,10 @@ describe("real terminal renderer soft-grid resizing", () => {
       await page.waitForTimeout(600);
       expect(await page.evaluate(() => (window as any).fixtureScrollFrames.length)).toBe(count);
       expect(errors).toEqual([]);
-    } finally { if (!electron) await page.close(); }
+    } finally {
+      if (!electron) await page.close();
+      else await page.goto(`${origin}/?surface=electron`);
+    }
   });
 
   it.each([

@@ -7,9 +7,10 @@ Zellij handles mouse-wheel history inside its native buffer; xterm's local scrol
 - 161 focused UI, transport, runtime and gateway tests passed. New coverage includes geometry, drag coalescing, ownership, unavailable-query recovery, reconnect cleanup, permission preservation, symlink rejection, artifact hashes, and a delayed query that must not block typing/pings.
 - Real Zellij 0.44.3 integration passed using an isolated home and real node-pty attachment: native mouse wheel, top/line31/bottom seek, and output appended while viewing history.
 - Three Chromium renderer integrations passed: actual Web Desktop, Web Canvas at 0.75 zoom, and Electron Desktop components with synthetic native protocol responses. One native Electron integration also passed. They verify capability negotiation, polling, native seek, observer rejection, and polling cleanup after unmount.
+- Full-suite native import regressions were fixed using the package imports map; all 38 follow-up contract/UI tests passed. The full run had 33 failures; see the PR for remaining failure boundaries.
 - Repository typecheck, runtime build, Electron production build, production shell build (CI test Clerk key), and pattern scan (0 violations) passed.
 - Rust 1.98.1 locked build completed; shipped asset/source hashes are tested. Full repository suite is tracked in the PR description.
-- React Doctor latest requests project installation; the runnable pinned 0.0.29 scan reports broader existing-file findings (shell 85 errors / 117 warnings, Electron 3 errors / 88 warnings). This is not a clean React Doctor result and has not been compared against an untouched base.
+- React Doctor latest requests project installation; the runnable pinned 0.0.29 scan reports findings scoped to this branch base (shell 17 compiler errors / 5 warnings, Electron 4 warnings). This is not a clean React Doctor result and has not been compared against an untouched base.
 
 ## Surface matrix
 

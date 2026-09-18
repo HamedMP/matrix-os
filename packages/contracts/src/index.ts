@@ -1,5 +1,5 @@
-import { TerminalScrollLineSchema, TerminalScrollStateSchema } from "./terminal-scroll.js";
-export * from "./terminal-scroll.js";
+import { TerminalScrollLineSchema, TerminalScrollStateSchema } from "#terminal-scroll";
+export * from "#terminal-scroll";
 export { APP_GENERATE_CHANNEL, AppGenerateContextSchema, AppGenerateEventSchema, createAppGenerateClient } from "#app-ai";
 export { APP_AI_TIMEOUT_MS, APP_AI_CHANNEL, AppAiInputSchema, AppAiRequestSchema, AppAiResultSchema, createAppAiClient } from "#app-ai";
 export type { AppAiInput, AppAiRequest, AppAiResult } from "#app-ai";
