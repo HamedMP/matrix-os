@@ -55,7 +55,7 @@ export function SharedWithMeRailRow() {
   const actorId = useConnection((state) => state.userId);
   const platformHost = useConnection((state) => state.platformHost);
   const api = useMemo(() => createDesktopCollaborationApi(platformHost), [platformHost]);
-  const [pendingCount, setPendingCount] = useState<number | null>(null);
+  const [pendingCount, setPendingCount] = useState(0);
   useEffect(() => {
     let active = true;
     if (!actorId || !api) return () => { active = false; };
@@ -65,13 +65,13 @@ export function SharedWithMeRailRow() {
         setPendingCount(page.items.filter((item) => item.status === "invited").length);
       }).catch((error: unknown) => {
         console.warn("[collaboration-navigation] inbox unavailable", error instanceof Error ? error.name : "UnknownError");
-        if (active) setPendingCount(null);
+        if (active) setPendingCount(0);
       });
     load();
     const unsubscribe = subscribeCollaborationDiscoveryChanged(load);
     return () => { active = false; unsubscribe(); };
   }, [actorId, api]);
-  if (pendingCount === null) return null;
+  if (!actorId || !api) return null;
   return <button type="button" aria-label="Shared with me"
     className="mx-1 flex min-h-9 items-center gap-2 rounded-lg px-2 text-left text-sm hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
     onClick={() => useTabs.getState().openTab({ kind: "shared", title: "Shared with me" })}>

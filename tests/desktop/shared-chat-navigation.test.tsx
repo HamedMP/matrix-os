@@ -47,12 +47,13 @@ const sharedChat = {
   revision: "1",
   messageCount: "0",
 } as const;
-const collaborationMock = vi.hoisted(() => ({ pending: 0 }));
+const collaborationMock = vi.hoisted(() => ({ pending: 0, failInbox: false }));
 
 vi.mock("../../desktop/src/renderer/src/lib/collaboration", () => ({
   createDesktopCollaborationApi: () => ({
     baseUrl: "https://app.matrix-os.com",
     get: vi.fn(async (path: string) => {
+      if (path.endsWith("/inbox") && collaborationMock.failInbox) throw new Error("InboxUnavailable");
       if (path.endsWith("/inbox")) return { items: collaborationMock.pending ? [{
         scopeId,
         runtimeId: "runtime_owner",
@@ -101,6 +102,7 @@ vi.mock("../../desktop/src/renderer/src/lib/collaboration", () => ({
 describe("Electron Shared with me navigation", () => {
   beforeEach(() => {
     collaborationMock.pending = 0;
+    collaborationMock.failInbox = false;
     vi.stubGlobal("ResizeObserver", class {
       observe() {}
       unobserve() {}
@@ -149,6 +151,14 @@ describe("Electron Shared with me navigation", () => {
     collaborationMock.pending = 1;
     notifyCollaborationDiscoveryChanged();
     expect(await screen.findByLabelText("1 pending invitations")).toBeVisible();
+  });
+
+  it("keeps Shared with me available when only its pending count fails", async () => {
+    collaborationMock.failInbox = true;
+    render(<SharedWithMeRailRow />);
+
+    expect(await screen.findByRole("button", { name: "Shared with me" })).toBeVisible();
+    expect(screen.queryByLabelText(/pending invitations/)).toBeNull();
   });
 
   it("renders the selected scope inside the canonical Chat workspace", async () => {
