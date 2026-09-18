@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 
 import React from "react";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -117,6 +119,23 @@ describe("Electron Shared with me navigation", () => {
   });
 
   afterEach(cleanup);
+
+  it("uses the centralized desktop overlay layers for shared sessions", () => {
+    const chatSource = readFileSync(resolve(
+      process.cwd(),
+      "desktop/src/renderer/src/features/chat/DesktopChatCollaboration.tsx",
+    ), "utf8");
+    const terminalSource = readFileSync(resolve(
+      process.cwd(),
+      "desktop/src/renderer/src/features/terminal/DesktopSharedTerminal.tsx",
+    ), "utf8");
+
+    for (const source of [chatSource, terminalSource]) {
+      expect(source).toContain("DESKTOP_Z_INDEX.dialog");
+      expect(source).toContain("DESKTOP_Z_INDEX.popover");
+      expect(source).toContain("layers={COLLABORATION_LAYERS}");
+    }
+  });
 
   it("hands an accepted shared Chat to the canonical Chat workspace", async () => {
     render(<DesktopChatCollaboration />);
