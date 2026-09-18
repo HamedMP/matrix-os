@@ -70,6 +70,25 @@ interface OpenApp {
 const FETCH_TIMEOUT_MS = 10_000;
 const MAX_TERMINAL_INSTANCES = 5;
 
+function mobileTerminalCapacityAction<T extends {
+  id: string;
+  sharedTerminalScopeId?: string;
+}>(
+  terminals: readonly T[],
+  requestedSharedScopeId?: string,
+): { kind: "open" } | { kind: "focus"; terminal: T } | { kind: "reject" } {
+  if (requestedSharedScopeId) {
+    const existing = terminals.find((terminal) => (
+      terminal.sharedTerminalScopeId === requestedSharedScopeId
+    ));
+    if (existing) return { kind: "focus", terminal: existing };
+    if (terminals.length >= MAX_TERMINAL_INSTANCES) return { kind: "reject" };
+  }
+  if (terminals.length < MAX_TERMINAL_INSTANCES) return { kind: "open" };
+  const latest = terminals[terminals.length - 1];
+  return latest ? { kind: "focus", terminal: latest } : { kind: "open" };
+}
+
 const BUILT_IN_APPS: MobileApp[] = [
   { id: "terminal", name: "Terminal", path: "__terminal__", iconSlug: "terminal" },
   { id: "files", name: "Files", path: "__file-browser__", iconSlug: "folder" },
@@ -232,16 +251,24 @@ export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenComman
 
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity is consumed by the launch-path useEffect dependency array below; removing useCallback would re-run that effect on every render and could re-open the launch app.
   const openApp = useCallback((app: MobileApp, options?: { sharedTerminalScopeId?: string }) => {
+    if (app.path.startsWith("__terminal__") && options?.sharedTerminalScopeId) {
+      const currentTerminals = stackRef.current.filter((entry) => entry.app.path.startsWith("__terminal__"));
+      if (mobileTerminalCapacityAction(currentTerminals, options.sharedTerminalScopeId).kind === "reject") {
+        toast("Close a Terminal before opening this shared session");
+        return;
+      }
+    }
     setOpenStack((prev) => {
       // Bring existing instance to the front rather than open a duplicate
       // (terminals are the only deliberately-multi-instance case and we
       // special-case them).
       if (app.path.startsWith("__terminal__")) {
         const terminalInstances = prev.filter((entry) => entry.app.path.startsWith("__terminal__"));
-        if (terminalInstances.length >= MAX_TERMINAL_INSTANCES) {
-          const latestTerminal = terminalInstances[terminalInstances.length - 1];
-          return [...prev.filter((entry) => entry.id !== latestTerminal.id), latestTerminal];
+        const action = mobileTerminalCapacityAction(terminalInstances, options?.sharedTerminalScopeId);
+        if (action.kind === "focus") {
+          return [...prev.filter((entry) => entry.id !== action.terminal.id), action.terminal];
         }
+        if (action.kind === "reject") return prev;
         const id = `term:${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
         return [...prev, {
           id,

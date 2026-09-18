@@ -1,10 +1,13 @@
 // @vitest-environment jsdom
 
 import React, { type ReactElement, type ReactNode } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { toast } from "sonner";
 import SharedChatPage from "../../shell/src/app/shared/chat/[scopeId]/page";
 import SharedTerminalPage from "../../shell/src/app/shared/terminal/[scopeId]/page";
 import SharedInvitationPage from "../../shell/src/app/shared/invitations/[invitationId]/page";
+import { MobileShell } from "../../shell/src/components/mobile/MobileShell";
 import {
   resetWindowManagerLayoutPersistenceForTests,
   useWindowManager,
@@ -16,8 +19,21 @@ vi.mock("next/navigation", () => ({
     throw new Error("NEXT_NOT_FOUND");
   }),
 }));
+vi.mock("../../shell/src/hooks/useFileWatcher", () => ({ useFileWatcher: vi.fn() }));
+vi.mock("../../shell/src/components/terminal/TerminalApp", () => ({
+  TerminalApp: ({ sharedScopeId }: { sharedScopeId?: string | null }) => (
+    <div data-testid="mobile-terminal" data-shared-scope={sharedScopeId ?? undefined} />
+  ),
+}));
+vi.mock("../../shell/src/components/Settings", () => ({ Settings: () => null }));
+vi.mock("sonner", () => ({ toast: vi.fn() }));
 
 const scopeId = "10000000-0000-4000-8000-000000000001";
+
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 function componentNames(node: ReactNode): string[] {
   if (!React.isValidElement(node)) return [];
@@ -83,6 +99,27 @@ describe("shared Terminal deep link", () => {
     } finally {
       resetWindowManagerLayoutPersistenceForTests();
     }
+  });
+
+  it("never substitutes an unrelated terminal when a shared launch reaches mobile capacity", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => [] })));
+    const { rerender } = render(<MobileShell />);
+    await act(async () => Promise.resolve());
+    act(() => {
+      for (let index = 0; index < 5; index += 1) {
+        fireEvent.click(screen.getByLabelText("Terminal"));
+      }
+    });
+    expect(screen.getAllByTestId("mobile-terminal")).toHaveLength(5);
+
+    const requestedScopeId = "20000000-0000-4000-8000-000000000002";
+    rerender(<MobileShell launchAppPath="__terminal__" sharedTerminalScopeId={requestedScopeId} />);
+
+    await waitFor(() => expect(toast).toHaveBeenCalledWith(
+      "Close a Terminal before opening this shared session",
+    ));
+    expect(screen.getAllByTestId("mobile-terminal")).toHaveLength(5);
+    expect(document.querySelector(`[data-shared-scope="${requestedScopeId}"]`)).toBeNull();
   });
 });
 
