@@ -8,6 +8,7 @@
     "./collaboration": "./src/collaboration.ts"
   },
   "imports": {
+    "#sync": "./src/sync.ts",
     "#app-ai": "./src/app-ai.ts",
     "#file-download": "./src/file-download.ts",
     "#release-alignment": "./src/release-alignment.ts",

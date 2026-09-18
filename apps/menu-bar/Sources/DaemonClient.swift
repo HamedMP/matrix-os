@@ -3,9 +3,11 @@ import Foundation
 struct DaemonState: Sendable {
     let status: SyncStatusModel.Status
     let peers: [PeerInfo]
+    let peersAvailable: Bool
     let activity: [ActivityItem]
     let conflicts: [ConflictItem]
     let invites: [ShareInvite]
+    let invitesAvailable: Bool
 }
 
 actor DaemonClient {
@@ -17,7 +19,7 @@ actor DaemonClient {
     }
 
     func getStatus() async throws -> DaemonState {
-        let response = try await sendRequest(["command": "status"])
+        let response = try await sendRequest(command: "status")
 
         guard let result = response["result"] as? [String: Any] else {
             throw DaemonError.invalidResponse
@@ -32,17 +34,29 @@ actor DaemonClient {
         return DaemonState(
             status: status,
             peers: peers,
+            peersAvailable: result["peers"] is [[String: Any]],
             activity: activity,
             conflicts: conflicts,
-            invites: invites
+            invites: invites,
+            invitesAvailable: result["invites"] is [[String: Any]]
         )
     }
 
     func sendCommand(_ command: String) async throws {
-        _ = try await sendRequest(["command": command])
+        _ = try await sendRequest(command: command)
     }
 
-    private func sendRequest(_ payload: [String: Any]) async throws -> [String: Any] {
+    private func sendRequest(
+        command: String,
+        args: [String: Any] = [:]
+    ) async throws -> [String: Any] {
+        let requestID = UUID().uuidString
+        let payload: [String: Any] = [
+            "id": requestID,
+            "v": 1,
+            "command": command,
+            "args": args,
+        ]
         let data = try JSONSerialization.data(withJSONObject: payload)
         let message = data + Data([0x0A]) // newline-delimited JSON
 
@@ -64,11 +78,23 @@ actor DaemonClient {
             let bytesRead = read(socket, buffer, bufferSize)
             if bytesRead <= 0 { break }
             responseData.append(buffer, count: bytesRead)
+            guard responseData.count <= 1_048_576 else {
+                throw DaemonError.responseTooLarge
+            }
             if responseData.contains(0x0A) { break }
         }
 
         guard let json = try JSONSerialization.jsonObject(with: responseData) as? [String: Any] else {
             throw DaemonError.invalidResponse
+        }
+        guard json["v"] as? Int == 1,
+              json["id"] as? String == requestID
+        else {
+            throw DaemonError.invalidResponse
+        }
+        if let daemonError = json["error"] as? [String: Any] {
+            let code = daemonError["code"] as? String ?? "request_failed"
+            throw DaemonError.requestFailed(code)
         }
 
         return json
@@ -183,10 +209,25 @@ actor DaemonClient {
     }
 }
 
-enum DaemonError: Error {
+enum DaemonError: LocalizedError {
     case socketCreateFailed
     case connectFailed
     case writeFailed
     case invalidResponse
     case pathTooLong
+    case responseTooLarge
+    case requestFailed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .connectFailed:
+            return "Matrix Sync service is unavailable."
+        case .requestFailed:
+            return "Matrix Sync request failed. Please try again."
+        case .responseTooLarge:
+            return "Matrix Sync returned too much data."
+        default:
+            return "Matrix Sync could not complete the request."
+        }
+    }
 }

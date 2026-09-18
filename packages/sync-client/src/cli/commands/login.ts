@@ -9,10 +9,12 @@ import {
   defaultPlatformUrl,
   defaultSyncPath,
   generatePeerId,
-  loadConfig,
-  saveConfig,
   type SyncConfig,
 } from "../../lib/config.js";
+import {
+  loadProfileSyncConfig,
+  saveProfileSyncConfig,
+} from "../../lib/profile-sync-config.js";
 import { loadProfiles, saveProfiles, type ProfilesFile } from "../../lib/profiles.js";
 import {
   cliFetchError,
@@ -103,7 +105,7 @@ export const loginCommand = defineCommand({
       // Also stamp localhost endpoints into config so the daemon points at
       // the local docker stack instead of matrix-os.com. Preserve syncPath
       // and peerId if a config already exists.
-        const existingDev = await loadConfig();
+        const existingDev = (await loadProfileSyncConfig({ profileName: "local" }))?.config ?? null;
         const next: SyncConfig = {
           profile: "local",
           platformUrl: localProfile.platformUrl,
@@ -117,7 +119,7 @@ export const loginCommand = defineCommand({
           exclude: existingDev?.exclude,
           pauseSync: existingDev?.pauseSync ?? false,
         };
-        await saveConfig(next);
+        await saveProfileSyncConfig(next, { bindDaemon: false });
 
         getCliTelemetry().captureLoggedIn();
 
@@ -137,13 +139,13 @@ export const loginCommand = defineCommand({
         return;
       }
 
-    const existing = await loadConfig();
     const profiles = await loadProfiles();
     const profileName = typeof ctx.args.profile === "string" ? ctx.args.profile : profiles.active;
     const profile = profiles.profiles[profileName];
     if (!profile) {
       throw Object.assign(new Error("profile_not_found"), { code: "profile_not_found" });
     }
+    const existing = (await loadProfileSyncConfig({ profileName }))?.config ?? null;
     const platformUrl =
       (typeof ctx.args.platform === "string" && ctx.args.platform) ||
       profile.platformUrl ||
@@ -246,7 +248,7 @@ export const loginCommand = defineCommand({
       exclude: existing?.exclude,
       pauseSync: existing?.pauseSync ?? false,
     };
-    await saveConfig(next);
+    await saveProfileSyncConfig(next, { bindDaemon: false });
     await saveProfile(profiles, profileName, {
       platformUrl,
       gatewayUrl: next.gatewayUrl,
