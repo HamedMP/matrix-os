@@ -86,6 +86,35 @@ describe("real terminal renderer soft-grid resizing", () => {
   }
 
   it.each([
+    { surface: "web", zoom: 1 }, { surface: "web", zoom: 0.75 }, { surface: "electron", zoom: 1 },
+  ].filter((entry) => !nativeElectron || entry.surface === "electron"))("wires native history polling and drag in $surface at $zoom", async ({ surface, zoom }) => {
+    const page = electron ? await electron.firstWindow() : await browser.newPage({ viewport: { width: 1450, height: 1050 } });
+    const errors: string[] = []; page.on("pageerror", (error) => errors.push(error.message));
+    try {
+      if (electron) await page.locator("#terminal-window").waitFor();
+      await page.goto(`${origin}/?surface=${surface}&zoom=${zoom}&nativeScroll=1`);
+      const rail = page.locator('[data-terminal-scrollbar="content"]');
+      await expect.poll(() => rail.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+      const bottom = await rail.evaluate((element) => element.scrollTop);
+      await page.evaluate(() => (window as any).fixtureNativeWheel());
+      await expect.poll(() => rail.evaluate((element) => element.scrollTop)).toBeLessThan(bottom / 2);
+      await rail.evaluate((element) => { element.scrollTop = 0; element.dispatchEvent(new Event("scroll")); });
+      await expect.poll(() => page.evaluate(() => (window as any).fixtureScrollFrames.some((f: any) => f.type === "scroll-to" && f.line === 0))).toBe(true);
+      await page.evaluate(() => (window as any).fixtureObserve());
+      const seeks = await page.evaluate(() => (window as any).fixtureScrollFrames.filter((f: any) => f.type === "scroll-to").length);
+      await rail.evaluate((element) => { element.scrollTop = 200; element.dispatchEvent(new Event("scroll")); });
+      await page.waitForTimeout(600);
+      expect(await page.evaluate(() => (window as any).fixtureScrollFrames.filter((f: any) => f.type === "scroll-to").length)).toBe(seeks);
+      await page.screenshot({ path: resolve(evidence, `native-history-${surface}-${zoom}.png`), fullPage: true });
+      await page.evaluate(() => (window as any).fixtureUnmount());
+      const count = await page.evaluate(() => (window as any).fixtureScrollFrames.length);
+      await page.waitForTimeout(600);
+      expect(await page.evaluate(() => (window as any).fixtureScrollFrames.length)).toBe(count);
+      expect(errors).toEqual([]);
+    } finally { if (!electron) await page.close(); }
+  });
+
+  it.each([
     { surface: "web", name: "Web Desktop", zoom: 1 }, { surface: "web", name: "Web Canvas", zoom: 0.75 },
     { surface: "electron", name: "Electron Desktop", zoom: 1 },
     { surface: "web-mobile", name: "Web Mobile", zoom: 1 },

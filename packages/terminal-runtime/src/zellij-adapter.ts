@@ -1,3 +1,4 @@
+import { prepareNativeScrollPlugin, queryNativeScroll } from "./native-scroll-bridge.js";
 import { execFile as nodeExecFile, spawn as spawnProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { chmod, mkdir, mkdtemp, open, realpath as nodeRealpath, rename, rm } from "node:fs/promises";
@@ -122,6 +123,7 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
   private readonly workspaceLifecycle?: WorkspaceZellijLifecycle;
   private readonly runtimeEnvironment: Record<string, string>;
   private attachmentOpenChain = Promise.resolve();
+  private scrollPluginReady: Promise<void> | null = null;
 
   constructor(options: ZellijCliRuntimeAdapterOptions) {
     this.homePath = options.homePath;
@@ -672,6 +674,16 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
     await this.run(["delete-session", logicalSessionName, "--force"]);
   }
 
+  async scrollState(sessionNameInput: string, paneId: string, line?: number) {
+    const { sessionName, binaryPath } = await this.resolveWorkspaceTarget(sessionNameInput);
+    this.scrollPluginReady ??= prepareNativeScrollPlugin(this.homePath, this.runtimeEnvironment)
+      .catch((error: unknown) => { this.scrollPluginReady = null; throw error; });
+    await this.scrollPluginReady;
+    return queryNativeScroll({ sessionName, paneId, line,
+      run: (args, timeoutMs) => this.runCommand(args, binaryPath, timeoutMs),
+    });
+  }
+
   async resizeSession(sessionNameInput: string, size: { cols: number; rows: number }): Promise<void> {
     z.string().regex(SESSION_NAME).parse(sessionNameInput);
     const parsed = z.object({ cols: z.number().int().min(20).max(500), rows: z.number().int().min(5).max(200) }).parse(size);
@@ -910,7 +922,7 @@ function createCommandRunner(options: {
   timeoutMs: number;
 }): (args: string[], timeoutMs?: number) => Promise<string> {
   return (args, timeoutMs) => new Promise((resolve, reject) => {
-    nodeExecFile(options.binaryPath, args, {
+    const child = nodeExecFile(options.binaryPath, args, {
       cwd: options.cwd,
       env: options.env,
       timeout: timeoutMs ?? options.timeoutMs,
@@ -923,6 +935,8 @@ function createCommandRunner(options: {
         reject(failure);
       } else resolve(String(stdout));
     });
+    // `zellij pipe` otherwise waits forever for stdin even after replying.
+    if (args[2] === "pipe") child?.stdin?.end();
   });
 }
 

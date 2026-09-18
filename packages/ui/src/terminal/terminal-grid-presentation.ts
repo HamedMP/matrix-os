@@ -1,3 +1,4 @@
+import type { TerminalScrollState } from "@matrix-os/contracts";
 import { computeSoftGridLayout } from "./terminal-soft-grid.js";
 import { createTerminalScrollbar } from "./terminal-scrollbar.js";
 import { terminalContentExtent } from "./terminal-content-extent.js";
@@ -24,6 +25,7 @@ interface GridPresentationOptions {
   enabled?: () => boolean;
   onScale?: (scale: number) => void;
   getParentScale?: () => number;
+  nativeHistory?: { getState(): TerminalScrollState | null; scrollTo(line: number): void };
 }
 
 function pixels(value: string): number {
@@ -236,7 +238,7 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
       left: host.scrollLeft,
     };
     if (!scrollbar && terminal.buffer && terminal.scrollToLine && terminal.onScroll && host.parentElement) {
-      scrollbar = createTerminalScrollbar({ host, root, terminal: {
+      scrollbar = createTerminalScrollbar({ host, root, nativeHistory: options.nativeHistory, terminal: {
         buffer: terminal.buffer, scrollToLine: terminal.scrollToLine.bind(terminal), onScroll: terminal.onScroll.bind(terminal),
       }, getCellHeight: () => visualCellHeight, getTailHeight: () => liveContentHeight, onPan: () => { wheelPannedAway = true; } });
     }

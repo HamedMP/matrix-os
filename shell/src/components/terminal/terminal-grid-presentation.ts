@@ -7,9 +7,10 @@ import { TERMINAL_CANONICAL_MAX_COLS, TERMINAL_CANONICAL_MAX_ROWS } from "./term
 
 export function createWebTerminalGridPresentation({
   container, getTerm, getFitAddon, getSessionId, getSocket, getFontSize,
-  isDisposed, allowRemoteResize, suppressNativeKeyboard, connectWs, onScale, getParentScale, log,
+  nativeHistory, isDisposed, allowRemoteResize, suppressNativeKeyboard, connectWs, onScale, getParentScale, log,
 }: {
   container: HTMLElement;
+  nativeHistory?: { getState(): import("@matrix-os/contracts").TerminalScrollState | null; scrollTo(line: number): void };
   getTerm: () => Terminal;
   getFitAddon: () => FitAddon;
   getSessionId: () => string | null | undefined;
@@ -32,7 +33,7 @@ export function createWebTerminalGridPresentation({
   const declaresViewportSize = () => usesCanonicalGrid() && !suppressNativeKeyboard;
 
   const presentation = createTerminalGridPresentation({
-    host: container,
+    host: container, nativeHistory,
     getTerminal: getTerm,
     getConfiguredFontSize: getFontSize,
     enabled: usesCanonicalGrid,

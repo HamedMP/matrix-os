@@ -1,3 +1,4 @@
+import { TerminalScrollLineSchema, type TerminalScrollState } from "@matrix-os/contracts";
 import {
   TerminalRefSchema,
   TerminalPaneActionSchema,
@@ -44,6 +45,7 @@ export interface ZellijRuntimeAdapter {
   renameTab?(sessionName: string, tabId: number, name: string): Promise<void>;
   closeTab?(sessionName: string, tabId: number): Promise<void>;
   deleteSession?(sessionName: string): Promise<void>;
+  scrollState?(sessionName: string, paneId: string, line?: number): Promise<TerminalScrollState>;
   resizeSession?(sessionName: string, size: { cols: number; rows: number }): Promise<void>;
   writeToPane?(sessionName: string, paneId: string, data: Uint8Array): Promise<void>;
   paneAction?(
@@ -97,6 +99,7 @@ interface AttachmentState {
   handle: ZellijAttachment;
   viewers: Map<string, ViewerState>;
   mouseModes: TerminalMouseModeState;
+  scrollRead?: { at: number; ttl: number; pending: boolean; result: Promise<TerminalScrollState | null> };
 }
 
 interface InputQueueState {
@@ -425,6 +428,38 @@ export class TerminalRuntime {
       ) throw new TerminalRuntimeError("unavailable");
       await this.zellij.writeToPane(workspace.zellijSessionName, tab.zellijPaneId, data);
     });
+  }
+
+  async scrollState(refInput: TerminalRef, line?: number): Promise<TerminalScrollState | null> {
+    const ref = TerminalRefSchema.parse(refInput);
+    if (line !== undefined) TerminalScrollLineSchema.parse(line);
+    const attachment = this.attachments.get(refKey(ref));
+    if (!attachment || !this.zellij.scrollState) return null;
+    if (line === undefined && attachment.scrollRead && (attachment.scrollRead.pending || Date.now() - attachment.scrollRead.at < attachment.scrollRead.ttl)) {
+      return attachment.scrollRead.result;
+    }
+    const read = async () => {
+      try {
+        const workspace = await this.requireRuntimeWorkspace(ref.workspaceId);
+        const tab = workspace.tabs[ref.tabId];
+        if (!tab?.zellijPaneId) return null;
+        return await this.zellij.scrollState!(workspace.zellijSessionName, tab.zellijPaneId, line);
+      } catch (error: unknown) {
+        console.warn("[terminal-runtime] native scroll unavailable", error instanceof Error ? error.name : "unknown_error");
+        return null;
+      }
+    };
+    // Writes share the workspace mutation queue; polling shares one in-flight query per tab.
+    const previous = attachment.scrollRead?.result;
+    const result = line === undefined
+      ? (previous ? previous.then(read) : read())
+      : this.runWorkspaceMutation(async () => { await previous; return read(); });
+    const entry = { at: Date.now(), ttl: 500, pending: true, result };
+    attachment.scrollRead = entry;
+    void result.then((state) => { entry.pending = false; entry.at = Date.now(); entry.ttl = state ? 500 : 5_000; }).catch((error: unknown) => {
+      console.warn("[terminal-runtime] native scroll query failed", error instanceof Error ? error.name : "unknown_error");
+    });
+    return result;
   }
 
   async paneAction(refInput: TerminalRef, actionInput: TerminalPaneAction): Promise<void> {
