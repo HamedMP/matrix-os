@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { describe, expect, it, vi } from "vitest";
 import { SessionDiscussionLayer } from "../../packages/ui/src/collaboration/SessionDiscussionLayer";
@@ -114,5 +114,62 @@ describe("SessionDiscussionLayer", () => {
       `/api/collaboration/scopes/${scope.id}/discussion/user-state`,
       { readThroughSeq: "101" },
     ));
+  });
+
+  it("fences an in-flight page when the collaboration identity changes", async () => {
+    const scopeA = {
+      id: "10000000-0000-4000-8000-000000000001",
+      ownerId: "user_owner",
+      kind: "chat" as const,
+      resourceId: "chat_a",
+      membershipMode: "direct" as const,
+      lifecycle: "shared" as const,
+      revision: "1",
+      authEpoch: "1",
+      authorityGeneration: "1",
+      role: "editor" as const,
+      capabilities: { read: true, discuss: true, manageMembers: false, requestAi: true,
+        observeTerminal: false, controlTerminal: false, stopTerminal: false },
+    };
+    const scopeB = { ...scopeA, id: "20000000-0000-4000-8000-000000000002", resourceId: "chat_b" };
+    const note = (scopeId: string, text: string) => ({
+      id: `note-${scopeId}`,
+      scopeId,
+      sequence: "1",
+      actor: { actorId: "ada", displayName: "Ada" },
+      text,
+      createdAt: "2026-09-17T12:00:00.000Z",
+    });
+    let resolveScopeA!: (value: unknown) => void;
+    const api = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async (path: string) => {
+        if (path.includes(scopeA.id)) return new Promise((resolve) => { resolveScopeA = resolve; });
+        return { messages: [note(scopeB.id, "Scope B note")], latestSequence: "1" };
+      }),
+      post: vi.fn(),
+      patch: vi.fn(async (_path: string, body: unknown) => body),
+      delete: vi.fn(),
+    };
+    function Harness({ scope }: { scope: typeof scopeA }) {
+      const value = useSessionDiscussion({ api, scope, actorId: "ada", runtimeId: "owner-vps", open: true });
+      return <SessionDiscussionLayer open onClose={vi.fn()} discussion={value} />;
+    }
+    const view = render(<Harness scope={scopeA} />);
+    await waitFor(() => expect(api.get).toHaveBeenCalledWith(expect.stringContaining(scopeA.id)));
+
+    view.rerender(<Harness scope={scopeB} />);
+    expect(await screen.findByText("Scope B note")).toBeVisible();
+    await act(async () => {
+      resolveScopeA({ messages: [note(scopeA.id, "Scope A note")], latestSequence: "1" });
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByText("Scope A note")).toBeNull();
+    expect(screen.getByText("Scope B note")).toBeVisible();
+    expect(api.patch).not.toHaveBeenCalledWith(
+      expect.stringContaining(scopeA.id),
+      expect.anything(),
+    );
   });
 });
