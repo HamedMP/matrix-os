@@ -13,6 +13,10 @@ import {
 } from '../../packages/platform/src/customer-vps-cloud-init.js';
 
 describe('platform/customer-vps-cloud-init', () => {
+  it('ships scoped sync credentials in the canonical host environment', async () => {
+    const rendered = renderCloudInitTemplate(await loadCustomerVpsCloudInitTemplate(), input);
+    expect(rendered).toContain('MATRIX_SYNC_RUNTIME_TOKEN=sync-runtime-verification-secret');
+  });
   it('rendered user_data stays under the Hetzner 32KiB limit with headroom', async () => {
     // Hetzner rejects servers whose user_data exceeds 32768 bytes with a
     // generic 422 invalid_input; the platform surfaces it as
@@ -33,6 +37,7 @@ describe('platform/customer-vps-cloud-init', () => {
         'https://app.matrix-os.com/system-bundles/0.0.0-pr10000.abcdef012345/matrix-host-bundle.tar.gz',
       registrationToken: 'r'.repeat(64),
       platformVerificationToken: 'v'.repeat(64),
+      syncRuntimeToken: 's'.repeat(64),
       fundedAiRuntimeToken: 'f'.repeat(64),
       postgresPassword: 'p'.repeat(48),
     };
@@ -55,6 +60,7 @@ describe('platform/customer-vps-cloud-init', () => {
     platformRegisterUrl: 'https://platform.example/vps/register',
     platformInternalUrl: 'https://platform.example',
     platformVerificationToken: 'platform-verification-secret',
+    syncRuntimeToken: 'sync-runtime-verification-secret',
     fundedAiRuntimeToken: 'funded-runtime-verification-secret',
     registrationToken: 'registration-secret',
     registrationTokenExpiresAt: '2026-08-29T20:45:00.000Z',

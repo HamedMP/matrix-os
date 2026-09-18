@@ -64,6 +64,7 @@ export * from "#funded-ai";
 export * from "#getting-started";
 export * from "#safe-client-error";
 export * from "#support-chat-properties";
+export * from "./sync.js";
 export * from "#terminal-clipboard";
 export * from "#terminal-links";
 export { IsoTimestampSchema, ProviderModelReferenceSchema } from "#contract-primitives";

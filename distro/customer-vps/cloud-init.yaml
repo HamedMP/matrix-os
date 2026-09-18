@@ -398,6 +398,7 @@ write_files:
       PLATFORM_INTERNAL_URL={{platformInternalUrl}}
       UPGRADE_TOKEN={{platformVerificationToken}}
       MATRIX_AUTH_TOKEN={{platformVerificationToken}}
+      MATRIX_SYNC_RUNTIME_TOKEN={{syncRuntimeToken}}
       MATRIX_FUNDED_AI_RUNTIME_TOKEN={{fundedAiRuntimeToken}}
       MATRIX_CODE_PROXY_TOKEN={{platformVerificationToken}}
       MATRIX_FUNDED_AI_ENABLED={{fundedAiEnabled}}
@@ -447,10 +448,7 @@ runcmd:
     fi
   - |
     set -eu
-    # Hetzner marks the root password expired when a server is created without
-    # SSH keys; expired accounts fail sudo/PAM account checks, which breaks
-    # every sudo-based installer (Hermes, tool pack). Clear expiry for the
-    # system accounts we transition between.
+    # Clear Hetzner's password expiry so sudo/PAM permits service installers.
     chage -d "$(date +%Y-%m-%d)" -M -1 -E -1 root || true
     chage -d "$(date +%Y-%m-%d)" -M -1 -E -1 matrix || true
   - |

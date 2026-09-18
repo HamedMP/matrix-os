@@ -14,11 +14,13 @@ function download({
   broken = false,
   empty = false,
   chunks,
+  scoped = false,
 }: {
   existing?: boolean;
   broken?: boolean;
   empty?: boolean;
   chunks?: string[];
+  scoped?: boolean;
 } = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'matrix-broker-download-'));
   directories.push(directory);
@@ -30,7 +32,12 @@ function download({
     : chunks
       ? `new ReadableStream({start(c){for(const chunk of ${JSON.stringify(chunks)}) c.enqueue(new TextEncoder().encode(chunk));c.close();}})`
       : JSON.stringify(empty ? '' : 'system/runtime-slots/pr-1502/db/snapshots/2026-09-09T1200Z.dump\n');
-  const stub = `globalThis.fetch = async (url) => {
+  const stub = `globalThis.fetch = async (url, init) => {
+    if (${scoped} && String(url).endsWith('/presign/get')) {
+      if (init.headers.authorization !== 'Bearer scoped-test-only-token' ||
+          init.headers['x-matrix-machine-id'] !== 'machine-test' ||
+          init.headers['x-matrix-runtime-slot'] !== 'pr-1502') throw new Error('missing scope');
+    }
     if (String(url).endsWith('/presign/get')) return Response.json({url:'https://download.test/snapshot'});
     return new Response(${downloadBody});
   };`;
@@ -43,12 +50,16 @@ function download({
     env: {
       MATRIX_HANDLE: 'pr-1502', PLATFORM_INTERNAL_URL: 'https://platform.test',
       UPGRADE_TOKEN: 'test-only-token-not-a-real-credential',
+      ...(scoped ? { MATRIX_SYNC_RUNTIME_TOKEN: 'scoped-test-only-token', MATRIX_MACHINE_ID: 'machine-test', MATRIX_RUNTIME_SLOT: 'pr-1502' } : {}),
     },
   });
   return { directory, destination, result };
 }
 
 describe('host R2 download completion', () => {
+  it('uses scoped runtime credentials and headers for a secondary backup', () => {
+    expect(download({ scoped: true }).result.status).toBe(0);
+  });
   it.each([false, true])('commits the destination before successful exit (existing=%s)', (existing) => {
     const { directory, destination, result } = download({ existing });
     expect(result.error).toBeUndefined();
