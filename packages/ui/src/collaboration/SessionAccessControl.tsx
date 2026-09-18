@@ -52,7 +52,9 @@ export function SessionAccessControl({ api, scope }: {
   const toggle = () => {
     const next = !open;
     setOpen(next);
-    if (next && members.length === 0) void refresh().catch(() => undefined);
+    if (next && members.length === 0) void refresh().catch((failure: unknown) => {
+      console.warn("[collaboration-access] initial load failed", failure instanceof Error ? failure.name : "UnknownError");
+    });
   };
   const accepted = members.filter((member) => member.status === "accepted");
   return <div className="relative">

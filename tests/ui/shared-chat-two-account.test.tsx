@@ -212,7 +212,7 @@ describe("shared Chat two-account lifecycle", () => {
     const reconnectedEditor = render(
       <SharedChatPanel api={editorApi} actorId="user_editor" runtimeId="editor-runtime" scopeId={scopeId} />,
     );
-    expect(await within(reconnectedEditor.container).findByText("Shared answer for everyone")).toBeVisible();
+    await waitFor(() => expect(within(reconnectedEditor.container).getByText("Shared answer for everyone")).toBeVisible());
     expect(within(reconnectedEditor.container).queryByText("Ada joined the discussion")).toBeNull();
     fireEvent.click(within(reconnectedEditor.container).getByRole("button", { name: "Open discussion" }));
     expect(await within(reconnectedEditor.container).findByText("Ada joined the discussion")).toBeVisible();
