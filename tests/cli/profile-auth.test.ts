@@ -49,7 +49,8 @@ describe("profile-aware auth CLI commands", () => {
     const auth = JSON.parse(
       await readFile(join(home, ".matrixos", "profiles", "local", "auth.json"), "utf-8"),
     );
-    const config = JSON.parse(await readFile(join(home, ".matrixos", "config.json"), "utf-8"));
+    const config = JSON.parse(await readFile(join(home, ".matrixos", "profiles", "local", "config.json"), "utf-8"));
+    await expect(readFile(join(home, ".matrixos", "config.json"), "utf-8")).rejects.toMatchObject({ code: "ENOENT" });
     const profiles = JSON.parse(await readFile(join(home, ".matrixos", "profiles.json"), "utf-8"));
     await expect(readFile(join(home, ".matrixos", "auth.json"), "utf-8")).rejects.toMatchObject({ code: "ENOENT" });
     expect(auth).toMatchObject({ accessToken: "dev-token", userId: "user_dev", handle: "dev" });

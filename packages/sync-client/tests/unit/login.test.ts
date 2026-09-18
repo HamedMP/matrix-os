@@ -5,16 +5,16 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 const {
   clearProfileAuthMock,
   saveProfileAuthMock,
-  saveConfigMock,
-  loadConfigMock,
+  saveProfileSyncConfigMock,
+  loadProfileSyncConfigMock,
   loadProfilesMock,
   saveProfilesMock,
   loginFn,
 } = vi.hoisted(() => ({
   clearProfileAuthMock: vi.fn().mockResolvedValue(undefined),
   saveProfileAuthMock: vi.fn().mockResolvedValue(undefined),
-  saveConfigMock: vi.fn().mockResolvedValue(undefined),
-  loadConfigMock: vi.fn().mockResolvedValue(null),
+  saveProfileSyncConfigMock: vi.fn().mockResolvedValue(undefined),
+  loadProfileSyncConfigMock: vi.fn().mockResolvedValue(null),
   loadProfilesMock: vi.fn().mockResolvedValue({
     active: "cloud",
     profiles: {
@@ -43,8 +43,11 @@ vi.mock("../../src/lib/config.js", () => ({
   defaultGatewayUrl: () => "https://gateway.example",
   defaultSyncPath: () => "/tmp/syncpath",
   generatePeerId: () => "peer-test",
-  loadConfig: loadConfigMock,
-  saveConfig: saveConfigMock,
+}));
+
+vi.mock("../../src/lib/profile-sync-config.js", () => ({
+  loadProfileSyncConfig: loadProfileSyncConfigMock,
+  saveProfileSyncConfig: saveProfileSyncConfigMock,
 }));
 
 vi.mock("../../src/lib/profiles.js", () => ({
@@ -81,8 +84,8 @@ function lastJsonError(): {
 beforeEach(() => {
   clearProfileAuthMock.mockClear();
   saveProfileAuthMock.mockClear();
-  saveConfigMock.mockClear();
-  loadConfigMock.mockClear();
+  saveProfileSyncConfigMock.mockClear();
+  loadProfileSyncConfigMock.mockClear();
   loadProfilesMock.mockClear();
   saveProfilesMock.mockClear();
   loginFn.mockReset();
@@ -116,7 +119,7 @@ describe("loginCommand /api/me handling", () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(clearProfileAuthMock).not.toHaveBeenCalled();
-    expect(saveConfigMock).not.toHaveBeenCalled();
+    expect(saveProfileSyncConfigMock).not.toHaveBeenCalled();
   });
 
   it("emits JSON error output when /api/me returns 404 in --json mode", async () => {
@@ -140,7 +143,7 @@ describe("loginCommand /api/me handling", () => {
     });
     expect(lastJsonError().message).toContain("Choose a plan");
     expect(clearProfileAuthMock).not.toHaveBeenCalled();
-    expect(saveConfigMock).not.toHaveBeenCalled();
+    expect(saveProfileSyncConfigMock).not.toHaveBeenCalled();
   });
 
   it("preserves auth and does NOT save config when /api/me returns 500", async () => {
@@ -155,7 +158,7 @@ describe("loginCommand /api/me handling", () => {
     // Critical: auth token stays on disk so user can retry after transient fix.
     expect(clearProfileAuthMock).not.toHaveBeenCalled();
     // Critical: no half-provisioned config with a guessed gatewayUrl.
-    expect(saveConfigMock).not.toHaveBeenCalled();
+    expect(saveProfileSyncConfigMock).not.toHaveBeenCalled();
   });
 
   it("preserves auth and does NOT save config when /api/me throws (network error)", async () => {
@@ -166,7 +169,7 @@ describe("loginCommand /api/me handling", () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(clearProfileAuthMock).not.toHaveBeenCalled();
-    expect(saveConfigMock).not.toHaveBeenCalled();
+    expect(saveProfileSyncConfigMock).not.toHaveBeenCalled();
   });
 
   it("preserves auth and does NOT save config on other non-ok status (502)", async () => {
@@ -178,7 +181,7 @@ describe("loginCommand /api/me handling", () => {
     await runLogin();
 
     expect(clearProfileAuthMock).not.toHaveBeenCalled();
-    expect(saveConfigMock).not.toHaveBeenCalled();
+    expect(saveProfileSyncConfigMock).not.toHaveBeenCalled();
   });
 
   it("falls back to defaultGatewayUrl when /api/me returns 200 without one", async () => {
@@ -194,8 +197,8 @@ describe("loginCommand /api/me handling", () => {
 
     await runLogin();
 
-    expect(saveConfigMock).toHaveBeenCalledTimes(1);
-    const written = saveConfigMock.mock.calls[0]![0];
+    expect(saveProfileSyncConfigMock).toHaveBeenCalledTimes(1);
+    const written = saveProfileSyncConfigMock.mock.calls[0]![0];
     expect(written.gatewayUrl).toBe("https://gateway.example");
     expect(written.platformUrl).toBe(PLATFORM_URL);
   });
@@ -216,8 +219,8 @@ describe("loginCommand /api/me handling", () => {
     await runLogin();
 
     expect(clearProfileAuthMock).not.toHaveBeenCalled();
-    expect(saveConfigMock).toHaveBeenCalledTimes(1);
-    const written = saveConfigMock.mock.calls[0]![0];
+    expect(saveProfileSyncConfigMock).toHaveBeenCalledTimes(1);
+    const written = saveProfileSyncConfigMock.mock.calls[0]![0];
     expect(written.platformUrl).toBe(PLATFORM_URL);
     expect(written.gatewayUrl).toBe("https://app.matrix-os.com");
     expect(written.syncPath).toBe("/tmp/syncpath");

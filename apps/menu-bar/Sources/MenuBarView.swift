@@ -37,6 +37,12 @@ struct MenuBarView: View {
                 Text(status.statusText)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if let lastError = status.lastError {
+                    Text(lastError)
+                        .font(.caption2)
+                        .foregroundStyle(.red)
+                        .lineLimit(2)
+                }
             }
             Spacer()
         }

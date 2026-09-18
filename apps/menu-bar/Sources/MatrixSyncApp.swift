@@ -29,6 +29,7 @@ final class SyncStatusModel: ObservableObject {
     @Published var recentActivity: [ActivityItem] = []
     @Published var pendingConflicts: [ConflictItem] = []
     @Published var pendingInvites: [ShareInvite] = []
+    @Published var lastError: String?
 
     var iconName: String {
         switch status {
@@ -78,19 +79,33 @@ final class SyncStatusModel: ObservableObject {
             recentActivity = state.activity
             pendingConflicts = state.conflicts
             pendingInvites = state.invites
+            lastError = nil
         } catch {
             status = .offline
+            lastError = error.localizedDescription
         }
     }
 
     func pauseSync() async {
-        try? await daemonClient?.sendCommand("pause")
-        status = .paused
+        guard let client = daemonClient else { return }
+        do {
+            try await client.sendCommand("pause")
+            status = .paused
+            lastError = nil
+        } catch {
+            lastError = error.localizedDescription
+        }
     }
 
     func resumeSync() async {
-        try? await daemonClient?.sendCommand("resume")
-        await refresh()
+        guard let client = daemonClient else { return }
+        do {
+            try await client.sendCommand("resume")
+            lastError = nil
+            await refresh()
+        } catch {
+            lastError = error.localizedDescription
+        }
     }
 }
 

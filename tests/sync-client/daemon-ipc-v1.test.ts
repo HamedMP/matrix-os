@@ -6,6 +6,7 @@ import {
   parseDaemonRequest,
 } from "../../packages/sync-client/src/daemon/types.js";
 import { createIpcHandler } from "../../packages/sync-client/src/daemon/ipc-handler.js";
+import { createSyncActivity } from "../../packages/sync-client/src/daemon/sync-activity.js";
 import { createDaemonShellControlClient } from "../../packages/sync-client/src/daemon/shell-control-client.js";
 
 describe("daemon IPC v1 envelopes", () => {
@@ -118,9 +119,26 @@ describe("daemon IPC v1 envelopes", () => {
     for (const command of ["shell.list", "shell.create", "shell.destroy", "tab.list", "pane.split", "layout.list"]) {
       await expect(handler(command, {})).rejects.toThrow("Unknown IPC command");
     }
-    await expect(handler("sync.status", {})).resolves.toMatchObject({ syncing: true, fileCount: 0 });
+    await expect(handler("sync.status", {})).resolves.toMatchObject({ syncing: false, paused: false, status: "offline", fileCount: 0 });
     await expect(handler("sync.pause", {})).resolves.toEqual({ paused: true });
     await expect(handler("sync.resume", {})).resolves.toEqual({ paused: false });
+  });
+
+  it("projects live transfer activity and recovery through the production IPC dependencies", async () => {
+    const activity = createSyncActivity();
+    const handler = createIpcHandler({
+      config: baseConfig(), syncState: baseSyncState(), logger: { info: () => undefined },
+      saveConfig: async () => undefined, persistPauseState: async () => undefined,
+      clearAuth: async () => undefined, exit: () => undefined,
+      connectionState: () => "online", ...activity,
+    });
+    const end = activity.begin();
+    await expect(handler("status", {})).resolves.toMatchObject({ status: "syncing", activeTransferCount: 1 });
+    activity.failed("notes.txt");
+    end();
+    await expect(handler("status", {})).resolves.toMatchObject({ status: "error", pendingFailureCount: 1 });
+    activity.succeeded("notes.txt");
+    await expect(handler("status", {})).resolves.toMatchObject({ status: "synced", activeTransferCount: 0, pendingFailureCount: 0 });
   });
 
   it("rejects invalid workspace and tab IDs before dispatch", async () => {

@@ -58,7 +58,7 @@ describe("peers CLI command", () => {
     const fetchImpl = vi.fn(async () =>
       new Response(
         JSON.stringify({
-          peers: [{ peerId: "peer-1", hostname: "devhost", connectedAt: 1700000000000 }],
+          connectedPeers: [{ peerId: "peer-1", hostname: "devhost", connectedAt: 1700000000000 }],
         }),
       ),
     );
