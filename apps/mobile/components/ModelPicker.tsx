@@ -75,7 +75,7 @@ export function ModelPicker({
     <View style={styles.container}>
       {lockedInstanceId ? (
         <Text style={[styles.lockedHint, { color: theme.v2.appColors.muted }]}>
-          Provider locked. Start or fork a new Chat to use another Provider.
+          This Chat is bound to its agent harness. Start or fork a new Chat to use another harness.
         </Text>
       ) : null}
       {availableInstances.length > 0 ? (

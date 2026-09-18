@@ -287,7 +287,7 @@ export function ChatProviderSetupPanel({
           <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Harness and model</p>
           {lockedInstanceId ? (
             <div className="mb-2 flex items-start justify-between gap-3 rounded-md border border-border/50 bg-background/55 px-2.5 py-2 text-xs text-muted-foreground" role="note">
-              <span>This Chat is bound to its Provider. Start or fork a new Chat to use another Provider.</span>
+              <span>This Chat is bound to its agent harness. Start or fork a new Chat to use another harness.</span>
               {onNewChat ? (
                 <button type="button" className="shrink-0 font-medium text-foreground underline-offset-2 hover:underline" onClick={onNewChat}>
                   New Chat

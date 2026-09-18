@@ -350,7 +350,7 @@ describe("Chat canonical provider state", () => {
 
     fireEvent.change(await screen.findByPlaceholderText("Ask anything..."), { target: { value: "Continue" } });
     fireEvent.click(screen.getByRole("button", { name: "Setup" }));
-    expect(screen.getByText(/start or fork a new Chat/i)).toBeVisible();
+    expect(screen.getByText("This Chat is bound to its agent harness. Start or fork a new Chat to use another harness.")).toBeVisible();
     fireEvent.click(await screen.findByRole("button", { name: "Claude Opus 5 via Pi" }));
     fireEvent.change(screen.getByLabelText("Interaction mode"), { target: { value: "plan" } });
     fireEvent.change(screen.getByLabelText("Permission mode"), { target: { value: "full_access" } });

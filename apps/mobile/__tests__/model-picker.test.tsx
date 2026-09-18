@@ -95,7 +95,7 @@ describe("Native Mobile model picker Provider binding", () => {
     />);
 
     expect(screen.queryByRole("button", { name: "GPT-5" })).toBeNull();
-    expect(screen.getByText(/start or fork a new Chat/i)).toBeTruthy();
+    expect(screen.getByText("This Chat is bound to its agent harness. Start or fork a new Chat to use another harness.")).toBeTruthy();
     fireEvent.press(screen.getByRole("button", { name: "Opus" }));
     expect(onSelectionChange).toHaveBeenCalledWith({ instanceId: "pi_default", model: "anthropic:opus" });
   });
