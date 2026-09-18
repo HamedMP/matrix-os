@@ -142,6 +142,7 @@ interface ChatAppProps {
   queuedTurns?: CanonicalChatQueuedTurn[];
   onCancelQueuedTurn?: (id: string) => Promise<boolean>;
   providerSelection?: CanonicalChatModelSelection;
+  boundProviderInstanceId?: string;
   onSubmitInput?: (runId: string, requestId: string, input: Omit<CanonicalSubmitChatInputRequest, "clientRequestId">) => Promise<boolean>;
   onSubmitApproval?: (
     runId: string,
@@ -203,6 +204,7 @@ function ChatAppContent({
   onRenameConversation,
   onSubmit,
   providerSelection,
+  boundProviderInstanceId,
   agentClient, queuedTurns = [], onCancelQueuedTurn,
   onSubmitApproval,
   onSubmitInput,
@@ -265,7 +267,7 @@ function ChatAppContent({
   };
   // react-doctor-disable-next-line react-hooks-js/refs -- lazy initializer performs one bounded localStorage read.
   const [channels, setChannels] = useState(() => new Set(getInitialHermesSetup().channels));
-  const providerState = useChatProviderState(providerSelection);
+  const providerState = useChatProviderState(providerSelection, boundProviderInstanceId);
   // Comfortable ≥44px touch targets on mobile; unchanged on desktop.
   const touchIcon = mobile ? "size-9" : "size-8";
   const grouped = groupMessages(messages);
@@ -543,7 +545,8 @@ function ChatAppContent({
             onSetupAction={(instance, action) => {
               void runProviderSetupAction(instance, action);
             }}
-            lockedInstanceId={providerSelection?.instanceId}
+            lockedInstanceId={boundProviderInstanceId}
+            onNewChat={onNewChat}
             showChannels={providerState.selected?.driverKind === "hermes"}
             channels={channels}
             onToggleChannel={(channel) => {

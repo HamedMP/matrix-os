@@ -650,6 +650,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView }
     queuedTurns: detail?.queuedTurns ?? [],
     cancelQueuedTurn,
     providerSelection: activeRecord?.chat.currentSelection,
+    boundProviderInstanceId: activeRecord?.providerBinding?.instanceId,
     conversations: records.map(conversationMeta),
     activeConversationTitle: activeRecord?.chat.title,
     renameConversation,

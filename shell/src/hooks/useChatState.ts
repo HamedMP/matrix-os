@@ -44,6 +44,7 @@ export interface ChatState {
   connected: boolean;
   queue: QueuedMessage[];
   providerSelection?: CanonicalChatModelSelection;
+  boundProviderInstanceId?: string;
   conversations: ReturnType<typeof useConversation>["conversations"];
   activeConversationTitle?: string;
   renameConversation?: (id: string, title: string) => Promise<boolean>;
