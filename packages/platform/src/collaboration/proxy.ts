@@ -36,6 +36,10 @@ const SCOPE_ROUTES = [
   ["GET", new RegExp(`^/api/collaboration/scopes/(${UUID})/chat$`)],
   ["GET", new RegExp(`^/api/collaboration/scopes/(${UUID})/chat/messages$`)],
   ["POST", new RegExp(`^/api/collaboration/scopes/(${UUID})/chat/messages$`)],
+  ["GET", new RegExp(`^/api/collaboration/scopes/(${UUID})/discussion/messages$`)],
+  ["POST", new RegExp(`^/api/collaboration/scopes/(${UUID})/discussion/messages$`)],
+  ["GET", new RegExp(`^/api/collaboration/scopes/(${UUID})/discussion/user-state$`)],
+  ["PATCH", new RegExp(`^/api/collaboration/scopes/(${UUID})/discussion/user-state$`)],
   ["POST", new RegExp(`^/api/collaboration/scopes/(${UUID})/lifecycle$`)],
   ["GET", new RegExp(`^/api/collaboration/scopes/(${UUID})/operations/${UUID}$`)],
   ["GET", new RegExp(`^/api/collaboration/scopes/(${UUID})/exports/${UUID}$`)],
@@ -88,6 +92,7 @@ const M4_SCOPE_ROUTES = [
 const INVITATION_ROUTES = [
   ["GET", new RegExp(`^/api/collaboration/invitations/(${UUID})$`)],
   ["POST", new RegExp(`^/api/collaboration/invitations/(${UUID})/accept$`)],
+  ["POST", new RegExp(`^/api/collaboration/invitations/(${UUID})/decline$`)],
 ] as const;
 
 export interface ParsedCollaborationProxyRoute {
