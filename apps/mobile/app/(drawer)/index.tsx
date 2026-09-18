@@ -64,12 +64,7 @@ export default function ChatScreen() {
   const { projects } = useProjects();
   const sendMessage = useSendChatMessage();
 
-  const boundInstanceId = detail?.record.providerBinding?.instanceId;
-  const effectiveOverride = selectionOverride
-    && (!boundInstanceId || selectionOverride.instanceId === boundInstanceId)
-    ? selectionOverride
-    : null;
-  const selection = effectiveOverride
+  const selection = selectionOverride
     ?? detail?.record.chat.currentSelection
     ?? defaultCatalogSelection(catalog);
   const turnModes = defaultTurnModes(catalog, selection);
@@ -284,7 +279,6 @@ export default function ChatScreen() {
                   <ModelPicker
                     catalog={catalog}
                     selection={selection}
-                    lockedInstanceId={boundInstanceId}
                     onSelectionChange={setSelectionOverride}
                   />
                 </View>

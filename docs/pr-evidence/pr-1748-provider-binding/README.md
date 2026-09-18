@@ -17,7 +17,7 @@ canonical Chat fixture. Electron Desktop uses the production Electron build,
 the same canonical fixture, and the repository's Xvfb E2E harness. Both capture
 paths assert the exact bound-harness notice before taking the screenshot.
 
-Native Mobile evidence remains outstanding because this Linux environment has
-no physical device, Expo development client, Android SDK/emulator, Java, or
-hardware virtualization. A narrow Web Mobile capture is intentionally not
-presented as Native Mobile evidence.
+Native Mobile is unchanged by this PR. Its bound-harness picker state and
+real-device evidence are deferred to
+[#1750](https://github.com/HamedMP/matrix-os/issues/1750). The canonical backend
+still rejects cross-instance mutation attempts from every client.
