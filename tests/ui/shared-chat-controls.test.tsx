@@ -56,20 +56,19 @@ describe("shared Chat AI controls", () => {
       changeDraftMode={(mode) => updateDraft("", mode)}
       discussionSending={false} discussionError={false} sendDiscussion={vi.fn()} refreshVersion={0} />);
 
-    expect(await screen.findByRole("button", { name: "Ask AI" })).toBeEnabled();
-    fireEvent.click(screen.getByRole("button", { name: "Ask AI" }));
-    expect(updateDraft).toHaveBeenCalledWith("", "ai");
+    expect(await screen.findByLabelText("Message Chat")).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Ask AI" })).toBeNull();
     rerender(<SharedChatControls api={api} scope={baseScope} actorId="user_editor"
       resourceRevision="4" draft={{ text: "Summarize decisions", mode: "ai" }} updateDraft={updateDraft}
       changeDraftMode={(mode) => updateDraft("", mode)}
       discussionSending={false} discussionError={false} sendDiscussion={vi.fn()} refreshVersion={0} />);
     updateDraft.mockClear();
-    fireEvent.click(screen.getByRole("button", { name: "Request AI" }));
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("AI request was not accepted");
     expect(updateDraft).not.toHaveBeenCalledWith("", "ai");
 
     fail = false;
-    fireEvent.click(screen.getByRole("button", { name: "Request AI" }));
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(api.post).toHaveBeenCalledWith(
       `/api/collaboration/scopes/${scopeId}/chat/requests`,
       expect.objectContaining({ expectedRevision: "4", text: "Summarize decisions" }),
@@ -96,7 +95,8 @@ describe("shared Chat AI controls", () => {
       changeDraftMode={vi.fn()}
       discussionSending={false} discussionError={false} sendDiscussion={vi.fn()} refreshVersion={0} />);
 
-    expect(await screen.findByRole("button", { name: "Ask AI" })).toBeDisabled();
+    expect(await screen.findByLabelText("Message Chat")).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Ask AI" })).toBeNull();
     expect(api.post).not.toHaveBeenCalled();
   });
 
@@ -159,6 +159,30 @@ describe("shared Chat AI controls", () => {
     ));
   });
 
+  it("keeps completed history out of the progressive queue disclosure", async () => {
+    const api = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async () => ({
+        defaultSelection,
+        resourceRevision: "8",
+        approvals: [],
+        requests: [
+          request({ id: "done_one", state: "completed" }),
+          request({ id: "done_two", acceptedSequence: "2", state: "completed" }),
+        ],
+      })),
+      post: vi.fn(),
+      delete: vi.fn(),
+    };
+    render(<SharedChatControls api={api} scope={baseScope} actorId="user_editor"
+      resourceRevision="4" draft={{ text: "", mode: "ai" }} updateDraft={vi.fn()}
+      changeDraftMode={vi.fn()} discussionSending={false} discussionError={false}
+      sendDiscussion={vi.fn()} refreshVersion={0} />);
+
+    expect(await screen.findByLabelText("Message Chat")).toBeEnabled();
+    expect(screen.queryByRole("region", { name: "Shared AI queue" })).toBeNull();
+  });
+
   it("keeps viewers read-only even when M2 is available", async () => {
     const api = {
       baseUrl: "https://app.matrix-os.com",
@@ -171,8 +195,8 @@ describe("shared Chat AI controls", () => {
       changeDraftMode={vi.fn()}
       discussionSending={false} discussionError={false} sendDiscussion={vi.fn()} refreshVersion={0} />);
 
-    expect(await screen.findByRole("button", { name: "Ask AI" })).toBeDisabled();
-    expect(screen.getByLabelText("Message everyone")).toBeDisabled();
+    expect(await screen.findByLabelText("Message Chat")).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Ask AI" })).toBeNull();
     expect(screen.queryByRole("button", { name: /Cancel request/i })).toBeNull();
     expect(api.post).not.toHaveBeenCalled();
   });

@@ -57,6 +57,7 @@ import {
   createTerminalLayoutId,
   type TerminalPersistence,
 } from "@/lib/terminal-window-metadata";
+import { sharedTerminalScopeIdFromPath } from "@/lib/shared-terminal-route";
 
 interface OpenApp {
   id: string;
@@ -234,8 +235,8 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette, cacheScope }:
       // Bring existing instance to the front rather than open a duplicate
       // (terminals are the only deliberately-multi-instance case and we
       // special-case them).
-      if (app.path === "__terminal__") {
-        const terminalInstances = prev.filter((entry) => entry.app.path === "__terminal__");
+      if (app.path.startsWith("__terminal__")) {
+        const terminalInstances = prev.filter((entry) => entry.app.path.startsWith("__terminal__"));
         if (terminalInstances.length >= MAX_TERMINAL_INSTANCES) {
           const latestTerminal = terminalInstances[terminalInstances.length - 1];
           return [...prev.filter((entry) => entry.id !== latestTerminal.id), latestTerminal];
@@ -304,7 +305,9 @@ export function MobileShell({ launchAppPath, onOpenCommandPalette, cacheScope }:
 
   useEffect(() => {
     if (!launchAppPath || launchPathConsumedRef.current === launchAppPath) return;
-    const app = apps.find((candidate) => candidate.path === launchAppPath);
+    const app = launchAppPath.startsWith("__terminal__:shared:")
+      ? { ...BUILT_IN_APPS[0]!, name: "Shared Terminal", path: launchAppPath }
+      : apps.find((candidate) => candidate.path === launchAppPath);
     if (!app) return;
     launchPathConsumedRef.current = launchAppPath;
     // react-doctor-disable-next-line react-hooks-js/set-state-in-effect, react-doctor/no-derived-state, react-doctor/no-adjust-state-on-prop-change -- imperative side effect, not derived state: opening an app in response to a one-shot `launchAppPath` request. The launchPathConsumedRef dedupe ensures it fires once per distinct path; `openStack` is genuine foreground-app state that the user mutates afterward, so it cannot be recomputed from `launchAppPath` in render.
@@ -534,6 +537,7 @@ function MobileAppFrame({
   if (app.path.startsWith("__terminal__")) {
     return (
       <TerminalApp
+        sharedScopeId={sharedTerminalScopeIdFromPath(app.path)}
         key={openId}
         mobile
         launchTargetId={openId}
@@ -558,6 +562,9 @@ function MobileAppFrame({
     }
     return (
       <ChatApp
+        collaborationView={chat.collaborationView}
+        onOpenSharedChat={chat.openSharedChat}
+        onOpenSharedHome={chat.openSharedHome}
                 filterUnreadOnly={chat.unreadOnly}
                 onUnreadFilterChange={chat.setUnreadOnly}
                 readState={chat.readState}

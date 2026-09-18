@@ -12,9 +12,11 @@ const e2eBypass = process.env.NEXT_PUBLIC_E2E_TEST_BYPASS === "1";
 export function ShellChatCollaboration({
   view,
   onOpenChat,
+  onSessionMetadata,
 }: {
   view: ChatCollaborationView;
   onOpenChat?: (scopeId: string) => void;
+  onSessionMetadata?: (metadata: { title: string; role: "owner" | "editor" | "viewer" }) => void;
 }) {
   const { isLoaded, userId } = useAuth();
   const browserOrigin = useBrowserOrigin();
@@ -39,6 +41,7 @@ export function ShellChatCollaboration({
       view={view}
       api={api}
       actorId={actorId}
+      onChatMetadata={onSessionMetadata}
       openInvitation={(invitationId) => router.push(`/shared/invitations/${encodeURIComponent(invitationId)}`)}
       openChat={(scopeId) => {
         onOpenChat?.(scopeId);

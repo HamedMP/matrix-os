@@ -8,17 +8,22 @@ import {
   CollaborationProjectSchema,
   CollaborationScopeSchema,
   CollaborationSharedChatMessageSchema,
+  type CanonicalChatMessagePart,
 } from "@matrix-os/contracts";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { z } from "zod/v4";
-import { ChatAttachments, type ChatMessageAttachment } from "../chat/ChatAttachments.js";
-import { ChatCollaboratorsDialog, type CollaborationApi } from "./ChatCollaboratorsDialog.js";
+import type { CollaborationApi } from "./ChatCollaboratorsDialog.js";
 import { collaborationDraftKey, collaborationDraftModeKey, createCollaborationDraftStore, type CollaborationDraft } from "./chat-state.js";
 import { deriveChatPermissions } from "./permissions.js";
 import { SharedChatControls } from "./SharedChatControls.js";
 import { SharedTerminalControls } from "./SharedTerminalControls.js";
+import { projectSharedChatTimeline } from "./chat-projection.js";
+import { SessionAccessControl } from "./SessionAccessControl.js";
+import { SessionDiscussionLayer } from "./SessionDiscussionLayer.js";
+import { useSessionDiscussion } from "./useSessionDiscussion.js";
+import { notifyCollaborationDiscoveryChanged } from "./discovery-events.js";
 
 type DiscoveryItem = z.infer<typeof CollaborationDiscoveryItemSchema>;
 type SharedMessage = z.infer<typeof CollaborationSharedChatMessageSchema>;
@@ -41,6 +46,7 @@ export function ChatCollaboration({
   openChat = () => undefined,
   openTerminal = () => undefined,
   openProject = () => undefined,
+  onChatMetadata,
 }: {
   view: ChatCollaborationView;
   api: CollaborationApi;
@@ -51,6 +57,7 @@ export function ChatCollaboration({
   openChat?: (scopeId: string, chatId?: string, title?: string) => void;
   openTerminal?: (scopeId: string) => void;
   openProject?: (scopeId: string) => void;
+  onChatMetadata?: (metadata: { title: string; role: "owner" | "editor" | "viewer" }) => void;
 }) {
   if (view.kind === "home") {
     return <CollaborationHome api={api} openInvitation={openInvitation} openChat={openChat}
@@ -63,9 +70,9 @@ export function ChatCollaboration({
   if (view.kind === "terminal") return <SharedTerminalView api={api} actorId={actorId} scopeId={view.scopeId} />;
   if (view.kind === "project") return <SharedProjectView api={api} scopeId={view.scopeId} />;
   if (view.kind === "canonical-chat") return <CanonicalSharedChatPanel api={api} actorId={actorId}
-    runtimeId={runtimeId ?? "platform"} chatId={view.chatId} storage={storage} />;
+    runtimeId={runtimeId ?? "platform"} chatId={view.chatId} storage={storage} onMetadata={onChatMetadata} />;
   return <SharedChatPanel api={api} actorId={actorId} runtimeId={runtimeId ?? "platform"}
-    scopeId={view.scopeId} storage={storage} />;
+    scopeId={view.scopeId} storage={storage} onMetadata={onChatMetadata} />;
 }
 
 function CollaborationHome({ api, openInvitation, openChat, openTerminal, openProject }: {
@@ -82,6 +89,8 @@ function CollaborationHome({ api, openInvitation, openChat, openTerminal, openPr
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState(false);
   const [paginationError, setPaginationError] = useState(false);
+  const [invitationPending, setInvitationPending] = useState<string | null>(null);
+  const [invitationError, setInvitationError] = useState(false);
   useEffect(() => {
     let active = true;
     void Promise.all([api.get("/api/collaboration/inbox"), api.get("/api/collaboration/shared")])
@@ -128,6 +137,29 @@ function CollaborationHome({ api, openInvitation, openChat, openTerminal, openPr
       setLoadingMore(false);
     }
   };
+  const actOnInvitation = async (item: Extract<DiscoveryItem, { status: "invited" }>, action: "accept" | "decline") => {
+    if (invitationPending) return;
+    setInvitationPending(item.invitationId);
+    setInvitationError(false);
+    try {
+      const result = z.looseObject({ scopeId: z.uuid() }).parse(await api.post(
+        `/api/collaboration/invitations/${encodeURIComponent(item.invitationId)}/${action}`,
+        { clientRequestId: crypto.randomUUID(), expectedRevision: item.resource.revision },
+      ));
+      setItems((current) => current.filter((candidate) => discoveryKey(candidate) !== discoveryKey(item)));
+      notifyCollaborationDiscoveryChanged();
+      if (action === "accept") {
+        if (item.kind === "terminal") openTerminal(result.scopeId);
+        else if (item.kind === "project") openProject(result.scopeId);
+        else openChat(result.scopeId);
+      }
+    } catch (failure: unknown) {
+      console.warn("[chat-collaboration] invitation action failed", failure instanceof Error ? failure.name : "UnknownError");
+      setInvitationError(true);
+    } finally {
+      setInvitationPending(null);
+    }
+  };
 
   return <main className="mx-auto flex min-h-full w-full max-w-4xl flex-col gap-5 p-5 sm:p-8">
     <header>
@@ -152,7 +184,14 @@ function CollaborationHome({ api, openInvitation, openChat, openTerminal, openPr
             <p className="font-medium">{item.resource.owner.displayName} invited you</p>
             <p className="text-sm" style={{ color: "var(--text-secondary)" }}>Shared {kindLabel(item.kind)} · {roleLabel(item.resource.role)}</p>
           </div>
-          <button type="button" className={buttonClass} onClick={() => openInvitation(item.invitationId)}>Review invitation</button>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" className={buttonClass} disabled={invitationPending !== null}
+              onClick={() => void actOnInvitation(item, "accept")}>Accept</button>
+            <button type="button" className={buttonClass} disabled={invitationPending !== null}
+              onClick={() => void actOnInvitation(item, "decline")}>Decline</button>
+            <button type="button" className={buttonClass} disabled={invitationPending !== null}
+              onClick={() => openInvitation(item.invitationId)}>Details</button>
+          </div>
         </article>
         : <article key={`scope:${item.scopeId}`} className="flex flex-wrap items-center gap-4 rounded-2xl border p-4">
           <div className="min-w-0 flex-1">
@@ -168,6 +207,7 @@ function CollaborationHome({ api, openInvitation, openChat, openTerminal, openPr
               : <button type="button" className={buttonClass} onClick={() => openProject(item.scopeId)}>Open project</button>}
         </article>)}
     </div>
+    {invitationError ? <p role="alert" className="text-sm">Invitation could not be updated. Try again.</p> : null}
     {paginationError ? <p role="alert" className="text-sm">More shared items could not be loaded. Try again.</p> : null}
     {inboxCursor || sharedCursor ? <button type="button" className={buttonClass} disabled={loadingMore} onClick={() => void loadMore()}>
       {loadingMore ? "Loading…" : "Load more shared items"}
@@ -299,19 +339,24 @@ function InvitationView({ api, invitationId, openChat, openTerminal, openProject
       });
     return () => { active = false; };
   }, [api, invitationId]);
-  const accept = async () => {
+  const act = async (action: "accept" | "decline") => {
     if (!invitation) return;
     setPending(true); setError(false);
     try {
       const result = z.looseObject({ scopeId: z.uuid() }).parse(await api.post(
-        `/api/collaboration/invitations/${encodeURIComponent(invitation.id)}/accept`,
+        `/api/collaboration/invitations/${encodeURIComponent(invitation.id)}/${action}`,
         { clientRequestId: crypto.randomUUID(), expectedRevision: invitation.revision },
       ));
-      if (invitation.scopeKind === "terminal") openTerminal(result.scopeId);
-      else if (invitation.scopeKind === "project") openProject(result.scopeId);
-      else openChat(result.scopeId);
+      notifyCollaborationDiscoveryChanged();
+      if (action === "accept") {
+        if (invitation.scopeKind === "terminal") openTerminal(result.scopeId);
+        else if (invitation.scopeKind === "project") openProject(result.scopeId);
+        else openChat(result.scopeId);
+      } else {
+        setInvitation((current) => current ? { ...current, status: "revoked" } : current);
+      }
     } catch (failure: unknown) {
-      console.warn("[chat-collaboration] invitation acceptance failed", failure instanceof Error ? failure.name : "UnknownError");
+      console.warn("[chat-collaboration] invitation action failed", failure instanceof Error ? failure.name : "UnknownError");
       setError(true);
     } finally { setPending(false); }
   };
@@ -337,10 +382,16 @@ function InvitationView({ api, invitationId, openChat, openTerminal, openProject
       <p className="mt-4 text-sm" style={{ color: "var(--text-secondary)" }}>{invitation.scopeKind === "terminal"
         ? "Owners and editors can request input control. Viewers watch only, and no role can create sibling terminals from this share."
         : "Editors can discuss and request AI. Viewers remain read-only. Owners decide any AI approvals."}</p>
-      {error ? <p role="alert" className="mt-4 text-sm">Invitation could not be accepted. Refresh and try again.</p> : null}
-      <button type="button" className={`${buttonClass} mt-6 w-full`} disabled={pending || invitation.status !== "pending"} onClick={() => void accept()}>
-        {pending ? "Accepting…" : invitation.status === "pending" ? "Accept invitation" : "Invitation unavailable"}
-      </button>
+      {invitation.status === "revoked" ? <p role="status" className="mt-4 text-sm">Invitation declined.</p> : null}
+      {error ? <p role="alert" className="mt-4 text-sm">Invitation could not be updated. Refresh and try again.</p> : null}
+      <div className="mt-6 grid gap-2 sm:grid-cols-2">
+        <button type="button" className={buttonClass} disabled={pending || invitation.status !== "pending"} onClick={() => void act("accept")}>
+          {pending ? "Updating…" : invitation.status === "pending" ? "Accept invitation" : "Invitation unavailable"}
+        </button>
+        <button type="button" className={buttonClass} disabled={pending || invitation.status !== "pending"} onClick={() => void act("decline")}>
+          Decline invitation
+        </button>
+      </div>
     </section>
   </main>;
 }
@@ -427,12 +478,13 @@ function reduceSharedChat(state: SharedChatState, action: SharedChatAction): Sha
   }
 }
 
-function useSharedChatController({ api, actorId, runtimeId, scopeId, storage }: {
+function useSharedChatController({ api, actorId, runtimeId, scopeId, storage, onMetadata }: {
   api: CollaborationApi;
   actorId: string;
   runtimeId: string;
   scopeId: string;
   storage?: Pick<Storage, "getItem" | "setItem" | "removeItem">;
+  onMetadata?: (metadata: { title: string; role: "owner" | "editor" | "viewer" }) => void;
 }) {
   const [state, dispatch] = useReducer(reduceSharedChat, initialSharedChatState);
   const loadGeneration = useRef(0);
@@ -455,12 +507,13 @@ function useSharedChatController({ api, actorId, runtimeId, scopeId, storage }: 
       const nextMessages = CollaborationChatMessagesResponseSchema.parse(messagesValue).messages;
       if (generation !== loadGeneration.current) return;
       dispatch({ type: "loaded", scope: nextScope, chat: nextChat, messages: nextMessages, clearForegroundError });
+      onMetadata?.({ title: nextChat.title, role: nextScope.role });
       markRead(api, base, nextMessages);
     } catch (failure: unknown) {
       console.warn("[chat-collaboration] Chat load failed", failure instanceof Error ? failure.name : "UnknownError");
       if (generation === loadGeneration.current) dispatch({ type: "load_failed" });
     }
-  }, [api, scopeId]);
+  }, [api, onMetadata, scopeId]);
   const recoverCanonical = useCallback(async () => {
     // Fence pending history pages and older refreshes before reading canonical state.
     const generation = ++loadGeneration.current;
@@ -484,6 +537,7 @@ function useSharedChatController({ api, actorId, runtimeId, scopeId, storage }: 
       }
       if (generation !== loadGeneration.current) throw new CollaborationRecoverySupersededError();
       dispatch({ type: "loaded", scope: nextScope, chat: nextChat, messages: combined, clearForegroundError: false });
+      onMetadata?.({ title: nextChat.title, role: nextScope.role });
       markRead(api, base, combined);
     } catch (failure: unknown) {
       if (generation === loadGeneration.current) dispatch({ type: "recovery_failed" });
@@ -494,7 +548,7 @@ function useSharedChatController({ api, actorId, runtimeId, scopeId, storage }: 
         dispatch({ type: "page_cancelled" });
       }
     }
-  }, [api, scopeId]);
+  }, [api, onMetadata, scopeId]);
   useEffect(() => {
     dispatch({ type: "reset" });
     void load(true);
@@ -524,8 +578,7 @@ function useSharedChatController({ api, actorId, runtimeId, scopeId, storage }: 
   useEffect(() => {
     if (!state.scope) return;
     const key = collaborationDraftKey({ actorId, runtimeId, scopeId, chatId: state.scope.resourceId });
-    const mode = draftStore.loadSelectedMode(key);
-    dispatch({ type: "draft_changed", draft: draftStore.load(collaborationDraftModeKey(key, mode), mode) });
+    dispatch({ type: "draft_changed", draft: draftStore.load(collaborationDraftModeKey(key, "ai"), "ai") });
   }, [actorId, draftStore, runtimeId, state.scope, scopeId]);
   useEffect(() => api.subscribe?.(
     scopeId,
@@ -569,80 +622,65 @@ function useSharedChatController({ api, actorId, runtimeId, scopeId, storage }: 
   return { state, loadMoreMessages, updateDraft, changeDraftMode, send };
 }
 
-export function SharedChatPanel(props: Parameters<typeof useSharedChatController>[0]) {
+export function SharedChatPanel(props: Parameters<typeof useSharedChatController>[0] & {
+  onMetadata?: (metadata: { title: string; role: "owner" | "editor" | "viewer" }) => void;
+}) {
   const { state, loadMoreMessages, updateDraft, changeDraftMode, send } = useSharedChatController(props);
-  const [members, setMembers] = useState<Array<z.infer<typeof CollaborationMemberSchema>>>([]);
-  const [membersOpen, setMembersOpen] = useState(false);
-  const [membersPending, setMembersPending] = useState(false);
-  const [membersError, setMembersError] = useState(false);
-  const refreshMembers = useCallback(async () => {
-    if (!state.scope) throw new Error("CollaborationUnavailable");
-    const [scopeValue, membersValue] = await Promise.all([
-      props.api.get(`/api/collaboration/scopes/${state.scope.id}`),
-      props.api.get(`/api/collaboration/scopes/${state.scope.id}/members`),
-    ]);
-    const scope = CollaborationScopeSchema.parse(scopeValue);
-    const nextMembers = z.object({
-      members: z.array(CollaborationMemberSchema).max(8),
-    }).parse(membersValue).members;
-    setMembers(nextMembers);
-    return { scope, members: nextMembers };
-  }, [props.api, state.scope]);
-  const openMembers = async () => {
-    if (membersPending) return;
-    setMembersPending(true);
-    setMembersError(false);
-    try {
-      await refreshMembers();
-      setMembersOpen(true);
-    } catch (failure: unknown) {
-      console.warn("[chat-collaboration] member load failed", failure instanceof Error ? failure.name : "UnknownError");
-      setMembersError(true);
-    } finally {
-      setMembersPending(false);
-    }
-  };
   if (state.loading) return <p role="status" className="p-8">Loading shared Chat…</p>;
   if (!state.scope || !state.chat || state.error === "load" || state.error === "unavailable") {
     return <SafeError title="Shared Chat unavailable" />;
   }
-  const permissions = deriveChatPermissions(state.scope);
-  return <main data-slot="shared-chat-panel" className="mx-auto flex h-full min-h-0 w-full max-w-4xl flex-col">
-    <header className="border-b p-4 sm:px-6">
-      <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0"><h1 className="truncate text-lg font-semibold">{state.chat.title}</h1>
-          <p className="text-xs" style={{ color: "var(--text-secondary)" }}>Shared Chat · {permissions.roleLabel}</p></div>
-        <div className="flex items-center gap-2">
-          <span role="status" className="rounded-full border px-2.5 py-1 text-xs">
-            {state.connection === "connected"
-              ? "Live collaboration"
-              : state.connection === "reconnecting" ? "Reconnecting…" : "Connecting…"}
-          </span>
-          {permissions.canManageMembers ? <button type="button" className={buttonClass}
-            disabled={membersPending} onClick={() => void openMembers()}>
-            {membersPending ? "Loading access…" : "Manage access"}
-          </button> : null}
-        </div>
-      </div>
-      {membersError ? <p role="alert" className="mt-2 text-sm">Member controls are unavailable. Try again.</p> : null}
-    </header>
+  return <NativeSharedChatPanel {...props} state={{ ...state, scope: state.scope, chat: state.chat }} loadMoreMessages={loadMoreMessages}
+    updateDraft={updateDraft} changeDraftMode={changeDraftMode} send={send} />;
+}
+
+function NativeSharedChatPanel({ api, actorId, runtimeId, storage, state, loadMoreMessages, updateDraft, changeDraftMode, send }: {
+  api: CollaborationApi;
+  actorId: string;
+  runtimeId: string;
+  scopeId: string;
+  storage?: Pick<Storage, "getItem" | "setItem" | "removeItem">;
+  state: SharedChatState & { scope: NonNullable<SharedChatState["scope"]>; chat: NonNullable<SharedChatState["chat"]> };
+  loadMoreMessages(): Promise<void>;
+  updateDraft(text: string, mode?: CollaborationDraft["mode"]): void;
+  changeDraftMode(mode: CollaborationDraft["mode"]): void;
+  send(): Promise<void>;
+}) {
+  const [discussionOpen, setDiscussionOpen] = useState(false);
+  const discussionTrigger = useRef<HTMLButtonElement>(null);
+  const discussion = useSessionDiscussion({ api, scope: state.scope, actorId, runtimeId, open: discussionOpen, storage });
+  const closeDiscussion = useCallback(() => {
+    setDiscussionOpen(false);
+    queueMicrotask(() => discussionTrigger.current?.focus());
+  }, []);
+  return <main data-slot="native-shared-chat" className="relative mx-auto flex h-full min-h-0 w-full max-w-4xl flex-col overflow-hidden">
+    <div className="flex min-h-11 items-center justify-end gap-1 border-b px-3">
+      <span className="mr-auto truncate text-xs capitalize text-muted-foreground">{state.scope.role} access</span>
+      {state.connection !== "connected" ? <span role="status" className="px-2 text-xs text-muted-foreground">
+        {state.connection === "reconnecting" ? "Reconnecting…" : "Connecting…"}
+      </span> : null}
+      <button ref={discussionTrigger} type="button" aria-label="Open discussion" aria-expanded={discussionOpen}
+        onClick={() => setDiscussionOpen(true)} className="rounded-lg px-2.5 py-2 text-xs hover:bg-[var(--bg-hover)]">
+        Discussion{BigInt(discussion.latestSequence) > BigInt(0) ? <span className="ml-1" aria-label="Discussion has notes">•</span> : null}
+      </button>
+      <SessionAccessControl key={state.scope.id} api={api} scope={state.scope} />
+    </div>
     <SharedChatHistory state={state} loadMoreMessages={loadMoreMessages} />
-    <SharedChatControls key={state.scope.id} api={props.api} scope={state.scope} actorId={props.actorId}
+    <SharedChatControls key={state.scope.id} api={api} scope={state.scope} actorId={actorId}
       resourceRevision={state.chat.revision} draft={state.draft} updateDraft={updateDraft}
-      changeDraftMode={changeDraftMode}
-      discussionSending={state.sending} discussionError={state.error === "send"}
+      changeDraftMode={changeDraftMode} discussionSending={state.sending} discussionError={state.error === "send"}
       sendDiscussion={send} refreshVersion={state.refreshVersion} />
-    {membersOpen ? <ChatCollaboratorsDialog api={props.api} scope={state.scope} members={members}
-      onRefresh={refreshMembers} onClose={() => setMembersOpen(false)} /> : null}
+    <SessionDiscussionLayer open={discussionOpen} onClose={closeDiscussion} discussion={discussion} />
   </main>;
 }
 
-export function CanonicalSharedChatPanel({ api, actorId, runtimeId, chatId, storage }: {
+export function CanonicalSharedChatPanel({ api, actorId, runtimeId, chatId, storage, onMetadata }: {
   api: CollaborationApi;
   actorId: string;
   runtimeId: string;
   chatId: string;
   storage?: Pick<Storage, "getItem" | "setItem" | "removeItem">;
+  onMetadata?: (metadata: { title: string; role: "owner" | "editor" | "viewer" }) => void;
 }) {
   const [resolution, setResolution] = useState<{
     chatId: string;
@@ -666,7 +704,7 @@ export function CanonicalSharedChatPanel({ api, actorId, runtimeId, chatId, stor
   }
   if (!resolution.scopeId) return <SafeError title="Shared Chat unavailable" />;
   return <SharedChatPanel api={api} actorId={actorId} runtimeId={runtimeId}
-    scopeId={resolution.scopeId} storage={storage} />;
+    scopeId={resolution.scopeId} storage={storage} onMetadata={onMetadata} />;
 }
 
 async function resolveCanonicalChatScope(api: CollaborationApi, chatId: string): Promise<string | null> {
@@ -692,11 +730,12 @@ function SharedChatHistory({ state, loadMoreMessages }: {
   state: SharedChatState;
   loadMoreMessages: () => Promise<void>;
 }) {
-  return <section aria-label="Chat history" className="flex-1 space-y-4 overflow-y-auto p-4 sm:p-6">
-    {state.messages.length === 0 ? <div className="py-12 text-center">
-      <div aria-hidden className="text-3xl">◇</div><h2 className="mt-3 font-medium">Start the discussion</h2>
-      <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>Messages here are visible to everyone in this shared Chat.</p>
-    </div> : state.messages.map((message) => <SharedMessageView key={message.id} message={message} />)}
+  const timeline = projectSharedChatTimeline(state.messages);
+  return <section aria-label="Chat history" className="flex-1 space-y-5 overflow-y-auto p-4 sm:p-6">
+    {timeline.length === 0 ? <div className="py-12 text-center">
+      <div aria-hidden className="text-3xl">◇</div><h2 className="mt-3 font-medium">Start a conversation</h2>
+      <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>Everyone here collaborates with the same Matrix AI session.</p>
+    </div> : timeline.map((message) => <NativeSharedMessageView key={message.id} message={message} />)}
     {state.historyPageError ? <p role="alert" className="text-center text-sm">More messages could not be loaded. Try again.</p> : null}
     {state.hasMoreMessages ? <div className="text-center"><button type="button" className={buttonClass}
       disabled={state.loadingMoreMessages} onClick={() => void loadMoreMessages()}>
@@ -705,33 +744,63 @@ function SharedChatHistory({ state, loadMoreMessages }: {
   </section>;
 }
 
+function NativeSharedMessageView({ message }: { message: ReturnType<typeof projectSharedChatTimeline>[number] }) {
+  if (message.side === "human") return <article className="ml-auto max-w-[82%] text-right">
+    <p className="mb-1 flex items-center justify-end gap-1.5 px-1 text-[11px] text-muted-foreground">
+      <span>{message.attribution?.displayName ?? "Unknown participant"}</span>
+      <span aria-hidden className="grid size-5 place-items-center rounded-full bg-[var(--bg-hover)] text-[9px] font-semibold">
+        {(message.attribution?.displayName ?? "?").slice(0, 1).toUpperCase()}
+      </span>
+    </p>
+    <div className="inline-block rounded-2xl bg-[var(--bg-hover)] px-4 py-2 text-left text-sm">
+      {keyedCanonicalParts(message.id, message.parts).map(({ key, part }) => <CanonicalPartView key={key} part={part} human />)}
+    </div>
+  </article>;
+  return <article className="mr-auto max-w-[88%]">
+    <div className="space-y-2 break-words">
+      {keyedCanonicalParts(message.id, message.parts).map(({ key, part }) => <CanonicalPartView key={key} part={part} />)}
+    </div>
+  </article>;
+}
+
+function CanonicalPartView({ part, human = false }: { part: CanonicalChatMessagePart; human?: boolean }) {
+  if (part.type === "text" || part.type === "summary") {
+    return human ? <p className="whitespace-pre-wrap">{part.text}</p>
+      : <div className="prose prose-sm max-w-none"><ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={safeMarkdownUrl}>{part.text}</ReactMarkdown></div>;
+  }
+  if (part.type === "tool_request") return <MessageDetail label={part.label} detail={part.inputPreview} />;
+  if (part.type === "tool_result") return <MessageDetail label={`Tool ${part.outcome}`} detail={part.text} />;
+  if (part.type === "attachment_reference") return <MessageDetail label={part.label} detail={part.kind} />;
+  if (part.type === "approval_request") return <MessageDetail label={part.title} detail={`${part.description} · ${part.risk} risk`} />;
+  if (part.type === "approval_result") return <MessageDetail label="Approval updated" detail={part.decision.replaceAll("_", " ")} />;
+  if (part.type === "status") return <MessageDetail label={part.label} detail={part.detail} tone={part.tone} />;
+  if (part.type === "invocation_reference") return <MessageDetail label={part.invocation.invocation} detail={part.invocation.arguments} />;
+  return <MessageDetail label={part.resource.label} detail={part.resource.path ?? part.resource.kind} />;
+}
+
+function keyedCanonicalParts(messageId: string, parts: CanonicalChatMessagePart[]) {
+  const occurrences = new Map<string, number>();
+  return parts.map((part) => {
+    const valueKey = JSON.stringify(part);
+    const occurrence = occurrences.get(valueKey) ?? 0;
+    occurrences.set(valueKey, occurrence + 1);
+    return { key: `${messageId}:${valueKey}:${occurrence}`, part };
+  });
+}
+
+function MessageDetail({ label, detail, tone }: { label: string; detail?: string; tone?: string }) {
+  return <div className="rounded-xl border px-3 py-2 text-sm" data-tone={tone}>
+    <p className="font-medium">{label}</p>
+    {detail ? <p className="mt-0.5 whitespace-pre-wrap text-xs text-muted-foreground">{detail}</p> : null}
+  </div>;
+}
+
 function markRead(api: CollaborationApi, base: string, messages: readonly SharedMessage[]): void {
   const sequence = messages.at(-1)?.sequence;
   if (!sequence || !api.patch) return;
   void api.patch(`${base}/user-state`, { readThroughSeq: sequence }).catch((failure: unknown) => {
     console.warn("[chat-collaboration] read state update failed", failure instanceof Error ? failure.name : "UnknownError");
   });
-}
-
-function SharedMessageView({ message }: { message: SharedMessage }) {
-  const attachments: ChatMessageAttachment[] = message.parts.flatMap((part) => part.type === "attachment_reference"
-    ? [{ id: part.attachmentId, label: part.label, kind: part.kind === "image" ? "image" as const : "file" as const }]
-    : []);
-  const texts = keyedValues(message.parts.flatMap((part) => part.type === "text" || part.type === "summary" ? [part.text] : []), "text");
-  const notices = keyedValues(message.parts.flatMap((part) => part.type === "status" ? [part.detail ?? part.label]
-    : part.type === "tool_request" ? [`Tool request: ${part.label}`]
-      : part.type === "tool_result" ? [part.text ?? `Tool ${part.outcome}`] : []), "notice");
-  return <article className="rounded-2xl border p-4">
-    <header className="mb-2 flex items-center justify-between gap-3">
-      <span className="font-medium">{message.actor.displayName}</span>
-      <time className="text-xs" style={{ color: "var(--text-tertiary)" }} dateTime={message.createdAt}>{formatTime(message.createdAt)}</time>
-    </header>
-    <div className="prose prose-sm max-w-none break-words">
-      {texts.map((item) => <ReactMarkdown key={item.key} remarkPlugins={[remarkGfm]} urlTransform={safeMarkdownUrl}>{item.value}</ReactMarkdown>)}
-      {notices.map((item) => <p key={item.key} className="text-sm" style={{ color: "var(--text-secondary)" }}>{item.value}</p>)}
-    </div>
-    {attachments.length > 0 ? <div className="mt-3"><ChatAttachments attachments={attachments} /></div> : null}
-  </article>;
 }
 
 function SafeError({ title }: { title: string }) {
@@ -771,23 +840,6 @@ function roleLabel(role: "owner" | "editor" | "viewer"): string {
 
 function kindLabel(kind: "chat" | "terminal" | "project"): string {
   return kind === "chat" ? "Chat" : kind === "terminal" ? "terminal" : "project";
-}
-
-const messageTimeFormatter = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
-
-function formatTime(value: string): string {
-  return messageTimeFormatter.format(new Date(value));
-}
-
-function keyedValues(values: readonly string[], kind: string): Array<{ key: string; value: string }> {
-  // Message parts are contract-capped at 64; a plain record avoids retaining
-  // collection state beyond this render.
-  const occurrences: Record<string, number> = Object.create(null) as Record<string, number>;
-  return values.map((value) => {
-    const occurrence = (occurrences[value] ?? 0) + 1;
-    occurrences[value] = occurrence;
-    return { key: `${kind}:${value}:${occurrence}`, value };
-  });
 }
 
 const buttonClass = "rounded-xl border px-4 py-2 text-sm font-medium transition-colors hover:enabled:bg-[var(--bg-hover)] disabled:opacity-50";

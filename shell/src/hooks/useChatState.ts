@@ -27,6 +27,7 @@ const MAX_SEEN_REPLAY_EVENTS = 2_000;
 export interface ChatState {
   collaborationView?: ChatCollaborationView;
   openSharedChat?: (scopeId: string) => void;
+  openSharedHome?: () => void;
   unreadOnly?: boolean;
   setUnreadOnly?: (value: boolean) => void;
   readState?: import("@matrix-os/contracts").CanonicalChatReadState;

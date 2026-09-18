@@ -138,6 +138,33 @@ async function mockShell(
     capability,
     resourceRevision: "4",
   }));
+  await page.route(`**/api/collaboration/scopes/${scopeId}/discussion/messages**`, (route) => fulfill(route, {
+    messages: [{
+      id: "msg_discussion_1",
+      scopeId,
+      sequence: "1",
+      actor: { actorId: "user_ada", displayName: "Ada" },
+      text: "I moved the launch review to Thursday at 10:00.",
+      createdAt: now,
+    }],
+    latestSequence: "1",
+  }));
+  await page.route(`**/api/collaboration/scopes/${scopeId}/discussion/user-state`, (route) => fulfill(route, {
+    readThroughSeq: "1",
+    lastOpenedAt: now,
+  }));
+  await page.route(`**/api/collaboration/scopes/${scopeId}/members`, (route) => fulfill(route, {
+    members: [
+      {
+        actor: { actorId: "user_e2e", displayName: "Test User" },
+        role: "owner", status: "accepted", revision: "1", joinedAt: now, updatedAt: now,
+      },
+      {
+        actor: { actorId: "user_ada", displayName: "Ada" },
+        role: "editor", status: "accepted", revision: "1", joinedAt: now, updatedAt: now,
+      },
+    ],
+  }));
   await page.route(`**/api/collaboration/scopes/${scopeId}/connection-tickets`, (route) => fulfill(route, {
     ticket: "a".repeat(43),
     actorId: "user_e2e",
@@ -146,27 +173,36 @@ async function mockShell(
   await page.route("**/ws/**", (route) => route.abort());
 }
 
-test("shared Chat stays inside Web Desktop and Web Canvas", async ({ page }) => {
+test("shared Chat stays an ordinary Chat inside Web Desktop and Web Canvas", async ({ page }) => {
   await mockShell(page);
-  await page.goto(`/shared/chat/${scopeId}`);
-  await expect(page.getByRole("heading", { name: "Launch plan" })).toBeVisible();
-  await expect(page.getByText("Live shared collaboration")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Discussion" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Ask AI" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Manage access" })).toBeVisible();
-  await page.screenshot({ path: "../output/playwright/shared-chat/web-desktop-discussion.png", fullPage: true });
+  await page.goto(`/shared/chat/${scopeId}`, { waitUntil: "domcontentloaded" });
+  await expect(page.getByText("Launch plan")).toBeVisible();
+  await expect(page.getByRole("region", { name: "Chat history" })).toContainText("Turn our decisions into a final checklist.");
+  await expect(page.getByRole("region", { name: "Chat history" })).toContainText("Launch checklist");
+  await expect(page.getByRole("region", { name: "Chat history" })).not.toContainText("moved the launch review");
+  await expect(page.getByLabel("Message Chat")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Ask AI" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Open discussion" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Collaboration access" })).toBeVisible();
+  await page.screenshot({ path: "../output/playwright/collaboration-ux/web-desktop-chat.png", fullPage: true });
 
-  await page.getByRole("button", { name: "Ask AI" }).click();
-  await expect(page.getByRole("region", { name: "Shared AI queue" })).toBeVisible();
-  await expect(page.getByTitle("Turn our decisions into a final checklist.")).toBeVisible();
-  await page.screenshot({ path: "../output/playwright/shared-chat/web-desktop-ai.png", fullPage: true });
+  await page.getByRole("button", { name: "Open discussion" }).click();
+  await expect(page.getByRole("dialog", { name: "Discussion" })).toContainText("I moved the launch review to Thursday at 10:00.");
+  await page.screenshot({ path: "../output/playwright/collaboration-ux/web-desktop-discussion.png", fullPage: true });
+  await page.getByRole("button", { name: "Close discussion panel" }).click();
+
+  await page.getByRole("button", { name: "Collaboration access" }).click();
+  await expect(page.getByRole("dialog", { name: "Collaboration access summary" })).toContainText("Ada");
+  await expect(page.getByRole("button", { name: "Manage access" })).toBeVisible();
+  await page.screenshot({ path: "../output/playwright/collaboration-ux/web-desktop-access.png", fullPage: true });
+  await page.getByRole("button", { name: "Close access summary" }).click();
 
   await page.keyboard.press("Meta+k");
   await page.keyboard.type("Mode: Canvas");
   await page.keyboard.press("Enter");
-  await expect(page.getByRole("heading", { name: "Launch plan" })).toBeVisible();
-  await expect(page.getByRole("region", { name: "Shared AI queue" })).toBeVisible();
-  await page.screenshot({ path: "../output/playwright/shared-chat/web-canvas-ai.png", fullPage: true });
+  await expect(page.getByText("Launch plan")).toBeVisible();
+  await expect(page.getByLabel("Message Chat")).toBeVisible();
+  await page.screenshot({ path: "../output/playwright/collaboration-ux/web-canvas-chat.png", fullPage: true });
 });
 
 test("Codex-bound shared Chat keeps discussion available without advertising Claude", async ({ page }) => {

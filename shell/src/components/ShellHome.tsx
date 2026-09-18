@@ -18,6 +18,7 @@ import { CommandPalette } from "@/components/CommandPalette";
 import { ApprovalDialog } from "@/components/ApprovalDialog";
 import { useMobileViewport } from "@/hooks/useMobileViewport";
 import { createShellSnapshotScope } from "@/lib/shell-snapshot-cache";
+import { sharedTerminalAppPath } from "@/lib/shared-terminal-route";
 
 const LAUNCHABLE_BUILT_IN_PATHS = new Set([
   "__terminal__",
@@ -60,15 +61,18 @@ export function ShellHome({ initialCollaborationView }: { initialCollaborationVi
 
   const runtimeSlot = useSyncExternalStore(subscribeLaunchPathNoop, readRuntimeSlotFromLocation, getLaunchPathServerSnapshot);
   const recipePrompt = useSyncExternalStore(subscribeLaunchPathNoop, readRecipePromptFromLocation, getLaunchPathServerSnapshot);
-  const desktopCollaborationView = isMobile ? undefined : initialCollaborationView;
-  const chat = useCanonicalChatState({ initialDraft: recipePrompt, initialCollaborationView: desktopCollaborationView });
+  const terminalCollaborationView = initialCollaborationView?.kind === "terminal" ? initialCollaborationView : undefined;
+  const chatCollaborationView = terminalCollaborationView ? undefined : initialCollaborationView;
+  const chat = useCanonicalChatState({ initialDraft: recipePrompt, initialCollaborationView: chatCollaborationView });
   const [paletteOpen, setPaletteOpen] = useState(false);
   const locationLaunchAppPath = useSyncExternalStore(
     subscribeLaunchPathNoop,
     readLaunchPathFromLocation,
     getLaunchPathServerSnapshot,
   );
-  const launchAppPath = desktopCollaborationView ? "__chat__" : locationLaunchAppPath;
+  const launchAppPath = terminalCollaborationView
+    ? sharedTerminalAppPath(terminalCollaborationView.scopeId)
+    : chatCollaborationView ? "__chat__" : locationLaunchAppPath;
   const shellLoadedCaptured = useRef(false);
 
   useGlobalShortcuts(

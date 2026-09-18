@@ -493,11 +493,16 @@ export function Desktop({ launchAppPath, onOpenCommandPalette, chat, cacheScope 
 
   useEffect(() => {
     if (!launchAppPath || launchPathConsumedRef.current === launchAppPath) return;
+    if (launchAppPath.startsWith("__terminal__:shared:")) {
+      launchPathConsumedRef.current = launchAppPath;
+      focusOrOpen("Shared Terminal", launchAppPath);
+      return;
+    }
     const match = apps.find((app) => app.path === launchAppPath);
     if (!match) return;
     launchPathConsumedRef.current = launchAppPath;
     openAppOrFocus(match.path, match.name);
-  }, [apps, launchAppPath, openAppOrFocus]);
+  }, [apps, focusOrOpen, launchAppPath, openAppOrFocus]);
 
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- identity consumed by the module-load useEffect dependency array (L~1070); a fresh function each render would re-run the layout/modules/apps fetch on every render
   const loadModules = useCallback(async (signal?: AbortSignal) => {

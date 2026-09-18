@@ -103,7 +103,7 @@ vi.mock("../../shell/src/lib/collaboration", () => ({
 }));
 
 describe("web Chat shared collaboration integration", () => {
-  it("keeps the normal Chat frame while rendering the shared controller", async () => {
+  it("keeps the normal Chat frame and one ordinary AI composer", async () => {
     render(
       <ChatApp
         collaborationView={{ kind: "chat", scopeId }}
@@ -118,13 +118,13 @@ describe("web Chat shared collaboration integration", () => {
       />,
     );
 
-    expect(await screen.findByRole("heading", { name: "Launch plan" })).toBeVisible();
+    expect(await screen.findByText("Launch plan")).toBeVisible();
     expect(document.querySelector('[data-slot="chat-app-collaboration"]')).toBeTruthy();
-    expect(document.querySelector('[data-slot="shared-chat-panel"]')).toBeTruthy();
+    expect(document.querySelector('[data-slot="native-shared-chat"]')).toBeTruthy();
     expect(screen.getByRole("button", { name: "New chat" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Discussion" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Ask AI" })).toBeDisabled();
-    expect(screen.getByText("Live shared collaboration")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Open discussion" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Ask AI" })).toBeNull();
+    expect(screen.getByLabelText("Message Chat")).toBeDisabled();
     expect(screen.queryByRole("button", { name: "Setup" })).toBeNull();
   });
 
@@ -167,8 +167,8 @@ describe("web Chat shared collaboration integration", () => {
       />,
     );
 
-    expect(await screen.findByRole("heading", { name: "Launch plan" })).toBeVisible();
+    expect(await screen.findByText("Launch plan")).toBeVisible();
     expect(document.querySelector('[data-slot="chat-app-collaboration"]')).toBeTruthy();
-    expect(document.querySelector('[data-slot="shared-chat-panel"]')).toBeTruthy();
+    expect(document.querySelector('[data-slot="native-shared-chat"]')).toBeTruthy();
   });
 });
