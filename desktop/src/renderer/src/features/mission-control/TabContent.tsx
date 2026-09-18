@@ -15,6 +15,7 @@ import BrowserTab from "../browser/BrowserTab";
 import DesktopEditorWorkspace from "../editor/DesktopEditorWorkspace";
 import NotesWorkspace from "../notes/NotesWorkspace";
 import DesktopChatCollaboration from "../chat/DesktopChatCollaboration";
+import { DesktopSharedTerminal } from "../terminal/DesktopSharedTerminal";
 
 export class TabErrorBoundary extends Component<{
   children: ReactNode;
@@ -105,7 +106,9 @@ export function TabPane({
     case "task":
       return tab.taskId ? <TaskWorkspace taskId={tab.taskId} projectSlug={tab.projectSlug} active={active} /> : null;
     case "terminal":
-      return tab.sessionName
+      return tab.sharedScopeId
+        ? <DesktopSharedTerminal scopeId={tab.sharedScopeId} />
+        : tab.sessionName
         ? <TerminalView sessionName={tab.sessionName} active={active} visualScale={visualScale} />
         : null;
     case "settings":

@@ -1,6 +1,7 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
 
 const scopeId = "10000000-0000-4000-8000-000000000001";
+const invitationId = "30000000-0000-4000-8000-000000000001";
 const now = "2026-09-17T12:00:00.000Z";
 
 function fulfill(route: Route, body: unknown) {
@@ -55,6 +56,56 @@ async function mockShell(
   await page.route("**/api/chat-providers**", (route) => fulfill(route, { revision: 1, instances: [] }));
   await page.route("**/api/chats?**", (route) => fulfill(route, { items: [] }));
   await page.route("**/api/chats/events**", (route) => route.abort());
+  await page.route("**/api/collaboration/inbox**", (route) => fulfill(route, { items: [{
+    scopeId,
+    runtimeId: "vps:11111111-1111-4111-8111-111111111111",
+    ownerId: "user_e2e",
+    kind: "chat",
+    authorityGeneration: 1,
+    status: "invited",
+    invitationId,
+    resource: {
+      id: invitationId,
+      scopeId,
+      owner: { actorId: "user_e2e", displayName: "Nima" },
+      target: { actorId: "user_ada", displayName: "Ada" },
+      scopeKind: "chat",
+      role: "editor",
+      status: "pending",
+      expiresAt: "2026-09-19T12:00:00.000Z",
+      revision: "2",
+    },
+  }] }));
+  await page.route("**/api/collaboration/shared**", (route) => fulfill(route, { items: [{
+    scopeId,
+    runtimeId: "vps:11111111-1111-4111-8111-111111111111",
+    ownerId: "user_e2e",
+    kind: "chat",
+    authorityGeneration: 1,
+    status: "accepted",
+    resource: {
+      scope: {
+        id: scopeId,
+        ownerId: "user_e2e",
+        kind: "chat",
+        resourceId: "chat_launch_plan",
+        membershipMode: "direct",
+        lifecycle: "shared",
+        revision: "4",
+        authEpoch: "1",
+        authorityGeneration: "1",
+        role: "owner",
+        capabilities: {
+          read: true, discuss: true, manageMembers: true, requestAi: true,
+          observeTerminal: false, controlTerminal: false, stopTerminal: false,
+        },
+      },
+      chat: {
+        id: "chat_launch_plan", scopeId, title: "Launch plan", lifecycle: "active",
+        revision: "4", messageCount: "3", lastMessagePreview: "The launch checklist is ready.",
+      },
+    },
+  }] }));
   await page.route(`**/api/collaboration/scopes/${scopeId}`, (route) => fulfill(route, {
     id: scopeId,
     ownerId: "user_e2e",
@@ -184,7 +235,17 @@ test("shared Chat stays an ordinary Chat inside Web Desktop and Web Canvas", asy
   await expect(page.getByRole("button", { name: "Ask AI" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Open discussion" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Collaboration access" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Shared with me" })).toBeVisible();
+  await expect(page.getByLabel("1 pending invitation")).toBeVisible();
   await page.screenshot({ path: "../output/playwright/collaboration-ux/web-desktop-chat.png", fullPage: true });
+
+  await page.getByRole("button", { name: "Shared with me" }).click();
+  await expect(page.getByRole("heading", { name: "Shared with me" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Accept" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Decline" })).toBeVisible();
+  await page.screenshot({ path: "../output/playwright/collaboration-ux/web-desktop-shared-with-me.png", fullPage: true });
+  await page.getByRole("button", { name: "Open Chat" }).click();
+  await expect(page.getByText("Launch plan")).toBeVisible();
 
   await page.getByRole("button", { name: "Open discussion" }).click();
   await expect(page.getByRole("dialog", { name: "Discussion" })).toContainText("I moved the launch review to Thursday at 10:00.");
@@ -225,15 +286,19 @@ test("Codex-bound shared Chat keeps discussion available without advertising Cla
   });
   await page.goto(`/shared/chat/${scopeId}`, { waitUntil: "domcontentloaded" });
 
-  await expect(page.getByRole("button", { name: "Ask AI" })).toBeDisabled();
-  await expect(page.getByText("AI requests are unavailable; discussion still works.")).toBeVisible();
-  const discussion = page.getByRole("textbox", { name: "Message everyone" });
+  await expect(page.getByRole("button", { name: "Ask AI" })).toHaveCount(0);
+  await expect(page.getByLabel("Message Chat")).toBeDisabled();
+  await expect(page.getByLabel("Message Chat")).toHaveAttribute("placeholder", "AI is unavailable");
+  await page.getByRole("button", { name: "Open discussion" }).click();
+  const discussionLayer = page.getByRole("dialog", { name: "Discussion" });
+  const discussion = discussionLayer.getByRole("textbox", { name: "Add a discussion note" });
   await expect(discussion).toBeEnabled();
   await discussion.fill("Human discussion remains available.");
-  await expect(page.getByRole("button", { name: "Send message" })).toBeEnabled();
+  await expect(discussionLayer.getByRole("button", { name: "Post note" })).toBeEnabled();
+  await expect(page.getByText(/Claude/i)).toHaveCount(0);
   await page.addStyleTag({ content: "nextjs-portal { display: none !important; }" });
   await page.screenshot({
-    path: "../specs/121-collaboration-session-sharing/evidence/immutable-codex-shared-ai-unavailable.png",
+    path: "../output/playwright/collaboration-ux/immutable-codex-shared-ai-unavailable.png",
     fullPage: true,
   });
 });

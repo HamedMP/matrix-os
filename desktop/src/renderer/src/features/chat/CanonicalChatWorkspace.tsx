@@ -94,6 +94,8 @@ export function CanonicalChatWorkspace({
   initialChatId,
   initialView,
   sharedScopeId,
+  sharedHeaderContainer,
+  onSharedChatMetadata,
   draftRequest,
   projectLabel,
   active,
@@ -113,6 +115,8 @@ export function CanonicalChatWorkspace({
   initialChatId?: string;
   initialView?: "index" | "draft" | "conversation";
   sharedScopeId?: string;
+  sharedHeaderContainer?: HTMLElement | null;
+  onSharedChatMetadata?: (metadata: { title: string; role: "owner" | "editor" | "viewer" }) => void;
   draftRequest?: ChatAgentDraftRequest | null;
   projectLabel?: string;
   active: boolean;
@@ -813,7 +817,8 @@ export function CanonicalChatWorkspace({
         {sharedScopeId || projectedSharedChat ? (
           collaborationApi && actorId ? (
             sharedScopeId ? <SharedChatPanel api={collaborationApi} actorId={actorId}
-              runtimeId={`desktop:${runtimeSlot}`} scopeId={sharedScopeId} />
+              runtimeId={`desktop:${runtimeSlot}`} scopeId={sharedScopeId}
+              headerContainer={sharedHeaderContainer} onMetadata={onSharedChatMetadata} />
               : <CanonicalSharedChatPanel api={collaborationApi} actorId={actorId}
                 runtimeId={`desktop:${runtimeSlot}`} chatId={controller.detail!.record.chat.id} />
           ) : (

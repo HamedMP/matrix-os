@@ -496,6 +496,8 @@ function useSharedChatController({ api, actorId, runtimeId, scopeId, storage, on
   const [state, dispatch] = useReducer(reduceSharedChat, initialSharedChatState);
   const loadGeneration = useRef(0);
   const recoveryGeneration = useRef<number | null>(null);
+  const onMetadataRef = useRef(onMetadata);
+  useEffect(() => { onMetadataRef.current = onMetadata; }, [onMetadata]);
   const stateRef = useRef(state);
   useEffect(() => { stateRef.current = state; }, [state]);
   const draftStore = useMemo(() => createCollaborationDraftStore(storage ?? browserStorage()), [storage]);
@@ -514,13 +516,13 @@ function useSharedChatController({ api, actorId, runtimeId, scopeId, storage, on
       const nextMessages = CollaborationChatMessagesResponseSchema.parse(messagesValue).messages;
       if (generation !== loadGeneration.current) return;
       dispatch({ type: "loaded", scope: nextScope, chat: nextChat, messages: nextMessages, clearForegroundError });
-      onMetadata?.({ title: nextChat.title, role: nextScope.role });
+      onMetadataRef.current?.({ title: nextChat.title, role: nextScope.role });
       markRead(api, base, nextMessages);
     } catch (failure: unknown) {
       console.warn("[chat-collaboration] Chat load failed", failure instanceof Error ? failure.name : "UnknownError");
       if (generation === loadGeneration.current) dispatch({ type: "load_failed" });
     }
-  }, [api, onMetadata, scopeId]);
+  }, [api, scopeId]);
   const recoverCanonical = useCallback(async () => {
     // Fence pending history pages and older refreshes before reading canonical state.
     const generation = ++loadGeneration.current;
@@ -544,7 +546,7 @@ function useSharedChatController({ api, actorId, runtimeId, scopeId, storage, on
       }
       if (generation !== loadGeneration.current) throw new CollaborationRecoverySupersededError();
       dispatch({ type: "loaded", scope: nextScope, chat: nextChat, messages: combined, clearForegroundError: false });
-      onMetadata?.({ title: nextChat.title, role: nextScope.role });
+      onMetadataRef.current?.({ title: nextChat.title, role: nextScope.role });
       markRead(api, base, combined);
     } catch (failure: unknown) {
       if (generation === loadGeneration.current) dispatch({ type: "recovery_failed" });
@@ -555,7 +557,7 @@ function useSharedChatController({ api, actorId, runtimeId, scopeId, storage, on
         dispatch({ type: "page_cancelled" });
       }
     }
-  }, [api, onMetadata, scopeId]);
+  }, [api, scopeId]);
   useEffect(() => {
     dispatch({ type: "reset" });
     void load(true);
