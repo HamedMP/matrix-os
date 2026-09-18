@@ -13,10 +13,12 @@ export function ShellChatCollaboration({
   view,
   onOpenChat,
   onSessionMetadata,
+  headerContainer,
 }: {
   view: ChatCollaborationView;
   onOpenChat?: (scopeId: string) => void;
   onSessionMetadata?: (metadata: { title: string; role: "owner" | "editor" | "viewer" }) => void;
+  headerContainer?: HTMLElement | null;
 }) {
   const { isLoaded, userId } = useAuth();
   const browserOrigin = useBrowserOrigin();
@@ -42,6 +44,7 @@ export function ShellChatCollaboration({
       api={api}
       actorId={actorId}
       onChatMetadata={onSessionMetadata}
+      headerContainer={headerContainer}
       openInvitation={(invitationId) => router.push(`/shared/invitations/${encodeURIComponent(invitationId)}`)}
       openChat={(scopeId) => {
         onOpenChat?.(scopeId);

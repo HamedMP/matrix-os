@@ -42,7 +42,9 @@ describe("SessionAccessControl", () => {
   it("uses a compact summary and discloses owner management at the second level", async () => {
     render(<SessionAccessControl api={api()} scope={scope} />);
     fireEvent.click(screen.getByRole("button", { name: "Collaboration access" }));
-    expect(await screen.findByRole("dialog", { name: "Collaboration access summary" })).toBeVisible();
+    const summary = await screen.findByRole("dialog", { name: "Collaboration access summary" });
+    expect(summary).toBeVisible();
+    expect(summary).toHaveClass("w-80", "max-w-[calc(100vw-2rem)]", "bg-background");
     expect(await screen.findByText("Nima")).toBeVisible();
     expect(screen.getByRole("button", { name: "Manage access" })).toBeVisible();
   });

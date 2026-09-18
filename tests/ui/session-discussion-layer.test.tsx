@@ -51,7 +51,7 @@ describe("SessionDiscussionLayer", () => {
     const post = screen.getByRole("button", { name: "Post note" });
 
     await waitFor(() => expect(close).toHaveFocus());
-    expect(dialog).toHaveClass("max-sm:inset-0", "max-sm:h-full");
+    expect(dialog).toHaveClass("w-full", "bg-background", "sm:w-96");
     post.focus();
     fireEvent.keyDown(window, { key: "Tab" });
     expect(close).toHaveFocus();

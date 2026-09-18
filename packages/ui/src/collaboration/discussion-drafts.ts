@@ -1,6 +1,19 @@
 const PREFIX = "matrix:collaboration:discussion-draft:v1";
 const MAX_DRAFT_BYTES = 16 * 1024;
 
+function truncateUtf8(value: string): string {
+  const encoder = new TextEncoder();
+  if (encoder.encode(value).byteLength <= MAX_DRAFT_BYTES) return value;
+  let low = 0;
+  let high = value.length;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (encoder.encode(value.slice(0, middle)).byteLength <= MAX_DRAFT_BYTES) low = middle;
+    else high = middle - 1;
+  }
+  return value.slice(0, low);
+}
+
 export function discussionDraftKey(input: {
   actorId: string;
   runtimeId: string;
@@ -29,7 +42,7 @@ export function createDiscussionDraftStore(
     },
     save(key: string, text: string): void {
       if (!storage) return;
-      const bounded = new TextEncoder().encode(text).byteLength <= MAX_DRAFT_BYTES ? text : text.slice(0, 8_192);
+      const bounded = truncateUtf8(text);
       try {
         storage.setItem(key, JSON.stringify({ text: bounded }));
       } catch (error: unknown) {

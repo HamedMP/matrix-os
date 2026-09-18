@@ -30,5 +30,10 @@ describe("private collaboration discussion drafts", () => {
     const store = createDiscussionDraftStore(storage);
     store.save(key, "x".repeat(30_000));
     expect(new TextEncoder().encode(store.load(key)).byteLength).toBeLessThanOrEqual(16 * 1024);
+
+    store.save(key, "€".repeat(20_000));
+    const unicodeDraft = store.load(key);
+    expect(unicodeDraft.length).toBeGreaterThan(0);
+    expect(new TextEncoder().encode(unicodeDraft).byteLength).toBeLessThanOrEqual(16 * 1024);
   });
 });

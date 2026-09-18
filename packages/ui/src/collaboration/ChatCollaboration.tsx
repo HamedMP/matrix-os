@@ -11,6 +11,7 @@ import {
   type CanonicalChatMessagePart,
 } from "@matrix-os/contracts";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { z } from "zod/v4";
@@ -47,6 +48,7 @@ export function ChatCollaboration({
   openTerminal = () => undefined,
   openProject = () => undefined,
   onChatMetadata,
+  headerContainer,
 }: {
   view: ChatCollaborationView;
   api: CollaborationApi;
@@ -58,6 +60,7 @@ export function ChatCollaboration({
   openTerminal?: (scopeId: string) => void;
   openProject?: (scopeId: string) => void;
   onChatMetadata?: (metadata: { title: string; role: "owner" | "editor" | "viewer" }) => void;
+  headerContainer?: HTMLElement | null;
 }) {
   if (view.kind === "home") {
     return <CollaborationHome api={api} openInvitation={openInvitation} openChat={openChat}
@@ -70,9 +73,10 @@ export function ChatCollaboration({
   if (view.kind === "terminal") return <SharedTerminalView api={api} actorId={actorId} scopeId={view.scopeId} />;
   if (view.kind === "project") return <SharedProjectView api={api} scopeId={view.scopeId} />;
   if (view.kind === "canonical-chat") return <CanonicalSharedChatPanel api={api} actorId={actorId}
-    runtimeId={runtimeId ?? "platform"} chatId={view.chatId} storage={storage} onMetadata={onChatMetadata} />;
+    runtimeId={runtimeId ?? "platform"} chatId={view.chatId} storage={storage} onMetadata={onChatMetadata}
+    headerContainer={headerContainer} />;
   return <SharedChatPanel api={api} actorId={actorId} runtimeId={runtimeId ?? "platform"}
-    scopeId={view.scopeId} storage={storage} onMetadata={onChatMetadata} />;
+    scopeId={view.scopeId} storage={storage} onMetadata={onChatMetadata} headerContainer={headerContainer} />;
 }
 
 function CollaborationHome({ api, openInvitation, openChat, openTerminal, openProject }: {
@@ -624,6 +628,7 @@ function useSharedChatController({ api, actorId, runtimeId, scopeId, storage, on
 
 export function SharedChatPanel(props: Parameters<typeof useSharedChatController>[0] & {
   onMetadata?: (metadata: { title: string; role: "owner" | "editor" | "viewer" }) => void;
+  headerContainer?: HTMLElement | null;
 }) {
   const { state, loadMoreMessages, updateDraft, changeDraftMode, send } = useSharedChatController(props);
   if (state.loading) return <p role="status" className="p-8">Loading shared Chat…</p>;
@@ -634,7 +639,8 @@ export function SharedChatPanel(props: Parameters<typeof useSharedChatController
     updateDraft={updateDraft} changeDraftMode={changeDraftMode} send={send} />;
 }
 
-function NativeSharedChatPanel({ api, actorId, runtimeId, storage, state, loadMoreMessages, updateDraft, changeDraftMode, send }: {
+function NativeSharedChatPanel({ api, actorId, runtimeId, storage, state, loadMoreMessages, updateDraft, changeDraftMode, send,
+  headerContainer }: {
   api: CollaborationApi;
   actorId: string;
   runtimeId: string;
@@ -645,6 +651,7 @@ function NativeSharedChatPanel({ api, actorId, runtimeId, storage, state, loadMo
   updateDraft(text: string, mode?: CollaborationDraft["mode"]): void;
   changeDraftMode(mode: CollaborationDraft["mode"]): void;
   send(): Promise<void>;
+  headerContainer?: HTMLElement | null;
 }) {
   const [discussionOpen, setDiscussionOpen] = useState(false);
   const discussionTrigger = useRef<HTMLButtonElement>(null);
@@ -653,18 +660,23 @@ function NativeSharedChatPanel({ api, actorId, runtimeId, storage, state, loadMo
     setDiscussionOpen(false);
     queueMicrotask(() => discussionTrigger.current?.focus());
   }, []);
-  return <main data-slot="native-shared-chat" className="relative mx-auto flex h-full min-h-0 w-full max-w-4xl flex-col overflow-hidden">
-    <div className="flex min-h-11 items-center justify-end gap-1 border-b px-3">
-      <span className="mr-auto truncate text-xs capitalize text-muted-foreground">{state.scope.role} access</span>
-      {state.connection !== "connected" ? <span role="status" className="px-2 text-xs text-muted-foreground">
+  const collaborationChrome = <div className="flex items-center justify-end gap-1">
+      {state.connection !== "connected" ? <span role="status" className="sr-only sm:not-sr-only sm:px-2 sm:text-xs sm:text-muted-foreground">
         {state.connection === "reconnecting" ? "Reconnecting…" : "Connecting…"}
       </span> : null}
       <button ref={discussionTrigger} type="button" aria-label="Open discussion" aria-expanded={discussionOpen}
         onClick={() => setDiscussionOpen(true)} className="rounded-lg px-2.5 py-2 text-xs hover:bg-[var(--bg-hover)]">
-        Discussion{BigInt(discussion.latestSequence) > BigInt(0) ? <span className="ml-1" aria-label="Discussion has notes">•</span> : null}
+        <span className="hidden sm:inline">Discussion</span><span aria-hidden className="sm:hidden">Notes</span>
+        {BigInt(discussion.latestSequence) > BigInt(0) ? <span className="ml-1" aria-label="Discussion has notes">•</span> : null}
       </button>
       <SessionAccessControl key={state.scope.id} api={api} scope={state.scope} />
-    </div>
+    </div>;
+  return <main data-slot="native-shared-chat" className="relative mx-auto flex h-full min-h-0 w-full max-w-4xl flex-col overflow-hidden">
+    {headerContainer
+      ? createPortal(collaborationChrome, headerContainer)
+      : <div data-slot="collaboration-session-subheader" className="flex min-h-11 items-center justify-end border-b px-3">
+        {collaborationChrome}
+      </div>}
     <SharedChatHistory state={state} loadMoreMessages={loadMoreMessages} />
     <SharedChatControls key={state.scope.id} api={api} scope={state.scope} actorId={actorId}
       resourceRevision={state.chat.revision} draft={state.draft} updateDraft={updateDraft}
@@ -674,13 +686,14 @@ function NativeSharedChatPanel({ api, actorId, runtimeId, storage, state, loadMo
   </main>;
 }
 
-export function CanonicalSharedChatPanel({ api, actorId, runtimeId, chatId, storage, onMetadata }: {
+export function CanonicalSharedChatPanel({ api, actorId, runtimeId, chatId, storage, onMetadata, headerContainer }: {
   api: CollaborationApi;
   actorId: string;
   runtimeId: string;
   chatId: string;
   storage?: Pick<Storage, "getItem" | "setItem" | "removeItem">;
   onMetadata?: (metadata: { title: string; role: "owner" | "editor" | "viewer" }) => void;
+  headerContainer?: HTMLElement | null;
 }) {
   const [resolution, setResolution] = useState<{
     chatId: string;
@@ -704,7 +717,7 @@ export function CanonicalSharedChatPanel({ api, actorId, runtimeId, chatId, stor
   }
   if (!resolution.scopeId) return <SafeError title="Shared Chat unavailable" />;
   return <SharedChatPanel api={api} actorId={actorId} runtimeId={runtimeId}
-    scopeId={resolution.scopeId} storage={storage} onMetadata={onMetadata} />;
+    scopeId={resolution.scopeId} storage={storage} onMetadata={onMetadata} headerContainer={headerContainer} />;
 }
 
 async function resolveCanonicalChatScope(api: CollaborationApi, chatId: string): Promise<string | null> {
@@ -766,7 +779,16 @@ function NativeSharedMessageView({ message }: { message: ReturnType<typeof proje
 function CanonicalPartView({ part, human = false }: { part: CanonicalChatMessagePart; human?: boolean }) {
   if (part.type === "text" || part.type === "summary") {
     return human ? <p className="whitespace-pre-wrap">{part.text}</p>
-      : <div className="prose prose-sm max-w-none"><ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={safeMarkdownUrl}>{part.text}</ReactMarkdown></div>;
+      : <div className="max-w-none text-sm leading-6"><ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={safeMarkdownUrl}
+        components={{
+          h1: ({ children }) => <h1 className="mb-2 mt-4 text-xl font-semibold first:mt-0">{children}</h1>,
+          h2: ({ children }) => <h2 className="mb-2 mt-4 text-lg font-semibold first:mt-0">{children}</h2>,
+          h3: ({ children }) => <h3 className="mb-2 mt-3 text-base font-semibold first:mt-0">{children}</h3>,
+          p: ({ children }) => <p className="my-2 first:mt-0 last:mb-0">{children}</p>,
+          ul: ({ children }) => <ul className="my-2 list-disc space-y-1 pl-5">{children}</ul>,
+          ol: ({ children }) => <ol className="my-2 list-decimal space-y-1 pl-5">{children}</ol>,
+          code: ({ children }) => <code className="rounded bg-muted px-1 py-0.5 font-mono text-[0.9em]">{children}</code>,
+        }}>{part.text}</ReactMarkdown></div>;
   }
   if (part.type === "tool_request") return <MessageDetail label={part.label} detail={part.inputPreview} />;
   if (part.type === "tool_result") return <MessageDetail label={`Tool ${part.outcome}`} detail={part.text} />;

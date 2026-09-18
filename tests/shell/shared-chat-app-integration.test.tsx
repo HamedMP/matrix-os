@@ -121,6 +121,10 @@ describe("web Chat shared collaboration integration", () => {
     expect(await screen.findByText("Launch plan")).toBeVisible();
     expect(document.querySelector('[data-slot="chat-app-collaboration"]')).toBeTruthy();
     expect(document.querySelector('[data-slot="native-shared-chat"]')).toBeTruthy();
+    const sessionHeader = document.querySelector('[data-slot="chat-session-header"]');
+    expect(sessionHeader).toBeTruthy();
+    expect(sessionHeader).toContainElement(screen.getByRole("button", { name: "Open discussion" }));
+    expect(document.querySelector('[data-slot="collaboration-session-subheader"]')).toBeNull();
     expect(screen.getByRole("button", { name: "New chat" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Open discussion" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "Ask AI" })).toBeNull();

@@ -203,6 +203,19 @@ test("shared Chat stays an ordinary Chat inside Web Desktop and Web Canvas", asy
   await expect(page.getByText("Launch plan")).toBeVisible();
   await expect(page.getByLabel("Message Chat")).toBeVisible();
   await page.screenshot({ path: "../output/playwright/collaboration-ux/web-canvas-chat.png", fullPage: true });
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`/shared/chat/${scopeId}`, { waitUntil: "domcontentloaded" });
+  await expect(page.getByText("Launch plan")).toBeVisible();
+  await expect(page.getByLabel("Message Chat")).toBeVisible();
+  await page.screenshot({ path: "../output/playwright/collaboration-ux/responsive-chat.png", fullPage: true });
+  await page.getByRole("button", { name: "Open discussion" }).click();
+  const mobileDiscussion = page.getByRole("dialog", { name: "Discussion" });
+  await expect(mobileDiscussion).toBeVisible();
+  const viewport = page.viewportSize();
+  const discussionBox = await mobileDiscussion.boundingBox();
+  expect(discussionBox?.width).toBeGreaterThanOrEqual((viewport?.width ?? 390) - 2);
+  await page.screenshot({ path: "../output/playwright/collaboration-ux/responsive-discussion.png", fullPage: true });
 });
 
 test("Codex-bound shared Chat keeps discussion available without advertising Claude", async ({ page }) => {

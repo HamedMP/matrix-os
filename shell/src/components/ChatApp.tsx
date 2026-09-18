@@ -265,6 +265,7 @@ function ChatAppContent({
     title: string;
     role: "owner" | "editor" | "viewer";
   } | null>(null);
+  const [collaborationHeaderContainer, setCollaborationHeaderContainer] = useState<HTMLDivElement | null>(null);
   const activeSharedMetadata = sharedMetadata?.viewKey === collaborationViewKey ? sharedMetadata : null;
   const handleSharedMetadata = useCallback((metadata: {
     title: string;
@@ -471,7 +472,7 @@ function ChatAppContent({
       <ChatAgentsContent client={agentClient} scopeKey={sessionId ?? "draft"}>
       <main className="flex flex-1 flex-col min-w-0">
         {/* Top bar */}
-        <header className={`flex items-center gap-2 border-b px-3 ${mobile ? "surface-glass min-h-14" : "min-h-12 border-border/30"}`}>
+        <header data-slot="chat-session-header" className={`flex items-center gap-2 border-b px-3 ${mobile ? "surface-glass min-h-14" : "min-h-12 border-border/30"}`}>
           {!sidebarOpen && (
             <>
               <Button
@@ -540,6 +541,7 @@ function ChatAppContent({
             </div>
           </div>
           {!collaborationView && sessionId ? <ChatSharing key={sessionId} chatId={sessionId} /> : null}
+          {collaborationView ? <div ref={setCollaborationHeaderContainer} className="flex shrink-0 items-center" /> : null}
           {!collaborationView ? <Button
             variant={setupOpen ? "secondary" : "ghost"}
             size="sm"
@@ -582,7 +584,7 @@ function ChatAppContent({
 
         {collaborationView ? (
           <ShellChatCollaboration view={collaborationView} onOpenChat={onOpenSharedChat}
-            onSessionMetadata={handleSharedMetadata} />
+            onSessionMetadata={handleSharedMetadata} headerContainer={collaborationHeaderContainer} />
         ) : <>
         <ChatQueuedRequests key={`queue:${sessionId ?? "new"}`} turns={queuedTurns} onCancel={onCancelQueuedTurn} />
         {/* Empty state or conversation */}

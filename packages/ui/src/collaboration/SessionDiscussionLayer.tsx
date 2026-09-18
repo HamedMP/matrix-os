@@ -35,7 +35,7 @@ export function SessionDiscussionLayer({ open, onClose, discussion }: {
   return <div className="absolute inset-0 z-30" data-slot="session-discussion-layer">
     <button type="button" aria-label="Close discussion" className="absolute inset-0 bg-black/20" onClick={onClose} />
     <section ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="session-discussion-title"
-      className="absolute inset-y-0 right-0 flex w-full flex-col border-l bg-[var(--bg-surface,var(--background))] shadow-2xl motion-safe:animate-in motion-safe:slide-in-from-right sm:w-[min(420px,42vw)] max-sm:inset-0 max-sm:h-full max-sm:border-l-0">
+      className="absolute inset-y-0 right-0 flex w-full flex-col border-l bg-background shadow-2xl motion-safe:animate-in motion-safe:slide-in-from-right sm:w-96 max-sm:border-l-0">
       <header className="flex min-h-14 items-center justify-between gap-3 border-b px-4">
         <div><h2 id="session-discussion-title" className="font-semibold">Discussion</h2>
           <p className="text-xs text-muted-foreground">Notes for people in this session—not prompts for AI.</p></div>

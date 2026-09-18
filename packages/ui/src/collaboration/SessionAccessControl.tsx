@@ -62,10 +62,10 @@ export function SessionAccessControl({ api, scope }: {
         <span key={member.actor.actorId} className="grid size-5 place-items-center rounded-full border bg-[var(--bg-surface,var(--background))] text-[9px] font-semibold">
           {member.actor.displayName.slice(0, 1).toUpperCase()}
         </span>) : <span className="grid size-5 place-items-center rounded-full border bg-[var(--bg-surface,var(--background))] text-[9px] font-semibold">S</span>}</span>
-      <span>{scope.membershipMode === "inherited" ? "Project access" : "Shared"}</span>
+      <span className="hidden sm:inline">{scope.membershipMode === "inherited" ? "Project access" : "Shared"}</span>
     </button>
     {open ? <section role="dialog" aria-label="Collaboration access summary"
-      className="absolute right-0 top-full z-40 mt-2 w-[min(340px,calc(100vw-2rem))] rounded-2xl border bg-[var(--bg-surface,var(--background))] p-4 shadow-xl">
+      className="absolute right-0 top-full z-40 mt-2 w-80 max-w-[calc(100vw-2rem)] rounded-2xl border bg-background p-4 shadow-xl">
       <div className="flex items-start justify-between gap-3"><div>
         <h2 className="font-semibold">Access</h2>
         <p className="text-xs text-muted-foreground">You are {scope.role === "owner" ? "the owner" : `an ${scope.role}`}.</p>
