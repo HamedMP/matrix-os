@@ -232,10 +232,10 @@
 - [ ] T102 After applying Stack PR 2, run the complete `quickstart.md` acceptance matrix and record exact commands, failures/fixes, timings, and evidence links in `specs/525-collaboration-ux-redesign/implementation-log.md`
 - [ ] T103 Run all required affected/full tests, typechecks, builds, pattern scan, and react-doctor checks and record final results in `specs/525-collaboration-ux-redesign/implementation-log.md`
 - [ ] T104 Audit every changed file against `AGENTS.md`, `.specify/memory/constitution.md`, and `specs/quality-gates.md`, recording any explicit deferrals with linked issues in `specs/525-collaboration-ux-redesign/implementation-log.md`
-- [ ] T105 Create the separate private `FinnaAI/matrix-os-site` documentation worktree/PR under `content/docs/` and record its URL and validation in `specs/525-collaboration-ux-redesign/implementation-log.md`
-- [ ] T106 Update each Graphite PR body with Conventional Commit title, source of truth, lock/transaction scope, acceptable orphan states, auth source of truth, deferred scope, test results, and evidence links tracked in `specs/525-collaboration-ux-redesign/implementation-log.md`
+- [x] T105 Create the separate private `FinnaAI/matrix-os-site` documentation worktree/PR under `content/docs/` and record its URL and validation in `specs/525-collaboration-ux-redesign/implementation-log.md`
+- [x] T106 Update each Graphite PR body with Conventional Commit title, source of truth, lock/transaction scope, acceptable orphan states, auth source of truth, deferred scope, test results, and evidence links tracked in `specs/525-collaboration-ux-redesign/implementation-log.md`
 - [ ] T107 Run `$worktree-pr-monitor` for every stack PR, apply `ready-for-ci`, fix relevant CI failures, and record current-head Greptile 5/5 plus non-draft status in `specs/525-collaboration-ux-redesign/implementation-log.md`
-- [ ] T108 Verify no PR is merged and record the explicit user-approval gate and final stacked PR order in `specs/525-collaboration-ux-redesign/implementation-log.md`
+- [x] T108 Verify no PR is merged and record the explicit user-approval gate and final stacked PR order in `specs/525-collaboration-ux-redesign/implementation-log.md`
 
 ---
 
