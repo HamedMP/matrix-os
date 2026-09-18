@@ -45,6 +45,18 @@ async function reconcileInTransaction(
       current_selection IS NULL
       OR current_selection->>'instanceId' IS DISTINCT FROM bound_instance_id
     )`)
+    // Repairable rows sort ahead of diagnostic-only rows so an arbitrary
+    // number of missing proving Runs cannot starve later valid repairs. The
+    // canonical schema is still revalidated below before any update.
+    .orderBy(sql<number>`CASE WHEN EXISTS (
+      SELECT 1
+      FROM chat_runs AS proving_run
+      WHERE proving_run.chat_id = chats.id
+        AND proving_run.turn_id = chats.bound_at_turn_id
+        AND proving_run.driver_kind = chats.bound_driver_kind
+        AND proving_run.instance_id = chats.bound_instance_id
+        AND proving_run.selection->>'instanceId' = chats.bound_instance_id
+    ) THEN 0 ELSE 1 END`)
     .orderBy("id")
     .limit(RECONCILIATION_LIMIT)
     .forUpdate()

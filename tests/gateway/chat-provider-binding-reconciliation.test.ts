@@ -82,6 +82,43 @@ describe("Chat Provider binding reconciliation", () => {
       .resolves.toEqual({ current_selection: corruptSelection, bound_instance_id: "codex_default" });
     warn.mockRestore();
   });
+
+  it("repairs proven rows even when more than one diagnostic batch sorts before them", async () => {
+    await fixture.db.insertInto("chats").values(Array.from({ length: 101 }, (_value, index) => ({
+      id: `chat_${String(index).padStart(3, "0")}_unproven`,
+      owner_type: "personal" as const,
+      owner_id: owner.ownerId,
+      create_request_id: `req_unproven_${index}`,
+      project_id: null,
+      title: "Unproven provider mismatch",
+      lifecycle: "active" as const,
+      attention: "none" as const,
+      revision: 1,
+      message_count: 0,
+      collaboration: null,
+      user_state: null,
+      shell_state: null,
+      fork_provenance: null,
+      last_message_preview: null,
+      current_selection: JSON.stringify(corruptSelection),
+      bound_driver_kind: "codex" as const,
+      bound_instance_id: "codex_default",
+      bound_at_turn_id: `cturn_missing_${index}`,
+      created_at: now,
+      updated_at: now,
+    }))).execute();
+    await seedBoundCodexChat(repository, "chat_zzz_repairable");
+    await fixture.db.updateTable("chats").set({ current_selection: JSON.stringify(corruptSelection) })
+      .where("id", "=", "chat_zzz_repairable").execute();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    await expect(repository.reconcileProviderBindings()).resolves.toEqual({ repaired: 1, unresolved: 99 });
+    await expect(fixture.db.selectFrom("chats").select("current_selection")
+      .where("id", "=", "chat_zzz_repairable").executeTakeFirstOrThrow())
+      .resolves.toEqual({ current_selection: codexSelection });
+    expect(warn).toHaveBeenCalledTimes(99);
+    warn.mockRestore();
+  });
 });
 
 const realDescribe = process.env.MATRIX_TEST_POSTGRES_URL ? describe : describe.skip;
