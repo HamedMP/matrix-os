@@ -4,6 +4,14 @@ import { describe, expect, it } from "vitest";
 
 const root = process.cwd();
 
+function nginxLocation(script: string, location: string): string {
+  const start = script.indexOf(`  location ${location} {`);
+  expect(start).toBeGreaterThanOrEqual(0);
+  const end = script.indexOf("\n  }\n", start);
+  expect(end).toBeGreaterThan(start);
+  return script.slice(start, end);
+}
+
 describe("self-host server installer", () => {
   it("keeps the source installer executable", () => {
     expect(statSync(join(root, "scripts/install-server.sh")).mode & 0o111).not.toBe(0);
@@ -107,6 +115,12 @@ describe("self-host server installer", () => {
     expect(script).toContain('if (\\$arg_reconnectionToken != "")');
     expect(script).toContain("error_page 418 = @matrix_code_root_ws");
     expect(script).toContain("proxy_set_header X-Forwarded-Prefix /code");
+    for (const location of ["/code/", "@matrix_code_root_ws"]) {
+      const block = nginxLocation(script, location);
+      expect(block).toContain("proxy_set_header Host \\$host;");
+      expect(block).toContain("proxy_set_header X-Forwarded-Host \\$host;");
+      expect(block).toContain("proxy_set_header X-Forwarded-Proto \\$scheme;");
+    }
     expect(script).toContain("proxy_read_timeout 3600s");
     expect(script).toContain("proxy_pass http://127.0.0.1:8788");
     expect(script).toContain("proxy_pass http://127.0.0.1:3000");
