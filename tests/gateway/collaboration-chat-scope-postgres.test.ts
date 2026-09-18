@@ -73,10 +73,11 @@ realDescribe("CollaborationChatScopeService PostgreSQL capability lifecycle", ()
       service.reconcileExecutionEligibility({ executionGeneration: 9, eligibility }),
     ]);
 
-    await expect(fixture.db.selectFrom("collaboration_scopes")
+    const scope = await fixture.db.selectFrom("collaboration_scopes")
       .select(["execution_generation", "execution_eligibility"])
-      .where("id", "=", affectedScopeId).executeTakeFirstOrThrow())
-      .resolves.toMatchObject({ execution_generation: 9, execution_eligibility: eligibility });
+      .where("id", "=", affectedScopeId).executeTakeFirstOrThrow();
+    expect({ ...scope, execution_generation: Number(scope.execution_generation) })
+      .toMatchObject({ execution_generation: 9, execution_eligibility: eligibility });
 
     const restarted = createService(fixture);
     await expect(restarted.reconcileExecutionEligibility({ executionGeneration: 9, eligibility }))

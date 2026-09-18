@@ -924,7 +924,6 @@ describe("collaboration gateway routes", () => {
       clientRequestId: request(80),
       expectedRevision: "2",
       text: "Summarize our discussion",
-      selection: { instanceId: "claude_shared", model: "claude-opus-4-6" },
     };
     expect((await signedJson({
       actorId: collaborationActors.owner,
@@ -933,6 +932,19 @@ describe("collaboration gateway routes", () => {
       path,
       body,
     })).status).toBe(401);
+    const tampered = await signedJson({
+      actorId: collaborationActors.owner,
+      scopeId: collaborationIds.scope,
+      method: "POST",
+      path,
+      body: {
+        ...body,
+        clientRequestId: request(81),
+        selection: { instanceId: "claude_shared", model: "claude-opus-4-6" },
+      },
+      m2Policy: true,
+    });
+    expect(tampered.status).toBe(400);
     const admitted = await signedJson({
       actorId: collaborationActors.owner,
       scopeId: collaborationIds.scope,
@@ -964,6 +976,97 @@ describe("collaboration gateway routes", () => {
       requests: [{ id: "qturn_shared_route_1" }],
       resourceRevision: "3",
     });
+  });
+
+  it("keeps history and discussion available when the bound Provider is unsupported", async () => {
+    await shareChat();
+    await fixture.db.insertInto("collaboration_members").values({
+      scope_id: collaborationIds.scope,
+      actor_id: collaborationActors.editor,
+      role: "editor",
+      status: "accepted",
+      invitation_id: null,
+      invited_by: collaborationActors.owner,
+      accepted_at: now,
+      expires_at: null,
+      revision: 1,
+      joined_at: now,
+      updated_at: now,
+    }).execute();
+    await fixture.db.updateTable("collaboration_scopes").set({
+      execution_generation: 1,
+      execution_eligibility: JSON.stringify({
+        profileId: "scope-runtime-chat-v1",
+        profileVersion: 1,
+        profileDigest: "a".repeat(64),
+        adapterId: "claude-code",
+        harnessVersion: "2.1.240",
+      }),
+    }).where("id", "=", collaborationIds.scope).execute();
+    await fixture.db.updateTable("chats").set({
+      current_selection: JSON.stringify({ instanceId: "codex_default", model: "gpt-5.6-sol" }),
+      bound_driver_kind: "codex",
+      bound_instance_id: "codex_default",
+      bound_at_turn_id: "cturn_existing_codex",
+    }).where("id", "=", collaborationIds.chat).execute();
+    const requestPath = `/api/collaboration/scopes/${collaborationIds.scope}/chat/requests`;
+
+    const capabilityResponse = await signedJson({
+      actorId: collaborationActors.editor,
+      scopeId: collaborationIds.scope,
+      method: "GET",
+      path: requestPath,
+      m2Policy: true,
+    });
+    expect(capabilityResponse.status).toBe(200);
+    const capabilityBody = await capabilityResponse.json() as { resourceRevision: string };
+    expect(capabilityBody).toMatchObject({
+      capability: {
+        status: "unavailable",
+        effectiveSelection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      },
+    });
+    expect((await signedJson({
+      actorId: collaborationActors.editor,
+      scopeId: collaborationIds.scope,
+      method: "GET",
+      path: `/api/collaboration/scopes/${collaborationIds.scope}/chat/messages`,
+      query: "after=0&limit=50",
+    })).status).toBe(200);
+    const scope = await fixture.db.selectFrom("collaboration_scopes").select("revision")
+      .where("id", "=", collaborationIds.scope).executeTakeFirstOrThrow();
+    const discussionResponse = await signedJson({
+      actorId: collaborationActors.editor,
+      scopeId: collaborationIds.scope,
+      method: "POST",
+      path: `/api/collaboration/scopes/${collaborationIds.scope}/chat/messages`,
+      body: {
+        clientRequestId: request(82),
+        expectedRevision: String(scope.revision),
+        text: "Discussion still works",
+      },
+    });
+    expect(discussionResponse.status).toBe(201);
+    expect((await signedJson({
+      actorId: collaborationActors.editor,
+      scopeId: collaborationIds.scope,
+      method: "POST",
+      path: requestPath,
+      body: {
+        clientRequestId: request(83),
+        expectedRevision: String(Number(capabilityBody.resourceRevision) + 1),
+        text: "Do not switch this Chat",
+      },
+      m2Policy: true,
+    })).status).toBe(503);
+    await expect(fixture.db.selectFrom("chats")
+      .select(["current_selection", "bound_driver_kind", "bound_instance_id"])
+      .where("id", "=", collaborationIds.chat).executeTakeFirstOrThrow())
+      .resolves.toMatchObject({
+        current_selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+        bound_driver_kind: "codex",
+        bound_instance_id: "codex_default",
+      });
   });
 
   it("lets viewers read and keep private state but rejects every discussion write", async () => {
@@ -1366,7 +1469,7 @@ async function seedChat(fixture: CollaborationTestDatabase): Promise<void> {
     shell_state: null,
     fork_provenance: null,
     last_message_preview: null,
-    current_selection: null,
+    current_selection: JSON.stringify({ instanceId: "claude_shared", model: "claude-opus-4-6" }),
     bound_driver_kind: null,
     bound_instance_id: null,
     bound_at_turn_id: null,

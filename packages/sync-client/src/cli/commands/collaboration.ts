@@ -396,8 +396,6 @@ export const collaborationCommand = defineCommand({
         ...scopeArgs,
         revision: { type: "string", required: true },
         message: { type: "string", required: true },
-        instance: { type: "string", required: false, default: "claude_shared" },
-        model: { type: "string", required: false, default: "claude-opus-4-6" },
       },
       run: async ({ args }) => run(args, async (platformUrl, token) => {
         const scopeId = value(args, "scope", ScopeIdSchema);
@@ -405,7 +403,6 @@ export const collaborationCommand = defineCommand({
           clientRequestId: randomUUID(),
           expectedRevision: value(args, "revision", RevisionSchema),
           text: args.message,
-          selection: { instanceId: args.instance, model: args.model },
         });
         return collaborationRequest({
           platformUrl, token, method: "POST",

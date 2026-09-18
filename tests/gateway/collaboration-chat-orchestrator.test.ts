@@ -36,8 +36,6 @@ describe("canonical shared Chat orchestration", () => {
       payloadHash: "a".repeat(64),
       expectedRevision: 1,
       parts: [{ type: "text", text: "Shared prompt" }],
-      driverKind: "claude_code",
-      selection: { instanceId: "claude_shared", model: "claude-opus-4-6" },
       interactionMode: "default",
       permissionMode: "supervised",
       capabilitySnapshot: {
@@ -213,8 +211,6 @@ describe("canonical shared Chat orchestration", () => {
       payloadHash: "b".repeat(64),
       expectedRevision: 1,
       parts: [{ type: "text", text: "Shared prompt" }],
-      driverKind: "claude_code",
-      selection: { instanceId: "claude_shared", model: "claude-opus-4-6" },
       interactionMode: "default",
       permissionMode: "supervised",
       capabilitySnapshot: {
@@ -232,7 +228,9 @@ describe("canonical shared Chat orchestration", () => {
       lifecycle: "active", attention: "none", revision: 1, message_count: 0,
       collaboration: JSON.stringify({ scopeId: collaborationIds.scope, mode: "shared_ai", executionFenced: true }),
       user_state: null, shell_state: null, fork_provenance: null, last_message_preview: null,
-      current_selection: null, bound_driver_kind: null, bound_instance_id: null, bound_at_turn_id: null,
+      current_selection: JSON.stringify({ instanceId: "claude_shared", model: "claude-opus-4-6" }),
+      bound_driver_kind: "claude_code", bound_instance_id: "claude_shared",
+      bound_at_turn_id: "cturn_shared_orchestrator_origin",
       created_at: now, updated_at: now,
     }).execute();
     await fixture.db.insertInto("collaboration_scopes").values({

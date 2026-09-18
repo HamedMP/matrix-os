@@ -79,7 +79,7 @@ describe("shared Chat two-account lifecycle", () => {
         if (path.endsWith("/chat/requests")) return {
           requests,
           approvals: [],
-          defaultSelection,
+          capability: { status: "available", effectiveSelection: defaultSelection },
           resourceRevision: String(revision),
         };
         if (path.endsWith("/chat")) return chat();

@@ -11,7 +11,16 @@ function fulfill(route: Route, body: unknown) {
   });
 }
 
-async function mockShell(page: Page) {
+async function mockShell(
+  page: Page,
+  capability: {
+    status: "available" | "unavailable" | "owner_binding_required";
+    effectiveSelection?: { instanceId: string; model: string };
+  } = {
+    status: "available",
+    effectiveSelection: { instanceId: "claude_shared", model: "claude-opus-4-6" },
+  },
+) {
   await page.setExtraHTTPHeaders({ "x-matrix-platform-session": "platform" });
   await page.route("**/api/settings/**", (route) => {
     const pathname = new URL(route.request().url()).pathname;
@@ -126,7 +135,7 @@ async function mockShell(page: Page) {
       updatedAt: now,
     }],
     approvals: [],
-    defaultSelection: { instanceId: "claude_shared", model: "claude-opus-4-6" },
+    capability,
     resourceRevision: "4",
   }));
   await page.route(`**/api/collaboration/scopes/${scopeId}/connection-tickets`, (route) => fulfill(route, {
@@ -158,4 +167,24 @@ test("shared Chat stays inside Web Desktop and Web Canvas", async ({ page }) => 
   await expect(page.getByRole("heading", { name: "Launch plan" })).toBeVisible();
   await expect(page.getByRole("region", { name: "Shared AI queue" })).toBeVisible();
   await page.screenshot({ path: "../output/playwright/shared-chat/web-canvas-ai.png", fullPage: true });
+});
+
+test("Codex-bound shared Chat keeps discussion available without advertising Claude", async ({ page }) => {
+  await mockShell(page, {
+    status: "unavailable",
+    effectiveSelection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+  });
+  await page.goto(`/shared/chat/${scopeId}`, { waitUntil: "domcontentloaded" });
+
+  await expect(page.getByRole("button", { name: "Ask AI" })).toBeDisabled();
+  await expect(page.getByText("AI requests are unavailable; discussion still works.")).toBeVisible();
+  const discussion = page.getByRole("textbox", { name: "Message everyone" });
+  await expect(discussion).toBeEnabled();
+  await discussion.fill("Human discussion remains available.");
+  await expect(page.getByRole("button", { name: "Send message" })).toBeEnabled();
+  await page.addStyleTag({ content: "nextjs-portal { display: none !important; }" });
+  await page.screenshot({
+    path: "../specs/121-collaboration-session-sharing/evidence/immutable-codex-shared-ai-unavailable.png",
+    fullPage: true,
+  });
 });
