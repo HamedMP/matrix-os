@@ -24,8 +24,8 @@ Confirmed by the product owner on 2026-09-17.
 ## Stack
 
 1. `feat(collaboration): add discussion and invitation UX contracts` — 29 files, 2,650 additions.
-2. `feat(collaboration): integrate native web session UX` — 39 files, 1,304 additions.
-3. `feat(collaboration): align desktop and mobile session UX` — 48 files, 1,852 additions after final verification and provider-ownership alignment.
+2. `feat(collaboration): integrate native web session UX` — 46 files, 1,305 additions plus current screenshot evidence.
+3. `feat(collaboration): align desktop and mobile session UX` — 50 files, 1,864 additions after final verification, provider-ownership alignment, and Electron evidence.
 
 Each layer must remain at or below 3,000 additions and 50 files, include current-head evidence for visible changes, pass its relevant checks, use `$worktree-pr-monitor`, reach Greptile 5/5, and stay unmerged until explicit product-owner approval.
 
