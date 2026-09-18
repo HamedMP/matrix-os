@@ -88,7 +88,7 @@ describe('platform/customer-vps-cloud-init', () => {
 
   function runRestoreWithFakeMatrixctl(
     existsStatus: number | { vpsMeta: number; latestPointer: number },
-    options: { preexistingRestoreFlag?: 'file' | 'symlink' } = {},
+    options: { preexistingRestoreFlag?: 'file' | 'symlink'; runtimeSlot?: string } = {},
   ) {
     const root = process.cwd();
     const tempDir = mkdtempSync(join(tmpdir(), 'second-restore-r2-'));
@@ -145,6 +145,7 @@ exit 99
         env: {
           ...process.env,
           SECOND_RESTORE_TEST_ROOT: tempDir,
+          MATRIX_RUNTIME_SLOT: options.runtimeSlot ?? 'primary',
         },
       });
       return {
@@ -886,6 +887,18 @@ exit 99
     expect(backupWithoutMetadata.result.status).toBe(1);
     expect(backupWithoutMetadata.restoreFlagExists).toBe(false);
     expect(backupWithoutMetadata.result.stderr).toContain('matrix-restore: failed to fetch latest pointer');
+  });
+
+  it('uses only secondary-authorized keys for secondary restore preflight', () => {
+    const fresh = runRestoreWithFakeMatrixctl({ vpsMeta: 1, latestPointer: 44 }, { runtimeSlot: 'studio' });
+    expect(fresh.result.status, fresh.result.stderr).toBe(0);
+    expect(fresh.matrixctlCalls).not.toContain('system/vps-meta.json');
+    expect(fresh.matrixctlCalls).toContain('system/runtime-slots/studio/db/latest');
+    const failure = runRestoreWithFakeMatrixctl(1, { runtimeSlot: 'studio' });
+    expect(failure.result.status).toBe(1);
+    expect(failure.restoreFlagExists).toBe(false);
+    const backup = runRestoreWithFakeMatrixctl({ vpsMeta: 1, latestPointer: 0 }, { runtimeSlot: 'studio' });
+    expect(backup.matrixctlCalls).toContain('r2 get system/runtime-slots/studio/db/latest');
   });
 
   it('keeps a completed local restore authoritative across ordinary reboots', () => {

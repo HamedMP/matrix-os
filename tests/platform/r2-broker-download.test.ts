@@ -57,6 +57,17 @@ function download({
 }
 
 describe('host R2 download completion', () => {
+  it('probes only a key authorized for its secondary runtime', () => {
+    const stub = `globalThis.fetch = async (_url, init) => {
+      if (JSON.parse(init.body).key !== 'system/runtime-slots/studio/db/latest') throw new Error('wrong scope');
+      return Response.json({url:'https://download.test/snapshot'});
+    };`;
+    const result = spawnSync(process.execPath, ['--import', `data:text/javascript,${encodeURIComponent(stub)}`, resolve('distro/customer-vps/host-bin/matrix-r2-broker.mjs'), 'probe'], {
+      encoding: 'utf8', timeout: 5_000,
+      env: { MATRIX_HANDLE: 'alice', PLATFORM_INTERNAL_URL: 'https://platform.test', UPGRADE_TOKEN: 'test-only-legacy-token', MATRIX_SYNC_RUNTIME_TOKEN: 'scoped-test-only-token', MATRIX_MACHINE_ID: 'machine-test', MATRIX_RUNTIME_SLOT: 'studio' },
+    });
+    expect(result.status, result.stderr).toBe(0);
+  });
   it('uses scoped runtime credentials and headers for a secondary backup', () => {
     expect(download({ scoped: true }).result.status).toBe(0);
   });

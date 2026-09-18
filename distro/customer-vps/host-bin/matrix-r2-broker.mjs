@@ -244,10 +244,14 @@ async function exists(key) {
 
 async function main(args) {
   switch (args[0]) {
-    case 'probe':
+    case 'probe': {
       if (args.length !== 1) fail('usage');
-      await brokerRequest('/presign/get', { key: 'system/vps-meta.json' });
+      const slot = process.env.MATRIX_RUNTIME_SLOT ?? 'primary';
+      if (!SAFE_SLOT.test(slot)) fail('runtime slot invalid');
+      const key = slot === 'primary' ? 'system/vps-meta.json' : `system/runtime-slots/${slot}/db/latest`;
+      await brokerRequest('/presign/get', { key });
       return 0;
+    }
     case 'exists':
       if (args.length !== 2) fail('usage');
       return (await exists(args[1])) ? 0 : 44;
