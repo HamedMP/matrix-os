@@ -126,6 +126,7 @@ describe("Electron Shared with me navigation", () => {
       kind: "work",
       workRoute: "chat",
       title: "Chat",
+      chatId: "chat_shared",
       chatTitle: "Launch plan",
       sharedScopeId: scopeId,
     });

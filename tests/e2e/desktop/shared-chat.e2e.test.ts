@@ -298,12 +298,15 @@ suite("Electron shared Chat presentation", () => {
 
   it("opens Shared with me inside the canonical Chat workspace", async () => {
     await page.keyboard.press("Escape");
+    await page.getByRole("button", { name: "Chat", exact: true }).first().dblclick({ timeout: 20_000 });
     await page.getByRole("button", { name: "Shared with me" }).click();
     await page.getByRole("button", { name: "Open Chat" }).click();
 
     await page.getByText("Launch plan", { exact: true }).first().waitFor();
+    expect(await page.getByRole("button", { name: "Rename Launch plan" }).count()).toBe(0);
     expect(await page.locator('[data-slot="canonical-chat-workspace"]').count()).toBe(1);
     expect(await page.locator('[data-slot="native-shared-chat"]').count()).toBe(1);
+    expect(await page.locator('[data-slot="collaboration-session-subheader"]').count()).toBe(0);
     expect(await page.getByLabel("Message Chat").isVisible()).toBe(true);
     expect(await page.getByRole("button", { name: "Ask AI" }).count()).toBe(0);
     expect(await page.getByRole("button", { name: "Open discussion" }).isVisible()).toBe(true);

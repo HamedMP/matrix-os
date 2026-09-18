@@ -1,5 +1,5 @@
 import type { CollaborationMember, CollaborationScope } from "@matrix-os/contracts/collaboration";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import {
@@ -25,42 +25,60 @@ export function SessionAccessControl({ scope, getToken }: {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState(false);
   const [feedback, setFeedback] = useState("");
+  const refreshGeneration = useRef(0);
+  const mutationGeneration = useRef(0);
 
-  const refresh = async () => {
+  useEffect(() => () => {
+    refreshGeneration.current += 1;
+    mutationGeneration.current += 1;
+  }, []);
+
+  const loadAccess = useCallback(async () => {
     const token = await getToken();
     const [nextScope, result] = await Promise.all([
       fetchCollaborationScope(token, scope.id),
       fetchCollaborationMembers(token, scope.id),
     ]);
-    setCurrentScope(nextScope);
+    return { scope: nextScope, members: result.members };
+  }, [getToken, scope.id]);
+  const refresh = useCallback(async () => {
+    const generation = ++refreshGeneration.current;
+    const result = await loadAccess();
+    if (generation !== refreshGeneration.current) return;
+    setCurrentScope(result.scope);
     setMembers(result.members);
-  };
+  }, [loadAccess]);
   useEffect(() => {
     if (!open) return;
     let current = true;
     setLoading(true);
     setError(false);
-    void refresh().catch((failure: unknown) => {
-      console.warn("[mobile-collaboration] access load failed", failure instanceof Error ? failure.name : "UnknownError");
-      if (current) setError(true);
-    }).finally(() => { if (current) setLoading(false); });
+    void loadAccess().then((result) => {
+      if (!current) return;
+      setCurrentScope(result.scope);
+      setMembers(result.members);
+    }).catch((failure: unknown) => {
+        console.warn("[mobile-collaboration] access load failed", failure instanceof Error ? failure.name : "UnknownError");
+        if (current) setError(true);
+      }).finally(() => { if (current) setLoading(false); });
     return () => { current = false; };
-    // refresh is intentionally scoped to a newly opened sheet and session identity.
-  }, [open, scope.id]);
+  }, [loadAccess, open]);
 
   const mutate = async (operation: (token: string) => Promise<unknown>, message: string) => {
+    const generation = ++mutationGeneration.current;
     setPending(true);
     setError(false);
     setFeedback("");
     try {
       await operation(await getToken());
       await refresh();
+      if (generation !== mutationGeneration.current) return;
       setFeedback(message);
     } catch (failure: unknown) {
       console.warn("[mobile-collaboration] access update failed", failure instanceof Error ? failure.name : "UnknownError");
-      setError(true);
+      if (generation === mutationGeneration.current) setError(true);
     } finally {
-      setPending(false);
+      if (generation === mutationGeneration.current) setPending(false);
     }
   };
   const invite = async () => {

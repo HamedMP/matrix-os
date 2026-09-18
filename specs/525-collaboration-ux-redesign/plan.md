@@ -136,12 +136,10 @@ This is a file-ownership extraction only. It must not change live-collaboration 
 Use a small Graphite stack because the redesign spans more than the repository's practical one-PR review limits. Do not split individual components across PRs.
 
 1. **`feat(collaboration): add discussion and invitation UX contracts`** — failing tests first; decline transition; generic discussion projection; terminal discussion/read storage; exact proxy/CLI allowlists; contract and authorization tests. No new UI is enabled.
-2. **`feat(chat): make shared sessions native`** — shared projection hook; ordinary Canvas Chat timeline/composer integration; attribution; compact queue; native route normalization; component and Playwright evidence.
-3. **`feat(collaboration): add native session layers`** — common discussion/access layers, invitation decline UI, responsive Chat behavior, and Canvas evidence.
-4. **`feat(collaboration): complete native terminal and discovery`** — ordinary Canvas terminal chrome, controller summary/actions, native terminal routing, Chat-sidebar Shared with me, native resource discovery, stale-action evidence, and Canvas evidence.
-5. **`feat(collaboration): align desktop and mobile surfaces`** — Electron/Web Desktop work rail and native Chat/Terminal integration; supported React Native navigation and shared session composition; full-height discussion sheet; final cross-surface regression evidence. Include the separate `matrix-os-site` documentation PR.
+2. **`feat(collaboration): integrate native web session UX`** — common discussion/access layers, ordinary Canvas Chat and terminal composition, attribution, compact queue/controller state, native route normalization, Shared with me, responsive behavior, and browser evidence.
+3. **`feat(collaboration): align desktop and mobile session UX`** — Electron/Web Desktop work rail and native Chat/Terminal integration; supported React Native navigation and shared session composition; full-height discussion sheet; final cross-surface regression evidence. The separate `matrix-os-site` documentation PR remains independent.
 
-Each PR remains independently safe: server additions are backward-compatible and dormant until a consumer uses them; UI slices are feature-flagged and preserve direct server enforcement. If the actual diff stays below limits after extraction, adjacent surface slices may be combined, but backend and user-visible evidence remain reviewable units.
+Each PR remains independently safe: server additions are backward-compatible and dormant until a consumer uses them; UI slices are feature-flagged and preserve direct server enforcement. The measured layers are 29/39/25 files and 2,650/1,304/1,436 additions respectively, so the consolidated three-layer stack remains below the per-PR limits without splitting components.
 
 ## Test and Evidence Strategy
 

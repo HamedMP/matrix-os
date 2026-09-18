@@ -1,6 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { CollaborationDiscussionMessage, CollaborationScope } from "@matrix-os/contracts/collaboration";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, FlatList, KeyboardAvoidingView, Modal, Platform, Pressable, Text, TextInput, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { loadCollaborationDraft, saveCollaborationDraft } from "@/lib/collaboration-drafts";
@@ -23,7 +23,9 @@ export function SessionDiscussionSheet({ open, scope, actorId, getToken, onClose
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState(false);
-  const draftIdentity = { actorId, scopeId: scope.id, chatId: scope.resourceId, mode: "discussion" as const };
+  const draftIdentity = useMemo(() => ({
+    actorId, scopeId: scope.id, chatId: scope.resourceId, mode: "discussion" as const,
+  }), [actorId, scope.id, scope.resourceId]);
 
   useEffect(() => {
     if (!open) return;
@@ -32,6 +34,7 @@ export function SessionDiscussionSheet({ open, scope, actorId, getToken, onClose
     setError(false);
     void (async () => {
       try {
+        if (!current) return;
         const token = await getToken();
         const [page, userState, savedDraft] = await Promise.all([
           fetchSessionDiscussion(token, scope.id),
@@ -54,8 +57,7 @@ export function SessionDiscussionSheet({ open, scope, actorId, getToken, onClose
       }
     })();
     return () => { current = false; };
-    // The identity fields are scalar so reopening a different session reloads the correct private draft.
-  }, [actorId, getToken, open, scope.id, scope.resourceId]);
+  }, [draftIdentity, getToken, open, scope.id]);
 
   const updateDraft = (text: string) => {
     setDraft(text);

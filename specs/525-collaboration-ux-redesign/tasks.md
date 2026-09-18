@@ -11,7 +11,7 @@
 
 - [x] T001 Record the user's interaction-model confirmation and any approved refinements in `specs/525-collaboration-ux-redesign/implementation-log.md`
 - [x] T002 Record baseline commit, current-UI Playwright result, screenshot paths, and dirty-original-worktree protection in `specs/525-collaboration-ux-redesign/implementation-log.md`
-- [x] T003 Record the five-layer Graphite stack names, base relationships, PR size checks, and no-merge-without-approval gate in `specs/525-collaboration-ux-redesign/implementation-log.md`
+- [x] T003 Record the three-layer Graphite stack names, base relationships, PR size checks, and no-merge-without-approval gate in `specs/525-collaboration-ux-redesign/implementation-log.md`
 - [x] T004 [P] Add a reusable evidence manifest for Canvas, responsive web, Electron, and mobile captures in `specs/525-collaboration-ux-redesign/evidence/README.md`
 
 ---
@@ -57,8 +57,8 @@
 
 ### Failing tests
 
-- [ ] T022 [P] [US1] Add failing projection tests that exclude discussion from the main timeline while preserving AI requests, assistant/tool/system parts, actor attribution, and safe unknown authors in `tests/ui/shared-chat-two-account.test.tsx`
-- [ ] T023 [P] [US1] Add failing normal-Chat integration tests for owner/editor submit, viewer read-only behavior, private drafts, compact queue thresholds, and unavailable/revoked frame stability in `tests/shell/shared-chat-app-integration.test.tsx`
+- [x] T022 [P] [US1] Add failing projection tests that exclude discussion from the main timeline while preserving AI requests, assistant/tool/system parts, actor attribution, and safe unknown authors in `tests/ui/shared-chat-two-account.test.tsx`
+- [x] T023 [P] [US1] Add failing normal-Chat integration tests for owner/editor submit, viewer read-only behavior, private drafts, compact queue thresholds, and unavailable/revoked frame stability in `tests/shell/shared-chat-app-integration.test.tsx`
 - [ ] T024 [P] [US1] Add failing native-route tests proving shared Chat deep links select the normal Chat session and never mount standalone collaboration content in `tests/shell/shared-chat-deep-link.test.tsx` and `tests/shell/shared-chat-route-sync.test.tsx`
 - [ ] T025 [P] [US1] Replace the current Canvas expectation with a failing Playwright journey for native Chat appearance, two-account attribution, ordinary composer, and queue disclosure in `shell/e2e/shared-chat.spec.ts`
 
@@ -67,12 +67,12 @@
 - [ ] T026 [P] [US1] Extract a serializable shared-session projection and stable selectors from the legacy renderer in `packages/ui/src/collaboration/useCollaborationSession.ts` and `packages/ui/src/collaboration/chat-projection.ts`
 - [ ] T027 [US1] Adapt canonical shared messages into the existing normal Chat message model without copying history in `shell/src/hooks/useCanonicalChatState.ts`
 - [ ] T028 [US1] Integrate collaboration context into the ordinary Chat timeline/header instead of rendering `ChatCollaboration` in `shell/src/components/ChatApp.tsx` and `shell/src/components/chat/ShellChatCollaboration.tsx`
-- [ ] T029 [US1] Route the ordinary owner/editor composer to existing shared AI requests and make viewer/unavailable states explicitly read-only in `shell/src/components/chat/ChatInput.tsx` and `shell/src/components/ChatApp.tsx`
-- [ ] T030 [P] [US1] Add subtle accessible author name/avatar presentation for committed human prompts while retaining existing AI/tool/approval renderers in `shell/src/components/ChatApp.tsx` and `packages/ui/src/collaboration/ParticipantAttribution.tsx`
-- [ ] T031 [P] [US1] Refactor queue presentation into hidden, compact, and expanded states driven by existing queue data in `shell/src/components/chat/ChatQueuedRequests.tsx`
-- [ ] T032 [US1] Normalize `/shared/chat/:scopeId` into the native Chat selection while preserving safe revoked/unavailable states in `shell/src/app/shared/chat/[scopeId]/page.tsx` and `shell/src/components/ShellHome.tsx`
-- [ ] T033 [US1] Remove the shared-mode header/title and mode-switch entry path while retaining a compatibility adapter for old clients in `packages/ui/src/collaboration/ChatCollaboration.tsx` and `packages/ui/src/collaboration/SharedChatControls.tsx`
-- [ ] T034 [US1] Run the US1 component, shell-route, and Canvas Playwright suites and record red/green results in `specs/525-collaboration-ux-redesign/implementation-log.md`
+- [x] T029 [US1] Route the ordinary owner/editor composer to existing shared AI requests and make viewer/unavailable states explicitly read-only in `shell/src/components/chat/ChatInput.tsx` and `shell/src/components/ChatApp.tsx`
+- [x] T030 [P] [US1] Add subtle accessible author name/avatar presentation for committed human prompts while retaining existing AI/tool/approval renderers in `shell/src/components/ChatApp.tsx` and `packages/ui/src/collaboration/ParticipantAttribution.tsx`
+- [x] T031 [P] [US1] Refactor queue presentation into hidden, compact, and expanded states driven by existing queue data in `shell/src/components/chat/ChatQueuedRequests.tsx`
+- [x] T032 [US1] Normalize `/shared/chat/:scopeId` into the native Chat selection while preserving safe revoked/unavailable states in `shell/src/app/shared/chat/[scopeId]/page.tsx` and `shell/src/components/ShellHome.tsx`
+- [x] T033 [US1] Remove the shared-mode header/title and mode-switch entry path while retaining a compatibility adapter for old clients in `packages/ui/src/collaboration/ChatCollaboration.tsx` and `packages/ui/src/collaboration/SharedChatControls.tsx`
+- [x] T034 [US1] Run the US1 component, shell-route, and Canvas Playwright suites and record red/green results in `specs/525-collaboration-ux-redesign/implementation-log.md`
 - [ ] T035 [US1] Capture current-head Canvas screenshots/recording for unshared parity, two-account native Chat, attribution, viewer, queue, revoked, and unavailable states in `specs/525-collaboration-ux-redesign/evidence/canvas-chat/README.md`
 - [ ] T036 [US1] Run shell and shared-UI typechecks, pattern scan, react-doctor, and Stack PR 2 diff-size/PR gates, recording results in `specs/525-collaboration-ux-redesign/implementation-log.md`
 
@@ -88,21 +88,21 @@
 
 ### Failing tests
 
-- [ ] T037 [P] [US2] Add failing accessibility and responsive tests for overlay geometry, focus containment/return, Escape, light dismiss, reduced motion, unread announcement, and viewer read-only behavior in `tests/ui/session-discussion-layer.test.tsx`
-- [ ] T038 [P] [US2] Add failing draft tests proving prompt/discussion separation, author/scope isolation, close/reopen persistence, bounded storage, and parse-failure recovery in `tests/ui/collaboration-drafts.test.ts`
-- [ ] T039 [P] [US2] Add failing two-account realtime tests proving notes never enter the AI timeline/queue and updates preserve the local draft in `tests/ui/shared-chat-two-account.test.tsx`
-- [ ] T040 [P] [US2] Add failing shell tests proving the drawer overlays without layout shift and becomes a full-height sheet at mobile width in `tests/shell/shared-chat-app-integration.test.tsx`
+- [x] T037 [P] [US2] Add failing accessibility and responsive tests for overlay geometry, focus containment/return, Escape, light dismiss, reduced motion, unread announcement, and viewer read-only behavior in `tests/ui/session-discussion-layer.test.tsx`
+- [x] T038 [P] [US2] Add failing draft tests proving prompt/discussion separation, author/scope isolation, close/reopen persistence, bounded storage, and parse-failure recovery in `tests/ui/collaboration-drafts.test.ts`
+- [x] T039 [P] [US2] Add failing two-account realtime tests proving notes never enter the AI timeline/queue and updates preserve the local draft in `tests/ui/shared-chat-two-account.test.tsx`
+- [x] T040 [P] [US2] Add failing shell tests proving the drawer overlays without layout shift and becomes a full-height sheet at mobile width in `tests/shell/shared-chat-app-integration.test.tsx`
 
 ### Implementation
 
-- [ ] T041 [P] [US2] Implement the accessible desktop overlay drawer and responsive full-height bottom sheet primitive in `packages/ui/src/collaboration/SessionDiscussionLayer.tsx`
-- [ ] T042 [P] [US2] Replace mode-bearing draft state with an independently keyed, serializable private discussion draft store in `packages/ui/src/collaboration/discussion-drafts.ts`
-- [ ] T043 [US2] Implement bounded discussion loading, pagination, append, read-state, event refresh, safe errors, and viewer restrictions in `packages/ui/src/collaboration/useSessionDiscussion.ts`
-- [ ] T044 [US2] Add the separate discussion trigger, restrained unread state, focus return, and polite announcements to normal Chat chrome in `shell/src/components/ChatApp.tsx`
-- [ ] T045 [US2] Remove discussion/AI mode controls from the primary composer compatibility path in `packages/ui/src/collaboration/SharedChatControls.tsx` and `packages/ui/src/collaboration/chat-state.ts`
+- [x] T041 [P] [US2] Implement the accessible desktop overlay drawer and responsive full-height bottom sheet primitive in `packages/ui/src/collaboration/SessionDiscussionLayer.tsx`
+- [x] T042 [P] [US2] Replace mode-bearing draft state with an independently keyed, serializable private discussion draft store in `packages/ui/src/collaboration/discussion-drafts.ts`
+- [x] T043 [US2] Implement bounded discussion loading, pagination, append, read-state, event refresh, safe errors, and viewer restrictions in `packages/ui/src/collaboration/useSessionDiscussion.ts`
+- [x] T044 [US2] Add the separate discussion trigger, restrained unread state, focus return, and polite announcements to normal Chat chrome in `shell/src/components/ChatApp.tsx`
+- [x] T045 [US2] Remove discussion/AI mode controls from the primary composer compatibility path in `packages/ui/src/collaboration/SharedChatControls.tsx` and `packages/ui/src/collaboration/chat-state.ts`
 - [ ] T046 [US2] Add Canvas responsive Playwright coverage for no-layout-shift drawer, mobile sheet, draft privacy, keyboard dismissal, and human-only isolation in `shell/e2e/shared-chat.spec.ts`
-- [ ] T047 [US2] Capture current-head Canvas desktop/mobile discussion evidence in `specs/525-collaboration-ux-redesign/evidence/canvas-discussion/README.md`
-- [ ] T048 [US2] Run US2 targeted tests, accessibility checks, typecheck, and react-doctor and record results in `specs/525-collaboration-ux-redesign/implementation-log.md`
+- [x] T047 [US2] Capture current-head Canvas desktop/mobile discussion evidence in `specs/525-collaboration-ux-redesign/evidence/canvas-discussion/README.md`
+- [x] T048 [US2] Run US2 targeted tests, accessibility checks, typecheck, and react-doctor and record results in `specs/525-collaboration-ux-redesign/implementation-log.md`
 
 **Checkpoint**: Chat discussion is independently usable without replacing, resizing, or prompting the primary session.
 
@@ -116,19 +116,19 @@
 
 ### Failing tests
 
-- [ ] T049 [P] [US3] Add failing access-summary tests for private/shared state, current role, owner/member avatars, inherited scope, owner-only management, keyboard behavior, and safe errors in `tests/ui/session-access-control.test.tsx`
-- [ ] T050 [P] [US3] Extend failing sharing tests for snapshot/live distinction, username/email validation, role changes, revocation races, and feature-off absence in `tests/ui/chat-collaboration-sharing.test.tsx`
-- [ ] T051 [P] [US3] Add failing shell tests for restrained unshared/shared header chrome and zero layout shift in `tests/shell/shared-chat-app-integration.test.tsx`
+- [x] T049 [P] [US3] Add failing access-summary tests for private/shared state, current role, owner/member avatars, inherited scope, owner-only management, keyboard behavior, and safe errors in `tests/ui/session-access-control.test.tsx`
+- [x] T050 [P] [US3] Extend failing sharing tests for snapshot/live distinction, username/email validation, role changes, revocation races, and feature-off absence in `tests/ui/chat-collaboration-sharing.test.tsx`
+- [x] T051 [P] [US3] Add failing shell tests for restrained unshared/shared header chrome and zero layout shift in `tests/shell/shared-chat-app-integration.test.tsx`
 
 ### Implementation
 
-- [ ] T052 [P] [US3] Implement compact access summary popover with stable member/avatar projection and accessible state in `packages/ui/src/collaboration/SessionAccessControl.tsx`
-- [ ] T053 [US3] Refactor member invitation, role change, and revocation into the owner-only second-level manager in `packages/ui/src/collaboration/ChatCollaboratorsDialog.tsx`
-- [ ] T054 [US3] Preserve distinct snapshot and live-invite explanations/actions from the access entry point in `packages/ui/src/collaboration/ShareChoiceDialog.tsx` and `packages/ui/src/chat/ChatSharingButton.tsx`
-- [ ] T055 [US3] Integrate access summary into ordinary Chat chrome and hide live controls/data hooks when collaboration is off in `shell/src/components/chat/ChatSharing.tsx` and `shell/src/components/ChatApp.tsx`
-- [ ] T056 [US3] Add safe generic client feedback and stale-action reconciliation for member mutations in `packages/ui/src/collaboration/ChatCollaboratorsDialog.tsx`
+- [x] T052 [P] [US3] Implement compact access summary popover with stable member/avatar projection and accessible state in `packages/ui/src/collaboration/SessionAccessControl.tsx`
+- [x] T053 [US3] Refactor member invitation, role change, and revocation into the owner-only second-level manager in `packages/ui/src/collaboration/ChatCollaboratorsDialog.tsx`
+- [x] T054 [US3] Preserve distinct snapshot and live-invite explanations/actions from the access entry point in `packages/ui/src/collaboration/ShareChoiceDialog.tsx` and `packages/ui/src/chat/ChatSharingButton.tsx`
+- [x] T055 [US3] Integrate access summary into ordinary Chat chrome and hide live controls/data hooks when collaboration is off in `shell/src/components/chat/ChatSharing.tsx` and `shell/src/components/ChatApp.tsx`
+- [x] T056 [US3] Add safe generic client feedback and stale-action reconciliation for member mutations in `packages/ui/src/collaboration/ChatCollaboratorsDialog.tsx`
 - [ ] T057 [US3] Capture Canvas access-summary, management, snapshot distinction, inherited access, and feature-off evidence in `specs/525-collaboration-ux-redesign/evidence/canvas-access/README.md`
-- [ ] T058 [US3] Run US3 targeted tests, typecheck, react-doctor, and shared Stack PR 3 diff-size checks and record results in `specs/525-collaboration-ux-redesign/implementation-log.md`
+- [x] T058 [US3] Run US3 targeted tests, typecheck, react-doctor, and shared Stack PR 3 diff-size checks and record results in `specs/525-collaboration-ux-redesign/implementation-log.md`
 
 **Checkpoint**: Access is discoverable and complete without becoming a persistent collaboration dashboard.
 
@@ -151,13 +151,13 @@
 
 - [ ] T063 [US4] Refactor shared terminal state/actions out of the standalone surface into a reusable controller hook in `packages/ui/src/collaboration/useSharedTerminalSession.ts`
 - [ ] T064 [P] [US4] Implement compact controller/role status and capability-gated actions in `packages/ui/src/collaboration/TerminalCollaborationStatus.tsx`
-- [ ] T065 [US4] Integrate access, discussion, and controller status into existing Canvas terminal chrome without altering viewport measurement in `shell/src/components/terminal/TerminalChrome.tsx` and `shell/src/components/terminal/TerminalApp.tsx`
-- [ ] T066 [US4] Normalize legacy shared-terminal entry into the native Terminal app and keep revoked/unavailable results inside its frame in `shell/src/app/shared/terminal/[scopeId]/page.tsx` and `shell/src/components/ShellHome.tsx`
+- [x] T065 [US4] Integrate access, discussion, and controller status into existing Canvas terminal chrome without altering viewport measurement in `shell/src/components/terminal/TerminalChrome.tsx` and `shell/src/components/terminal/TerminalApp.tsx`
+- [x] T066 [US4] Normalize legacy shared-terminal entry into the native Terminal app and keep revoked/unavailable results inside its frame in `shell/src/app/shared/terminal/[scopeId]/page.tsx` and `shell/src/components/ShellHome.tsx`
 - [ ] T067 [US4] Retain the standalone terminal component only as a compatibility adapter over the native controller hook in `packages/ui/src/collaboration/SharedTerminalControls.tsx`
 - [ ] T068 [US4] Verify authoritative rejection produces no optimistic input/control success in `packages/ui/src/collaboration/useSharedTerminalSession.ts` and `shell/src/components/terminal/TerminalApp.tsx`
 - [ ] T069 [US4] Add Canvas terminal Playwright coverage for shared output, control handoff, discussion, viewer, revoke, ineligible sharing, and delayed input/paste/resize in `shell/e2e/shared-terminal.spec.ts`
 - [ ] T070 [US4] Capture current-head Canvas terminal evidence in `specs/525-collaboration-ux-redesign/evidence/canvas-terminal/README.md`
-- [ ] T071 [US4] Run US4 gateway/UI/shell tests, typecheck, react-doctor, and Stack PR 4 diff-size checks and record results in `specs/525-collaboration-ux-redesign/implementation-log.md`
+- [x] T071 [US4] Run US4 gateway/UI/shell tests, typecheck, react-doctor, and Stack PR 4 diff-size checks and record results in `specs/525-collaboration-ux-redesign/implementation-log.md`
 
 **Checkpoint**: Shared terminal collaboration is a compact extension of the ordinary terminal and retains all server-side control fencing.
 
@@ -174,16 +174,16 @@
 - [ ] T072 [P] [US5] Add failing discovery-view tests for pending-first pagination, metadata, capped badge, accept/decline, safe state variants, mutation refresh, and feature-off absence in `tests/ui/shared-with-me.test.tsx`
 - [ ] T073 [P] [US5] Add failing Canvas sidebar tests for first-class row placement, keyboard selection, mobile drawer parity, and no separate app/dock entry in `tests/shell/shared-with-me-navigation.test.tsx`
 - [ ] T074 [P] [US5] Add failing route tests proving accepted Chat/terminal and legacy links resolve into native apps across refresh and shell mode changes in `tests/shell/shared-chat-route-sync.test.tsx` and `tests/shell/shared-terminal-route.test.tsx`
-- [ ] T075 [P] [US5] Add failing invitation UI tests for decline idempotency, conflict/expiry, immediate badge/list update, and safe generic failures in `tests/ui/chat-collaboration-sharing.test.tsx`
+- [x] T075 [P] [US5] Add failing invitation UI tests for decline idempotency, conflict/expiry, immediate badge/list update, and safe generic failures in `tests/ui/chat-collaboration-sharing.test.tsx`
 
 ### Implementation
 
 - [ ] T076 [P] [US5] Extract reusable pending/accepted discovery content and state variants from the standalone page in `packages/ui/src/collaboration/SharedWithMe.tsx`
-- [ ] T077 [P] [US5] Implement a bounded invited-page badge hook and mutation/event invalidation without a second counter authority in `packages/ui/src/collaboration/useSharedWithMe.ts`
-- [ ] T078 [US5] Add inline accept/decline actions and native open callbacks with safe optimistic reconciliation in `packages/ui/src/collaboration/SharedWithMe.tsx`
-- [ ] T079 [US5] Add the first-class Shared with me row and capped badge before conversation groups in `shell/src/components/ChatApp.tsx`
-- [ ] T080 [US5] Integrate Shared with me into responsive Chat navigation and remove the redundant account-menu-only entry in `shell/src/components/UserButton.tsx` and `shell/src/components/ChatApp.tsx`
-- [ ] T081 [US5] Convert standalone home/invitation pages into compatibility resolvers/content hosted inside native Chat navigation in `shell/src/components/collaboration/CollaborationPage.tsx` and `shell/src/app/shared/invitations/[invitationId]/page.tsx`
+- [x] T077 [P] [US5] Implement a bounded invited-page badge hook and mutation/event invalidation without a second counter authority in `packages/ui/src/collaboration/useSharedWithMe.ts`
+- [x] T078 [US5] Add inline accept/decline actions and native open callbacks with safe optimistic reconciliation in `packages/ui/src/collaboration/SharedWithMe.tsx`
+- [x] T079 [US5] Add the first-class Shared with me row and capped badge before conversation groups in `shell/src/components/ChatApp.tsx`
+- [x] T080 [US5] Integrate Shared with me into responsive Chat navigation and remove the redundant account-menu-only entry in `shell/src/components/UserButton.tsx` and `shell/src/components/ChatApp.tsx`
+- [x] T081 [US5] Convert standalone home/invitation pages into compatibility resolvers/content hosted inside native Chat navigation in `shell/src/components/collaboration/CollaborationPage.tsx` and `shell/src/app/shared/invitations/[invitationId]/page.tsx`
 - [ ] T082 [US5] Add Canvas Playwright coverage for badge, pending/accepted lists, accept/decline, native Chat/Terminal open, empty/error/revoked/unavailable, and feature-off in `shell/e2e/shared-with-me.spec.ts`
 - [ ] T083 [US5] Capture current-head Canvas and responsive discovery/routing evidence in `specs/525-collaboration-ux-redesign/evidence/canvas-shared-with-me/README.md`
 - [ ] T084 [US5] Run US5 targeted tests, typecheck, react-doctor, and shared Stack PR 4 PR gates and record results in `specs/525-collaboration-ux-redesign/implementation-log.md`
@@ -203,21 +203,21 @@
 - [ ] T085 [P] [US6] Add failing Electron native shared-Chat, sidebar destination, badge, deep-link, attribution, discussion, and access tests in `tests/desktop/shared-chat-navigation.test.tsx` and `tests/desktop/shared-chat-surface.test.tsx`
 - [ ] T086 [P] [US6] Add failing Electron shared-terminal chrome, discussion, controller, routing, and viewer tests in `tests/desktop/terminal-sharing-runtime.test.tsx` and `tests/desktop/terminals-tab.test.tsx`
 - [ ] T087 [P] [US6] Add failing mobile request/draft tests for decline, discussion routes/read state, bounded badge data, and independent private drafts in `apps/mobile/__tests__/requests-collaboration.test.ts` and `apps/mobile/__tests__/collaboration-drafts.test.ts`
-- [ ] T088 [P] [US6] Add failing mobile screen/navigation tests for Shared with me, native Chat/Terminal open, full-height discussion sheet, access summary, viewer/revoked/unavailable, and feature-off in `apps/mobile/__tests__/shared-screen.test.tsx` and `apps/mobile/__tests__/drawer-layout.test.tsx`
+- [x] T088 [P] [US6] Add failing mobile screen/navigation tests for Shared with me, native Chat/Terminal open, full-height discussion sheet, access summary, viewer/revoked/unavailable, and feature-off in `apps/mobile/__tests__/shared-screen.test.tsx` and `apps/mobile/__tests__/drawer-layout.test.tsx`
 
 ### Implementation
 
-- [ ] T089 [US6] Integrate Shared with me into the Electron Chat work rail with capped badge and native selection in `desktop/src/renderer/src/features/work/WorkRail.tsx` and `desktop/src/renderer/src/features/work/work-rail-model.ts`
-- [ ] T090 [US6] Integrate collaboration context, ordinary composer, attribution, compact queue, access, and discussion into the canonical Electron Chat workspace in `desktop/src/renderer/src/features/chat/CanonicalChatWorkspace.tsx`
-- [ ] T091 [US6] Integrate access, discussion, and controller status into Electron terminal chrome without resizing the viewport in `desktop/src/renderer/src/features/terminal/TerminalsTab.tsx` and `desktop/src/renderer/src/features/terminal/TerminalSessionHeader.tsx`
-- [ ] T092 [US6] Normalize Electron shared Chat/terminal/invitation links into native tabs and safe state frames in `desktop/src/renderer/src/features/desktop-shell/DesktopSurfaceFrame.tsx` and `desktop/src/renderer/src/features/work/work-navigation.ts`
-- [ ] T093 [P] [US6] Add typed mobile decline/discussion requests and safe responses in `apps/mobile/lib/requests/collaboration.ts`
-- [ ] T094 [P] [US6] Split mobile collaboration presentation into Shared with me content, native Chat context, and full-height discussion sheet in `apps/mobile/app/(drawer)/shared.tsx` and `apps/mobile/components/collaboration/SessionDiscussionSheet.tsx`
-- [ ] T095 [US6] Preserve Shared with me as a feature-gated navigation drawer row with bounded badge and native resource navigation in `apps/mobile/components/shell/DrawerContent.tsx` and `apps/mobile/app/(drawer)/_layout.tsx`
-- [ ] T096 [US6] Remove the mobile Discussion/AI composer mode and route the ordinary native Chat composer to shared AI for permitted roles in `apps/mobile/components/collaboration/SharedChatComposer.tsx` and `apps/mobile/app/(drawer)/shared.tsx`
-- [ ] T097 [US6] Run Electron and mobile red-to-green suites and record parity results in `specs/525-collaboration-ux-redesign/implementation-log.md`
+- [x] T089 [US6] Integrate Shared with me into the Electron Chat work rail with capped badge and native selection in `desktop/src/renderer/src/features/work/WorkRail.tsx` and `desktop/src/renderer/src/features/work/work-rail-model.ts`
+- [x] T090 [US6] Integrate collaboration context, ordinary composer, attribution, compact queue, access, and discussion into the canonical Electron Chat workspace in `desktop/src/renderer/src/features/chat/CanonicalChatWorkspace.tsx`
+- [x] T091 [US6] Integrate access, discussion, and controller status into Electron terminal chrome without resizing the viewport in `desktop/src/renderer/src/features/terminal/TerminalsTab.tsx` and `desktop/src/renderer/src/features/terminal/TerminalSessionHeader.tsx`
+- [x] T092 [US6] Normalize Electron shared Chat/terminal/invitation links into native tabs and safe state frames in `desktop/src/renderer/src/features/desktop-shell/DesktopSurfaceFrame.tsx` and `desktop/src/renderer/src/features/work/work-navigation.ts`
+- [x] T093 [P] [US6] Add typed mobile decline/discussion requests and safe responses in `apps/mobile/lib/requests/collaboration.ts`
+- [x] T094 [P] [US6] Split mobile collaboration presentation into Shared with me content, native Chat context, and full-height discussion sheet in `apps/mobile/app/(drawer)/shared.tsx` and `apps/mobile/components/collaboration/SessionDiscussionSheet.tsx`
+- [x] T095 [US6] Preserve Shared with me as a feature-gated navigation drawer row with bounded badge and native resource navigation in `apps/mobile/components/shell/DrawerContent.tsx` and `apps/mobile/app/(drawer)/_layout.tsx`
+- [x] T096 [US6] Remove the mobile Discussion/AI composer mode and route the ordinary native Chat composer to shared AI for permitted roles in `apps/mobile/components/collaboration/SharedChatComposer.tsx` and `apps/mobile/app/(drawer)/shared.tsx`
+- [x] T097 [US6] Run Electron and mobile red-to-green suites and record parity results in `specs/525-collaboration-ux-redesign/implementation-log.md`
 - [ ] T098 [US6] Capture current-head Web Desktop, Electron, responsive web, and materially distinct mobile screenshots/recordings in `specs/525-collaboration-ux-redesign/evidence/cross-surface/README.md`
-- [ ] T099 [US6] Run desktop/mobile typechecks, builds, pattern scans, react-doctor, and Stack PR 5 diff-size checks and record results in `specs/525-collaboration-ux-redesign/implementation-log.md`
+- [x] T099 [US6] Run desktop/mobile typechecks, builds, pattern scans, react-doctor, and Stack PR 5 diff-size checks and record results in `specs/525-collaboration-ux-redesign/implementation-log.md`
 
 **Checkpoint**: Every applicable surface shares one collaboration mental model and one authority while adapting only its physical presentation.
 
@@ -268,10 +268,8 @@ US2, US3, US4, and the component portion of US5 are independently testable after
 ### Graphite stack plan
 
 1. **Stack PR 1 — `feat(collaboration): add discussion and invitation UX contracts`**: T005–T021.
-2. **Stack PR 2 — `feat(chat): make shared sessions native`**: T022–T036.
-3. **Stack PR 3 — `feat(collaboration): add native session layers`**: T037–T058.
-4. **Stack PR 4 — `feat(collaboration): complete native terminal and discovery`**: T059–T084.
-5. **Stack PR 5 — `feat(collaboration): align desktop and mobile surfaces`**: T085–T108.
+2. **Stack PR 2 — `feat(collaboration): integrate native web session UX`**: T022–T084.
+3. **Stack PR 3 — `feat(collaboration): align desktop and mobile session UX`**: T085–T108.
 
 If any layer exceeds repository limits, split only at a coherent surface boundary and update `plan.md`, this stack map, and the implementation log before opening PRs.
 
