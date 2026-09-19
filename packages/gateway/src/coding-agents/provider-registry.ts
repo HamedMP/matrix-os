@@ -12,7 +12,7 @@ import {
   type AgentId,
 } from "../onboarding/activation-contracts.js";
 import type { AgentCredentialStatusService } from "../onboarding/agent-credential-status.js";
-import type { RequestPrincipal } from "../request-principal.js";
+import type { RequestPrincipal } from "../domains/identity/request-principal.js";
 import { logCodingAgentWarning } from "./diagnostics.js";
 import type { CodingAgentProviderAdapter } from "./thread-store.js";
 

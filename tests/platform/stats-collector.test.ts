@@ -5,7 +5,7 @@ import {
   containerMemoryUsage,
   containerMemoryLimit,
   containersTotal,
-} from '../../packages/platform/src/metrics.js';
+} from '../../packages/gateway/src/domains/observability/metrics.js';
 import { createStatsCollector, type StatsCollector } from '../../packages/platform/src/stats-collector.js';
 
 function makeDockerStats(opts: {

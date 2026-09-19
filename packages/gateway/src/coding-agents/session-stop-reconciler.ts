@@ -1,4 +1,4 @@
-import { BackgroundAgentRefSchema, type BackgroundAgentRef } from "../background-agent-runtime.js";
+import { BackgroundAgentRefSchema, type BackgroundAgentRef } from "../domains/sessions/background-agent-runtime.js";
 import { z } from "zod/v4";
 import { TerminalRefSchema, type TerminalRef } from "@matrix-os/contracts";
 import { logCodingAgentWarning } from "./diagnostics.js";

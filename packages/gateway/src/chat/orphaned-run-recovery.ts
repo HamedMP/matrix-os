@@ -3,7 +3,7 @@ import type { CanonicalChatRun } from "@matrix-os/contracts";
 import type { ChatOwner } from "./records.js";
 import type { ChatRepository } from "./repository.js";
 import { RecoveredControlActivitySchema, type RecoveredControlActivity, type CanonicalChatProviderAdapter } from "./provider-adapter.js";
-import { boundedOperation } from "../bounded-operation.js";
+import { boundedOperation } from "../_shared/bounded-operation.js";
 import { ChatConflictError } from "./errors.js";
 
 const Snapshot = z.object({

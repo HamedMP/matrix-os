@@ -8,12 +8,12 @@ import { chmod, lstat, unlink } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import { Agent } from "undici";
 import { z } from "zod/v4";
-import type { MatrixFundedCredentialProvider } from "../funded-ai-credential-manager.js";
+import type { MatrixFundedCredentialProvider } from "../domains/integrations/funded-ai-credential-manager.js";
 import {
   buildKernelCredentialLaunch,
   KernelCredentialAccessSourceIdSchema,
   type KernelCredentialAccessSourceId,
-} from "../kernel-credentials.js";
+} from "../domains/integrations/kernel-credentials.js";
 import { validateCustomMcpUrl } from "../integrations/custom-mcp/security.js";
 
 const MAX_RESPONSE_BYTES = 512 * 1024;

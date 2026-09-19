@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, mkdir, open, readdir, rename, unlink, type FileHandle } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
-import { resolveWritableFileApiPath } from "../path-security.js";
+import { resolveWritableFileApiPath } from "../_shared/path-security.js";
 import { shellError } from "./errors.js";
 
 export const TERMINAL_PASTE_ASSET_BODY_LIMIT = 10 * 1024 * 1024;

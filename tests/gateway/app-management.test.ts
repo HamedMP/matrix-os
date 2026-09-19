@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { renameApp, deleteApp } from "../../packages/gateway/src/app-ops.js";
+import { renameApp, deleteApp } from "../../packages/gateway/src/domains/apps/app-ops.js";
 
 describe("App rename and delete operations", () => {
   let homePath: string;

@@ -62,7 +62,7 @@ import { z } from "zod/v4";
 import type { ChatOwner } from "./records.js";
 import type { ChatRepository } from "./repository.js";
 import type { CanonicalChatRouteService } from "./routes.js";
-import type { RequestPrincipal } from "../request-principal.js";
+import type { RequestPrincipal } from "../domains/identity/request-principal.js";
 import { ChatExecutionRootError, type ChatExecutionRootResolver } from "./execution-root.js";
 import { CanonicalChatOrchestrationError, type CanonicalChatOrchestrator } from "./orchestrator.js";
 

@@ -1,7 +1,7 @@
 import { createProjectChatCleanup } from "./chat/project-deletion.js";
 import { createRuntimeAppAiRoutes } from "./app-ai/runtime.js";
 import { restoreBackgroundChatThread, createBackgroundChatProjection } from "./coding-agents/background-chat-recovery.js";
-import { createBackgroundAgentRuntime } from "./background-agent-runtime.js";
+import { createBackgroundAgentRuntime } from "./domains/sessions/background-agent-runtime.js";
 import { bootstrapChatSharing, ChatSharing } from "./chat/sharing.js";
 import { withAsyncChatInput } from "./chat/async-input-adapter.js";
 import { createChatSharingRoutes } from "./chat/sharing-routes.js";
@@ -21,73 +21,73 @@ import { createNodeWebSocket } from "@hono/node-ws";
 import { installPostHogHonoErrorTracking, resolveOwnerTelemetryDistinctId } from "@matrix-os/observability";
 import { TerminalRuntimeSocketClient, TerminalFrameQueue } from "@matrix-os/terminal-runtime";
 import { CanonicalChatIdSchema, TerminalRefSchema, TerminalTabClientFrameSchema } from "@matrix-os/contracts";
-import { createDispatcher, type Dispatcher, type BatchEntry, type DispatchContext } from "./dispatcher.js";
+import { createDispatcher, type Dispatcher, type BatchEntry, type DispatchContext } from "./domains/sessions/dispatcher.js";
 import {
   createFundedAiCredentialManager,
   loadFundedAiRuntimeConfig,
-} from "./funded-ai-credential-manager.js";
-import { createFundedAiFundingSummaryClient } from "./funded-ai-funding-summary-client.js";
-import { createAllowedOriginController } from "./allowed-origins.js";
-import { createAiGenerationRecorder } from "./ai-analytics.js";
-import { createWatcher, type Watcher } from "./watcher.js";
-import { createPtyHandler, type PtyMessage } from "./pty.js";
-import { createConversationStore, type ConversationStore } from "./conversations.js";
+} from "./domains/integrations/funded-ai-credential-manager.js";
+import { createFundedAiFundingSummaryClient } from "./domains/integrations/funded-ai-funding-summary-client.js";
+import { createAllowedOriginController } from "./domains/identity/allowed-origins.js";
+import { createAiGenerationRecorder } from "./domains/observability/ai-analytics.js";
+import { createWatcher, type Watcher } from "./domains/files/watcher.js";
+import { createPtyHandler, type PtyMessage } from "./domains/terminal/pty.js";
+import { createConversationStore, type ConversationStore } from "./domains/sessions/conversations.js";
 import {
   createConversationLifecycle,
   providerResumeSessionId,
-} from "./conversation-lifecycle.js";
-import { createConversationContextResolver } from "./conversation-context.js";
-import { createConversationMutationLock } from "./conversation-mutation-lock.js";
-import { stampApprovalRequestForReplay } from "./conversation-approval-replay.js";
-import { buildDispatchFailureReplayMessage } from "./conversation-dispatch-failure.js";
+} from "./domains/sessions/conversation-lifecycle.js";
+import { createConversationContextResolver } from "./domains/sessions/conversation-context.js";
+import { createConversationMutationLock } from "./domains/sessions/conversation-mutation-lock.js";
+import { stampApprovalRequestForReplay } from "./domains/sessions/conversation-approval-replay.js";
+import { buildDispatchFailureReplayMessage } from "./domains/sessions/conversation-dispatch-failure.js";
 import {
   conversationHistoryRefreshRequired,
   ConversationRunRegistry,
   type ConversationRunMessage,
-} from "./conversation-run-registry.js";
+} from "./domains/sessions/conversation-run-registry.js";
 import {
   clearReconnectAbortTimersForSession as clearReconnectAbortTimers,
   drainReconnectableAbortEntries,
   replaceReconnectableAbortEntry,
   scheduleReconnectAbortTimersForDisconnectedClient,
   type ReconnectableAbortEntry,
-} from "./conversation-reconnect-aborts.js";
-import { summarizeConversation, saveSummary } from "./conversation-summary.js";
-import { extractMemoriesLocal } from "./memory-extractor.js";
-import { createWorkspaceRoutes } from "./workspace-routes.js";
-import { createPreviewManager } from "./preview-manager.js";
-import { createProjectManager } from "./project-manager.js";
-import { createTaskManager } from "./task-manager.js";
-import { createReviewStore } from "./review-store.js";
+} from "./domains/sessions/conversation-reconnect-aborts.js";
+import { summarizeConversation, saveSummary } from "./domains/sessions/conversation-summary.js";
+import { extractMemoriesLocal } from "./domains/observability/memory-extractor.js";
+import { createWorkspaceRoutes } from "./domains/workspace/workspace-routes.js";
+import { createPreviewManager } from "./domains/apps/preview-manager.js";
+import { createProjectManager } from "./domains/workspace/project-manager.js";
+import { createTaskManager } from "./domains/workspace/task-manager.js";
+import { createReviewStore } from "./domains/review/review-store.js";
 import { createElixirSymphonyProxyRoutes } from "./symphony/proxy.js";
 import { createSymphonyRunner } from "./symphony-runner.js";
-import { createAgentLauncher } from "./agent-launcher.js";
+import { createAgentLauncher } from "./domains/sessions/agent-launcher.js";
 import { resolveAgentCredentialProbe } from "./onboarding/agent-credential-probe.js";
 import {
   createAgentSessionManager,
   hasActiveWorkspaceSessionForTerminalRef,
-} from "./agent-session-manager.js";
-import { createAgentSandbox } from "./agent-sandbox.js";
-import { createWorktreeManager } from "./worktree-manager.js";
+} from "./domains/sessions/agent-session-manager.js";
+import { createAgentSandbox } from "./domains/sessions/agent-sandbox.js";
+import { createWorktreeManager } from "./domains/git/worktree-manager.js";
 import {
   createWorkspaceSessionOrchestrator,
   type WorkspaceSessionOrchestrator,
-} from "./workspace-session-orchestrator.js";
-import { createWorkspaceEventStore } from "./workspace-events.js";
-import { createWorkspaceEventPublisher } from "./workspace-event-publisher.js";
+} from "./domains/workspace/workspace-session-orchestrator.js";
+import { createWorkspaceEventStore } from "./domains/workspace/workspace-events.js";
+import { createWorkspaceEventPublisher } from "./domains/workspace/workspace-event-publisher.js";
 import {
   createProviderLoginTerminalRegistry,
   createSessionRuntimeBridge,
   resolveTerminalAttachmentMode,
   terminalAttachmentAllowsFrame,
-} from "./session-runtime-bridge.js";
+} from "./domains/sessions/session-runtime-bridge.js";
 import {
   parseTerminalInputCapabilityRequest,
   terminalFrameForInputCapabilities,
-} from "./terminal-input-capabilities.js";
+} from "./domains/terminal/terminal-input-capabilities.js";
 import { createTerminalSizeLease } from "./terminal-size-lease.js";
 import { createTerminalLiveOwnership } from "./terminal-live-ownership.js";
-import { createWorkspaceStartupRecovery } from "./workspace-startup-recovery.js";
+import { createWorkspaceStartupRecovery } from "./domains/workspace/workspace-startup-recovery.js";
 import { createChannelManager, type ChannelManager } from "./channels/manager.js";
 import { createOutboundQueue } from "./security/outbound-queue.js";
 import { createRateLimiter } from "./security/rate-limiter.js";
@@ -95,7 +95,7 @@ import { timingSafeStringEquals } from "./security/timing-safe.js";
 import { createTelegramAdapter, type TelegramAdapter } from "./channels/telegram.js";
 import { createTelegramStream } from "./channels/telegram-stream.js";
 import { createPushAdapter } from "./channels/push.js";
-import { createSessionStore } from "./session-store.js";
+import { createSessionStore } from "./domains/sessions/session-store.js";
 import { formatForChannel } from "./channels/format.js";
 import type { ChannelConfig, ChannelId } from "./channels/types.js";
 import { createCronStore } from "./cron/store.js";
@@ -107,32 +107,24 @@ import {
   restoreModule,
   checkModuleHealth,
   createWatchdog,
-  createTask,
-  listTasks,
-  getTask,
   type Heartbeat,
   type Watchdog,
   type KernelEvent,
   loadHandle,
-  createImageClient,
-  loadIconStyle,
-  buildIconPrompt,
-  generateIconBatch,
-  createUsageTracker,
   createMemoryStore,
 } from "@matrix-os/kernel";
 import { createProvisioner } from "./provisioner.js";
 import {
   authMiddleware,
   readPreviewTerminalOwner,
-} from "./auth.js";
+} from "./domains/identity/auth.js";
 import {
   isRequestPrincipalError,
   mapRequestPrincipalError,
   ownerScopeFromPrincipal,
   requireRequestPrincipal,
   type RequestPrincipal,
-} from "./request-principal.js";
+} from "./domains/identity/request-principal.js";
 import { createOnboardingHandler } from "./onboarding/ws-handler.js";
 import { InMemoryReadinessRepository } from "./onboarding/readiness-repository.js";
 import { createReadinessService } from "./onboarding/readiness-service.js";
@@ -219,44 +211,29 @@ import { createDraftActionReadinessService } from "./onboarding/draft-action-rea
 import { createDraftActionRoutes } from "./onboarding/draft-action-routes.js";
 import { createVocalHandler } from "./vocal/ws-handler.js";
 import type { GeminiLiveConnection } from "./onboarding/gemini-live.js";
-import { resolveDefaultAppIconUrl, resolveSystemIconUrl } from "./default-icons.js";
-import { registerIconRoutes } from "./icon-routes.js";
-import { buildShellBootstrap } from "./shell-bootstrap.js";
 import { securityHeadersMiddleware } from "./security/headers.js";
-import { getSystemInfo, getVersion } from "./system-info.js";
+import { getVersion } from "./domains/observability/system-info.js";
 import { collectSystemActivity } from "./system-activity/collector.js";
 import { CleanupCandidateRegistry, executeCleanupAction } from "./system-activity/cleanup.js";
 import { ActivityHistoryStore, AutoCleanupPolicyStore } from "./system-activity/history.js";
 import { createSystemActivityRoutes } from "./system-activity/routes.js";
 import {
-  checkForSystemUpdate,
-  listSystemReleases,
   parseInternalUpgradeTarget,
-  readSystemUpdateFailure,
-  resolveInternalUpgradeInstallTarget,
-  resolveInternalUpgradeStartTarget,
-  resolveSystemUpdateChannel,
-  startSystemUpdate,
-  startSystemUpdateRepair,
-  writeInternalUpgradeTrigger,
-} from "./system-update.js";
-import { createInteractionLogger, type InteractionLogger } from "./logger.js";
-import { createApprovalBridge, type ApprovalBridge } from "./approval.js";
+} from "./domains/observability/system-update.js";
+import { createInteractionLogger, type InteractionLogger } from "./_shared/logger.js";
+import { createApprovalBridge, type ApprovalBridge } from "./domains/sessions/approval.js";
 import { DEFAULT_APPROVAL_POLICY, type ApprovalPolicy } from "@matrix-os/kernel";
-import { listApps } from "./apps.js";
-import { createAppDb, type AppDb } from "./app-db.js";
-import { createAppRegistry, type AppRegistry } from "./app-db-registry.js";
-import { registerNativeAppStorage } from "./native-app-storage.js";
-import { createQueryEngine, type QueryEngine } from "./app-db-query.js";
-import { BridgeQueryBodySchema } from "./app-db-contracts.js";
-import { isSafeName, normalizeAppStorageSlug } from "./app-db-types.js";
-import { createKvStore, type KvStore } from "./app-db-kv.js";
-import { renameApp, deleteApp } from "./app-ops.js";
+import { listApps } from "./domains/apps/apps.js";
+import { createAppDb, type AppDb } from "./domains/apps/db/app-db.js";
+import { createAppRegistry, type AppRegistry } from "./domains/apps/db/app-db-registry.js";
+import { registerNativeAppStorage } from "./domains/apps/native-app-storage.js";
+import { createQueryEngine, type QueryEngine } from "./domains/apps/db/app-db-query.js";
+import { isSafeName, normalizeAppStorageSlug } from "./domains/apps/db/app-db-types.js";
+import { createKvStore, type KvStore } from "./domains/apps/db/app-db-kv.js";
 import { createPlatformDb, type PlatformDb } from "./platform-db.js";
 import { createPipedreamClient, type PipedreamConnectClient } from "./integrations/pipedream.js";
 import { registerCustomMcpGatewayRoutes } from "./integrations/custom-mcp/gateway-routes.js";
 import { createIntegrationRoutes } from "./integrations/routes.js";
-import { createIntegrationBridgeRoutes } from "./integrations/bridge-routes.js";
 import { discoverComponentKeys } from "./integrations/registry.js";
 import { createIntegrationProxyResponse } from "./integrations/proxy-response.js";
 import { z } from "zod/v4";
@@ -306,8 +283,8 @@ import {
   type SyncDatabase,
 } from "./sync/sharing-db.js";
 import { sql, type Kysely } from "kysely";
-import { createSocialRoutes, insertPost, bootstrapSocialSchema, type SocialRoutes } from "./social.js";
-import { createActivityService } from "./social-activity.js";
+import { createSocialRoutes, insertPost, bootstrapSocialSchema, type SocialRoutes } from "./domains/social/social.js";
+import { createActivityService } from "./domains/social/social-activity.js";
 import { CanvasRepository } from "./canvas/repository.js";
 import { CanvasConfigurationError, CanvasService } from "./canvas/service.js";
 import { createCanvasRoutes } from "./canvas/routes.js";
@@ -327,7 +304,7 @@ import type { WSContext } from "hono/ws";
 import {
   MainWsClientMessageSchema,
   type MainWsClientMessage,
-} from "./ws-message-schema.js";
+} from "./domains/integrations/ws-message-schema.js";
 import type { GatewayConfig, ServerMessage } from "./server/types.js";
 import {
   kernelEventToServerMessage,
@@ -341,7 +318,14 @@ import {
 } from "./server/symphony-origin.js";
 import { registerAppRuntimeRoutes } from "./server/app-runtime-routes.js";
 import { registerFileRoutes } from "./server/file-routes.js";
-import { registerConversationHistoryRoutes } from "./server/conversation-history-routes.js";
+import { createBridgeRoutes } from "./routes/bridge.js";
+import { createConversationRoutes } from "./routes/conversations.js";
+import { createLayoutCanvasRoutes } from "./routes/layout-canvas.js";
+import { createTasksAppsRoutes } from "./routes/tasks-apps.js";
+import { createCronChannelsRoutes } from "./routes/cron-channels.js";
+import { createSystemRoutes } from "./routes/system.js";
+import { createTerminalRoutes } from "./routes/terminal.js";
+import { createMiscRoutes } from "./routes/misc.js";
 import { startTerminalPasteAssetCleanup } from "./shell/paste-asset-cleanup-runtime.js";
 import {
   metricsRegistry,
@@ -349,7 +333,7 @@ import {
   httpRequestDuration,
   wsConnectionsActive,
   normalizePath,
-} from "./metrics.js";
+} from "./domains/observability/metrics.js";
 import {
   createShellRoutes,
   SHELL_SESSION_CREATE_RATE_LIMIT,
@@ -364,52 +348,22 @@ import {
   terminalRuntimeRefAccess,
   shellWsMessageDataToString,
 } from "./shell/index.js";
-import {
-  CLIENT_ERROR_LOG_BODY_LIMIT,
-  ClientErrorReportSchema,
-  forwardClientErrorToPostHog,
-  writeClientErrorReport,
-} from "./client-error-log.js";
-import { createForwardTunnelHub } from "./forward-ws.js";
+import { createForwardTunnelHub } from "./_shared/forward-ws.js";
 
 export {
   buildAllowedOrigins,
   createAllowedOriginController,
-} from "./allowed-origins.js";
+} from "./domains/identity/allowed-origins.js";
 export {
   registerTerminalSessionRoutes,
   TERMINAL_SESSION_DELETE_BODY_LIMIT_BYTES,
   type TerminalSessionRouteRegistry,
-} from "./terminal-session-routes.js";
+} from "./domains/terminal/terminal-session-routes.js";
 export type { GatewayConfig, ServerMessage } from "./server/types.js";
 export {
   readInitialSymphonyPort,
   resolveInitialSymphonyPort,
 } from "./server/symphony-origin.js";
-
-const SAFE_ICON_STEM = /^[a-zA-Z0-9_-]+$/;
-
-function isSafeIconStem(value: unknown): value is string {
-  return typeof value === "string" && SAFE_ICON_STEM.test(value);
-}
-
-const ApiMessageBodySchema = z.object({
-  text: z.string().refine((value) => value.trim().length > 0),
-  sessionId: z.string().optional(),
-  from: z.object({
-    handle: z.string(),
-    displayName: z.string().optional(),
-  }).optional(),
-});
-
-const PushRegisterBodySchema = z.object({
-  token: z.string().trim().min(1).max(512),
-  platform: z.string().trim().min(1).max(32),
-}).strict();
-
-const PushUnregisterBodySchema = z.object({
-  token: z.string().trim().min(1).max(512),
-}).strict();
 
 export async function resetVolatilePtySessionList(persistPath: string): Promise<void> {
   await mkdirAsync(dirname(persistPath), { recursive: true });
@@ -861,7 +815,7 @@ export async function createGateway(config: GatewayConfig) {
     if (!registry || !storageSlug || provisionedAppSlugs.has(storageSlug)) return;
     if (!isSafeName(storageSlug)) return;
     try {
-      const { loadAppManifest } = await import("./app-manifest.js");
+      const { loadAppManifest } = await import("./domains/apps/app-manifest.js");
       const apps = await listApps(homePath, { includeInactiveDesigns: true });
       let shouldCacheProvisionAttempt = false;
       for (const app of apps) {
@@ -1076,7 +1030,7 @@ export async function createGateway(config: GatewayConfig) {
       const migrated = await kvStore.read("_system", `migration_v1_${handle}`);
       if (!migrated) {
         try {
-          const { migrateJsonToKv } = await import("./app-db-migration.js");
+          const { migrateJsonToKv } = await import("./domains/apps/db/app-db-migration.js");
           const jsonResult = await migrateJsonToKv(homePath, kvStore);
           if (jsonResult.keys > 0) {
             console.log(`[app-db] JSON migration: ${jsonResult.apps} apps, ${jsonResult.keys} keys`);
@@ -1093,7 +1047,7 @@ export async function createGateway(config: GatewayConfig) {
 
       // Register apps with storage declarations
       try {
-        const { loadAppManifest } = await import("./app-manifest.js");
+        const { loadAppManifest } = await import("./domains/apps/app-manifest.js");
         const apps = await listApps(homePath, { includeInactiveDesigns: true });
         let registered = 0;
         for (const app of apps) {
@@ -2272,12 +2226,6 @@ export async function createGateway(config: GatewayConfig) {
     httpRequestDuration.observe({ method, path }, duration);
   });
 
-  app.get("/metrics", async (c) => {
-    const output = await metricsRegistry.metrics();
-    return c.text(output, 200, {
-      "Content-Type": metricsRegistry.contentType,
-    });
-  });
 
   app.get(
     "/ws",
@@ -3001,6 +2949,13 @@ export async function createGateway(config: GatewayConfig) {
     }),
   );
 
+  // --- Realtime core (stays inline by design) ---
+  // The /ws/* upgrade handlers below close over ~30 gateway registries
+  // (clients, sync peers, conversation runs, approval bridges, terminal
+  // runtime). Extracting them as factories before the Phase 5 terminal
+  // ownership work would just move the coupling without reducing it, and
+  // the WS layer has no integration coverage to guard the move. REST
+  // handlers are fully extracted; revisit WS in Phase 5 (#1676).
   const clientUpgradeRequired = (c: Context) => c.json({
     error: "client_upgrade_required",
     message: "Upgrade Matrix OS to use terminal workspaces.",
@@ -3245,356 +3200,11 @@ export async function createGateway(config: GatewayConfig) {
       projectPathAdmission: legacyProjectPathAdmission,
     } : {}),
   });
-
-  const apiMessageBodyLimit = bodyLimit({ maxSize: 64 * 1024 });
-  const bridgeQueryBodyLimit = bodyLimit({ maxSize: 1_000_000 });
-  const bridgeDataBodyLimit = bodyLimit({ maxSize: 1_000_000 });
-  const conversationBodyLimit = bodyLimit({ maxSize: 4096 });
-  const layoutBodyLimit = bodyLimit({ maxSize: 100_000 });
-  const canvasBodyLimit = bodyLimit({ maxSize: 100_000 });
-  const taskBodyLimit = bodyLimit({ maxSize: 64 * 1024 });
-  const renameAppBodyLimit = bodyLimit({ maxSize: 4096 });
-  const appIconBodyLimit = bodyLimit({ maxSize: 4096 });
-  let iconRegenerationInProgress = false;
-  const cronBodyLimit = bodyLimit({ maxSize: 64 * 1024 });
-  const upgradeBodyLimit = bodyLimit({ maxSize: 4096 });
-  const pushRegistrationBodyLimit = bodyLimit({ maxSize: 4096 });
-  const clientErrorBodyLimit = bodyLimit({ maxSize: CLIENT_ERROR_LOG_BODY_LIMIT });
-  app.get("/api/terminal/layout", async (c) => {
-    const layoutPath = join(homePath, "system", "terminal-layout.json");
-    try {
-      const { readFile } = await import("node:fs/promises");
-      const data = await readFile(layoutPath, "utf-8");
-      return c.json(JSON.parse(data));
-    } catch (err: unknown) {
-      logBestEffortFailure("Failed to read terminal layout", err);
-      return c.json({});
-    }
-  });
-
-  const terminalLayoutBodyLimit = bodyLimit({ maxSize: 100_000 });
-  app.put("/api/terminal/layout", terminalLayoutBodyLimit, async (c) => {
-    const layoutPath = join(homePath, "system", "terminal-layout.json");
-    const raw = await c.req.text();
-    let body: unknown;
-    try {
-      body = JSON.parse(raw);
-    } catch (err: unknown) {
-      logUnexpectedJsonParseFailure("Failed to parse terminal layout payload", err);
-      return c.json({ error: "Invalid JSON" }, 400);
-    }
-    if (typeof body !== "object" || body === null || !Array.isArray((body as Record<string, unknown>).tabs)) {
-      return c.json({ error: "Invalid layout schema" }, 400);
-    }
-    try {
-      const { writeFile, mkdir } = await import("node:fs/promises");
-      await mkdir(dirname(layoutPath), { recursive: true });
-      await writeFile(layoutPath, JSON.stringify(body, null, 2));
-      return c.json({ ok: true });
-    } catch (err: unknown) {
-      console.error("[gateway] Failed to save terminal layout:", err);
-      return c.json({ error: "Failed to save layout" }, 500);
-    }
-  });
-
-  app.post("/api/message", apiMessageBodyLimit, async (c) => {
-    let rawBody: unknown;
-    try {
-      rawBody = await c.req.json();
-    } catch (err: unknown) {
-      console.warn("[gateway] Invalid /api/message JSON:", err instanceof Error ? err.message : String(err));
-      return c.json({ error: "Invalid JSON" }, 400);
-    }
-    const parsedBody = ApiMessageBodySchema.safeParse(rawBody);
-    if (!parsedBody.success) {
-      return c.json({ error: "Invalid message body" }, 400);
-    }
-    const body = parsedBody.data;
-    const events: KernelEvent[] = [];
-
-    const context: DispatchContext | undefined = body.from
-      ? { senderId: body.from.handle, senderName: body.from.displayName ?? body.from.handle }
-      : undefined;
-
-    try {
-      await dispatcher.dispatch(body.text, body.sessionId, (event) => {
-        events.push(event);
-      }, context);
-    } catch (err: unknown) {
-      console.error("[gateway] Message dispatch failed:", err);
-      return c.json({ error: "Message dispatch failed" }, 500);
-    }
-
-    return c.json({ events });
-  });
-
-  // Structured query API (Postgres-backed)
-  app.post("/api/bridge/query", bridgeQueryBodyLimit, async (c) => {
-    if (!queryEngine || !appRegistry) {
-      return c.json({ error: "Database not configured (no DATABASE_URL)" }, 503);
-    }
-
-    let rawBody: unknown;
-    try {
-      rawBody = await c.req.json();
-    } catch (err: unknown) {
-      if (err instanceof SyntaxError) {
-        return c.json({ error: "Invalid JSON body" }, 400);
-      }
-      console.error("[bridge/query] Failed to read request body:", err);
-      return c.json({ error: "Failed to read request body" }, 500);
-    }
-
-    const parsedBody = BridgeQueryBodySchema.safeParse(rawBody);
-    if (!parsedBody.success) {
-      const exceedsRowLimit = parsedBody.error.issues.some((issue) =>
-        issue.code === "too_big" && (issue.path[0] === "rows" || issue.path[0] === "updates")
-      );
-      return c.json(
-        { error: exceedsRowLimit ? "rows too large (max 200 rows)" : "Invalid query body" },
-        exceedsRowLimit ? 413 : 400,
-      );
-    }
-    const body = parsedBody.data;
-    const action = body.action;
-    const appSlug = action === "listApps" ? "" : body.app;
-    const safeTable = "table" in body ? body.table : "";
-
-    // Ensure the app's Postgres schema exists before querying. Apps built in-OS
-    // after gateway startup aren't in the startup registration pass; provision
-    // them lazily from their manifest so the first query doesn't 500.
-    if (appSlug && action !== "listApps") {
-      await ensureAppProvisioned(appSlug);
-    }
-
-    try {
-      switch (action) {
-        case "find":
-          return c.json(await queryEngine.find(appSlug, safeTable, {
-            filter: body.filter,
-            orderBy: body.orderBy,
-            limit: body.limit,
-            offset: body.offset,
-          }));
-        case "findOne":
-          return c.json(await queryEngine.findOne(appSlug, safeTable, body.id));
-        case "insert": {
-          const result = await queryEngine.insert(appSlug, safeTable, body.data);
-          broadcast({ type: "data:change", app: appSlug, key: safeTable });
-          return c.json(result, 201);
-        }
-        case "bulkInsert": {
-          const result = await queryEngine.bulkInsert(
-            appSlug,
-            safeTable,
-            body.rows,
-          );
-          broadcast({ type: "data:change", app: appSlug, key: safeTable });
-          return c.json(result, 201);
-        }
-        case "update": {
-          await queryEngine.update(appSlug, safeTable, body.id, body.data);
-          broadcast({ type: "data:change", app: appSlug, key: safeTable });
-          return c.json({ ok: true });
-        }
-        case "bulkUpdate": {
-          await queryEngine.bulkUpdate(
-            appSlug,
-            safeTable,
-            body.updates,
-          );
-          broadcast({ type: "data:change", app: appSlug, key: safeTable });
-          return c.json({ ok: true });
-        }
-        case "delete": {
-          await queryEngine.delete(appSlug, safeTable, body.id);
-          broadcast({ type: "data:change", app: appSlug, key: safeTable });
-          return c.json({ ok: true });
-        }
-        case "count":
-          return c.json({ count: await queryEngine.count(appSlug, safeTable, body.filter) });
-        case "schema":
-          return c.json(await appRegistry.getSchema(appSlug));
-        case "appInfo": {
-          const record = await appRegistry.get(appSlug);
-          if (!record) return c.json({ error: "App not found" }, 404);
-          return c.json({ installedVersion: record.installed_version });
-        }
-        case "listApps":
-          return c.json(await appRegistry.listApps());
-        default:
-          return c.json({ error: `Unknown action: ${action}` }, 400);
-      }
-    } catch (e) {
-      const msg = (e as Error).message;
-      console.error("[app-db] Query error:", msg);
-      const isValidation =
-        msg.startsWith("Invalid ") ||
-        msg.startsWith("insert:") ||
-        msg.startsWith("bulkInsert:") ||
-        msg.startsWith("update:") ||
-        msg.startsWith("bulkUpdate:");
-      const safe = isValidation ? msg : "Query failed";
-      return c.json({ error: safe }, isValidation ? 400 : 500);
-    }
-  });
-
-  // Read-only outbound proxy for sandboxed apps. Apps run in a null-origin iframe
-  // with CSP connect-src 'self', so they cannot call third-party APIs directly.
-  // This proxies GET requests to a small, fixed allowlist of public, keyless data
-  // APIs. Allowlist-only (no user-supplied host) keeps the SSRF surface closed.
-  // The fetch remains hostname-based after allowlist validation, so it accepts
-  // the residual DNS-rebinding risk for these stable public API hosts.
-  const BRIDGE_PROXY_ALLOWED_HOSTS = new Set([
-    "api.open-meteo.com",
-    "geocoding-api.open-meteo.com",
-  ]);
-  app.get("/api/bridge/proxy", async (c) => {
-    const target = c.req.query("url");
-    if (!target || typeof target !== "string" || target.length > 2048) {
-      return c.json({ error: "url query param required" }, 400);
-    }
-    let parsed: URL;
-    try {
-      parsed = new URL(target);
-    } catch (err) {
-      if (!(err instanceof TypeError)) {
-        console.warn("[bridge/proxy] URL parse failed:", err instanceof Error ? err.message : String(err));
-      }
-      return c.json({ error: "invalid url" }, 400);
-    }
-    if (parsed.protocol !== "https:" || !BRIDGE_PROXY_ALLOWED_HOSTS.has(parsed.hostname)) {
-      // Do not echo the host back; this is an allowlist boundary.
-      return c.json({ error: "url not allowed" }, 403);
-    }
-    try {
-      const upstream = await fetch(parsed.toString(), {
-        method: "GET",
-        redirect: "error",
-        headers: { accept: "application/json" },
-        signal: AbortSignal.timeout(10_000),
-      });
-      if (!upstream.ok) {
-        // Coarse status only; never leak upstream body/headers on failure.
-        return c.json({ error: "upstream request failed" }, 502);
-      }
-      let data: unknown = null;
-      try {
-        data = await upstream.json();
-      } catch (err) {
-        console.warn("[bridge/proxy] upstream JSON parse failed:", err instanceof Error ? err.message : String(err));
-      }
-      if (data == null) return c.json({ error: "upstream returned no data" }, 502);
-      return c.json({ data });
-    } catch (e) {
-      console.error("[bridge/proxy] fetch error:", (e as Error).message);
-      return c.json({ error: "proxy request failed" }, 502);
-    }
-  });
-
-  // Key-value bridge: GET for reads (query params), POST for read/write (JSON body)
-  app.get("/api/bridge/data", async (c) => {
-    const appName = c.req.query("app");
-    const key = c.req.query("key");
-    if (!appName || !key) return c.json({ error: "app and key query params required" }, 400);
-
-    const safeApp = appName.replace(/[^a-zA-Z0-9_-]/g, "");
-    const safeKey = key.replace(/[^a-zA-Z0-9_-]/g, "");
-    if (!safeApp || !safeKey) return c.json({ error: "Invalid app or key" }, 400);
-
-    if (kvStore) {
-      try {
-        const value = await kvStore.read(safeApp, safeKey);
-        return c.json({ value });
-      } catch (e) {
-        console.error(`[app-db] KV read error for ${safeApp}/${safeKey}:`, (e as Error).message);
-        return c.json({ error: "Database read failed" }, 500);
-      }
-    }
-
-    const dataDir = join(homePath, "data", safeApp);
-    const filePath = normalize(join(dataDir, `${safeKey}.json`));
-    if (!filePath.startsWith(normalize(dataDir))) return c.json({ error: "Path traversal denied" }, 403);
-    if (!existsSync(filePath)) return c.json({ value: null });
-    const content = readFileSync(filePath, "utf-8");
-    let value = content;
-    try {
-      const parsed = JSON.parse(content);
-      if (typeof parsed === "string") value = parsed;
-    } catch (err: unknown) {
-      logUnexpectedJsonParseFailure("Failed to parse stored bridge value", err);
-    }
-    return c.json({ value });
-  });
-
-  app.post("/api/bridge/data", bridgeDataBodyLimit, async (c) => {
-    let body: { action: "read" | "write"; app: string; key: string; value?: string };
-    try {
-      body = await c.req.json();
-    } catch (err: unknown) {
-      if (err instanceof SyntaxError) {
-        return c.json({ error: "Invalid JSON body" }, 400);
-      }
-      console.error("[bridge/data] Failed to read request body:", err);
-      return c.json({ error: "Failed to read request body" }, 500);
-    }
-
-    if (!body.app || typeof body.app !== "string" || !body.key || typeof body.key !== "string") {
-      return c.json({ error: "app and key are required strings" }, 400);
-    }
-
-    const safeApp = body.app.replace(/[^a-zA-Z0-9_-]/g, "");
-    const safeKey = body.key.replace(/[^a-zA-Z0-9_-]/g, "");
-
-    if (!safeApp || !safeKey) {
-      return c.json({ error: "app and key must contain valid characters" }, 400);
-    }
-
-    // Postgres-backed path
-    if (kvStore) {
-      try {
-        if (body.action === "read") {
-          const value = await kvStore.read(safeApp, safeKey);
-          return c.json({ value });
-        }
-        await kvStore.write(safeApp, safeKey, body.value ?? "");
-        broadcast({ type: "data:change", app: safeApp, key: safeKey });
-        return c.json({ ok: true });
-      } catch (e) {
-        console.error(`[app-db] KV ${body.action} error for ${safeApp}/${safeKey}:`, (e as Error).message);
-        return c.json({ error: "Database operation failed" }, 500);
-      }
-    }
-
-    // File-based fallback (no Postgres)
-    const dataDir = join(homePath, "data", safeApp);
-    const filePath = normalize(join(dataDir, `${safeKey}.json`));
-
-    if (!filePath.startsWith(normalize(dataDir))) {
-      return c.json({ error: "Path traversal denied" }, 403);
-    }
-
-    if (body.action === "read") {
-      if (!existsSync(filePath)) return c.json({ value: null });
-      const content = readFileSync(filePath, "utf-8");
-      let value = content;
-      try {
-        const parsed = JSON.parse(content);
-        if (typeof parsed === "string") {
-          value = parsed;
-        }
-      } catch (err: unknown) {
-        logUnexpectedJsonParseFailure("Failed to parse stored bridge data", err);
-      }
-      return c.json({ value });
-    }
-
-    await mkdirAsync(dataDir, { recursive: true });
-    const raw = body.value ?? "";
-    await writeFileAsync(filePath, typeof raw === "string" ? raw : String(raw), "utf-8");
-    broadcast({ type: "data:change", app: safeApp, key: safeKey });
-    return c.json({ ok: true });
-  });
+  app.route("/", createTerminalRoutes({
+    homePath,
+    logBestEffortFailure,
+    logUnexpectedJsonParseFailure,
+  }));
 
   app.route("/api/bridge/ai", createRuntimeAppAiRoutes({
     homePath,
@@ -3603,611 +3213,60 @@ export async function createGateway(config: GatewayConfig) {
     fundedCredentialProvider,
   }));
 
-  app.route("/api/bridge/service", createIntegrationBridgeRoutes({
-    platformDb,
-    pipedream: pipedreamClient,
-    resolveUserId: resolveIntegrationUserId,
+
+  app.route("/", createBridgeRoutes({
+    dispatcher,
+    getQueryEngine: () => queryEngine,
+    getAppRegistry: () => appRegistry,
+    getKvStore: () => kvStore,
+    homePath,
+    ensureAppProvisioned,
+    broadcast,
+    logUnexpectedJsonParseFailure,
+    integrationBridge: {
+      platformDb,
+      pipedream: pipedreamClient,
+      resolveUserId: resolveIntegrationUserId,
+    },
   }));
 
-  registerConversationHistoryRoutes(app, {
+  app.route("/", createConversationRoutes({
     conversations,
     conversationLifecycle,
     conversationRuns,
-    contextResolver: conversationContextResolver,
-    getOwnerScope: (c) => ({ type: "user", id: requireRequestPrincipal(c).userId }),
-  });
+    conversationContextResolver,
+  }));
 
-  app.post("/api/conversations", conversationBodyLimit, async (c) => {
-    let body: { channel?: string } = {};
-    try {
-      body = await c.req.json<{ channel?: string }>();
-    } catch (err: unknown) {
-      if (!(err instanceof SyntaxError)) {
-        console.error("[gateway] Failed to read conversation create body:", err);
-      }
-    }
-    const id = conversations.create(body.channel);
-    return c.json({ id }, 201);
-  });
 
-  app.get("/api/conversations/:id/search", (c) => {
-    const query = c.req.query("q");
-    if (!query) return c.json({ error: "q parameter required" }, 400);
-    const limit = c.req.query("limit") ? Number(c.req.query("limit")) : undefined;
-    const results = conversations.search(query, { limit });
-    return c.json(results);
-  });
+  app.route("/", createLayoutCanvasRoutes({
+    homePath,
+    getCanvasService: () => canvasService,
+    logBestEffortFailure,
+  }));
 
-  app.get("/api/layout", (c) => {
-    const layoutPath = join(homePath, "system/layout.json");
-    if (!existsSync(layoutPath)) {
-      return c.json({});
-    }
-    try {
-      const data = JSON.parse(readFileSync(layoutPath, "utf-8"));
-      return c.json(data);
-    } catch (err: unknown) {
-      logBestEffortFailure("Failed to read layout", err);
-      return c.json({});
-    }
-  });
+  app.route("/", createTasksAppsRoutes({
+    dispatcher,
+    broadcast,
+    homePath,
+  }));
 
-  app.put("/api/layout", layoutBodyLimit, async (c) => {
-    const body = await c.req.json<Record<string, unknown>>();
-    if (!body || typeof body !== "object" || !Array.isArray(body.windows)) {
-      return c.json({ error: "Invalid layout: requires windows array" }, 400);
-    }
-    const layoutPath = join(homePath, "system/layout.json");
-    await mkdirAsync(dirname(layoutPath), { recursive: true });
-    await writeFileAsync(layoutPath, JSON.stringify(body, null, 2));
-    return c.json({ ok: true });
-  });
 
-  app.get("/api/canvas", async (c) => {
-    if (!canvasService) {
-      return c.json({ error: "Database not configured (no DATABASE_URL)" }, 503);
-    }
-    try {
-      const userId = requireRequestPrincipal(c).userId;
-      const result = await canvasService.listCanvases(userId);
-      return c.json({
-        legacy: true,
-        canvasesEndpoint: "/api/canvases",
-        canvases: result.canvases,
-      });
-    } catch (err: unknown) {
-      if (isRequestPrincipalError(err)) {
-        const mapped = mapRequestPrincipalError(err, "Canvas request failed");
-        if (mapped.log) {
-          console.error("[canvas] Legacy canvas route request principal misconfigured:", err.name);
-        }
-        return c.json(mapped.body, mapped.status);
-      }
-      logBestEffortFailure("Failed to read Postgres-backed canvas summaries", err);
-      return c.json({ error: "Canvas request failed" }, 500);
-    }
-  });
+  app.route("/", createCronChannelsRoutes({
+    cronService,
+    channelManager,
+  }));
 
-  app.put("/api/canvas", canvasBodyLimit, (c) => {
-    if (!canvasService) {
-      return c.json({ error: "Database not configured (no DATABASE_URL)" }, 503);
-    }
-    return c.json({
-      error: "Legacy canvas writes moved to /api/canvases",
-      canvasesEndpoint: "/api/canvases",
-    }, 410);
-  });
+  app.route("/", createSystemRoutes({
+    homePath,
+    getConfigModel: () => config.model,
+    runningVersion,
+    interactionLogger,
+    logBestEffortFailure,
+    pushAdapter,
+    posthogErrorTracker,
+    ownerTelemetryDistinctId,
+  }));
 
-  app.get("/api/theme", (c) => {
-    const themePath = join(homePath, "system/theme.json");
-    if (!existsSync(themePath)) {
-      return c.json({ error: "No theme" }, 404);
-    }
-    const theme = JSON.parse(readFileSync(themePath, "utf-8"));
-    return c.json(theme);
-  });
-
-  app.all("/modules/:name/*", async (c) => {
-    const moduleName = c.req.param("name");
-    const modulesPath = join(homePath, "system/modules.json");
-
-    if (!existsSync(modulesPath)) {
-      return c.text("No modules registered", 404);
-    }
-
-    const modules = JSON.parse(readFileSync(modulesPath, "utf-8")) as Array<{
-      name: string;
-      port: number;
-      status: string;
-    }>;
-
-    const mod = modules.find((m) => m.name === moduleName);
-    if (!mod) {
-      return c.text(`Module "${moduleName}" not found`, 404);
-    }
-
-    const subPath = c.req.path.replace(`/modules/${moduleName}`, "") || "/";
-    const targetUrl = `http://localhost:${mod.port}${subPath}`;
-
-    const res = await fetch(targetUrl, {
-      method: c.req.method,
-      headers: c.req.raw.headers,
-      signal: AbortSignal.timeout(30_000),
-      body: c.req.method !== "GET" && c.req.method !== "HEAD"
-        ? c.req.raw.body
-        : undefined,
-    });
-
-    return new Response(res.body, {
-      status: res.status,
-      headers: res.headers,
-    });
-  });
-
-  app.get("/api/tasks", (c) => {
-    const status = c.req.query("status");
-    const tasks = listTasks(dispatcher.db, status ? { status } : undefined);
-    return c.json(tasks);
-  });
-
-  app.post("/api/tasks", taskBodyLimit, async (c) => {
-    const body = await c.req.json<{ type?: string; input: string; priority?: number }>();
-    if (!body.input || typeof body.input !== "string") {
-      return c.json({ error: "input is required" }, 400);
-    }
-    const id = createTask(dispatcher.db, {
-      type: body.type ?? "todo",
-      input: body.input,
-      priority: body.priority,
-    });
-    const task = getTask(dispatcher.db, id);
-    broadcast({
-      type: "task:created",
-      task: { id, type: body.type ?? "todo", status: "pending", input: body.input },
-    });
-    return c.json({ id, task }, 201);
-  });
-
-  app.get("/api/tasks/:id", (c) => {
-    const task = getTask(dispatcher.db, c.req.param("id"));
-    if (!task) return c.json({ error: "Not found" }, 404);
-    return c.json(task);
-  });
-
-  app.get("/api/apps", async (c) => {
-    return c.json(await listApps(homePath));
-  });
-
-  app.get("/api/shell/bootstrap", async (c) => {
-    return c.json(await buildShellBootstrap(homePath));
-  });
-
-  registerIconRoutes(app, homePath);
-
-  app.put("/api/apps/:slug/rename", renameAppBodyLimit, async (c) => {
-    const slug = c.req.param("slug");
-    const { name } = await c.req.json<{ name: string }>();
-    const result = renameApp(homePath, slug, name);
-    if (!result.success) {
-      const status = result.error?.includes("not found") ? 404 : 400;
-      return c.json({ error: result.error }, status);
-    }
-    return c.json({ ok: true, newSlug: result.newSlug });
-  });
-
-  app.delete("/api/apps/:slug", async (c) => {
-    const slug = c.req.param("slug");
-    const result = deleteApp(homePath, slug);
-    if (!result.success) {
-      const status = result.error?.includes("not found") ? 404 : 400;
-      return c.json({ error: result.error }, status);
-    }
-    return c.json({ ok: true });
-  });
-
-  app.post("/api/apps/:slug/icon", appIconBodyLimit, async (c) => {
-    const slug = c.req.param("slug");
-    if (!/^[a-zA-Z0-9_-]+$/.test(slug)) {
-      return c.json({ error: "Invalid slug" }, 400);
-    }
-    const shippedDefaultIcon = await resolveDefaultAppIconUrl(homePath, slug);
-    if (shippedDefaultIcon) {
-      return c.json({
-        iconUrl: shippedDefaultIcon,
-        generated: false,
-        shipped: true,
-      });
-    }
-    const geminiKey = process.env.GEMINI_API_KEY ?? "";
-    if (!geminiKey) {
-      return c.json({
-        iconUrl: (await resolveSystemIconUrl(homePath, `${slug}.png`)) ?? "/files/system/icons/game.svg",
-        generated: false,
-      });
-    }
-    try {
-      let body: { style?: string } = {};
-      try {
-        body = await c.req.json();
-      } catch (err: unknown) {
-        if (!(err instanceof SyntaxError)) {
-          console.error("[gateway] Failed to parse icon generation body:", err);
-          return c.json({ error: "Failed to read request body" }, 500);
-        }
-      }
-
-      const iconStyle = body.style || loadIconStyle(homePath);
-      const client = createImageClient(geminiKey);
-      const apps = await listApps(homePath);
-      const targetApp = apps.find((appEntry) => appEntry.slug === slug);
-      const iconStem = isSafeIconStem(targetApp?.icon) ? targetApp.icon : slug;
-      const prompt = buildIconPrompt(targetApp?.name ?? slug, iconStyle);
-      const iconsDir = join(homePath, "system/icons");
-      const result = await client.generateImage(prompt, {
-        aspectRatio: "1:1",
-        imageDir: iconsDir,
-        saveAs: `${iconStem}.png`,
-      });
-      const iconPath = join(iconsDir, `${iconStem}.png`);
-      const stat = statSync(iconPath);
-      const etag = `"${stat.mtimeMs.toString(36)}-${stat.size.toString(36)}"`;
-      c.header("ETag", etag);
-      return c.json({
-        iconUrl: `/files/system/icons/${iconStem}.png`,
-        etag,
-        cost: result.cost,
-      });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Unknown error";
-      console.error(`Icon generation failed for "${slug}":`, message);
-      return c.json({ error: "Icon generation failed" }, 500);
-    }
-  });
-
-  app.post("/api/icons/regenerate-all", appIconBodyLimit, async (c) => {
-    if (iconRegenerationInProgress) {
-      return c.json({ error: "Regeneration already in progress" }, 409);
-    }
-    iconRegenerationInProgress = true;
-
-    const geminiKey = process.env.GEMINI_API_KEY ?? "";
-    if (!geminiKey) {
-      iconRegenerationInProgress = false;
-      return c.json({ regenerated: 0, failed: [], generated: false });
-    }
-
-    const iconsDir = join(homePath, "system/icons");
-    if (!existsSync(iconsDir)) {
-      iconRegenerationInProgress = false;
-      return c.json({ regenerated: 0, failed: [] });
-    }
-
-    const apps = await listApps(homePath);
-    const iconTargets = apps.flatMap((appEntry) => appEntry.slug ? [{
-        slug: appEntry.slug,
-        icon: isSafeIconStem(appEntry.icon) ? appEntry.icon : appEntry.slug,
-        name: appEntry.name,
-      }] : []);
-
-    generateIconBatch(geminiKey, iconTargets, loadIconStyle(homePath), iconsDir)
-      .then((r) => console.log(`[icons] Regeneration complete: ${r.generated}/${iconTargets.length} succeeded, ${r.failed.length} failed`))
-      .catch((err) => console.error("[icons] Regeneration error:", err))
-      .finally(() => { iconRegenerationInProgress = false; });
-    return c.json({ accepted: true, total: iconTargets.length }, 202);
-  });
-
-  app.get("/api/cron", (c) => {
-    return c.json(cronService.listJobs());
-  });
-
-  app.post("/api/cron", cronBodyLimit, async (c) => {
-    const body = await c.req.json<{
-      name: string;
-      message: string;
-      schedule: { type: string; intervalMs?: number; cron?: string; at?: string };
-      target?: { channel: string; chatId: string };
-    }>();
-    if (!body.name || !body.message || !body.schedule?.type) {
-      return c.json({ error: "name, message, and schedule.type are required" }, 400);
-    }
-    const { type } = body.schedule;
-    let schedule: import("./cron/types.js").CronSchedule;
-    if (type === "interval" && body.schedule.intervalMs) {
-      schedule = { type: "interval", intervalMs: body.schedule.intervalMs };
-    } else if (type === "cron" && body.schedule.cron) {
-      schedule = { type: "cron", cron: body.schedule.cron };
-    } else if (type === "once" && body.schedule.at) {
-      schedule = { type: "once", at: body.schedule.at };
-    } else {
-      return c.json({ error: "Invalid schedule" }, 400);
-    }
-    const job: import("./cron/types.js").CronJob = {
-      id: crypto.randomUUID(),
-      name: body.name,
-      message: body.message,
-      schedule,
-      target: body.target as import("./cron/types.js").CronTarget | undefined,
-      createdAt: new Date().toISOString(),
-    };
-    cronService.addJob(job);
-    return c.json(job, 201);
-  });
-
-  app.delete("/api/cron/:id", (c) => {
-    const id = c.req.param("id");
-    const removed = cronService.removeJob(id);
-    if (!removed) return c.json({ error: "Not found" }, 404);
-    return c.json({ ok: true });
-  });
-
-  app.get("/api/channels/status", (c) => {
-    return c.json(channelManager.status());
-  });
-
-  app.get("/api/identity", (c) => {
-    return c.json(loadHandle(homePath));
-  });
-
-  app.get("/api/profile", (c) => {
-    const profilePath = join(homePath, "system", "profile.md");
-    if (!existsSync(profilePath)) return c.text("No profile", 404);
-    return c.text(readFileSync(profilePath, "utf-8"));
-  });
-
-  app.get("/api/ai-profile", (c) => {
-    const aiProfilePath = join(homePath, "system", "ai-profile.md");
-    if (!existsSync(aiProfilePath)) return c.text("No AI profile", 404);
-    return c.text(readFileSync(aiProfilePath, "utf-8"));
-  });
-
-  app.get("/api/logs", (c) => {
-    const date = c.req.query("date") ?? new Date().toISOString().slice(0, 10);
-    const source = c.req.query("source");
-    const entries = interactionLogger.query({ date, source });
-    return c.json({ entries, totalCost: interactionLogger.totalCost(date) });
-  });
-
-  app.get("/api/security/audit", async (c) => {
-    const { runSecurityAudit } = await import("@matrix-os/kernel/security/audit");
-    const report = await runSecurityAudit(homePath);
-    return c.json(report);
-  });
-
-  app.get("/api/system/info", (c) => {
-    const info = getSystemInfo(homePath, { model: config.model, runningVersion });
-    const today = new Date().toISOString().slice(0, 10);
-    return c.json({ ...info, todayCost: interactionLogger.totalCost(today) });
-  });
-
-  app.get("/api/system/update", async (c) => {
-    const info = getSystemInfo(homePath, { model: config.model, runningVersion });
-    const channel = resolveSystemUpdateChannel(c.req.query("channel"), {
-      envChannel: process.env.MATRIX_UPDATE_CHANNEL,
-      installedChannel: info.release?.channel,
-    });
-    if (!channel) return c.json({ error: "Invalid update channel" }, 400);
-    const result = await checkForSystemUpdate({
-      installed: info.release ?? {
-        version: info.version,
-        gitCommit: info.build.sha,
-        gitRef: info.build.ref,
-        buildTime: info.build.date,
-      },
-      platformUrl: process.env.MATRIX_UPDATE_MANIFEST_BASE_URL ?? process.env.PLATFORM_INTERNAL_URL,
-      channel,
-    });
-    const installError = await readSystemUpdateFailure();
-    return c.json({ ...result, installError });
-  });
-
-  app.get("/api/system/releases", async (c) => {
-    const info = getSystemInfo(homePath, { model: config.model, runningVersion });
-    const channel = resolveSystemUpdateChannel(c.req.query("channel"), {
-      envChannel: process.env.MATRIX_UPDATE_CHANNEL,
-      installedChannel: info.release?.channel,
-    });
-    if (!channel) return c.json({ error: "Invalid update channel" }, 400);
-    const result = await listSystemReleases({
-      platformUrl: process.env.MATRIX_UPDATE_MANIFEST_BASE_URL ?? process.env.PLATFORM_INTERNAL_URL,
-      channel,
-    });
-    return c.json(result);
-  });
-
-  app.post("/system/backup", bodyLimit({ maxSize: 1024 }), (c) => {
-    const token = process.env.MATRIX_SYSTEM_BACKUP_TOKEN;
-    if (!token) {
-      return c.json({ error: "Backup trigger not configured" }, 503);
-    }
-    const authHeader = c.req.header("authorization");
-    const presented = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
-    if (!timingSafeStringEquals(presented, token)) {
-      return c.json({ error: "Unauthorized" }, 401);
-    }
-    return c.json({ error: "Backup trigger not implemented" }, 501);
-  });
-
-  async function startUpdateFromRequest(c: Context) {
-    let body: unknown = {};
-    try {
-      body = await c.req.json();
-    } catch (err: unknown) {
-      if (!(err instanceof SyntaxError)) {
-        console.warn("[system-update] Failed to parse update request:", err);
-      }
-    }
-    const info = getSystemInfo(homePath, { model: config.model, runningVersion });
-    const parsedTarget = resolveInternalUpgradeStartTarget(body, {
-      envChannel: process.env.MATRIX_UPDATE_CHANNEL,
-      installedChannel: info.release?.channel,
-    });
-    if (!parsedTarget.ok) return c.json({ error: "Invalid request" }, 400);
-
-    let installTarget: Extract<typeof parsedTarget.target, { type: "version" }>;
-    try {
-      installTarget = await resolveInternalUpgradeInstallTarget({
-        target: parsedTarget.target,
-        platformUrl: process.env.MATRIX_UPDATE_MANIFEST_BASE_URL ?? process.env.PLATFORM_INTERNAL_URL,
-      });
-    } catch (err: unknown) {
-      console.warn("[system-update] Failed to resolve requested update version:", err instanceof Error ? err.message : String(err));
-      return c.json({ error: "Update is unavailable" }, 503);
-    }
-
-    const result = await startSystemUpdate({ target: installTarget });
-    if (!result.ok) {
-      return c.json({ error: "Update not configured" }, 503);
-    }
-    const targetProperty =
-      parsedTarget.target.type === "channel"
-        ? { channel: parsedTarget.target.value, version: installTarget.value }
-        : { version: parsedTarget.target.value };
-    void posthogErrorTracker.captureEvent("matrix_system_update_requested", {
-      distinctId: ownerTelemetryDistinctId,
-      properties: {
-        ...targetProperty,
-        targetType: parsedTarget.target.type,
-        handle: process.env.MATRIX_HANDLE,
-      },
-    }).catch((err: unknown) => {
-      const kind = err instanceof Error ? err.name : typeof err;
-      console.warn(`[posthog] Failed to queue system update event: ${kind}`);
-    });
-    return c.json({ ok: true, status: result.status, ...targetProperty }, 202);
-  }
-
-  app.post("/api/system/update", upgradeBodyLimit, startUpdateFromRequest);
-
-  app.post("/api/system/update/repair", upgradeBodyLimit, async (c) => {
-    const result = await startSystemUpdateRepair();
-    if (!result.ok) {
-      return c.json({ error: "Update repair not configured" }, 503);
-    }
-    void posthogErrorTracker.captureEvent("matrix_system_update_repair_requested", {
-      distinctId: ownerTelemetryDistinctId,
-      properties: {
-        handle: process.env.MATRIX_HANDLE,
-      },
-    }).catch((err: unknown) => {
-      const kind = err instanceof Error ? err.name : typeof err;
-      console.warn(`[posthog] Failed to queue system update repair event: ${kind}`);
-    });
-    return c.json({ ok: true, status: result.status }, 202);
-  });
-
-  app.post("/api/system/upgrade", upgradeBodyLimit, async (c) => {
-    return startUpdateFromRequest(c);
-  });
-
-  const usageTracker = createUsageTracker(homePath);
-
-  app.get("/api/usage", (c) => {
-    try {
-      const period = (c.req.query("period") ?? "daily") as string;
-      const date = c.req.query("date") as string | undefined;
-      const month = c.req.query("month") as string | undefined;
-
-      if (period === "monthly") {
-        return c.json(usageTracker.getMonthly(month));
-      }
-      return c.json(usageTracker.getDaily(date));
-    } catch (err: unknown) {
-      logBestEffortFailure("Failed to read usage stats", err);
-      return c.json({ total: 0, byAction: {} });
-    }
-  });
-
-  app.post("/api/push/register", pushRegistrationBodyLimit, async (c) => {
-    let principal;
-    try {
-      principal = requireRequestPrincipal(c);
-    } catch (err: unknown) {
-      if (isRequestPrincipalError(err)) {
-        const mapped = mapRequestPrincipalError(err, "Push registration failed");
-        if (mapped.log) console.error("[push] Request principal misconfigured:", err.name);
-        return c.json(mapped.body, mapped.status);
-      }
-      throw err;
-    }
-
-    let rawBody: unknown;
-    try {
-      rawBody = await c.req.json();
-    } catch (err: unknown) {
-      if (!(err instanceof SyntaxError)) {
-        logBestEffortFailure("Failed to parse push registration", err);
-      }
-      return c.json({ error: "Invalid push registration" }, 400);
-    }
-
-    const parsed = PushRegisterBodySchema.safeParse(rawBody);
-    if (!parsed.success) {
-      return c.json({ error: "Invalid push registration" }, 400);
-    }
-
-    pushAdapter.registerToken(parsed.data.token, parsed.data.platform, principal.userId);
-    return c.json({ ok: true });
-  });
-
-  app.delete("/api/push/register", pushRegistrationBodyLimit, async (c) => {
-    let principal;
-    try {
-      principal = requireRequestPrincipal(c);
-    } catch (err: unknown) {
-      if (isRequestPrincipalError(err)) {
-        const mapped = mapRequestPrincipalError(err, "Push registration failed");
-        if (mapped.log) console.error("[push] Request principal misconfigured:", err.name);
-        return c.json(mapped.body, mapped.status);
-      }
-      throw err;
-    }
-
-    let rawBody: unknown;
-    try {
-      rawBody = await c.req.json();
-    } catch (err: unknown) {
-      if (!(err instanceof SyntaxError)) {
-        logBestEffortFailure("Failed to parse push registration removal", err);
-      }
-      return c.json({ error: "Invalid push registration" }, 400);
-    }
-
-    const parsed = PushUnregisterBodySchema.safeParse(rawBody);
-    if (!parsed.success) {
-      return c.json({ error: "Invalid push registration" }, 400);
-    }
-
-    pushAdapter.removeToken(parsed.data.token, principal.userId);
-    return c.json({ ok: true });
-  });
-
-  app.post("/api/client-errors", clientErrorBodyLimit, async (c) => {
-    let rawBody: unknown;
-    try {
-      rawBody = await c.req.json();
-    } catch (err: unknown) {
-      if (!(err instanceof SyntaxError)) {
-        console.warn("[client-error-log] Failed to parse client error report:", err);
-      }
-      return c.json({ error: "Invalid client error report" }, 400);
-    }
-
-    const parsed = ClientErrorReportSchema.safeParse(rawBody);
-    if (!parsed.success) {
-      return c.json({ error: "Invalid client error report" }, 400);
-    }
-
-    try {
-      await writeClientErrorReport(homePath, parsed.data);
-      // Fire-and-forget PostHog forwarding so client exceptions are visible
-      // beyond the owner-local JSONL. Must never affect the 2xx response.
-      forwardClientErrorToPostHog(posthogErrorTracker, ownerTelemetryDistinctId, parsed.data);
-      return c.json({ ok: true });
-    } catch (err: unknown) {
-      console.warn("[client-error-log] Failed to persist client error report:", err instanceof Error ? err.message : String(err));
-      return c.json({ error: "Unable to record client error" }, 500);
-    }
-  });
 
   // Spec 101: Hermes dashboard proxy (loopback only, auth-gated)
   const hermesDashboardUrl = process.env.HERMES_DASHBOARD_URL
@@ -4628,84 +3687,16 @@ export async function createGateway(config: GatewayConfig) {
     createPost: queryEngine ? (post) => insertPost(queryEngine, post) : async () => "",
   });
 
-  // T946: Plugin list endpoint
-  app.get("/api/plugins", (c) => {
-    return c.json(
-      loadedPlugins.map((p) => ({
-        id: p.manifest.id,
-        name: p.manifest.name ?? p.manifest.id,
-        version: p.manifest.version ?? "0.0.0",
-        description: p.manifest.description,
-        origin: p.origin,
-        status: p.status,
-        error: p.error,
-        contributions: pluginRegistry.getPluginContributions(p.manifest.id),
-      })),
-    );
-  });
-
-  // T2063: Leaderboard API routes
-  const { getLeaderboard } = await import("./leaderboard.js");
-
-  app.get("/api/games/leaderboard", (c) => {
-    return c.json(getLeaderboard(homePath));
-  });
-
-  app.get("/api/games/leaderboard/:game", (c) => {
-    const game = c.req.param("game");
-    return c.json(getLeaderboard(homePath, game));
-  });
-
-  app.get("/health", (c) => c.json({
-    status: "ok",
+  app.route("/", createMiscRoutes({
+    homePath,
     runningVersion,
-    cronJobs: cronService.listJobs().length,
-    channels: channelManager.status(),
-    plugins: loadedPlugins.length,
-    workspace: {
-      status: "ok",
-    },
-    sessions: {
-      status: "ok",
-    },
-    reviews: {
-      status: "ok",
-    },
-    sandbox: {
-      status: typeof process.getuid === "function" && process.getuid() === 0 ? "degraded" : "ok",
-    },
-    memory: {
-      rssBytes: process.memoryUsage.rss(),
-      pendingPersistBytes: 0,
-    },
-    browserIde: {
-      status: process.env.MATRIX_CODE_SERVER_PORT ? "configured" : "disabled",
-    },
+    cronService,
+    channelManager,
+    pluginRegistry,
+    getLoadedPlugins: () => loadedPlugins,
+    logUnexpectedJsonParseFailure,
   }));
 
-  app.post("/api/internal/upgrade", upgradeBodyLimit, async (c) => {
-    const upgradeToken = process.env.UPGRADE_TOKEN;
-    if (!upgradeToken) return c.json({ error: "UPGRADE_TOKEN not configured" }, 503);
-    const auth = c.req.header("authorization");
-    const token = auth?.startsWith("Bearer ") ? auth.slice(7) : undefined;
-    if (!timingSafeStringEquals(token, upgradeToken)) return c.json({ error: "Unauthorized" }, 401);
-
-    let body: unknown = {};
-    const raw = await c.req.text();
-    if (raw.trim()) {
-      try {
-        body = JSON.parse(raw);
-      } catch (err: unknown) {
-        logUnexpectedJsonParseFailure("Failed to parse internal upgrade payload", err);
-        return c.json({ error: "Invalid JSON" }, 400);
-      }
-    }
-
-    const result = await writeInternalUpgradeTrigger({ body });
-    if (!result.ok) return c.json({ error: result.error }, 400);
-
-    return c.json({ status: "upgrading", target: result.target }, 202);
-  });
 
   // Load plugins and mount their HTTP routes
   async function initPlugins() {

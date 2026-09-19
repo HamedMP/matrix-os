@@ -1,12 +1,12 @@
 import { randomUUID } from "node:crypto";
 import type { TerminalRef, TerminalWorkspace } from "@matrix-os/contracts";
 import type { TerminalRuntimeSocketClient } from "@matrix-os/terminal-runtime";
-import type { WorkspaceSessionOrchestrator } from "../workspace-session-orchestrator.js";
+import type { WorkspaceSessionOrchestrator } from "../domains/workspace/workspace-session-orchestrator.js";
 import type { CodingAgentThreadStore } from "./thread-store.js";
 import type { CodexControlClient } from "./codex-control-client.js";
 import type { IdleWorkspaceIdentity } from "./idle-workspace-state.js";
 
-import type { BackgroundAgentRuntime } from "../background-agent-runtime.js";
+import type { BackgroundAgentRuntime } from "../domains/sessions/background-agent-runtime.js";
 
 type Report = { checked: number; reclaimed: number; skipped: number };
 type Sessions = Pick<WorkspaceSessionOrchestrator, "getSession" | "listSessions">;

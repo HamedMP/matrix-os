@@ -7,8 +7,8 @@ import {
   buildKernelEnv,
   resolveKernelCredentialMode,
   resolveKernelCredentialSources,
-} from "../../packages/gateway/src/kernel-credentials.js";
-import type { MatrixFundedCredentialProvider } from "../../packages/gateway/src/funded-ai-credential-manager.js";
+} from "../../packages/gateway/src/domains/integrations/kernel-credentials.js";
+import type { MatrixFundedCredentialProvider } from "../../packages/gateway/src/domains/integrations/funded-ai-credential-manager.js";
 
 function fundedProvider(): MatrixFundedCredentialProvider {
   return {
