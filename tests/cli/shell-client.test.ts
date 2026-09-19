@@ -19,11 +19,14 @@ const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0
 const roots: string[] = [];
 
 function serverFrame(
-  type: "attached" | "output" | "exit" | "pong" | "error",
+  type: "attached" | "output" | "exit" | "pong" | "lease-revoked" | "error",
   fields: Record<string, unknown> = {},
 ): string {
   if (type === "error") {
     return JSON.stringify({ type, terminalRef: TERMINAL_REF, code: "attach_failed", message: "Terminal unavailable", ...fields });
+  }
+  if (type === "lease-revoked") {
+    return JSON.stringify({ type, terminalRef: TERMINAL_REF, epoch: null, ...fields });
   }
   const defaults = type === "attached"
     ? { canonicalSize: { cols: 80, rows: 24 }, nextSeq: 0 }
@@ -588,7 +591,7 @@ describe("shell REST client", () => {
     ControlledWebSocket.last?.emit("message", serverFrame("attached"));
     const revokedSocket = ControlledWebSocket.last!;
 
-    revokedSocket.emit("message", JSON.stringify({ type: "lease-revoked", epoch: 2 }));
+    revokedSocket.emit("message", serverFrame("lease-revoked", { epoch: 2 }));
     await expect(attached).resolves.toEqual({ detached: true, exitCode: null });
     await vi.advanceTimersByTimeAsync(50);
 
@@ -687,6 +690,40 @@ describe("shell REST client", () => {
     ControlledWebSocket.last?.emit("open");
     ControlledWebSocket.last?.emit("message", serverFrame("attached"));
     ControlledWebSocket.last?.emit("message", serverFrame("exit", { exitCode: 0 }));
+    await expect(attached).resolves.toEqual({ detached: false, exitCode: 0 });
+  });
+
+  it("accepts tab output after another tab resizes without reconnecting", async () => {
+    vi.useFakeTimers();
+    const client = createShellClient({ gatewayUrl: "http://gateway", timeoutMs: 50 });
+    const input = new EventEmitter() as NodeJS.ReadStream;
+    const output = { write: vi.fn() } as unknown as NodeJS.WriteStream;
+    const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
+
+    const attached = client.attachTab(TERMINAL_REF, {
+      WebSocketImpl: ControlledWebSocket,
+      input,
+      output,
+      errorOutput,
+      reconnectBaseDelayMs: 5,
+      reconnectMaxDelayMs: 5,
+    });
+    ControlledWebSocket.last?.emit("open");
+    ControlledWebSocket.last?.emit("message", serverFrame("attached", { revision: 2 }));
+    ControlledWebSocket.last?.emit("message", JSON.stringify({
+      type: "canonical-size",
+      terminalRef: TERMINAL_REF,
+      revision: 50,
+      canonicalSize: { cols: 120, rows: 40 },
+    }));
+    ControlledWebSocket.last?.emit("message", serverFrame("output", {
+      revision: 4,
+      seq: 1,
+      data: "reconnected",
+    }));
+
+    expect(output.write).toHaveBeenCalledWith("reconnected");
+    ControlledWebSocket.last?.emit("message", serverFrame("exit", { revision: 51, exitCode: 0 }));
     await expect(attached).resolves.toEqual({ detached: false, exitCode: 0 });
   });
 

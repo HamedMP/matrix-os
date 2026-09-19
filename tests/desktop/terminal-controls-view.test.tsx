@@ -7,7 +7,7 @@ import { useConnection } from "@desktop/renderer/src/stores/connection";
 import type { ShellSocketEvents } from "@desktop/renderer/src/lib/shell-socket";
 
 const { terminals, attach, write } = vi.hoisted(() => ({
-  terminals: [] as Array<{ key?: (event: KeyboardEvent) => boolean; selection: string; selectAll: ReturnType<typeof vi.fn> }>,
+  terminals: [] as Array<{ key?: (event: KeyboardEvent) => boolean; selection: string; selectAll: ReturnType<typeof vi.fn>; paste: ReturnType<typeof vi.fn> }>,
   attach: vi.fn(),
   write: vi.fn(),
 }));
@@ -21,6 +21,7 @@ vi.mock("@xterm/xterm", () => ({
     element: HTMLElement | null = null;
     key?: (event: KeyboardEvent) => boolean;
     selectAll = vi.fn();
+    paste = vi.fn();
     parser = { registerOscHandler: () => ({ dispose() {} }) };
     constructor() { terminals.push(this); }
     open(host: HTMLElement) { this.element = host; }
@@ -50,6 +51,7 @@ vi.mock("@desktop/renderer/src/features/terminal/terminal-runtime", () => ({
 }));
 
 describe("TerminalView keyboard control wiring", () => {
+  const originalClipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
   const originalPlatform = Object.getOwnPropertyDescriptor(navigator, "platform");
   let events: ShellSocketEvents;
   let api: { get: ReturnType<typeof vi.fn>; post: ReturnType<typeof vi.fn>; put: ReturnType<typeof vi.fn> };
@@ -76,7 +78,51 @@ describe("TerminalView keyboard control wiring", () => {
     vi.unstubAllGlobals();
     if (originalPlatform) Object.defineProperty(navigator, "platform", originalPlatform);
     else Reflect.deleteProperty(navigator, "platform");
+    if (originalClipboard) Object.defineProperty(navigator, "clipboard", originalClipboard);
+    else Reflect.deleteProperty(navigator, "clipboard");
     useConnection.setState({ api: null });
+  });
+
+  it.each(["MacIntel", "Linux x86_64"])("pastes Ctrl+V once and consumes held-key phases on %s", async (platform) => {
+    Object.defineProperty(navigator, "platform", { configurable: true, value: platform });
+    const readText = vi.fn().mockResolvedValue("printf 'λ 👩🏽‍💻'");
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { readText } });
+    render(<TerminalView sessionName="session-one" />);
+    act(() => events.onState("attached"));
+    const terminal = terminals[0];
+    for (const [type, repeat] of [["keydown", false], ["keydown", true], ["keypress", false], ["keyup", false]] as const) {
+      const event = new KeyboardEvent(type, { key: "v", ctrlKey: true, repeat, cancelable: true });
+      act(() => expect(terminal.key!(event)).toBe(false));
+      expect(event.defaultPrevented).toBe(true);
+    }
+    await waitFor(() => expect(terminal.paste).toHaveBeenCalledExactlyOnceWith("printf 'λ 👩🏽‍💻'"));
+    expect(readText).toHaveBeenCalledOnce();
+    expect(write).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { isComposing: true }, { keyCode: 229 }, { altKey: true }, { metaKey: true },
+    { key: "c" }, { key: "a" }, { key: "d" },
+  ])("leaves composition and unrelated control input to xterm: %j", (options) => {
+    const readText = vi.fn();
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { readText } });
+    render(<TerminalView sessionName="session-one" />);
+    const event = new KeyboardEvent("keydown", { key: "v", ctrlKey: true, cancelable: true, ...options });
+    act(() => expect(terminals[0].key!(event)).toBe(true));
+    expect(event.defaultPrevented).toBe(false);
+    expect(readText).not.toHaveBeenCalled();
+    expect(write).not.toHaveBeenCalled();
+  });
+
+  it("preserves AltGraph input without a separate altKey flag", () => {
+    const readText = vi.fn();
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { readText } });
+    render(<TerminalView sessionName="session-one" />);
+    const event = new KeyboardEvent("keydown", { key: "v", ctrlKey: true, cancelable: true });
+    Object.defineProperty(event, "getModifierState", { value: (key: string) => key === "AltGraph" });
+    act(() => expect(terminals[0].key!(event)).toBe(true));
+    expect(event.defaultPrevented).toBe(false);
+    expect(readText).not.toHaveBeenCalled();
   });
 
   it("renders controls in the supplied header without remounting the terminal", async () => {

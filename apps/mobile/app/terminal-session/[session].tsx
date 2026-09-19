@@ -23,7 +23,7 @@ import {
 import { isSafeSessionId } from "@/lib/terminal-state";
 import { colors } from "@/lib/theme";
 
-type LiveStatus = "connecting" | "attached" | "detached" | "ended" | "error";
+type LiveStatus = "connecting" | "attached" | "observer" | "detached" | "ended" | "error";
 const TERMINAL_HANDSHAKE_TIMEOUT_MS = 15_000;
 
 export default function TerminalSessionScreen() {
@@ -54,11 +54,17 @@ export default function TerminalSessionScreen() {
   const handleFrame = useCallback((frame: TerminalServerFrame) => {
     if (frame.type === "attached") {
       clearHandshakeTimeout();
-      setStatus("attached");
+      setStatus(frame.ownership === "observer" ? "observer" : "attached");
       setError(null);
       surfaceRef.current?.clear();
       surfaceRef.current?.resize(frame.canonicalSize.cols, frame.canonicalSize.rows);
-      surfaceRef.current?.focus();
+      if (frame.ownership !== "observer") surfaceRef.current?.focus();
+      return;
+    }
+    if (frame.type === "lease-revoked") {
+      setStatus("observer");
+      setError(null);
+      surfaceRef.current?.blur();
       return;
     }
     if (frame.type === "snapshot") {
@@ -165,19 +171,21 @@ export default function TerminalSessionScreen() {
 
   const sendData = useCallback((data: string) => {
     if (!data) return;
+    if (status === "observer") return;
     if (!connectionRef.current?.sendInput(data)) {
       setStatus("error");
       setError("Terminal unavailable. Try again.");
     }
-  }, []);
+  }, [status]);
 
   const sendBinary = useCallback((data: string) => {
     if (!data) return;
+    if (status === "observer") return;
     if (!connectionRef.current?.sendBinary(data)) {
       setStatus("error");
       setError("Terminal unavailable. Try again.");
     }
-  }, []);
+  }, [status]);
 
   const handleResize = useCallback((cols: number, rows: number) => {
     gridRef.current = { cols, rows };
@@ -228,6 +236,16 @@ export default function TerminalSessionScreen() {
             <Spacer size="lg" />
             <Pressable accessibilityRole="button" onPress={() => void connect()} style={styles.retryButton}>
               <Text style={styles.retryText}>Reconnect</Text>
+            </Pressable>
+          </View>
+        ) : null}
+
+        {status === "observer" ? (
+          <View style={styles.overlay}>
+            <Text style={styles.overlayTitle}>Live on another device.</Text>
+            <Spacer size="lg" />
+            <Pressable accessibilityRole="button" onPress={() => void connect()} style={styles.retryButton}>
+              <Text style={styles.retryText}>Continue here</Text>
             </Pressable>
           </View>
         ) : null}

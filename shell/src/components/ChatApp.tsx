@@ -1,10 +1,10 @@
 "use client";
-import type { ChatAgentDraftRequest, StartAgentChat } from "@matrix-os/ui";
+import type { ChatAgentDraftRequest, ChatCollaborationView, StartAgentChat } from "@matrix-os/ui";
 
 import { useChatReadState, CanonicalChatInputForm } from "@matrix-os/ui";
 import type { CanonicalChatInputView, CanonicalSubmitChatInputRequest } from "@matrix-os/contracts";
 
-import { useState, useMemo, useRef, useEffect } from "react";
+import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { ChatQueuedRequests } from "./chat/ChatQueuedRequests";
 import { ChatContextReceipt } from "@matrix-os/ui";
 import { ChatRunContextSchema, type CanonicalChatQueuedTurn } from "@matrix-os/contracts";
@@ -13,6 +13,8 @@ import { useChatComposerDraft } from "./chat/useChatComposerDraft";
 import { ChatAgentsRailSection, ChatAgentsWorkspace, ChatAgentsContent, useChatAgentsNavigation, type ChatAgentClient } from "@matrix-os/ui";
 import type { ChatSubmitOptions } from "@/hooks/useChatState";
 import { ChatSharing } from "./chat/ChatSharing";
+import { SharedWithMeNav } from "./chat/SharedWithMeNav";
+import { ShellChatCollaboration } from "./chat/ShellChatCollaboration";
 import { ChatAttachments, ChatContextMenu } from "@matrix-os/ui";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { resolveChatMessageLink } from "@matrix-os/contracts";
@@ -115,6 +117,9 @@ function writeHermesSetup(channels: string[]) {
 }
 
 interface ChatAppProps {
+  collaborationView?: ChatCollaborationView;
+  onOpenSharedChat?: (scopeId: string) => void;
+  onOpenSharedHome?: () => void;
   filterUnreadOnly?: boolean;
   onUnreadFilterChange?: (value: boolean) => void;
   active?: boolean;
@@ -139,6 +144,7 @@ interface ChatAppProps {
   queuedTurns?: CanonicalChatQueuedTurn[];
   onCancelQueuedTurn?: (id: string) => Promise<boolean>;
   providerSelection?: CanonicalChatModelSelection;
+  boundProviderInstanceId?: string;
   onSubmitInput?: (runId: string, requestId: string, input: Omit<CanonicalSubmitChatInputRequest, "clientRequestId">) => Promise<boolean>;
   onSubmitApproval?: (
     runId: string,
@@ -186,6 +192,7 @@ export function ChatApp(props: ChatAppProps) {
 }
 
 function ChatAppContent({
+  collaborationView, onOpenSharedChat, onOpenSharedHome,
   filterUnreadOnly, onUnreadFilterChange,
   active = true, readState, displayedThroughSeq = 0, onUpdateReadState,
   messages,
@@ -199,6 +206,7 @@ function ChatAppContent({
   onRenameConversation,
   onSubmit,
   providerSelection,
+  boundProviderInstanceId,
   agentClient, queuedTurns = [], onCancelQueuedTurn,
   onSubmitApproval,
   onSubmitInput,
@@ -251,6 +259,21 @@ function ChatAppContent({
   const [setupOpen, setSetupOpen] = useState(false);
   const [submittingApprovalId, setSubmittingApprovalId] = useState<string | null>(null);
   const [providerSetupError, setProviderSetupError] = useState<string | null>(null);
+  const collaborationViewKey = collaborationView ? JSON.stringify(collaborationView) : null;
+  const [sharedMetadata, setSharedMetadata] = useState<{
+    viewKey: string;
+    title: string;
+    role: "owner" | "editor" | "viewer";
+  } | null>(null);
+  const [collaborationHeaderContainer, setCollaborationHeaderContainer] = useState<HTMLDivElement | null>(null);
+  const activeSharedMetadata = sharedMetadata?.viewKey === collaborationViewKey ? sharedMetadata : null;
+  const handleSharedMetadata = useCallback((metadata: {
+    title: string;
+    role: "owner" | "editor" | "viewer";
+  }) => {
+    if (!collaborationViewKey) return;
+    setSharedMetadata({ ...metadata, viewKey: collaborationViewKey });
+  }, [collaborationViewKey]);
   const [editingChat, setEditingChat] = useState<{ id: string; source: "header" | "rail" } | null>(null);
   const [renamePending, setRenamePending] = useState(false);
   const initialHermesSetupRef = useRef<ReturnType<typeof readHermesSetup> | null>(null);
@@ -261,7 +284,7 @@ function ChatAppContent({
   };
   // react-doctor-disable-next-line react-hooks-js/refs -- lazy initializer performs one bounded localStorage read.
   const [channels, setChannels] = useState(() => new Set(getInitialHermesSetup().channels));
-  const providerState = useChatProviderState(providerSelection);
+  const providerState = useChatProviderState(providerSelection, boundProviderInstanceId);
   // Comfortable ≥44px touch targets on mobile; unchanged on desktop.
   const touchIcon = mobile ? "size-9" : "size-8";
   const grouped = groupMessages(messages);
@@ -356,6 +379,7 @@ function ChatAppContent({
           <Button
             variant="ghost"
             size="icon"
+            aria-label="Close Chat sidebar"
             className={`${touchIcon} text-muted-foreground hover:text-foreground`}
             onClick={() => setSidebarOpen(false)}
           >
@@ -373,6 +397,10 @@ function ChatAppContent({
         </div>
 
         <div className="px-2 pb-2"><ChatAgentsRailSection client={agentClient} onStartChat={startAgentChat} onOpen={() => { if (mobile) setSidebarOpen(false); }} onSetup={() => setSetupOpen(true)} /></div>
+        {onOpenSharedHome ? <SharedWithMeNav active={collaborationView?.kind === "home"} onOpen={() => {
+          onOpenSharedHome();
+          if (mobile) setSidebarOpen(false);
+        }} /> : null}
         {/* Search */}
         <div className="px-3 pb-2">
           <div className={`flex items-center gap-2 rounded-lg bg-background/60 px-2.5 text-xs ${mobile ? "py-2.5" : "py-1.5"}`}>
@@ -443,14 +471,14 @@ function ChatAppContent({
       {/* Main content */}
       <ChatAgentsContent client={agentClient} scopeKey={sessionId ?? "draft"}>
       <main className="flex flex-1 flex-col min-w-0">
-        {sessionId ? <ChatSharing key={sessionId} chatId={sessionId} /> : null}
         {/* Top bar */}
-        <header className={`flex items-center gap-2 border-b px-3 ${mobile ? "surface-glass min-h-14" : "min-h-12 border-border/30"}`}>
+        <header data-slot="chat-session-header" className={`flex items-center gap-2 border-b px-3 ${mobile ? "surface-glass min-h-14" : "min-h-12 border-border/30"}`}>
           {!sidebarOpen && (
             <>
               <Button
                 variant="ghost"
                 size="icon"
+                aria-label="Open Chat sidebar"
                 className={`${touchIcon} text-muted-foreground hover:text-foreground`}
                 onClick={() => setSidebarOpen(true)}
               >
@@ -473,7 +501,11 @@ function ChatAppContent({
                 <BotIcon className="size-3.5" aria-hidden="true" />
               </span>
               <div className="min-w-0 flex-1 text-center">
-                {editingChat?.source === "header" && editingChat.id === sessionId && activeConversationTitle ? (
+                {collaborationView ? (
+                  <span className="block truncate px-1 text-sm font-semibold leading-4 text-foreground">
+                    {activeSharedMetadata?.title ?? "Chat"}
+                  </span>
+                ) : editingChat?.source === "header" && editingChat.id === sessionId && activeConversationTitle ? (
                   <ChatTitleEditor
                     title={activeConversationTitle}
                     pending={renamePending}
@@ -501,12 +533,16 @@ function ChatAppContent({
                   </button>
                 )}
                 <p className="truncate text-[10px] leading-3 text-muted-foreground">
-                  {providerState.selected?.modelLabel ?? (providerState.loading ? "Loading AI access" : "AI access unavailable")}
+                  {collaborationView
+                    ? activeSharedMetadata ? `Shared · ${activeSharedMetadata.role}` : "Shared session"
+                    : providerState.selected?.modelLabel ?? (providerState.loading ? "Loading AI access" : "AI access unavailable")}
                 </p>
               </div>
             </div>
           </div>
-          <Button
+          {!collaborationView && sessionId ? <ChatSharing key={sessionId} chatId={sessionId} /> : null}
+          {collaborationView ? <div ref={setCollaborationHeaderContainer} className="flex shrink-0 items-center" /> : null}
+          {!collaborationView ? <Button
             variant={setupOpen ? "secondary" : "ghost"}
             size="sm"
             className="h-8 gap-1.5 px-2.5 text-xs"
@@ -514,12 +550,12 @@ function ChatAppContent({
           >
             <Settings2Icon className="size-3.5" aria-hidden="true" />
             Setup
-          </Button>
+          </Button> : null}
           {!connected && (
             <span className="text-[10px] text-destructive font-medium">Offline</span>
           )}
         </header>
-        {setupOpen && (
+        {!collaborationView && setupOpen && (
           <ChatProviderSetupPanel
             catalog={providerState.catalog}
             choices={providerState.choices}
@@ -531,7 +567,8 @@ function ChatAppContent({
             onSetupAction={(instance, action) => {
               void runProviderSetupAction(instance, action);
             }}
-            lockedInstanceId={providerSelection?.instanceId}
+            lockedInstanceId={boundProviderInstanceId}
+            onNewChat={onNewChat}
             showChannels={providerState.selected?.driverKind === "hermes"}
             channels={channels}
             onToggleChannel={(channel) => {
@@ -545,6 +582,10 @@ function ChatAppContent({
           />
         )}
 
+        {collaborationView ? (
+          <ShellChatCollaboration view={collaborationView} onOpenChat={onOpenSharedChat}
+            onSessionMetadata={handleSharedMetadata} headerContainer={collaborationHeaderContainer} />
+        ) : <>
         <ChatQueuedRequests key={`queue:${sessionId ?? "new"}`} turns={queuedTurns} onCancel={onCancelQueuedTurn} />
         {/* Empty state or conversation */}
         {isEmpty ? (
@@ -652,6 +693,7 @@ function ChatAppContent({
             </div>
           </div>
         )}
+        </>}
       </main>
       {previewFile && previewFile.chatId === sessionId ? <ChatFilePanel key={`${sessionId}:${previewFile.path}`} path={previewFile.path} onClose={() => {
         setPreviewFile(null);

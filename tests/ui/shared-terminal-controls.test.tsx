@@ -53,7 +53,9 @@ function apiFixture() {
   let handlers: TerminalHandlers | undefined;
   const api = {
     baseUrl: "https://app.matrix-os.com",
-    get: vi.fn(async () => terminal),
+    get: vi.fn(async (path: string) => path.includes("/discussion/messages")
+      ? { messages: [], latestSequence: "0" }
+      : terminal),
     post: vi.fn(async () => ({ terminal, action: "accepted" })),
     delete: vi.fn(),
     subscribeTerminal: vi.fn((_scopeId: string, next: TerminalHandlers) => {
@@ -79,6 +81,17 @@ function readyFrame(connectionId: string, current = terminal) {
 }
 
 describe("shared terminal controls", () => {
+  it("toggles the discussion layer from the terminal chrome", async () => {
+    const { api } = apiFixture();
+    render(<SharedTerminalControls api={api} scope={scope("viewer")} actorId="user_viewer" />);
+    const trigger = screen.getByRole("button", { name: "Open terminal discussion" });
+
+    fireEvent.click(trigger);
+    expect(await screen.findByRole("dialog", { name: "Discussion" })).toBeVisible();
+    fireEvent.click(trigger);
+    expect(screen.queryByRole("dialog", { name: "Discussion" })).toBeNull();
+  });
+
   it("lets a viewer watch bounded output without exposing mutation controls", async () => {
     const { api, handlers } = apiFixture();
     render(<SharedTerminalControls api={api} scope={scope("viewer")} actorId="user_viewer" />);

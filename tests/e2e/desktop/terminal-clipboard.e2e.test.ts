@@ -80,6 +80,28 @@ suite("packaged Electron terminal clipboard", () => {
     };
   }
 
+  let lastGeometry = "";
+  let geometryChangedAt = 0;
+  async function waitForSettledGeometry(): Promise<void> {
+    await page.evaluate(() => document.fonts.ready.then(() => undefined));
+    await expect.poll(async () => {
+      const geometry = await terminalSurface().evaluate((surface) => {
+        const screen = surface.querySelector(".xterm-screen");
+        const root = surface.querySelector(".xterm");
+        return [screen?.getBoundingClientRect().toJSON(), root?.getAttribute("style")];
+      });
+      const resizes = gateway.state.terminalResizeEvents.filter(event => event.session === activeSessionName);
+      const signature = JSON.stringify([activeSessionName, geometry, resizes.length, resizes.at(-1)]);
+      if (signature !== lastGeometry) {
+        lastGeometry = signature;
+        geometryChangedAt = Date.now();
+      }
+      // The socket debounces startup resize by 220 ms. Require a quiet window
+      // beyond that boundary so both drag anchors use the acknowledged layout.
+      return resizes.length > 0 && Date.now() - geometryChangedAt >= 300;
+    }, { timeout: 10_000, intervals: [50], message: "terminal geometry did not settle before drag selection" }).toBe(true);
+  }
+
   async function selectBetween(
     startText: string,
     startIndex: number,
@@ -90,6 +112,7 @@ suite("packaged Electron terminal clipboard", () => {
     // synthetic pointer exactly at the midpoint can therefore land on either
     // side when Chromium and xterm use slightly different fractional widths.
     // Keep both anchors safely inside the intended selection halves.
+    await waitForSettledGeometry();
     const start = await terminalPoint(startText, startIndex, 0.25);
     const end = await terminalPoint(endText, Math.max(0, endIndexExclusive - 1), 0.75);
     await page.mouse.move(start.x, start.y);
@@ -511,6 +534,23 @@ suite("packaged Electron production-mode terminal selection", () => {
       ),
       { timeout: 10_000 },
     ).toBeTruthy();
+    await page.evaluate(() => document.fonts.ready.then(() => undefined));
+    // Soft-grid layout, font loading, and the gateway's debounced size reply
+    // can settle on different frames. Pixel gestures need a stable grid.
+    let previousGeometry = "";
+    let stableSamples = 0;
+    await expect.poll(async () => {
+      const geometry = JSON.stringify({
+        screen: await terminalSurface().locator(".xterm-screen").boundingBox(),
+        resize: gateway.state.terminalResizeEvents.findLast(
+          (event) => event.session === "matrix-task-1",
+        ),
+      });
+      stableSamples = geometry === previousGeometry ? stableSamples + 1 : 0;
+      previousGeometry = geometry;
+      return stableSamples;
+    }, { timeout: 10_000, intervals: [125], message: "terminal geometry did not settle" })
+      .toBeGreaterThanOrEqual(3);
     const [screenBox, resize, liveDimensions] = await Promise.all([
       terminalSurface().locator(".xterm-screen").boundingBox(),
       Promise.resolve(gateway.state.terminalResizeEvents.findLast(
@@ -759,7 +799,7 @@ suite("packaged Electron production-mode terminal selection", () => {
   }, 60_000);
 
   it("extends a drag selection by auto-scrolling beyond both terminal edges", async () => {
-    const { resize, screenBox, point } = await terminalGrid();
+    const { resize } = await terminalGrid();
     const lines = Array.from(
       { length: resize.rows + 80 },
       (_, index) => `EDGE-SCROLL-${String(index).padStart(3, "0")}`,
@@ -769,6 +809,8 @@ suite("packaged Electron production-mode terminal selection", () => {
     await waitForTerminalOutput(lines[0]!);
     await scrollTerminalToBottom();
     await waitForRenderFrames(2);
+    await page.waitForTimeout(300);
+    const { screenBox, point } = await terminalGrid();
 
     await writeClipboard("sentinel-before-upward-drag");
     const upwardStart = await expectTerminalPoint(point(5, resize.rows - 2), "upward-edge-drag-start");
@@ -805,12 +847,13 @@ suite("packaged Electron production-mode terminal selection", () => {
     await expect.poll(async () => (await readTerminalDiagnostics()).viewportY).toBe(0);
     await waitForRenderFrames(2);
 
-    const downwardStart = await expectTerminalPoint(point(5, 1), "downward-edge-drag-start");
+    const downwardGrid = await terminalGrid();
+    const downwardStart = await expectTerminalPoint(downwardGrid.point(5, 1), "downward-edge-drag-start");
     await page.mouse.move(downwardStart.x, downwardStart.y);
     await page.mouse.down();
     await page.mouse.move(
       downwardStart.x,
-      screenBox.y + screenBox.height + 32,
+      downwardGrid.screenBox.y + downwardGrid.screenBox.height + 32,
       { steps: 8 },
     );
 
@@ -829,6 +872,8 @@ suite("packaged Electron production-mode terminal selection", () => {
 
     await page.keyboard.press(process.platform === "darwin" ? "Meta+C" : "Control+Shift+C");
     await expect.poll(clipboardText).toContain(lines.at(-1)!);
+    mkdirSync(EVIDENCE_DIR, { recursive: true });
+    await page.screenshot({ path: join(EVIDENCE_DIR, "terminal-edge-selection.png") });
   }, 60_000);
 
   it("extends a mouse-reporting selection by auto-scrolling beyond both edges", async () => {
@@ -851,7 +896,7 @@ suite("packaged Electron production-mode terminal selection", () => {
       ).length,
       { timeout: 10_000 },
     ).toBeGreaterThan(resizeCountBeforeReload);
-    const { resize, screenBox, point } = await terminalGrid();
+    const { resize } = await terminalGrid();
     const lines = Array.from(
       { length: resize.rows + 80 },
       (_, index) => `MOUSE-EDGE-SCROLL-${String(index).padStart(3, "0")}`,
@@ -861,6 +906,8 @@ suite("packaged Electron production-mode terminal selection", () => {
     await waitForTerminalOutput(lines[0]!);
     await scrollTerminalToBottom();
     await waitForRenderFrames(2);
+    await page.waitForTimeout(300);
+    const { screenBox, point } = await terminalGrid();
 
     const probePoint = await expectTerminalPoint(point(2, resize.rows - 2), "mouse-edge-probe-point");
     await page.mouse.click(probePoint.x, probePoint.y);
@@ -870,10 +917,11 @@ suite("packaged Electron production-mode terminal selection", () => {
 
     try {
       const upwardInputCount = gateway.state.terminalInputs.length;
-      const upwardStart = await expectTerminalPoint(point(5, resize.rows - 2), "mouse-upward-drag-start");
+      const upwardGrid = await terminalGrid();
+      const upwardStart = await expectTerminalPoint(upwardGrid.point(5, upwardGrid.resize.rows - 2), "mouse-upward-drag-start");
       await page.mouse.move(upwardStart.x, upwardStart.y);
       await page.mouse.down();
-      await page.mouse.move(upwardStart.x, screenBox.y - 32, { steps: 8 });
+      await page.mouse.move(upwardStart.x, upwardGrid.screenBox.y - 32, { steps: 8 });
 
       try {
         await expect.poll(readTerminalSelection, {
@@ -907,12 +955,13 @@ suite("packaged Electron production-mode terminal selection", () => {
       await waitForRenderFrames(1);
 
       const downwardInputCount = gateway.state.terminalInputs.length;
-      const downwardStart = await expectTerminalPoint(point(5, 1), "mouse-downward-drag-start");
+      const downwardGrid = await terminalGrid();
+      const downwardStart = await expectTerminalPoint(downwardGrid.point(5, 1), "mouse-downward-drag-start");
       await page.mouse.move(downwardStart.x, downwardStart.y);
       await page.mouse.down();
       await page.mouse.move(
         downwardStart.x,
-        screenBox.y + screenBox.height + 32,
+        downwardGrid.screenBox.y + downwardGrid.screenBox.height + 32,
         { steps: 8 },
       );
 

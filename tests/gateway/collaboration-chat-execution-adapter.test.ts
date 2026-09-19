@@ -47,7 +47,6 @@ describe("CollaborationChatExecutionAdapter", () => {
       clientRequestId: queued.clientRequestId,
       expectedRevision: "12",
       text: "Summarize this Chat",
-      selection,
     })).resolves.toMatchObject({
       resourceRevision: "13",
       request: {
@@ -64,9 +63,10 @@ describe("CollaborationChatExecutionAdapter", () => {
         requestingActorId: collaborationActors.editor,
         acceptedAuthEpoch: 4,
         expectedRevision: 12,
-        driverKind: "claude_code",
       }),
     );
+    expect(enqueueSharedQueuedTurn.mock.calls[0]?.[1]).not.toHaveProperty("selection");
+    expect(enqueueSharedQueuedTurn.mock.calls[0]?.[1]).not.toHaveProperty("driverKind");
     expect(onCommitted).toHaveBeenCalledWith(collaborationIds.scope);
     await vi.waitFor(() => expect(requestDispatch).toHaveBeenCalledWith(
       collaborationIds.scope,
@@ -86,7 +86,6 @@ describe("CollaborationChatExecutionAdapter", () => {
       clientRequestId: queued.clientRequestId,
       expectedRevision: "12",
       text: "Summarize this Chat",
-      selection,
     });
     expect(requestDispatch).not.toHaveBeenCalled();
   });
@@ -118,6 +117,10 @@ describe("CollaborationChatExecutionAdapter", () => {
     const requests = await adapter.list({ ...context, capability: "read" });
 
     await expect(adapter.capability({ ...context, capability: "read" }, requests)).resolves.toMatchObject({
+      capability: {
+        status: "available",
+        effectiveSelection: selection,
+      },
       approvals: [{
         approvalId: "approval_shared",
         runId: "run_shared",
@@ -131,6 +134,21 @@ describe("CollaborationChatExecutionAdapter", () => {
       collaborationIds.chat,
       collaborationIds.scope,
     );
+  });
+
+  it("reports the authoritative bound selection without advertising Claude for a Codex Chat", async () => {
+    const codexSelection = { instanceId: "codex_default", model: "gpt-5.6-sol" };
+    const adapter = createAdapter({
+      getSharedAiCapability: vi.fn(async () => ({
+        status: "unavailable" as const,
+        effectiveSelection: codexSelection,
+      })),
+    });
+
+    await expect(adapter.capability({ ...context, capability: "read" }, []))
+      .resolves.toMatchObject({
+        capability: { status: "unavailable", effectiveSelection: codexSelection },
+      });
   });
 
   it("forwards attributed controls and refuses a mismatched capability", async () => {
@@ -160,7 +178,16 @@ function createAdapter(overrides: Record<string, unknown> = {}) {
     })),
     listSharedQueuedTurns: vi.fn(async () => [queued]),
     listSharedPendingApprovals: vi.fn(async () => []),
-    ...pick(overrides, ["enqueueSharedQueuedTurn", "listSharedQueuedTurns", "listSharedPendingApprovals"]),
+    getSharedAiCapability: vi.fn(async () => ({
+      status: "available" as const,
+      effectiveSelection: selection,
+    })),
+    ...pick(overrides, [
+      "enqueueSharedQueuedTurn",
+      "listSharedQueuedTurns",
+      "listSharedPendingApprovals",
+      "getSharedAiCapability",
+    ]),
   };
   const commands = {
     cancel: vi.fn(async () => ({ id: "command-cancel", kind: "cancel" as const, state: "completed" as const })),

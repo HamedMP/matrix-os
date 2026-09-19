@@ -6,6 +6,7 @@ import type { CollaborationActorProofVerifier } from "./actor-proof.js";
 import { requireSecureCollaborationPlatformBaseUrl } from "./platform-base-url.js";
 const REQUEST_TIMEOUT_MS = 10_000;
 const MAX_RESPONSE_BYTES = 16 * 1024;
+const POLICY_CACHE_TTL_MS = 5_000;
 export class CollaborationPolicyClientError extends Error {
   constructor() {
     super("Collaboration rollout policy is unavailable");
@@ -15,12 +16,16 @@ export class CollaborationPolicyClientError extends Error {
 export class CollaborationPolicyClient {
   private readonly endpoint: string;
   private readonly fetchImpl: typeof fetch;
+  private readonly now: () => Date;
+  private cachedPolicy?: { policy: CollaborationPolicy; validUntil: number };
+  private inFlight?: Promise<CollaborationPolicy>;
   constructor(private readonly options: {
     platformBaseUrl: string;
     runtimeId: string;
     serviceToken: string;
     verifier: Pick<CollaborationActorProofVerifier, "verifyPolicy">;
     fetchImpl?: typeof fetch;
+    now?: () => Date;
   }) {
     const baseUrl = requireSecureCollaborationPlatformBaseUrl(options.platformBaseUrl);
     CollaborationRuntimeIdSchema.parse(options.runtimeId);
@@ -29,8 +34,32 @@ export class CollaborationPolicyClient {
     }
     this.endpoint = `${baseUrl.origin}/internal/collaboration/policy?milestone=m2`;
     this.fetchImpl = options.fetchImpl ?? fetch;
+    this.now = options.now ?? (() => new Date());
   }
   async getM2(): Promise<CollaborationPolicy> {
+    const now = this.now().getTime();
+    if (this.cachedPolicy && now < this.cachedPolicy.validUntil) {
+      return this.cachedPolicy.policy;
+    }
+    this.cachedPolicy = undefined;
+    if (this.inFlight) return this.inFlight;
+
+    const request = this.fetchM2();
+    this.inFlight = request;
+    try {
+      const policy = await request;
+      const expiresAt = new Date(policy.expiresAt).getTime();
+      const validUntil = Math.min(now + POLICY_CACHE_TTL_MS, expiresAt);
+      if (Number.isFinite(validUntil) && validUntil > now) {
+        this.cachedPolicy = { policy, validUntil };
+      }
+      return policy;
+    } finally {
+      if (this.inFlight === request) this.inFlight = undefined;
+    }
+  }
+
+  private async fetchM2(): Promise<CollaborationPolicy> {
     try {
       const response = await this.fetchImpl(this.endpoint, {
         method: "GET",

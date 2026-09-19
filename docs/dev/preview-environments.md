@@ -76,6 +76,43 @@ blocks subsequent HTTP requests and new WebSocket handshakes after that deploy.
 An already-established WebSocket remains connected until it disconnects or is
 closed; active connection draining is intentionally deferred.
 
+### Shared preview Terminal authorization
+
+The platform database machine record is authoritative for preview classification
+and `accessClerkUserIds`. The machine retains one canonical owner. Each browser
+request and WebSocket token retains the authenticated collaborator's Clerk ID.
+No allowlist is copied into VPS configuration.
+
+For `/api/terminal/*` and `/ws/terminal/tab`, the platform adds a compact,
+HMAC-SHA256 signed `x-platform-preview-terminal` access decision only after checking
+the current preview classification and allowlist. The existing verified identity
+headers continue to carry the real actor. The terminal access signature binds that
+actor to the canonical owner and runtime slot; its existing per-handle signing key
+also binds it to the exact preview handle. HTTP and WebSocket proxies strip incoming
+platform identity and terminal-access headers before creating their own. The
+gateway verifies the signature, authenticated actor, configured owner, and exact
+runtime slot. Preview classification remains a server-side platform decision, not
+a client header or a classification inferred solely from a `pr-*` name. Customer
+records cannot issue terminal access, including records with preview-shaped names.
+
+Terminal workspaces, project fences, and attachment capabilities continue to use
+canonical resource ownership. Authentication, Chat authorization, and terminal
+audit data retain the real actor. The same gateway owner/access
+guard protects HTTP discovery/mutations and WebSocket attachment. Invalid proofs
+provide no additional authority and retain the generic denial behavior. The
+browser keeps the `/vm/pr-<N>` prefix on API, token, and WebSocket URLs.
+
+Allowlist changes apply on the next proxied request or handshake. Active-stream
+revocation, changes to Chat permissions, and sharing of
+other owner-only APIs are outside this fix. There are no new DB writes, caches,
+clocks, background timers, or persisted authorization state. Existing terminal lifecycle,
+project transaction/fencing, and shutdown behavior remain in effect.
+
+Rollout requires both the platform routing service and the preview VPS gateway
+host bundle. Publishing only a host bundle leaves the old platform token/proof
+behavior in place. Install both before validating the browser workflow with an
+allowlisted collaborator; ordinary customer VPS access remains owner-only.
+
 Preview provisioning uses the operator-only `/vps/preview/provision` route with the
 same `pr-<N>` value for the handle and runtime slot. A `202` is valid only when its
 machine ID is immediately visible as `provisioning` or `running` in `/vps/fleet`.

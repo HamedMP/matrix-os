@@ -133,4 +133,22 @@ describe("live terminal session modal", () => {
     expect(screen.getByText("Terminal unavailable. Try again.")).toBeTruthy();
     jest.useRealTimers();
   });
+
+  it("offers Continue here while following a terminal owned by another device", async () => {
+    const rendered = render(<TerminalSessionScreen />);
+    await waitFor(() => expect(mockConnect).toHaveBeenCalled());
+    const options = mockConnect.mock.calls[0]?.[0] as {
+      onMessage: (frame: { type: string; canonicalSize?: { cols: number; rows: number } }) => void;
+    };
+
+    act(() => {
+      options.onMessage({ type: "attached", canonicalSize: { cols: 100, rows: 30 } });
+      options.onMessage({ type: "lease-revoked" });
+    });
+
+    expect(screen.getByText("Live on another device.")).toBeTruthy();
+    fireEvent.press(screen.getByText("Continue here"));
+    await waitFor(() => expect(mockConnect).toHaveBeenCalledTimes(2));
+    rendered.unmount();
+  });
 });

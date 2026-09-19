@@ -3331,6 +3331,21 @@ export async function getPlatformUserByHandle(
   return row ? mapPlatformUser(row) : undefined;
 }
 
+export async function listActivePlatformUsersByNormalizedHandle(
+  db: PlatformDB,
+  normalizedHandle: string,
+): Promise<PlatformUserRecord[]> {
+  await db.ready;
+  const rows = await db.executor
+    .selectFrom('users')
+    .selectAll()
+    .where('handle', '=', normalizedHandle)
+    .where('status', '=', 'active')
+    .limit(2)
+    .execute();
+  return rows.map(mapPlatformUser);
+}
+
 export async function upsertBillingCustomer(db: PlatformDB, record: NewBillingCustomer): Promise<void> {
   await db.ready;
   await db.executor

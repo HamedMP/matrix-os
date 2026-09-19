@@ -35,7 +35,7 @@ it("loads Resource Manager through the actual native app preload", async () => {
     services: [], processes: [], cleanupSuggestions: [], collectionWarnings: [],
   };
   const fetchFn = vi.fn(async () => new Response(JSON.stringify(snapshot)));
-  const bridge = new NativeAppBridge({
+  const bridge = new NativeAppBridge({ authGeneration: () => 0, generate: vi.fn(), aiRequest: vi.fn(),
     request: vi.fn(),
     gatewayOrigin: () => "https://gateway.test",
     gatewayRequest: createNativeAppGatewayRequester({

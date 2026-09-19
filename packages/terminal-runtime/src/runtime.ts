@@ -1,3 +1,4 @@
+import { TerminalScrollLineSchema, type TerminalScrollState } from "@matrix-os/contracts";
 import {
   TerminalRefSchema,
   TerminalPaneActionSchema,
@@ -13,6 +14,7 @@ import { z } from "zod/v4";
 import { openBufferedAttachment } from "./attachment-bootstrap.js";
 import { TerminalRuntimeError } from "./errors.js";
 import { TerminalMouseModeState } from "./mouse-mode-state.js";
+import { applyWorkspaceResize, workspaceResizeProposal, type TerminalSizeListener } from "./workspace-resize.js";
 import { createViewerOutput } from "./viewer-output.js";
 import {
   TerminalWorkspaceStore,
@@ -44,6 +46,7 @@ export interface ZellijRuntimeAdapter {
   renameTab?(sessionName: string, tabId: number, name: string): Promise<void>;
   closeTab?(sessionName: string, tabId: number): Promise<void>;
   deleteSession?(sessionName: string): Promise<void>;
+  scrollState?(sessionName: string, paneId: string, line?: number): Promise<TerminalScrollState>;
   resizeSession?(sessionName: string, size: { cols: number; rows: number }): Promise<void>;
   writeToPane?(sessionName: string, paneId: string, data: Uint8Array): Promise<void>;
   paneAction?(
@@ -84,8 +87,9 @@ export interface TerminalViewer {
   detach(): Promise<void>;
 }
 
-interface ViewerState {
+interface ViewerState extends TerminalSizeListener {
   disposeOutput: () => void;
+  requestedSize?: { cols: number; rows: number };
   id: string;
   lastTouched: number;
   send: (data: Uint8Array) => void | Promise<void>;
@@ -97,6 +101,7 @@ interface AttachmentState {
   handle: ZellijAttachment;
   viewers: Map<string, ViewerState>;
   mouseModes: TerminalMouseModeState;
+  scrollRead?: { at: number; ttl: number; pending: boolean; result: Promise<TerminalScrollState | null> };
 }
 
 interface InputQueueState {
@@ -343,20 +348,27 @@ export class TerminalRuntime {
     return this.store.updateTabUiState(ref, input);
   }
 
-  async resize(refInput: TerminalRef, input: {
+  resize(refInput: TerminalRef, input: {
     mode: "hard" | "soft";
     size: { cols: number; rows: number };
-  }): Promise<TerminalWorkspace> {
-    const ref = TerminalRefSchema.parse(refInput);
-    const workspace = await this.requireRuntimeWorkspace(ref.workspaceId);
-    if (!workspace.tabs[ref.tabId]) throw new TerminalRuntimeError("not_found");
-    if (input.mode === "soft") return (await this.listWorkspaces()).find((item) => item.id === ref.workspaceId)!;
-    const updated = await this.store.updateCanonicalSize(ref.workspaceId, input.size);
-    await this.zellij.resizeSession?.(workspace.zellijSessionName, updated.canonicalSize);
-    await Promise.all([...this.attachments.values()]
-      .filter((attachment) => attachment.ref.workspaceId === ref.workspaceId)
-      .map((attachment) => attachment.handle.resize(updated.canonicalSize.cols, updated.canonicalSize.rows)));
-    return updated;
+  }, viewerId?: string): Promise<TerminalWorkspace> {
+    return this.runWorkspaceMutation(async () => {
+      const ref = TerminalRefSchema.parse(refInput);
+      const workspace = await this.requireRuntimeWorkspace(ref.workspaceId);
+      if (!workspace.tabs[ref.tabId]) throw new TerminalRuntimeError("not_found");
+      if (input.mode === "soft" && !viewerId) return (await this.listWorkspaces()).find((item) => item.id === ref.workspaceId)!;
+      await this.sweepStaleViewers();
+      const size = workspaceResizeProposal({ ref, size: input.size, mode: input.mode, viewerId, attachments: this.attachments.values() });
+      if (!size) return (await this.listWorkspaces()).find((item) => item.id === ref.workspaceId)!;
+      const updated = await this.store.updateCanonicalSize(ref.workspaceId, size);
+      await applyWorkspaceResize({
+        workspace: updated,
+        resizeSession: async () => { await this.zellij.resizeSession?.(workspace.zellijSessionName, updated.canonicalSize); },
+        attachments: this.attachments.values(),
+        closeEmpty: (attachmentRef) => this.closeAttachment(refKey(attachmentRef)),
+      });
+      return updated;
+    });
   }
 
   async terminateTab(refInput: TerminalRef): Promise<void> {
@@ -427,6 +439,38 @@ export class TerminalRuntime {
     });
   }
 
+  async scrollState(refInput: TerminalRef, line?: number): Promise<TerminalScrollState | null> {
+    const ref = TerminalRefSchema.parse(refInput);
+    if (line !== undefined) TerminalScrollLineSchema.parse(line);
+    const attachment = this.attachments.get(refKey(ref));
+    if (!attachment || !this.zellij.scrollState) return null;
+    if (line === undefined && attachment.scrollRead && (attachment.scrollRead.pending || Date.now() - attachment.scrollRead.at < attachment.scrollRead.ttl)) {
+      return attachment.scrollRead.result;
+    }
+    const read = async () => {
+      try {
+        const workspace = await this.requireRuntimeWorkspace(ref.workspaceId);
+        const tab = workspace.tabs[ref.tabId];
+        if (!tab?.zellijPaneId) return null;
+        return await this.zellij.scrollState!(workspace.zellijSessionName, tab.zellijPaneId, line);
+      } catch (error: unknown) {
+        console.warn("[terminal-runtime] native scroll unavailable", error instanceof Error ? error.name : "unknown_error");
+        return null;
+      }
+    };
+    // Writes share the workspace mutation queue; polling shares one in-flight query per tab.
+    const previous = attachment.scrollRead?.result;
+    const result = line === undefined
+      ? (previous ? previous.then(read) : read())
+      : this.runWorkspaceMutation(async () => { await previous; return read(); });
+    const entry = { at: Date.now(), ttl: 500, pending: true, result };
+    attachment.scrollRead = entry;
+    void result.then((state) => { entry.pending = false; entry.at = Date.now(); entry.ttl = state ? 500 : 5_000; }).catch((error: unknown) => {
+      console.warn("[terminal-runtime] native scroll query failed", error instanceof Error ? error.name : "unknown_error");
+    });
+    return result;
+  }
+
   async paneAction(refInput: TerminalRef, actionInput: TerminalPaneAction): Promise<void> {
     const ref = TerminalRefSchema.parse(refInput);
     const action = TerminalPaneActionSchema.parse(actionInput);
@@ -495,7 +539,7 @@ export class TerminalRuntime {
     });
   }
 
-  attach(refInput: TerminalRef, input: {
+  attach(refInput: TerminalRef, input: TerminalSizeListener & {
     viewerId: string;
     send: (data: Uint8Array) => void | Promise<void>;
     onExit?: (exitCode: number | null) => void | Promise<void>;
@@ -503,7 +547,7 @@ export class TerminalRuntime {
     return this.runWorkspaceMutation(() => this.attachNow(refInput, input));
   }
 
-  private async attachNow(refInput: TerminalRef, input: {
+  private async attachNow(refInput: TerminalRef, input: TerminalSizeListener & {
     viewerId: string;
     send: (data: Uint8Array) => void | Promise<void>;
     onExit?: (exitCode: number | null) => void | Promise<void>;
@@ -560,6 +604,8 @@ export class TerminalRuntime {
       send,
       disposeOutput: send.dispose,
       ...(input.onExit ? { onExit: input.onExit } : {}),
+      ...(input.onCanonicalSize ? { onCanonicalSize: input.onCanonicalSize } : {}),
+      ...(input.onDisconnect ? { onDisconnect: input.onDisconnect } : {}),
     });
     const mouseInitialization = attachment.mouseModes.bootstrap();
     if (mouseInitialization) {

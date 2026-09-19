@@ -6,6 +6,14 @@ import { describe, expect, it, vi } from "vitest";
 import { TerminalSessionSidebar } from "../../desktop/src/renderer/src/features/terminal/TerminalSessionSidebar.js";
 
 describe("TerminalSessionSidebar", () => {
+  it("marks a pending deletion and prevents competing actions", () => {
+    render(<TerminalSessionSidebar sessions={[{ name: "test-delete", subtitle: "Test", status: "active" }]}
+      selectedName="test-delete" creating={false} disabled={false} deletingName="test-delete" />);
+    expect(screen.getByText("Deleting…")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Open Test" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("button", { name: "More actions for Test" }).hasAttribute("disabled")).toBe(true);
+  });
+
   it("opens sessions from a non-squashing, scrollable list with status dots", () => {
     const stableRef = `tws_${"a".repeat(32)}:tt_${"1".repeat(32)}`;
     const secondRef = `tws_${"a".repeat(32)}:tt_${"2".repeat(32)}`;

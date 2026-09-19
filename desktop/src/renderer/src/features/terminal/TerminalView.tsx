@@ -1,9 +1,9 @@
 import { Terminal } from "@xterm/xterm";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import { createPortal } from "react-dom";
-import { TerminalControls } from "@matrix-os/ui";
+import { TerminalControls, createTerminalNativeHistory, createTerminalGridPresentation, measureTerminalGridDimensions } from "@matrix-os/ui";
 import {
-  classifyTerminalClipboardShortcut,
+  resolveTerminalClipboardKeyEvent,
   classifyTerminalPointerEvent,
 } from "@matrix-os/contracts";
 import { FitAddon } from "@xterm/addon-fit";
@@ -43,11 +43,12 @@ import { useDesktopTerminalControls } from "./use-desktop-terminal-controls";
 
 const GAP_MARKER = "\r\n\x1b[2m── output gap ──\x1b[0m\r\n";
 
-function proposedTerminalDimensions(fit: FitAddon | null, terminal: Terminal): { cols: number; rows: number } {
+function proposedTerminalDimensions(fit: FitAddon | null, terminal: Terminal, host: HTMLElement | null): { cols: number; rows: number } {
   // The production add-on exposes proposeDimensions(). Keep a safe fallback
   // for a temporarily unmeasurable host (and lightweight renderer test mocks).
   if (fit && typeof fit.proposeDimensions === "function") {
-    return fit.proposeDimensions() ?? { cols: terminal.cols, rows: terminal.rows };
+    return (host ? measureTerminalGridDimensions(host, terminal, 13, () => fit.proposeDimensions()) : fit.proposeDimensions())
+      ?? { cols: terminal.cols, rows: terminal.rows };
   }
   return { cols: terminal.cols, rows: terminal.rows };
 }
@@ -59,7 +60,10 @@ function applyTerminalSurfaceTheme(element: HTMLElement | undefined, background:
   element.style.backgroundColor = background;
   for (const selector of [".xterm-viewport", ".xterm-scrollable-element"]) {
     const surface = element.querySelector<HTMLElement>(selector);
-    if (surface) surface.style.backgroundColor = background;
+    if (surface) {
+      surface.style.backgroundColor = background;
+      surface.style.overscrollBehavior = "none";
+    }
   }
 }
 
@@ -158,6 +162,11 @@ export default function TerminalView({
   const [stateSessionName, setStateSessionName] = useState(sessionName);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
+  const nativeHistoryRef = useRef<ReturnType<typeof createTerminalNativeHistory> | null>(null);
+  const nativeHistoryWriterRef = useRef(false);
+  const gridPresentationRef = useRef<ReturnType<typeof createTerminalGridPresentation> | null>(null);
+  const gridScaleRef = useRef(1);
+  const gridWriterRef = useRef(false);
   const serializeRef = useRef<SerializeAddon | null>(null);
   const attachmentRef = useRef<ActiveAttachment | null>(null);
   const pasteClipboardRef = useRef<() => Promise<void>>(async () => undefined);
@@ -173,6 +182,8 @@ export default function TerminalView({
   const endedRef = useRef(false);
   const hoveredLinkRef = useRef<TerminalLinkEntry | null>(null);
   const [socketState, setSocketState] = useState<ShellSocketState>("connecting");
+  const [liveOwnership, setLiveOwnership] = useState<"writer" | "observer">("writer");
+  const [leaseAttempt, setLeaseAttempt] = useState(0);
   const [exitCode, setExitCode] = useState<number | null>(null);
   const [terminalContextMenu, setTerminalContextMenu] = useState<DesktopTerminalMenuState | null>(null);
   const closeTerminalContextMenu = useCallback(() => {
@@ -211,11 +222,14 @@ export default function TerminalView({
     extendedSelectionRef.current = "";
     endedRef.current = false;
     setSocketState("connecting");
+    setLiveOwnership("writer");
+    setLeaseAttempt(0);
     setExitCode(null);
   }
 
   const controls = useDesktopTerminalControls({
     api, sessionName, chatId, active, socketState,
+    writable: liveOwnership === "writer",
     isMac: navigator.platform.startsWith("Mac"),
     attachmentRef, termRef,
   });
@@ -318,7 +332,7 @@ export default function TerminalView({
     host.ownerDocument.addEventListener("selectionchange", onDocumentSelectionChange);
     terminal.attachCustomKeyEventHandler((event) => {
       const selection = readTerminalSelection();
-      const action = classifyTerminalClipboardShortcut({
+      const action = resolveTerminalClipboardKeyEvent({
         type: event.type as "keydown" | "keyup" | "keypress",
         key: event.key,
         isMac: navigator.platform.startsWith("Mac"),
@@ -329,6 +343,8 @@ export default function TerminalView({
         repeat: event.repeat,
         isComposing: event.isComposing,
         hasSelection: Boolean(selection),
+        keyCode: event.keyCode,
+        altGraphKey: event.getModifierState?.("AltGraph"),
       });
       if (!action) return controlsRef.current.handleKeyEvent(event);
       event.preventDefault();
@@ -336,7 +352,7 @@ export default function TerminalView({
         void copyTerminalTextWithFeedback(selection);
       } else if (action === "paste") {
         void pasteClipboardRef.current();
-      } else {
+      } else if (action === "select-all") {
         terminal.selectAll();
       }
       return false;
@@ -382,7 +398,7 @@ export default function TerminalView({
         return;
       }
       const scale = Number.isFinite(visualScaleRef.current) && visualScaleRef.current > 0
-        ? visualScaleRef.current
+        ? visualScaleRef.current * gridScaleRef.current
         : 1;
       if (scale === 1) return;
 
@@ -409,6 +425,8 @@ export default function TerminalView({
       });
       Object.defineProperty(synthetic, "_xtermScaleCorrected", { value: true });
       target.dispatchEvent(synthetic);
+      // Preserve xterm's suppression of native DOM selection on the real event.
+      if (synthetic.defaultPrevented) event.preventDefault();
     };
     const onTerminalContextMenu = (event: MouseEvent) => {
       const link = linkAtPointer(event);
@@ -425,7 +443,7 @@ export default function TerminalView({
     const removeMouseTrackingSelection = installMouseTrackingSelection({
       host,
       getTerminal: () => terminal,
-      getVisualScale: () => visualScaleRef.current,
+      getVisualScale: () => visualScaleRef.current * gridScaleRef.current,
       isMac: navigator.platform.startsWith("Mac"),
       onPrimaryGestureStart: () => {
         confirmedSelectionRef.current = "";
@@ -493,19 +511,42 @@ export default function TerminalView({
       configurable: true,
       writable: true,
     });
+    const nativeHistory = createTerminalNativeHistory({
+      send: (frame) => attachmentRef.current?.scroll?.(frame),
+      canWrite: () => nativeHistoryWriterRef.current,
+      onState: () => gridPresentationRef.current?.schedule(),
+    });
+    nativeHistoryRef.current = nativeHistory;
+    gridWriterRef.current = false;
+    const presentation = createTerminalGridPresentation({
+      host, nativeHistory, getTerminal: () => terminal, getConfiguredFontSize: () => 13,
+      allowScaling: () => !gridWriterRef.current,
+      onScale: (scale) => { gridScaleRef.current = scale; },
+      getParentScale: () => visualScaleRef.current,
+    });
+    gridPresentationRef.current = presentation;
+    const onFontMetricsChange = () => presentation.schedule();
+    document.fonts?.addEventListener("loadingdone", onFontMetricsChange);
+    void document.fonts?.ready.then(onFontMetricsChange);
 
     let rafId: number | null = null;
     const observer = new ResizeObserver(() => {
       if (rafId !== null) cancelAnimationFrame(rafId);
       rafId = window.requestAnimationFrame(() => {
         rafId = null;
-        const proposed = proposedTerminalDimensions(fit, terminal);
+        const proposed = proposedTerminalDimensions(fit, terminal, host);
         attachmentRef.current?.resize(proposed.cols, proposed.rows);
+        presentation.schedule();
       });
     });
     observer.observe(host);
 
     return () => {
+      document.fonts?.removeEventListener("loadingdone", onFontMetricsChange);
+      nativeHistory.dispose();
+      nativeHistoryRef.current = null;
+      presentation.dispose();
+      gridPresentationRef.current = null;
       setTerminalContextMenu(null);
       hoveredLinkRef.current = null;
       removeMouseTrackingSelection();
@@ -548,6 +589,7 @@ export default function TerminalView({
     const theme = getDesktopTerminalXtermTheme(terminalThemeId);
     terminal.options.theme = theme;
     applyTerminalSurfaceTheme(terminal.element, theme.background);
+    gridPresentationRef.current?.schedule();
   }, [terminalThemeId]);
 
   // Attach lifecycle — only the active tab holds the live socket (L4).
@@ -565,12 +607,24 @@ export default function TerminalView({
 
     const manager = getAttachManager();
     const attachment = manager.attach(sessionName, {
-      onState: (state) => setSocketState(state),
+      onState: (state) => {
+        setSocketState(state);
+        if (state !== "attached") nativeHistoryRef.current?.attach(false);
+      },
+      onNativeScroll: (state) => nativeHistoryRef.current?.update(state),
+      onNativeScrollSupported: (supported) => nativeHistoryRef.current?.attach(supported),
       onOutput: (data) => terminal.write(data),
       onCanonicalSize: (size) => {
         if (terminal.cols !== size.cols || terminal.rows !== size.rows) {
           terminal.resize(size.cols, size.rows);
         }
+        gridPresentationRef.current?.schedule();
+      },
+      onOwnershipChange: (ownership) => {
+        nativeHistoryWriterRef.current = ownership === "writer";
+        gridWriterRef.current = ownership === "writer";
+        setLiveOwnership(ownership);
+        gridPresentationRef.current?.schedule();
       },
       onGap: () => {
         terminal.clear();
@@ -589,17 +643,18 @@ export default function TerminalView({
     const binaryDisposable = terminal.onBinary((data) => {
       attachment.writeBinary(data);
     });
-    const proposed = proposedTerminalDimensions(fit, terminal);
+    const proposed = proposedTerminalDimensions(fit, terminal, hostRef.current);
     attachment.resize(proposed.cols, proposed.rows);
     terminal.focus();
 
     return () => {
       dataDisposable.dispose();
       binaryDisposable.dispose();
+      nativeHistoryRef.current?.attach(false);
       attachmentRef.current = null;
       if (manager.activeSessionName === sessionName) manager.detachActive();
     };
-  }, [sessionName, chatId, active]);
+  }, [sessionName, chatId, active, leaseAttempt]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -766,6 +821,12 @@ export default function TerminalView({
   }, [active, api, reportClipboardFailure, reportClipboardSuccess, sessionName]);
 
   const banner = (() => {
+    if (liveOwnership === "observer") {
+      return {
+        text: "Live on another device.",
+        action: <Button variant="primary" onClick={() => setLeaseAttempt((attempt) => attempt + 1)}>Continue here</Button>,
+      };
+    }
     if (socketState === "fatal") {
       return { text: "This session has ended on your computer.", action: onRecreate ? <Button variant="primary" onClick={onRecreate}>Start new session</Button> : null };
     }
@@ -800,7 +861,7 @@ export default function TerminalView({
           </span>
         </div>
       ) : null}
-      {active && (socketState === "connecting" || socketState === "reconnecting") ? (
+      {active && liveOwnership === "writer" && (socketState === "connecting" || socketState === "reconnecting") ? (
         <div className="pointer-events-none absolute inset-x-0 top-0 flex justify-center pt-2" role="status" aria-live="polite">
           <span className="status-pulse rounded-full px-3 py-1 text-xs" style={{ background: "var(--bg-overlay)", color: "var(--text-secondary)" }}>
             {socketState === "connecting" ? "Connecting…" : "Reconnecting…"}
