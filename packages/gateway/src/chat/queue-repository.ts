@@ -31,7 +31,7 @@ import type {
   ChatRunsTable,
   ChatsTable,
 } from "./database.js";
-import { ChatBusyError, ChatConflictError, ChatNotFoundError } from "./errors.js";
+import { ChatBusyError, ChatConflictError, ChatNotFoundError, ChatProviderInstanceLockedError } from "./errors.js";
 import {
   asIso,
   jsonb,
@@ -122,7 +122,10 @@ export interface ClaimedQueuedTurn {
   };
 }
 
-export interface EnqueueSharedQueuedTurnInput extends Omit<EnqueueQueuedTurnInput, "baseRevision" | "createdAt"> {
+export interface EnqueueSharedQueuedTurnInput extends Omit<
+  EnqueueQueuedTurnInput,
+  "baseRevision" | "createdAt" | "driverKind" | "selection"
+> {
   scopeId: string;
   requestingActorId: string;
   acceptedAuthEpoch: number;
@@ -154,6 +157,11 @@ export interface EnqueuedSharedQueuedTurn extends SharedQueuedTurn {
   pendingCount: number;
   alreadyAccepted: boolean;
   resourceRevision: number;
+}
+
+export interface SharedAiCapability {
+  status: "available" | "unavailable" | "owner_binding_required";
+  effectiveSelection?: CanonicalQueueChatTurnRequest["selection"];
 }
 
 export class SharedChatQueueError extends Error {
@@ -238,7 +246,6 @@ export class ChatQueueRepository {
       : CanonicalChatQueuedTurnIdSchema.parse(input.retryOfQueuedTurnId);
     const clientRequestId = CollaborationIdSchema.parse(input.clientRequestId);
     const requestingActorId = CollaborationActorIdSchema.parse(input.requestingActorId);
-    const selection = CanonicalChatModelSelectionSchema.parse(input.selection);
     const capabilitySnapshot = CanonicalChatRunSchema.shape.capabilitySnapshot.parse(input.capabilitySnapshot);
     const parts = CanonicalChatQueuedTurnSchema.shape.parts.parse(input.parts);
     const acceptedAt = new Date(input.acceptedAt).toISOString();
@@ -293,6 +300,14 @@ export class ChatQueueRepository {
           resourceRevision: Number(chat.revision),
         };
       }
+      const provider = authoritativeSharedProvider({
+        chat,
+        actorId: requestingActorId,
+        executionEligibility: scope.execution_eligibility,
+      });
+      if (provider.capability.status !== "available" || !provider.execution) {
+        throw new SharedChatQueueError("unavailable");
+      }
       if (Number(chat.revision) !== input.expectedRevision) {
         throw new SharedChatQueueError("conflict");
       }
@@ -319,9 +334,9 @@ export class ChatQueueRepository {
         position,
         status: "queued",
         parts: jsonb(parts),
-        driver_kind: input.driverKind,
-        instance_id: selection.instanceId,
-        selection: jsonb(selection),
+        driver_kind: provider.execution.driverKind,
+        instance_id: provider.execution.selection.instanceId,
+        selection: jsonb(provider.execution.selection),
         interaction_mode: input.interactionMode,
         permission_mode: input.permissionMode,
         execution_root: null,
@@ -383,6 +398,40 @@ export class ChatQueueRepository {
     return rows.map(toSharedQueuedTurn);
   }
 
+  async getSharedAiCapability(
+    ownerInput: ChatOwner,
+    input: { chatId: string; scopeId: string; actorId: string },
+  ): Promise<SharedAiCapability> {
+    const owner = CanonicalOwnerScopeSchema.parse(ownerInput);
+    const chatId = CanonicalChatIdSchema.parse(input.chatId);
+    const scopeId = CollaborationIdSchema.parse(input.scopeId);
+    const actorId = CollaborationActorIdSchema.parse(input.actorId);
+    const collaborationDb = this.kysely as unknown as Kysely<OwnerCollaborationDatabase>;
+    const row = await collaborationDb.selectFrom("chats")
+      .innerJoin("collaboration_scopes", "collaboration_scopes.resource_id", "chats.id")
+      .select([
+        "chats.current_selection",
+        "chats.bound_driver_kind",
+        "chats.bound_instance_id",
+        "chats.bound_at_turn_id",
+        "collaboration_scopes.execution_eligibility",
+        "collaboration_scopes.lifecycle as scope_lifecycle",
+      ])
+      .where("chats.id", "=", chatId)
+      .where("chats.owner_type", "=", owner.type)
+      .where("chats.owner_id", "=", owner.ownerId)
+      .where("collaboration_scopes.id", "=", scopeId)
+      .where("collaboration_scopes.kind", "=", "chat")
+      .executeTakeFirst();
+    if (!row || row.scope_lifecycle !== "shared") return { status: "unavailable" };
+    return authoritativeSharedProvider({
+      chat: row,
+      actorId,
+      executionEligibility: row.execution_eligibility,
+      ownerId: owner.ownerId,
+    }).capability;
+  }
+
   async enqueue(
     ownerInput: ChatOwner,
     input: EnqueueQueuedTurnInput,
@@ -426,7 +475,7 @@ export class ChatQueueRepository {
         throw new ChatConflictError(chatId, Number(chat.revision));
       }
       if (!context?.agent && chat.bound_instance_id && (chat.bound_instance_id !== selection.instanceId
-        || chat.bound_driver_kind !== input.driverKind)) throw new ChatConflictError(chatId, Number(chat.revision));
+        || chat.bound_driver_kind !== input.driverKind)) throw new ChatProviderInstanceLockedError(chatId);
       const activeRun = await trx.selectFrom("chat_runs").select("id")
         .where("chat_id", "=", chatId)
         .where("status", "in", [...ACTIVE_RUNS])
@@ -765,35 +814,32 @@ export class ChatQueueRepository {
         .orderBy("position")
         .executeTakeFirst();
       if (!candidate) return null;
-      if (candidate.collaboration_scope_id && sharedAdmission !== "allowed") {
-        const terminalized = await trx.updateTable("chat_queued_turns").set({
-          status: sharedAdmission,
-          updated_at: claimedAt,
-        }).where("id", "=", candidate.id)
-          .where("status", "=", "queued")
-          .returning("id")
-          .executeTakeFirst();
-        if (!terminalized) return null;
-        await trx.updateTable("chat_queued_turns")
-          .set({ position: sql<number>`position - 1`, updated_at: claimedAt })
-          .where("chat_id", "=", chatId)
-          .where("status", "=", "queued")
-          .where("position", ">", Number(candidate.position))
-          .execute();
-        const revision = Number(chat.revision) + 1;
-        await trx.updateTable("chats").set({ revision, updated_at: claimedAt })
-          .where("id", "=", chatId)
-          .where("revision", "=", Number(chat.revision))
-          .executeTakeFirstOrThrow();
-        await appendSharedEvent(trx as unknown as Transaction<OwnerCollaborationDatabase>, {
-          scopeId: candidate.collaboration_scope_id,
-          resourceId: chatId,
-          revision,
-          authorityGeneration: Number(sharedScope?.authority_generation ?? 0),
-          eventType: `chat.ai_request.${sharedAdmission}`,
-          payload: { queuedTurnId: candidate.id, actorId: candidate.requesting_actor_id, state: sharedAdmission },
-          createdAt: claimedAt,
+      if (candidate.collaboration_scope_id && sharedAdmission === "allowed") {
+        const provider = authoritativeSharedProvider({
+          chat,
+          actorId: candidate.requesting_actor_id ?? "",
+          executionEligibility: sharedScope?.execution_eligibility,
         });
+        const candidateSelection = CanonicalChatModelSelectionSchema.safeParse(
+          safelyParseSharedJson(candidate.selection),
+        );
+        if (provider.capability.status !== "available" || !provider.execution
+          || !candidateSelection.success
+          || candidate.driver_kind !== provider.execution.driverKind
+          || candidate.instance_id !== provider.execution.selection.instanceId
+          || candidateSelection.data.instanceId !== provider.execution.selection.instanceId) {
+          sharedAdmission = "unavailable";
+        }
+      }
+      if (candidate.collaboration_scope_id && sharedAdmission !== "allowed") {
+        await this.terminalizeSharedCandidate(
+          trx,
+          chat,
+          candidate,
+          sharedScope,
+          sharedAdmission,
+          claimedAt,
+        );
         return null;
       }
       const pendingSteer = await trx.selectFrom("chat_run_steers").select("id")
@@ -1021,6 +1067,51 @@ export class ChatQueueRepository {
       .executeTakeFirstOrThrow();
     return Number(row.count);
   }
+
+  private async terminalizeSharedCandidate(
+    trx: Executor,
+    chat: Selectable<ChatsTable>,
+    candidate: Selectable<ChatQueuedTurnsTable>,
+    sharedScope: {
+      authority_generation: number;
+    } | undefined,
+    state: "unauthorized" | "unavailable",
+    timestamp: string,
+  ): Promise<void> {
+    if (!candidate.collaboration_scope_id) return;
+    const terminalized = await trx.updateTable("chat_queued_turns").set({
+      status: state,
+      updated_at: timestamp,
+    }).where("id", "=", candidate.id)
+      .where("status", "=", "queued")
+      .returning("id")
+      .executeTakeFirst();
+    if (!terminalized) return;
+    await trx.updateTable("chat_queued_turns")
+      .set({ position: sql<number>`position - 1`, updated_at: timestamp })
+      .where("chat_id", "=", candidate.chat_id)
+      .where("status", "=", "queued")
+      .where("position", ">", Number(candidate.position))
+      .execute();
+    const revision = Number(chat.revision) + 1;
+    await trx.updateTable("chats").set({ revision, updated_at: timestamp })
+      .where("id", "=", candidate.chat_id)
+      .where("revision", "=", Number(chat.revision))
+      .executeTakeFirstOrThrow();
+    await appendSharedEvent(trx as unknown as Transaction<OwnerCollaborationDatabase>, {
+      scopeId: candidate.collaboration_scope_id,
+      resourceId: candidate.chat_id,
+      revision,
+      authorityGeneration: Number(sharedScope?.authority_generation ?? 0),
+      eventType: `chat.ai_request.${state}`,
+      payload: {
+        queuedTurnId: candidate.id,
+        actorId: candidate.requesting_actor_id,
+        state,
+      },
+      createdAt: timestamp,
+    });
+  }
 }
 
 function toSharedQueuedTurn(row: Selectable<ChatQueuedTurnsTable> & {
@@ -1073,6 +1164,96 @@ function sharedBindingMatches(value: unknown, scopeId: string): boolean {
       console.warn("[chat/queue] collaboration binding decode failed", error instanceof Error ? error.name : "UnknownError");
     }
     return false;
+  }
+}
+
+function authoritativeSharedProvider(input: {
+  chat: Pick<Selectable<ChatsTable>,
+    "current_selection" | "bound_driver_kind" | "bound_instance_id" | "bound_at_turn_id"
+  > & Partial<Pick<Selectable<ChatsTable>, "owner_id">>;
+  actorId: string;
+  ownerId?: string;
+  executionEligibility: unknown;
+}): {
+  capability: SharedAiCapability;
+  execution?: {
+    driverKind: CanonicalProviderDriverKind;
+    selection: CanonicalQueueChatTurnRequest["selection"];
+  };
+} {
+  const selection = CanonicalChatModelSelectionSchema.safeParse(
+    input.chat.current_selection === null
+      ? undefined
+      : safelyParseSharedJson(input.chat.current_selection),
+  );
+  const bindingFields = [
+    input.chat.bound_driver_kind,
+    input.chat.bound_instance_id,
+    input.chat.bound_at_turn_id,
+  ];
+  const hasBinding = bindingFields.every((value) => value !== null);
+  const hasPartialBinding = bindingFields.some((value) => value !== null) && !hasBinding;
+  if (!selection.success || hasPartialBinding) return { capability: { status: "unavailable" } };
+
+  if (hasBinding) {
+    if (selection.data.instanceId !== input.chat.bound_instance_id) {
+      return { capability: { status: "unavailable" } };
+    }
+    const driverKind = CanonicalChatRunSchema.shape.driverKind.safeParse(input.chat.bound_driver_kind);
+    if (!driverKind.success || !sharedRuntimeSupports(
+      input.executionEligibility,
+      driverKind.data,
+      selection.data.instanceId,
+    )) {
+      return {
+        capability: { status: "unavailable", effectiveSelection: selection.data },
+      };
+    }
+    return {
+      capability: { status: "available", effectiveSelection: selection.data },
+      execution: { driverKind: driverKind.data, selection: selection.data },
+    };
+  }
+
+  const ownerId = input.ownerId ?? input.chat.owner_id;
+  if (input.actorId !== ownerId) {
+    return {
+      capability: { status: "owner_binding_required", effectiveSelection: selection.data },
+    };
+  }
+  if (!sharedRuntimeSupports(input.executionEligibility, "claude_code", selection.data.instanceId)) {
+    return {
+      capability: { status: "unavailable", effectiveSelection: selection.data },
+    };
+  }
+  return {
+    capability: { status: "available", effectiveSelection: selection.data },
+    execution: { driverKind: "claude_code", selection: selection.data },
+  };
+}
+
+function sharedRuntimeSupports(
+  eligibility: unknown,
+  driverKind: CanonicalProviderDriverKind,
+  instanceId: string,
+): boolean {
+  const value = typeof eligibility === "string"
+    ? safelyParseSharedJson(eligibility)
+    : eligibility;
+  return value !== null && typeof value === "object"
+    && (value as { adapterId?: unknown }).adapterId === "claude-code"
+    && driverKind === "claude_code"
+    && instanceId === "claude_shared";
+}
+
+function safelyParseSharedJson(value: unknown): unknown {
+  try {
+    return parseJson(value);
+  } catch (error: unknown) {
+    console.warn("[chat/queue] shared authority JSON decode failed", {
+      errorType: error instanceof Error ? error.name : "UnknownError",
+    });
+    return undefined;
   }
 }
 

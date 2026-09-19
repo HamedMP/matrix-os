@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppError } from "@desktop/shared/app-error";
-import type { ApiClient } from "@desktop/renderer/src/lib/api";
+import { createApiClient, type ApiClient } from "@desktop/renderer/src/lib/api";
 import { isValidShellSessionName, useShellSessions } from "@desktop/renderer/src/stores/shell-sessions";
 import { advanceRuntimeGeneration } from "@desktop/renderer/src/stores/runtime-generation";
 
@@ -145,6 +145,20 @@ describe("useShellSessions workspace/tab contract", () => {
     expect(del).toHaveBeenCalledWith(`/api/terminal/workspaces/${WORKSPACE_ID}/tabs/${TAB_ONE}`);
     expect(useShellSessions.getState().sessions.map((entry) => entry.name)).toEqual([REF_ONE]);
     expect(useShellSessions.getState().error).toBe("offline");
+  });
+
+  it("accepts the real DELETE 204 response and removes the row before the next poll", async () => {
+    await useShellSessions.getState().load(makeApi());
+    const response = deferred<Response>();
+    const fetchFn = vi.fn(() => response.promise);
+    const api = createApiClient({ baseUrl: "https://x.test", getRuntimeSlot: () => "primary", fetchFn });
+    const pending = useShellSessions.getState().deleteSession(api, REF_ONE);
+    expect(useShellSessions.getState().sessions.map((entry) => entry.name)).toEqual([REF_ONE]);
+    response.resolve(new Response(null, { status: 204 }));
+    await expect(pending).resolves.toBe(true);
+    expect(useShellSessions.getState().error).toBeNull();
+    expect(useShellSessions.getState().sessions).toEqual([]);
+    expect(fetchFn).toHaveBeenCalledOnce();
   });
 
   it("keeps a deleting tab visible until acknowledgement and rejects stale list resurrection", async () => {

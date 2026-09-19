@@ -52,6 +52,7 @@
     "#support-chat-properties": "./src/support-chat-properties.ts",
     "#terminal-clipboard": "./src/terminal-clipboard.ts",
     "#terminal-keyboard": "./src/terminal-keyboard.ts",
+    "#terminal-scroll": "./src/terminal-scroll.ts",
     "#terminal-snapshot": "./src/terminal-snapshot.ts",
     "#terminal-links": "./src/terminal-links.ts"
   },

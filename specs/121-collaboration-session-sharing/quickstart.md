@@ -32,13 +32,14 @@ Still required before M1 is review-ready or internally enabled: full named-surfa
 
 ## PR3 M2 local evidence — 2026-09-10
 
-PR3 adds actor-attributed AI requests to the canonical Chat queue, a 32-pending/one-active invariant, actor-scoped idempotency, owner approval decisions, editor-own cancel/retry, dispatch-time reauthorization, truthful interrupted/unavailable recovery, exact-profile isolated execution, and shared queue controls across the common Web/Electron UI, native mobile, and CLI. M1 discussion remains available when M2 policy is off or read-only.
+PR3 adds actor-attributed AI requests to the canonical Chat queue, a 32-pending/one-active invariant, actor-scoped idempotency, immutable owner-selected Provider Instance authority, owner approval decisions, editor-own cancel/retry, dispatch-time reauthorization, truthful interrupted/unavailable recovery, exact-profile isolated execution, and shared queue controls across the common Web/Electron UI, native mobile, and CLI. Shared request bodies do not carry Provider or model-selection authority. M1 discussion remains available when M2 policy is off, read-only, or incompatible with the Chat's bound Provider.
 
 Current public-safe component evidence:
 
 - [Shared AI queue and owner controls](evidence/m2-shared-ai-queue.png)
+- [Unsupported bound Provider preserves human discussion](evidence/immutable-codex-shared-ai-unavailable.png)
 
-The screenshot was captured at 1440×900 from a temporary self-hosted Next.js route rendering the production `SharedChatControls` component in a Canvas-style Chat. A focused Playwright check asserted the ordered attributed requests, one-active/32-pending copy, owner approval controls, private Ask AI draft, and zero browser/page errors; the temporary route and test were removed after capture.
+The queue screenshot was captured at 1440×900 from a temporary self-hosted Next.js route rendering the production `SharedChatControls` component in a Canvas-style Chat. A focused Playwright check asserted the ordered attributed requests, one-active/32-pending copy, owner approval controls, private Ask AI draft, and zero browser/page errors; the temporary route and test were removed after capture. The immutable-Provider screenshot comes from the actual shared-Chat shell route with synthetic data: the focused Playwright regression verifies that a Codex-bound Chat does not advertise the Claude-only shared runtime, Ask AI is disabled, and the human-discussion composer remains enabled.
 
 Validation results:
 

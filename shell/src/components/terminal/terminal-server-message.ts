@@ -17,6 +17,7 @@ export type TerminalServerMessage =
       ownership: "writer" | "observer";
       leaseEpoch: number | null;
     })
+  | (TerminalMessageIdentity & { type: "scroll-state"; state: import("@matrix-os/contracts").TerminalScrollState | null })
   | (TerminalMessageIdentity & { type: "canonical-size"; cols: number; rows: number })
   | (TerminalMessageIdentity & { type: "output"; data: string; seq: number })
   | (TerminalMessageIdentity & {
@@ -86,6 +87,8 @@ export function parseTerminalServerMessage(raw: string): TerminalServerMessage |
         ownership: msg.ownership ?? "writer",
         leaseEpoch: msg.leaseEpoch ?? null,
       };
+    case "scroll-state":
+      return { ...identity, type: "scroll-state", state: msg.state };
     case "canonical-size":
       return { ...identity, type: "canonical-size", ...msg.canonicalSize };
     case "output":

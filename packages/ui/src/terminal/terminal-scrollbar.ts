@@ -1,3 +1,4 @@
+import type { TerminalScrollState } from "@matrix-os/contracts";
 interface ScrollTerminal {
   buffer: { active: { baseY: number; viewportY: number } };
   scrollToLine: (line: number) => void;
@@ -12,6 +13,7 @@ export function createTerminalScrollbar(options: {
   getCellHeight: () => number;
   getTailHeight?: () => number;
   onPan: () => void;
+  nativeHistory?: { getState(): TerminalScrollState | null; scrollTo(line: number): void };
 }) {
   const { host, root, terminal } = options;
   const parent = host.parentElement!;
@@ -49,11 +51,16 @@ export function createTerminalScrollbar(options: {
   parent.append(rail);
   let syncing = false;
   let synchronizedTop = 0;
-  const metrics = () => ({
-    cell: options.getCellHeight(),
+  const metrics = () => {
+    const native = options.nativeHistory?.getState();
+    return ({
+    cell: native ? Math.max(options.getCellHeight(), host.clientHeight / native.rows) : options.getCellHeight(),
     pan: Math.max(0, (options.getTailHeight?.() ?? host.scrollHeight) - host.clientHeight),
-    history: terminal.buffer.active.baseY,
-  });
+    history: native
+      ? native.above + native.below
+      : terminal.buffer.active.baseY,
+    });
+  };
   const sync = () => {
     if (syncing) return;
     // The rail event may still be queued behind an earlier host scroll.
@@ -66,7 +73,7 @@ export function createTerminalScrollbar(options: {
       height: `${host.clientHeight}px`, display: history * cell + pan > 0 ? "block" : "none",
     });
     spacer.style.height = `${host.clientHeight + history * cell + pan}px`;
-    rail.scrollTop = terminal.buffer.active.viewportY * cell + host.scrollTop;
+    rail.scrollTop = (options.nativeHistory?.getState()?.above ?? terminal.buffer.active.viewportY) * cell + host.scrollTop;
     synchronizedTop = rail.scrollTop;
   };
   const onScroll = () => {
@@ -77,7 +84,8 @@ export function createTerminalScrollbar(options: {
     const line = Math.min(history, Math.floor(top / cell));
     syncing = true;
     try {
-      terminal.scrollToLine(line);
+      if (options.nativeHistory?.getState()) options.nativeHistory.scrollTo(line);
+      else terminal.scrollToLine(line);
       host.scrollTop = Math.min(Math.max(0, host.scrollHeight - host.clientHeight), top - line * cell);
       options.onPan();
       synchronizedTop = rail.scrollTop;

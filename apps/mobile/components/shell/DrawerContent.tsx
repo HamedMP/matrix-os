@@ -38,6 +38,7 @@ const primaryItems: Array<{ route: string; label: string; icon: IconData }> = [
 interface DrawerContentProps extends DrawerContentComponentProps {
   computerName: string;
   collaborationEnabled: boolean;
+  pendingInvitationCount?: number;
   recentChats: CanonicalChatRecord[];
   recentChatsLoading: boolean;
   projects: ProjectSummary[];
@@ -50,6 +51,7 @@ interface DrawerContentProps extends DrawerContentComponentProps {
 export function DrawerContent({
   computerName,
   collaborationEnabled,
+  pendingInvitationCount = 0,
   recentChats,
   recentChatsLoading,
   projects,
@@ -109,10 +111,13 @@ export function DrawerContent({
             <Fragment key={item.route}>
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel={item.label}
+                accessibilityLabel={item.route === "shared" && pendingInvitationCount > 0
+                  ? `${item.label}, ${pendingInvitationCount} pending ${pendingInvitationCount === 1 ? "invitation" : "invitations"}`
+                  : item.label}
                 onPress={() => navigate(item.route)}
                 style={({ pressed }) => [
                   styles.padded,
+                  styles.primaryRow,
                   pressed && styles.pressed,
                 ]}
               >
@@ -125,6 +130,9 @@ export function DrawerContent({
                   />
                   <Text size="body">{item.label}</Text>
                 </View>
+                {item.route === "shared" && pendingInvitationCount > 0 ? <View style={styles.badge}>
+                  <Text size="muted" tone="inverse">{pendingInvitationCount > 99 ? "99+" : String(pendingInvitationCount)}</Text>
+                </View> : null}
                 <Spacer size="xxs" />
               </Pressable>
               {index < visibleItems.length - 1 ? <Spacer size="sm" /> : null}
@@ -346,6 +354,11 @@ const styles = StyleSheet.create((theme) => ({
   padded: {
     paddingHorizontal: 8,
   },
+  primaryRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
   itemContainer: {
     flexDirection: "row",
     alignItems: "center",
@@ -353,6 +366,15 @@ const styles = StyleSheet.create((theme) => ({
   },
   itemIcon: {
     marginRight: 8,
+  },
+  badge: {
+    minWidth: 22,
+    height: 22,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 6,
+    borderRadius: 999,
+    backgroundColor: theme.v2.palette.green[800],
   },
   projectRow: {
     flexDirection: "row",

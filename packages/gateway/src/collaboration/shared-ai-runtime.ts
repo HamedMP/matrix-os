@@ -1,3 +1,4 @@
+import type { CollaborationPolicy } from "@matrix-os/contracts";
 import {
   SCOPE_RUNTIME_HARNESS_VERSION,
   SCOPE_RUNTIME_PROFILE_DIGEST,
@@ -265,25 +266,26 @@ export async function createSharedAiRuntime(options: {
   let wakeInFlight: Promise<void> | undefined;
   const runQueueWake = async (): Promise<void> => {
     try {
-      await commands.reconcilePendingApprovals();
-      const currentPolicy = await policy.getM2();
-      if (currentPolicy.mode === "off" || currentPolicy.mode === "read_only") return;
-      const rows = await options.db.selectFrom("chat_queued_turns as queued")
-        .innerJoin("collaboration_scopes as scope", "scope.id", "queued.collaboration_scope_id")
-        .select(["scope.id as scope_id", "scope.resource_id as chat_id", "queued.created_at"])
-        .where("queued.status", "=", "queued")
-        .where("scope.kind", "=", "chat")
-        .where("scope.lifecycle", "=", "shared")
-        .where("scope.execution_generation", "=", executionGeneration)
-        .orderBy("queued.created_at")
-        .limit(QUEUE_WAKE_LIMIT)
-        .execute();
-      const scopes: Record<string, { scopeId: string; chatId: string }> = Object.create(null) as Record<
-        string,
-        { scopeId: string; chatId: string }
-      >;
-      for (const row of rows) scopes[row.scope_id] ??= { scopeId: row.scope_id, chatId: row.chat_id };
-      await Promise.allSettled(Object.values(scopes).map((row) => dispatch(row.scopeId, row.chatId)));
+      await recoverSharedAiQueue({
+        reconcilePendingApprovals: async () => {
+          await commands.reconcilePendingApprovals();
+        },
+        listQueued: async () => {
+          const rows = await options.db.selectFrom("chat_queued_turns as queued")
+            .innerJoin("collaboration_scopes as scope", "scope.id", "queued.collaboration_scope_id")
+            .select(["scope.id as scope_id", "scope.resource_id as chat_id", "queued.created_at"])
+            .where("queued.status", "=", "queued")
+            .where("scope.kind", "=", "chat")
+            .where("scope.lifecycle", "=", "shared")
+            .where("scope.execution_generation", "=", executionGeneration)
+            .orderBy("queued.created_at")
+            .limit(QUEUE_WAKE_LIMIT)
+            .execute();
+          return rows.map((row) => ({ scopeId: row.scope_id, chatId: row.chat_id }));
+        },
+        getPolicy: () => policy.getM2(),
+        dispatch,
+      });
     } catch (error: unknown) {
       console.warn("[collaboration] shared AI queue recovery deferred",
         error instanceof Error ? error.name : "UnknownError");
@@ -308,6 +310,25 @@ export async function createSharedAiRuntime(options: {
       await client.close();
     },
   };
+}
+
+export async function recoverSharedAiQueue(options: {
+  reconcilePendingApprovals(): Promise<void>;
+  listQueued(): Promise<readonly { scopeId: string; chatId: string }[]>;
+  getPolicy(): Promise<Pick<CollaborationPolicy, "mode">>;
+  dispatch(scopeId: string, chatId: string): Promise<void>;
+}): Promise<void> {
+  await options.reconcilePendingApprovals();
+  const rows = await options.listQueued();
+  if (rows.length === 0) return;
+  const policy = await options.getPolicy();
+  if (policy.mode === "off" || policy.mode === "read_only") return;
+  const scopes: Record<string, { scopeId: string; chatId: string }> = Object.create(null) as Record<
+    string,
+    { scopeId: string; chatId: string }
+  >;
+  for (const row of rows) scopes[row.scopeId] ??= row;
+  await Promise.allSettled(Object.values(scopes).map((row) => options.dispatch(row.scopeId, row.chatId)));
 }
 
 export function createSharedAiCancellationDispatcher(options: {

@@ -10,7 +10,7 @@ import { ImageAddon } from "@xterm/addon-image";
 import type { FitAddon } from "@xterm/addon-fit";
 import type { Terminal } from "@xterm/xterm";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
-import { TerminalControls } from "@matrix-os/ui";
+import { TerminalControls, createTerminalNativeHistory } from "@matrix-os/ui";
 import { createTerminalKeyHandler } from "./terminal-key-handler";
 import { useWebTerminalControls } from "./useWebTerminalControls";
 import type { TerminalFontFamily, TerminalThemeId } from "@/stores/terminal-settings";
@@ -518,6 +518,7 @@ export function TerminalPane({
   useEffect(() => {
     let disposed = false;
     let lastRevision = -1;
+    let lastWorkspaceRevision = -1;
     let destroyRequested = false;
     const destroyIfRequested = (): boolean => {
       const destroyDecision = shouldDestroyOnUnmountRef.current?.(paneId) ?? false;
@@ -636,18 +637,29 @@ export function TerminalPane({
       const xtermTheme = buildXtermTheme(theme, terminalThemeId);
       codexCompatTransformRef.current = createCodexTuiCompatTransform(xtermTheme);
 
+      const nativeHistory = createTerminalNativeHistory({
+        canWrite: () => hasWriteOwnershipRef.current,
+        send: (frame) => {
+          const ref = parseTerminalRefKey(sessionIdRef.current);
+          if (ref && wsRef.current?.readyState === WebSocket.OPEN) {
+            wsRef.current.send(JSON.stringify({ ...frame, terminalRef: ref }));
+          }
+        },
+        onState: () => scheduleSoftGridLayout(),
+      });
       const gridPresentation = createWebTerminalGridPresentation({
-        container, getTerm: () => term, getFitAddon: () => fitAddon,
+        container, nativeHistory, getTerm: () => term, getFitAddon: () => fitAddon,
         getSessionId: () => sessionIdRef.current, getSocket: () => wsRef.current,
         getFontSize: () => terminalFontSizeRef.current, isDisposed: () => disposed,
-        allowRemoteResize: () => allowRemoteResizeRef.current, suppressNativeKeyboard,
+        allowRemoteResize: () => allowRemoteResizeRef.current,
+        hasWriteOwnership: () => hasWriteOwnershipRef.current, suppressNativeKeyboard,
         connectWs, onScale: (scale) => { softGridScaleRef.current = scale; },
         getParentScale: () => canvasZoomRef.current, log,
       });
       const {
         usesCanonicalGrid, declaresViewportSize, proposeViewportDimensions,
         rememberViewportDeclaration, scheduleSoftGridLayout, scheduleViewportMeasurement,
-        applyCanonicalGridSize,
+        applyCanonicalGridSize, resetViewportDeclaration,
       } = gridPresentation;
 
       const focusIfAllowed = () => {
@@ -951,6 +963,7 @@ export function TerminalPane({
         // revision, so carrying that value across reconnects would reject the
         // new attached/snapshot/output stream indefinitely.
         lastRevision = -1;
+        lastWorkspaceRevision = -1;
         const alreadyAttached = options.alreadyAttached === true;
         setControlsConnection({
           sessionName: alreadyAttached && sessionIdRef.current && isCanonicalShellSessionId(sessionIdRef.current) ? sessionIdRef.current : null,
@@ -1074,6 +1087,7 @@ export function TerminalPane({
           hasExclusiveOwnershipRef.current = false;
           setControlsConnection({ sessionName: null, connected: false });
           heartbeatRef.current?.stop();
+          nativeHistory.attach(false);
           log("ws-close", {
             disposed,
             isClosing: isClosingRef.current,
@@ -1133,14 +1147,22 @@ export function TerminalPane({
           }
           if ("sessionId" in msg && msg.sessionId && msg.sessionId !== sessionIdRef.current) return;
           if ("revision" in msg) {
-            if (msg.revision < lastRevision) return;
-            lastRevision = msg.revision;
+            // Workspace geometry and tab output have independent revision streams.
+            if (msg.type === "canonical-size") {
+              if (msg.revision < lastWorkspaceRevision) return;
+              lastWorkspaceRevision = msg.revision;
+            } else {
+              if (msg.revision < lastRevision) return;
+              lastRevision = msg.revision;
+            }
           }
 
           switch (msg.type) {
             case "attached":
+              resetViewportDeclaration();
               binaryInputSupportedRef.current = msg.capabilities.includes("binary-input-v1");
               hasWriteOwnershipRef.current = msg.ownership === "writer";
+              nativeHistory.attach(msg.capabilities.includes("native-scroll-v1"));
               hasExclusiveOwnershipRef.current = msg.leaseEpoch !== null;
               requestedOwnershipRef.current = hasExclusiveOwnershipRef.current
                 ? "exclusive"
@@ -1184,6 +1206,12 @@ export function TerminalPane({
               requestedOwnershipRef.current = "observe";
               setControlsConnection((current) => ({ ...current, connected: false }));
               setConnectionNotice("elsewhere");
+              resetViewportDeclaration();
+              scheduleSoftGridLayout();
+              break;
+
+            case "scroll-state":
+              nativeHistory.update(msg.state);
               break;
 
             case "canonical-size":
@@ -1325,7 +1353,7 @@ export function TerminalPane({
         const replayRequest = getCanonicalReplayRequest();
         const declaredSize = declaresViewportSize() ? proposeViewportDimensions() : null;
         // Defer an initially hidden pane until its viewport can be measured.
-        // These dimensions remain a soft proposal, never shared-grid authority.
+        // The handshake is a proposal; only the acknowledged writer sends a hard resize.
         if (declaresViewportSize() && !declaredSize) {
           return;
         }
@@ -1555,6 +1583,7 @@ export function TerminalPane({
         container.removeEventListener("contextmenu", onLinkContextMenu, true);
         fontSet?.removeEventListener("loadingdone", onFontMetricsChange);
         resizeObserver.disconnect();
+        nativeHistory.dispose();
         gridPresentation.dispose();
         if (softGridLayoutRef.current === scheduleSoftGridLayout) {
           softGridLayoutRef.current = null;

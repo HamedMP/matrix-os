@@ -115,6 +115,135 @@ describe("shared Chat canonical queue", () => {
     )).resolves.toMatchObject({ acceptedSequence: 1, resourceRevision: 2 });
   });
 
+  it("derives the bound Provider selection server-side for an editor request", async () => {
+    const admitted = await repository.enqueueSharedQueuedTurn(
+      owner,
+      request(15, collaborationActors.editor),
+    );
+
+    expect(admitted.selection).toEqual({
+      instanceId: "claude_shared",
+      model: "claude-opus-4-6",
+    });
+    const stored = await fixture.db.selectFrom("chat_queued_turns")
+      .select(["driver_kind", "instance_id", "selection"])
+      .where("id", "=", admitted.id)
+      .executeTakeFirstOrThrow();
+    expect(stored).toMatchObject({
+      driver_kind: "claude_code",
+      instance_id: "claude_shared",
+      selection: { instanceId: "claude_shared", model: "claude-opus-4-6" },
+    });
+  });
+
+  it("keeps an existing Codex binding immutable when an editor requests shared AI", async () => {
+    await fixture.db.updateTable("chats").set({
+      current_selection: JSON.stringify({ instanceId: "codex_default", model: "gpt-5.6-sol" }),
+      bound_driver_kind: "codex",
+      bound_instance_id: "codex_default",
+      bound_at_turn_id: "cturn_original_codex",
+    }).where("id", "=", collaborationIds.chat).execute();
+
+    await expect(repository.enqueueSharedQueuedTurn(
+      owner,
+      request(16, collaborationActors.editor),
+    )).rejects.toMatchObject({ code: "unavailable" });
+    await expect(fixture.db.selectFrom("chats")
+      .select(["current_selection", "bound_driver_kind", "bound_instance_id", "bound_at_turn_id"])
+      .where("id", "=", collaborationIds.chat).executeTakeFirstOrThrow())
+      .resolves.toMatchObject({
+        current_selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+        bound_driver_kind: "codex",
+        bound_instance_id: "codex_default",
+        bound_at_turn_id: "cturn_original_codex",
+      });
+  });
+
+  it("requires the owner to establish an unbound shared Chat Provider", async () => {
+    await fixture.db.updateTable("chats").set({
+      bound_driver_kind: null,
+      bound_instance_id: null,
+      bound_at_turn_id: null,
+    }).where("id", "=", collaborationIds.chat).execute();
+
+    await expect(repository.enqueueSharedQueuedTurn(
+      owner,
+      request(18, collaborationActors.editor),
+    )).rejects.toMatchObject({ code: "unavailable" });
+    const admitted = await repository.enqueueSharedQueuedTurn(
+      owner,
+      request(19, collaborationActors.owner),
+    );
+    expect(admitted.selection.instanceId).toBe("claude_shared");
+    await repository.claimNextQueuedTurn(owner, {
+      chatId: collaborationIds.chat,
+      collaborationScopeId: collaborationIds.scope,
+      turnId: "cturn_owner_initial_binding",
+      runId: "run_owner_initial_binding",
+      messageId: "msg_owner_initial_binding",
+      claimedAt: now,
+    });
+    await expect(repository.get(owner, collaborationIds.chat)).resolves.toMatchObject({
+      providerBinding: {
+        driverKind: "claude_code",
+        instanceId: "claude_shared",
+        lockedAtTurnId: "cturn_owner_initial_binding",
+      },
+    });
+  });
+
+  it("terminalizes an incompatible legacy shared request without corrupting owner reads", async () => {
+    await fixture.db.updateTable("chats").set({
+      current_selection: JSON.stringify({ instanceId: "codex_default", model: "gpt-5.6-sol" }),
+      bound_driver_kind: "codex",
+      bound_instance_id: "codex_default",
+      bound_at_turn_id: "cturn_original_codex",
+    }).where("id", "=", collaborationIds.chat).execute();
+    await fixture.db.insertInto("chat_queued_turns").values({
+      id: "qturn_corrupt_claude",
+      chat_id: collaborationIds.chat,
+      client_request_id: "req_corrupt_claude",
+      actor_request_id: uuid(17),
+      requesting_actor_id: collaborationActors.editor,
+      collaboration_scope_id: collaborationIds.scope,
+      accepted_seq: 1,
+      payload_hash: "a".repeat(64),
+      accepted_auth_epoch: 1,
+      retry_of_queued_turn_id: null,
+      position: 1,
+      status: "queued",
+      parts: JSON.stringify([{ type: "text", text: "Legacy corrupt request" }]),
+      driver_kind: "claude_code",
+      instance_id: "claude_shared",
+      selection: JSON.stringify({ instanceId: "claude_shared", model: "claude-opus-4-6" }),
+      interaction_mode: "default",
+      permission_mode: "supervised",
+      execution_root: null,
+      execution_root_fingerprint: null,
+      capability_snapshot: JSON.stringify(capabilitySnapshot),
+      claimed_turn_id: null,
+      claimed_run_id: null,
+      cancelled_at: null,
+      created_at: now,
+      updated_at: now,
+    }).execute();
+
+    await expect(repository.claimNextQueuedTurn(owner, {
+      chatId: collaborationIds.chat,
+      collaborationScopeId: collaborationIds.scope,
+      turnId: "cturn_should_not_exist",
+      runId: "run_should_not_exist",
+      messageId: "msg_should_not_exist",
+      claimedAt: now,
+    })).resolves.toBeNull();
+    await expect(repository.listSharedQueuedTurns(owner, collaborationIds.chat))
+      .resolves.toEqual([expect.objectContaining({ id: "qturn_corrupt_claude", state: "unavailable" })]);
+    await expect(repository.get(owner, collaborationIds.chat)).resolves.toMatchObject({
+      chat: { currentSelection: { instanceId: "codex_default", model: "gpt-5.6-sol" } },
+      providerBinding: { driverKind: "codex", instanceId: "codex_default" },
+    });
+  });
+
   it("allows 32 pending requests and rejects the thirty-third without consuming order", async () => {
     for (let index = 1; index <= 32; index += 1) {
       await expect(repository.enqueueSharedQueuedTurn(
@@ -214,6 +343,39 @@ realDescribe("shared Chat queue real PostgreSQL ordering", () => {
       new Set([collaborationActors.owner, collaborationActors.editor]),
     );
   });
+
+  it("serializes initial binding attempts and never lets an editor establish ownership", async () => {
+    await fixture.db.updateTable("chats").set({
+      bound_driver_kind: null,
+      bound_instance_id: null,
+      bound_at_turn_id: null,
+    }).where("id", "=", collaborationIds.chat).execute();
+
+    const results = await Promise.allSettled([
+      repository.enqueueSharedQueuedTurn(owner, request(50, collaborationActors.owner)),
+      repository.enqueueSharedQueuedTurn(owner, request(51, collaborationActors.editor)),
+    ]);
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((result) => result.status === "rejected"))
+      .toEqual([expect.objectContaining({ reason: expect.objectContaining({ code: "unavailable" }) })]);
+
+    await repository.claimNextQueuedTurn(owner, {
+      chatId: collaborationIds.chat,
+      collaborationScopeId: collaborationIds.scope,
+      turnId: "cturn_concurrent_initial_binding",
+      runId: "run_concurrent_initial_binding",
+      messageId: "msg_concurrent_initial_binding",
+      claimedAt: now,
+    });
+    await expect(fixture.db.selectFrom("chats")
+      .select(["bound_driver_kind", "bound_instance_id", "bound_at_turn_id"])
+      .where("id", "=", collaborationIds.chat).executeTakeFirstOrThrow())
+      .resolves.toEqual({
+        bound_driver_kind: "claude_code",
+        bound_instance_id: "claude_shared",
+        bound_at_turn_id: "cturn_concurrent_initial_binding",
+      });
+  });
 });
 
 function request(index: number, actorId: string, expectedRevision = 1) {
@@ -227,8 +389,6 @@ function request(index: number, actorId: string, expectedRevision = 1) {
     payloadHash: index.toString(16).padStart(64, "0"),
     expectedRevision,
     parts: [{ type: "text" as const, text: `Shared request ${index}` }],
-    driverKind: "claude_code" as const,
-    selection: { instanceId: "claude_shared", model: "claude-opus-4-6" },
     interactionMode: "default",
     permissionMode: "supervised",
     capabilitySnapshot,
@@ -276,10 +436,10 @@ async function seedSharedChat(fixture: CollaborationTestDatabase): Promise<void>
     shell_state: null,
     fork_provenance: null,
     last_message_preview: null,
-    current_selection: null,
-    bound_driver_kind: null,
-    bound_instance_id: null,
-    bound_at_turn_id: null,
+    current_selection: JSON.stringify({ instanceId: "claude_shared", model: "claude-opus-4-6" }),
+    bound_driver_kind: "claude_code",
+    bound_instance_id: "claude_shared",
+    bound_at_turn_id: "cturn_original_claude",
     created_at: now,
     updated_at: now,
   }).execute();

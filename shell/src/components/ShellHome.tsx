@@ -60,15 +60,18 @@ export function ShellHome({ initialCollaborationView }: { initialCollaborationVi
 
   const runtimeSlot = useSyncExternalStore(subscribeLaunchPathNoop, readRuntimeSlotFromLocation, getLaunchPathServerSnapshot);
   const recipePrompt = useSyncExternalStore(subscribeLaunchPathNoop, readRecipePromptFromLocation, getLaunchPathServerSnapshot);
-  const desktopCollaborationView = isMobile ? undefined : initialCollaborationView;
-  const chat = useCanonicalChatState({ initialDraft: recipePrompt, initialCollaborationView: desktopCollaborationView });
+  const terminalCollaborationView = initialCollaborationView?.kind === "terminal" ? initialCollaborationView : undefined;
+  const chatCollaborationView = terminalCollaborationView ? undefined : initialCollaborationView;
+  const chat = useCanonicalChatState({ initialDraft: recipePrompt, initialCollaborationView: chatCollaborationView });
   const [paletteOpen, setPaletteOpen] = useState(false);
   const locationLaunchAppPath = useSyncExternalStore(
     subscribeLaunchPathNoop,
     readLaunchPathFromLocation,
     getLaunchPathServerSnapshot,
   );
-  const launchAppPath = desktopCollaborationView ? "__chat__" : locationLaunchAppPath;
+  const launchAppPath = terminalCollaborationView ? "__terminal__"
+    : chatCollaborationView ? "__chat__" : locationLaunchAppPath;
+  const sharedTerminalScopeId = terminalCollaborationView?.scopeId ?? null;
   const shellLoadedCaptured = useRef(false);
 
   useGlobalShortcuts(
@@ -110,12 +113,14 @@ export function ShellHome({ initialCollaborationView }: { initialCollaborationVi
             {isMobile ? (
               <MobileShell
                 launchAppPath={launchAppPath}
+                sharedTerminalScopeId={sharedTerminalScopeId}
                 onOpenCommandPalette={() => setPaletteOpen(true)}
                 cacheScope={cacheScope}
               />
             ) : (
               <Desktop
                 launchAppPath={launchAppPath}
+                sharedTerminalScopeId={sharedTerminalScopeId}
                 onOpenCommandPalette={() => setPaletteOpen(true)}
                 chat={chat}
                 cacheScope={cacheScope}

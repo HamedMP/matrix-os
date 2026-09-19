@@ -1,10 +1,16 @@
-import { mergeCanonicalChatRecord, isChatUnread, chatReadAction, mergeChatReadState } from "@matrix-os/ui";
+import {
+  mergeCanonicalChatRecord,
+  isChatUnread,
+  chatReadAction,
+  mergeChatReadState,
+  subscribeCollaborationDiscoveryChanged,
+} from "@matrix-os/ui";
 import type { StartAgentChat } from "@matrix-os/ui";
 import { ChatAgentsRailSection, useChatAgentsNavigation } from "@matrix-os/ui";
 import { useUi } from "../../stores/ui";
 import { useTabs } from "../../stores/tabs";
-import type { CanonicalChatRecord } from "@matrix-os/contracts";
-import { Plus } from "@renderer/lib/hugeicons";
+import { CollaborationDiscoveryResponseSchema, type CanonicalChatRecord } from "@matrix-os/contracts";
+import { Plus, UsersIcon } from "@renderer/lib/hugeicons";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   CanonicalChatClient,
@@ -23,6 +29,8 @@ import { WorkRailProjectGroup } from "./work-rail/WorkRailProjectGroup";
 import { WorkRailSection } from "./work-rail/WorkRailSection";
 import { WorkRailSearchDialog } from "./WorkRailSearchDialog";
 import type { CanonicalChatTitleProjection } from "./WorkSurfaceRuntime";
+import { createDesktopCollaborationApi } from "../../lib/collaboration";
+import { useConnection } from "../../stores/connection";
 
 type SectionKey = "pinned" | "projects" | "recents";
 const MAX_CHAT_PAGES = 10;
@@ -41,6 +49,39 @@ function applyProjectedChats(
       chat: { ...record.chat, title: projection.title, titleVersion: projection.titleVersion, revision: projection.revision },
     });
   });
+}
+
+export function SharedWithMeRailRow() {
+  const actorId = useConnection((state) => state.userId);
+  const platformHost = useConnection((state) => state.platformHost);
+  const api = useMemo(() => createDesktopCollaborationApi(platformHost), [platformHost]);
+  const [pendingCount, setPendingCount] = useState(0);
+  useEffect(() => {
+    let active = true;
+    if (!actorId || !api) return () => { active = false; };
+    const load = () => void api.get("/api/collaboration/inbox").then((value) => {
+        if (!active) return;
+        const page = CollaborationDiscoveryResponseSchema.parse(value);
+        setPendingCount(page.items.filter((item) => item.status === "invited").length);
+      }).catch((error: unknown) => {
+        console.warn("[collaboration-navigation] inbox unavailable", error instanceof Error ? error.name : "UnknownError");
+        if (active) setPendingCount(0);
+      });
+    load();
+    const unsubscribe = subscribeCollaborationDiscoveryChanged(load);
+    return () => { active = false; unsubscribe(); };
+  }, [actorId, api]);
+  if (!actorId || !api) return null;
+  return <button type="button" aria-label="Shared with me"
+    className="mx-1 flex min-h-9 items-center gap-2 rounded-lg px-2 text-left text-sm hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+    onClick={() => useTabs.getState().openTab({ kind: "shared", title: "Shared with me" })}>
+    <UsersIcon size={16} aria-hidden />
+    <span className="min-w-0 flex-1 truncate">Shared with me</span>
+    {pendingCount > 0 ? <span aria-label={`${pendingCount} pending invitations`}
+      className="min-w-5 rounded-full bg-[var(--accent)] px-1.5 py-0.5 text-center text-[10px] text-white">
+      {pendingCount > 99 ? "99+" : pendingCount}
+    </span> : null}
+  </button>;
 }
 
 async function loadWorkRailChats(client: CanonicalChatClient, unreadOnly = false): Promise<CanonicalChatRecord[]> {
@@ -334,13 +375,12 @@ export function WorkRail({
       <WorkRailHeader
         onNewChat={onNewGlobalChat}
         onSearch={() => setSearchOpen(true)}
+        unreadOnly={unreadOnly}
+        onUnreadOnlyChange={setUnreadOnly}
         onCollapse={onCollapse}
         showCollapseControl={showCollapseControl}
       />
-      <div className="flex items-center gap-2 px-3 py-2 text-xs">
-        <button type="button" aria-pressed={!unreadOnly} onClick={() => setUnreadOnly(false)} className="rounded px-2 py-1 hover:bg-[var(--bg-hover)] aria-pressed:bg-[var(--bg-selected)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]">All</button>
-        <button type="button" aria-pressed={unreadOnly} onClick={() => setUnreadOnly(true)} className="rounded px-2 py-1 hover:bg-[var(--bg-hover)] aria-pressed:bg-[var(--bg-selected)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]">Unread</button>
-      </div>
+      <SharedWithMeRailRow />
       {readError ? <p role="alert" className="px-3 text-xs">{readError}</p> : null}
       {unreadOnly && !records.some(isChatUnread) ? <p className="px-3 text-xs">No unread chats.</p> : null}
       <ChatAgentsRailSection client={client?.agents} onOpen={onOpenAgents} onStartChat={onStartAgentChat} onSetup={() => { useUi.getState().requestSettingsSection("agents-providers"); useTabs.getState().openTab({ kind: "settings", title: "Settings" }); }} />
