@@ -81,6 +81,7 @@ import {
   type EnqueuedSharedQueuedTurn,
   type SharedQueuedTurn,
   type SharedAiCapability,
+  type CanonicalSharedProviderAuthority,
 } from "./queue-repository.js";
 import {
   ChatSteeringRepository,
@@ -116,6 +117,7 @@ export type {
   EnqueuedSharedQueuedTurn,
   SharedQueuedTurn,
   SharedAiCapability,
+  CanonicalSharedProviderAuthority,
 } from "./queue-repository.js";
 export { SharedChatQueueError } from "./queue-repository.js";
 export type { BeginSteerInput, BegunSteer } from "./steering-repository.js";

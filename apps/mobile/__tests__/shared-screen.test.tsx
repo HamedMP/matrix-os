@@ -111,7 +111,10 @@ describe("native shared Chat screen", () => {
     mockPostDiscussion.mockResolvedValue({});
     mockFetchAiRequests.mockResolvedValue({
       requests: [], approvals: [],
-      defaultSelection: { instanceId: "claude_shared", model: "claude-opus-4-6" },
+      capability: {
+        status: "available",
+        effectiveSelection: { instanceId: "claude_code_default", model: "opus" },
+      },
       resourceRevision: "1",
     });
     mockPostAiRequest.mockResolvedValue({
@@ -292,7 +295,10 @@ describe("native shared Chat screen", () => {
     mockFetchChat.mockResolvedValue(aiChat);
     mockFetchAiRequests.mockResolvedValue({
       requests: [], approvals: [], resourceRevision: "4",
-      defaultSelection: { instanceId: "claude_shared", model: "claude-opus-4-6" },
+      capability: {
+        status: "available",
+        effectiveSelection: { instanceId: "claude_code_default", model: "opus" },
+      },
     });
     mockPostAiRequest.mockRejectedValueOnce(new Error("offline"));
 
@@ -307,7 +313,7 @@ describe("native shared Chat screen", () => {
     fireEvent.press(screen.getByLabelText("Request AI"));
     await waitFor(() => expect(mockPostAiRequest).toHaveBeenLastCalledWith(
       "clerk-token", scopeId, "4", "Summarize",
-      { instanceId: "claude_shared", model: "claude-opus-4-6" }, expect.any(String),
+      { instanceId: "claude_code_default", model: "opus" }, expect.any(String),
     ));
     expect(await screen.findByText("1 · Ada")).toBeTruthy();
     expect(screen.getByText(/queued · Summarize/)).toBeTruthy();
@@ -353,6 +359,35 @@ describe("native shared Chat screen", () => {
     fireEvent.press(await screen.findByLabelText("Open Launch plan"));
     expect((await screen.findByLabelText("Ask AI mode")).props.accessibilityState.disabled).toBe(true);
     expect(mockPostAiRequest).not.toHaveBeenCalled();
+  });
+
+  it("shows an owner-only reconnect action while leaving discussion writable", async () => {
+    const ownerScope = {
+      ...(await mockFetchScope()), role: "owner",
+      capabilities: { read: true, discuss: true, manageMembers: true, requestAi: true },
+    };
+    mockFetchInbox.mockResolvedValue({ items: [] });
+    mockFetchShared.mockResolvedValue({ items: [{
+      scopeId, runtimeId: "runtime_owner", ownerId: "user_owner", kind: "chat", authorityGeneration: 1,
+      status: "accepted", resource: { scope: ownerScope, chat: await mockFetchChat() },
+    }] });
+    mockFetchScope.mockResolvedValue(ownerScope);
+    mockFetchAiRequests.mockResolvedValue({
+      requests: [], approvals: [], resourceRevision: "1",
+      capability: {
+        status: "owner_reconnect_required",
+        effectiveSelection: { instanceId: "claude_code_default", model: "opus" },
+      },
+    });
+
+    render(<SharedScreen />);
+    fireEvent.press(await screen.findByLabelText("Open Launch plan"));
+
+    expect(await screen.findByText(
+      "Reconnect your AI provider in Settings → Agents & providers; discussion still works.",
+    )).toBeTruthy();
+    expect(screen.getByLabelText("Ask AI mode").props.accessibilityState.disabled).toBe(true);
+    expect(screen.getByLabelText("Message everyone").props.editable).toBe(true);
   });
 
   it("does not let a completed AI submission from one Chat overwrite another Chat", async () => {

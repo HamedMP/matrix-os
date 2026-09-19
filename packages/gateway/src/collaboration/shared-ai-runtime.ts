@@ -7,9 +7,14 @@ import {
 } from "@matrix-os/scope-runtime/profile";
 import type { Kysely } from "kysely";
 import type { CanonicalChatOrchestrator } from "../chat/orchestrator.js";
+import {
+  validateChatProviderSelection,
+  type ChatProviderCatalogService,
+} from "../chat/provider-catalog.js";
 import { SharedChatRunPreparationError } from "../chat/shared-execution-coordinator.js";
 import { CollaborationChatCommands } from "../chat/collaboration-commands.js";
 import type { ChatRepository } from "../chat/repository.js";
+import type { CodingAgentProviderRegistry } from "../coding-agents/provider-registry.js";
 import type { MatrixFundedCredentialProvider } from "../funded-ai-credential-manager.js";
 import {
   resolveKernelCredentialSources,
@@ -21,9 +26,11 @@ import {
 } from "./authority.js";
 import {
   CollaborationChatExecutionAdapter,
+} from "./chat-execution-adapter.js";
+import {
   parseCollaborationAiEligibility,
   type CollaborationAiExecutionEligibility,
-} from "./chat-execution-adapter.js";
+} from "./shared-ai-eligibility.js";
 import type { CollaborationChatScopeService } from "./chat-scope.js";
 import type { OwnerCollaborationDatabase } from "./database.js";
 import type { CollaborationEventRegistry } from "./events.js";
@@ -81,6 +88,8 @@ export async function createSharedAiRuntime(options: {
   brokerSocket?: string;
   fetchImpl?: typeof fetch;
   resolveAccessSource?: () => Promise<KernelCredentialAccessSourceId>;
+  providerCatalog?: ChatProviderCatalogService;
+  codingProviders?: Pick<CodingAgentProviderRegistry, "listProviders">;
 }) {
   const client = createScopeRuntimeClient({
     socketPath: options.supervisorSocket ?? SUPERVISOR_SOCKET,
@@ -218,6 +227,24 @@ export async function createSharedAiRuntime(options: {
       }
       return scope.execution_eligibility;
     },
+    ...(options.codingProviders ? {
+      resolveProviderReadiness: (ownerId: string) => resolveClaudeProviderReadiness(
+        options.codingProviders!,
+        ownerId,
+      ),
+    } : {}),
+    ...(options.providerCatalog ? {
+      resolveCanonicalProviderAuthority: async (ownerId, selection) => {
+        const catalog = await options.providerCatalog!.getCatalog({ userId: ownerId, source: "jwt" });
+        const validated = validateChatProviderSelection({
+          catalog,
+          selection,
+          requirements: { interactionMode: "default", permissionMode: "supervised" },
+        });
+        if (!validated.ok || validated.instance.driverKind !== "claude_code") return null;
+        return { driverKind: validated.instance.driverKind, selection: validated.selection };
+      },
+    } : {}),
     requestDispatch: dispatch,
     onCommitted: (scopeId) => options.eventRegistry.broadcastScope(scopeId),
   });
@@ -310,6 +337,19 @@ export async function createSharedAiRuntime(options: {
       await client.close();
     },
   };
+}
+
+export async function resolveClaudeProviderReadiness(
+  providers: Pick<CodingAgentProviderRegistry, "listProviders">,
+  ownerId: string,
+): Promise<"ready" | "reconnect_required" | "unavailable"> {
+  const summaries = await providers.listProviders({ userId: ownerId, source: "jwt" });
+  const claude = summaries.find((provider) => provider.id === "claude" || provider.kind === "claude");
+  if (claude?.availability === "available" && claude.authStatus === "authenticated") return "ready";
+  if (claude?.availability === "auth_required" || claude?.authStatus === "expired") {
+    return "reconnect_required";
+  }
+  return "unavailable";
 }
 
 export async function recoverSharedAiQueue(options: {

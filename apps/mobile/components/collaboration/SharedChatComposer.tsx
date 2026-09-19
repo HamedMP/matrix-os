@@ -14,7 +14,7 @@ type ApprovalDecision = "approve" | "approve_for_session" | "decline" | "cancel"
 export type SharedChatComposerState = {
   scope: Scope | null;
   composerMode: "discussion" | "ai";
-  aiAvailability: "checking" | "available" | "unavailable";
+  aiAvailability: "checking" | "available" | "unavailable" | "owner_reconnect_required";
   defaultSelection: CollaborationAiRequest["selection"] | null;
   aiRequests: CollaborationAiRequest[];
   approvals: CollaborationApproval[];
@@ -141,7 +141,10 @@ export function deriveSharedChatComposerPresentation(state: SharedChatComposerSt
   const status = viewer
     ? "Viewers can read this Chat but cannot post messages or request AI."
     : state.aiAvailability === "checking" ? "Checking shared AI…"
-      : aiAvailable ? "One active run · up to 32 pending" : "AI requests are unavailable; discussion still works.";
+      : aiAvailable ? "One active run · up to 32 pending"
+        : state.aiAvailability === "owner_reconnect_required"
+          ? "Reconnect your AI provider in Settings → Agents & providers; discussion still works."
+          : "AI requests are unavailable; discussion still works.";
   return {
     aiMode,
     aiAvailable,

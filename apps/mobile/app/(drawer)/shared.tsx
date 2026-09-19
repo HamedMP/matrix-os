@@ -63,7 +63,7 @@ type ScreenState = {
   draft: string;
   aiDraft: string;
   composerMode: "discussion" | "ai";
-  aiAvailability: "checking" | "available" | "unavailable";
+  aiAvailability: "checking" | "available" | "unavailable" | "owner_reconnect_required";
   aiRequests: CollaborationAiRequest[];
   approvals: CollaborationApproval[];
   defaultSelection: CollaborationAiRequest["selection"] | null;
@@ -97,6 +97,13 @@ const initialState: ScreenState = {
   sending: false,
   error: "",
 };
+
+function sharedAiAvailability(
+  status: "available" | "unavailable" | "owner_binding_required" | "owner_reconnect_required",
+): ScreenState["aiAvailability"] {
+  if (status === "available" || status === "owner_reconnect_required") return status;
+  return "unavailable";
+}
 
 type ScreenAction =
   | { type: "patch"; patch: Partial<ScreenState> }
@@ -239,12 +246,13 @@ export default function SharedScreen() {
       try {
         const ai = CollaborationAiRequestsResponseSchema.parse(await fetchSharedAiRequests(actorToken, scopeId));
         if (generation === chatLoadGeneration.current) {
-          aiWasAvailableRef.current = true;
+          aiWasAvailableRef.current = ai.capability.status === "available";
           const refreshedChat = { ...nextChat, revision: ai.resourceRevision };
           chatRef.current = refreshedChat;
           dispatch({ type: "patch", patch: {
-            aiAvailability: "available", aiRequests: ai.requests, approvals: ai.approvals,
-            defaultSelection: ai.defaultSelection, aiError: "", chat: refreshedChat,
+            aiAvailability: sharedAiAvailability(ai.capability.status), aiRequests: ai.requests,
+            approvals: ai.approvals, defaultSelection: ai.capability.effectiveSelection ?? null,
+            aiError: "", chat: refreshedChat,
           } });
         }
       } catch (failure: unknown) {
@@ -326,12 +334,13 @@ export default function SharedScreen() {
     try {
       const ai = CollaborationAiRequestsResponseSchema.parse(await fetchSharedAiRequests(actorToken, scopeId));
       if (generation === chatLoadGeneration.current && eventScopeRef.current === scopeId) {
-        aiWasAvailableRef.current = true;
+        aiWasAvailableRef.current = ai.capability.status === "available";
         const refreshedChat = { ...nextChat, revision: ai.resourceRevision };
         chatRef.current = refreshedChat;
         dispatch({ type: "patch", patch: {
-          aiAvailability: "available", aiRequests: ai.requests, approvals: ai.approvals,
-          defaultSelection: ai.defaultSelection, aiError: "", chat: refreshedChat,
+          aiAvailability: sharedAiAvailability(ai.capability.status), aiRequests: ai.requests,
+          approvals: ai.approvals, defaultSelection: ai.capability.effectiveSelection ?? null,
+          aiError: "", chat: refreshedChat,
         } });
       }
     } catch (failure: unknown) {
@@ -552,13 +561,14 @@ export default function SharedScreen() {
   const refreshAiRequests = async (scopeId: string) => {
     const ai = CollaborationAiRequestsResponseSchema.parse(await fetchSharedAiRequests(await token(), scopeId));
     if (eventScopeRef.current !== scopeId) return;
-    aiWasAvailableRef.current = true;
+    aiWasAvailableRef.current = ai.capability.status === "available";
     const currentChat = chatRef.current;
     const refreshedChat = currentChat ? { ...currentChat, revision: ai.resourceRevision } : null;
     if (refreshedChat) chatRef.current = refreshedChat;
     dispatch({ type: "patch", patch: {
-      aiAvailability: "available", aiRequests: ai.requests, approvals: ai.approvals,
-      defaultSelection: ai.defaultSelection, aiError: "", ...(refreshedChat ? { chat: refreshedChat } : {}),
+      aiAvailability: sharedAiAvailability(ai.capability.status), aiRequests: ai.requests,
+      approvals: ai.approvals, defaultSelection: ai.capability.effectiveSelection ?? null,
+      aiError: "", ...(refreshedChat ? { chat: refreshedChat } : {}),
     } });
   };
   const controlAi = async (request: CollaborationAiRequest, action: "cancel" | "retry") => {

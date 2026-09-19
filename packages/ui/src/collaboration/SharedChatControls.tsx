@@ -9,7 +9,7 @@ import { useCallback, useEffect, useReducer, useRef } from "react";
 import type { CollaborationApi } from "./ChatCollaboratorsDialog.js";
 import type { CollaborationDraft } from "./chat-state.js";
 
-type AiAvailability = "checking" | "available" | "unavailable";
+type AiAvailability = "checking" | "available" | "unavailable" | "owner_reconnect_required";
 type SharedAiError = "request" | "control" | "recovery" | null;
 type SharedAiState = {
   availability: AiAvailability;
@@ -103,6 +103,8 @@ function sharedComposerPresentation(
   const status = !writableRole ? "Viewers can read this Chat but cannot post messages or request AI."
     : state.availability === "checking" ? "Checking shared AI…"
       : state.availability === "available" ? "One active run · up to 32 pending"
+        : state.availability === "owner_reconnect_required"
+          ? "Reconnect your AI provider in Settings → Agents & providers; discussion still works."
         : "AI requests are unavailable; discussion still works.";
   return {
     aiMode, canDiscuss, canRequestAi, canCompose, sending, status,
@@ -254,7 +256,11 @@ function reduceSharedAi(state: SharedAiState, action: SharedAiAction): SharedAiS
     case "loaded":
       return {
         ...state,
-        availability: action.response.capability.status === "available" ? "available" : "unavailable",
+        availability: action.response.capability.status === "available"
+          ? "available"
+          : action.response.capability.status === "owner_reconnect_required"
+            ? "owner_reconnect_required"
+            : "unavailable",
         requests: action.response.requests,
         approvals: action.response.approvals,
         effectiveSelection: action.response.capability.effectiveSelection ?? null,

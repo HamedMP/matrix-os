@@ -127,6 +127,30 @@ describe("shared Chat AI controls", () => {
     expect(sendDiscussion).toHaveBeenCalledOnce();
   });
 
+  it("shows reconnect guidance only for the owner readiness state", async () => {
+    const ownerScope = { ...baseScope, role: "owner" as const,
+      capabilities: { read: true, discuss: true, manageMembers: true, requestAi: true } };
+    const api = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async () => ({
+        requests: [], approvals: [],
+        capability: { status: "owner_reconnect_required", effectiveSelection: defaultSelection },
+        resourceRevision: "4",
+      })),
+      post: vi.fn(), delete: vi.fn(),
+    };
+    render(<SharedChatControls api={api} scope={ownerScope} actorId="user_owner"
+      resourceRevision="4" draft={{ text: "Human update", mode: "discussion" }} updateDraft={vi.fn()}
+      changeDraftMode={vi.fn()} discussionSending={false} discussionError={false}
+      sendDiscussion={vi.fn(async () => undefined)} refreshVersion={0} />);
+
+    expect(await screen.findByText(
+      "Reconnect your AI provider in Settings → Agents & providers; discussion still works.",
+    )).toBeVisible();
+    expect(screen.getByRole("button", { name: "Ask AI" })).toBeDisabled();
+    expect(screen.getByLabelText("Message everyone")).toBeEnabled();
+  });
+
   it("renders immutable queue order and scopes editor controls to their own requests", async () => {
     const api = {
       baseUrl: "https://app.matrix-os.com",

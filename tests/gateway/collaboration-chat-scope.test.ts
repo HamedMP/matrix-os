@@ -8,19 +8,14 @@ import {
 } from "../../packages/gateway/src/collaboration/chat-scope.js";
 import {
   collaborationActors,
+  collaborationExecutionEligibility,
   collaborationIds,
   createCollaborationTestDatabase,
   type CollaborationTestDatabase,
 } from "./collaboration-test-support.js";
 
 const now = "2026-09-07T12:00:00.000Z";
-const executionEligibility = {
-  profileId: "scope-runtime-chat-v1",
-  profileVersion: 1,
-  profileDigest: "b".repeat(64),
-  adapterId: "claude-code" as const,
-  harnessVersion: "2.1.240",
-};
+const executionEligibility = collaborationExecutionEligibility();
 
 describe("CollaborationChatScopeService", () => {
   let fixture: CollaborationTestDatabase;

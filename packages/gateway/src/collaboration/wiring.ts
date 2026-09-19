@@ -3,6 +3,8 @@ import type { Hono } from "hono";
 import type { UpgradeWebSocket } from "hono/ws";
 import type { ChatRepository } from "../chat/repository.js";
 import type { CanonicalChatOrchestrator } from "../chat/orchestrator.js";
+import type { ChatProviderCatalogService } from "../chat/provider-catalog.js";
+import type { CodingAgentProviderRegistry } from "../coding-agents/provider-registry.js";
 import type { MatrixFundedCredentialProvider } from "../funded-ai-credential-manager.js";
 import { CollaborationActorProofVerifier } from "./actor-proof.js";
 import { CollaborationAuthority } from "./authority.js";
@@ -205,6 +207,8 @@ export async function createGatewayCollaboration(options: {
       supervisorSocket?: string;
       brokerSocket?: string;
       fetchImpl?: typeof fetch;
+      providerCatalog?: ChatProviderCatalogService;
+      codingProviders?: Pick<CodingAgentProviderRegistry, "listProviders">;
     }): Promise<{ available: boolean }> {
       if (registered || closing || sharedAiRuntime) {
         throw new Error("Shared AI must be initialized exactly once before route registration");
@@ -222,6 +226,8 @@ export async function createGatewayCollaboration(options: {
         serviceToken: options.config.serviceToken,
         homePath: input.homePath,
         resolveParticipant,
+        ...(input.providerCatalog ? { providerCatalog: input.providerCatalog } : {}),
+        ...(input.codingProviders ? { codingProviders: input.codingProviders } : {}),
         ...(input.fundedCredentialProvider ? { fundedCredentialProvider: input.fundedCredentialProvider } : {}),
         ...(input.supervisorSocket ? { supervisorSocket: input.supervisorSocket } : {}),
         ...(input.brokerSocket ? { brokerSocket: input.brokerSocket } : {}),

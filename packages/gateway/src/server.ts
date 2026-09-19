@@ -4359,6 +4359,8 @@ export async function createGateway(config: GatewayConfig) {
       const sharedAi = await gatewayCollaboration.enableSharedAi({
         orchestrator: canonicalChatOrchestrator,
         homePath,
+        providerCatalog: canonicalChatProviderCatalog,
+        codingProviders: codingAgentProviderRegistry,
         ...(fundedCredentialProvider ? { fundedCredentialProvider } : {}),
       });
       console.log(`[collaboration] shared AI ${sharedAi.available ? "ready" : "disabled"}`);

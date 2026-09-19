@@ -493,7 +493,9 @@ export const CollaborationAiRequestsResponseSchema = z.object({
   requests: z.array(CollaborationAiRequestSchema).max(COLLABORATION_PAGE_LIMIT),
   approvals: z.array(CollaborationApprovalSchema).max(COLLABORATION_PAGE_LIMIT),
   capability: z.object({
-    status: z.enum(["available", "unavailable", "owner_binding_required"]),
+    status: z.enum([
+      "available", "unavailable", "owner_binding_required", "owner_reconnect_required",
+    ]),
     effectiveSelection: CanonicalChatModelSelectionSchema.optional(),
   }).strict(),
   resourceRevision: CollaborationRevisionSchema,
