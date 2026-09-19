@@ -177,6 +177,31 @@ describe("CollaborationProxy", () => {
       .toBeNull();
   });
 
+  it("allowlists only exact invitation decline and scope discussion paths", () => {
+    expect(parseCollaborationProxyRoute(
+      "POST",
+      `/api/collaboration/invitations/${invitationId}/decline`,
+    )).toEqual({ kind: "invitation", identifier: invitationId });
+    for (const [method, suffix] of [
+      ["GET", "discussion/messages"],
+      ["POST", "discussion/messages"],
+      ["GET", "discussion/user-state"],
+      ["PATCH", "discussion/user-state"],
+    ] as const) {
+      const path = `/api/collaboration/scopes/${scopeId}/${suffix}`;
+      expect(parseCollaborationProxyRoute(method, path)).toEqual({ kind: "scope", identifier: scopeId });
+      expect(collaborationMilestoneForRoute(method, path)).toBe("m1");
+    }
+    expect(parseCollaborationProxyRoute(
+      "POST",
+      `/api/collaboration/invitations/${invitationId}/decline/extra`,
+    )).toBeNull();
+    expect(parseCollaborationProxyRoute(
+      "GET",
+      `/api/collaboration/scopes/${scopeId}/discussion/messages/private`,
+    )).toBeNull();
+  });
+
   it("classifies shared AI routes under M2 without moving discussion off M1", () => {
     const requestId = "qturn_shared_request_1";
     const approvalId = "approval_shared_request_1";

@@ -6,15 +6,21 @@ import { useRouter } from "next/navigation";
 import { useMemo } from "react";
 import { useBrowserOrigin } from "@/hooks/useBrowserOrigin";
 import { createShellCollaborationApi } from "@/lib/collaboration";
+import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 
 const e2eBypass = process.env.NEXT_PUBLIC_E2E_TEST_BYPASS === "1";
+const COLLABORATION_LAYERS = { dialog: SHELL_Z_INDEX.appDialog, popover: SHELL_Z_INDEX.popover };
 
 export function ShellChatCollaboration({
   view,
   onOpenChat,
+  onSessionMetadata,
+  headerContainer,
 }: {
   view: ChatCollaborationView;
   onOpenChat?: (scopeId: string) => void;
+  onSessionMetadata?: (metadata: { title: string; role: "owner" | "editor" | "viewer" }) => void;
+  headerContainer?: HTMLElement | null;
 }) {
   const { isLoaded, userId } = useAuth();
   const browserOrigin = useBrowserOrigin();
@@ -39,6 +45,9 @@ export function ShellChatCollaboration({
       view={view}
       api={api}
       actorId={actorId}
+      layers={COLLABORATION_LAYERS}
+      onChatMetadata={onSessionMetadata}
+      headerContainer={headerContainer}
       openInvitation={(invitationId) => router.push(`/shared/invitations/${encodeURIComponent(invitationId)}`)}
       openChat={(scopeId) => {
         onOpenChat?.(scopeId);

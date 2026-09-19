@@ -184,6 +184,7 @@ export function DesktopWindow({
       <CardContent className="relative flex-1 p-0 min-h-0">
         {win.path.startsWith("__terminal__") ? (
           <TerminalApp
+            sharedScopeId={win.sharedTerminalScopeId ?? null}
             launchTargetId={win.id}
             layoutId={win.terminalLayoutId}
             persistence={win.terminalPersistence ?? "durable"}
@@ -212,6 +213,7 @@ export function DesktopWindow({
               <ChatApp
                 collaborationView={chat.collaborationView}
                 onOpenSharedChat={chat.openSharedChat}
+                onOpenSharedHome={chat.openSharedHome}
                 filterUnreadOnly={chat.unreadOnly}
                 onUnreadFilterChange={chat.setUnreadOnly}
                 active={focusedWindowId === win.id && !win.minimized}

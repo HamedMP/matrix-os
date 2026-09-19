@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   createCollaborationTerminalWebSocketUrl,
+  isCollaborationPathAllowed,
   watchCollaborationTerminal,
 } from "../../packages/sync-client/src/cli/commands/collaboration.js";
 
@@ -46,6 +47,17 @@ function frame(type: "terminal.ready" | "terminal.state", current: ReturnType<ty
 }
 
 describe("CLI shared terminal", () => {
+  it("allows only exact decline and generic discussion request paths", () => {
+    expect(isCollaborationPathAllowed(`/api/collaboration/invitations/30000000-0000-4000-8000-000000000001/decline`))
+      .toBe(true);
+    expect(isCollaborationPathAllowed(`/api/collaboration/scopes/${scopeId}/discussion/messages?after=0&limit=50`))
+      .toBe(true);
+    expect(isCollaborationPathAllowed(`/api/collaboration/scopes/${scopeId}/discussion/user-state`))
+      .toBe(true);
+    expect(isCollaborationPathAllowed(`/api/collaboration/scopes/${scopeId}/discussion/messages/private`))
+      .toBe(false);
+  });
+
   it("builds an exact ticket-only terminal WebSocket URL", () => {
     expect(createCollaborationTerminalWebSocketUrl("https://app.matrix-os.com", scopeId, "t".repeat(43)))
       .toBe(`wss://app.matrix-os.com/ws/collaboration/scopes/${scopeId}/terminal?ticket=${"t".repeat(43)}`);

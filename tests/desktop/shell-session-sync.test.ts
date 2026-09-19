@@ -49,6 +49,21 @@ describe("desktop shell-session synchronization", () => {
     expect(useTabs.getState().tabs.map((tab) => tab.id)).toEqual([home]);
   });
 
+  it("does not reconcile native shared terminal tabs against owner shell sessions", async () => {
+    const shared = useTabs.getState().openTab({
+      kind: "terminal",
+      sessionName: "shared:10000000-0000-4000-8000-000000000001",
+      sharedScopeId: "10000000-0000-4000-8000-000000000001",
+      title: "Shared Terminal",
+    });
+    const load = vi.fn().mockResolvedValue([]);
+    useShellSessions.setState({ load });
+
+    expect(await syncShellSessions({} as ApiClient)).toEqual([]);
+    expect(useTabs.getState().tabs.map((tab) => tab.id)).toEqual([shared]);
+    expect(useTabs.getState().activeTabId).toBe(shared);
+  });
+
   it("polls every five seconds while visible and applies external deletion", async () => {
     const api = {} as ApiClient;
     const home = useTabs.getState().openTab({ kind: "home", title: "Home", closable: false });

@@ -73,6 +73,8 @@ export {
 } from "./collaboration/ChatCollaboration.js";
 export {
   sharedChatMembershipFromProjection,
+  projectSharedChatTimeline,
+  type NativeSharedChatMessage,
   type SharedChatMembershipProjection,
 } from "./collaboration/chat-projection.js";
 export { SharedChatControls } from "./collaboration/SharedChatControls.js";
@@ -88,6 +90,11 @@ export {
 export { collaborationDraftKey, collaborationDraftModeKey, createCollaborationDraftStore } from "./collaboration/chat-state.js";
 export { deriveChatPermissions } from "./collaboration/permissions.js";
 export { createCollaborationBrowserApi } from "./collaboration/client.js";
+export {
+  COLLABORATION_DISCOVERY_CHANGED_EVENT,
+  notifyCollaborationDiscoveryChanged,
+  subscribeCollaborationDiscoveryChanged,
+} from "./collaboration/discovery-events.js";
 export { TerminalControls } from './terminal/TerminalControls.js';
 export { useTerminalControls } from './terminal/use-terminal-controls.js';
 export type { TerminalControlsState, TerminalControlsTransport, TerminalControlsOptions } from './terminal/use-terminal-controls.js';
