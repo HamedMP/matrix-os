@@ -1,4 +1,4 @@
-import { classifyTerminalClipboardShortcut } from "@matrix-os/contracts";
+import { resolveTerminalClipboardKeyEvent } from "@matrix-os/contracts";
 
 interface TerminalKeyHandlerOptions {
   isMac: boolean;
@@ -14,12 +14,12 @@ interface TerminalKeyHandlerOptions {
 /** Clipboard remains ahead of the shared editing/pane profile. */
 export function createTerminalKeyHandler(options: TerminalKeyHandlerOptions) {
   return (event: KeyboardEvent): boolean => {
-    if (event.type !== "keydown" || event.isComposing || event.keyCode === 229 || event.getModifierState?.("AltGraph")) return options.handleControls(event);
-    const clipboardAction = classifyTerminalClipboardShortcut({
-      type: "keydown", key: event.key, isMac: options.isMac,
+    const clipboardAction = resolveTerminalClipboardKeyEvent({
+      type: event.type as "keydown" | "keyup" | "keypress", key: event.key, isMac: options.isMac,
       metaKey: event.metaKey, ctrlKey: event.ctrlKey, shiftKey: event.shiftKey,
       altKey: event.altKey, repeat: event.repeat, isComposing: event.isComposing,
       hasSelection: options.getSelection().length > 0,
+      keyCode: event.keyCode, altGraphKey: event.getModifierState?.("AltGraph"),
     });
     if (clipboardAction) {
       event.preventDefault();
@@ -28,6 +28,7 @@ export function createTerminalKeyHandler(options: TerminalKeyHandlerOptions) {
       if (clipboardAction === "select-all") options.selectAll();
       return false;
     }
+    if (event.type !== "keydown" || event.isComposing || event.keyCode === 229 || event.getModifierState?.("AltGraph")) return options.handleControls(event);
     if (event.ctrlKey && event.shiftKey && !event.metaKey && !event.altKey && event.key.toUpperCase() === "F") {
       event.preventDefault();
       if (!event.repeat) options.toggleSearch();

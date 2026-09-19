@@ -109,6 +109,7 @@ describe("platform collaboration wiring", () => {
       resolveActor: async (c) => c.req.header("x-test-actor") ?? null,
       authenticateRuntime: async () => null,
       resolveParticipant: async (actorId) => ({ actorId, displayName: actorId }),
+      resolveInvitationIdentifier: async (identifier) => ({ actorId: identifier, displayName: identifier }),
       resolveRuntime: async (runtimeId) => ({
         runtimeId,
         ownerId: platformCollaborationActors.owner,

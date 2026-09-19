@@ -24,7 +24,7 @@ All paths are under `/api/collaboration`. `S` means `/scopes/:scopeId`. Every ro
 | POST `/runtimes/:runtimeId/scopes` | Verified runtime owner | Idempotent creation bound to preflight token and expected revision. M4 prepares an unpublished project scope; project publication uses confirm below. |
 | GET `S` | Member | Scope, role, participants, lifecycle, capabilities and safe unavailable reasons. |
 | GET `S/members` | Member | Accepted participant labels/roles; pending invite details owner-only. |
-| POST `S/invitations` | Owner | Verified target account ID and editor/viewer role; reserve capacity transactionally. No implicit contact creation or external email sending. |
+| POST `S/invitations` | Owner | Bounded `identifier` (internal actor ID, exact verified email, or exact username with optional leading `@`) and editor/viewer role; resolve to one canonical actor before reserving capacity transactionally. No implicit contact creation or external email sending. |
 | GET `/invitations/:invitationId` | Exact invited actor or inviter | Bounded inviter/target-kind/role/implications preview; no content access. |
 | POST `/invitations/:invitationId/accept` | Exact invited actor | Explicit acceptance; recheck expiry, scope state, cohort and current reservation. |
 | DELETE `S/invitations/:invitationId` | Owner | Revoke pending invitation; old accept links remain invalid. |
@@ -34,7 +34,7 @@ All paths are under `/api/collaboration`. `S` means `/scopes/:scopeId`. Every ro
 | GET `S/chat`, `S/chat/messages` | Member | Canonical safe Chat projection and paginated history, M1. |
 | POST `S/chat/messages` | Owner/editor | Discussion message only; starts zero runs. M1. |
 | GET `S/chat/requests` | Member | Ordered accepted requests and attempts, M2. |
-| POST `S/chat/requests` | Owner/editor | Explicit AI request; accepted sequence and operation ID; M2 only. |
+| POST `S/chat/requests` | Owner/editor | Explicit AI request containing text, request ID and expected revision only; Provider/Instance/model/credentials are server-controlled; M2 only. |
 | POST `S/chat/requests/:requestId/cancel` | Owner; editor for own request | Durable command, current state/author/role check, M2. |
 | POST `S/chat/requests/:requestId/retry` | Owner; editor for own request | New attempt linked to original, reauthorized and queued, M2. |
 | POST `S/chat/approvals/:approvalId/decision` | Owner | One durable decision claim before adapter call, M2. |
@@ -60,6 +60,10 @@ Project child Chat/terminal operations use that child's scope ID, whose binding 
 
 Internal service routes are separate: `PUT /internal/collaboration/directory` accepts idempotent metadata from the authenticated registered runtime for its own owner/generation only; `GET /internal/collaboration/policy` returns signed capability policy to an authenticated registered runtime. Both require service authentication and are not public or reachable using participant proofs/tickets. Policy changes use existing authenticated platform operator configuration, not a new customer endpoint. Directory repair cannot change owner membership.
 
+`POST /internal/collaboration/participants/resolve` is an authenticated runtime-only platform route used during invitation creation. The gateway first authenticates the signed actor and authorizes `manage_members`, then sends only the bounded identifier to platform. Platform trims surrounding whitespace, removes one optional leading `@` for usernames, normalizes username casing, and exact-matches an active Matrix account. Email resolution uses the identity provider's exact verified canonical email and fails closed on partial, duplicate, ambiguous, malformed, oversized, unavailable, or timed-out results. The public invitation response collapses all resolution failures to one generic error. Both gateway and platform apply bounded per-owner rate limits; there is no public search or autocomplete endpoint.
+
+Resolution finishes before the owner-database transaction. The transaction locks the scope, reauthorizes the current owner and revision, and remains authoritative for self-invites, capacity, pending/accepted duplicates, revoked/expired renewal, idempotency, and races. Only the canonical actor ID crosses into owner persistence, directory events, audit records, and proofs. Clerk administrative credentials and email addresses never reach the owner gateway or collaboration storage.
+
 ## Existing snapshot routes: preserved, not collaboration credentials
 
 Merged #1551 provides the following independent routes. Preserve their existing contracts and do not widen their anonymous allowlists to any collaboration path.
@@ -81,6 +85,8 @@ The common Share chooser opens either **Share snapshot** using existing preview/
 Zod 4 validates params, queries and bodies before service calls. New IDs are UUIDs; canonical resource IDs retain their existing bounded contracts. Revisions/epochs/sequences are decimal strings. Reject unknown fields, actor/owner/role injection and client absolute paths. All mutation verbs, including DELETE, apply Hono `bodyLimit` before buffering. Default maximum is 96 KiB; file upload has an explicit 2 MiB bounded body exception. Text messages/AI requests are at most 64 KiB UTF-8. Pagination defaults to 50, maximum 100; opaque cursors are scope-bound and at most 512 bytes. Rate/capacity and cleanup bounds are in the [plan](../plan.md).
 
 Every mutation includes `clientRequestId` and, where updating existing state, `expectedRevision`. Replay key is scope+actor+operation kind+request ID and stores a payload hash; different payload on a used key returns conflict. Body-free DELETE supplies bounded request ID/revision headers covered by the signed proof. Only documented canonical request headers participate in that proof.
+
+`POST S/chat/requests` is strict and rejects legacy or tampered `selection`, Driver, Instance, credential, resume, actor and owner fields. `GET S/chat/requests` returns a read-only capability with `status = available / unavailable / owner_binding_required` and the effective canonical selection when it can be safely projected. An unavailable Codex-bound Chat must report Codex, never the shared runtime's Claude default. Before an unbound Chat is owner-bound, editor submission is unavailable and performs no write.
 
 Project confirmation contains `inventoryToken`, `inventoryHash`, `expectedRevision`, and confirmed membership effects. Tokens expire after 10 minutes and bind owner/scope/generation/inventory/membership. A stale inventory returns conflict with a new preview; the user confirms the complete updated inventory again. There is no `exclude`, `selectedItems`, or per-child private flag.
 

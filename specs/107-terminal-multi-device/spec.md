@@ -2,7 +2,7 @@
 
 **Feature Branch**: `codex/project-scoped-zellij-workspaces`
 **Created**: 2026-07-13
-**Revised**: 2026-09-09
+**Revised**: 2026-09-18
 **Status**: Accepted for coordinated implementation
 
 ## Scope and locked decisions
@@ -19,7 +19,7 @@ This specification replaces the earlier phased and compatibility-oriented termin
 - Older clients are unsupported after activation. There is no legacy coexistence or partial feature mode.
 - Project deletion requires explicit confirmation before its workspace and running tabs are terminated.
 
-True per-client reflow of one PTY is impossible. A workspace therefore owns one canonical grid. CLI is a hard-size client; browser, Canvas, Electron, and native mobile are soft clients that scale or pan without changing the canonical grid.
+True per-client reflow of one PTY is impossible. A workspace therefore owns one canonical grid. CLI and the acknowledged writer in Web Desktop, Web Canvas, or Electron Desktop are hard-size clients. Desktop writers declare viewport rows/columns at the configured font after attach, resize, and reconnect. Web Mobile, Native Mobile, and observers remain soft clients that scale or pan without changing the canonical grid. The runtime arbitrates live hard-client proposals across the whole workspace using the largest requested columns and rows; a smaller writer on another tab cannot shrink an existing writer. Write-lease revocation clears the displaced viewer's proposal while preserving observer output. Proposals share the bounded viewer lifecycle and disappear on detach or TTL eviction; the next hard proposal recomputes the grid. All attached tabs receive workspace geometry updates after their PTYs are resized; workspace-size revisions are independent of tab-output revisions.
 
 ## User stories and acceptance
 
@@ -36,14 +36,14 @@ Acceptance:
 
 ### P1: independent multi-device viewing and serialized input
 
-As an owner, I can view the same or different tabs from two devices without either device changing the other's selection or dimensions.
+As an owner, I can view the same or different tabs from two devices without either device changing the other's selection. Observers adapt locally to the writer-owned canonical dimensions.
 
 Acceptance:
 
 1. Two devices may view one tab through one shared attachment and both receive its raw output.
 2. Concurrent input from all viewers and agent controllers is serialized in message-arrival order for that tab.
 3. Different tabs use different attachments. An attachment is closed after its last viewer leaves without stopping the tab process.
-4. A mobile/browser/Electron attach never changes the workspace canonical size. CLI hard-size updates do.
+4. Mobile and observer attaches never change the workspace canonical size. A desktop writer sends hard-size updates only after ownership acknowledgement, including after reconnect. Revocation cancels its authority to resize.
 
 ### P1: background observation and reconnect
 
@@ -157,7 +157,7 @@ Tests are written red-first for contracts, migration, runtime orchestration, gat
 5. Browser, Canvas, Desktop, Electron, native mobile, CLI, agent, and gateway resolve identical refs.
 6. Zero-viewer agent/build output survives gateway and control-plane reconnect.
 7. Workspace unit and workload PIDs remain unchanged across gateway restart and two ordinary bundle updates; only the initial legacy cutover may interrupt existing processes.
-8. Soft-client attaches never alter hard canonical dimensions.
+8. Soft-client attaches never alter hard canonical dimensions. Desktop writers fill enlarged and reduced viewports with actual rows/columns; non-writers retain local fit/pan behavior.
 9. Detach preserves processes, explicit terminate affects one tab, and project deletion is confirmation-gated.
 10. Migration tests cover classification, duplicates, interruption, corruption, scrollback, rewrites, atomic commit, and rollback.
 11. Security/failure tests cover auth, query tokens, Zod boundaries, body limits, generic errors, stale eviction, drains, and bounded buffers.

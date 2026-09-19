@@ -30,6 +30,7 @@ function setup() {
     sessionName: "session-one",
     active: true,
     socketState: "attached" as const,
+    writable: true,
     isMac: true,
     attachmentRef: attachment,
     termRef: terminal,
@@ -125,6 +126,7 @@ describe("Electron Desktop shared terminal controls", () => {
 
   it.each([
     { active: false },
+    { writable: false },
     { socketState: "reconnecting" as const },
     { socketState: "connecting" as const },
     { api: null },

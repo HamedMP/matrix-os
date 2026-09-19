@@ -3,51 +3,42 @@ import {
   type CollaborationAiRequest,
   type CollaborationApproval,
 } from "@matrix-os/contracts/collaboration";
-import { useCallback } from "react";
-import { FlatList, Pressable, Text, TextInput, View, type ListRenderItemInfo } from "react-native";
+import { Pressable, Text, TextInput, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import type { z } from "zod/v4";
+import {
+  canControlSharedAiRequest,
+  deriveSharedChatComposerPresentation,
+  shouldShowSharedAiQueue,
+} from "./shared-chat-composer-model";
 
 type Scope = z.infer<typeof CollaborationScopeSchema>;
 type ApprovalDecision = "approve" | "approve_for_session" | "decline" | "cancel";
 
 export type SharedChatComposerState = {
   scope: Scope | null;
-  composerMode: "discussion" | "ai";
   aiAvailability: "checking" | "available" | "unavailable";
-  defaultSelection: CollaborationAiRequest["selection"] | null;
   aiRequests: CollaborationAiRequest[];
   approvals: CollaborationApproval[];
-  draft: string;
   aiDraft: string;
   sending: boolean;
   error: string;
   aiError: string;
 };
 
-export function SharedChatComposer({ state, actorId, canDiscuss, onDraftChange, onSend, onModeChange, onRequestAi,
+export function SharedChatComposer({ state, actorId, onDraftChange, onRequestAi,
   onControlAi, onDecideApproval }: {
   state: SharedChatComposerState;
   actorId: string;
-  canDiscuss: boolean;
   onDraftChange: (text: string) => void;
-  onSend: () => Promise<void>;
-  onModeChange: (mode: "discussion" | "ai") => void;
   onRequestAi: () => Promise<void>;
   onControlAi: (request: CollaborationAiRequest, action: "cancel" | "retry") => Promise<void>;
   onDecideApproval: (approval: CollaborationApproval, decision: ApprovalDecision) => Promise<void>;
 }) {
-  const presentation = deriveSharedChatComposerPresentation(state, canDiscuss);
-  const submit = presentation.aiMode ? onRequestAi : onSend;
+  const presentation = deriveSharedChatComposerPresentation(state);
   return <View style={styles.composer}>
-    <View accessibilityLabel="Composer mode" style={styles.modeRow}>
-      <ModeAction label="Discussion mode" text="Discussion" active={!presentation.aiMode} disabled={!canDiscuss || state.sending}
-        onPress={() => onModeChange("discussion")} />
-      <ModeAction label="Ask AI mode" text="Ask AI" active={presentation.aiMode} disabled={!presentation.canRequestAi || state.sending}
-        onPress={() => onModeChange("ai")} />
-    </View>
-    <Text style={styles.muted}>{presentation.status}</Text>
-    {presentation.aiMode && presentation.aiAvailable ? <SharedAiQueue state={state} actorId={actorId}
+    {presentation.status ? <Text accessibilityRole="text" style={styles.muted}>{presentation.status}</Text> : null}
+    {shouldShowSharedAiQueue(state) ? <SharedAiQueue state={state} actorId={actorId}
       onControlAi={onControlAi} onDecideApproval={onDecideApproval} /> : null}
     {state.error ? <Text accessibilityRole="alert" style={styles.error}>{state.error}</Text> : null}
     {state.aiError ? <Text accessibilityRole="alert" style={styles.error}>{state.aiError}</Text> : null}
@@ -56,7 +47,7 @@ export function SharedChatComposer({ state, actorId, canDiscuss, onDraftChange, 
       placeholder={presentation.placeholder} style={styles.input} />
     <Action label={state.sending ? "Sending…" : presentation.submitLabel}
       disabled={Boolean(!presentation.canWrite || state.sending || !presentation.value.trim())}
-      onPress={() => void submit()} />
+      onPress={() => void onRequestAi()} />
   </View>;
 }
 
@@ -71,16 +62,12 @@ function SharedAiQueue({ state, actorId, onControlAi, onDecideApproval }: {
   onDecideApproval: (approval: CollaborationApproval, decision: ApprovalDecision) => Promise<void>;
 }) {
   const rows = sharedAiRows(state);
-  const renderRow = useCallback(({ item }: ListRenderItemInfo<SharedAiQueueRow>) => (
-    <SharedAiQueueRowView row={item} role={state.scope?.role} actorId={actorId}
-      sending={state.sending} onControlAi={onControlAi} onDecideApproval={onDecideApproval} />
-  ), [actorId, onControlAi, onDecideApproval, state.scope?.role, state.sending]);
   return <View accessibilityLabel="Shared AI queue" style={styles.queue}>
     <Text style={styles.cardTitle}>AI requests · {state.aiRequests.length} accepted</Text>
-    <FlatList data={rows} nestedScrollEnabled contentContainerStyle={styles.queueContent}
-      keyExtractor={(row) => row.kind === "request" ? `request:${row.request.id}` : `approval:${row.approval.approvalId}`}
-      ListEmptyComponent={<Text style={styles.muted}>No AI requests yet.</Text>}
-      renderItem={renderRow} />
+    <View style={styles.queueContent}>{rows.map((row) => <SharedAiQueueRowView
+      key={row.kind === "request" ? `request:${row.request.id}` : `approval:${row.approval.approvalId}`}
+      row={row} role={state.scope?.role} actorId={actorId} sending={state.sending}
+      onControlAi={onControlAi} onDecideApproval={onDecideApproval} />)}</View>
   </View>;
 }
 
@@ -122,7 +109,9 @@ function ApprovalQueueRow({ approval, sending, onDecide }: {
 }
 
 function sharedAiRows(state: SharedChatComposerState): SharedAiQueueRow[] {
-  const rows: SharedAiQueueRow[] = state.aiRequests.map((request) => ({ kind: "request", request }));
+  const rows: SharedAiQueueRow[] = state.aiRequests
+    .filter((request) => request.state !== "completed")
+    .map((request) => ({ kind: "request", request }));
   if (state.scope?.role !== "owner") return rows;
   for (const approval of state.approvals) {
     if (approval.state === "pending") rows.push({ kind: "approval", approval });
@@ -130,56 +119,10 @@ function sharedAiRows(state: SharedChatComposerState): SharedAiQueueRow[] {
   return rows;
 }
 
-export function deriveSharedChatComposerPresentation(state: SharedChatComposerState, canDiscuss: boolean) {
-  const viewer = state.scope?.role === "viewer";
-  const aiMode = state.composerMode === "ai";
-  const aiAvailable = state.aiAvailability === "available" && state.defaultSelection !== null;
-  const canRequestAi = !viewer && aiAvailable && state.scope?.lifecycle === "shared"
-    && state.scope.capabilities.requestAi;
-  const canWrite = aiMode ? canRequestAi : canDiscuss;
-  const value = aiMode ? state.aiDraft : state.draft;
-  const status = viewer
-    ? "Viewers can read this Chat but cannot post messages or request AI."
-    : state.aiAvailability === "checking" ? "Checking shared AI…"
-      : aiAvailable ? "One active run · up to 32 pending" : "AI requests are unavailable; discussion still works.";
-  return {
-    aiMode,
-    aiAvailable,
-    canRequestAi,
-    canWrite,
-    value,
-    status,
-    inputLabel: aiMode ? "Ask AI" : "Message everyone",
-    placeholder: !canWrite ? "Read-only access" : aiMode ? "Ask AI for everyone…" : "Message everyone…",
-    submitLabel: aiMode ? "Request AI" : "Send message",
-  };
-}
-
-export function canControlSharedAiRequest(
-  role: Scope["role"] | undefined,
-  actorId: string,
-  request: CollaborationAiRequest,
-): boolean {
-  return role === "owner" || (role === "editor" && request.actor.actorId === actorId);
-}
-
 function Action({ label, onPress, disabled = false }: { label: string; onPress: () => void; disabled?: boolean }) {
   return <Pressable accessibilityRole="button" accessibilityLabel={label} disabled={disabled} onPress={onPress}
     style={({ pressed }) => [styles.action, (pressed || disabled) && styles.faded]}>
     <Text style={styles.actionText}>{label}</Text>
-  </Pressable>;
-}
-
-function ModeAction({ label, text, active, disabled, onPress }: {
-  label: string;
-  text: string;
-  active: boolean;
-  disabled: boolean;
-  onPress: () => void;
-}) {
-  return <Pressable accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ selected: active, disabled }}
-    disabled={disabled} onPress={onPress} style={[styles.modeAction, active && styles.modeActionActive, disabled && styles.faded]}>
-    <Text style={styles.cardTitle}>{text}</Text>
   </Pressable>;
 }
 
@@ -190,9 +133,6 @@ function decisionLabel(decision: ApprovalDecision): string {
 
 const styles = StyleSheet.create((theme) => ({
   composer: { gap: 8, padding: 16, borderTopWidth: 1, borderTopColor: theme.v2.colors.borderSubtle, backgroundColor: theme.v2.appColors.canvas },
-  modeRow: { flexDirection: "row", gap: 8 },
-  modeAction: { flex: 1, alignItems: "center", borderWidth: 1, borderColor: theme.v2.colors.borderSubtle, borderRadius: 10, padding: 9 },
-  modeActionActive: { backgroundColor: theme.v2.appColors.soft },
   queue: { maxHeight: 240, gap: 8, borderWidth: 1, borderColor: theme.v2.colors.borderSubtle, borderRadius: 14, padding: 12 },
   queueContent: { gap: 8 },
   queueItem: { gap: 6, borderTopWidth: 1, borderTopColor: theme.v2.colors.borderSubtle, paddingTop: 8 },

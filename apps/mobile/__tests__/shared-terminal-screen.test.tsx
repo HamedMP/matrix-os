@@ -119,6 +119,8 @@ describe("native shared terminal screen", () => {
 
     expect(await screen.findByText(/release ready/)).toBeTruthy();
     expect(screen.getByText("Watching only")).toBeTruthy();
+    expect(screen.getByLabelText("Open discussion")).toBeTruthy();
+    expect(screen.getByLabelText("Collaboration access")).toBeTruthy();
     expect(screen.queryByLabelText("Request control")).toBeNull();
     expect(screen.getByLabelText("Terminal input").props.editable).toBe(false);
     view.unmount();

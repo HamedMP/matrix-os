@@ -32,6 +32,17 @@ describe("buildGatewayUrl", () => {
 });
 
 describe("createApiClient", () => {
+  it.each([undefined, 128])("accepts 204 deletion without parsing JSON (maxBytes=%s)", async (maxBytes) => {
+    const response = new Response(null, { status: 204 });
+    const json = vi.spyOn(response, "json");
+    const client = createApiClient({
+      baseUrl: "https://app.matrix-os.com", getRuntimeSlot: () => "pr-1760",
+      fetchFn: vi.fn().mockResolvedValue(response),
+    });
+    await expect(client.delete<void>("/api/terminal/workspaces/test/tabs/test", {}, { maxBytes })).resolves.toBeUndefined();
+    expect(json).not.toHaveBeenCalled();
+  });
+
   it("opens an authenticated runtime stream without consuming its response body", async () => {
     const response = new Response("data: {}\n\n", {
       headers: { "content-type": "text/event-stream" },

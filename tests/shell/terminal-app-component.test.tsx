@@ -176,6 +176,41 @@ describe("TerminalApp workspace contract", () => {
     expect(screen.getByRole("button", { name: "Share project proj_alpha" })).toBeTruthy();
   });
 
+  it("locks an already-open menu and rename editor during deletion, then recovers on failure", () => {
+    const props = {
+      label: "Active" as const,
+      shells: [{ name: REF_KEY, subtitle: "Shell", workspaceId: WORKSPACE_ID, tabId: TAB_ID,
+        revision: 1, workspaceRevision: 1, status: "active" as const }],
+      expanded: true, foreground: true, selectedShellName: null,
+      onOpen: vi.fn(), onToggle: vi.fn(), onPin: vi.fn(), onRename: vi.fn(async () => true),
+      onDelete: vi.fn(), draggingShellName: null, dragOverShellName: null,
+      onDragStart: vi.fn(), onDragOver: vi.fn(), onDrop: vi.fn(), onDragEnd: vi.fn(),
+    };
+    const view = render(<ShellSessionGroup {...props} deletingShellNames={[]} />);
+    fireEvent.mouseEnter(screen.getByTestId(`terminal-session-card-${REF_KEY}`));
+    fireEvent.click(screen.getByLabelText("More actions for Shell"));
+    view.rerender(<ShellSessionGroup {...props} deletingShellNames={[REF_KEY]} />);
+    for (const item of screen.getAllByRole("menuitem")) {
+      expect((item as HTMLButtonElement).disabled).toBe(true);
+      fireEvent.click(item);
+    }
+    expect(props.onPin).not.toHaveBeenCalled();
+    expect(props.onToggle).not.toHaveBeenCalled();
+    expect(props.onDelete).not.toHaveBeenCalled();
+    view.rerender(<ShellSessionGroup {...props} deletingShellNames={[]} />);
+    fireEvent.click(screen.getByRole("menuitem", { name: "Pin", exact: true }));
+    expect(props.onPin).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByLabelText("Rename Shell"));
+    const input = screen.getByRole("textbox", { name: "Session name for Shell" });
+    fireEvent.change(input, { target: { value: "Renamed" } });
+    view.rerender(<ShellSessionGroup {...props} deletingShellNames={[REF_KEY]} />);
+    expect((input as HTMLInputElement).disabled).toBe(true);
+    fireEvent.blur(input);
+    expect(props.onRename).not.toHaveBeenCalled();
+    view.rerender(<ShellSessionGroup {...props} deletingShellNames={[]} />);
+    expect((input as HTMLInputElement).disabled).toBe(false);
+  });
+
   it("opens a canvas-provided TerminalRef without creating another tab", async () => {
     render(<TerminalApp initialSessionId={REF_KEY} />);
     await settle();
@@ -183,6 +218,37 @@ describe("TerminalApp workspace contract", () => {
     const props = paneGridSpy.mock.lastCall?.[0] as { paneTree: { sessionId?: string } };
     expect(props.paneTree.sessionId).toBe(REF_KEY);
     expect(vi.mocked(fetch).mock.calls.some(([input, init]) => String(input).includes("/tabs") && init?.method === "POST")).toBe(false);
+  });
+
+  it("keeps a pending deletion visible and ignores an older list after confirmation", async () => {
+    const fallback = vi.mocked(fetch).getMockImplementation()!;
+    let confirm!: (response: Response) => void;
+    let stale!: (response: Response) => void;
+    let delayList = false, deleted = false;
+    vi.mocked(fetch).mockImplementation((input, init) => {
+      if (init?.method === "DELETE") return new Promise<Response>((resolve) => { confirm = resolve; });
+      if (String(input).endsWith("/api/terminal/workspaces")) {
+        if (delayList) { delayList = false; return new Promise<Response>((resolve) => { stale = resolve; }); }
+        return Promise.resolve(json({ workspaces: [workspace(deleted ? [] : [tab()])] }));
+      }
+      return fallback(input, init);
+    });
+    render(<TerminalApp initialSessionId={REF_KEY} />); await settle();
+    fireEvent.mouseEnter(screen.getByTestId(`terminal-session-card-${REF_KEY}`));
+    fireEvent.click(screen.getByRole("button", { name: "More actions for Shell" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Close" })); await settle();
+    fireEvent.click(screen.getByRole("button", { name: "Delete", exact: true })); await settle();
+    expect(screen.getByTestId(`terminal-session-card-${REF_KEY}`)).toBeTruthy();
+    expect(screen.getByText("Deleting…")).toBeTruthy();
+    for (const name of ["Open Shell", "Rename Shell", "More actions for Shell", "Drag Shell session"]) {
+      expect((screen.getByLabelText(name, { exact: true }) as HTMLButtonElement).disabled).toBe(true);
+    }
+    delayList = true;
+    fireEvent.click(screen.getByRole("button", { name: "Refresh sessions" })); await settle();
+    deleted = true; confirm(json({ ok: true })); await settle();
+    expect(screen.queryByTestId(`terminal-session-card-${REF_KEY}`)).toBeNull();
+    stale(json({ workspaces: [workspace()] })); await settle();
+    expect(screen.queryByTestId(`terminal-session-card-${REF_KEY}`)).toBeNull();
   });
 
   it("loads sidebar rows from workspace tabs", async () => {

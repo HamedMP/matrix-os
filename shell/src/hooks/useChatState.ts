@@ -1,7 +1,7 @@
 "use client";
 import type { CanonicalSubmitChatInputRequest } from "@matrix-os/contracts";
 
-import type { ChatAgentClient } from "@matrix-os/ui";
+import type { ChatAgentClient, ChatCollaborationView } from "@matrix-os/ui";
 import type { CanonicalChatQueuedTurn } from "@matrix-os/contracts";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useSocket, type ServerMessage } from "@/hooks/useSocket";
@@ -25,6 +25,9 @@ interface QueuedMessage {
 const MAX_SEEN_REPLAY_EVENTS = 2_000;
 
 export interface ChatState {
+  collaborationView?: ChatCollaborationView;
+  openSharedChat?: (scopeId: string) => void;
+  openSharedHome?: () => void;
   unreadOnly?: boolean;
   setUnreadOnly?: (value: boolean) => void;
   readState?: import("@matrix-os/contracts").CanonicalChatReadState;
@@ -42,6 +45,7 @@ export interface ChatState {
   connected: boolean;
   queue: QueuedMessage[];
   providerSelection?: CanonicalChatModelSelection;
+  boundProviderInstanceId?: string;
   conversations: ReturnType<typeof useConversation>["conversations"];
   activeConversationTitle?: string;
   renameConversation?: (id: string, title: string) => Promise<boolean>;

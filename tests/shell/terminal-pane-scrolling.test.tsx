@@ -2,6 +2,7 @@
 import React from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { assertSoftResizeLifecycle, installSoftResizeGeometry } from "../helpers/terminal-soft-resize-regression";
 
 const originalClipboardDescriptor = Object.getOwnPropertyDescriptor(navigator, "clipboard");
 const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(navigator, "platform");
@@ -539,6 +540,39 @@ describe("TerminalPane scrolling", () => {
     Reflect.deleteProperty(window, "visualViewport");
   });
 
+  it.each([1, 0.75])("keeps the last canonical row accessible after soft viewport resizing at Web Canvas zoom %s", async (canvasZoom) => {
+    const { container } = render(<TerminalPane
+      paneId="soft-resize-regression" cwd="" theme={theme} isFocused
+      sessionId={TERMINAL_REF_KEY} canvasZoom={canvasZoom}
+      shouldCacheOnUnmount={() => false} shouldDestroyOnUnmount={() => false}
+    />);
+    await waitFor(() => expect(WebSocketMock.instances).toHaveLength(1));
+    await waitFor(() => expect(ResizeObserverMock.instances.length).toBeGreaterThan(0));
+    const terminal = createdTerminals[0];
+    const host = container.querySelector<HTMLElement>("[data-terminal-viewport]")!;
+    const geometry = installSoftResizeGeometry(terminal, host);
+    geometry.setHostSize(1_600, 900);
+    // Real soft-client responses preserve canonical size instead of echoing proposals.
+    await act(async () => {
+      WebSocketMock.instances[0].onmessage?.({ data: JSON.stringify({ ...attachedFrame(0, { cols: 120, rows: 36 }), ownership: "observer" }) });
+      WebSocketMock.instances[0].onmessage?.({ data: JSON.stringify(replayEndFrame(0)) });
+      terminal.flushWrites();
+    });
+    await assertSoftResizeLifecycle({
+      terminal, host, geometry,
+      resizeHost: () => ResizeObserverMock.instances.at(-1)!.trigger(),
+    });
+    expect(stubWs.send.mock.calls.map(([frame]) => JSON.parse(frame as string))
+      .filter((frame) => frame.type === "resize").every((frame) => frame.mode === "soft")).toBe(true);
+    // xterm suppresses native DOM selection on mousedown. Forwarding through
+    // Canvas/grid transforms must preserve that cancellation on the real event.
+    terminal.element!.addEventListener("mousedown", (event) => event.preventDefault());
+    const pointer = new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0, buttons: 1 });
+    fireEvent(terminal.element!, pointer);
+    expect(pointer.defaultPrevented).toBe(true);
+
+  });
+
   it("attaches browser terminal tabs as soft clients with proposed dimensions", async () => {
     render(
       <TerminalPane
@@ -639,6 +673,68 @@ describe("TerminalPane scrolling", () => {
     WebSocketMock.instances[0]!.onopen?.();
 
     expect(socketHealthConfigs.at(-1)?.pingIntervalMs).toBe(10_000);
+  });
+
+  it("keeps the first automatic reconnect silent, then warns after the retry fails", async () => {
+    const view = render(
+      <TerminalPane
+        paneId="pane-quiet-reconnect"
+        cwd=""
+        theme={theme}
+        isFocused
+        sessionId={TERMINAL_REF_KEY}
+        isClosing={false}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+
+    await waitFor(() => expect(WebSocketMock.instances).toHaveLength(1));
+    const nativeSetTimeout = window.setTimeout.bind(window);
+    let runReconnect: (() => void) | null = null;
+    let runReconnectBanner: (() => void) | null = null;
+    const setTimeoutSpy = vi.spyOn(window, "setTimeout").mockImplementation((handler, timeout, ...args) => {
+      if (timeout === 750) {
+        runReconnectBanner = () => {
+          if (typeof handler === "function") handler(...args);
+        };
+        return 750 as unknown as ReturnType<typeof window.setTimeout>;
+      }
+      if (typeof timeout === "number" && timeout >= 800 && timeout <= 1_200) {
+        runReconnect = () => {
+          if (typeof handler === "function") handler(...args);
+        };
+        return 1_000 as unknown as ReturnType<typeof window.setTimeout>;
+      }
+      return nativeSetTimeout(handler, timeout, ...args);
+    });
+
+    try {
+      await act(async () => {
+        WebSocketMock.instances[0]!.onclose?.();
+      });
+      expect(view.queryByText("Reconnecting terminal...")).toBeNull();
+      expect(runReconnectBanner).toBeNull();
+      expect(runReconnect).not.toBeNull();
+
+      await act(async () => {
+        runReconnect?.();
+      });
+      await waitFor(() => expect(WebSocketMock.instances).toHaveLength(2));
+
+      await act(async () => {
+        WebSocketMock.instances[1]!.onclose?.();
+      });
+      expect(runReconnectBanner).not.toBeNull();
+
+      await act(async () => {
+        runReconnectBanner?.();
+      });
+      await waitFor(() => expect(view.getByText("Reconnecting terminal...")).toBeTruthy());
+    } finally {
+      setTimeoutSpy.mockRestore();
+    }
   });
 
   it("renders the durable observer snapshot for a terminal tab", async () => {
@@ -770,6 +866,14 @@ describe("TerminalPane scrolling", () => {
     const fitAddon = createdFitAddons[0];
     const pane = container.querySelector("[data-terminal-viewport]") as HTMLElement;
     fitAddon.proposeDimensions.mockReturnValue({ cols: 154, rows: 51 });
+    // No canonical mutation is sent until the server acknowledges writer ownership.
+    expect(stubWs.send.mock.calls.filter(([raw]) => JSON.parse(raw as string).type === "resize")).toHaveLength(0);
+    await act(async () => {
+      WebSocketMock.instances[0].onmessage?.({ data: JSON.stringify({
+        ...attachedFrame(0, { cols: terminal.cols, rows: terminal.rows }), ownership: "writer",
+      }) });
+    });
+    terminal.resize.mockClear();
 
     await act(async () => {
       ResizeObserverMock.instances.at(-1)!.trigger();
@@ -779,7 +883,7 @@ describe("TerminalPane scrolling", () => {
     expect(stubWs.send).toHaveBeenCalledWith(JSON.stringify({
       type: "resize",
       terminalRef: TERMINAL_REF,
-      mode: "soft",
+      mode: "hard",
       size: { cols: 154, rows: 51 },
     }));
     expect(terminal.resize).not.toHaveBeenCalled();
@@ -830,6 +934,7 @@ describe("TerminalPane scrolling", () => {
     expect(terminal.resize).not.toHaveBeenCalled();
 
     await act(async () => {
+      socket.onmessage?.({ data: JSON.stringify({ ...attachedFrame(0), revision: 20 }) });
       socket.onmessage?.({
         data: JSON.stringify({ type: "canonical-size", terminalRef: TERMINAL_REF, revision: 2, canonicalSize: { cols: 146, rows: 47 } }),
       });
@@ -862,6 +967,7 @@ describe("TerminalPane scrolling", () => {
     const pane = container.querySelector("[data-terminal-viewport]") as HTMLElement;
     Object.defineProperty(pane, "clientWidth", { configurable: true, value: 700 });
     Object.defineProperty(pane, "clientHeight", { configurable: true, value: 800 });
+    pane.scrollLeft = 100;
 
     expect(buildAuthenticatedWebSocketUrl).toHaveBeenCalledWith(
       "/ws/terminal/tab",
@@ -877,6 +983,9 @@ describe("TerminalPane scrolling", () => {
     await waitFor(() => expect(terminal.resize).toHaveBeenLastCalledWith(140, 40));
     await waitFor(() => expect(terminal.options.fontSize).toBe(10));
     await waitFor(() => expect(terminal.element?.style.transform).toBe("scale(1)"));
+    expect((terminal.options.fontSize as number)).toBeGreaterThanOrEqual(10);
+    expect(pane.style.overflowX).toBe("auto");
+    expect(pane.scrollLeft).toBe(100);
     expect(terminal.cols).toBe(140);
     expect(terminal.rows).toBe(40);
     expect(fitAddon.fit).not.toHaveBeenCalled();
@@ -1395,6 +1504,47 @@ describe("TerminalPane scrolling", () => {
     expect(url.searchParams.get("fromSeq")).toBe("0");
     expect(url.searchParams.get("inputCapability")).toBe("binary-input-v1");
     expect(url.searchParams.get("fromSeq")).not.toBe(String(Number.MAX_SAFE_INTEGER));
+  });
+
+  it("claims focused writer ownership and remains attached when another device takes over", async () => {
+    render(
+      <TerminalPane
+        paneId="pane-live-ownership-test"
+        cwd=""
+        theme={theme}
+        isFocused
+        isClosing={false}
+        sessionId={TERMINAL_REF_KEY}
+        shouldCacheOnUnmount={() => false}
+        shouldDestroyOnUnmount={() => false}
+        onFocus={() => {}}
+      />,
+    );
+
+    await waitFor(() => expect(WebSocketMock.instances).toHaveLength(1));
+    const socket = WebSocketMock.instances[0]!;
+    expect(new URL(socket.url).searchParams.get("lease")).toBe("exclusive");
+
+    await act(async () => {
+      socket.onmessage?.({ data: JSON.stringify({ ...attachedFrame(0), ownership: "writer", leaseEpoch: 1 }) });
+      socket.onmessage?.({
+        data: JSON.stringify({ type: "lease-revoked", terminalRef: TERMINAL_REF, epoch: 1 }),
+      });
+    });
+
+    expect(screen.getByText("Live on another device.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Continue here" })).toBeTruthy();
+    expect(WebSocketMock.instances).toHaveLength(1);
+    expect(socket.readyState).toBe(WebSocket.OPEN);
+
+    await act(async () => {
+      const onClose = socket.onclose;
+      socket.close();
+      onClose?.();
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await waitFor(() => expect(WebSocketMock.instances).toHaveLength(2));
+    expect(new URL(WebSocketMock.instances[1]!.url).searchParams.get("lease")).toBe("observe");
   });
 
   it("renders retained output into a new xterm after a full canonical-session remount", async () => {

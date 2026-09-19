@@ -571,7 +571,7 @@ describe("SharedChatComposer", () => {
     render(<Harness locked onNewChat={onNewChat} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
-    expect(screen.getByText("Provider Instance is locked after the first Turn.")).toBeTruthy();
+    expect(screen.getByText("This Chat is bound to its agent harness. Start or fork a new Chat to use another harness.")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Claude Code harness, Available" }).getAttribute("aria-disabled"))
       .toBe("true");
     fireEvent.click(screen.getByRole("option", { name: /GPT-5.6-Terra/ }));

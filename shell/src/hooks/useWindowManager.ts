@@ -30,6 +30,7 @@ export interface AppWindow {
   zIndex: number;
   terminalLayoutId?: string;
   terminalPersistence?: TerminalPersistence;
+  sharedTerminalScopeId?: string;
 }
 
 export interface LayoutWindow {
@@ -130,12 +131,17 @@ interface WindowManagerState {
   fullscreenWindowId: string | null;
 }
 
+interface TerminalWindowOptions {
+  terminalPersistence?: TerminalPersistence;
+  sharedTerminalScopeId?: string;
+}
+
 interface WindowManagerActions {
   openWindow: (
     name: string,
     path: string,
     dockXOffset: number,
-    options?: { terminalPersistence?: TerminalPersistence },
+    options?: TerminalWindowOptions,
   ) => void;
   openWindowExclusive: (name: string, path: string, dockXOffset: number, basePath?: string) => void;
   closeWindow: (id: string) => void;
@@ -274,7 +280,7 @@ function createWindowRecord(
   path: string,
   fallbackX: number,
   fallbackY: number,
-  options: { terminalPersistence?: TerminalPersistence } = {},
+  options: TerminalWindowOptions = {},
 ): AppWindow {
   const storedLayout = state.closedLayouts.get(path);
   const saved = storedLayout ? normalizeRestoredLayout(path, storedLayout) : undefined;
@@ -298,6 +304,7 @@ function createWindowRecord(
     zIndex: state.nextZ,
     terminalLayoutId: terminalLayoutIdForPath(path, terminalPersistence, saved?.terminalLayoutId),
     ...(terminalPersistence ? { terminalPersistence } : {}),
+    ...(options.sharedTerminalScopeId ? { sharedTerminalScopeId: options.sharedTerminalScopeId } : {}),
   };
 }
 
@@ -348,6 +355,7 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
         const existing = zState.windows.find((w) => (
           w.path === path
           && (!desiredPersistence || (w.terminalPersistence ?? "durable") === desiredPersistence)
+          && w.sharedTerminalScopeId === options.sharedTerminalScopeId
         ));
         if (existing) {
           return {
@@ -613,7 +621,9 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
           newWindows.push({
             // Bootstrap may settle after a launch link has already mounted Chat.
             // Keep mounted state (including a consumed recipe draft) across hydration.
-            id: state.windows.find((window) => window.path === s.path)?.id
+            id: state.windows.find((window) => (
+              window.path === s.path && window.terminalPersistence !== "ephemeral"
+            ))?.id
               ?? `win-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
             title: s.title,
             path: s.path,
@@ -628,7 +638,12 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
           });
         }
 
-        const windows = [...state.windows.filter((w) => !saved.some((s) => s.path === w.path)), ...newWindows];
+        const windows = [
+          ...state.windows.filter((w) => (
+            w.terminalPersistence === "ephemeral" || !saved.some((s) => s.path === w.path)
+          )),
+          ...newWindows,
+        ];
         const visibleFocused = windows
           .filter((w) => !w.minimized)
           .reduce<AppWindow | null>((best, w) => !best || w.zIndex > best.zIndex ? w : best, null);

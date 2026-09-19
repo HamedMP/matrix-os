@@ -9,6 +9,12 @@ const mockUseProjects = jest.fn();
 const mockSelectChat = jest.fn();
 const mockStartDraftChat = jest.fn();
 const mockUseSettingsSystemInfo = jest.fn();
+const mockFetchCollaborationInbox = jest.fn(async () => ({ items: [] }));
+
+jest.mock("@clerk/clerk-expo", () => ({ useAuth: () => ({ getToken: async () => "clerk-token" }) }));
+jest.mock("@/lib/requests/collaboration", () => ({
+  fetchCollaborationInbox: () => mockFetchCollaborationInbox(),
+}));
 
 jest.mock("@/lib/queries/use-canonical-chats", () => ({
   useCanonicalChats: () => mockUseCanonicalChats(),
@@ -155,7 +161,8 @@ describe("authenticated drawer layout", () => {
           navigation: { navigate, closeDrawer },
           descriptors: {},
           computerName: "Studio Mac",
-          collaborationEnabled: false,
+          collaborationEnabled: true,
+          pendingInvitationCount: 3,
           recentChatsLoading: false,
           recentChats: [
             chatRecord({ id: "chat-2", title: "Ship the mobile sidebar", updatedAt: "2026-01-02T00:00:00.000Z" }),
@@ -176,6 +183,8 @@ describe("authenticated drawer layout", () => {
     expect(screen.getByLabelText("Terminal")).toBeTruthy();
     expect(screen.getByLabelText("Integrations")).toBeTruthy();
     expect(screen.getByLabelText("Apps")).toBeTruthy();
+    expect(screen.getByLabelText("Shared with me, 3 pending invitations")).toBeTruthy();
+    expect(screen.getByText("3")).toBeTruthy();
     expect(screen.queryByLabelText("Search")).toBeNull();
 
     expect(screen.getByText("Ship the mobile sidebar")).toBeTruthy();

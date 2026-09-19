@@ -35,6 +35,7 @@ export interface Tab {
   projectSlug?: string;
   chatId?: string;
   chatTitle?: string;
+  sharedScopeId?: string;
   chatView?: "index" | "draft" | "conversation";
   workRoute?: WorkRoute;
   taskId?: string;
@@ -86,7 +87,7 @@ function isWorkRouteKind(kind: TabKind): kind is "work" | "chat" | "projects" | 
 function normalizeWorkTabSpec(spec: TabSpec): TabSpec {
   if (!isWorkRouteKind(spec.kind)) return spec;
   const workRoute: WorkRoute = spec.kind === "work" ? spec.workRoute ?? "chat" : spec.kind;
-  const chatTitle = workRoute !== "projects" && spec.chatId
+  const chatTitle = workRoute !== "projects" && (spec.chatId || spec.sharedScopeId)
     ? spec.chatTitle ?? (spec.kind === "chat" ? spec.title : undefined)
     : undefined;
   return {
@@ -194,11 +195,15 @@ export const useTabs = create<TabsState>()((set, get) => ({
             ? normalizedSpec.chatView ?? (nextChatId ? "conversation" : "index")
             : normalizedSpec.chatView
           : existing.chatView;
-        const nextChatTitle = nextChatId ? normalizedSpec.chatTitle : undefined;
+        const nextSharedScopeId = routeOwnsChatSelection
+          ? normalizedSpec.sharedScopeId
+          : existing.sharedScopeId;
+        const nextChatTitle = nextChatId || nextSharedScopeId ? normalizedSpec.chatTitle : undefined;
         const tabs = existing.title === normalizedSpec.title
           && existing.chatId === nextChatId
           && existing.chatTitle === nextChatTitle
           && existing.chatView === nextChatView
+          && existing.sharedScopeId === nextSharedScopeId
           && existing.projectSlug === normalizedSpec.projectSlug
           && existing.workRoute === normalizedSpec.workRoute
           ? state.tabs
@@ -210,6 +215,7 @@ export const useTabs = create<TabsState>()((set, get) => ({
                 chatId: nextChatId,
                 chatTitle: nextChatTitle,
                 chatView: nextChatView,
+                sharedScopeId: nextSharedScopeId,
                 workRoute: normalizedSpec.workRoute,
               }
             : tab);
@@ -254,6 +260,7 @@ export const useTabs = create<TabsState>()((set, get) => ({
           title: route.title,
           chatId: route.chatId,
           chatView: route.chatView,
+          sharedScopeId: undefined,
         }
       : tab),
   })),
@@ -334,7 +341,8 @@ export const useTabs = create<TabsState>()((set, get) => ({
     const liveNames = new Set(liveSessionNames);
     const removedIds: Record<string, true> = {};
     for (const tab of state.tabs) {
-      if (tab.kind === "terminal" && (!tab.sessionName || !liveNames.has(tab.sessionName))) {
+      if (tab.kind === "terminal" && !tab.sharedScopeId
+        && (!tab.sessionName || !liveNames.has(tab.sessionName))) {
         removedIds[tab.id] = true;
       }
     }
