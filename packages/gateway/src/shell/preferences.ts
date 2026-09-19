@@ -1,7 +1,7 @@
 import { link, mkdir, readFile, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { z } from "zod/v4";
-import { TerminalKeyboardPreferencesSchema } from "@matrix-os/contracts";
+import { TerminalKeyboardPreferencesReadSchema, TerminalKeyboardPreferencesSchema } from "@matrix-os/contracts";
 import { writeUtf8FileAtomic } from "./atomic-write.js";
 import { shellError } from "./errors.js";
 import { validateSessionName } from "./names.js";
@@ -77,6 +77,14 @@ export const ShellPreferencesSchema = z.preprocess((input) => {
   keyboard: TerminalKeyboardPreferencesSchema.default(() => TerminalKeyboardPreferencesSchema.parse({})),
 }));
 
+const StoredShellPreferencesSchema = z.object({
+  keyboard: TerminalKeyboardPreferencesReadSchema.optional(),
+}).passthrough();
+
+function parseStoredShellPreferences(input: unknown): ShellPreferences {
+  return ShellPreferencesSchema.parse(StoredShellPreferencesSchema.parse(input));
+}
+
 export type ShellPreferences = z.infer<typeof ShellPreferencesSchema>;
 export type ShellThemeId = z.infer<typeof ShellThemeIdSchema>;
 
@@ -104,7 +112,7 @@ export class ShellPreferencesStore {
     const safeName = validateSessionName(name);
     try {
       const raw = await readFile(this.pathFor(safeName), "utf-8");
-      return ShellPreferencesSchema.parse(JSON.parse(raw));
+      return parseStoredShellPreferences(JSON.parse(raw));
     } catch (err: unknown) {
       if (
         err instanceof Error &&
@@ -127,7 +135,7 @@ export class ShellPreferencesStore {
   async loadGlobal(): Promise<ShellPreferences> {
     try {
       const raw = await readFile(this.globalPath(), "utf-8");
-      return ShellPreferencesSchema.parse(JSON.parse(raw));
+      return parseStoredShellPreferences(JSON.parse(raw));
     } catch (err: unknown) {
       if (
         err instanceof Error &&

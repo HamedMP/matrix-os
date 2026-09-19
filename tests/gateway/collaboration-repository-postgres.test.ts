@@ -145,6 +145,28 @@ realDescribe("CollaborationRepository real PostgreSQL serialization", () => {
     const rejected = results.find((result) => result.status === "rejected");
     expect(rejected).toMatchObject({ status: "rejected", reason: { code: "conflict" } });
   });
+
+  it("serializes simultaneous accept and target decline", async () => {
+    const scope = await createScope();
+    const invitation = await repository.createInvitation({
+      scopeId: scope.id, actorId: collaborationActors.owner, targetActorId: collaborationActors.editor,
+      role: "editor", clientRequestId: uuid(50), expectedRevision: 0,
+      payloadHash: "d".repeat(64), expiresAt: future,
+    });
+    const results = await Promise.allSettled([
+      repository.acceptInvitation({
+        invitationId: invitation.invitationId, actorId: collaborationActors.editor,
+        clientRequestId: uuid(51), expectedRevision: 1, payloadHash: "e".repeat(64),
+      }),
+      repository.declineInvitation({
+        invitationId: invitation.invitationId, actorId: collaborationActors.editor,
+        clientRequestId: uuid(52), expectedRevision: 1, payloadHash: "f".repeat(64),
+      }),
+    ]);
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.find((result) => result.status === "rejected"))
+      .toMatchObject({ status: "rejected", reason: { code: "conflict" } });
+  });
 });
 
 function uuid(index: number): string {

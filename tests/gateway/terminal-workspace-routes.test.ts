@@ -425,8 +425,11 @@ describe("terminal workspace gateway routes", () => {
   });
 
   it("deletes a terminal tab by exact IDs instead of retaining an exited record", async () => {
-    const deleteTab = vi.fn(async () => undefined);
+    const deleteTab = vi.fn(async function (this: { marker: string }) {
+      expect(this.marker).toBe("runtime-receiver");
+    });
     const runtime = {
+      marker: "runtime-receiver",
       listWorkspaces: vi.fn(async () => [workspace]),
       ensureWorkspace: vi.fn(async () => workspace),
       createTab: vi.fn(),

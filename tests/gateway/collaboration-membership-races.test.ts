@@ -29,6 +29,8 @@ realDescribe("collaboration membership real PostgreSQL races", () => {
       resourceId: collaborationIds.chat,
       authorityRuntimeId: collaborationIds.runtime,
     });
+    await fixture.db.updateTable("collaboration_scopes").set({ lifecycle: "shared" })
+      .where("id", "=", collaborationIds.scope).execute();
   });
 
   afterEach(async () => {

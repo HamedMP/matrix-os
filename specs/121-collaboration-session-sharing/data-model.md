@@ -39,7 +39,7 @@ A direct Chat scope may exist inside a private project without granting project 
 | invited_by / accepted_at / expires_at | Verified inviter, explicit acceptance, bounded expiry |
 | revision / joined_at / updated_at | Conditional role changes and preserved original join history |
 
-The owner has exactly one accepted owner row in the initial model. Transfer cannot remove the final owner before the successor is committed. Owner+pending+accepted slots cannot exceed eight; lock the scope row before counting/upserting. A renewal of a revoked/expired invitation uses a new invitation ID, so accepting an old link cannot reactivate access. Target account is immutable for that invitation.
+The owner has exactly one accepted owner row in the initial model. Transfer cannot remove the final owner before the successor is committed. Owner+pending+accepted slots cannot exceed eight; lock the scope row before counting/upserting. A renewal of a revoked/expired invitation uses a new invitation ID, so accepting an old link cannot reactivate access. Target account is immutable for that invitation. User-entered email/username identifiers are resolved by platform before this transaction; only the canonical actor ID is stored. Owner collaboration tables, events, proofs, audit rows and directory metadata never store the submitted email address.
 
 For inherited children, resolve the project member row inside the authorizing operation. Do not copy memberships into child grant tables. Existing `chat_members` may remain a compatibility projection maintained from the common authority, but shared authorization must never consult it as an independent fallback. Private Chats retain existing owner semantics.
 
@@ -92,6 +92,10 @@ Shared queue states: `queued -> claimed -> running -> completed / failed / cance
 
 Queued request admission locks effective scope then Chat row, validates actor and policy, enforces cap, allocates accepted_seq, stores replay hash and message, and commits outbox. Dispatcher rechecks original actor, epoch, and capability before claim/execution. Personal queue ordering/steering behavior remains personal; shared queues do not expose reorder or steer operations outside the accepted spec.
 
+Provider authority is canonical Chat metadata under that same Chat row lock. Ordinary shared request payloads contain no selection, Driver, Instance, credential or resume authority. For a bound Chat, admission copies the current selection only when its Instance matches `bound_instance_id`, and uses `bound_driver_kind`; claim revalidates both before creating a Turn or Run. For an unbound Chat, only an owner-authored request may use the owner's canonical current selection to create the first binding at claim. Editors receive `owner_binding_required`/unavailable behavior and cannot establish it. The Instance is immutable; the model may change within that Instance because existing canonical Chat behavior updates `current_selection` per Run.
+
+An unsupported binding is not remapped. Admission fails unavailable, and claim terminalizes any legacy or racing incompatible queued row as unavailable without changing `current_selection` or any `bound_*` column. Shared execution never loads `chat_run_adapter_state` from private Runs.
+
 ### chat_collaboration_commands
 
 id, scope_id, chat_id, request_id/run_id, actor_id, kind (`approval`, `cancel`, `retry`), payload_hash, expected_state_revision, authorized_epoch, state, result_ref, timestamps. Unique action decision per pending approval and actor-request operation idempotency. Transaction claims the decision and records attribution/outbox; adapter calls occur outside locks. An owner-only approval must not be satisfiable by an editor through a legacy route.
@@ -126,3 +130,4 @@ Platform routing proof is short-lived transport authentication, not a durable gr
 5. Owner file writes and app/Chat/Terminal changes honor the generation fence. Filesystem/DB work is a journaled saga with an authority commit point, not a claimed cross-filesystem transaction.
 6. Deletes filter already-deleted rows, cascade only owned scope state, publish after commit and preserve unrelated participant data. Ended grants cannot be revived by replaying old accept/confirm operations.
 7. Rollback is capability disable or a verified compatible binary. Keep schema/history, invalidate stale proofs/epochs, and retain owner export/recovery. Binary downgrade to old owner-only code must be blocked for shared resources.
+8. Startup reconciliation locks a bounded set of demonstrably mismatched Chats in one transaction. It treats the immutable binding as read-only evidence and restores `current_selection` only from the earliest Run on `bound_at_turn_id` whose Driver and Instance exactly match the binding. Valid rows are untouched; absent provenance fails closed with a bounded content-free diagnostic. Repeated startup is safe and cannot change a binding to `claude_shared`.

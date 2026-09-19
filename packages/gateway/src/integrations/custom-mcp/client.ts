@@ -1,5 +1,5 @@
 import { request as httpsRequest } from "node:https";
-import type { LookupFunction } from "node:net";
+import { createPinnedCustomMcpLookup } from "./pinned-lookup.js";
 import { createHash } from "node:crypto";
 import { validateCustomMcpUrl } from "./security.js";
 import type { CustomMcpTool } from "./types.js";
@@ -63,9 +63,7 @@ export const pinnedRemoteMcpRequester: RemoteMcpRequester = async (input) => {
     throw new Error("Custom MCP request exceeds 64 KB limit");
   }
   const target = await validateCustomMcpUrl(input.url);
-  const lookup: LookupFunction = ((_hostname, _options, callback) => {
-    callback(null, target.address, target.family);
-  }) as LookupFunction;
+  const lookup = createPinnedCustomMcpLookup(target);
 
   return new Promise<RemoteMcpResponse>((resolve, reject) => {
     const request = httpsRequest(target.url, {

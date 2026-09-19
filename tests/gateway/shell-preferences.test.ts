@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -7,6 +7,7 @@ import { createShellRoutes } from "../../packages/gateway/src/shell/routes.js";
 import { createTerminalWorkspaceRoutes } from "../../packages/gateway/src/shell/workspace-routes.js";
 import {
   ShellPreferencesSchema,
+  ShellPreferencesPatchSchema,
   ShellPreferencesStore,
   type ShellPreferences,
 } from "../../packages/gateway/src/shell/preferences.js";
@@ -46,6 +47,29 @@ describe("shell preferences", () => {
 
     expect(() => ShellPreferencesSchema.parse({ fontFamily: "../bad" })).toThrow();
     expect(() => ShellPreferencesSchema.parse({ shellThemeId: "dracula" })).toThrow();
+  });
+
+  it("reads existing Ctrl+V overrides without resetting other stored preferences or rewriting the file", async () => {
+    const root = await tempRoot();
+    const directory = join(root, "system", "shell-preferences");
+    await mkdir(directory, { recursive: true });
+    const stored = JSON.stringify({
+      shellThemeId: "matrix", fontFamily: "Berkeley Mono", smoothScroll: false,
+      keyboard: { profile: "standard", overrides: { "split-right": "Ctrl+V", "split-down": "Ctrl+Shift+D" } },
+    });
+    const file = join(directory, "terminal-global.json");
+    await writeFile(file, stored);
+    const preferences = await new ShellPreferencesStore({ homePath: root }).loadGlobal();
+    expect(preferences).toMatchObject({
+      shellThemeId: "matrix", fontFamily: "Berkeley Mono", smoothScroll: false,
+      keyboard: { profile: "standard", overrides: { "split-right": null, "split-down": "Ctrl+Shift+D" } },
+    });
+    expect(await readFile(file, "utf8")).toBe(stored);
+    const invalidWrite = { keyboard: { profile: "standard", overrides: { "split-right": "Ctrl+V" } } };
+    expect(ShellPreferencesPatchSchema.safeParse(invalidWrite).success).toBe(false);
+    expect(ShellPreferencesSchema.safeParse(invalidWrite).success).toBe(false);
+    await expect(new ShellPreferencesStore({ homePath: root }).saveGlobal(invalidWrite)).rejects.toThrow();
+    expect(await readFile(file, "utf8")).toBe(stored);
   });
 
   it("persists per-session preferences atomically", async () => {

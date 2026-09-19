@@ -9,6 +9,8 @@ import {
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
+import { SessionDiscussionSheet } from "./SessionDiscussionSheet";
+import { SessionAccessControl } from "./SessionAccessControl";
 import {
   collaborationTerminalUrl,
   controlSharedTerminal,
@@ -66,6 +68,7 @@ export function SharedTerminalScreen({ scopeId, actorId, getToken, onBack }: {
 }) {
   const [state, dispatch] = useReducer(reduce, initialState);
   const [input, setInput] = useState("");
+  const [discussionOpen, setDiscussionOpen] = useState(false);
   const terminalRef = useRef<CollaborationTerminal | null>(null);
   const connectionIdRef = useRef<string | null>(null);
 
@@ -253,9 +256,17 @@ export function SharedTerminalScreen({ scopeId, actorId, getToken, onBack }: {
 
   return <View style={styles.screen}>
     <View style={styles.header}>
-      <Pressable accessibilityRole="button" accessibilityLabel="Back to Shared with me" onPress={onBack}>
-        <Text style={styles.back}>‹ Shared with me</Text>
-      </Pressable>
+      <View style={styles.headerTop}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Back to Shared with me" onPress={onBack}>
+          <Text style={styles.back}>‹ Shared with me</Text>
+        </Pressable>
+        <View style={styles.headerActions}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Open discussion" onPress={() => setDiscussionOpen(true)} style={styles.headerAction}>
+            <Text style={styles.headerActionText}>Discussion</Text>
+          </Pressable>
+          {state.scope ? <SessionAccessControl key={state.scope.id} scope={state.scope} getToken={getToken} /> : null}
+        </View>
+      </View>
       <Text style={styles.title}>Shared terminal</Text>
       <Text style={styles.status}>{controlLabel}</Text>
     </View>
@@ -285,6 +296,8 @@ export function SharedTerminalScreen({ scopeId, actorId, getToken, onBack }: {
         <Action label="Paste text" disabled={!holdsControl || !input || state.pending} onPress={() => { void submitText("paste"); }} />
       </View>
     </View>
+    {state.scope ? <SessionDiscussionSheet open={discussionOpen} scope={state.scope} actorId={actorId}
+      getToken={getToken} onClose={() => setDiscussionOpen(false)} /> : null}
   </View>;
 }
 
@@ -327,7 +340,11 @@ function Action({ label, disabled = false, onPress }: { label: string; disabled?
 
 const styles = StyleSheet.create((theme) => ({
   screen: { flex: 1, backgroundColor: theme.v2.appColors.canvas },
-  header: { gap: 5, paddingHorizontal: 20, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: theme.v2.colors.borderSubtle },
+  header: { gap: 5, paddingHorizontal: 16, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: theme.v2.colors.borderSubtle },
+  headerTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
+  headerActions: { flexDirection: "row", alignItems: "center", gap: 6 },
+  headerAction: { paddingHorizontal: 9, paddingVertical: 7, borderWidth: 1, borderColor: theme.v2.colors.borderSubtle, borderRadius: 10 },
+  headerActionText: { fontFamily: theme.v2.fonts.semibold, fontSize: 12, color: theme.v2.appColors.muted },
   back: { fontFamily: theme.v2.fonts.semibold, color: theme.v2.colors.action },
   title: { fontFamily: theme.v2.fonts.display, fontSize: 24, color: theme.v2.appColors.ink },
   status: { fontFamily: theme.v2.fonts.semibold, fontSize: 13, color: theme.v2.appColors.muted },

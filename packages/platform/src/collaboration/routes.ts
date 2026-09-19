@@ -10,6 +10,7 @@ import {
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
+import { registerInvitationIdentifierResolutionRoute } from "./identifier-resolution-route.js";
 import type { CollaborationProofSigner } from "./proof.js";
 import { parseCollaborationProxyRoute, type CollaborationProxy } from "./proxy.js";
 import {
@@ -48,6 +49,7 @@ export function createPlatformCollaborationRoutes(options: {
     bearerToken: string;
   }): Promise<{ runtimeId: string; ownerId: string } | null>;
   resolveParticipant(actorId: string): Promise<{ actorId: string; displayName: string } | null>;
+  resolveInvitationIdentifier(identifier: string): Promise<{ actorId: string; displayName: string } | null>;
   hydrate(input: {
     actorId: string;
     entry: CollaborationDirectoryEntry;
@@ -150,6 +152,8 @@ export function createPlatformCollaborationRoutes(options: {
       return safeJson(c, "Collaboration unavailable", 503);
     }
   });
+
+  registerInvitationIdentifierResolutionRoute(app, options);
 
   app.get("/internal/collaboration/policy", async (c) => {
     const runtime = await requireRuntime(c, options.authenticateRuntime);
@@ -347,3 +351,8 @@ function safeJson(c: RouteContext, error: string, status: 401 | 403 | 404 | 409 
   c.header("Cache-Control", "no-store");
   return c.json({ error }, status);
 }
+
+const ParticipantProjectionSchema = z.object({
+  actorId: CollaborationActorIdSchema,
+  displayName: z.string().trim().min(1).max(120),
+}).strict();

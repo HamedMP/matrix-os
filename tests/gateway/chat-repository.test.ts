@@ -14,6 +14,7 @@ import {
   ChatBusyError,
   ChatConflictError,
   ChatNotFoundError,
+  ChatProviderInstanceLockedError,
   ChatRepository,
   ChatRunNotActiveError,
 } from "../../packages/gateway/src/chat/repository.js";
@@ -914,6 +915,165 @@ describe("ChatRepository", () => {
     })).rejects.toBeInstanceOf(ChatBusyError);
   });
 
+  it.each([
+    {
+      first: { driverKind: "codex" as const, instanceId: "codex_default", model: "gpt-5.6-sol" },
+      later: { driverKind: "claude_code" as const, instanceId: "claude_default", model: "claude-opus-5" },
+    },
+    {
+      first: { driverKind: "claude_code" as const, instanceId: "claude_default", model: "claude-opus-5" },
+      later: { driverKind: "codex" as const, instanceId: "codex_default", model: "gpt-5.6-sol" },
+    },
+  ])("keeps a personal Chat bound to $first.instanceId across direct and metadata bypasses", async ({ first, later }) => {
+    const created = await repository.create(owner, {
+      id: `chat_bound_${first.driverKind}`,
+      clientRequestId: `req_bound_${first.driverKind}`,
+      title: "Immutable Provider",
+      currentSelection: { instanceId: later.instanceId, model: later.model },
+    });
+    const prebound = await repository.update(owner, created.chat.id, {
+      baseRevision: 0,
+      currentSelection: { instanceId: first.instanceId, model: first.model },
+    });
+    expect(prebound.providerBinding).toBeUndefined();
+
+    const firstMessage = message(created.chat.id);
+    const firstTurn = turn(created.chat.id, firstMessage, `req_first_${first.driverKind}`);
+    const firstRun = {
+      ...run(created.chat.id, firstTurn),
+      driverKind: first.driverKind,
+      instanceId: first.instanceId,
+      selection: { instanceId: first.instanceId, model: first.model },
+    };
+    const admitted = await repository.admitTurn(owner, {
+      chatId: created.chat.id,
+      baseRevision: prebound.chat.revision,
+      message: firstMessage,
+      turn: firstTurn,
+      run: firstRun,
+    });
+    expect(admitted.chat.providerBinding).toMatchObject({
+      driverKind: first.driverKind,
+      instanceId: first.instanceId,
+    });
+
+    await repository.finishRun(owner, {
+      chatId: created.chat.id,
+      runId: firstRun.id,
+      outcome: "failed",
+      completedAt: "2026-08-25T00:01:00.000Z",
+    });
+    const afterFailure = await repository.get(owner, created.chat.id);
+    expect(afterFailure?.providerBinding).toEqual(admitted.chat.providerBinding);
+
+    await expect(repository.update(owner, created.chat.id, {
+      baseRevision: afterFailure!.chat.revision,
+      currentSelection: { instanceId: later.instanceId, model: later.model },
+    })).rejects.toBeInstanceOf(ChatProviderInstanceLockedError);
+
+    const secondMessage = {
+      ...message(created.chat.id, 2),
+      id: `msg_later_${later.driverKind}`,
+      turnId: `cturn_later_${later.driverKind}`,
+    };
+    const secondTurn = {
+      ...turn(created.chat.id, secondMessage, `req_later_${later.driverKind}`),
+      id: `cturn_later_${later.driverKind}`,
+    };
+    await expect(repository.admitTurn(owner, {
+      chatId: created.chat.id,
+      baseRevision: afterFailure!.chat.revision,
+      message: secondMessage,
+      turn: secondTurn,
+      run: {
+        ...run(created.chat.id, secondTurn),
+        id: `run_later_${later.driverKind}`,
+        driverKind: later.driverKind,
+        instanceId: later.instanceId,
+        selection: { instanceId: later.instanceId, model: later.model },
+        historyBoundarySeq: 1,
+      },
+    })).rejects.toBeInstanceOf(ChatProviderInstanceLockedError);
+
+    const retryRun = {
+      ...firstRun,
+      id: `run_retry_${first.driverKind}`,
+      attempt: 2,
+    };
+    const retried = await repository.admitRetry(owner, {
+      chatId: created.chat.id,
+      turnId: firstTurn.id,
+      clientRequestId: `req_retry_${first.driverKind}`,
+      baseRevision: afterFailure!.chat.revision,
+      run: retryRun,
+    });
+    expect(retried.run).toMatchObject({
+      driverKind: first.driverKind,
+      instanceId: first.instanceId,
+    });
+    expect(retried.chat.providerBinding).toEqual(admitted.chat.providerBinding);
+  });
+
+  it("rejects a queued cross-instance request with the immutable-binding conflict", async () => {
+    const admitted = await admitChat(repository, "queue_provider_lock");
+
+    await expect(repository.enqueueQueuedTurn(owner, {
+      chatId: admitted.chatId,
+      baseRevision: 1,
+      queuedTurnId: "qturn_wrong_provider",
+      clientRequestId: "req_wrong_provider",
+      parts: [{ type: "text", text: "switch provider" }],
+      driverKind: "claude_code",
+      selection: { instanceId: "claude_default", model: "claude-opus-5" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+      capabilitySnapshot: admitted.run.capabilitySnapshot,
+      createdAt: "2026-08-25T00:00:10.000Z",
+    })).rejects.toBeInstanceOf(ChatProviderInstanceLockedError);
+  });
+
+  it("projects the bound Run selection on personal reads when stale metadata disagrees", async () => {
+    const admitted = await admitChat(repository, "stale_selection_read");
+    await repository.kysely.updateTable("chats").set({
+      current_selection: JSON.stringify({ instanceId: "claude_default", model: "claude-opus-5" }),
+    }).where("id", "=", admitted.chatId).execute();
+
+    const record = await repository.get(owner, admitted.chatId);
+    expect(record?.chat.currentSelection).toEqual(admitted.run.selection);
+    expect(record?.providerBinding?.instanceId).toBe(admitted.run.instanceId);
+    const listed = (await repository.list(owner, { limit: 100 })).items
+      .find((item) => item.chat.id === admitted.chatId);
+    expect(listed?.chat.currentSelection).toEqual(admitted.run.selection);
+    expect(listed?.providerBinding?.instanceId).toBe(admitted.run.instanceId);
+  });
+
+  it("allows a newly created Chat to bind a different Provider instance", async () => {
+    const first = await admitChat(repository, "original_provider");
+    expect((await repository.get(owner, first.chatId))?.providerBinding?.instanceId).toBe("codex_default");
+
+    const created = await repository.create(owner, {
+      id: "chat_new_provider",
+      clientRequestId: "req_new_provider",
+      title: "New Provider",
+      currentSelection: { instanceId: "claude_default", model: "claude-opus-5" },
+    });
+    const inputMessage = message(created.chat.id);
+    const inputTurn = turn(created.chat.id, inputMessage, "req_new_provider_turn");
+    const admitted = await repository.admitTurn(owner, {
+      chatId: created.chat.id,
+      baseRevision: 0,
+      message: inputMessage,
+      turn: inputTurn,
+      run: {
+        ...run(created.chat.id, inputTurn),
+        driverKind: "claude_code",
+        instanceId: "claude_default",
+        selection: { instanceId: "claude_default", model: "claude-opus-5" },
+      },
+    });
+    expect(admitted.chat.providerBinding?.instanceId).toBe("claude_default");
+  });
+
   it("rejects a new Turn after the locked Chat row becomes discussion-only shared", async () => {
     const created = await repository.create(owner, {
       id: "chat_safence",
@@ -1238,7 +1398,13 @@ describe("ChatRepository", () => {
     expect(claims.filter((claim) => claim !== null)).toHaveLength(1);
     expect(claimed).toMatchObject({
       queuedTurn: { id: "qturn_queue_claim_1", position: 1 },
-      message: { role: "user", state: "committed", parts: [{ type: "text", text: "first queued" }] },
+      message: {
+        role: "user",
+        state: "committed",
+        actorId: owner.ownerId,
+        purpose: "ai_request",
+        parts: [{ type: "text", text: "first queued" }],
+      },
       turn: { status: "accepted", clientRequestId: "req_queue_claim_1" },
       run: { status: "accepted", driverKind: "codex", attempt: 1 },
     });
@@ -1292,7 +1458,12 @@ describe("ChatRepository", () => {
       clientRequestId: input.clientRequestId,
       acceptedAt: "2026-08-25T00:00:11.000Z",
     });
-    expect(accepted).toMatchObject({ id: input.messageId, state: "committed" });
+    expect(accepted).toMatchObject({
+      id: input.messageId,
+      state: "committed",
+      actorId: owner.ownerId,
+      purpose: "ai_request",
+    });
     await expect(repository.acceptSteer(owner, {
       chatId: admitted.chatId,
       runId: admitted.runId,
@@ -1381,6 +1552,8 @@ describe("ChatRepository", () => {
     expect(accepted).toMatchObject({
       id: "msg_queued_steer_retry",
       runId: admitted.runId,
+      actorId: owner.ownerId,
+      purpose: "ai_request",
       parts: [{ type: "text", text: "steer this now" }],
     });
     expect(await repository.listQueuedTurns(owner, admitted.chatId)).toEqual([]);

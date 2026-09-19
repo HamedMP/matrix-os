@@ -119,6 +119,33 @@ describe("CollaborationWebSocketAuthorizer", () => {
     })).rejects.toMatchObject({ code: "invalid_ticket" });
   });
 
+  it("accepts an opaque native-client origin only with a one-use scoped ticket", async () => {
+    const issued = await authorizer.issueTicket({
+      actorId: platformCollaborationActors.recipientWithoutComputer,
+      scopeId,
+      purpose: "events",
+      clientRequestId: "40000000-0000-4000-8000-000000000010",
+    });
+
+    await expect(authorizer.authorizeUpgrade({
+      actorId: platformCollaborationActors.recipientWithoutComputer,
+      authentication: "ticket",
+      rawPath: `${eventPath}?ticket=${encodeURIComponent(issued.ticket)}&after=0`,
+      origin: "file://",
+    })).resolves.toMatchObject({
+      upstreamPath: `${eventPath}?after=0`,
+      scopeId,
+      purpose: "events",
+    });
+
+    await expect(authorizer.authorizeUpgrade({
+      actorId: platformCollaborationActors.recipientWithoutComputer,
+      authentication: "session",
+      rawPath: eventPath,
+      origin: "file://",
+    })).rejects.toMatchObject({ code: "invalid_origin" });
+  });
+
   it("supports an authenticated same-origin session without exposing credentials upstream", async () => {
     const upgrade = await authorizer.authorizeUpgrade({
       actorId: platformCollaborationActors.owner,
