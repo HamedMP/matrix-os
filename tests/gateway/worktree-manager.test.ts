@@ -4,8 +4,8 @@ import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { atomicWriteJson } from "../../packages/gateway/src/state-ops.js";
-import { createWorktreeManager } from "../../packages/gateway/src/worktree-manager.js";
+import { atomicWriteJson } from "../../packages/gateway/src/domains/files/state-ops.js";
+import { createWorktreeManager } from "../../packages/gateway/src/domains/git/worktree-manager.js";
 
 describe("worktree-manager", () => {
   let homePath: string;

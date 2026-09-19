@@ -3,8 +3,8 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createProjectManager } from "../../packages/gateway/src/project-manager.js";
-import { createProjectLifecycleService } from "../../packages/gateway/src/project-lifecycle.js";
+import { createProjectManager } from "../../packages/gateway/src/domains/workspace/project-manager.js";
+import { createProjectLifecycleService } from "../../packages/gateway/src/domains/workspace/project-lifecycle.js";
 
 import { withProjectLock } from "../../packages/gateway/src/state-ops.js";
 

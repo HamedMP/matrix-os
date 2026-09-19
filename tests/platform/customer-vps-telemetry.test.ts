@@ -6,7 +6,7 @@ import {
   createCustomerVpsRoutes,
   type CustomerVpsRoutesDeps,
 } from '../../packages/platform/src/customer-vps-routes.js';
-import { vpsProvisionFailuresTotal } from '../../packages/platform/src/metrics.js';
+import { vpsProvisionFailuresTotal } from '../../packages/gateway/src/domains/observability/metrics.js';
 
 const platformSecret = 'platform-secret';
 const adminHeaders = {

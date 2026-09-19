@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { createSessionStore } from "../../packages/gateway/src/session-store.js";
+import { createSessionStore } from "../../packages/gateway/src/domains/sessions/session-store.js";
 
 describe("session-store", () => {
   let dir: string;

@@ -1,5 +1,5 @@
 import { z } from "zod/v4";
-import { BackgroundAgentRefSchema } from "../background-agent-runtime.js";
+import { BackgroundAgentRefSchema } from "../domains/sessions/background-agent-runtime.js";
 import type { StoredThread, StoredThreadState, StoredTurn } from "./thread-store.js";
 import type { AgentThreadEvent } from "@matrix-os/contracts";
 

@@ -6,9 +6,9 @@ import { join } from "node:path";
 import { RuntimeSummarySchema } from "../../packages/contracts/src/index.js";
 import { createCodingAgentFileStore } from "../../packages/gateway/src/coding-agents/file-read.js";
 import { createCodingAgentRoutes } from "../../packages/gateway/src/coding-agents/routes.js";
-import type { RequestPrincipal } from "../../packages/gateway/src/request-principal.js";
-import { MissingRequestPrincipalError } from "../../packages/gateway/src/request-principal.js";
-import { atomicWriteJson } from "../../packages/gateway/src/state-ops.js";
+import type { RequestPrincipal } from "../../packages/gateway/src/domains/identity/request-principal.js";
+import { MissingRequestPrincipalError } from "../../packages/gateway/src/domains/identity/request-principal.js";
+import { atomicWriteJson } from "../../packages/gateway/src/domains/files/state-ops.js";
 import { testPrincipal } from "../helpers/activation-readiness.js";
 import { ProjectFenceError } from "../../packages/gateway/src/collaboration/project-fence.js";
 

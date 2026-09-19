@@ -3,7 +3,7 @@ import { lstat, realpath } from "node:fs/promises";
 import type { Context } from "hono";
 import { join, sep } from "node:path";
 import { Readable } from "node:stream";
-import { resolveWithinHome } from "../path-security.js";
+import { resolveWithinHome } from "../_shared/path-security.js";
 
 const MAX_STATIC_ASSET_BYTES = 25 * 1024 * 1024;
 const APP_STATIC_CSP = [

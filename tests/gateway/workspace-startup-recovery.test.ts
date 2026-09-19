@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { runWorkspaceStartupRecovery } from "../../packages/gateway/src/workspace-startup-recovery.js";
+import { runWorkspaceStartupRecovery } from "../../packages/gateway/src/domains/workspace/workspace-startup-recovery.js";
 
 describe("workspace startup recovery", () => {
   it("runs recovery in dependency order and reports sanitized component status", async () => {

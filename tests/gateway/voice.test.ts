@@ -6,7 +6,7 @@ import {
   createVoiceService,
   type VoiceService,
   type VoiceConfig,
-} from "../../packages/gateway/src/voice.js";
+} from "../../packages/gateway/src/domains/voice/voice.js";
 
 const DEFAULT_CONFIG: VoiceConfig = {
   enabled: true,

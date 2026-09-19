@@ -5,9 +5,9 @@ import {
   SafeDisplayStringSchema,
   type PreviewSessionSummary,
 } from "@matrix-os/contracts";
-import { PROJECT_SLUG_REGEX } from "../project-manager.js";
-import type { PreviewRecord } from "../preview-manager.js";
-import type { RequestPrincipal } from "../request-principal.js";
+import { PROJECT_SLUG_REGEX } from "../domains/workspace/project-manager.js";
+import type { PreviewRecord } from "../domains/apps/preview-manager.js";
+import type { RequestPrincipal } from "../domains/identity/request-principal.js";
 import type {
   CodingAgentPreviewSummaryStore,
   CodingAgentRuntimeSummaryRequestOptions,
