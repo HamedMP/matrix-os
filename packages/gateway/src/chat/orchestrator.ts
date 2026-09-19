@@ -34,8 +34,8 @@ import {
   type CanonicalSteerQueuedChatTurnRequest,
   type CanonicalChatApprovalSubmissionResponse,
 } from "@matrix-os/contracts";
-import type { RequestPrincipal } from "../request-principal.js";
-import type { AiGenerationInput } from "../ai-analytics.js";
+import type { RequestPrincipal } from "../domains/identity/request-principal.js";
+import type { AiGenerationInput } from "../domains/observability/ai-analytics.js";
 import type {
   ChatExecutionRootProvenance,
   ChatExecutionRootResolver,
@@ -68,7 +68,7 @@ import { recoverOrphanedRun } from "./orphaned-run-recovery.js";
 import { retryAvailability } from "./retry-preflight.js";
 import { dispatchAdmissionKey, hasStoppingChatExecution } from "./dispatch-ownership.js";
 import { loadChatResumeState } from "./resume-checkpoint.js";
-import { boundedOperation } from "../bounded-operation.js";
+import { boundedOperation } from "../_shared/bounded-operation.js";
 import { CHAT_RUN_CLEANUP_UNCONFIRMED_MESSAGE, diagnoseChatRunFailure, type ChatRunFailureDiagnostic } from "./failure-diagnostic.js";
 import {
   CanonicalChatOrchestrationError,

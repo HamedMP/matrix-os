@@ -3,7 +3,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseFindingsFile, parseFindingsMarkdown } from "../../packages/gateway/src/findings-parser.js";
+import { parseFindingsFile, parseFindingsMarkdown } from "../../packages/gateway/src/domains/review/findings-parser.js";
 
 describe("findings-parser", () => {
   let homePath: string;

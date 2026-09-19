@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentStatus } from "../../packages/gateway/src/agent-launcher.js";
+import type { AgentStatus } from "../../packages/gateway/src/domains/sessions/agent-launcher.js";
 import { resolveAgentCredentialProbe } from "../../packages/gateway/src/onboarding/agent-credential-probe.js";
 
 function installedStatus(overrides: Partial<AgentStatus> = {}): AgentStatus {

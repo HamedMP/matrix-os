@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createWorkspaceRoutes } from "../../packages/gateway/src/workspace-routes.js";
+import { createWorkspaceRoutes } from "../../packages/gateway/src/domains/workspace/workspace-routes.js";
 
 function makeApp(listGithubRepos: ReturnType<typeof vi.fn>) {
   const projectManager = {

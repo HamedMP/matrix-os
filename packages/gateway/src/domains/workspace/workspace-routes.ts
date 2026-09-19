@@ -1,0 +1,1188 @@
+import { createProjectDeletionCleanup, type ProjectChatCleanup } from "../../project-deletion-cleanup.js";
+import type { BackgroundAgentRuntime } from "../sessions/background-agent-runtime.js";
+import { Hono, type Context } from "hono";
+import { bodyLimit } from "hono/body-limit";
+import type { ContentfulStatusCode } from "hono/utils/http-status";
+import { randomUUID } from "node:crypto";
+import { z } from "zod/v4";
+import { createProjectManager, GitBranchSchema, PROJECT_SLUG_REGEX } from "./project-manager.js";
+import { createProjectFolders } from "./project-folders.js";
+import { createGitLog, COMMIT_SHA_REGEX } from "../git/git-log.js";
+import { createWorktreeManager } from "../git/worktree-manager.js";
+import { createStateOps, type OwnerScope } from "../files/state-ops.js";
+import { createAgentLauncher } from "../sessions/agent-launcher.js";
+import { PromptContentSchema } from "../sessions/prompt-validation.js";
+import { createAgentSessionManager } from "../sessions/agent-session-manager.js";
+import { createAgentSandbox } from "../sessions/agent-sandbox.js";
+import { createSessionRuntimeBridge } from "../sessions/session-runtime-bridge.js";
+import { TerminalRuntimeSocketClient } from "@matrix-os/terminal-runtime";
+import { approveReview, createReviewLoopRecord, startNextReviewRound, stopReview } from "../review/review-loop.js";
+import { createReviewStore } from "../review/review-store.js";
+import { createTaskManager } from "./task-manager.js";
+import { createPreviewManager } from "../apps/preview-manager.js";
+import { createWorkspaceEventStore } from "./workspace-events.js";
+import { isRequestPrincipalError, mapRequestPrincipalError, ownerScopeFromPrincipal, requireRequestPrincipal } from "../identity/request-principal.js";
+import { createWorkspaceEventPublisher, type WorkspaceEventPublisher } from "./workspace-event-publisher.js";
+import { createWorkspaceSessionOrchestrator, type WorkspaceSessionOrchestrator } from "./workspace-session-orchestrator.js";
+import { requestHasBody } from "../../_shared/http-body.js";
+import { createProjectLifecycleService, ProjectLifecycleActionSchema } from "./project-lifecycle.js";
+import type { CodingAgentThreadStore } from "../../coding-agents/thread-store.js";
+import {
+  ProjectFenceError,
+  type LegacyProjectOperationAdmission,
+} from "../../collaboration/project-fence.js";
+
+type ProjectManager = ReturnType<typeof createProjectManager>;
+type ProjectFolders = ReturnType<typeof createProjectFolders>;
+type GitLog = ReturnType<typeof createGitLog>;
+type WorktreeManager = ReturnType<typeof createWorktreeManager>;
+type AgentLauncher = ReturnType<typeof createAgentLauncher>;
+type AgentSessionManager = ReturnType<typeof createAgentSessionManager>;
+type AgentSandbox = ReturnType<typeof createAgentSandbox>;
+type SessionRuntimeBridge = ReturnType<typeof createSessionRuntimeBridge>;
+type ReviewStore = ReturnType<typeof createReviewStore>;
+type TaskManager = ReturnType<typeof createTaskManager>;
+type PreviewManager = ReturnType<typeof createPreviewManager>;
+type WorkspaceEventStore = ReturnType<typeof createWorkspaceEventStore>;
+type ProjectLifecycleService = ReturnType<typeof createProjectLifecycleService>;
+
+const WORKSPACE_BODY_LIMIT = 64 * 1024;
+
+const CreateProjectSchema = z.object({
+  url: z.string().min(1).max(512).optional(),
+  slug: z.string().min(1).max(63).optional(),
+  name: z.string().trim().min(1).max(128).optional(),
+  description: z.string().trim().max(1_000).optional(),
+  path: z.string().min(1).max(4096).optional(),
+  branch: GitBranchSchema.optional(),
+  clientRequestId: z.string().min(5).max(132).regex(/^req_[A-Za-z0-9_-]+$/).optional(),
+  mode: z.enum(["scratch", "github", "folder"]).optional(),
+  ownerScope: z.object({
+    type: z.enum(["user", "org"]),
+    id: z.string().min(1).max(128),
+  }).optional(),
+}).superRefine((body, ctx) => {
+  const mode = body.mode ?? (body.url ? "github" : "scratch");
+  if (mode === "github" && !body.url) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["url"],
+      message: "Repository URL is required",
+    });
+  }
+  if (mode === "scratch" && !body.name && !body.slug) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["name"],
+      message: "Project name is required",
+    });
+  }
+  if (mode === "folder" && (!body.name || !body.path)) {
+    ctx.addIssue({
+      code: "custom",
+      path: [body.name ? "path" : "name"],
+      message: "Folder projects require a name and path",
+    });
+  }
+});
+
+// Desktop add-project clone flow. Stricter than the generic create route:
+// https GitHub URLs only (no ssh, no userinfo, no other hosts — the anchored
+// regex rejects credentials by construction) and the target folder name must
+// already be a safe slug.
+const CloneProjectSchema = z.object({
+  url: z.string().trim().min(1).max(512).regex(
+    /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+?(\.git)?\/?$/,
+  ),
+  name: z.string().trim().regex(PROJECT_SLUG_REGEX).optional(),
+  displayName: z.string().trim().min(1).max(128).optional(),
+  description: z.string().trim().max(1_000).optional(),
+  branch: GitBranchSchema.optional(),
+  clientRequestId: z.string().min(5).max(132).regex(/^req_[A-Za-z0-9_-]+$/),
+});
+
+const MkdirFolderSchema = z.object({
+  name: z.string().trim().regex(PROJECT_SLUG_REGEX),
+  parent: z.string().trim().min(1).max(1024).optional(),
+  clientRequestId: z.string().min(5).max(132).regex(/^req_[A-Za-z0-9_-]+$/).optional(),
+});
+
+const CreateWorktreeSchema = z.object({
+  branch: z.string().min(1).max(200).optional(),
+  pr: z.number().int().positive().optional(),
+}).refine((body) => (body.branch ? 1 : 0) + (typeof body.pr === "number" ? 1 : 0) === 1);
+
+const DeleteWorktreeSchema = z.object({
+  confirmDirtyDelete: z.boolean().optional(),
+});
+
+const ExportWorkspaceSchema = z.object({
+  scope: z.enum(["all", "project"]),
+  projectSlug: z.string().optional(),
+  includeTranscripts: z.boolean().optional(),
+  ownerScope: z.object({
+    type: z.enum(["user", "org"]),
+    id: z.string().min(1).max(128),
+  }).optional(),
+});
+
+const DeleteWorkspaceSchema = z.object({
+  scope: z.literal("project"),
+  projectSlug: z.string().regex(PROJECT_SLUG_REGEX),
+  confirmation: z.string(),
+  ownerScope: z.object({
+    type: z.enum(["user", "org"]),
+    id: z.string().min(1).max(128),
+  }).optional(),
+});
+
+const StartSessionSchema = z.object({
+  sessionId: z.string().regex(/^sess_[A-Za-z0-9_-]{1,128}$/).optional(),
+  projectSlug: z.string().min(1).max(63).optional(),
+  taskId: z.string().min(1).max(128).optional(),
+  worktreeId: z.string().min(1).max(128).optional(),
+  pr: z.number().int().positive().optional(),
+  kind: z.enum(["shell", "agent"]),
+  agent: z.enum(["claude", "codex", "opencode", "pi"]).optional(),
+  prompt: PromptContentSchema.optional(),
+  runtimePreference: z.enum(["zellij"]).optional(),
+  adminSandboxOverride: z.boolean().optional(),
+});
+
+const SendSessionInputSchema = z.object({
+  input: z.string().min(1).max(64 * 1024),
+});
+
+const EmptyObjectSchema = z.object({}).passthrough();
+const ProjectVisibilitySchema = z.enum(["active", "archived", "all"]);
+const ProjectDeleteCompatibilitySchema = z.object({
+  confirmation: z.string().min(1).max(128),
+  confirmTerminate: z.boolean().optional(),
+}).strict();
+
+const CreateReviewSchema = z.object({
+  projectSlug: z.string().min(1).max(63),
+  worktreeId: z.string().min(1).max(128),
+  pr: z.number().int().positive(),
+  reviewer: z.enum(["claude", "codex", "opencode", "pi"]),
+  implementer: z.enum(["claude", "codex", "opencode", "pi"]),
+  maxRounds: z.number().int().min(1).max(20).default(5),
+  convergenceGate: z.enum(["findings_only", "findings_and_verify"]).default("findings_only"),
+  verificationCommands: z.array(z.string().min(1).max(500)).max(20).default([]),
+});
+
+const CreateTaskSchema = z.object({
+  title: z.string().min(1).max(200),
+  description: z.string().max(10_000).optional(),
+  status: z.enum(["todo", "running", "waiting", "blocked", "complete", "archived"]).optional(),
+  priority: z.enum(["low", "normal", "high", "urgent"]).optional(),
+  order: z.number().finite().optional(),
+  parentTaskId: z.string().min(1).max(128).optional(),
+  dueAt: z.string().min(1).max(64).optional(),
+  linkedSessionId: z.string().min(1).max(128).optional(),
+  linkedWorktreeId: z.string().min(1).max(128).optional(),
+  previewIds: z.array(z.string().min(1).max(128)).max(20).optional(),
+});
+
+const UpdateTaskSchema = CreateTaskSchema.partial();
+
+const CreatePreviewSchema = z.object({
+  taskId: z.string().min(1).max(128).optional(),
+  sessionId: z.string().min(1).max(128).optional(),
+  label: z.string().min(1).max(120),
+  url: z.string().min(1).max(2048),
+  displayPreference: z.enum(["panel", "external"]).optional(),
+});
+
+const UpdatePreviewSchema = CreatePreviewSchema.partial().extend({
+  lastStatus: z.enum(["unknown", "ok", "failed"]).optional(),
+});
+
+function status(code: number): ContentfulStatusCode {
+  return code as ContentfulStatusCode;
+}
+
+function errorBody(code: string, message: string): { error: { code: string; message: string } } {
+  return { error: { code, message } };
+}
+
+async function parseJson<T>(c: Context, schema: z.ZodType<T>): Promise<
+  { ok: true; value: T } | { ok: false; status: number; code: string; message: string }
+> {
+  let raw: unknown;
+  try {
+    raw = await c.req.json();
+  } catch (err: unknown) {
+    if (err instanceof Error && err.name === "BodyLimitError") {
+      return { ok: false, status: 413, code: "payload_too_large", message: "Request body is too large" };
+    }
+    if (err instanceof SyntaxError) {
+      return { ok: false, status: 400, code: "invalid_json", message: "Request body must be valid JSON" };
+    }
+    console.error("[workspace-routes] Failed to parse JSON:", err);
+    return { ok: false, status: 400, code: "invalid_json", message: "Request body must be valid JSON" };
+  }
+  const parsed = schema.safeParse(raw);
+  if (!parsed.success) {
+    return { ok: false, status: 400, code: "invalid_request", message: "Request body is invalid" };
+  }
+  return { ok: true, value: parsed.data };
+}
+
+export function createWorkspaceRoutes(options: {
+  backgroundRuntime?: BackgroundAgentRuntime;
+  homePath: string;
+  projectManager?: ProjectManager;
+  projectFolders?: ProjectFolders;
+  gitLog?: GitLog;
+  worktreeManager?: WorktreeManager;
+  agentLauncher?: AgentLauncher;
+  agentSessionManager?: AgentSessionManager;
+  agentSandbox?: AgentSandbox;
+  terminalRuntime?: TerminalRuntimeSocketClient;
+  sessionRuntimeBridge?: SessionRuntimeBridge;
+  reviewStore?: ReviewStore;
+  taskManager?: TaskManager;
+  previewManager?: PreviewManager;
+  eventStore?: WorkspaceEventStore;
+  eventPublisher?: WorkspaceEventPublisher;
+  sessionOrchestrator?: WorkspaceSessionOrchestrator;
+  projectLifecycleService?: ProjectLifecycleService;
+  projectOperationAdmission?: LegacyProjectOperationAdmission;
+  deleteProjectChats?: ProjectChatCleanup;
+  codingAgentThreadStore?: Pick<CodingAgentThreadStore, "getProjectLifecycleState" | "deleteProjectThreads">;
+  getOwnerScope?: (c: Context) => OwnerScope;
+  listChatBoundSessionIds?: (
+    ownerScope: OwnerScope,
+    terminalSessionIds: readonly string[],
+  ) => Promise<readonly string[]>;
+}) {
+  const app = new Hono();
+  const projectManager = options.projectManager ?? createProjectManager({ homePath: options.homePath });
+  const projectFolders = options.projectFolders ?? createProjectFolders({ homePath: options.homePath });
+  const gitLog = options.gitLog ?? createGitLog({ homePath: options.homePath });
+  const worktreeManager = options.worktreeManager ?? createWorktreeManager({ homePath: options.homePath });
+  const agentLauncher = options.agentLauncher ?? createAgentLauncher({ cwd: options.homePath, runtimeHome: options.homePath });
+  const terminalRuntime = options.terminalRuntime ?? new TerminalRuntimeSocketClient({
+    socketPath: process.env.MATRIX_TERMINAL_RUNTIME_SOCKET ?? "/run/matrix/terminal-runtime.sock",
+  });
+  const agentSessionManager = options.agentSessionManager ?? createAgentSessionManager({
+    homePath: options.homePath,
+    worktreeManager,
+    agentLauncher,
+    terminalRuntime,
+    backgroundRuntime: options.backgroundRuntime,
+  });
+  const agentSandbox = options.agentSandbox ?? createAgentSandbox({ homePath: options.homePath });
+  const sessionRuntimeBridge = options.sessionRuntimeBridge ?? createSessionRuntimeBridge();
+  const reviewStore = options.reviewStore ?? createReviewStore({ homePath: options.homePath });
+  const taskManager = options.taskManager ?? createTaskManager({ homePath: options.homePath });
+  const previewManager = options.previewManager ?? createPreviewManager({ homePath: options.homePath });
+  const eventStore = options.eventStore ?? createWorkspaceEventStore({ homePath: options.homePath });
+  const eventPublisher = options.eventPublisher ?? createWorkspaceEventPublisher({ eventStore });
+  const sessionOrchestrator = options.sessionOrchestrator ?? createWorkspaceSessionOrchestrator({
+    projectManager,
+    worktreeManager,
+    agentSessionManager,
+    agentSandbox,
+    sessionRuntimeBridge,
+    eventPublisher,
+  });
+  const stateOps = createStateOps({ homePath: options.homePath });
+  const limited = bodyLimit({ maxSize: WORKSPACE_BODY_LIMIT });
+  const getOwnerScope = options.getOwnerScope ?? ((c: Context) => ownerScopeFromPrincipal(requireRequestPrincipal(c, {
+    requireAuthContextReady: false,
+  })));
+  const projectLifecycleService = options.projectLifecycleService ?? createProjectLifecycleService({
+    projectManager,
+    findBlockers: async (project, principal) => {
+      const blockers: Array<{ type: "session" | "thread" | "review" | "preview" | "worktree"; label: string }> = [];
+      const sessions = await agentSessionManager.getProjectLifecycleState({
+        projectSlug: project.slug,
+        ownerId: principal.userId,
+      });
+      if ("ok" in sessions) throw new Error("session activity unavailable");
+      if (sessions.activeSessionCount > 0) {
+        blockers.push({ type: "session", label: "Active session" });
+      }
+      const reviews = await reviewStore.getProjectLifecycleState(project.slug);
+      if ("ok" in reviews) throw new Error("review activity unavailable");
+      if (reviews.activeReviewCount > 0) {
+        blockers.push({ type: "review", label: "Active review" });
+      }
+      const previews = await previewManager.listPreviews(project.slug, { limit: 100 });
+      if (!previews.ok) throw new Error("preview activity unavailable");
+      if (previews.previews.some((preview) => preview.lastStatus !== "failed")) {
+        blockers.push({ type: "preview", label: "Active preview" });
+      }
+      const leases = await worktreeManager.listActiveLeases(project.slug);
+      if (!leases.ok) throw new Error("worktree activity unavailable");
+      if (leases.leases.length > 0) blockers.push({ type: "worktree", label: "Leased worktree" });
+      if (options.codingAgentThreadStore) {
+        const threads = await options.codingAgentThreadStore.getProjectLifecycleState(principal, project.slug);
+        if (threads.activeThreadCount > 0) blockers.push({ type: "thread", label: "Active coding-agent thread" });
+      }
+      return blockers;
+    },
+    cleanupRelatedState: createProjectDeletionCleanup({
+      sessions: agentSessionManager, reviews: reviewStore, threads: options.codingAgentThreadStore,
+      terminal: terminalRuntime, deleteChats: options.deleteProjectChats, worktrees: worktreeManager,
+    }),
+  });
+
+  function lifecyclePrincipal(ownerScope: OwnerScope) {
+    return { userId: ownerScope.id, source: "configured-container" as const };
+  }
+
+  function principalError(c: Context, err: unknown) {
+    if (!isRequestPrincipalError(err)) throw err;
+    const mapped = mapRequestPrincipalError(err, "Workspace request failed");
+    if (mapped.log) console.error("[workspace-routes] Request principal misconfigured:", err.name);
+    if (mapped.status === 401) {
+      return c.json(errorBody("unauthorized", "Unauthorized"), 401);
+    }
+    return c.json(errorBody("server_misconfigured", mapped.body.error), 500);
+  }
+
+  async function withLegacyProjectOperation<T>(input: {
+    ownerScope: OwnerScope;
+    projectSlug: string;
+    kind: "write" | "run";
+    operation(): Promise<T>;
+  }): Promise<
+    | { ok: true; value: T }
+    | { ok: false; status: number; body: { error: unknown } }
+  > {
+    if (!options.projectOperationAdmission) {
+      return { ok: true, value: await input.operation() };
+    }
+    const project = await projectManager.getProject(input.projectSlug, input.ownerScope);
+    if (!project.ok) {
+      return { ok: false, status: project.status, body: { error: project.error } };
+    }
+    try {
+      const value = await options.projectOperationAdmission.withLegacyAdmission({
+        ownerType: input.ownerScope.type === "org" ? "organization" : "personal",
+        ownerId: input.ownerScope.id,
+        projectId: project.project.id,
+        kind: input.kind,
+      }, input.operation);
+      return { ok: true, value };
+    } catch (err: unknown) {
+      if (err instanceof ProjectFenceError) {
+        if (["fenced", "scope_required", "conflict", "not_found"].includes(err.code)) {
+          return {
+            ok: false,
+            status: 409,
+            body: { error: { code: "project_shared", message: "Use the shared project route" } },
+          };
+        }
+        return {
+          ok: false,
+          status: 503,
+          body: { error: { code: "project_unavailable", message: "Project operation is unavailable" } },
+        };
+      }
+      console.error("[workspace-routes] Project admission failed:", err instanceof Error ? err.name : "UnknownError");
+      return {
+        ok: false,
+        status: 503,
+        body: { error: { code: "project_unavailable", message: "Project operation is unavailable" } },
+      };
+    }
+  }
+
+  app.get("/api/github/status", async (c) => c.json(await projectManager.getGithubStatus()));
+
+  const GithubReposQuerySchema = z.object({
+    search: z.string().trim().min(1).max(100).optional(),
+    limit: z.coerce.number().int().min(1).default(50).transform((v) => Math.min(v, 50)),
+  });
+
+  app.get("/api/github/repos", async (c) => {
+    try {
+      getOwnerScope(c);
+    } catch (err: unknown) {
+      return principalError(c, err);
+    }
+    const parsed = GithubReposQuerySchema.safeParse({
+      search: c.req.query("search"),
+      limit: c.req.query("limit"),
+    });
+    if (!parsed.success) {
+      return c.json(errorBody("invalid_query", "Invalid query parameters"), 400);
+    }
+    try {
+      const result = await projectManager.listGithubRepos({
+        search: parsed.data.search,
+        limit: parsed.data.limit,
+      });
+      return c.json(result);
+    } catch (err: unknown) {
+      console.error("[github/repos] list failed:", err instanceof Error ? err.message : typeof err);
+      return c.json({ error: "github_unavailable" }, 502);
+    }
+  });
+
+  app.post("/api/projects", limited, async (c) => {
+    const body = await parseJson(c, CreateProjectSchema);
+    if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+    let ownerScope: OwnerScope;
+    try {
+      ownerScope = getOwnerScope(c);
+    } catch (err: unknown) {
+      return principalError(c, err);
+    }
+    const result = await projectManager.createProject({
+      url: body.value.url,
+      slug: body.value.slug,
+      name: body.value.name,
+      description: body.value.description || undefined,
+      path: body.value.path,
+      branch: body.value.branch,
+      clientRequestId: body.value.clientRequestId,
+      mode: body.value.mode ?? (body.value.url ? "github" : "scratch"),
+      ownerScope,
+    });
+    if (!result.ok) return c.json({ error: result.error }, status(result.status));
+    return c.json({ project: result.project }, status(result.status ?? 201));
+  });
+
+  // Purpose-specific add-project endpoints used by the desktop dialog. Both
+  // delegate to the same managers as the generic routes so locking,
+  // idempotency, and conflict semantics stay in one place.
+  app.post("/api/projects/clone", limited, async (c) => {
+    const body = await parseJson(c, CloneProjectSchema);
+    if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+    let ownerScope: OwnerScope;
+    try {
+      ownerScope = getOwnerScope(c);
+    } catch (err: unknown) {
+      return principalError(c, err);
+    }
+    const result = await projectManager.createProject({
+      mode: "github",
+      url: body.value.url,
+      slug: body.value.name,
+      name: body.value.displayName,
+      description: body.value.description || undefined,
+      branch: body.value.branch,
+      clientRequestId: body.value.clientRequestId,
+      ownerScope,
+    });
+    if (!result.ok) return c.json({ error: result.error }, status(result.status));
+    return c.json({ project: result.project }, 201);
+  });
+
+  app.post("/api/projects/mkdir", limited, async (c) => {
+    const body = await parseJson(c, MkdirFolderSchema);
+    if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+    let ownerScope: OwnerScope;
+    try {
+      ownerScope = getOwnerScope(c);
+    } catch (err: unknown) {
+      return principalError(c, err);
+    }
+    const result = await projectFolders.createFolder({
+      name: body.value.name,
+      parent: body.value.parent,
+      clientRequestId: body.value.clientRequestId,
+      ownerScope,
+    });
+    if (!result.ok) return c.json({ error: result.error }, status(result.status));
+    return c.json({ path: result.path }, status(result.status ?? 201));
+  });
+
+  app.get("/api/workspace/projects", async (c) => {
+    const visibility = ProjectVisibilitySchema.safeParse(c.req.query("visibility") ?? "active");
+    if (!visibility.success) return c.json(errorBody("invalid_query", "Invalid query parameters"), 400);
+    let ownerScope: OwnerScope;
+    try {
+      ownerScope = getOwnerScope(c);
+    } catch (err: unknown) {
+      return principalError(c, err);
+    }
+    const result = await projectManager.listManagedProjects({ visibility: visibility.data, ownerScope });
+    return c.json(result);
+  });
+
+  app.get("/api/projects/:slug", async (c) => {
+    let ownerScope: OwnerScope;
+    try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
+    const result = await projectManager.getProject(c.req.param("slug"), ownerScope);
+    if (!result.ok) return c.json({ error: result.error }, status(result.status));
+    return c.json({ project: result.project });
+  });
+
+  app.post("/api/projects/:slug/actions", limited, async (c) => {
+    const body = await parseJson(c, ProjectLifecycleActionSchema);
+    if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+    let ownerScope: OwnerScope;
+    try {
+      ownerScope = getOwnerScope(c);
+    } catch (err: unknown) {
+      return principalError(c, err);
+    }
+    if (body.value.type === "delete") {
+      const project = await projectManager.getProjectForLifecycle({ slug: c.req.param("slug"), ownerScope });
+      if (!project.ok) return c.json({ error: project.error }, status(project.status));
+      const confirmation = await requireTerminalDeletionConfirmation(
+        c,
+        project.project.id,
+        body.value.confirmTerminate ?? false,
+      );
+      if (confirmation) return confirmation;
+    }
+    const admitted = await withLegacyProjectOperation({
+      ownerScope,
+      projectSlug: c.req.param("slug"),
+      kind: "write",
+      operation: () => projectLifecycleService.applyProjectLifecycleAction(
+        lifecyclePrincipal(ownerScope),
+        c.req.param("slug"),
+        body.value,
+      ),
+    });
+    if (!admitted.ok) return c.json(admitted.body, status(admitted.status));
+    const result = admitted.value;
+    if (!result.ok) return c.json({ error: result.error }, status(result.status));
+    return c.json(result);
+  });
+
+  async function requireTerminalDeletionConfirmation(
+    c: Context,
+    projectId: string,
+    confirmTerminate: boolean,
+  ) {
+    try {
+      const workspace = (await terminalRuntime.listWorkspaces())
+        .find((candidate) => candidate.scope === "project" && candidate.projectId === projectId);
+      if (workspace) {
+        const impact = await terminalRuntime.deletionImpact(workspace.id);
+        if (impact.runningTabs > 0 && !confirmTerminate) {
+          return c.json({
+            error: {
+              code: "terminal_termination_confirmation_required",
+              message: "Project has running terminal tabs",
+            },
+            ...impact,
+          }, 409);
+        }
+      }
+    } catch (error: unknown) {
+      console.error("[workspace-routes] Terminal workspace deletion failed", error);
+      return c.json(errorBody("terminal_runtime_unavailable", "Project could not be deleted"), 503);
+    }
+    return null;
+  }
+
+  app.delete("/api/projects/:slug", limited, async (c) => {
+    const body = await parseJson(c, ProjectDeleteCompatibilitySchema);
+    if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+    let ownerScope: OwnerScope;
+    try {
+      ownerScope = getOwnerScope(c);
+    } catch (err: unknown) {
+      return principalError(c, err);
+    }
+    const project = await projectManager.getProjectForLifecycle({ slug: c.req.param("slug"), ownerScope });
+    if (!project.ok) return c.json({ error: project.error }, status(project.status));
+    const confirmation = await requireTerminalDeletionConfirmation(
+      c,
+      project.project.id,
+      body.value.confirmTerminate ?? false,
+    );
+    if (confirmation) return confirmation;
+    const admitted = await withLegacyProjectOperation({
+      ownerScope,
+      projectSlug: c.req.param("slug"),
+      kind: "write",
+      operation: () => projectLifecycleService.applyProjectLifecycleAction(
+        lifecyclePrincipal(ownerScope),
+        c.req.param("slug"),
+        {
+          type: "delete",
+          confirmation: body.value.confirmation,
+          ...(body.value.confirmTerminate === undefined
+            ? {}
+            : { confirmTerminate: body.value.confirmTerminate }),
+        },
+      ),
+    });
+    if (!admitted.ok) return c.json(admitted.body, status(admitted.status));
+    const result = admitted.value;
+    if (!result.ok) return c.json({ error: result.error }, status(result.status));
+    return c.json(result);
+  });
+
+  app.get("/api/projects/:slug/prs", async (c) => {
+    let ownerScope: OwnerScope;
+    try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
+    const result = await projectManager.listPullRequests(c.req.param("slug"), ownerScope);
+    if (!result.ok) return c.json({ error: result.error }, status(result.status));
+    return c.json({ prs: result.prs, refreshedAt: result.refreshedAt });
+  });
+
+  app.get("/api/projects/:slug/code-metadata", async (c) => {
+    let ownerScope: OwnerScope;
+    try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
+    const result = await projectManager.getCodeMetadata(c.req.param("slug"), ownerScope);
+    if (!result.ok) return c.json({ error: result.error }, status(result.status));
+    const worktrees = await worktreeManager.listWorktrees(c.req.param("slug"), ownerScope);
+    if (!worktrees.ok) {
+      console.warn("[workspace-routes] Failed to list project worktrees:", worktrees.error.code);
+    }
+    return c.json({
+      path: result.path,
+      repository: result.repository,
+      isGitRepository: result.isGitRepository,
+      branch: result.branch,
+      clean: result.clean,
+      ahead: result.ahead,
+      behind: result.behind,
+      hasUpstream: result.hasUpstream,
+      worktreeCount: worktrees.ok ? worktrees.worktrees.length : null,
+    });
+  });
+
+  app.get("/api/projects/:slug/branches", async (c) => {
+    let ownerScope: OwnerScope;
+    try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
+    const result = await projectManager.listBranches(c.req.param("slug"), ownerScope);
+    if (!result.ok) return c.json({ error: result.error }, status(result.status));
+    return c.json({ branches: result.branches, refreshedAt: result.refreshedAt });
+  });
+
+  const ListCommitsQuerySchema = z.object({
+    limit: z.coerce.number().int().min(1).max(500).default(200),
+    cursor: z.string().regex(/^[a-f0-9]{24}\.\d{1,4}$/).optional(),
+  });
+
+  app.get("/api/projects/:slug/commits", async (c) => {
+    const query = ListCommitsQuerySchema.safeParse(c.req.query());
+    if (!query.success) return c.json(errorBody("invalid_request", "Query parameters are invalid"), 400);
+    let ownerScope: OwnerScope;
+    try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
+    const project = await projectManager.getProject(c.req.param("slug"), ownerScope);
+    if (!project.ok) return c.json({ error: project.error }, status(project.status));
+    const result = await gitLog.listCommits(c.req.param("slug"), {
+      limit: query.data.limit,
+      cursor: query.data.cursor,
+    });
+    if (!result.ok) return c.json({ error: result.error }, status(result.status));
+    return c.json({ commits: result.commits, nextCursor: result.nextCursor, refreshedAt: result.refreshedAt });
+  });
+
+  const CommitDiffQuerySchema = z.object({
+    maxFiles: z.coerce.number().int().min(1).max(500).default(200),
+    maxLines: z.coerce.number().int().min(50).max(2000).default(400),
+  });
+
+  app.get("/api/projects/:slug/commits/:sha/diff", async (c) => {
+    const sha = z.string().regex(COMMIT_SHA_REGEX).safeParse(c.req.param("sha"));
+    const query = CommitDiffQuerySchema.safeParse(c.req.query());
+    if (!sha.success || !query.success) {
+      return c.json(errorBody("invalid_request", "Request parameters are invalid"), 400);
+    }
+    let ownerScope: OwnerScope;
+    try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
+    const project = await projectManager.getProject(c.req.param("slug"), ownerScope);
+    if (!project.ok) return c.json({ error: project.error }, status(project.status));
+    const result = await gitLog.getCommitDiff(c.req.param("slug"), sha.data, {
+      maxFiles: query.data.maxFiles,
+      maxLines: query.data.maxLines,
+    });
+    if (!result.ok) return c.json({ error: result.error }, status(result.status));
+    return c.json({ files: result.files, truncated: result.truncated, refreshedAt: result.refreshedAt });
+  });
+
+  app.post("/api/projects/:slug/worktrees", limited, async (c) => {
+    const body = await parseJson(c, CreateWorktreeSchema);
+    if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+    let ownerScope: OwnerScope;
+    try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
+    const admitted = await withLegacyProjectOperation({
+      ownerScope,
+      projectSlug: c.req.param("slug"),
+      kind: "write",
+      operation: () => worktreeManager.createWorktree({
+        projectSlug: c.req.param("slug"),
+        ownerScope,
+        branch: body.value.branch,
+        pr: body.value.pr,
+      }),
+    });
+    if (!admitted.ok) return c.json(admitted.body, status(admitted.status));
+    const result = admitted.value;
+    if (!result.ok) return c.json({ error: result.error }, status(result.status));
+    return c.json({ worktree: result.worktree }, result.status);
+  });
+
+  app.get("/api/projects/:slug/worktrees", async (c) => {
+    let ownerScope: OwnerScope;
+    try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
+    const result = await worktreeManager.listWorktrees(c.req.param("slug"), ownerScope);
+    if (!result.ok) return c.json({ error: result.error }, status(result.status));
+    return c.json({ worktrees: result.worktrees });
+  });
+
+  app.delete("/api/projects/:slug/worktrees/:worktreeId", limited, async (c) => {
+    let confirmDirtyDelete: boolean | undefined;
+    if (requestHasBody(c)) {
+      const body = await parseJson(c, DeleteWorktreeSchema);
+      if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+      confirmDirtyDelete = body.value.confirmDirtyDelete;
+    }
+    let ownerScope: OwnerScope;
+    try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
+    const admitted = await withLegacyProjectOperation({
+      ownerScope,
+      projectSlug: c.req.param("slug"),
+      kind: "write",
+      operation: () => worktreeManager.deleteWorktree({
+        projectSlug: c.req.param("slug"),
+        worktreeId: c.req.param("worktreeId"),
+        confirmDirtyDelete,
+        ownerScope,
+      }),
+    });
+    if (!admitted.ok) return c.json(admitted.body, status(admitted.status));
+    const result = admitted.value;
+    if (!result.ok) return c.json({ error: result.error }, status(result.status));
+    return c.json({ ok: true });
+  });
+
+  app.post("/api/projects/:slug/tasks", limited, async (c) => {
+    const body = await parseJson(c, CreateTaskSchema);
+    if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+    const projectSlug = c.req.param("slug");
+    let ownerScope: OwnerScope;
+    try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
+    const admitted = await withLegacyProjectOperation({
+      ownerScope,
+      projectSlug,
+      kind: "write",
+      operation: async () => {
+        const result = await taskManager.createTask(projectSlug, body.value, ownerScope);
+        if (result.ok) await eventPublisher.publishTaskCreated(result.task);
+        return result;
+      },
+    });
+    if (!admitted.ok) return c.json(admitted.body, status(admitted.status));
+    const result = admitted.value;
+    if (!result.ok) return c.json({ error: result.error }, status(result.status));
+    return c.json({ task: result.task }, status(result.status ?? 201));
+  });
+
+  app.get("/api/projects/:slug/tasks", async (c) => {
+    let ownerScope: OwnerScope;
+    try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
+    const limitRaw = c.req.query("limit");
+    const result = await taskManager.listTasks(c.req.param("slug"), {
+      includeArchived: c.req.query("includeArchived") === "true",
+      limit: limitRaw ? Number.parseInt(limitRaw, 10) : undefined,
+      cursor: c.req.query("cursor"),
+    }, ownerScope);
+    if (!result.ok) return c.json({ error: result.error }, status(result.status));
+    return c.json({ tasks: result.tasks, nextCursor: result.nextCursor });
+  });
+
+  app.patch("/api/projects/:slug/tasks/:taskId", limited, async (c) => {
+    const body = await parseJson(c, UpdateTaskSchema);
+    if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+    const projectSlug = c.req.param("slug");
+    let ownerScope: OwnerScope;
+    try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
+    const admitted = await withLegacyProjectOperation({
+      ownerScope,
+      projectSlug,
+      kind: "write",
+      operation: async () => {
+        const result = await taskManager.updateTask(projectSlug, c.req.param("taskId"), body.value, ownerScope);
+        if (result.ok) await eventPublisher.publishTaskUpdated(result.task);
+        return result;
+      },
+    });
+    if (!admitted.ok) return c.json(admitted.body, status(admitted.status));
+    const result = admitted.value;
+    if (!result.ok) return c.json({ error: result.error }, status(result.status));
+    return c.json({ task: result.task });
+  });
+
+  app.delete("/api/projects/:slug/tasks/:taskId", limited, async (c) => {
+    const body = await parseJson(c, EmptyObjectSchema);
+    if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+    const projectSlug = c.req.param("slug");
+    const taskId = c.req.param("taskId");
+    let ownerScope: OwnerScope;
+    try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
+    const admitted = await withLegacyProjectOperation({
+      ownerScope,
+      projectSlug,
+      kind: "write",
+      operation: async () => {
+        const result = await taskManager.deleteTask(projectSlug, taskId, ownerScope);
+        if (result.ok) await eventPublisher.publishTaskDeleted(projectSlug, taskId);
+        return result;
+      },
+    });
+    if (!admitted.ok) return c.json(admitted.body, status(admitted.status));
+    const result = admitted.value;
+    if (!result.ok) return c.json({ error: result.error }, status(result.status));
+    return c.json({ ok: true });
+  });
+
+  app.post("/api/projects/:slug/previews", limited, async (c) => {
+    const body = await parseJson(c, CreatePreviewSchema);
+    if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+    const projectSlug = c.req.param("slug");
+    let ownerScope: OwnerScope;
+    try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
+    const admitted = await withLegacyProjectOperation({
+      ownerScope,
+      projectSlug,
+      kind: "write",
+      operation: async () => {
+        const result = await previewManager.createPreview(projectSlug, body.value, ownerScope);
+        if (result.ok) await eventPublisher.publishPreviewCreated(result.preview);
+        return result;
+      },
+    });
+    if (!admitted.ok) return c.json(admitted.body, status(admitted.status));
+    const result = admitted.value;
+    if (!result.ok) return c.json({ error: result.error }, status(result.status));
+    return c.json({ preview: result.preview }, status(result.status ?? 201));
+  });
+
+  app.get("/api/projects/:slug/previews", async (c) => {
+    let ownerScope: OwnerScope;
+    try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
+    const limitRaw = c.req.query("limit");
+    const result = await previewManager.listPreviews(c.req.param("slug"), {
+      taskId: c.req.query("taskId"),
+      sessionId: c.req.query("sessionId"),
+      limit: limitRaw ? Number.parseInt(limitRaw, 10) : undefined,
+      cursor: c.req.query("cursor"),
+    }, ownerScope);
+    if (!result.ok) return c.json({ error: result.error }, status(result.status));
+    return c.json({ previews: result.previews, nextCursor: result.nextCursor });
+  });
+
+  app.patch("/api/projects/:slug/previews/:previewId", limited, async (c) => {
+    const body = await parseJson(c, UpdatePreviewSchema);
+    if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+    const projectSlug = c.req.param("slug");
+    let ownerScope: OwnerScope;
+    try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
+    const admitted = await withLegacyProjectOperation({
+      ownerScope,
+      projectSlug,
+      kind: "write",
+      operation: async () => {
+        const result = await previewManager.updatePreview(projectSlug, c.req.param("previewId"), body.value, ownerScope);
+        if (result.ok) await eventPublisher.publishPreviewUpdated(result.preview);
+        return result;
+      },
+    });
+    if (!admitted.ok) return c.json(admitted.body, status(admitted.status));
+    const result = admitted.value;
+    if (!result.ok) return c.json({ error: result.error }, status(result.status));
+    return c.json({ preview: result.preview });
+  });
+
+  app.delete("/api/projects/:slug/previews/:previewId", limited, async (c) => {
+    const body = await parseJson(c, EmptyObjectSchema);
+    if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+    const projectSlug = c.req.param("slug");
+    const previewId = c.req.param("previewId");
+    let ownerScope: OwnerScope;
+    try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
+    const admitted = await withLegacyProjectOperation({
+      ownerScope,
+      projectSlug,
+      kind: "write",
+      operation: async () => {
+        const result = await previewManager.deletePreview(projectSlug, previewId, ownerScope);
+        if (result.ok) await eventPublisher.publishPreviewDeleted(projectSlug, previewId);
+        return result;
+      },
+    });
+    if (!admitted.ok) return c.json(admitted.body, status(admitted.status));
+    const result = admitted.value;
+    if (!result.ok) return c.json({ error: result.error }, status(result.status));
+    return c.json({ ok: true });
+  });
+
+  app.post("/api/sessions", limited, async (c) => {
+    const body = await parseJson(c, StartSessionSchema);
+    if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+    let ownerScope: OwnerScope;
+    try {
+      ownerScope = getOwnerScope(c);
+    } catch (err: unknown) {
+      return principalError(c, err);
+    }
+    const admitted = body.value.projectSlug
+      ? await withLegacyProjectOperation({
+          ownerScope,
+          projectSlug: body.value.projectSlug,
+          kind: "run",
+          operation: () => sessionOrchestrator.startSession({ ownerScope, request: body.value }),
+        })
+      : { ok: true as const, value: await sessionOrchestrator.startSession({ ownerScope, request: body.value }) };
+    if (!admitted.ok) return c.json(admitted.body, status(admitted.status));
+    const result = admitted.value;
+    if (!result.ok) {
+      if ("sandboxStatus" in result) {
+        return c.json({ error: result.error, sandboxStatus: result.sandboxStatus }, status(result.status));
+      }
+      return c.json({ error: result.error }, status(result.status));
+    }
+    return c.json({ session: result.session }, status(result.status));
+  });
+
+  app.get("/api/sessions", async (c) => {
+    const prRaw = c.req.query("pr");
+    const limitRaw = c.req.query("limit");
+    const result = await sessionOrchestrator.listSessions({
+      projectSlug: c.req.query("projectSlug"),
+      taskId: c.req.query("taskId"),
+      status: c.req.query("status"),
+      pr: prRaw ? Number.parseInt(prRaw, 10) : undefined,
+      limit: limitRaw ? Number.parseInt(limitRaw, 10) : undefined,
+      cursor: c.req.query("cursor"),
+    });
+    if (!result.ok) return c.json({ error: result.error }, status(result.status));
+    if (!options.listChatBoundSessionIds) {
+      return c.json({ sessions: result.sessions, nextCursor: result.nextCursor });
+    }
+    let ownerScope: OwnerScope;
+    try {
+      ownerScope = getOwnerScope(c);
+    } catch (err: unknown) {
+      return principalError(c, err);
+    }
+    try {
+      const boundedSessions = result.sessions.slice(0, 100).filter((session) => session.runtime?.type !== "background" && session.terminalRef);
+      const terminalSessionIds = boundedSessions.map((session) => (
+        `${session.terminalRef!.workspaceId}:${session.terminalRef!.tabId}`
+      ));
+      const boundIds = await options.listChatBoundSessionIds(ownerScope, terminalSessionIds);
+      const bound = new Set(boundIds.slice(0, 100));
+      return c.json({
+        sessions: boundedSessions.filter((session) => !bound.has(
+          `${session.terminalRef!.workspaceId}:${session.terminalRef!.tabId}`,
+        )),
+        nextCursor: result.nextCursor,
+      });
+    } catch (err: unknown) {
+      console.warn(
+        "[workspace-routes] Chat terminal visibility failed:",
+        err instanceof Error ? err.message : String(err),
+      );
+      return c.json(errorBody("session_visibility_failed", "Request failed"), 500);
+    }
+  });
+
+  app.get("/api/sessions/:sessionId", async (c) => {
+    const result = await sessionOrchestrator.getSession(c.req.param("sessionId"));
+    if (!result.ok) return c.json({ error: result.error }, status(result.status));
+    return c.json({ session: result.session });
+  });
+
+  app.post("/api/sessions/:sessionId/send", limited, async (c) => {
+    const body = await parseJson(c, SendSessionInputSchema);
+    if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+    const result = await sessionOrchestrator.sendInput(c.req.param("sessionId"), body.value.input);
+    if (!result.ok) return c.json({ error: result.error }, status(result.status));
+    return c.json({ session: result.session });
+  });
+
+  app.post("/api/sessions/:sessionId/observe", limited, async (c) => {
+    const body = await parseJson(c, EmptyObjectSchema);
+    if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+    const result = await sessionOrchestrator.attachSession(c.req.param("sessionId"), "observe");
+    if (!result.ok) return c.json({ error: result.error }, status(result.status));
+    return c.json(result);
+  });
+
+  app.post("/api/sessions/:sessionId/takeover", limited, async (c) => {
+    const body = await parseJson(c, EmptyObjectSchema);
+    if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+    const result = await sessionOrchestrator.attachSession(c.req.param("sessionId"), "owner");
+    if (!result.ok) return c.json({ error: result.error }, status(result.status));
+    return c.json(result);
+  });
+
+  app.delete("/api/sessions/:sessionId", limited, async (c) => {
+    const body = await parseJson(c, EmptyObjectSchema);
+    if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+    const result = await sessionOrchestrator.stopSession(c.req.param("sessionId"));
+    if (!result.ok) return c.json({ error: result.error }, status(result.status));
+    return c.json({ session: result.session });
+  });
+
+  app.get("/api/agents", async (c) => c.json(await agentLauncher.detectAgentInstallations()));
+
+  app.get("/api/agents/sandbox-status", async (c) => c.json(await agentSandbox.status()));
+
+  app.get("/api/workspace/events", async (c) => {
+    const limitRaw = c.req.query("limit");
+    const result = await eventStore.listEvents({
+      projectSlug: c.req.query("projectSlug"),
+      taskId: c.req.query("taskId"),
+      sessionId: c.req.query("sessionId"),
+      reviewId: c.req.query("reviewId"),
+      previewId: c.req.query("previewId"),
+      limit: limitRaw ? Number.parseInt(limitRaw, 10) : undefined,
+      cursor: c.req.query("cursor"),
+    });
+    if (!result.ok) return c.json({ error: result.error }, status(result.status));
+    return c.json({ events: result.events, nextCursor: result.nextCursor });
+  });
+
+  app.post("/api/reviews", limited, async (c) => {
+    const body = await parseJson(c, CreateReviewSchema);
+    if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+    let ownerScope: OwnerScope;
+    try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
+    const admitted = await withLegacyProjectOperation({
+      ownerScope,
+      projectSlug: body.value.projectSlug,
+      kind: "write",
+      operation: async () => {
+        const review = createReviewLoopRecord({
+          id: `rev_${randomUUID()}`,
+          ownerId: ownerScope.id,
+          ...body.value,
+        });
+        const saved = await reviewStore.saveReview(review);
+        return { review, saved };
+      },
+    });
+    if (!admitted.ok) return c.json(admitted.body, status(admitted.status));
+    const { review, saved } = admitted.value;
+    if (!saved.ok) return c.json({ error: saved.error }, status(saved.status));
+    return c.json({ review }, 201);
+  });
+
+  app.get("/api/reviews", async (c) => {
+    const limitRaw = c.req.query("limit");
+    const result = await reviewStore.listReviews({
+      projectSlug: c.req.query("projectSlug"),
+      limit: limitRaw ? Number.parseInt(limitRaw, 10) : undefined,
+      cursor: c.req.query("cursor"),
+    });
+    if (!result.ok) return c.json({ error: result.error }, status(result.status));
+    return c.json({ reviews: result.reviews, nextCursor: result.nextCursor });
+  });
+
+  app.get("/api/reviews/:reviewId", async (c) => {
+    const result = await reviewStore.getReview(c.req.param("reviewId"));
+    if (!result.ok) return c.json({ error: result.error }, status(result.status));
+    return c.json({ review: result.review });
+  });
+
+  app.post("/api/reviews/:reviewId/next", limited, async (c) => {
+    const body = await parseJson(c, EmptyObjectSchema);
+    if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+    const current = await reviewStore.getReview(c.req.param("reviewId"));
+    if (!current.ok) return c.json({ error: current.error }, status(current.status));
+    let ownerScope: OwnerScope;
+    try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
+    const admitted = await withLegacyProjectOperation({
+      ownerScope,
+      projectSlug: current.review.projectSlug,
+      kind: "run",
+      operation: async () => {
+        const next = startNextReviewRound(current.review, { sessionId: `sess_${randomUUID()}` });
+        if (!next.ok) return { next, saved: null };
+        return { next, saved: await reviewStore.saveReview(next.review) };
+      },
+    });
+    if (!admitted.ok) return c.json(admitted.body, status(admitted.status));
+    const { next, saved } = admitted.value;
+    if (!next.ok) return c.json({ error: next.error }, status(next.status));
+    if (!saved) return c.json(errorBody("review_unavailable", "Review is unavailable"), 503);
+    if (!saved.ok) return c.json({ error: saved.error }, status(saved.status));
+    return c.json({ review: next.review });
+  });
+
+  app.post("/api/reviews/:reviewId/approve", limited, async (c) => {
+    const body = await parseJson(c, EmptyObjectSchema);
+    if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+    const current = await reviewStore.getReview(c.req.param("reviewId"));
+    if (!current.ok) return c.json({ error: current.error }, status(current.status));
+    let ownerScope: OwnerScope;
+    try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
+    const admitted = await withLegacyProjectOperation({
+      ownerScope,
+      projectSlug: current.review.projectSlug,
+      kind: "write",
+      operation: async () => {
+        const approved = approveReview(current.review, {});
+        if (!approved.ok) return { approved, saved: null };
+        return { approved, saved: await reviewStore.saveReview(approved.review) };
+      },
+    });
+    if (!admitted.ok) return c.json(admitted.body, status(admitted.status));
+    const { approved, saved } = admitted.value;
+    if (!approved.ok) return c.json({ error: approved.error }, status(approved.status));
+    if (!saved) return c.json(errorBody("review_unavailable", "Review is unavailable"), 503);
+    if (!saved.ok) return c.json({ error: saved.error }, status(saved.status));
+    return c.json({ review: approved.review });
+  });
+
+  app.post("/api/reviews/:reviewId/stop", limited, async (c) => {
+    const body = await parseJson(c, EmptyObjectSchema);
+    if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+    const current = await reviewStore.getReview(c.req.param("reviewId"));
+    if (!current.ok) return c.json({ error: current.error }, status(current.status));
+    let ownerScope: OwnerScope;
+    try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
+    const admitted = await withLegacyProjectOperation({
+      ownerScope,
+      projectSlug: current.review.projectSlug,
+      kind: "write",
+      operation: async () => {
+        const stopped = stopReview(current.review, {});
+        if (!stopped.ok) return { stopped, saved: null };
+        return { stopped, saved: await reviewStore.saveReview(stopped.review) };
+      },
+    });
+    if (!admitted.ok) return c.json(admitted.body, status(admitted.status));
+    const { stopped, saved } = admitted.value;
+    if (!stopped.ok) return c.json({ error: stopped.error }, status(stopped.status));
+    if (!saved) return c.json(errorBody("review_unavailable", "Review is unavailable"), 503);
+    if (!saved.ok) return c.json({ error: saved.error }, status(saved.status));
+    return c.json({ review: stopped.review });
+  });
+
+  app.post("/api/workspace/export", limited, async (c) => {
+    const body = await parseJson(c, ExportWorkspaceSchema);
+    if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+    let ownerScope: OwnerScope;
+    try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
+    const manifest = await stateOps.exportWorkspace({ ...body.value, ownerScope });
+    return c.json({ export: { id: manifest.id, status: "complete", files: manifest.files } }, 202);
+  });
+
+  app.delete("/api/workspace/data", limited, async (c) => {
+    const body = await parseJson(c, DeleteWorkspaceSchema);
+    if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
+    let ownerScope: OwnerScope;
+    try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
+    const admitted = await withLegacyProjectOperation({
+      ownerScope,
+      projectSlug: body.value.projectSlug,
+      kind: "write",
+      operation: () => stateOps.deleteWorkspaceData({ ...body.value, ownerScope }),
+    });
+    if (!admitted.ok) return c.json(admitted.body, status(admitted.status));
+    const result = admitted.value;
+    if (!result.ok) return c.json({ error: result.error }, status(result.status));
+    return c.json({ ok: true });
+  });
+
+  return app;
+}

@@ -55,7 +55,7 @@ it("requires the confirmed preview fingerprint even if the Chat revision is unch
 
 it("wires owner preview, listing, creation, public read, and revocation", async () => {
   const { Hono } = await import("hono");
-  const { markAuthContextReady, setPlatformVerifiedPrincipal } = await import("../../packages/gateway/src/request-principal");
+  const { markAuthContextReady, setPlatformVerifiedPrincipal } = await import("../../packages/gateway/src/domains/identity/request-principal");
   const { createChatSharingRoutes } = await import("../../packages/gateway/src/chat/sharing-routes");
   const app = new Hono();
   app.use("/api/*", async (c, next) => { markAuthContextReady(c); setPlatformVerifiedPrincipal(c, owner.ownerId); await next(); });

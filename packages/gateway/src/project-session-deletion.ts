@@ -1,6 +1,6 @@
 import { unlink } from "node:fs/promises";
 import { join } from "node:path";
-import type { WorkspaceSession } from "./agent-session-manager.js";
+import type { WorkspaceSession } from "./domains/sessions/agent-session-manager.js";
 
 /** Only derived OS-owned paths are removed; persisted transcriptPath is never trusted. */
 export async function deleteProjectSessionFiles(homePath: string, session: WorkspaceSession): Promise<void> {

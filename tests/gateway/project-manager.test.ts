@@ -3,8 +3,8 @@ import { mkdir, mkdtemp, readdir, readFile, realpath, stat, symlink, writeFile }
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createProjectManager, validateGitHubUrl } from "../../packages/gateway/src/project-manager.js";
-import { atomicWriteJson } from "../../packages/gateway/src/state-ops.js";
+import { createProjectManager, validateGitHubUrl } from "../../packages/gateway/src/domains/workspace/project-manager.js";
+import { atomicWriteJson } from "../../packages/gateway/src/domains/files/state-ops.js";
 
 describe("project-manager", () => {
   let homePath: string;
@@ -1119,7 +1119,7 @@ describe("project-manager", () => {
   it("lists PRs and branches through argv-based commands", async () => {
     await mkdir(join(homePath, "projects", "repo", "repo", ".git"), { recursive: true });
     await mkdir(join(homePath, "projects", "repo"), { recursive: true });
-    await import("../../packages/gateway/src/state-ops.js").then(({ atomicWriteJson }) =>
+    await import("../../packages/gateway/src/domains/files/state-ops.js").then(({ atomicWriteJson }) =>
       atomicWriteJson(join(homePath, "projects", "repo", "config.json"), {
         id: "proj_repo",
         name: "repo",

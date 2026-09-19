@@ -3,8 +3,8 @@ import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createPreviewManager } from "../../packages/gateway/src/preview-manager.js";
-import { atomicWriteJson } from "../../packages/gateway/src/state-ops.js";
+import { createPreviewManager } from "../../packages/gateway/src/domains/apps/preview-manager.js";
+import { atomicWriteJson } from "../../packages/gateway/src/domains/files/state-ops.js";
 
 describe("preview-manager", () => {
   let homePath: string;

@@ -7,7 +7,7 @@ import type { CompanyBrainReadinessService } from "./company-brain-readiness.js"
 import {
   requireRequestPrincipal,
   type RequestPrincipal,
-} from "../request-principal.js";
+} from "../domains/identity/request-principal.js";
 
 const COMPANY_BRAIN_BODY_LIMIT = 8192;
 

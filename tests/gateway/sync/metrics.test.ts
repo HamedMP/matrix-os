@@ -9,7 +9,7 @@ import {
   syncManifestBytes,
   syncConnectedPeers,
 } from "../../../packages/gateway/src/sync/metrics.js";
-import { metricsRegistry } from "../../../packages/gateway/src/metrics.js";
+import { metricsRegistry } from "../../../packages/gateway/src/domains/observability/metrics.js";
 
 describe("sync metrics", () => {
   it("registers all sync counters in the shared registry", async () => {

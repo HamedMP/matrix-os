@@ -1,7 +1,7 @@
 export { createGateway } from "./server.js";
 export type { GatewayConfig, ServerMessage } from "./server.js";
 export { createProvisioner } from "./provisioner.js";
-export { createDispatcher } from "./dispatcher.js";
+export { createDispatcher } from "./domains/sessions/dispatcher.js";
 export type {
   Dispatcher,
   DispatchOptions,
@@ -10,11 +10,11 @@ export type {
   SpawnFn,
   BatchEntry,
   BatchResult,
-} from "./dispatcher.js";
-export { createWatcher } from "./watcher.js";
-export type { Watcher, FileChangeEvent, FileEvent } from "./watcher.js";
-export { createPtyHandler } from "./pty.js";
-export type { PtyMessage, PtyServerMessage } from "./pty.js";
+} from "./domains/sessions/dispatcher.js";
+export { createWatcher } from "./domains/files/watcher.js";
+export type { Watcher, FileChangeEvent, FileEvent } from "./domains/files/watcher.js";
+export { createPtyHandler } from "./domains/terminal/pty.js";
+export type { PtyMessage, PtyServerMessage } from "./domains/terminal/pty.js";
 export { createChannelManager } from "./channels/manager.js";
 export type { ChannelManager, ChannelManagerConfig } from "./channels/manager.js";
 export { createTelegramAdapter } from "./channels/telegram.js";
@@ -34,19 +34,19 @@ export type { CronJob, CronSchedule, CronTarget } from "./cron/types.js";
 export { createHeartbeatRunner } from "./heartbeat/runner.js";
 export type { HeartbeatRunner, HeartbeatConfig } from "./heartbeat/runner.js";
 export { buildHeartbeatPrompt } from "./heartbeat/prompt.js";
-export { createInteractionLogger } from "./logger.js";
-export type { InteractionLogger, InteractionEntry, InteractionInput } from "./logger.js";
-export { createGitSync, createAutoSync } from "./git-sync.js";
-export type { GitSync, GitStatus, GitResult, AutoSync, AutoSyncOptions } from "./git-sync.js";
-export { createS3SyncDaemon, parseSyncignore } from "./s3-sync.js";
-export type { S3SyncDaemon, S3SyncConfig, S3FileVersion, ReconcileStats } from "./s3-sync.js";
-export { createGitAutoCommit, createSnapshotManager, createFileHistory } from "./git-versioning.js";
-export { createBridgeSql } from "./bridge-sql.js";
-export type { BridgeSql, QueryResult, ExecResult } from "./bridge-sql.js";
-export { createPostgresManager } from "./postgres-manager.js";
-export type { PostgresManager, PostgresConfig, AppDatabaseInfo, PostgresStatus } from "./postgres-manager.js";
-export { createStorageTracker } from "./storage-tracker.js";
-export type { StorageTracker, StorageUsage } from "./storage-tracker.js";
+export { createInteractionLogger } from "./_shared/logger.js";
+export type { InteractionLogger, InteractionEntry, InteractionInput } from "./_shared/logger.js";
+export { createGitSync, createAutoSync } from "./domains/git/git-sync.js";
+export type { GitSync, GitStatus, GitResult, AutoSync, AutoSyncOptions } from "./domains/git/git-sync.js";
+export { createS3SyncDaemon, parseSyncignore } from "./domains/files/s3-sync.js";
+export type { S3SyncDaemon, S3SyncConfig, S3FileVersion, ReconcileStats } from "./domains/files/s3-sync.js";
+export { createGitAutoCommit, createSnapshotManager, createFileHistory } from "./domains/git/git-versioning.js";
+export { createBridgeSql } from "./domains/apps/db/bridge-sql.js";
+export type { BridgeSql, QueryResult, ExecResult } from "./domains/apps/db/bridge-sql.js";
+export { createPostgresManager } from "./_shared/postgres-manager.js";
+export type { PostgresManager, PostgresConfig, AppDatabaseInfo, PostgresStatus } from "./_shared/postgres-manager.js";
+export { createStorageTracker } from "./domains/files/storage-tracker.js";
+export type { StorageTracker, StorageUsage } from "./domains/files/storage-tracker.js";
 export type {
   GitAutoCommit,
   AutoCommitResult,
@@ -57,8 +57,8 @@ export type {
   HistoryEntry,
   HistoryOptions,
   RestoreResult,
-} from "./git-versioning.js";
-export { authMiddleware } from "./auth.js";
+} from "./domains/git/git-versioning.js";
+export { authMiddleware } from "./domains/identity/auth.js";
 export {
   AUTH_CONTEXT_READY_CONTEXT_KEY,
   JWT_CLAIMS_CONTEXT_KEY,
@@ -74,10 +74,10 @@ export {
   ownerScopeFromPrincipal,
   readPrincipalRuntimeConfig,
   requireRequestPrincipal,
-} from "./request-principal.js";
-export type { PrincipalRuntimeConfig, PrincipalSource, RequestPrincipal, RequestPrincipalError } from "./request-principal.js";
-export { getSystemInfo } from "./system-info.js";
-export type { SystemInfo } from "./system-info.js";
+} from "./domains/identity/request-principal.js";
+export type { PrincipalRuntimeConfig, PrincipalSource, RequestPrincipal, RequestPrincipalError } from "./domains/identity/request-principal.js";
+export { getSystemInfo } from "./domains/observability/system-info.js";
+export type { SystemInfo } from "./domains/observability/system-info.js";
 export {
   CanvasActionSchema,
   CanvasDocumentWriteSchema,
@@ -125,10 +125,10 @@ export type {
 export { createSymphonyRunner, SymphonyConfigSchema, SymphonyConfigUpdateSchema, SymphonyTrackerConfigSchema, SymphonyTrackerConfigUpdateSchema } from "./symphony-runner.js";
 export type { SymphonyConfig, SymphonyConfigUpdate, SymphonyStatus, SymphonyStartResult } from "./symphony-runner.js";
 export * from "./symphony/index.js";
-export { createConversationStore } from "./conversations.js";
-export type { ConversationStore, ConversationFile, ConversationMeta, SearchResult } from "./conversations.js";
-export { createApprovalBridge } from "./approval.js";
-export type { ApprovalBridge, ApprovalRequest, ApprovalResponse } from "./approval.js";
+export { createConversationStore } from "./domains/sessions/conversations.js";
+export type { ConversationStore, ConversationFile, ConversationMeta, SearchResult } from "./domains/sessions/conversations.js";
+export { createApprovalBridge } from "./domains/sessions/approval.js";
+export type { ApprovalBridge, ApprovalRequest, ApprovalResponse } from "./domains/sessions/approval.js";
 export {
   metricsRegistry,
   httpRequestsTotal,
@@ -139,4 +139,4 @@ export {
   aiCostTotal,
   aiTokensTotal,
   normalizePath,
-} from "./metrics.js";
+} from "./domains/observability/metrics.js";
