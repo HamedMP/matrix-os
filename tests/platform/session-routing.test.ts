@@ -11,6 +11,7 @@ describe("app-domain icon caching", () => {
       "https://app.matrix-os.com/icons/custom-brand.png?v=mtime-size",
     );
     expect(current.get("cache-control")).toBe("private, max-age=31536000, immutable");
+    expect(current.get("vary")).toBe("Accept-Encoding");
 
     const stale = new Headers({ etag: '"new-version"' });
     applyAppDomainRuntimeAssetCacheHeaders(
@@ -19,6 +20,37 @@ describe("app-domain icon caching", () => {
       "https://app.matrix-os.com/icons/custom-brand.png?v=old-version",
     );
     expect(stale.get("cache-control")).toBe("private, max-age=86400");
+    expect(stale.get("vary")).toBe("Cookie, Accept-Encoding");
+  });
+
+  it("keeps content-addressed icons cacheable across session cookie rotation", () => {
+    const headers = new Headers({ etag: '"mtime-size"', vary: "Cookie, Origin" });
+    applyAppDomainRuntimeAssetCacheHeaders(
+      headers,
+      "/icons/custom-brand.png",
+      "https://app.matrix-os.com/icons/custom-brand.png?v=mtime-size",
+    );
+    expect(headers.get("vary")).toBe("Origin, Accept-Encoding");
+
+    const unversioned = new Headers({ etag: '"mtime-size"' });
+    applyAppDomainRuntimeAssetCacheHeaders(
+      unversioned,
+      "/icons/custom-brand.png",
+      "https://app.matrix-os.com/icons/custom-brand.png",
+    );
+    expect(unversioned.get("cache-control")).toBe("private, max-age=86400");
+    expect(unversioned.get("vary")).toBe("Cookie, Accept-Encoding");
+  });
+
+  it("still varies other runtime assets on the session cookie", () => {
+    const headers = new Headers();
+    applyAppDomainRuntimeAssetCacheHeaders(
+      headers,
+      "/wallpapers/dusk.webp",
+      "https://app.matrix-os.com/wallpapers/dusk.webp",
+    );
+    expect(headers.get("cache-control")).toBe("private, max-age=86400");
+    expect(headers.get("vary")).toBe("Cookie, Accept-Encoding");
   });
 });
 

@@ -140,7 +140,7 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
     () => apiApps.map((app) => ({
       name: app.name,
       path: normalizeBuiltInAppPath(app.path.replace(/^\/files\//, "")),
-      iconUrl: gatewayAssetUrl(app.iconUrl) ?? iconUrlForSlug(app.icon ?? app.slug),
+      iconUrl: app.iconUrl ?? iconUrlForSlug(app.icon ?? app.slug),
     })),
     [apiApps],
   );

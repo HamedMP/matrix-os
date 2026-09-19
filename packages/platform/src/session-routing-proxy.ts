@@ -31,29 +31,70 @@ export function applyCookieRoutedShellAssetCacheHeaders(headers: Headers): void 
 }
 
 export function applyAppDomainRuntimeAssetCacheHeaders(headers: Headers, path: string, rawUrl: string): void {
-  const maxAge = getAppDomainRuntimeAssetBrowserMaxAge(headers, path, rawUrl);
-  if (maxAge === null) return;
-  const immutable = maxAge === 31_536_000 ? ', immutable' : '';
-  headers.set('cache-control', `private, max-age=${maxAge}${immutable}`);
+  const policy = getAppDomainRuntimeAssetCachePolicy(headers, path, rawUrl);
+  if (policy === null) return;
+  const immutable = policy.maxAge === ONE_YEAR_SECONDS ? ', immutable' : '';
+  headers.set('cache-control', `private, max-age=${policy.maxAge}${immutable}`);
   headers.set('cdn-cache-control', 'no-store');
   headers.set('cloudflare-cdn-cache-control', 'no-store');
-  addVaryHeader(headers, ['Cookie', 'Accept-Encoding']);
+  if (policy.varyOnCookie) {
+    addVaryHeader(headers, ['Cookie', 'Accept-Encoding']);
+    return;
+  }
+  // Content-addressed icon bytes (`?v=` matched the served ETag) are the same
+  // for every session that can emit that URL, so the browser may keep them
+  // across Clerk session-cookie rotations. Varying on Cookie here made every
+  // launcher icon re-download on each shell open for customer VPS users.
+  removeVaryHeaderValue(headers, 'Cookie');
+  addVaryHeader(headers, ['Accept-Encoding']);
 }
 
-function getAppDomainRuntimeAssetBrowserMaxAge(headers: Headers, path: string, rawUrl: string): number | null {
-  if (path.startsWith('/_next/static/') || isViteAppAssetPath(path)) return 31_536_000;
+const ONE_YEAR_SECONDS = 31_536_000;
+const ONE_DAY_SECONDS = 86_400;
+
+interface AppDomainRuntimeAssetCachePolicy {
+  maxAge: number;
+  varyOnCookie: boolean;
+}
+
+function getAppDomainRuntimeAssetCachePolicy(
+  headers: Headers,
+  path: string,
+  rawUrl: string,
+): AppDomainRuntimeAssetCachePolicy | null {
+  if (path.startsWith('/_next/static/') || isViteAppAssetPath(path)) {
+    return { maxAge: ONE_YEAR_SECONDS, varyOnCookie: true };
+  }
   if (path.startsWith('/icons/')) {
     try {
       const requestedVersion = new URL(rawUrl, 'https://app.matrix-os.com').searchParams.get('v');
       const responseVersion = headers.get('etag')?.replace(/^W\//, '').replace(/^"|"$/g, '');
-      return requestedVersion && requestedVersion === responseVersion ? 31_536_000 : 86_400;
+      return requestedVersion && requestedVersion === responseVersion
+        ? { maxAge: ONE_YEAR_SECONDS, varyOnCookie: false }
+        : { maxAge: ONE_DAY_SECONDS, varyOnCookie: true };
     } catch (err: unknown) {
       console.warn('[platform] Failed to parse runtime asset cache URL:', err instanceof Error ? err.message : String(err));
-      return 86_400;
+      return { maxAge: ONE_DAY_SECONDS, varyOnCookie: true };
     }
   }
-  if (path.startsWith('/fonts/') || path.startsWith('/wallpapers/')) return 86_400;
+  if (path.startsWith('/fonts/') || path.startsWith('/wallpapers/')) {
+    return { maxAge: ONE_DAY_SECONDS, varyOnCookie: true };
+  }
   return null;
+}
+
+function removeVaryHeaderValue(headers: Headers, value: string): void {
+  const vary = headers.get('vary');
+  if (!vary) return;
+  const remaining = vary
+    .split(',')
+    .map((part) => part.trim())
+    .filter((part) => part && part.toLowerCase() !== value.toLowerCase());
+  if (remaining.length === 0) {
+    headers.delete('vary');
+  } else {
+    headers.set('vary', remaining.join(', '));
+  }
 }
 
 function addVaryHeader(headers: Headers, values: string[]): void {
