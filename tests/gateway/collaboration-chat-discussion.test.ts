@@ -3,6 +3,7 @@ import { bootstrapChatDatabase } from "../../packages/gateway/src/chat/database.
 import { CollaborationAuthority } from "../../packages/gateway/src/collaboration/authority.js";
 import { CollaborationChatAdapter } from "../../packages/gateway/src/collaboration/chat-adapter.js";
 import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
+import { CollaborationDiscussionAdapter } from "../../packages/gateway/src/collaboration/discussion-adapter.js";
 import { CollaborationRepository } from "../../packages/gateway/src/collaboration/repository.js";
 import {
   collaborationActors,
@@ -228,6 +229,119 @@ describe("CollaborationChatAdapter discussion", () => {
     expect(history).toHaveLength(1);
     expect(history[0]).toMatchObject({ actor: { displayName: "Unknown participant" } });
     expect(JSON.stringify(history)).not.toContain("projects/private.txt");
+  });
+
+  it("projects only canonical discussion through the scope discussion adapter", async () => {
+    const writer = await authority.authorize({
+      scopeId: collaborationIds.scope,
+      actorId: collaborationActors.editor,
+      action: "discuss",
+    });
+    await adapter.appendDiscussion(writer, {
+      clientRequestId: requestId,
+      expectedRevision: "1",
+      text: "Visible only in discussion",
+    });
+    await fixture.db.insertInto("chat_messages").values({
+      id: "msg_ai_request",
+      chat_id: collaborationIds.chat,
+      seq: 2,
+      role: "user",
+      state: "committed",
+      turn_id: null,
+      run_id: null,
+      actor_id: collaborationActors.owner,
+      purpose: "ai_request",
+      parts: JSON.stringify([{ type: "text", text: "Ask the AI" }]),
+      byte_count: 10,
+      search_text: "Ask the AI",
+      created_at: now,
+    }).execute();
+    const discussion = new CollaborationDiscussionAdapter({
+      db: fixture.db,
+      authority,
+      chatAdapter: adapter,
+      now: () => new Date(now),
+      resolveParticipant: async (actorId) => ({ actorId, displayName: "Participant" }),
+    });
+    const reader = await authority.authorize({
+      scopeId: collaborationIds.scope,
+      actorId: collaborationActors.viewer,
+      action: "read",
+    });
+
+    await expect(discussion.list(reader, { afterSequence: "0", limit: 50 })).resolves.toMatchObject({
+      latestSequence: "1",
+      messages: [{ sequence: "1", text: "Visible only in discussion" }],
+    });
+  });
+
+  it("keeps discussion read state independent from ordinary Chat messages", async () => {
+    await fixture.db.insertInto("chat_messages").values({
+      id: "msg_ai_only",
+      chat_id: collaborationIds.chat,
+      seq: 1,
+      role: "assistant",
+      state: "committed",
+      turn_id: null,
+      run_id: null,
+      actor_id: null,
+      purpose: "assistant",
+      parts: JSON.stringify([{ type: "text", text: "AI response" }]),
+      byte_count: 20,
+      search_text: "AI response",
+      created_at: now,
+    }).execute();
+    await fixture.db.updateTable("chats").set({ message_count: 1 }).where("id", "=", collaborationIds.chat).execute();
+    await fixture.db.insertInto("chat_user_state").values({
+      chat_id: collaborationIds.chat,
+      principal_id: collaborationActors.editor,
+      read_through_seq: 1,
+      pinned: false,
+      muted: false,
+      attention_acknowledged_at: null,
+      last_opened_at: now,
+      updated_at: now,
+    }).execute();
+    const discussion = new CollaborationDiscussionAdapter({
+      db: fixture.db,
+      authority,
+      chatAdapter: adapter,
+      now: () => new Date(now),
+      resolveParticipant: async (actorId) => ({ actorId, displayName: "Participant" }),
+    });
+    const reader = await authority.authorize({
+      scopeId: collaborationIds.scope,
+      actorId: collaborationActors.editor,
+      action: "read",
+    });
+
+    await expect(discussion.getUserState(reader)).resolves.toEqual({ readThroughSeq: "0" });
+    await expect(discussion.updateUserState(reader, { readThroughSeq: "1" }))
+      .rejects.toMatchObject({ code: "invalid_request" });
+
+    const writer = await authority.authorize({
+      scopeId: collaborationIds.scope,
+      actorId: collaborationActors.editor,
+      action: "discuss",
+    });
+    await discussion.append(writer, {
+      clientRequestId: requestId,
+      expectedRevision: "1",
+      text: "Discussion note",
+    });
+    await expect(discussion.updateUserState(reader, { readThroughSeq: "2" }))
+      .resolves.toMatchObject({ readThroughSeq: "2" });
+    await expect(fixture.db.selectFrom("chat_user_state")
+      .select("read_through_seq")
+      .where("chat_id", "=", collaborationIds.chat)
+      .where("principal_id", "=", collaborationActors.editor)
+      .executeTakeFirstOrThrow()).resolves.toEqual({ read_through_seq: 1 });
+    await expect(fixture.db.selectFrom("collaboration_discussion_user_state")
+      .select("read_through_seq")
+      .where("scope_id", "=", collaborationIds.scope)
+      .where("actor_id", "=", collaborationActors.editor)
+      .executeTakeFirstOrThrow()).resolves.toEqual({ read_through_seq: 2 });
   });
 
   it("keeps committed discussion and history available when participant lookup fails", async () => {

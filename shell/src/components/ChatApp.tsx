@@ -4,7 +4,7 @@ import type { ChatAgentDraftRequest, ChatCollaborationView, StartAgentChat } fro
 import { useChatReadState, CanonicalChatInputForm } from "@matrix-os/ui";
 import type { CanonicalChatInputView, CanonicalSubmitChatInputRequest } from "@matrix-os/contracts";
 
-import { useState, useMemo, useRef, useEffect } from "react";
+import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { ChatQueuedRequests } from "./chat/ChatQueuedRequests";
 import { ChatContextReceipt } from "@matrix-os/ui";
 import { ChatRunContextSchema, type CanonicalChatQueuedTurn } from "@matrix-os/contracts";
@@ -13,6 +13,7 @@ import { useChatComposerDraft } from "./chat/useChatComposerDraft";
 import { ChatAgentsRailSection, ChatAgentsWorkspace, ChatAgentsContent, useChatAgentsNavigation, type ChatAgentClient } from "@matrix-os/ui";
 import type { ChatSubmitOptions } from "@/hooks/useChatState";
 import { ChatSharing } from "./chat/ChatSharing";
+import { SharedWithMeNav } from "./chat/SharedWithMeNav";
 import { ShellChatCollaboration } from "./chat/ShellChatCollaboration";
 import { ChatAttachments, ChatContextMenu } from "@matrix-os/ui";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
@@ -118,6 +119,7 @@ function writeHermesSetup(channels: string[]) {
 interface ChatAppProps {
   collaborationView?: ChatCollaborationView;
   onOpenSharedChat?: (scopeId: string) => void;
+  onOpenSharedHome?: () => void;
   filterUnreadOnly?: boolean;
   onUnreadFilterChange?: (value: boolean) => void;
   active?: boolean;
@@ -190,7 +192,7 @@ export function ChatApp(props: ChatAppProps) {
 }
 
 function ChatAppContent({
-  collaborationView, onOpenSharedChat,
+  collaborationView, onOpenSharedChat, onOpenSharedHome,
   filterUnreadOnly, onUnreadFilterChange,
   active = true, readState, displayedThroughSeq = 0, onUpdateReadState,
   messages,
@@ -257,6 +259,21 @@ function ChatAppContent({
   const [setupOpen, setSetupOpen] = useState(false);
   const [submittingApprovalId, setSubmittingApprovalId] = useState<string | null>(null);
   const [providerSetupError, setProviderSetupError] = useState<string | null>(null);
+  const collaborationViewKey = collaborationView ? JSON.stringify(collaborationView) : null;
+  const [sharedMetadata, setSharedMetadata] = useState<{
+    viewKey: string;
+    title: string;
+    role: "owner" | "editor" | "viewer";
+  } | null>(null);
+  const [collaborationHeaderContainer, setCollaborationHeaderContainer] = useState<HTMLDivElement | null>(null);
+  const activeSharedMetadata = sharedMetadata?.viewKey === collaborationViewKey ? sharedMetadata : null;
+  const handleSharedMetadata = useCallback((metadata: {
+    title: string;
+    role: "owner" | "editor" | "viewer";
+  }) => {
+    if (!collaborationViewKey) return;
+    setSharedMetadata({ ...metadata, viewKey: collaborationViewKey });
+  }, [collaborationViewKey]);
   const [editingChat, setEditingChat] = useState<{ id: string; source: "header" | "rail" } | null>(null);
   const [renamePending, setRenamePending] = useState(false);
   const initialHermesSetupRef = useRef<ReturnType<typeof readHermesSetup> | null>(null);
@@ -380,6 +397,10 @@ function ChatAppContent({
         </div>
 
         <div className="px-2 pb-2"><ChatAgentsRailSection client={agentClient} onStartChat={startAgentChat} onOpen={() => { if (mobile) setSidebarOpen(false); }} onSetup={() => setSetupOpen(true)} /></div>
+        {onOpenSharedHome ? <SharedWithMeNav active={collaborationView?.kind === "home"} onOpen={() => {
+          onOpenSharedHome();
+          if (mobile) setSidebarOpen(false);
+        }} /> : null}
         {/* Search */}
         <div className="px-3 pb-2">
           <div className={`flex items-center gap-2 rounded-lg bg-background/60 px-2.5 text-xs ${mobile ? "py-2.5" : "py-1.5"}`}>
@@ -450,9 +471,8 @@ function ChatAppContent({
       {/* Main content */}
       <ChatAgentsContent client={agentClient} scopeKey={sessionId ?? "draft"}>
       <main className="flex flex-1 flex-col min-w-0">
-        {sessionId ? <ChatSharing key={sessionId} chatId={sessionId} /> : null}
         {/* Top bar */}
-        <header className={`flex items-center gap-2 border-b px-3 ${mobile ? "surface-glass min-h-14" : "min-h-12 border-border/30"}`}>
+        <header data-slot="chat-session-header" className={`flex items-center gap-2 border-b px-3 ${mobile ? "surface-glass min-h-14" : "min-h-12 border-border/30"}`}>
           {!sidebarOpen && (
             <>
               <Button
@@ -483,7 +503,7 @@ function ChatAppContent({
               <div className="min-w-0 flex-1 text-center">
                 {collaborationView ? (
                   <span className="block truncate px-1 text-sm font-semibold leading-4 text-foreground">
-                    Shared Chat
+                    {activeSharedMetadata?.title ?? "Chat"}
                   </span>
                 ) : editingChat?.source === "header" && editingChat.id === sessionId && activeConversationTitle ? (
                   <ChatTitleEditor
@@ -514,12 +534,14 @@ function ChatAppContent({
                 )}
                 <p className="truncate text-[10px] leading-3 text-muted-foreground">
                   {collaborationView
-                    ? "Live shared collaboration"
+                    ? activeSharedMetadata ? `Shared · ${activeSharedMetadata.role}` : "Shared session"
                     : providerState.selected?.modelLabel ?? (providerState.loading ? "Loading AI access" : "AI access unavailable")}
                 </p>
               </div>
             </div>
           </div>
+          {!collaborationView && sessionId ? <ChatSharing key={sessionId} chatId={sessionId} /> : null}
+          {collaborationView ? <div ref={setCollaborationHeaderContainer} className="flex shrink-0 items-center" /> : null}
           {!collaborationView ? <Button
             variant={setupOpen ? "secondary" : "ghost"}
             size="sm"
@@ -561,7 +583,8 @@ function ChatAppContent({
         )}
 
         {collaborationView ? (
-          <ShellChatCollaboration view={collaborationView} onOpenChat={onOpenSharedChat} />
+          <ShellChatCollaboration view={collaborationView} onOpenChat={onOpenSharedChat}
+            onSessionMetadata={handleSharedMetadata} headerContainer={collaborationHeaderContainer} />
         ) : <>
         <ChatQueuedRequests key={`queue:${sessionId ?? "new"}`} turns={queuedTurns} onCancel={onCancelQueuedTurn} />
         {/* Empty state or conversation */}

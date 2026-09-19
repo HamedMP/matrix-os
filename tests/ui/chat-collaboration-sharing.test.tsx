@@ -100,7 +100,7 @@ describe("Chat collaboration sharing", () => {
     const { rerender } = render(<ChatCollaboration view={{ kind: "home" }} api={api} actorId="user_editor"
       openInvitation={openInvitation} openChat={openChat} />);
     expect(await screen.findByText("Nima invited you")).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: /Review invitation/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Details" }));
     expect(openInvitation).toHaveBeenCalledWith(invitationId);
 
     rerender(<ChatCollaboration view={{ kind: "invitation", invitationId }} api={api} actorId="user_editor"
@@ -113,6 +113,32 @@ describe("Chat collaboration sharing", () => {
       expect.objectContaining({ expectedRevision: "2" }),
     ));
     expect(openChat).toHaveBeenCalledWith(scopeId);
+  });
+
+  it("declines a deep-linked invitation without authenticating a live session", async () => {
+    const invitationId = "30000000-0000-4000-8000-000000000001";
+    const invitation = {
+      id: invitationId, scopeId, owner: { actorId: "user_owner", displayName: "Nima" },
+      target: { actorId: "user_editor", displayName: "Ada" }, scopeKind: "chat" as const,
+      role: "editor" as const, status: "pending" as const,
+      expiresAt: "2026-09-19T12:00:00.000Z", revision: "2",
+    };
+    const api = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async () => invitation),
+      post: vi.fn(async () => ({
+        scopeId, actorId: "user_editor", status: "revoked", scopeRevision: 3, memberRevision: 3,
+      })),
+      delete: vi.fn(),
+    };
+    render(<ChatCollaboration view={{ kind: "invitation", invitationId }} api={api} actorId="user_editor" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Decline invitation" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith(
+      `/api/collaboration/invitations/${invitationId}/decline`,
+      expect.objectContaining({ expectedRevision: "2" }),
+    ));
+    expect(await screen.findByRole("status")).toHaveTextContent("Invitation declined");
   });
 
   it("loads additional opaque discovery pages without replacing the first page", async () => {
@@ -245,20 +271,19 @@ describe("Chat collaboration sharing", () => {
     expect(screen.queryByText("README.md")).toBeNull();
   });
 
-  it("renders attributed canonical history and preserves a private draft after failure", async () => {
+  it("renders attributed canonical history in the ordinary shared Chat surface", async () => {
     const scope = {
       id: scopeId, ownerId: "user_owner", kind: "chat" as const, resourceId: chatId,
       membershipMode: "direct" as const, lifecycle: "shared" as const, revision: "1", authEpoch: "1",
       authorityGeneration: "1", role: "editor" as const,
       capabilities: { read: true, discuss: true, manageMembers: false, requestAi: false },
     };
-    let fail = true;
     let refresh = () => undefined;
     const api = {
       baseUrl: "https://app.matrix-os.com",
       get: vi.fn(async (path: string) => {
         if (path.endsWith("/chat/messages?after=0&limit=100")) return { messages: [{
-          id: "msg_one", chatId, sequence: "1", role: "user", state: "committed", purpose: "discussion",
+          id: "msg_one", chatId, sequence: "1", role: "user", state: "committed", purpose: "ai_request",
           actor: { actorId: "user_owner", displayName: "Nima" }, parts: [{ type: "text", text: "**Welcome**" }],
           createdAt: "2026-09-07T12:00:00.000Z",
         }] };
@@ -266,10 +291,7 @@ describe("Chat collaboration sharing", () => {
         if (path.endsWith("/user-state")) return { readThroughSeq: "0", pinned: false, muted: false };
         return scope;
       }),
-      post: vi.fn(async () => {
-        if (fail) throw new Error("private upstream detail");
-        return { id: "msg_two", chatId, sequence: "2", purpose: "discussion", actor: { actorId: "user_editor", displayName: "Ada" }, text: "Ready", createdAt: "2026-09-07T12:01:00.000Z" };
-      }),
+      post: vi.fn(),
       patch: vi.fn(async () => ({ readThroughSeq: "1", pinned: false, muted: false })),
       delete: vi.fn(),
       subscribe: vi.fn((_scopeId: string, onEvent: () => void) => {
@@ -277,27 +299,16 @@ describe("Chat collaboration sharing", () => {
         return () => undefined;
       }),
     };
-    const { unmount } = render(<ChatCollaboration view={{ kind: "chat", scopeId }} api={api}
-      actorId="user_editor" runtimeId="runtime_owner" />);
-    expect(await screen.findByText("Nima")).toBeVisible();
-    expect(screen.getByText("Welcome")).toBeVisible();
-    expect(await screen.findByText(/AI requests are unavailable/i)).toBeVisible();
-    fireEvent.change(screen.getByLabelText("Message everyone"), { target: { value: "Ready" } });
-    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Message was not sent");
-    expect(screen.getByLabelText("Message everyone")).toHaveValue("Ready");
-    const requestsBeforeRefresh = api.get.mock.calls.length;
-    refresh();
-    await waitFor(() => expect(api.get.mock.calls.length).toBeGreaterThan(requestsBeforeRefresh));
-    expect(screen.getByRole("alert")).toHaveTextContent("Message was not sent");
-    unmount();
-
-    fail = false;
     render(<ChatCollaboration view={{ kind: "chat", scopeId }} api={api}
       actorId="user_editor" runtimeId="runtime_owner" />);
-    await waitFor(() => expect(screen.getByLabelText("Message everyone")).toHaveValue("Ready"));
-    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
-    await waitFor(() => expect(screen.getByLabelText("Message everyone")).toHaveValue(""));
+    expect(await screen.findByText("Nima")).toBeVisible();
+    expect(screen.getByText("**Welcome**")).toBeVisible();
+    expect(await screen.findByLabelText("Message Chat")).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Ask AI" })).toBeNull();
+    const requestsBeforeRefresh = api.get.mock.calls.length;
+    await act(async () => { await refresh(); });
+    expect(api.get.mock.calls.length).toBeGreaterThan(requestsBeforeRefresh);
+    expect(screen.getByText("**Welcome**")).toBeVisible();
   });
 
   it("does not let an older scope load overwrite a newly selected Chat", async () => {
@@ -326,15 +337,15 @@ describe("Chat collaboration sharing", () => {
       }),
       post: vi.fn(), delete: vi.fn(),
     };
+    const onMetadata = vi.fn();
     const { rerender } = render(<ChatCollaboration view={{ kind: "chat", scopeId: oldScopeId }} api={api}
-      actorId="user_editor" runtimeId="runtime_owner" />);
+      actorId="user_editor" runtimeId="runtime_owner" onChatMetadata={onMetadata} />);
     await waitFor(() => expect(resolveOldScope).toBeTypeOf("function"));
     rerender(<ChatCollaboration view={{ kind: "chat", scopeId: nextScopeId }} api={api}
-      actorId="user_editor" runtimeId="runtime_owner" />);
-    expect(await screen.findByRole("heading", { name: "New Chat" })).toBeVisible();
+      actorId="user_editor" runtimeId="runtime_owner" onChatMetadata={onMetadata} />);
+    await waitFor(() => expect(onMetadata).toHaveBeenLastCalledWith({ title: "New Chat", role: "editor" }));
     await act(async () => { resolveOldScope(scopeFor(oldScopeId, "chat_old")); });
-    expect(screen.getByRole("heading", { name: "New Chat" })).toBeVisible();
-    expect(screen.queryByRole("heading", { name: "Old Chat" })).toBeNull();
+    expect(onMetadata).toHaveBeenLastCalledWith({ title: "New Chat", role: "editor" });
   });
 
   it("does not let a stale history page overwrite a newer canonical refresh", async () => {
@@ -346,7 +357,7 @@ describe("Chat collaboration sharing", () => {
     };
     const message = (sequence: number) => ({
       id: `msg_${sequence}`, chatId, sequence: String(sequence), role: "user" as const,
-      state: "committed" as const, purpose: "discussion" as const,
+      state: "committed" as const, purpose: "ai_request" as const,
       actor: { actorId: "user_owner", displayName: "Nima" }, parts: [{ type: "text" as const, text: `Message ${sequence}` }],
       createdAt: "2026-09-07T12:00:00.000Z",
     });
@@ -388,7 +399,7 @@ describe("Chat collaboration sharing", () => {
       capabilities: { read: true, discuss: false, manageMembers: false, requestAi: false },
     };
     const message = (sequence: number) => ({
-      id: `msg_${sequence}`, chatId, sequence: String(sequence), role: "user", state: "committed", purpose: "discussion",
+      id: `msg_${sequence}`, chatId, sequence: String(sequence), role: "user", state: "committed", purpose: "ai_request",
       actor: { actorId: "user_owner", displayName: "Nima" }, parts: [{ type: "text", text: `Message ${sequence}` }],
       createdAt: "2026-09-07T12:00:00.000Z",
     });
@@ -436,7 +447,7 @@ describe("Chat collaboration sharing", () => {
       capabilities: { read: true, discuss: true, manageMembers: false, requestAi: false },
     };
     const message = (text: string) => ({
-      id: "msg_1", chatId, sequence: "1", role: "user", state: "committed", purpose: "discussion",
+      id: "msg_1", chatId, sequence: "1", role: "user", state: "committed", purpose: "ai_request",
       actor: { actorId: "user_owner", displayName: "Nima" }, parts: [{ type: "text", text }],
       createdAt: "2026-09-07T12:00:00.000Z",
     });
@@ -462,8 +473,9 @@ describe("Chat collaboration sharing", () => {
     };
     render(<ChatCollaboration view={{ kind: "chat", scopeId }} api={api} actorId="user_editor" />);
     expect(await screen.findByText("Initial message")).toBeVisible();
-    fireEvent.change(screen.getByLabelText("Message everyone"), { target: { value: "Ship it" } });
-    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    let olderRefresh!: Promise<void>;
+    act(() => { olderRefresh = refresh(); });
+    const olderSettled = olderRefresh.then(() => null, (error: unknown) => error);
     await waitFor(() => expect(resolveOlder).toBeTypeOf("function"));
     await act(async () => { await refresh(); });
     expect(screen.getByText("Newest message")).toBeVisible();
@@ -471,8 +483,8 @@ describe("Chat collaboration sharing", () => {
       resolveOlder({ messages: [message("Stale message")] });
       await Promise.resolve();
       await Promise.resolve();
+      expect(await olderSettled).toBeInstanceOf(Error);
     });
-    expect(screen.getByRole("heading", { name: "Refresh race" })).toBeVisible();
     expect(screen.getByText("Newest message")).toBeVisible();
     expect(screen.queryByText("Stale message")).toBeNull();
   });
@@ -485,7 +497,7 @@ describe("Chat collaboration sharing", () => {
       capabilities: { read: true, discuss: true, manageMembers: false, requestAi: false },
     };
     const message = (text: string) => ({
-      id: "msg_1", chatId, sequence: "1", role: "user", state: "committed", purpose: "discussion",
+      id: "msg_1", chatId, sequence: "1", role: "user", state: "committed", purpose: "ai_request",
       actor: { actorId: "user_owner", displayName: "Nima" }, parts: [{ type: "text", text }],
       createdAt: "2026-09-07T12:00:00.000Z",
     });
@@ -516,8 +528,9 @@ describe("Chat collaboration sharing", () => {
     };
     render(<ChatCollaboration view={{ kind: "chat", scopeId }} api={api} actorId="user_editor" />);
     expect(await screen.findByText("Initial message")).toBeVisible();
-    fireEvent.change(screen.getByLabelText("Message everyone"), { target: { value: "Hello" } });
-    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    let olderRefresh!: Promise<void>;
+    act(() => { olderRefresh = refresh(); });
+    const olderSettled = olderRefresh.then(() => null, (error: unknown) => error);
     await waitFor(() => expect(resolveSendRecovery).toBeTypeOf("function"));
 
     await act(async () => { await refresh(); });
@@ -525,6 +538,7 @@ describe("Chat collaboration sharing", () => {
     await act(async () => {
       resolveSendRecovery({ messages: [message("Stale message")] });
       await Promise.resolve();
+      expect(await olderSettled).toBeInstanceOf(Error);
     });
 
     expect(screen.getByText("Newest message")).toBeVisible();
@@ -538,7 +552,7 @@ describe("Chat collaboration sharing", () => {
       authorityGeneration: "1", role: "editor",
       capabilities: { read: true, discuss: true, manageMembers: false, requestAi: false },
     };
-    const message = { id: "msg_1", chatId, sequence: "1", role: "user", state: "committed", purpose: "discussion",
+    const message = { id: "msg_1", chatId, sequence: "1", role: "user", state: "committed", purpose: "ai_request",
       actor: { actorId: "user_owner", displayName: "Nima" }, parts: [{ type: "text", text: "Still healthy" }],
       createdAt: "2026-09-07T12:00:00.000Z" };
     let refresh!: () => Promise<void>;
@@ -568,24 +582,27 @@ describe("Chat collaboration sharing", () => {
         return () => undefined;
       }),
     };
-    render(<ChatCollaboration view={{ kind: "chat", scopeId }} api={api} actorId="user_editor" />);
-    expect(await screen.findByRole("heading", { name: "Overlap Chat" })).toBeVisible();
-    fireEvent.change(screen.getByLabelText("Message everyone"), { target: { value: "Ship it" } });
-    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    const onMetadata = vi.fn();
+    render(<ChatCollaboration view={{ kind: "chat", scopeId }} api={api} actorId="user_editor" onChatMetadata={onMetadata} />);
+    await waitFor(() => expect(onMetadata).toHaveBeenCalledWith({ title: "Overlap Chat", role: "editor" }));
+    let olderRefresh!: Promise<void>;
+    act(() => { olderRefresh = refresh(); });
+    const olderSettled = olderRefresh.then(() => null, (error: unknown) => error);
     await waitFor(() => expect(resolveSendChat).toBeTypeOf("function"));
-    const liveRefresh = refresh();
+    let liveRefresh!: Promise<void>;
+    act(() => { liveRefresh = refresh(); });
     await waitFor(() => expect(resolveLiveMessages).toBeTypeOf("function"));
-    await act(async () => {
-      resolveSendChat(chat);
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    expect(screen.getByRole("heading", { name: "Overlap Chat" })).toBeVisible();
     await act(async () => {
       resolveLiveMessages({ messages: [message] });
       await liveRefresh;
     });
-    expect(screen.getByRole("heading", { name: "Overlap Chat" })).toBeVisible();
+    await act(async () => {
+      resolveSendChat(chat);
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(await olderSettled).toBeInstanceOf(Error);
+    });
+    expect(onMetadata).toHaveBeenLastCalledWith({ title: "Overlap Chat", role: "editor" });
     expect(screen.queryByText("Shared Chat unavailable")).toBeNull();
   });
 
@@ -593,6 +610,7 @@ describe("Chat collaboration sharing", () => {
     const api = {
       baseUrl: "https://app.matrix-os.com",
       get: vi.fn(async (path: string) => {
+        if (path.includes("/discussion/messages")) return { messages: [], latestSequence: "0" };
         if (path.includes("messages")) return { messages: [] };
         if (path.endsWith("/chat")) return { id: chatId, scopeId, title: "Read only", lifecycle: "active", revision: "1", messageCount: "0" };
         if (path.endsWith("/user-state")) return { readThroughSeq: "0", pinned: false, muted: false };
@@ -603,9 +621,34 @@ describe("Chat collaboration sharing", () => {
       post: vi.fn(), delete: vi.fn(),
     };
     render(<ChatCollaboration view={{ kind: "chat", scopeId }} api={api} actorId="user_viewer" runtimeId="runtime_owner" />);
-    expect(await screen.findByLabelText("Message everyone")).toBeDisabled();
-    expect(screen.getByText(/Viewers can read this Chat/i)).toBeVisible();
+    expect(await screen.findByLabelText("Message Chat")).toBeDisabled();
+    expect(screen.getByLabelText("Message Chat")).toHaveAttribute("placeholder", "Read-only access");
+    fireEvent.click(screen.getByRole("button", { name: "Open discussion" }));
+    expect(await screen.findByLabelText("Add a discussion note")).toBeDisabled();
     expect(api.post).not.toHaveBeenCalled();
+  });
+
+  it("toggles the discussion layer from the Chat header", async () => {
+    const api = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async (path: string) => {
+        if (path.includes("/discussion/messages")) return { messages: [], latestSequence: "0" };
+        if (path.includes("messages")) return { messages: [] };
+        if (path.endsWith("/chat")) return { id: chatId, scopeId, title: "Toggle Chat", lifecycle: "active", revision: "1", messageCount: "0" };
+        if (path.endsWith("/chat/requests")) throw new Error("SharedAiUnavailable");
+        return { id: scopeId, ownerId: "user_owner", kind: "chat", resourceId: chatId, membershipMode: "direct", lifecycle: "shared",
+          revision: "1", authEpoch: "1", authorityGeneration: "1", role: "viewer",
+          capabilities: { read: true, discuss: false, manageMembers: false, requestAi: false } };
+      }),
+      post: vi.fn(), delete: vi.fn(),
+    };
+    render(<ChatCollaboration view={{ kind: "chat", scopeId }} api={api} actorId="user_viewer" runtimeId="runtime_owner" />);
+    const trigger = await screen.findByRole("button", { name: "Open discussion" });
+
+    fireEvent.click(trigger);
+    expect(await screen.findByRole("dialog", { name: "Discussion" })).toBeVisible();
+    fireEvent.click(trigger);
+    expect(screen.queryByRole("dialog", { name: "Discussion" })).toBeNull();
   });
 
   it("shows scoped realtime reconnect state without taking discussion offline", async () => {
@@ -629,23 +672,25 @@ describe("Chat collaboration sharing", () => {
         return () => undefined;
       }),
     };
-    render(<ChatCollaboration view={{ kind: "chat", scopeId }} api={api} actorId="user_editor" runtimeId="runtime_owner" />);
-    expect(await screen.findByRole("heading", { name: "Reconnect Chat" })).toBeVisible();
+    const onMetadata = vi.fn();
+    render(<ChatCollaboration view={{ kind: "chat", scopeId }} api={api} actorId="user_editor" runtimeId="runtime_owner"
+      onChatMetadata={onMetadata} />);
+    await waitFor(() => expect(onMetadata).toHaveBeenCalledWith({ title: "Reconnect Chat", role: "editor" }));
     expect(screen.getByText("Connecting…")).toHaveAttribute("role", "status");
 
     act(() => connectionChange("reconnecting"));
 
     expect(screen.getByText("Reconnecting…")).toHaveAttribute("role", "status");
-    expect(screen.getByLabelText("Message everyone")).toBeEnabled();
+    expect(screen.getByLabelText("Message Chat")).toBeDisabled();
 
     act(() => connectionChange("connected"));
-    expect(screen.getByText("Live collaboration")).toBeVisible();
+    expect(screen.queryByText("Reconnecting…")).toBeNull();
   });
 
   it("paginates canonical history instead of treating the first page as complete", async () => {
     const firstPage = Array.from({ length: 100 }, (_, index) => ({
       id: `msg_${index}`, chatId, sequence: String(index + 1), role: "user" as const,
-      state: "committed" as const, purpose: "discussion" as const,
+      state: "committed" as const, purpose: "ai_request" as const,
       actor: { actorId: "user_owner", displayName: "Nima" }, parts: [{ type: "text" as const, text: `Message ${index + 1}` }],
       createdAt: "2026-09-07T12:00:00.000Z",
     }));
@@ -654,7 +699,7 @@ describe("Chat collaboration sharing", () => {
       get: vi.fn(async (path: string) => {
         if (path.endsWith("after=0&limit=100")) return { messages: firstPage };
         if (path.endsWith("after=100&limit=100")) return { messages: [{
-          id: "msg_101", chatId, sequence: "101", role: "user", state: "committed", purpose: "discussion",
+          id: "msg_101", chatId, sequence: "101", role: "user", state: "committed", purpose: "ai_request",
           actor: { actorId: "user_editor", displayName: "Ada" }, parts: [{ type: "text", text: "Latest message" }],
           createdAt: "2026-09-07T12:01:00.000Z",
         }] };
@@ -674,7 +719,7 @@ describe("Chat collaboration sharing", () => {
   it("reenables history pagination when a failed recovery fences an older page", async () => {
     const firstPage = Array.from({ length: 100 }, (_, index) => ({
       id: `msg_${index}`, chatId, sequence: String(index + 1), role: "user" as const,
-      state: "committed" as const, purpose: "discussion" as const,
+      state: "committed" as const, purpose: "ai_request" as const,
       actor: { actorId: "user_owner", displayName: "Nima" }, parts: [{ type: "text" as const, text: `Message ${index + 1}` }],
       createdAt: "2026-09-07T12:00:00.000Z",
     }));
@@ -726,7 +771,7 @@ describe("Chat collaboration sharing", () => {
   it("recovers every canonical page without collapsing already loaded history", async () => {
     const message = (sequence: number) => ({
       id: `msg_${sequence}`, chatId, sequence: String(sequence), role: "user" as const,
-      state: "committed" as const, purpose: "discussion" as const,
+      state: "committed" as const, purpose: "ai_request" as const,
       actor: { actorId: "user_owner", displayName: "Nima" },
       parts: [{ type: "text" as const, text: `Message ${sequence}` }],
       createdAt: "2026-09-07T12:00:00.000Z",

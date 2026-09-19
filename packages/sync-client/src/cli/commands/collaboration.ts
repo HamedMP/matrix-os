@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
 import {
   CollaborationAcceptInvitationRequestSchema,
+  CollaborationDeclineInvitationRequestSchema,
   CollaborationChatMessagesResponseSchema,
   CollaborationChatSchema,
   CollaborationCreateDiscussionRequestSchema,
+  CollaborationDiscussionMessageSchema,
   CollaborationCreateAiRequestSchema,
   CollaborationAiRequestControlSchema,
   CollaborationApprovalDecisionRequestSchema,
@@ -27,7 +29,7 @@ import { resolveCliProfile } from "../profiles.js";
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const ScopeIdSchema = z.uuid();
 const RevisionSchema = z.string().regex(/^(?:0|[1-9][0-9]{0,18})$/);
-const COLLABORATION_PATH = /^\/api\/collaboration\/(?:inbox|shared|invitations\/[0-9a-f-]+(?:\/accept)?|scopes\/[0-9a-f-]+(?:\/chat(?:\/messages|\/requests(?:\/[A-Za-z0-9_.:-]+\/(?:cancel|retry))?|\/approvals\/[A-Za-z0-9_.:-]+\/decision)?|\/terminal(?:\/actions)?|\/project|\/connection-tickets|\/user-state)?)?(?:\?[^#]*)?$/i;
+const COLLABORATION_PATH = /^\/api\/collaboration\/(?:inbox|shared|invitations\/[0-9a-f-]+(?:\/(?:accept|decline))?|scopes\/[0-9a-f-]+(?:\/chat(?:\/messages|\/requests(?:\/[A-Za-z0-9_.:-]+\/(?:cancel|retry))?|\/approvals\/[A-Za-z0-9_.:-]+\/decision)?|\/discussion\/(?:messages|user-state)|\/terminal(?:\/actions)?|\/project|\/connection-tickets|\/user-state)?)?(?:\?[^#]*)?$/i;
 const MAX_TERMINAL_FRAME_BYTES = 80 * 1024;
 const TERMINAL_HEARTBEAT_MS = 10_000;
 
@@ -37,6 +39,10 @@ interface CollaborationRequestInput {
   method: "GET" | "POST" | "PATCH";
   path: string;
   body?: unknown;
+}
+
+export function isCollaborationPathAllowed(path: string): boolean {
+  return COLLABORATION_PATH.test(path);
 }
 
 interface CollaborationTerminalSocket {
@@ -180,7 +186,7 @@ function terminalFrameText(value: unknown): string {
 }
 
 export async function collaborationRequest(input: CollaborationRequestInput): Promise<unknown> {
-  if (!COLLABORATION_PATH.test(input.path)) throw cliError("collaboration_failed");
+  if (!isCollaborationPathAllowed(input.path)) throw cliError("collaboration_failed");
   let base: URL;
   try {
     base = new URL(input.platformUrl);
@@ -341,6 +347,28 @@ export const collaborationCommand = defineCommand({
         }).then((accepted) => ({ invitation, accepted }));
       }),
     }),
+    decline: defineCommand({
+      meta: { name: "decline", description: "Decline a collaboration invitation" },
+      args: {
+        ...commonArgs,
+        invitation: { type: "string", required: true },
+        revision: { type: "string", required: true },
+      },
+      run: async ({ args }) => run(args, async (platformUrl, token) => {
+        const invitationId = value(args, "invitation", ScopeIdSchema);
+        const body = CollaborationDeclineInvitationRequestSchema.parse({
+          clientRequestId: randomUUID(),
+          expectedRevision: value(args, "revision", RevisionSchema),
+        });
+        return collaborationRequest({
+          platformUrl,
+          token,
+          method: "POST",
+          path: `/api/collaboration/invitations/${invitationId}/decline`,
+          body,
+        });
+      }),
+    }),
     open: defineCommand({
       meta: { name: "open", description: "Read a shared Chat without owner-home access" },
       args: scopeArgs,
@@ -357,7 +385,7 @@ export const collaborationCommand = defineCommand({
       }),
     }),
     discuss: defineCommand({
-      meta: { name: "discuss", description: "Post a human discussion message to a shared Chat" },
+      meta: { name: "discuss", description: "Post a human note to a shared session" },
       args: {
         ...scopeArgs,
         revision: { type: "string", required: true },
@@ -371,13 +399,13 @@ export const collaborationCommand = defineCommand({
           expectedRevision,
           text: args.message,
         });
-        return collaborationRequest({
+        return CollaborationDiscussionMessageSchema.parse(await collaborationRequest({
           platformUrl,
           token,
           method: "POST",
-          path: `/api/collaboration/scopes/${scopeId}/chat/messages`,
+          path: `/api/collaboration/scopes/${scopeId}/discussion/messages`,
           body,
-        });
+        }));
       }),
     }),
     requests: defineCommand({
