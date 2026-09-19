@@ -42,7 +42,10 @@ it.runIf(Boolean(process.env.MATRIX_TEST_ZELLIJ_BIN))("keeps native wheel, absol
     await command("seq 1 200");
     const query = (line?: number) => queryNativeScroll({ sessionName, paneId, line, run });
     // A first pipe can be consumed during plugin load/permission initialization.
-    await expect.poll(async () => { try { return (await query()).above; } catch { return 0; } }, { timeout: 10_000 }).toBeGreaterThan(0);
+    await expect.poll(async () => { try { return (await query()).above; } catch (error: unknown) {
+      console.warn("native-scroll initialization retry", error instanceof Error ? `${error.name}: ${error.message}` : "unknown_error");
+      return 0;
+    } }, { timeout: 10_000 }).toBeGreaterThan(0);
     const bottom = await query(); expect(bottom.below).toBe(0);
     pty.write("\x1b[<64;10;10M".repeat(5));
     await expect.poll(async () => (await query()).below, { timeout: 5000 }).toBeGreaterThan(0);

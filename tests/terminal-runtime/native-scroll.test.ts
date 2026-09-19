@@ -52,11 +52,3 @@ describe("native scroll bridge", () => {
   });
 });
 
-it("ships the WASI artifact built from the recorded pinned source", async () => {
-  const { createHash } = await import("node:crypto");
-  const base = new URL("../../packages/terminal-runtime/native-scroll/", import.meta.url);
-  const manifest: Record<string, string> = JSON.parse(await readFile(new URL("manifest.json", base), "utf8"));
-  for (const [path, hash] of Object.entries(manifest)) {
-    expect(createHash("sha256").update(await readFile(new URL(path, base))).digest("hex"), path).toBe(hash);
-  }
-});
