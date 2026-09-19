@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MainWsClientMessageSchema } from "../../packages/gateway/src/ws-message-schema.js";
+import { MainWsClientMessageSchema } from "../../packages/gateway/src/domains/integrations/ws-message-schema.js";
 
 describe("MainWsClientMessageSchema", () => {
   it("accepts valid chat messages", () => {

@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { getSystemInfo, getVersion } from "../../packages/gateway/src/system-info.js";
+import { getSystemInfo, getVersion } from "../../packages/gateway/src/domains/observability/system-info.js";
 
 function tmpHome(): string {
   const dir = resolve(mkdtempSync(join(tmpdir(), "sysinfo-")));

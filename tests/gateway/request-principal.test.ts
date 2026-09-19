@@ -11,7 +11,7 @@ import {
   readPrincipalRuntimeConfig,
   requireRequestPrincipal,
   type PrincipalRuntimeConfig,
-} from "../../packages/gateway/src/request-principal.js";
+} from "../../packages/gateway/src/domains/identity/request-principal.js";
 
 function createContext(claims?: { sub: string; handle?: string }) {
   const store = new Map<string, unknown>();

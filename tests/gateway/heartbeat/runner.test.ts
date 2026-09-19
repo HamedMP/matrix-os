@@ -7,7 +7,7 @@ import {
   type HeartbeatRunner,
 } from "../../../packages/gateway/src/heartbeat/runner.js";
 import { buildHeartbeatPrompt } from "../../../packages/gateway/src/heartbeat/prompt.js";
-import type { Dispatcher } from "../../../packages/gateway/src/dispatcher.js";
+import type { Dispatcher } from "../../../packages/gateway/src/domains/sessions/dispatcher.js";
 import type { CronJob } from "../../../packages/gateway/src/cron/types.js";
 import type { KernelEvent } from "@matrix-os/kernel";
 

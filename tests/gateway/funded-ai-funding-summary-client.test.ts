@@ -2,10 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import {
   FundedAiFundingSummaryClientError,
   createFundedAiFundingSummaryClient,
-} from "../../packages/gateway/src/funded-ai-funding-summary-client.js";
+} from "../../packages/gateway/src/domains/integrations/funded-ai-funding-summary-client.js";
 import {
   loadFundedAiRuntimeConfig,
-} from "../../packages/gateway/src/funded-ai-credential-manager.js";
+} from "../../packages/gateway/src/domains/integrations/funded-ai-credential-manager.js";
 
 const NOW = "2026-08-30T10:00:00.000Z";
 const funding = {

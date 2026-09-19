@@ -26,7 +26,7 @@ import {
   parseSyncignore,
   type S3SyncDaemon,
   type S3SyncConfig,
-} from "../../packages/gateway/src/s3-sync.js";
+} from "../../packages/gateway/src/domains/files/s3-sync.js";
 
 function tmpHome(): string {
   const dir = resolve(mkdtempSync(join(tmpdir(), "s3-sync-")));

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { resolveBundledSystemIconPath, resolveDefaultAppIconUrl, resolveSystemIconUrl } from "../../packages/gateway/src/default-icons.js";
+import { resolveBundledSystemIconPath, resolveDefaultAppIconUrl, resolveSystemIconUrl } from "../../packages/gateway/src/domains/apps/default-icons.js";
 
 describe("default app icons", () => {
   it("resolves shipped manifest icons for default apps", async () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { PromptContentSchema } from "../../packages/gateway/src/prompt-validation.js";
+import { PromptContentSchema } from "../../packages/gateway/src/domains/sessions/prompt-validation.js";
 
 describe("prompt-validation", () => {
   it("accepts normal text prompts", () => {

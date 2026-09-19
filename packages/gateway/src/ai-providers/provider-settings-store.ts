@@ -51,7 +51,7 @@ import {
   hashProviderSettingsMutation,
   sameProviderDependencyCounts,
 } from "./provider-settings-receipts.js";
-import type { FundedAiFundingSummaryReader } from "../funded-ai-funding-summary-client.js";
+import type { FundedAiFundingSummaryReader } from "../domains/integrations/funded-ai-funding-summary-client.js";
 
 const CONFIG_PATH = "system/ai-providers/settings.json";
 const PRIVATE_DIRECTORY = ".matrix-private";
