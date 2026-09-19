@@ -6,7 +6,7 @@ import {
   createPostgresManager,
   type PostgresManager,
   type PostgresConfig,
-} from "../../packages/gateway/src/postgres-manager.js";
+} from "../../packages/gateway/src/_shared/postgres-manager.js";
 
 function tmpHome(): string {
   const dir = resolve(mkdtempSync(join(tmpdir(), "pg-addon-")));
@@ -178,7 +178,7 @@ describe("T1534: Storage usage tracking", () => {
   });
 
   it("tracks storage usage with breakdown by type", async () => {
-    const { createStorageTracker } = await import("../../packages/gateway/src/storage-tracker.js");
+    const { createStorageTracker } = await import("../../packages/gateway/src/domains/files/storage-tracker.js");
     mkdirSync(join(homePath, "data", "test-app"), { recursive: true });
     writeFileSync(join(homePath, "data", "test-app", "file.txt"), "x".repeat(1000));
     mkdirSync(join(homePath, "system", "logs"), { recursive: true });
@@ -192,7 +192,7 @@ describe("T1534: Storage usage tracking", () => {
   });
 
   it("returns per-app SQLite sizes", async () => {
-    const { createStorageTracker } = await import("../../packages/gateway/src/storage-tracker.js");
+    const { createStorageTracker } = await import("../../packages/gateway/src/domains/files/storage-tracker.js");
 
     // Create an actual sqlite database
     const Database = (await import("better-sqlite3")).default;
@@ -211,7 +211,7 @@ describe("T1534: Storage usage tracking", () => {
   });
 
   it("logs usage to storage.jsonl", async () => {
-    const { createStorageTracker } = await import("../../packages/gateway/src/storage-tracker.js");
+    const { createStorageTracker } = await import("../../packages/gateway/src/domains/files/storage-tracker.js");
     mkdirSync(join(homePath, "system", "logs"), { recursive: true });
 
     const tracker = createStorageTracker(homePath);

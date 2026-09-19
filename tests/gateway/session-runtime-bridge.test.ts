@@ -4,7 +4,7 @@ import {
   createSessionRuntimeBridge,
   resolveTerminalAttachmentMode,
   terminalAttachmentAllowsFrame,
-} from "../../packages/gateway/src/session-runtime-bridge.js";
+} from "../../packages/gateway/src/domains/sessions/session-runtime-bridge.js";
 
 const TERMINAL_REF = {
   workspaceId: "tws_00000000000000000000000000000001",

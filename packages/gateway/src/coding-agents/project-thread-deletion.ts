@@ -1,5 +1,5 @@
-import type { RequestPrincipal } from "../request-principal.js";
-import { boundedOperation } from "../bounded-operation.js";
+import type { RequestPrincipal } from "../domains/identity/request-principal.js";
+import { boundedOperation } from "../_shared/bounded-operation.js";
 import type { StoredThread, StoredThreadState } from "./thread-store.js";
 import type { CodingAgentProviderAdapter } from "./provider-adapter.js";
 

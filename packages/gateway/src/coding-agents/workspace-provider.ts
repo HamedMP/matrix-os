@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { boundedOperation } from "../bounded-operation.js";
+import { boundedOperation } from "../_shared/bounded-operation.js";
 import {
   AgentThreadEventSchema,
   CODEX_VERIFIED_NPM_PACKAGE,
@@ -11,8 +11,8 @@ import {
   type AgentThreadSummary,
   type SafeSetupAction,
 } from "@matrix-os/contracts";
-import { SupportedAgentSchema, type SupportedAgent } from "../agent-launcher.js";
-import type { WorkspaceSessionOrchestrator } from "../workspace-session-orchestrator.js";
+import { SupportedAgentSchema, type SupportedAgent } from "../domains/sessions/agent-launcher.js";
+import type { WorkspaceSessionOrchestrator } from "../domains/workspace/workspace-session-orchestrator.js";
 import { createPiCodingAgentProvider, type PiCodingAgentProviderOptions } from "./pi-provider.js";
 import {
   createOpenCodeCodingAgentProvider,

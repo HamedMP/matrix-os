@@ -4,7 +4,7 @@ import { delimiter, join } from "node:path";
 import { createHash } from "node:crypto";
 import { z } from "zod/v4";
 import { CanonicalChatModelReferenceSchema } from "@matrix-os/contracts";
-import { buildAgentRuntimeEnvironment } from "../agent-launcher.js";
+import { buildAgentRuntimeEnvironment } from "../domains/sessions/agent-launcher.js";
 import {
   CanonicalProviderRunEventSchema,
   parseCanonicalProviderRunInput,

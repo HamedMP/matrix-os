@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { startBackgroundSession } from "../../packages/gateway/src/background-session-lifecycle.js";
-import type { WorkspaceSession } from "../../packages/gateway/src/agent-session-manager.js";
-import { BackgroundSessionRunningError, type BackgroundAgentRuntime } from "../../packages/gateway/src/background-agent-runtime.js";
+import { startBackgroundSession } from "../../packages/gateway/src/domains/sessions/background-session-lifecycle.js";
+import type { WorkspaceSession } from "../../packages/gateway/src/domains/sessions/agent-session-manager.js";
+import { BackgroundSessionRunningError, type BackgroundAgentRuntime } from "../../packages/gateway/src/domains/sessions/background-agent-runtime.js";
 
 const ref = { id: "bg_00000000000000000000000000000001" };
 const session = { id: "sess_test", runtime: { type: "background", status: "running" } } as WorkspaceSession;

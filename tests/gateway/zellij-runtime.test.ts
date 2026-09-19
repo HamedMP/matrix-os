@@ -3,8 +3,8 @@ import { mkdtemp, readFile } from "node:fs/promises";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createZellijRuntime } from "../../packages/gateway/src/zellij-runtime.js";
-import type { AgentLaunchSpec } from "../../packages/gateway/src/agent-launcher.js";
+import { createZellijRuntime } from "../../packages/gateway/src/domains/terminal/zellij-runtime.js";
+import type { AgentLaunchSpec } from "../../packages/gateway/src/domains/sessions/agent-launcher.js";
 
 function createPty() {
   const handlers: Array<(event: { exitCode: number; signal?: number }) => void> = [];

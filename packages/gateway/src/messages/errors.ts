@@ -4,7 +4,7 @@ import {
   MissingRequestPrincipalError,
   InvalidRequestPrincipalError,
   RequestPrincipalMisconfiguredError,
-} from "../request-principal.js";
+} from "../domains/identity/request-principal.js";
 import type { MessagingSafeErrorCode } from "./schemas.js";
 
 export class MessagingError extends Error {

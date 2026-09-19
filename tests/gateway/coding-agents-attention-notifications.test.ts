@@ -9,7 +9,7 @@ import {
   type CodingAgentProviderAdapter,
 } from "../../packages/gateway/src/coding-agents/thread-store.js";
 import type { ChannelReply } from "../../packages/gateway/src/channels/types.js";
-import type { RequestPrincipal } from "../../packages/gateway/src/request-principal.js";
+import type { RequestPrincipal } from "../../packages/gateway/src/domains/identity/request-principal.js";
 
 const principal: RequestPrincipal = { userId: "owner_user", source: "jwt" };
 const now = new Date("2026-07-07T12:00:00.000Z");

@@ -7,8 +7,8 @@ import {
   createReviewLoopRecord,
   startNextReviewRound,
   stopReview,
-} from "../../packages/gateway/src/review-loop.js";
-import type { FindingsParseSuccess, FindingsParseFailure } from "../../packages/gateway/src/findings-parser.js";
+} from "../../packages/gateway/src/domains/review/review-loop.js";
+import type { FindingsParseSuccess, FindingsParseFailure } from "../../packages/gateway/src/domains/review/findings-parser.js";
 
 const parsedWithFindings: FindingsParseSuccess = {
   ok: true,
