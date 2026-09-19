@@ -9,7 +9,7 @@ The acknowledged desktop writer declares the actual viewport grid at the configu
 - 2 native Electron renderer scenarios passed using an isolated profile, real xterm and synthetic terminal frames.
 - Real Zellij 0.44.3 watcher sizing smoke passed. This independently checks PTY sizing; it does not replace full product Human Review.
 - Repository typecheck, pattern scan (zero violations), production shell build (CI test Clerk key), and Electron production build passed.
-- React Doctor 0.0.29: existing large-component/compiler findings remain (Electron 4 warnings; shell 17 compiler errors and 5 warnings). Latest React Doctor only requests installation, so the runnable pinned scanner was used. Production TypeScript/build checks pass.
+- Latest React Doctor 0.9.14 changed-scope audit: Electron has zero findings; shell has zero new errors and one complexity warning. The same warning (cyclomatic 16, cognitive 13, nesting 2, line 153) exists on unchanged main; changed component span makes the scanner classify it as new. Full baseline shell audit reports 56 errors / 182 warnings. Baseline remediation is explicitly deferred to [#1763](https://github.com/HamedMP/matrix-os/issues/1763); this is not a clean full-project audit claim.
 
 ## Surface matrix
 
@@ -19,11 +19,17 @@ The acknowledged desktop writer declares the actual viewport grid at the configu
 | Web Canvas | Same behavior under 0.75 parent zoom |
 | Electron Desktop | Same behavior in Chromium fixture and native Electron |
 | Web Mobile | Existing canonical soft fit/pan regression passes |
-| Native Mobile | No renderer changes; soft proposals remain non-mutating in runtime tests; device acceptance not run |
+| Native Mobile | No renderer changes; runtime soft-client/reconnect tests pass. Physical-device acceptance explicitly deferred to [#1764](https://github.com/HamedMP/matrix-os/issues/1764): no connected phone is available. Local Jest results match untouched main (52 suites / 334 tests pass; 13 suites / 1 test fail), and native typecheck has baseline React Native type errors. |
 
 ![Electron expanded grid](electron-expanded.png)
 ![Web Desktop expanded grid](web-desktop-expanded.png)
 ![Web Canvas expanded grid](web-canvas-expanded.png)
+
+## Review regressions
+
+- 218 runtime, sizing-lease, gateway-wiring and ownership tests pass, including clearing revoked proposals without disconnecting observers and revocation before runtime stream assignment.
+- 240 runtime/CLI tests previously passed, including independent geometry/output revisions and real Unix-socket recovery after PTY resize failure.
+- The requester passed fullscreen, native scrolling and deletion feedback through the combined Preview / Electron Desktop and authorized merge after review and CI.
 
 ## Human Review
 

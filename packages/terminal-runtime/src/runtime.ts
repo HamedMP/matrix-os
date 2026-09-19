@@ -356,9 +356,10 @@ export class TerminalRuntime {
       const ref = TerminalRefSchema.parse(refInput);
       const workspace = await this.requireRuntimeWorkspace(ref.workspaceId);
       if (!workspace.tabs[ref.tabId]) throw new TerminalRuntimeError("not_found");
-      if (input.mode === "soft") return (await this.listWorkspaces()).find((item) => item.id === ref.workspaceId)!;
+      if (input.mode === "soft" && !viewerId) return (await this.listWorkspaces()).find((item) => item.id === ref.workspaceId)!;
       await this.sweepStaleViewers();
-      const size = workspaceResizeProposal({ ref, size: input.size, viewerId, attachments: this.attachments.values() });
+      const size = workspaceResizeProposal({ ref, size: input.size, mode: input.mode, viewerId, attachments: this.attachments.values() });
+      if (!size) return (await this.listWorkspaces()).find((item) => item.id === ref.workspaceId)!;
       const updated = await this.store.updateCanonicalSize(ref.workspaceId, size);
       await applyWorkspaceResize({
         workspace: updated,
