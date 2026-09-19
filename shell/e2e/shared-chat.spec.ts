@@ -15,7 +15,7 @@ function fulfill(route: Route, body: unknown) {
 async function mockShell(
   page: Page,
   capability: {
-    status: "available" | "unavailable" | "owner_binding_required";
+    status: "available" | "unavailable" | "owner_binding_required" | "owner_reconnect_required";
     effectiveSelection?: { instanceId: string; model: string };
   } = {
     status: "available",
@@ -299,6 +299,29 @@ test("Codex-bound shared Chat keeps discussion available without advertising Cla
   await page.addStyleTag({ content: "nextjs-portal { display: none !important; }" });
   await page.screenshot({
     path: "../output/playwright/collaboration-ux/immutable-codex-shared-ai-unavailable.png",
+    fullPage: true,
+  });
+});
+
+test("owner sees actionable Claude reconnect guidance while discussion stays available", async ({ page }) => {
+  await mockShell(page, {
+    status: "owner_reconnect_required",
+    effectiveSelection: { instanceId: "claude_code_default", model: "opus" },
+  });
+  await page.goto(`/shared/chat/${scopeId}`, { waitUntil: "domcontentloaded" });
+
+  await expect(page.getByRole("button", { name: "Ask AI" })).toHaveCount(0);
+  await expect(page.getByLabel("Message Chat")).toBeDisabled();
+  await expect(page.getByRole("status").filter({ hasText: "Agents & providers" })).toHaveText(
+    "Reconnect your AI provider in Settings → Agents & providers to resume AI requests.",
+  );
+  await page.getByRole("button", { name: "Open discussion" }).click();
+  const discussionLayer = page.getByRole("dialog", { name: "Discussion" });
+  await expect(discussionLayer.getByRole("textbox", { name: "Add a discussion note" })).toBeEnabled();
+  await page.getByRole("button", { name: "Close discussion panel" }).click();
+  await page.addStyleTag({ content: "nextjs-portal { display: none !important; } }" });
+  await page.screenshot({
+    path: "../specs/121-collaboration-session-sharing/evidence/owner-claude-reconnect-required.png",
     fullPage: true,
   });
 });

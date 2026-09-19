@@ -4,8 +4,34 @@ import {
   createSharedAiApprovalReconciler,
   createSharedAiCancellationDispatcher,
   recoverSharedAiQueue,
+  resolveClaudeProviderReadiness,
   sharedDispatchFenceMatches,
 } from "../../packages/gateway/src/collaboration/shared-ai-runtime.js";
+
+describe("shared AI Provider readiness", () => {
+  it.each([
+    { availability: "available", authStatus: "authenticated", expected: "ready" },
+    { availability: "auth_required", authStatus: "expired", expected: "reconnect_required" },
+    { availability: "unavailable", authStatus: "unknown", expected: "unavailable" },
+  ] as const)("maps safe Claude $availability readiness", async ({ availability, authStatus, expected }) => {
+    const providers = {
+      listProviders: vi.fn(async () => [{
+        id: "claude",
+        displayName: "Claude Code",
+        kind: "claude" as const,
+        availability,
+        installStatus: "installed" as const,
+        authStatus,
+        supportedModes: ["default" as const],
+        defaultMode: "default" as const,
+        setupActions: [],
+      }]),
+    };
+
+    await expect(resolveClaudeProviderReadiness(providers, "user_owner")).resolves.toBe(expected);
+    expect(providers.listProviders).toHaveBeenCalledWith({ userId: "user_owner", source: "jwt" });
+  });
+});
 
 describe("shared AI dispatch fence", () => {
   const expected = {

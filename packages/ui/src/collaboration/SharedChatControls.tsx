@@ -9,7 +9,7 @@ import { useCallback, useEffect, useReducer, useRef } from "react";
 import type { CollaborationApi } from "./ChatCollaboratorsDialog.js";
 import type { CollaborationDraft } from "./chat-state.js";
 
-type AiAvailability = "checking" | "available" | "unavailable";
+type AiAvailability = "checking" | "available" | "unavailable" | "owner_reconnect_required";
 type SharedAiError = "request" | "control" | "recovery" | null;
 type SharedAiState = {
   availability: AiAvailability;
@@ -93,7 +93,9 @@ function sharedComposerPresentation(
   const status = !writableRole ? "Viewers can read this Chat but cannot post messages or request AI."
     : state.availability === "checking" ? "Checking shared AI…"
       : state.availability === "available" ? "One active run · up to 32 pending"
-        : "AI requests are unavailable.";
+        : state.availability === "owner_reconnect_required"
+          ? "Reconnect your AI provider in Settings → Agents & providers to resume AI requests."
+          : "AI requests are unavailable.";
   const relevantRequests = state.requests.filter((request) => request.state !== "completed");
   const retryable = relevantRequests.some((request) => ["cancelled", "interrupted", "unauthorized", "unavailable"].includes(request.state));
   return {
@@ -241,7 +243,7 @@ function reduceSharedAi(state: SharedAiState, action: SharedAiAction): SharedAiS
     case "loaded":
       return {
         ...state,
-        availability: action.response.capability.status === "available" ? "available" : "unavailable",
+        availability: sharedAiAvailability(action.response.capability.status),
         requests: action.response.requests,
         approvals: action.response.approvals,
         error: null,
@@ -260,6 +262,13 @@ function reduceSharedAi(state: SharedAiState, action: SharedAiAction): SharedAiS
         ? state
         : { ...state, requests: [...state.requests, action.request].sort(compareAcceptedSequence) };
   }
+}
+
+function sharedAiAvailability(
+  status: "available" | "unavailable" | "owner_binding_required" | "owner_reconnect_required",
+): AiAvailability {
+  if (status === "available" || status === "owner_reconnect_required") return status;
+  return "unavailable";
 }
 
 function SharedAiErrors({ discussionError, error }: { discussionError: boolean; error: SharedAiError }) {

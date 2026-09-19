@@ -65,7 +65,7 @@ type ScreenState = {
   hasMoreMessages: boolean;
   loadingMoreMessages: boolean;
   aiDraft: string;
-  aiAvailability: "checking" | "available" | "unavailable";
+  aiAvailability: "checking" | "available" | "unavailable" | "owner_reconnect_required";
   aiRequests: CollaborationAiRequest[];
   approvals: CollaborationApproval[];
   aiError: string;
@@ -95,6 +95,13 @@ const initialState: ScreenState = {
   sending: false,
   error: "",
 };
+
+function sharedAiAvailability(
+  status: "available" | "unavailable" | "owner_binding_required" | "owner_reconnect_required",
+): ScreenState["aiAvailability"] {
+  if (status === "available" || status === "owner_reconnect_required") return status;
+  return "unavailable";
+}
 
 type ScreenAction =
   | { type: "patch"; patch: Partial<ScreenState> }
@@ -237,7 +244,7 @@ export default function SharedScreen() {
           const refreshedChat = { ...nextChat, revision: ai.resourceRevision };
           chatRef.current = refreshedChat;
           dispatch({ type: "patch", patch: {
-            aiAvailability: ai.capability.status === "available" ? "available" : "unavailable",
+            aiAvailability: sharedAiAvailability(ai.capability.status),
             aiRequests: ai.requests, approvals: ai.approvals,
             aiError: "", chat: refreshedChat,
           } });
@@ -325,7 +332,7 @@ export default function SharedScreen() {
         const refreshedChat = { ...nextChat, revision: ai.resourceRevision };
         chatRef.current = refreshedChat;
         dispatch({ type: "patch", patch: {
-          aiAvailability: ai.capability.status === "available" ? "available" : "unavailable",
+          aiAvailability: sharedAiAvailability(ai.capability.status),
           aiRequests: ai.requests, approvals: ai.approvals,
           aiError: "", chat: refreshedChat,
         } });
@@ -550,7 +557,7 @@ export default function SharedScreen() {
     const refreshedChat = currentChat ? { ...currentChat, revision: ai.resourceRevision } : null;
     if (refreshedChat) chatRef.current = refreshedChat;
     dispatch({ type: "patch", patch: {
-      aiAvailability: ai.capability.status === "available" ? "available" : "unavailable",
+      aiAvailability: sharedAiAvailability(ai.capability.status),
       aiRequests: ai.requests, approvals: ai.approvals,
       aiError: "", ...(refreshedChat ? { chat: refreshedChat } : {}),
     } });
