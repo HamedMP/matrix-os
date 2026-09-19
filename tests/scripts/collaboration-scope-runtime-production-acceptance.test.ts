@@ -29,7 +29,7 @@ describe("collaboration production scope-runtime acceptance", () => {
     expect(source.indexOf(guard)).toBeLessThan(source.lastIndexOf("runAcceptance()"));
   });
 
-  it("requires the exact installed production bundle and restores the disabled service state", async () => {
+  it("requires the exact installed production bundle and restores the original supervisor state", async () => {
     const source = await readFile(acceptancePath, "utf8");
 
     expect(source).toContain("MATRIX_SCOPE_PRODUCTION_DISPOSABLE");
@@ -38,26 +38,71 @@ describe("collaboration production scope-runtime acceptance", () => {
     expect(source).toContain("/opt/matrix/release.json");
     expect(source).toContain("release.gitCommit === expectedHead");
     expect(source).not.toContain("expectedHead.slice(0, 7)");
-    expect(source).toContain("/opt/matrix/app/SCOPE_RUNTIME_DISABLED");
     expect(source).toContain("matrix-scope-runtime.service");
-    expect(source).toContain("scope_runtime_service_default=disabled");
-    expect(source).toContain("scope_runtime_disabled_marker=restored");
+    // Main activated the supervisor in #1602: production bundles no longer ship the
+    // dormant marker, so the proof must observe and restore whatever state the exact
+    // preview has instead of demanding a disabled host.
+    expect(source).not.toContain("disabled_marker_required");
+    expect(source).not.toContain("service_enabled_unexpectedly");
+    expect(source).not.toContain("service_active_unexpectedly");
+    expect(source).not.toContain("scope_runtime_service_default=disabled");
+    expect(source).toContain("captureOriginalServiceState");
+    expect(source).toContain("service_state_invalid");
+    expect(source).toContain("scope_runtime_service_enabled_before=");
+    expect(source).toContain("scope_runtime_service_active_before=");
+    expect(source).toContain("scope_runtime_service_state=restored");
+    expect(source).toContain("service_state_not_restored");
     expect(source).toContain("finally");
   });
 
-  it("restores the disabled marker even when service cleanup fails", async () => {
+  it("tolerates a legacy dormant marker without requiring, shipping, or leaving it behind", async () => {
     const source = await readFile(acceptancePath, "utf8");
 
-    expect(source).toContain("restoreDormantService");
+    expect(source).toContain("/opt/matrix/app/SCOPE_RUNTIME_DISABLED");
+    expect(source).toContain("await rename(DISABLED_MARKER, MARKER_BACKUP)");
+    expect(source).toContain("await rename(MARKER_BACKUP, DISABLED_MARKER)");
+    expect(source).toContain('scope_runtime_disabled_marker=${markerMoved ? "restored" : "absent"}');
+    expect(source).not.toMatch(/writeFile\([^)]*DISABLED_MARKER/);
+    expect(source).not.toContain("scope_runtime_disabled_marker=restored\\n");
+  });
+
+  it("restores the original service state even when workload cleanup fails", async () => {
+    const source = await readFile(acceptancePath, "utf8");
+
+    expect(source).toContain("restoreOriginalService");
+    expect(source).not.toContain("restoreDormantService");
     expect(source).toContain("service_cleanup_failed");
     expect(source).toContain('"kill", "--kill-whom=all", "--signal=SIGKILL", SERVICE');
-    expect(source).toContain("await restoreDormantService(runtimeUnits)");
-    expect(source.indexOf("await restoreDormantService(runtimeUnits)")).toBeLessThan(
+    expect(source).toContain("await restoreOriginalService(original, runtimeUnits)");
+    expect(source.indexOf("await restoreOriginalService(original, runtimeUnits)")).toBeLessThan(
       source.indexOf("await rename(MARKER_BACKUP, DISABLED_MARKER)"),
     );
     expect(source).toMatch(
-      /try \{\s+await restoreDormantService\(runtimeUnits\);\s+\} finally \{\s+if \(markerMoved\)/,
+      /try \{\s+await restoreOriginalService\(original, runtimeUnits\);\s+\} finally \{\s+if \(markerMoved\)/,
     );
+  });
+
+  it("proves Codex on an activated host without globally disabling the Claude supervisor", async () => {
+    const source = await readFile(acceptancePath, "utf8");
+
+    // A supervisor that was enabled before the proof stays enabled; only a host that
+    // was already dormant is returned to disabled.
+    expect(source).toMatch(/if \(original\.enabled === "disabled"\)[\s\S]{0,240}\["disable", SERVICE\]/);
+    expect(source).not.toMatch(/\n\s+await command\("\/usr\/bin\/systemctl", \["disable", SERVICE\]\);\n\s+\n/);
+    // An originally active supervisor is stopped only to get a cold, drained start and is
+    // started again afterwards; a dormant host is left stopped.
+    expect(source).toMatch(/if \(original\.active\)[\s\S]{0,400}\["start", SERVICE\]/);
+    expect(source).toContain("await stopServiceForProof(");
+    // The gateway owns the production broker socket inside the supervisor's runtime
+    // directory, which systemd removes on stop. The proof cannot restart the gateway
+    // inline because the gateway is executing this command, so it schedules a bounded
+    // deferred restart that fires after the response is returned.
+    expect(source).toContain('"/usr/bin/systemd-run"');
+    expect(source).toContain("--on-active=");
+    expect(source).toContain('"try-restart", "matrix-gateway.service"');
+    expect(source).toContain('scope_runtime_gateway_restart=${');
+    expect(source).not.toContain('["restart", "matrix-gateway.service"]');
+    expect(source).not.toContain('["stop", "matrix-gateway.service"]');
   });
 
   it("exercises strict frames, a bounded timeout, and fixed-profile workload creation", async () => {

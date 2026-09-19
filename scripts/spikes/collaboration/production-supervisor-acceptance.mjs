@@ -14,6 +14,10 @@ const DISABLED_MARKER = "/opt/matrix/app/SCOPE_RUNTIME_DISABLED";
 const MARKER_BACKUP = "/var/tmp/matrix-scope-runtime-disabled.acceptance";
 const BUNDLE_VERSION = "/opt/matrix/app/BUNDLE_VERSION";
 const RELEASE_METADATA = "/opt/matrix/release.json";
+const SUPERVISOR_STOP_TIMEOUT_MS = 15_000;
+// The gateway is executing this command, so its own restart must fire after
+// the signed response has been returned and the workflow's remote cleanup ran.
+const GATEWAY_REATTACH_DELAY_SECONDS = 45;
 const EXPECTED_PROFILE_DIGEST = "9f4e3e2ad9e63cb300854dfca7bc31370d4cbae6d15fab902841b2b50a6443c0";
 const EXPECTED_PROFILE_ID = "scope-runtime-chat-v1";
 const EXPECTED_HARNESS_VERSION = "2.1.240";
@@ -568,24 +572,94 @@ async function openCrashRequest() {
   return { socket, closed };
 }
 
-async function restoreDormantService(runtimeUnits) {
+async function serviceEnabledState() {
+  const enabled = await command("/usr/bin/systemctl", ["is-enabled", SERVICE]);
+  return enabled.stdout;
+}
+
+async function serviceActive() {
+  return (await command("/usr/bin/systemctl", ["is-active", "--quiet", SERVICE])).code === 0;
+}
+
+// Since #1602 activated shared AI, production bundles ship the supervisor
+// enabled and running with no dormant marker. Older previews may still carry
+// the inverse ConditionPathExists marker. The proof observes whichever state
+// the exact preview has and restores that same state afterwards; it never
+// demands a dormant host and never disables an activated Claude runtime.
+async function captureOriginalServiceState() {
+  const marker = await pathType(DISABLED_MARKER);
+  assert(!marker || (marker.isFile() && !marker.isSymbolicLink()), "service_state_invalid");
+  const enabled = await serviceEnabledState();
+  assert(enabled === "enabled" || enabled === "disabled", "service_state_invalid");
+  const active = await serviceActive();
+  assert(!(marker && active), "service_state_invalid");
+  return { marker: Boolean(marker), enabled, active };
+}
+
+async function supervisorSocketReady() {
+  try {
+    await waitFor(async () => (await pathType(SUPERVISOR_SOCKET))?.isSocket(),
+      SUPERVISOR_STOP_TIMEOUT_MS, "supervisor_socket_unavailable");
+    return true;
+  } catch (error) {
+    if (error instanceof AcceptanceError) return false;
+    throw error;
+  }
+}
+
+async function stopServiceForProof() {
+  await mustCommand("/usr/bin/systemctl", ["stop", SERVICE], "supervisor_stop_failed");
+  await waitFor(async () => !(await serviceActive()) && !(await pathType(SUPERVISOR_SOCKET)),
+    SUPERVISOR_STOP_TIMEOUT_MS, "supervisor_stop_failed");
+}
+
+// Stopping the supervisor removes its systemd RuntimeDirectory, which also
+// holds the gateway-owned production broker socket, and every restart mints a
+// new execution generation. The gateway re-attaches both only at startup, and
+// it is the process running this acceptance, so the restart is deferred to a
+// transient timer outside the gateway's control group.
+async function scheduleGatewayReattach() {
+  const unit = `matrix-scope-acceptance-gateway-${randomUUID().replaceAll("-", "").slice(0, 12)}`;
+  const scheduled = await command("/usr/bin/systemd-run", [
+    "--quiet", "--collect", `--unit=${unit}`,
+    "--description=Matrix scope-runtime acceptance gateway re-attach",
+    `--on-active=${GATEWAY_REATTACH_DELAY_SECONDS}`,
+    "--timer-property=AccuracySec=1s",
+    "/usr/bin/systemctl", "try-restart", "matrix-gateway.service",
+  ]);
+  assert(scheduled.code === 0, "gateway_reattach_schedule_failed");
+}
+
+async function restoreOriginalService(original, runtimeUnits) {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     await command("/usr/bin/systemctl", ["stop", SERVICE]);
     for (const unit of runtimeUnits) {
       await command("/usr/bin/systemctl", ["stop", unit]);
       await command("/usr/bin/systemctl", ["reset-failed", unit]);
     }
-    await command("/usr/bin/systemctl", ["disable", SERVICE]);
+    await command("/usr/bin/systemctl", ["reset-failed", SERVICE]);
+    if (original.enabled === "disabled") {
+      await command("/usr/bin/systemctl", ["disable", SERVICE]);
+    } else {
+      await command("/usr/bin/systemctl", ["enable", SERVICE]);
+    }
 
-    const enabled = await command("/usr/bin/systemctl", ["is-enabled", SERVICE]);
-    const active = await command("/usr/bin/systemctl", ["is-active", "--quiet", SERVICE]);
     let runtimeActive = false;
     for (const unit of runtimeUnits) {
       if ((await command("/usr/bin/systemctl", ["is-active", "--quiet", unit])).code === 0) {
         runtimeActive = true;
       }
     }
-    if (enabled.stdout === "disabled" && active.code !== 0 && !runtimeActive) return;
+    const drained = (await serviceEnabledState()) === original.enabled
+      && !(await serviceActive()) && !runtimeActive;
+    if (drained) {
+      if (!original.active) return;
+      const started = await command("/usr/bin/systemctl", ["start", SERVICE]);
+      if (started.code === 0 && await supervisorSocketReady()) {
+        await scheduleGatewayReattach();
+        return;
+      }
+    }
 
     await command("/usr/bin/systemctl", ["kill", "--kill-whom=all", "--signal=SIGKILL", SERVICE]);
     await new Promise((resolve) => setTimeout(resolve, 250));
@@ -601,13 +675,11 @@ async function runAcceptance() {
   assert(/^[A-Za-z0-9._-]{1,128}$/.test(bundleVersion), "exact_bundle_required");
   const release = await readInstalledRelease();
   assert(release.gitCommit === expectedHead, "exact_bundle_required");
-  const marker = await pathType(DISABLED_MARKER);
-  assert(marker?.isFile() && !marker.isSymbolicLink(), "disabled_marker_required");
   assert(!(await pathType(MARKER_BACKUP)), "marker_backup_collision");
-  const enabled = await command("/usr/bin/systemctl", ["is-enabled", SERVICE]);
-  assert(enabled.stdout === "disabled", "service_enabled_unexpectedly");
-  const active = await command("/usr/bin/systemctl", ["is-active", "--quiet", SERVICE]);
-  assert(active.code !== 0, "service_active_unexpectedly");
+  const original = await captureOriginalServiceState();
+  // Emitted before the proof so a failed run still records the observed host state.
+  process.stdout.write(`scope_runtime_service_enabled_before=${original.enabled}\n`);
+  process.stdout.write(`scope_runtime_service_active_before=${original.active ? "active" : "inactive"}\n`);
 
   let markerMoved = false;
   let closeBroker;
@@ -617,8 +689,13 @@ async function runAcceptance() {
   let generationBefore;
   let generationAfter;
   try {
-    await rename(DISABLED_MARKER, MARKER_BACKUP);
-    markerMoved = true;
+    if (original.marker) {
+      await rename(DISABLED_MARKER, MARKER_BACKUP);
+      markerMoved = true;
+    }
+    // An already-running supervisor is stopped only to obtain a cold, drained
+    // start whose broker socket the proof can own; it is started again below.
+    if (original.active) await stopServiceForProof();
     await mustCommand("/usr/bin/systemctl", ["start", SERVICE], "supervisor_start_failed");
     await waitFor(async () => (await pathType(SUPERVISOR_SOCKET))?.isSocket(),
       15_000, "supervisor_socket_unavailable");
@@ -705,7 +782,7 @@ async function runAcceptance() {
       }
     }
     try {
-      await restoreDormantService(runtimeUnits);
+      await restoreOriginalService(original, runtimeUnits);
     } finally {
       if (markerMoved) {
         const currentMarker = await pathType(DISABLED_MARKER);
@@ -715,13 +792,15 @@ async function runAcceptance() {
     }
   }
 
-  const finalEnabled = await command("/usr/bin/systemctl", ["is-enabled", SERVICE]);
-  const finalActive = await command("/usr/bin/systemctl", ["is-active", "--quiet", SERVICE]);
-  assert(productionPassed && (await pathType(DISABLED_MARKER))?.isFile()
-    && finalEnabled.stdout === "disabled" && finalActive.code !== 0, "disabled_marker_not_restored");
+  const finalMarker = await pathType(DISABLED_MARKER);
+  assert(productionPassed
+    && Boolean(finalMarker?.isFile()) === original.marker
+    && (await serviceEnabledState()) === original.enabled
+    && (await serviceActive()) === original.active, "service_state_not_restored");
   process.stdout.write("scope_runtime_production_acceptance=passed\n");
-  process.stdout.write("scope_runtime_service_default=disabled\n");
-  process.stdout.write("scope_runtime_disabled_marker=restored\n");
+  process.stdout.write("scope_runtime_service_state=restored\n");
+  process.stdout.write(`scope_runtime_disabled_marker=${markerMoved ? "restored" : "absent"}\n`);
+  process.stdout.write(`scope_runtime_gateway_restart=${original.active ? "scheduled" : "not_required"}\n`);
   process.stdout.write("malformed_frame=closed\n");
   process.stdout.write("multi_frame=closed\n");
   process.stdout.write("oversized_frame=closed\n");

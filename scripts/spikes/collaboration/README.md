@@ -121,17 +121,28 @@ The exact-head disposable preview workflow must report
 `scope_runtime_codex_chat=passed`. That check launches the installed native
 Codex binary inside a real DynamicUser/PrivateUsers/PrivateNetwork chroot,
 observes a zero-tool Responses request at the fake broker, completes one bounded
-turn, and restores the supervisor to its disabled state. A mock-only or local
-pass is insufficient.
+turn, and restores the preview's supervisor to the exact enabled/active state
+observed before the proof. Since #1602 activated shared AI, production bundles
+ship the supervisor enabled and running with no `SCOPE_RUNTIME_DISABLED`
+marker. The harness therefore stops an already-running supervisor only to obtain
+a cold start whose broker socket it can own, starts it again afterwards, and
+schedules a deferred `matrix-gateway` re-attach: the gateway executes the signed
+acceptance command itself and loses its production broker socket whenever the
+supervisor's runtime directory is recreated. A legacy dormant preview that still
+carries the marker is proved the same way and returned to dormant. A mock-only
+or local pass is insufficient.
 
-Rollback is fail-closed and does not rebind Chats. Removing or changing the
-pinned Codex executable causes the supervisor to omit the Codex adapter from
-eligibility. Stopping the supervisor or restoring the disabled marker clears
-execution eligibility while human discussion remains available. Existing
-`codex_default` bindings stay immutable and shared AI reports unavailable; they
-are never translated to `claude_shared`. Accepted work fenced to an older
-execution generation or eligibility document is terminalized as unavailable,
-and an uncertain active run is interrupted rather than replayed.
+Rollback is fail-closed, Codex-specific, and does not rebind Chats. Removing or
+changing the pinned Codex executable causes the supervisor to omit the Codex
+adapter from eligibility while the Claude adapter keeps running; that is the
+Codex rollback. Stopping the supervisor, or placing the `SCOPE_RUNTIME_DISABLED`
+marker that production bundles no longer ship, is a host-wide emergency stop
+that also clears Claude shared AI, so it must not be used as a Codex rollback.
+In every case human discussion remains available. Existing `codex_default`
+bindings stay immutable and shared AI reports unavailable; they are never
+translated to `claude_shared`. Accepted work fenced to an older execution
+generation or eligibility document is terminalized as unavailable, and an
+uncertain active run is interrupted rather than replayed.
 
 The initial shared Codex surface intentionally does not support attachments,
 resources, tools, approvals, user input, steering, worktrees, session resume,
