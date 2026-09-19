@@ -1,4 +1,3 @@
-import { useTerminalDeletionStatus } from "./use-terminal-deletion-status";
 import { RefreshCw, SquareTerminal } from "@renderer/lib/hugeicons";
 import { systemTerminalLabel } from "@renderer/lib/platform-labels";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -98,7 +97,6 @@ export default function TerminalsTab({
   const api = useConnection((s) => s.api);
   const runtimeSlot = useConnection((s) => s.runtimeSlot);
   const shells = useShellSessions((s) => s.sessions);
-  const { deletingNames, beginDeletion, failDeletion } = useTerminalDeletionStatus(shells, runtimeSlot);
   const loading = useShellSessions((s) => s.loading);
   const creating = useShellSessions((s) => s.creating);
   const error = useShellSessions((s) => s.error);
@@ -343,9 +341,7 @@ export default function TerminalsTab({
     if (!api || !deleteTarget) return;
     const name = deleteTarget.name;
     if (!markShellBusy(name)) return;
-    beginDeletion(name);
     const ok = await deleteSession(api, name);
-    if (!ok) failDeletion(name);
     clearShellBusy(name);
     setDeleteTarget(null);
     if (!ok) return;
@@ -403,7 +399,7 @@ export default function TerminalsTab({
         onPin={(shell, pinned) => {
           if (api) void useShellSessions.getState().patchUiState(api, shell.name, { pinned });
         }}
-        deletingNames={deletingNames}
+        deletingName={deleteTarget && isShellBusy(deleteTarget.name) ? deleteTarget.name : null}
         onDelete={setDeleteTarget}
       />
     )}>

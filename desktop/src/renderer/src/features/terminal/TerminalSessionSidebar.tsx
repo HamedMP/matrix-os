@@ -41,7 +41,6 @@ export function TerminalSessionSidebar({
   sessions,
   selectedName,
   deletingName = null,
-  deletingNames = [],
   creating,
   disabled,
   agentStatuses = UNKNOWN_TERMINAL_AGENT_STATUSES,
@@ -68,7 +67,6 @@ export function TerminalSessionSidebar({
   sessions: ShellSessionSummary[];
   selectedName: string | null;
   deletingName?: string | null;
-  deletingNames?: readonly string[];
   creating: boolean;
   disabled: boolean;
   agentStatuses: Record<TerminalAgentId, TerminalAgentInstallState>;
@@ -103,7 +101,7 @@ export function TerminalSessionSidebar({
         <ul aria-label="Terminal sessions" className="min-h-0 flex-1 overflow-y-auto pb-4">
           {[...sessions].sort((left, right) => Number(Boolean(right.pinned)) - Number(Boolean(left.pinned))).map((session) => {
             const label = displayName(session);
-            const deleting = deletingName === session.name || deletingNames.includes(session.name);
+            const deleting = deletingName === session.name;
             const selected = selectedName === session.name;
             const metadata = agentMetadata(session);
             const title = sessionTitle(session);

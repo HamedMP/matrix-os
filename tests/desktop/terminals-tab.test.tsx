@@ -1007,30 +1007,6 @@ describe("TerminalsTab", () => {
     await waitFor(() => expect(deleteSession).toHaveBeenCalledWith(useConnection.getState().api, "matrix-main"));
   });
 
-  it.each([true, false])("retains deletion feedback until removal, or restores the row on failure (success=%s)", async (succeeded) => {
-    const pending = deferred<boolean>();
-    useShellSessions.setState({
-      sessions: [{ name: "matrix-delete", status: "active", placement: "active", updatedAt: new Date().toISOString() }],
-      deleteSession: vi.fn(() => pending.promise),
-    });
-    renderTab();
-    fireEvent.pointerDown(screen.getByRole("button", { name: "More actions for matrix-delete" }), { button: 0, ctrlKey: false });
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
-    fireEvent.click(screen.getByRole("button", { name: /^delete$/i }));
-    expect(screen.getByRole("status", { hidden: true }).textContent).toBe("Deleting…");
-    await act(async () => { pending.resolve(succeeded); });
-    if (!succeeded) {
-      expect(screen.getByRole("button", { name: "Open matrix-delete" })).toHaveProperty("disabled", false);
-      expect(screen.queryByText("Deleting…")).toBeNull();
-      return;
-    }
-    expect(screen.getByRole("button", { name: "Open matrix-delete" })).toHaveProperty("disabled", true);
-    expect(screen.getByRole("status", { hidden: true }).textContent).toBe("Deleting…");
-    act(() => useShellSessions.setState({ sessions: [] }));
-    expect(screen.queryByRole("button", { name: "Open matrix-delete" })).toBeNull();
-    expect(screen.queryByText("Deleting…")).toBeNull();
-  });
-
   it("reconciles open terminal tabs after a successful desktop deletion", async () => {
     const deleteSession = vi.fn(async () => {
       useShellSessions.setState({
