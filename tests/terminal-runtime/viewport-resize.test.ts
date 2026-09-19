@@ -60,6 +60,89 @@ describe("workspace viewport resize propagation", () => {
   });
 });
 
+it("arbitrates hard sizes across workspace tabs and releases disconnected proposals", async () => {
+  const homePath = await mkdtemp(join(tmpdir(), "matrix-size-arbitration-"));
+  let nextTab = 0;
+  const adapter: ZellijRuntimeAdapter = {
+    ensureSession: async () => {}, createTab: async () => ({ tabId: ++nextTab, paneId: `terminal_${nextTab}` }),
+    subscribeWorkspace: async () => ({ close: async () => {} }),
+    openAttachment: async () => ({ write: async () => {}, resize: async () => {}, close: async () => {} }),
+    resizeSession: async () => {},
+  };
+  const runtime = new TerminalRuntime({ store: new TerminalWorkspaceStore({ homePath }), zellij: adapter });
+  try {
+    const workspace = await runtime.ensureWorkspace();
+    const a = await runtime.createTab(workspace.id, { name: "large", cwd: "" });
+    const b = await runtime.createTab(workspace.id, { name: "small", cwd: "" });
+    const refA = { workspaceId: workspace.id, tabId: a.id };
+    const refB = { workspaceId: workspace.id, tabId: b.id };
+    const large = await runtime.attach(refA, { viewerId: "large", send() {} });
+    await runtime.attach(refB, { viewerId: "small", send() {} });
+    await runtime.resize(refA, { mode: "hard", size: { cols: 180, rows: 60 } }, "large");
+    expect((await runtime.resize(refB, { mode: "hard", size: { cols: 100, rows: 30 } }, "small")).canonicalSize)
+      .toEqual({ cols: 180, rows: 60 });
+    expect((await runtime.resize(refA, { mode: "hard", size: { cols: 90, rows: 25 } }, "large")).canonicalSize)
+      .toEqual({ cols: 100, rows: 30 });
+    await large.detach();
+    expect((await runtime.resize(refB, { mode: "hard", size: { cols: 80, rows: 24 } }, "small")).canonicalSize)
+      .toEqual({ cols: 80, rows: 24 });
+    await expect(runtime.resize(refA, { mode: "hard", size: { cols: 200, rows: 80 } }, "large"))
+      .rejects.toThrow();
+  } finally {
+    await runtime.shutdown();
+    await rm(homePath, { recursive: true, force: true });
+  }
+});
+
+describe("failed attachment recovery", () => {
+  it("disconnects stale sockets and reattaches at the persisted geometry", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-resize-recovery-"));
+    const opened: Array<{ cols: number; rows: number }> = [];
+    const close = vi.fn(async () => {});
+    const adapter: ZellijRuntimeAdapter = {
+      ensureSession: async () => {},
+      createTab: async () => ({ tabId: 1, paneId: "terminal_1" }),
+      subscribeWorkspace: async () => ({ close: async () => {} }),
+      openAttachment: async (_session, input) => {
+        opened.push(input.size);
+        return { write: async () => {}, resize: async () => { throw new Error("pty_closed"); }, close };
+      },
+      resizeSession: async () => {},
+    };
+    const runtime = new TerminalRuntime({ store: new TerminalWorkspaceStore({ homePath }), zellij: adapter });
+    const socketPath = join(homePath, "r.sock");
+    const server = new TerminalRuntimeSocketServer({ socketPath, runtime });
+    const streams: Array<{ close(): void }> = [];
+    try {
+      await server.start();
+      const workspace = await runtime.ensureWorkspace();
+      const tab = await runtime.createTab(workspace.id, { name: "recovery", cwd: "" });
+      const ref = { workspaceId: workspace.id, tabId: tab.id };
+      const client = new TerminalRuntimeSocketClient({ socketPath });
+      const frames: Array<{ type: string; canonicalSize?: { cols: number; rows: number } }> = [];
+      const onClose = vi.fn();
+      const connect = (viewerId: string) => client.attach({ ref, viewerId, mode: "soft", size: workspace.canonicalSize,
+        fromSeq: Number.MAX_SAFE_INTEGER, onFrame: (frame) => { frames.push(frame); }, onClose, onError: vi.fn(),
+      });
+      streams.push(connect("before"));
+      await vi.waitFor(() => expect(frames.some((frame) => frame.type === "attached")).toBe(true));
+      const size = { cols: 190, rows: 65 };
+      await expect(runtime.resize(ref, { mode: "hard", size })).rejects.toThrow("Terminal attachment resize failed");
+      await vi.waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+      expect(close).toHaveBeenCalledOnce();
+      frames.length = 0;
+      streams.push(connect("after"));
+      await vi.waitFor(() => expect(frames).toContainEqual(expect.objectContaining({ type: "attached", canonicalSize: size })));
+      expect(opened).toEqual([workspace.canonicalSize, size]);
+    } finally {
+      for (const stream of streams) stream.close();
+      await server.close();
+      await runtime.shutdown();
+      await rm(homePath, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("resize subscriber isolation", () => {
   it("evicts a failed listener while delivering geometry to the remaining viewers", async () => {
     const { applyWorkspaceResize } = await import("../../packages/terminal-runtime/src/workspace-resize.js");
@@ -83,13 +166,16 @@ describe("resize subscriber isolation", () => {
       expect(errorLog).toHaveBeenCalledOnce();
       live.onCanonicalSize.mockClear();
       const failedResize = { ref: { workspaceId: workspace.id, tabId: `tt_${"b".repeat(32)}` },
-        handle: { resize: async () => { throw new Error("pty_closed"); } }, viewers: new Map(),
+        handle: { resize: async () => { throw new Error("pty_closed"); } },
+        viewers: new Map([["stale", { id: "stale", disposeOutput: vi.fn(), onDisconnect: vi.fn() }]]),
       };
       await expect(applyWorkspaceResize({ workspace, resizeSession: async () => {}, closeEmpty,
         attachments: [failedResize, { ref: { workspaceId: workspace.id, tabId: `tt_${"a".repeat(32)}` },
           handle: { resize }, viewers }],
       })).rejects.toThrow("Terminal attachment resize failed");
       expect(live.onCanonicalSize).toHaveBeenCalledOnce();
+      expect(failedResize.viewers.size).toBe(0);
+      expect(closeEmpty).toHaveBeenCalledWith(failedResize.ref);
     } finally {
       errorLog.mockRestore();
       await rm(homePath, { recursive: true, force: true });
