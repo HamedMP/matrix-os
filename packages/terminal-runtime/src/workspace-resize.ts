@@ -1,10 +1,12 @@
-import type { TerminalRef, TerminalWorkspace } from "@matrix-os/contracts";
+import { TerminalGridSizeSchema, type TerminalRef, type TerminalWorkspace } from "@matrix-os/contracts";
 
 export interface TerminalSizeListener {
+  onDisconnect?: () => void | Promise<void>;
   onCanonicalSize?: (size: { cols: number; rows: number }, revision: number) => void | Promise<void>;
 }
 interface ResizeViewer extends TerminalSizeListener {
   id: string;
+  requestedSize?: { cols: number; rows: number };
   disposeOutput(): void;
 }
 interface ResizeAttachment {
@@ -29,6 +31,17 @@ export async function applyWorkspaceResize(options: {
       await attachment.handle.resize(workspace.canonicalSize.cols, workspace.canonicalSize.rows);
     } catch (error: unknown) {
       failures.push(error);
+      console.error("[terminal-runtime] attachment resize failed", error instanceof Error ? error.name : "unknown_error");
+      for (const viewer of attachment.viewers.values()) {
+        viewer.disposeOutput();
+        try { await viewer.onDisconnect?.(); }
+        catch (disconnectError: unknown) {
+          console.error("[terminal-runtime] viewer disconnect failed", disconnectError instanceof Error ? disconnectError.name : "unknown_error");
+        }
+      }
+      attachment.viewers.clear();
+      try { await options.closeEmpty(attachment.ref); }
+      catch (closeError: unknown) { failures.push(closeError); }
       continue;
     }
     const failed: ResizeViewer[] = [];
@@ -47,4 +60,29 @@ export async function applyWorkspaceResize(options: {
     if (attachment.viewers.size === 0) await options.closeEmpty(attachment.ref);
   }
   if (failures.length > 0) throw new AggregateError(failures, "Terminal attachment resize failed");
+}
+
+/** Live hard clients share one grid; a smaller tab cannot shrink another writer's viewport. */
+export function workspaceResizeProposal(options: {
+  ref: TerminalRef;
+  size: { cols: number; rows: number };
+  viewerId?: string;
+  attachments: Iterable<ResizeAttachment>;
+}): { cols: number; rows: number } {
+  const requested = TerminalGridSizeSchema.parse(options.size);
+  const attachments = [...options.attachments].filter((item) => item.ref.workspaceId === options.ref.workspaceId);
+  if (options.viewerId) {
+    const viewer = attachments.find((item) => item.ref.tabId === options.ref.tabId)?.viewers.get(options.viewerId);
+    if (!viewer) throw new Error("Terminal resize viewer unavailable");
+    viewer.requestedSize = requested;
+  }
+  const size = { ...requested };
+  for (const attachment of attachments) {
+    for (const viewer of attachment.viewers.values()) {
+      if (!viewer.requestedSize) continue;
+      size.cols = Math.max(size.cols, viewer.requestedSize.cols);
+      size.rows = Math.max(size.rows, viewer.requestedSize.rows);
+    }
+  }
+  return size;
 }

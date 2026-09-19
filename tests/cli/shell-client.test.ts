@@ -693,6 +693,40 @@ describe("shell REST client", () => {
     await expect(attached).resolves.toEqual({ detached: false, exitCode: 0 });
   });
 
+  it("accepts tab output after another tab resizes without reconnecting", async () => {
+    vi.useFakeTimers();
+    const client = createShellClient({ gatewayUrl: "http://gateway", timeoutMs: 50 });
+    const input = new EventEmitter() as NodeJS.ReadStream;
+    const output = { write: vi.fn() } as unknown as NodeJS.WriteStream;
+    const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
+
+    const attached = client.attachTab(TERMINAL_REF, {
+      WebSocketImpl: ControlledWebSocket,
+      input,
+      output,
+      errorOutput,
+      reconnectBaseDelayMs: 5,
+      reconnectMaxDelayMs: 5,
+    });
+    ControlledWebSocket.last?.emit("open");
+    ControlledWebSocket.last?.emit("message", serverFrame("attached", { revision: 2 }));
+    ControlledWebSocket.last?.emit("message", JSON.stringify({
+      type: "canonical-size",
+      terminalRef: TERMINAL_REF,
+      revision: 50,
+      canonicalSize: { cols: 120, rows: 40 },
+    }));
+    ControlledWebSocket.last?.emit("message", serverFrame("output", {
+      revision: 4,
+      seq: 1,
+      data: "reconnected",
+    }));
+
+    expect(output.write).toHaveBeenCalledWith("reconnected");
+    ControlledWebSocket.last?.emit("message", serverFrame("exit", { revision: 51, exitCode: 0 }));
+    await expect(attached).resolves.toEqual({ detached: false, exitCode: 0 });
+  });
+
   it("accepts a lower tab revision after reconnecting from a workspace resize revision", async () => {
     vi.useFakeTimers();
     const client = createShellClient({ gatewayUrl: "http://gateway", timeoutMs: 50 });

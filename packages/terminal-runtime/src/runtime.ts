@@ -13,7 +13,7 @@ import { z } from "zod/v4";
 import { openBufferedAttachment } from "./attachment-bootstrap.js";
 import { TerminalRuntimeError } from "./errors.js";
 import { TerminalMouseModeState } from "./mouse-mode-state.js";
-import { applyWorkspaceResize, type TerminalSizeListener } from "./workspace-resize.js";
+import { applyWorkspaceResize, workspaceResizeProposal, type TerminalSizeListener } from "./workspace-resize.js";
 import { createViewerOutput } from "./viewer-output.js";
 import {
   TerminalWorkspaceStore,
@@ -87,6 +87,7 @@ export interface TerminalViewer {
 
 interface ViewerState extends TerminalSizeListener {
   disposeOutput: () => void;
+  requestedSize?: { cols: number; rows: number };
   id: string;
   lastTouched: number;
   send: (data: Uint8Array) => void | Promise<void>;
@@ -347,13 +348,15 @@ export class TerminalRuntime {
   resize(refInput: TerminalRef, input: {
     mode: "hard" | "soft";
     size: { cols: number; rows: number };
-  }): Promise<TerminalWorkspace> {
+  }, viewerId?: string): Promise<TerminalWorkspace> {
     return this.runWorkspaceMutation(async () => {
       const ref = TerminalRefSchema.parse(refInput);
       const workspace = await this.requireRuntimeWorkspace(ref.workspaceId);
       if (!workspace.tabs[ref.tabId]) throw new TerminalRuntimeError("not_found");
       if (input.mode === "soft") return (await this.listWorkspaces()).find((item) => item.id === ref.workspaceId)!;
-      const updated = await this.store.updateCanonicalSize(ref.workspaceId, input.size);
+      await this.sweepStaleViewers();
+      const size = workspaceResizeProposal({ ref, size: input.size, viewerId, attachments: this.attachments.values() });
+      const updated = await this.store.updateCanonicalSize(ref.workspaceId, size);
       await applyWorkspaceResize({
         workspace: updated,
         resizeSession: async () => { await this.zellij.resizeSession?.(workspace.zellijSessionName, updated.canonicalSize); },
@@ -566,6 +569,7 @@ export class TerminalRuntime {
       disposeOutput: send.dispose,
       ...(input.onExit ? { onExit: input.onExit } : {}),
       ...(input.onCanonicalSize ? { onCanonicalSize: input.onCanonicalSize } : {}),
+      ...(input.onDisconnect ? { onDisconnect: input.onDisconnect } : {}),
     });
     const mouseInitialization = attachment.mouseModes.bootstrap();
     if (mouseInitialization) {
