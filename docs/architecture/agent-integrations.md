@@ -45,6 +45,15 @@ platform stores AES-256-GCM encrypted OAuth/static credentials; the VPS stores
 only the non-secret revisioned enforcement projection in
 `~/system/mcp-servers.json`. Calls require the intersection of both copies.
 
+The MCP and OAuth HTTPS transports pin the validated DNS address for both
+single-address and all-address lookup callbacks used by Node automatic
+address-family selection. Neither callback performs a second DNS lookup.
+
+Environments without managed-integration credentials return an authenticated
+503 for `/api/integrations`, rather than expiring a valid Desktop session with
+an unrelated admin-auth 401. This lets Custom MCP remain usable independently
+in isolated Preview environments.
+
 The Custom MCP backend is enabled with `CUSTOM_MCP_ENABLED`, independently of
 `MATRIX_MCP_ENABLED` (the hosted Matrix `/mcp` endpoint). When Custom MCP is
 disabled, authenticated `/api/mcp-servers` requests and the corresponding
@@ -55,6 +64,28 @@ Electron Desktop and the shared Web Desktop/Web Canvas Settings panel show
 “MCP servers are currently unavailable” with Retry, preserve form values,
 and disable management until loading succeeds. This does not expire the
 Matrix session or close open windows. Invalid credentials still fail authentication.
+
+Cloud Run deploys must forward `CUSTOM_MCP_ENABLED`, `MCP_OAUTH_CALLBACK_URL`,
+and the optional `MCP_OAUTH_CLIENT_ID` from the selected GitHub environment.
+The flag defaults to `false`; enabling the hosted Matrix MCP endpoint alone
+does not enable personal servers. To enable personal servers, set the flag to
+`true` and the callback to the public HTTPS platform origin followed by
+`/api/mcp-servers/oauth/callback`. An empty client ID allows dynamic OAuth
+registration. Provision a dedicated 32-byte encryption key in Secret Manager as
+`mcp-credential-encryption-key` and grant the runtime identity secret accessor
+access before enabling the flag. The deployment binds the numeric version in `MCP_CREDENTIAL_ENCRYPTION_KEY_VERSION` (default `1`)
+to `MCP_CREDENTIAL_ENCRYPTION_KEY`; never rotate or regenerate this key during a
+routine deployment, since existing credentials depend on it. Startup validates
+the key format and rejects reuse of platform/provider secrets.
+
+The deployment preflight rejects malformed flags, missing/non-HTTPS callbacks,
+callbacks outside the configured platform/API origins, unsafe deployment delimiters, unavailable secret versions, and missing runtime
+access. Both `--set-env-vars` and `--set-secrets` replace the previous bindings,
+so these settings must remain in the workflow on every release. A healthy
+platform alone does not establish MCP availability: after enabling and deploying,
+verify an authenticated Settings list request succeeds before testing OAuth,
+tool discovery, and a policy-approved call. Keep the unavailable fallback for
+intentionally disabled environments.
 
 The boundary is a local stdio MCP server at
 `/opt/matrix/bin/matrix-integrations-mcp`. The MCP process calls only the

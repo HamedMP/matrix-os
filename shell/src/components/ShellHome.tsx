@@ -1,6 +1,6 @@
 "use client";
 
-import { GettingStartedVisibilityProvider, resolveRecipeHandoff } from "@matrix-os/ui";
+import { GettingStartedVisibilityProvider, resolveRecipeHandoff, type ChatCollaborationView } from "@matrix-os/ui";
 import { useState, useCallback, useEffect, useRef, useSyncExternalStore } from "react";
 import { useAuth } from "@clerk/nextjs";
 import { useTheme } from "@/hooks/useTheme";
@@ -50,7 +50,7 @@ function readRuntimeSlotFromLocation(): string | null {
   return new URLSearchParams(window.location.search).get("runtime");
 }
 
-export function ShellHome() {
+export function ShellHome({ initialCollaborationView }: { initialCollaborationView?: ChatCollaborationView } = {}) {
   const isMobile = useMobileViewport();
   const { userId, sessionId } = useAuth();
   const cachePathname = typeof window === "undefined" ? "/" : window.location.pathname;
@@ -60,13 +60,18 @@ export function ShellHome() {
 
   const runtimeSlot = useSyncExternalStore(subscribeLaunchPathNoop, readRuntimeSlotFromLocation, getLaunchPathServerSnapshot);
   const recipePrompt = useSyncExternalStore(subscribeLaunchPathNoop, readRecipePromptFromLocation, getLaunchPathServerSnapshot);
-  const chat = useCanonicalChatState({ initialDraft: recipePrompt });
+  const terminalCollaborationView = initialCollaborationView?.kind === "terminal" ? initialCollaborationView : undefined;
+  const chatCollaborationView = terminalCollaborationView ? undefined : initialCollaborationView;
+  const chat = useCanonicalChatState({ initialDraft: recipePrompt, initialCollaborationView: chatCollaborationView });
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const launchAppPath = useSyncExternalStore(
+  const locationLaunchAppPath = useSyncExternalStore(
     subscribeLaunchPathNoop,
     readLaunchPathFromLocation,
     getLaunchPathServerSnapshot,
   );
+  const launchAppPath = terminalCollaborationView ? "__terminal__"
+    : chatCollaborationView ? "__chat__" : locationLaunchAppPath;
+  const sharedTerminalScopeId = terminalCollaborationView?.scopeId ?? null;
   const shellLoadedCaptured = useRef(false);
 
   useGlobalShortcuts(
@@ -108,12 +113,14 @@ export function ShellHome() {
             {isMobile ? (
               <MobileShell
                 launchAppPath={launchAppPath}
+                sharedTerminalScopeId={sharedTerminalScopeId}
                 onOpenCommandPalette={() => setPaletteOpen(true)}
                 cacheScope={cacheScope}
               />
             ) : (
               <Desktop
                 launchAppPath={launchAppPath}
+                sharedTerminalScopeId={sharedTerminalScopeId}
                 onOpenCommandPalette={() => setPaletteOpen(true)}
                 chat={chat}
                 cacheScope={cacheScope}

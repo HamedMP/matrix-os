@@ -399,6 +399,7 @@ export default function TerminalsTab({
         onPin={(shell, pinned) => {
           if (api) void useShellSessions.getState().patchUiState(api, shell.name, { pinned });
         }}
+        deletingName={deleteTarget && isShellBusy(deleteTarget.name) ? deleteTarget.name : null}
         onDelete={setDeleteTarget}
       />
     )}>
@@ -479,7 +480,9 @@ export default function TerminalsTab({
 
       <Dialog
         open={deleteTarget !== null}
-        onClose={() => setDeleteTarget(null)}
+        onClose={() => {
+          if (!deleteTarget || !isShellBusy(deleteTarget.name)) setDeleteTarget(null);
+        }}
         width={360}
         placement="center"
       >
@@ -493,9 +496,9 @@ export default function TerminalsTab({
             </p>
           </div>
           <div className="flex justify-end gap-2">
-            <Button variant="ghost" onClick={() => setDeleteTarget(null)}>Cancel</Button>
+            <Button variant="ghost" disabled={!!deleteTarget && isShellBusy(deleteTarget.name)} onClick={() => setDeleteTarget(null)}>Cancel</Button>
             <Button variant="danger" disabled={!deleteTarget || isShellBusy(deleteTarget.name)} onClick={() => void confirmDelete()}>
-              Delete
+              {deleteTarget && isShellBusy(deleteTarget.name) ? "Deleting…" : "Delete"}
             </Button>
           </div>
         </div>

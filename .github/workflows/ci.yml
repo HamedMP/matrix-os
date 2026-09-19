@@ -553,9 +553,27 @@ jobs:
       - run: pnpm install --frozen-lockfile
         if: needs.changes.outputs.should_run == 'true'
 
+      - name: Install Chromium for terminal presentation regression
+        if: needs.changes.outputs.should_run == 'true'
+        run: pnpm --filter @matrix-os/mcp-browser exec playwright install --with-deps chromium
+
       - name: Run E2E tests
         if: needs.changes.outputs.should_run == 'true'
         run: bun run test:e2e
+
+      - name: Run native Electron terminal presentation regression
+        if: needs.changes.outputs.should_run == 'true'
+        env:
+          MATRIX_GRID_ELECTRON: "1"
+        run: xvfb-run --auto-servernum bun run test:e2e -- tests/e2e/terminal-soft-grid.e2e.test.ts --maxWorkers=1
+
+      - name: Upload terminal presentation evidence
+        if: always() && needs.changes.outputs.should_run == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: terminal-soft-resize-evidence
+          path: output/playwright/terminal-soft-resize
+          if-no-files-found: ignore
 
       - name: Build Desktop for Electron E2E
         if: needs.changes.outputs.should_run == 'true'

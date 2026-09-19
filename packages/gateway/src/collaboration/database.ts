@@ -179,6 +179,24 @@ export interface ChatCollaborationCommandsTable {
   updated_at: Timestamp;
 }
 
+export interface CollaborationDiscussionMessagesTable {
+  scope_id: string;
+  sequence: number;
+  id: string;
+  actor_id: string;
+  text: string;
+  scope_revision: number;
+  created_at: Timestamp;
+}
+
+export interface CollaborationDiscussionUserStateTable {
+  scope_id: string;
+  actor_id: string;
+  read_through_seq: number;
+  last_opened_at: NullableTimestamp;
+  updated_at: Timestamp;
+}
+
 export interface CollaborationDatabase {
   collaboration_scopes: CollaborationScopesTable;
   collaboration_members: CollaborationMembersTable;
@@ -192,6 +210,8 @@ export interface CollaborationDatabase {
   collaboration_resource_bindings: CollaborationResourceBindingsTable;
   collaboration_layout_node_revisions: CollaborationLayoutNodeRevisionsTable;
   collaboration_project_view_states: CollaborationProjectViewStatesTable;
+  collaboration_discussion_messages: CollaborationDiscussionMessagesTable;
+  collaboration_discussion_user_state: CollaborationDiscussionUserStateTable;
   chat_collaboration_commands: ChatCollaborationCommandsTable;
 }
 
@@ -567,6 +587,40 @@ export async function bootstrapCollaborationDatabase(
     await sql`
       INSERT INTO collaboration_schema_migrations (version)
       VALUES (5)
+      ON CONFLICT (version) DO NOTHING
+    `.execute(trx);
+  });
+  await db.transaction().execute(async (trx) => {
+    await sql`
+      CREATE TABLE IF NOT EXISTS collaboration_discussion_messages (
+        scope_id UUID NOT NULL REFERENCES collaboration_scopes(id) ON DELETE CASCADE,
+        sequence BIGINT NOT NULL CHECK (sequence > 0),
+        id TEXT NOT NULL CHECK (char_length(id) BETWEEN 1 AND 160),
+        actor_id TEXT NOT NULL CHECK (char_length(actor_id) BETWEEN 1 AND 128),
+        text TEXT NOT NULL CHECK (octet_length(text) BETWEEN 1 AND 65536),
+        scope_revision BIGINT NOT NULL CHECK (scope_revision >= 0),
+        created_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (scope_id, sequence),
+        UNIQUE (scope_id, id)
+      )
+    `.execute(trx);
+    await sql`
+      CREATE TABLE IF NOT EXISTS collaboration_discussion_user_state (
+        scope_id UUID NOT NULL REFERENCES collaboration_scopes(id) ON DELETE CASCADE,
+        actor_id TEXT NOT NULL CHECK (char_length(actor_id) BETWEEN 1 AND 128),
+        read_through_seq BIGINT NOT NULL DEFAULT 0 CHECK (read_through_seq >= 0),
+        last_opened_at TIMESTAMPTZ,
+        updated_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (scope_id, actor_id)
+      )
+    `.execute(trx);
+    await sql`
+      CREATE INDEX IF NOT EXISTS idx_collaboration_discussion_messages
+      ON collaboration_discussion_messages(scope_id, sequence)
+    `.execute(trx);
+    await sql`
+      INSERT INTO collaboration_schema_migrations (version)
+      VALUES (6)
       ON CONFLICT (version) DO NOTHING
     `.execute(trx);
   });

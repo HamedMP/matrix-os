@@ -1,3 +1,4 @@
+import { prepareNativeScrollPlugin, queryNativeScroll } from "./native-scroll-bridge.js";
 import { execFile as nodeExecFile, spawn as spawnProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { chmod, mkdir, mkdtemp, open, realpath as nodeRealpath, rename, rm } from "node:fs/promises";
@@ -17,6 +18,7 @@ import {
   TERMINAL_RUNTIME_CONTROL_OPERATION_TIMEOUT_MS,
 } from "./limits.js";
 import { createTerminalRuntimeEnvironment } from "./runtime-environment.js";
+import { decodeZellijScreenDump } from "./zellij-screen-dump.js";
 
 const MAX_COMMAND_OUTPUT_BYTES = 5 * 1024 * 1024;
 const MAX_SUBSCRIPTION_LINE_BYTES = 1024 * 1024;
@@ -121,6 +123,7 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
   private readonly workspaceLifecycle?: WorkspaceZellijLifecycle;
   private readonly runtimeEnvironment: Record<string, string>;
   private attachmentOpenChain = Promise.resolve();
+  private scrollPluginReady: Promise<void> | null = null;
 
   constructor(options: ZellijCliRuntimeAdapterOptions) {
     this.homePath = options.homePath;
@@ -618,9 +621,10 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
           input.onEvent({ type: "pane-closed", paneId: parsed.data.pane_id });
           return;
         }
-        const ansi = await this.run([
+        const dump = await this.run([
           "--session", sessionName, "action", "dump-screen", "--pane-id", parsed.data.pane_id, "--full", "--ansi",
         ], binaryPath);
+        const ansi = decodeZellijScreenDump(dump, parsed.data.scrollback);
         const fullLines = ansi.split(/\r?\n/);
         const scrollback = parsed.data.scrollback ?? fullLines.slice(0, Math.max(0, fullLines.length - parsed.data.viewport.length));
         input.onEvent({
@@ -668,6 +672,16 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
       return;
     }
     await this.run(["delete-session", logicalSessionName, "--force"]);
+  }
+
+  async scrollState(sessionNameInput: string, paneId: string, line?: number) {
+    const { sessionName, binaryPath } = await this.resolveWorkspaceTarget(sessionNameInput);
+    this.scrollPluginReady ??= prepareNativeScrollPlugin(this.homePath, this.runtimeEnvironment)
+      .catch((error: unknown) => { this.scrollPluginReady = null; throw error; });
+    await this.scrollPluginReady;
+    return queryNativeScroll({ sessionName, paneId, line,
+      run: (args, timeoutMs) => this.runCommand(args, binaryPath, timeoutMs),
+    });
   }
 
   async resizeSession(sessionNameInput: string, size: { cols: number; rows: number }): Promise<void> {
@@ -908,7 +922,7 @@ function createCommandRunner(options: {
   timeoutMs: number;
 }): (args: string[], timeoutMs?: number) => Promise<string> {
   return (args, timeoutMs) => new Promise((resolve, reject) => {
-    nodeExecFile(options.binaryPath, args, {
+    const child = nodeExecFile(options.binaryPath, args, {
       cwd: options.cwd,
       env: options.env,
       timeout: timeoutMs ?? options.timeoutMs,
@@ -921,6 +935,8 @@ function createCommandRunner(options: {
         reject(failure);
       } else resolve(String(stdout));
     });
+    // `zellij pipe` otherwise waits forever for stdin even after replying.
+    if (args[2] === "pipe") child?.stdin?.end();
   });
 }
 

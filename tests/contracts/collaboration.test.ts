@@ -8,6 +8,11 @@ import {
   CollaborationConnectionTicketRequestSchema,
   CollaborationDiscoveryResponseSchema,
   CollaborationCreateDiscussionRequestSchema,
+  CollaborationDeclineInvitationRequestSchema,
+  CollaborationDiscussionMessageSchema,
+  CollaborationDiscussionMessagesResponseSchema,
+  CollaborationDiscussionUserStatePatchSchema,
+  CollaborationDiscussionUserStateSchema,
   CollaborationCreateInvitationRequestSchema,
   CollaborationCreateScopeRequestSchema,
   CollaborationEventFrameSchema,
@@ -81,25 +86,33 @@ describe("collaboration contracts", () => {
     }).success).toBe(false);
   });
 
-  it("accepts only editor or viewer invitations and rejects identity injection", () => {
-    expect(CollaborationCreateInvitationRequestSchema.parse({
-      targetActorId: "user_editor",
-      role: "editor",
-      clientRequestId: requestId,
-      expectedRevision: "4",
-    })).toMatchObject({ role: "editor" });
+  it("accepts a bounded identifier and rejects client-supplied actor authority", () => {
+    for (const identifier of ["user_editor", "person@example.com", "nimanaderi", "@nimanaderi"]) {
+      expect(CollaborationCreateInvitationRequestSchema.parse({
+        identifier: `  ${identifier}  `,
+        role: "editor",
+        clientRequestId: requestId,
+        expectedRevision: "4",
+      })).toMatchObject({ identifier, role: "editor" });
+    }
     expect(CollaborationCreateInvitationRequestSchema.safeParse({
-      targetActorId: "user_editor",
+      identifier: "nimanaderi",
       role: "owner",
       clientRequestId: requestId,
       expectedRevision: "4",
     }).success).toBe(false);
     expect(CollaborationCreateInvitationRequestSchema.safeParse({
-      targetActorId: "user_editor",
+      identifier: "nimanaderi",
+      targetActorId: "user_attacker",
       role: "viewer",
       clientRequestId: requestId,
       expectedRevision: "4",
-      invitedBy: "user_attacker",
+    }).success).toBe(false);
+    expect(CollaborationCreateInvitationRequestSchema.safeParse({
+      identifier: "x".repeat(321),
+      role: "viewer",
+      clientRequestId: requestId,
+      expectedRevision: "4",
     }).success).toBe(false);
   });
 
@@ -185,6 +198,57 @@ describe("collaboration contracts", () => {
       mode: "ai",
       actorId: "user_owner",
     }).success).toBe(false);
+  });
+
+  it("keeps invitation decline conditional and free of client authority", () => {
+    expect(CollaborationDeclineInvitationRequestSchema.parse({
+      clientRequestId: requestId,
+      expectedRevision: "4",
+    })).toEqual({ clientRequestId: requestId, expectedRevision: "4" });
+    expect(CollaborationDeclineInvitationRequestSchema.safeParse({
+      clientRequestId: requestId,
+      expectedRevision: "4",
+      actorId: "user_owner",
+      status: "revoked",
+    }).success).toBe(false);
+  });
+
+  it("projects bounded scope discussion without executable content", () => {
+    const message = CollaborationDiscussionMessageSchema.parse({
+      id: "discussion_1",
+      scopeId,
+      sequence: "12",
+      actor: { actorId: "user_editor", displayName: "Ada" },
+      text: "Human-only note",
+      createdAt: now,
+    });
+    expect(CollaborationDiscussionMessagesResponseSchema.parse({
+      messages: [message],
+      latestSequence: "12",
+    }).messages).toEqual([message]);
+    expect(CollaborationDiscussionMessageSchema.safeParse({
+      ...message,
+      terminalInput: "rm -rf /",
+    }).success).toBe(false);
+    expect(CollaborationDiscussionMessagesResponseSchema.safeParse({
+      messages: Array.from({ length: 101 }, () => message),
+      latestSequence: "12",
+    }).success).toBe(false);
+  });
+
+  it("keeps discussion read state actor-local and monotonic at the service boundary", () => {
+    expect(CollaborationDiscussionUserStateSchema.parse({
+      readThroughSeq: "12",
+      lastOpenedAt: now,
+    })).toEqual({ readThroughSeq: "12", lastOpenedAt: now });
+    expect(CollaborationDiscussionUserStatePatchSchema.parse({
+      readThroughSeq: "12",
+    })).toEqual({ readThroughSeq: "12" });
+    expect(CollaborationDiscussionUserStatePatchSchema.safeParse({
+      readThroughSeq: "12",
+      actorId: "user_other",
+    }).success).toBe(false);
+    expect(CollaborationDiscussionUserStatePatchSchema.safeParse({}).success).toBe(false);
   });
 
   it("binds actor proofs to exact transport facts", () => {
@@ -403,6 +467,25 @@ describe("collaboration contracts", () => {
       },
     });
     expect(JSON.stringify(exported)).not.toContain("draft");
+
+    expect(CollaborationScopeExportSchema.parse({
+      version: 1,
+      id: requestId,
+      scopeId,
+      exportedAt: now,
+      expiresAt: "2026-09-14T12:00:00.000Z",
+      scope: { kind: "terminal", resourceId: "terminal_release", lifecycle: "shared", revision: "4" },
+      members: [{ actorId: "user_owner", role: "owner", status: "accepted", revision: "1" }],
+      audit: [{ actorId: "user_owner", action: "scope.exported", outcome: "completed", revision: "4", createdAt: now }],
+      discussion: [{
+        id: "discussion_1",
+        scopeId,
+        sequence: "1",
+        actor: { actorId: "user_owner", displayName: "Owner" },
+        text: "Shared terminal note",
+        createdAt: now,
+      }],
+    })).toMatchObject({ scope: { kind: "terminal" }, discussion: [{ text: "Shared terminal note" }] });
   });
 
   it("validates hydrated discovery and safe attributed history projections", () => {
@@ -467,13 +550,17 @@ describe("collaboration contracts", () => {
       clientRequestId: requestId,
       expectedRevision: "4",
       text: "Run the release checks",
-      selection: { instanceId: "claude_shared", model: "claude-opus-4-6" },
     })).toMatchObject({ text: "Run the release checks" });
     expect(CollaborationCreateAiRequestSchema.safeParse({
       clientRequestId: requestId,
       expectedRevision: "4",
       text: "Run the release checks",
       selection: { instanceId: "claude_shared", model: "claude-opus-4-6" },
+    }).success).toBe(false);
+    expect(CollaborationCreateAiRequestSchema.safeParse({
+      clientRequestId: requestId,
+      expectedRevision: "4",
+      text: "Run the release checks",
       actorId: "user_editor",
     }).success).toBe(false);
     expect(CollaborationApprovalDecisionRequestSchema.parse({
@@ -496,7 +583,10 @@ describe("collaboration contracts", () => {
     expect(CollaborationAiRequestsResponseSchema.parse({
       requests: [],
       approvals: [],
-      defaultSelection: { instanceId: "claude_shared", model: "claude-opus-4-6" },
+      capability: {
+        status: "available",
+        effectiveSelection: { instanceId: "claude_shared", model: "claude-opus-4-6" },
+      },
       resourceRevision: "6",
     })).toMatchObject({ resourceRevision: "6" });
   });

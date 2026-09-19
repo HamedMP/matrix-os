@@ -14,7 +14,10 @@ export type TerminalServerMessage =
       fromSeq: number;
       canonicalSize: TerminalCanonicalSize;
       capabilities: string[];
+      ownership: "writer" | "observer";
+      leaseEpoch: number | null;
     })
+  | (TerminalMessageIdentity & { type: "scroll-state"; state: import("@matrix-os/contracts").TerminalScrollState | null })
   | (TerminalMessageIdentity & { type: "canonical-size"; cols: number; rows: number })
   | (TerminalMessageIdentity & { type: "output"; data: string; seq: number })
   | (TerminalMessageIdentity & {
@@ -28,6 +31,7 @@ export type TerminalServerMessage =
   | (TerminalMessageIdentity & { type: "replay-end" })
   | (TerminalMessageIdentity & { type: "pong" })
   | (TerminalMessageIdentity & { type: "exit"; code: number | null })
+  | { type: "lease-revoked"; sessionId: string; epoch: number | null }
   | { type: "error"; message: string; sessionId?: string };
 
 export interface TerminalCanonicalSize {
@@ -58,6 +62,13 @@ export function parseTerminalServerMessage(raw: string): TerminalServerMessage |
       ...(msg.terminalRef ? { sessionId: terminalRefKey(msg.terminalRef) } : {}),
     };
   }
+  if (msg.type === "lease-revoked") {
+    return {
+      type: "lease-revoked",
+      sessionId: terminalRefKey(msg.terminalRef),
+      epoch: msg.epoch,
+    };
+  }
 
   const identity: TerminalMessageIdentity = {
     sessionId: terminalRefKey(msg.terminalRef),
@@ -73,7 +84,11 @@ export function parseTerminalServerMessage(raw: string): TerminalServerMessage |
         fromSeq: msg.nextSeq,
         canonicalSize: msg.canonicalSize,
         capabilities: msg.capabilities ?? [],
+        ownership: msg.ownership ?? "writer",
+        leaseEpoch: msg.leaseEpoch ?? null,
       };
+    case "scroll-state":
+      return { ...identity, type: "scroll-state", state: msg.state };
     case "canonical-size":
       return { ...identity, type: "canonical-size", ...msg.canonicalSize };
     case "output":

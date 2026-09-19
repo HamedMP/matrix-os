@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { bootstrapPlatformCollaborationDatabase } from "../../packages/platform/src/collaboration/database.js";
 import { createInternalCollaborationRoutes } from "../../packages/platform/src/collaboration/internal-routes.js";
 import { PlatformCollaborationRepository } from "../../packages/platform/src/collaboration/repository.js";
@@ -29,6 +29,7 @@ describe("platform internal collaboration routes", () => {
         ? { runtimeId, ownerId: platformCollaborationActors.owner }
         : null,
       resolveParticipant: async (actorId) => ({ actorId, displayName: "Known participant" }),
+      resolveInvitationIdentifier: async () => null,
     });
     const response = await app.request("/internal/collaboration/directory", {
       method: "PUT",
@@ -60,6 +61,7 @@ describe("platform internal collaboration routes", () => {
         ? { runtimeId: input.runtimeId, ownerId: platformCollaborationActors.owner }
         : null,
       resolveParticipant: async (actorId) => ({ actorId, displayName: "Nima Owner" }),
+      resolveInvitationIdentifier: async () => null,
     });
     expect((await app.request(`/internal/collaboration/participants/${platformCollaborationActors.owner}`)).status)
       .toBe(401);
@@ -68,5 +70,67 @@ describe("platform internal collaboration routes", () => {
     });
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ actorId: platformCollaborationActors.owner, displayName: "Nima Owner" });
+  });
+
+  it("resolves invitation identifiers only for authenticated owner runtimes and fails generically", async () => {
+    const resolveInvitationIdentifier = vi.fn(async (identifier: string) => identifier === "nimanaderi"
+      ? { actorId: platformCollaborationActors.recipientWithoutComputer, displayName: "Nima Naderi" }
+      : null);
+    const app = createInternalCollaborationRoutes({
+      repository: new PlatformCollaborationRepository(fixture.collaborationDb),
+      authenticateRuntime: async (input) => input.bearerToken === token
+        ? { runtimeId: input.runtimeId, ownerId: platformCollaborationActors.owner }
+        : null,
+      resolveParticipant: async () => null,
+      resolveInvitationIdentifier,
+    });
+    const request = (identifier: string, authenticated = true) => app.request(
+      "/internal/collaboration/participants/resolve",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          ...(authenticated ? { authorization: `Bearer ${token}`, "x-matrix-runtime-id": runtimeId } : {}),
+        },
+        body: JSON.stringify({ identifier }),
+      },
+    );
+    expect((await request("nimanaderi", false)).status).toBe(401);
+    expect(resolveInvitationIdentifier).not.toHaveBeenCalled();
+
+    const resolved = await request("nimanaderi");
+    expect(resolved.status).toBe(200);
+    expect(await resolved.json()).toEqual({
+      actorId: platformCollaborationActors.recipientWithoutComputer,
+      displayName: "Nima Naderi",
+    });
+
+    const unknown = await request("missing-person");
+    expect(unknown.status).toBe(404);
+    expect(await unknown.json()).toEqual({ error: "Invitation target unavailable" });
+  });
+
+  it("rate limits invitation resolution per authenticated owner runtime", async () => {
+    const app = createInternalCollaborationRoutes({
+      repository: new PlatformCollaborationRepository(fixture.collaborationDb),
+      authenticateRuntime: async (input) => ({ runtimeId: input.runtimeId, ownerId: platformCollaborationActors.owner }),
+      resolveParticipant: async () => null,
+      resolveInvitationIdentifier: async () => null,
+    });
+    const statuses: number[] = [];
+    for (let index = 0; index < 11; index += 1) {
+      const response = await app.request("/internal/collaboration/participants/resolve", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+          "x-matrix-runtime-id": runtimeId,
+        },
+        body: JSON.stringify({ identifier: `person-${index}` }),
+      });
+      statuses.push(response.status);
+    }
+    expect(statuses.slice(0, 10)).toEqual(Array(10).fill(404));
+    expect(statuses[10]).toBe(429);
   });
 });

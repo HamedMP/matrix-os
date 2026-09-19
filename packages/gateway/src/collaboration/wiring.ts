@@ -10,6 +10,7 @@ import { CollaborationChatAdapter } from "./chat-adapter.js";
 import { CollaborationChatScopeService } from "./chat-scope.js";
 import { bootstrapCollaborationDatabase, type OwnerCollaborationDatabase } from "./database.js";
 import { CollaborationDirectoryOutbox } from "./directory-outbox.js";
+import { CollaborationDiscussionAdapter } from "./discussion-adapter.js";
 import { registerCollaborationEventWebSocketRoute } from "./event-websocket-route.js";
 import { CollaborationEventRegistry } from "./events.js";
 import { CollaborationParticipantResolver } from "./participant-resolver.js";
@@ -93,6 +94,7 @@ export async function createGatewayCollaboration(options: {
   chatRepository: ChatRepository;
   config: GatewayCollaborationConfig;
   resolveParticipant?(actorId: string): Promise<{ actorId: string; displayName: string }>;
+  resolveInvitationIdentifier?(identifier: string): Promise<{ actorId: string; displayName: string }>;
   outboxFetch?: typeof fetch;
   projectLifecycleDrivers?: {
     stageTransfer: ProjectTransferStager;
@@ -104,13 +106,17 @@ export async function createGatewayCollaboration(options: {
   await bootstrapCollaborationDatabase(options.db);
   await cleanupExpiredArtifacts(options.db, new Date());
   const repository = new CollaborationRepository(options.db, { chatRepository: options.chatRepository });
-  const participantResolver = options.resolveParticipant ? undefined : new CollaborationParticipantResolver({
-    platformBaseUrl: options.config.platformBaseUrl,
-    runtimeId: options.config.runtimeId,
-    serviceToken: options.config.serviceToken,
-  });
+  const participantResolver = options.resolveParticipant && options.resolveInvitationIdentifier
+    ? undefined
+    : new CollaborationParticipantResolver({
+      platformBaseUrl: options.config.platformBaseUrl,
+      runtimeId: options.config.runtimeId,
+      serviceToken: options.config.serviceToken,
+    });
   const resolveParticipant = options.resolveParticipant
     ?? ((actorId: string) => participantResolver!.resolve(actorId));
+  const resolveInvitationIdentifier = options.resolveInvitationIdentifier
+    ?? ((identifier: string) => participantResolver!.resolveInvitationIdentifier(identifier));
   const authority = new CollaborationAuthority(repository);
   const verifier = new CollaborationActorProofVerifier({
     runtimeId: options.config.runtimeId,
@@ -151,6 +157,13 @@ export async function createGatewayCollaboration(options: {
     resolveParticipant,
     onCommitted: (scopeId) => eventRegistry.broadcastScope(scopeId),
   });
+  const discussionAdapter = new CollaborationDiscussionAdapter({
+    db: options.db,
+    authority,
+    chatAdapter,
+    resolveParticipant,
+    onCommitted: (scopeId) => eventRegistry.broadcastScope(scopeId),
+  });
   const cleanupTimer = options.startTimers === false ? undefined : setInterval(() => {
     void cleanupExpiredArtifacts(options.db, new Date()).catch((error: unknown) => {
       console.warn("[collaboration] artifact cleanup failed", error instanceof Error ? error.name : "UnknownError");
@@ -175,6 +188,7 @@ export async function createGatewayCollaboration(options: {
     eventRegistry,
     chatScope,
     chatAdapter,
+    discussionAdapter,
     outbox,
     collaborationGuard: chatScope,
     projectTransitions,
@@ -314,6 +328,7 @@ export async function createGatewayCollaboration(options: {
         repository,
         chatScope,
         chatAdapter,
+        discussionAdapter,
         ...(chatExecutionAdapter ? { chatExecutionAdapter } : {}),
         ...(terminalAdapter ? { terminalAdapter } : {}),
         ...(terminalDispatcher ? { terminalDispatcher } : {}),
@@ -321,6 +336,7 @@ export async function createGatewayCollaboration(options: {
         ...(projectScope ? { projectScope } : {}),
         ...(projectSharing ? { projectSharing } : {}),
         resolveParticipant,
+        resolveInvitationIdentifier,
         onScopeCommitted: (scopeId) => eventRegistry.broadcastScope(scopeId),
         onRevoked: (scopeId, actorId) => {
           eventRegistry.notifyRevoked(scopeId, actorId);

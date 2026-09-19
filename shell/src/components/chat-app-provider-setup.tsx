@@ -91,10 +91,13 @@ function applySavedSelection(
   return { ...choice, interactionMode, permissionMode, selectedOptions };
 }
 
-export function useChatProviderState(boundSelection?: CanonicalChatModelSelection) {
+export function useChatProviderState(
+  currentSelection?: CanonicalChatModelSelection,
+  boundInstanceId?: string,
+) {
   const [catalog, setCatalog] = useState<CanonicalProviderCatalog | null>(null);
   const [savedChoice, setSavedChoice] = useState(readSavedChoice);
-  const [boundDraft, setBoundDraft] = useState<{
+  const [chatDraft, setChatDraft] = useState<{
     bindingKey: string;
     selection: SavedProviderSelection;
   } | null>(null);
@@ -148,20 +151,20 @@ export function useChatProviderState(boundSelection?: CanonicalChatModelSelectio
   }, []);
 
   const choices = catalog ? deriveCanonicalProviderChoices(catalog) : [];
-  const bindingKey = boundSelection
-    ? `${boundSelection.instanceId}:${boundSelection.model}:${JSON.stringify(boundSelection.options ?? [])}`
+  const bindingKey = currentSelection
+    ? `${currentSelection.instanceId}:${currentSelection.model}:${JSON.stringify(currentSelection.options ?? [])}`
     : "";
-  const effectiveSaved = boundSelection
-    ? boundDraft?.bindingKey === bindingKey
-      ? boundDraft.selection
-      : { key: `${boundSelection.instanceId}:${boundSelection.model}`, options: boundSelection.options ?? [] }
+  const effectiveSaved = currentSelection
+    ? chatDraft?.bindingKey === bindingKey
+      ? chatDraft.selection
+      : { key: `${currentSelection.instanceId}:${currentSelection.model}`, options: currentSelection.options ?? [] }
     : savedChoice;
-  const boundChoice = choices.find((choice) => choice.instanceId === boundSelection?.instanceId
+  const chatChoice = choices.find((choice) => (!boundInstanceId || choice.instanceId === boundInstanceId)
     && choiceKey(choice) === effectiveSaved.key)
-    ?? choices.find((choice) => choice.instanceId === boundSelection?.instanceId
-      && choice.modelId === boundSelection.model);
-  const selectedBase = boundSelection
-    ? boundChoice ?? null
+    ?? choices.find((choice) => choice.instanceId === currentSelection?.instanceId
+      && choice.modelId === currentSelection.model);
+  const selectedBase = currentSelection
+    ? chatChoice ?? null
     : choices.find((choice) => choiceKey(choice) === effectiveSaved.key)
     ?? choices.find((choice) => {
       const instance = catalog?.instances.find((candidate) => candidate.id === choice.instanceId);
@@ -174,8 +177,8 @@ export function useChatProviderState(boundSelection?: CanonicalChatModelSelectio
     : null;
 
   const save = (next: SavedProviderSelection) => {
-    if (boundSelection) {
-      setBoundDraft({ bindingKey, selection: next });
+    if (currentSelection) {
+      setChatDraft({ bindingKey, selection: next });
       return;
     }
     setSavedChoice(next);
@@ -187,7 +190,7 @@ export function useChatProviderState(boundSelection?: CanonicalChatModelSelectio
   };
 
   const select = (choice: CanonicalProviderChoice) => {
-    if (boundSelection && choice.instanceId !== boundSelection.instanceId) return;
+    if (boundInstanceId && choice.instanceId !== boundInstanceId) return;
     const preserveControls = selected?.instanceId === choice.instanceId;
     save({
       key: choiceKey(choice),
@@ -255,6 +258,7 @@ export function ChatProviderSetupPanel({
   onOptionChange,
   onSetupAction,
   lockedInstanceId,
+  onNewChat,
   showChannels,
   channels,
   onToggleChannel,
@@ -271,6 +275,7 @@ export function ChatProviderSetupPanel({
     action: CanonicalProviderSetupAction,
   ) => void;
   lockedInstanceId?: string;
+  onNewChat?: () => void;
   showChannels: boolean;
   channels: Set<string>;
   onToggleChannel: (channel: string) => void;
@@ -280,6 +285,16 @@ export function ChatProviderSetupPanel({
       <div className="mx-auto grid w-full max-w-[720px] gap-3 md:grid-cols-[1fr_1.1fr]">
         <div>
           <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Harness and model</p>
+          {lockedInstanceId ? (
+            <div className="mb-2 flex items-start justify-between gap-3 rounded-md border border-border/50 bg-background/55 px-2.5 py-2 text-xs text-muted-foreground" role="note">
+              <span>This Chat is bound to its agent harness. Start or fork a new Chat to use another harness.</span>
+              {onNewChat ? (
+                <button type="button" className="shrink-0 font-medium text-foreground underline-offset-2 hover:underline" onClick={onNewChat}>
+                  New Chat
+                </button>
+              ) : null}
+            </div>
+          ) : null}
           <div className="space-y-1.5">
             {choices.map((choice) => {
               const isSelected = choice.instanceId === selected?.instanceId && choice.modelId === selected.modelId;

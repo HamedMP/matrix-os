@@ -425,7 +425,7 @@ describe("coding agent thread lifecycle", () => {
     for (const subscription of subscriptions) subscription.dispose();
   });
 
-  it("blocks project cleanup on active threads and deletes only the owner's terminal project history", async () => {
+  it("cascades project cleanup through active threads and preserves other owners", async () => {
     const { threads } = await createHarness();
     const owner = await threads.createThread(ownerPrincipal, createBody);
     await threads.createThread(otherPrincipal, {
@@ -437,12 +437,6 @@ describe("coding agent thread lifecycle", () => {
       activeThreadCount: 1,
       threadCount: 1,
     });
-    await expect(threads.deleteProjectThreads(ownerPrincipal, "repo-main")).resolves.toEqual({
-      ok: false,
-      activeThreadCount: 1,
-    });
-
-    await threads.abortThread(ownerPrincipal, owner.snapshot.thread.id, "req_abort_project_cleanup");
     await expect(threads.deleteProjectThreads(ownerPrincipal, "repo-main")).resolves.toEqual({
       ok: true,
       deleted: 1,

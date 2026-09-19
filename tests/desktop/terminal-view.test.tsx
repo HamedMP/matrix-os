@@ -2,6 +2,7 @@
 import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { assertSoftResizeLifecycle, installSoftResizeGeometry, type SoftResizeTerminal } from "../helpers/terminal-soft-resize-regression";
 import type { ShellSocketEvents } from "@desktop/renderer/src/lib/shell-socket";
 import TerminalView from "@desktop/renderer/src/features/terminal/TerminalView";
 import { useAppearance } from "@desktop/renderer/src/stores/appearance";
@@ -275,7 +276,25 @@ describe("TerminalView session switching", () => {
     expect(root.style.height).toBe("100%");
     expect(root.style.backgroundColor).toBe(colorProbe.style.backgroundColor);
     expect(viewport.style.backgroundColor).toBe(colorProbe.style.backgroundColor);
+    expect(viewport.style.overscrollBehavior).toBe("none");
     expect(scrollable.style.backgroundColor).toBe(colorProbe.style.backgroundColor);
+    expect(scrollable.style.overscrollBehavior).toBe("none");
+  });
+
+  it("keeps the last canonical row accessible after soft viewport resizing", async () => {
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => setTimeout(() => callback(0), 0));
+    vi.stubGlobal("cancelAnimationFrame", clearTimeout);
+    const { container } = render(<TerminalView sessionName={TERMINAL_REF_KEY} active />);
+    const terminal = createdTerminals.at(-1)! as unknown as SoftResizeTerminal;
+    const host = container.querySelector<HTMLElement>("[data-terminal-viewport]")!;
+    const geometry = installSoftResizeGeometry(terminal, host);
+    geometry.setHostSize(1_600, 900);
+    const events = attachMock.mock.calls.at(-1)![1] as ShellSocketEvents;
+    act(() => events.onCanonicalSize?.({ cols: 120, rows: 36 }));
+    await assertSoftResizeLifecycle({
+      terminal, host, geometry,
+      resizeHost: () => resizeObserverCallbacks.at(-1)!([], {} as ResizeObserver),
+    });
   });
 
   it("proposes a new grid to the authority without locally refitting after a host resize", () => {
@@ -428,6 +447,21 @@ describe("TerminalView session switching", () => {
 
     act(() => events.onState("fatal"));
     expect(screen.getByRole("status").textContent).toContain("This session has ended on your computer.");
+  });
+
+  it("offers to continue locally when another device becomes the writer", () => {
+    render(<TerminalView sessionName="alpha" />);
+    const events = attachMock.mock.calls[0]?.[1] as ShellSocketEvents;
+
+    act(() => events.onOwnershipChange?.("observer"));
+
+    expect(screen.getByRole("status").textContent).toContain("Live on another device.");
+    fireEvent.click(screen.getByRole("button", { name: "Continue here" }));
+    expect(attachMock).toHaveBeenCalledTimes(2);
+
+    const resumedEvents = attachMock.mock.calls[1]?.[1] as ShellSocketEvents;
+    act(() => resumedEvents.onOwnershipChange?.("writer"));
+    expect(screen.queryByText("Live on another device.")).toBeNull();
   });
 
   it("clears xterm before rendering an authoritative replacement snapshot", () => {
@@ -1333,14 +1367,18 @@ describe("TerminalView session switching", () => {
       const xtermCoordinates: Array<[number, number]> = [];
       root.addEventListener("mousedown", (event) => {
         xtermCoordinates.push([event.clientX, event.clientY]);
+        event.preventDefault();
       });
 
-      fireEvent.mouseDown(root, {
+      const original = new MouseEvent("mousedown", {
+        bubbles: true, cancelable: true,
         button: 0,
         buttons: 1,
         clientX: 100 + 36 * visualScale,
         clientY: 50 + 24 * visualScale,
       });
+      fireEvent(root, original);
+      expect(original.defaultPrevented).toBe(true);
 
       expect(xtermCoordinates).toEqual([[136, 74]]);
 
@@ -1351,6 +1389,67 @@ describe("TerminalView session switching", () => {
       expect(host.contains(root)).toBe(true);
     },
   );
+
+  it("keeps correcting a scaled selection drag outside Electron Desktop", () => {
+    const { container } = render(<TerminalView sessionName="alpha" visualScale={0.5} />);
+    const terminal = createdTerminals.at(-1)!;
+    const root = terminal.element!;
+    const host = container.querySelector<HTMLElement>("[data-terminal-viewport]")!;
+    vi.spyOn(root, "getBoundingClientRect").mockReturnValue({
+      left: 100,
+      top: 50,
+      right: 500,
+      bottom: 350,
+      width: 400,
+      height: 300,
+      x: 100,
+      y: 50,
+      toJSON: () => ({}),
+    });
+    const delivered: Array<[string, number, number]> = [];
+    const record = (event: MouseEvent) => {
+      if ((event as MouseEvent & { _xtermScaleCorrected?: boolean })._xtermScaleCorrected) {
+        delivered.push([event.type, event.clientX, event.clientY]);
+      }
+    };
+    document.addEventListener("mousemove", record);
+    document.addEventListener("mouseup", record);
+
+    fireEvent.mouseDown(root, {
+      button: 0,
+      buttons: 1,
+      clientX: 118,
+      clientY: 62,
+    });
+    const outsideMove = new MouseEvent("mousemove", {
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      buttons: 1,
+      clientX: 140,
+      clientY: 20,
+    });
+    fireEvent(document.body, outsideMove);
+    const outsideUp = new MouseEvent("mouseup", {
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      buttons: 0,
+      clientX: 140,
+      clientY: 20,
+    });
+    fireEvent(document.body, outsideUp);
+
+    expect(delivered).toEqual([
+      ["mousemove", 100, -10],
+      ["mouseup", 100, -10],
+    ]);
+    expect(outsideMove.defaultPrevented).toBe(true);
+    expect(outsideUp.defaultPrevented).toBe(true);
+    expect(host.contains(root)).toBe(true);
+    document.removeEventListener("mousemove", record);
+    document.removeEventListener("mouseup", record);
+  });
 
   it("updates native Canvas scale without recreating xterm", () => {
     const { rerender } = render(<TerminalView sessionName="alpha" visualScale={0.5} />);

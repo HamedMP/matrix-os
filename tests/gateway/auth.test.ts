@@ -237,6 +237,77 @@ describe("T133: Auth token middleware", () => {
     expect(result?.status).toBe(429);
   });
 
+  it("delegates collaboration HTTP routes to their signed-proof verifier", async () => {
+    const mw = authMiddleware("secret-token");
+    let nextCalled = false;
+    await mw(
+      mockContext(
+        "/api/collaboration/runtimes/vps:10000000-0000-4000-8000-000000000001/scopes/preflight",
+        undefined,
+        undefined,
+        undefined,
+        { "x-real-ip": "10.66.0.1" },
+      ),
+      async () => { nextCalled = true; },
+    );
+    expect(nextCalled).toBe(true);
+
+    nextCalled = false;
+    const lookalike = await mw(
+      mockContext("/api/collaboration-unsafe/scopes", undefined, undefined, "10.66.0.2"),
+      async () => { nextCalled = true; },
+    );
+    expect(nextCalled).toBe(false);
+    expect(lookalike?.status).toBe(401);
+  });
+
+  it("delegates only exact collaboration WebSocket routes to their signed-proof verifier", async () => {
+    const mw = authMiddleware("secret-token");
+    const scopeId = "10000000-0000-4000-8000-000000000001";
+    for (const suffix of ["events", "terminal"]) {
+      let nextCalled = false;
+      await mw(
+        mockContext(
+          `/ws/collaboration/scopes/${scopeId}/${suffix}`,
+          undefined,
+          undefined,
+          undefined,
+          { "x-real-ip": `10.66.1.${suffix === "events" ? "1" : "2"}` },
+        ),
+        async () => { nextCalled = true; },
+      );
+      expect(nextCalled).toBe(true);
+    }
+
+    let nextCalled = false;
+    const unknown = await mw(
+      mockContext(
+        `/ws/collaboration/scopes/${scopeId}/unknown`,
+        undefined,
+        undefined,
+        "10.66.1.3",
+      ),
+      async () => { nextCalled = true; },
+    );
+    expect(nextCalled).toBe(false);
+    expect(unknown?.status).toBe(401);
+  });
+
+  it("does not share a collaboration quota across a platform transport peer", async () => {
+    const mw = authMiddleware("secret-token");
+    const testIp = "10.66.2.1";
+    const path = "/api/collaboration/runtimes/vps:10000000-0000-4000-8000-000000000001/scopes/preflight";
+    for (let i = 0; i < 121; i++) {
+      let nextCalled = false;
+      const result = await mw(
+        mockContext(path, undefined, undefined, undefined, { "x-real-ip": testIp }),
+        async () => { nextCalled = true; },
+      );
+      expect(nextCalled).toBe(true);
+      expect(result?.status).not.toBe(429);
+    }
+  });
+
   it("cannot bypass signed terminal acceptance limits by rotating CF-Connecting-IP", async () => {
     const mw = authMiddleware("secret-token");
     const trustedProxyIp = "10.44.0.5";

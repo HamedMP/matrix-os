@@ -38,8 +38,8 @@ archived, or deleted.
 6. A folder project that points at an existing owner-controlled directory loses its
    Matrix registration and related Matrix state, but the external directory and its
    contents are never deleted.
-7. Archive and delete are rejected while project-scoped work is active. The user must
-   stop active coding-agent turns, sessions, previews, and leased worktrees first.
+7. Archive is rejected while project-scoped work is active. Confirmed deletion
+   stops project work and cascades through all associated chats and sessions.
 8. The renderer does not optimistically hide a project. It reconciles local state only
    after the Gateway confirms the lifecycle transition.
 
@@ -109,7 +109,8 @@ removed, and the connected external folder is unchanged.
    delete succeeds, **then** Matrix registration and related Matrix state are removed
    while the external directory remains byte-for-byte untouched.
 5. **Given** active project-scoped work, **when** delete is requested, **then** the
-   request fails safely without partial deletion.
+   Gateway fences new work, stops child sessions, and deletes associated state.
+   Failed cleanup retains a hidden deletion marker for retry.
 6. **Given** a delete operation partially completes after its durable deletion marker
    is written, **when** startup recovery runs, **then** it resumes cleanup and never
    re-exposes the project as active.
@@ -224,7 +225,9 @@ archived --delete--> deleting --cleanup--> absent
 
 - Archive and restore run under the existing per-project lock and atomically rewrite
   the project config.
-- Delete first verifies ownership, typed confirmation, and absence of active work.
+- Delete first verifies ownership and typed confirmation, then fences new work.
+  Lifecycle requests serialize separately from project admission so session cleanup
+  can acquire the project lock when releasing worktree leases.
 - Delete then writes `deletingAt` atomically before any irreversible cleanup.
 - Related Matrix state is removed through owner-scoped store operations.
 - The managed project directory is removed last. For folder projects, only the Matrix
@@ -243,12 +246,13 @@ archived --delete--> deleting --cleanup--> absent
   Gateway, not only by the renderer.
 - **FR-003a**: The Gateway MUST provide a canonical project kind and MUST NOT rely on
   the renderer to infer whether a local path is Matrix-managed or externally owned.
-- **FR-004**: Archive and delete MUST reject a project with active coding-agent turns,
+- **FR-004**: Archive MUST reject a project with active coding-agent turns,
   workspace sessions, live previews, reviews, or leased worktrees.
 - **FR-005**: Archive MUST preserve all project data and relationships.
 - **FR-006**: Restore MUST return the original project state without duplicating
   records or losing relationships.
-- **FR-007**: Delete MUST remove Matrix-owned project state and related project chats.
+- **FR-007**: Delete MUST stop and remove associated sessions and terminal tabs, remove
+  Matrix-owned project state, and hard-delete related active and archived chats.
 - **FR-008**: Delete MUST preserve an external folder project's owner-controlled
   directory and contents.
 - **FR-009**: Normal project projections MUST hide archived and deleting projects.
@@ -366,6 +370,6 @@ helpers.
 - Bulk archive/delete.
 - Renaming projects.
 - Cross-owner or organization project transfer.
-- Automatic stopping of active work to force deletion.
+- General background reconciliation of stale activity unrelated to explicit deletion.
 - Mobile-specific lifecycle UI. Mobile and browser shells consume the same Gateway
   state but receive dedicated renderer work later.

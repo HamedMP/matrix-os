@@ -177,6 +177,31 @@ describe("CollaborationProxy", () => {
       .toBeNull();
   });
 
+  it("allowlists only exact invitation decline and scope discussion paths", () => {
+    expect(parseCollaborationProxyRoute(
+      "POST",
+      `/api/collaboration/invitations/${invitationId}/decline`,
+    )).toEqual({ kind: "invitation", identifier: invitationId });
+    for (const [method, suffix] of [
+      ["GET", "discussion/messages"],
+      ["POST", "discussion/messages"],
+      ["GET", "discussion/user-state"],
+      ["PATCH", "discussion/user-state"],
+    ] as const) {
+      const path = `/api/collaboration/scopes/${scopeId}/${suffix}`;
+      expect(parseCollaborationProxyRoute(method, path)).toEqual({ kind: "scope", identifier: scopeId });
+      expect(collaborationMilestoneForRoute(method, path)).toBe("m1");
+    }
+    expect(parseCollaborationProxyRoute(
+      "POST",
+      `/api/collaboration/invitations/${invitationId}/decline/extra`,
+    )).toBeNull();
+    expect(parseCollaborationProxyRoute(
+      "GET",
+      `/api/collaboration/scopes/${scopeId}/discussion/messages/private`,
+    )).toBeNull();
+  });
+
   it("classifies shared AI routes under M2 without moving discussion off M1", () => {
     const requestId = "qturn_shared_request_1";
     const approvalId = "approval_shared_request_1";
@@ -327,6 +352,92 @@ describe("CollaborationProxy", () => {
     });
     expect(verifier.verifyPolicy(JSON.parse(Buffer.from(policyHeader!, "base64url").toString("utf8"))))
       .toMatchObject({ milestone: "m2", mode: "internal" });
+  });
+
+  it("forwards the signed M2 policy on scope projections without gating M1 discussion", async () => {
+    const path = `/api/collaboration/scopes/${scopeId}`;
+    const disabled = await proxy.forward({
+      actorId: platformCollaborationActors.recipientWithoutComputer,
+      method: "GET",
+      path,
+      query: "",
+      body: new Uint8Array(),
+      headers: new Headers(),
+    });
+    expect(disabled.status).toBe(200);
+    const [, disabledInit] = fetchImpl.mock.calls[0] as [string, RequestInit];
+    const disabledHeader = new Headers(disabledInit.headers).get("x-matrix-collaboration-policy");
+    const verifier = new CollaborationActorProofVerifier({
+      runtimeId: "runtime_owner", keys: { "collaboration-key-1": key }, now: () => now,
+    });
+    expect(verifier.verifyPolicy(JSON.parse(Buffer.from(disabledHeader!, "base64url").toString("utf8"))))
+      .toMatchObject({ milestone: "m2", mode: "off" });
+
+    await repository.setPolicy({
+      milestone: "m2",
+      expectedRevision: 0,
+      mode: "read_only",
+      cohort: [],
+      changedBy: "operator_test",
+    });
+    fetchImpl.mockClear();
+    const readOnly = await proxy.forward({
+      actorId: platformCollaborationActors.recipientWithoutComputer,
+      method: "GET",
+      path,
+      query: "",
+      body: new Uint8Array(),
+      headers: new Headers(),
+    });
+    expect(readOnly.status).toBe(200);
+    const [, readOnlyInit] = fetchImpl.mock.calls[0] as [string, RequestInit];
+    const readOnlyHeader = new Headers(readOnlyInit.headers).get("x-matrix-collaboration-policy");
+    expect(verifier.verifyPolicy(JSON.parse(Buffer.from(readOnlyHeader!, "base64url").toString("utf8"))))
+      .toMatchObject({ milestone: "m2", mode: "read_only" });
+
+    fetchImpl.mockClear();
+    const createBody = new TextEncoder().encode(JSON.stringify({
+      kind: "chat",
+      resourceId: "chat_post_startup",
+      clientRequestId: "40000000-0000-4000-8000-000000000099",
+      expectedRevision: "0",
+      confirmationToken: "a".repeat(64),
+    }));
+    const created = await proxy.forward({
+      actorId: platformCollaborationActors.owner,
+      method: "POST",
+      path: "/api/collaboration/runtimes/runtime_owner/scopes",
+      query: "",
+      body: createBody,
+      headers: new Headers({ "content-type": "application/json" }),
+    });
+    expect(created.status).toBe(200);
+    const [, createdInit] = fetchImpl.mock.calls[0] as [string, RequestInit];
+    const createdHeader = new Headers(createdInit.headers).get("x-matrix-collaboration-policy");
+    expect(verifier.verifyPolicy(JSON.parse(Buffer.from(createdHeader!, "base64url").toString("utf8"))))
+      .toMatchObject({ milestone: "m2", mode: "read_only" });
+  });
+
+  it("keeps M1 scope reads available when the M2 projection policy cannot be loaded", async () => {
+    const getPolicy = repository.getPolicy.bind(repository);
+    vi.spyOn(repository, "getPolicy").mockImplementation(async (milestone) => {
+      if (milestone === "m2") throw new Error("policy store unavailable");
+      return getPolicy(milestone);
+    });
+
+    const response = await proxy.forward({
+      actorId: platformCollaborationActors.recipientWithoutComputer,
+      method: "GET",
+      path: `/api/collaboration/scopes/${scopeId}`,
+      query: "",
+      body: new Uint8Array(),
+      headers: new Headers(),
+    });
+
+    expect(response.status).toBe(200);
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    const [, init] = fetchImpl.mock.calls[0] as [string, RequestInit];
+    expect(new Headers(init.headers).has("x-matrix-collaboration-policy")).toBe(false);
   });
 
   it("streams a completed owner export without applying the JSON API buffer limit", async () => {
