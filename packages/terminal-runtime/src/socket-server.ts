@@ -14,6 +14,7 @@ import type { z } from "zod/v4";
 import { terminalRuntimeErrorDetails } from "./errors.js";
 import type { TerminalSnapshot } from "./workspace-store.js";
 import { encodeSocketFrame, SocketFrameDecoder } from "./socket-framing.js";
+import type { TerminalSizeListener } from "./workspace-resize.js";
 import { TerminalFrameQueue } from "./input-frame-queue.js";
 import { presentZellijSnapshot } from "./zellij-screen-dump.js";
 import {
@@ -50,10 +51,10 @@ export interface TerminalRuntimeControlApi {
     pinned?: boolean;
     baseRevision: number;
   }): Promise<TerminalTab>;
-  resize(ref: { workspaceId: string; tabId: string }, input: { mode: "hard" | "soft"; size: { cols: number; rows: number } }): Promise<TerminalWorkspace>;
+  resize(ref: { workspaceId: string; tabId: string }, input: { mode: "hard" | "soft"; size: { cols: number; rows: number } }, viewerId?: string): Promise<TerminalWorkspace>;
   deletionImpact(workspaceId: string): Promise<{ runningTabs: number; tabs: TerminalTab[] }>;
   deleteWorkspace(workspaceId: string, input: { confirmTerminate: boolean }): Promise<void>;
-  attach(ref: TerminalRef, input: {
+  attach(ref: TerminalRef, input: TerminalSizeListener & {
     viewerId: string;
     send(data: Uint8Array): void | Promise<void>;
     onExit(exitCode: number | null): void | Promise<void>;
@@ -231,7 +232,7 @@ export class TerminalRuntimeSocketServer {
   ): Promise<(raw: unknown) => Promise<void>> {
     socket.setTimeout(0);
     const ref = { workspaceId: request.input.workspaceId, tabId: request.input.tabId };
-    const resized = await this.options.runtime.resize(ref, request.input);
+    const resized = await this.options.runtime.resize(ref, { ...request.input, mode: "soft" });
     const tab = resized.tabs.find((candidate) => candidate.id === ref.tabId);
     if (!tab) throw new Error("Terminal tab not found");
     const snapshot = await this.options.runtime.getSnapshot(ref);
@@ -276,6 +277,10 @@ export class TerminalRuntimeSocketServer {
         if (!text) return;
         send({ type: "output", terminalRef: ref, revision, seq: nextSeq++, data: text });
       },
+      onDisconnect: () => { socket.end(); },
+      onCanonicalSize: (canonicalSize, workspaceRevision) => {
+        send({ type: "canonical-size", terminalRef: ref, revision: workspaceRevision, canonicalSize });
+      },
       onExit: (exitCode) => {
         revision += 1;
         send({ type: "exit", terminalRef: ref, revision, exitCode });
@@ -292,6 +297,9 @@ export class TerminalRuntimeSocketServer {
     else socket.once("close", () => { void detach().catch((error: unknown) => {
       console.error("[terminal-runtime] detach failed", error instanceof Error ? error.name : "unknown_error");
     }); });
+    if (!socket.destroyed && request.input.mode === "hard") {
+      await this.options.runtime.resize(ref, request.input, request.input.viewerId);
+    }
     return async (raw) => {
       const frame = TerminalTabClientFrameSchema.parse(raw);
       if (frame.terminalRef.workspaceId !== ref.workspaceId || frame.terminalRef.tabId !== ref.tabId) {
@@ -300,7 +308,7 @@ export class TerminalRuntimeSocketServer {
       if (frame.type === "input") await viewer.write(frame.data);
       if (frame.type === "binary") await viewer.write(Buffer.from(frame.dataBase64, "base64"));
       if (frame.type === "resize") {
-        const workspace = await this.options.runtime.resize(ref, frame);
+        const workspace = await this.options.runtime.resize(ref, frame, request.input.viewerId);
         revision = workspace.revision;
         send({ type: "canonical-size", terminalRef: ref, revision, canonicalSize: workspace.canonicalSize });
       }

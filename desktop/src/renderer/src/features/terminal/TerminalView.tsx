@@ -1,7 +1,7 @@
 import { Terminal } from "@xterm/xterm";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import { createPortal } from "react-dom";
-import { TerminalControls, createTerminalGridPresentation, measureTerminalViewport } from "@matrix-os/ui";
+import { TerminalControls, createTerminalGridPresentation, measureTerminalGridDimensions } from "@matrix-os/ui";
 import {
   resolveTerminalClipboardKeyEvent,
   classifyTerminalPointerEvent,
@@ -47,7 +47,7 @@ function proposedTerminalDimensions(fit: FitAddon | null, terminal: Terminal, ho
   // The production add-on exposes proposeDimensions(). Keep a safe fallback
   // for a temporarily unmeasurable host (and lightweight renderer test mocks).
   if (fit && typeof fit.proposeDimensions === "function") {
-    return (host ? measureTerminalViewport(host, terminal.element, () => fit.proposeDimensions()) : fit.proposeDimensions())
+    return (host ? measureTerminalGridDimensions(host, terminal, 13, () => fit.proposeDimensions()) : fit.proposeDimensions())
       ?? { cols: terminal.cols, rows: terminal.rows };
   }
   return { cols: terminal.cols, rows: terminal.rows };
@@ -164,6 +164,7 @@ export default function TerminalView({
   const fitRef = useRef<FitAddon | null>(null);
   const gridPresentationRef = useRef<ReturnType<typeof createTerminalGridPresentation> | null>(null);
   const gridScaleRef = useRef(1);
+  const gridWriterRef = useRef(false);
   const serializeRef = useRef<SerializeAddon | null>(null);
   const attachmentRef = useRef<ActiveAttachment | null>(null);
   const pasteClipboardRef = useRef<() => Promise<void>>(async () => undefined);
@@ -456,8 +457,10 @@ export default function TerminalView({
     termRef.current = terminal;
     fitRef.current = fit;
     serializeRef.current = serialize;
+    gridWriterRef.current = false;
     const presentation = createTerminalGridPresentation({
       host, getTerminal: () => terminal, getConfiguredFontSize: () => 13,
+      allowScaling: () => !gridWriterRef.current,
       onScale: (scale) => { gridScaleRef.current = scale; },
       getParentScale: () => visualScaleRef.current,
     });
@@ -546,7 +549,11 @@ export default function TerminalView({
         }
         gridPresentationRef.current?.schedule();
       },
-      onOwnershipChange: setLiveOwnership,
+      onOwnershipChange: (ownership) => {
+        gridWriterRef.current = ownership === "writer";
+        setLiveOwnership(ownership);
+        gridPresentationRef.current?.schedule();
+      },
       onGap: () => {
         terminal.clear();
         terminal.write(GAP_MARKER);

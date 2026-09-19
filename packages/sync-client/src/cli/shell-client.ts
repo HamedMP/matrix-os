@@ -824,6 +824,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
         let socketGeneration = 0;
         let lastSeq: number | undefined;
         let lastRevision = -1;
+        let lastWorkspaceRevision = -1;
         const queuedFrames: string[] = [];
         let queuedFrameBytes = 0;
         let attachTimeout: ReturnType<typeof setTimeout> | undefined;
@@ -1024,6 +1025,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
           // can advance the workspace revision beyond the tab revision used by
           // the next attachment, so never compare revisions across sockets.
           lastRevision = -1;
+          lastWorkspaceRevision = -1;
           const ws = new WebSocketImpl(createAttachUrl(ref, {
             ...attachOptions,
             fromSeq: currentFromSeq(),
@@ -1368,8 +1370,13 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
             return;
           }
           if ("revision" in msg) {
-            if (msg.revision < lastRevision) return;
-            lastRevision = msg.revision;
+            if (msg.type === "canonical-size") {
+              if (msg.revision < lastWorkspaceRevision) return;
+              lastWorkspaceRevision = msg.revision;
+            } else {
+              if (msg.revision < lastRevision) return;
+              lastRevision = msg.revision;
+            }
           }
           if (msg.type === "attached") {
             everAttached = true;

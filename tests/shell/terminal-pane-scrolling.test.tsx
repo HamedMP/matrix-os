@@ -554,7 +554,7 @@ describe("TerminalPane scrolling", () => {
     geometry.setHostSize(1_600, 900);
     // Real soft-client responses preserve canonical size instead of echoing proposals.
     await act(async () => {
-      WebSocketMock.instances[0].onmessage?.({ data: JSON.stringify(attachedFrame(0, { cols: 120, rows: 36 })) });
+      WebSocketMock.instances[0].onmessage?.({ data: JSON.stringify({ ...attachedFrame(0, { cols: 120, rows: 36 }), ownership: "observer" }) });
       WebSocketMock.instances[0].onmessage?.({ data: JSON.stringify(replayEndFrame(0)) });
       terminal.flushWrites();
     });
@@ -866,6 +866,14 @@ describe("TerminalPane scrolling", () => {
     const fitAddon = createdFitAddons[0];
     const pane = container.querySelector("[data-terminal-viewport]") as HTMLElement;
     fitAddon.proposeDimensions.mockReturnValue({ cols: 154, rows: 51 });
+    // No canonical mutation is sent until the server acknowledges writer ownership.
+    expect(stubWs.send.mock.calls.filter(([raw]) => JSON.parse(raw as string).type === "resize")).toHaveLength(0);
+    await act(async () => {
+      WebSocketMock.instances[0].onmessage?.({ data: JSON.stringify({
+        ...attachedFrame(0, { cols: terminal.cols, rows: terminal.rows }), ownership: "writer",
+      }) });
+    });
+    terminal.resize.mockClear();
 
     await act(async () => {
       ResizeObserverMock.instances.at(-1)!.trigger();
@@ -875,7 +883,7 @@ describe("TerminalPane scrolling", () => {
     expect(stubWs.send).toHaveBeenCalledWith(JSON.stringify({
       type: "resize",
       terminalRef: TERMINAL_REF,
-      mode: "soft",
+      mode: "hard",
       size: { cols: 154, rows: 51 },
     }));
     expect(terminal.resize).not.toHaveBeenCalled();
@@ -926,6 +934,7 @@ describe("TerminalPane scrolling", () => {
     expect(terminal.resize).not.toHaveBeenCalled();
 
     await act(async () => {
+      socket.onmessage?.({ data: JSON.stringify({ ...attachedFrame(0), revision: 20 }) });
       socket.onmessage?.({
         data: JSON.stringify({ type: "canonical-size", terminalRef: TERMINAL_REF, revision: 2, canonicalSize: { cols: 146, rows: 47 } }),
       });

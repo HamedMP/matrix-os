@@ -8,6 +8,7 @@ import "@xterm/xterm/css/xterm.css";
 
 const ref = { workspaceId: `tws_${"a".repeat(32)}`, tabId: `tt_${"b".repeat(32)}` };
 const canonicalSize = { cols: 120, rows: 36 };
+const fitViewport = new URLSearchParams(window.location.search).get("sizing") === "viewport";
 const proposals: unknown[] = [];
 const inputs: string[] = [];
 let latestSocket: FixtureSocket | undefined;
@@ -28,7 +29,7 @@ class FixtureSocket {
         canonicalSize,
         nextSeq: 0,
         capabilities: ["binary-input-v1"],
-        ownership: "writer",
+        ownership: fitViewport ? "writer" : "observer",
         leaseEpoch: 1,
       });
       this.receive({ type: "replay-start", fromSeq: 0 });
@@ -48,8 +49,16 @@ class FixtureSocket {
     const frame = JSON.parse(raw);
     if (frame.type === "resize") {
       if (proposals.length < 100) proposals.push(frame);
-      // The actual runtime ignores soft proposals. Never echo requested sizes.
+      // Match runtime semantics: only a hard resize changes the canonical grid.
+      if (fitViewport && frame.mode === "hard") Object.assign(canonicalSize, frame.size);
       this.receive({ type: "canonical-size", canonicalSize });
+      if (fitViewport && frame.mode === "hard") {
+        const { cols, rows } = canonicalSize;
+        this.receive({ type: "output", seq: outputSequence++, data:
+          `\x1b[2J\x1b[HGrid: ${cols} columns x ${rows} rows\r\n` +
+          "Synthetic terminal resize verification" +
+          `\x1b[${rows};1HFINAL ROW${" ".repeat(Math.max(0, cols - 20))}RIGHT EDGE` });
+      }
     }
     if (frame.type === "ping") this.receive({ type: "pong" });
     if ((frame.type === "input" || frame.type === "binary") && inputs.length < 100) {
@@ -60,6 +69,7 @@ class FixtureSocket {
 }
 Object.defineProperty(window, "WebSocket", { value: FixtureSocket });
 Object.defineProperty(window, "fixtureProposals", { value: proposals });
+Object.defineProperty(window, "fixtureGrid", { value: canonicalSize });
 Object.defineProperty(window, "fixtureInputs", { value: inputs });
 Object.defineProperty(window, "fixtureOutput", { value: (data: string) => latestSocket?.receive({ type: "output", seq: outputSequence++, data }) });
 Object.defineProperty(window, "fixtureObserve", { value: () => latestSocket?.receive({ type: "lease-revoked", epoch: 1 }) });

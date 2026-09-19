@@ -568,7 +568,7 @@ export class ShellSocket {
     if (this.lastSentDims !== null && this.lastSentDims.cols === dims.cols && this.lastSentDims.rows === dims.rows) {
       return;
     }
-    this.sendFrame({ type: "resize", terminalRef: this.terminalRef, mode: "soft", size: dims });
+    this.sendFrame({ type: "resize", terminalRef: this.terminalRef, mode: this.hasWriteOwnership ? "hard" : "soft", size: dims });
     this.lastSentDims = dims;
     this.resizeSentSinceAttach = true;
   }

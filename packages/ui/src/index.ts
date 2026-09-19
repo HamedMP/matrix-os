@@ -126,6 +126,6 @@ export { useChatReadState } from "./chat/use-chat-read-state.js";
 export { isChatUnread, chatReadAction, mergeChatReadState } from "./chat/read-state.js";
 
 export { computeSoftGridLayout, type SoftGridLayout, type SoftGridLayoutInput } from "./terminal/terminal-soft-grid.js";
-export { createTerminalGridPresentation, measureTerminalViewport } from "./terminal/terminal-grid-presentation.js";
+export { createTerminalGridPresentation, measureTerminalViewport, measureTerminalGridDimensions } from "./terminal/terminal-grid-presentation.js";
 
 export { McpServerDiagnostics } from "./McpServerDiagnostics.js";

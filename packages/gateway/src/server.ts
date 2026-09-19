@@ -85,6 +85,7 @@ import {
   parseTerminalInputCapabilityRequest,
   terminalFrameForInputCapabilities,
 } from "./terminal-input-capabilities.js";
+import { createTerminalSizeLease } from "./terminal-size-lease.js";
 import { createTerminalLiveOwnership } from "./terminal-live-ownership.js";
 import { createWorkspaceStartupRecovery } from "./workspace-startup-recovery.js";
 import { createChannelManager, type ChannelManager } from "./channels/manager.js";
@@ -2863,6 +2864,7 @@ export async function createGateway(config: GatewayConfig) {
               consumeSessionAttachment: workspaceSessionRuntimeBridge.consumeSessionAttachment,
               requiresAttachmentToken: (ref) => hasActiveWorkspaceSessionForTerminalRef(homePath, ref),
             });
+            const sizeLease = createTerminalSizeLease(refResult.data, (frame) => { stream?.send(frame); });
             ownershipKey = `${principal.userId}:${refKey}`;
             terminalLiveOwnership.attach({
               key: ownershipKey,
@@ -2872,6 +2874,7 @@ export async function createGateway(config: GatewayConfig) {
               onRevoked: (epoch) => {
                 if (closed) return;
                 try {
+                  sizeLease.revoke();
                   ws.send(JSON.stringify({
                     type: "lease-revoked",
                     terminalRef: refResult.data,
@@ -2934,6 +2937,7 @@ export async function createGateway(config: GatewayConfig) {
               }),
             );
             if (closed) { stream.close(); stream = null; return; }
+            sizeLease.attached();
             inputQueue?.resume(async (frame) => {
               if (closed || !stream || !principal) return;
               await terminalWorkspaceProjectAdmission.withWorkspace(
@@ -2943,6 +2947,7 @@ export async function createGateway(config: GatewayConfig) {
                 async () => {
                   if (closed || !stream || !attachmentMode || !ownershipKey) return;
                   terminalLiveOwnership.touch(ownershipKey, ownershipViewerId);
+                  if (terminalLiveOwnership.role(ownershipKey, ownershipViewerId) !== "writer") sizeLease.revoke();
                   const liveOwnershipAllowsFrame = frame.type === "ping"
                     || frame.type === "detach"
                     || (frame.type === "resize" && frame.mode === "soft")
