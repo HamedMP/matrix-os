@@ -19,7 +19,7 @@ The acknowledged desktop writer declares the actual viewport grid at the configu
 | Web Canvas | Same behavior under 0.75 parent zoom |
 | Electron Desktop | Same behavior in Chromium fixture and native Electron |
 | Web Mobile | Existing canonical soft fit/pan regression passes |
-| Native Mobile | No renderer changes; runtime soft-client/reconnect tests pass. Physical-device acceptance explicitly deferred to [#1764](https://github.com/HamedMP/matrix-os/issues/1764): no connected phone is available. Local Jest results match untouched main (52 suites / 334 tests pass; 13 suites / 1 test fail), and native typecheck has baseline React Native type errors. |
+| Native Mobile | No renderer changes; runtime soft-client/reconnect tests pass. The human owner explicitly approved deferring physical-device acceptance to [#1764](https://github.com/HamedMP/matrix-os/issues/1764): no connected phone is available. Local Jest results match untouched main (52 suites / 334 tests pass; 13 suites / 1 test fail), and native typecheck has baseline React Native type errors. |
 
 ![Electron expanded grid](electron-expanded.png)
 ![Web Desktop expanded grid](web-desktop-expanded.png)
