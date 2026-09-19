@@ -444,6 +444,7 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
     <>
       {win.path.startsWith("__terminal__") ? (
         <TerminalApp
+          sharedScopeId={win.sharedTerminalScopeId ?? null}
           mobile={isMobile}
           launchTargetId={win.id}
           layoutId={win.terminalLayoutId}
@@ -475,6 +476,7 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
             <ChatApp
                 collaborationView={chatState.collaborationView}
                 onOpenSharedChat={chatState.openSharedChat}
+                onOpenSharedHome={chatState.openSharedHome}
                 filterUnreadOnly={chatState.unreadOnly}
                 onUnreadFilterChange={chatState.setUnreadOnly}
                 active={isFocused && !win.minimized}
@@ -495,6 +497,7 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
               onSubmitApproval={chatState.submitApproval}
               onSubmitInput={chatState.submitInput}
               providerSelection={chatState.providerSelection}
+              boundProviderInstanceId={chatState.boundProviderInstanceId}
               composerDraftRequest={chatState.composerDraftRequest}
               onComposerDraftConsumed={chatState.consumeComposerDraft}
               mobile={isMobile}

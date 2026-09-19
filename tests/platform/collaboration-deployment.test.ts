@@ -13,6 +13,12 @@ describe("platform collaboration deployment contract", () => {
     expect(workflow).toContain("MATRIX_COLLABORATION_PROOF_KEYS=collaboration-proof-keys:latest");
   });
 
+  it("keeps long-lived collaboration sockets within a bounded Cloud Run capacity envelope", () => {
+    expect(workflow).toContain("--timeout 3600");
+    expect(workflow).toContain("--concurrency 80");
+    expect(workflow).toContain("--max-instances 10");
+  });
+
   it("verifies the proof-key secret and the deployed revision contract", () => {
     expect(workflow).toContain("Verify collaboration proof secret");
     expect(workflow).toContain("secret_name=collaboration-proof-keys");

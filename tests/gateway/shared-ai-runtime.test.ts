@@ -3,6 +3,7 @@ import { CollaborationAuthorizationError } from "../../packages/gateway/src/coll
 import {
   createSharedAiApprovalReconciler,
   createSharedAiCancellationDispatcher,
+  recoverSharedAiQueue,
 } from "../../packages/gateway/src/collaboration/shared-ai-runtime.js";
 describe("shared AI runtime cancellation", () => {
   it("reauthorizes the actor immediately before stopping the external run", async () => {
@@ -71,5 +72,45 @@ describe("shared AI runtime cancellation", () => {
     })).resolves.toBe("failed");
     expect(cancelSharedRun).toHaveBeenCalledOnce();
     expect(reconcileActiveRuns).toHaveBeenCalledWith({ type: "personal", ownerId: "user_owner" });
+  });
+});
+
+describe("shared AI queue recovery", () => {
+  it("does not fetch rollout policy when there is no queued work", async () => {
+    const getPolicy = vi.fn();
+    const dispatch = vi.fn();
+    const reconcilePendingApprovals = vi.fn(async () => undefined);
+
+    await recoverSharedAiQueue({
+      reconcilePendingApprovals,
+      listQueued: vi.fn(async () => []),
+      getPolicy,
+      dispatch,
+    });
+
+    expect(reconcilePendingApprovals).toHaveBeenCalledOnce();
+    expect(getPolicy).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it("checks policy once and wakes each queued scope once", async () => {
+    const dispatch = vi.fn(async () => undefined);
+    const getPolicy = vi.fn(async () => ({ mode: "enabled" as const }));
+
+    await recoverSharedAiQueue({
+      reconcilePendingApprovals: vi.fn(async () => undefined),
+      listQueued: vi.fn(async () => [
+        { scopeId: "scope-1", chatId: "chat-1" },
+        { scopeId: "scope-1", chatId: "chat-1" },
+        { scopeId: "scope-2", chatId: "chat-2" },
+      ]),
+      getPolicy,
+      dispatch,
+    });
+
+    expect(getPolicy).toHaveBeenCalledOnce();
+    expect(dispatch).toHaveBeenCalledTimes(2);
+    expect(dispatch).toHaveBeenCalledWith("scope-1", "chat-1");
+    expect(dispatch).toHaveBeenCalledWith("scope-2", "chat-2");
   });
 });

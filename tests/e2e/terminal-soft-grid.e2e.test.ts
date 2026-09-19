@@ -60,6 +60,7 @@ describe("real terminal renderer soft-grid resizing", () => {
         env: { ...process.env, MATRIX_TERMINAL_FIXTURE_USER_DATA: userData,
           MATRIX_TERMINAL_FIXTURE_URL: `${origin}/?surface=electron` },
       });
+      await (await electron.firstWindow()).locator(".xterm-screen").waitFor();
     } else browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE });
     await mkdir(evidence, { recursive: true });
   }, 60_000);
@@ -86,6 +87,84 @@ describe("real terminal renderer soft-grid resizing", () => {
   }
 
   it.each([
+    { surface: "web", zoom: 1 }, { surface: "web", zoom: 0.75 }, { surface: "electron", zoom: 1 },
+  ].filter((entry) => !nativeElectron || entry.surface === "electron"))("wires native history polling and drag in $surface at $zoom", async ({ surface, zoom }) => {
+    const page = electron ? await electron.firstWindow() : await browser.newPage({ viewport: { width: 1450, height: 1050 } });
+    const errors: string[] = []; page.on("pageerror", (error) => errors.push(error.message));
+    try {
+      if (electron) await page.locator("#terminal-window").waitFor();
+      await page.goto(`${origin}/?surface=${surface}&zoom=${zoom}&nativeScroll=1`);
+      const rail = page.locator('[data-terminal-scrollbar="content"]');
+      await expect.poll(() => rail.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+      const bottom = await rail.evaluate((element) => element.scrollTop);
+      await page.evaluate(() => (window as any).fixtureNativeWheel());
+      await expect.poll(() => rail.evaluate((element) => element.scrollTop)).toBeLessThan(bottom / 2);
+      await rail.evaluate((element) => { element.scrollTop = 0; element.dispatchEvent(new Event("scroll")); });
+      await expect.poll(() => page.evaluate(() => (window as any).fixtureScrollFrames.some((f: any) => f.type === "scroll-to" && f.line === 0))).toBe(true);
+      await page.evaluate(() => (window as any).fixtureObserve());
+      const seeks = await page.evaluate(() => (window as any).fixtureScrollFrames.filter((f: any) => f.type === "scroll-to").length);
+      await rail.evaluate((element) => { element.scrollTop = 200; element.dispatchEvent(new Event("scroll")); });
+      await page.waitForTimeout(600);
+      expect(await page.evaluate(() => (window as any).fixtureScrollFrames.filter((f: any) => f.type === "scroll-to").length)).toBe(seeks);
+      await page.screenshot({ path: resolve(evidence, `native-history-${surface}-${zoom}.png`), fullPage: true });
+      await page.evaluate(() => (window as any).fixtureUnmount());
+      const count = await page.evaluate(() => (window as any).fixtureScrollFrames.length);
+      await page.waitForTimeout(600);
+      expect(await page.evaluate(() => (window as any).fixtureScrollFrames.length)).toBe(count);
+      expect(errors).toEqual([]);
+    } finally {
+      if (!electron) await page.close();
+      else await page.goto(`${origin}/?surface=electron`);
+    }
+  });
+
+  it.each([
+    { surface: "web", name: "Web Desktop", zoom: 1 },
+    { surface: "web", name: "Web Canvas", zoom: 0.75 },
+    { surface: "electron", name: "Electron Desktop", zoom: 1 },
+  ].filter((entry) => !nativeElectron || entry.surface === "electron"))("fills the writable viewport with real rows and columns in $name", async ({ surface, zoom }) => {
+    const page = electron ? await electron.firstWindow() : await browser.newPage({ viewport: { width: 1700, height: 1200 } });
+    try {
+      await page.goto(`${origin}/?surface=${surface}&zoom=${zoom}&sizing=viewport`);
+      await page.locator(".xterm-screen").waitFor();
+      for (const [width, height] of [[1100, 850], [750, 420], [1500, 1000]]) {
+        await page.locator("#terminal-window").evaluate((element, size) => {
+          Object.assign((element as HTMLElement).style, { width: `${size[0]}px`, height: `${size[1]}px` });
+        }, [width, height]);
+        await expect.poll(() => page.locator("[data-terminal-viewport]").evaluate((host) => {
+          const screen = host.querySelector<HTMLElement>(".xterm-screen")!;
+          const style = getComputedStyle(host);
+          const grid = (window as unknown as { fixtureGrid: { cols: number; rows: number } }).fixtureGrid;
+          const availableWidth = host.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+          const availableHeight = host.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
+          return { width: availableWidth - screen.offsetWidth, height: availableHeight - screen.offsetHeight,
+            cols: grid.cols, rows: grid.rows, font: host.querySelector(".xterm")?.getAttribute("style"),
+            proposals: (window as unknown as { fixtureProposals: unknown[] }).fixtureProposals.slice(-2),
+            fills: availableWidth - screen.offsetWidth < screen.offsetWidth / grid.cols + 16
+            && availableHeight - screen.offsetHeight < screen.offsetHeight / grid.rows + 1
+            && screen.offsetWidth <= availableWidth && screen.offsetHeight <= availableHeight };
+        }), { timeout: 5000 }).toMatchObject({ fills: true });
+        await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+        await page.screenshot({ fullPage: true, path: resolve(evidence, `${nativeElectron ? "native-" : ""}${surface}-${zoom}-fill-${width}.png`) });
+      }
+      const grid = await page.evaluate(() => (window as unknown as { fixtureGrid: { cols: number; rows: number } }).fixtureGrid);
+      expect(grid.cols).toBeGreaterThan(120);
+      expect(grid.rows).toBeGreaterThan(36);
+      // The writer still forwards native application mouse reports after resizing.
+      await page.evaluate(() => (window as unknown as { fixtureOutput(data: string): void })
+        .fixtureOutput("\x1b[?1000h\x1b[?1006h"));
+      const point = await page.locator(".xterm-screen").evaluate((screen) => {
+        const box = screen.getBoundingClientRect();
+        return { x: box.left + 40, y: box.top + 40 };
+      });
+      await page.mouse.move(point.x, point.y);
+      await page.mouse.wheel(0, -100);
+      await expect.poll(() => page.evaluate(() => (window as unknown as { fixtureInputs: string[] })
+        .fixtureInputs.some((input) => /\x1b\[<64;/.test(input)))).toBe(true);
+    } finally { if (!electron) await page.close(); }
+  });
+
+  it.each([
     { surface: "web", name: "Web Desktop", zoom: 1 }, { surface: "web", name: "Web Canvas", zoom: 0.75 },
     { surface: "electron", name: "Electron Desktop", zoom: 1 },
     { surface: "web-mobile", name: "Web Mobile", zoom: 1 },
@@ -95,7 +174,7 @@ describe("real terminal renderer soft-grid resizing", () => {
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));
     try {
-      if (!electron) await page.goto(`${origin}/?surface=${surface}&zoom=${zoom}`);
+      await page.goto(`${origin}/?surface=${surface}&zoom=${zoom}`);
       await page.locator("[data-terminal-grid-stage]").waitFor();
       for (const height of [600, 300, 850]) {
         await page.locator("#terminal-window").evaluate((element, height) => { (element as HTMLElement).style.height = `${height}px`; }, height);
@@ -124,9 +203,10 @@ describe("real terminal renderer soft-grid resizing", () => {
           await page.mouse.move(point.x, point.y);
           await page.mouse.wheel(0, -100);
           await expect.poll(() => page.evaluate(() =>
-            (window as unknown as { fixtureInputs: string[] }).fixtureInputs.some((data) => data.includes("\x1b[<64;6;35M")))).toBe(true);
+            (window as unknown as { fixtureInputs: string[] }).fixtureInputs.some((data) => data.includes("\x1b[<64;6;35M")))).toBe(false);
         }
-        await page.screenshot({ path: resolve(evidence, `${nativeElectron ? "native-" : ""}${surface}-${zoom}-${height}.png`) });
+        await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+        await page.screenshot({ fullPage: true, path: resolve(evidence, `${nativeElectron ? "native-" : ""}${surface}-${zoom}-${height}.png`) });
       }
       // Output can arrive after the resize has settled, moving a previously
       // visible cursor below the short viewport without another ResizeObserver.
@@ -204,7 +284,7 @@ describe("real terminal renderer soft-grid resizing", () => {
       await expect.poll(() => page.evaluate(() => document.activeElement?.classList.contains("xterm-helper-textarea"))).toBe(true);
       await page.mouse.move(blankArea.x + blankArea.width - 40, blankArea.y + 80);
       await page.mouse.wheel(0, -200);
-      await expect.poll(() => page.evaluate(() => (window as unknown as { fixtureInputs: string[] }).fixtureInputs.some((input) => /\x1b\[<64;/.test(input)))).toBe(true);
+      await expect.poll(() => page.evaluate(() => (window as unknown as { fixtureInputs: string[] }).fixtureInputs.some((input) => /\x1b\[<64;/.test(input)))).toBe(false);
       // A short normal shell must not pan across unused canonical-grid space.
       await page.locator("#terminal-window").evaluate((element) => { (element as HTMLElement).style.height = "300px"; });
       await page.evaluate(() => (window as unknown as { fixtureOutput: (data: string) => void }).fixtureOutput("\x1bcshort\r\nresult\r\n$ "));

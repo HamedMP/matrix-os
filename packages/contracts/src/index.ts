@@ -1,3 +1,5 @@
+import { TerminalScrollLineSchema, TerminalScrollStateSchema } from "#terminal-scroll";
+export * from "#terminal-scroll";
 export { APP_GENERATE_CHANNEL, AppGenerateContextSchema, AppGenerateEventSchema, createAppGenerateClient } from "#app-ai";
 export { APP_AI_TIMEOUT_MS, APP_AI_CHANNEL, AppAiInputSchema, AppAiRequestSchema, AppAiResultSchema, createAppAiClient } from "#app-ai";
 export type { AppAiInput, AppAiRequest, AppAiResult } from "#app-ai";
@@ -27,7 +29,7 @@ import {
   textEncoder,
 } from "#legacy-contract-primitives";
 
-export const CODEX_VERIFIED_VERSION = "0.154.0";
+export const CODEX_VERIFIED_VERSION = "0.155.1";
 export const CODEX_VERIFIED_NPM_PACKAGE = `@openai/codex@${CODEX_VERIFIED_VERSION}`;
 /** Keep Codex output in xterm's normal buffer so scrollback remains selectable. */
 export const CODEX_TERMINAL_LAUNCH_COMMAND = "codex --no-alt-screen";
@@ -689,6 +691,8 @@ const TerminalBinaryInputSchema = z.string()
   });
 
 export const TerminalTabClientFrameSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("scroll-query"), terminalRef: TerminalRefSchema }).strict(),
+  z.object({ type: z.literal("scroll-to"), terminalRef: TerminalRefSchema, line: TerminalScrollLineSchema }).strict(),
   z.object({
     type: z.literal("input"),
     terminalRef: TerminalRefSchema,
@@ -720,10 +724,11 @@ const TerminalServerEventBaseSchema = z.object({
   revision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
 });
 
-export const TerminalInputCapabilitySchema = z.enum(["binary-input-v1"]);
+export const TerminalInputCapabilitySchema = z.enum(["binary-input-v1", "native-scroll-v1"]);
 export type TerminalInputCapability = z.infer<typeof TerminalInputCapabilitySchema>;
 
 export const TerminalTabServerFrameSchema = z.discriminatedUnion("type", [
+  TerminalServerEventBaseSchema.extend({ type: z.literal("scroll-state"), state: TerminalScrollStateSchema.nullable() }).strict(),
   TerminalServerEventBaseSchema.extend({
     type: z.literal("attached"),
     canonicalSize: TerminalGridSizeSchema,

@@ -676,8 +676,8 @@ jobs:
             --port 8080 \
             --cpu 1 \
             --memory 1Gi \
-            --concurrency 30 \
-            --timeout 300 \
+            --concurrency 80 \
+            --timeout 3600 \
             --min-instances 0 \
             --max-instances 10 \
             --ingress all \

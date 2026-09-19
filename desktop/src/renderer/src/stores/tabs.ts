@@ -341,7 +341,8 @@ export const useTabs = create<TabsState>()((set, get) => ({
     const liveNames = new Set(liveSessionNames);
     const removedIds: Record<string, true> = {};
     for (const tab of state.tabs) {
-      if (tab.kind === "terminal" && (!tab.sessionName || !liveNames.has(tab.sessionName))) {
+      if (tab.kind === "terminal" && !tab.sharedScopeId
+        && (!tab.sessionName || !liveNames.has(tab.sessionName))) {
         removedIds[tab.id] = true;
       }
     }

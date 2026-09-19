@@ -498,6 +498,18 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView }
     pushShellChatPath(`/shared/chat/${encodeURIComponent(scopeId)}`);
   }, []);
 
+  const openSharedHome = useCallback(() => {
+    autoRestoreChatRef.current = false;
+    activeChatIdRef.current = undefined;
+    detailRef.current = null;
+    detailRequestGeneration.current += 1;
+    setActiveChatId(undefined);
+    setDetail(null);
+    setSafeError(null);
+    setSelectedCollaborationView({ kind: "home" });
+    pushShellChatPath("/shared");
+  }, []);
+
   const abortCurrent = useCallback(() => {
     const current = detailRef.current;
     if (!current?.record.activeRun) return;
@@ -636,6 +648,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView }
   return {
     collaborationView,
     openSharedChat,
+    openSharedHome,
     unreadOnly, setUnreadOnly,
     readState: detail?.record.chat.id === activeChatId ? detail?.record.readState : undefined,
     displayedThroughSeq: Math.max(0, ...(detail?.messages ?? []).filter((message) => message.role === "assistant" && message.state === "committed").map((message) => message.seq)),
@@ -650,6 +663,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView }
     queuedTurns: detail?.queuedTurns ?? [],
     cancelQueuedTurn,
     providerSelection: activeRecord?.chat.currentSelection,
+    boundProviderInstanceId: activeRecord?.providerBinding?.instanceId,
     conversations: records.map(conversationMeta),
     activeConversationTitle: activeRecord?.chat.title,
     renameConversation,

@@ -73,6 +73,8 @@ export {
 } from "./collaboration/ChatCollaboration.js";
 export {
   sharedChatMembershipFromProjection,
+  projectSharedChatTimeline,
+  type NativeSharedChatMessage,
   type SharedChatMembershipProjection,
 } from "./collaboration/chat-projection.js";
 export { SharedChatControls } from "./collaboration/SharedChatControls.js";
@@ -88,6 +90,11 @@ export {
 export { collaborationDraftKey, collaborationDraftModeKey, createCollaborationDraftStore } from "./collaboration/chat-state.js";
 export { deriveChatPermissions } from "./collaboration/permissions.js";
 export { createCollaborationBrowserApi } from "./collaboration/client.js";
+export {
+  COLLABORATION_DISCOVERY_CHANGED_EVENT,
+  notifyCollaborationDiscoveryChanged,
+  subscribeCollaborationDiscoveryChanged,
+} from "./collaboration/discovery-events.js";
 export { TerminalControls } from './terminal/TerminalControls.js';
 export { useTerminalControls } from './terminal/use-terminal-controls.js';
 export type { TerminalControlsState, TerminalControlsTransport, TerminalControlsOptions } from './terminal/use-terminal-controls.js';
@@ -119,6 +126,8 @@ export { useChatReadState } from "./chat/use-chat-read-state.js";
 export { isChatUnread, chatReadAction, mergeChatReadState } from "./chat/read-state.js";
 
 export { computeSoftGridLayout, type SoftGridLayout, type SoftGridLayoutInput } from "./terminal/terminal-soft-grid.js";
-export { createTerminalGridPresentation, measureTerminalViewport } from "./terminal/terminal-grid-presentation.js";
+export { createTerminalGridPresentation, measureTerminalViewport, measureTerminalGridDimensions } from "./terminal/terminal-grid-presentation.js";
 
 export { McpServerDiagnostics } from "./McpServerDiagnostics.js";
+
+export { createTerminalNativeHistory } from "./terminal/terminal-native-history.js";

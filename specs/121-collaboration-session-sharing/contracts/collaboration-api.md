@@ -34,7 +34,7 @@ All paths are under `/api/collaboration`. `S` means `/scopes/:scopeId`. Every ro
 | GET `S/chat`, `S/chat/messages` | Member | Canonical safe Chat projection and paginated history, M1. |
 | POST `S/chat/messages` | Owner/editor | Discussion message only; starts zero runs. M1. |
 | GET `S/chat/requests` | Member | Ordered accepted requests and attempts, M2. |
-| POST `S/chat/requests` | Owner/editor | Explicit AI request; accepted sequence and operation ID; M2 only. |
+| POST `S/chat/requests` | Owner/editor | Explicit AI request containing text, request ID and expected revision only; Provider/Instance/model/credentials are server-controlled; M2 only. |
 | POST `S/chat/requests/:requestId/cancel` | Owner; editor for own request | Durable command, current state/author/role check, M2. |
 | POST `S/chat/requests/:requestId/retry` | Owner; editor for own request | New attempt linked to original, reauthorized and queued, M2. |
 | POST `S/chat/approvals/:approvalId/decision` | Owner | One durable decision claim before adapter call, M2. |
@@ -85,6 +85,8 @@ The common Share chooser opens either **Share snapshot** using existing preview/
 Zod 4 validates params, queries and bodies before service calls. New IDs are UUIDs; canonical resource IDs retain their existing bounded contracts. Revisions/epochs/sequences are decimal strings. Reject unknown fields, actor/owner/role injection and client absolute paths. All mutation verbs, including DELETE, apply Hono `bodyLimit` before buffering. Default maximum is 96 KiB; file upload has an explicit 2 MiB bounded body exception. Text messages/AI requests are at most 64 KiB UTF-8. Pagination defaults to 50, maximum 100; opaque cursors are scope-bound and at most 512 bytes. Rate/capacity and cleanup bounds are in the [plan](../plan.md).
 
 Every mutation includes `clientRequestId` and, where updating existing state, `expectedRevision`. Replay key is scope+actor+operation kind+request ID and stores a payload hash; different payload on a used key returns conflict. Body-free DELETE supplies bounded request ID/revision headers covered by the signed proof. Only documented canonical request headers participate in that proof.
+
+`POST S/chat/requests` is strict and rejects legacy or tampered `selection`, Driver, Instance, credential, resume, actor and owner fields. `GET S/chat/requests` returns a read-only capability with `status = available / unavailable / owner_binding_required` and the effective canonical selection when it can be safely projected. An unavailable Codex-bound Chat must report Codex, never the shared runtime's Claude default. Before an unbound Chat is owner-bound, editor submission is unavailable and performs no write.
 
 Project confirmation contains `inventoryToken`, `inventoryHash`, `expectedRevision`, and confirmed membership effects. Tokens expire after 10 minutes and bind owner/scope/generation/inventory/membership. A stale inventory returns conflict with a new preview; the user confirms the complete updated inventory again. There is no `exclude`, `selectedItems`, or per-child private flag.
 
