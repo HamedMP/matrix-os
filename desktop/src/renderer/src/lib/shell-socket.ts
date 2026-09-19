@@ -3,7 +3,7 @@
 // the WebSocket factory and timers are injectable so tests never need a
 // network or real clocks.
 
-import { normalizeTerminalSnapshot, TerminalTabServerFrameSchema, type TerminalRef } from "@matrix-os/contracts";
+import { normalizeTerminalSnapshot, TerminalScrollStateSchema, TerminalTabServerFrameSchema, type TerminalRef, type TerminalScrollState } from "@matrix-os/contracts";
 import { parseTerminalRefKey } from "./terminal-workspaces";
 
 export const LIVE_TAIL_FROM_SEQ = 9_007_199_254_740_991;
@@ -29,6 +29,8 @@ export interface ShellSocketEvents {
   onState(state: ShellSocketState, detail?: { code?: string }): void;
   onOutput(data: string, seq: number): void;
   onCanonicalSize?(size: { cols: number; rows: number }): void;
+  onNativeScroll?(state: TerminalScrollState | null): void;
+  onNativeScrollSupported?(supported: boolean): void;
   onOwnershipChange?(role: "writer" | "observer"): void;
   onGap(): void;
   onExit(code: number): void;
@@ -202,6 +204,11 @@ export class ShellSocket {
         if (this.pendingInput.length > PENDING_INPUT_MAX_CHUNKS) this.pendingInput.shift();
       }
     }
+  }
+
+  scroll(frame: { type: "scroll-query" } | { type: "scroll-to"; line: number }): void {
+    if (this.disposed || this.currentState !== "attached" || (frame.type === "scroll-to" && !this.hasWriteOwnership)) return;
+    this.sendFrame({ ...frame, terminalRef: this.terminalRef });
   }
 
   resize(cols: number, rows: number): void {
@@ -411,6 +418,9 @@ export class ShellSocket {
         if (this.currentState !== "attached") return;
         this.handleOutput(frame);
         return;
+      case "scroll-state":
+        this.opts.events.onNativeScroll?.(TerminalScrollStateSchema.nullable().parse(frame.state));
+        return;
       case "canonical-size":
         this.handleCanonicalSize(frame);
         return;
@@ -464,6 +474,7 @@ export class ShellSocket {
     this.scheduleHeartbeat();
     this.setState("attached");
     this.opts.events.onOwnershipChange?.(this.hasWriteOwnership ? "writer" : "observer");
+    this.opts.events.onNativeScrollSupported?.(Array.isArray(frame.capabilities) && frame.capabilities.includes("native-scroll-v1"));
   }
 
   private handleCanonicalSize(frame: Record<string, unknown>): void {

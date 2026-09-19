@@ -3,6 +3,7 @@ import { createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
 import {
   normalizeTerminalSnapshot,
+  type TerminalScrollState,
   TerminalTabClientFrameSchema,
   type TerminalPaneAction,
   type TerminalRef,
@@ -28,6 +29,7 @@ import {
 } from "./socket-protocol.js";
 
 export interface TerminalRuntimeControlApi {
+  scrollState?(ref: TerminalRef, line?: number): Promise<TerminalScrollState | null>;
   listWorkspaces(): Promise<TerminalWorkspace[]>;
   ensureWorkspace(input?: { projectId?: string }): Promise<TerminalWorkspace>;
   createTab(workspaceId: string, input: {
@@ -250,7 +252,7 @@ export class TerminalRuntimeSocketServer {
       canonicalSize: resized.canonicalSize,
       revision,
       nextSeq,
-      capabilities: ["binary-input-v1"],
+      capabilities: this.options.runtime.scrollState ? ["binary-input-v1", "native-scroll-v1"] : ["binary-input-v1"],
     });
     send({ type: "replay-start", terminalRef: ref, revision, fromSeq: effectiveFromSeq });
     if (snapshot) {
@@ -300,10 +302,30 @@ export class TerminalRuntimeSocketServer {
     if (!socket.destroyed && request.input.mode === "hard") {
       await this.options.runtime.resize(ref, request.input, request.input.viewerId);
     }
+    let scrollQueryPending = false;
     return async (raw) => {
       const frame = TerminalTabClientFrameSchema.parse(raw);
       if (frame.terminalRef.workspaceId !== ref.workspaceId || frame.terminalRef.tabId !== ref.tabId) {
         throw new Error("Terminal reference mismatch");
+      }
+      if (frame.type === "scroll-query") {
+        if (scrollQueryPending) return;
+        scrollQueryPending = true;
+        // Read-only plugin startup must never hold typing or heartbeat frames.
+        void (async () => {
+          try {
+            const state = await this.options.runtime.scrollState?.(ref) ?? null;
+            if (!detached) send({ type: "scroll-state", terminalRef: ref, revision, state });
+          } catch (error: unknown) {
+            console.warn("[terminal-runtime] native scroll query failed", error instanceof Error ? error.name : "unknown_error");
+            if (!detached) send({ type: "scroll-state", terminalRef: ref, revision, state: null });
+          } finally { scrollQueryPending = false; }
+        })();
+        return;
+      }
+      if (frame.type === "scroll-to") {
+        const state = await this.options.runtime.scrollState?.(ref, frame.line) ?? null;
+        send({ type: "scroll-state", terminalRef: ref, revision, state });
       }
       if (frame.type === "input") await viewer.write(frame.data);
       if (frame.type === "binary") await viewer.write(Buffer.from(frame.dataBase64, "base64"));

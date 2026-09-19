@@ -2948,7 +2948,7 @@ export async function createGateway(config: GatewayConfig) {
                   if (closed || !stream || !attachmentMode || !ownershipKey) return;
                   terminalLiveOwnership.touch(ownershipKey, ownershipViewerId);
                   if (terminalLiveOwnership.role(ownershipKey, ownershipViewerId) !== "writer") sizeLease.revoke();
-                  const liveOwnershipAllowsFrame = frame.type === "ping"
+                  const liveOwnershipAllowsFrame = frame.type === "scroll-query" || frame.type === "ping"
                     || frame.type === "detach"
                     || (frame.type === "resize" && frame.mode === "soft")
                     || terminalLiveOwnership.allowsMutation(ownershipKey, ownershipViewerId);

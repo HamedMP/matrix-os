@@ -8,6 +8,9 @@ import "@xterm/xterm/css/xterm.css";
 
 const ref = { workspaceId: `tws_${"a".repeat(32)}`, tabId: `tt_${"b".repeat(32)}` };
 const canonicalSize = { cols: 120, rows: 36 };
+const nativeScroll = new URLSearchParams(window.location.search).has("nativeScroll");
+let nativeState = { above: 100, below: 0, rows: 36 };
+const scrollFrames: unknown[] = [];
 const fitViewport = new URLSearchParams(window.location.search).get("sizing") === "viewport";
 const proposals: unknown[] = [];
 const inputs: string[] = [];
@@ -28,8 +31,8 @@ class FixtureSocket {
         type: "attached",
         canonicalSize,
         nextSeq: 0,
-        capabilities: ["binary-input-v1"],
-        ownership: fitViewport ? "writer" : "observer",
+        capabilities: ["binary-input-v1", ...(nativeScroll ? ["native-scroll-v1"] : [])],
+        ownership: fitViewport || nativeScroll ? "writer" : "observer",
         leaseEpoch: 1,
       });
       this.receive({ type: "replay-start", fromSeq: 0 });
@@ -47,6 +50,11 @@ class FixtureSocket {
   }
   send(raw: string) {
     const frame = JSON.parse(raw);
+    if (frame.type === "scroll-query" || frame.type === "scroll-to") {
+      if (scrollFrames.length < 100) scrollFrames.push(frame);
+      if (frame.type === "scroll-to") nativeState = { ...nativeState, above: frame.line, below: 100 - frame.line };
+      setTimeout(() => this.receive({ type: "scroll-state", state: nativeState }), 1);
+    }
     if (frame.type === "resize") {
       if (proposals.length < 100) proposals.push(frame);
       // Match runtime semantics: only a hard resize changes the canonical grid.
@@ -68,6 +76,8 @@ class FixtureSocket {
   close() { this.readyState = 3; }
 }
 Object.defineProperty(window, "WebSocket", { value: FixtureSocket });
+Object.defineProperty(window, "fixtureScrollFrames", { value: scrollFrames });
+Object.defineProperty(window, "fixtureNativeWheel", { value: () => { nativeState = { above: 20, below: 80, rows: 36 }; } });
 Object.defineProperty(window, "fixtureProposals", { value: proposals });
 Object.defineProperty(window, "fixtureGrid", { value: canonicalSize });
 Object.defineProperty(window, "fixtureInputs", { value: inputs });
@@ -84,7 +94,9 @@ const theme = {
     background: "#141614", foreground: "#e5e7eb", primary: "#434e3f",
   }, fonts: { mono: "monospace" }, radius: "8px",
 };
-createRoot(document.getElementById("root")!).render(
+const reactRoot = createRoot(document.getElementById("root")!);
+Object.defineProperty(window, "fixtureUnmount", { value: () => reactRoot.unmount() });
+reactRoot.render(
   <main>
     <h1>{electron ? "Electron Desktop" : mobile ? "Web Mobile" : zoom === 1 ? "Web Desktop" : "Web Canvas"} — Terminal resize verification</h1>
     <section id="terminal-window" style={{ width: mobile ? 360 : 1100, height: 850, transform: `scale(${zoom})`, transformOrigin: "top left", display: "flex", flexDirection: "column", background: theme.colors.background }}>

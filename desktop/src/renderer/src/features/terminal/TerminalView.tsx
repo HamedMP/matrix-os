@@ -1,7 +1,7 @@
 import { Terminal } from "@xterm/xterm";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import { createPortal } from "react-dom";
-import { TerminalControls, createTerminalGridPresentation, measureTerminalGridDimensions } from "@matrix-os/ui";
+import { TerminalControls, createTerminalNativeHistory, createTerminalGridPresentation, measureTerminalGridDimensions } from "@matrix-os/ui";
 import {
   resolveTerminalClipboardKeyEvent,
   classifyTerminalPointerEvent,
@@ -162,6 +162,8 @@ export default function TerminalView({
   const [stateSessionName, setStateSessionName] = useState(sessionName);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
+  const nativeHistoryRef = useRef<ReturnType<typeof createTerminalNativeHistory> | null>(null);
+  const nativeHistoryWriterRef = useRef(false);
   const gridPresentationRef = useRef<ReturnType<typeof createTerminalGridPresentation> | null>(null);
   const gridScaleRef = useRef(1);
   const gridWriterRef = useRef(false);
@@ -457,9 +459,15 @@ export default function TerminalView({
     termRef.current = terminal;
     fitRef.current = fit;
     serializeRef.current = serialize;
+    const nativeHistory = createTerminalNativeHistory({
+      send: (frame) => attachmentRef.current?.scroll?.(frame),
+      canWrite: () => nativeHistoryWriterRef.current,
+      onState: () => gridPresentationRef.current?.schedule(),
+    });
+    nativeHistoryRef.current = nativeHistory;
     gridWriterRef.current = false;
     const presentation = createTerminalGridPresentation({
-      host, getTerminal: () => terminal, getConfiguredFontSize: () => 13,
+      host, nativeHistory, getTerminal: () => terminal, getConfiguredFontSize: () => 13,
       allowScaling: () => !gridWriterRef.current,
       onScale: (scale) => { gridScaleRef.current = scale; },
       getParentScale: () => visualScaleRef.current,
@@ -483,6 +491,8 @@ export default function TerminalView({
 
     return () => {
       document.fonts?.removeEventListener("loadingdone", onFontMetricsChange);
+      nativeHistory.dispose();
+      nativeHistoryRef.current = null;
       presentation.dispose();
       gridPresentationRef.current = null;
       setTerminalContextMenu(null);
@@ -541,7 +551,12 @@ export default function TerminalView({
 
     const manager = getAttachManager();
     const attachment = manager.attach(sessionName, {
-      onState: (state) => setSocketState(state),
+      onState: (state) => {
+        setSocketState(state);
+        if (state !== "attached") nativeHistoryRef.current?.attach(false);
+      },
+      onNativeScroll: (state) => nativeHistoryRef.current?.update(state),
+      onNativeScrollSupported: (supported) => nativeHistoryRef.current?.attach(supported),
       onOutput: (data) => terminal.write(data),
       onCanonicalSize: (size) => {
         if (terminal.cols !== size.cols || terminal.rows !== size.rows) {
@@ -550,6 +565,7 @@ export default function TerminalView({
         gridPresentationRef.current?.schedule();
       },
       onOwnershipChange: (ownership) => {
+        nativeHistoryWriterRef.current = ownership === "writer";
         gridWriterRef.current = ownership === "writer";
         setLiveOwnership(ownership);
         gridPresentationRef.current?.schedule();
@@ -578,6 +594,7 @@ export default function TerminalView({
     return () => {
       dataDisposable.dispose();
       binaryDisposable.dispose();
+      nativeHistoryRef.current?.attach(false);
       attachmentRef.current = null;
       if (manager.activeSessionName === sessionName) manager.detachActive();
     };

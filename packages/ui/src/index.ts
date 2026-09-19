@@ -129,3 +129,5 @@ export { computeSoftGridLayout, type SoftGridLayout, type SoftGridLayoutInput } 
 export { createTerminalGridPresentation, measureTerminalViewport, measureTerminalGridDimensions } from "./terminal/terminal-grid-presentation.js";
 
 export { McpServerDiagnostics } from "./McpServerDiagnostics.js";
+
+export { createTerminalNativeHistory } from "./terminal/terminal-native-history.js";
