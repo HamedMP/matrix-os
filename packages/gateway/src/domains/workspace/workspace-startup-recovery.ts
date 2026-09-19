@@ -1,3 +1,4 @@
+import { createProjectDeletionCleanup, type ProjectChatCleanup } from "../../project-deletion-cleanup.js";
 import type { BackgroundAgentRuntime } from "../sessions/background-agent-runtime.js";
 import { resolve } from "node:path";
 import { createAgentLauncher } from "../sessions/agent-launcher.js";
@@ -233,6 +234,7 @@ export function createWorkspaceStartupRecovery(options: {
   backgroundRuntime?: BackgroundAgentRuntime;
   homePath: string;
   eventPublisher?: WorkspaceStartupRecoveryDeps["eventPublisher"];
+  deleteProjectChats?: ProjectChatCleanup;
   codingAgentThreadStore?: Pick<CodingAgentThreadStore, "deleteProjectThreads">;
 }) {
   const homePath = resolve(options.homePath);
@@ -254,24 +256,10 @@ export function createWorkspaceStartupRecovery(options: {
   const projectLifecycleRecovery = createProjectLifecycleService({
     projectManager,
     findBlockers: async () => [],
-    cleanupRelatedState: async (project, principal) => {
-      const sessions = await agentSessionManager.deleteProjectSessions({
-        projectSlug: project.slug,
-        ownerId: principal.userId,
-      });
-      if (!sessions.ok) throw new Error("session cleanup failed");
-      const reviews = await reviewStore.deleteProjectReviews(project.slug);
-      if (!reviews.ok) throw new Error("review cleanup failed");
-      if (options.codingAgentThreadStore) {
-        const threads = await options.codingAgentThreadStore.deleteProjectThreads(principal, project.slug);
-        if (!threads.ok) throw new Error("coding-agent cleanup blocked");
-      }
-      const workspace = (await terminalRuntime.listWorkspaces())
-        .find((candidate) => candidate.scope === "project" && candidate.projectId === project.id);
-      if (workspace) {
-        await terminalRuntime.deleteWorkspace(workspace.id, { confirmTerminate: true });
-      }
-    },
+    cleanupRelatedState: createProjectDeletionCleanup({
+      sessions: agentSessionManager, reviews: reviewStore, threads: options.codingAgentThreadStore,
+      terminal: terminalRuntime, deleteChats: options.deleteProjectChats, worktrees: worktreeManager,
+    }),
   });
 
   return {

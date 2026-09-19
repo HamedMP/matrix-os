@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @source "../../../../../packages/ui/src/chat-agents";
+@source "../../../../../packages/ui/src/collaboration";
 @import "@fontsource/inter/400.css";
 @import "@fontsource/inter/500.css";
 @import "@fontsource/instrument-sans/400.css";
@@ -21,22 +22,30 @@
   to { opacity: 1; transform: translate3d(0, 0, 0); }
 }
 
+@keyframes chat-title-scroll {
+  from { transform: translateX(0); }
+  to { transform: translateX(calc(-1 * var(--chat-title-scroll-distance))); }
+}
 @import "./chat.css";
 
 /* Map tokens into Tailwind v4 theme so utilities like bg-surface work. */
 @theme inline {
   --color-app: var(--bg-app);
+  --color-background: var(--background);
   --color-surface: var(--bg-surface);
   --color-raised: var(--bg-raised);
   --color-overlay: var(--bg-overlay);
   --color-primary: var(--text-primary);
+  --color-foreground: var(--foreground);
   --color-secondary: var(--text-secondary);
+  --color-muted-foreground: var(--text-secondary);
   --color-tertiary: var(--text-tertiary);
   --color-accent: var(--accent);
   --color-accent-hover: var(--accent-hover);
   --color-success: var(--success);
   --color-warning: var(--warning);
   --color-danger: var(--danger);
+  --color-destructive: var(--danger);
   --color-info: var(--info);
   --font-ui: var(--font-ui);
   --font-mono: var(--font-mono);
@@ -51,6 +60,12 @@
   --radius-md: var(--radius);
   --radius-lg: var(--radius-lg);
   --radius-xl: var(--radius-xl);
+}
+
+:root {
+  /* Shared UI components use the cross-app background token. */
+  --background: var(--bg-app);
+  --foreground: var(--text-primary);
 }
 
 html,

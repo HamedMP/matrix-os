@@ -116,6 +116,23 @@ describe("shell session sizing arbiter", () => {
     expect(persisted).toEqual([]);
   });
 
+  it("reapplies the corrected grid after every classified client detached", async () => {
+    const { sizing, applied } = harness();
+    sizing.attach("first-window", "hard", { cols: 120, rows: 40 });
+    await vi.advanceTimersByTimeAsync(20);
+    expect(applied).toEqual([{ cols: 120, rows: 40 }]);
+
+    sizing.detach("first-window");
+    sizing.attach("restored-window", "hard", { cols: 120, rows: 41 });
+    sizing.declared("restored-window", { cols: 120, rows: 40 });
+    await vi.advanceTimersByTimeAsync(20);
+
+    expect(applied).toEqual([
+      { cols: 120, rows: 40 },
+      { cols: 120, rows: 40 },
+    ]);
+  });
+
   it("dispose cancels pending applications", async () => {
     const { sizing, applied } = harness();
     sizing.attach("a", "hard", { cols: 200, rows: 50 });

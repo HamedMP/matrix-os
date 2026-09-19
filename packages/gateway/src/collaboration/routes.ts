@@ -6,13 +6,14 @@ import {
   COLLABORATION_EXPECTED_REVISION_HEADER,
   COLLABORATION_POLICY_HEADER,
   CollaborationAcceptInvitationRequestSchema,
+  CollaborationDeclineInvitationRequestSchema,
   CollaborationAiRequestControlSchema,
   CollaborationAiRequestsResponseSchema,
   CollaborationApprovalDecisionRequestSchema,
   CollaborationActorIdSchema,
   CollaborationCreateAiRequestSchema,
   CollaborationCreateDiscussionRequestSchema,
-  CollaborationCreateInvitationRequestSchema,
+  CollaborationDiscussionUserStatePatchSchema,
   CollaborationCreateScopeRequestSchema,
   CollaborationIdSchema,
   CollaborationInvitationSchema,
@@ -35,12 +36,14 @@ import {
   CollaborationTerminalActionSchema,
   CollaborationUserStatePatchSchema,
   CollaborationUserStateSchema,
+  type CollaborationPolicy,
 } from "@matrix-os/contracts";
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
 import { CollaborationChatCommandError } from "../chat/collaboration-commands.js";
 import { SharedChatQueueError } from "../chat/repository.js";
+import type { RateLimiter } from "../security/rate-limiter.js";
 import { CollaborationActorProofError, type CollaborationActorProofVerifier } from "./actor-proof.js";
 import {
   CollaborationAuthorizationError,
@@ -50,6 +53,10 @@ import {
 } from "./authority.js";
 import type { CollaborationChatAdapter } from "./chat-adapter.js";
 import type { CollaborationChatExecutionAdapter } from "./chat-execution-adapter.js";
+import {
+  CollaborationDiscussionError,
+  type CollaborationDiscussionAdapter,
+} from "./discussion-adapter.js";
 import { CollaborationChatScopeError, type CollaborationChatScopeService } from "./chat-scope.js";
 import type { createCollaborationProjectLifecycle } from "./project-lifecycle.js";
 import {
@@ -59,6 +66,7 @@ import {
 import { ProjectSharingError, type ProjectSharingService } from "./project-sharing.js";
 import { ProjectInventoryError } from "./project-inventory.js";
 import { ProjectTransitionError } from "./project-transition.js";
+import { createInvitationCreationHandler } from "./invitation-creation-route.js";
 import {
   CollaborationTerminalAdapterError,
   type CollaborationTerminalAdapter,
@@ -75,7 +83,6 @@ import {
 } from "./repository.js";
 
 const PROOF_HEADER = "x-matrix-collaboration-proof";
-const INVITATION_LIFETIME_MS = 7 * 24 * 60 * 60 * 1_000;
 const MessageQuerySchema = z.object({
   after: CollaborationRevisionSchema.default("0"),
   limit: z.coerce.number().int().min(1).max(100).default(50),
@@ -90,6 +97,7 @@ export function createCollaborationRoutes(options: {
   repository: CollaborationRepository;
   chatScope: CollaborationChatScopeService;
   chatAdapter: CollaborationChatAdapter;
+  discussionAdapter: CollaborationDiscussionAdapter;
   chatExecutionAdapter?: CollaborationChatExecutionAdapter;
   terminalAdapter?: CollaborationTerminalAdapter;
   terminalDispatcher?: CollaborationTerminalDispatcher;
@@ -100,6 +108,8 @@ export function createCollaborationRoutes(options: {
   projectScope?: CollaborationProjectScopeService;
   projectSharing?: ProjectSharingService;
   resolveParticipant(actorId: string): Promise<Participant>;
+  resolveInvitationIdentifier(identifier: string): Promise<Participant>;
+  invitationResolutionRateLimiter?: RateLimiter;
   onScopeCommitted?(scopeId: string): Promise<void>;
   onRevoked?(scopeId: string, actorId: string): void;
   onRoleChanged?(scopeId: string, actorId: string, role: "editor" | "viewer"): void;
@@ -189,14 +199,26 @@ export function createCollaborationRoutes(options: {
       action: "read",
     });
     await notifyScope(options, scope.id);
-    return c.json(scopeProjection(scope, context), 201);
+    return c.json(await scopeProjection(
+      scope,
+      context,
+      options.authority,
+      options.chatScope,
+      projectionM2Policy(options.verifier, c),
+    ), 201);
   }));
 
   routes.get("/api/collaboration/scopes/:scopeId", async (c) => handle(c, async () => {
     const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
     const context = await authorize(options, c, new Uint8Array(), "read", scopeId);
     const scope = await requireScope(options.repository, scopeId);
-    return c.json(scopeProjection(scope, context));
+    return c.json(await scopeProjection(
+      scope,
+      context,
+      options.authority,
+      options.chatScope,
+      projectionM2Policy(options.verifier, c),
+    ));
   }));
 
   routes.get("/api/collaboration/scopes/:scopeId/members", async (c) => handle(c, async () => {
@@ -208,25 +230,15 @@ export function createCollaborationRoutes(options: {
     return c.json({ members: await Promise.all(members.map((member) => memberProjection(options, member))) });
   }));
 
-  routes.post("/api/collaboration/scopes/:scopeId/invitations", async (c) => handle(c, async () => {
-    const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
-    const { value, bytes } = await readJson(c);
-    const context = await authorize(options, c, bytes, "manage_members", scopeId);
-    const input = CollaborationCreateInvitationRequestSchema.parse(value);
-    await options.resolveParticipant(input.targetActorId);
-    const result = await options.repository.createInvitation({
-      scopeId,
-      actorId: context.actorId,
-      targetActorId: input.targetActorId,
-      role: input.role,
-      clientRequestId: input.clientRequestId,
-      expectedRevision: Number(input.expectedRevision),
-      payloadHash: digest(bytes),
-      expiresAt: new Date(now().getTime() + INVITATION_LIFETIME_MS).toISOString(),
-    });
-    const member = await requireInvitation(options.repository, result.invitationId);
-    await notifyScope(options, scopeId);
-    return c.json(await invitationProjection(options, member), 201);
+  routes.post("/api/collaboration/scopes/:scopeId/invitations", createInvitationCreationHandler({
+    repository: options.repository,
+    resolveInvitationIdentifier: options.resolveInvitationIdentifier,
+    invitationResolutionRateLimiter: options.invitationResolutionRateLimiter,
+    authorize: (c, bytes, scopeId) => authorize(options, c, bytes, "manage_members", scopeId),
+    projectInvitation: (member) => invitationProjection(options, member),
+    notifyScope: (scopeId) => notifyScope(options, scopeId),
+    handle,
+    now,
   }));
 
   routes.get("/api/collaboration/invitations/:invitationId", async (c) => handle(c, async () => {
@@ -251,6 +263,26 @@ export function createCollaborationRoutes(options: {
       throw new CollaborationAuthorizationError("forbidden", "Invitation access is required");
     }
     const result = await options.repository.acceptInvitation({
+      invitationId,
+      actorId: proof.actorId,
+      clientRequestId: input.clientRequestId,
+      expectedRevision: Number(input.expectedRevision),
+      payloadHash: digest(bytes),
+    });
+    await notifyScope(options, result.scopeId);
+    return c.json(result);
+  }));
+
+  routes.post("/api/collaboration/invitations/:invitationId/decline", async (c) => handle(c, async () => {
+    const invitationId = CollaborationIdSchema.parse(c.req.param("invitationId"));
+    const { value, bytes } = await readJson(c);
+    const proof = await verifyHttp(options.verifier, c, bytes);
+    const input = CollaborationDeclineInvitationRequestSchema.parse(value);
+    const member = await requireInvitation(options.repository, invitationId);
+    if (proof.scopeId !== member.scopeId || proof.actorId !== member.actorId) {
+      throw new CollaborationAuthorizationError("forbidden", "Invitation access is required");
+    }
+    const result = await options.repository.declineInvitation({
       invitationId,
       actorId: proof.actorId,
       clientRequestId: input.clientRequestId,
@@ -366,6 +398,38 @@ export function createCollaborationRoutes(options: {
     const context = await authorize(options, c, bytes, "discuss", scopeId);
     const input = CollaborationCreateDiscussionRequestSchema.parse(value);
     return c.json(await options.chatAdapter.appendDiscussion(context, input), 201);
+  }));
+
+  routes.get("/api/collaboration/scopes/:scopeId/discussion/messages", async (c) => handle(c, async () => {
+    const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
+    const context = await authorize(options, c, new Uint8Array(), "read", scopeId);
+    const query = MessageQuerySchema.parse(exactQuery(c, ["after", "limit"]));
+    return c.json(await options.discussionAdapter.list(context, {
+      afterSequence: query.after,
+      limit: query.limit,
+    }));
+  }));
+
+  routes.post("/api/collaboration/scopes/:scopeId/discussion/messages", async (c) => handle(c, async () => {
+    const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
+    const { value, bytes } = await readJson(c);
+    const context = await authorize(options, c, bytes, "discuss", scopeId);
+    const input = CollaborationCreateDiscussionRequestSchema.parse(value);
+    return c.json(await options.discussionAdapter.append(context, input), 201);
+  }));
+
+  routes.get("/api/collaboration/scopes/:scopeId/discussion/user-state", async (c) => handle(c, async () => {
+    const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
+    const context = await authorize(options, c, new Uint8Array(), "read", scopeId);
+    return c.json(await options.discussionAdapter.getUserState(context));
+  }));
+
+  routes.patch("/api/collaboration/scopes/:scopeId/discussion/user-state", async (c) => handle(c, async () => {
+    const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
+    const { value, bytes } = await readJson(c);
+    const context = await authorize(options, c, bytes, "read", scopeId);
+    const input = CollaborationDiscussionUserStatePatchSchema.parse(value);
+    return c.json(await options.discussionAdapter.updateUserState(context, input));
   }));
 
   routes.get("/api/collaboration/scopes/:scopeId/chat/requests", async (c) => handle(c, async () => {
@@ -533,6 +597,21 @@ export function createCollaborationRoutes(options: {
           expectedMemberRevision: Number(input.expectedMemberRevision),
         })
         : await lifecycle.apply({ ...common, type: input.type });
+      await notifyScope(options, scopeId);
+      return c.json(CollaborationOperationSchema.parse(result));
+    }
+    if (scope.kind === "terminal") {
+      if (input.type !== "export") {
+        throw new CollaborationAuthorizationError("unavailable", "Lifecycle action is unavailable");
+      }
+      const result = await options.repository.applyTerminalExport({
+        scopeId,
+        actorId: proof.actorId,
+        type: "export",
+        clientRequestId: input.clientRequestId,
+        expectedRevision: Number(input.expectedRevision),
+        payloadHash: digest(bytes),
+      }, () => options.discussionAdapter.prepareTerminalDiscussionExport(scopeId));
       await notifyScope(options, scopeId);
       return c.json(CollaborationOperationSchema.parse(result));
     }
@@ -740,9 +819,24 @@ function requireProjectLifecycle(
   return lifecycle;
 }
 
-function scopeProjection(scope: CollaborationScopeRecord, context: AuthorizedCollaborationContext) {
+async function scopeProjection(
+  scope: CollaborationScopeRecord,
+  context: AuthorizedCollaborationContext,
+  authority: CollaborationAuthority,
+  chatScope: CollaborationChatScopeService,
+  executionPolicy?: CollaborationPolicy,
+): Promise<ReturnType<typeof CollaborationScopeSchema.parse>> {
   const mutable = scope.lifecycle === "shared";
   const terminal = scope.kind === "terminal";
+  const requestAi = scope.kind === "chat"
+    && chatScope.matchesCurrentExecutionCapability(scope)
+    && await authority.canRequestAi({
+      kind: scope.kind,
+      lifecycle: scope.lifecycle,
+      owner_id: scope.ownerId,
+      execution_generation: scope.executionGeneration,
+      execution_eligibility: scope.executionEligibility,
+    }, context.actorId, context.role, context.membershipScopeId, executionPolicy);
   return CollaborationScopeSchema.parse({
     id: scope.id,
     ownerId: scope.ownerId,
@@ -759,12 +853,21 @@ function scopeProjection(scope: CollaborationScopeRecord, context: AuthorizedCol
       read: true,
       discuss: context.role !== "viewer" && mutable,
       manageMembers: context.role === "owner" && scope.membershipMode === "direct" && mutable,
-      requestAi: false,
+      requestAi,
       observeTerminal: terminal && mutable,
       controlTerminal: terminal && context.role !== "viewer" && mutable,
       stopTerminal: terminal && context.role === "owner" && mutable,
     },
   });
+}
+
+function projectionM2Policy(
+  verifier: CollaborationActorProofVerifier,
+  c: Context,
+): CollaborationPolicy | undefined {
+  if (!c.req.header(COLLABORATION_POLICY_HEADER)) return undefined;
+  const policy = verifier.verifyPolicy(decodePolicy(c));
+  return policy.milestone === "m2" ? policy : undefined;
 }
 
 function projectPreparationProjection(scope: CollaborationScopeRecord) {
@@ -826,7 +929,7 @@ async function invitationProjection(
     role: member.role,
     status: member.status,
     expiresAt: member.expiresAt,
-    revision: String(member.revision),
+    revision: String(scope.revision),
   });
 }
 
@@ -890,10 +993,16 @@ async function handle(c: Context, operation: () => Promise<Response>): Promise<R
     return await operation();
   } catch (error: unknown) {
     if (error instanceof CollaborationActorProofError) {
+      if (error.code === "rate_limited") {
+        return c.json({ error: "Try again later", code: "rate_limited" }, 429);
+      }
       return c.json({ error: "Collaboration authentication failed", code: "unauthorized" }, 401);
     }
     if (error instanceof z.ZodError || error instanceof SyntaxError) {
       return c.json({ error: "Invalid collaboration request", code: "invalid_request" }, 400);
+    }
+    if (error instanceof CollaborationDiscussionError) {
+      return c.json({ error: "Invalid collaboration request", code: error.code }, 400);
     }
     if (error instanceof CollaborationAuthorizationError) {
       const status = error.code === "not_found" ? 404 : error.code === "forbidden" ? 403 : 503;

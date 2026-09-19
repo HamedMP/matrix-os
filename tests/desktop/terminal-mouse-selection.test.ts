@@ -262,7 +262,7 @@ describe("mouse-reporting terminal selection", () => {
     remove();
   });
 
-  it("auto-scrolls an ordinary xterm selection without swallowing its native pointer events", () => {
+  it("captures complete rows while auto-scrolling an ordinary xterm selection", () => {
     vi.useFakeTimers();
     const { root, delivered, onExtendedSelection, scrollLines, remove } = setup({
       mouseTrackingMode: "none",
@@ -273,19 +273,142 @@ describe("mouse-reporting terminal selection", () => {
     root.addEventListener("mousedown", nativeDown);
 
     root.dispatchEvent(mouse("mousedown", { button: 0, buttons: 1, clientX: 120, clientY: 80 }));
-    outside.dispatchEvent(mouse("mousemove", { button: 0, buttons: 1, clientX: 130, clientY: 20 }));
+    outside.dispatchEvent(mouse("mousemove", { button: 0, buttons: 1, clientX: 130, clientY: 290 }));
     vi.advanceTimersByTime(160);
 
     expect(nativeDown).toHaveBeenCalledOnce();
     expect(scrollLines.mock.calls.length).toBeGreaterThanOrEqual(3);
-    expect(scrollLines.mock.calls.every(([amount]) => amount < 0)).toBe(true);
+    expect(scrollLines.mock.calls.every(([amount]) => amount > 0)).toBe(true);
     expect(delivered).toEqual(expect.arrayContaining([
-      expect.objectContaining({ type: "mousemove", clientY: 20, altKey: false, shiftKey: false }),
+      expect.objectContaining({ type: "mousemove", clientY: 290, altKey: false, shiftKey: false }),
     ]));
-    expect(onExtendedSelection).not.toHaveBeenCalled();
 
-    outside.dispatchEvent(mouse("mouseup", { button: 0, buttons: 0, clientX: 130, clientY: 20 }));
+    outside.dispatchEvent(mouse("mouseup", { button: 0, buttons: 0, clientX: 130, clientY: 290 }));
     expect(delivered.at(-1)).toEqual(expect.objectContaining({ type: "mouseup", altKey: false }));
+    expect(onExtendedSelection.mock.calls.at(-1)?.[0]).toMatch(/^103\nline-104[\s\S]*\nline-127$/);
+    remove();
+  });
+
+  it.each(["none", "any"])("captures the anchor before xterm scrolls between edge entry and the first timer tick (%s)", (mouseTrackingMode) => {
+    vi.useFakeTimers();
+    const { root, scrollLines, onExtendedSelection, remove } = setup({ mouseTrackingMode });
+    try {
+      root.dispatchEvent(mouse("mousedown", {
+        button: 0, buttons: 1, clientX: 120, clientY: 65,
+      }));
+      root.dispatchEvent(mouse("mousemove", {
+        button: 0, buttons: 1, clientX: 120, clientY: 290,
+      }));
+      // xterm has its own drag-scroll timer, independent of our capture timer.
+      scrollLines(2);
+      vi.advanceTimersByTime(40);
+      const selected = onExtendedSelection.mock.calls.at(-1)?.[0] as string;
+      expect(selected).toContain("line-102");
+      expect(selected).toContain("line-121");
+    } finally {
+      remove();
+    }
+  });
+
+  it("releases the captured edge range when an ordinary drag returns inside", () => {
+    vi.useFakeTimers();
+    const { root, onExtendedSelection, remove } = setup({
+      mouseTrackingMode: "none",
+    });
+    const outside = document.createElement("div");
+    document.body.append(outside);
+
+    root.dispatchEvent(mouse("mousedown", {
+      button: 0,
+      buttons: 1,
+      clientX: 120,
+      clientY: 80,
+    }));
+    outside.dispatchEvent(mouse("mousemove", {
+      button: 0,
+      buttons: 1,
+      clientX: 130,
+      clientY: 290,
+    }));
+    vi.advanceTimersByTime(80);
+    expect(onExtendedSelection.mock.calls.at(-1)?.[0]).not.toBe("");
+
+    root.dispatchEvent(mouse("mousemove", {
+      button: 0,
+      buttons: 1,
+      clientX: 130,
+      clientY: 100,
+    }));
+    root.dispatchEvent(mouse("mouseup", {
+      button: 0,
+      buttons: 0,
+      clientX: 130,
+      clientY: 100,
+    }));
+
+    expect(onExtendedSelection.mock.calls.at(-1)?.[0]).toBe("");
+    remove();
+  });
+
+  it("replaces unscaled document events while an ordinary scaled selection leaves the terminal", () => {
+    const { root, delivered, remove } = setup({
+      mouseTrackingMode: "none",
+      visualScale: 0.5,
+    });
+    const outside = document.createElement("div");
+    document.body.append(outside);
+
+    root.dispatchEvent(mouse("mousedown", {
+      button: 0,
+      buttons: 1,
+      clientX: 120,
+      clientY: 80,
+    }));
+    const outsideMove = mouse("mousemove", {
+      button: 0,
+      buttons: 1,
+      clientX: 130,
+      clientY: 20,
+    });
+    const outsideUp = mouse("mouseup", {
+      button: 0,
+      buttons: 0,
+      clientX: 130,
+      clientY: 20,
+    });
+    outside.dispatchEvent(outsideMove);
+    outside.dispatchEvent(outsideUp);
+
+    expect(delivered).toEqual([
+      expect.objectContaining({ type: "mousemove", clientX: 100, clientY: -10 }),
+      expect.objectContaining({ type: "mouseup", clientX: 100, clientY: -10 }),
+    ]);
+    expect(outsideMove.defaultPrevented).toBe(true);
+    expect(outsideUp.defaultPrevented).toBe(true);
+
+    delivered.length = 0;
+    root.dispatchEvent(mouse("mousedown", {
+      button: 0,
+      buttons: 1,
+      clientX: 120,
+      clientY: 80,
+    }));
+    outside.dispatchEvent(mouse("mousemove", {
+      button: 0,
+      buttons: 1,
+      clientX: 130,
+      clientY: 290,
+    }));
+    outside.dispatchEvent(mouse("mouseup", {
+      button: 0,
+      buttons: 0,
+      clientX: 130,
+      clientY: 290,
+    }));
+    expect(delivered).toEqual([
+      expect.objectContaining({ type: "mousemove", clientX: 900, clientY: 530 }),
+      expect.objectContaining({ type: "mouseup", clientX: 900, clientY: 530 }),
+    ]);
     remove();
   });
 

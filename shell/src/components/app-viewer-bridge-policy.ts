@@ -7,7 +7,13 @@ function appSlugFromName(appName: string): string {
 }
 
 export function isAllowedBridgeFetchUrl(appName: string, url: string): boolean {
-  if (url.startsWith("/api/bridge/")) return true;
+  // Reject aliases and encoded paths so app-scoped AI cannot bypass identity binding.
+  const parsed = new URL(url, "https://bridge.invalid");
+  if (parsed.origin !== "https://bridge.invalid" || parsed.pathname.includes("%")) return false;
+  if (parsed.pathname === "/api/bridge/ai" || parsed.pathname.startsWith("/api/bridge/ai/")) {
+    return url === "/api/bridge/ai";
+  }
+  if (url.startsWith("/api/bridge/") && parsed.pathname.startsWith("/api/bridge/")) return true;
   const slug = appSlugFromName(appName);
   if (slug === "symphony") return SYMPHONY_API_PATH.test(url);
   if (slug === "resource-manager") return RESOURCE_MANAGER_ACTIVITY_PATH.test(url);

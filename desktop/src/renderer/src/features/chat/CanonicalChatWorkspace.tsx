@@ -1,4 +1,10 @@
-import { isChatUnread, chatReadAction } from "@matrix-os/ui";
+import {
+  isChatUnread,
+  chatReadAction,
+  CanonicalSharedChatPanel,
+  SharedChatPanel,
+  sharedChatMembershipFromProjection,
+} from "@matrix-os/ui";
 import type { ChatAgentDraftRequest } from "@matrix-os/ui";
 import { createChatMentionRequestTracker } from "@matrix-os/ui";
 import { ChatMentionControls, useChatMentionPermission } from "@matrix-os/ui";
@@ -29,6 +35,8 @@ import { useChatFileNavigation } from "../work/ChatFileNavigation";
 import { resolveChatInspectorTarget, resolveWorkFilesScope } from "../work/work-files-scope";
 import type { ApiClient } from "../../lib/api";
 import { useBoard } from "../../stores/board";
+import { useConnection } from "../../stores/connection";
+import { createDesktopCollaborationApi } from "../../lib/collaboration";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "../../stores/runtime-generation";
 import { AttachmentPreviewRow } from "./attachments/AttachmentPreviewRow";
@@ -85,6 +93,9 @@ export function CanonicalChatWorkspace({
   projectId,
   initialChatId,
   initialView,
+  sharedScopeId,
+  sharedHeaderContainer,
+  onSharedChatMetadata,
   draftRequest,
   projectLabel,
   active,
@@ -103,6 +114,9 @@ export function CanonicalChatWorkspace({
   projectId: string | null;
   initialChatId?: string;
   initialView?: "index" | "draft" | "conversation";
+  sharedScopeId?: string;
+  sharedHeaderContainer?: HTMLElement | null;
+  onSharedChatMetadata?: (metadata: { title: string; role: "owner" | "editor" | "viewer" }) => void;
   draftRequest?: ChatAgentDraftRequest | null;
   projectLabel?: string;
   active: boolean;
@@ -116,6 +130,14 @@ export function CanonicalChatWorkspace({
   onActiveChatChanged?: (chatId: string | null, title?: string) => void;
   eventSource?: Pick<CanonicalChatEventSource, "subscribe">;
 }) {
+  const actorId = useConnection((state) => state.userId);
+  const platformHost = useConnection((state) => state.platformHost);
+  const runtimeSlot = useConnection((state) => state.runtimeSlot);
+  const explicitSharedRoute = Boolean(sharedScopeId);
+  const collaborationApi = useMemo(
+    () => createDesktopCollaborationApi(platformHost),
+    [platformHost],
+  );
   const [mentionRequests] = useState(createChatMentionRequestTracker);
   const projects = useBoard((state) => state.projects);
   const fileNavigation = useChatFileNavigation();
@@ -124,7 +146,10 @@ export function CanonicalChatWorkspace({
     () => createLegacyGlobalProviderCatalog({ hasProject: projects.length > 0 }),
     [projects.length],
   );
-  const liveCatalog = useChatProviderCatalog(fallbackCatalog, { api: api ?? null, active: live });
+  const liveCatalog = useChatProviderCatalog(fallbackCatalog, {
+    api: api ?? null,
+    active: live && !explicitSharedRoute,
+  });
   const unavailableCatalog = useMemo(() => failClosedProviderCatalog(fallbackCatalog), [fallbackCatalog]);
   const providerCatalog = catalog ?? (
     liveCatalog.status === "ready" ? liveCatalog.catalog : unavailableCatalog
@@ -132,7 +157,7 @@ export function CanonicalChatWorkspace({
   const controller = useCanonicalChatRouteController({
     client,
     projectId,
-    active: live,
+    active: live && !explicitSharedRoute,
     initialChatId,
     autoSelectFirst: false,
     eventSource,
@@ -231,9 +256,9 @@ export function CanonicalChatWorkspace({
   }, []);
 
   useEffect(() => {
-    if (!api || runtimeStatus !== "idle") return;
+    if (!api || explicitSharedRoute || runtimeStatus !== "idle") return;
     void refreshRuntimeSummary();
-  }, [api, refreshRuntimeSummary, runtimeStatus]);
+  }, [api, explicitSharedRoute, refreshRuntimeSummary, runtimeStatus]);
 
   useLayoutEffect(() => {
     const previous = previousRoute.current;
@@ -295,6 +320,7 @@ export function CanonicalChatWorkspace({
     ...controller.detail,
     streamedMessageIds: controller.streamedMessageIds,
   }) : [];
+  const projectedSharedChat = sharedChatMembershipFromProjection(controller.detail?.record.chat.collaboration);
 
   useEffect(() => {
     if (!editingQueuedTurn || !controller.detail) return;
@@ -788,6 +814,19 @@ export function CanonicalChatWorkspace({
         )}
         {...attachments.paneProps}
       >
+        {sharedScopeId || projectedSharedChat ? (
+          collaborationApi && actorId ? (
+            sharedScopeId ? <SharedChatPanel api={collaborationApi} actorId={actorId}
+              runtimeId={`desktop:${runtimeSlot}`} scopeId={sharedScopeId}
+              headerContainer={sharedHeaderContainer} onMetadata={onSharedChatMetadata} />
+              : <CanonicalSharedChatPanel api={collaborationApi} actorId={actorId}
+                runtimeId={`desktop:${runtimeSlot}`} chatId={controller.detail!.record.chat.id} />
+          ) : (
+            <div role="alert" className="m-auto max-w-lg rounded-2xl border p-8 text-center">
+              Shared Chat is unavailable. Reconnect your Matrix account and try again.
+            </div>
+          )
+        ) : <>
         {submissionError || controller.error ? (
           <div role="alert" className={cn("mx-auto mt-3 w-[calc(100%-2.5rem)] rounded-lg border px-3 py-2 text-sm", CHAT_CONTENT_WIDTH_CLASS)} style={{ borderColor: "var(--border-subtle)", color: "var(--text-secondary)" }}>
             {submissionError ?? controller.error}
@@ -874,6 +913,7 @@ export function CanonicalChatWorkspace({
             {composer}
           </div>
         )}
+        </>}
       </SharedChatSurface>
       {renderInspector ? (controller.detail ? renderInspector(controller.detail) : null) : inspector}
       {projectId === null ? (

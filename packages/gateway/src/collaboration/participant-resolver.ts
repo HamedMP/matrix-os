@@ -1,5 +1,6 @@
 import {
   CollaborationActorIdSchema,
+  CollaborationInvitationIdentifierSchema,
   CollaborationParticipantSchema,
   CollaborationRuntimeIdSchema,
 } from "@matrix-os/contracts";
@@ -23,7 +24,8 @@ export class CollaborationParticipantResolverError extends Error {
 }
 
 export class CollaborationParticipantResolver {
-  private readonly endpoint: string;
+  private readonly participantEndpoint: string;
+  private readonly resolutionEndpoint: string;
   private readonly fetchImpl: typeof fetch;
   private readonly now: () => Date;
   private readonly cache = new Map<string, CacheEntry>();
@@ -40,7 +42,8 @@ export class CollaborationParticipantResolver {
     if (Buffer.byteLength(options.serviceToken) < 32) {
       throw new Error("Collaboration participant service token is unavailable");
     }
-    this.endpoint = `${baseUrl.origin}/internal/collaboration/participants`;
+    this.participantEndpoint = `${baseUrl.origin}/internal/collaboration/participants`;
+    this.resolutionEndpoint = `${this.participantEndpoint}/resolve`;
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.now = options.now ?? (() => new Date());
   }
@@ -57,7 +60,7 @@ export class CollaborationParticipantResolver {
     if (cached) this.cache.delete(actorId);
 
     try {
-      const response = await this.fetchImpl(`${this.endpoint}/${encodeURIComponent(actorId)}`, {
+      const response = await this.fetchImpl(`${this.participantEndpoint}/${encodeURIComponent(actorId)}`, {
         method: "GET",
         redirect: "error",
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
@@ -94,6 +97,44 @@ export class CollaborationParticipantResolver {
       return result;
     } catch (error: unknown) {
       console.warn("[collaboration-participant] identity lookup failed", error instanceof Error ? error.name : "UnknownError");
+      if (error instanceof CollaborationParticipantResolverError) throw error;
+      throw new CollaborationParticipantResolverError();
+    }
+  }
+
+  async resolveInvitationIdentifier(identifierInput: string): Promise<{ actorId: string; displayName: string }> {
+    const identifier = CollaborationInvitationIdentifierSchema.parse(identifierInput);
+    try {
+      const response = await this.fetchImpl(this.resolutionEndpoint, {
+        method: "POST",
+        redirect: "error",
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        headers: {
+          accept: "application/json",
+          authorization: `Bearer ${this.options.serviceToken}`,
+          "content-type": "application/json",
+          "x-matrix-runtime-id": this.options.runtimeId,
+        },
+        body: JSON.stringify({ identifier }),
+      });
+      if (!response.ok) {
+        await response.body?.cancel();
+        throw new CollaborationParticipantResolverError();
+      }
+      const bytes = await readBounded(response, MAX_RESPONSE_BYTES);
+      if (!bytes) throw new CollaborationParticipantResolverError();
+      let value: unknown;
+      try {
+        value = JSON.parse(new TextDecoder().decode(bytes)) as unknown;
+      } catch (error: unknown) {
+        if (!(error instanceof SyntaxError)) throw error;
+        throw new CollaborationParticipantResolverError();
+      }
+      const participant = CollaborationParticipantSchema.safeParse(value);
+      if (!participant.success) throw new CollaborationParticipantResolverError();
+      return { actorId: participant.data.actorId, displayName: participant.data.displayName };
+    } catch (error: unknown) {
+      console.warn("[collaboration-participant] invitation identity lookup failed", error instanceof Error ? error.name : "UnknownError");
       if (error instanceof CollaborationParticipantResolverError) throw error;
       throw new CollaborationParticipantResolverError();
     }

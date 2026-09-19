@@ -18,6 +18,8 @@ export interface TerminalClipboardShortcutInput {
   repeat: boolean;
   isComposing: boolean;
   hasSelection: boolean;
+  keyCode?: number;
+  altGraphKey?: boolean;
 }
 
 export type TerminalPointerEventType =
@@ -41,7 +43,7 @@ export type TerminalPointerDecision =
 export function classifyTerminalClipboardShortcut(
   input: TerminalClipboardShortcutInput,
 ): TerminalClipboardAction | null {
-  if (input.type !== "keydown" || input.repeat || input.isComposing) {
+  if (input.type !== "keydown" || input.repeat || input.isComposing || input.keyCode === 229 || input.altGraphKey) {
     return null;
   }
 
@@ -61,7 +63,7 @@ export function classifyTerminalClipboardShortcut(
   }
 
   if (key === "v") {
-    if ((isMacCommand && !input.shiftKey) || isTerminalControl) return "paste";
+    if ((isMacCommand && !input.shiftKey) || (input.ctrlKey && !input.metaKey && !input.altKey)) return "paste";
     return null;
   }
 
@@ -70,6 +72,17 @@ export function classifyTerminalClipboardShortcut(
   }
 
   return null;
+}
+
+/** Consume every paste key phase while executing only the initial keydown. */
+export function resolveTerminalClipboardKeyEvent(
+  input: TerminalClipboardShortcutInput,
+): TerminalClipboardAction | "consume" | null {
+  const action = classifyTerminalClipboardShortcut({ ...input, type: "keydown", repeat: false });
+  if (action === "paste") {
+    return input.type === "keydown" && !input.repeat ? action : "consume";
+  }
+  return classifyTerminalClipboardShortcut(input);
 }
 
 export function classifyTerminalPointerEvent(

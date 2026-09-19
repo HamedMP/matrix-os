@@ -212,6 +212,7 @@ function WorkTabContent({
   initialChatId,
   initialChatView,
   initialChatTitle,
+  sharedScopeId,
 }: {
   tabId?: string;
   route: WorkRoute;
@@ -221,6 +222,7 @@ function WorkTabContent({
   initialChatId?: string;
   initialChatView?: "index" | "draft" | "conversation";
   initialChatTitle?: string;
+  sharedScopeId?: string;
 }) {
   const api = useConnection((state) => state.api);
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
@@ -232,6 +234,7 @@ function WorkTabContent({
   const showNavigationRef = useRef<HTMLButtonElement>(null);
   const railBackRef = useRef<HTMLButtonElement>(null);
   const inspectorRegionRef = useRef<HTMLDivElement>(null);
+  const [sharedHeaderContainer, setSharedHeaderContainer] = useState<HTMLDivElement | null>(null);
   const measuredWidthRef = useRef(false);
   const pendingFocusRef = useRef<RefObject<HTMLButtonElement | null> | null>(null);
   const resizeCleanupRef = useRef<(() => void) | null>(null);
@@ -257,6 +260,7 @@ function WorkTabContent({
   } | null>(null);
   const activeTitleRecordRef = useRef<CanonicalChatRecord | null>(null);
   const [activeChatTitle, setActiveChatTitle] = useState(initialChatTitle ?? "Chat");
+  const updateSharedChatMetadata = useCallback(({ title }: { title: string }) => setActiveChatTitle(title), []);
   const [agentDraftRequest, setAgentDraftRequest] = useState<ChatAgentDraftRequest | null>(null);
   const agentDraftSequence = useRef(0);
   const [editingChatTitle, setEditingChatTitle] = useState(false);
@@ -692,7 +696,11 @@ function WorkTabContent({
   ) : null;
   const canonicalInspector = initialChatId ? renderInspector : undefined;
   const content = route === "chat"
-    ? <ChatTab tabId={tabId} active={active} visible={visible} initialChatId={initialChatId} initialView={initialChatView} draftRequest={hostedRuntime ? hostedRuntime.agentDraftRequest : agentDraftRequest} eventSource={eventSource ?? undefined} externalNavigation renderInspector={canonicalInspector} inspectorExclusive={inspectorExclusive} allowLegacyFallback={false} />
+    ? <ChatTab tabId={tabId} active={active} visible={visible} initialChatId={initialChatId} initialView={initialChatView}
+        sharedScopeId={sharedScopeId} sharedHeaderContainer={sharedHeaderContainer}
+        onSharedChatMetadata={updateSharedChatMetadata}
+        draftRequest={hostedRuntime ? hostedRuntime.agentDraftRequest : agentDraftRequest} eventSource={eventSource ?? undefined}
+        externalNavigation renderInspector={canonicalInspector} inspectorExclusive={inspectorExclusive} allowLegacyFallback={false} />
     : route === "projects"
       ? <ProjectsIndex />
       : projectSlug
@@ -722,7 +730,8 @@ function WorkTabContent({
     />
   ), [active, applyRenamedChat, client, collapseRail, eventSource, handleRailChatDeleted, hostedChrome, initialChatId, openAgentDraft, openCreateProject, openGlobalDraft, openProjectDraft, projectSlug, projects, route, selectRailChat, layout, showChat]);
   const chromeTitle = useMemo(() => initialChatId && initialChatId !== draftTerminalLaunch?.chatId
-    ? editingChatTitle ? (
+    ? sharedScopeId ? <span className="block min-w-0 max-w-full truncate" title={activeChatTitle}>{activeChatTitle}</span>
+      : editingChatTitle ? (
         <ChatTitleEditor
           title={activeChatTitle}
           disabled={renamingChatTitle}
@@ -749,17 +758,22 @@ function WorkTabContent({
       renameActiveChat,
       renamingChatTitle,
       route,
+      sharedScopeId,
     ]);
   const sharingControl = useMemo(() => api && initialChatId ? (
     <ChatSharingButton key={`${runtimeSlot}:${authGeneration}:${initialChatId}`} api={api} chatId={initialChatId} copyText={async (text) => { await navigator.clipboard.writeText(text); }} />
   ) : null, [api, initialChatId, runtimeSlot, authGeneration]);
+  const sharedChromeSlot = useMemo(() => sharedScopeId ? (
+    <div ref={setSharedHeaderContainer} data-slot="desktop-shared-chat-controls"
+      className="no-drag pointer-events-auto flex items-center gap-1" />
+  ) : sharingControl, [sharedScopeId, sharingControl]);
   const chromeSpec = useMemo(() => ({
     title: agentsOpen ? "Agents" : chromeTitle,
     leftPaneWidth: hostedChrome || (layout !== "narrow" && navigationVisible) ? NAVIGATION_WIDTH : 0,
     rightPaneWidth: !agentsOpen && layout !== "narrow" && inspectorVisible ? inspectorWidth : 0,
     rightActions: agentsOpen ? null : hasInspector ? (
       <div className="flex items-center gap-1">
-        {sharingControl}
+        {sharedChromeSlot}
         <PaneButton
           buttonRef={showToolsRef}
           label={inspectorVisible ? "Hide inspector" : "Show inspector"}
@@ -773,8 +787,8 @@ function WorkTabContent({
             : <PanelRightOpen size={15} aria-hidden />}
         </PaneButton>
       </div>
-    ) : sharingControl,
-  }), [agentsOpen, sharingControl, chromeTitle, closeInspector, hasInspector, hostedChrome, inspectorVisible, inspectorWidth, layout, navigationVisible, openInspector]);
+    ) : sharedChromeSlot,
+  }), [agentsOpen, sharedChromeSlot, chromeTitle, closeInspector, hasInspector, hostedChrome, inspectorVisible, inspectorWidth, layout, navigationVisible, openInspector]);
 
   useLayoutEffect(() => {
     if (!active || !surfaceChromeHost) return;

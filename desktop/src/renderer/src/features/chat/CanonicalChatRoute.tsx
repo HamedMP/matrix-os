@@ -21,6 +21,9 @@ export function CanonicalChatRoute({
   tabId,
   initialChatId,
   initialView,
+  sharedScopeId,
+  sharedHeaderContainer,
+  onSharedChatMetadata,
   draftRequest,
   projectLabel,
   active,
@@ -37,6 +40,9 @@ export function CanonicalChatRoute({
   tabId?: string;
   initialChatId?: string;
   initialView?: "index" | "draft" | "conversation";
+  sharedScopeId?: string;
+  sharedHeaderContainer?: HTMLElement | null;
+  onSharedChatMetadata?: (metadata: { title: string; role: "owner" | "editor" | "viewer" }) => void;
   draftRequest?: ChatAgentDraftRequest | null;
   projectLabel?: string;
   active: boolean;
@@ -107,6 +113,10 @@ export function CanonicalChatRoute({
       return () => { current = false; };
     }
     if (!live) return () => { current = false; };
+    if (sharedScopeId) {
+      setAvailability({ routeKey, value: "available" });
+      return () => { current = false; };
+    }
     if (
       provenRoute.current?.client === client
       && provenRoute.current.projectId === canonicalProjectId
@@ -126,10 +136,10 @@ export function CanonicalChatRoute({
       setAvailability({ routeKey, value: "unavailable" });
     });
     return () => { current = false; };
-  }, [canonicalProjectId, client, live, routeKey]);
+  }, [canonicalProjectId, client, live, routeKey, sharedScopeId]);
 
-  if (!client || currentAvailability === "unavailable") return fallback;
-  if (currentAvailability === "checking") {
+  if (!client || (!sharedScopeId && currentAvailability === "unavailable")) return fallback;
+  if (!sharedScopeId && currentAvailability === "checking") {
     return (
       <div
         role="status"
@@ -148,6 +158,9 @@ export function CanonicalChatRoute({
       projectId={canonicalProjectId}
       initialChatId={initialChatId}
       initialView={initialView}
+      sharedScopeId={sharedScopeId}
+      sharedHeaderContainer={sharedHeaderContainer}
+      onSharedChatMetadata={onSharedChatMetadata}
       draftRequest={draftRequest}
       projectLabel={projectLabel}
       active={active}

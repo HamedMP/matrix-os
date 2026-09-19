@@ -36,6 +36,10 @@ const SCOPE_ROUTES = [
   ["GET", new RegExp(`^/api/collaboration/scopes/(${UUID})/chat$`)],
   ["GET", new RegExp(`^/api/collaboration/scopes/(${UUID})/chat/messages$`)],
   ["POST", new RegExp(`^/api/collaboration/scopes/(${UUID})/chat/messages$`)],
+  ["GET", new RegExp(`^/api/collaboration/scopes/(${UUID})/discussion/messages$`)],
+  ["POST", new RegExp(`^/api/collaboration/scopes/(${UUID})/discussion/messages$`)],
+  ["GET", new RegExp(`^/api/collaboration/scopes/(${UUID})/discussion/user-state$`)],
+  ["PATCH", new RegExp(`^/api/collaboration/scopes/(${UUID})/discussion/user-state$`)],
   ["POST", new RegExp(`^/api/collaboration/scopes/(${UUID})/lifecycle$`)],
   ["GET", new RegExp(`^/api/collaboration/scopes/(${UUID})/operations/${UUID}$`)],
   ["GET", new RegExp(`^/api/collaboration/scopes/(${UUID})/exports/${UUID}$`)],
@@ -88,6 +92,7 @@ const M4_SCOPE_ROUTES = [
 const INVITATION_ROUTES = [
   ["GET", new RegExp(`^/api/collaboration/invitations/(${UUID})$`)],
   ["POST", new RegExp(`^/api/collaboration/invitations/(${UUID})/accept$`)],
+  ["POST", new RegExp(`^/api/collaboration/invitations/(${UUID})/decline$`)],
 ] as const;
 
 export interface ParsedCollaborationProxyRoute {
@@ -222,13 +227,23 @@ export class CollaborationProxy {
       }
       headers.set("accept", "application/json");
       headers.set(PROOF_HEADER, Buffer.from(JSON.stringify(signedProof)).toString("base64url"));
-      if (milestone !== "m1") {
+      let forwardedPolicy = milestone === "m1" ? undefined : policy;
+      if (shouldAttachM2ProjectionPolicy(input.method, input.path, input.body, directory?.kind)) {
+        try {
+          forwardedPolicy = await this.options.repository.getPolicy("m2");
+        } catch (error: unknown) {
+          console.warn("[collaboration-proxy] M2 projection policy unavailable",
+            error instanceof Error ? error.name : "UnknownError");
+          forwardedPolicy = undefined;
+        }
+      }
+      if (forwardedPolicy) {
         const issuedAt = (this.options.now ?? (() => new Date()))();
         const signedPolicy = this.options.signer.signPolicy({
-          milestone: policy.milestone,
-          revision: String(policy.revision),
-          mode: policy.mode,
-          cohort: policy.cohort,
+          milestone: forwardedPolicy.milestone,
+          revision: String(forwardedPolicy.revision),
+          mode: forwardedPolicy.mode,
+          cohort: forwardedPolicy.cohort,
           issuedAt: issuedAt.toISOString(),
           expiresAt: new Date(issuedAt.getTime() + 30_000).toISOString(),
         });
@@ -299,6 +314,29 @@ function runtimeMilestone(path: string, body: Uint8Array): "m1" | "m4" {
       console.warn("[collaboration-proxy] runtime route classification failed", error instanceof Error ? error.name : "UnknownError");
     }
     return "m1";
+  }
+}
+
+function shouldAttachM2ProjectionPolicy(
+  method: string,
+  path: string,
+  body: Uint8Array,
+  scopeKind?: "chat" | "terminal" | "project",
+): boolean {
+  if (method === "GET" && scopeKind === "chat"
+    && new RegExp(`^/api/collaboration/scopes/${UUID}$`).test(path)) return true;
+  if (method !== "POST" || !new RegExp(`^/api/collaboration/runtimes/${RUNTIME}/scopes$`).test(path)) return false;
+  try {
+    const parsed = CollaborationCreateScopeRequestSchema.safeParse(
+      JSON.parse(new TextDecoder().decode(body)) as unknown,
+    );
+    return parsed.success && parsed.data.kind === "chat";
+  } catch (error: unknown) {
+    if (!(error instanceof SyntaxError)) {
+      console.warn("[collaboration-proxy] scope projection classification failed",
+        error instanceof Error ? error.name : "UnknownError");
+    }
+    return false;
   }
 }
 

@@ -44,7 +44,8 @@ export class CollaborationChatExecutionAdapter {
 
   constructor(private readonly options: {
     repository: Pick<ChatRepository,
-      "enqueueSharedQueuedTurn" | "listSharedQueuedTurns" | "listSharedPendingApprovals">;
+      "enqueueSharedQueuedTurn" | "listSharedQueuedTurns" | "listSharedPendingApprovals"
+      | "getSharedAiCapability">;
     commands: Pick<CollaborationChatCommands, "cancel" | "retry" | "decideApproval">;
     resolveParticipant(actorId: string): Promise<{ actorId: string; displayName: string }>;
     resolveEligibility(scopeId: string): Promise<unknown>;
@@ -64,6 +65,11 @@ export class CollaborationChatExecutionAdapter {
     requests: readonly CollaborationAiRequest[],
   ) {
     requireChatContext(context, "read");
+    const capability = await this.options.repository.getSharedAiCapability(ownerFor(context), {
+      chatId: context.resourceId,
+      scopeId: context.scopeId,
+      actorId: context.actorId,
+    });
     const pending = await this.options.repository.listSharedPendingApprovals(
       ownerFor(context), context.resourceId, context.scopeId,
     );
@@ -82,10 +88,7 @@ export class CollaborationChatExecutionAdapter {
       })];
     }).slice(0, 100);
     return {
-      defaultSelection: {
-        instanceId: "claude_shared",
-        model: "claude-opus-4-6",
-      },
+      capability,
       approvals,
     };
   }
@@ -120,8 +123,6 @@ export class CollaborationChatExecutionAdapter {
       payloadHash: digest(input),
       expectedRevision: Number(input.expectedRevision),
       parts: [{ type: "text", text: input.text }],
-      driverKind: "claude_code",
-      selection: input.selection,
       interactionMode: "default",
       permissionMode: "supervised",
       capabilitySnapshot: {

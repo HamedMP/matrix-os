@@ -37,7 +37,7 @@ import {
 } from './runtime-mode.js';
 import { resolvePlatformIntegrationConfig } from './integration-config.js';
 import { buildPlatformVerificationToken } from './platform-token.js';
-import { buildCustomMcpProjectionUrl } from './custom-mcp-projection.js';
+import { createCustomMcpProjectionRequest } from './custom-mcp-projection.js';
 import {
   createGranolaPresetBroker,
   type ManagedMcpPresetBroker,
@@ -65,12 +65,8 @@ import type { PlatformCollaborationRuntime } from './collaboration/wiring.js';
 
 interface GatewayPlatformUser {
   id: string;
-  clerkId: string;
+  clerk_id: string;
   handle: string;
-  displayName: string;
-  email: string;
-  containerId: string;
-  pipedreamExternalId?: string;
 }
 
 export function parseGoldenSnapshotReconciliationInterval(raw: string | undefined): number | undefined {
@@ -564,37 +560,12 @@ async function startPlatformServerWithCleanup(
         containerId: `platform:${clerkUserId}`,
       })).id;
     };
-    const projectionRequest = async (
-      userId: string,
-      method: 'GET' | 'POST' | 'DELETE',
-      serverId?: string,
-      body?: unknown,
-    ): Promise<unknown> => {
-      const user = await customDb.getUserById(userId);
-      if (!user) throw new Error('Custom MCP owner is unavailable');
-      const machine = await getRunningUserMachineByHandle(db, user.handle);
-      if (!machine || machine.clerkUserId !== user.clerkId) {
-        throw new Error('Custom MCP owner runtime is unavailable');
-      }
-      const target = buildCustomMcpProjectionUrl(machine, serverId);
-      const response = await fetch(target, {
-        method,
-        redirect: 'error',
-        signal: AbortSignal.timeout(10_000),
-        headers: {
-          authorization: `Bearer ${buildPlatformVerificationToken(user.handle, platformSecret)}`,
-          'x-matrix-clerk-user-id': user.clerkId,
-          host: 'app.matrix-os.com',
-          'x-forwarded-host': 'app.matrix-os.com',
-          'x-forwarded-proto': 'https',
-          ...(body === undefined ? {} : { 'content-type': 'application/json' }),
-        },
-        body: body === undefined ? undefined : JSON.stringify(body),
-        dispatcher: customerVpsProxyDispatcher,
-      } as RequestInit & { dispatcher: Agent });
-      if (!response.ok) throw new Error(`Custom MCP projection failed (${response.status})`);
-      return response.status === 204 ? undefined : response.json();
-    };
+    const projectionRequest = createCustomMcpProjectionRequest({
+      getUser: (userId) => customDb.getUserById(userId),
+      getMachine: (handle) => getRunningUserMachineByHandle(db, handle),
+      platformSecret,
+      dispatcher: customerVpsProxyDispatcher,
+    });
     const projection = {
       upsert: (userId: string, server: unknown) => projectionRequest(userId, 'POST', undefined, server).then(() => undefined),
       remove: (userId: string, serverId: string) => projectionRequest(userId, 'DELETE', serverId).then(() => undefined),

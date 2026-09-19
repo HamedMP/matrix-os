@@ -132,12 +132,13 @@ export class TerminalRuntimeSocketClient {
       closed = true;
       socket.end();
     };
-    socket.once("connect", () => socket.write(encodeSocketFrame({
+    // Queue the handshake first: callers may send frames before connect fires.
+    socket.write(encodeSocketFrame({
       version: 1,
       requestId,
       operation: "Attach",
       input: { ...input.ref, viewerId: input.viewerId, fromSeq: input.fromSeq ?? 0, mode: input.mode, size: input.size },
-    })));
+    }));
     socket.on("data", (chunk) => {
       try {
         for (const raw of decoder.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))) {
