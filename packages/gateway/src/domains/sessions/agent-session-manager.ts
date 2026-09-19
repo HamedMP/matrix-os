@@ -1,0 +1,825 @@
+import { stopLegacySession, type LegacySessionRuntime } from "../../legacy-session-stop.js";
+import { deleteProjectSessionFiles } from "../../project-session-deletion.js";
+import { TerminalRuntimeError } from "@matrix-os/terminal-runtime";
+import { randomUUID } from "node:crypto";
+import { constants } from "node:fs";
+import { access, lstat, readdir, realpath, unlink } from "node:fs/promises";
+import { isAbsolute, join, relative, resolve } from "node:path";
+import { z } from "zod/v4";
+import {
+  AgentAttachmentSchema,
+  AgentModelOptionSchema,
+  ProviderModelReferenceSchema,
+  TerminalRefSchema,
+  type AgentAttachment,
+  type TerminalRef,
+} from "@matrix-os/contracts";
+import {
+  SupportedAgentSchema,
+  type AgentLaunchSandbox,
+  type SupportedAgent,
+} from "./agent-launcher.js";
+import { MAX_PROMPT_CONTENT_LENGTH, PromptContentSchema } from "./prompt-validation.js";
+import { PROJECT_SLUG_REGEX, type ProjectConfig, type WorkspaceError } from "../workspace/project-manager.js";
+import { atomicWriteJson, readJsonFile } from "../files/state-ops.js";
+import { createProjectRegistry } from "../workspace/project-registry.js";
+import type { createAgentLauncher } from "./agent-launcher.js";
+import type { createWorktreeManager, WorktreeRecord } from "../git/worktree-manager.js";
+import type { TerminalRuntimeSocketClient } from "@matrix-os/terminal-runtime";
+import { codexProviderEventPath } from "../../coding-agents/codex-event-bridge.js";
+import { agentTerminalCwd } from "./agent-terminal-cwd.js";
+import { logSessionStartupFailure } from "./session-startup-diagnostics.js";
+
+import type { BackgroundAgentRuntime, BackgroundAgentRef } from "./background-agent-runtime.js";
+import { startBackgroundSession } from "./background-session-lifecycle.js";
+
+export type SessionKind = "shell" | "agent";
+export type RuntimeStatus = "starting" | "running" | "idle" | "waiting" | "exited" | "failed" | "degraded";
+type SessionApprovalPolicy = "untrusted" | "on_request" | "on_failure" | "never";
+
+export interface WorkspaceSession {
+  id: string;
+  kind: SessionKind;
+  projectSlug?: string;
+  taskId?: string;
+  worktreeId?: string;
+  pr?: number;
+  agent?: SupportedAgent;
+  runtime: {
+    type: "zellij" | "tmux" | "pty" | "background";
+    status: RuntimeStatus;
+    zellijSession?: string;
+    zellijLayoutPath?: string;
+    createdAt?: string;
+    tmuxSession?: string;
+    fallbackReason?: string;
+  };
+  terminalRef?: TerminalRef;
+  backgroundRef?: BackgroundAgentRef;
+  transcriptPath: string;
+  attachedClients: number;
+  writeMode: "owner" | "takeover" | "closed";
+  ownerId: string;
+  startedAt: string;
+  lastActivityAt: string;
+  exitedAt?: string;
+  exitCode?: number;
+}
+
+export type WorkspaceSessionView = WorkspaceSession & {
+  nativeAttachCommand?: string[];
+  observeCommand?: string[];
+};
+
+type WorktreeManager = Pick<
+  ReturnType<typeof createWorktreeManager>,
+  "listWorktrees" | "acquireLease" | "releaseLease"
+>;
+type AgentLauncher = Pick<ReturnType<typeof createAgentLauncher>, "buildLaunch">;
+type TerminalRuntimeClient = Pick<
+  TerminalRuntimeSocketClient,
+  "ensureWorkspace" | "createTab" | "terminateTab" | "writeInput" | "listWorkspaces"
+>;
+
+type Failure = {
+  ok: false;
+  status: number;
+  error: WorkspaceError;
+  holderId?: string;
+};
+
+export type AgentSessionStartupReconciliation = {
+  checked: number;
+  degraded: number;
+  releasedLeases: number;
+  stoppedSessions: WorkspaceSessionView[];
+};
+
+const SessionIdSchema = z.string().regex(/^sess_[A-Za-z0-9_-]{1,128}$/);
+const TaskIdSchema = z.string().regex(/^task_[A-Za-z0-9_-]{1,128}$/);
+const SlugSchema = z.string().regex(PROJECT_SLUG_REGEX);
+const WorktreeIdSchema = z.string().regex(/^wt_[a-z0-9]{12,40}$/);
+const AgentSandboxSchema = z.object({
+  enabled: z.boolean(),
+  mode: z.enum(["read-only", "workspace-write", "danger-full-access"]).optional(),
+  writableRoots: z.array(z.string().trim().min(1).max(4096)).max(20).optional(),
+  denyWriteRoots: z.array(z.string().trim().min(1).max(4096)).max(20).optional(),
+  adminOverride: z.boolean().optional(),
+}).strict();
+const StartSessionSchema = z.object({
+  sessionId: SessionIdSchema.optional(),
+  kind: z.enum(["shell", "agent"]),
+  ownerId: z.string().trim().min(1).max(200),
+  projectSlug: SlugSchema.optional(),
+  workspaceRoot: z.string().trim().min(1).max(4096).refine(isAbsolute).optional(),
+  taskId: TaskIdSchema.optional(),
+  worktreeId: WorktreeIdSchema.optional(),
+  pr: z.number().int().positive().optional(),
+  agent: SupportedAgentSchema.optional(),
+  prompt: PromptContentSchema.optional(),
+  providerThreadId: z.string().trim().min(1).max(512).optional(),
+  attachments: z.array(AgentAttachmentSchema).max(8).optional(),
+  model: ProviderModelReferenceSchema.optional(),
+  modelOptions: z.array(AgentModelOptionSchema).max(32).optional(),
+  mode: z.enum(["default", "plan", "review", "full_access"]).optional(),
+  approvalPolicy: z.enum(["untrusted", "on_request", "on_failure", "never"]).optional(),
+  sandboxMode: z.enum(["read_only", "workspace_write", "full_access"]).optional(),
+  runtimePreference: z.enum(["zellij", "background"]).optional(),
+  sandbox: AgentSandboxSchema.optional(),
+});
+const ListSessionsSchema = z.object({
+  projectSlug: SlugSchema.optional(),
+  taskId: TaskIdSchema.optional(),
+  pr: z.number().int().positive().optional(),
+  status: z.enum(["starting", "running", "idle", "waiting", "exited", "failed", "degraded"]).optional(),
+  limit: z.number().int().min(1).max(100).optional(),
+  cursor: SessionIdSchema.optional(),
+});
+const SessionInputSchema = z.string().min(1).max(64 * 1024);
+
+function nowIso(now?: () => string): string {
+  return now ? now() : new Date().toISOString();
+}
+
+function failure(status: number, code: string, message: string, holderId?: string): Failure {
+  return { ok: false, status, error: { code, message }, holderId };
+}
+
+function toAgentApprovalPolicy(policy?: SessionApprovalPolicy): "untrusted" | "on-request" | "on-failure" | "never" | undefined {
+  if (policy === "on_request") return "on-request";
+  if (policy === "on_failure") return "on-failure";
+  return policy;
+}
+
+function launchPromptWithReferences(prompt: string | undefined, attachments: AgentAttachment[] | undefined): string | undefined {
+  const references = (attachments ?? [])
+    .filter((attachment) => attachment.kind === "structured_ref")
+    .map((attachment) => {
+      const target = attachment.path ? `: ${attachment.path}` : "";
+      return `- [${attachment.kind}] ${attachment.label}${target}`;
+    });
+  if (references.length === 0) return prompt;
+  const context = ["Context references:", ...references].join("\n");
+  const nextPrompt = prompt && prompt.trim().length > 0 ? `${prompt}\n\n${context}` : context;
+  const parsed = PromptContentSchema.safeParse(nextPrompt);
+  if (parsed.success) return parsed.data;
+
+  const contextOnly = PromptContentSchema.safeParse(context);
+  if (!contextOnly.success) return prompt;
+  if (!prompt || prompt.trim().length === 0) return contextOnly.data;
+
+  const separator = "\n\n";
+  const promptBudget = MAX_PROMPT_CONTENT_LENGTH - context.length - separator.length;
+  if (promptBudget <= 0) return contextOnly.data;
+
+  const truncatedPrompt = prompt.slice(0, promptBudget);
+  const boundedPrompt = PromptContentSchema.safeParse(`${truncatedPrompt}${separator}${context}`);
+  return boundedPrompt.success ? boundedPrompt.data : contextOnly.data;
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await access(path, constants.F_OK);
+    return true;
+  } catch (err: unknown) {
+    if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") {
+      return false;
+    }
+    throw err;
+  }
+}
+
+function sessionPath(homePath: string, sessionId: string): string {
+  return join(homePath, "system", "sessions", `${sessionId}.json`);
+}
+
+async function readProject(homePath: string, projectSlug: string): Promise<ProjectConfig | null> {
+  return await createProjectRegistry({ homePath }).readConfig<ProjectConfig>(projectSlug);
+}
+
+async function readSession(homePath: string, sessionId: string): Promise<WorkspaceSession | null> {
+  try {
+    return await readJsonFile<WorkspaceSession>(sessionPath(homePath, sessionId));
+  } catch (err: unknown) {
+    if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") {
+      return null;
+    }
+    throw err;
+  }
+}
+
+async function writeSession(homePath: string, session: WorkspaceSession): Promise<void> {
+  await atomicWriteJson(sessionPath(homePath, session.id), session);
+}
+
+function isActive(session: WorkspaceSession): boolean {
+  return ["starting", "running", "idle", "waiting"].includes(session.runtime.status);
+}
+
+function decorateSession(session: WorkspaceSession): WorkspaceSessionView {
+  return session;
+}
+
+function sanitizeStartupInput(input: unknown):
+  | { ok: true; value: z.infer<typeof StartSessionSchema> }
+  | Failure {
+  const parsed = StartSessionSchema.safeParse(input);
+  if (!parsed.success) {
+    return failure(400, "invalid_session_request", "Session request is invalid");
+  }
+  if (parsed.data.kind === "agent" && !parsed.data.agent) {
+    return failure(400, "invalid_session_request", "Agent sessions require an agent");
+  }
+  if (parsed.data.kind === "shell" && parsed.data.agent) {
+    return failure(400, "invalid_session_request", "Shell sessions cannot include an agent");
+  }
+  if (parsed.data.worktreeId && !parsed.data.projectSlug) {
+    return failure(400, "invalid_session_request", "Worktree sessions require a project");
+  }
+  if (parsed.data.workspaceRoot && (parsed.data.projectSlug || parsed.data.worktreeId)) {
+    return failure(400, "invalid_session_request", "Session workspace is invalid");
+  }
+  return { ok: true, value: parsed.data };
+}
+
+async function resolveInternalWorkspaceRoot(homePath: string, requestedRoot: string): Promise<string | null> {
+  try {
+    const [homeReal, stats, rootReal] = await Promise.all([
+      realpath(homePath),
+      lstat(requestedRoot),
+      realpath(requestedRoot),
+    ]);
+    if (!stats.isDirectory() || stats.isSymbolicLink()) return null;
+    const rel = relative(homeReal, rootReal);
+    if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) return null;
+    return rootReal;
+  } catch (error: unknown) {
+    if (
+      error instanceof Error
+      && "code" in error
+      && ["EACCES", "ENOENT", "ENOTDIR"].includes(String((error as NodeJS.ErrnoException).code))
+    ) {
+      return null;
+    }
+    throw error;
+  }
+}
+
+async function readAllSessions(homePath: string): Promise<WorkspaceSession[]> {
+  const dir = join(homePath, "system", "sessions");
+  let entries;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch (err: unknown) {
+    if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") {
+      return [];
+    }
+    throw err;
+  }
+  const sessions: WorkspaceSession[] = [];
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+    const sessionId = entry.name.slice(0, -".json".length);
+    if (!SessionIdSchema.safeParse(sessionId).success) continue;
+    sessions.push(await readJsonFile<WorkspaceSession>(join(dir, entry.name)));
+  }
+  return sessions;
+}
+
+export async function hasActiveWorkspaceSessionForTerminalRef(
+  homePathInput: string,
+  refInput: TerminalRef,
+): Promise<boolean> {
+  const homePath = resolve(homePathInput);
+  const ref = TerminalRefSchema.parse(refInput);
+  return (await readAllSessions(homePath)).some((session) => {
+    if (!isActive(session)) return false;
+    // Sessions persisted before terminal workspace references were introduced
+    // remain valid legacy records, but cannot bind a current terminal tab.
+    if (session.terminalRef === undefined) return false;
+    const sessionRef = TerminalRefSchema.parse(session.terminalRef);
+    return sessionRef.workspaceId === ref.workspaceId
+      && sessionRef.tabId === ref.tabId;
+  });
+}
+
+async function resolveWorktree(
+  worktreeManager: WorktreeManager,
+  projectSlug: string,
+  worktreeId: string,
+): Promise<WorktreeRecord | null> {
+  const listed = await worktreeManager.listWorktrees(projectSlug);
+  if (!listed.ok) return null;
+  return listed.worktrees.find((worktree) => worktree.id === worktreeId) ?? null;
+}
+
+async function releaseSessionLease(worktreeManager: WorktreeManager, session: Pick<WorkspaceSession, "id" | "projectSlug" | "worktreeId">): Promise<boolean> {
+  if (!session.projectSlug || !session.worktreeId) return true;
+  const released = await worktreeManager.releaseLease({
+    projectSlug: session.projectSlug,
+    worktreeId: session.worktreeId,
+    holderId: session.id,
+  });
+  if (!released.ok) {
+    console.warn("[agent-session-manager] Worktree lease release failed:", released.error.code);
+    return false;
+  }
+  return true;
+}
+
+export function createAgentSessionManager(options: {
+  homePath: string;
+  worktreeManager: WorktreeManager;
+  agentLauncher: AgentLauncher;
+  terminalRuntime: TerminalRuntimeClient;
+  backgroundRuntime?: BackgroundAgentRuntime;
+  legacyZellij?: LegacySessionRuntime;
+  now?: () => string;
+  idGenerator?: () => string;
+  startupRetryDelaysMs?: readonly number[];
+  startupReconcileIntervalMs?: number;
+  sleep?: (delayMs: number) => Promise<void>;
+}) {
+  const homePath = resolve(options.homePath);
+  const idGenerator = options.idGenerator ?? (() => `sess_${randomUUID()}`);
+  const startupRetryDelaysMs = options.startupRetryDelaysMs ?? [250, 1_000, 3_000];
+  const startupReconcileIntervalMs = options.startupReconcileIntervalMs ?? 30_000;
+  const sleep = options.sleep ?? ((delayMs: number) => new Promise<void>((resolveSleep) => {
+    const timer = setTimeout(resolveSleep, delayMs);
+    timer.unref();
+  }));
+  let startupReconcileTimer: NodeJS.Timeout | null = null;
+  let stopped = false;
+  let runScheduledReconciliation = async () => undefined;
+  const scheduleStartupReconciliation = () => {
+    if (stopped || startupReconcileTimer !== null) return;
+    startupReconcileTimer = setTimeout(async () => {
+      startupReconcileTimer = null;
+      if (stopped) return;
+      try {
+        await runScheduledReconciliation();
+      } catch (error: unknown) {
+        console.error(
+          "[agent-session-manager] Scheduled reconciliation failed:",
+          error instanceof Error ? error.name : "unknown_error",
+        );
+        scheduleStartupReconciliation();
+      }
+    }, startupReconcileIntervalMs);
+    startupReconcileTimer.unref();
+  };
+
+  const manager = {
+    async startSession(input: unknown, lockedRuntime?: BackgroundAgentRuntime): Promise<
+      { ok: true; status: 201; session: WorkspaceSessionView } | Failure
+    > {
+      const parsed = sanitizeStartupInput(input);
+      if (!parsed.ok) return parsed;
+      const request = parsed.value;
+      if (request.runtimePreference === "background" && (request.kind !== "agent" || request.agent !== "codex" || !options.backgroundRuntime)) {
+        return failure(503, "runtime_unavailable", "Session runtime is unavailable");
+      }
+      if (request.runtimePreference === "background" && !lockedRuntime && options.backgroundRuntime?.withLock) {
+        return options.backgroundRuntime.withLock(runtime => manager.startSession(input, runtime));
+      }
+      const sessionId = request.sessionId ?? idGenerator();
+      if (!SessionIdSchema.safeParse(sessionId).success) {
+        return failure(500, "session_id_invalid", "Session could not be created");
+      }
+
+      if (request.runtimePreference === "background") {
+        const previous = await readSession(homePath, sessionId);
+        if (previous?.runtime.type === "background") {
+          try {
+            if (!previous.backgroundRef || previous.ownerId !== request.ownerId
+              || await (lockedRuntime ?? options.backgroundRuntime!).isRunning(previous.backgroundRef)) {
+              return failure(503, "runtime_ownership_retained", "Session runtime is unavailable");
+            }
+          } catch (error: unknown) {
+            console.warn("[agent-session-manager] Previous background ownership unconfirmed", error instanceof Error ? error.name : "UnknownError");
+            return failure(503, "runtime_ownership_retained", "Session runtime is unavailable");
+          }
+        }
+      }
+
+      let cwd = homePath;
+      let projectId: string | undefined;
+      let worktree: WorktreeRecord | null = null;
+      let leaseAcquired = false;
+      if (request.workspaceRoot) {
+        const workspaceRoot = await resolveInternalWorkspaceRoot(homePath, request.workspaceRoot);
+        if (!workspaceRoot) return failure(400, "sandbox_unavailable", "Agent sandbox is unavailable");
+        cwd = workspaceRoot;
+      }
+      if (request.projectSlug) {
+        const project = await readProject(homePath, request.projectSlug);
+        if (!project) return failure(404, "not_found", "Project was not found");
+        cwd = project.localPath;
+        projectId = project.id;
+      }
+      if (request.projectSlug && request.worktreeId) {
+        worktree = await resolveWorktree(options.worktreeManager, request.projectSlug, request.worktreeId);
+        if (!worktree || !await pathExists(worktree.path)) {
+          return failure(404, "not_found", "Worktree was not found");
+        }
+        cwd = worktree.path;
+        const lease = await options.worktreeManager.acquireLease({
+          projectSlug: request.projectSlug,
+          worktreeId: request.worktreeId,
+          holderType: "session",
+          holderId: sessionId,
+        });
+        if (!lease.ok) {
+          const holderId = "holderId" in lease ? lease.holderId : undefined;
+          return failure(lease.status, "worktree_locked", "Worktree is locked", holderId);
+        }
+        leaseAcquired = true;
+      }
+
+      const startedAt = nowIso(options.now);
+      let launch;
+      try {
+        launch = request.kind === "agent"
+          ? options.agentLauncher.buildLaunch({
+            agent: request.agent!,
+            cwd,
+            prompt: launchPromptWithReferences(request.prompt, request.attachments),
+            providerThreadId: request.providerThreadId,
+            model: request.model,
+            modelOptions: request.modelOptions,
+            mode: request.mode,
+            sandbox: request.sandbox,
+            approvalPolicy: toAgentApprovalPolicy(request.approvalPolicy),
+            ...(request.agent === "codex"
+              ? { providerEventPath: codexProviderEventPath(homePath, sessionId) }
+              : {}),
+          })
+          : { command: "bash", args: [], cwd, env: {} };
+      } catch (err: unknown) {
+        await logSessionStartupFailure("launch_preflight", sessionId, err);
+        if (leaseAcquired) {
+          await releaseSessionLease(options.worktreeManager, { id: sessionId, projectSlug: request.projectSlug, worktreeId: request.worktreeId });
+        }
+        return failure(400, "sandbox_unavailable", "Agent sandbox is unavailable");
+      }
+
+      const session: WorkspaceSession = {
+        id: sessionId,
+        kind: request.kind,
+        projectSlug: request.projectSlug,
+        taskId: request.taskId,
+        worktreeId: request.worktreeId,
+        pr: request.pr,
+        agent: request.agent,
+        runtime: {
+          type: request.runtimePreference === "background" ? "background" : "zellij",
+          status: "running",
+          createdAt: startedAt,
+        },
+        transcriptPath: join(homePath, "system", "session-output", `${sessionId}.jsonl`),
+        attachedClients: 0,
+        writeMode: "owner",
+        ownerId: request.ownerId,
+        startedAt,
+        lastActivityAt: startedAt,
+      };
+      if (request.runtimePreference === "background") {
+        const started = await startBackgroundSession({
+          runtime: lockedRuntime ?? options.backgroundRuntime!, session, launch,
+          persist: (value) => writeSession(homePath, value),
+        });
+        if (started.ok) return { ok: true, status: 201, session: decorateSession(started.session) };
+        if (!started.retainWorkspace && leaseAcquired) await releaseSessionLease(options.worktreeManager, session);
+        scheduleStartupReconciliation();
+        return failure(503, started.retainWorkspace ? "runtime_ownership_retained" : "runtime_unavailable", "Session runtime is unavailable");
+      }
+      let terminalRef: TerminalRef | undefined;
+      try {
+        const terminalCwd = await agentTerminalCwd(homePath, launch.cwd);
+        const workspace = await options.terminalRuntime.ensureWorkspace(projectId ? { projectId } : {});
+        const command = [
+          "env",
+          ...Object.entries(launch.env).map(([key, value]) => `${key}=${value}`),
+          launch.command,
+          ...launch.args,
+        ];
+        const tab = await options.terminalRuntime.createTab(workspace.id, {
+          name: request.agent ?? "shell",
+          cwd: terminalCwd,
+          command,
+          ...(request.agent ? { agent: { providerId: request.agent } } : {}),
+        });
+        terminalRef = TerminalRefSchema.parse({ workspaceId: workspace.id, tabId: tab.id });
+      } catch (err: unknown) {
+        await logSessionStartupFailure("runtime_start", sessionId, err);
+        if (leaseAcquired) {
+          await releaseSessionLease(options.worktreeManager, { id: sessionId, projectSlug: request.projectSlug, worktreeId: request.worktreeId });
+        }
+        return failure(503, "runtime_unavailable", "Session runtime is unavailable");
+      }
+
+      session.terminalRef = terminalRef;
+      try {
+        await writeSession(homePath, session);
+      } catch (err: unknown) {
+        await logSessionStartupFailure("session_persist", sessionId, err);
+        await options.terminalRuntime.terminateTab(terminalRef!).catch((killErr: unknown) => {
+          console.warn("[agent-session-manager] Runtime cleanup after session write failure failed:", killErr instanceof Error ? killErr.message : String(killErr));
+        });
+        if (leaseAcquired) {
+          await releaseSessionLease(options.worktreeManager, session);
+        }
+        return failure(500, "session_persist_failed", "Session could not be created");
+      }
+      return { ok: true, status: 201, session: decorateSession(session) };
+    },
+
+    async getSession(sessionId: string): Promise<{ ok: true; session: WorkspaceSessionView } | Failure> {
+      if (!SessionIdSchema.safeParse(sessionId).success) {
+        return failure(400, "invalid_session_id", "Session identifier is invalid");
+      }
+      const session = await readSession(homePath, sessionId);
+      if (!session) return failure(404, "not_found", "Session was not found");
+      return { ok: true, session: decorateSession(session) };
+    },
+
+    async listSessions(input: unknown = {}): Promise<
+      { ok: true; sessions: WorkspaceSessionView[]; nextCursor: string | null } | Failure
+    > {
+      const parsed = ListSessionsSchema.safeParse(input);
+      if (!parsed.success) {
+        return failure(400, "invalid_session_query", "Session query is invalid");
+      }
+      const query = parsed.data;
+      const limit = query.limit ?? 100;
+      const sessions = (await readAllSessions(homePath))
+        .filter((session) => !query.projectSlug || session.projectSlug === query.projectSlug)
+        .filter((session) => !query.taskId || session.taskId === query.taskId)
+        .filter((session) => typeof query.pr !== "number" || session.pr === query.pr)
+        .filter((session) => !query.status || session.runtime.status === query.status)
+        .sort((a, b) => (
+          b.lastActivityAt.localeCompare(a.lastActivityAt) || a.id.localeCompare(b.id)
+        ));
+      const cursorIndex = query.cursor
+        ? sessions.findIndex((session) => session.id === query.cursor)
+        : -1;
+      if (query.cursor && cursorIndex < 0) {
+        return failure(400, "invalid_session_cursor", "Session cursor is invalid");
+      }
+      const start = cursorIndex + 1;
+      const page = sessions.slice(start, start + limit);
+      const nextCursor = start + page.length < sessions.length
+        ? page.at(-1)?.id ?? null
+        : null;
+      return {
+        ok: true,
+        sessions: page.map((session) => decorateSession(session)),
+        nextCursor,
+      };
+    },
+
+    async getProjectLifecycleState(input: {
+      projectSlug: string;
+      ownerId: string;
+    }): Promise<{ activeSessionCount: number; sessionCount: number } | Failure> {
+      if (!PROJECT_SLUG_REGEX.test(input.projectSlug) || input.ownerId.length < 1 || input.ownerId.length > 256) {
+        return failure(400, "invalid_session_query", "Session query is invalid");
+      }
+      const sessions = (await readAllSessions(homePath)).filter((session) =>
+        session.projectSlug === input.projectSlug && session.ownerId === input.ownerId
+      );
+      return {
+        activeSessionCount: sessions.filter(isActive).length,
+        sessionCount: sessions.length,
+      };
+    },
+
+    async deleteProjectSessions(input: {
+      projectSlug: string;
+      ownerId: string;
+      beforeRemove?: (sessions: WorkspaceSession[]) => Promise<void>;
+    }): Promise<{ ok: true; deleted: number } | Failure> {
+      if (!PROJECT_SLUG_REGEX.test(input.projectSlug) || input.ownerId.length < 1 || input.ownerId.length > 256) {
+        return failure(400, "invalid_session_query", "Session query is invalid");
+      }
+      const sessions = (await readAllSessions(homePath)).filter((session) =>
+        session.projectSlug === input.projectSlug && session.ownerId === input.ownerId
+      );
+      // Stop every owned runtime before removing any session record. A failed stop is retryable.
+      for (const session of sessions) {
+        if (session.runtime.status !== "exited" || session.runtime.fallbackReason === "lease_release_failed") {
+          const stopped = await manager.killSession(session.id);
+          if (!stopped.ok) return stopped;
+        }
+      }
+      await input.beforeRemove?.(sessions);
+      for (const session of sessions) await deleteProjectSessionFiles(homePath, session);
+      return { ok: true, deleted: sessions.length };
+    },
+
+    async sendInput(
+      sessionId: string,
+      input: string,
+      signal?: AbortSignal,
+    ): Promise<{ ok: true; session: WorkspaceSessionView } | Failure> {
+      if (!SessionIdSchema.safeParse(sessionId).success || !SessionInputSchema.safeParse(input).success) {
+        return failure(400, "invalid_session_input", "Session input is invalid");
+      }
+      const session = await readSession(homePath, sessionId);
+      if (!session) return failure(404, "not_found", "Session was not found");
+      if (session.writeMode === "closed" || session.runtime.status === "exited" || session.runtime.status === "failed") {
+        return failure(409, "session_closed", "Session is closed");
+      }
+      if (!session.terminalRef || session.runtime.type === "background") return failure(400, "runtime_unsupported", "Session input is unavailable");
+      try {
+        signal?.throwIfAborted();
+        await options.terminalRuntime.writeInput(session.terminalRef, input);
+      } catch (err: unknown) {
+        if (err instanceof Error) {
+          console.warn("[agent-session-manager] Failed to send session input:", err.message);
+        }
+        return failure(502, "session_send_failed", "Session input could not be sent");
+      }
+      const updated = { ...session, lastActivityAt: nowIso(options.now) };
+      await writeSession(homePath, updated);
+      return { ok: true, session: decorateSession(updated) };
+    },
+
+    async killSession(sessionId: string, lockedRuntime?: BackgroundAgentRuntime): Promise<{ ok: true; session: WorkspaceSessionView } | Failure> {
+      if (!SessionIdSchema.safeParse(sessionId).success) {
+        return failure(400, "invalid_session_id", "Session identifier is invalid");
+      }
+      const session = await readSession(homePath, sessionId);
+      if (!session) return failure(404, "not_found", "Session was not found");
+      if (session.runtime.type === "background" && !lockedRuntime && options.backgroundRuntime?.withLock) {
+        return options.backgroundRuntime.withLock(runtime => manager.killSession(sessionId, runtime));
+      }
+      let killFailed = false;
+      try {
+        if (session.runtime.status === "exited") {
+          // Already stopped sessions may predate all current runtime references.
+          // Continue to lease release, without trying to stop a recycled runtime.
+        } else if (session.runtime.type === "background") {
+          if (!session.backgroundRef || !options.backgroundRuntime) throw new Error("Background runtime unavailable");
+          await (lockedRuntime ?? options.backgroundRuntime).stop(session.backgroundRef);
+        } else if (session.terminalRef) {
+          await options.terminalRuntime.terminateTab(session.terminalRef);
+        } else {
+          await stopLegacySession(session.runtime.zellijSession, options.legacyZellij);
+        }
+      } catch (err: unknown) {
+        if (!(err instanceof TerminalRuntimeError && err.code === "not_found")) {
+          console.warn("[agent-session-manager] Runtime kill failed:", err instanceof Error ? err.message : "UnknownError");
+          killFailed = true;
+        }
+      }
+      if (killFailed && session.runtime.type === "background") {
+        scheduleStartupReconciliation();
+        return failure(503, "runtime_ownership_retained", "Session runtime is unavailable");
+      }
+      const releaseOk = await releaseSessionLease(options.worktreeManager, session);
+      const exitedAt = nowIso(options.now);
+      const updated: WorkspaceSession = {
+        ...session,
+        runtime: {
+          ...session.runtime,
+          status: killFailed ? "degraded" : releaseOk ? "exited" : "failed",
+          fallbackReason: killFailed
+            ? "kill_failed"
+            : releaseOk ? session.runtime.fallbackReason : "lease_release_failed",
+        },
+        writeMode: "closed",
+        lastActivityAt: exitedAt,
+        exitedAt,
+      };
+      await writeSession(homePath, updated);
+      if (!releaseOk) return failure(500, "lease_release_failed", "Session stopped but the worktree lease could not be released");
+      if (killFailed) return failure(503, "runtime_unavailable", "Session runtime is unavailable");
+      return { ok: true, session: decorateSession(updated) };
+    },
+
+    async reconcileStartup(): Promise<AgentSessionStartupReconciliation> {
+      const sessions = await readAllSessions(homePath);
+      let degraded = 0;
+      let releasedLeases = 0;
+      const stoppedSessions: WorkspaceSessionView[] = [];
+      const runtimeReconciliationSessions: WorkspaceSession[] = [];
+      for (const session of sessions) {
+        if (session.runtime.type === "background") continue;
+        if (session.runtime.fallbackReason !== "lease_release_failed") {
+          runtimeReconciliationSessions.push(session);
+          continue;
+        }
+        const releaseOk = await releaseSessionLease(options.worktreeManager, session);
+        if (!releaseOk) {
+          scheduleStartupReconciliation();
+          continue;
+        }
+        if (session.projectSlug && session.worktreeId) releasedLeases += 1;
+        const recoveredSession: WorkspaceSession = {
+          ...session,
+          runtime: session.runtime.status === "failed"
+            ? { ...session.runtime, status: "exited", fallbackReason: undefined }
+            : { ...session.runtime, status: "degraded", fallbackReason: "runtime_degraded" },
+        };
+        await writeSession(homePath, recoveredSession);
+      }
+      const reconcileBackground = async (runtime: BackgroundAgentRuntime | undefined) => {
+        // Refresh under the same cross-process lock as start/stop before releasing any lease.
+        for (const session of await readAllSessions(homePath)) {
+          if (session.runtime.type !== "background" || (!isActive(session) && session.runtime.fallbackReason !== "lease_release_failed")) continue;
+          try {
+            if (!runtime || !session.backgroundRef) throw new Error("Background runtime unavailable");
+            if (await runtime.isRunning(session.backgroundRef)) {
+              scheduleStartupReconciliation();
+              continue;
+            }
+            const releaseOk = await releaseSessionLease(options.worktreeManager, session);
+            if (releaseOk && session.projectSlug && session.worktreeId) releasedLeases++;
+            if (!releaseOk) scheduleStartupReconciliation();
+            const stoppedSession: WorkspaceSession = {
+              ...session, runtime: { ...session.runtime, status: "degraded", fallbackReason: releaseOk ? "runtime_degraded" : "lease_release_failed" },
+              writeMode: "closed", lastActivityAt: nowIso(options.now),
+            };
+            await writeSession(homePath, stoppedSession);
+            stoppedSessions.push(decorateSession(stoppedSession));
+            degraded++;
+          } catch (error: unknown) {
+            console.warn("[agent-session-manager] Background reconciliation deferred", error instanceof Error ? error.name : "UnknownError");
+            scheduleStartupReconciliation();
+          }
+        }
+      };
+      if (options.backgroundRuntime?.withLock) await options.backgroundRuntime.withLock(reconcileBackground);
+      else await reconcileBackground(options.backgroundRuntime);
+      let liveWorkspaces;
+      let inventoryFailure: unknown;
+      for (let attempt = 0; attempt <= startupRetryDelaysMs.length; attempt += 1) {
+        try {
+          liveWorkspaces = await options.terminalRuntime.listWorkspaces();
+          inventoryFailure = undefined;
+          break;
+        } catch (error: unknown) {
+          inventoryFailure = error;
+          const retryDelay = startupRetryDelaysMs[attempt];
+          if (retryDelay === undefined) break;
+          await sleep(retryDelay);
+        }
+      }
+      if (!liveWorkspaces) {
+        console.warn("[agent-session-manager] Terminal runtime reconciliation failed:", inventoryFailure instanceof Error ? inventoryFailure.message : String(inventoryFailure));
+        scheduleStartupReconciliation();
+        return { checked: sessions.length, degraded, releasedLeases, stoppedSessions };
+      }
+      if (liveWorkspaces.length === 0) {
+        console.warn("[agent-session-manager] Empty terminal runtime inventory; preserving active sessions");
+        scheduleStartupReconciliation();
+        return { checked: sessions.length, degraded, releasedLeases, stoppedSessions };
+      }
+      let reconciliationPending = false;
+      for (const session of runtimeReconciliationSessions) {
+        if (!isActive(session) || session.runtime.type !== "zellij" || !session.terminalRef) continue;
+        const ref = session.terminalRef;
+        const workspace = liveWorkspaces.find((candidate) => candidate.id === ref.workspaceId);
+        const liveTab = workspace?.tabs.find((tab) => tab.id === ref.tabId);
+        // A bulk runtime inventory is observational, not proof of absence. Only
+        // an explicit terminal state may close the durable session and release
+        // its lease; missing entries remain recoverable on the next startup.
+        if (!liveTab) {
+          reconciliationPending = true;
+          continue;
+        }
+        if (liveTab.status !== "exited" && liveTab.status !== "failed") {
+          reconciliationPending = true;
+          continue;
+        }
+        degraded += 1;
+        const releaseOk = await releaseSessionLease(options.worktreeManager, session);
+        if (session.projectSlug && session.worktreeId && releaseOk) releasedLeases += 1;
+        else scheduleStartupReconciliation();
+        const stoppedSession: WorkspaceSession = {
+          ...session,
+          runtime: {
+            ...session.runtime,
+            status: "degraded",
+            fallbackReason: releaseOk ? "runtime_degraded" : "lease_release_failed",
+          },
+          writeMode: "closed",
+          lastActivityAt: nowIso(options.now),
+        };
+        await writeSession(homePath, stoppedSession);
+        stoppedSessions.push(decorateSession(stoppedSession));
+      }
+      if (reconciliationPending) scheduleStartupReconciliation();
+      return { checked: sessions.length, degraded, releasedLeases, stoppedSessions };
+    },
+
+    shutdown(): void {
+      stopped = true;
+      if (startupReconcileTimer !== null) clearTimeout(startupReconcileTimer);
+      startupReconcileTimer = null;
+    },
+  };
+  runScheduledReconciliation = async () => { await manager.reconcileStartup(); };
+  return manager;
+}

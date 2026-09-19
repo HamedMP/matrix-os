@@ -4,7 +4,7 @@ import {
   authMiddleware,
   getUserIdFromContext,
   MissingSyncUserIdentityError,
-} from "../../../packages/gateway/src/auth.js";
+} from "../../../packages/gateway/src/domains/identity/auth.js";
 import { issueSyncJwt } from "../../../packages/platform/src/sync-jwt.js";
 import {
   createSyncRoutes,

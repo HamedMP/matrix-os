@@ -23,7 +23,7 @@ import {
   type MatrixZellijShellThemeId,
   type MatrixZellijConfigPaths,
 } from "./zellij-config.js";
-import { applyTerminalTruecolorEnv } from "../terminal-env.js";
+import { applyTerminalTruecolorEnv } from "../domains/terminal/terminal-env.js";
 import {
   UNAVAILABLE_FOCUSED_PANE_RUNTIME,
   type FocusedPaneRuntimeObservation,

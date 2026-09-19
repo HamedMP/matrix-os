@@ -8,8 +8,8 @@ import {
   type CanonicalChatExecutionRootRef,
   type CanonicalOwnerScope,
 } from "@matrix-os/contracts";
-import { PROJECT_SLUG_REGEX } from "../project-registry.js";
-import type { OwnerScope } from "../state-ops.js";
+import { PROJECT_SLUG_REGEX } from "../domains/workspace/project-registry.js";
+import type { OwnerScope } from "../domains/files/state-ops.js";
 
 export interface ChatExecutionRootProject {
   id: string;

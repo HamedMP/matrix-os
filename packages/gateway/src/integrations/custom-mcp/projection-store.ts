@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { atomicWriteJson, readJsonFile } from "../../state-ops.js";
+import { atomicWriteJson, readJsonFile } from "../../domains/files/state-ops.js";
 import type {
   CustomMcpProjectionFile,
   CustomMcpServerProjection,

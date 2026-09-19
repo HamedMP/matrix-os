@@ -3,7 +3,7 @@ import { appendFile, chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } f
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { buildAgentLaunch } from "../../packages/gateway/src/agent-launcher.js";
+import { buildAgentLaunch } from "../../packages/gateway/src/domains/sessions/agent-launcher.js";
 import { createCanonicalCodingChatProviderAdapter } from "../../packages/gateway/src/chat/coding-provider-adapter.js";
 import { CODEX_VERIFIED_VERSION } from "../../packages/contracts/src/index.js";
 import {
@@ -12,7 +12,7 @@ import {
 } from "../../packages/gateway/src/coding-agents/codex-event-bridge.js";
 import { createCodingAgentThreadStore } from "../../packages/gateway/src/coding-agents/thread-store.js";
 import { createWorkspaceCodingAgentProvider } from "../../packages/gateway/src/coding-agents/workspace-provider.js";
-import type { RequestPrincipal } from "../../packages/gateway/src/request-principal.js";
+import type { RequestPrincipal } from "../../packages/gateway/src/domains/identity/request-principal.js";
 
 const principal: RequestPrincipal = { userId: "owner_user", source: "jwt" };
 

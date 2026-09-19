@@ -18,7 +18,7 @@ import {
   SAFE_SLUG,
   installApp,
 } from "../../packages/gateway/src/app-runtime/index.js";
-import { authMiddleware } from "../../packages/gateway/src/auth.js";
+import { authMiddleware } from "../../packages/gateway/src/domains/identity/auth.js";
 
 const TEST_TOKEN = "test-gateway-token-for-integration";
 

@@ -74,7 +74,7 @@ import {
   isRequestPrincipalError,
   mapRequestPrincipalError,
   type RequestPrincipal,
-} from "../request-principal.js";
+} from "../domains/identity/request-principal.js";
 import type { ChatOwner } from "./records.js";
 import { CanonicalChatOrchestrationError, mapRepositoryError } from "./orchestrator.js";
 import {

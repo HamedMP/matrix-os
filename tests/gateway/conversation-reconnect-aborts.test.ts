@@ -6,7 +6,7 @@ import {
   scheduleReconnectAbortTimersForDisconnectedClient,
   scheduleReconnectAbortTimersForSession,
   type ReconnectableAbortEntry,
-} from "../../packages/gateway/src/conversation-reconnect-aborts.js";
+} from "../../packages/gateway/src/domains/sessions/conversation-reconnect-aborts.js";
 
 describe("conversation reconnect abort guards", () => {
   afterEach(() => {
