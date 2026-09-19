@@ -1,3 +1,4 @@
+import { createProjectDeletionCleanup, type ProjectChatCleanup } from "../../project-deletion-cleanup.js";
 import type { BackgroundAgentRuntime } from "../sessions/background-agent-runtime.js";
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
@@ -248,6 +249,7 @@ export function createWorkspaceRoutes(options: {
   sessionOrchestrator?: WorkspaceSessionOrchestrator;
   projectLifecycleService?: ProjectLifecycleService;
   projectOperationAdmission?: LegacyProjectOperationAdmission;
+  deleteProjectChats?: ProjectChatCleanup;
   codingAgentThreadStore?: Pick<CodingAgentThreadStore, "getProjectLifecycleState" | "deleteProjectThreads">;
   getOwnerScope?: (c: Context) => OwnerScope;
   listChatBoundSessionIds?: (
@@ -322,24 +324,10 @@ export function createWorkspaceRoutes(options: {
       }
       return blockers;
     },
-    cleanupRelatedState: async (project, principal) => {
-      const sessions = await agentSessionManager.deleteProjectSessions({
-        projectSlug: project.slug,
-        ownerId: principal.userId,
-      });
-      if (!sessions.ok) throw new Error("session cleanup failed");
-      const reviews = await reviewStore.deleteProjectReviews(project.slug);
-      if (!reviews.ok) throw new Error("review cleanup failed");
-      if (options.codingAgentThreadStore) {
-        const threads = await options.codingAgentThreadStore.deleteProjectThreads(principal, project.slug);
-        if (!threads.ok) throw new Error("coding-agent cleanup blocked");
-      }
-      const workspace = (await terminalRuntime.listWorkspaces())
-        .find((candidate) => candidate.scope === "project" && candidate.projectId === project.id);
-      if (workspace) {
-        await terminalRuntime.deleteWorkspace(workspace.id, { confirmTerminate: true });
-      }
-    },
+    cleanupRelatedState: createProjectDeletionCleanup({
+      sessions: agentSessionManager, reviews: reviewStore, threads: options.codingAgentThreadStore,
+      terminal: terminalRuntime, deleteChats: options.deleteProjectChats, worktrees: worktreeManager,
+    }),
   });
 
   function lifecyclePrincipal(ownerScope: OwnerScope) {
@@ -536,7 +524,7 @@ export function createWorkspaceRoutes(options: {
       return principalError(c, err);
     }
     if (body.value.type === "delete") {
-      const project = await projectManager.getProject(c.req.param("slug"), ownerScope);
+      const project = await projectManager.getProjectForLifecycle({ slug: c.req.param("slug"), ownerScope });
       if (!project.ok) return c.json({ error: project.error }, status(project.status));
       const confirmation = await requireTerminalDeletionConfirmation(
         c,
@@ -597,7 +585,7 @@ export function createWorkspaceRoutes(options: {
     } catch (err: unknown) {
       return principalError(c, err);
     }
-    const project = await projectManager.getProject(c.req.param("slug"), ownerScope);
+    const project = await projectManager.getProjectForLifecycle({ slug: c.req.param("slug"), ownerScope });
     if (!project.ok) return c.json({ error: project.error }, status(project.status));
     const confirmation = await requireTerminalDeletionConfirmation(
       c,

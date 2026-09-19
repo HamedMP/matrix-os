@@ -19,12 +19,15 @@ It does not change clipboard behavior for non-terminal controls or sandboxed app
 | Focused terminal, macOS | Command+Shift+C | Copy the exact active xterm selection once. |
 | Focused terminal, macOS | Command+V | Paste supported clipboard content into that terminal once without Enter. |
 | Focused terminal, macOS | Command+A | Select all currently available xterm text. |
+| Focused terminal, all platforms | Ctrl+V | Paste supported clipboard content once without Enter. |
 | Focused terminal, existing cross-platform behavior | Ctrl+Shift+C / Ctrl+Shift+V | Preserve existing terminal Copy/Paste behavior. |
 | Focused terminal, no selection | Copy shortcut | Do not overwrite the clipboard or claim success. |
 | Key repeat or unsupported modifiers | Any | Do not execute a terminal clipboard action. |
 | Focus outside a terminal | Any terminal combination | Preserve established non-terminal handling. |
 
-A recognized terminal action prevents competing xterm/shell/native handling for that interaction. An unrecognized or inapplicable action is not consumed.
+A recognized terminal action prevents competing xterm/shell/native handling for that interaction. An unrecognized or inapplicable action is not consumed. Paste repeats, keypress, and keyup are consumed without another clipboard operation, preventing held Ctrl+V from leaking terminal control bytes. IME composition, keyCode 229, AltGraph, and unsupported modifier combinations remain available to the input method.
+
+Ctrl+V is an explicit extension to the original policy requested in September 2026. It replaces literal control-V input; Ctrl+C remains terminal interrupt input and unrelated control letters are unchanged. Ctrl+V cannot be assigned as a custom keyboard shortcut. When reading older preferences, only a Ctrl+V override is disabled (set to null); the selected profile and unrelated preferences remain intact, and reading does not rewrite the stored file. New preference writes reject Ctrl+V bindings.
 
 ## Copy contract
 

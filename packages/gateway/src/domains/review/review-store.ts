@@ -125,9 +125,6 @@ export function createReviewStore(options: { homePath: string }) {
         return failure(400, "invalid_slug", "Project slug is invalid");
       }
       const reviews = (await readAllReviews()).filter((review) => review.projectSlug === projectSlug);
-      if (reviews.some((review) => !terminalStatuses.has(review.status))) {
-        return failure(409, "project_active", "Stop active project work before continuing");
-      }
       for (const review of reviews) {
         await unlink(reviewPath(homePath, review.id)).catch((err: unknown) => {
           if (!(err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT")) throw err;

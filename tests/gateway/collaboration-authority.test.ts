@@ -115,7 +115,12 @@ describe("CollaborationAuthority", () => {
       milestone: "m2" as const,
       revision: "1",
       mode: "internal" as const,
-      cohort: [collaborationActors.owner, collaborationActors.editor],
+      cohort: [
+        collaborationActors.owner,
+        collaborationActors.editor,
+        collaborationActors.viewer,
+        "user_pending",
+      ],
       issuedAt: "2026-09-07T11:59:50.000Z",
       expiresAt: "2026-09-07T12:00:20.000Z",
     };
@@ -128,9 +133,21 @@ describe("CollaborationAuthority", () => {
     })).resolves.toMatchObject({ capability: "request_ai", role: "editor" });
     await expect(m2.authorize({
       scopeId: collaborationIds.scope,
+      actorId: collaborationActors.editor,
+      action: "request_ai",
+      executionPolicy: {
+        ...executionPolicy,
+        cohort: executionPolicy.cohort.filter((actorId) => actorId !== collaborationActors.viewer),
+      },
+    })).rejects.toMatchObject({ code: "unavailable" });
+    await expect(m2.authorize({
+      scopeId: collaborationIds.scope,
       actorId: collaborationActors.viewer,
       action: "request_ai",
-      executionPolicy,
+      executionPolicy: {
+        ...executionPolicy,
+        cohort: executionPolicy.cohort.filter((actorId) => actorId !== collaborationActors.viewer),
+      },
     })).rejects.toMatchObject({ code: "unavailable" });
 
     await expect(m2.authorize({
@@ -152,7 +169,12 @@ describe("CollaborationAuthority", () => {
       milestone: "m3" as const,
       revision: "1",
       mode: "internal" as const,
-      cohort: [collaborationActors.owner, collaborationActors.editor],
+      cohort: [
+        collaborationActors.owner,
+        collaborationActors.editor,
+        collaborationActors.viewer,
+        "user_pending",
+      ],
       issuedAt: "2026-09-07T11:59:50.000Z",
       expiresAt: "2026-09-07T12:00:20.000Z",
     };
@@ -178,7 +200,7 @@ describe("CollaborationAuthority", () => {
       actorId: collaborationActors.viewer,
       action: "control_execution",
       executionPolicy: policy,
-    })).rejects.toMatchObject({ code: "unavailable" });
+    })).rejects.toMatchObject({ code: "forbidden" });
   });
 
   it("resolves inherited membership only through an active project parent", async () => {

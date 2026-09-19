@@ -636,7 +636,12 @@ export class GatewayClient {
     };
   }
 
-  openTerminalWebSocket(token?: string | null, terminalRefKey?: string, fromSeq?: number): WebSocket {
+  openTerminalWebSocket(
+    token?: string | null,
+    terminalRefKey?: string,
+    fromSeq?: number,
+    ownership: "exclusive" | "observe" = "exclusive",
+  ): WebSocket {
     if (token || this.token) {
       assertSecureTokenTransport(this.baseUrl);
     }
@@ -646,6 +651,7 @@ export class GatewayClient {
     if (tabId) params.set("tabId", tabId);
     params.set("client", "mobile");
     params.set("inputCapability", "binary-input-v1");
+    params.set("lease", ownership);
     if (typeof fromSeq === "number" && Number.isFinite(fromSeq)) params.set("fromSeq", String(fromSeq));
     if (token) params.set("token", token);
     const query = params.toString();

@@ -5,7 +5,6 @@ import {
   CreditCard,
   LogOut,
   Settings,
-  UsersIcon,
 } from "@renderer/lib/hugeicons";
 import { useEffect, useState, type ReactNode } from "react";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
@@ -13,7 +12,6 @@ import { useConnection } from "../../stores/connection";
 import { useTabs } from "../../stores/tabs";
 import { useUi } from "../../stores/ui";
 import { openHelpInMatrixBrowser } from "../browser/help-navigation";
-import { useCollaborationRuntimeId } from "../collaboration/useCollaborationRuntime";
 
 function AccountAvatar({
   imageUrl,
@@ -64,12 +62,6 @@ function MenuRow({
   );
 }
 
-function SharedWithMeMenuRow({ onSelect }: { onSelect: () => void }) {
-  const api = useConnection((state) => state.api);
-  const collaborationEnabled = useCollaborationRuntimeId(api) !== null;
-  if (!collaborationEnabled) return null;
-  return <MenuRow icon={<UsersIcon size={14} />} label="Shared with me" trailing onSelect={onSelect} />;
-}
 
 function AccountMenuTrigger({
   collapsed,
@@ -180,10 +172,6 @@ export default function AccountMenu({
             </DropdownMenu.Label>
             <DropdownMenu.Separator className="my-1 h-px" style={{ background: "var(--border-subtle)" }} />
             <MenuRow icon={<Settings size={14} />} label="Settings" trailing onSelect={() => openSettings("account")} />
-            <SharedWithMeMenuRow onSelect={() => {
-              setOpen(false);
-              openTab({ kind: "shared", title: "Shared with me" });
-            }} />
             <MenuRow
               icon={<CircleHelp size={14} />}
               label="Get help"

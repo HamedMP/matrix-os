@@ -32,13 +32,14 @@ Still required before M1 is review-ready or internally enabled: full named-surfa
 
 ## PR3 M2 local evidence — 2026-09-10
 
-PR3 adds actor-attributed AI requests to the canonical Chat queue, a 32-pending/one-active invariant, actor-scoped idempotency, owner approval decisions, editor-own cancel/retry, dispatch-time reauthorization, truthful interrupted/unavailable recovery, exact-profile isolated execution, and shared queue controls across the common Web/Electron UI, native mobile, and CLI. M1 discussion remains available when M2 policy is off or read-only.
+PR3 adds actor-attributed AI requests to the canonical Chat queue, a 32-pending/one-active invariant, actor-scoped idempotency, immutable owner-selected Provider Instance authority, owner approval decisions, editor-own cancel/retry, dispatch-time reauthorization, truthful interrupted/unavailable recovery, exact-profile isolated execution, and shared queue controls across the common Web/Electron UI, native mobile, and CLI. Shared request bodies do not carry Provider or model-selection authority. M1 discussion remains available when M2 policy is off, read-only, or incompatible with the Chat's bound Provider.
 
 Current public-safe component evidence:
 
 - [Shared AI queue and owner controls](evidence/m2-shared-ai-queue.png)
+- [Unsupported bound Provider preserves human discussion](evidence/immutable-codex-shared-ai-unavailable.png)
 
-The screenshot was captured at 1440×900 from a temporary self-hosted Next.js route rendering the production `SharedChatControls` component in a Canvas-style Chat. A focused Playwright check asserted the ordered attributed requests, one-active/32-pending copy, owner approval controls, private Ask AI draft, and zero browser/page errors; the temporary route and test were removed after capture.
+The queue screenshot was captured at 1440×900 from a temporary self-hosted Next.js route rendering the production `SharedChatControls` component in a Canvas-style Chat. A focused Playwright check asserted the ordered attributed requests, one-active/32-pending copy, owner approval controls, private Ask AI draft, and zero browser/page errors; the temporary route and test were removed after capture. The immutable-Provider screenshot comes from the actual shared-Chat shell route with synthetic data: the focused Playwright regression verifies that a Codex-bound Chat does not advertise the Claude-only shared runtime, Ask AI is disabled, and the human-discussion composer remains enabled.
 
 Validation results:
 
@@ -81,6 +82,31 @@ Validation results:
 | Root test suite | A root `pnpm run test` invocation begun before the final UI amendments completed with 1,263 files / 14,401 tests passed, 59 files / 222 tests failed, 7 files / 39 tests skipped, and 20 worker errors. The failures are dominated by this sandbox denying child-process spawn, TCP/Unix listeners and Git operations, plus native app-build timeouts. It also loaded stale versions of the two UI files amended during the run; both affected focused suites passed cleanly afterward (`tests/desktop/draft-chat-send.test.tsx` 15/15 and common project UI 22/22). This is not a clean-head full-suite pass; CI remains authoritative. |
 
 Still required before M4 is internally enabled: run the exact release artifact on a disposable VPS, exercise the mixed-project two-account journey on every applicable named surface, run the real-Postgres concurrency variants, and perform the M4 read-only/off rollback and crash-recovery drill. The local branch does not claim those results and does not enable M4 by itself.
+
+## Secure invitation identifier local evidence — 2026-09-17
+
+Invitation creation now accepts one bounded email, username (with or without one leading `@`), or internal actor ID. The owner gateway authorizes `manage_members` before calling the authenticated platform resolver; platform exact-matches one active Matrix account and returns only its canonical actor ID. Unknown, ambiguous, duplicate, inaccessible, provider-failed and timed-out identities collapse to the same public failure. Gateway and platform apply per-owner admission limits. The owner transaction is opened only after resolution and remains authoritative for revision, capacity, self-invite, idempotency, pending/accepted duplicates, revoked/expired renewal and races. No submitted email or email-derived payload digest is stored in owner collaboration state.
+
+Current public-safe component evidence:
+
+- [Email or username invitation](evidence/identifier-invitation.png)
+
+The screenshot was captured at 1440×900 from a temporary self-hosted Next.js route rendering the production `ChatCollaboratorsDialog` used by the shared Web Canvas, Web Desktop and Electron Desktop `ChatSharingButton`. Browser verification found the required account copy and `@nimanaderi` input, a meaningful accessibility tree, no framework error overlay and no page errors. The temporary route was removed after capture.
+
+Validation results:
+
+| Check | Result |
+| --- | --- |
+| Identifier and boundary suites | Contracts, platform resolver, gateway participant client and focused gateway invitation routes passed 32 tests. Coverage includes IDs, exact verified email, username casing/optional `@`, malformed/oversized input, unknown/ambiguous/duplicate/inaccessible identities, auth-before-resolution, self-invite, generic failures, rate limiting, canonical persistence and no partial rows. |
+| Membership behavior | The focused repository renewal test passed for pending/accepted rejection and revoked reinvitation with a fresh invitation ID. |
+| Real PostgreSQL 16 races | `collaboration-repository-postgres` and `collaboration-membership-races` passed 2 files / 9 tests against a disposable loopback-only PostgreSQL 16 container; the container was removed afterward. |
+| Common Web/Electron UI | `tests/ui/chat-collaboration-sharing.test.tsx` passed 18/18, including the shared email/username label, placeholder, existing-account copy and identifier-only request. |
+| Two-account journey | The Playwright spec now covers username discovery/acceptance, verified email, `@username`, canonical actor persistence, safe unknown failure without a partial member, revocation and reinvitation. Its environment parser passed 2/2; the live journey was not run because all eight authenticated/VPS environment variables are unavailable locally. |
+| TypeScript | The pnpm-equivalent root typecheck (including kernel prerequisites, gateway, platform, proxy, edge router and desktop), plus contracts and UI, passed. `bun run typecheck` itself remains unavailable because Bun is not installed in this environment. |
+| Pattern scan | `pnpm run check:patterns` passed with 0 violations and 5 inherited repository warning groups. |
+| React Doctor | Changed-scope `packages/ui` audit scored 100/100 with no findings. The package-wide audit reports inherited findings outside this diff. |
+
+This evidence establishes the local implementation and common-component presentation. It does not claim the unavailable live authenticated two-account/VPS run or separate packaged Electron screenshot as completed release acceptance.
 
 ## Prepare a slice
 

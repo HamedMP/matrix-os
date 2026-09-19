@@ -19,6 +19,7 @@ import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
 import {
   ChatBusyError,
   ChatConflictError,
+  ChatProviderInstanceLockedError,
   ChatRunNotAcknowledgeableError,
 } from "../../packages/gateway/src/chat/errors.js";
 import {
@@ -159,6 +160,95 @@ describe("canonical Chat routes", () => {
       }),
     });
     expect(oversized.status).toBe(413);
+  });
+
+  it("returns the immutable Provider conflict for a direct API bypass attempt", async () => {
+    const admitTurn = vi.fn(async () => {
+      throw new ChatProviderInstanceLockedError("chat_route_test");
+    });
+    const response = await appFor(routeService({ admitTurn })).request(
+      "/api/chats/chat_route_test/turns",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          clientRequestId: "req_route_provider_bypass",
+          baseRevision: 1,
+          parts: [{ type: "text", text: "switch provider" }],
+          selection: { instanceId: "claude_default", model: "claude-opus-5" },
+          interactionMode: "default",
+          permissionMode: "supervised",
+        }),
+      },
+    );
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      error: {
+        code: "provider_instance_locked",
+        safeMessage: "This Chat is already bound to another Provider instance.",
+        retryable: false,
+        recoveryActions: ["fork_chat", "start_new_chat"],
+      },
+    });
+  });
+
+  it.each([
+    {
+      path: "/api/chats/chat_route_test/turns",
+      body: {
+        clientRequestId: "req_spoof_turn",
+        baseRevision: 0,
+        parts: [{ type: "text", text: "spoof" }],
+        selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+        interactionMode: "default",
+        permissionMode: "supervised",
+        actorId: "other_user",
+      },
+    },
+    {
+      path: "/api/chats/chat_route_test/queued-turns",
+      body: {
+        clientRequestId: "req_spoof_queue",
+        baseRevision: 0,
+        parts: [{ type: "text", text: "spoof" }],
+        selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+        interactionMode: "default",
+        permissionMode: "supervised",
+        purpose: "discussion",
+      },
+    },
+    {
+      path: "/api/chats/chat_route_test/runs/run_route/steer",
+      body: {
+        clientRequestId: "req_spoof_steer",
+        expectedTurnId: "cturn_route",
+        parts: [{ type: "text", text: "spoof" }],
+        actorId: "other_user",
+      },
+    },
+    {
+      path: "/api/chats/chat_route_test/runs/run_route/queued-turns/qturn_route/steer",
+      body: {
+        clientRequestId: "req_spoof_queued_steer",
+        baseRevision: 1,
+        expectedTurnId: "cturn_route",
+        purpose: "discussion",
+      },
+    },
+  ])("rejects client-supplied human identity on $path", async ({ path, body }) => {
+    const service = routeService();
+    const response = await appFor(service).request(path, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+    expect(response.status).toBe(400);
+    expect(service.admitTurn).not.toHaveBeenCalled();
+    expect(service.enqueueQueuedTurn).not.toHaveBeenCalled();
+    expect(service.steerRun).not.toHaveBeenCalled();
+    expect(service.steerQueuedTurn).not.toHaveBeenCalled();
   });
 
   it("moves a Chat with owner-derived identity and a strict revision-guarded body", async () => {

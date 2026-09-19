@@ -184,6 +184,7 @@ export function DesktopWindow({
       <CardContent className="relative flex-1 p-0 min-h-0">
         {win.path.startsWith("__terminal__") ? (
           <TerminalApp
+            sharedScopeId={win.sharedTerminalScopeId ?? null}
             launchTargetId={win.id}
             layoutId={win.terminalLayoutId}
             persistence={win.terminalPersistence ?? "durable"}
@@ -210,6 +211,9 @@ export function DesktopWindow({
           <div className="h-full overflow-hidden">
             {chat && (
               <ChatApp
+                collaborationView={chat.collaborationView}
+                onOpenSharedChat={chat.openSharedChat}
+                onOpenSharedHome={chat.openSharedHome}
                 filterUnreadOnly={chat.unreadOnly}
                 onUnreadFilterChange={chat.setUnreadOnly}
                 active={focusedWindowId === win.id && !win.minimized}
@@ -228,8 +232,9 @@ export function DesktopWindow({
                 onSubmit={chat.submitMessage}
               agentClient={chat.agentClient} queuedTurns={chat.queuedTurns} onCancelQueuedTurn={chat.cancelQueuedTurn}
                 onSubmitApproval={chat.submitApproval}
-              onSubmitInput={chat.submitInput}
+                onSubmitInput={chat.submitInput}
                 providerSelection={chat.providerSelection}
+                boundProviderInstanceId={chat.boundProviderInstanceId}
                 composerDraftRequest={chat.composerDraftRequest}
                 onComposerDraftConsumed={chat.consumeComposerDraft}
               />

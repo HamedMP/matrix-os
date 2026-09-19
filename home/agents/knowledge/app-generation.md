@@ -337,3 +337,22 @@ wasteful and stale.
 - Before finishing, verify the app's manifest and entry file are reachable through the gateway path derived from the registry entry, not from a guessed directory.
 - Always verify the build succeeds before reporting completion
 - If build fails, read the error output and fix before retrying
+
+### AI text generation
+
+For text generation inside an app, use `window.MatrixOS.ai.generate({ prompt })`
+and read the returned `{ text }`. Guard for the API being absent on older hosts;
+catch failures and show an app-safe error. Do not use `gatewayFetch` or raw fetch
+for model calls, and never embed credentials in app code.
+
+The owner must explicitly grant the app identity and select a kernel model in
+`system/app-ai.json` (see `specs/158-app-ai-bridge/spec.md` in the source repo).
+Do not create or expand this grant without the owner's instruction. This API
+uses the kernel credential chain, has no file/tool access, and does not expose
+Codex/Hermes or other agent sessions. Send the required text in the prompt.
+
+Legacy app tasks: `MatrixOS.generate(context)` submits a task through the shell
+to the Matrix kernel and returns `undefined`. It is available in Web and Electron
+app windows. Keep using it for existing kernel workflows. For text-only inference,
+use `await MatrixOS.ai.generate({ prompt })` (explicit owner grant required). These
+APIs have different contracts; do not treat legacy `generate` as a text Promise.

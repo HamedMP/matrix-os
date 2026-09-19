@@ -2,10 +2,11 @@ import { defineConfig, devices } from "@playwright/test";
 
 const chromiumExecutablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE;
 const port = Number.parseInt(process.env.PLAYWRIGHT_PORT ?? "3000", 10);
+const useDevServer = process.env.PLAYWRIGHT_DEV_SERVER === "1";
 
 export default defineConfig({
   testDir: "./e2e",
-  testMatch: /(screenshots|terminal-sizing|getting-started)\.spec\.ts/,
+  testMatch: /(screenshots|terminal-sizing|getting-started|shared-chat)\.spec\.ts/,
   snapshotPathTemplate: "{testDir}/__screenshots__/{testFilePath}/{arg}{ext}",
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
@@ -27,7 +28,9 @@ export default defineConfig({
     viewport: { width: 1440, height: 900 },
   },
   webServer: {
-    command: `pnpm start -p ${port}`,
+    command: useDevServer
+      ? `pnpm dev --webpack -H 127.0.0.1 -p ${port}`
+      : `pnpm start -p ${port}`,
     port,
     reuseExistingServer: !process.env.CI,
     timeout: 60_000,

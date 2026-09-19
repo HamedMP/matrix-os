@@ -45,6 +45,11 @@ export interface CollaborationAuthorityOptions {
   now?: () => Date;
 }
 
+type ExecutionScope = Pick<
+  Selectable<CollaborationScopesTable>,
+  "kind" | "lifecycle" | "owner_id" | "execution_generation" | "execution_eligibility"
+>;
+
 export class CollaborationAuthority {
   private readonly now: () => Date;
   constructor(
@@ -69,7 +74,17 @@ export class CollaborationAuthority {
     if (member.expiresAt && new Date(member.expiresAt).getTime() <= this.now().getTime()) {
       throw new CollaborationAuthorizationError("not_found", "Current membership is required");
     }
-    this.requireLifecycle(scope, member.role, input.actorId, input.action, input.executionPolicy);
+    const participantActorIds = input.action === "request_ai" || input.action === "control_execution"
+      ? await this.listCurrentParticipantActorIds(membershipScope.id)
+      : undefined;
+    this.requireLifecycle(
+      scope,
+      member.role,
+      input.actorId,
+      input.action,
+      input.executionPolicy,
+      participantActorIds,
+    );
     requireRoleCapability(member.role, input.action);
 
     return {
@@ -126,9 +141,10 @@ export class CollaborationAuthority {
     actorId: string,
     action: CollaborationAction,
     executionPolicy?: CollaborationPolicy,
+    participantActorIds?: string[],
   ): void {
     if (action === "request_ai" || action === "control_execution") {
-      if (!this.executionAllowed(scope, actorId, action, executionPolicy)) {
+      if (!this.executionAllowed(scope, actorId, action, executionPolicy, participantActorIds)) {
         throw new CollaborationAuthorizationError("unavailable", "Shared execution is unavailable");
       }
     }
@@ -139,21 +155,24 @@ export class CollaborationAuthority {
     throw new CollaborationAuthorizationError("unavailable", "Scope is not available for this action");
   }
 
-  canRequestAi(
-    scope: Selectable<CollaborationScopesTable>,
+  async canRequestAi(
+    scope: ExecutionScope,
     actorId: string,
     role: CollaborationRole,
+    membershipScopeId: string,
     executionPolicy?: CollaborationPolicy,
-  ): boolean {
+  ): Promise<boolean> {
+    const participantActorIds = await this.listCurrentParticipantActorIds(membershipScopeId);
     return role !== "viewer" && scope.lifecycle === "shared"
-      && this.executionAllowed(scope, actorId, "request_ai", executionPolicy);
+      && this.executionAllowed(scope, actorId, "request_ai", executionPolicy, participantActorIds);
   }
 
   private executionAllowed(
-    scope: Selectable<CollaborationScopesTable>,
+    scope: ExecutionScope,
     actorId: string,
     action: "request_ai" | "control_execution",
     policy?: CollaborationPolicy,
+    participantActorIds: string[] = [],
   ): boolean {
     if (action === "request_ai" && scope.kind !== "chat") return false;
     if (action === "control_execution" && scope.kind !== "chat" && scope.kind !== "terminal") return false;
@@ -162,7 +181,16 @@ export class CollaborationAuthority {
       || scope.execution_generation === null || scope.execution_eligibility === null) return false;
     if (policy.mode === "enabled") return true;
     if (policy.cohort.length > 1_000) return false;
-    return policy.cohort.includes(actorId) && policy.cohort.includes(scope.owner_id);
+    return policy.cohort.includes(actorId) && policy.cohort.includes(scope.owner_id)
+      && participantActorIds.every((participantActorId) => policy.cohort.includes(participantActorId));
+  }
+
+  private async listCurrentParticipantActorIds(scopeId: string): Promise<string[]> {
+    const now = this.now().getTime();
+    const members = await this.repository.listMembers(scopeId, { includePending: true });
+    return members.filter((member) => (member.status === "accepted" || member.status === "pending")
+      && (!member.expiresAt || new Date(member.expiresAt).getTime() > now))
+      .map((member) => member.actorId);
   }
 }
 

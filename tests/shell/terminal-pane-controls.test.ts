@@ -71,13 +71,13 @@ describe("Web terminal controls transport", () => {
 describe("Web xterm keyboard integration", () => {
   const event = (key: string, options = {}) =>
     new KeyboardEvent("keydown", { key, cancelable: true, ...options });
-  function setup() {
+  function setup(isMac = true) {
     const controls = vi.fn(() => false);
     const copy = vi.fn();
     const paste = vi.fn();
     const selectAll = vi.fn();
     const handler = createTerminalKeyHandler({
-      isMac: true,
+      isMac,
       getSelection: () => "selected",
       getCommandBlock: () => "block",
       copy,
@@ -95,6 +95,39 @@ describe("Web xterm keyboard integration", () => {
     expect(ev.defaultPrevented).toBe(true);
     expect(copy).toHaveBeenCalledWith("selected");
     expect(controls).not.toHaveBeenCalled();
+  });
+  it.each([false, true])("pastes Ctrl+V once and consumes held-key phases on isMac=%s", (isMac) => {
+    const { handler, paste, controls } = setup(isMac);
+    controls.mockReturnValue(true);
+    for (const [type, repeat] of [["keydown", false], ["keydown", true], ["keypress", false], ["keyup", false]] as const) {
+      const ev = new KeyboardEvent(type, { key: "v", ctrlKey: true, repeat, cancelable: true });
+      expect(handler(ev)).toBe(false);
+      expect(ev.defaultPrevented).toBe(true);
+    }
+    expect(paste).toHaveBeenCalledOnce();
+    expect(controls).not.toHaveBeenCalled();
+  });
+  it.each([
+    { isComposing: true }, { keyCode: 229 }, { altKey: true }, { metaKey: true },
+    { key: "c" }, { key: "a" }, { key: "d" },
+  ])("preserves unrelated control input and composition: %j", (options) => {
+    const { handler, paste, copy, controls } = setup();
+    controls.mockReturnValue(true);
+    const ev = event("v", { ctrlKey: true, ...options });
+    expect(handler(ev)).toBe(true);
+    expect(ev.defaultPrevented).toBe(false);
+    expect(paste).not.toHaveBeenCalled();
+    expect(copy).not.toHaveBeenCalled();
+    expect(controls).toHaveBeenCalledExactlyOnceWith(ev);
+  });
+  it("preserves AltGraph input even when the browser does not set altKey", () => {
+    const { handler, paste, controls } = setup();
+    controls.mockReturnValue(true);
+    const ev = event("v", { ctrlKey: true });
+    Object.defineProperty(ev, "getModifierState", { value: (key: string) => key === "AltGraph" });
+    expect(handler(ev)).toBe(true);
+    expect(paste).not.toHaveBeenCalled();
+    expect(ev.defaultPrevented).toBe(false);
   });
   it("delegates editing and pane chords to shared controls exactly once", () => {
     const { handler, controls } = setup();

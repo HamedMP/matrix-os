@@ -12,6 +12,7 @@ export interface SocketControl {
   sendInput(data: string): void;
   sendBinary(data: string): void;
   resize(cols: number, rows: number): void;
+  scroll?(frame: { type: "scroll-query" } | { type: "scroll-to"; line: number }): void;
   detach(): void;
   dispose(): void;
 }
@@ -31,6 +32,7 @@ export interface ActiveAttachment {
   write(data: string): void;
   writeBinary(data: string): void;
   resize(cols: number, rows: number): void;
+  scroll?(frame: { type: "scroll-query" } | { type: "scroll-to"; line: number }): void;
 }
 
 interface ActiveSocket {
@@ -79,8 +81,13 @@ export class AttachManager {
       onOutput: (data: string, seq: number) => {
         if (this.isLive(generation)) events.onOutput(data, seq);
       },
+      onNativeScroll: (state) => { if (this.isLive(generation)) events.onNativeScroll?.(state); },
+      onNativeScrollSupported: (supported) => { if (this.isLive(generation)) events.onNativeScrollSupported?.(supported); },
       onCanonicalSize: (size) => {
         if (this.isLive(generation)) events.onCanonicalSize?.(size);
+      },
+      onOwnershipChange: (role) => {
+        if (this.isLive(generation)) events.onOwnershipChange?.(role);
       },
       onGap: () => {
         if (this.isLive(generation)) events.onGap();
@@ -101,6 +108,7 @@ export class AttachManager {
       writeBinary: (data: string) => {
         if (this.isLive(generation)) socket.sendBinary(data);
       },
+      scroll: (frame) => { if (this.isLive(generation)) socket.scroll?.(frame); },
       resize: (cols: number, rows: number) => {
         if (this.isLive(generation)) socket.resize(cols, rows);
       },
