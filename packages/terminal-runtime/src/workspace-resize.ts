@@ -67,19 +67,26 @@ export function workspaceResizeProposal(options: {
   ref: TerminalRef;
   size: { cols: number; rows: number };
   viewerId?: string;
+  mode: "hard" | "soft";
   attachments: Iterable<ResizeAttachment>;
-}): { cols: number; rows: number } {
-  const requested = TerminalGridSizeSchema.parse(options.size);
+}): { cols: number; rows: number } | undefined {
+  const requested = options.mode === "hard" ? TerminalGridSizeSchema.parse(options.size) : undefined;
   const attachments = [...options.attachments].filter((item) => item.ref.workspaceId === options.ref.workspaceId);
   if (options.viewerId) {
     const viewer = attachments.find((item) => item.ref.tabId === options.ref.tabId)?.viewers.get(options.viewerId);
-    if (!viewer) throw new Error("Terminal resize viewer unavailable");
-    viewer.requestedSize = requested;
+    if (!requested) {
+      if (!viewer?.requestedSize) return undefined;
+      delete viewer.requestedSize;
+    } else {
+      if (!viewer) throw new Error("Terminal resize viewer unavailable");
+      viewer.requestedSize = requested;
+    }
   }
-  const size = { ...requested };
+  let size = requested ? { ...requested } : undefined;
   for (const attachment of attachments) {
     for (const viewer of attachment.viewers.values()) {
       if (!viewer.requestedSize) continue;
+      size ??= { ...viewer.requestedSize };
       size.cols = Math.max(size.cols, viewer.requestedSize.cols);
       size.rows = Math.max(size.rows, viewer.requestedSize.rows);
     }

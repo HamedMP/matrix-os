@@ -81,6 +81,10 @@ it("arbitrates hard sizes across workspace tabs and releases disconnected propos
     await runtime.resize(refA, { mode: "hard", size: { cols: 180, rows: 60 } }, "large");
     expect((await runtime.resize(refB, { mode: "hard", size: { cols: 100, rows: 30 } }, "small")).canonicalSize)
       .toEqual({ cols: 180, rows: 60 });
+    expect((await runtime.resize(refA, { mode: "soft", size: { cols: 180, rows: 60 } }, "large")).canonicalSize)
+      .toEqual({ cols: 100, rows: 30 });
+    // Revocation releases geometry without tearing down the observer connection.
+    await expect(large.write("still attached")).resolves.toBeUndefined();
     expect((await runtime.resize(refA, { mode: "hard", size: { cols: 90, rows: 25 } }, "large")).canonicalSize)
       .toEqual({ cols: 100, rows: 30 });
     await large.detach();
