@@ -1,7 +1,7 @@
 import { ChatInputNotDeliveredError } from "./input-delivery-error.js";
 import { BackgroundProjectionDetached } from "./background-run-control.js";
 import { createHash } from "node:crypto";
-import { boundedOperation } from "../bounded-operation.js";
+import { boundedOperation } from "../_shared/bounded-operation.js";
 import type { CodingAbortScope } from "../coding-agents/thread-abort.js";
 import type { CodingAgentProviderAdapter } from "../coding-agents/provider-adapter.js";
 import {
@@ -16,7 +16,7 @@ import type {
   CodingAgentThreadStore,
   CodingAgentTurnStore,
 } from "../coding-agents/thread-store.js";
-import type { AiTokenUsage } from "../ai-analytics.js";
+import type { AiTokenUsage } from "../domains/observability/ai-analytics.js";
 import { projectCodingActivity } from "./coding-activity-projection.js";
 import { CodingChatStateSchema, recoveryState, recoverCodingRun, type CodingChatState } from "./coding-run-recovery.js";
 import {

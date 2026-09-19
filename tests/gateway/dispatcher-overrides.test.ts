@@ -6,8 +6,8 @@ import type { KernelConfig, KernelEvent } from "@matrix-os/kernel";
 import {
   createDispatcher,
   type SpawnFn,
-} from "../../packages/gateway/src/dispatcher.js";
-import type { MatrixFundedCredentialProvider } from "../../packages/gateway/src/funded-ai-credential-manager.js";
+} from "../../packages/gateway/src/domains/sessions/dispatcher.js";
+import type { MatrixFundedCredentialProvider } from "../../packages/gateway/src/domains/integrations/funded-ai-credential-manager.js";
 
 const temporaryHomePaths: string[] = [];
 

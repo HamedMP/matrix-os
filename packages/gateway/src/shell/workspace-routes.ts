@@ -17,7 +17,7 @@ import {
 } from "@matrix-os/contracts";
 import type { Context } from "hono";
 import { TerminalRuntimeError } from "@matrix-os/terminal-runtime";
-import type { RequestPrincipal } from "../request-principal.js";
+import type { RequestPrincipal } from "../domains/identity/request-principal.js";
 import {
   ProjectFenceError,
   type LegacyProjectOperationAdmission,

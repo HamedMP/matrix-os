@@ -7,10 +7,10 @@ import { TerminalTabSchema } from "@matrix-os/contracts";
 import {
   createAgentSessionManager,
   hasActiveWorkspaceSessionForTerminalRef,
-} from "../../packages/gateway/src/agent-session-manager.js";
-import { createWorktreeManager } from "../../packages/gateway/src/worktree-manager.js";
-import { atomicWriteJson } from "../../packages/gateway/src/state-ops.js";
-import type { AgentLaunchInput, AgentLaunchSpec } from "../../packages/gateway/src/agent-launcher.js";
+} from "../../packages/gateway/src/domains/sessions/agent-session-manager.js";
+import { createWorktreeManager } from "../../packages/gateway/src/domains/git/worktree-manager.js";
+import { atomicWriteJson } from "../../packages/gateway/src/domains/files/state-ops.js";
+import type { AgentLaunchInput, AgentLaunchSpec } from "../../packages/gateway/src/domains/sessions/agent-launcher.js";
 
 describe("agent-session-manager", () => {
   let homePath: string;

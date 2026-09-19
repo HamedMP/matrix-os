@@ -1,6 +1,6 @@
 import type { AgentThreadEvent, AgentThreadSnapshot, AgentThreadSummary } from "@matrix-os/contracts";
-import type { RequestPrincipal } from "../request-principal.js";
-import { boundedOperation } from "../bounded-operation.js";
+import type { RequestPrincipal } from "../domains/identity/request-principal.js";
+import { boundedOperation } from "../_shared/bounded-operation.js";
 import { logCodingAgentWarning } from "./diagnostics.js";
 import { parseCodingAgentProviderEvents, type CodingAgentProviderAdapter } from "./provider-adapter.js";
 import { defaultAbortEvents } from "./thread-fallback-events.js";

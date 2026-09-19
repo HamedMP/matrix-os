@@ -10,11 +10,11 @@ import type { CanonicalChatOrchestrator } from "../chat/orchestrator.js";
 import { SharedChatRunPreparationError } from "../chat/shared-execution-coordinator.js";
 import { CollaborationChatCommands } from "../chat/collaboration-commands.js";
 import type { ChatRepository } from "../chat/repository.js";
-import type { MatrixFundedCredentialProvider } from "../funded-ai-credential-manager.js";
+import type { MatrixFundedCredentialProvider } from "../domains/integrations/funded-ai-credential-manager.js";
 import {
   resolveKernelCredentialSources,
   type KernelCredentialAccessSourceId,
-} from "../kernel-credentials.js";
+} from "../domains/integrations/kernel-credentials.js";
 import {
   CollaborationAuthorizationError,
   type CollaborationAuthority,

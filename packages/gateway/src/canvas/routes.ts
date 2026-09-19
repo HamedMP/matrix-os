@@ -14,7 +14,7 @@ import {
   type CreateCanvasRequest,
 } from "./contracts.js";
 import { mapCanvasError } from "./service.js";
-import { isRequestPrincipalError, mapRequestPrincipalError } from "../request-principal.js";
+import { isRequestPrincipalError, mapRequestPrincipalError } from "../domains/identity/request-principal.js";
 import {
   ProjectFenceError,
   type LegacyProjectOperationAdmission,

@@ -15,7 +15,7 @@ import {
   loadRuntimeCatalog, computeEffectiveEntitlement, parseBillingOverrideRecord,
   getRuntimeAccessDecision, projectPublicBillingEntitlement,
 } from './billing.js';
-import type { StripeBillingClient } from './billing-routes.js';
+import type { StripeBillingClient } from './billing-route-helpers.js';
 import { RuntimeSlotSchema } from './customer-vps-schema.js';
 
 const BillingStatusQuerySchema = z.object({ runtimeSlot: RuntimeSlotSchema.optional() }).strict();
