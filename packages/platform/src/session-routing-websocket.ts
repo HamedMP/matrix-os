@@ -10,6 +10,7 @@ import {
   buildPlatformVerificationToken,
   timingSafeTokenEquals,
 } from './platform-token.js';
+import { PREVIEW_TERMINAL_ACCESS_HEADER } from './preview-terminal-access.js';
 
 type HeaderValue = string | string[] | undefined;
 
@@ -80,9 +81,13 @@ export function buildPlatformWebSocketUpgradeHeaders(opts: {
   platformSecret: string;
   includePlatformProof: boolean;
   isCodeDomain: boolean;
+  previewTerminalAccess?: string;
 }): string {
   return Object.entries(opts.incomingHeaders)
     .filter(([k]) => (
+      k.toLowerCase() !== 'x-platform-user-id' &&
+      k.toLowerCase() !== 'x-platform-verified' &&
+      k.toLowerCase() !== PREVIEW_TERMINAL_ACCESS_HEADER &&
       k !== 'host' &&
       k !== 'authorization' &&
       k !== 'cookie' &&
@@ -106,6 +111,8 @@ export function buildPlatformWebSocketUpgradeHeaders(opts: {
           ]
         : [],
     )
+    .concat(opts.includePlatformProof && opts.platformSecret && opts.previewTerminalAccess
+      ? [`${PREVIEW_TERMINAL_ACCESS_HEADER}: ${opts.previewTerminalAccess}`] : [])
     .concat(
       opts.platformSecret && opts.isCodeDomain
         ? [`x-matrix-code-proxy-token: ${buildPlatformVerificationToken(opts.handle, opts.platformSecret)}`]

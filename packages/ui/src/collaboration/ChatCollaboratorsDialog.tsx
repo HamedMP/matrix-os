@@ -1,5 +1,5 @@
 import {
-  CollaborationActorIdSchema,
+  CollaborationInvitationIdentifierSchema,
   CollaborationMemberSchema,
   CollaborationScopeSchema,
   type CollaborationTerminalFrame,
@@ -17,7 +17,12 @@ export interface CollaborationApi {
   post(path: string, body: unknown): Promise<unknown>;
   patch?(path: string, body: unknown): Promise<unknown>;
   delete(path: string, body?: unknown): Promise<unknown>;
-  subscribe?(scopeId: string, onEvent: () => void | Promise<void>, onUnavailable: () => void): () => void;
+  subscribe?(
+    scopeId: string,
+    onEvent: () => void | Promise<void>,
+    onUnavailable: () => void,
+    onConnectionChange?: (state: "connected" | "reconnecting") => void,
+  ): () => void;
   subscribeTerminal?(scopeId: string, handlers: {
     onReady(frame: Extract<CollaborationTerminalFrame, { type: "terminal.ready" }>): void;
     onOutput(frame: Extract<CollaborationTerminalFrame, { type: "terminal.output" }>): void;
@@ -40,7 +45,7 @@ export function ChatCollaboratorsDialog({ api, scope, members, onRefresh, onClos
   const resourceLabel = scope.kind === "chat" ? "Chat" : scope.kind === "terminal" ? "terminal" : "project";
   const currentScope = useRef(scope);
   const [currentMembers, setCurrentMembers] = useState(members);
-  const [targetActorId, setTargetActorId] = useState("");
+  const [identifier, setIdentifier] = useState("");
   const [role, setRole] = useState<"editor" | "viewer">("editor");
   const [pending, setPending] = useState(false);
   const [feedback, setFeedback] = useState("");
@@ -62,15 +67,15 @@ export function ChatCollaboratorsDialog({ api, scope, members, onRefresh, onClos
   const invite = async () => {
     beginAction();
     try {
-      const actorId = CollaborationActorIdSchema.parse(targetActorId.trim());
-      await api.post(`/api/collaboration/scopes/${currentScope.current.id}/invitations`, {
-        targetActorId: actorId,
+      const targetIdentifier = CollaborationInvitationIdentifierSchema.parse(identifier);
+      await api.post(`/api/collaboration/scopes/${encodeURIComponent(currentScope.current.id)}/invitations`, {
+        identifier: targetIdentifier,
         role,
         clientRequestId: crypto.randomUUID(),
         expectedRevision: currentScope.current.revision,
       });
       await refresh();
-      setTargetActorId("");
+      setIdentifier("");
       setFeedback("Invitation sent. Access begins only after acceptance.");
     } catch (failure: unknown) {
       failAction(failure);
@@ -82,7 +87,7 @@ export function ChatCollaboratorsDialog({ api, scope, members, onRefresh, onClos
     beginAction();
     try {
       if (!api.patch) throw new Error("Unsupported collaboration client");
-      await api.patch(`/api/collaboration/scopes/${currentScope.current.id}/members/${member.actor.actorId}`, {
+      await api.patch(`/api/collaboration/scopes/${encodeURIComponent(currentScope.current.id)}/members/${encodeURIComponent(member.actor.actorId)}`, {
         role: nextRole,
         clientRequestId: crypto.randomUUID(),
         expectedRevision: currentScope.current.revision,
@@ -99,10 +104,10 @@ export function ChatCollaboratorsDialog({ api, scope, members, onRefresh, onClos
   const revoke = async (member: Member) => {
     beginAction();
     try {
-      const base = `/api/collaboration/scopes/${currentScope.current.id}`;
+      const base = `/api/collaboration/scopes/${encodeURIComponent(currentScope.current.id)}`;
       const path = member.status === "pending" && member.invitationId
-        ? `${base}/invitations/${member.invitationId}`
-        : `${base}/members/${member.actor.actorId}`;
+        ? `${base}/invitations/${encodeURIComponent(member.invitationId)}`
+        : `${base}/members/${encodeURIComponent(member.actor.actorId)}`;
       await api.delete(path, {
         clientRequestId: crypto.randomUUID(),
         expectedRevision: currentScope.current.revision,
@@ -134,9 +139,10 @@ export function ChatCollaboratorsDialog({ api, scope, members, onRefresh, onClos
     <section aria-labelledby="invite-person-heading" className="rounded-xl border p-4">
       <h3 id="invite-person-heading" className="font-medium">Invite a person</h3>
       <div className="mt-3 grid gap-3 sm:grid-cols-[1fr_9rem_auto]">
-        <label className="grid gap-1 text-sm">Matrix user ID
-          <input value={targetActorId} disabled={pending} onChange={(event) => setTargetActorId(event.target.value)}
-            placeholder="user_…" className="min-w-0 rounded-lg border bg-transparent px-3 py-2" />
+        <label className="grid gap-1 text-sm">Email or username
+          <input value={identifier} disabled={pending} onChange={(event) => setIdentifier(event.target.value)}
+            placeholder="name@example.com or @username" autoComplete="off"
+            className="min-w-0 rounded-lg border bg-transparent px-3 py-2" />
         </label>
         <label className="grid gap-1 text-sm">Role
           <select value={role} disabled={pending} onChange={(event) => setRole(event.target.value as "editor" | "viewer")}
@@ -145,10 +151,13 @@ export function ChatCollaboratorsDialog({ api, scope, members, onRefresh, onClos
             <option value="viewer">Viewer</option>
           </select>
         </label>
-        <button type="button" className={`${buttonClass} self-end`} disabled={pending || !targetActorId.trim()} onClick={() => void invite()}>
+        <button type="button" className={`${buttonClass} self-end`} disabled={pending || !identifier.trim()} onClick={() => void invite()}>
           {pending ? "Sending…" : "Send invitation"}
         </button>
       </div>
+      <p className="mt-3 text-xs" style={{ color: "var(--text-secondary)" }}>
+        The person must already have a Matrix account. Enter their exact email address or username.
+      </p>
       <p className="mt-3 text-xs" style={{ color: "var(--text-secondary)" }}>
         {scope.kind === "terminal"
           ? "Editors can watch and request input control. Viewers watch only. Owners may take over control."

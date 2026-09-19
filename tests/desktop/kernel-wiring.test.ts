@@ -143,6 +143,41 @@ describe("kernel wiring", () => {
     vi.restoreAllMocks();
   });
 
+  it("routes app tasks through the kernel socket without changing the active chat", () => {
+    const cleanup = wireKernel();
+    const handler = vi.mocked(window.operator.on).mock.calls.find(([channel]) => channel === "app:generate")?.[1];
+    expect(handler).toBeTypeOf("function");
+    const before = useHermesChat.getState();
+    handler!({ app: "brain", context: "Read my notes", authGeneration: 0, runtimeSlot: "primary" });
+    const sent = kernelSocketMocks.instances[0].send;
+    expect(sent).toHaveBeenCalledWith({ type: "message", text: "[App: brain] Read my notes", requestId: expect.any(String) });
+    expect(useHermesChat.getState()).toBe(before);
+    handler!({ app: "brain", context: "wrong computer", authGeneration: 0, runtimeSlot: "other" });
+    useConnection.setState({ runtimeSlot: "other" });
+    handler!({ app: "brain", context: "retired computer", authGeneration: 0, runtimeSlot: "primary" });
+    handler!({ app: "brain", context: "retired account", authGeneration: 1, runtimeSlot: "primary" });
+    expect(sent).toHaveBeenCalledTimes(1);
+    cleanup();
+  });
+
+  it("tracks an app task separately when another thread is waiting for kernel init", () => {
+    const other = useThreads.getState().startThread({ text: "Other task", requestId: "other-request" });
+    useThreads.getState().setActiveThread(other.id);
+    const cleanup = wireKernel();
+    const handler = vi.mocked(window.operator.on).mock.calls.find(([channel]) => channel === "app:generate")![1];
+    handler({ app: "brain", context: "Read my notes", authGeneration: 0, runtimeSlot: "primary" });
+    const socket = kernelSocketMocks.instances[0];
+    const request = socket.send.mock.calls[0][0];
+    const receive = socket.subscribe.mock.calls[0][0];
+    receive({ type: "kernel:init", requestId: request.requestId, sessionId: "app-session" });
+    receive({ type: "kernel:result", requestId: request.requestId, data: {} });
+    const state = useThreads.getState();
+    expect(state.threads.find((thread) => thread.id === other.id)?.sessionId).toBeNull();
+    expect(state.activeThreadId).toBe(other.id);
+    expect(state.threads.find((thread) => thread.requestId === request.requestId)).toMatchObject({ sessionId: "app-session", status: "done" });
+    cleanup();
+  });
+
   it("opens the notified coding-agent thread inside its project tab", async () => {
     const loadThreadSnapshot = vi.fn().mockResolvedValue(undefined);
     useCodingAgentWorkspace.setState({ loadThreadSnapshot });
@@ -404,45 +439,11 @@ describe("kernel wiring", () => {
     cleanup();
   });
 
-  it("includes gateway-owned coding-agent attention in the desktop badge count", () => {
+  it("does not let legacy task attention overwrite the Chat Dock badge", () => {
     const cleanup = wireKernel();
     const invoke = window.operator.invoke as ReturnType<typeof vi.fn>;
-
-    useCodingAgentWorkspace.setState({
-      summary: codingAgentAttentionSummaryFixture(),
-    });
-
-    expect(invoke).toHaveBeenLastCalledWith("badge:set", { count: 2 });
-
-    useCodingAgentWorkspace.setState({
-      summary: {
-        ...codingAgentAttentionSummaryFixture(),
-        attentionThreads: { items: [], hasMore: false, limit: 20 },
-      },
-    });
-
-    expect(invoke).toHaveBeenLastCalledWith("badge:set", { count: 0 });
-
-    cleanup();
-  });
-
-  it("uses the desktop badge cap for truncated coding-agent attention summaries", () => {
-    const cleanup = wireKernel();
-    const invoke = window.operator.invoke as ReturnType<typeof vi.fn>;
-    const summary = codingAgentAttentionSummaryFixture();
-
-    useCodingAgentWorkspace.setState({
-      summary: {
-        ...summary,
-        attentionThreads: {
-          ...summary.attentionThreads,
-          hasMore: true,
-        },
-      },
-    });
-
-    expect(invoke).toHaveBeenLastCalledWith("badge:set", { count: 999 });
-
+    useCodingAgentWorkspace.setState({ summary: codingAgentAttentionSummaryFixture() });
+    expect(invoke.mock.calls.some(([channel]) => channel === "badge:set")).toBe(false);
     cleanup();
   });
 });

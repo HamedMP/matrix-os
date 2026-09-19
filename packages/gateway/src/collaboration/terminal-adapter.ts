@@ -462,6 +462,8 @@ function rowToScope(row: {
   auth_epoch: number;
   authority_runtime_id: string;
   authority_generation: number;
+  execution_generation: number | null;
+  execution_eligibility: unknown | null;
 }): CollaborationScopeRecord {
   return {
     id: row.id,
@@ -475,5 +477,7 @@ function rowToScope(row: {
     authEpoch: Number(row.auth_epoch),
     authorityRuntimeId: row.authority_runtime_id,
     authorityGeneration: Number(row.authority_generation),
+    executionGeneration: row.execution_generation === null ? null : Number(row.execution_generation),
+    executionEligibility: row.execution_eligibility,
   };
 }

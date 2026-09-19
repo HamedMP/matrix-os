@@ -15,6 +15,7 @@ import {
   NativeAppBridge,
   createNativeAppQueryRequester,
   createNativeAppGatewayRequester,
+  createNativeAppAiRequester,
 } from "./embeds/native-app-bridge";
 import {
   abortCodingAgentThread,
@@ -258,6 +259,16 @@ if (!gotLock) {
       );
 
       const nativeAppBridge = new NativeAppBridge({
+        authGeneration: () => auth.getStatus().authGeneration,
+        generate: (app, context) => {
+          const status = auth.getStatus();
+          if (!status.signedIn || !mainWindow || mainWindow.isDestroyed()) throw new Error("App task is unavailable");
+          sendEvent("app:generate", { app, context, runtimeSlot: status.runtimeSlot, authGeneration: status.authGeneration });
+        },
+        aiRequest: createNativeAppAiRequester({
+          getGatewayOrigin: () => auth.getGatewayOrigin(),
+          getToken: () => auth.getToken(),
+        }),
         gatewayRequest: createNativeAppGatewayRequester({
           getGatewayOrigin: () => auth.getGatewayOrigin(),
           getToken: () => auth.getToken(),

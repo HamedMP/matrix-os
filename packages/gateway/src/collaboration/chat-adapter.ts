@@ -3,17 +3,23 @@ import {
   CanonicalChatMessageSchema,
   CollaborationChatSchema,
   CollaborationCreateDiscussionRequestSchema,
+  CollaborationDiscussionMessageSchema,
+  CollaborationDiscussionMessagesResponseSchema,
+  CollaborationDiscussionUserStatePatchSchema,
+  CollaborationDiscussionUserStateSchema,
   CollaborationHumanMessageSchema,
   CollaborationUserStatePatchSchema,
   CollaborationUserStateSchema,
   type CanonicalChatMessage,
   type CanonicalChatMessagePart,
   type CollaborationHumanMessage,
+  type CollaborationDiscussionMessagesResponse,
 } from "@matrix-os/contracts";
 import { sql, type Kysely, type Selectable, type Transaction } from "kysely";
 import { z } from "zod/v4";
 import { CollaborationAuthorizationError, type AuthorizedCollaborationContext } from "./authority.js";
 import type { CollaborationScopesTable, OwnerCollaborationDatabase } from "./database.js";
+import { CollaborationDiscussionError } from "./discussion-error.js";
 import { CollaborationRepositoryError } from "./repository.js";
 
 const OPERATION_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
@@ -217,6 +223,64 @@ export class CollaborationChatAdapter {
     });
   }
 
+  async listDiscussionMessages(
+    context: AuthorizedCollaborationContext,
+    input: { afterSequence: string; limit: number },
+  ): Promise<CollaborationDiscussionMessagesResponse> {
+    const current = await this.options.authority.authorize({
+      scopeId: context.scopeId,
+      actorId: context.actorId,
+      action: "read",
+    });
+    if (current.resourceKind !== "chat" || current.resourceId !== context.resourceId
+      || current.ownerId !== context.ownerId || input.limit < 1 || input.limit > 100) {
+      throw new CollaborationAuthorizationError("unavailable", "Shared Chat discussion is unavailable");
+    }
+    const { rows, latestSequence } = await this.options.db.transaction().execute(async (trx) => {
+      const scope = await lockScope(trx, current);
+      await reauthorizeRead(trx, current, this.now());
+      requireCurrentEpoch(scope, current, await membershipEpoch(trx, current));
+      const [rows, latest] = await Promise.all([
+        trx.selectFrom("chat_messages")
+          .selectAll()
+          .where("chat_id", "=", current.resourceId)
+          .where("purpose", "=", "discussion")
+          .where("seq", ">", Number(input.afterSequence))
+          .orderBy("seq", "asc")
+          .limit(input.limit)
+          .execute(),
+        trx.selectFrom("chat_messages")
+          .select(({ fn }) => fn.max("seq").as("sequence"))
+          .where("chat_id", "=", current.resourceId)
+          .where("purpose", "=", "discussion")
+          .executeTakeFirst(),
+      ]);
+      return { rows, latestSequence: Number(latest?.sequence ?? 0) };
+    });
+    const authors = new Map<string, { actorId: string; displayName: string }>();
+    for (const row of rows) {
+      if (!row.actor_id || authors.has(row.actor_id)) continue;
+      authors.set(row.actor_id, await this.resolveParticipant(row.actor_id));
+    }
+    return CollaborationDiscussionMessagesResponseSchema.parse({
+      messages: rows.map((row) => {
+        const message = canonicalMessage(row);
+        const text = message.parts.find((part) => part.type === "text")?.text ?? "";
+        return CollaborationDiscussionMessageSchema.parse({
+          id: message.id,
+          scopeId: current.scopeId,
+          sequence: String(message.seq),
+          actor: message.actorId
+            ? authors.get(message.actorId) ?? { actorId: message.actorId, displayName: "Unknown participant" }
+            : { actorId: "unknown_participant", displayName: "Unknown participant" },
+          text,
+          createdAt: message.createdAt,
+        });
+      }),
+      latestSequence: String(latestSequence),
+    });
+  }
+
   async getChat(context: AuthorizedCollaborationContext) {
     const current = await this.options.authority.authorize({
       scopeId: context.scopeId,
@@ -268,6 +332,74 @@ export class CollaborationChatAdapter {
         muted: row.muted,
         ...(row.last_opened_at === null ? {} : { lastOpenedAt: toIso(row.last_opened_at) }),
       } : { readThroughSeq: "0", pinned: false, muted: false });
+    });
+  }
+
+  async getDiscussionUserState(context: AuthorizedCollaborationContext) {
+    return this.options.db.transaction().execute(async (trx) => {
+      const scope = await lockScope(trx, context);
+      await reauthorizeRead(trx, context, this.now());
+      requireCurrentEpoch(scope, context, await membershipEpoch(trx, context));
+      const row = await trx.selectFrom("collaboration_discussion_user_state")
+        .select(["read_through_seq", "last_opened_at"])
+        .where("scope_id", "=", context.scopeId)
+        .where("actor_id", "=", context.actorId)
+        .executeTakeFirst();
+      return CollaborationDiscussionUserStateSchema.parse(row ? {
+        readThroughSeq: String(row.read_through_seq),
+        ...(row.last_opened_at === null ? {} : { lastOpenedAt: toIso(row.last_opened_at) }),
+      } : { readThroughSeq: "0" });
+    });
+  }
+
+  async updateDiscussionUserState(context: AuthorizedCollaborationContext, input: unknown) {
+    const patch = CollaborationDiscussionUserStatePatchSchema.parse(input);
+    const readThroughSeq = z.coerce.number().int().min(0).max(Number.MAX_SAFE_INTEGER).parse(patch.readThroughSeq);
+    const now = this.now().toISOString();
+    return this.options.db.transaction().execute(async (trx) => {
+      const scope = await lockScope(trx, context);
+      await reauthorizeRead(trx, context, this.now());
+      requireCurrentEpoch(scope, context, await membershipEpoch(trx, context));
+      const chat = await trx.selectFrom("chats")
+        .select("collaboration")
+        .where("id", "=", context.resourceId)
+        .where("owner_type", "=", "personal")
+        .where("owner_id", "=", context.ownerId)
+        .executeTakeFirst();
+      if (!chat || !bindingMatches(chat.collaboration, context.scopeId)) {
+        throw new CollaborationAuthorizationError("unavailable", "Shared Chat binding is unavailable");
+      }
+      if (readThroughSeq !== 0) {
+        const discussion = await trx.selectFrom("chat_messages")
+          .select("id")
+          .where("chat_id", "=", context.resourceId)
+          .where("purpose", "=", "discussion")
+          .where("seq", "=", readThroughSeq)
+          .executeTakeFirst();
+        if (!discussion) {
+          throw new CollaborationDiscussionError("invalid_request", "Discussion cursor is unavailable");
+        }
+      }
+      await trx.insertInto("collaboration_discussion_user_state").values({
+        scope_id: context.scopeId,
+        actor_id: context.actorId,
+        read_through_seq: readThroughSeq,
+        last_opened_at: now,
+        updated_at: now,
+      }).onConflict((conflict) => conflict.columns(["scope_id", "actor_id"]).doUpdateSet({
+        read_through_seq: sql<number>`GREATEST(collaboration_discussion_user_state.read_through_seq, ${readThroughSeq})`,
+        last_opened_at: now,
+        updated_at: now,
+      })).execute();
+      const row = await trx.selectFrom("collaboration_discussion_user_state")
+        .select(["read_through_seq", "last_opened_at"])
+        .where("scope_id", "=", context.scopeId)
+        .where("actor_id", "=", context.actorId)
+        .executeTakeFirstOrThrow();
+      return CollaborationDiscussionUserStateSchema.parse({
+        readThroughSeq: String(row.read_through_seq),
+        ...(row.last_opened_at === null ? {} : { lastOpenedAt: toIso(row.last_opened_at) }),
+      });
     });
   }
 

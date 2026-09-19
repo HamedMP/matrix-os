@@ -574,8 +574,6 @@ function aiRequest(index: number, actorId: string, expectedRevision = 1) {
     payloadHash: index.toString(16).padStart(64, "0"),
     expectedRevision,
     parts: [{ type: "text" as const, text: `Control request ${index}` }],
-    driverKind: "claude_code" as const,
-    selection: { instanceId: "claude_shared", model: "claude-opus-4-6" },
     interactionMode: "default",
     permissionMode: "supervised",
     capabilitySnapshot,
@@ -590,7 +588,9 @@ async function seedSharedChat(fixture: CollaborationTestDatabase): Promise<void>
     lifecycle: "active", attention: "none", revision: 1, message_count: 0,
     collaboration: JSON.stringify({ scopeId: collaborationIds.scope, mode: "shared_ai", executionFenced: true }),
     user_state: null, shell_state: null, fork_provenance: null, last_message_preview: null,
-    current_selection: null, bound_driver_kind: null, bound_instance_id: null, bound_at_turn_id: null,
+    current_selection: JSON.stringify({ instanceId: "claude_shared", model: "claude-opus-4-6" }),
+    bound_driver_kind: "claude_code", bound_instance_id: "claude_shared",
+    bound_at_turn_id: "cturn_shared_controls_origin",
     created_at: now, updated_at: now,
   }).execute();
   await fixture.db.insertInto("collaboration_scopes").values({
@@ -598,7 +598,10 @@ async function seedSharedChat(fixture: CollaborationTestDatabase): Promise<void>
     kind: "chat", resource_id: collaborationIds.chat, parent_scope_id: null, membership_mode: "direct",
     lifecycle: "shared", revision: 1, auth_epoch: 1, authority_runtime_id: collaborationIds.runtime,
     authority_generation: 1, execution_generation: 1,
-    execution_eligibility: JSON.stringify({ profileId: "scope-runtime-chat-v1" }),
+    execution_eligibility: JSON.stringify({
+      profileId: "scope-runtime-chat-v1", profileVersion: 1, profileDigest: "a".repeat(64),
+      adapterId: "claude-code", harnessVersion: "2.1.240",
+    }),
     deleted_at: null, created_at: now, updated_at: now,
   }).execute();
   await fixture.db.insertInto("collaboration_members").values([

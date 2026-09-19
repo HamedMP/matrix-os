@@ -35,6 +35,14 @@ function pointer(overrides: Partial<TerminalPointerInput> = {}): TerminalPointer
 }
 
 describe("terminal clipboard shortcut contract", () => {
+  it.each([false, true])("supports Ctrl+V on isMac=%s with or without selection", (isMac) => {
+    for (const hasSelection of [false, true]) {
+      expect(classifyTerminalClipboardShortcut(shortcut({
+        key: "v", isMac, metaKey: false, ctrlKey: true, hasSelection,
+      }))).toBe("paste");
+    }
+  });
+
   it.each([
     [shortcut(), "copy"],
     [shortcut({ shiftKey: true }), "copy"],

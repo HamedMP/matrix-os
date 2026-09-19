@@ -68,4 +68,48 @@ describe("terminal pointer interception", () => {
     container.dispatchEvent(new MouseEvent("mousemove", { bubbles: true, cancelable: true }));
     expect(correctPointer).not.toHaveBeenCalled();
   });
+
+  it("continues correcting a scaled primary drag after it leaves the terminal", () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const correctPointer = vi.fn();
+    const remove = installTerminalPointerInterception({
+      container,
+      getTerminal: () => null,
+      getVisualScale: () => 0.5,
+      correctPointer,
+    });
+
+    container.dispatchEvent(new MouseEvent("mousedown", {
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      buttons: 1,
+    }));
+    document.body.dispatchEvent(new MouseEvent("mousemove", {
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      buttons: 1,
+    }));
+    document.body.dispatchEvent(new MouseEvent("mouseup", {
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      buttons: 0,
+    }));
+    document.body.dispatchEvent(new MouseEvent("mousemove", {
+      bubbles: true,
+      cancelable: true,
+      buttons: 0,
+    }));
+
+    expect(correctPointer.mock.calls.map(([event]) => event.type)).toEqual([
+      "mousedown",
+      "mousemove",
+      "mouseup",
+    ]);
+    remove();
+    container.remove();
+  });
 });

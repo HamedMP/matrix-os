@@ -19,6 +19,8 @@ const CollaborationJourneyEnvironmentSchema = z.object({
   MATRIX_COLLABORATION_E2E_EDITOR_STATE: StorageStatePathSchema,
   MATRIX_COLLABORATION_E2E_PROJECT_ID: z.string().min(1).max(256).regex(/^[A-Za-z0-9_-]+$/),
   MATRIX_COLLABORATION_E2E_EDITOR_ACTOR_ID: z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/),
+  MATRIX_COLLABORATION_E2E_EDITOR_EMAIL: z.email().max(254),
+  MATRIX_COLLABORATION_E2E_EDITOR_USERNAME: z.string().min(2).max(63).regex(/^[a-z0-9][a-z0-9-]*$/),
 });
 
 export interface CollaborationJourneyEnvironment {
@@ -28,6 +30,8 @@ export interface CollaborationJourneyEnvironment {
   editorStorageState: string;
   projectId: string;
   editorActorId: string;
+  editorEmail: string;
+  editorUsername: string;
 }
 
 export interface CollaborationJourneyActor {
@@ -64,6 +68,8 @@ export function parseCollaborationJourneyEnvironment(
     editorStorageState: parsed.MATRIX_COLLABORATION_E2E_EDITOR_STATE,
     projectId: parsed.MATRIX_COLLABORATION_E2E_PROJECT_ID,
     editorActorId: parsed.MATRIX_COLLABORATION_E2E_EDITOR_ACTOR_ID,
+    editorEmail: parsed.MATRIX_COLLABORATION_E2E_EDITOR_EMAIL,
+    editorUsername: parsed.MATRIX_COLLABORATION_E2E_EDITOR_USERNAME,
   };
 }
 

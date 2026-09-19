@@ -16,12 +16,13 @@ export type TerminalClientFrame =
 type TerminalRef = { workspaceId: string; tabId: string };
 
 export type TerminalServerFrame =
-  | { type: "attached"; terminalRef: TerminalRef; canonicalSize: { cols: number; rows: number }; revision: number; nextSeq: number; capabilities?: string[] }
+  | { type: "attached"; terminalRef: TerminalRef; canonicalSize: { cols: number; rows: number }; revision: number; nextSeq: number; capabilities?: string[]; ownership?: "writer" | "observer"; leaseEpoch?: number }
   | { type: "snapshot"; terminalRef: TerminalRef; ansi: string; seq: number; revision: number }
   | { type: "output"; terminalRef: TerminalRef; data: string; seq: number; revision: number }
   | { type: "replay-start"; fromSeq?: number; toSeq?: number }
   | { type: "replay-end"; nextSeq?: number }
   | { type: "exit"; exitCode?: number | null }
+  | { type: "lease-revoked"; terminalRef: TerminalRef; epoch: number | null }
   | { type: "error"; message?: string };
 
 export interface MobileTerminalConnectOptions {
@@ -55,11 +56,11 @@ export class MobileTerminalClient {
     if (!options.sessionId) return null;
     const token = await this.gateway.getWsToken();
     this.gateway.setWebSocketToken(token);
-    const ws = this.gateway.openTerminalWebSocket(token, options.sessionId, options.fromSeq);
-    const connection = new MobileTerminalConnection(ws, options, async (fromSeq) => {
+    const ws = this.gateway.openTerminalWebSocket(token, options.sessionId, options.fromSeq, "exclusive");
+    const connection = new MobileTerminalConnection(ws, options, async (fromSeq, ownership) => {
       const nextToken = await this.gateway.getWsToken();
       this.gateway.setWebSocketToken(nextToken);
-      return this.gateway.openTerminalWebSocket(nextToken, options.sessionId, fromSeq);
+      return this.gateway.openTerminalWebSocket(nextToken, options.sessionId, fromSeq, ownership);
     });
     connection.attach();
     return connection;
@@ -75,11 +76,13 @@ export class MobileTerminalConnection {
   private heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
   private lastSeq: number;
   private binaryInputSupported = false;
+  private hasWriteOwnership = false;
+  private requestedOwnership: "exclusive" | "observe" = "exclusive";
 
   constructor(
     private ws: WebSocket,
     private readonly options: MobileTerminalConnectOptions,
-    private readonly reconnect?: (fromSeq: number) => Promise<WebSocket>,
+    private readonly reconnect?: (fromSeq: number, ownership: "exclusive" | "observe") => Promise<WebSocket>,
   ) {
     const [workspaceId, tabId] = options.sessionId?.split(":") ?? [];
     if (!/^tws_[0-9a-f]{32}$/.test(workspaceId ?? "") || !/^tt_[0-9a-f]{32}$/.test(tabId ?? "")) {
@@ -96,10 +99,12 @@ export class MobileTerminalConnection {
 
   private bindSocket(ws: WebSocket): void {
     this.binaryInputSupported = false;
+    this.hasWriteOwnership = false;
     // The TerminalRef is supplied in the WS query; announce the viewport once open.
     ws.onopen = () => {
       if (this.ws !== ws || this.disposed) return;
       this.attached = true;
+      this.hasWriteOwnership = this.requestedOwnership === "exclusive";
       this.reconnectAttempt = 0;
       this.options.onStatus?.("open");
       if (this.options.cols && this.options.rows) {
@@ -114,6 +119,13 @@ export class MobileTerminalConnection {
       if (frame) {
         if (frame.type === "attached") {
           this.binaryInputSupported = frame.capabilities?.includes("binary-input-v1") ?? false;
+          this.hasWriteOwnership = frame.ownership !== "observer";
+          if (frame.ownership === "observer") this.requestedOwnership = "observe";
+          else if (frame.leaseEpoch !== undefined) this.requestedOwnership = "exclusive";
+        }
+        if (frame.type === "lease-revoked") {
+          this.hasWriteOwnership = false;
+          this.requestedOwnership = "observe";
         }
         if ((frame.type === "snapshot" || frame.type === "output") && typeof frame.seq === "number") {
           this.lastSeq = Math.max(this.lastSeq, frame.seq);
@@ -137,11 +149,12 @@ export class MobileTerminalConnection {
   }
 
   sendInput(data: string): boolean {
+    if (!this.hasWriteOwnership) return false;
     return this.sendFrame({ type: "input", terminalRef: this.terminalRef, data });
   }
 
   sendBinary(data: string): boolean {
-    if (data.length === 0) return false;
+    if (!this.hasWriteOwnership || data.length === 0) return false;
     for (const value of data) {
       if (value.charCodeAt(0) > 0xff) return false;
     }
@@ -205,7 +218,7 @@ export class MobileTerminalConnection {
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       if (this.disposed) return;
-      void this.reconnect!(this.lastSeq + 1).then((next) => {
+      void this.reconnect!(this.lastSeq + 1, this.requestedOwnership).then((next) => {
         if (this.disposed) {
           next.close();
           return;
@@ -270,6 +283,7 @@ export function buildTerminalWebSocketUrl(baseUrl: string, refKey: string, token
   url.searchParams.set("tabId", tabId ?? "");
   url.searchParams.set("client", "mobile");
   url.searchParams.set("inputCapability", "binary-input-v1");
+  url.searchParams.set("lease", "exclusive");
   if (token) url.searchParams.set("token", token);
   return url.toString();
 }
@@ -289,6 +303,7 @@ function parseTerminalServerFrame(data: unknown): TerminalServerFrame | null {
     if (frame.type === "snapshot" && typeof frame.ansi === "string") return frame;
     if (frame.type === "output" && typeof frame.data === "string") return frame;
     if (frame.type === "replay-start" || frame.type === "replay-end" || frame.type === "exit") return frame;
+    if (frame.type === "lease-revoked" && frame.terminalRef && (typeof frame.epoch === "number" || frame.epoch === null)) return frame;
     if (frame.type === "error") return { type: "error", message: typeof frame.message === "string" ? frame.message : undefined };
     return null;
   } catch (err: unknown) {
