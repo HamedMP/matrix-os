@@ -394,6 +394,8 @@ export default function ChatTab({
   initialChatId,
   initialView,
   sharedScopeId,
+  sharedHeaderContainer,
+  onSharedChatMetadata,
   draftRequest,
   externalNavigation = false,
   renderInspector,
@@ -407,6 +409,8 @@ export default function ChatTab({
   initialChatId?: string;
   initialView?: "index" | "draft" | "conversation";
   sharedScopeId?: string;
+  sharedHeaderContainer?: HTMLElement | null;
+  onSharedChatMetadata?: (metadata: { title: string; role: "owner" | "editor" | "viewer" }) => void;
   draftRequest?: ChatAgentDraftRequest | null;
   externalNavigation?: boolean;
   renderInspector?: (detail: CanonicalChatDetailResponse) => ReactNode;
@@ -425,6 +429,8 @@ export default function ChatTab({
       initialChatId={initialChatId}
       initialView={initialView}
       sharedScopeId={sharedScopeId}
+      sharedHeaderContainer={sharedHeaderContainer}
+      onSharedChatMetadata={onSharedChatMetadata}
       draftRequest={draftRequest}
       active={active}
       live={visible}

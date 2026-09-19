@@ -68,7 +68,7 @@ export function ChatCollaboratorsDialog({ api, scope, members, onRefresh, onClos
     beginAction();
     try {
       const targetIdentifier = CollaborationInvitationIdentifierSchema.parse(identifier);
-      await api.post(`/api/collaboration/scopes/${currentScope.current.id}/invitations`, {
+      await api.post(`/api/collaboration/scopes/${encodeURIComponent(currentScope.current.id)}/invitations`, {
         identifier: targetIdentifier,
         role,
         clientRequestId: crypto.randomUUID(),
@@ -87,7 +87,7 @@ export function ChatCollaboratorsDialog({ api, scope, members, onRefresh, onClos
     beginAction();
     try {
       if (!api.patch) throw new Error("Unsupported collaboration client");
-      await api.patch(`/api/collaboration/scopes/${currentScope.current.id}/members/${member.actor.actorId}`, {
+      await api.patch(`/api/collaboration/scopes/${encodeURIComponent(currentScope.current.id)}/members/${encodeURIComponent(member.actor.actorId)}`, {
         role: nextRole,
         clientRequestId: crypto.randomUUID(),
         expectedRevision: currentScope.current.revision,
@@ -104,10 +104,10 @@ export function ChatCollaboratorsDialog({ api, scope, members, onRefresh, onClos
   const revoke = async (member: Member) => {
     beginAction();
     try {
-      const base = `/api/collaboration/scopes/${currentScope.current.id}`;
+      const base = `/api/collaboration/scopes/${encodeURIComponent(currentScope.current.id)}`;
       const path = member.status === "pending" && member.invitationId
-        ? `${base}/invitations/${member.invitationId}`
-        : `${base}/members/${member.actor.actorId}`;
+        ? `${base}/invitations/${encodeURIComponent(member.invitationId)}`
+        : `${base}/members/${encodeURIComponent(member.actor.actorId)}`;
       await api.delete(path, {
         clientRequestId: crypto.randomUUID(),
         expectedRevision: currentScope.current.revision,

@@ -5,9 +5,12 @@ import {
   CollaborationTerminalSchema,
   type CollaborationTerminal,
 } from "@matrix-os/contracts";
-import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { z } from "zod/v4";
 import type { CollaborationApi } from "./ChatCollaboratorsDialog.js";
+import { SessionAccessControl } from "./SessionAccessControl.js";
+import { SessionDiscussionLayer, type CollaborationOverlayLayers } from "./SessionDiscussionLayer.js";
+import { useSessionDiscussion } from "./useSessionDiscussion.js";
 
 const MAX_OUTPUT_BYTES = 2 * 1024 * 1024;
 const LEASE_RENEW_INTERVAL_MS = 10_000;
@@ -50,13 +53,23 @@ const initialState: State = {
 };
 
 // react-doctor-disable-next-line react-doctor/no-high-complexity-react-function -- This is one lease-bound UI state machine: its branches are role, connection, and epoch guards covered by shared-terminal-controls tests. Splitting them would duplicate security-sensitive derived authority across components.
-export function SharedTerminalControls({ api, scope, actorId }: {
+export function SharedTerminalControls({ api, scope, actorId, layers }: {
   api: CollaborationApi;
   scope: Scope;
   actorId: string;
+  layers?: CollaborationOverlayLayers;
 }) {
   const [state, dispatch] = useReducer(reduce, initialState);
   const [input, setInput] = useState("");
+  const [discussionOpen, setDiscussionOpen] = useState(false);
+  const discussionTrigger = useRef<HTMLButtonElement>(null);
+  const discussion = useSessionDiscussion({
+    api,
+    scope,
+    actorId,
+    runtimeId: scope.ownerId,
+    open: discussionOpen,
+  });
   const refresh = useCallback(async () => {
     const terminal = CollaborationTerminalSchema.parse(await api.get(
       `/api/collaboration/scopes/${scope.id}/terminal`,
@@ -156,14 +169,22 @@ export function SharedTerminalControls({ api, scope, actorId }: {
     void sendAction({ type, leaseEpoch: controller.leaseEpoch, data: input });
     setInput("");
   };
+  const closeDiscussion = useCallback(() => {
+    setDiscussionOpen(false);
+    queueMicrotask(() => discussionTrigger.current?.focus());
+  }, []);
 
-  return <section className="flex min-h-0 flex-1 flex-col bg-[#101218] text-[#e4e4e7]">
+  return <section className="relative flex min-h-0 flex-1 flex-col bg-[#101218] text-[#e4e4e7]">
     <header className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
       <div>
         <p className="text-xs uppercase tracking-[0.16em] text-zinc-400">Shared terminal</p>
         <p className="mt-0.5 text-sm font-medium">{controlLabel}</p>
       </div>
       <div className="flex flex-wrap gap-2">
+        <button ref={discussionTrigger} type="button" className={buttonClass}
+          aria-label={discussionOpen ? "Close terminal discussion" : "Open terminal discussion"}
+          aria-expanded={discussionOpen} onClick={() => setDiscussionOpen((current) => !current)}>Discussion</button>
+        <SessionAccessControl key={scope.id} api={api} scope={scope} zIndex={layers?.popover} />
         {canControl && !holdsControl && !controller ? <button type="button" className={buttonClass}
           disabled={state.pending || !state.connectionId} onClick={() => void sendAction({ type: "acquire" })}>
           Request control
@@ -200,6 +221,7 @@ export function SharedTerminalControls({ api, scope, actorId }: {
       <button type="button" className={buttonClass} disabled={!holdsControl || !input || state.pending}
         onClick={() => submitText("paste")}>Paste text</button>
     </div>
+    <SessionDiscussionLayer open={discussionOpen} onClose={closeDiscussion} discussion={discussion} zIndex={layers?.dialog} />
   </section>;
 }
 
