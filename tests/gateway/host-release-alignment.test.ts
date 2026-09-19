@@ -23,17 +23,18 @@ it("compares the real host system-info producer without container build variable
     writeRelease(hostInfo.version, hostInfo.release.gitCommit);
     const running = { runningVersion: hostInfo.runningVersion };
     const before = getSystemInfo(home, running);
+    expect(evaluateDesktopReleaseState(before, desktop).status).toBe("compatible");
     expect(before.build.sha).toBe("unknown");
-    expect(evaluateDesktopReleaseState(before, desktop).status).toBe("runtime-update-required");
+    expect(evaluateDesktopReleaseState(before, desktop).alignment).toBe("runtime-update-required");
 
     // The installer can replace release.json while the old process still runs.
     writeRelease("v2026.09.10-1209", desktop.commit);
     const now = Date.now();
     vi.spyOn(Date, "now").mockReturnValue(now + 60_000);
-    expect(evaluateDesktopReleaseState(getSystemInfo(home, running), desktop).status).toBe("unavailable");
+    expect(evaluateDesktopReleaseState(getSystemInfo(home, running), desktop).alignment).toBe("unavailable");
     expect(evaluateDesktopReleaseState(getSystemInfo(home, {
       runningVersion: "v2026.09.10-1209",
-    }), desktop).status).toBe("aligned");
+    }), desktop).alignment).toBe("aligned");
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
