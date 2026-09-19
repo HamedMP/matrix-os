@@ -32,11 +32,17 @@ async function fixture() {
   const workerFile = join(root, "worker.js");
   const brokerSocket = join(root, "broker.sock");
   const stateRoot = join(root, "state");
+  const runtimeRoot = join(root, "runtime");
+  const runtimeBin = join(runtimeRoot, "bin");
   await mkdir(sdkDirectory);
   await mkdir(nativeDirectory);
+  await mkdir(runtimeBin, { recursive: true });
   await writeFile(join(sdkDirectory, "sdk.mjs"), "export {};\n");
   await writeFile(join(nativeDirectory, "claude"), "#!/bin/sh\nexit 0\n");
   await chmod(join(nativeDirectory, "claude"), 0o755);
+  const codexBinary = join(runtimeBin, "codex");
+  await writeFile(codexBinary, "#!/bin/sh\nexit 0\n");
+  await chmod(codexBinary, 0o755);
   await writeFile(workerFile, "setInterval(() => {}, 1000);\n");
   const broker: Server = createServer();
   await new Promise<void>((resolve, reject) => {
@@ -44,7 +50,10 @@ async function fixture() {
     broker.listen(brokerSocket, resolve);
   });
   cleanup.push(() => new Promise<void>((resolve) => broker.close(() => resolve())));
-  return { root, sdkDirectory, nativeDirectory, workerFile, brokerSocket, stateRoot, nodeBinary: process.execPath };
+  return {
+    root, sdkDirectory, nativeDirectory, workerFile, brokerSocket, stateRoot,
+    nodeBinary: process.execPath, codexBinary,
+  };
 }
 
 const launch = {
@@ -76,6 +85,30 @@ async function writeProvenance(
 }
 
 describe("scope runtime systemd launcher", () => {
+  it("advertises Codex only when the fixed native binary has the pinned version", async () => {
+    const paths = await fixture();
+    const verified = createSystemdScopeRuntimeLauncher({
+      ...paths,
+      runCommand: vi.fn(async (command) => ({
+        stdout: command === paths.codexBinary ? "codex-cli 0.154.0\n" : "",
+      })),
+    });
+    await expect(verified.supportedAdapters?.()).resolves.toEqual([
+      { adapterId: "claude-code", harnessVersion: "2.1.240", workloads: ["chat_ai"] },
+      { adapterId: "codex", harnessVersion: "0.154.0", workloads: ["chat_ai"] },
+    ]);
+
+    const changed = createSystemdScopeRuntimeLauncher({
+      ...paths,
+      runCommand: vi.fn(async (command) => ({
+        stdout: command === paths.codexBinary ? "codex-cli 0.155.0\n" : "",
+      })),
+    });
+    await expect(changed.supportedAdapters?.()).resolves.toEqual([
+      { adapterId: "claude-code", harnessVersion: "2.1.240", workloads: ["chat_ai"] },
+    ]);
+  });
+
   it("builds only the source-controlled profile and fixed worker command", () => {
     const args = buildFixedSystemdRunArgs(launch, {
       scopeRoot: "/var/lib/matrix-scope-runtime/runtimes/222/root",

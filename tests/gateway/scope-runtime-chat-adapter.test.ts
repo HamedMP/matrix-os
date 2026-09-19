@@ -43,6 +43,39 @@ describe("scope runtime canonical Chat adapter", () => {
     ]);
     expect(client.stopRuntime).toHaveBeenCalledWith({ runtimeHandle });
   });
+  it("maps the immutable Codex binding to the pinned native adapter and OpenAI result", async () => {
+    const client = {
+      capability: () => ({
+        available: true as const,
+        profileId: "scope-runtime-chat-v1",
+        executionGeneration: "7",
+        supportedAdapters: [{ adapterId: "codex", harnessVersion: "0.154.0", workloads: ["chat_ai" as const] }],
+      }),
+      createRuntime: vi.fn(async () => ({ runtimeHandle, executionGeneration: "7", state: "running" as const })),
+      runChat: vi.fn(async () => ({ runtimeHandle, executionGeneration: "7", text: "Codex answer" })),
+      stopRuntime: vi.fn(async () => ({ state: "stopped" })),
+    };
+    const adapter = createScopeRuntimeChatProviderAdapter({
+      client,
+      scopeId,
+      executionGeneration: "7",
+      adapterId: "codex",
+      harnessVersion: "0.154.0",
+    });
+    const events = [];
+    for await (const event of adapter.start({
+      ...runInput(),
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+    })) events.push(event);
+
+    expect(adapter.driverKind).toBe("codex");
+    expect(client.createRuntime).toHaveBeenCalledWith(expect.objectContaining({
+      adapterId: "codex",
+      harnessVersion: "0.154.0",
+    }));
+    expect(client.runChat).toHaveBeenCalledWith(expect.objectContaining({ model: "gpt-5.6-sol" }));
+    expect(events.at(-1)).toMatchObject({ type: "run.completed", outcome: "completed", provider: "openai" });
+  });
   it("fails closed before launch for stale generations and owner-context inputs", async () => {
     const client = {
       capability: () => ({ available: false as const, reason: "supervisor_unavailable" as const }),
@@ -64,6 +97,9 @@ describe("scope runtime canonical Chat adapter", () => {
     const unsafe = [];
     for await (const event of adapter.start({ ...runInput(), executionRoot: "/home/matrix/home" })) unsafe.push(event);
     expect(unsafe).toMatchObject([{ type: "run.completed", outcome: "failed" }]);
+    const resumed = [];
+    for await (const event of adapter.start({ ...runInput(), resumeState: { private: true } })) resumed.push(event);
+    expect(resumed).toMatchObject([{ type: "run.completed", outcome: "failed" }]);
     expect(client.createRuntime).not.toHaveBeenCalled();
   });
   it("coalesces abort and explicit cancellation into one runtime stop", async () => {

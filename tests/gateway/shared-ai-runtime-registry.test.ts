@@ -11,7 +11,11 @@ describe("shared AI runtime registry", () => {
       ownerId: "owner_1",
       actorId: "editor_1",
       executionGeneration: "7",
-      accessSourceId: "owner_anthropic_key",
+      providerIdentity: {
+        driverKind: "claude_code",
+        instanceId: "claude_shared",
+        accessSourceId: "owner_anthropic_key",
+      },
     });
     registry.selectModel(runtime("1"), "claude-opus-4-6");
     expect(registry.authorize({
@@ -20,6 +24,7 @@ describe("shared AI runtime registry", () => {
     })).toEqual({
       allowed: true,
       accessSourceId: "owner_anthropic_key",
+      providerIdentity: { driverKind: "claude_code", instanceId: "claude_shared" },
       allowedModelIds: ["claude-opus-4-6"],
       allowedEgressOrigins: [],
     });
@@ -46,7 +51,11 @@ describe("shared AI runtime registry", () => {
       ownerId: "owner_1",
       actorId: "editor_1",
       executionGeneration: "7",
-      accessSourceId: "matrix_included",
+      providerIdentity: {
+        driverKind: "claude_code",
+        instanceId: "claude_shared",
+        accessSourceId: "matrix_included",
+      },
     });
     bind(1);
     bind(2);
@@ -56,5 +65,42 @@ describe("shared AI runtime registry", () => {
     expect(registry.size).toBe(1);
     registry.shutdown();
     expect(registry.size).toBe(0);
+  });
+  it("authorizes a Codex runtime only for Responses with its exact owner-bound model", () => {
+    const registry = new SharedAiRuntimeRegistry();
+    registry.bind({
+      runtimeHandle: runtime("9"),
+      scopeId: "10000000-0000-4000-8000-000000000001",
+      chatId: "chat_1",
+      ownerId: "owner_1",
+      actorId: "editor_1",
+      executionGeneration: "7",
+      providerIdentity: { driverKind: "codex", instanceId: "codex_default" },
+    });
+    registry.selectModel(runtime("9"), "gpt-5.6-sol");
+
+    expect(registry.authorize({
+      runtimeHandle: runtime("9"),
+      executionGeneration: "7",
+      action: "inference.responses",
+      modelId: "gpt-5.6-sol",
+    })).toEqual({
+      allowed: true,
+      providerIdentity: { driverKind: "codex", instanceId: "codex_default" },
+      allowedModelIds: ["gpt-5.6-sol"],
+      allowedEgressOrigins: [],
+    });
+    expect(registry.authorize({
+      runtimeHandle: runtime("9"),
+      executionGeneration: "7",
+      action: "inference.messages",
+      modelId: "gpt-5.6-sol",
+    })).toEqual({ allowed: false });
+    expect(registry.authorize({
+      runtimeHandle: runtime("9"),
+      executionGeneration: "7",
+      action: "inference.responses",
+      modelId: "gpt-5.6-terra",
+    })).toEqual({ allowed: false });
   });
 });

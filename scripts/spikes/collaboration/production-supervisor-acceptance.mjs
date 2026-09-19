@@ -14,9 +14,10 @@ const DISABLED_MARKER = "/opt/matrix/app/SCOPE_RUNTIME_DISABLED";
 const MARKER_BACKUP = "/var/tmp/matrix-scope-runtime-disabled.acceptance";
 const BUNDLE_VERSION = "/opt/matrix/app/BUNDLE_VERSION";
 const RELEASE_METADATA = "/opt/matrix/release.json";
-const EXPECTED_PROFILE_DIGEST = "6650e74684fd322251882f65c36e1226149087dac346eee8a43da426a57fad8e";
+const EXPECTED_PROFILE_DIGEST = "9f4e3e2ad9e63cb300854dfca7bc31370d4cbae6d15fab902841b2b50a6443c0";
 const EXPECTED_PROFILE_ID = "scope-runtime-chat-v1";
 const EXPECTED_HARNESS_VERSION = "2.1.240";
+const EXPECTED_CODEX_VERSION = "0.154.0";
 const MAX_FRAME_BYTES = 64 * 1024;
 const SUPERVISOR_QUERY_TIMEOUT_MS = 5_000;
 const SUPERVISOR_OPERATION_TIMEOUT_MS = 30_000;
@@ -24,6 +25,7 @@ const MAX_BROKER_REQUEST_BYTES = 512 * 1024;
 const MAX_PROVIDER_BODY_BYTES = 256 * 1024;
 const BROKER_SOCKET_TIMEOUT_MS = 5_000;
 const ACCEPTANCE_MODEL = "claude-haiku-4-5-20251001";
+const ACCEPTANCE_CODEX_MODEL = "gpt-5.6-sol";
 const SYSTEMD_EXEC_STEPS = [
   "ADDRESS_FAMILIES", "CAPABILITIES", "CHDIR", "CHROOT", "EXEC", "GROUP", "NAMESPACE", "SECCOMP", "USER",
 ];
@@ -178,7 +180,7 @@ function validateCapability(response) {
     "capability_invalid");
   assert(response.supervisorVersion === "1.0.0", "supervisor_version_invalid");
   const profile = response.profile;
-  assert(profile?.profileId === EXPECTED_PROFILE_ID && profile.profileVersion === 1,
+  assert(profile?.profileId === EXPECTED_PROFILE_ID && profile.profileVersion === 2,
     "profile_identity_invalid");
   assert(profile.profileDigest === EXPECTED_PROFILE_DIGEST, "profile_digest_invalid");
   assert(/^[1-9][0-9]{0,19}$/.test(profile.executionGeneration), "generation_invalid");
@@ -188,10 +190,13 @@ function validateCapability(response) {
     && profile.limits.cpuQuotaPercent === 200
     && profile.limits.tasksMax === 256
     && profile.limits.storageMaxBytes === 10_737_418_240, "profile_limits_invalid");
-  assert(profile.adapters?.length === 1
+  assert(profile.adapters?.length === 2
     && profile.adapters[0]?.adapterId === "claude-code"
     && profile.adapters[0]?.harnessVersion === EXPECTED_HARNESS_VERSION
-    && JSON.stringify(profile.adapters[0]?.workloads) === '["chat_ai"]',
+    && JSON.stringify(profile.adapters[0]?.workloads) === '["chat_ai"]'
+    && profile.adapters[1]?.adapterId === "codex"
+    && profile.adapters[1]?.harnessVersion === EXPECTED_CODEX_VERSION
+    && JSON.stringify(profile.adapters[1]?.workloads) === '["chat_ai"]',
   "adapter_capability_invalid");
   return profile;
 }
@@ -244,6 +249,31 @@ function providerResponse() {
   ].join("");
 }
 
+function codexProviderResponse() {
+  return [
+    providerEvent("response.created", {
+      type: "response.created", response: { id: "resp_scope_runtime_codex_acceptance" },
+    }),
+    providerEvent("response.output_item.done", {
+      type: "response.output_item.done",
+      item: {
+        type: "message", role: "assistant", id: "msg_scope_runtime_codex_acceptance",
+        content: [{ type: "output_text", text: "scope-codex-ok" }],
+      },
+    }),
+    providerEvent("response.completed", {
+      type: "response.completed",
+      response: {
+        id: "resp_scope_runtime_codex_acceptance",
+        usage: {
+          input_tokens: 1, input_tokens_details: null,
+          output_tokens: 1, output_tokens_details: null, total_tokens: 2,
+        },
+      },
+    }),
+  ].join("");
+}
+
 function parseBrokerRequest(raw) {
   let request;
   try {
@@ -254,8 +284,36 @@ function parseBrokerRequest(raw) {
   }
   const requestId = typeof request?.requestId === "string" ? request.requestId : randomUUID();
   const failure = (error) => ({ version: 1, requestId, ok: false, error });
-  if (request?.version !== 1 || request?.action !== "inference.messages") {
+  if (request?.version !== 1
+    || !["inference.messages", "inference.responses"].includes(request?.action)) {
     return failure("action_denied");
+  }
+  if (request.action === "inference.responses") {
+    if (request.method !== "POST" || request.path !== "/v1/responses") {
+      return failure("route_denied");
+    }
+    if (typeof request.body !== "string"
+      || Buffer.byteLength(request.body, "utf8") > MAX_PROVIDER_BODY_BYTES) {
+      return failure("request_too_large");
+    }
+    try {
+      const body = JSON.parse(request.body);
+      if (!Array.isArray(body.input) || body.model !== ACCEPTANCE_CODEX_MODEL || body.stream !== true
+        || (body.tools !== undefined && (!Array.isArray(body.tools) || body.tools.length !== 0))) {
+        return failure("invalid_request");
+      }
+    } catch (error) {
+      if (!(error instanceof SyntaxError)) throw error;
+      return failure("invalid_request");
+    }
+    return {
+      version: 1,
+      requestId,
+      ok: true,
+      status: 200,
+      headers: { "cache-control": "no-cache", "content-type": "text/event-stream" },
+      body: codexProviderResponse(),
+    };
   }
   if (request.method === "HEAD" && request.path === "/api/hello") {
     return {
@@ -437,7 +495,11 @@ async function assertWorkloadBoundary(unit) {
   return uid;
 }
 
-async function createRuntime(profile) {
+async function createRuntime(
+  profile,
+  adapterId = "claude-code",
+  harnessVersion = EXPECTED_HARNESS_VERSION,
+) {
   const cursor = await captureSupervisorJournalCursor();
   const response = await supervisorRequest({
     version: 1,
@@ -446,8 +508,8 @@ async function createRuntime(profile) {
     scopeHandle: `scope_${"1".repeat(32)}`,
     profileId: profile.profileId,
     workload: "chat_ai",
-    adapterId: "claude-code",
-    harnessVersion: EXPECTED_HARNESS_VERSION,
+    adapterId,
+    harnessVersion,
   });
   if (!(response?.type === "runtime.result" && response.ok === true && response.state === "running")) {
     throw new AcceptanceError(await runtimeCreationFailureCode(cursor));
@@ -468,19 +530,24 @@ async function stopRuntime(runtimeHandle, generation) {
   "runtime_stop_failed");
 }
 
-async function runRuntimeChat(runtimeHandle, generation) {
+async function runRuntimeChat(
+  runtimeHandle,
+  generation,
+  model = ACCEPTANCE_MODEL,
+  expectedText = "scope-sdk-ok",
+) {
   const response = await supervisorRequest({
     version: 1,
     type: "runtime.chat",
     requestId: randomUUID(),
     runtimeHandle,
     executionGeneration: generation,
-    model: ACCEPTANCE_MODEL,
+    model,
     prompt: "Return the bounded acceptance response.",
   });
   assert(response?.type === "runtime.chat.result" && response.ok === true
     && response.runtimeHandle === runtimeHandle && response.executionGeneration === generation
-    && response.text === "scope-sdk-ok", "runtime_chat_failed");
+    && response.text === expectedText, "runtime_chat_failed");
 }
 
 async function openCrashRequest() {
@@ -578,6 +645,19 @@ async function runAcceptance() {
     uid = await assertWorkloadBoundary(firstUnit);
     await runRuntimeChat(firstHandle, generationBefore);
 
+    const codexHandle = await createRuntime(profileBefore, "codex", EXPECTED_CODEX_VERSION);
+    const codexUnit = unitForRuntime(codexHandle);
+    runtimeUnits.push(codexUnit);
+    await assertWorkloadBoundary(codexUnit);
+    await runRuntimeChat(
+      codexHandle,
+      generationBefore,
+      ACCEPTANCE_CODEX_MODEL,
+      "scope-codex-ok",
+    );
+    await stopRuntime(codexHandle, generationBefore);
+    runtimeUnits.splice(runtimeUnits.indexOf(codexUnit), 1);
+
     const crashRequest = await openCrashRequest();
     await mustCommand("/usr/bin/systemctl", ["kill", "--kill-whom=main", "--signal=SIGKILL", SERVICE],
       "supervisor_crash_failed");
@@ -647,6 +727,7 @@ async function runAcceptance() {
   process.stdout.write("oversized_frame=closed\n");
   process.stdout.write("request_timeout=closed\n");
   process.stdout.write("scope_runtime_chat=passed\n");
+  process.stdout.write("scope_runtime_codex_chat=passed\n");
   process.stdout.write("restart_reconciliation=passed\n");
   process.stdout.write("shutdown_drain=passed\n");
   process.stdout.write("supervisor_version=1.0.0\n");

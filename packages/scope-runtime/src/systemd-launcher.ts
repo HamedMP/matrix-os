@@ -20,6 +20,7 @@ import { createConnection } from "node:net";
 import { RuntimeHandleSchema, ScopeHandleSchema, ScopeRuntimeResponseSchema } from "./protocol.js";
 import {
   FIXED_SYSTEMD_ENVIRONMENT,
+  SCOPE_RUNTIME_CODEX_VERSION,
   SCOPE_RUNTIME_HARNESS_VERSION,
   SCOPE_RUNTIME_PROFILE_DIGEST,
   SCOPE_RUNTIME_PROFILE_ID,
@@ -57,6 +58,7 @@ interface LauncherPaths {
   workerFile: string;
   brokerSocket: string;
   nodeBinary?: string;
+  codexBinary?: string;
 }
 
 function unitName(runtimeHandle: string): string {
@@ -76,8 +78,7 @@ export function buildFixedSystemdRunArgs(
 ): string[] {
   const runtimeHandle = RuntimeHandleSchema.parse(input.runtimeHandle);
   const scopeHandle = ScopeHandleSchema.parse(input.scopeHandle);
-  if (input.workload !== "chat_ai" || input.adapterId !== "claude-code"
-    || input.harnessVersion !== SCOPE_RUNTIME_HARNESS_VERSION) {
+  if (input.workload !== "chat_ai" || !isFixedChatAdapter(input.adapterId, input.harnessVersion)) {
     throw new Error("Unsupported scope runtime adapter");
   }
   const properties = materializeFixedSystemdProperties({
@@ -285,8 +286,9 @@ async function readRuntimeProvenance(
       || value.profileVersion !== SCOPE_RUNTIME_PROFILE_VERSION
       || value.profileDigest !== SCOPE_RUNTIME_PROFILE_DIGEST
       || value.workload !== "chat_ai"
-      || value.adapterId !== "claude-code"
-      || value.harnessVersion !== SCOPE_RUNTIME_HARNESS_VERSION
+      || typeof value.adapterId !== "string"
+      || typeof value.harnessVersion !== "string"
+      || !isFixedChatAdapter(value.adapterId, value.harnessVersion)
       || typeof value.executionGeneration !== "string"
       || !EXECUTION_GENERATION.test(value.executionGeneration)) return undefined;
     return { runtimeHandle, executionGeneration: value.executionGeneration };
@@ -298,7 +300,16 @@ async function readRuntimeProvenance(
   }
 }
 
-async function validateRuntimeSources(paths: Required<LauncherPaths>): Promise<{
+function isFixedChatAdapter(adapterId: string, harnessVersion: string): boolean {
+  return (adapterId === "claude-code" && harnessVersion === SCOPE_RUNTIME_HARNESS_VERSION)
+    || (adapterId === "codex" && harnessVersion === SCOPE_RUNTIME_CODEX_VERSION);
+}
+
+async function validateRuntimeSources(
+  paths: Required<LauncherPaths>,
+  adapterId?: string,
+  runCommand?: ScopeRuntimeCommandRunner,
+): Promise<{
   sdkDirectory: string;
   nativeDirectory: string;
   workerFile: string;
@@ -314,7 +325,22 @@ async function validateRuntimeSources(paths: Required<LauncherPaths>): Promise<{
   await access(join(nativeDirectory, "claude"), constants.X_OK);
   await access("/usr/bin/env", constants.X_OK);
   await access(paths.nodeBinary, constants.X_OK);
+  if (adapterId === "codex") await verifyCodexBinary(paths.codexBinary, runCommand ?? defaultRunCommand);
   return { sdkDirectory, nativeDirectory, workerFile };
+}
+
+async function verifyCodexBinary(
+  codexBinary: string,
+  runCommand: ScopeRuntimeCommandRunner,
+): Promise<void> {
+  await access(codexBinary, constants.X_OK);
+  const resolved = await realpath(codexBinary);
+  const trustedRoot = `${dirname(dirname(codexBinary))}/`;
+  if (!resolved.startsWith(trustedRoot)) throw new Error("Codex scope harness path is untrusted");
+  const result = await runCommand(codexBinary, ["--version"]);
+  if (result.stdout.trim() !== `codex-cli ${SCOPE_RUNTIME_CODEX_VERSION}`) {
+    throw new Error("Codex scope harness version is unverified");
+  }
 }
 
 function inactiveUnitError(error: unknown): boolean {
@@ -435,10 +461,31 @@ export function createSystemdScopeRuntimeLauncher(
     workerFile: assertTrustedAbsolutePath(input.workerFile),
     brokerSocket: assertTrustedAbsolutePath(input.brokerSocket),
     nodeBinary: assertTrustedAbsolutePath(input.nodeBinary ?? "/opt/matrix/runtime/node/bin/node"),
+    codexBinary: assertTrustedAbsolutePath(input.codexBinary ?? "/opt/matrix/runtime/node/bin/codex"),
   };
   const runCommand = input.runCommand ?? defaultRunCommand;
 
   return {
+    async supportedAdapters() {
+      await validateRuntimeSources(paths);
+      const adapters = [{
+        adapterId: "claude-code",
+        harnessVersion: SCOPE_RUNTIME_HARNESS_VERSION,
+        workloads: ["chat_ai" as const],
+      }];
+      try {
+        await verifyCodexBinary(paths.codexBinary, runCommand);
+        adapters.push({
+          adapterId: "codex",
+          harnessVersion: SCOPE_RUNTIME_CODEX_VERSION,
+          workloads: ["chat_ai" as const],
+        });
+      } catch (error: unknown) {
+        console.warn("[scope-runtime] Codex adapter disabled:",
+          error instanceof Error ? error.name : "UnknownError");
+      }
+      return adapters;
+    },
     async list(): Promise<ScopeRuntimeReconciledRuntime[]> {
       const { stdout } = await runCommand("/usr/bin/systemctl", [
         "list-units",
@@ -485,7 +532,7 @@ export function createSystemdScopeRuntimeLauncher(
       const { root, readinessFile, commandDirectory } = await prepareRuntimeRoot(paths.stateRoot, request);
       let submitted = false;
       try {
-        const sources = await validateRuntimeSources(paths);
+        const sources = await validateRuntimeSources(paths, request.adapterId, runCommand);
         const args = buildFixedSystemdRunArgs(request, {
           scopeRoot: root,
           sdkDirectory: sources.sdkDirectory,
