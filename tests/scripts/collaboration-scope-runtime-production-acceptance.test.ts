@@ -142,6 +142,26 @@ describe("collaboration production scope-runtime acceptance", () => {
     expect(source).toContain("BROKER_SOCKET_TIMEOUT_MS");
   });
 
+  it("reports only bounded supervisor diagnostics when the supervisor socket never appears", async () => {
+    const source = await readFile(acceptancePath, "utf8");
+
+    // A supervisor that starts but exits or crash-loops before creating its socket
+    // must surface a bounded, content-free reason instead of a bare timeout.
+    expect(source).toContain("supervisorStartFailureCode");
+    expect(source).toContain("await awaitSupervisorSocket(startCursor)");
+    expect(source).toContain('"--grep", "^scope_runtime_supervisor_failed:"');
+    expect(source).toContain("scope_runtime_supervisor_failed:\\s+([A-Za-z]{1,64}Error)");
+    expect(source).toContain('"--property=ActiveState"');
+    expect(source).toContain('"--property=SubState"');
+    expect(source).toContain('"--property=Result"');
+    expect(source).toContain('"--property=NRestarts"');
+    expect(source).toContain('"--property=ExecMainStatus"');
+    expect(source).toContain("supervisor_socket_unavailable_");
+    expect(source).toContain("condition_failed");
+    expect(source).not.toContain("supervisor_socket_unavailable_${journal.stdout}");
+    expect(source).not.toMatch(/supervisor_socket_unavailable_\$\{[^}]*stdout\}/);
+  });
+
   it("reports only bounded systemd launch diagnostics when runtime creation fails", async () => {
     const source = await readFile(acceptancePath, "utf8");
 

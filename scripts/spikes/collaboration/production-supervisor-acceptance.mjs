@@ -15,6 +15,7 @@ const MARKER_BACKUP = "/var/tmp/matrix-scope-runtime-disabled.acceptance";
 const BUNDLE_VERSION = "/opt/matrix/app/BUNDLE_VERSION";
 const RELEASE_METADATA = "/opt/matrix/release.json";
 const SUPERVISOR_STOP_TIMEOUT_MS = 15_000;
+const SUPERVISOR_START_TIMEOUT_MS = 30_000;
 // The gateway is executing this command, so its own restart must fire after
 // the signed response has been returned and the workflow's remote cleanup ran.
 const GATEWAY_REATTACH_DELAY_SECONDS = 45;
@@ -424,6 +425,70 @@ async function captureSupervisorJournalCursor() {
   return cursor;
 }
 
+async function captureJournalCursor() {
+  const journal = await command("/usr/bin/journalctl", ["--show-cursor", "--lines=0", "--no-pager"]);
+  const cursor = /^-- cursor: ([A-Za-z0-9_=;.:+-]{1,1024})$/m.exec(journal.stdout)?.[1];
+  assert(journal.code === 0 && cursor, "journal_cursor_unavailable");
+  return cursor;
+}
+
+// Bounded, content-free reason for a supervisor that was started but never
+// published its socket: unit state, non-success result, restart count, main
+// exit status, failed unit conditions, the supervisor's own failure error
+// name, and the systemd exec step when the binary could not launch.
+async function supervisorStartFailureCode(cursor) {
+  const parts = [];
+  const show = await command("/usr/bin/systemctl", [
+    "show", SERVICE,
+    "--property=ActiveState",
+    "--property=SubState",
+    "--property=Result",
+    "--property=NRestarts",
+    "--property=ExecMainStatus",
+    "--property=ConditionResult",
+  ]);
+  if (show.code === 0) {
+    const field = (name, pattern) => new RegExp(`^${name}=(${pattern})$`, "m").exec(show.stdout)?.[1];
+    const activeState = field("ActiveState", "[a-z-]{1,16}");
+    const subState = field("SubState", "[a-z-]{1,24}");
+    if (activeState && subState) parts.push(`state_${activeState}_${subState}`);
+    const result = field("Result", "[a-z-]{1,24}");
+    if (result && result !== "success") parts.push(`result_${result}`);
+    const restarts = field("NRestarts", "[0-9]{1,6}");
+    if (restarts && restarts !== "0") parts.push(`restarts_${restarts}`);
+    const status = field("ExecMainStatus", "[0-9]{1,3}");
+    if (status && status !== "0") parts.push(`exit_${status}`);
+    if (field("ConditionResult", "yes|no") === "no") parts.push("condition_failed");
+  }
+  const failureJournal = await command("/usr/bin/journalctl", [
+    "--unit", SERVICE, "--after-cursor", cursor, "--grep", "^scope_runtime_supervisor_failed:",
+    "--no-pager", "--output=cat", "--lines=20",
+  ]);
+  const failure = /scope_runtime_supervisor_failed:\s+([A-Za-z]{1,64}Error)\b/
+    .exec(failureJournal.stdout)?.[1];
+  if (failureJournal.code === 0 && failure) parts.push(`error_${failure}`);
+  const unitJournal = await command("/usr/bin/journalctl", [
+    "--unit", SERVICE, "--after-cursor", cursor, "--no-pager", "--output=cat", "--lines=40",
+  ]);
+  const step = /Failed at step ([A-Z][A-Z0-9_-]{0,31})\b/.exec(unitJournal.stdout)?.[1];
+  if (unitJournal.code === 0 && step && SYSTEMD_EXEC_STEPS.includes(step)) {
+    parts.push(`step_${step.toLowerCase()}`);
+  }
+  return parts.length > 0
+    ? `supervisor_socket_unavailable_${parts.join("_")}`
+    : "supervisor_socket_unavailable";
+}
+
+async function awaitSupervisorSocket(cursor) {
+  try {
+    await waitFor(async () => (await pathType(SUPERVISOR_SOCKET))?.isSocket(),
+      SUPERVISOR_START_TIMEOUT_MS, "supervisor_socket_unavailable");
+  } catch (error) {
+    if (!(error instanceof AcceptanceError)) throw error;
+    throw new AcceptanceError(await supervisorStartFailureCode(cursor));
+  }
+}
+
 async function runtimeCreationFailureCode(cursor) {
   const supervisorJournal = await command("/usr/bin/journalctl", [
     "--unit", SERVICE, "--after-cursor", cursor, "--grep", "fixed-profile launch failed:",
@@ -696,9 +761,9 @@ async function runAcceptance() {
     // An already-running supervisor is stopped only to obtain a cold, drained
     // start whose broker socket the proof can own; it is started again below.
     if (original.active) await stopServiceForProof();
+    const startCursor = await captureJournalCursor();
     await mustCommand("/usr/bin/systemctl", ["start", SERVICE], "supervisor_start_failed");
-    await waitFor(async () => (await pathType(SUPERVISOR_SOCKET))?.isSocket(),
-      15_000, "supervisor_socket_unavailable");
+    await awaitSupervisorSocket(startCursor);
     closeBroker = await startBroker();
 
     const profileBefore = validateCapability(await supervisorRequest(capabilityRequest()));
