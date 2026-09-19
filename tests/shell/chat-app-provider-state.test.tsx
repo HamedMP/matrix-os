@@ -72,6 +72,24 @@ function openClawCatalog() {
   });
 }
 
+function twoAvailableProviderCatalog() {
+  const source = providerCatalog(true, true);
+  return CanonicalProviderCatalogSchema.parse({
+    ...source,
+    instances: source.instances.map((instance) => instance.id === "opencode_default" ? {
+      ...source.instances[0],
+      id: "opencode_default",
+      driverKind: "opencode",
+      displayName: "OpenCode",
+      models: [{
+        id: "openai:gpt-5", displayName: "GPT-5", availability: "available",
+        capabilities: ["reasoning", "tools"], supportsVision: false, supportsToolUse: true,
+      }],
+      defaultSelection: { instanceId: "opencode_default", model: "openai:gpt-5" },
+    } : instance),
+  });
+}
+
 beforeEach(() => {
   window.localStorage.clear();
   vi.restoreAllMocks();
@@ -309,6 +327,7 @@ describe("Chat canonical provider state", () => {
     render(<ChatApp
       messages={[]} sessionId="chat_bound" busy={false} connected conversations={[]}
       providerSelection={{ instanceId: "opencode_default", model: "openai:gpt-5" }}
+      boundProviderInstanceId="opencode_default"
       onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()}
     />);
 
@@ -325,11 +344,13 @@ describe("Chat canonical provider state", () => {
         instanceId: "pi_default", model: "anthropic:claude-sonnet-5",
         options: [{ id: "effort", value: "high" }],
       }}
+      boundProviderInstanceId="pi_default"
       onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={onSubmit}
     />);
 
     fireEvent.change(await screen.findByPlaceholderText("Ask anything..."), { target: { value: "Continue" } });
     fireEvent.click(screen.getByRole("button", { name: "Setup" }));
+    expect(screen.getByText("This Chat is bound to its agent harness. Start or fork a new Chat to use another harness.")).toBeVisible();
     fireEvent.click(await screen.findByRole("button", { name: "Claude Opus 5 via Pi" }));
     fireEvent.change(screen.getByLabelText("Interaction mode"), { target: { value: "plan" } });
     fireEvent.change(screen.getByLabelText("Permission mode"), { target: { value: "full_access" } });
@@ -341,6 +362,28 @@ describe("Chat canonical provider state", () => {
       interactionMode: "plan",
       permissionMode: "full_access",
       modelOptions: [{ id: "effort", value: "high" }, { id: "thinking", value: false }],
+    })));
+  });
+
+  it("keeps Provider selection available until the first root Turn binds the Chat", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json(twoAvailableProviderCatalog())));
+    const onSubmit = vi.fn();
+    render(<ChatApp
+      messages={[]} sessionId="chat_unbound" busy={false} connected conversations={[]}
+      providerSelection={{ instanceId: "pi_default", model: "anthropic:claude-sonnet-5" }}
+      onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={onSubmit}
+    />);
+
+    fireEvent.change(await screen.findByPlaceholderText("Ask anything..."), { target: { value: "Use OpenCode" } });
+    fireEvent.click(screen.getByRole("button", { name: "Setup" }));
+    const openCode = await screen.findByRole("button", { name: "GPT-5 via OpenCode" });
+    expect(openCode).toBeEnabled();
+    fireEvent.click(openCode);
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith("Use OpenCode", undefined, expect.objectContaining({
+      instanceId: "opencode_default",
+      model: "openai:gpt-5",
     })));
   });
 

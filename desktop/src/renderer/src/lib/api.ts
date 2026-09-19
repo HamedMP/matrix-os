@@ -119,6 +119,8 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
 
   async function request<T>(path: string, init: RequestInit, options?: JsonRequestOptions): Promise<T> {
     const response = await send(path, init, options);
+    // Successful bodyless mutations (including Terminal DELETE) are not JSON.
+    if (response.status === 204) return undefined as T;
     try {
       if (options?.maxBytes !== undefined) {
         const chunks = await readBoundedBytes(response, options.maxBytes);

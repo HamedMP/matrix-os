@@ -4,6 +4,7 @@ import type { ClerkAuth } from "../clerk-auth.js";
 import {
   getPlatformUserByClerkId,
   getUserMachine,
+  listActivePlatformUsersByNormalizedHandle,
   type PlatformDB,
 } from "../db.js";
 import { createJourneyUserResolver } from "../journey-routes.js";
@@ -14,6 +15,7 @@ import {
   loadPlatformCollaborationConfig,
   type PlatformCollaborationRuntime,
 } from "./wiring.js";
+import { PlatformCollaborationIdentifierResolver } from "./identifier-resolver.js";
 
 export interface BootstrapPlatformCollaborationOptions {
   env: NodeJS.ProcessEnv;
@@ -35,6 +37,16 @@ export async function bootstrapPlatformCollaboration(
   if (!options.platformSecret) {
     throw new Error("Platform collaboration runtime authentication is unavailable");
   }
+
+  const identifierResolver = new PlatformCollaborationIdentifierResolver({
+    ...(options.env.CLERK_SECRET_KEY ? { clerkSecretKey: options.env.CLERK_SECRET_KEY } : {}),
+    getAccountByActorId: async (actorId) => {
+      const user = await getPlatformUserByClerkId(options.db, actorId);
+      return user?.status === "active" ? { actorId: user.clerkId, displayName: user.displayName } : null;
+    },
+    listAccountsByUsername: async (username) => (await listActivePlatformUsersByNormalizedHandle(options.db, username))
+      .map((user) => ({ actorId: user.clerkId, displayName: user.displayName })),
+  });
 
   return createPlatformCollaboration({
     db: options.db.kysely as unknown as Kysely<CollaborationPlatformDatabase>,
@@ -60,6 +72,7 @@ export async function bootstrapPlatformCollaboration(
       const user = await getPlatformUserByClerkId(options.db, actorId);
       return user ? { actorId, displayName: user.displayName } : null;
     },
+    resolveInvitationIdentifier: (identifier) => identifierResolver.resolve(identifier),
     resolveRuntime: async (runtimeId) => {
       const machineId = parseVpsRuntimeId(runtimeId);
       if (!machineId) return null;

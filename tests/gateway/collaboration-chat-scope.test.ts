@@ -14,6 +14,13 @@ import {
 } from "./collaboration-test-support.js";
 
 const now = "2026-09-07T12:00:00.000Z";
+const executionEligibility = {
+  profileId: "scope-runtime-chat-v1",
+  profileVersion: 1,
+  profileDigest: "b".repeat(64),
+  adapterId: "claude-code" as const,
+  harnessVersion: "2.1.240",
+};
 
 describe("CollaborationChatScopeService", () => {
   let fixture: CollaborationTestDatabase;
@@ -172,24 +179,16 @@ describe("CollaborationChatScopeService", () => {
       expectedChatRevision: 0,
       confirmationToken: preflight.confirmationToken!,
     });
-    const eligibility = {
-      profileId: "scope-runtime-chat-v1",
-      profileVersion: 1,
-      profileDigest: "b".repeat(64),
-      adapterId: "claude-code" as const,
-      harnessVersion: "2.1.240",
-    };
-
     await expect(service.reconcileExecutionEligibility({
       executionGeneration: 9,
-      eligibility,
+      eligibility: executionEligibility,
     })).resolves.toEqual({ updated: 1 });
     const scope = await fixture.db.selectFrom("collaboration_scopes")
       .select(["execution_generation", "execution_eligibility", "revision"])
       .where("id", "=", collaborationIds.scope).executeTakeFirstOrThrow();
     expect(scope).toMatchObject({
       execution_generation: 9,
-      execution_eligibility: eligibility,
+      execution_eligibility: executionEligibility,
       revision: 2,
     });
     expect(await fixture.db.selectFrom("collaboration_events").select("event_type")
@@ -201,8 +200,65 @@ describe("CollaborationChatScopeService", () => {
 
     await expect(service.reconcileExecutionEligibility({
       executionGeneration: 9,
-      eligibility,
+      eligibility: executionEligibility,
     })).resolves.toEqual({ updated: 0 });
+  });
+
+  it("atomically activates a new shared Chat with the cached runtime capability", async () => {
+    await expect(service.reconcileExecutionEligibility({
+      executionGeneration: 9,
+      eligibility: executionEligibility,
+    })).resolves.toEqual({ updated: 0 });
+
+    const preflight = await service.preflight({ ownerId: collaborationActors.owner, chatId: collaborationIds.chat });
+    await service.shareChat({
+      ownerId: collaborationActors.owner,
+      chatId: collaborationIds.chat,
+      clientRequestId: "50000000-0000-4000-8000-000000000010",
+      payloadHash: "a".repeat(64),
+      expectedChatRevision: 0,
+      confirmationToken: preflight.confirmationToken!,
+    });
+
+    await expect(fixture.db.selectFrom("collaboration_scopes")
+      .select(["execution_generation", "execution_eligibility"])
+      .where("id", "=", collaborationIds.scope).executeTakeFirstOrThrow())
+      .resolves.toMatchObject({
+        execution_generation: 9,
+        execution_eligibility: executionEligibility,
+      });
+  });
+
+  it("removes stored eligibility when the cached runtime capability is lost", async () => {
+    const preflight = await service.preflight({ ownerId: collaborationActors.owner, chatId: collaborationIds.chat });
+    await service.shareChat({
+      ownerId: collaborationActors.owner,
+      chatId: collaborationIds.chat,
+      clientRequestId: "50000000-0000-4000-8000-000000000010",
+      payloadHash: "a".repeat(64),
+      expectedChatRevision: 0,
+      confirmationToken: preflight.confirmationToken!,
+    });
+    await service.reconcileExecutionEligibility({
+      executionGeneration: 9,
+      eligibility: executionEligibility,
+    });
+
+    await expect(service.reconcileExecutionEligibility({
+      executionGeneration: null,
+      eligibility: null,
+    })).resolves.toEqual({ updated: 1 });
+    await expect(fixture.db.selectFrom("collaboration_scopes")
+      .select(["execution_generation", "execution_eligibility"])
+      .where("id", "=", collaborationIds.scope).executeTakeFirstOrThrow())
+      .resolves.toMatchObject({ execution_generation: null, execution_eligibility: null });
+    expect(await fixture.db.selectFrom("collaboration_events").select("event_type")
+      .where("scope_id", "=", collaborationIds.scope).orderBy("scope_seq").execute())
+      .toEqual([
+        { event_type: "scope.shared" },
+        { event_type: "scope.execution_eligibility_changed" },
+        { event_type: "scope.execution_eligibility_changed" },
+      ]);
   });
 });
 

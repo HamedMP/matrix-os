@@ -59,6 +59,7 @@ describe("ProjectLifecycleDialog", () => {
 
     expect(screen.getByRole("alertdialog", { name: "Delete project permanently?" })).toBeTruthy();
     expect(screen.getByText(/original folder and files will stay untouched/i)).not.toBeNull();
+    expect(screen.getByText(/stop.*tasks.*terminal/i)).not.toBeNull();
     const submit = screen.getByRole("button", { name: "Delete project" });
     expect(submit.hasAttribute("disabled")).toBe(true);
     fireEvent.change(screen.getByLabelText(/type Customer app to confirm/i), { target: { value: "customer-app" } });
@@ -68,6 +69,7 @@ describe("ProjectLifecycleDialog", () => {
 
     await waitFor(() => expect(post).toHaveBeenCalledWith("/api/projects/customer-app/actions", {
       type: "delete",
+      confirmTerminate: true,
       confirmation: "Customer app",
     }));
     await waitFor(() => expect(onClose).toHaveBeenCalled());

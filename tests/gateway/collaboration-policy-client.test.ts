@@ -25,7 +25,7 @@ function signedPolicy(overrides: Record<string, unknown> = {}) {
       .digest("base64url"),
   };
 }
-function client(fetchImpl: typeof fetch) {
+function client(fetchImpl: typeof fetch, currentTime: () => Date = () => now) {
   return new CollaborationPolicyClient({
     platformBaseUrl: "https://platform.example",
     runtimeId: "runtime_owner",
@@ -36,6 +36,7 @@ function client(fetchImpl: typeof fetch) {
       now: () => now,
     }),
     fetchImpl,
+    now: currentTime,
   });
 }
 describe("collaboration policy client", () => {
@@ -75,5 +76,36 @@ describe("collaboration policy client", () => {
       headers: { "content-length": "20000" },
     }));
     await expect(client(fetchImpl).getM2()).rejects.toBeInstanceOf(CollaborationPolicyClientError);
+  });
+
+  it("deduplicates concurrent lookups and briefly caches only a still-fresh verified policy", async () => {
+    let currentTime = now;
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify(signedPolicy()), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }));
+    const policy = client(fetchImpl, () => currentTime);
+
+    await Promise.all([policy.getM2(), policy.getM2(), policy.getM2()]);
+    await policy.getM2();
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+
+    currentTime = new Date(now.getTime() + 5_001);
+    await policy.getM2();
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it("fails closed instead of serving an expired cached policy when refresh fails", async () => {
+    let currentTime = now;
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(signedPolicy()), { status: 200 }))
+      .mockRejectedValueOnce(new Error("platform unavailable"));
+    const policy = client(fetchImpl as typeof fetch, () => currentTime);
+
+    await expect(policy.getM2()).resolves.toMatchObject({ mode: "enabled" });
+    currentTime = new Date(now.getTime() + 5_001);
+
+    await expect(policy.getM2()).rejects.toBeInstanceOf(CollaborationPolicyClientError);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 });

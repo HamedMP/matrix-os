@@ -17,6 +17,7 @@ import {
   PlusCircleIcon,
   ServerIcon,
   SettingsIcon,
+  UsersIcon,
   UserIcon,
 } from "@/lib/hugeicons";
 import Image from "next/image";
@@ -25,6 +26,7 @@ import { DropdownMenu as DropdownMenuPrimitive } from "radix-ui";
 import { useState } from "react";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { isSelfHostedDocument } from "@/lib/self-host-mode";
+import { useMobileViewport } from "@/hooks/useMobileViewport";
 import {
   clearMatrixAppSession,
   clerkSignOutWithTimeout,
@@ -77,6 +79,7 @@ export function UserButton({
   // Clerk hooks -- which read browser-only auth state -- mount without a hydration
   // mismatch or a setState-in-effect cascade.
   const mounted = useIsClient();
+  const isMobile = useMobileViewport();
 
   if (!mounted || e2eBypass) {
     return <Placeholder variant={variant} />;
@@ -85,7 +88,7 @@ export function UserButton({
     return <SelfHostedUserButton variant={variant} onOpenSettings={onOpenSettings} />;
   }
 
-  return <MountedUserButton variant={variant} onOpenSettings={onOpenSettings} />;
+  return <MountedUserButton variant={variant} onOpenSettings={onOpenSettings} showSharedWithMe={!isMobile} />;
 }
 
 function SelfHostedUserButton({
@@ -142,9 +145,11 @@ function SelfHostedUserButton({
 function MountedUserButton({
   variant,
   onOpenSettings,
+  showSharedWithMe,
 }: {
   variant: UserButtonVariant;
   onOpenSettings?: (section: AccountSettingsSection) => void;
+  showSharedWithMe: boolean;
 }) {
   const { isLoaded, isSignedIn, signOut } = useAuth();
   const { user } = useUser();
@@ -253,6 +258,12 @@ function MountedUserButton({
               <UserIcon className="size-4 text-muted-foreground" aria-hidden="true" />
               Manage account
             </DropdownMenuPrimitive.Item>
+            {showSharedWithMe ? <DropdownMenuPrimitive.Item asChild>
+              <Link className={itemClass} href="/shared">
+                <UsersIcon className="size-4 text-muted-foreground" aria-hidden="true" />
+                Shared with me
+              </Link>
+            </DropdownMenuPrimitive.Item> : null}
             <DropdownMenuPrimitive.Item asChild>
               <a
                 className={itemClass}

@@ -255,7 +255,7 @@ describe("Chat ordering and title versions", () => {
     const marker = await sql<{ version: number }>`SELECT version FROM chat_schema_migrations WHERE version = 1`.execute(repository.kysely);
     expect(marker.rows).toEqual([{ version: 1 }]);
     await repository.bootstrap();
-    expect(Number((await sql<{ count: string }>`SELECT count(*) FROM chat_schema_migrations`.execute(repository.kysely)).rows[0].count)).toBe(1);
+    expect(Number((await sql<{ count: string }>`SELECT count(*) FROM chat_schema_migrations`.execute(repository.kysely)).rows[0].count)).toBe(2);
   });
 
   it("serializes overlapping metadata migrations", async () => {
@@ -266,7 +266,7 @@ describe("Chat ordering and title versions", () => {
       await bootstrapChatMetadata(repository.kysely);
       await bootstrapChatMetadata(repository.kysely);
     }
-    expect(Number((await sql<{ count: string }>`SELECT count(*) FROM chat_schema_migrations`.execute(repository.kysely)).rows[0].count)).toBe(1);
+    expect(Number((await sql<{ count: string }>`SELECT count(*) FROM chat_schema_migrations`.execute(repository.kysely)).rows[0].count)).toBe(2);
   });
 
 });

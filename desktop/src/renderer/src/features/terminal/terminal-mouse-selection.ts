@@ -253,6 +253,17 @@ export function installMouseTrackingSelection({
     }
   };
 
+  const resetEdgeCapture = (releaseSelection = false) => {
+    const hadCapturedSelection = extendedSelectionLines !== null
+      || pendingEdgeScrollAmount !== 0;
+    extendedSelectionLines = null;
+    previousEdgeViewport = null;
+    edgeDirection = null;
+    edgeAnchorColumn = null;
+    pendingEdgeScrollAmount = 0;
+    if (releaseSelection && hadCapturedSelection) onExtendedSelection?.("");
+  };
+
   const selectionTarget = (source: MouseSnapshot): MouseSnapshot => (
     gesture ? { ...source, target: gesture.start.target } : source
   );
@@ -272,6 +283,24 @@ export function installMouseTrackingSelection({
       Math.max(1, Math.ceil(Math.abs(distance) / EDGE_SCROLL_DISTANCE_PER_LINE_PX)),
     );
     return distance < 0 ? -magnitude : magnitude;
+  };
+
+  const alignPointerToVerticalSelectionEdge = (
+    source: MouseSnapshot,
+  ): MouseSnapshot => {
+    const amount = edgeScrollAmount(source);
+    if (amount === 0) return source;
+    const terminal = getTerminal();
+    const coordinateElement = terminal?.element ?? host;
+    const rect = coordinateElement.getBoundingClientRect();
+    return {
+      ...source,
+      // Once a drag crosses a vertical terminal edge, xterm treats the
+      // selection endpoint as the beginning/end of that boundary row. Keep
+      // that behavior when replaying scaled document events; preserving the
+      // interior pointer column truncates the final auto-scrolled line.
+      clientX: amount < 0 ? rect.left : rect.right,
+    };
   };
 
   const dispatchEdgeWheel = (source: MouseSnapshot, amount: number) => {
@@ -364,24 +393,23 @@ export function installMouseTrackingSelection({
     const amount = edgeScrollAmount(edgePointer);
     if (amount === 0) {
       stopEdgeScroll();
+      resetEdgeCapture(true);
       return;
     }
     const terminal = getTerminal();
-    if (gesture.appOwnsSelection) {
-      const captureAmount = pendingEdgeScrollAmount || amount;
-      if (terminal) {
-        captureExtendedSelection(
-          terminal,
-          captureAmount,
-          Math.abs(pendingEdgeScrollAmount),
-        );
-      }
-      dispatchEdgeWheel(edgePointer, amount);
-      pendingEdgeScrollAmount = amount;
-      terminal?.scrollLines(amount);
-    } else {
-      terminal?.scrollLines(amount);
+    const captureAmount = pendingEdgeScrollAmount || amount;
+    if (terminal) {
+      captureExtendedSelection(
+        terminal,
+        captureAmount,
+        Math.abs(pendingEdgeScrollAmount),
+      );
     }
+    if (gesture.appOwnsSelection) {
+      dispatchEdgeWheel(edgePointer, amount);
+    }
+    pendingEdgeScrollAmount = amount;
+    terminal?.scrollLines(amount);
     dispatch(
       selectionTarget(edgePointer),
       "mousemove",
@@ -395,12 +423,18 @@ export function installMouseTrackingSelection({
   };
 
   const updateEdgeScroll = (source: MouseSnapshot) => {
-    if (edgeScrollAmount(source) === 0) {
+    const amount = edgeScrollAmount(source);
+    if (amount === 0) {
       stopEdgeScroll();
+      resetEdgeCapture(true);
       return;
     }
     edgePointer = selectionTarget(source);
     if (edgeScrollTimer === null) {
+      // xterm also runs a drag-scroll timer. Preserve the anchor viewport
+      // before either timer can move it and discard the first selected rows.
+      const terminal = getTerminal();
+      if (terminal) captureExtendedSelection(terminal, amount);
       edgeScrollTimer = document.defaultView?.setInterval(
         tickEdgeScroll,
         EDGE_SCROLL_INTERVAL_MS,
@@ -411,17 +445,19 @@ export function installMouseTrackingSelection({
   const cancelGesture = () => {
     stopEdgeScroll();
     gesture = null;
-    extendedSelectionLines = null;
-    previousEdgeViewport = null;
-    edgeDirection = null;
-    edgeAnchorColumn = null;
-    pendingEdgeScrollAmount = 0;
+    resetEdgeCapture();
     removeDocumentListeners();
   };
 
   const onDocumentMouseMove = (event: MouseEvent) => {
     if ((event as MatrixSyntheticMouseEvent)._xtermScaleCorrected || !gesture) return;
-    if (gesture.forceSelection) stopOriginal(event);
+    const outsideHost = !event.composedPath().includes(host);
+    const rawScale = getVisualScale();
+    const replacesUnscaledEvent = outsideHost
+      && Number.isFinite(rawScale)
+      && rawScale > 0
+      && rawScale !== 1;
+    if (gesture.forceSelection || replacesUnscaledEvent) stopOriginal(event);
     const current = snapshot(event);
     if (!gesture.dragging) {
       const distance = Math.hypot(
@@ -434,19 +470,25 @@ export function installMouseTrackingSelection({
         dispatch(gesture.start, "mousedown", 0, 1, true);
       }
     }
-    const targetedCurrent = selectionTarget(current);
-    if (gesture.forceSelection || !event.composedPath().includes(host)) {
+    const targetedCurrent = alignPointerToVerticalSelectionEdge(selectionTarget(current));
+    updateEdgeScroll(targetedCurrent);
+    if (gesture.forceSelection || outsideHost) {
       dispatch(targetedCurrent, "mousemove", 0, 1, gesture.forceSelection);
     }
-    updateEdgeScroll(targetedCurrent);
   };
 
   const onDocumentMouseUp = (event: MouseEvent) => {
     if ((event as MatrixSyntheticMouseEvent)._xtermScaleCorrected || !gesture) return;
-    if (gesture.forceSelection) stopOriginal(event);
-    const current = selectionTarget(snapshot(event));
+    const outsideHost = !event.composedPath().includes(host);
+    const rawScale = getVisualScale();
+    const replacesUnscaledEvent = outsideHost
+      && Number.isFinite(rawScale)
+      && rawScale > 0
+      && rawScale !== 1;
+    if (gesture.forceSelection || replacesUnscaledEvent) stopOriginal(event);
+    const current = alignPointerToVerticalSelectionEdge(selectionTarget(snapshot(event)));
     const terminal = getTerminal();
-    if (pendingEdgeScrollAmount !== 0 && terminal && gesture.appOwnsSelection) {
+    if (pendingEdgeScrollAmount !== 0 && terminal) {
       captureExtendedSelection(
         terminal,
         pendingEdgeScrollAmount,
@@ -454,7 +496,7 @@ export function installMouseTrackingSelection({
       );
     }
     if (gesture.dragging) {
-      if (gesture.forceSelection || !event.composedPath().includes(host)) {
+      if (gesture.forceSelection || outsideHost) {
         dispatch(current, "mouseup", 0, 0, gesture.forceSelection);
       }
     } else if (gesture.forceSelection) {

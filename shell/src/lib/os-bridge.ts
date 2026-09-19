@@ -399,6 +399,16 @@ export function buildBridgeScript(appName: string, themeVars?: ThemeVars, design
 
     app: { name: app },
 
+    ai: {
+      generate: function(input) {
+        return parentFetch("/api/bridge/ai", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(input)
+        }, 35000).then(function(r) { return r.json(); })
+          .catch(function() { throw new Error("App AI is unavailable"); });
+      }
+    },
+
     integrations: function() {
 	      return parentFetch("/api/bridge/service", {}, 10000)
 	        .then(function(r) { return r.json(); })

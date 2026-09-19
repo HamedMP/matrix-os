@@ -12,6 +12,7 @@ const DEFAULT_MAX_ENTRIES = 20;
 const DraftSchema = z.strictObject({
   text: z.string().max(65_536).refine((value) => new TextEncoder().encode(value).byteLength <= 64 * 1024),
   mode: z.enum(["discussion", "ai"]),
+  selectedMode: z.enum(["discussion", "ai"]).optional(),
 });
 const DraftIndexSchema = z.array(z.string().max(1_024).regex(/^matrix:collaboration:chat-draft:v1:/)).max(100);
 
@@ -53,7 +54,9 @@ export function createCollaborationDraftStore(
       requireDraftKey(key);
       try {
         const raw = storage.getItem(key);
-        return raw ? DraftSchema.parse(JSON.parse(raw) as unknown) : emptyDraft(mode);
+        if (!raw) return emptyDraft(mode);
+        const draft = DraftSchema.parse(JSON.parse(raw) as unknown);
+        return { text: draft.text, mode: draft.mode };
       } catch (error: unknown) {
         console.warn("[chat-collaboration] private draft load failed", error instanceof Error ? error.name : "UnknownError");
         return emptyDraft(mode);
@@ -63,14 +66,43 @@ export function createCollaborationDraftStore(
       requireDraftKey(key);
       const draft = DraftSchema.parse(value);
       try {
+        const existing = storage.getItem(key);
+        const selectedMode = existing
+          ? DraftSchema.parse(JSON.parse(existing) as unknown).selectedMode
+          : undefined;
         const index = readIndex(storage).filter((entry) => entry !== key);
         index.push(key);
         const evicted = index.splice(0, Math.max(0, index.length - maxEntries));
         for (const entry of evicted) storage.removeItem(entry);
-        storage.setItem(key, JSON.stringify(draft));
+        storage.setItem(key, JSON.stringify({ ...draft, ...(selectedMode ? { selectedMode } : {}) }));
         storage.setItem(DRAFT_INDEX_KEY, JSON.stringify(index));
       } catch (error: unknown) {
         console.warn("[chat-collaboration] private draft save failed", error instanceof Error ? error.name : "UnknownError");
+      }
+    },
+    loadSelectedMode(key: string): CollaborationDraft["mode"] {
+      requireDraftKey(key);
+      try {
+        const raw = storage.getItem(key);
+        return raw ? DraftSchema.parse(JSON.parse(raw) as unknown).selectedMode ?? "discussion" : "discussion";
+      } catch (error: unknown) {
+        console.warn("[chat-collaboration] private composer mode load failed", error instanceof Error ? error.name : "UnknownError");
+        return "discussion";
+      }
+    },
+    saveSelectedMode(key: string, mode: CollaborationDraft["mode"]): void {
+      requireDraftKey(key);
+      try {
+        const raw = storage.getItem(key);
+        const existing = raw ? DraftSchema.parse(JSON.parse(raw) as unknown) : emptyDraft("discussion");
+        const index = readIndex(storage).filter((entry) => entry !== key);
+        index.push(key);
+        const evicted = index.splice(0, Math.max(0, index.length - maxEntries));
+        for (const entry of evicted) storage.removeItem(entry);
+        storage.setItem(key, JSON.stringify({ ...existing, selectedMode: mode }));
+        storage.setItem(DRAFT_INDEX_KEY, JSON.stringify(index));
+      } catch (error: unknown) {
+        console.warn("[chat-collaboration] private composer mode save failed", error instanceof Error ? error.name : "UnknownError");
       }
     },
     clear(key: string): void {

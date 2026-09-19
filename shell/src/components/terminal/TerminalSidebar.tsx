@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { deleteTerminalSession } from "./terminal-session-delete";
 import type { TerminalWorkspace } from "@matrix-os/contracts";
 import { ChevronsLeftIcon, RefreshCwIcon, SearchIcon } from "@/lib/hugeicons";
 
@@ -253,6 +254,7 @@ export function LocalTerminalSidebar({
       error: shellsError,
     };
   }, [shells, shellsAuthoritative, shellsError, shellsStale]);
+  const shellListEpochRef = useRef(0);
   const creatingShellRef = useRef(false);
   const reorderSaveCountRef = useRef(0);
   const [creatingShell, setCreatingShell] = useState(false);
@@ -278,6 +280,7 @@ export function LocalTerminalSidebar({
 
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity for effect dep: `fetchShells` is in the dependency array of the shell-session load useEffect below and command handlers.
   const fetchShells = useCallback(async (options: { silent?: boolean; signal?: AbortSignal; preserveOrderDuringReorder?: boolean } = {}) => {
+    const epoch = ++shellListEpochRef.current;
     const silent = options.silent === true;
     if (!silent) setShellsLoading(true);
     if (!silent) setShellsError(null);
@@ -286,6 +289,7 @@ export function LocalTerminalSidebar({
       const res = await fetch(`${getGatewayUrl()}/api/terminal/workspaces`, {
         signal: options.signal ?? AbortSignal.timeout(10_000),
       });
+      if (epoch !== shellListEpochRef.current) return;
       if (!res.ok) {
         if (silent) {
           commitShellRefreshState(applyShellRefreshSilentFailure(shellRefreshStateRef.current));
@@ -302,6 +306,7 @@ export function LocalTerminalSidebar({
         return;
       }
       const data = (await res.json()) as { workspaces?: TerminalWorkspace[] };
+      if (epoch !== shellListEpochRef.current) return;
       const hasSessionList = Array.isArray(data.workspaces);
       const nextShells: ShellSessionSummary[] = hasSessionList
         ? data.workspaces!.flatMap((workspace) => workspace.tabs.map((terminalTab) => ({
@@ -327,7 +332,7 @@ export function LocalTerminalSidebar({
         hasSessionList,
       ));
     } catch (err: unknown) {
-      if (err instanceof DOMException && err.name === "AbortError") return;
+      if (epoch !== shellListEpochRef.current || (err instanceof DOMException && err.name === "AbortError")) return;
       if (silent) {
         commitShellRefreshState(applyShellRefreshSilentFailure(shellRefreshStateRef.current));
         return;
@@ -398,26 +403,19 @@ export function LocalTerminalSidebar({
       setShellsError("Could not remove shell");
       return;
     }
-    setShells((prev) => prev.filter((shell) => shell.name !== name));
-    // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler cannot lower the try/finally below into memoized form; the async delete flow is correct as written
+    // Keep the row (with its existing deleting indicator) until shutdown is acknowledged.
     try {
-      const res = await fetch(`${getGatewayUrl()}/api/terminal/workspaces/${deletedShell.workspaceId}/tabs/${deletedShell.tabId}`, {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: "{}",
-        signal: AbortSignal.timeout(10_000),
+      const removed = await deleteTerminalSession({
+        gateway: getGatewayUrl(), workspaceId: deletedShell.workspaceId, tabId: deletedShell.tabId,
+        error: setShellsError,
+        confirmed: () => {
+          shellListEpochRef.current += 1;
+          commitShellRefreshState({ ...shellRefreshStateRef.current,
+            shells: shellRefreshStateRef.current.shells.filter((shell) => shell.name !== name) });
+          ctx.removeDeletedShellSessionFromLayout(name);
+        },
       });
-      if (!res.ok) {
-        setShellsError("Failed to remove shell");
-        setShells((prev) => prev.some((shell) => shell.name === name) || !deletedShell ? prev : [...prev, deletedShell]);
-        return;
-      }
-      ctx.removeDeletedShellSessionFromLayout(name);
-      await fetchShells({ silent: true });
-    } catch (err: unknown) {
-      console.warn("Failed to remove shell session:", err instanceof Error ? err.message : err);
-      setShellsError("Could not remove shell");
-      setShells((prev) => prev.some((shell) => shell.name === name) || !deletedShell ? prev : [...prev, deletedShell]);
+      if (removed) await fetchShells({ silent: true });
     } finally {
       deletingShellsRef.current!.delete(name);
       setDeletingShellNames(Array.from(deletingShellsRef.current!));

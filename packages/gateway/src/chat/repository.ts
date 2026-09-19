@@ -65,6 +65,10 @@ import {
 } from "./records.js";
 import { ChatRunLifecycleRepository } from "./run-lifecycle-repository.js";
 import {
+  reconcileProviderBindings,
+  type ProviderBindingReconciliationResult,
+} from "./provider-binding-reconciliation.js";
+import {
   ChatQueueRepository,
   type EnqueueQueuedTurnInput,
   type EnqueuedQueuedTurn,
@@ -76,6 +80,7 @@ import {
   type EnqueueSharedQueuedTurnInput,
   type EnqueuedSharedQueuedTurn,
   type SharedQueuedTurn,
+  type SharedAiCapability,
 } from "./queue-repository.js";
 import {
   ChatSteeringRepository,
@@ -110,6 +115,7 @@ export type {
   EnqueueSharedQueuedTurnInput,
   EnqueuedSharedQueuedTurn,
   SharedQueuedTurn,
+  SharedAiCapability,
 } from "./queue-repository.js";
 export { SharedChatQueueError } from "./queue-repository.js";
 export type { BeginSteerInput, BegunSteer } from "./steering-repository.js";
@@ -310,13 +316,14 @@ async function toPrincipalRecord(
     activeRunQuery(executor, row.id),
     userStateQuery(executor, owner, row.id),
     latestSuccessfulCompletionQuery(executor, row.id),
-    internalScopeId ? ownerSharedProjection(executor, internalScopeId, row.id) : undefined,
+    internalScopeId ? ownerSharedProjection(executor, owner, internalScopeId, row.id) : undefined,
   ]);
   const effectiveProjection = collaborationProjection ?? internalProjection;
+  const providerConsistentRow = await projectPersonalProviderSelection(executor, row);
   const record = toChatRecord(
     effectiveProjection
-      ? { ...row, collaboration: JSON.stringify(effectiveProjection) }
-      : row,
+      ? { ...providerConsistentRow, collaboration: JSON.stringify(effectiveProjection) }
+      : providerConsistentRow,
     activeRun,
     userState ? toUserState(userState) : undefined,
     latestSuccessfulCompletion,
@@ -325,13 +332,45 @@ async function toPrincipalRecord(
   return { ...record, readState: await projectChatReadState(executor, owner, row.id) };
 }
 
+/**
+ * The immutable binding is authoritative for an ordinary Chat. Older or stale
+ * metadata can disagree with it, so read the accepted binding Run rather than
+ * returning a self-contradictory canonical record. Shared Chat reconciliation
+ * is owned by the collaboration lifecycle and deliberately remains untouched.
+ */
+async function projectPersonalProviderSelection(
+  executor: Executor,
+  row: Selectable<ChatsTable>,
+): Promise<Selectable<ChatsTable>> {
+  if (row.collaboration !== null || !row.bound_driver_kind || !row.bound_instance_id || !row.bound_at_turn_id) {
+    return row;
+  }
+  const currentSelection = row.current_selection === null
+    ? undefined
+    : CanonicalChatModelSelectionSchema.safeParse(parseJson(row.current_selection)).data;
+  if (currentSelection?.instanceId === row.bound_instance_id) return row;
+  const bindingRun = await executor.selectFrom("chat_runs")
+    .select(["selection", "driver_kind", "instance_id"])
+    .where("chat_id", "=", row.id)
+    .where("turn_id", "=", row.bound_at_turn_id)
+    .where("driver_kind", "=", row.bound_driver_kind)
+    .where("instance_id", "=", row.bound_instance_id)
+    .orderBy("attempt", "asc")
+    .executeTakeFirst();
+  if (!bindingRun) return row;
+  const bindingSelection = CanonicalChatModelSelectionSchema.safeParse(parseJson(bindingRun.selection)).data;
+  if (bindingSelection?.instanceId !== row.bound_instance_id) return row;
+  return { ...row, current_selection: bindingRun.selection };
+}
+
 function sharedBindingScopeId(value: unknown): string | undefined {
   if (value === null) return undefined;
   try {
     const parsed = typeof value === "string" ? JSON.parse(value) as unknown : value;
     if (!parsed || typeof parsed !== "object") return undefined;
     const binding = parsed as { scopeId?: unknown; mode?: unknown; executionFenced?: unknown };
-    return binding.mode === "shared_ai" && binding.executionFenced === true
+    return (binding.mode === "discussion_only" || binding.mode === "shared_ai")
+      && binding.executionFenced === true
       ? z.uuid().safeParse(binding.scopeId).data
       : undefined;
   } catch (error: unknown) {
@@ -345,23 +384,65 @@ function sharedBindingScopeId(value: unknown): string | undefined {
 
 async function ownerSharedProjection(
   executor: Executor,
+  owner: ChatOwner,
   scopeId: string,
   chatId: string,
 ): Promise<CanonicalChatCollaboration | undefined> {
   const collaborationExecutor = executor as unknown as Kysely<OwnerCollaborationDatabase>;
   const scope = await collaborationExecutor.selectFrom("collaboration_scopes")
-    .select("id")
+    .select(["id", "parent_scope_id", "membership_mode", "lifecycle", "authority_runtime_id"])
     .where("id", "=", scopeId)
+    .where("owner_type", "=", owner.type)
+    .where("owner_id", "=", owner.ownerId)
     .where("kind", "=", "chat")
     .where("resource_id", "=", chatId)
     .where("lifecycle", "in", ["shared", "archived"])
     .where("deleted_at", "is", null)
     .executeTakeFirst();
   if (!scope) return undefined;
+
+  let membershipScopeId: string;
+  if (scope.membership_mode === "direct") {
+    if (scope.parent_scope_id !== null) return undefined;
+    membershipScopeId = scope.id;
+  } else {
+    if (!scope.parent_scope_id) return undefined;
+    const parent = await collaborationExecutor.selectFrom("collaboration_scopes")
+      .select("id")
+      .where("id", "=", scope.parent_scope_id)
+      .where("owner_type", "=", owner.type)
+      .where("owner_id", "=", owner.ownerId)
+      .where("kind", "=", "project")
+      .where("membership_mode", "=", "direct")
+      .where("parent_scope_id", "is", null)
+      .where("lifecycle", "=", scope.lifecycle)
+      .where("authority_runtime_id", "=", scope.authority_runtime_id)
+      .where("deleted_at", "is", null)
+      .executeTakeFirst();
+    if (!parent) return undefined;
+    membershipScopeId = parent.id;
+  }
+
+  const ownerMember = await collaborationExecutor.selectFrom("collaboration_members")
+    .select("actor_id")
+    .where("scope_id", "=", membershipScopeId)
+    .where("actor_id", "=", owner.ownerId)
+    .where("role", "=", "owner")
+    .where("status", "=", "accepted")
+    .where((eb) => eb.or([
+      eb("expires_at", "is", null),
+      eb("expires_at", ">", sql<Date | string>`clock_timestamp()`),
+    ]))
+    .executeTakeFirst();
+  if (!ownerMember) return undefined;
   const members = await collaborationExecutor.selectFrom("collaboration_members")
     .select(({ fn }) => fn.countAll<number>().as("count"))
-    .where("scope_id", "=", scopeId)
+    .where("scope_id", "=", membershipScopeId)
     .where("status", "=", "accepted")
+    .where((eb) => eb.or([
+      eb("expires_at", "is", null),
+      eb("expires_at", ">", sql<Date | string>`clock_timestamp()`),
+    ]))
     .executeTakeFirstOrThrow();
   return { mode: "shared", membership: { role: "owner", memberCount: Number(members.count) } };
 }
@@ -445,6 +526,11 @@ export class ChatRepository {
 
   async bootstrap(): Promise<void> {
     await bootstrapChatDatabase(this.kysely);
+    await this.reconcileProviderBindings();
+  }
+
+  async reconcileProviderBindings(): Promise<ProviderBindingReconciliationResult> {
+    return reconcileProviderBindings(this.kysely);
   }
 
   async release(): Promise<void> {
@@ -988,6 +1074,13 @@ export class ChatRepository {
 
   async listSharedQueuedTurns(owner: ChatOwner, chatId: string): Promise<SharedQueuedTurn[]> {
     return this.queue.listShared(owner, chatId);
+  }
+
+  async getSharedAiCapability(
+    owner: ChatOwner,
+    input: { chatId: string; scopeId: string; actorId: string },
+  ): Promise<SharedAiCapability> {
+    return this.queue.getSharedAiCapability(owner, input);
   }
 
   async listSharedPendingApprovals(

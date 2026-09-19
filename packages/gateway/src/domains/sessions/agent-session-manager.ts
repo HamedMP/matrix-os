@@ -1,3 +1,6 @@
+import { stopLegacySession, type LegacySessionRuntime } from "../../legacy-session-stop.js";
+import { deleteProjectSessionFiles } from "../../project-session-deletion.js";
+import { TerminalRuntimeError } from "@matrix-os/terminal-runtime";
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { access, lstat, readdir, realpath, unlink } from "node:fs/promises";
@@ -330,6 +333,7 @@ export function createAgentSessionManager(options: {
   agentLauncher: AgentLauncher;
   terminalRuntime: TerminalRuntimeClient;
   backgroundRuntime?: BackgroundAgentRuntime;
+  legacyZellij?: LegacySessionRuntime;
   now?: () => string;
   idGenerator?: () => string;
   startupRetryDelaysMs?: readonly number[];
@@ -593,6 +597,7 @@ export function createAgentSessionManager(options: {
     async deleteProjectSessions(input: {
       projectSlug: string;
       ownerId: string;
+      beforeRemove?: (sessions: WorkspaceSession[]) => Promise<void>;
     }): Promise<{ ok: true; deleted: number } | Failure> {
       if (!PROJECT_SLUG_REGEX.test(input.projectSlug) || input.ownerId.length < 1 || input.ownerId.length > 256) {
         return failure(400, "invalid_session_query", "Session query is invalid");
@@ -600,14 +605,15 @@ export function createAgentSessionManager(options: {
       const sessions = (await readAllSessions(homePath)).filter((session) =>
         session.projectSlug === input.projectSlug && session.ownerId === input.ownerId
       );
-      if (sessions.some(isActive)) {
-        return failure(409, "project_active", "Stop active project work before continuing");
-      }
+      // Stop every owned runtime before removing any session record. A failed stop is retryable.
       for (const session of sessions) {
-        await unlink(sessionPath(homePath, session.id)).catch((err: unknown) => {
-          if (!(err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT")) throw err;
-        });
+        if (session.runtime.status !== "exited" || session.runtime.fallbackReason === "lease_release_failed") {
+          const stopped = await manager.killSession(session.id);
+          if (!stopped.ok) return stopped;
+        }
       }
+      await input.beforeRemove?.(sessions);
+      for (const session of sessions) await deleteProjectSessionFiles(homePath, session);
       return { ok: true, deleted: sessions.length };
     },
 
@@ -650,18 +656,22 @@ export function createAgentSessionManager(options: {
       }
       let killFailed = false;
       try {
-        if (session.runtime.type === "background") {
+        if (session.runtime.status === "exited") {
+          // Already stopped sessions may predate all current runtime references.
+          // Continue to lease release, without trying to stop a recycled runtime.
+        } else if (session.runtime.type === "background") {
           if (!session.backgroundRef || !options.backgroundRuntime) throw new Error("Background runtime unavailable");
           await (lockedRuntime ?? options.backgroundRuntime).stop(session.backgroundRef);
-        } else {
-          if (!session.terminalRef) throw new Error("Terminal reference unavailable");
+        } else if (session.terminalRef) {
           await options.terminalRuntime.terminateTab(session.terminalRef);
+        } else {
+          await stopLegacySession(session.runtime.zellijSession, options.legacyZellij);
         }
       } catch (err: unknown) {
-        if (err instanceof Error) {
-          console.warn("[agent-session-manager] Runtime kill failed:", err.message);
+        if (!(err instanceof TerminalRuntimeError && err.code === "not_found")) {
+          console.warn("[agent-session-manager] Runtime kill failed:", err instanceof Error ? err.message : "UnknownError");
+          killFailed = true;
         }
-        killFailed = true;
       }
       if (killFailed && session.runtime.type === "background") {
         scheduleStartupReconciliation();

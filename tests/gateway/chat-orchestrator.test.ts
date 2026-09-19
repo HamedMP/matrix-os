@@ -149,7 +149,11 @@ describe("CanonicalChatOrchestrator", () => {
       permissionMode: "supervised",
       executionRoot: { kind: "project", projectId: "project_matrix" },
     });
-    expect(admitted).toMatchObject({ admission: "accepted", run: { status: "accepted" } });
+    expect(admitted).toMatchObject({
+      admission: "accepted",
+      message: { actorId: principal.userId, purpose: "ai_request" },
+      run: { status: "accepted" },
+    });
     await orchestrator.drain();
 
     expect(sawCommittedAdmission).toHaveBeenCalledWith("running", "user");
@@ -264,9 +268,9 @@ describe("CanonicalChatOrchestrator", () => {
       .toEqual([]);
     const snapshot = await repository.exportChat(owner, "chat_queue_orchestrated");
     expect(snapshot?.messages.filter((message) => message.role === "user")
-      .map((message) => message.parts)).toEqual([
-      [{ type: "text", text: "keep running" }],
-      [{ type: "text", text: "run this next" }],
+      .map((message) => ({ actorId: message.actorId, purpose: message.purpose, parts: message.parts }))).toEqual([
+      { actorId: principal.userId, purpose: "ai_request", parts: [{ type: "text", text: "keep running" }] },
+      { actorId: principal.userId, purpose: "ai_request", parts: [{ type: "text", text: "run this next" }] },
     ]);
     expect(snapshot?.runs).toHaveLength(2);
     expect(snapshot?.runs.every((run) => run.status === "completed")).toBe(true);
@@ -331,7 +335,13 @@ describe("CanonicalChatOrchestrator", () => {
       runId: admitted.run.id,
       turnId: admitted.turn.id,
       steering: "accepted",
-      message: { role: "user", state: "committed", parts: request.parts },
+      message: {
+        role: "user",
+        state: "committed",
+        actorId: principal.userId,
+        purpose: "ai_request",
+        parts: request.parts,
+      },
     });
     expect(duplicate).toMatchObject({ message: first.message, steering: "already_accepted" });
     expect(steer).toHaveBeenCalledTimes(1);
@@ -622,7 +632,11 @@ describe("CanonicalChatOrchestrator", () => {
 
     expect(accepted).toMatchObject({
       steering: "accepted",
-      message: { parts: [{ type: "text", text: "steer queued now" }] },
+      message: {
+        actorId: principal.userId,
+        purpose: "ai_request",
+        parts: [{ type: "text", text: "steer queued now" }],
+      },
     });
     expect(steer).toHaveBeenCalledTimes(2);
     expect(acceptQueuedTurnSteerSpy).toHaveBeenCalledTimes(2);

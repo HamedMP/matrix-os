@@ -15,6 +15,7 @@ import BrowserTab from "../browser/BrowserTab";
 import DesktopEditorWorkspace from "../editor/DesktopEditorWorkspace";
 import NotesWorkspace from "../notes/NotesWorkspace";
 import DesktopChatCollaboration from "../chat/DesktopChatCollaboration";
+import { DesktopSharedTerminal } from "../terminal/DesktopSharedTerminal";
 
 export class TabErrorBoundary extends Component<{
   children: ReactNode;
@@ -70,6 +71,7 @@ export function TabPane({
       return <BrowserTab active={active} layoutRevision={layoutRevision} visualScale={visualScale} />;
     case "work":
       return <WorkTab
+        tabId={tab.id}
         route={tab.workRoute ?? "chat"}
         projectSlug={tab.projectSlug}
         active={active}
@@ -77,9 +79,10 @@ export function TabPane({
         initialChatId={tab.chatId}
         initialChatView={tab.chatView}
         initialChatTitle={tab.chatTitle}
+        sharedScopeId={tab.sharedScopeId}
       />;
     case "chat":
-      return <WorkTab tabId={tab.id} route="chat" active={active} visible={visible} initialChatId={tab.chatId} initialChatView={tab.chatView} initialChatTitle={tab.chatTitle} />;
+      return <WorkTab tabId={tab.id} route="chat" active={active} visible={visible} initialChatId={tab.chatId} initialChatView={tab.chatView} initialChatTitle={tab.chatTitle} sharedScopeId={tab.sharedScopeId} />;
     case "terminals":
       return <TerminalsTab active={active} visible={visible} visualScale={visualScale} />;
     case "files":
@@ -103,7 +106,9 @@ export function TabPane({
     case "task":
       return tab.taskId ? <TaskWorkspace taskId={tab.taskId} projectSlug={tab.projectSlug} active={active} /> : null;
     case "terminal":
-      return tab.sessionName
+      return tab.sharedScopeId
+        ? <DesktopSharedTerminal scopeId={tab.sharedScopeId} />
+        : tab.sessionName
         ? <TerminalView sessionName={tab.sessionName} active={active} visualScale={visualScale} />
         : null;
     case "settings":

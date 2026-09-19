@@ -11,6 +11,8 @@ describe("two-account collaboration journey fixture", () => {
       MATRIX_COLLABORATION_E2E_EDITOR_STATE: "/tmp/editor.json",
       MATRIX_COLLABORATION_E2E_PROJECT_ID: "proj_review",
       MATRIX_COLLABORATION_E2E_EDITOR_ACTOR_ID: "user_editor",
+      MATRIX_COLLABORATION_E2E_EDITOR_EMAIL: "editor@example.com",
+      MATRIX_COLLABORATION_E2E_EDITOR_USERNAME: "nimanaderi",
     })).toEqual({
       baseUrl: "https://app.matrix-os.com",
       runtimePath: "/vm/review-vm",
@@ -18,6 +20,8 @@ describe("two-account collaboration journey fixture", () => {
       editorStorageState: "/tmp/editor.json",
       projectId: "proj_review",
       editorActorId: "user_editor",
+      editorEmail: "editor@example.com",
+      editorUsername: "nimanaderi",
     });
   });
 
@@ -29,6 +33,8 @@ describe("two-account collaboration journey fixture", () => {
       MATRIX_COLLABORATION_E2E_EDITOR_STATE: "/tmp/editor.json",
       MATRIX_COLLABORATION_E2E_PROJECT_ID: "proj_review",
       MATRIX_COLLABORATION_E2E_EDITOR_ACTOR_ID: "user_editor",
+      MATRIX_COLLABORATION_E2E_EDITOR_EMAIL: "editor@example.com",
+      MATRIX_COLLABORATION_E2E_EDITOR_USERNAME: "nimanaderi",
     })).toThrow();
     expect(() => parseCollaborationJourneyEnvironment({
       MATRIX_COLLABORATION_E2E_BASE_URL: "https://app.matrix-os.com",
@@ -37,6 +43,8 @@ describe("two-account collaboration journey fixture", () => {
       MATRIX_COLLABORATION_E2E_EDITOR_STATE: "/tmp/editor.json",
       MATRIX_COLLABORATION_E2E_PROJECT_ID: "proj_review",
       MATRIX_COLLABORATION_E2E_EDITOR_ACTOR_ID: "user_editor",
+      MATRIX_COLLABORATION_E2E_EDITOR_EMAIL: "editor@example.com",
+      MATRIX_COLLABORATION_E2E_EDITOR_USERNAME: "nimanaderi",
     })).toThrow();
   });
 });
