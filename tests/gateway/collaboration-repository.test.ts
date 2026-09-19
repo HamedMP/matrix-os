@@ -325,6 +325,104 @@ describe("CollaborationRepository", () => {
     })).rejects.toMatchObject({ code: "conflict" });
   });
 
+  it("lets only the pending target decline and records an idempotent revoked projection", async () => {
+    const scope = await createScope();
+    const invitation = await repository.createInvitation({
+      scopeId: scope.id,
+      actorId: collaborationActors.owner,
+      targetActorId: collaborationActors.editor,
+      role: "editor",
+      clientRequestId: uuid(63),
+      expectedRevision: 0,
+      payloadHash: "d".repeat(64),
+      expiresAt: future,
+    });
+    const input = {
+      invitationId: invitation.invitationId,
+      actorId: collaborationActors.editor,
+      clientRequestId: uuid(64),
+      expectedRevision: 1,
+      payloadHash: "e".repeat(64),
+    };
+
+    await expect(repository.declineInvitation(input)).resolves.toMatchObject({
+      scopeId: scope.id,
+      actorId: collaborationActors.editor,
+      role: "editor",
+      status: "revoked",
+      scopeRevision: 2,
+      memberRevision: 2,
+    });
+    await expect(repository.declineInvitation(input)).resolves.toMatchObject({ status: "revoked" });
+    await expect(repository.declineInvitation({
+      ...input,
+      actorId: collaborationActors.owner,
+      clientRequestId: uuid(65),
+    })).rejects.toMatchObject({ code: "not_found" });
+    await expect(fixture.db.selectFrom("collaboration_audit")
+      .select(["actor_id", "action", "outcome"])
+      .where("scope_id", "=", scope.id)
+      .orderBy("id", "desc")
+      .executeTakeFirstOrThrow()).resolves.toMatchObject({
+        actor_id: collaborationActors.editor,
+        action: "invitation.declined",
+        outcome: "completed",
+      });
+    await expect(fixture.db.selectFrom("collaboration_directory_outbox")
+      .select("discovery_state")
+      .where("scope_id", "=", scope.id)
+      .where("discovery_state", "=", "revoked")
+      .executeTakeFirstOrThrow()).resolves.toEqual({ discovery_state: "revoked" });
+  });
+
+  it("rejects pending or accepted duplicates and renews revoked membership with a new invitation", async () => {
+    let invitationSequence = 70;
+    repository = new CollaborationRepository(fixture.db, {
+      now: () => instant,
+      createId: () => uuid(invitationSequence++),
+    });
+    const scope = await createScope();
+    const create = (clientRequestId: string, expectedRevision: number) => repository.createInvitation({
+      scopeId: scope.id,
+      actorId: collaborationActors.owner,
+      targetActorId: collaborationActors.editor,
+      role: "editor",
+      clientRequestId,
+      expectedRevision,
+      payloadHash: clientRequestId.replaceAll("-", "").padEnd(64, "0").slice(0, 64),
+      expiresAt: future,
+    });
+
+    const pending = await create(uuid(71), 0);
+    await expect(create(uuid(72), 1)).rejects.toMatchObject({ code: "conflict" });
+    await repository.acceptInvitation({
+      invitationId: pending.invitationId,
+      actorId: collaborationActors.editor,
+      clientRequestId: uuid(73),
+      expectedRevision: 1,
+      payloadHash: "d".repeat(64),
+    });
+    await expect(create(uuid(74), 2)).rejects.toMatchObject({ code: "conflict" });
+    await fixture.db.updateTable("collaboration_scopes").set({ lifecycle: "shared" })
+      .where("id", "=", scope.id).execute();
+    await repository.revokeMember({
+      scopeId: scope.id,
+      actorId: collaborationActors.owner,
+      targetActorId: collaborationActors.editor,
+      clientRequestId: uuid(75),
+      expectedRevision: 2,
+      expectedMemberRevision: 2,
+      payloadHash: "e".repeat(64),
+    });
+
+    const renewed = await create(uuid(76), 3);
+    expect(renewed.invitationId).not.toBe(pending.invitationId);
+    await expect(repository.getMember(scope.id, collaborationActors.editor)).resolves.toMatchObject({
+      invitationId: renewed.invitationId,
+      status: "pending",
+    });
+  });
+
   it("keeps read, pin, mute, and opened state local to each Chat participant", async () => {
     await fixture.db.insertInto("chats").values({
       id: collaborationIds.chat,

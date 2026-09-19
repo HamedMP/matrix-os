@@ -58,6 +58,7 @@ import { formatShellDisplayName } from "./TerminalSidebarItems";
 import { TERMINAL_UI_FONT_FAMILY } from "./terminal-typography";
 import { DesktopTerminalEmptyState, DesktopTerminalSessionHeader } from "./DesktopTerminalWorkspace";
 import { useTerminalSessionCreate } from "./useTerminalSessionCreate";
+import { ShellSharedTerminal } from "./ShellSharedTerminal";
 
 export { TERMINAL_INPUT_EVENT };
 export type { TerminalInputEventDetail };
@@ -278,10 +279,21 @@ interface TerminalAppProps {
   layoutId?: string;
   /** Setup/login terminals never read or write durable window layouts. */
   persistence?: "durable" | "ephemeral";
+  /** Render an authorized remote collaboration session inside native Terminal chrome. */
+  sharedScopeId?: string | null;
+}
+
+export function TerminalApp(props: TerminalAppProps = {}) {
+  if (props.sharedScopeId) {
+    return <div className="flex h-full w-full flex-col bg-[#101218] text-[#e4e4e7]" role="application" aria-label="Terminal">
+      <ShellSharedTerminal scopeId={props.sharedScopeId} />
+    </div>;
+  }
+  return <LocalTerminalApp {...props} />;
 }
 
 // react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/no-high-complexity-react-function, react-doctor/prefer-useReducer -- no-giant-component/no-high-complexity-react-function: cohesive core terminal shell component whose extraction is tracked separately; splitting it during a retry-idempotency fix would be broad and behavior-changing. prefer-useReducer: the 6 useState fields are independent, not one related cluster: tabs/activeTabId/focusedPaneId are mutated through many distinct code paths (split, close, rename, reorder, session-attach) using nested functional updaters that read prev and call sibling setters, while sidebarOpen/sidebarSelectedPath are sidebar UI and initialized is a one-time bootstrap gate; a single reducer would not be a mechanical, behavior-identical change.
-export function TerminalApp({ initialCommand, initialLabel, initialClaudeMode = false, initialSessionId, launchTargetId, mobile = false, windowControls, embeddedChrome = false, canvasZoom = 1, suspended = false, desktopParity = false, layoutId, persistence = "durable" }: TerminalAppProps = {}) {
+function LocalTerminalApp({ initialCommand, initialLabel, initialClaudeMode = false, initialSessionId, launchTargetId, mobile = false, windowControls, embeddedChrome = false, canvasZoom = 1, suspended = false, desktopParity = false, layoutId, persistence = "durable" }: TerminalAppProps = {}) {
   const theme = useTheme();
   const themeId = useTerminalSettings((s) => s.themeId);
   const setThemeId = useTerminalSettings((s) => s.setThemeId);

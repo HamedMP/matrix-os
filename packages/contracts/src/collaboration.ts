@@ -22,6 +22,14 @@ export const CollaborationActorIdSchema = z.string()
   .min(1)
   .max(128)
   .regex(/^[A-Za-z0-9_-]+$/, "Invalid actor identifier");
+export const CollaborationInvitationIdentifierSchema = z.string()
+  .trim()
+  .min(1)
+  .max(320)
+  .regex(/^[^\u0000-\u001F\u007F]+$/, "Invalid invitation identifier");
+export const CollaborationInvitationIdentifierRequestSchema = z.object({
+  identifier: CollaborationInvitationIdentifierSchema,
+}).strict();
 export const CollaborationRuntimeIdSchema = referenceId(128);
 export const CollaborationResourceIdSchema = referenceId(160);
 export const CollaborationRevisionSchema = z.string()
@@ -147,7 +155,9 @@ export const CollaborationInvitationSchema = z.object({
   role: CollaborationInviteRoleSchema,
   status: CollaborationMemberStatusSchema,
   expiresAt: z.iso.datetime(),
-  revision: CollaborationRevisionSchema,
+  // Acceptance is a scope mutation, so this is the optimistic concurrency
+  // revision callers must send as expectedRevision when accepting.
+  revision: CollaborationRevisionSchema.describe("Current collaboration scope revision"),
 }).strict();
 
 const CollaborationConditionalMutationSchema = z.object({
@@ -156,13 +166,14 @@ const CollaborationConditionalMutationSchema = z.object({
 }).strict();
 
 export const CollaborationCreateInvitationRequestSchema = z.object({
-  targetActorId: CollaborationActorIdSchema,
+  identifier: CollaborationInvitationIdentifierSchema,
   role: CollaborationInviteRoleSchema,
   clientRequestId: CollaborationIdSchema,
   expectedRevision: CollaborationRevisionSchema,
 }).strict();
 
 export const CollaborationAcceptInvitationRequestSchema = CollaborationConditionalMutationSchema;
+export const CollaborationDeclineInvitationRequestSchema = CollaborationConditionalMutationSchema;
 
 export const CollaborationMemberPatchRequestSchema = z.object({
   role: CollaborationInviteRoleSchema,
@@ -327,20 +338,23 @@ const CollaborationExportChatMessageSchema = z.object({
   });
 });
 
-export const CollaborationScopeExportSchema = z.object({
+const CollaborationScopeExportBaseSchema = z.object({
   version: z.literal(1),
   id: CollaborationIdSchema,
   scopeId: CollaborationIdSchema,
   exportedAt: z.iso.datetime(),
   expiresAt: z.iso.datetime(),
+  members: z.array(CollaborationExportMemberSchema).max(8),
+  audit: z.array(CollaborationExportAuditSchema).max(10_000),
+});
+
+const CollaborationChatScopeExportSchema = CollaborationScopeExportBaseSchema.extend({
   scope: z.object({
     kind: z.literal("chat"),
     resourceId: CollaborationResourceIdSchema,
     lifecycle: CollaborationLifecycleSchema,
     revision: CollaborationRevisionSchema,
   }).strict(),
-  members: z.array(CollaborationExportMemberSchema).max(8),
-  audit: z.array(CollaborationExportAuditSchema).max(10_000),
   chat: z.object({
     id: CollaborationResourceIdSchema,
     title: boundedDisplayText(200, 1_024),
@@ -357,6 +371,28 @@ export const CollaborationScopeExportSchema = z.object({
     }).strict()).max(100_000),
   }).strict(),
 }).strict();
+
+const CollaborationTerminalScopeExportSchema = CollaborationScopeExportBaseSchema.extend({
+  scope: z.object({
+    kind: z.literal("terminal"),
+    resourceId: CollaborationResourceIdSchema,
+    lifecycle: CollaborationLifecycleSchema,
+    revision: CollaborationRevisionSchema,
+  }).strict(),
+  discussion: z.array(z.object({
+    id: CollaborationResourceIdSchema,
+    scopeId: CollaborationIdSchema,
+    sequence: CollaborationRevisionSchema,
+    actor: CollaborationParticipantSchema,
+    text: boundedText(65_536, COLLABORATION_MESSAGE_BYTE_LIMIT),
+    createdAt: z.iso.datetime(),
+  }).strict()).max(100_000),
+}).strict();
+
+export const CollaborationScopeExportSchema = z.union([
+  CollaborationChatScopeExportSchema,
+  CollaborationTerminalScopeExportSchema,
+]);
 
 export const CollaborationUserStateSchema = z.object({
   readThroughSeq: CollaborationRevisionSchema,
@@ -387,6 +423,29 @@ export const CollaborationHumanMessageSchema = z.object({
   actor: CollaborationParticipantSchema,
   text: boundedText(65_536, COLLABORATION_MESSAGE_BYTE_LIMIT),
   createdAt: z.iso.datetime(),
+}).strict();
+
+export const CollaborationDiscussionMessageSchema = z.object({
+  id: CollaborationResourceIdSchema,
+  scopeId: CollaborationIdSchema,
+  sequence: CollaborationRevisionSchema,
+  actor: CollaborationParticipantSchema,
+  text: boundedText(65_536, COLLABORATION_MESSAGE_BYTE_LIMIT),
+  createdAt: z.iso.datetime(),
+}).strict();
+
+export const CollaborationDiscussionMessagesResponseSchema = z.object({
+  messages: z.array(CollaborationDiscussionMessageSchema).max(COLLABORATION_PAGE_LIMIT),
+  latestSequence: CollaborationRevisionSchema,
+}).strict();
+
+export const CollaborationDiscussionUserStateSchema = z.object({
+  readThroughSeq: CollaborationRevisionSchema,
+  lastOpenedAt: z.iso.datetime().optional(),
+}).strict();
+
+export const CollaborationDiscussionUserStatePatchSchema = z.object({
+  readThroughSeq: CollaborationRevisionSchema,
 }).strict();
 
 export const CollaborationChatSchema = z.object({
@@ -438,7 +497,6 @@ export const CollaborationCreateAiRequestSchema = z.object({
   clientRequestId: CollaborationIdSchema,
   expectedRevision: CollaborationRevisionSchema,
   text: boundedText(65_536, COLLABORATION_MESSAGE_BYTE_LIMIT),
-  selection: CanonicalChatModelSelectionSchema,
 }).strict();
 
 export const CollaborationAiRequestControlSchema = z.object({
@@ -483,7 +541,10 @@ export const CollaborationApprovalSchema = z.object({
 export const CollaborationAiRequestsResponseSchema = z.object({
   requests: z.array(CollaborationAiRequestSchema).max(COLLABORATION_PAGE_LIMIT),
   approvals: z.array(CollaborationApprovalSchema).max(COLLABORATION_PAGE_LIMIT),
-  defaultSelection: CanonicalChatModelSelectionSchema,
+  capability: z.object({
+    status: z.enum(["available", "unavailable", "owner_binding_required"]),
+    effectiveSelection: CanonicalChatModelSelectionSchema.optional(),
+  }).strict(),
   resourceRevision: CollaborationRevisionSchema,
 }).strict();
 
@@ -755,6 +816,9 @@ export type CollaborationAiRequestState = z.infer<typeof CollaborationAiRequestS
 export type CollaborationDeleteCondition = z.infer<typeof CollaborationDeleteConditionSchema>;
 export type CollaborationCapabilities = z.infer<typeof CollaborationCapabilitiesSchema>;
 export type CollaborationEventFrame = z.infer<typeof CollaborationEventFrameSchema>;
+export type CollaborationDiscussionMessage = z.infer<typeof CollaborationDiscussionMessageSchema>;
+export type CollaborationDiscussionMessagesResponse = z.infer<typeof CollaborationDiscussionMessagesResponseSchema>;
+export type CollaborationDiscussionUserState = z.infer<typeof CollaborationDiscussionUserStateSchema>;
 export type CollaborationHumanMessage = z.infer<typeof CollaborationHumanMessageSchema>;
 export type CollaborationInvitation = z.infer<typeof CollaborationInvitationSchema>;
 export type CollaborationLifecycleRequest = z.infer<typeof CollaborationLifecycleRequestSchema>;

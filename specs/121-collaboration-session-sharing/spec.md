@@ -212,6 +212,9 @@ Owners and editors each retain private composer drafts and personal view state. 
 - **FR-013**: Owners and editors MUST explicitly choose between human discussion and requesting AI work. Human discussion alone MUST NOT trigger a new AI run.
 - **FR-014**: Accepted AI requests MUST enter one visible ordered queue per Chat, with at most one executing request at a time. Concurrent submissions and reconnect retries MUST NOT lose, duplicate, or silently reorder accepted work.
 - **FR-015**: Queue entries MUST show author, accepted order, and lifecycle state. Submission failure or capacity rejection MUST be visible to the author and preserve unsent input. The initial limit is 32 pending AI requests per Chat; running and historical requests do not consume pending capacity.
+- **FR-015a**: A shared AI submission carries text and idempotency/revision data only. The owner-runtime derives the Provider Driver, Provider Instance, model selection, credentials and execution capability from canonical Chat and scope state. The Provider Instance is immutable after the first non-agent Turn binds it; model choice remains mutable within that bound Instance, matching canonical private Chat behavior.
+- **FR-015b**: Only the owner may cause an unbound shared Chat to establish its initial Provider Instance. An editor request before that binding exists is unavailable and creates no queue entry or binding. Once bound, owner and editor requests use the same immutable Instance; changing between Codex and Claude requires a new or forked Chat.
+- **FR-015c**: Sharing preserves an existing Provider binding. If the isolated shared runtime does not support that binding, history and human discussion remain available while shared AI reports unavailable. It never substitutes another Provider, imports private resume state, or changes Chat metadata.
 - **FR-016**: Approval, cancellation, and retry MUST enforce the action matrix at the moment the action takes effect, publish one consistent outcome to members, and reject conflicting late decisions. Retry MUST remain a distinct attempt associated with the original request.
 - **FR-017**: Every participant's unsent composer draft and composing mode MUST remain private and independent. Read position, pin, mute, last-opened, and comparable presentation state MUST remain per member.
 - **FR-018**: Queued requests MUST be reauthorized immediately before execution; revoked or downgraded authors MUST NOT start work they can no longer request. Reconnection or recovery MUST expose the actual accepted, running, failed, cancelled, or completed state rather than inventing success or replaying work.
@@ -306,6 +309,18 @@ This sequence is delivery order, not a reduction of the final P1/P2 scope. Discu
 - Automatic exposure or live migration of unrestricted personal processes and terminals, personal homes, credentials, or system state.
 - Anonymous live-collaboration links, custom organization-wide policies, outside identity federation, or automatic public project publishing. Existing read-only snapshot links are preserved.
 - Runtime implementation or deployment as part of this specification and planning PR.
+- Cloud Run/WebSocket 503s or five-minute connection termination; Cloud Run capacity/no-available-instance 429s; collaboration policy caching/backoff; expired owner Claude OAuth credentials; and broader shared-Chat UI/UX redesign. These are separately observed production issues and are not part of immutable Provider authority or metadata recovery.
+
+### Immutable Provider hotfix deployment verification
+
+The bounded startup reconciliation repairs only rows whose `current_selection.instanceId` conflicts with a complete immutable binding and whose binding Turn has a Run with the exact stored Driver and Provider Instance. It restores that Run's selection projection, increments the Chat revision, and never rewrites the binding. Missing or contradictory provenance is left unchanged with a bounded server diagnostic; retrying after restart is idempotent.
+
+After deployment, verify the known affected Chat without issuing a production mutation:
+
+1. Query Chat `chat_e5aca64e722f41d8b128403096c8dbd2` and confirm title `New caht`, `bound_driver_kind = codex`, `bound_instance_id = codex_default`, and `current_selection->>'instanceId' = codex_default`.
+2. Join `bound_at_turn_id` to `chat_runs.turn_id` and confirm the proving Run has `driver_kind = codex`, `instance_id = codex_default`, and a selection whose `instanceId` is `codex_default`.
+3. Read the owner's canonical Chat detail endpoint and confirm HTTP 200 with the same Provider binding and selection.
+4. Read collaboration scope `6aed8d12-f6c8-4c10-90b2-1e51fcc738e3` and its AI capability. A Claude-only isolated runtime must report AI unavailable while Chat history and discussion reads remain available; it must not advertise or persist `claude_shared` for this Chat.
 
 ## Success Criteria *(mandatory)*
 

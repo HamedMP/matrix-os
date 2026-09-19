@@ -58,6 +58,7 @@ export async function createPlatformCollaboration(options: {
     bearerToken: string;
   }): Promise<{ runtimeId: string; ownerId: string } | null>;
   resolveParticipant(actorId: string): Promise<{ actorId: string; displayName: string } | null>;
+  resolveInvitationIdentifier(identifier: string): Promise<{ actorId: string; displayName: string } | null>;
   resolveRuntime(runtimeId: string): Promise<CollaborationRuntimeRoute | null>;
   fetchImpl?: typeof fetch;
   now?: () => Date;
@@ -120,6 +121,7 @@ export async function createPlatformCollaboration(options: {
     resolveActor: options.resolveActor,
     authenticateRuntime: options.authenticateRuntime,
     resolveParticipant: options.resolveParticipant,
+    resolveInvitationIdentifier: options.resolveInvitationIdentifier,
     hydrate,
     now: options.now,
   });

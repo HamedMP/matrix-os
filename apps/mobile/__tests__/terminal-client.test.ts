@@ -104,7 +104,7 @@ describe("mobile terminal client", () => {
 
   it("builds token-authenticated terminal websocket URLs", () => {
     expect(buildTerminalWebSocketUrl("https://app.matrix-os.test/", SESSION_ID, "ws token")).toBe(
-      `wss://app.matrix-os.test/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=mobile&inputCapability=binary-input-v1&token=ws+token`,
+      `wss://app.matrix-os.test/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=mobile&inputCapability=binary-input-v1&lease=exclusive&token=ws+token`,
     );
     expect(isSafeSessionId(SESSION_ID)).toBe(true);
     expect(isSafeSessionId("../bad")).toBe(false);
@@ -167,6 +167,39 @@ describe("mobile terminal client", () => {
       dataBase64: "G10xMDs/B4D/",
     });
     connection.close();
+  });
+
+  it("keeps following output but blocks input after another device takes ownership", () => {
+    const ws = new MockWebSocket() as unknown as WebSocket;
+    const onMessage = jest.fn();
+    const connection = new MobileTerminalConnection(ws, {
+      sessionId: SESSION_ID,
+      onMessage,
+    });
+    connection.attach();
+    (ws as unknown as MockWebSocket).onopen?.();
+    (ws as unknown as MockWebSocket).onmessage?.({
+      data: JSON.stringify({
+        type: "attached",
+        terminalRef: TERMINAL_REF,
+        canonicalSize: { cols: 80, rows: 24 },
+        revision: 1,
+        nextSeq: 0,
+        ownership: "writer",
+        leaseEpoch: 1,
+      }),
+    });
+    (ws as unknown as MockWebSocket).onmessage?.({
+      data: JSON.stringify({ type: "lease-revoked", terminalRef: TERMINAL_REF, epoch: 1 }),
+    });
+    (ws as unknown as MockWebSocket).onmessage?.({
+      data: JSON.stringify({ type: "output", terminalRef: TERMINAL_REF, revision: 1, seq: 1, data: "follow" }),
+    });
+
+    expect(connection.sendInput("blocked")).toBe(false);
+    expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "lease-revoked" }));
+    expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "output", data: "follow" }));
+    expect((ws as unknown as MockWebSocket).closed).toBe(false);
   });
 
   it("uses text input for emulator replies when connected to an older runtime", () => {
@@ -242,7 +275,7 @@ describe("mobile terminal client", () => {
 
     expect(connection).toBeTruthy();
     expect(webSocketMock).toHaveBeenCalledWith(
-      `wss://app.matrix-os.test/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=mobile&inputCapability=binary-input-v1&token=ws-token`,
+      `wss://app.matrix-os.test/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=mobile&inputCapability=binary-input-v1&lease=exclusive&token=ws-token`,
       [],
       { headers: { Authorization: "Bearer clerk-token" } },
     );
@@ -262,7 +295,7 @@ describe("mobile terminal client", () => {
 
     expect(connection).toBeTruthy();
     expect(webSocketMock).toHaveBeenCalledWith(
-      `wss://app.matrix-os.test/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=mobile&inputCapability=binary-input-v1`,
+      `wss://app.matrix-os.test/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=mobile&inputCapability=binary-input-v1&lease=exclusive`,
       [],
       { headers: { Authorization: "Bearer clerk-token" } },
     );

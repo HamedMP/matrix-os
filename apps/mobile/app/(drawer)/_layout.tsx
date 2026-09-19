@@ -1,4 +1,6 @@
 import Menu01Icon from "@hugeicons/core-free-icons/Menu01Icon";
+import { useAuth } from "@clerk/clerk-expo";
+import { useEffect, useRef, useState } from "react";
 import { Pressable } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import * as Haptics from "expo-haptics";
@@ -10,6 +12,8 @@ import { useCanonicalChatSession } from "@/lib/canonical-chat-session-context";
 import { useCanonicalChats } from "@/lib/queries/use-canonical-chats";
 import { useProjects } from "@/lib/queries/use-projects";
 import { useSettingsSystemInfo } from "@/lib/queries/use-settings-system-info";
+import { fetchCollaborationInbox } from "@/lib/requests/collaboration";
+import { subscribeCollaborationDiscoveryChanged } from "@/lib/collaboration-events";
 
 function triggerDrawerHaptic() {
   void Promise.resolve(
@@ -23,12 +27,38 @@ function triggerDrawerHaptic() {
 }
 
 export default function DrawerLayout() {
+  const { getToken } = useAuth();
+  const getTokenRef = useRef(getToken);
+  useEffect(() => { getTokenRef.current = getToken; }, [getToken]);
   const { computer, chats, isPending: recentChatsLoading } = useCanonicalChats();
   const { projects } = useProjects();
   const { activeChatId, selectChat, startDraftChat } = useCanonicalChatSession();
   const { systemInfo } = useSettingsSystemInfo();
   const { theme } = useUnistyles();
   const computerName = computer?.handle ?? (recentChatsLoading ? "Loading…" : "Not connected");
+  const collaborationEnabled = systemInfo?.capabilities?.collaboration === true;
+  const [pendingInvitationCount, setPendingInvitationCount] = useState(0);
+
+  useEffect(() => {
+    if (!collaborationEnabled) {
+      setPendingInvitationCount(0);
+      return;
+    }
+    let current = true;
+    const load = () => void (async () => {
+      try {
+        const token = await getTokenRef.current();
+        if (!token) return;
+        const inbox = await fetchCollaborationInbox(token);
+        if (current) setPendingInvitationCount(inbox.items.filter((item) => item.status === "invited").length);
+      } catch (failure: unknown) {
+        console.warn("[mobile-collaboration] invitation badge unavailable", failure instanceof Error ? failure.name : "UnknownError");
+      }
+    })();
+    load();
+    const unsubscribe = subscribeCollaborationDiscoveryChanged(load);
+    return () => { current = false; unsubscribe(); };
+  }, [collaborationEnabled]);
 
   return (
     <Drawer
@@ -40,7 +70,8 @@ export default function DrawerLayout() {
         <DrawerContent
           {...props}
           computerName={computerName}
-          collaborationEnabled={systemInfo?.capabilities?.collaboration === true}
+          collaborationEnabled={collaborationEnabled}
+          pendingInvitationCount={pendingInvitationCount}
           recentChats={chats}
           recentChatsLoading={recentChatsLoading}
           projects={projects}
@@ -84,7 +115,7 @@ export default function DrawerLayout() {
       <Drawer.Screen name="terminal" options={{ title: null, drawerLabel: "Terminal" }} />
       <Drawer.Screen name="integrations" options={{ title: null, drawerLabel: "Integrations" }} />
       <Drawer.Screen name="apps" options={{ title: null, drawerLabel: "Apps" }} />
-      {systemInfo?.capabilities?.collaboration === true
+      {collaborationEnabled
         ? <Drawer.Screen name="shared" options={{ title: null, drawerLabel: "Shared with me" }} />
         : null}
       <Drawer.Screen name="settings" options={{ title: null, drawerLabel: "Settings" }} />

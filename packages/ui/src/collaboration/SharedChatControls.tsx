@@ -15,7 +15,6 @@ type SharedAiState = {
   availability: AiAvailability;
   requests: CollaborationAiRequest[];
   approvals: CollaborationApproval[];
-  defaultSelection: CollaborationAiRequest["selection"] | null;
   pendingAction: string | null;
   error: SharedAiError;
 };
@@ -31,7 +30,6 @@ const initialSharedAiState: SharedAiState = {
   availability: "checking",
   requests: [],
   approvals: [],
-  defaultSelection: null,
   pendingAction: null,
   error: null,
 };
@@ -43,10 +41,6 @@ export function SharedChatControls({
   resourceRevision,
   draft,
   updateDraft,
-  changeDraftMode,
-  discussionSending,
-  discussionError,
-  sendDiscussion,
   refreshVersion,
 }: {
   api: CollaborationApi;
@@ -63,20 +57,21 @@ export function SharedChatControls({
 }) {
   const controller = useSharedAiController({ api, scope, actorId, resourceRevision, draft, updateDraft, refreshVersion });
   const { state, submitAi, control, decide } = controller;
-  const presentation = sharedComposerPresentation(scope, state, draft, discussionSending);
-  const submit = presentation.aiMode ? submitAi : sendDiscussion;
+  const presentation = sharedComposerPresentation(scope, state);
+  const relevantRequests = state.requests.filter((request) => request.state !== "completed");
   return <footer className="border-t p-4 sm:px-6">
-    <SharedComposerHeader presentation={presentation} changeDraftMode={changeDraftMode} />
-    <OptionalSharedAiQueue visible={presentation.showQueue} requests={state.requests} approvals={state.approvals}
+    <OptionalSharedAiQueue visible={presentation.showQueue} requests={relevantRequests} approvals={state.approvals}
       actorId={actorId} role={scope.role} pendingAction={state.pendingAction} control={control} decide={decide} />
-    <SharedAiErrors discussionError={discussionError && !presentation.aiMode} error={state.error} />
-    <SharedComposerInput presentation={presentation} draft={draft} updateDraft={updateDraft} submit={submit} />
+    <SharedAiErrors discussionError={false} error={state.error} />
+    {!presentation.canCompose ? <p role="status" className="mb-2 text-xs text-muted-foreground">
+      {presentation.status}
+    </p> : null}
+    <SharedComposerInput presentation={presentation} draft={{ ...draft, mode: "ai" }}
+      updateDraft={(text) => updateDraft(text, "ai")} submit={submitAi} />
   </footer>;
 }
 
 type SharedComposerPresentation = {
-  aiMode: boolean;
-  canDiscuss: boolean;
   canRequestAi: boolean;
   canCompose: boolean;
   sending: boolean;
@@ -90,42 +85,28 @@ type SharedComposerPresentation = {
 function sharedComposerPresentation(
   scope: CollaborationScope,
   state: SharedAiState,
-  draft: CollaborationDraft,
-  discussionSending: boolean,
 ): SharedComposerPresentation {
   const writableRole = scope.role === "owner" || scope.role === "editor";
-  const canDiscuss = scope.lifecycle === "shared" && writableRole && scope.capabilities.discuss;
   const canRequestAi = scope.lifecycle === "shared" && writableRole
-    && scope.capabilities.requestAi && state.availability === "available" && state.defaultSelection !== null;
-  const aiMode = draft.mode === "ai";
-  const canCompose = aiMode ? canRequestAi : canDiscuss;
-  const sending = discussionSending || state.pendingAction === "submit";
+    && scope.capabilities.requestAi && state.availability === "available";
+  const sending = state.pendingAction === "submit";
   const status = !writableRole ? "Viewers can read this Chat but cannot post messages or request AI."
     : state.availability === "checking" ? "Checking shared AI…"
       : state.availability === "available" ? "One active run · up to 32 pending"
-        : "AI requests are unavailable; discussion still works.";
+        : "AI requests are unavailable.";
+  const relevantRequests = state.requests.filter((request) => request.state !== "completed");
+  const retryable = relevantRequests.some((request) => ["cancelled", "interrupted", "unauthorized", "unavailable"].includes(request.state));
   return {
-    aiMode, canDiscuss, canRequestAi, canCompose, sending, status,
-    showQueue: aiMode && state.availability === "available",
-    inputLabel: aiMode ? "Ask AI" : "Message everyone",
-    placeholder: !canCompose ? "Read-only access" : aiMode ? "Ask AI for everyone…" : "Message everyone…",
-    submitLabel: sending ? "Sending…" : aiMode ? "Request AI" : "Send message",
+    canRequestAi, canCompose: canRequestAi, sending, status,
+    showQueue: state.availability === "available"
+      && (relevantRequests.length > 1
+        || relevantRequests.some((request) => ["queued", "waiting_for_approval"].includes(request.state))
+        || retryable
+        || state.approvals.some((approval) => approval.state === "pending")),
+    inputLabel: "Message Chat",
+    placeholder: !writableRole ? "Read-only access" : canRequestAi ? "Message Chat…" : "AI is unavailable",
+    submitLabel: sending ? "Sending…" : "Send",
   };
-}
-
-function SharedComposerHeader({ presentation, changeDraftMode }: {
-  presentation: SharedComposerPresentation;
-  changeDraftMode(mode: CollaborationDraft["mode"]): void;
-}) {
-  return <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-    <div className="flex rounded-xl border p-1" aria-label="Composer mode">
-      <button type="button" aria-pressed={!presentation.aiMode} className={modeButtonClass(!presentation.aiMode)}
-        disabled={!presentation.canDiscuss || presentation.sending} onClick={() => changeDraftMode("discussion")}>Discussion</button>
-      <button type="button" aria-pressed={presentation.aiMode} className={modeButtonClass(presentation.aiMode)}
-        disabled={!presentation.canRequestAi || presentation.sending} onClick={() => changeDraftMode("ai")}>Ask AI</button>
-    </div>
-    <span className="text-xs" style={{ color: "var(--text-secondary)" }}>{presentation.status}</span>
-  </div>;
 }
 
 function OptionalSharedAiQueue({ visible, ...props }: Parameters<typeof SharedAiQueue>[0] & { visible: boolean }) {
@@ -171,7 +152,7 @@ function useSharedAiController({ api, scope, actorId, resourceRevision, draft, u
     try {
       const response = CollaborationAiRequestsResponseSchema.parse(await api.get(`${endpoint}/requests`));
       latestResourceRevision.current = response.resourceRevision;
-      hadAvailable.current = true;
+      hadAvailable.current = response.capability.status === "available";
       dispatch({ type: "loaded", response });
     } catch (failure: unknown) {
       console.warn("[chat-collaboration] shared AI recovery failed",
@@ -180,21 +161,26 @@ function useSharedAiController({ api, scope, actorId, resourceRevision, draft, u
     }
   }, [api, endpoint]);
 
-  useEffect(() => { void load(); }, [load, refreshVersion]);
+  useEffect(() => {
+    if (!scope.capabilities.requestAi) {
+      dispatch({ type: "unavailable", retainQueue: false });
+      return;
+    }
+    void load();
+  }, [load, refreshVersion, scope.capabilities.requestAi]);
 
   const writableRole = scope.role === "owner" || scope.role === "editor";
   const canRequestAi = scope.lifecycle === "shared" && writableRole
-    && scope.capabilities.requestAi && state.availability === "available" && state.defaultSelection !== null;
+    && scope.capabilities.requestAi && state.availability === "available";
 
   const submitAi = async () => {
-    if (!canRequestAi || !state.defaultSelection || !draft.text.trim() || state.pendingAction) return;
+    if (!canRequestAi || !draft.text.trim() || state.pendingAction) return;
     dispatch({ type: "action_started", key: "submit" });
     try {
       const accepted = CollaborationAiRequestAcceptedResponseSchema.parse(await api.post(`${endpoint}/requests`, {
         clientRequestId: crypto.randomUUID(),
         expectedRevision: latestResourceRevision.current,
         text: draft.text.trim(),
-        selection: state.defaultSelection,
       }));
       latestResourceRevision.current = accepted.resourceRevision;
       dispatch({ type: "request_accepted", request: accepted.request });
@@ -255,10 +241,9 @@ function reduceSharedAi(state: SharedAiState, action: SharedAiAction): SharedAiS
     case "loaded":
       return {
         ...state,
-        availability: "available",
+        availability: action.response.capability.status === "available" ? "available" : "unavailable",
         requests: action.response.requests,
         approvals: action.response.approvals,
-        defaultSelection: action.response.defaultSelection,
         error: null,
       };
     case "unavailable":
@@ -351,10 +336,6 @@ function requestStateLabel(state: CollaborationAiRequest["state"]): string {
 function decisionLabel(decision: "approve" | "approve_for_session" | "decline" | "cancel"): string {
   return decision === "approve_for_session" ? "Approve for session"
     : decision[0]!.toUpperCase() + decision.slice(1);
-}
-
-function modeButtonClass(active: boolean): string {
-  return `rounded-lg px-3 py-1.5 text-sm transition-colors disabled:opacity-50 ${active ? "bg-[var(--bg-hover)] font-medium" : ""}`;
 }
 
 const buttonClass = "rounded-xl border px-4 py-2 text-sm font-medium transition-colors hover:enabled:bg-[var(--bg-hover)] disabled:opacity-50";

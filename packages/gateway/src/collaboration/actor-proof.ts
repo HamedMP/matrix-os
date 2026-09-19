@@ -11,12 +11,27 @@ import type {
   CollaborationAction,
   CollaborationAuthority,
 } from "./authority.js";
+import {
+  createRateLimiter,
+  type RateLimitConfig,
+  type RateLimiter,
+} from "../security/rate-limiter.js";
 
 const MAX_PROOF_LIFETIME_MS = 30_000;
 const MAX_CLOCK_SKEW_MS = 5_000;
 const MAX_SEEN_NONCES = 10_000;
+const DEFAULT_ACTOR_RATE_LIMIT: RateLimitConfig = {
+  maxAttempts: 600,
+  windowMs: 60_000,
+  lockoutMs: 30_000,
+  maxKeys: 10_000,
+};
 
-export type CollaborationActorProofErrorCode = "invalid_proof" | "replayed_proof" | "unavailable";
+export type CollaborationActorProofErrorCode =
+  | "invalid_proof"
+  | "replayed_proof"
+  | "rate_limited"
+  | "unavailable";
 
 export class CollaborationActorProofError extends Error {
   constructor(
@@ -31,14 +46,17 @@ export class CollaborationActorProofError extends Error {
 export class CollaborationActorProofVerifier {
   private readonly now: () => Date;
   private readonly seenNonces = new Map<string, number>();
+  private readonly actorRateLimiter: RateLimiter;
 
   constructor(private readonly options: {
     runtimeId: string;
     keys: Readonly<Record<string, string>>;
     now?: () => Date;
     authority?: CollaborationAuthority;
+    actorRateLimit?: RateLimitConfig;
   }) {
     this.now = options.now ?? (() => new Date());
+    this.actorRateLimiter = createRateLimiter(options.actorRateLimit ?? DEFAULT_ACTOR_RATE_LIMIT);
   }
 
   async verifyHttp(input: {
@@ -71,7 +89,7 @@ export class CollaborationActorProofVerifier {
       || digestConditionalHeaders(input.conditionalHeaders) !== proof.conditionalHeadersDigest) {
       throw invalidProof();
     }
-    this.rejectReplay(proof, expiresAt, now);
+    this.admitActor(proof, expiresAt, now);
     return proof;
   }
 
@@ -131,7 +149,7 @@ export class CollaborationActorProofVerifier {
       || expiresAt - issuedAt > MAX_PROOF_LIFETIME_MS) {
       throw invalidProof();
     }
-    this.rejectReplay(proof, expiresAt, now);
+    this.admitActor(proof, expiresAt, now);
     return proof;
   }
 
@@ -154,6 +172,13 @@ export class CollaborationActorProofVerifier {
 
   shutdown(): void {
     this.seenNonces.clear();
+  }
+
+  private admitActor(proof: CollaborationActorProof, expiresAt: number, now: number): void {
+    this.rejectReplay(proof, expiresAt, now);
+    if (!this.actorRateLimiter.check(proof.actorId)) {
+      throw new CollaborationActorProofError("rate_limited", "Collaboration actor rate limit reached");
+    }
   }
 
   private rejectReplay(proof: CollaborationActorProof, expiresAt: number, now: number): void {
