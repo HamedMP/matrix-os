@@ -426,6 +426,45 @@ describe("native shared Chat screen", () => {
     expect(mockPostAiRequest).not.toHaveBeenCalled();
   });
 
+  it("keeps the owner reconnect guidance when a realtime refresh fails", async () => {
+    const ownerScope = {
+      ...(await mockFetchScope()), role: "owner",
+      capabilities: { read: true, discuss: true, manageMembers: true, requestAi: true },
+    };
+    mockFetchInbox.mockResolvedValue({ items: [] });
+    mockFetchShared.mockResolvedValue({ items: [{
+      scopeId, runtimeId: "runtime_owner", ownerId: "user_owner", kind: "chat", authorityGeneration: 1,
+      status: "accepted", resource: { scope: ownerScope, chat: await mockFetchChat() },
+    }] });
+    mockFetchScope.mockResolvedValue(ownerScope);
+    mockFetchAiRequests
+      .mockResolvedValueOnce({
+        requests: [], approvals: [], resourceRevision: "1",
+        capability: {
+          status: "owner_reconnect_required",
+          effectiveSelection: { instanceId: "claude_code_default", model: "opus" },
+        },
+      })
+      .mockRejectedValueOnce(new Error("offline"));
+
+    render(<SharedScreen />);
+    fireEvent.press(await screen.findByLabelText("Open Launch plan"));
+    expect(await screen.findByText(
+      "Reconnect your AI provider in Settings → Agents & providers to resume AI requests.",
+    )).toBeTruthy();
+    await waitFor(() => expect(sockets).toHaveLength(1));
+    await act(async () => sockets[0]!.onmessage?.({ data: JSON.stringify({
+      version: 1, type: "refresh_required", scopeId, resourceId: "chat_one", authorityGeneration: "1", sequence: "2",
+    }) }));
+    await waitFor(() => expect(mockFetchAiRequests).toHaveBeenCalledTimes(2));
+
+    expect(screen.getByText(
+      "Reconnect your AI provider in Settings → Agents & providers to resume AI requests.",
+    )).toBeTruthy();
+    expect(screen.getByLabelText("Message Chat").props.editable).toBe(false);
+    expect(screen.queryByText("Queue updates are delayed. The last confirmed order is shown.")).toBeNull();
+  });
+
   it("does not let a completed AI submission from one Chat overwrite another Chat", async () => {
     const secondScopeId = "10000000-0000-4000-8000-000000000002";
     const scopeFor = (id: string, chatId: string) => ({

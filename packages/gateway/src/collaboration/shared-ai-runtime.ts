@@ -24,6 +24,8 @@ import type { MatrixFundedCredentialProvider } from "../funded-ai-credential-man
 import {
   resolveKernelCredentialSources,
   type KernelCredentialAccessSourceId,
+  type KernelCredentialObservationState,
+  type KernelCredentialSources,
 } from "../kernel-credentials.js";
 import {
   CollaborationAuthorizationError,
@@ -279,12 +281,14 @@ export async function createSharedAiRuntime(options: {
       }
       return scope.execution_eligibility;
     },
-    ...(options.codingProviders ? {
-      resolveProviderReadiness: (ownerId: string) => resolveClaudeProviderReadiness(
-        options.codingProviders!,
-        ownerId,
+    resolveProviderReadiness: (ownerId: string) => resolveClaudeProviderReadiness({
+      resolveCredentialSources: () => resolveKernelCredentialSources(
+        options.homePath,
+        process.env,
+        options.fundedCredentialProvider,
       ),
-    } : {}),
+      ...(options.codingProviders ? { codingProviders: options.codingProviders } : {}),
+    }, ownerId),
     ...(options.providerCatalog ? {
       resolveCanonicalProviderAuthority: async (ownerId, selection) => {
         const catalog = await options.providerCatalog!.getCatalog({ userId: ownerId, source: "jwt" });
@@ -391,17 +395,42 @@ export async function createSharedAiRuntime(options: {
   };
 }
 
+/**
+ * Readiness follows the kernel credential access source the scoped run will
+ * actually use (see `scope-runtime-broker`): Matrix-included access, the owner's
+ * API key, or the owner's Claude profile. Only the profile route depends on the
+ * Claude login state, so a valid funded or API-key route is never reported as
+ * reconnect-required because of an unrelated local Claude login.
+ */
 export async function resolveClaudeProviderReadiness(
-  providers: Pick<CodingAgentProviderRegistry, "listProviders">,
+  input: {
+    resolveCredentialSources(): Promise<KernelCredentialSources>;
+    codingProviders?: Pick<CodingAgentProviderRegistry, "listProviders">;
+  },
   ownerId: string,
 ): Promise<"ready" | "reconnect_required" | "unavailable"> {
-  const summaries = await providers.listProviders({ userId: ownerId, source: "jwt" });
-  const claude = summaries.find((provider) => provider.id === "claude" || provider.kind === "claude");
-  if (claude?.availability === "available" && claude.authStatus === "authenticated") return "ready";
-  if (claude?.availability === "auth_required" || claude?.authStatus === "expired") {
-    return "reconnect_required";
+  const sources = await input.resolveCredentialSources();
+  switch (sources.selectedAccessSourceId) {
+    case "matrix_included":
+      return sources.matrixIncluded.state === "ready" ? "ready" : "unavailable";
+    case "owner_anthropic_key":
+      return usableCredentialState(sources.ownerApiKey.state) ? "ready" : "unavailable";
+    case "owner_anthropic_profile": {
+      if (!usableCredentialState(sources.ownerProfile.state)) return "unavailable";
+      if (!input.codingProviders) return "ready";
+      const summaries = await input.codingProviders.listProviders({ userId: ownerId, source: "jwt" });
+      const claude = summaries.find((provider) => provider.id === "claude" || provider.kind === "claude");
+      if (claude?.availability === "available" && claude.authStatus === "authenticated") return "ready";
+      if (claude?.availability === "auth_required" || claude?.authStatus === "expired") {
+        return "reconnect_required";
+      }
+      return "unavailable";
+    }
   }
-  return "unavailable";
+}
+
+function usableCredentialState(state: KernelCredentialObservationState): boolean {
+  return state === "ready" || state === "unverified";
 }
 
 export async function recoverSharedAiQueue(options: {

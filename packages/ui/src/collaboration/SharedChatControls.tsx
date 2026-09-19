@@ -20,7 +20,8 @@ type SharedAiState = {
 };
 type SharedAiAction =
   | { type: "loaded"; response: ReturnType<typeof CollaborationAiRequestsResponseSchema.parse> }
-  | { type: "unavailable"; retainQueue: boolean }
+  | { type: "unavailable" }
+  | { type: "refresh_failed"; retainQueue: boolean }
   | { type: "action_started"; key: string }
   | { type: "action_finished" }
   | { type: "action_failed"; error: Exclude<SharedAiError, null> }
@@ -159,13 +160,13 @@ function useSharedAiController({ api, scope, actorId, resourceRevision, draft, u
     } catch (failure: unknown) {
       console.warn("[chat-collaboration] shared AI recovery failed",
         failure instanceof Error ? failure.name : "UnknownError");
-      dispatch({ type: "unavailable", retainQueue: hadAvailable.current });
+      dispatch({ type: "refresh_failed", retainQueue: hadAvailable.current });
     }
   }, [api, endpoint]);
 
   useEffect(() => {
     if (!scope.capabilities.requestAi) {
-      dispatch({ type: "unavailable", retainQueue: false });
+      dispatch({ type: "unavailable" });
       return;
     }
     void load();
@@ -249,9 +250,15 @@ function reduceSharedAi(state: SharedAiState, action: SharedAiAction): SharedAiS
         error: null,
       };
     case "unavailable":
+      return { ...state, availability: "unavailable", error: null };
+    case "refresh_failed":
+      // A failed refresh keeps the last confirmed state: an available queue is
+      // retained with a recovery notice, and an owner reconnect requirement is
+      // never promoted to available or degraded to the generic copy.
       return {
         ...state,
-        availability: action.retainQueue ? "available" : "unavailable",
+        availability: action.retainQueue ? "available"
+          : state.availability === "owner_reconnect_required" ? "owner_reconnect_required" : "unavailable",
         error: action.retainQueue ? "recovery" : null,
       };
     case "action_started": return { ...state, pendingAction: action.key, error: null };

@@ -159,6 +159,38 @@ describe("shared Chat AI controls", () => {
     expect(api.post).not.toHaveBeenCalled();
   });
 
+  it("keeps the owner reconnect guidance when a later refresh fails", async () => {
+    const ownerScope = { ...baseScope, role: "owner" as const,
+      capabilities: { read: true, discuss: true, manageMembers: true, requestAi: true } };
+    const api = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn()
+        .mockResolvedValueOnce({
+          requests: [], approvals: [],
+          capability: { status: "owner_reconnect_required", effectiveSelection: defaultSelection },
+          resourceRevision: "4",
+        })
+        .mockRejectedValueOnce(new Error("offline")),
+      post: vi.fn(), delete: vi.fn(),
+    };
+    const { rerender } = render(<SharedChatControls api={api} scope={ownerScope} actorId="user_owner"
+      resourceRevision="4" draft={{ text: "", mode: "ai" }} updateDraft={vi.fn()}
+      changeDraftMode={vi.fn()} discussionSending={false} discussionError={false}
+      sendDiscussion={vi.fn(async () => undefined)} refreshVersion={0} />);
+    expect(await screen.findByRole("status")).toHaveTextContent("Agents & providers");
+
+    rerender(<SharedChatControls api={api} scope={ownerScope} actorId="user_owner"
+      resourceRevision="4" draft={{ text: "", mode: "ai" }} updateDraft={vi.fn()}
+      changeDraftMode={vi.fn()} discussionSending={false} discussionError={false}
+      sendDiscussion={vi.fn(async () => undefined)} refreshVersion={1} />);
+    await waitFor(() => expect(api.get).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Reconnect your AI provider in Settings → Agents & providers to resume AI requests.",
+    );
+    expect(screen.getByLabelText("Message Chat")).toBeDisabled();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
   it("keeps the generic unavailable copy for collaborators even when the owner must reconnect", async () => {
     const api = {
       baseUrl: "https://app.matrix-os.com",

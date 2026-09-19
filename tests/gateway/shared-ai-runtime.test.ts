@@ -9,27 +9,73 @@ import {
 } from "../../packages/gateway/src/collaboration/shared-ai-runtime.js";
 
 describe("shared AI Provider readiness", () => {
-  it.each([
-    { availability: "available", authStatus: "authenticated", expected: "ready" },
-    { availability: "auth_required", authStatus: "expired", expected: "reconnect_required" },
-    { availability: "unavailable", authStatus: "unknown", expected: "unavailable" },
-  ] as const)("maps safe Claude $availability readiness", async ({ availability, authStatus, expected }) => {
-    const providers = {
-      listProviders: vi.fn(async () => [{
-        id: "claude",
-        displayName: "Claude Code",
-        kind: "claude" as const,
-        availability,
-        installStatus: "installed" as const,
-        authStatus,
-        supportedModes: ["default" as const],
-        defaultMode: "default" as const,
-        setupActions: [],
-      }]),
-    };
+  const claudeSummary = (availability: "available" | "auth_required" | "unavailable",
+    authStatus: "authenticated" | "expired" | "unknown") => ({
+    id: "claude",
+    displayName: "Claude Code",
+    kind: "claude" as const,
+    availability,
+    installStatus: "installed" as const,
+    authStatus,
+    supportedModes: ["default" as const],
+    defaultMode: "default" as const,
+    setupActions: [],
+  });
+  const sources = (
+    selectedAccessSourceId: "matrix_included" | "owner_anthropic_key" | "owner_anthropic_profile",
+    states: Partial<Record<"matrixIncluded" | "ownerApiKey" | "ownerProfile",
+      "ready" | "setup_required" | "unverified" | "invalid" | "unavailable" | "disabled">> = {},
+  ) => ({
+    selectedMode: selectedAccessSourceId === "owner_anthropic_key" ? "api_key" as const
+      : selectedAccessSourceId === "owner_anthropic_profile" ? "claude_login" as const : "platform" as const,
+    selectedAccessSourceId,
+    matrixIncluded: { state: states.matrixIncluded ?? "disabled" as const },
+    ownerApiKey: { state: states.ownerApiKey ?? "setup_required" as const },
+    ownerProfile: { state: states.ownerProfile ?? "setup_required" as const },
+  });
 
-    await expect(resolveClaudeProviderReadiness(providers, "user_owner")).resolves.toBe(expected);
-    expect(providers.listProviders).toHaveBeenCalledWith({ userId: "user_owner", source: "jwt" });
+  it("reports the Matrix-included route ready even when the local Claude login needs auth", async () => {
+    const listProviders = vi.fn(async () => [claudeSummary("auth_required", "expired")]);
+    await expect(resolveClaudeProviderReadiness({
+      resolveCredentialSources: async () => sources("matrix_included", { matrixIncluded: "ready" }),
+      codingProviders: { listProviders },
+    }, "user_owner")).resolves.toBe("ready");
+    expect(listProviders).not.toHaveBeenCalled();
+  });
+
+  it("reports the owner API key route ready without consulting the Claude login", async () => {
+    const listProviders = vi.fn(async () => [claudeSummary("auth_required", "expired")]);
+    await expect(resolveClaudeProviderReadiness({
+      resolveCredentialSources: async () => sources("owner_anthropic_key", { ownerApiKey: "unverified" }),
+      codingProviders: { listProviders },
+    }, "user_owner")).resolves.toBe("ready");
+    expect(listProviders).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { summary: claudeSummary("available", "authenticated"), expected: "ready" },
+    { summary: claudeSummary("auth_required", "expired"), expected: "reconnect_required" },
+    { summary: claudeSummary("unavailable", "unknown"), expected: "unavailable" },
+  ] as const)("maps the owner Claude profile route from the login state ($expected)", async ({ summary, expected }) => {
+    const listProviders = vi.fn(async () => [summary]);
+    await expect(resolveClaudeProviderReadiness({
+      resolveCredentialSources: async () => sources("owner_anthropic_profile", { ownerProfile: "unverified" }),
+      codingProviders: { listProviders },
+    }, "user_owner")).resolves.toBe(expected);
+    expect(listProviders).toHaveBeenCalledWith({ userId: "user_owner", source: "jwt" });
+  });
+
+  it("fails closed when the selected access source is not usable", async () => {
+    const listProviders = vi.fn(async () => [claudeSummary("available", "authenticated")]);
+    await expect(resolveClaudeProviderReadiness({
+      resolveCredentialSources: async () => sources("matrix_included", { matrixIncluded: "disabled" }),
+      codingProviders: { listProviders },
+    }, "user_owner")).resolves.toBe("unavailable");
+    await expect(resolveClaudeProviderReadiness({
+      resolveCredentialSources: async () => sources("owner_anthropic_profile", { ownerProfile: "invalid" }),
+      codingProviders: { listProviders },
+    }, "user_owner")).resolves.toBe("unavailable");
+    expect(listProviders).not.toHaveBeenCalled();
   });
 });
 

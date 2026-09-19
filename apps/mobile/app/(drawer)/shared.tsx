@@ -106,10 +106,21 @@ function sharedAiAvailability(
 type ScreenAction =
   | { type: "patch"; patch: Partial<ScreenState> }
   | { type: "ai_request_accepted"; scopeId: string; chatId: string; request: CollaborationAiRequest; resourceRevision: string }
+  | { type: "ai_refresh_failed"; retainQueue: boolean }
   | { type: "append_items"; additions: DiscoveryItem[]; inboxCursor?: string | null; sharedCursor?: string | null };
 
 function screenReducer(state: ScreenState, action: ScreenAction): ScreenState {
   if (action.type === "patch") return { ...state, ...action.patch };
+  if (action.type === "ai_refresh_failed") {
+    // Keep the last confirmed readiness: retain an available queue with a notice,
+    // and never promote or degrade an owner reconnect requirement.
+    return {
+      ...state,
+      aiAvailability: action.retainQueue ? "available"
+        : state.aiAvailability === "owner_reconnect_required" ? "owner_reconnect_required" : "unavailable",
+      ...(action.retainQueue ? { aiError: "Queue updates are delayed. The last confirmed order is shown." } : {}),
+    };
+  }
   if (action.type === "ai_request_accepted") {
     if (state.view.kind !== "chat" || state.view.scopeId !== action.scopeId || state.chat?.id !== action.chatId) return state;
     return {
@@ -340,10 +351,7 @@ export default function SharedScreen() {
     } catch (failure: unknown) {
       console.warn("[mobile-collaboration] shared AI refresh unavailable", failure instanceof Error ? failure.name : "UnknownError");
       if (generation === chatLoadGeneration.current && eventScopeRef.current === scopeId) {
-        dispatch({ type: "patch", patch: {
-          aiAvailability: aiWasAvailableRef.current ? "available" : "unavailable",
-          ...(aiWasAvailableRef.current ? { aiError: "Queue updates are delayed. The last confirmed order is shown." } : {}),
-        } });
+        dispatch({ type: "ai_refresh_failed", retainQueue: aiWasAvailableRef.current });
       }
     }
     const sequence = combined.at(-1)?.sequence;
