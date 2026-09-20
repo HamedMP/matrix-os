@@ -317,8 +317,10 @@ function projectHarness(input: {
     && source.eligibleModelIds.includes(input.stored.route.modelId)
     && (source.kind !== "harness_profile" || source.harness === input.stored.harness)
     && (source.kind !== "matrix_gateway" || input.allowedGatewayModels.has(input.stored.route.modelId));
+  const managedCatalogRoute = source?.kind === "matrix_gateway"
+    && source.providerId === input.stored.route.providerId;
   const routeCatalogUnavailable = !routeAvailable
-    || (input.catalogUnavailable && source?.kind !== "matrix_gateway");
+    || (input.catalogUnavailable && !managedCatalogRoute);
   const nativeCredentialRoute = input.stored.harness === "pi" || input.stored.harness === "opencode";
   const routeSourceEligible = sourceEligible === true && !routeCatalogUnavailable
     && (source.kind !== "matrix_gateway" && !nativeCredentialRoute

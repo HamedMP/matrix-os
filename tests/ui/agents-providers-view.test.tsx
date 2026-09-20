@@ -391,6 +391,8 @@ describe("AgentsProvidersView", () => {
     expect(within(gateway).queryByText("Ready")).not.toBeInTheDocument();
     expect(within(gateway).queryByText("Selected for Pi")).not.toBeInTheDocument();
     expect(within(gateway).getByRole("button", { name: "Check again" })).toBeVisible();
+  });
+
   it("keeps Matrix AI upstream providers private in an agent route", () => {
     const next = snapshot();
     const harness = next.harnesses[0]!;
