@@ -173,6 +173,7 @@ describe("shared Chat owner list and detail reads", () => {
         owner_type: "personal",
         owner_id: OWNER_ID,
         kind: "project",
+        organization_id: "org_matrix_team",
         resource_id: "project_shared_owner_reads",
         parent_scope_id: null,
         membership_mode: "direct",

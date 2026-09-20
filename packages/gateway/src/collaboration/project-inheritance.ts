@@ -108,6 +108,15 @@ async function inheritedResourceScope(
     createScopeId: () => string;
   },
 ): Promise<string> {
+  // A parent project without an organization context (a pre-organization
+  // record) must never stage inherited resources; its children would inherit
+  // no organization and could never be authorized (S20 / T101).
+  const parent = await trx.selectFrom("collaboration_scopes").select("organization_id")
+    .where("id", "=", input.projectScopeId)
+    .where("kind", "=", "project")
+    .where("deleted_at", "is", null)
+    .executeTakeFirst();
+  if (!parent?.organization_id) throw new ProjectInheritanceError("conflict");
   const existing = await trx.selectFrom("collaboration_scopes").selectAll()
     .where("owner_type", "=", input.ownerType)
     .where("owner_id", "=", input.ownerId)
