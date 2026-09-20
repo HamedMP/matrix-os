@@ -9,8 +9,9 @@ service. It never selects a provider and never reads a speech-provider key.
 - The browser uses the gateway's existing authenticated session. The route
   resolves that principal through `requireRequestPrincipal` and only forwards
   when its owner matches the runtime-bound platform client identity.
-- Gateway-to-platform calls reuse the provisioned, runtime-bound funded-AI
-  credential. A user handle, Gemini compatibility token, browser field, or
+- Gateway-to-platform calls use the provisioned, runtime-bound speech-domain
+  HMAC credential. A funded-AI credential, user handle, Gemini compatibility
+  token, browser field, or
   legacy shared gateway bearer is not a platform speech credential.
 - The upstream path, handle and runtime slot come only from validated runtime
   configuration. The browser cannot supply a provider, model, source kind,

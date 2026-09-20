@@ -140,6 +140,8 @@ export PLATFORM_SECRET='<local-platform-secret>'
 export PLATFORM_PORT=9117
 export PLATFORM_INTERNAL_URL=http://127.0.0.1:9117
 export MATRIX_PLATFORM_SPEECH_ENABLED=true
+export MATRIX_PLATFORM_SPEECH_ORIGIN=http://127.0.0.1:9117
+export MATRIX_PLATFORM_SPEECH_RUNTIME_TOKEN='<speech-domain runtime token>'
 export MATRIX_SPEECH_GATEWAY_PORT=4117
 export MATRIX_SPEECH_SHELL_PORT=3117
 export GATEWAY_URL=http://127.0.0.1:4117
@@ -153,7 +155,9 @@ export MATRIX_CLERK_USER_ID='<reviewed-owner-id>'
 bun run dev:speech
 ```
 
-Generate `MATRIX_PLATFORM_SPEECH_RUNTIME_TOKEN` through the normal local runtime-registration workflow. Do not copy a customer token or key, and do not put the OpenAI key in a runtime home, host bundle, gateway env file, renderer, or browser storage. `PLATFORM_SPEECH_FUNDING_SOURCES` may be `addon`, `promotional`, or `promotional,addon`; choose deliberately so a text-only campaign is not spent accidentally.
+Generate `MATRIX_PLATFORM_SPEECH_RUNTIME_TOKEN` with the speech-domain runtime identity and local platform secret. Do not reuse a funded-AI token, copy a customer token or key, or put the OpenAI key in a runtime home, host bundle, gateway env file, renderer, or browser storage. `PLATFORM_SPEECH_FUNDING_SOURCES` may be `addon`, `promotional`, or `promotional,addon`; choose deliberately so a text-only campaign is not spent accidentally.
+
+Production `existing_wallet` rollout requires an operator-provisioned `ai_funded_runtime_policies` row, runtime balance, and eligible promotional or add-on credit before host exposure is enabled. The speech funding adapter uses those database records directly; `MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED` and the text relay's `MATRIX_FUNDED_AI_RUNTIME_ENABLED` remain separate rollout flags. Never seed preview no-charge grants in production.
 
 ## Device and format gates
 
