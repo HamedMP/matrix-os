@@ -20,6 +20,12 @@ The installable Matrix CLI is the `@finnaai/matrix` package in `packages/sync-cl
 
 ## Preflight
 
+The CLI bundles the private `@matrix-os/contracts` workspace dependency. Pack
+and publish with `pnpm --config.node-linker=hoisted`, as the release workflows
+do: plain `npm pack` preserves `workspace:*`, and a registry-only dependency
+cannot resolve this private package. Keep the isolated package-runner check;
+it verifies bundled contract files and installs the tarball outside the repo.
+
 Run these from the repo root before dispatching the release workflow:
 
 ```bash
