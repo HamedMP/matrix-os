@@ -98,6 +98,27 @@ Automated tests must exercise the shared derivations and actions. Each frontend
 PR must also include current screenshot or recording evidence for all affected
 surfaces.
 
+## Generic catalog delivery surface matrix
+
+This matrix records the surfaces affected by generic Pi/OpenCode catalog
+discovery and the shared **Agents & providers** projection. A catalog failure
+keeps each saved enabled generic route visible, disables execution, shows the
+same safe retry state, and never exposes command output on every surface that
+renders provider settings.
+
+| Surface | UI | Behavior | Recovery | Automated tests | Evidence |
+|---|---|---|---|---|---|
+| Web Canvas | Shared `Settings` → `AgentSection` → `AgentsProvidersView`; Chat uses the canonical picker. | Reads Provider V3/settings and `/api/chat-providers`; unavailable Pi/OpenCode routes remain visible and disabled. | Retry refreshes authoritative settings; setup opens the visible `__terminal__` flow and preserves the draft. | `tests/ui/agents-providers-view.test.tsx`, `tests/ui/provider-settings-controller.test.tsx`, `tests/shell/agent-section.test.tsx`, `tests/shell/chat-app-provider-state.test.tsx` | Shared browser-shell state reference: `specs/118-ai-gateway-provider-auth/assets/phase2-provider-state-desktop.jpg`. Canvas and Web Desktop share the same feature component and controller; a release smoke must still exercise Canvas first. |
+| Web Desktop | Same shared settings and Chat components as Web Canvas, with Desktop window chrome. | Same snapshot, route availability, disabled reasons, and mutations as Canvas. | Same refresh and visible Terminal handoff; failed mutations retain confirmed state. | Canvas tests above plus `tests/shell/settings-panel.test.tsx` and `tests/shell/provider-settings-transport.test.ts` | `specs/118-ai-gateway-provider-auth/assets/phase2-provider-state-desktop.jpg`; browser-shell parity is structural because both presentations mount the same settings feature. |
+| Electron Desktop | `SettingsView` mounts `AgentsProvidersAdapter`, which renders the shared `AgentsProvidersView`. | Uses the same strict contracts and derivations through the Electron transport adapter. | Retry reloads the snapshot; login/setup opens the visible Electron Terminal session. | `tests/desktop/agents-providers-adapter.test.tsx`, `tests/desktop/provider-settings-adapter.test.ts`, `tests/desktop/settings-view.test.tsx`, `tests/e2e/desktop/provider-auth-terminal.e2e.test.ts` | The automated Electron settings and Terminal E2E are the tracked interaction evidence. Current authenticated screenshot evidence remains a release gate because credentials cannot be committed. |
+| Web Mobile | MobileShell mounts the same responsive `Settings` and shared `AgentSection`; the canonical Chat picker remains available. | Uses the same provider snapshot and fail-closed route state with touch-adapted chrome. | The same retry and canonical visible Terminal setup actions are available from the responsive settings sheet. | Shared UI/controller tests above plus `tests/shell/settings-panel.test.tsx`; responsive state reference is covered by the shared component contract. | `specs/118-ai-gateway-provider-auth/assets/phase2-provider-state-mobile.jpg`. The image is a responsive Web Mobile reference; it is not physical-device evidence. |
+| Native Mobile | **N/A for Agents & providers management UI:** Native Mobile currently exposes the canonical Chat model picker, but it does not expose the shared provider-management settings feature changed here. | Existing Chat catalog consumption remains unchanged; this PR adds no native settings behavior. | **N/A for this settings change:** provider management is completed in Web/Electron settings. Native setup workspace/Terminal support is an existing separate capability. | Existing `apps/mobile/__tests__/home-screen.test.tsx` guards the Chat surface; no native settings test applies because that surface does not exist. | **N/A:** no Native Mobile provider-settings screen exists to capture. Physical Native Mobile Chat validation remains a separate release gate and this matrix does not claim it occurred. |
+
+The Native Mobile N/A entries describe an absent product surface rather than a
+silent omission from an existing settings implementation. If Native Mobile
+adds provider management, it must consume the same contracts, derivations,
+actions, recovery semantics, tests, and current device evidence before release.
+
 Canvas, Web Desktop, and Electron admit turns through the canonical Chat
 orchestrator (`/api/chats` and `/api/chats/:id/turns`) and resolve picker choices
 from `/api/chat-providers`. A shell must not pair the canonical picker with the

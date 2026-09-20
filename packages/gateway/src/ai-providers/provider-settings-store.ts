@@ -39,7 +39,10 @@ import type {
   ProviderSettingsRuntimeMutationInput,
   ProviderSettingsRuntimeCoordinator,
 } from "./provider-settings-coordinators.js";
-import type { GenericHarnessModelCatalogReader } from "./generic-harness-model-catalog.js";
+import type {
+  GenericHarnessModelCatalog,
+  GenericHarnessModelCatalogReader,
+} from "./generic-harness-model-catalog.js";
 import {
   assertProviderSettingsAction,
   coordinatorLoginHarness,
@@ -189,6 +192,14 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
             "[provider-settings] Generic harness model catalog unavailable:",
             error instanceof Error ? error.name : "UnknownError",
           );
+          genericModelCatalog = {
+            providers: [],
+            accessSources: [],
+            failures: [...new Set(config.harnesses.flatMap((harness) =>
+              harness.enabled && (harness.harness === "pi" || harness.harness === "opencode")
+                ? [harness.harness]
+                : []))],
+          } satisfies GenericHarnessModelCatalog;
         }
       }
       return await projectProviderSettings({

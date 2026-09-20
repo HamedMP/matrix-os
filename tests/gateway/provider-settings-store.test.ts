@@ -129,7 +129,7 @@ describe("ProviderSettingsStore", () => {
     withRuntime?: boolean;
     snapshot?: () => AiProviderSnapshotV3;
     fundingSummary?: { funding: FundedAiFundingSummary; policy: FundedAiEffectivePolicy } | Error;
-    genericModelCatalog?: GenericHarnessModelCatalog;
+    genericModelCatalog?: GenericHarnessModelCatalog | Error;
   } = {}) {
     let nextId = 0;
     return new ProviderSettingsStore({
@@ -149,7 +149,10 @@ describe("ProviderSettingsStore", () => {
         }),
       },
       genericModelCatalogReader: options.genericModelCatalog === undefined ? undefined : {
-        getCatalog: vi.fn(async () => structuredClone(options.genericModelCatalog!)),
+        getCatalog: vi.fn(async () => {
+          if (options.genericModelCatalog instanceof Error) throw options.genericModelCatalog;
+          return structuredClone(options.genericModelCatalog!);
+        }),
       },
       now: () => NOW,
       idGenerator: () => `generated_${++nextId}`,
@@ -466,6 +469,52 @@ describe("ProviderSettingsStore", () => {
       accessSourceId: null,
       routeAvailability: "catalog_unavailable",
     }));
+  });
+
+  it("keeps every enabled generic route visible and failed closed when the catalog reader rejects", async () => {
+    const store = createStore({ genericModelCatalog: new Error("private catalog failure") });
+    await mkdir(dirname(store.configurationPath), { recursive: true });
+    await writeFile(store.configurationPath, JSON.stringify({
+      schemaVersion: 1,
+      revision: 7,
+      harnesses: ["pi", "opencode"].map((harness) => ({
+        id: `harness_${harness}_saved`,
+        driverId: harness,
+        harness,
+        displayName: `${harness} saved`,
+        accentColor: null,
+        enabled: true,
+        selectedAccountId: null,
+        accessSourceId: "matrix_included",
+        route: {
+          kind: "configurable",
+          providerId: "baseten",
+          modelId: "baseten:zai-org/GLM-5.3",
+        },
+      })),
+      accountProfiles: [],
+      gatewayPolicy: null,
+      receipts: [],
+    }));
+
+    const projected = await store.getSnapshot();
+
+    expect(projected.harnesses).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "harness_pi_saved",
+        enabled: false,
+        connectivity: "offline",
+        accessSourceId: null,
+        routeAvailability: "catalog_unavailable",
+      }),
+      expect.objectContaining({
+        id: "harness_opencode_saved",
+        enabled: false,
+        connectivity: "offline",
+        accessSourceId: null,
+        routeAvailability: "catalog_unavailable",
+      }),
+    ]));
   });
 
   it("normalizes a persisted legacy Claude driver to canonical inventory for projection and login", async () => {
