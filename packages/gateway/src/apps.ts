@@ -67,17 +67,22 @@ export function appIconStem(app: Pick<AppEntry, "icon" | "slug">): string | null
 async function attachLocalIconUrls(homePath: string, apps: AppEntry[]): Promise<AppCatalog> {
   const hydrated: AppEntry[] = [];
   const icons: Record<string, SystemIconMetadata> = {};
-  const pending = new Map<string, Promise<SystemIconMetadata | null>>();
-  const resolveOnce = (iconStem: string): Promise<SystemIconMetadata | null> => {
-    let lookup = pending.get(iconStem);
-    if (!lookup) {
-      lookup = resolveSystemIconMetadata(homePath, iconStem);
-      pending.set(iconStem, lookup);
-    }
-    return lookup;
-  };
   for (let offset = 0; offset < apps.length; offset += ICON_METADATA_BATCH_SIZE) {
     const batch = apps.slice(offset, offset + ICON_METADATA_BATCH_SIZE);
+    // In-flight lookups are deduplicated per batch, so this map never holds
+    // more than ICON_METADATA_BATCH_SIZE entries; stems resolved by earlier
+    // batches are reused from the returned `icons` metadata instead.
+    const pending = new Map<string, Promise<SystemIconMetadata | null>>();
+    const resolveOnce = (iconStem: string): Promise<SystemIconMetadata | null> => {
+      const resolved = icons[iconStem];
+      if (resolved) return Promise.resolve(resolved);
+      let lookup = pending.get(iconStem);
+      if (!lookup) {
+        lookup = resolveSystemIconMetadata(homePath, iconStem);
+        pending.set(iconStem, lookup);
+      }
+      return lookup;
+    };
     // Bounded batches prevent a large custom-app catalog from flooding the filesystem.
     // eslint-disable-next-line no-await-in-loop -- each bounded batch must settle before the next starts
     const entries = await Promise.all(batch.map(async (app) => {
