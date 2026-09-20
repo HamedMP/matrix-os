@@ -60,6 +60,17 @@ describe("funded relay Cloud Run service", () => {
     expect(workflow).toContain("AI_RELAY_CONTROL_TOKEN=ai-relay-control-token:latest");
     expect(workflow).toContain("AI_RELAY_METADATA_SECRET=ai-relay-metadata-secret:latest");
     expect(workflow).toContain("--allow-unauthenticated");
+    expect(workflow).toContain("traffic_flags=(--tag candidate --no-traffic)");
+    expect(workflow).not.toContain('gcloud run services describe "$AI_RELAY_CLOUD_RUN_SERVICE"');
+    expect(workflow).toContain(
+      "actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6",
+    );
+    expect(workflow).toContain(
+      "google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3",
+    );
+    expect(workflow).toContain(
+      "google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3",
+    );
     expect(workflow).toContain('curl --fail --silent --show-error --max-time 10 "$CANDIDATE_URL/health"');
     expect(workflow).not.toContain("vars.CLOUDFLARE_AI_GATEWAY_TOKEN");
     expect(workflow).not.toContain("secrets.CLOUDFLARE_AI_GATEWAY_TOKEN");

@@ -170,8 +170,8 @@ describe("native desktop shell", () => {
   it("switches between Desktop and Canvas from visible header controls and keeps Settings reachable", async () => {
     render(<><NavigationHeader /><NativeDesktopShell overlayOpen={false} /></>);
 
-    const desktopMode = screen.getByRole("button", { name: "Desktop mode" });
-    const canvasMode = screen.getByRole("button", { name: "Canvas mode" });
+    const desktopMode = screen.getByRole("button", { name: "Web Desktop" });
+    const canvasMode = screen.getByRole("button", { name: "Web Canvas" });
     expect(desktopMode.getAttribute("aria-pressed")).toBe("true");
     expect(canvasMode.getAttribute("aria-pressed")).toBe("false");
 

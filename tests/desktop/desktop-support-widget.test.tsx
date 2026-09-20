@@ -368,8 +368,8 @@ describe("Desktop support widget", () => {
 
     expect(screen.getAllByRole("button").map((button) => button.getAttribute("aria-label") ?? button.textContent))
       .toEqual([
-        "Desktop mode",
-        "Canvas mode",
+        "Web Desktop",
+        "Web Canvas",
         "Search",
         "Support",
         "Join Discord",

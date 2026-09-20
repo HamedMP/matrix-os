@@ -80,12 +80,12 @@ describe("Desktop navigation header", () => {
     expect(screen.getByRole("tab", { name: "Sidebar" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Open account menu" })).toBeTruthy();
     expect(screen.getByRole("group", { name: "Workspace mode" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Desktop mode" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "Web Desktop" }).getAttribute("aria-pressed")).toBe("true");
 
-    fireEvent.click(screen.getByRole("button", { name: "Canvas mode" }));
+    fireEvent.click(screen.getByRole("button", { name: "Web Canvas" }));
 
     expect(useNativeDesktopMode.getState().mode).toBe("canvas");
-    expect(screen.getByRole("button", { name: "Canvas mode" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "Web Canvas" }).getAttribute("aria-pressed")).toBe("true");
     await waitFor(() => {
       expect(window.operator.invoke).toHaveBeenCalledWith("state:set", {
         key: "desktopShell",

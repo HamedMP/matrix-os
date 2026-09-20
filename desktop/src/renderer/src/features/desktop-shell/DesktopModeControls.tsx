@@ -13,8 +13,8 @@ const MODES: Array<{
   label: string;
   icon: typeof Monitor;
 }> = [
-  { id: "desktop", label: "Desktop mode", icon: Monitor },
-  { id: "canvas", label: "Canvas mode", icon: LayoutGrid },
+  { id: "desktop", label: "Web Desktop", icon: Monitor },
+  { id: "canvas", label: "Web Canvas", icon: LayoutGrid },
 ];
 
 export default function DesktopModeControls() {
