@@ -1416,6 +1416,7 @@ describe("collaboration gateway routes", () => {
       owner_type: "personal",
       owner_id: collaborationActors.owner,
       kind: "project",
+      organization_id: "org_matrix_team",
       resource_id: "proj_routes",
       parent_scope_id: null,
       membership_mode: "direct",
