@@ -7,7 +7,7 @@ const runtimeId = "vps:10000000-0000-4000-8000-000000000001";
 
 function assertionResponse(input: { member: boolean; requestStartedAt: Date; ttlMs?: number; actorId?: string }) {
   return new Response(JSON.stringify([{
-    protocolVersion: 2, type: "membership_assertion", organizationId: org, actorId: input.actorId ?? member, membershipEpoch: 3,
+    protocolVersion: 2, type: "membership_assertion", organizationId: org, actorId: input.actorId ?? member, membershipEpoch: "3",
     member: input.member, requestStartedAt: input.requestStartedAt.toISOString(), expiresAt: new Date(input.requestStartedAt.getTime() + (input.ttlMs ?? 20_000)).toISOString(),
   }]), { status: 200, headers: { "content-type": "application/json" } });
 }
