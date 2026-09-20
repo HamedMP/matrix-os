@@ -101,16 +101,23 @@ describe("Terminal WebSocket protocol", () => {
     expect(terminalWebSocketPathForSession(null)).toBe("/ws/terminal/tab");
   });
 
-  it("routes bounded server-created login sessions without admitting invalid names or legacy UUIDs", () => {
+  it("rejects legacy named sessions and keeps every fallback on the tab route", () => {
     const sessionId = `provider-auth-${"a".repeat(50)}`;
     expect(sessionId).toHaveLength(64);
-    expect(isCanonicalShellSessionId(sessionId)).toBe(true);
-    expect(terminalWebSocketPathForSession(sessionId)).toBe("/ws/terminal/session");
-    for (const invalid of ["", `${sessionId}a`, "../login", "login?token=x", "LOGIN", "-login", "login\n"]) {
+    for (const invalid of [
+      "",
+      sessionId,
+      `${sessionId}a`,
+      "../login",
+      "login?token=x",
+      "LOGIN",
+      "-login",
+      "login\n",
+      "550E8400-E29B-41D4-A716-446655440000",
+    ]) {
       expect(isCanonicalShellSessionId(invalid)).toBe(false);
+      expect(terminalWebSocketPathForSession(invalid)).toBe("/ws/terminal/tab");
     }
-    expect(terminalWebSocketPathForSession("550E8400-E29B-41D4-A716-446655440000"))
-      .toBe("/ws/terminal");
   });
 
   it("uses two-word friendly terminal session names by default", () => {
