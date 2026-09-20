@@ -3147,32 +3147,18 @@ export async function createGateway(config: GatewayConfig) {
       projectPathAdmission: legacyProjectPathAdmission,
     } : {}),
   });
-  app.route("/api", createShellRoutes(shellRouteDeps));
-  app.route("/api/symphony", createElixirSymphonyProxyRoutes({
-    upstreamOrigin: symphonyUpstreamOriginForPort(initialSymphonyPort),
-  }));
-  const workspaceStartupRecoveryController = createWorkspaceStartupRecovery({
-    homePath,
-    backgroundRuntime: backgroundAgentRuntime,
-    eventPublisher: workspaceEventPublisher,
-    codingAgentThreadStore,
-  });
-  const workspaceStartupRecovery = await workspaceStartupRecoveryController.run();
-  if (workspaceStartupRecovery.status === "degraded") {
-    console.warn("[gateway] Workspace startup recovery completed with degraded steps");
-  }
 
   app.route("/", createTerminalRoutes({
     homePath,
     logBestEffortFailure,
     logUnexpectedJsonParseFailure,
+  }));
 
   app.route("/api/bridge/ai", createRuntimeAppAiRoutes({
     homePath,
     ownerIds: [process.env.MATRIX_USER_ID, process.env.MATRIX_CLERK_USER_ID]
       .filter((id): id is string => Boolean(id)),
     fundedCredentialProvider,
-  }));
   }));
 
 
