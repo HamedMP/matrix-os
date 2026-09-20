@@ -76,6 +76,7 @@ describe("platform speech startup wiring", () => {
   });
 
   it("runs preview-only OpenAI transcription without creating wallet entries", async () => {
+    const now = new Date("2026-09-13T12:00:00.000Z");
     const config = loadPlatformSpeechConfig({
       NODE_ENV: "production",
       PLATFORM_PREVIEW: "true",
@@ -93,10 +94,10 @@ describe("platform speech startup wiring", () => {
       status: 200,
       headers: { "content-type": "application/json" },
     }));
-    const service = createConfiguredPlatformSpeechService({ db, config, fetchImpl });
+    const service = createConfiguredPlatformSpeechService({ db, config, fetchImpl, now: () => now });
     await expect(service.transcribe({
       identity: { ownerId: "user_alice", machineId: "machine_123", runtimeSlot: "primary" },
-      requestId: `sp_${Date.now()}_previewtranscript`,
+      requestId: `sp_${now.getTime()}_previewtranscript`,
       sourceKind: "dictation",
       audio: oneSecondWav(),
       mediaType: "audio/wav",
