@@ -2,6 +2,7 @@ import type { CollaborationRole } from "@matrix-os/contracts";
 import type { Selectable } from "kysely";
 import { CollaborationAuthorizationError, type CollaborationAuthorizationErrorCode } from "./authority-error.js";
 import type { CollaborationScopesTable } from "./database.js";
+import type { CollaborationCapabilityRepository } from "./capability-repository.js";
 import type { OrganizationPrecondition } from "./organization-precondition.js";
 import type { CollaborationRepository } from "./repository.js";
 
@@ -36,6 +37,8 @@ export interface AuthorizedCollaborationContext {
 export interface CollaborationAuthorityOptions {
   /** The organization precondition; every authorization consults it before any allow (S20). */
   organizationPrecondition: OrganizationPrecondition;
+  /** S04: whole-project preset grants; when present, an active grant maps to a role (contributor→editor, viewer→viewer). */
+  capabilities?: CollaborationCapabilityRepository;
   now?: () => Date;
 }
 
@@ -55,12 +58,14 @@ export class CollaborationAuthority {
   private readonly now: () => Date;
   /** The organization precondition every protected operation must pass, including proof-only owner operations. */
   readonly organizationPrecondition: OrganizationPrecondition;
+  private readonly capabilities: CollaborationCapabilityRepository | undefined;
   constructor(
     private readonly repository: CollaborationRepository,
     options: CollaborationAuthorityOptions,
   ) {
     this.now = options.now ?? (() => new Date());
     this.organizationPrecondition = options.organizationPrecondition;
+    this.capabilities = options.capabilities;
   }
 
   async authorize(input: {
@@ -75,14 +80,17 @@ export class CollaborationAuthority {
       actorId: input.actorId,
     });
     const member = await this.repository.getMember(membershipScope.id, input.actorId);
-    if (!member || member.status !== "accepted") {
+    const legacyRole = member && member.status === "accepted"
+      && !(member.expiresAt && new Date(member.expiresAt).getTime() <= this.now().getTime())
+      ? member.role
+      : null;
+    // S04: a whole-project preset grant is the V1 membership; legacy member rows keep their exact old role.
+    const role = legacyRole ?? await this.resolveGrantRole(membershipScope.id, input.actorId);
+    if (!role) {
       throw new CollaborationAuthorizationError("not_found", "Current membership is required");
     }
-    if (member.expiresAt && new Date(member.expiresAt).getTime() <= this.now().getTime()) {
-      throw new CollaborationAuthorizationError("not_found", "Current membership is required");
-    }
-    this.requireLifecycle(scope, member.role, input.action);
-    requireRoleCapability(member.role, input.action);
+    this.requireLifecycle(scope, role, input.action);
+    requireRoleCapability(role, input.action);
 
     return {
       actorId: input.actorId,
@@ -92,12 +100,33 @@ export class CollaborationAuthority {
       membershipScopeId: membershipScope.id,
       resourceKind: scope.kind,
       resourceId: scope.resource_id,
-      role: member.role,
+      role,
       authEpoch: Math.max(Number(scope.auth_epoch), Number(membershipScope.auth_epoch)),
       authorityRuntimeId: scope.authority_runtime_id,
       authorityGeneration: Number(scope.authority_generation),
       capability: input.action,
     };
+  }
+
+  /** S04: preset grants on the membership scope; contributor maps to editor, viewer to viewer. */
+  private async resolveGrantRole(membershipScopeId: string, actorId: string): Promise<CollaborationRole | null> {
+    if (!this.capabilities) return null;
+    let resolution;
+    try {
+      resolution = await this.capabilities.resolveActorGrants(membershipScopeId, actorId);
+    } catch (error: unknown) {
+      console.warn("[collaboration-authority] grant lookup failed", error instanceof Error ? error.name : "UnknownError");
+      throw new CollaborationAuthorizationError("unavailable", "Collaboration policy is unavailable");
+    }
+    if (!resolution) return null;
+    const nowMs = this.now().getTime();
+    const live = (grant: { state: string; expires_at: Date | string | null } | null): boolean =>
+      grant !== null && grant.state === "active" && (grant.expires_at === null || new Date(grant.expires_at).getTime() > nowMs);
+    const presets: Array<"viewer" | "contributor"> = [];
+    if (live(resolution.memberGrant)) presets.push(resolution.memberGrant!.preset);
+    if (live(resolution.organizationGrant) && resolution.activation?.state === "active") presets.push(resolution.organizationGrant!.preset);
+    if (presets.length === 0) return null;
+    return presets.includes("contributor") ? "editor" : "viewer";
   }
 
   private async loadScope(scopeId: string): Promise<Selectable<CollaborationScopesTable>> {

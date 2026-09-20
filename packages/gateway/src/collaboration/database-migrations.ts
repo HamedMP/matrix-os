@@ -1,3 +1,4 @@
+import { migrateCapabilityGrantsV8 } from "./policy-migrations.js";
 import { sql, type Kysely, type Transaction } from "kysely";
 import type { OwnerCollaborationDatabase } from "./database.js";
 
@@ -456,4 +457,5 @@ export const COLLABORATION_VERSIONED_MIGRATIONS: readonly CollaborationVersioned
   { version: 5, run: migrateTransitionAuthorityCheckV5 },
   { version: 6, run: migrateDiscussionV6 },
   { version: 7, run: migrateOrganizationContextV7 },
+  { version: 8, run: migrateCapabilityGrantsV8 },
 ];
