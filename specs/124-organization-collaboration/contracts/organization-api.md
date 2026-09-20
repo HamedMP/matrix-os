@@ -10,6 +10,8 @@ Mutations require UUID clientRequestId, record expectedRevision where applicable
 
 ## Platform control endpoints
 
+V1 platform endpoints are `GET /api/organizations`, `GET /api/organizations/:orgId/members`, the `/api/collaboration/*` discovery and connection routes, the `/internal/*` runtime, control and access routes, and `POST /webhooks/clerk/organizations`. Every other row in this table is deferred from V1 and retained for the administration release; organizations and members are managed in the Clerk dashboard.
+
 | Method + path | Auth | Behavior |
 | --- | --- | --- |
 | GET/POST `/api/organizations` | U; create permission for POST | Clerk-backed org discovery/create |
@@ -53,7 +55,7 @@ All routes below terminate on the home computer; in this release bytes reach it 
 | POST `/api/collaboration/runtimes/:runtimeId/scopes/preflight`; POST `/scopes` | D plus actual resource owner/delegated create authority |
 | GET `/api/collaboration/scopes/:scopeId`; GET `/access` | D read, effective capabilities/reasons only |
 | GET/POST `/scopes/:scopeId/grants`; PATCH/DELETE `/grants/:grantId` | D read/manage, expected revision |
-| POST `/scopes/:scopeId/invitations`; GET `/api/collaboration/invitations/:id`; POST `/:id/accept` or `/decline` | D manage / exact invitee who is a current member or admitted guest of the scope's organization; identifiers outside that organization are not resolved; pending-invitation T permits only these actions |
+| POST `/scopes/:scopeId/invitations`; GET `/api/collaboration/invitations/:id`; POST `/:id/accept` or `/decline` | D manage / exact invitee who is a current member of the scope's organization; identifiers outside that organization are not resolved; pending-invitation T permits only these actions |
 | GET/PUT `/scopes/:scopeId/policy`; POST `/policy/preflight` | D read/manage; resolved recipient profile, dependency/readiness report |
 | GET/POST `/scopes/:scopeId/access-requests`; POST `/access-requests/:id/decision` | D actor request or designated approver; exact actions and expiry |
 | GET `/scopes/:scopeId/chat`; GET/POST `/chat/messages`; GET/POST `/discussion/messages`; GET/PATCH `/user-state` | D per Chat content/read/discuss rights; private actor state |
@@ -71,7 +73,7 @@ All routes below terminate on the home computer; in this release bytes reach it 
 | GET `/scopes/:scopeId/integrations`; POST `/integrations/:connectionId/actions` | D+F exact tool/upstream resource + required approval; output audience ceiling |
 | GET/PUT `/scopes/:scopeId/execution-policy` | D read; only owner changes the single selected V3 source and submit mode. Participants cannot override source/account IDs in run payloads |
 | POST `/scopes/:scopeId/lifecycle`; GET `/operations/:id`; GET `/exports/:id` | D distinct archive/delete/transfer/export/recovery capabilities |
-| POST `/scopes/:scopeId/transfers` | D transfer plus target signed consent; preview/confirm action union |
+| POST `/scopes/:scopeId/transfers` (deferred from V1) | D transfer plus target signed consent; preview/confirm action union |
 | Existing shared sync manifest/stage/commit/multipart routes | D exact scope/capability; server-resolved namespace, no broad storage GET URL |
 
 Route suffixes in this table use `/api/collaboration` as prefix unless a complete prefix is shown. S02 expands combined method/path rows to exact router allowlists and schemas; there is no catch-all forwarding route. Personal unrelated gateway APIs keep their existing authentication and are inaccessible through D.
@@ -90,7 +92,7 @@ Initial limits: ticket 30 seconds; identity session five minutes; org evidence 2
 
 Signed control assertions are fixed-expiry and cannot be refreshed by receipt time. No platform round trip per content chunk; the relay is a byte path, not an authorization call. Local checks plus control refresh enforce leases. Revocation pending/completed states follow data-model.md. Rate-limit auth, bytes, connections, execution and integrations on each home; metadata/control costs remain budgeted on platform.
 
-## Matrix group text exception
+## Matrix group text exception (deferred from V1)
 
 GET/POST `/api/organizations/:orgId/groups/:groupId/messages` and GET `/events` (WS) terminate on the managed group service with U+O+current group membership, one-use stream ticket and expiry checks. Rooms contain service identity only; no user/AI token joins or direct Matrix bypass. Text only, no file/Chat payload mirroring. These explicit messaging routes are not a generic resource proxy.
 

@@ -34,7 +34,7 @@ flowchart LR
   P -->|Quotes, entitlements, usage metadata| B[Org or personal payer]
 ```
 
-Platform bootstrap registers org projection, role mapping, runtime endpoint/key directory, ticket issuer, control stream/fences, quote/assignment services and discovery. Gateway bootstrap registers direct verifier/session store, current policy resolver, local resource catalog, isolation supervisor, run/account binder, local connection broker, worktree leases, transfer journal, resource/peer routes, then event fanout. Resolve dependencies at registration; unavailable dependencies deny affected capabilities. Register exact WS query-ticket paths. Shutdown fences admission, drains sessions/processes/staging/outboxes, and closes owned pools.
+Platform bootstrap registers the Clerk membership projection, runtime endpoint/key directory, ticket issuer, control stream/fences and discovery. Quote, assignment, sponsorship and Matrix group services are deferred. Gateway bootstrap registers direct verifier/session store, current policy resolver, local resource catalog, isolation supervisor, run/account binder, local connection broker, worktree leases, transfer journal, resource/peer routes, then event fanout. Resolve dependencies at registration; unavailable dependencies deny affected capabilities. Register exact WS query-ticket paths. Shutdown fences admission, drains sessions/processes/staging/outboxes, and closes owned pools.
 
 Browser clients hydrate resources directly after metadata discovery, including app iframe assets/bridges and downloads. The client transport dials the origin the resource directory returns for the resource home, never the user's selected personal runtime and never a hardcoded origin; in this release that origin is the platform relay. Endpoint changes require a fresh generation-bound ticket. Home registration reuses existing customer-VPS enrollment and routing; every enrolled VPS is eligible. Three rules keep a later direct upgrade protocol-compatible: clients resolve origins from the directory; tickets bind logical runtime ID and generation, not a TLS hostname; the home verifies tickets identically regardless of ingress. Per-home hostnames, browser-trusted certificates, physical/NAT computers and tunnels/mesh are deferred.
 
@@ -59,7 +59,7 @@ Each packet has failing tests, exact file responsibilities and exit criteria in 
 | S00 | Baseline/provider/Clerk/TLS/isolation probes | None | Coordinator |
 | S01 | Mechanical extraction of large platform/gateway seams | S00 | Foundation |
 | S02 | Direct identity, capability, funding and peer contracts | S00,S01,S20 | Contracts |
-| S03 | Clerk permissions, groups, freshness and control epochs | S02 | Identity |
+| S03 | Clerk membership projection, freshness and control epochs | S02 | Identity |
 | S04 | Local granular grants, ceilings and history audience rules | S02 | Authority |
 | S05 | Transparent relay, home sessions, tickets and control transport | S03,S04 | Transport |
 | S06 | Direct clients, WS and resource routing | S05 | Clients |
@@ -69,16 +69,16 @@ Each packet has failing tests, exact file responsibilities and exit criteria in 
 | S10 | Shared Chat worktrees, leases, review and merge | S09 | Worktrees |
 | S11 | Local/peer integration broker and action delegation | S07,S08 | Integrations |
 | S12 | Direct files/apps/project adapters and sync | S06,S07 | Resources |
-| S13 | Peer resource transfer and recovery | S10,S11,S12 | Transfer |
-| S14 | Org payer, invite quote and member assignments | S03,S08 | Billing |
-| S15 | Ready-to-work Share and org administration UI | S06,S10,S11,S12,S14 | Shared UI |
-| S16 | Managed Matrix group text | S03,S04 | Messaging |
-| S17 | Native Mobile and CLI parity | S13,S15,S16 | Surfaces |
-| S18 | One-shot migration and legacy serving-path removal | S13,S14,S17 | Cutover |
+| S13 | Peer resource transfer and recovery (deferred from V1) | S10,S11,S12 | Transfer |
+| S14 | Org payer, invite quote and member assignments (deferred from V1) | S03,S08 | Billing |
+| S15 | Ready-to-work Share UI | S06,S10,S11,S12 | Shared UI |
+| S16 | Managed Matrix group text (deferred from V1) | S03,S04 | Messaging |
+| S17 | Native Mobile and CLI parity | S15 | Surfaces |
+| S18 | One-shot migration and legacy serving-path removal | S17 | Cutover |
 | S19 | Full release evidence and public docs | S18 | Coordinator |
 | S20 | Org-only precondition and release-gate removal | S01 | Foundation |
 
-Packet numbers are stable labels, not execution order. S20 executes immediately after S01 and before S02 so that the rollout gates and person-to-person paths are gone before any contract is frozen; S18 then removes only the proxy, WebSocket forwarding and V1 fallback. Parallel work is allowed only for independent file ownership after frozen contracts. Each code packet starts RED → GREEN → refactor; use real Postgres for leases, policy and migrations. Registration/shared exports/lockfile belong to coordinator. Keep new files focused and under 500 lines; extract existing 1000+ line files before adding behavior. Use small reviewed stacked PRs while keeping production collaboration activation gated until S19.
+S13, S14 and S16 are deferred from V1 and are not on the release path; their tasks stay in the ledger for the later administration release. Packet numbers are stable labels, not execution order. S20 executes immediately after S01 and before S02 so that the rollout gates and person-to-person paths are gone before any contract is frozen; S18 then removes only the proxy, WebSocket forwarding and V1 fallback. Parallel work is allowed only for independent file ownership after frozen contracts. Each code packet starts RED → GREEN → refactor; use real Postgres for leases, policy and migrations. Registration/shared exports/lockfile belong to coordinator. Keep new files focused and under 500 lines; extract existing 1000+ line files before adding behavior. Use small reviewed stacked PRs while keeping production collaboration activation gated until S19.
 
 ## Cutover and rollback
 

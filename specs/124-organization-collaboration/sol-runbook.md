@@ -7,7 +7,7 @@ Read spec.md, plan.md, research.md, data-model.md, contracts/organization-api.md
 | S00 | T001–T005 | Baseline and live boundary probes |
 | S01 | T006–T009 | Extract large composition seams |
 | S02 | T010–T014 | Freeze shared wire contracts |
-| S03 | T015–T019 | Clerk roles and control authority |
+| S03 | T015–T019 | Clerk membership projection and control authority |
 | S04 | T020–T024 | Local granular authority |
 | S05 | T025–T029, T103 | Transparent relay, home sessions, tickets and revocation |
 | S06 | T030–T034 | Direct clients and resource discovery |
@@ -17,10 +17,10 @@ Read spec.md, plan.md, research.md, data-model.md, contracts/organization-api.md
 | S10 | T050–T054 | Chat worktrees and Git concurrency |
 | S11 | T055–T059 | Local and peer integration delegation |
 | S12 | T060–T064 | Direct resource adapters and sync |
-| S13 | T065–T069 | Computer-to-computer migration and recovery |
-| S14 | T070–T074 | Org billing and invitation compute choices |
-| S15 | T075–T079 | Shared permission/readiness and org UI |
-| S16 | T080–T083 | Managed Matrix group text |
+| S13 | T065–T069 | Computer-to-computer migration and recovery (deferred from V1) |
+| S14 | T070–T074 | Org billing and invitation compute choices (deferred from V1) |
+| S15 | T075–T079 | Shared permission/readiness UI |
+| S16 | T080–T083 | Managed Matrix group text (deferred from V1) |
 | S17 | T084–T087 | Native Mobile and CLI parity |
 | S18 | T088–T092 | One coordinated migration and removal |
 | S19 | T093–T097 | Release acceptance and docs |
@@ -28,7 +28,7 @@ Read spec.md, plan.md, research.md, data-model.md, contracts/organization-api.md
 
 ## Assignment prompt
 
-> Implement packet Sxx, tasks Tnnn–Tmmm, from specs/124-organization-collaboration/tasks.md. Read the constitution and applicable directory instructions, then all feature artifacts. Verify prerequisite SHAs in a persistent manual worktree from reviewed branches. Own only this packet’s files; you are not alone in the codebase: preserve others’ edits and coordinate overlapping modules. Start with failing behavior tests, use real Postgres for races/migration/leases, and record exact red/green results. Reuse canonical Chat, provider V3, worktree and authority seams. V1 is a default shared project group Chat with one owner source and owner-controlled commits/PRs. Sharing exists only inside an organization; the organization is the only gate. The confirmed 525 collaboration interaction model is the UI baseline: add state and controls inside its chrome and never introduce new collaboration headers, composers, share dialogs or inboxes. Open UI decisions listed in spec.md are answered by the product owner, not by you. Transport is a transparent platform relay with all authorization on the home; clients resolve origins from the directory, tickets bind runtime ID and generation rather than a hostname, and the relay is extracted, not deleted. Defer participant accounts and copy-and-continue. Do not add a pooled org computer, collaboration payload proxy fallback, personal-subscription pooling, credential export, prompt-only sandbox, hidden wider file/integration access, a release flag, a rollout cohort, or a person-to-person sharing path. Supply coordinator registration/export changes. Return changed paths, tests, head/prerequisite SHAs, open gates and migration/recovery evidence. Do not merge, deploy, provision paid services or publish externally without authorization.
+> Implement packet Sxx, tasks Tnnn–Tmmm, from specs/124-organization-collaboration/tasks.md. Read the constitution and applicable directory instructions, then all feature artifacts. Verify prerequisite SHAs in a persistent manual worktree from reviewed branches. Own only this packet’s files; you are not alone in the codebase: preserve others’ edits and coordinate overlapping modules. Start with failing behavior tests, use real Postgres for races/migration/leases, and record exact red/green results. Reuse canonical Chat, provider V3, worktree and authority seams. V1 is a default shared project group Chat with one owner source and owner-controlled commits/PRs. Sharing exists only inside an organization; the organization is the only gate. V1 is the minimum functional organization collaboration: Clerk membership projection only, organizations administered in the Clerk dashboard, no groups, guests, invitation quotes, billing, sponsorship, member computers, transfer or Matrix group text. PRs #1761 and #1765 are the shared-execution baseline. The confirmed 525 collaboration interaction model is the UI baseline: add state and controls inside its chrome and never introduce new collaboration headers, composers, share dialogs or inboxes. Open UI decisions listed in spec.md are answered by the product owner, not by you. Transport is a transparent platform relay with all authorization on the home; clients resolve origins from the directory, tickets bind runtime ID and generation rather than a hostname, and the relay is extracted, not deleted. Defer participant accounts and copy-and-continue. Do not add a pooled org computer, collaboration payload proxy fallback, personal-subscription pooling, credential export, prompt-only sandbox, hidden wider file/integration access, a release flag, a rollout cohort, or a person-to-person sharing path. Supply coordinator registration/export changes. Return changed paths, tests, head/prerequisite SHAs, open gates and migration/recovery evidence. Do not merge, deploy, provision paid services or publish externally without authorization.
 
 ## Coordinator ownership
 
