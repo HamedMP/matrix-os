@@ -4,7 +4,7 @@ This is the future implementation acceptance recipe. No runtime tests or live pr
 
 ## Fixtures
 
-Two enrolled member computers A/B reached through the platform relay (existing customer-VPS routing; self-signed host certificates are acceptable), browser/Electron/native/CLI clients, a real Postgres test service, a Clerk test organization created in the Clerk dashboard with an owner, two members and an outsider who has a valid Clerk session and no org relationship. Fixtures set no `MATRIX_COLLABORATION_ENABLED` value and seed no rollout cohort; both must be absent from the codebase. Use one owner-selected source per project, exercising eligible API/Matrix AI delegation and owner-only subscription mode separately, Stripe sandbox and managed Matrix test rooms. Include a full project with two Chats/worktrees, a restricted folder, denied sibling/history in Git, dirty edits, app database, terminal and two integration connections (read-only and send-capable).
+Two enrolled member computers A/B reached through the platform relay (existing customer-VPS routing; self-signed host certificates are acceptable), browser/Electron/native/CLI clients, a real Postgres test service, a Clerk test organization created in the Clerk dashboard with an owner, two members and an outsider who has a valid Clerk session and no org relationship. Fixtures set no `MATRIX_COLLABORATION_ENABLED` value and seed no rollout cohort; both must be absent from the codebase. Use one owner-selected source per project, exercising eligible API/Matrix AI delegation and owner-only subscription mode separately, Stripe sandbox and managed Matrix test rooms. Include a full project with two Chats, one of which already owns a separate worktree with dirty edits, an app database and a terminal.
 
 Resource content lives on A; B can be a recipient/integration custodian/transfer target. No organization-wide shared computer is provisioned. Test a viewer with no personal computer.
 
@@ -15,8 +15,8 @@ Run from the implementation worktree using repository Vitest configuration, for 
 ```sh
 pnpm exec vitest run tests/gateway/collaboration-org-precondition.test.ts tests/platform/collaboration-org-precondition.test.ts
 pnpm exec vitest run tests/contracts/collaboration-direct.test.ts tests/contracts/collaboration-capabilities.test.ts tests/contracts/collaboration-execution.test.ts
-pnpm exec vitest run tests/platform/organization-authority-postgres.test.ts tests/gateway/collaboration-capabilities-postgres.test.ts tests/gateway/shared-chat-worktrees-postgres.test.ts
-pnpm exec vitest run tests/platform/collaboration-cutover-postgres.test.ts tests/gateway/collaboration-peer-transfer-postgres.test.ts tests/platform/org-invite-billing-postgres.test.ts
+pnpm exec vitest run tests/platform/organization-authority-postgres.test.ts tests/gateway/collaboration-capabilities-postgres.test.ts tests/gateway/project-share-inventory-postgres.test.ts
+pnpm exec vitest run tests/platform/collaboration-cutover-postgres.test.ts
 bun run build:shell:production
 bun run build:desktop
 ```
@@ -29,24 +29,24 @@ These new test paths are assigned in tasks.md and will exist after implementatio
 | --- | --- |
 | Org-only gate | Outsider with a valid session and direct reachability is denied on every route, WebSocket, queue claim, tool and integration path; no environment flag or cohort record is consulted; missing signing/origin configuration fails closed with a generic error; a person-to-person invitation identifier outside the organization is not resolved; departure ends every derived grant |
 | Relay transparency | Client authenticates with platform, obtains a ticket and streams Chat/files/PTY/app content to A through the relay; the relay makes no authorization decision, parses no payload and logs none (platform trace contains only permitted metadata); a forged, expired or wrong-generation ticket delivered by the relay is rejected by A; disabling platform-side policy storage does not affect an in-flight session; recipient needs no own computer |
-| Peer path | B performs exact delegated integration action or stages transfer from A over authenticated direct HTTPS; wrong peer/key/operation replay denied |
+| Peer path (deferred from V1) | B performs exact delegated integration action or stages transfer from A over authenticated direct HTTPS |
 | Membership | Lost/reordered webhook, direct Clerk edit and platform/control partition enforce fixed deadlines; revocation completion waits for ack/expiry; same local fence blocks REST/WS/queue/tools |
 | Coarse roles (deferred from V1) | Billing manager can manage quoted spend but cannot read resource content; integration manager cannot access arbitrary personal connections; unknown Clerk roles fail closed |
-| Granular profile | Contributor accesses selected folder/app/action/task only; overlapping broader allow cannot beat deny/ceiling; path moves and policy revisions preserve boundary |
-| Git/shell | Restricted worker cannot recover denied files via object database/history, worktree admin paths, symlinks, proc, hooks, shell/interpreter, raw network or alternate app bridge |
-| Chat disclosure | A tool result available only to one actor cannot enter a broader Chat; historical grant expansion requires reviewed audience; account/root change cannot resume hidden state; restricted artifact publish is separately approved |
+| Granular profile (deferred from V1) | Contributor accesses selected folder/app/action/task only |
+| Git/shell | Sandboxed worker cannot reach host credentials, the forge token, proc/environment secrets or the credential helper; only broker operations perform Git side effects |
+| Chat disclosure (deferred from V1) | A tool result available only to one actor cannot enter a broader Chat |
 | One owner source | Multiple members share the owner's configured source of any kind when the organization metadata enables member submission; an organization without the metadata, or a project restricted to owner-only, blocks member execution while discussion works; readiness shows the source kind; owner source change is revision-checked; exhausted source pauses without fallback |
 | Group Chat | Repeated share/join creates one default shared Chat/root, named humans and explicit AI request; joining creates no worktree or account; audience ceiling protects historical content |
-| Git/PR owner | New host commits use configured owner identity, PRs use owner forge identity, imported history unchanged; contributor proposals need exact owner approval; git/gh/shell/MCP bypass and changed-tree replay fail; audit retains requesting actor |
-| Shared coding | Both Codex and Claude API-backed runs operate in their selected Chat worktrees with correct files/history, attributed approvals/cancellation and tool restrictions |
-| Root concurrency | Two Chats run concurrently in different worktrees; same-root writers conflict/queue safely; merge/push separate from edit; restart recovers lease; dirty worktree survives Chat deletion |
-| Integrations | Exact connection/tool/upstream scope; read cannot send/delete; approvals recheck policy; peer connection owner can revoke; direct-capable execution no longer traverses platform; vendor exceptions disclosed |
-| Ready-to-work | Share preflight names allowed environment and missing account/dependency/approval; recipient requests exact access without hidden widening; no sensitive hidden resource-name enumeration |
+| Git identity | A member's commit carries the configured owner author/committer and their push/PR uses the owner forge identity with no approval step; imported history unchanged; audit retains the requesting member and run; force push and remote changes are not offered |
+| Shared coding | Both Codex and Claude API-backed runs operate on the project root with correct files/history, attributed cancellation and sandbox restrictions |
+| Share inventory | Sharing a project whose Chats own separate worktrees lists every Chat with root, branch and dirty state in the confirmation; an unresolvable root blocks the share; joining creates no worktree; a dirty worktree survives Chat deletion |
+| Integrations (deferred from V1) | Exact connection/tool/upstream scope; V1 evidence instead shows a member-triggered run using the owner's existing connection on the owner's host with no credential in the sandbox |
+| Ready-to-work | Share preflight names the source kind, owner Git identity, inventoried Chat roots and missing owner setup; no sensitive hidden resource-name enumeration |
 | Invite costs (deferred from V1) | New/existing user sees no-compute/sponsor/provision choices; pending invite has no charge; expired quote requires renewed payer approval; duplicate accept/payment callback cannot double charge or provision |
 | Ownership (deferred from V1) | Sponsoring a personal host changes payer only; org-managed member assignment retains org data/backups after departure; personal data remains personal |
 | Transfer (deferred from V1) | Dirty worktree/app/Chat/file inventory staged with checksums; crashes at every phase leave one authority; credentials/memory/drafts absent; generation CAS prevents double-writable copies |
 | Cutover | IDs and old action ceilings preserved; legacy proxy/WS/V1 paths, rollout flag and cohort policy removed; person-to-person records dispositioned per S20 (zero expected); old clients upgrade-required; offline/ambiguous scopes unavailable with recovery; rollback never restores legacy auth |
-| Surfaces | Web Canvas then Web Desktop then Electron Desktop; applicable Web Mobile, Native Mobile and CLI share semantics/root/owner-source/Git-approval/error states; every surface uses the confirmed 525 chrome (ordinary timeline/composer, discussion drawer or sheet, access popover, Shared with me row, ordinary terminal viewport) with no new collaboration header, composer switch, share dialog or inbox |
+| Surfaces | Web Canvas then Web Desktop then Electron Desktop share semantics/root/owner-source/error states using the confirmed 525 chrome; Native Mobile and CLI are a recorded V1 limitation whose existing 525 shared Chat/terminal keep working |
 | Scale | Record control request/metadata byte rates separately from relayed resource bytes and report relay bandwidth cost; no refresh per keystroke/chunk; verify bounded host connection/process/transfer capacity and shutdown |
 | Matrix groups (deferred from V1) | Human/AI tokens cannot directly read/join private service rooms; managed group text expires during partition; no canonical AI Chat/files mirrored |
 

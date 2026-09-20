@@ -30,7 +30,7 @@ Use `gpt-5.6-sol` with high reasoning, one coordinator and at most three workers
 - [ ] T010 Add failing strict-schema and serialization tests in tests/contracts/collaboration-direct.test.ts, collaboration-capabilities.test.ts and collaboration-execution.test.ts, covering forged owners/endpoints/payers, selectors, unknown actions and replay fields.
 - [ ] T011 Create packages/contracts/src/collaboration-direct.ts, collaboration-capabilities.ts and collaboration-peer.ts for tickets/sessions/control epochs, exact peer operations, selectors/presets/ceilings/denies and safe readiness/errors. Expand combined route-table rows into exact method/path schemas.
 - [ ] T012 Create packages/contracts/src/organization-billing.ts and collaboration-execution.ts for quotes/assignments, immutable run account-payer bindings, task profiles and connection delegation. Extend canonical Chat/root and V3 types without introducing competing stores.
-- [ ] T013 Freeze Clerk custom permissions and resource capability vocabulary with identity/runtime/billing owners. Define role preset expansion and old-role migration matrix with exact action ceilings. Freeze the default group Chat, owner-selected source and owner-only Git approval rules. Audiences are the organization or a current member of it only; there is no personal, group or guest audience, departure-surviving grant, milestone or cohort field. Participant account routing and copy-and-continue are deferred.
+- [ ] T013 Freeze Clerk custom permissions and resource capability vocabulary with identity/runtime/billing owners. Define role preset expansion and old-role migration matrix with exact action ceilings. Freeze the default group Chat, owner-selected source and owner-only Git approval rules. Audiences are the organization or a current member of it only; grants carry one whole-project preset and no selectors; there is no personal, group or guest audience, departure-surviving grant, milestone or cohort field. Git operations carry no approval field in V1. Participant account routing and copy-and-continue are deferred.
 - [ ] T014 Give coordinator index.ts exports and package dependency changes; verify package consumers and schemas compile. Update contracts/organization-api.md with final concrete payload unions and version negotiation.
 
 ## S03 — Clerk roles and control authority
@@ -45,12 +45,12 @@ Use `gpt-5.6-sol` with high reasoning, one coordinator and at most three workers
 
 ## S04 — Local granular authority
 
-**Owner:** Authority Sol. **Depends on:** S02. **Exit:** The same deny-wins policy controls all resource and execution paths.
+**Owner:** Authority Sol. **Depends on:** S02. **Exit:** One deny-wins evaluator applies the organization precondition and whole-project presets to every resource and execution path; selectors, ceilings and audience rules are deferred.
 
-- [ ] T020 Write failing tests/gateway/collaboration-capabilities-postgres.test.ts covering conflicting user/org/group grants, parent ceilings, narrow children, moves, direct-grant departure, legacy ceilings and races.
-- [ ] T021 Implement collaboration/{capability-repository,capability-evaluator,policy-migrations}.ts and extend authority.ts. Support action/resource selectors, presets, restrictions, expiry and explicit management; no implicit editor funding or admin content privilege.
-- [ ] T022 Implement collaboration/{chat-audience-policy,artifact-publication-policy}.ts: audience data ceiling, historical Chat share preflight, policy-narrowing session invalidation and explicit restricted-to-broad publication. Test hidden tool results/history/search/attachments and output laundering.
-- [ ] T023 Implement collaboration/access-requests.ts and readiness evaluator for exact missing capabilities and designated approvers. Approval grants only reviewed scoped actions and revision, never broad role escalation.
+- [ ] T020 Write failing tests/gateway/collaboration-capabilities-postgres.test.ts covering conflicting user/org grants, preset changes, expiry, departure, legacy ceilings and races. Selector, parent-ceiling and move cases are deferred.
+- [ ] T021 Implement collaboration/{capability-repository,capability-evaluator,policy-migrations}.ts and extend authority.ts for whole-project presets, expiry and explicit management; no implicit editor funding or admin content privilege. Keep selector fields out of the V1 schema.
+- [ ] T022 Deferred from V1: collaboration/{chat-audience-policy,artifact-publication-policy}.ts (audience data ceilings, historical Chat share preflight, restricted-to-broad publication).
+- [ ] T023 Implement the readiness evaluator for missing owner setup (Git identity, forge credential, AI source), host offline and unsupported states. Access requests are deferred.
 - [ ] T024 Wire evaluator into resource grant mutations and local epoch fences; prove conditional writes, audit/outbox atomicity, safe effective-access reasons and no permissive fallback on policy lookup failure.
 
 ## S05 — Direct endpoints, tickets and revocation
@@ -78,9 +78,9 @@ Use `gpt-5.6-sol` with high reasoning, one coordinator and at most three workers
 
 **Owner:** Runtime Sol. **Depends on:** S04,S05. **Exit:** Commands/tools cannot escape the granted data, network or credential boundary.
 
-- [ ] T035 Write tests/scope-runtime/collaboration-policy-boundary.test.ts and disposable-host tests for symlink/hardlink escape, Git object/history leakage, subprocess/interpreter escape, proc/environment secrets, broker forgery and denied network.
+- [ ] T035 Write tests/scope-runtime/collaboration-policy-boundary.test.ts and disposable-host tests for symlink/hardlink escape, subprocess/interpreter escape, proc/environment secrets, forge-token and credential-helper reach and denied network from a shared run.
 - [ ] T036 Extend packages/scope-runtime/ supervisor/profile/protocol seams and gateway collaboration/scope-runtime-client.ts with actor/scope/worktree mount manifests, isolated UID/process namespaces, resource caps and restricted network. No changes based only on prompt instructions.
-- [ ] T037 Implement gateway collaboration/{task-profiles,filtered-workspace,publication-broker}.ts for typed task commands, bounded arguments/cwd/env, restricted Git mediation and staged patch publication with ref/revision/visibility fences.
+- [ ] T037 Deferred from V1: collaboration/{task-profiles,filtered-workspace,publication-broker}.ts. V1 shared runs use the project root under the sandbox from T036.
 - [ ] T038 Extend terminal adapter/control/dispatcher for sandbox-only terminal sessions and exact task profile capability. Arbitrary sandbox shell is explicit and cannot imply unrestricted host shell or connection secrets.
 - [ ] T039 Prove revocation stops new tools/terminal input and terminates isolated processes on lease loss. Expose unsupported profiles through readiness, with dependency/access requests rather than silent wider mounts.
 
@@ -106,17 +106,17 @@ Use `gpt-5.6-sol` with high reasoning, one coordinator and at most three workers
 
 ## S10 — Chat worktrees and Git concurrency
 
-**Owner:** Worktree Sol. **Depends on:** S09. **Exit:** Multiple shared Chats use distinct roots safely with visible state and recoverable leases.
+**Owner:** Worktree Sol. **Depends on:** S09. **Exit:** Members commit/push/PR through the broker under the owner identity without approval, and every Chat root in a project is inventoried at share time; per-Chat worktree UI and leases are deferred.
 
-- [ ] T050 Write tests/gateway/shared-chat-worktrees-postgres.test.ts for two Chats/two worktrees, shared Chat viewers, same-root competing writers, stale fingerprint, merge conflict, restart lease recovery and deletion during active run.
-- [ ] T051 Extend chat/execution-root.ts, worktree-manager.ts and focused collaboration/worktree-leases.ts with project capability-aware resolution, durable fencing tokens, safe explicit reuse and protected main. Use canonical executionRoot fields.
-- [ ] T052 Implement direct worktree routes and collaboration/{project-git-operations,project-git-broker}.ts for contributor proposals and owner-approved exact commit/merge/push/PR operations. Pin tree/ref/remote digest, configured owner Git identity, one-use expiry and requestor/approver audit. Forge credentials stay in broker; deny git/gh/MCP/shell bypass and reconcile ambiguous PR creation before retry. Filtered workers never get raw .git.
-- [ ] T053 Add shared Chat worktree/branch/status/restore controls under packages/ui/src/collaboration/ inside the confirmed 525 Chat chrome, reusing the ordinary Chat worktree context; no new collaboration header. Default project group Chat/root creation is idempotent; joining reuses it without a new worktree. Additional coding Chats may create worktrees. Show owner Git setup/approval, missing-root/offline/lease-conflict states.
-- [ ] T054 Prove cleanup retains dirty worktrees and checks active runs/terminals plus merge state; no Chat-delete cascade removes uncommitted work. Validate concurrent Codex and Claude Chats under the same owner source and source-change continuation on pinned roots. Test non-owner commit/push/PR rejection and preserve imported Git authorship.
+- [ ] T050 Write tests/gateway/project-share-inventory-postgres.test.ts: a project whose Chats own separate worktrees lists every Chat with execution root, branch and dirty state in the share preflight; an unresolvable root blocks the share; joining creates no worktree or copy; a dirty worktree survives Chat deletion. Per-Chat worktree, viewer and lease tests are deferred.
+- [ ] T051 Extend chat/execution-root.ts and the project inventory to resolve and fingerprint every Chat root in a project for the share preflight, using canonical executionRoot fields. Worktree leases, protected-main fencing and explicit reuse are deferred.
+- [ ] T052 Implement collaboration/{project-git-operations,project-git-broker}.ts: commit, push and PR for Contributor and above through the broker under the configured owner Git identity and broker-held forge credential, no owner approval, requestor and run audited, ambiguous push/PR results reconciled by operation ID before retry. Deny raw git/gh credential access from the sandbox; approval, merge and remote changes are deferred.
+- [ ] T053 Show the share-time Chat root inventory and owner Git identity/setup state inside the confirmed 525 share dialog and access popover. Per-Chat worktree/branch/status/restore controls are deferred.
+- [ ] T054 Prove a member commit/push/PR carries the owner identity with the requesting member in audit, imported authorship is preserved, Chat deletion retains a dirty worktree, and concurrent Codex and Claude Chats on the project root serialize per Chat under the same owner source.
 
 ## S11 — Local and peer integration delegation
 
-**Owner:** Integration Sol. **Depends on:** S07,S08. **Exit:** Exact connection actions run with scoped credentials outside the platform content path.
+**Deferred from V1; not on the release path.** **Owner:** Integration Sol. **Depends on:** S07,S08. **Exit:** Exact connection actions run with scoped credentials outside the platform content path. V1 shared runs use the owner's existing connections as the owner's own runs do; the accepted risk is recorded in spec.md.
 
 - [ ] T055 Write tests/gateway/collaboration-integration-delegation.test.ts for connection-owner consent, tool/upstream scopes, read versus send/delete, approval races, revoked credentials, output audience and ambiguous remote effects.
 - [ ] T056 Implement integrations/{local-credential-store,delegated-action-broker,connection-policy}.ts reusing custom-mcp client/schema/SSRF protections. Encrypt secrets locally; sandbox agents receive capabilities, never raw tokens or unrestricted MCP endpoints.
@@ -128,11 +128,11 @@ Use `gpt-5.6-sol` with high reasoning, one coordinator and at most three workers
 
 **Owner:** Resource Sol. **Depends on:** S06,S07. **Exit:** Apps/files/projects/sync enforce identical granular grants on the home computer.
 
-- [ ] T060 Write tests/gateway/direct-resource-policy-postgres.test.ts for file/folder identity, renamed/deleted incarnations, narrow app actions, parent ceilings, exports/search/thumbnails and simultaneous policy change/upload commit.
+- [ ] T060 Write tests/gateway/direct-resource-policy-postgres.test.ts for file/folder identity, renamed/deleted incarnations, whole-project preset enforcement on files/apps/exports/search/thumbnails and simultaneous policy change/upload commit. Narrow app actions and parent ceilings are deferred.
 - [ ] T061 Implement collaboration/resource-catalog.ts and production file/project/app routes using project-adapters.ts/project-app-adapter.ts, local owner namespaces and stable app instance IDs. No allowlisted-but-unmounted project endpoints.
 - [ ] T062 Implement direct streaming reads, staged uploads, multipart/resume, immutable checksums and final fresh commit. Do not issue reusable shared storage GET URLs; cancel on revoked leases and clean inert staging.
-- [ ] T063 Extend packages/sync-client shared transfer and CLI mounts to direct scoped endpoints; import sync grants into the single authority with exact legacy action ceilings. Personal sync remains its own non-collaboration operation.
-- [ ] T064 Wire app sandbox assets and action-specific bridges to scoped direct sessions. Prove viewer/limited app users cannot mutate through alternate HTTP/network/bridge paths and all applicable surfaces use the same selectors.
+- [ ] T063 Deferred from V1: packages/sync-client shared transfer and CLI mounts. Personal sync remains its own non-collaboration operation; existing sync grants are inventoried in T102.
+- [ ] T064 Wire app sandbox assets and bridges to scoped sessions. Prove viewers cannot mutate through alternate HTTP/network/bridge paths and Web Canvas, Web Desktop and Electron Desktop use the same preset semantics.
 
 ## S13 — Computer-to-computer migration and recovery
 
@@ -156,12 +156,12 @@ Use `gpt-5.6-sol` with high reasoning, one coordinator and at most three workers
 
 ## S15 — Shared permission/readiness and org UI
 
-**Owner:** Shared UI Sol. **Depends on:** S06,S10,S11,S12. **Exit:** Owners can grant a usable bounded environment and recipients understand missing access.
+**Owner:** Shared UI Sol. **Depends on:** S06,S10,S12. **Exit:** Owners can share a whole project with a preset and recipients understand readiness.
 
-- [ ] T075 Write tests/ui/collaboration-ready-to-work.test.tsx for presets, granular folders/apps/task/connection selection, overlapping deny explanation, hidden resource counts, missing dependencies and exact access-request approval.
-- [ ] T076 Build shared packages/ui/src/collaboration/{CapabilityEditor,ReadinessSummary,ProjectSourceSummary,AccessRequest}.tsx with stable server-derived state, mounted inside the existing SessionAccessControl popover/owner manager and ProjectSharingDialog/ShareChoiceDialog per the spec.md UI baseline table; replace the identifier field with an organization/group/member picker; do not add a new share dialog or inbox. Default join opens the shared group Chat with named humans; show one owner-configured source/payer and submit mode, not a participant account picker. Include audience-safe history preview and exact owner Git approval controls.
+- [ ] T075 Write tests/ui/collaboration-ready-to-work.test.tsx for presets, organization/member audience selection, Chat root inventory display, missing owner setup and source-kind display.
+- [ ] T076 Build shared packages/ui/src/collaboration/{ReadinessSummary,ProjectSourceSummary}.tsx with stable server-derived state, mounted inside the existing SessionAccessControl popover/owner manager and ProjectSharingDialog/ShareChoiceDialog per the spec.md UI baseline table; replace the identifier field with an organization/member picker; show the Chat root inventory and owner Git identity. CapabilityEditor and AccessRequest are deferred; do not add a new share dialog or inbox.
 - [ ] T077 Deferred from V1: packages/ui/src/organizations/{OrganizationSettings,SharedResources,MemberComputerAssignments,OrganizationBilling,InviteCostReview}.tsx. V1 has no organization surface; the share dialog member picker reads the platform membership projection.
-- [ ] T078 Mount identical feature components in Web Canvas/Web Desktop/Electron Desktop normal Share/Chat/project/app/file surfaces, keeping the confirmed 525 model (ordinary timeline/composer, discussion drawer, access popover, Shared with me row, ordinary terminal viewport). Open UI decisions in spec.md must be answered by the product owner before this task starts. Worktree state, integration approvals, offline/blocked/unknown funding and upgrade-required states must remain truthful.
+- [ ] T078 Mount identical feature components in Web Canvas/Web Desktop/Electron Desktop normal Share/Chat/project/app/file surfaces, keeping the confirmed 525 model (ordinary timeline/composer, discussion drawer, access popover, Shared with me row, ordinary terminal viewport). Native Mobile and CLI are a recorded V1 limitation.
 - [ ] T079 Exercise owner/member/outsider journeys; sharing never silently connects a personal integration, broadens a folder or picks a different payer. Record Web Canvas first, Web Desktop then Electron evidence.
 
 ## S16 — Managed Matrix group text
@@ -175,7 +175,7 @@ Use `gpt-5.6-sol` with high reasoning, one coordinator and at most three workers
 
 ## S17 — Native Mobile and CLI parity
 
-**Owner:** Surface Sol. **Depends on:** S15. **Exit:** Every applicable surface honors direct protocol, permissions, funding and root binding.
+**Deferred from V1; recorded platform limitation.** **Owner:** Surface Sol. **Depends on:** S15. **Exit:** Native Mobile and CLI honor the same permissions, funding and root binding. Their existing 525 shared Chat and terminal keep working in V1.
 
 - [ ] T084 Write mobile Jest and CLI integration tests for direct auth refresh/key custody, resource-home selection, worktree/root state, scoped integrations and stale policy handling.
 - [ ] T085 Wire apps/mobile and existing CLI collaboration clients to shared contracts and direct transport adapters, platform-native secure key storage, same permission/readiness derivations and safe error states.
@@ -184,13 +184,13 @@ Use `gpt-5.6-sol` with high reasoning, one coordinator and at most three workers
 
 ## S18 — One coordinated migration and removal
 
-**Owner:** Cutover Sol. **Depends on:** S17. **Exit:** Direct protocol is the only serving collaboration path after activation.
+**Owner:** Cutover Sol. **Depends on:** S15. **Exit:** Direct protocol is the only serving collaboration path after activation.
 
 - [ ] T088 Write tests/platform/collaboration-cutover-postgres.test.ts for idempotent import/count validation, ambiguous legacy handles, offline homes, exact old ceilings, failed freeze, interrupted CAS, compatible rollback and the T102 person-to-person record disposition (zero expected; any found are terminated with notice or owner re-homed, never imported as personal grants).
 - [ ] T089 Implement collaboration cutover coordinator/journals under packages/platform/src/collaboration/cutover.ts and gateway collaboration/cutover.ts: backup inventory, maintenance fence, drain, shadow import, verification and direct-generation activation.
 - [ ] T090 Remove per-request authorization, policy lookups, body parsing, V1 proof/ACL fallback and `MATRIX_COLLABORATION_PREFLIGHT_SECRET` from packages/platform/src/collaboration/proxy.ts and websocket.ts after migrated consumers are integrated, leaving only the transparent relay extracted in T103. Update exact route registration/tests to reject retired endpoints; retain only metadata/control routes. The rollout flag and cohort policy are already gone from S20; assert their absence here.
 - [ ] T091 Remove direct-capable integration central execution fallback and legacy sync/collaboration secondary allow readers. Temporary import code is migration-only with explicit completion/retention state; snapshots and unrelated personal routing remain separate.
-- [ ] T092 Run full dry-run with old client/home negative tests, two direct computers, multiple actors/one owner source, shared group Chat, owner-controlled commit/PR operations, integration grants and dirty worktrees. Record that the relay makes no authorization decision and parses or logs no payload, no dual writer and recoverable rollback state before release approval.
+- [ ] T092 Run full dry-run with old client/home negative tests, two computers through the relay, multiple members/one owner source, shared group Chat, member commit/push/PR under the owner identity, share-time root inventory and dirty worktrees. Record that the relay makes no authorization decision and parses or logs no payload, no dual writer and recoverable rollback state before release approval.
 
 ## S19 — Release acceptance and docs
 
@@ -198,8 +198,8 @@ Use `gpt-5.6-sol` with high reasoning, one coordinator and at most three workers
 
 - [ ] T093 Run quickstart.md acceptance matrix with real Postgres, approved provider/Stripe/Clerk/Matrix sandboxes and disposable reachable computers. Capture exact SHA/version/result, not fabricated screenshots or skipped-required-tests passes.
 - [ ] T094 Profile platform control requests separately from relayed resource bytes under concurrent Chat/PTY/file workloads and report relay bandwidth cost. Verify control request coalescing and host CPU/memory/network caps; flag managed inference/vendor exceptions clearly.
-- [ ] T095 Perform auth/atomicity/wiring review covering direct routes, dynamic policy/history, sandbox escapes, owner-source concurrency and Git identity/approval bypass, transfer failures and all-surface parity; resolve material findings before declaring release ready.
-- [ ] T096 Prepare separate FinnaAI/matrix-os-site/content/docs/ documentation PR deliverable for direct connectivity, group Chat/owner source/payer, owner Git/PR identity, worktrees, granular sharing, integration consent, outages and migration. External publication needs its own authorization.
+- [ ] T095 Perform auth/atomicity/wiring review covering relayed routes, dynamic policy, sandbox escapes, owner-source concurrency, Git broker credential containment and Web Canvas/Web Desktop/Electron Desktop parity; resolve material findings before declaring release ready.
+- [ ] T096 Prepare separate FinnaAI/matrix-os-site/content/docs/ documentation PR deliverable for organization sharing, group Chat/owner source, member prompting, owner Git identity, share inventory, readiness, outages, the Native Mobile/CLI limitation and migration. External publication needs its own authorization.
 - [ ] T097 Record full implementation log, migration/rollback runbook and configured price/provider limitations. Obtain required CI/current-head Greptile 5/5 and ready-for-ci; do not infer deployment/merge authority from this planning request.
 
 ## S20 — Org-only precondition and release-gate removal

@@ -45,9 +45,9 @@ Browser clients hydrate resources directly after metadata discovery, including a
 - Fixed-expiry evidence with signed invalidation/control and local fences replaces per-payload platform authorization. The 60-second external removal goal is a measured provider gate, not a webhook promise.
 - Resolve one owner-selected V3 binding per project and pin it per run, preserving requesting actor attribution. Reuse existing owner account settings; do not build participant account profiles, routing or quota rotation. Submit mode is org-enabled members or owner-only; it is an owner-side policy, not a provider-derived state.
 - Both Codex and Claude shared execution must use the same authoritative queue/history and scoped sandbox. Verify actual harness/native subscription eligibility. Use a project/Chat-scoped session, never the owner’s private session. Recreate it on account/root/audience changes unless safe continuation is proven.
-- Joining the default group Chat reuses its stable execution-root binding; optional additional coding Chats normally use separate worktrees. Lease conflicts serialize writers. Distinct worktrees can run in parallel. Owner Git identity/forge credentials are held by a broker, and exact commit/merge/push/PR operations require owner approval; participant attribution remains in audit. Restrictive folder access requires a filtered execution view and mediated Git, because raw shared object stores expose other paths/history.
-- Integration grants name connection, tool/action and upstream scope. Broker holds credentials and rechecks before calls. Exporting a secret to arbitrary child processes defeats scoped grants and is prohibited. Approval never substitutes for a missing capability.
-- A Chat's data ceiling covers its audience; output/artifact publication cannot widen input sensitivity without explicit approved release. Readiness exposes missing dependencies/accounts/permissions before a run, with an exact access request flow.
+- The default group Chat uses the project's existing execution root; sharing and joining create no worktree or copy, and the share confirmation inventories every Chat root in the project so none is silently excluded. Per-Chat worktrees, leases and parallel roots are deferred. Owner Git identity/forge credentials are held by a broker that executes member commit/push/PR operations without owner approval in V1; the requesting member is audited. Granular folder restrictions and filtered execution views are deferred.
+- Integration delegation is deferred: shared runs use the owner's existing connections as the owner's own runs do, with credentials that never enter sandboxed processes. The accepted risk that a member can drive the owner's connections is recorded in spec.md.
+- In V1 the whole project is the audience of every Chat in it; Chat data ceilings and publication review are deferred with granular sharing. Readiness exposes missing owner setup before a run.
 - One resource home at a time. Direct peer transfer uses staging, source fence, directory generation CAS, target activation and retained restricted recovery copy. No writable peer replicas or process/session transfer assumptions.
 
 ## Sol work packets
@@ -60,25 +60,25 @@ Each packet has failing tests, exact file responsibilities and exit criteria in 
 | S01 | Mechanical extraction of large platform/gateway seams | S00 | Foundation |
 | S02 | Direct identity, capability, funding and peer contracts | S00,S01,S20 | Contracts |
 | S03 | Clerk membership projection, freshness and control epochs | S02 | Identity |
-| S04 | Local granular grants, ceilings and history audience rules | S02 | Authority |
+| S04 | Whole-project preset grants and the organization precondition | S02 | Authority |
 | S05 | Transparent relay, home sessions, tickets and control transport | S03,S04 | Transport |
 | S06 | Direct clients, WS and resource routing | S05 | Clients |
-| S07 | OS sandbox, task profiles and publication boundaries | S04,S05 | Runtime |
+| S07 | OS sandbox for shared runs and terminals | S04,S05 | Runtime |
 | S08 | Single owner source and funding eligibility | S02,S04 | Owner AI source |
 | S09 | Shared Codex/Claude execution and resume isolation | S07,S08 | AI execution |
-| S10 | Shared Chat worktrees, leases, review and merge | S09 | Worktrees |
-| S11 | Local/peer integration broker and action delegation | S07,S08 | Integrations |
-| S12 | Direct files/apps/project adapters and sync | S06,S07 | Resources |
+| S10 | Git broker without approval; share-time root inventory (per-Chat worktrees deferred) | S09 | Worktrees |
+| S11 | Local/peer integration broker and action delegation (deferred from V1) | S07,S08 | Integrations |
+| S12 | Files/apps/project adapters (sync-client CLI mounts deferred) | S06,S07 | Resources |
 | S13 | Peer resource transfer and recovery (deferred from V1) | S10,S11,S12 | Transfer |
 | S14 | Org payer, invite quote and member assignments (deferred from V1) | S03,S08 | Billing |
-| S15 | Ready-to-work Share UI | S06,S10,S11,S12 | Shared UI |
+| S15 | Ready-to-work Share UI | S06,S10,S12 | Shared UI |
 | S16 | Managed Matrix group text (deferred from V1) | S03,S04 | Messaging |
-| S17 | Native Mobile and CLI parity | S15 | Surfaces |
-| S18 | One-shot migration and legacy serving-path removal | S17 | Cutover |
+| S17 | Native Mobile and CLI parity (deferred from V1; recorded limitation) | S15 | Surfaces |
+| S18 | One-shot migration and legacy serving-path removal | S15 | Cutover |
 | S19 | Full release evidence and public docs | S18 | Coordinator |
 | S20 | Org-only precondition and release-gate removal | S01 | Foundation |
 
-S13, S14 and S16 are deferred from V1 and are not on the release path; their tasks stay in the ledger for the later administration release. Packet numbers are stable labels, not execution order. S20 executes immediately after S01 and before S02 so that the rollout gates and person-to-person paths are gone before any contract is frozen; S18 then removes only the proxy, WebSocket forwarding and V1 fallback. Parallel work is allowed only for independent file ownership after frozen contracts. Each code packet starts RED → GREEN → refactor; use real Postgres for leases, policy and migrations. Registration/shared exports/lockfile belong to coordinator. Keep new files focused and under 500 lines; extract existing 1000+ line files before adding behavior. Use small reviewed stacked PRs while keeping production collaboration activation gated until S19.
+S11, S13, S14, S16 and S17 are deferred from V1 and are not on the release path; their tasks stay in the ledger for the later administration release. Packet numbers are stable labels, not execution order. S20 executes immediately after S01 and before S02 so that the rollout gates and person-to-person paths are gone before any contract is frozen; S18 then removes only the proxy, WebSocket forwarding and V1 fallback. Parallel work is allowed only for independent file ownership after frozen contracts. Each code packet starts RED → GREEN → refactor; use real Postgres for leases, policy and migrations. Registration/shared exports/lockfile belong to coordinator. Keep new files focused and under 500 lines; extract existing 1000+ line files before adding behavior. Use small reviewed stacked PRs while keeping production collaboration activation gated until S19.
 
 ## Cutover and rollback
 

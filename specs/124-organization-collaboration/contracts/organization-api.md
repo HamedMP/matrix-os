@@ -57,20 +57,20 @@ All routes below terminate on the home computer; in this release bytes reach it 
 | GET/POST `/scopes/:scopeId/grants`; PATCH/DELETE `/grants/:grantId` | D read/manage, expected revision |
 | POST `/scopes/:scopeId/invitations`; GET `/api/collaboration/invitations/:id`; POST `/:id/accept` or `/decline` | D manage / exact invitee who is a current member of the scope's organization; identifiers outside that organization are not resolved; pending-invitation T permits only these actions |
 | GET/PUT `/scopes/:scopeId/policy`; POST `/policy/preflight` | D read/manage; resolved recipient profile, dependency/readiness report |
-| GET/POST `/scopes/:scopeId/access-requests`; POST `/access-requests/:id/decision` | D actor request or designated approver; exact actions and expiry |
+| GET/POST `/scopes/:scopeId/access-requests`; POST `/access-requests/:id/decision` (deferred from V1) | D actor request or designated approver |
 | GET `/scopes/:scopeId/chat`; GET/POST `/chat/messages`; GET/POST `/discussion/messages`; GET/PATCH `/user-state` | D per Chat content/read/discuss rights; private actor state |
 | GET/POST `/scopes/:scopeId/chat/requests`; POST `/chat/requests/:id/cancel` or `/retry`; POST `/chat/approvals/:id/decision` | D+F submit/cancel/approve; payload pins root and V3 funding selection |
 | GET `/scopes/:scopeId/project`; GET `/project/inventory`; POST `/project/confirm` | D project read/manage and inventory digest |
-| GET/POST `/scopes/:scopeId/project/worktrees`; GET/DELETE `/project/worktrees/:id` | D allowed worktree actions; cleanup/lease/fingerprint checks |
+| GET/POST `/scopes/:scopeId/project/worktrees`; GET/DELETE `/project/worktrees/:id` (deferred from V1) | D allowed worktree actions |
 | POST `/scopes/:scopeId/project/chats`; POST `/project/terminals` | D create with explicit Chat audience/root or sandbox terminal profile; default group Chat is created idempotently on share, join reuses it |
-| GET `/scopes/:scopeId/project/git`; POST `/project/git/actions` | D inspect/propose; commit/merge/push/PR execute only with exact owner-approved operation, typed refs/tree digest and CAS; no raw Git on restricted view |
-| POST `/scopes/:scopeId/project/git/operations/:operationId/decision` | D resource owner only; one-use expiring approval bound to tree/ref, remote/branch and exact action, never a generic forge token |
+| GET `/scopes/:scopeId/project/git`; POST `/project/git/actions` | D inspect; commit/push/PR execute through the broker under the owner identity for Contributor and above, no owner approval in V1, requesting member audited |
+| POST `/scopes/:scopeId/project/git/operations/:operationId/decision` (deferred from V1) | D resource owner only; one-use expiring approval bound to tree/ref |
 | GET/PATCH `/scopes/:scopeId/project/layout` | D read/mutate filtered nodes; personal viewport separate |
 | GET `/scopes/:scopeId/files`; GET `/files/:fileId/content`; POST `/files/actions` | D exact catalog action; streaming download/staged upload/commit/rename/delete/move union |
 | GET `/scopes/:scopeId/apps/:appId`; POST `/apps/:appId/view`; GET `/apps/:appId/assets/*`; POST `/apps/:appId/actions` | D per-instance asset/view/action policy; isolated renderer origin/CSP, no owner cookies |
 | GET `/scopes/:scopeId/terminal`; POST `/terminal/actions`; GET `/terminal/ws` (WS) | D read/control profile; no generic owner PTY |
 | GET `/scopes/:scopeId/events` (WS); GET `/sync/events` (WS) | D every batch/replay/input + expiry watchdog; audience-filtered event payloads |
-| GET `/scopes/:scopeId/integrations`; POST `/integrations/:connectionId/actions` | D+F exact tool/upstream resource + required approval; output audience ceiling |
+| GET `/scopes/:scopeId/integrations`; POST `/integrations/:connectionId/actions` (deferred from V1) | D+F exact tool/upstream resource; V1 runs use the owner's existing connections through the ordinary run path |
 | GET/PUT `/scopes/:scopeId/execution-policy` | D read; only owner changes the single selected V3 source and submit mode. Participants cannot override source/account IDs in run payloads |
 | POST `/scopes/:scopeId/lifecycle`; GET `/operations/:id`; GET `/exports/:id` | D distinct archive/delete/transfer/export/recovery capabilities |
 | POST `/scopes/:scopeId/transfers` (deferred from V1) | D transfer plus target signed consent; preview/confirm action union |
@@ -82,7 +82,7 @@ Route suffixes in this table use `/api/collaboration` as prefix unless a complet
 
 POST `/api/collaboration/peer/sessions` verifies P with exact purpose, actor, source/target keys and generation. GET `/peer/operations/:id/manifest`, GET `/peer/operations/:id/chunks/:chunkId`, PUT `/peer/operations/:id/chunks/:chunkId`, POST `/peer/operations/:id/commit`, and POST `/peer/operations/:id/cancel` require the resulting proof-bound P session plus current G on both endpoints. Manifest/chunk IDs are operation-bound, lengths/hashes checked and streaming bounded; commits require matching inventory/fence. No path supplied by a peer is an unchecked filesystem destination.
 
-POST `/peer/integrations/:delegationId/actions` requires P+F with exact tool/action/request hash and upstream scope; retry ambiguous remote effects only with connector idempotency or explicit reconciliation. Responses carry approved data only to the authorized requesting runtime/Chat audience. Peer sessions never grant a remote shell or provider token export.
+Deferred from V1: POST `/peer/integrations/:delegationId/actions` requires P+F with exact tool/action/request hash and upstream scope; retry ambiguous remote effects only with connector idempotency or explicit reconciliation. Responses carry approved data only to the authorized requesting runtime/Chat audience. Peer sessions never grant a remote shell or provider token export.
 
 ## Ticket/proof and limits
 
@@ -100,6 +100,6 @@ GET/POST `/api/organizations/:orgId/groups/:groupId/messages` and GET `/events` 
 
 Project share/create idempotently establishes the default shared Chat. Accept/join returns its Chat/resource ID and direct connection metadata, never a new personal copy or new worktree. Discussion is distinct from AI submission; Contributor includes discussion, Viewer is read-only. A run body may select allowed model/harness/root and request ID but never an arbitrary account; server pins the project owner's configured source/policy revision and original requesting actor. Effective submit mode is `members` only when the organization's projected `collaboration.aiSubmission` metadata is `members` and the project policy is not `owner_only`; otherwise `owner_only` rejects member execution while preserving discussion. No provider-eligibility check is performed; the source kind is returned in readiness. No participant OAuth/sign-in or source picker endpoints ship.
 
-Git actions form an explicit union: status/diff, propose-commit, propose-merge, propose-push, propose-pr, owner-approve and execute-approved. Requests/decisions use immutable payload hashes, expected refs/tree digest and exact owner identity. Broker checks grants, owner decision, protected branches, credential binding and freshness immediately before side effects. Ambiguous push/PR results reconcile by operation ID and observed refs before retry. Local agent commands and integration routes must enforce the same Git ceiling. No credential access/forge write bypass through unrestricted shell or broad MCP tokens.
+Git actions form an explicit union: status/diff, commit, push and pr. Requests use immutable payload hashes and expected refs. The broker checks the member's preset, credential binding and freshness immediately before side effects and executes under the owner identity; owner approval, merge and remote changes are deferred. Ambiguous push/PR results reconcile by operation ID and observed refs before retry. Local agent commands and integration routes must enforce the same Git ceiling. No credential access/forge write bypass through unrestricted shell or broad MCP tokens.
 
 Copy-and-continue is a documented future capability, not an enabled peer action or route. Existing peer transfer keeps its move/fence semantics and cannot be used as a hidden clone API.

@@ -29,17 +29,17 @@ V1 platform records are organizations/memberships, the organization command inbo
 | --- | --- |
 | collaboration_scopes | Stable resource ID, owner, owning organization, home runtime/generation, parent scope, lifecycle, policy revision; one authoritative writer |
 | collaboration_grants | Audience, deriving organization, preset, explicit actions/selectors, pending/active/revoked/expired, source ID, exact legacy ceiling, revision; org grants do not fan out to every member; no grant outlives the membership or guest admission it derives from |
-| capability_profiles/restrictions | Versioned action sets, file/folder/app/Chat selectors, denies, parent/org ceilings, approval requirements; parent restrictions cannot be widened below |
+| capability_profiles/restrictions (deferred from V1) | Versioned action sets, file/folder/app/Chat selectors, denies, parent/org ceilings, approval requirements; V1 stores one whole-project preset per grant |
 | resource_catalog/app_instances | Non-reused file/folder/instance IDs, path incarnation, parent and namespace, revision/tombstone; app namespace is owner-controlled and not a shared slug |
-| collaboration_access_requests | Actor, scope, requested capability, proposed bounded operation, approver class, state/expiry/revision; approval never creates a generic owner session |
+| collaboration_access_requests (deferred from V1) | Actor, scope, requested capability, proposed bounded operation, approver class, state/expiry/revision |
 | direct_sessions/nonces | Actor/device key, resource, home generation, ticket nonce, expiry; bounded single-use handshake records and proof replay window |
 | collaboration_run_bindings | Existing canonical run ID plus requesting actor, executing owner, one project-selected V3 binding, payer/policy, worktree/root fingerprint, executor, Chat audience ceiling, session generation; immutable once admitted |
 | project_execution_policies | One active owner-selected V3 source, submit mode (follow organization, or owner-only), owner provider-terms acknowledgement, allowed harnesses/models, budget/concurrency, task profiles and integration grants; versioned owner approval |
-| project_default_chat | Unique project ID to canonical Chat ID/root and audience binding; idempotent create/join, joining does not create a worktree or provider account |
-| project_git_operations | Requestor, owner approver, tree/ref digest, approved remote/branch/action, one-use expiry, commit/PR result and unknown/reconciling state; owner Git identity and broker-held forge credential, immutable operation audit |
-| worktree_leases | Worktree ID, Chat/run/terminal holders, fencing token, heartbeat/deadline and root fingerprint; one writer, bounded readers |
-| filtered_workspace_operations | Source revision, allowed catalog set, materialization digest, produced-file audience label, staged patch, publication state; no unrestricted Git object store |
-| integration_connections/delegations | V3-style credential owner/custody runtime, encrypted local secret reference, allowed actors/scopes/tools/upstream resources, revisions and approval rules; no plaintext in ordinary owner data exports |
+| project_default_chat | Unique project ID to canonical Chat ID/root and audience binding; idempotent create/join; joining creates no worktree, copy or provider account; share-time inventory of every Chat root in the project |
+| project_git_operations | Requesting member, run, operation (commit/push/PR), remote/branch, result and unknown/reconciling state; owner Git identity and broker-held forge credential; no owner approval in V1; immutable operation audit |
+| worktree_leases (deferred from V1) | Worktree ID, Chat/run/terminal holders, fencing token, heartbeat/deadline and root fingerprint |
+| filtered_workspace_operations (deferred from V1) | Source revision, allowed catalog set, materialization digest, staged patch, publication state |
+| integration_connections/delegations (deferred from V1) | Credential owner/custody runtime, allowed actors/scopes/tools/upstream resources; V1 shared runs use the owner's existing connections |
 | transfers | Exact inventory/version digest, source/target runtime and owner, dual consent, authority generation, phase, checksums/checkpoint/recovery state |
 | resource audit/outbox | Actor/action/resource/generation/result, no secrets/transcript; transactional with authority changes |
 
@@ -50,9 +50,9 @@ Keep canonical Chat/project/worktree entities; extend them rather than adding an
 1. Resolve current lifecycle, runtime generation and actor identity.
 2. Resolve fresh membership evidence for every grant; a resource without a resolvable organization context, or an actor without current membership or guest admission in it, denies before any allow is considered. No environment flag or cohort record participates.
 3. Union matching explicit allows, intersect parent/resource/org hard ceilings and original migration action ceilings, subtract matching denies. No implicit management/funding privilege from editor or org admin.
-4. For a run, intersect actor capabilities with Chat audience data ceiling, the single project owner source and its submission mode, payer budget, task profile and sandbox capabilities. For commit/merge/push/PR also require a current exact owner Git approval, regardless of generic integration/task grants. For integration calls also intersect upstream OAuth/resource scope.
+4. For a run, intersect actor capabilities with Chat audience data ceiling, the single project owner source and its submission mode, payer budget, task profile and sandbox capabilities. Commit/push/PR run through the Git broker under the owner identity with no approval in V1. Integration calls use the owner's existing connections.
 5. Reauthorize queue claim, each tool/terminal input, output publication, final upload/patch commit and stream batches. Previously started remote effects cannot be recalled; no next step gets expired authority.
-6. Artifacts inherit the data audience of their inputs. A broader publish/merge is a separately approved declassification operation; general merge permission is insufficient. Mixed-sensitivity historical Chats cannot be broad-shared without explicit review.
+Deferred from V1 with granular sharing: 6. Artifacts inherit the data audience of their inputs. A broader publish/merge is a separately approved declassification operation; general merge permission is insufficient. Mixed-sensitivity historical Chats cannot be broad-shared without explicit review.
 
 ## Lease and revocation protocol
 
