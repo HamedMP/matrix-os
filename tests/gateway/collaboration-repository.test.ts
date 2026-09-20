@@ -37,6 +37,7 @@ describe("CollaborationRepository", () => {
   async function createScope() {
     return repository.createDirectScope({
       scopeId: collaborationIds.scope,
+      organizationId: "org_matrix_team",
       ownerId: collaborationActors.owner,
       kind: "chat",
       resourceId: collaborationIds.chat,
@@ -49,6 +50,7 @@ describe("CollaborationRepository", () => {
       createScope(),
       repository.createDirectScope({
         scopeId: "10000000-0000-4000-8000-000000000002",
+        organizationId: "org_matrix_team",
         ownerId: collaborationActors.owner,
         kind: "chat",
         resourceId: collaborationIds.chat,
@@ -201,6 +203,7 @@ describe("CollaborationRepository", () => {
   it("keeps project invitations and acceptance undiscoverable until project activation", async () => {
     const scope = await repository.createDirectScope({
       scopeId: collaborationIds.scope,
+      organizationId: "org_matrix_team",
       ownerId: collaborationActors.owner,
       kind: "project",
       resourceId: "project_private",

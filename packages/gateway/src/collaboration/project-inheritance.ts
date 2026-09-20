@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { Kysely, Selectable, Transaction } from "kysely";
+import { sql, type Kysely, type Selectable, type Transaction } from "kysely";
 import { z } from "zod/v4";
 import type {
   CollaborationResourceBindingsTable,
@@ -139,6 +139,10 @@ async function inheritedResourceScope(
     id: proposedId,
     owner_type: input.ownerType,
     owner_id: input.ownerId,
+    // The deriving organization is always the parent project's (S20 / T101).
+    organization_id: sql<string | null>`(
+      SELECT organization_id FROM collaboration_scopes WHERE id = ${input.projectScopeId}
+    )`,
     kind: input.kind,
     resource_id: input.resourceId,
     parent_scope_id: input.projectScopeId,

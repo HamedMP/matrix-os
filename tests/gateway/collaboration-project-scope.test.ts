@@ -32,9 +32,10 @@ describe("project collaboration scope preparation", () => {
 
   it("creates one unpublished owner scope without a discoverable directory route", async () => {
     const service = projectScopeService(fixture, () => revision);
-    const preflight = await service.preflight({ ownerId: OWNER_ID, projectId: PROJECT_ID });
+    const preflight = await service.preflight({ ownerId: OWNER_ID, organizationId: "org_matrix_team", projectId: PROJECT_ID });
     const scope = await service.prepare({
       ownerId: OWNER_ID,
+      organizationId: "org_matrix_team",
       projectId: PROJECT_ID,
       clientRequestId: REQUEST_ID,
       payloadHash: "a".repeat(64),
@@ -61,9 +62,10 @@ describe("project collaboration scope preparation", () => {
 
   it("replays the same actor request but rejects a changed payload", async () => {
     const service = projectScopeService(fixture, () => revision);
-    const preflight = await service.preflight({ ownerId: OWNER_ID, projectId: PROJECT_ID });
+    const preflight = await service.preflight({ ownerId: OWNER_ID, organizationId: "org_matrix_team", projectId: PROJECT_ID });
     const input = {
       ownerId: OWNER_ID,
+      organizationId: "org_matrix_team",
       projectId: PROJECT_ID,
       clientRequestId: REQUEST_ID,
       payloadHash: "a".repeat(64),
@@ -78,9 +80,10 @@ describe("project collaboration scope preparation", () => {
 
   it("returns the existing logical project scope for a new idempotent create request", async () => {
     const service = projectScopeService(fixture, () => revision);
-    const preflight = await service.preflight({ ownerId: OWNER_ID, projectId: PROJECT_ID });
+    const preflight = await service.preflight({ ownerId: OWNER_ID, organizationId: "org_matrix_team", projectId: PROJECT_ID });
     const base = {
       ownerId: OWNER_ID,
+      organizationId: "org_matrix_team",
       projectId: PROJECT_ID,
       payloadHash: "a".repeat(64),
       expectedProjectRevision: preflight.projectRevision,
@@ -102,9 +105,10 @@ describe("project collaboration scope preparation", () => {
 
   it("returns an existing project scope in preflight so the owner can reopen sharing", async () => {
     const service = projectScopeService(fixture, () => revision);
-    const preflight = await service.preflight({ ownerId: OWNER_ID, projectId: PROJECT_ID });
+    const preflight = await service.preflight({ ownerId: OWNER_ID, organizationId: "org_matrix_team", projectId: PROJECT_ID });
     await service.prepare({
       ownerId: OWNER_ID,
+      organizationId: "org_matrix_team",
       projectId: PROJECT_ID,
       clientRequestId: REQUEST_ID,
       payloadHash: "a".repeat(64),
@@ -114,7 +118,7 @@ describe("project collaboration scope preparation", () => {
     await fixture.db.updateTable("collaboration_scopes").set({ lifecycle: "shared", revision: 1 })
       .where("id", "=", SCOPE_ID).execute();
 
-    await expect(service.preflight({ ownerId: OWNER_ID, projectId: PROJECT_ID })).resolves.toMatchObject({
+    await expect(service.preflight({ ownerId: OWNER_ID, organizationId: "org_matrix_team", projectId: PROJECT_ID })).resolves.toMatchObject({
       eligible: true,
       existingScopeId: SCOPE_ID,
       existingLifecycle: "shared",
@@ -123,10 +127,11 @@ describe("project collaboration scope preparation", () => {
 
   it("rejects stale or cross-owner confirmation without creating a scope", async () => {
     const service = projectScopeService(fixture, () => revision);
-    const preflight = await service.preflight({ ownerId: OWNER_ID, projectId: PROJECT_ID });
+    const preflight = await service.preflight({ ownerId: OWNER_ID, organizationId: "org_matrix_team", projectId: PROJECT_ID });
     revision = 8;
     await expect(service.prepare({
       ownerId: OWNER_ID,
+      organizationId: "org_matrix_team",
       projectId: PROJECT_ID,
       clientRequestId: REQUEST_ID,
       payloadHash: "a".repeat(64),

@@ -27,6 +27,11 @@ export const CollaborationInvitationIdentifierSchema = z.string()
   .min(1)
   .max(320)
   .regex(/^[^\u0000-\u001F\u007F]+$/, "Invalid invitation identifier");
+/** Clerk organization identifier: every scope is owned by exactly one organization (S20 / T101). */
+export const CollaborationOrganizationIdSchema = z.string()
+  .min(5)
+  .max(128)
+  .regex(/^org_[A-Za-z0-9_-]+$/, "Invalid organization identifier");
 export const CollaborationInvitationIdentifierRequestSchema = z.object({
   identifier: CollaborationInvitationIdentifierSchema,
 }).strict();
@@ -84,6 +89,7 @@ export const CollaborationCapabilitiesSchema = z.object({
 export const CollaborationScopeSchema = z.object({
   id: CollaborationIdSchema,
   ownerId: CollaborationActorIdSchema,
+  organizationId: CollaborationOrganizationIdSchema.optional(),
   kind: CollaborationScopeKindSchema,
   resourceId: CollaborationResourceIdSchema,
   parentScopeId: CollaborationIdSchema.optional(),
@@ -106,6 +112,7 @@ export const CollaborationScopeSchema = z.object({
 export const CollaborationScopePreflightRequestSchema = z.object({
   kind: CollaborationScopeKindSchema,
   resourceId: CollaborationResourceIdSchema,
+  organizationId: CollaborationOrganizationIdSchema,
 }).strict();
 
 export const CollaborationScopePreflightResponseSchema = z.object({
@@ -124,6 +131,7 @@ export const CollaborationScopePreflightResponseSchema = z.object({
 export const CollaborationCreateScopeRequestSchema = z.object({
   kind: CollaborationScopeKindSchema,
   resourceId: CollaborationResourceIdSchema,
+  organizationId: CollaborationOrganizationIdSchema,
   clientRequestId: CollaborationIdSchema,
   expectedRevision: CollaborationRevisionSchema,
   confirmationToken: z.string().min(64).max(4_096).regex(/^[A-Za-z0-9_.-]+$/),

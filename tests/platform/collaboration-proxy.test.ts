@@ -264,7 +264,7 @@ describe("CollaborationProxy", () => {
       ],
     });
     const preflightPath = "/api/collaboration/runtimes/runtime_owner/scopes/preflight";
-    const projectBody = new TextEncoder().encode(JSON.stringify({ kind: "project", resourceId: "project_alpha" }));
+    const projectBody = new TextEncoder().encode(JSON.stringify({ kind: "project", resourceId: "project_alpha", organizationId: "org_matrix_team" }));
     expect((await proxy.forward({
       actorId: platformCollaborationActors.owner,
       method: "POST",
@@ -399,6 +399,8 @@ describe("CollaborationProxy", () => {
     const createBody = new TextEncoder().encode(JSON.stringify({
       kind: "chat",
       resourceId: "chat_post_startup",
+
+      organizationId: "org_matrix_team",
       clientRequestId: "40000000-0000-4000-8000-000000000099",
       expectedRevision: "0",
       confirmationToken: "a".repeat(64),

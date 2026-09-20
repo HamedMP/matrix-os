@@ -419,6 +419,31 @@ export async function migrateDiscussionV6(trx: Transaction<OwnerCollaborationDat
   `.execute(trx);
 }
 
+/**
+ * S20 / T101: every scope records its owning organization and every grant the
+ * organization it derives from. The columns are nullable so the migration
+ * never fails on a home that still holds pre-organization rows; those rows
+ * are denied by the organization precondition, inventoried by T102 and
+ * dispositioned at the S18 cutover, after which S18 tightens them to NOT
+ * NULL. Write paths always populate them.
+ */
+async function migrateOrganizationContextV7(trx: Transaction<OwnerCollaborationDatabase>): Promise<void> {
+  await sql`ALTER TABLE collaboration_scopes ADD COLUMN IF NOT EXISTS organization_id TEXT
+    CHECK (organization_id IS NULL OR char_length(organization_id) BETWEEN 1 AND 128)`.execute(trx);
+  await sql`ALTER TABLE collaboration_members ADD COLUMN IF NOT EXISTS organization_id TEXT
+    CHECK (organization_id IS NULL OR char_length(organization_id) BETWEEN 1 AND 128)`.execute(trx);
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_collaboration_scopes_organization
+    ON collaboration_scopes(organization_id)
+    WHERE organization_id IS NOT NULL AND deleted_at IS NULL
+  `.execute(trx);
+  await sql`
+    INSERT INTO collaboration_schema_migrations (version)
+    VALUES (7)
+    ON CONFLICT (version) DO NOTHING
+  `.execute(trx);
+}
+
 export interface CollaborationVersionedMigration {
   readonly version: number;
   readonly run: (trx: Transaction<OwnerCollaborationDatabase>) => Promise<void>;
@@ -430,4 +455,5 @@ export const COLLABORATION_VERSIONED_MIGRATIONS: readonly CollaborationVersioned
   { version: 4, run: migrateLayoutAndViewStatesV4 },
   { version: 5, run: migrateTransitionAuthorityCheckV5 },
   { version: 6, run: migrateDiscussionV6 },
+  { version: 7, run: migrateOrganizationContextV7 },
 ];

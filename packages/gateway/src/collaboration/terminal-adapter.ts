@@ -22,6 +22,7 @@ const TerminalSessionSchema = z.object({
 const PreflightPayloadSchema = z.object({
   version: z.literal(1),
   ownerId: z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/),
+  organizationId: z.string().min(5).max(128).regex(/^org_[A-Za-z0-9_-]+$/),
   terminalId: z.string().min(1).max(128),
   incarnation: z.string().regex(/^terminal-[a-f0-9]{32}$/),
   executionGeneration: z.number().int().positive(),
@@ -88,7 +89,7 @@ export class CollaborationTerminalAdapter implements CollaborationTerminalRuntim
     TerminalEligibilitySchema.parse(options.executionEligibility);
   }
 
-  async preflight(input: { ownerId: string; terminalId: string }): Promise<{
+  async preflight(input: { ownerId: string; organizationId: string; terminalId: string }): Promise<{
     eligible: boolean;
     reason?: "unsupported" | "unavailable";
     resourceRevision: number;
@@ -105,6 +106,7 @@ export class CollaborationTerminalAdapter implements CollaborationTerminalRuntim
     const payload = PreflightPayloadSchema.parse({
       version: 1,
       ownerId: input.ownerId,
+      organizationId: input.organizationId,
       terminalId: input.terminalId,
       incarnation: session.sessionIncarnation,
       executionGeneration: session.executionGeneration,
@@ -119,6 +121,7 @@ export class CollaborationTerminalAdapter implements CollaborationTerminalRuntim
 
   async shareTerminal(input: {
     ownerId: string;
+    organizationId: string;
     terminalId: string;
     clientRequestId: string;
     payloadHash: string;
@@ -140,6 +143,7 @@ export class CollaborationTerminalAdapter implements CollaborationTerminalRuntim
     const scope = await this.options.repository.createDirectScope({
       scopeId: this.createScopeId(),
       ownerId: input.ownerId,
+      organizationId: input.organizationId,
       kind: "terminal",
       resourceId: input.terminalId,
       authorityRuntimeId: this.options.runtimeId,
@@ -285,6 +289,7 @@ export class CollaborationTerminalAdapter implements CollaborationTerminalRuntim
 
   private verifyConfirmation(input: {
     ownerId: string;
+    organizationId: string;
     terminalId: string;
     expectedResourceRevision: number;
     confirmationToken: string;
@@ -306,7 +311,8 @@ export class CollaborationTerminalAdapter implements CollaborationTerminalRuntim
       throw invalidConfirmation();
     }
     const payload = PreflightPayloadSchema.safeParse(value);
-    if (!payload.success || payload.data.ownerId !== input.ownerId || payload.data.terminalId !== input.terminalId
+    if (!payload.success || payload.data.ownerId !== input.ownerId
+      || payload.data.organizationId !== input.organizationId || payload.data.terminalId !== input.terminalId
       || payload.data.executionGeneration !== input.expectedResourceRevision
       || Date.parse(payload.data.expiresAt) <= this.now().getTime()) throw invalidConfirmation();
     return payload.data;
@@ -453,6 +459,7 @@ function invalidConfirmation(): CollaborationTerminalAdapterError {
 function rowToScope(row: {
   id: string;
   owner_id: string;
+  organization_id?: string | null;
   kind: "chat" | "terminal" | "project";
   resource_id: string;
   parent_scope_id: string | null;
@@ -478,6 +485,7 @@ function rowToScope(row: {
     authorityRuntimeId: row.authority_runtime_id,
     authorityGeneration: Number(row.authority_generation),
     executionGeneration: row.execution_generation === null ? null : Number(row.execution_generation),
+    ...(row.organization_id === null || row.organization_id === undefined ? {} : { organizationId: row.organization_id }),
     executionEligibility: row.execution_eligibility,
   };
 }

@@ -17,6 +17,15 @@ import {
 import { registerFailClosedCollaborationRoutes } from "../../packages/gateway/src/collaboration/fail-closed.js";
 import { constructGatewayCollaborationOrFailClosed } from "../../packages/gateway/src/collaboration/construct.js";
 import { COLLABORATION_HTTP_BODY_LIMIT } from "@matrix-os/contracts";
+import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
+import { CollaborationRepository } from "../../packages/gateway/src/collaboration/repository.js";
+import { bootstrapChatDatabase } from "../../packages/gateway/src/chat/database.js";
+import {
+  collaborationActors,
+  collaborationIds,
+  createCollaborationTestDatabase,
+  type CollaborationTestDatabase,
+} from "./collaboration-test-support.js";
 
 const completeEnvironment = {
   MATRIX_RUNTIME_ID: "vps:11111111-1111-4111-8111-111111111111",
@@ -173,5 +182,94 @@ describe("S20 organization precondition: construction failures fail closed", () 
       onPartialRuntime: async () => { throw new Error("inventory unavailable"); },
     })).resolves.toEqual({ ok: false, reason: "construction_failed" });
     expect(runtime.shutdown).toHaveBeenCalledOnce();
+  });
+});
+
+describe("S20 / T101: every scope and grant carries its organization", () => {
+  const now = new Date("2026-09-20T12:00:00.000Z");
+  let fixture: CollaborationTestDatabase;
+
+  beforeEach(async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    fixture = await createCollaborationTestDatabase();
+    await bootstrapChatDatabase(fixture.db);
+    await bootstrapCollaborationDatabase(fixture.db);
+  });
+
+  afterEach(async () => {
+    await fixture.destroy();
+    vi.restoreAllMocks();
+  });
+
+  it("records the owning organization on the scope and the deriving organization on every grant", async () => {
+    const repository = new CollaborationRepository(fixture.db, { now: () => now });
+    const scope = await repository.createDirectScope({
+      scopeId: collaborationIds.scope,
+      ownerId: collaborationActors.owner,
+      organizationId: "org_matrix_team",
+      kind: "chat",
+      resourceId: collaborationIds.chat,
+      authorityRuntimeId: collaborationIds.runtime,
+    });
+    expect(scope.organizationId).toBe("org_matrix_team");
+    await fixture.db.updateTable("collaboration_scopes").set({ lifecycle: "shared" })
+      .where("id", "=", collaborationIds.scope).execute();
+    const created = await repository.createInvitation({
+      scopeId: collaborationIds.scope,
+      actorId: collaborationActors.owner,
+      targetActorId: collaborationActors.editor,
+      role: "editor",
+      clientRequestId: "40000000-0000-4000-8000-000000000001",
+      expectedRevision: 0,
+      payloadHash: "a".repeat(64),
+      expiresAt: new Date(now.getTime() + 60_000).toISOString(),
+    });
+    const rows = await fixture.db.selectFrom("collaboration_members")
+      .select(["actor_id", "organization_id"]).where("scope_id", "=", created.scopeId).execute();
+    expect(rows).toEqual(expect.arrayContaining([
+      { actor_id: collaborationActors.owner, organization_id: "org_matrix_team" },
+      { actor_id: collaborationActors.editor, organization_id: "org_matrix_team" },
+    ]));
+  });
+
+  it("refuses to reuse a direct scope for another organization", async () => {
+    const repository = new CollaborationRepository(fixture.db, { now: () => now });
+    const input = {
+      scopeId: collaborationIds.scope,
+      ownerId: collaborationActors.owner,
+      organizationId: "org_matrix_team",
+      kind: "terminal" as const,
+      resourceId: "terminal_release",
+      authorityRuntimeId: collaborationIds.runtime,
+    };
+    await expect(repository.createDirectScope(input)).resolves.toMatchObject({ organizationId: "org_matrix_team" });
+    await expect(repository.createDirectScope({ ...input, scopeId: "10000000-0000-4000-8000-000000000099", organizationId: "org_other_company" }))
+      .rejects.toMatchObject({ code: "conflict" });
+    expect(await fixture.db.selectFrom("collaboration_scopes").select("organization_id").execute())
+      .toEqual([{ organization_id: "org_matrix_team" }]);
+  });
+
+  it("refuses to widen a pre-organization scope", async () => {
+    const repository = new CollaborationRepository(fixture.db, { now: () => now });
+    await repository.createDirectScope({
+      scopeId: collaborationIds.scope,
+      ownerId: collaborationActors.owner,
+      organizationId: "org_matrix_team",
+      kind: "chat",
+      resourceId: collaborationIds.chat,
+      authorityRuntimeId: collaborationIds.runtime,
+    });
+    await fixture.db.updateTable("collaboration_scopes").set({ lifecycle: "shared", organization_id: null })
+      .where("id", "=", collaborationIds.scope).execute();
+    await expect(repository.createInvitation({
+      scopeId: collaborationIds.scope,
+      actorId: collaborationActors.owner,
+      targetActorId: collaborationActors.editor,
+      role: "editor",
+      clientRequestId: "40000000-0000-4000-8000-000000000002",
+      expectedRevision: 0,
+      payloadHash: "a".repeat(64),
+      expiresAt: new Date(now.getTime() + 60_000).toISOString(),
+    })).rejects.toMatchObject({ code: "conflict" });
   });
 });
