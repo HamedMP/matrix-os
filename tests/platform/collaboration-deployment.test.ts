@@ -5,12 +5,11 @@ import { describe, expect, it } from "vitest";
 const workflow = readFileSync(resolve(".github/workflows/platform-cloud-run.yml"), "utf8");
 
 describe("platform collaboration deployment contract", () => {
-  it("keeps the platform authority enabled across Cloud Run deployments", () => {
-    expect(workflow).toContain("MATRIX_COLLABORATION_ENABLED: 'true'");
+  it("configures the platform authority without any collaboration release flag", () => {
     expect(workflow).toContain("MATRIX_COLLABORATION_ACTIVE_KEY_ID:");
     expect(workflow).toContain("MATRIX_COLLABORATION_ALLOWED_ORIGINS:");
-    expect(workflow).toContain("MATRIX_COLLABORATION_ENABLED=${MATRIX_COLLABORATION_ENABLED}");
     expect(workflow).toContain("MATRIX_COLLABORATION_PROOF_KEYS=collaboration-proof-keys:latest");
+    expect(workflow).not.toContain("MATRIX_COLLABORATION_ENABLED");
   });
 
   it("keeps long-lived collaboration sockets within a bounded Cloud Run capacity envelope", () => {
@@ -22,7 +21,7 @@ describe("platform collaboration deployment contract", () => {
   it("verifies the proof-key secret and the deployed revision contract", () => {
     expect(workflow).toContain("Verify collaboration proof secret");
     expect(workflow).toContain("secret_name=collaboration-proof-keys");
-    expect(workflow).toContain("MATRIX_COLLABORATION_ENABLED\n");
+    expect(workflow).toContain("MATRIX_COLLABORATION_ACTIVE_KEY_ID\n");
     expect(workflow).toContain("MATRIX_COLLABORATION_PROOF_KEYS=collaboration-proof-keys:latest");
   });
 });

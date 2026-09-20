@@ -38,9 +38,8 @@ describe("gateway collaboration wiring", () => {
   });
 
   it("fails closed on incomplete environment configuration", () => {
-    expect(loadGatewayCollaborationConfig({ MATRIX_COLLABORATION_ENABLED: "true" })).toBeNull();
+    expect(loadGatewayCollaborationConfig({})).toBeNull();
     expect(loadGatewayCollaborationConfig({
-      MATRIX_COLLABORATION_ENABLED: "true",
       MATRIX_RUNTIME_ID: collaborationIds.runtime,
       MATRIX_COLLABORATION_ACTIVE_KEY_ID: "key-1",
       MATRIX_COLLABORATION_PROOF_KEYS: JSON.stringify({ "key-1": "a".repeat(32) }),
@@ -52,7 +51,6 @@ describe("gateway collaboration wiring", () => {
 
   it("derives the VPS runtime ID from the existing machine identity", () => {
     expect(loadGatewayCollaborationConfig({
-      MATRIX_COLLABORATION_ENABLED: "true",
       MATRIX_MACHINE_ID: "11111111-1111-4111-8111-111111111111",
       MATRIX_COLLABORATION_ACTIVE_KEY_ID: "key-1",
       MATRIX_COLLABORATION_PROOF_KEYS: JSON.stringify({ "key-1": "a".repeat(32) }),

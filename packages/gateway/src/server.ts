@@ -193,8 +193,12 @@ import {
 } from "./chat/service.js";
 import { createDiscussionOnlyChatExecutionGuard } from "./collaboration/chat-scope.js";
 import {
+  constructGatewayCollaborationOrFailClosed,
   createGatewayCollaboration,
+  describeGatewayCollaborationConfiguration,
   loadGatewayCollaborationConfig,
+  registerFailClosedCollaborationRoutes,
+  type GatewayCollaborationConfigurationFailure,
   type GatewayCollaborationRuntime,
 } from "./collaboration/wiring.js";
 import { createLegacyProjectPathAdmission } from "./collaboration/project-path-admission.js";
@@ -915,13 +919,14 @@ export async function createGateway(config: GatewayConfig) {
   let canonicalChatCollaborationGuard: ReturnType<typeof createDiscussionOnlyChatExecutionGuard> | null = null;
   let gatewayCollaboration: GatewayCollaborationRuntime | null = null;
   let messagingRepository: MessagingKyselyRepository | null = null;
-  const collaborationConfig = loadGatewayCollaborationConfig(process.env);
-  if (process.env.MATRIX_COLLABORATION_ENABLED === "true" && !collaborationConfig) {
-    throw new Error("[collaboration] enabled with incomplete configuration");
-  }
-  if (collaborationConfig && !databaseUrl) {
-    throw new Error("[collaboration] enabled without owner Postgres");
-  }
+  // Collaboration wiring always constructs (S20): there is no release flag.
+  // Incomplete configuration or a missing owner database registers the
+  // fail-closed routes below instead of skipping construction.
+  const collaborationHealth = describeGatewayCollaborationConfiguration(process.env);
+  const collaborationConfig = collaborationHealth.configured ? loadGatewayCollaborationConfig(process.env) : null;
+  let collaborationFailClosedReason: GatewayCollaborationConfigurationFailure | null = collaborationHealth.configured
+    ? null
+    : collaborationHealth.reason;
   if (databaseUrl) {
     try {
       const { db, kysely } = createAppDb(databaseUrl);
@@ -943,9 +948,11 @@ export async function createGateway(config: GatewayConfig) {
       canonicalChatCollaborationGuard = createDiscussionOnlyChatExecutionGuard(chatRepository.kysely as Kysely<any>);
       await bootstrapChatSharing(chatRepository.kysely);
       if (collaborationConfig) {
-        gatewayCollaboration = await createGatewayCollaboration({
-          db: chatRepository.kysely as Kysely<any>,
-          chatRepository,
+        const ownerChatRepository = chatRepository;
+        const construction = await constructGatewayCollaborationOrFailClosed(
+          () => createGatewayCollaboration({
+          db: ownerChatRepository.kysely as Kysely<any>,
+          chatRepository: ownerChatRepository,
           config: collaborationConfig,
           projectSource: {
             getProject: async (ownerId, projectId) => {
@@ -961,61 +968,65 @@ export async function createGateway(config: GatewayConfig) {
               return { id: result.project.id, ownerId, revision };
             },
           },
-        });
-        await gatewayCollaboration.enableSharedProject({
-          homePath,
-          inventorySource: createGatewayProjectInventorySource({
+        }),
+          {
+          onPartialRuntime: (runtime) => runtime.enableSharedProject({
             homePath,
-            projects: {
-              get: async (ownerId, projectId) => {
-                const result = await codingAgentProjectManager.getProjectById(
-                  { type: "user", id: ownerId },
-                  projectId,
-                );
-                return result.ok ? {
-                  id: result.project.id,
-                  ownerId,
-                  rootPath: result.project.localPath,
-                  updatedAt: result.project.updatedAt,
-                } : null;
+            inventorySource: createGatewayProjectInventorySource({
+              homePath,
+              projects: {
+                get: async (ownerId, projectId) => {
+                  const result = await codingAgentProjectManager.getProjectById(
+                    { type: "user", id: ownerId },
+                    projectId,
+                  );
+                  return result.ok ? {
+                    id: result.project.id,
+                    ownerId,
+                    rootPath: result.project.localPath,
+                    updatedAt: result.project.updatedAt,
+                  } : null;
+                },
               },
-            },
-            chats: {
-              list: async (ownerId, projectId) => chatRepository!.kysely.selectFrom("chats")
-                .select(["id", "revision"])
-                .where("owner_type", "=", "personal")
-                .where("owner_id", "=", ownerId)
-                .where("project_id", "=", projectId)
-                .orderBy("id", "asc")
-                .limit(100_001)
-                .execute(),
-            },
-            canvases: {
-              getProjectCanvas: async (ownerId, projectId) => {
-                const rows = await canvasRepository!.kysely.selectFrom("canvas_documents")
-                  .select(["id", "revision", "nodes"])
-                  .where("owner_scope", "=", "personal")
+              chats: {
+                list: async (ownerId, projectId) => chatRepository!.kysely.selectFrom("chats")
+                  .select(["id", "revision"])
+                  .where("owner_type", "=", "personal")
                   .where("owner_id", "=", ownerId)
-                  .where("scope_type", "=", "project")
-                  .where("deleted_at", "is", null)
-                  .where(sql<boolean>`scope_ref ->> 'projectId' = ${projectId}`)
-                  .limit(2)
-                  .execute();
-                if (rows.length > 1) throw new Error("ProjectCanvasConflict");
-                return rows[0] ?? null;
+                  .where("project_id", "=", projectId)
+                  .orderBy("id", "asc")
+                  .limit(100_001)
+                  .execute(),
               },
-            },
-            apps: {
-              get: async (appId) => {
-                const app = await appRegistry!.get(appId);
-                return app ? { id: app.slug, collaborationMode: "scoped" as const } : null;
+              canvases: {
+                getProjectCanvas: async (ownerId, projectId) => {
+                  const rows = await canvasRepository!.kysely.selectFrom("canvas_documents")
+                    .select(["id", "revision", "nodes"])
+                    .where("owner_scope", "=", "personal")
+                    .where("owner_id", "=", ownerId)
+                    .where("scope_type", "=", "project")
+                    .where("deleted_at", "is", null)
+                    .where(sql<boolean>`scope_ref ->> 'projectId' = ${projectId}`)
+                    .limit(2)
+                    .execute();
+                  if (rows.length > 1) throw new Error("ProjectCanvasConflict");
+                  return rows[0] ?? null;
+                },
               },
-            },
-            sessions: {
-              list: () => terminalWorkspaceRuntime.listWorkspaces(),
-            },
-          }),
-        });
+              apps: {
+                get: async (appId) => {
+                  const app = await appRegistry!.get(appId);
+                  return app ? { id: app.slug, collaborationMode: "scoped" as const } : null;
+                },
+              },
+              sessions: {
+                list: () => terminalWorkspaceRuntime.listWorkspaces(),
+              },
+            }),
+          }) },
+        );
+        if (construction.ok) gatewayCollaboration = construction.runtime;
+        else collaborationFailClosedReason = construction.reason;
       }
       canonicalChatEventStream = createGatewayChatEventStream({
         projectOwnerToolOutput,
@@ -1148,7 +1159,8 @@ export async function createGateway(config: GatewayConfig) {
       await gatewayCollaboration?.shutdown();
       gatewayCollaboration = null;
       console.error("[app-db] Failed to connect to Postgres:", (err as Error).message);
-      if (collaborationConfig) throw err;
+      // Collaboration fails closed without the owner database; the rest of the gateway keeps serving.
+      if (collaborationConfig) collaborationFailClosedReason = "owner_database_missing";
       console.log("[app-db] Falling back to file-based storage");
       appDb = null;
       queryEngine = null;
@@ -4405,7 +4417,15 @@ export async function createGateway(config: GatewayConfig) {
     });
   }
   app.route("/", createChatSharingRoutes(chatRepository ? new ChatSharing(chatRepository.kysely) : null));
-  gatewayCollaboration?.register({ app, upgradeWebSocket });
+  if (gatewayCollaboration) {
+    gatewayCollaboration.register({ app, upgradeWebSocket });
+  } else {
+    registerFailClosedCollaborationRoutes({
+      app,
+      upgradeWebSocket,
+      reason: collaborationFailClosedReason ?? "owner_database_missing",
+    });
+  }
   app.route("/", createCanonicalChatRoutes({
     service: chatRepository
         ? createCanonicalChatService(chatRepository, {

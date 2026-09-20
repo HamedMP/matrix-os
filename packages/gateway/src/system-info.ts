@@ -1,4 +1,5 @@
 import { RUNNING_RUNTIME_COMPATIBILITY, type RuntimeCompatibility } from "@matrix-os/contracts";
+import { describeGatewayCollaborationConfiguration } from "./collaboration/config.js";
 import {
   closeSync,
   existsSync,
@@ -343,7 +344,7 @@ function readDiskUsage(path: string): { totalBytes: number; freeBytes: number } 
 
 export function getSystemInfo(
   homePath: string,
-  kernelOverrides: { model?: string; runningVersion?: string } = {},
+  kernelOverrides: { model?: string; runningVersion?: string; collaborationConfigured?: boolean } = {},
 ): SystemInfo {
   const kernel = resolveKernelConfigFile(homePath);
   let modules = 0;
@@ -429,7 +430,10 @@ export function getSystemInfo(
       runtimeSlot: process.env.MATRIX_RUNTIME_SLOT ?? "primary",
     },
     capabilities: {
-      collaboration: process.env.MATRIX_COLLABORATION_ENABLED === "true",
+      // Configuration health, not a release flag: true only when the home can
+      // construct the real collaboration runtime (S20 / T099).
+      collaboration: kernelOverrides.collaborationConfigured
+        ?? describeGatewayCollaborationConfiguration(process.env).configured,
     },
     build: {
       sha: process.env.MATRIX_BUILD_SHA ?? "unknown",
