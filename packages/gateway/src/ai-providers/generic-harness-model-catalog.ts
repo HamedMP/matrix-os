@@ -228,7 +228,10 @@ export function createGenericHarnessModelCatalogReader(options: {
           timeoutMs: COMMAND_TIMEOUT_MS,
           maxOutputBytes: MAX_OUTPUT_BYTES,
           env: harness === "opencode" ? {
-            ...env, OPENCODE_DISABLE_PROJECT_CONFIG: "1", OPENCODE_DISABLE_AUTOUPDATE: "1",
+            ...env,
+            NO_COLOR: "1",
+            OPENCODE_DISABLE_PROJECT_CONFIG: "1",
+            OPENCODE_DISABLE_AUTOUPDATE: "1",
           } : env,
         });
         return {
