@@ -1,3 +1,5 @@
+import { createProjectMetadataService } from "./project-metadata.js";
+import { registerProjectMetadataRoutes } from "./project-metadata-routes.js";
 import { createProjectDeletionCleanup, type ProjectChatCleanup } from "./project-deletion-cleanup.js";
 import type { BackgroundAgentRuntime } from "./background-agent-runtime.js";
 import { Hono, type Context } from "hono";
@@ -391,6 +393,11 @@ export function createWorkspaceRoutes(options: {
       };
     }
   }
+
+  registerProjectMetadataRoutes(app, {
+    update: createProjectMetadataService({ homePath: options.homePath, projectManager }),
+    getOwnerScope, principalError, admit: withLegacyProjectOperation,
+  });
 
   app.get("/api/github/status", async (c) => c.json(await projectManager.getGithubStatus()));
 

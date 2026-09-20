@@ -22,6 +22,7 @@ const ProjectRecordSchema = z.object({
   id: z.string().regex(/^proj_[A-Za-z0-9_-]{1,128}$/),
   name: z.string().min(1).max(200),
   description: z.string().max(1_000).optional(),
+  pinned: z.boolean().optional(),
   slug: z.string().regex(PROJECT_SLUG_REGEX),
   kind: z.enum(["scratch", "github", "folder"]).optional(),
   remote: z.string().max(2_048).optional(),
@@ -55,6 +56,7 @@ export interface ProjectRecord {
   id: string;
   name: string;
   description?: string;
+  pinned?: boolean;
   slug: string;
   kind?: "scratch" | "github" | "folder";
   remote?: string;

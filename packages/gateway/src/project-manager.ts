@@ -22,6 +22,7 @@ export interface ProjectConfig {
   id: string;
   name: string;
   description?: string;
+  pinned?: boolean;
   slug: string;
   kind: ProjectKind;
   remote?: string;
