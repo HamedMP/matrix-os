@@ -11,6 +11,11 @@ import { bootstrapPlatformCollaboration } from "../../packages/platform/src/coll
 import { createFailClosedPlatformCollaboration } from "../../packages/platform/src/collaboration/fail-closed.js";
 import { describePlatformCollaborationConfiguration } from "../../packages/platform/src/collaboration/wiring.js";
 import { COLLABORATION_HTTP_BODY_LIMIT } from "@matrix-os/contracts";
+import { bootstrapPlatformCollaborationDatabase } from "../../packages/platform/src/collaboration/database.js";
+import {
+  createPlatformCollaborationTestDatabase,
+  destroyPlatformCollaborationTestDatabase,
+} from "./collaboration-test-support.js";
 
 const signing = {
   MATRIX_COLLABORATION_ACTIVE_KEY_ID: "key-1",
@@ -93,5 +98,24 @@ describe("S20 platform organization precondition: fail-closed composition", () =
     });
     expect("failClosed" in composition && composition.failClosed.reason).toBe("runtime_authentication_missing");
     expect(composition.sockets).toBeUndefined();
+  });
+});
+
+describe("S20 / T100: the rollout cohort table is gone", () => {
+  it("drops collaboration_rollout_policy on bootstrap and keeps the ticket table without a policy revision", async () => {
+    const fixture = await createPlatformCollaborationTestDatabase();
+    try {
+      await bootstrapPlatformCollaborationDatabase(fixture.collaborationDb);
+      const tables = await fixture.collaborationDb.selectFrom("pg_tables" as never)
+        .select("tablename" as never).where("tablename" as never, "=", "collaboration_rollout_policy").execute();
+      expect(tables).toEqual([]);
+      const columns = await fixture.collaborationDb.selectFrom("information_schema.columns" as never)
+        .select("column_name" as never)
+        .where("table_name" as never, "=", "collaboration_connection_tickets")
+        .where("column_name" as never, "=", "policy_revision").execute();
+      expect(columns).toEqual([]);
+    } finally {
+      await destroyPlatformCollaborationTestDatabase(fixture);
+    }
   });
 });

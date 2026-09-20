@@ -189,13 +189,6 @@ describe("platform collaboration routes", () => {
 
   it("issues an events-only ticket to an accepted current member", async () => {
     await repository.applyDirectoryEvent({ ...directoryEvent("accepted"), metadataRevision: 2 });
-    await repository.setPolicy({
-      milestone: "m1",
-      expectedRevision: 0,
-      mode: "enabled",
-      cohort: [],
-      changedBy: "operator_test",
-    });
     const response = await app.request(`/api/collaboration/scopes/${scopeId}/connection-tickets`, {
       method: "POST",
       headers: {
@@ -279,24 +272,6 @@ describe("platform collaboration routes", () => {
     expect(resolveInvitationIdentifier).toHaveBeenCalledTimes(10);
   });
 
-  it("serves a short-lived signed rollout policy only to an authenticated runtime", async () => {
-    const denied = await app.request("/internal/collaboration/policy?milestone=m1");
-    expect(denied.status).toBe(401);
-    const response = await app.request("/internal/collaboration/policy?milestone=m1", {
-      headers: { authorization: `Bearer ${runtimeSecret}`, "x-matrix-runtime-id": "runtime_owner" },
-    });
-    expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({
-      policy: {
-        milestone: "m1",
-        revision: "0",
-        mode: "off",
-        issuedAt: now.toISOString(),
-        expiresAt: new Date(now.getTime() + 30_000).toISOString(),
-      },
-      keyId: "key-1",
-    });
-  });
 });
 
 function directoryEvent(status: "invited" | "accepted") {
