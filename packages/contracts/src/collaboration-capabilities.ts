@@ -234,6 +234,14 @@ export const CollaborationReadinessSchema = z.object({
   if (expected.length === 0 && (readiness.sourceKind !== undefined || readiness.effectiveSubmitMode !== undefined)) {
     ctx.addIssue({ code: "custom", path: ["sourceKind"], message: "Only execution scopes report a source or submit mode" });
   }
+  if (expected.length > 0 && readiness.state === "ready") {
+    if (readiness.sourceKind === undefined) {
+      ctx.addIssue({ code: "custom", path: ["sourceKind"], message: "A ready execution scope names its source kind" });
+    }
+    if (readiness.effectiveSubmitMode === undefined) {
+      ctx.addIssue({ code: "custom", path: ["effectiveSubmitMode"], message: "A ready execution scope names its effective submit mode" });
+    }
+  }
   if ((readiness.state === "owner_setup_needed") !== (readiness.missingOwnerSetup.length > 0)) {
     ctx.addIssue({ code: "custom", path: ["missingOwnerSetup"], message: "Owner setup items are reported only when setup is needed" });
   }

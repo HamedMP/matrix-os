@@ -21,7 +21,7 @@
 
 | Command | RED (`c2e42789f`) | GREEN (`07c129efb`) |
 | --- | --- | --- |
-| `pnpm exec vitest run tests/contracts/collaboration-capabilities.test.ts tests/contracts/collaboration-direct.test.ts tests/contracts/collaboration-execution.test.ts` | 30 failed / 0 passed (every schema undefined) | 30 passed |
+| `pnpm exec vitest run tests/contracts/collaboration-capabilities.test.ts tests/contracts/collaboration-direct.test.ts tests/contracts/collaboration-execution.test.ts` | 30 failed / 0 passed (every schema undefined) | 30 passed; 31 after the Greptile round (branch-corpus parity test) |
 | `pnpm exec vitest run tests/contracts` | — | 38 files, 353 tests passed |
 | `pnpm --filter @matrix-os/contracts exec tsc --noEmit` | — | clean |
 | `bun run check:patterns` | — | 0 violations (5 pre-existing warnings) |
@@ -34,7 +34,9 @@
 - Resource kinds: project, chat, terminal, app_instance, file, folder. Readiness items (project and chat only): ai_source, submit_mode, git_identity, chat_root_inventory.
 - Submit mode: follow_organization, owner_only; effective: members, owner_only; organization metadata: members, owner_only, absent, unknown (absent/unknown resolve to owner_only).
 - Run status: queued, claimed, running, waiting_for_approval, completed, failed, cancelled, interrupted (reasons: gateway_restart, scope_runtime_crash, run_unit_exit, control_partition). Control: cancel and tool_approval for requester or scope_owner; retry for requester.
-- Git actions: status, diff, commit, push, pr; operation states: pending, running, completed, failed, unknown, reconciling.
+- Git actions: status, diff, commit, push, pr; operation states: pending, running, completed, failed, unknown, reconciling. Branch names: `isCollaborationGitBranchName` mirrors the gateway's `isValidGitBranchName` (git-check-ref-format tightened for argv safety, plus no `refs/` prefix) and a contract test pins both validators to one corpus.
+- Run decisions: `decidedBy.relation = requester` requires `actorId = requestingActorId`; `scope_owner` requires `actorId = scopeOwnerId` when present and never the requester unless the owner requested the run. Tool-approval bodies carry `runId` (identity in `:approvalId`), matching the existing handler and CLI.
+- Readiness: a `ready` project or Chat must carry `sourceKind` and `effectiveSubmitMode`; file, folder, app instance and terminal never do.
 - Ticket purposes: direct_session, events, terminal, control, peer. Protocol version 2; mismatch → `upgrade_required`.
 
 ## Open gates
