@@ -52,7 +52,7 @@ import { AppViewer } from "@/components/AppViewer";
 import { Settings } from "@/components/Settings";
 import { PreviewWindow } from "@/components/preview-window/PreviewWindow";
 import { enqueueTerminalLaunch, type TerminalLaunchAction } from "@/lib/terminal-launch";
-import { enqueueExistingTerminalSession } from "@/lib/provider-terminal-session";
+import { enqueueExistingProviderTerminal } from "@/lib/provider-terminal-session";
 import { OPEN_PROVIDER_SETTINGS_EVENT } from "@/lib/canonical-provider-setup";
 import {
   createTerminalLayoutId,
@@ -345,7 +345,7 @@ export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenComman
       : [...previous, { id, app: terminal, openedAt: Date.now() }]);
     setSettingsOpen(false);
     setView("app");
-    enqueueExistingTerminalSession(sessionId, id);
+    enqueueExistingProviderTerminal(sessionId, id);
   }, []);
 
   const terminalInstanceCount = openStack.reduce((count, entry) => (

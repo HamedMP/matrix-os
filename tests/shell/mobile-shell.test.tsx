@@ -280,6 +280,23 @@ describe("mobile shell", () => {
     expect(window.sessionStorage.getItem("matrix:terminal-launch-queue")).toBeNull();
   });
 
+  it("selects the browser-created provider tab by its canonical reference", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve({
+      ok: true,
+      json: async () => [],
+    })));
+    const MobileShell = await loadMobileShell();
+    const terminalRef = `tws_${"a".repeat(32)}:tt_${"b".repeat(32)}`;
+
+    render(<MobileShell />);
+    act(() => settingsMock.onOpenProviderTerminalSession?.(terminalRef));
+
+    expect(await screen.findByTestId("terminal-app")).toBeTruthy();
+    expect(JSON.parse(window.sessionStorage.getItem("matrix:provider-terminal-session-queue") ?? "[]"))
+      .toEqual([expect.objectContaining({ terminalRef })]);
+    expect(window.sessionStorage.getItem("matrix:terminal-launch-queue")).toBeNull();
+  });
+
   it("gives normal mobile terminals independent durable layouts", async () => {
     vi.stubGlobal("fetch", vi.fn(() => Promise.resolve({
       ok: true,
