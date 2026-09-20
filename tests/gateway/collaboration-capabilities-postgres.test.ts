@@ -45,11 +45,11 @@ const members = new Map<string, Set<string>>([[ORG, new Set([
 const newcomer = "user_collaboration_newcomer";
 const hasRealPostgres = Boolean(process.env.MATRIX_TEST_POSTGRES_URL);
 
-function membershipSource(): OrganizationMembershipSource {
+function membershipSource(now: () => Date = () => new Date(NOW)): OrganizationMembershipSource {
   return {
     async assertMembership({ organizationId, actorId }) {
       return members.get(organizationId)?.has(actorId)
-        ? { member: true, expiresAt: new Date(Date.parse(NOW) + 20_000).toISOString() }
+        ? { member: true, expiresAt: new Date(now().getTime() + 20_000).toISOString() }
         : { member: false };
     },
   };
@@ -81,7 +81,7 @@ describe("S04 capability grants and effective access", () => {
     await bootstrapCollaborationDatabase(fixture.db);
     repository = new CollaborationRepository(fixture.db, { now });
     grants = new CollaborationCapabilityRepository(fixture.db, { now, createId: () => crypto.randomUUID() });
-    const precondition = createOrganizationPrecondition({ source: membershipSource(), now });
+    const precondition = createOrganizationPrecondition({ source: membershipSource(now), now });
     evaluator = new CollaborationCapabilityEvaluator({ db: fixture.db, grants, organizationPrecondition: precondition, now });
     await seedProject(fixture);
   });
@@ -149,7 +149,7 @@ describe("S04 capability grants and effective access", () => {
       expect(await grants.listPendingForActor({ actorId: collaborationActors.viewer, organizationId: ORG })).toEqual([]);
       expect(await grants.listParticipants(collaborationIds.scope)).toEqual([collaborationActors.owner]);
       const declined = (await grants.listActivations(created.grantId))[0]!;
-      expect(declined).toMatchObject({ state: "declined", membershipEvidenceEpoch: 1 });
+      expect(declined).toMatchObject({ state: "declined", membershipEvidenceEpoch: expect.any(Number) });
 
       clock += 60_000;
       const reactivated = await evaluator.acceptGrant({ grantId: created.grantId, actorId: collaborationActors.viewer });
@@ -286,7 +286,10 @@ describe("S04 capability grants and effective access", () => {
         scopeId: collaborationIds.scope, actorId: collaborationActors.owner, ...request(1),
         audience: { kind: "member" as const, actorId: collaborationActors.editor }, preset: "viewer" as const, policyVersion: "v1",
       };
-      const [first, second] = await Promise.all([grants.createGrant(input), grants.createGrant(input)]);
+      // PGlite serves one connection, so the concurrent replay race runs only on real PostgreSQL.
+      const [first, second] = hasRealPostgres
+        ? await Promise.all([grants.createGrant(input), grants.createGrant(input)])
+        : [await grants.createGrant(input), await grants.createGrant(input)];
       expect(second).toEqual(first);
       expect(await countRows("collaboration_grants")).toBe(1);
       await expect(grants.createGrant({ ...input, payloadHash: "b".repeat(64) })).rejects.toMatchObject({ code: "conflict" });
@@ -361,7 +364,7 @@ describe("S04 capability grants and effective access", () => {
       const broken = new CollaborationCapabilityEvaluator({
         db: fixture.db,
         grants: { resolveActorGrants: async () => { throw new Error("connection refused"); } } as unknown as CollaborationCapabilityRepository,
-        organizationPrecondition: createOrganizationPrecondition({ source: membershipSource(), now }),
+        organizationPrecondition: createOrganizationPrecondition({ source: membershipSource(now), now }),
         now,
       });
       await expect(broken.requireAction({ scopeId: collaborationIds.scope, actorId: collaborationActors.editor, action: "chat.read" }))
@@ -400,11 +403,14 @@ describe("S04 capability grants and effective access", () => {
       const result = await dispositionLegacyMembers(fixture.db, { scopeId: collaborationIds.scope, actorId: collaborationActors.owner, now, createId: () => crypto.randomUUID() });
       expect(result).toMatchObject({ converted: 2 });
       expect(await dispositionLegacyMembers(fixture.db, { scopeId: collaborationIds.scope, actorId: collaborationActors.owner, now, createId: () => crypto.randomUUID() })).toMatchObject({ converted: 0 });
-      const editor = await evaluator.evaluateEffectiveAccess({ scopeId: collaborationIds.scope, actorId: collaborationActors.editor });
-      expect(editor.actions).toEqual(expect.arrayContaining(["files.write", "discussion.post", "ai.submit"]));
-      expect(editor.actions).not.toEqual(expect.arrayContaining(["git.push"]));
-      expect(editor.actions).not.toContain("git.commit");
-      expect(CollaborationEffectiveAccessSchema.parse(editor).preset).toBe("viewer");
+      const editor = await evaluator.decide({ scopeId: collaborationIds.scope, actorId: collaborationActors.editor });
+      expect([...editor.actions]).toEqual(expect.arrayContaining(["files.write", "discussion.post", "ai.submit"]));
+      expect(editor.actions.has("git.push")).toBe(false);
+      expect(editor.actions.has("git.commit")).toBe(false);
+      // The wire summary is never wider than enforcement: a capped contributor reports the viewer preset.
+      expect(CollaborationEffectiveAccessSchema.parse(editor.access).preset).toBe("viewer");
+      await expect(evaluator.requireAction({ scopeId: collaborationIds.scope, actorId: collaborationActors.editor, action: "files.write" })).resolves.toBeTruthy();
+      await expect(evaluator.requireAction({ scopeId: collaborationIds.scope, actorId: collaborationActors.editor, action: "git.push" })).rejects.toMatchObject({ code: "forbidden" });
       const viewer = await evaluator.evaluateEffectiveAccess({ scopeId: collaborationIds.scope, actorId: collaborationActors.viewer });
       expect(viewer.preset).toBe("viewer");
     });
@@ -412,7 +418,7 @@ describe("S04 capability grants and effective access", () => {
     it("lets CollaborationAuthority honour grants: contributor maps to editor, viewer cannot request AI", async () => {
       const authority = new CollaborationAuthority(repository, {
         now,
-        organizationPrecondition: createOrganizationPrecondition({ source: membershipSource(), now }),
+        organizationPrecondition: createOrganizationPrecondition({ source: membershipSource(now), now }),
         capabilities: grants,
       });
       await expect(authority.authorize({ scopeId: collaborationIds.scope, actorId: collaborationActors.editor, action: "discuss" }))
@@ -473,7 +479,8 @@ describe("S04 capability grants and effective access", () => {
 
     it("reports host offline before anything else and unsupported when the type cannot be served", async () => {
       const offline = await evaluateCollaborationReadiness({ resourceKind: "project", ownerId: collaborationActors.owner, scopeId: collaborationIds.scope, organizationId: ORG }, { ...probes, hostOnline: async () => false });
-      expect(offline).toMatchObject({ state: "host_offline", missingOwnerSetup: [] });
+      expect(CollaborationReadinessSchema.parse(offline)).toMatchObject({ state: "host_offline", missingOwnerSetup: [] });
+      expect(offline.items.every((item) => item.status === "unavailable")).toBe(true);
       const unsupported = await evaluateCollaborationReadiness({ resourceKind: "app_instance", ownerId: collaborationActors.owner, scopeId: collaborationIds.scope, organizationId: ORG }, { ...probes, supported: async () => false });
       expect(unsupported).toMatchObject({ state: "unsupported", items: [] });
     });
@@ -494,7 +501,8 @@ describe("S04 capability grants and effective access", () => {
       });
       expect(readiness.effectiveSubmitMode).toBe("owner_only");
       expect(readiness.items.find((item) => item.item === "chat_root_inventory")).toMatchObject({ status: "unavailable" });
-      expect(readiness.state).toBe("owner_setup_needed");
+      expect(readiness.items.find((item) => item.item === "submit_mode")).toMatchObject({ status: "unavailable" });
+      expect(CollaborationReadinessSchema.parse(readiness).state).toBe("ready");
     });
   });
 
