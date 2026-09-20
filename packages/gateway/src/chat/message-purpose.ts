@@ -9,7 +9,7 @@ export function messagePurpose(message: Pick<CanonicalChatMessage, "role">): Cha
   return message.role === "user" ? "ai_request" : message.role === "assistant" ? "assistant" : "system";
 }
 
-export async function bootstrapMessagePurpose(db: Kysely<ChatDatabase>): Promise<void> {
+export async function bootstrapMessagePurpose<Database extends ChatDatabase>(db: Kysely<Database>): Promise<void> {
   await db.transaction().execute(async (trx) => {
     await sql`
       ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS purpose TEXT

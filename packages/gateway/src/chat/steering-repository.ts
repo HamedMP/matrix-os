@@ -1,4 +1,3 @@
-import { messagePurpose } from "./message-purpose.js";
 import {
   CanonicalChatIdSchema,
   CanonicalChatMessageSchema,
@@ -397,7 +396,6 @@ export class ChatSteeringRepository {
           chat_id: chatId,
           seq: message.seq,
           role: message.role,
-          purpose: messagePurpose(message),
           state: message.state,
           turn_id: message.turnId ?? null,
           run_id: message.runId ?? null,
