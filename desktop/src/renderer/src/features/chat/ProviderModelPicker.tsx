@@ -8,6 +8,7 @@ import { CompactChatProviderChoices, canonicalProviderAvailabilityLabel, deriveC
 import { changeCanonicalComposerInstance, createCanonicalComposerSelection, type CanonicalComposerSelection } from "./canonical-composer-state";
 import { ProviderDriverGlyph } from "./ProviderDriverGlyph";
 import { openProviderSettings } from "../settings/open-provider-settings";
+import { DESKTOP_Z_INDEX } from "../../design/layering";
 
 export function ProviderModelPicker({ catalog, selection, instanceLocked, disabled = false,
   unavailableProviderLabel, menuSide = "top", onSetupAction, onNewChat, onChange,
@@ -38,8 +39,8 @@ export function ProviderModelPicker({ catalog, selection, instanceLocked, disabl
       </button>
     </Popover.Trigger>
     <Popover.Portal><Popover.Content side={menuSide} align="end" sideOffset={10} collisionPadding={16}
-      className="z-50 w-[376px] max-w-[calc(100vw-32px)] overflow-y-auto rounded-xl border p-3 shadow-xl"
-      style={{ maxHeight: "min(520px, calc(100vh - 32px))", borderColor: "var(--border-default)", background: "var(--bg-overlay)", color: "var(--text-primary)" }}
+      className="w-[376px] max-w-[calc(100vw-32px)] overflow-y-auto rounded-xl border p-3 shadow-xl"
+      style={{ zIndex: DESKTOP_Z_INDEX.popover, maxHeight: "min(520px, calc(100vh - 32px))", borderColor: "var(--border-default)", background: "var(--bg-overlay)", color: "var(--text-primary)" }}
       data-slot="provider-model-picker" data-preferred-side={menuSide}>
       <CompactChatProviderChoices choices={deriveCanonicalProviderChoices(catalog)}
         renderIcon={(choice) => <ProviderDriverGlyph kind={choice.driverKind} size={13} />}
