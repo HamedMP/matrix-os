@@ -45,13 +45,6 @@ describe("CollaborationWebSocketAuthorizer", () => {
         { actorId: platformCollaborationActors.recipientWithoutComputer, status: "accepted" },
       ],
     });
-    await repository.setPolicy({
-      milestone: "m1",
-      expectedRevision: 0,
-      mode: "internal",
-      cohort: [platformCollaborationActors.owner, platformCollaborationActors.recipientWithoutComputer],
-      changedBy: "operator_test",
-    });
     tokenNumber = 0;
     authorizer = new CollaborationWebSocketAuthorizer({
       repository,
@@ -95,7 +88,6 @@ describe("CollaborationWebSocketAuthorizer", () => {
       ownerId: platformCollaborationActors.owner,
       scopeId,
       purpose: "events",
-      signedPolicy: { policy: { milestone: "m1" } },
     });
     const verifier = new CollaborationActorProofVerifier({
       runtimeId: "runtime_owner",
@@ -185,13 +177,6 @@ describe("CollaborationWebSocketAuthorizer", () => {
         { actorId: platformCollaborationActors.recipientWithoutComputer, status: "accepted" },
       ],
     });
-    await repository.setPolicy({
-      milestone: "m3",
-      expectedRevision: 0,
-      mode: "internal",
-      cohort: [platformCollaborationActors.owner, platformCollaborationActors.recipientWithoutComputer],
-      changedBy: "operator_test",
-    });
     const terminalAuthorizer = new CollaborationWebSocketAuthorizer({
       repository,
       signer: new CollaborationProofSigner({
@@ -221,7 +206,6 @@ describe("CollaborationWebSocketAuthorizer", () => {
     })).resolves.toMatchObject({
       upstreamPath: `${terminalPath}?after=7`,
       purpose: "terminal",
-      signedPolicy: { policy: { milestone: "m3" } },
     });
   });
 
@@ -278,11 +262,10 @@ describe("CollaborationWebSocketAuthorizer", () => {
       },
       externalHost: "app.matrix-os.com",
       signedProof: { proof: { value: "safe" }, signature: "signed" },
-      signedPolicy: { policy: { milestone: "m3" }, signature: "policy-signed" },
     });
     expect(headers).toContain("sec-websocket-key: safe-key");
     expect(headers).toContain("x-matrix-collaboration-proof:");
-    expect(headers).toContain("x-matrix-collaboration-policy:");
+    expect(headers).not.toContain("x-matrix-collaboration-policy:");
     expect(headers).not.toContain("caller-secret");
     expect(headers).not.toContain("forged-owner");
     expect(headers).not.toContain("forged-proof");

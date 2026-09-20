@@ -46,15 +46,6 @@ export interface CollaborationDirectoryEntry {
   invitationId?: string;
 }
 
-export interface CollaborationRolloutPolicyRecord {
-  milestone: "m1" | "m2" | "m3" | "m4";
-  revision: number;
-  mode: "off" | "internal" | "enabled" | "read_only";
-  cohort: string[];
-  changedBy: string;
-  changedAt: string;
-}
-
 export class PlatformCollaborationRepository {
   private readonly now: () => Date;
 
@@ -315,61 +306,11 @@ export class PlatformCollaborationRepository {
     };
   }
 
-  async getPolicy(
-    milestone: "m1" | "m2" | "m3" | "m4",
-  ): Promise<CollaborationRolloutPolicyRecord> {
-    const row = await this.db.selectFrom("collaboration_rollout_policy")
-      .selectAll()
-      .where("milestone", "=", milestone)
-      .executeTakeFirstOrThrow();
-    return {
-      milestone: row.milestone,
-      revision: Number(row.revision),
-      mode: row.mode,
-      cohort: parseStringArray(row.cohort),
-      changedBy: row.changed_by,
-      changedAt: toIso(row.changed_at),
-    };
-  }
-
-  async setPolicy(input: {
-    milestone: "m1" | "m2" | "m3" | "m4";
-    expectedRevision: number;
-    mode: "off" | "internal" | "enabled" | "read_only";
-    cohort: string[];
-    changedBy: string;
-  }): Promise<CollaborationRolloutPolicyRecord> {
-    if (input.cohort.length > 1_000) {
-      throw new PlatformCollaborationRepositoryError("capacity", "Policy cohort is too large");
-    }
-    const now = this.now().toISOString();
-    const updated = await this.db.updateTable("collaboration_rollout_policy").set({
-      revision: input.expectedRevision + 1,
-      mode: input.mode,
-      cohort: jsonb([...new Set(input.cohort)].sort()),
-      changed_by: input.changedBy,
-      changed_at: now,
-    }).where("milestone", "=", input.milestone)
-      .where("revision", "=", input.expectedRevision)
-      .returningAll()
-      .executeTakeFirst();
-    if (!updated) throw new PlatformCollaborationRepositoryError("conflict", "Policy revision changed");
-    return {
-      milestone: updated.milestone,
-      revision: Number(updated.revision),
-      mode: updated.mode,
-      cohort: parseStringArray(updated.cohort),
-      changedBy: updated.changed_by,
-      changedAt: toIso(updated.changed_at),
-    };
-  }
-
   async createConnectionTicket(input: {
     token: string;
     actorId: string;
     scopeId: string;
     purpose: "events" | "terminal";
-    policyRevision: number;
     expiresAt: string;
   }): Promise<{ ticketId: string; expiresAt: string }> {
     const nowDate = this.now();
@@ -400,7 +341,6 @@ export class PlatformCollaborationRepository {
         actor_id: input.actorId,
         scope_id: input.scopeId,
         purpose: input.purpose,
-        policy_revision: input.policyRevision,
         expires_at: input.expiresAt,
         consumed_at: null,
         created_at: now,
@@ -414,7 +354,7 @@ export class PlatformCollaborationRepository {
     actorId: string;
     scopeId: string;
     purpose: "events" | "terminal";
-  }): Promise<{ ticketId: string; policyRevision: number }> {
+  }): Promise<{ ticketId: string }> {
     const consumed = await this.db.updateTable("collaboration_connection_tickets").set({
       consumed_at: this.now().toISOString(),
     }).where("token_hash", "=", hashToken(input.token))
@@ -423,12 +363,12 @@ export class PlatformCollaborationRepository {
       .where("purpose", "=", input.purpose)
       .where("consumed_at", "is", null)
       .where("expires_at", ">", this.now().toISOString())
-      .returning(["ticket_id", "policy_revision"])
+      .returning(["ticket_id"])
       .executeTakeFirst();
     if (!consumed) {
       throw new PlatformCollaborationRepositoryError("invalid_ticket", "Ticket is invalid");
     }
-    return { ticketId: consumed.ticket_id, policyRevision: Number(consumed.policy_revision) };
+    return { ticketId: consumed.ticket_id };
   }
 }
 

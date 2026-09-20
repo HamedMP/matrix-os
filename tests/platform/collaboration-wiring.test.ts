@@ -127,13 +127,6 @@ describe("platform collaboration wiring", () => {
       metadataRevision: 1,
       recipients: [{ actorId: platformCollaborationActors.recipientWithoutComputer, status: "accepted" }],
     });
-    await runtime.repository.setPolicy({
-      milestone: "m1",
-      expectedRevision: 0,
-      mode: "enabled",
-      cohort: [],
-      changedBy: "operator_test",
-    });
     const app = new Hono();
     runtime.register(app);
     const response = await app.request(`/api/collaboration/scopes/${scopeId}`, {
@@ -164,13 +157,6 @@ describe("platform collaboration wiring", () => {
       metadataRevision: 1,
       recipients: [{ actorId: platformCollaborationActors.recipientWithoutComputer, status: "accepted" }],
     });
-    await runtime.repository.setPolicy({
-      milestone: "m3",
-      expectedRevision: 0,
-      mode: "enabled",
-      cohort: [],
-      changedBy: "operator_test",
-    });
     const terminalDiscovery = await app.request("/api/collaboration/shared", {
       headers: { "x-test-actor": platformCollaborationActors.recipientWithoutComputer },
     });
@@ -191,13 +177,6 @@ describe("platform collaboration wiring", () => {
       authorityGeneration: 2,
       metadataRevision: 1,
       recipients: [{ actorId: platformCollaborationActors.recipientWithoutComputer, status: "accepted" }],
-    });
-    await runtime.repository.setPolicy({
-      milestone: "m4",
-      expectedRevision: 0,
-      mode: "enabled",
-      cohort: [],
-      changedBy: "operator_test",
     });
     const projectDiscovery = await app.request("/api/collaboration/shared", {
       headers: { "x-test-actor": platformCollaborationActors.recipientWithoutComputer },
