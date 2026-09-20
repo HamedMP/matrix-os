@@ -35,7 +35,9 @@ export interface CollaborationControlAuthority {
   describe(denialId: string): Promise<(CollaborationDenial & { denialId: string }) | null>;
   describeOutbox(denialId: string): Promise<DenialRuntimeRecord[]>;
   listPending(limit?: number): Promise<Array<CollaborationDenial & { denialId: string }>>;
-  sweep(): Promise<{ completed: number; delivered: number }>;
+  /** Turns durable revocation intents (written with the membership transition) into denial fences; retried with backoff, dead-lettered after repeated failure. */
+  drainRevocations(): Promise<{ fenced: number; failed: number }>;
+  sweep(): Promise<{ completed: number; delivered: number; fenced: number }>;
   registerTransport(transport: CollaborationControlTransport): void;
   shutdown(): Promise<void>;
 }
@@ -114,15 +116,44 @@ export function createCollaborationControlAuthority(options: {
   };
 
   if (options.startTimers) {
-    const sweepTimer = setInterval(guarded("sweep", () => options.repository.completeExpiredDenials(now())), options.sweepIntervalMs ?? DEFAULT_SWEEP_INTERVAL_MS);
+    const sweepTimer = setInterval(guarded("sweep", async () => {
+      await drainRevocations();
+      await options.repository.completeExpiredDenials(now());
+    }), options.sweepIntervalMs ?? DEFAULT_SWEEP_INTERVAL_MS);
     const deliveryTimer = setInterval(guarded("delivery", deliverDue), options.deliveryIntervalMs ?? DEFAULT_DELIVERY_INTERVAL_MS);
     sweepTimer.unref?.();
     deliveryTimer.unref?.();
     timers.push(sweepTimer, deliveryTimer);
   }
 
-  return {
-    async fence(input) {
+  const drainRevocations = async (): Promise<{ fenced: number; failed: number }> => {
+    if (closed) return { fenced: 0, failed: 0 };
+    const current = now();
+    const due = await options.repository.listDueRevocationIntents(current);
+    let fenced = 0;
+    let failed = 0;
+    for (const intent of due) {
+      if (closed) break;
+      try {
+        const denial = await fence({ organizationId: intent.organizationId, actorId: intent.actorId, generation: Math.max(1, intent.membershipEpoch) });
+        await options.repository.completeRevocationIntent(intent.intentId, denial.denialId);
+        fenced += 1;
+      } catch (error: unknown) {
+        console.warn("[collaboration-control] revocation fence failed", error instanceof Error ? error.name : "UnknownError");
+        const attempts = intent.attempts + 1;
+        const backoffMs = Math.min(MAX_BACKOFF_MS, 1_000 * 2 ** Math.min(attempts, 10));
+        await options.repository.recordRevocationIntentFailure({
+          intentId: intent.intentId,
+          nextAttemptAt: new Date(current.getTime() + backoffMs),
+          deadLetter: attempts >= maxAttempts,
+        });
+        failed += 1;
+      }
+    }
+    return { fenced, failed };
+  };
+
+  const fence: CollaborationControlAuthority["fence"] = async (input) => {
       if (closed) throw new Error("Control authority is shutting down");
       const fencedAt = now();
       const runtimeIds = await options.affectedRuntimes(input);
@@ -136,12 +167,18 @@ export function createCollaborationControlAuthority(options: {
         runtimeIds,
       });
       return toDenial(record);
-    },
+  };
+
+  return {
+    fence,
+    drainRevocations,
     async acknowledge(authenticatedRuntimeId, ack) {
       if (ack.runtimeId !== authenticatedRuntimeId) throw new Error("Acknowledgement runtime does not match the authenticated runtime");
       const fenceAt = new Date(ack.fenceAt);
       if (!Number.isFinite(fenceAt.getTime())) throw new Error("Acknowledgement fence time is invalid");
-      const completedDenialIds = await options.repository.acknowledgeRuntime({ runtimeId: ack.runtimeId, fenceAt, acknowledgedAt: now() });
+      const completedDenialIds = await options.repository.acknowledgeRuntime({
+        runtimeId: ack.runtimeId, fenceAt, generation: ack.authorityGeneration, acknowledgedAt: now(),
+      });
       return { completedDenialIds };
     },
     async assertActors(_runtimeId, actors) {
@@ -176,9 +213,10 @@ export function createCollaborationControlAuthority(options: {
       return (await options.repository.listPendingDenials(limit)).map(toDenial);
     },
     async sweep() {
+      const { fenced } = await drainRevocations();
       const completed = await options.repository.completeExpiredDenials(now());
       const delivered = await deliverDue();
-      return { completed, delivered };
+      return { completed, delivered, fenced };
     },
     registerTransport(next) {
       if (transport) throw new Error("A control transport is already registered");

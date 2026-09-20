@@ -59,8 +59,10 @@ export async function createPlatformOrganizations(options: {
     ...(upstream ? { upstream } : {}),
     now,
     startTimers: options.startTimers ?? false,
-    onMembershipEnded: async (ended, membershipEpoch) => {
-      await controlAuthority?.fence({ ...ended, generation: Math.max(1, membershipEpoch) });
+    onMembershipEnded: async () => {
+      // The reconciliation transaction already wrote the revocation intent; drain it now,
+      // and let the recurring sweep retry on failure.
+      await controlAuthority?.drainRevocations();
     },
   });
   controlAuthority = createCollaborationControlAuthority({

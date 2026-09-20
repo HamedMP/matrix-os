@@ -62,6 +62,7 @@ describe("organization membership projection (T016/T019)", () => {
     const result = await projection.reconcile(org);
     expect(result.endedMemberships).toEqual([{ organizationId: org, actorId: outsider }]);
     expect((await repository.getMembership({ organizationId: org, actorId: outsider }))?.state).toBe("removed");
+    expect(await repository.describeRevocationIntents({ organizationId: org, actorId: outsider })).toMatchObject([{ denialId: null, deadLetter: false }]);
     await projection.shutdown();
   });
 
