@@ -1,6 +1,6 @@
 # Organization collaboration
 
-**Status:** Minimal draft for product review — not approved for implementation
+**Status:** Product draft with implementation plan for review — no runtime implementation authorized
 
 **Date:** 2026-09-20
 
@@ -28,7 +28,7 @@ Every member can share resources they own with people, their entire organization
 
 - **Clerk is authoritative for organizations, invitations, memberships and org roles.** Reuse its organization management flows; local Postgres records are reconciled projections, not a separately editable membership directory. Map immutable Clerk user/org IDs to Matrix OS identities and Matrix IDs.
 - **Matrix OS owns resource grants and org-group definitions in Postgres/Kysely.** Grant audiences are a user, organization, or org group; resource roles remain viewer/editor, with owner/admin management authority evaluated separately. Org groups contain current Clerk org members only. An org admin role is not automatically an editor grant on someone's personal resource.
-- **Matrix Spaces/rooms represent organizations and groups for communication.** Provision an org Space and private group rooms, and reconcile membership from Clerk plus the org-group definitions. Matrix room invitations, power levels or Space membership never independently grant file/app/Chat access or billing rights. Canonical AI Chat history stays in its existing store; no automatic transcript/file mirroring into rooms.
+- **Matrix Spaces/rooms represent organizations and groups for communication.** The planned first rollout uses service-only rooms and Matrix OS-mediated group text, authorized from Clerk plus org-group definitions. Human/AI user identities are not directly joined to these rooms; direct Matrix-client membership needs a separate proven revocation mechanism. Matrix room invitations, power levels or Space membership never independently grant file/app/Chat access or billing rights. Canonical AI Chat history stays in its existing store; no automatic transcript/file mirroring into rooms.
 - Verified lifecycle events plus reconciliation update projections idempotently. Access requires sufficiently fresh membership evidence; stale/unavailable authority fails closed. Org removal invalidates org/group-derived access, pending work and live subscriptions within 60 seconds, including when a webhook is missed. After local revocation commits, new operations and delayed mutations are rejected immediately. The plan must prove this bound for Clerk checks, runtime proofs and Matrix room reconciliation, including outages; room delivery must be gated if it cannot enforce the bound. Already downloaded content cannot be recalled.
 
 ### 2. One Share experience
@@ -43,9 +43,9 @@ Share shows the resource boundary, owner, audience, viewer/editor role and effec
 | File | One file; no parent/sibling access |
 | Folder | Its current/future descendants; no parent, external links or symlink escapes |
 
-Standalone sharing works inside a private project without sharing that project. Items already under a shared project inherit its grants and cannot acquire independent child exceptions. Folder grants likewise inherit downward; moves into/out of shared boundaries require an access-impact confirmation. Overlapping allowed grants yield the highest applicable resource role; removing one grant leaves access from others, visibly explained. Removing org membership removes all access to org-owned resources; independent personal-resource invitations may remain and must be identified as such.
+Standalone sharing works inside a private project without sharing that project. Items already under a shared project inherit its grants and cannot acquire independent child exceptions. Folder grants likewise inherit downward; moves into/out of shared boundaries require an access-impact confirmation. Overlapping grants combine allowed actions after each grant’s role and any legacy action ceiling are applied; removing one grant leaves access from others, visibly explained. Removing org membership removes all access to org-owned resources; independent personal-resource invitations may remain and must be identified as such.
 
-Sharing preserves ownership and payer. A separate explicit transfer can make a resource org-owned, with durable org storage/runtime authority that survives the creator leaving. Org admins control org-owned resources; being an admin does not reveal members' unrelated personal data. Existing terminal sharing and immutable public Chat snapshots remain intact.
+Sharing preserves ownership and payer. A separate explicit transfer can make a resource org-owned, with durable org storage/runtime authority that survives the creator leaving. Org admins control org-owned resources and their grants; content access still requires an explicit resource grant, including an audited self-grant if an admin needs it. Being an admin does not reveal members' unrelated personal data. Existing terminal sharing and immutable public Chat snapshots remain intact.
 
 ### 3. Organization administration and billing
 
@@ -66,11 +66,11 @@ Test first, using an admin, two members and an outsider:
 4. An admin manages org billing; a member cannot. Concurrent/retried spend is attributed once to the selected payer; exhausted budgets or payment failure cannot charge personal accounts.
 5. Migrate legacy direct/sync grants without broadening access. Preserve snapshots, eight-person direct sharing, and project inheritance. Org audiences must not expand into or silently truncate to the existing eight-person member list; pagination and bounded concurrent participation are separate limits.
 
-Validate Web Canvas, Web Desktop and Electron Desktop with shared schemas/components; include Web Mobile, Native Mobile and CLI wherever the capability exists. Before implementation, provide an exact endpoint/WebSocket/webhook auth matrix, group/resource-role mapping, transaction and outbox boundaries, membership freshness proof, migration/rollback plan, finite limits/timeouts and shutdown/cleanup ownership. No new endpoint contracts are introduced by this draft. Deliver a separate public documentation PR in `FinnaAI/matrix-os-site/content/docs/` alongside implementation/tests.
+Validate Web Canvas, Web Desktop and Electron Desktop with shared schemas/components; include Web Mobile, Native Mobile and CLI wherever the capability exists. The [implementation plan](plan.md), [Sol task list](tasks.md) and [agent handoff](sol-runbook.md) now supply the planning artifacts. Before implementation, validate the exact endpoint/WebSocket/webhook auth matrix, group/resource-role mapping, transaction and outbox boundaries, membership freshness proof, migration/rollback plan, finite limits/timeouts and shutdown/cleanup ownership. No new endpoint contracts are introduced by this draft. Deliver a separate public documentation PR in `FinnaAI/matrix-os-site/content/docs/` alongside implementation/tests.
 
 ## Decisions proposed for review
 
-1. “Matrix groups” means org teams backed by private Matrix rooms within an org Space. Arbitrary external/federated room membership is not a sharing audience in this first version.
+1. “Matrix groups” means org teams backed by service-only private Matrix rooms within an org Space, accessed through Matrix OS in the first rollout. Arbitrary external/federated room membership is not a sharing audience in this first version.
 2. “Share an app” means collaborate on the same instance/data; sending an installable copy remains the gallery flow.
 3. Admin visibility covers org-related sharing, not all personal activity by employees. External guests require explicit grants to org-owned resources and cannot bypass org removal through an old member grant.
 4. Org billing covers explicitly sponsored runtime and AI costs. Seat pricing, included quotas and existing personal-subscription migration need a separate commercial decision before billing implementation.
@@ -78,3 +78,7 @@ Validate Web Canvas, Web Desktop and Electron Desktop with shared schemas/compon
 Approval extends 121's standalone-resource/billing exclusions, replaces 058's independent org membership ownership, and unifies 066 permissions. Detailed planning must reconcile those documents explicitly. Collaborative character editing, unrestricted federation, automatic ownership transfers and new pricing are outside this minimal draft.
 
 **External references:** [Clerk Organizations](https://clerk.com/docs/guides/organizations/overview), [Clerk roles and permissions](https://clerk.com/docs/guides/organizations/control-access/roles-and-permissions), [Matrix Spaces specification](https://spec.matrix.org/latest/client-server-api/#spaces). These support the integration primitives; the authority split above is a proposed Matrix OS design.
+
+## Story mapping for the implementation plan
+
+US1 (P1): Clerk organizations/groups and lifecycle. US2 (P1): common organization-aware sharing. US3 (P1): standalone apps/files/folders and shared data access. US4 (P1): admin inventory, durable organization ownership and transfer. US5 (P1): organization billing and sponsored AI. US6 (P2): managed Matrix-backed group communication. P2 changes delivery order, not the full requested scope.
