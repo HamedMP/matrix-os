@@ -128,6 +128,44 @@ describe("platform organization routes (T018)", () => {
     expect((await repository.getMembership({ organizationId: org, actorId: member }))?.state).toBe("active");
   });
 
+  it("keeps a durable revocation intent when fencing fails after the membership write, and a later drain completes it", async () => {
+    await projection.reconcile(org);
+    let discoveryFails = true;
+    const failing = createCollaborationControlAuthority({
+      repository, now: () => clock, projection,
+      affectedRuntimes: async () => { if (discoveryFails) throw new Error("directory unavailable"); return [runtimeId]; },
+    });
+    const failingApp = createPlatformOrganizationRoutes({
+      repository, projection, controlAuthority: failing, webhookSigningSecret: signingSecret, now: () => clock,
+      resolveActor: async () => actor, authenticateRuntime: async () => null,
+    });
+    try {
+      const body = clerkMembershipEvent("organizationMembership.deleted", member, "org:member", 9_500);
+      const headers = signed("msg_remove_fail", body, clock);
+      const first = await failingApp.request("/webhooks/clerk/organizations", { method: "POST", headers, body });
+      expect(first.status).toBe(200);
+      expect(await first.json()).toEqual({ received: true, outcome: "applied" });
+      expect((await repository.getMembership({ organizationId: org, actorId: member }))?.state).toBe("removed");
+      expect(await failing.listPending()).toEqual([]);
+      const intents = await repository.describeRevocationIntents({ organizationId: org, actorId: member });
+      expect(intents).toHaveLength(1);
+      expect(intents[0]).toMatchObject({ denialId: null, attempts: 1, deadLetter: false });
+      // A redelivery is a duplicate and must not lose the pending intent.
+      const retry = await failingApp.request("/webhooks/clerk/organizations", { method: "POST", headers, body });
+      expect(await retry.json()).toEqual({ received: true, outcome: "duplicate" });
+      discoveryFails = false;
+      clock = new Date(clock.getTime() + 5_000);
+      const drained = await failing.sweep();
+      expect(drained.fenced).toBe(1);
+      const pending = await failing.listPending();
+      expect(pending).toHaveLength(1);
+      expect(pending[0]).toMatchObject({ organizationId: org, actorId: member, state: "pending" });
+      expect((await repository.describeRevocationIntents({ organizationId: org, actorId: member }))[0]?.denialId).toBe(pending[0]!.denialId);
+    } finally {
+      await failing.shutdown();
+    }
+  });
+
   it("fences a denial when a webhook ends a membership", async () => {
     await projection.reconcile(org);
     const body = clerkMembershipEvent("organizationMembership.deleted", member, "org:member", 9_000);

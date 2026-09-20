@@ -42,6 +42,19 @@ describe("collaboration control authority (T017/T019)", () => {
     await authority.shutdown();
   });
 
+  it("does not let a stale-generation acknowledgement complete a newer denial", async () => {
+    const authority = createCollaborationControlAuthority({ repository, now: () => clock, leaseMs: 25_000, affectedRuntimes: async () => [runtimeA] });
+    const older = await authority.fence({ organizationId: org, actorId: member, generation: 3 });
+    const newer = await authority.fence({ organizationId: org, actorId: member, generation: 5 });
+    clock = new Date(clock.getTime() + 1_000);
+    await authority.acknowledge(runtimeA, { protocolVersion: 2, runtimeId: runtimeA, authorityGeneration: 3, fenceAt: clock.toISOString() });
+    expect((await authority.describe(older.denialId))?.state).toBe("completed");
+    expect((await authority.describe(newer.denialId))?.state).toBe("pending");
+    await authority.acknowledge(runtimeA, { protocolVersion: 2, runtimeId: runtimeA, authorityGeneration: 5, fenceAt: clock.toISOString() });
+    expect((await authority.describe(newer.denialId))?.state).toBe("completed");
+    await authority.shutdown();
+  });
+
   it("rejects an acknowledgement whose runtime does not match the authenticated runtime", async () => {
     const authority = createCollaborationControlAuthority({ repository, now: () => clock, affectedRuntimes: async () => [runtimeA] });
     await expect(authority.acknowledge(runtimeB, { protocolVersion: 2, runtimeId: runtimeA, authorityGeneration: 1, fenceAt: clock.toISOString() })).rejects.toThrow(/runtime/i);

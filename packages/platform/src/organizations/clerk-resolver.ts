@@ -45,7 +45,9 @@ export class ClerkOrganizationUpstreamClient implements ClerkOrganizationUpstrea
     const now = this.options.now?.() ?? new Date();
     const organization = ClerkOrganizationSchema.parse(await this.getJson(`${CLERK_API_BASE}/organizations/${encodeURIComponent(id)}`));
     const members: Awaited<ReturnType<ClerkOrganizationUpstream["listMembers"]>>["members"] = [];
-    for (let offset = 0; offset < MAX_MEMBERS; offset += PAGE_SIZE) {
+    // One extra page beyond the cap is fetched only to prove the organization is not larger
+    // than the cap; an organization with exactly MAX_MEMBERS members is accepted.
+    for (let offset = 0; offset <= MAX_MEMBERS; offset += PAGE_SIZE) {
       const url = new URL(`${CLERK_API_BASE}/organizations/${encodeURIComponent(id)}/memberships`);
       url.searchParams.set("limit", String(PAGE_SIZE));
       url.searchParams.set("offset", String(offset));
@@ -58,10 +60,12 @@ export class ClerkOrganizationUpstreamClient implements ClerkOrganizationUpstrea
           sourceUpdatedAt: entry.updated_at !== undefined ? new Date(entry.updated_at) : now,
         });
       }
+      if (members.length > MAX_MEMBERS || (page.total_count !== undefined && page.total_count > MAX_MEMBERS)) {
+        throw new Error("Organization exceeds the supported member count");
+      }
       if (page.data.length < PAGE_SIZE) break;
-      if (page.total_count !== undefined && page.total_count > MAX_MEMBERS) throw new Error("Organization exceeds the supported member count");
+      if (members.length === MAX_MEMBERS && page.total_count !== undefined && page.total_count <= MAX_MEMBERS) break;
     }
-    if (members.length >= MAX_MEMBERS) throw new Error("Organization exceeds the supported member count");
     return {
       organization: {
         organizationId: organization.id,

@@ -40,6 +40,13 @@
 - **Auth source of truth:** verified Clerk session/sync JWT for `U`; the existing customer-VPS verification token for `R`; the webhook signing secret for the public ingress. The selected organization is never authority; every answer is keyed by explicit organization + actor.
 - **Deferred scope:** custom Clerk permissions, groups, guests, invitation quotes and the administration routes (contract rows retained, not served); the control WebSocket transport (S05 registers it through `registerTransport`); the live 60 s removal measurement (unrun until the Clerk fixture exists); organization-wide denial fan-out to runtimes (only actor-scoped denials resolve affected runtimes; organization-level denials rely on evidence expiry).
 
+## Review round 1 (Greptile 0/5 → fixed in the diff)
+
+1. **Revocation could be lost after a 503**: the membership transition now writes a durable row in `organization_revocation_outbox` inside the same transaction; the control authority's `drainRevocations()` turns intents into denial fences (called after the webhook/reconciliation best-effort, and on the recurring sweep with backoff and dead-letter after 8 attempts). Test: failure injected in runtime discovery leaves the intent with `denialId = null`, the redelivery is a duplicate, and a later sweep fences it (`organization-routes.test.ts`).
+2. **Stale-generation acks**: `acknowledgeRuntime` now requires `denial.generation <= ack.authorityGeneration`; a runtime acknowledging generation 3 leaves the generation-5 denial pending (`collaboration-control-authority.test.ts`).
+3. **Exact member cap**: an organization with exactly 2,000 members is accepted (with `total_count`, or by probing one empty page without it); 2,001 is rejected either way (`organization-clerk-resolver.test.ts`).
+4. **Bootstrap under the migration lock**: `bootstrapPlatformOrganizationDatabase` runs its DDL through `runPlatformMigration` (advisory lock, one transaction, 40P01 retry). The S01 characterization fixture is unchanged because the tables are still not part of `PLATFORM_MIGRATION_STEPS`.
+
 ## Open gates
 
 - `CLERK_ORGANIZATION_WEBHOOK_SIGNING_SECRET` (Clerk dashboard endpoint secret, `whsec_…`) and `CLERK_SECRET_KEY` must be configured on the platform; without them the webhook returns 503 and no organization is ever verified.
