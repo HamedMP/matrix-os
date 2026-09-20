@@ -5,6 +5,7 @@ import {
   CollaborationExecutionPolicySchema,
   CollaborationExecutionScopeRefSchema,
   CollaborationGitActionRequestSchema,
+  CollaborationGitBranchSchema,
   CollaborationGitOperationSchema,
   CollaborationRunBindingSchema,
   CollaborationRunCancelRequestSchema,
@@ -16,8 +17,10 @@ import {
   CollaborationSubmitModeSchema,
   CollaborationToolApprovalDecisionRequestSchema,
   collaborationRunControlPermitted,
+  isCollaborationGitBranchName,
   resolveCollaborationEffectiveSubmitMode,
 } from "@matrix-os/contracts";
+import { isValidGitBranchName } from "../../packages/gateway/src/project-manager.js";
 import { describe, expect, it } from "vitest";
 
 const scopeId = "10000000-0000-4000-8000-000000000001";
@@ -124,9 +127,16 @@ describe("collaboration execution contracts (S02 T012/T013)", () => {
     expect(CollaborationRunSchema.parse(interrupted)).toEqual(interrupted);
     expect(CollaborationRunSchema.safeParse({ ...run, status: "interrupted" }).success).toBe(false);
     expect(CollaborationRunSchema.safeParse({ ...run, interruptedReason: "scope_runtime_crash" }).success).toBe(false);
-    const cancelled = { ...run, status: "cancelled", decidedBy: { actorId: "user_owner", relation: "scope_owner" } };
+    const cancelled = { ...run, scopeOwnerId: "user_owner", status: "cancelled", decidedBy: { actorId: "user_owner", relation: "scope_owner" } };
     expect(CollaborationRunSchema.parse(cancelled)).toEqual(cancelled);
+    expect(CollaborationRunSchema.parse({ ...cancelled, decidedBy: { actorId: "user_2abc", relation: "requester" } }).decidedBy.relation).toBe("requester");
     expect(CollaborationRunSchema.safeParse({ ...cancelled, decidedBy: { actorId: "user_x", relation: "contributor" } }).success).toBe(false);
+    expect(CollaborationRunSchema.safeParse({ ...cancelled, decidedBy: { actorId: "user_owner", relation: "requester" } }).success).toBe(false);
+    expect(CollaborationRunSchema.safeParse({ ...cancelled, decidedBy: { actorId: "user_mallory", relation: "scope_owner" } }).success).toBe(false);
+    expect(CollaborationRunSchema.safeParse({ ...cancelled, decidedBy: { actorId: "user_2abc", relation: "scope_owner" } }).success).toBe(false);
+    expect(CollaborationRunSchema.safeParse({ ...run, status: "cancelled", decidedBy: { actorId: "user_2abc", relation: "scope_owner" } }).success).toBe(false);
+    const ownerRequested = { ...run, requestingActorId: "user_owner", scopeOwnerId: "user_owner", status: "cancelled", decidedBy: { actorId: "user_owner", relation: "scope_owner" } };
+    expect(CollaborationRunSchema.parse(ownerRequested).decidedBy.relation).toBe("scope_owner");
     expect(CollaborationRunSchema.safeParse({ ...run, status: "cancelled" }).success).toBe(false);
     expect(CollaborationRunSchema.safeParse({ ...run, providerError: "anthropic 529" }).success).toBe(false);
   });
@@ -149,8 +159,10 @@ describe("collaboration execution contracts (S02 T012/T013)", () => {
     expect(CollaborationRunRetryRequestSchema.parse(control)).toEqual(control);
     expect(CollaborationRunCancelRequestSchema.safeParse({ ...control, onBehalfOf: "user_2abc" }).success).toBe(false);
     expect(CollaborationRunRetryRequestSchema.safeParse({ ...control, actorId: "user_owner" }).success).toBe(false);
-    const decision = { ...control, approvalId: "appr_1", decision: "approve" };
+    const decision = { ...control, runId: "run_1", decision: "approve" };
     expect(CollaborationToolApprovalDecisionRequestSchema.parse(decision)).toEqual(decision);
+    expect(CollaborationToolApprovalDecisionRequestSchema.safeParse({ ...decision, approvalId: "appr_1" }).success).toBe(false);
+    expect(CollaborationToolApprovalDecisionRequestSchema.safeParse({ ...control, decision: "approve" }).success).toBe(false);
     expect(CollaborationToolApprovalDecisionRequestSchema.safeParse({ ...decision, decision: "approve_all_forever" }).success).toBe(false);
     expect(CollaborationToolApprovalDecisionRequestSchema.safeParse({ ...decision, decidedBy: "user_owner" }).success).toBe(false);
   });
@@ -195,6 +207,21 @@ describe("collaboration execution contracts (S02 T012/T013)", () => {
       { ...pr, expectedHeadSha: "abc" },
     ]) {
       expect(CollaborationGitActionRequestSchema.safeParse(forged).success).toBe(false);
+    }
+  });
+
+  it("validates branch names exactly like the gateway's git-check-ref-format rules", () => {
+    const corpus = [
+      "main", "feature/release", "release-1.2", "a/b/c", "fix_x", "v1.0.0",
+      ".hidden", "feature/.draft", "release.", "feature/", "/main", "-flag", "a..b", "a//b", "a@{b", "@",
+      "x.lock", "x.lock/y", "a b", "a~b", "a^b", "a:b", "a?b", "a*b", "a[b", "a\\b", "refs/heads/main", "x".repeat(201), "",
+    ];
+    for (const candidate of corpus) {
+      expect([candidate, isCollaborationGitBranchName(candidate)]).toEqual([candidate, isValidGitBranchName(candidate) && !candidate.startsWith("refs/")]);
+      expect(CollaborationGitBranchSchema.safeParse(candidate).success).toBe(isCollaborationGitBranchName(candidate));
+    }
+    for (const bad of [".hidden", "feature/.draft", "release.", "x.lock", "feature/", "-oProxyCommand=evil", "refs/heads/main"]) {
+      expect(CollaborationGitBranchSchema.safeParse(bad).success).toBe(false);
     }
   });
 

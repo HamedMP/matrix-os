@@ -151,6 +151,7 @@ export const CollaborationRunSchema = z.object({
   requestId: canonicalReferenceId(160),
   scopeId: CollaborationIdSchema,
   requestingActorId: CollaborationActorIdSchema,
+  scopeOwnerId: CollaborationActorIdSchema.optional(),
   status: CollaborationRunStatusSchema,
   interruptedReason: CollaborationRunInterruptionReasonSchema.optional(),
   decidedBy: CollaborationRunDecisionActorSchema.optional(),
@@ -161,6 +162,17 @@ export const CollaborationRunSchema = z.object({
   }
   if ((run.status === "cancelled") !== (run.decidedBy !== undefined)) {
     ctx.addIssue({ code: "custom", path: ["decidedBy"], message: "Cancelled runs name the deciding actor" });
+  }
+  if (run.decidedBy?.relation === "requester" && run.decidedBy.actorId !== run.requestingActorId) {
+    ctx.addIssue({ code: "custom", path: ["decidedBy", "actorId"], message: "A requester decision must come from the requesting actor" });
+  }
+  if (run.decidedBy?.relation === "scope_owner") {
+    if (run.decidedBy.actorId === run.requestingActorId && run.scopeOwnerId !== run.requestingActorId) {
+      ctx.addIssue({ code: "custom", path: ["decidedBy", "relation"], message: "The requesting actor decides as requester, not owner" });
+    }
+    if (run.scopeOwnerId !== undefined && run.decidedBy.actorId !== run.scopeOwnerId) {
+      ctx.addIssue({ code: "custom", path: ["decidedBy", "actorId"], message: "An owner decision must come from the scope owner" });
+    }
   }
 });
 
@@ -184,8 +196,9 @@ const RunControlSchema = z.object({
 export const CollaborationRunCancelRequestSchema = RunControlSchema;
 export const CollaborationRunRetryRequestSchema = RunControlSchema;
 
+/** `:approvalId` is a path parameter; the body pins the run the approval belongs to, matching the existing handler and CLI. */
 export const CollaborationToolApprovalDecisionRequestSchema = RunControlSchema.extend({
-  approvalId: canonicalReferenceId(160),
+  runId: canonicalReferenceId(160),
   decision: CanonicalChatApprovalDecisionSchema,
 }).strict();
 
@@ -204,9 +217,28 @@ export const CollaborationRunQueueSchema = z.object({
   revision: CollaborationRevisionSchema,
 }).strict();
 
-const GIT_BRANCH = /^(?!-)(?!.*\.\.)(?!.*\/\/)(?!.*@\{)[A-Za-z0-9._/-]{1,255}$/;
-export const CollaborationGitBranchSchema = z.string().regex(GIT_BRANCH, "Invalid branch name")
-  .refine((value) => !value.endsWith("/") && !value.endsWith(".lock") && !value.startsWith("refs/"), { message: "Invalid branch name" });
+const BRANCH_FORBIDDEN_CHARS = /[\x00-\x20 ~^:?*[\]\\]/;
+
+/**
+ * Mirrors the gateway's `isValidGitBranchName` (project-manager.ts): the
+ * git-check-ref-format rules tightened for argv safety. The contract cannot
+ * import the gateway, so the rule set is duplicated verbatim and pinned by a
+ * contract test against the same corpus the gateway validator uses.
+ */
+export function isCollaborationGitBranchName(value: string): boolean {
+  if (value.length < 1 || value.length > 200) return false;
+  if (BRANCH_FORBIDDEN_CHARS.test(value)) return false;
+  if (value.startsWith("-") || value.startsWith(".") || value.startsWith("/")) return false;
+  if (value.endsWith("/") || value.endsWith(".") || value.endsWith(".lock")) return false;
+  if (value.includes("..") || value.includes("@{") || value.includes("//")) return false;
+  if (value.split("/").some((component) => component.startsWith(".") || component.endsWith(".lock"))) return false;
+  if (value === "@") return false;
+  if (value.startsWith("refs/")) return false;
+  return true;
+}
+
+export const CollaborationGitBranchSchema = z.string().min(1).max(200)
+  .refine(isCollaborationGitBranchName, { message: "Invalid branch name" });
 export const CollaborationGitShaSchema = z.string().regex(/^[a-f0-9]{40}$/);
 
 const GitActionBase = z.object({
