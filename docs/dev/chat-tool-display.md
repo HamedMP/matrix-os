@@ -111,3 +111,5 @@ Mobile physical-device acceptance remains deferred; its interaction regression
 is covered by the component test, not represented as device acceptance.
 
 ![Electron Desktop expanded tool result](assets/chat-tool-details-electron.png)
+
+Pi and OpenCode retain their existing thread event/journal contracts. When their results enter canonical Chat, the shared coding adapter seals them with the runtime key before canonical activities and outbox persistence; missing keys leave coarse notices. Their pre-existing thread journals are outside this output-protection boundary. Legacy unsealed Codex output remains coarse because Codex sealing belongs before journal persistence.
