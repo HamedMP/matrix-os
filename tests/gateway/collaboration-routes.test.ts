@@ -1210,6 +1210,72 @@ describe("collaboration gateway routes", () => {
       });
   });
 
+  it("admits an editor Codex request through the strict route only when the exact adapter is eligible", async () => {
+    await shareChat();
+    await fixture.db.insertInto("collaboration_members").values({
+      scope_id: collaborationIds.scope,
+      actor_id: collaborationActors.editor,
+      role: "editor",
+      status: "accepted",
+      invitation_id: null,
+      invited_by: collaborationActors.owner,
+      accepted_at: now,
+      expires_at: null,
+      revision: 1,
+      joined_at: now,
+      updated_at: now,
+    }).execute();
+    await fixture.db.updateTable("collaboration_scopes").set({
+      execution_generation: 7,
+      execution_eligibility: JSON.stringify({
+        profileId: "scope-runtime-chat-v1",
+        profileVersion: 2,
+        profileDigest: "a".repeat(64),
+        adapters: [
+          { adapterId: "claude-code", harnessVersion: "2.1.240" },
+          { adapterId: "codex", harnessVersion: "0.154.0" },
+        ],
+      }),
+    }).where("id", "=", collaborationIds.scope).execute();
+    await fixture.db.updateTable("chats").set({
+      current_selection: JSON.stringify({ instanceId: "codex_default", model: "gpt-5.6-sol" }),
+      bound_driver_kind: "codex",
+      bound_instance_id: "codex_default",
+      bound_at_turn_id: "cturn_existing_codex",
+    }).where("id", "=", collaborationIds.chat).execute();
+    const path = `/api/collaboration/scopes/${collaborationIds.scope}/chat/requests`;
+
+    const response = await signedJson({
+      actorId: collaborationActors.editor,
+      scopeId: collaborationIds.scope,
+      method: "POST",
+      path,
+      body: {
+        clientRequestId: request(84),
+        expectedRevision: "2",
+        text: "Use the owner's exact Codex binding",
+      },
+      m2Policy: true,
+    });
+
+    expect(response.status).toBe(201);
+    expect(await response.json()).toMatchObject({
+      request: {
+        actor: { actorId: collaborationActors.editor },
+        selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      },
+    });
+    await expect(fixture.db.selectFrom("chat_queued_turns")
+      .select(["driver_kind", "instance_id", "selection", "accepted_execution_generation"])
+      .where("collaboration_scope_id", "=", collaborationIds.scope)
+      .executeTakeFirstOrThrow()).resolves.toMatchObject({
+        driver_kind: "codex",
+        instance_id: "codex_default",
+        selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+        accepted_execution_generation: 7,
+      });
+  });
+
   it("lets viewers read and keep private state but rejects every discussion write", async () => {
     await shareChat();
     const invitation = await signedJson({

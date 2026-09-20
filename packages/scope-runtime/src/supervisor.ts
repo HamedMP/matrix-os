@@ -9,6 +9,7 @@ import {
 } from "./protocol.js";
 import {
   SCOPE_RUNTIME_HARNESS_VERSION,
+  SCOPE_RUNTIME_CODEX_VERSION,
   SCOPE_RUNTIME_PROFILE_DIGEST,
   SCOPE_RUNTIME_PROFILE_ID,
   SCOPE_RUNTIME_PROFILE_VERSION,
@@ -32,6 +33,10 @@ export const SCOPE_RUNTIME_PROFILE: Omit<ScopeRuntimeCapabilityProfile, "executi
     adapterId: "claude-code",
     harnessVersion: SCOPE_RUNTIME_HARNESS_VERSION,
     workloads: ["chat_ai"],
+  }, {
+    adapterId: "codex",
+    harnessVersion: SCOPE_RUNTIME_CODEX_VERSION,
+    workloads: ["chat_ai"],
   }],
 };
 
@@ -50,6 +55,7 @@ export interface ScopeRuntimeReconciledRuntime {
 }
 
 export interface ScopeRuntimeLauncher {
+  supportedAdapters?(): Promise<ScopeRuntimeCapabilityProfile["adapters"]>;
   list(): Promise<ScopeRuntimeReconciledRuntime[]>;
   start(input: ScopeRuntimeLaunchRequest): Promise<void>;
   runChat(input: {
@@ -103,6 +109,10 @@ export async function createScopeRuntimeController(options: {
     throw new Error("Invalid scope runtime execution generation");
   }
   const createRuntimeHandle = options.createRuntimeHandle ?? newRuntimeHandle;
+  const supportedAdapters = options.launcher.supportedAdapters
+    ? await options.launcher.supportedAdapters()
+    : SCOPE_RUNTIME_PROFILE.adapters;
+  const availableProfile = { ...SCOPE_RUNTIME_PROFILE, adapters: supportedAdapters };
   const existing = await options.launcher.list();
   if (existing.length > maxRuntimes) throw new Error("Scope runtime reconciliation exceeds capacity");
   const runtimes = new Map<string, string>();
@@ -124,7 +134,7 @@ export async function createScopeRuntimeController(options: {
     if (request.profileId !== SCOPE_RUNTIME_PROFILE.profileId) {
       return runtimeFailure(request.requestId, "profile_unavailable");
     }
-    const adapter = SCOPE_RUNTIME_PROFILE.adapters.find((candidate) =>
+    const adapter = availableProfile.adapters.find((candidate) =>
       candidate.adapterId === request.adapterId
       && candidate.harnessVersion === request.harnessVersion
       && candidate.workloads.includes(request.workload));
@@ -262,7 +272,7 @@ export async function createScopeRuntimeController(options: {
           requestId: request.requestId,
           ok: true,
           supervisorVersion: SCOPE_RUNTIME_SUPERVISOR_VERSION,
-          profile: { ...SCOPE_RUNTIME_PROFILE, executionGeneration: options.executionGeneration },
+          profile: { ...availableProfile, executionGeneration: options.executionGeneration },
         });
       }
       if (request.type === "runtime.create") return createRuntime(request);

@@ -1,9 +1,13 @@
 import { createHash } from "node:crypto";
-import { SCOPE_RUNTIME_WORKER_HARNESS_VERSION } from "./worker.js";
+import {
+  SCOPE_RUNTIME_CLAUDE_HARNESS_VERSION,
+  SCOPE_RUNTIME_CODEX_HARNESS_VERSION,
+} from "./worker.js";
 
 export const SCOPE_RUNTIME_PROFILE_ID = "scope-runtime-chat-v1";
-export const SCOPE_RUNTIME_PROFILE_VERSION = 1;
-export const SCOPE_RUNTIME_HARNESS_VERSION = SCOPE_RUNTIME_WORKER_HARNESS_VERSION;
+export const SCOPE_RUNTIME_PROFILE_VERSION = 2;
+export const SCOPE_RUNTIME_HARNESS_VERSION = SCOPE_RUNTIME_CLAUDE_HARNESS_VERSION;
+export const SCOPE_RUNTIME_CODEX_VERSION = SCOPE_RUNTIME_CODEX_HARNESS_VERSION;
 
 export const SCOPE_ROOT_TOKEN = "<scope-root>";
 export const SDK_DIRECTORY_TOKEN = "<sdk-directory>";
@@ -71,7 +75,12 @@ export const FIXED_SYSTEMD_ENVIRONMENT = [
 ] as const;
 
 export const SCOPE_RUNTIME_PROFILE_DIGEST = createHash("sha256")
-  .update([...FIXED_SYSTEMD_PROPERTIES, ...FIXED_SYSTEMD_ENVIRONMENT].join("\n") + "\n")
+  .update([
+    ...FIXED_SYSTEMD_PROPERTIES,
+    ...FIXED_SYSTEMD_ENVIRONMENT,
+    `Adapter=claude-code/${SCOPE_RUNTIME_HARNESS_VERSION}/chat_ai`,
+    `Adapter=codex/${SCOPE_RUNTIME_CODEX_VERSION}/chat_ai`,
+  ].join("\n") + "\n")
   .digest("hex");
 
 export interface ScopeRuntimeProfilePaths {

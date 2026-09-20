@@ -119,6 +119,8 @@ export interface ClaimedQueuedTurn {
     authorityGeneration: number;
     executionGeneration: number;
     executionEligibility: unknown;
+    driverKind: CanonicalProviderDriverKind;
+    selection: CanonicalQueueChatTurnRequest["selection"];
   };
 }
 
@@ -330,6 +332,8 @@ export class ChatQueueRepository {
         accepted_seq: acceptedSequence,
         payload_hash: input.payloadHash,
         accepted_auth_epoch: input.acceptedAuthEpoch,
+        accepted_execution_generation: Number(scope.execution_generation),
+        accepted_execution_eligibility: jsonb(scope.execution_eligibility),
         retry_of_queued_turn_id: retryOfQueuedTurnId ?? null,
         position,
         status: "queued",
@@ -750,7 +754,10 @@ export class ChatQueueRepository {
     const claimedAt = new Date(input.claimedAt).toISOString();
     return this.transact(async (trx) => {
       const candidateScope = await trx.selectFrom("chat_queued_turns")
-        .select(["collaboration_scope_id", "requesting_actor_id", "accepted_auth_epoch"])
+        .select([
+          "collaboration_scope_id", "requesting_actor_id", "accepted_auth_epoch",
+          "accepted_execution_generation", "accepted_execution_eligibility",
+        ])
         .where("chat_id", "=", chatId)
         .where("status", "=", "queued")
         .$if(collaborationScopeId !== undefined, (query) =>
@@ -779,6 +786,13 @@ export class ChatQueueRepository {
         if (!sharedScope) return null;
         if (sharedScope.lifecycle !== "shared" || sharedScope.execution_generation === null
           || sharedScope.execution_eligibility === null) {
+          sharedAdmission = "unavailable";
+        } else if (candidateScope.accepted_execution_generation === null
+          || Number(candidateScope.accepted_execution_generation) !== Number(sharedScope.execution_generation)
+          || !sameJson(
+            candidateScope.accepted_execution_eligibility,
+            sharedScope.execution_eligibility,
+          )) {
           sharedAdmission = "unavailable";
         // The scope auth epoch is deliberately a coarse dispatch fence: any
         // membership authority change invalidates accepted-but-unclaimed work,
@@ -827,7 +841,7 @@ export class ChatQueueRepository {
           || !candidateSelection.success
           || candidate.driver_kind !== provider.execution.driverKind
           || candidate.instance_id !== provider.execution.selection.instanceId
-          || candidateSelection.data.instanceId !== provider.execution.selection.instanceId) {
+          || JSON.stringify(candidateSelection.data) !== JSON.stringify(provider.execution.selection)) {
           sharedAdmission = "unavailable";
         }
       }
@@ -1027,6 +1041,8 @@ export class ChatQueueRepository {
               authorityGeneration: Number(sharedScope.authority_generation),
               executionGeneration: Number(sharedScope.execution_generation),
               executionEligibility: sharedScope.execution_eligibility,
+              driverKind: run.driverKind,
+              selection: run.selection,
             },
           } : {}),
       };
@@ -1240,10 +1256,18 @@ function sharedRuntimeSupports(
   const value = typeof eligibility === "string"
     ? safelyParseSharedJson(eligibility)
     : eligibility;
-  return value !== null && typeof value === "object"
-    && (value as { adapterId?: unknown }).adapterId === "claude-code"
-    && driverKind === "claude_code"
-    && instanceId === "claude_shared";
+  if (value === null || typeof value !== "object") return false;
+  const expected = driverKind === "claude_code" && instanceId === "claude_shared"
+    ? "claude-code"
+    : driverKind === "codex" && instanceId === "codex_default"
+      ? "codex"
+      : undefined;
+  if (!expected) return false;
+  if ((value as { adapterId?: unknown }).adapterId === expected) return true;
+  const adapters = (value as { adapters?: unknown }).adapters;
+  return Array.isArray(adapters) && adapters.some((adapter) => adapter !== null
+    && typeof adapter === "object"
+    && (adapter as { adapterId?: unknown }).adapterId === expected);
 }
 
 function safelyParseSharedJson(value: unknown): unknown {
@@ -1255,6 +1279,10 @@ function safelyParseSharedJson(value: unknown): unknown {
     });
     return undefined;
   }
+}
+
+function sameJson(left: unknown, right: unknown): boolean {
+  return JSON.stringify(safelyParseSharedJson(left)) === JSON.stringify(safelyParseSharedJson(right));
 }
 
 async function appendSharedEvent(

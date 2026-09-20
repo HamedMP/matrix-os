@@ -420,8 +420,7 @@ function eligibilityMatches(current: unknown, next: unknown): boolean {
     return left.profileId === right.profileId
       && left.profileVersion === right.profileVersion
       && left.profileDigest === right.profileDigest
-      && left.adapterId === right.adapterId
-      && left.harnessVersion === right.harnessVersion;
+      && JSON.stringify(left.adapters) === JSON.stringify(right.adapters);
   } catch (error: unknown) {
     console.warn("[collaboration] stored execution eligibility is invalid",
       error instanceof Error ? error.name : "UnknownError");
