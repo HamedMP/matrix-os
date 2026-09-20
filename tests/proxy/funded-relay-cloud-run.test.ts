@@ -63,6 +63,10 @@ describe("funded relay Cloud Run service", () => {
     expect(workflow).toContain("traffic_flags=(--tag candidate --no-traffic)");
     expect(workflow).toContain("for _attempt in {1..10}; do");
     expect(workflow).toContain('gcloud run services describe "$AI_RELAY_CLOUD_RUN_SERVICE"');
+    expect(workflow).toContain('gcloud run revisions describe "$candidate_revision"');
+    expect(workflow).toContain('expected_digest="${IMAGE_DIGEST##*@}"');
+    expect(workflow).toContain('candidate_digest="${candidate_image##*@}"');
+    expect(workflow).toContain('[ "$candidate_digest" = "$expected_digest" ]');
     expect(workflow).toContain("sleep 3");
     expect(workflow).toContain("Candidate relay metadata did not become ready.");
     expect(workflow).toContain(

@@ -156,6 +156,12 @@ jobs:
             --quiet
           candidate_url=""
           candidate_revision=""
+          candidate_digest=""
+          expected_digest="${IMAGE_DIGEST##*@}"
+          if ! [[ "$expected_digest" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+            echo "Candidate relay metadata did not become ready." >&2
+            exit 1
+          fi
           for _attempt in {1..10}; do
             service_json="$(gcloud run services describe "$AI_RELAY_CLOUD_RUN_SERVICE" \
               --project "$GCP_PROJECT_ID" \
@@ -164,11 +170,18 @@ jobs:
             candidate_url="$(printf '%s\n' "$service_json" | jq -r '.status.traffic[]? | select(.tag == "candidate") | .url // empty' | head -1)"
             candidate_revision="$(printf '%s\n' "$service_json" | jq -r '.status.traffic[]? | select(.tag == "candidate") | .revisionName // empty' | head -1)"
             if [ -n "$candidate_url" ] && [ -n "$candidate_revision" ]; then
-              break
+              candidate_image="$(gcloud run revisions describe "$candidate_revision" \
+                --project "$GCP_PROJECT_ID" \
+                --region "$GCP_REGION" \
+                --format='value(spec.containers[0].image)' 2>/dev/null || true)"
+              candidate_digest="${candidate_image##*@}"
+              if [[ "$candidate_image" == *@sha256:* ]] && [ "$candidate_digest" = "$expected_digest" ]; then
+                break
+              fi
             fi
             sleep 3
           done
-          if [ -z "$candidate_url" ] || [ -z "$candidate_revision" ]; then
+          if [ -z "$candidate_url" ] || [ -z "$candidate_revision" ] || [ "$candidate_digest" != "$expected_digest" ]; then
             echo "Candidate relay metadata did not become ready." >&2
             exit 1
           fi
