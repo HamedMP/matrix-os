@@ -4,13 +4,48 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
+const SUPERVISOR_START_TIMEOUT_MS = 10_000;
+const SUPERVISOR_CLEANUP_GRACE_MS = 1_000;
+
+async function waitForStartedMarker(path: string, closed: Promise<number | null>) {
+  const marker = (async () => {
+    const deadline = Date.now() + SUPERVISOR_START_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      try {
+        return JSON.parse(await readFile(path, "utf8")) as { fixture: string };
+      } catch (error) {
+        if (!(error instanceof SyntaxError) && (error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    throw new Error("Zellij smoke supervisor did not start");
+  })();
+  return Promise.race([
+    marker,
+    closed.then((code) => { throw new Error(`Zellij smoke supervisor exited before startup (${code})`); }),
+  ]);
+}
+
+async function waitForClose(closed: Promise<number | null>, timeout: number) {
+  return Promise.race([
+    closed.then(() => true),
+    new Promise<false>((resolve) => setTimeout(() => resolve(false), timeout)),
+  ]);
+}
+
 describe("Zellij smoke supervisor", () => {
+  it("keeps supervisor startup bounded with saturated-CI headroom", () => {
+    expect(SUPERVISOR_START_TIMEOUT_MS).toBeGreaterThanOrEqual(8_000);
+    expect(SUPERVISOR_START_TIMEOUT_MS).toBeLessThanOrEqual(10_000);
+  });
+
   it.each([false, true])("cleans an interrupted worker and preserves its error (cleanup fails: %s)", async (cleanupFails) => {
     const root = await mkdtemp(join(tmpdir(), "mzc-supervisor-"));
     const marker = join(root, "started.json");
     const cleaned = join(root, "cleaned");
     const binary = join(root, "fake-zellij");
     let child: ReturnType<typeof spawn> | undefined;
+    let closed: Promise<number | null> | undefined;
     try {
       await writeFile(binary, `#!${process.execPath}
 const fs = require('node:fs');
@@ -31,12 +66,8 @@ setTimeout(() => process.exit(0), 10000);
       let stderr = "";
       child.stderr!.on("data", (data) => { stderr = (stderr + data).slice(-65_536); });
       child.stdout!.resume();
-      const closed = new Promise<number | null>((done) => child!.once("close", done));
-      await expect.poll(async () => readFile(marker, "utf8").then(() => true, (error) => {
-        if (error.code === "ENOENT") return false;
-        throw error;
-      }), { timeout: 4_000 }).toBe(true);
-      const { fixture } = JSON.parse(await readFile(marker, "utf8"));
+      closed = new Promise<number | null>((done) => child!.once("close", done));
+      const { fixture } = await waitForStartedMarker(marker, closed);
       child.kill("SIGTERM");
       expect(await closed).not.toBe(0);
       expect(stderr).toContain("AbortError");
@@ -44,7 +75,13 @@ setTimeout(() => process.exit(0), 10000);
       await expect(readFile(cleaned, "utf8")).resolves.toBe("yes");
       await expect(readFile(join(fixture, "session"))).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
-      if (child && child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+      if (child && closed && child.exitCode === null && child.signalCode === null) {
+        child.kill("SIGTERM");
+        if (!await waitForClose(closed, SUPERVISOR_CLEANUP_GRACE_MS)) {
+          child.kill("SIGKILL");
+          await closed;
+        }
+      }
       await rm(root, { recursive: true, force: true });
     }
   }, 15_000);
