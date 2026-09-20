@@ -82,7 +82,7 @@ function assertRelPath(section, rel) {
   if (typeof rel !== 'string' || rel.length === 0 || rel.includes('\0')) {
     fail(`config.${section}`, 'keys must be non-empty path strings.');
   }
-  if (isAbsolute(rel) || rel.split('/').includes('..')) {
+  if (isAbsolute(rel) || rel.split('/').includes('..') || rel.split('\\').includes('..')) {
     fail(`config.${section}[${rel}]`, 'must be a repo-relative path without traversal.');
   }
 }
@@ -102,13 +102,21 @@ function isDeclarationFile(fileName) {
   return fileName.endsWith('.d.ts') || fileName.endsWith('.d.tsx') || fileName.endsWith('.d.mts');
 }
 
+function isGeneratedFile(fileName) {
+  // Machine-written sources (e.g. *.generated.ts) are build artifacts, not
+  // structural debt: regenerating them with more data must not trip the
+  // architecture ratchet. Regeneration scripts themselves are still scanned.
+  return fileName.includes('.generated.');
+}
+
 function extOf(fileName) {
   const dot = fileName.lastIndexOf('.');
   return dot === -1 ? '' : fileName.slice(dot);
 }
 
 function isScannedSource(fileName) {
-  return SOURCE_EXT.has(extOf(fileName)) && !isTestFile(fileName) && !isDeclarationFile(fileName);
+  return SOURCE_EXT.has(extOf(fileName)) && !isTestFile(fileName) && !isDeclarationFile(fileName)
+    && !isGeneratedFile(fileName);
 }
 
 async function walkSources(root, onFile) {
@@ -122,7 +130,7 @@ async function walkSources(root, onFile) {
     try {
       entries = await readdir(dir, { withFileTypes: true });
     } catch (err) {
-      if (err?.code === 'ENOENT' || err?.code === 'ENOTDIR') return;
+      if (err?.code === 'ENOENT' || err?.code === 'ENOTDIR') continue;
       throw err;
     }
     for (const entry of entries) {
@@ -159,7 +167,7 @@ async function flatTsCount(dirAbs) {
   for (const entry of entries) {
     if (!entry.isFile() || entry.isSymbolicLink()) continue;
     if ((entry.name.endsWith('.ts') || entry.name.endsWith('.tsx'))
-      && !isTestFile(entry.name) && !isDeclarationFile(entry.name)) {
+      && !isTestFile(entry.name) && !isDeclarationFile(entry.name) && !isGeneratedFile(entry.name)) {
       count += 1;
     }
   }

@@ -1,8 +1,14 @@
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { mkdtemp, mkdir, rm, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import { checkBudgets } from "../../scripts/review/check-budgets.mjs";
+
+const execFileAsync = promisify(execFile);
+const REPO_ROOT = fileURLToPath(new URL("../..", import.meta.url));
 
 function lines(n: number): string {
   return Array.from({ length: n }, (_, i) => `export const v${i} = ${i};`).join("\n") + "\n";
@@ -133,6 +139,15 @@ describe("checkBudgets", () => {
 
   it("rejects traversal-capable root and config paths", async () => {
     await expect(checkBudgets({ root: "/tmp/../etc", config: { fileCap: 1, ratchets: {}, dirCaps: {}, allowlist: {} } })).rejects.toThrow();
+    const root = await fixture({ "packages/a/src/ok.ts": lines(10) });
+    try {
+      const base = { fileCap: 1000, ratchets: {}, dirCaps: {} };
+      await expect(
+        checkBudgets({ root, config: { ...base, ratchets: { "a\\..\\b": 10 } } }),
+      ).rejects.toThrow(/traversal/);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("rejects allowlist entries without a linked issue and phase note", async () => {
@@ -203,4 +218,84 @@ describe("checkBudgets", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  it("skips generated sources in file-cap and dir-cap scans", async () => {
+    const root = await fixture({
+      "packages/ui/src/chat-agents/agent-inspirations.generated.ts": lines(2000),
+      "packages/ui/src/chat-agents/real.ts": lines(100),
+    });
+    try {
+      const result = await checkBudgets({
+        root,
+        config: {
+          fileCap: 1000,
+          ratchets: {},
+          dirCaps: { "packages/ui/src/chat-agents": 1 },
+          allowlist: {},
+        },
+      });
+      expect(result.violations).toEqual([]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("holds on the real repository tree with the committed config", async () => {
+    // Ratchet self-check: the committed arch-budgets.json must describe the
+    // tree it ships with. Re-baseline the JSON (never weaken this assert)
+    // when the tree legitimately grows.
+    const configPath = join(REPO_ROOT, "scripts", "review", "arch-budgets.json");
+    const config = JSON.parse(await readFile(configPath, "utf8"));
+    const result = await checkBudgets({ root: REPO_ROOT, config });
+    expect(result.violations).toEqual([]);
+  }, 60_000);
+});
+
+describe("check-patterns.sh budget gate ordering", () => {
+  it("runs the budget gate even when --diff has no packages/shell TypeScript changes", async (ctx) => {
+    // Needs a POSIX shell, git, and rg (hard dependency of check-patterns.sh).
+    for (const probe of [["bash", ["--version"]], ["git", ["--version"]], ["rg", ["--version"]]]) {
+      try {
+        await execFileAsync(probe[0], probe[1], { timeout: 10_000 });
+      } catch {
+        ctx.skip();
+        return;
+      }
+    }
+    const fixture = await mkdtemp(join(tmpdir(), "check-patterns-budget-"));
+    try {
+      const git = (args: string[]) => execFileAsync(
+        "git",
+        ["-c", "user.email=test@matrix-os", "-c", "user.name=test", ...args],
+        { cwd: fixture, timeout: 30_000 },
+      );
+      await git(["init", "-q"]);
+      await mkdir(join(fixture, "packages"), { recursive: true });
+      await mkdir(join(fixture, "desktop"), { recursive: true });
+      await writeFile(join(fixture, "packages", "a.ts"), "export const a = 1;\n");
+      await writeFile(join(fixture, "desktop", "app.ts"), "export const app = 1;\n");
+      await git(["add", "."]);
+      await git(["commit", "-qm", "base"]);
+      const { stdout: baseOut } = await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: fixture });
+      const base = baseOut.trim();
+      // Desktop-only change: the packages/shell diff is empty, so the
+      // pattern scanner takes its early exit.
+      await writeFile(join(fixture, "desktop", "app.ts"), "export const app = 2;\n");
+      await git(["add", "."]);
+      await git(["commit", "-qm", "desktop only"]);
+      const script = join(REPO_ROOT, "scripts", "review", "check-patterns.sh");
+      let output: string;
+      try {
+        const run = await execFileAsync("bash", [script, "--diff", base], { cwd: fixture, timeout: 120_000 });
+        output = run.stdout + run.stderr;
+      } catch (err: unknown) {
+        const e = err as { stdout?: unknown; stderr?: unknown };
+        output = String(e.stdout ?? "") + String(e.stderr ?? "");
+      }
+      // The full-tree budget gate must still have run before that early exit.
+      expect(output).toContain("Architecture budgets");
+    } finally {
+      await rm(fixture, { recursive: true, force: true });
+    }
+  }, 120_000);
 });
