@@ -1,3 +1,5 @@
+import { tryLoadToolOutputKey } from "./coding-agents/protected-tool-output.mjs";
+import { createOwnerToolOutputProjection } from "./chat/owner-tool-output.js";
 import { createProjectChatCleanup } from "./chat/project-deletion.js";
 import { createRuntimeAppAiRoutes } from "./app-ai/runtime.js";
 import { restoreBackgroundChatThread, createBackgroundChatProjection } from "./coding-agents/background-chat-recovery.js";
@@ -613,6 +615,8 @@ export async function createGateway(config: GatewayConfig) {
   const terminalRuntimeOwnerIds = terminalRuntimeOwnerId
     ? [terminalRuntimeOwnerId]
     : process.env.NODE_ENV === "production" ? [] : ["default"];
+  const toolOutputKey = await tryLoadToolOutputKey(homePath);
+  const projectOwnerToolOutput = createOwnerToolOutputProjection(toolOutputKey, terminalRuntimeOwnerIds);
   const codingAgentProjectManager = createProjectManager({ homePath });
   const conversationContextResolver = createConversationContextResolver(codingAgentProjectManager);
   const codingAgentWorktreeManager = createWorktreeManager({ homePath });
@@ -1011,6 +1015,7 @@ export async function createGateway(config: GatewayConfig) {
         });
       }
       canonicalChatEventStream = createGatewayChatEventStream({
+        projectOwnerToolOutput,
         repository: chatRepository,
         reconcileOwner: (owner) => canonicalChatOrchestrator?.reconcileActiveRuns(owner) ?? Promise.resolve(),
         capture: (event, options) => posthogErrorTracker.captureEvent(event, options),
@@ -4253,7 +4258,7 @@ export async function createGateway(config: GatewayConfig) {
     });
     const canonicalAdapters: CanonicalChatProviderAdapter[] = [
       createKernelChatProviderAdapter({ dispatcher }),
-      createHermesChatProviderAdapter({ homePath }),
+      createHermesChatProviderAdapter({ homePath, toolOutputKey }),
       createOpenClawChatProviderAdapter({ rpc: openClawRpc, homePath }),
     ];
     if (codingAgentProviders.some((provider) => provider.providerId === "claude")) {
@@ -4267,6 +4272,7 @@ export async function createGateway(config: GatewayConfig) {
         canonicalAdapters.push(createCanonicalCodingChatProviderAdapter({
           providerId: "codex",
           threads: codingAgentThreadStore,
+          toolOutputKey,
           nativeInputProvider: codingAgentProviders.find(provider => provider.providerId === "codex"),
         }));
       }
@@ -4274,6 +4280,7 @@ export async function createGateway(config: GatewayConfig) {
         canonicalAdapters.push(createCanonicalCodingChatProviderAdapter({
           providerId: "pi",
           threads: codingAgentThreadStore,
+          toolOutputKey,
           nativeInputProvider: codingAgentProviders.find(provider => provider.providerId === "pi"),
         }));
       }
@@ -4281,6 +4288,7 @@ export async function createGateway(config: GatewayConfig) {
         canonicalAdapters.push(createCanonicalCodingChatProviderAdapter({
           providerId: "opencode",
           threads: codingAgentThreadStore,
+          toolOutputKey,
           nativeInputProvider: codingAgentProviders.find(provider => provider.providerId === "opencode"),
         }));
       }
@@ -4383,6 +4391,7 @@ export async function createGateway(config: GatewayConfig) {
   app.route("/", createCanonicalChatRoutes({
     service: chatRepository
         ? createCanonicalChatService(chatRepository, {
+          projectOwnerToolOutput,
           ...(canonicalChatOrchestrator ? { orchestrator: canonicalChatOrchestrator } : {}),
           ...(canonicalChatExecutionRoots ? { executionRoots: canonicalChatExecutionRoots } : {}),
           ...(canonicalChatCollaborationGuard ? { collaborationGuard: canonicalChatCollaborationGuard } : {}),
