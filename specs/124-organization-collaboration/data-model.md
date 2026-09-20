@@ -28,7 +28,7 @@ V1 platform records are organizations/memberships, the organization command inbo
 | Record | Fields / invariant |
 | --- | --- |
 | collaboration_scopes | Stable resource ID, owner, owning organization, home runtime/generation, parent scope, lifecycle, policy revision; one authoritative writer |
-| collaboration_grants | Audience, deriving organization, preset, explicit actions/selectors, pending/active/revoked/expired, source ID, exact legacy ceiling, revision; org grants do not fan out to every member: a member becomes a participant only through per-member activation on first open, recorded with the activating actor and time; no grant outlives the membership it derives from |
+| collaboration_grants | Audience, deriving organization, preset, explicit actions/selectors, pending/active/revoked/expired, source ID, exact legacy ceiling, revision; org grants do not fan out to every member: opening the pending share is the accept, one atomic pending-to-active transition per member enforced as a conditional write on the member's activation row (`WHERE state = 'pending'`), recorded with the activating actor and time, idempotent on repeat opens; no grant outlives the membership it derives from |
 | capability_profiles/restrictions (deferred from V1) | Versioned action sets, file/folder/app/Chat selectors, denies, parent/org ceilings, approval requirements; V1 stores one whole-project preset per grant |
 | resource_catalog/app_instances | Non-reused file/folder/instance IDs, path incarnation, parent and namespace, revision/tombstone; app namespace is owner-controlled and not a shared slug |
 | collaboration_access_requests (deferred from V1) | Actor, scope, requested capability, proposed bounded operation, approver class, state/expiry/revision |
