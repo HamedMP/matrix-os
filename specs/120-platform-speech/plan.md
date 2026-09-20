@@ -49,7 +49,7 @@ Platform service authentication is not just accepting an owner ID passed by a VP
 ## Recording request lifecycle
 
 1. Read coarse capability readiness and limits. Missing configuration is an unavailable service, not “file not found.”
-2. Bind a request ID to owner, runtime, chat/draft and draft generation. Capture begins only on user action.
+2. Bind the request ID to the verified owner and runtime server-side. The client controller separately binds the chat/draft and draft generation so late results cannot cross drafts. Capture begins only on explicit user action.
 3. Record with a supported codec; prefer negotiated WebM/Opus or MP4 for browser compatibility. Stop/cancel always releases tracks.
 4. On Stop, upload bounded audio to the gateway facade. The facade validates media headers, actual supported format and size; authenticated identity is never taken from audio metadata.
 5. Platform checks capability eligibility, rate and concurrency limits, and creates an atomic usage reservation before provider work. The provider/model are selected from server policy.
