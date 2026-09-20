@@ -4,9 +4,9 @@ S02 freezes strict Zod 4 contracts and package exports before dependent packets.
 
 ## Wire rules
 
-Mutations require UUID clientRequestId, record expectedRevision where applicable, and a bounded discriminated payload. Same idempotency key/different payload conflicts. Validate all identifiers/path/query/body at boundary; no arbitrary target URL, owner filesystem path, payer or DB namespace. Resolve paths by catalog identity with symlink/hardlink escape checks. POST/PUT/PATCH/DELETE apply bodyLimit before buffering. Conditional DELETE uses validated headers where existing clients need bodyless DELETE. Generic errors only; hidden resource existence returns not-found. Cookies require exact Origin/CSRF; direct proof-authenticated requests also validate allowed client origin and proof binding. No wildcard CORS.
+Mutations require UUID clientRequestId, record expectedRevision where applicable, and a bounded discriminated payload. Same idempotency key/different payload conflicts. Validate all identifiers/path/query/body at boundary; no arbitrary target URL, owner filesystem path, payer or DB namespace. Resolve paths by catalog identity with symlink/hardlink escape checks. POST/PUT/PATCH/DELETE apply bodyLimit before buffering. Conditional DELETE uses validated headers where existing clients need bodyless DELETE. Generic errors only; hidden resource existence returns not-found. Cookies require exact Origin/CSRF; direct proof-authenticated requests also validate allowed client origin and proof binding. No wildcard CORS. No environment flag, milestone or rollout cohort gates any route: the actor's current membership or guest admission in the resource's organization is checked on every collaboration route, WebSocket upgrade, queue claim, tool invocation and integration action, and missing signing/origin configuration fails closed.
 
-`U`: verified Clerk/app/native/CLI actor; `O`: fresh Clerk org role/permission projection; `R`: enrolled runtime asymmetric identity; `T`: one-use platform-signed connection/operation ticket plus client proof of possession; `G`: local current grant/policy; `F`: exact approved funding/credential delegation; `P`: authenticated peer runtime plus T naming actor, operation and both endpoints. Selected org, custom headers or network reachability are never authority.
+`U`: verified Clerk/app/native/CLI actor; `O`: fresh Clerk org role/permission projection; `R`: enrolled runtime asymmetric identity; `T`: one-use platform-signed connection/operation ticket plus client proof of possession; `G`: local current grant/policy, always derived from the scope's organization; `F`: exact approved funding/credential delegation; `P`: authenticated peer runtime plus T naming actor, operation and both endpoints. Selected org, custom headers or network reachability are never authority.
 
 ## Platform control endpoints
 
@@ -38,6 +38,7 @@ Mutations require UUID clientRequestId, record expectedRevision where applicable
 | POST `/webhooks/clerk/organizations` | Verified signature on raw bounded body | Signed public ingress, replay/dedupe/reconciliation |
 | Existing Stripe webhook | Verified Stripe signature + dedupe | Signed public ingress, payer projection only |
 | GET `/api/organizations/:orgId/operations/:id` | U with initiating/management/recovery right | Sanitized asynchronous outcome |
+| `/internal/collaboration/policy` (legacy rollout cohort) | Retired | Removed in S20 with the `collaboration_rollout_policy` table; not migrated, no replacement route |
 
 Clerk organization acceptance uses Clerk's supported flow. A verified acceptance event triggers quote revalidation and entitlement command; no secret billing authority is trusted from the event payload. System Clerk permissions govern Clerk components/API; configure explicit Matrix custom permissions for application server checks, as system permissions are not JWT claims.
 
@@ -52,7 +53,7 @@ All routes below terminate on the registered computer origin. `D` means direct s
 | POST `/api/collaboration/runtimes/:runtimeId/scopes/preflight`; POST `/scopes` | D plus actual resource owner/delegated create authority |
 | GET `/api/collaboration/scopes/:scopeId`; GET `/access` | D read, effective capabilities/reasons only |
 | GET/POST `/scopes/:scopeId/grants`; PATCH/DELETE `/grants/:grantId` | D read/manage, expected revision |
-| POST `/scopes/:scopeId/invitations`; GET `/api/collaboration/invitations/:id`; POST `/:id/accept` or `/decline` | D manage / exact invitee; pending-invitation T permits only these actions |
+| POST `/scopes/:scopeId/invitations`; GET `/api/collaboration/invitations/:id`; POST `/:id/accept` or `/decline` | D manage / exact invitee who is a current member or admitted guest of the scope's organization; identifiers outside that organization are not resolved; pending-invitation T permits only these actions |
 | GET/PUT `/scopes/:scopeId/policy`; POST `/policy/preflight` | D read/manage; resolved recipient profile, dependency/readiness report |
 | GET/POST `/scopes/:scopeId/access-requests`; POST `/access-requests/:id/decision` | D actor request or designated approver; exact actions and expiry |
 | GET `/scopes/:scopeId/chat`; GET/POST `/chat/messages`; GET/POST `/discussion/messages`; GET/PATCH `/user-state` | D per Chat content/read/discuss rights; private actor state |

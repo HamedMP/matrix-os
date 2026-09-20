@@ -4,7 +4,7 @@ This is the future implementation acceptance recipe. No runtime tests or live pr
 
 ## Fixtures
 
-Two enrolled directly reachable member computers A/B, browser/Electron/native/CLI clients, a real Postgres test service, Clerk test org, admin, two members, outsider and separate billing/integration managers. Use one owner-selected source per project, exercising eligible API/Matrix AI delegation and owner-only subscription mode separately, Stripe sandbox and managed Matrix test rooms. Include a full project with two Chats/worktrees, a restricted folder, denied sibling/history in Git, dirty edits, app database, terminal and two integration connections (read-only and send-capable).
+Two enrolled directly reachable member computers A/B, browser/Electron/native/CLI clients, a real Postgres test service, Clerk test org, admin, two members, an outsider with a valid Clerk session and no org relationship, and separate billing/integration managers. Fixtures set no `MATRIX_COLLABORATION_ENABLED` value and seed no rollout cohort; both must be absent from the codebase. Use one owner-selected source per project, exercising eligible API/Matrix AI delegation and owner-only subscription mode separately, Stripe sandbox and managed Matrix test rooms. Include a full project with two Chats/worktrees, a restricted folder, denied sibling/history in Git, dirty edits, app database, terminal and two integration connections (read-only and send-capable).
 
 Resource content lives on A; B can be a recipient/integration custodian/transfer target. Test an org-managed computer assigned to a member for recovery; no organization-wide shared computer is provisioned. Test a viewer with no personal computer.
 
@@ -13,6 +13,7 @@ Resource content lives on A; B can be a recipient/integration custodian/transfer
 Run from the implementation worktree using repository Vitest configuration, for example:
 
 ```sh
+pnpm exec vitest run tests/gateway/collaboration-org-precondition.test.ts tests/platform/collaboration-org-precondition.test.ts
 pnpm exec vitest run tests/contracts/collaboration-direct.test.ts tests/contracts/collaboration-capabilities.test.ts tests/contracts/collaboration-execution.test.ts
 pnpm exec vitest run tests/platform/organization-authority-postgres.test.ts tests/gateway/collaboration-capabilities-postgres.test.ts tests/gateway/shared-chat-worktrees-postgres.test.ts
 pnpm exec vitest run tests/platform/collaboration-cutover-postgres.test.ts tests/gateway/collaboration-peer-transfer-postgres.test.ts tests/platform/org-invite-billing-postgres.test.ts
@@ -26,6 +27,7 @@ These new test paths are assigned in tasks.md and will exist after implementatio
 
 | Journey | Required evidence |
 | --- | --- |
+| Org-only gate | Outsider with a valid session and direct reachability is denied on every route, WebSocket, queue claim, tool and integration path; no environment flag or cohort record is consulted; missing signing/origin configuration fails closed with a generic error; a person-to-person invitation identifier outside the organization is not resolved; departure or guest expiry ends every derived grant |
 | Direct open | Client authenticates with platform then streams Chat/files/PTY/app content directly to A; platform trace contains only permitted metadata; recipient needs no own computer |
 | Peer path | B performs exact delegated integration action or stages transfer from A over authenticated direct HTTPS; wrong peer/key/operation replay denied |
 | Membership | Lost/reordered webhook, direct Clerk edit and platform/control partition enforce fixed deadlines; revocation completion waits for ack/expiry; same local fence blocks REST/WS/queue/tools |
@@ -43,7 +45,7 @@ These new test paths are assigned in tasks.md and will exist after implementatio
 | Invite costs | New/existing user sees no-compute/sponsor/provision choices; pending invite has no charge; expired quote requires renewed payer approval; duplicate accept/payment callback cannot double charge or provision |
 | Ownership | Sponsoring a personal host changes payer only; org-managed member assignment retains org data/backups after departure; personal data remains personal |
 | Transfer | Dirty worktree/app/Chat/file inventory staged with checksums; crashes at every phase leave one authority; credentials/memory/drafts absent; generation CAS prevents double-writable copies |
-| Cutover | IDs and old action ceilings preserved; legacy proxy/WS/V1 paths removed; old clients upgrade-required; offline/ambiguous scopes unavailable with recovery; rollback never restores legacy auth |
+| Cutover | IDs and old action ceilings preserved; legacy proxy/WS/V1 paths, rollout flag and cohort policy removed; person-to-person records dispositioned per S20 (zero expected); old clients upgrade-required; offline/ambiguous scopes unavailable with recovery; rollback never restores legacy auth |
 | Surfaces | Web Canvas then Web Desktop then Electron Desktop; applicable Web Mobile, Native Mobile and CLI share semantics/root/owner-source/Git-approval/error states |
 | Scale | Record control request/metadata byte rates separately from direct bytes; no refresh per keystroke/chunk; verify bounded host connection/process/transfer capacity and shutdown |
 | Matrix groups | Human/AI tokens cannot directly read/join private service rooms; managed group text expires during partition; no canonical AI Chat/files mirrored |

@@ -6,13 +6,13 @@
 
 ## Result
 
-Ship one coordinated replacement of collaboration transport and authorization. The platform coordinates identity, routing, generations, quotes and sponsorship; registered member computers serve canonical data, shared Codex/Claude execution, worktrees, apps, PTYs, integration actions and peer transfers. No pooled organization-wide computer, permanent compatibility proxy or rollout fallback to V1 authorization.
+Ship one coordinated replacement of collaboration transport and authorization. The platform coordinates identity, routing, generations, quotes and sponsorship; registered member computers serve canonical data, shared Codex/Claude execution, worktrees, apps, PTYs, integration actions and peer transfers. No pooled organization-wide computer, permanent compatibility proxy or rollout fallback to V1 authorization. No sharing outside an organization, and no release flag or rollout cohort: the organization is the only gate.
 
 Reuse current authority/transition/Chat/worktree/provider/integration seams. Replace the current platform payload forwarding path and the standalone-only shared-AI adapter's capability limitations through tested adapters. Do not rewrite canonical Chat, provider V3 or worktree state into separate collaboration stores.
 
 ## Opinionated release boundary
 
-The default is one owner-hosted project group Chat, one owner-selected AI source and owner-approved Git/PR operations. Collaborators join and discuss without provisioning a computer or configuring AI/Git accounts. Additional coding Chats/worktrees and advanced capability restrictions are available but not the join flow. Participant AI accounts and copy-and-continue are future scope. Existing member-computer reassignment/data migration remains distinct from cloning a project for independent work.
+The default is one owner-hosted project group Chat, one owner-selected AI source and owner-approved Git/PR operations. Collaborators join and discuss without provisioning a computer or configuring AI/Git accounts. Additional coding Chats/worktrees and advanced capability restrictions are available but not the join flow. Every share is scoped to one organization; specific members and admitted guests are audiences within it, and there is no person-to-person path. Participant AI accounts and copy-and-continue are future scope. Existing member-computer reassignment/data migration remains distinct from cloning a project for independent work.
 
 Personal subscription support is conditional on actual provider eligibility; running on the owner's machine does not establish multi-user permission. Where delegation is unsupported, subscription mode allows owner-submitted runs only and the UI explains this. Direct contributor AI requests use an eligible owner-controlled API/business source. Neither a UI approval nor an account-owner consent can waive provider restrictions.
 
@@ -41,6 +41,7 @@ Browser clients hydrate resources directly after metadata discovery, including a
 ## Authority and execution decisions
 
 - Clerk owns membership/coarse custom permissions; Matrix local grants own folder/app/Chat/task/connection selectors. Deny-wins restrictions and ceilings apply across every path. Migration preserves old allows without auto-granting new actions.
+- Organization membership or guest admission is the only gate. `MATRIX_COLLABORATION_ENABLED`, the `collaboration_rollout_policy` cohort table and the gateway policy client are deleted in S20 before contracts freeze, so no later packet models a personal audience, departure-surviving grant or cohort branch. Wiring always constructs; missing signing/origin configuration fails closed.
 - Fixed-expiry evidence with signed invalidation/control and local fences replaces per-payload platform authorization. The 60-second external removal goal is a measured provider gate, not a webhook promise.
 - Resolve one owner-selected V3 binding per project and pin it per run, preserving requesting actor attribution. Reuse existing owner account settings; do not build participant account profiles, routing or quota rotation. Owner-only subscription mode and eligible delegated-source mode have explicit different submit rights.
 - Both Codex and Claude shared execution must use the same authoritative queue/history and scoped sandbox. Verify actual harness/native subscription eligibility. Use a project/Chat-scoped session, never the owner’s private session. Recreate it on account/root/audience changes unless safe continuation is proven.
@@ -57,7 +58,7 @@ Each packet has failing tests, exact file responsibilities and exit criteria in 
 | --- | --- | --- | --- |
 | S00 | Baseline/provider/Clerk/TLS/isolation probes | None | Coordinator |
 | S01 | Mechanical extraction of large platform/gateway seams | S00 | Foundation |
-| S02 | Direct identity, capability, funding and peer contracts | S00,S01 | Contracts |
+| S02 | Direct identity, capability, funding and peer contracts | S00,S01,S20 | Contracts |
 | S03 | Clerk permissions, groups, freshness and control epochs | S02 | Identity |
 | S04 | Local granular grants, ceilings and history audience rules | S02 | Authority |
 | S05 | Endpoint enrollment, direct sessions and control transport | S03,S04 | Transport |
@@ -75,16 +76,17 @@ Each packet has failing tests, exact file responsibilities and exit criteria in 
 | S17 | Native Mobile and CLI parity | S13,S15,S16 | Surfaces |
 | S18 | One-shot migration and legacy serving-path removal | S13,S14,S17 | Cutover |
 | S19 | Full release evidence and public docs | S18 | Coordinator |
+| S20 | Org-only precondition and release-gate removal | S01 | Foundation |
 
-Parallel work is allowed only for independent file ownership after frozen contracts. Each code packet starts RED → GREEN → refactor; use real Postgres for leases, policy and migrations. Registration/shared exports/lockfile belong to coordinator. Keep new files focused and under 500 lines; extract existing 1000+ line files before adding behavior. Use small reviewed stacked PRs while keeping production collaboration activation gated until S19.
+Packet numbers are stable labels, not execution order. S20 executes immediately after S01 and before S02 so that the rollout gates and person-to-person paths are gone before any contract is frozen; S18 then removes only the proxy, WebSocket forwarding and V1 fallback. Parallel work is allowed only for independent file ownership after frozen contracts. Each code packet starts RED → GREEN → refactor; use real Postgres for leases, policy and migrations. Registration/shared exports/lockfile belong to coordinator. Keep new files focused and under 500 lines; extract existing 1000+ line files before adding behavior. Use small reviewed stacked PRs while keeping production collaboration activation gated until S19.
 
 ## Cutover and rollback
 
 1. Verify all required provider modes, direct connectivity, sandbox restrictions and applicable clients against the candidate protocol.
-2. Snapshot owner metadata/data and control metadata; inventory live scopes, pending invites, exact old action ceilings, accounts, connector custody and dirty worktrees. No user data cleanup is inferred.
+2. Snapshot owner metadata/data and control metadata; inventory live scopes, pending invites, exact old action ceilings, accounts, connector custody and dirty worktrees. Apply the S20 disposition to any person-to-person record (terminate with notice or owner re-homes into an organization); zero is expected. No other user data cleanup is inferred.
 3. Enter collaboration maintenance: reject new mutations/runs; drain/cancel running work with explicit states; freeze directory updates under a migration generation.
 4. Run idempotent imports and compare IDs/counts/authorization; ambiguous or offline scopes are marked unavailable with recovery steps. Finish direct-capable connector migration/reconnect; do not retain central execution fallback for those connectors.
-5. Install compatible clients/homes/control services, verify endpoint keys and policy snapshot acknowledgement, then activate the new generation. Release-level checks prove old proxy/WS/V1 paths are absent and old clients get upgrade-required.
+5. Install compatible clients/homes/control services, verify endpoint keys and policy snapshot acknowledgement, then activate the new generation. Release-level checks prove old proxy/WS/V1 paths, the rollout flag and the cohort policy are absent and old clients get upgrade-required.
 6. Resume collaboration only after the full acceptance matrix. Backup retention and recovery jobs are bounded and documented. Failed cutover keeps collaboration unavailable or returns to a compatible direct build; never activate old ACL or content forwarding as rollback.
 
 This revision updates the existing specification PR. No paid test machine, provisioning or production rollout is executed by this planning task. Implementation validation should use disposable enrolled VPSes with separately authorized spend. One product cutover does not require a single giant code PR.

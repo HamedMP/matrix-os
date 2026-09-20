@@ -4,7 +4,7 @@ Use PostgreSQL/Kysely and existing migrations/repositories. Reuse equivalent tab
 
 ## Identity and ownership
 
-`ActorId` is immutable Clerk user ID. `OwnerRef` is personal or organization principal. `RuntimeRef` is an enrolled machine and authority generation; `AssignedMember` never substitutes for its owner. `PayerRef` resolves an independent billing account. `ResourceRef` identifies project/Chat/terminal/app/file/folder; paths and app slugs are not identities. `AccountRef` is a V3 harness/account/access-source binding plus credential owner and custody runtime. `AudienceRef` is actor/org/group. The platform does not store content paths, worktree patches, transcripts or integration results for routing.
+`ActorId` is immutable Clerk user ID. `OwnerRef` is personal or organization principal. `RuntimeRef` is an enrolled machine and authority generation; `AssignedMember` never substitutes for its owner. `PayerRef` resolves an independent billing account. `ResourceRef` identifies project/Chat/terminal/app/file/folder; paths and app slugs are not identities. `AccountRef` is a V3 harness/account/access-source binding plus credential owner and custody runtime. `AudienceRef` is org, group, or an actor who is a current member or admitted guest of the resource's organization; every scope records its organization and no audience resolves outside it. The platform does not store content paths, worktree patches, transcripts or integration results for routing.
 
 ## Platform control records
 
@@ -27,8 +27,8 @@ Computer control streams carry only generations, endpoint updates, membership as
 
 | Record | Fields / invariant |
 | --- | --- |
-| collaboration_scopes | Stable resource ID, owner, home runtime/generation, parent scope, lifecycle, policy revision; one authoritative writer |
-| collaboration_grants | Audience, preset, explicit actions/selectors, pending/active/revoked/expired, source ID, exact legacy ceiling, revision; org grants do not fan out to every member |
+| collaboration_scopes | Stable resource ID, owner, owning organization, home runtime/generation, parent scope, lifecycle, policy revision; one authoritative writer |
+| collaboration_grants | Audience, deriving organization, preset, explicit actions/selectors, pending/active/revoked/expired, source ID, exact legacy ceiling, revision; org grants do not fan out to every member; no grant outlives the membership or guest admission it derives from |
 | capability_profiles/restrictions | Versioned action sets, file/folder/app/Chat selectors, denies, parent/org ceilings, approval requirements; parent restrictions cannot be widened below |
 | resource_catalog/app_instances | Non-reused file/folder/instance IDs, path incarnation, parent and namespace, revision/tombstone; app namespace is owner-controlled and not a shared slug |
 | collaboration_access_requests | Actor, scope, requested capability, proposed bounded operation, approver class, state/expiry/revision; approval never creates a generic owner session |
@@ -43,12 +43,12 @@ Computer control streams carry only generations, endpoint updates, membership as
 | transfers | Exact inventory/version digest, source/target runtime and owner, dual consent, authority generation, phase, checksums/checkpoint/recovery state |
 | resource audit/outbox | Actor/action/resource/generation/result, no secrets/transcript; transactional with authority changes |
 
-Keep canonical Chat/project/worktree entities; extend them rather than adding another Chat store. Per-person drafts/read state stay private. Existing direct-member/sync records are imported once then removed from the authorization read path, not maintained as dual authorities.
+Keep canonical Chat/project/worktree entities; extend them rather than adding another Chat store. Per-person drafts/read state stay private. Existing direct-member/sync records are inventoried and dispositioned (terminate with notice, or the owner re-homes them into an organization) rather than imported as personal grants; none remain on the authorization read path. The platform `collaboration_rollout_policy` table and its milestone/mode/cohort contract are dropped without replacement.
 
 ## Evaluation and publication
 
 1. Resolve current lifecycle, runtime generation and actor identity.
-2. Resolve fresh membership/guest/group evidence for org-derived grants.
+2. Resolve fresh membership/guest/group evidence for every grant; a resource without a resolvable organization context, or an actor without current membership or guest admission in it, denies before any allow is considered. No environment flag or cohort record participates.
 3. Union matching explicit allows, intersect parent/resource/org hard ceilings and original migration action ceilings, subtract matching denies. No implicit management/funding privilege from editor or org admin.
 4. For a run, intersect actor capabilities with Chat audience data ceiling, the single project owner source and its submission mode, payer budget, task profile and sandbox capabilities. For commit/merge/push/PR also require a current exact owner Git approval, regardless of generic integration/task grants. For integration calls also intersect upstream OAuth/resource scope.
 5. Reauthorize queue claim, each tool/terminal input, output publication, final upload/patch commit and stream batches. Previously started remote effects cannot be recalled; no next step gets expired authority.
