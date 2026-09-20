@@ -103,3 +103,9 @@ Project share/create idempotently establishes the default shared Chat. Accept/jo
 Git actions form an explicit union: status/diff, commit, push and pr. Requests use immutable payload hashes and expected refs. The broker checks the member's preset, credential binding and freshness immediately before side effects and executes under the owner identity; owner approval, merge and remote changes are deferred. Ambiguous push/PR results reconcile by operation ID and observed refs before retry. Local agent commands and integration routes must enforce the same Git ceiling. No credential access/forge write bypass through unrestricted shell or broad MCP tokens.
 
 Copy-and-continue is a documented future capability, not an enabled peer action or route. Existing peer transfer keeps its move/fence semantics and cannot be used as a hidden clone API.
+
+## S00 findings (T003)
+
+- V1 uses Clerk's default organization roles (`org:admin`, `org:member`) and defines no custom permissions; membership alone is the authority input and roles carry no application privilege. The supported mapping is therefore "current member → eligible audience, everyone else → denied"; the custom-permission vocabulary stays deferred with the administration surface.
+- The 60-second external removal bound is unmeasured. `tests/integration/collaboration-authority-boundaries.integration.ts` measures direct role changes, concurrent updates and remove/rejoin through the Clerk REST API when `COLLABORATION_PROBE_CLERK_*` fixtures are present; until that probe runs against the test organization the bound is a target, not evidence.
+- Local rules that always run: a JWT expired beyond the 5-second skew allowance is rejected, and the 20-second organization evidence deadline is anchored to the upstream request start, so upstream latency and skew shorten the usable window and never extend it.
