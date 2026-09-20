@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { createProjectManager } from "../../packages/gateway/src/domains/workspace/project-manager.js";
 import { createProjectLifecycleService } from "../../packages/gateway/src/domains/workspace/project-lifecycle.js";
 
-import { withProjectLock } from "../../packages/gateway/src/state-ops.js";
+import { withProjectLock } from "../../packages/gateway/src/domains/files/state-ops.js";
 
 describe("project lifecycle", () => {
   let homePath: string;
