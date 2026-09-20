@@ -36,7 +36,6 @@ import {
   CollaborationChatExecutionAdapter,
 } from "./chat-execution-adapter.js";
 import {
-  CODEX_SHARED_INSTANCE_ID,
   parseCollaborationAiEligibility,
   sharedAiAdapterFor,
   type CollaborationAiExecutionEligibility,
@@ -284,7 +283,7 @@ export async function createSharedAiRuntime(options: {
       }
       return scope.execution_eligibility;
     },
-    resolveProviderReadiness: (ownerId: string, selection) => resolveSharedProviderReadiness({
+    resolveProviderReadiness: (ownerId, selection, boundDriverKind) => resolveSharedProviderReadiness({
       resolveCredentialSources: () => resolveKernelCredentialSources(
         options.homePath,
         process.env,
@@ -292,7 +291,7 @@ export async function createSharedAiRuntime(options: {
       ),
       ...(options.codingProviders ? { codingProviders: options.codingProviders } : {}),
       ...(options.providerCatalog ? { providerCatalog: options.providerCatalog } : {}),
-    }, ownerId, selection),
+    }, ownerId, selection, boundDriverKind),
     ...(options.providerCatalog ? {
       resolveCanonicalProviderAuthority: async (ownerId, selection) => {
         const catalog = await options.providerCatalog!.getCatalog({ userId: ownerId, source: "jwt" });
@@ -416,20 +415,31 @@ interface SharedProviderReadinessInput {
 }
 
 /**
- * Readiness follows the immutable binding's driver. Codex executes only through
- * its single pinned `codex_default` Instance (see `shared-ai-runtime-registry`
- * and the scope broker), so that Instance id selects the Codex route without a
- * catalog probe; every other selection is a Claude binding.
+ * Readiness follows the immutable bound driver, never an Instance id: the
+ * catalog does not reserve ids per driver, so a Claude binding may legitimately
+ * use any Instance id. An unbound Chat has no bound driver yet, so its candidate
+ * selection is classified through the trusted server-side catalog (a `codex`
+ * Instance takes the Codex route); without a catalog it follows the Claude
+ * default, and first-binding authority still requires a catalog to bind.
  */
 export async function resolveSharedProviderReadiness(
   input: SharedProviderReadinessInput,
   ownerId: string,
   selection?: CanonicalChatModelSelection | null,
+  boundDriverKind?: CanonicalProviderDriverKind | null,
 ): Promise<SharedProviderReadiness> {
-  if (selection?.instanceId === CODEX_SHARED_INSTANCE_ID) {
-    return resolveCodexProviderReadiness(input, ownerId, selection);
+  if (boundDriverKind === "codex") {
+    return selection ? resolveCodexProviderReadiness(input, ownerId, selection) : "unavailable";
   }
-  return resolveClaudeProviderReadiness(input, ownerId, selection);
+  if (boundDriverKind || !input.providerCatalog || !selection) {
+    return resolveClaudeProviderReadiness(input, ownerId, selection);
+  }
+  const catalog = await input.providerCatalog.getCatalog({ userId: ownerId, source: "jwt" });
+  const cached = { getCatalog: async () => catalog };
+  const candidate = catalog.instances.find((instance) => instance.id === selection.instanceId);
+  return candidate?.driverKind === "codex"
+    ? resolveCodexProviderReadiness({ providerCatalog: cached }, ownerId, selection)
+    : resolveClaudeProviderReadiness({ ...input, providerCatalog: cached }, ownerId, selection);
 }
 
 /**

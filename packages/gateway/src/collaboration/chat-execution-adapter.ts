@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
   type CanonicalChatModelSelection,
+  type CanonicalProviderDriverKind,
   CollaborationAiRequestAcceptedResponseSchema,
   CollaborationAiRequestSchema,
   CollaborationApprovalSchema,
@@ -42,6 +43,7 @@ export class CollaborationChatExecutionAdapter {
     resolveProviderReadiness?(
       ownerId: string,
       selection: CanonicalChatModelSelection | null,
+      boundDriverKind: CanonicalProviderDriverKind | null,
     ): Promise<"ready" | "reconnect_required" | "unavailable">;
     resolveCanonicalProviderAuthority?(
       ownerId: string,
@@ -237,20 +239,22 @@ export class CollaborationChatExecutionAdapter {
     capability: SharedAiCapability;
     canonicalProviderAuthority?: CanonicalSharedProviderAuthority;
   }> {
-    const capability = await this.options.repository.getSharedAiCapability(ownerFor(context), {
-      chatId: context.resourceId,
-      scopeId: context.scopeId,
-      actorId: context.actorId,
-    });
+    const { boundDriverKind, ...capability } = await this.options.repository.getSharedAiCapability(
+      ownerFor(context),
+      { chatId: context.resourceId, scopeId: context.scopeId, actorId: context.actorId },
+    );
     if (capability.status !== "available" && capability.status !== "owner_binding_required") {
       return { capability };
     }
 
     let readiness: "ready" | "reconnect_required" | "unavailable" = "ready";
     try {
+      // Readiness follows the immutable bound driver; an unbound Chat has none
+      // and the resolver classifies the candidate selection server-side.
       readiness = await this.options.resolveProviderReadiness?.(
         context.ownerId,
         capability.effectiveSelection ?? null,
+        boundDriverKind ?? null,
       ) ?? "ready";
     } catch (error: unknown) {
       console.warn("[collaboration] shared AI Provider readiness unavailable",

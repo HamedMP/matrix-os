@@ -139,6 +139,29 @@ describe("shared Chat canonical queue", () => {
     });
   });
 
+  it("projects the immutable bound driver alongside the capability", async () => {
+    await expect(repository.getSharedAiCapability(owner, {
+      chatId: collaborationIds.chat,
+      scopeId: collaborationIds.scope,
+      actorId: collaborationActors.editor,
+    })).resolves.toEqual({
+      status: "available",
+      effectiveSelection: productionClaudeSelection,
+      boundDriverKind: "claude_code",
+    });
+    await fixture.db.updateTable("chats").set({
+      bound_driver_kind: null, bound_instance_id: null, bound_at_turn_id: null,
+    }).where("id", "=", collaborationIds.chat).execute();
+    await expect(repository.getSharedAiCapability(owner, {
+      chatId: collaborationIds.chat,
+      scopeId: collaborationIds.scope,
+      actorId: collaborationActors.owner,
+    })).resolves.toEqual({
+      status: "owner_binding_required",
+      effectiveSelection: productionClaudeSelection,
+    });
+  });
+
   it("keeps an existing Codex binding immutable when an editor requests shared AI", async () => {
     await fixture.db.updateTable("chats").set({
       current_selection: JSON.stringify({ instanceId: "codex_default", model: "gpt-5.6-sol" }),

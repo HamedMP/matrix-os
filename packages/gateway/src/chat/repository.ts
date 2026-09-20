@@ -81,6 +81,7 @@ import {
   type EnqueuedSharedQueuedTurn,
   type SharedQueuedTurn,
   type SharedAiCapability,
+  type SharedAiCapabilityProjection,
   type CanonicalSharedProviderAuthority,
 } from "./queue-repository.js";
 import {
@@ -117,6 +118,7 @@ export type {
   EnqueuedSharedQueuedTurn,
   SharedQueuedTurn,
   SharedAiCapability,
+  SharedAiCapabilityProjection,
   CanonicalSharedProviderAuthority,
 } from "./queue-repository.js";
 export { SharedChatQueueError } from "./queue-repository.js";
@@ -1081,7 +1083,7 @@ export class ChatRepository {
   async getSharedAiCapability(
     owner: ChatOwner,
     input: { chatId: string; scopeId: string; actorId: string },
-  ): Promise<SharedAiCapability> {
+  ): Promise<SharedAiCapabilityProjection> {
     return this.queue.getSharedAiCapability(owner, input);
   }
 

@@ -196,44 +196,76 @@ describe("shared AI readiness routing by immutable binding", () => {
     ownerProfile: { state: "setup_required" as const },
   }));
 
-  it("verifies a Codex binding through the catalog without touching Claude credential routes", async () => {
+  it("verifies a bound Codex Chat through the catalog without touching Claude credential routes", async () => {
     const providerCatalog = codexCatalog();
     const resolveCredentialSources = claudeSources();
     await expect(resolveSharedProviderReadiness({
       resolveCredentialSources,
       providerCatalog,
-    }, "user_owner", codexSelection)).resolves.toBe("ready");
+    }, "user_owner", codexSelection, "codex")).resolves.toBe("ready");
     expect(providerCatalog.getCatalog).toHaveBeenCalledWith({ userId: "user_owner", source: "jwt" });
     expect(resolveCredentialSources).not.toHaveBeenCalled();
   });
 
-  it("fails a Codex binding closed as generic unavailability, never Claude reconnect guidance", async () => {
+  it("fails a bound Codex Chat closed as generic unavailability, never Claude reconnect guidance", async () => {
     const resolveCredentialSources = claudeSources();
     await expect(resolveSharedProviderReadiness({
       resolveCredentialSources,
       providerCatalog: codexCatalog({
         availability: "auth_required", unavailabilityReason: "authentication_required",
       }),
-    }, "user_owner", codexSelection)).resolves.toBe("unavailable");
+    }, "user_owner", codexSelection, "codex")).resolves.toBe("unavailable");
     await expect(resolveSharedProviderReadiness({
       resolveCredentialSources,
       providerCatalog: codexCatalog({ driverKind: "claude_code" }),
-    }, "user_owner", codexSelection)).resolves.toBe("unavailable");
+    }, "user_owner", codexSelection, "codex")).resolves.toBe("unavailable");
     await expect(resolveSharedProviderReadiness({
       resolveCredentialSources,
-    }, "user_owner", codexSelection)).resolves.toBe("unavailable");
+    }, "user_owner", codexSelection, "codex")).resolves.toBe("unavailable");
+    await expect(resolveSharedProviderReadiness({
+      resolveCredentialSources,
+      providerCatalog: codexCatalog(),
+    }, "user_owner", null, "codex")).resolves.toBe("unavailable");
     expect(resolveCredentialSources).not.toHaveBeenCalled();
   });
 
-  it("routes every Claude Instance through the credential-aware Claude readiness", async () => {
-    const providerCatalog = codexCatalog();
+  it("follows the bound Claude driver even when its Instance id collides with the Codex id", async () => {
+    const providerCatalog = codexCatalog({ driverKind: "claude_code" });
     const resolveCredentialSources = claudeSources();
     await expect(resolveSharedProviderReadiness({
       resolveCredentialSources,
       providerCatalog,
-    }, "user_owner", { instanceId: "claude_code_default", model: "opus" })).resolves.toBe("ready");
-    expect(resolveCredentialSources).toHaveBeenCalledTimes(1);
+    }, "user_owner", codexSelection, "claude_code")).resolves.toBe("ready");
+    await expect(resolveSharedProviderReadiness({
+      resolveCredentialSources,
+      providerCatalog,
+    }, "user_owner", { instanceId: "claude_code_default", model: "opus" }, "claude_code")).resolves.toBe("ready");
+    expect(resolveCredentialSources).toHaveBeenCalledTimes(2);
     expect(providerCatalog.getCatalog).not.toHaveBeenCalled();
+  });
+
+  it("classifies an unbound Chat's candidate selection through the catalog once", async () => {
+    const codex = codexCatalog();
+    const resolveCredentialSources = claudeSources();
+    await expect(resolveSharedProviderReadiness({
+      resolveCredentialSources,
+      providerCatalog: codex,
+    }, "user_owner", codexSelection, null)).resolves.toBe("ready");
+    expect(codex.getCatalog).toHaveBeenCalledTimes(1);
+    expect(resolveCredentialSources).not.toHaveBeenCalled();
+
+    const claude = codexCatalog({ id: "claude_code_default", driverKind: "claude_code" });
+    await expect(resolveSharedProviderReadiness({
+      resolveCredentialSources,
+      providerCatalog: claude,
+    }, "user_owner", { instanceId: "claude_code_default", model: "gpt-5.6-sol" }, null)).resolves.toBe("ready");
+    expect(claude.getCatalog).toHaveBeenCalledTimes(1);
+    expect(resolveCredentialSources).toHaveBeenCalledTimes(1);
+
+    await expect(resolveSharedProviderReadiness({
+      resolveCredentialSources,
+    }, "user_owner", codexSelection, null)).resolves.toBe("ready");
+    expect(resolveCredentialSources).toHaveBeenCalledTimes(2);
   });
 });
 

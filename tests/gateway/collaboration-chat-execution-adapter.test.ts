@@ -155,6 +155,25 @@ describe("CollaborationChatExecutionAdapter", () => {
       });
   });
 
+  it("resolves readiness by the immutable bound driver and never exposes it to clients", async () => {
+    const resolveProviderReadiness = vi.fn(async () => "ready" as const);
+    const adapter = createAdapter({
+      getSharedAiCapability: vi.fn(async () => ({
+        status: "available" as const,
+        effectiveSelection: selection,
+        boundDriverKind: "claude_code" as const,
+      })),
+      resolveProviderReadiness,
+    });
+
+    await expect(adapter.capability({ ...context, capability: "read" }, []))
+      .resolves.toEqual({
+        capability: { status: "available", effectiveSelection: selection },
+        approvals: [],
+      });
+    expect(resolveProviderReadiness).toHaveBeenCalledWith(collaborationActors.owner, selection, "claude_code");
+  });
+
   it("surfaces expired Claude readiness only as an actionable owner state", async () => {
     const adapter = createAdapter({
       resolveProviderReadiness: vi.fn(async () => "reconnect_required"),
@@ -263,6 +282,8 @@ function createAdapter(overrides: Record<string, unknown> = {}) {
       ?? (async () => undefined),
     resolveProviderReadiness: (overrides.resolveProviderReadiness as (
       ownerId: string,
+      selection: typeof queued.selection | null,
+      boundDriverKind: "claude_code" | "codex" | null,
     ) => Promise<"ready" | "reconnect_required" | "unavailable">) ?? (async () => "ready"),
     resolveCanonicalProviderAuthority: (overrides.resolveCanonicalProviderAuthority as (
       ownerId: string,

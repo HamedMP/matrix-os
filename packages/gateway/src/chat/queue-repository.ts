@@ -173,6 +173,16 @@ export interface SharedAiCapability {
   effectiveSelection?: CanonicalQueueChatTurnRequest["selection"];
 }
 
+/**
+ * Server-side capability projection. `boundDriverKind` is the immutable bound
+ * driver when the Chat is bound; readiness must follow it rather than inferring
+ * a driver from the Instance id, which the catalog does not reserve per driver.
+ * It is stripped before the capability is returned to clients.
+ */
+export interface SharedAiCapabilityProjection extends SharedAiCapability {
+  boundDriverKind?: CanonicalProviderDriverKind;
+}
+
 export class SharedChatQueueError extends Error {
   constructor(readonly code: "capacity" | "conflict" | "forbidden" | "not_found" | "unavailable") {
     super("Shared Chat queue unavailable");
@@ -425,7 +435,7 @@ export class ChatQueueRepository {
   async getSharedAiCapability(
     ownerInput: ChatOwner,
     input: { chatId: string; scopeId: string; actorId: string },
-  ): Promise<SharedAiCapability> {
+  ): Promise<SharedAiCapabilityProjection> {
     const owner = CanonicalOwnerScopeSchema.parse(ownerInput);
     const chatId = CanonicalChatIdSchema.parse(input.chatId);
     const scopeId = CollaborationIdSchema.parse(input.scopeId);
@@ -448,12 +458,16 @@ export class ChatQueueRepository {
       .where("collaboration_scopes.kind", "=", "chat")
       .executeTakeFirst();
     if (!row || row.scope_lifecycle !== "shared") return { status: "unavailable" };
-    return authoritativeSharedProvider({
-      chat: row,
-      actorId,
-      executionEligibility: row.execution_eligibility,
-      ownerId: owner.ownerId,
-    }).capability;
+    const boundDriverKind = CanonicalChatRunSchema.shape.driverKind.safeParse(row.bound_driver_kind);
+    return {
+      ...authoritativeSharedProvider({
+        chat: row,
+        actorId,
+        executionEligibility: row.execution_eligibility,
+        ownerId: owner.ownerId,
+      }).capability,
+      ...(boundDriverKind.success ? { boundDriverKind: boundDriverKind.data } : {}),
+    };
   }
 
   async enqueue(
