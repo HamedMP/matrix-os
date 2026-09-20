@@ -569,10 +569,7 @@ runcmd:
     printf 'matrix ALL=(ALL) NOPASSWD:ALL\n' >/etc/sudoers.d/matrix
     chmod 0440 /etc/sudoers.d/matrix
     visudo -cf /etc/sudoers.d/matrix
-    # A golden builder may have enabled linger while validating the bundled
-    # user-systemd terminal runtime. Quiesce any inherited user manager before
-    # changing the clone-specific home; usermod refuses users with live
-    # processes and would otherwise abort cloud-init before restore starts.
+    # Quiesce inherited user processes before changing the clone home.
     matrix_uid="$(id -u matrix)"
     timeout --kill-after=5 30 loginctl disable-linger matrix >/dev/null 2>&1 || true
     timeout --kill-after=5 30 loginctl terminate-user matrix >/dev/null 2>&1 || true
