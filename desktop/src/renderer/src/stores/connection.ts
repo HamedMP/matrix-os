@@ -16,6 +16,13 @@ interface ConnectionState {
   status: ConnectionStatus;
   handle: string | null;
   userId: string | null;
+  /**
+   * Active Clerk organization for collaboration sharing (S20 / T101). The
+   * trusted-core auth status does not surface it yet, so it stays null and the
+   * share controls stay disabled on Electron Desktop until the device-auth
+   * status carries the organization.
+   */
+  organizationId: string | null;
   displayName: string | null;
   imageUrl: string | null;
   email: string | null;
@@ -34,6 +41,7 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
   status: "loading",
   handle: null,
   userId: null,
+  organizationId: null,
   displayName: null,
   imageUrl: null,
   email: null,
@@ -82,6 +90,7 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
         status: status.signedIn ? "signed-in" : "signed-out",
         handle: status.handle ?? null,
         userId: status.userId ?? null,
+        organizationId: readOrganizationId(status),
         displayName: status.displayName ?? null,
         imageUrl: status.imageUrl ?? null,
         email: status.email ?? null,
@@ -99,7 +108,7 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
         clearDraftChats();
         clearPreloadedAppIcons();
       }
-      set({ status: "signed-out", handle: null, userId: null, displayName: null, imageUrl: null, email: null, api: null });
+      set({ status: "signed-out", handle: null, userId: null, organizationId: null, displayName: null, imageUrl: null, email: null, api: null });
     }
   },
 
@@ -148,7 +157,7 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
     // request cannot repopulate the next account's desktop.
     clearDesktopQueryCache();
     reconcileDesktopRuntimeChange();
-    set({ status: "signed-out", handle: null, userId: null, displayName: null, imageUrl: null, email: null, api: null });
+    set({ status: "signed-out", handle: null, userId: null, organizationId: null, displayName: null, imageUrl: null, email: null, api: null });
   },
 }));
 
@@ -187,4 +196,10 @@ export function unwireConnectionEvents(): void {
   }
   connectionEventCleanups = [];
   wired = false;
+}
+
+function readOrganizationId(status: unknown): string | null {
+  if (!status || typeof status !== "object") return null;
+  const value = Reflect.get(status, "organizationId");
+  return typeof value === "string" && /^org_[A-Za-z0-9_-]{1,124}$/.test(value) ? value : null;
 }

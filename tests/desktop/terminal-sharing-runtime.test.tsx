@@ -16,7 +16,22 @@ vi.mock("@matrix-os/ui", () => ({
 describe("DesktopTerminalSharing", () => {
   beforeEach(() => {
     sharingButton.mockClear();
-    useConnection.setState({ api: null, platformHost: "https://app.matrix-os.com" });
+    useConnection.setState({ api: null, platformHost: "https://app.matrix-os.com", organizationId: null });
+  });
+
+  it("passes the active organization from the connection state and disables sharing without one", async () => {
+    const api = { get: vi.fn(async () => ({ runtime: { machineId: "10000000-0000-4000-8000-000000000001" }, capabilities: { collaboration: true } })) };
+    useConnection.setState({ api: api as never, organizationId: null });
+    render(<DesktopTerminalSharing terminalId="terminal_release" />);
+    await waitFor(() => expect(sharingButton).toHaveBeenLastCalledWith(
+      expect.objectContaining({ runtimeId: "vps:10000000-0000-4000-8000-000000000001", organizationId: null }),
+      undefined,
+    ));
+    act(() => useConnection.setState({ organizationId: "org_matrix_team" }));
+    await waitFor(() => expect(sharingButton).toHaveBeenLastCalledWith(
+      expect.objectContaining({ organizationId: "org_matrix_team" }),
+      undefined,
+    ));
   });
 
   it("clears the previous runtime identity while a replacement computer loads", async () => {
