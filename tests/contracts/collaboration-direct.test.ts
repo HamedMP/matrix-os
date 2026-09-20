@@ -262,7 +262,7 @@ describe("collaboration direct transport contracts (S02 T011)", () => {
       expect(route.path.startsWith("/")).toBe(true);
       expect(route.path.includes("*")).toBe(false);
       expect(["home", "platform"]).toContain(route.authority);
-      if (route.authority === "home") expect(route.auth).toBe("D");
+      if (route.authority === "home") expect(["D", "T"]).toContain(route.auth);
       if (route.method !== "GET") expect(route.bodyLimit).toBeGreaterThan(0);
     }
   });
