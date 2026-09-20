@@ -82,7 +82,11 @@ describe("real terminal renderer soft-grid resizing", () => {
       return { bottom: content.bottom, visibleBottom: outer.bottom,
         panTop: viewport.scrollTop, scrollHeight: viewport.scrollHeight,
         stageHeight: stage.offsetHeight, screenHeight: screen.offsetHeight, clientHeight: viewport.clientHeight,
-        scale: xterm.style.transform, stageBottom: stage.getBoundingClientRect().bottom };
+        scale: xterm.style.transform, stageBottom: stage.getBoundingClientRect().bottom,
+        overflowY: viewport.style.overflowY, stageTop: stage.getBoundingClientRect().top - outer.top,
+        fontSize: xterm.querySelector<HTMLElement>(".xterm-rows, .xterm-screen")?.style.fontSize ?? "",
+        inputs: (window as unknown as { fixtureInputs: string[] }).fixtureInputs.slice(-3).map((input) => JSON.stringify(input)),
+        proposals: (window as unknown as { fixtureProposals: { size: unknown }[] }).fixtureProposals.slice(-2).map((frame) => frame.size) };
     });
   }
 
@@ -178,8 +182,13 @@ describe("real terminal renderer soft-grid resizing", () => {
       await page.locator("[data-terminal-grid-stage]").waitFor();
       for (const height of [600, 300, 850]) {
         await page.locator("#terminal-window").evaluate((element, height) => { (element as HTMLElement).style.height = `${height}px`; }, height);
-        await expect.poll(async () => { const g = await geometry(page); return g.bottom - g.visibleBottom; }, { timeout: 5_000 }).toBeLessThanOrEqual(1);
+        try {
+          await expect.poll(async () => { const g = await geometry(page); return g.bottom - g.visibleBottom; }, { timeout: 5_000 }).toBeLessThanOrEqual(1);
+        } catch (error) {
+          throw new Error(`Final row hidden at ${height}px: ${JSON.stringify(await geometry(page))}`, { cause: error });
+        }
         const measured = await geometry(page);
+        console.log(`[soft-grid] ${surface}@${zoom} height=${height}`, JSON.stringify(measured));
         expect(measured.scrollHeight).toBeLessThanOrEqual(Math.max(measured.stageHeight, measured.clientHeight) + 1);
         if (height === 300) {
           expect(measured.panTop).toBeGreaterThan(0);
