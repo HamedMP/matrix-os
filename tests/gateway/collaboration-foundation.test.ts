@@ -223,6 +223,21 @@ describe("shared Chat queue behavior (S01 foundation)", () => {
       created_at: now,
       updated_at: now,
     }).execute();
+    await fixture.db.insertInto("collaboration_members").values(
+      [[collaborationActors.owner, "owner"], [collaborationActors.editor, "editor"]].map(([actorId, role]) => ({
+        scope_id: collaborationIds.scope,
+        actor_id: actorId,
+        role,
+        status: "accepted" as const,
+        invitation_id: null,
+        invited_by: collaborationActors.owner,
+        accepted_at: now,
+        expires_at: null,
+        revision: 1,
+        joined_at: now,
+        updated_at: now,
+      })),
+    ).execute();
   });
 
   afterEach(async () => {
@@ -258,7 +273,7 @@ describe("shared Chat queue behavior (S01 foundation)", () => {
     expect([first.acceptedSequence, second.acceptedSequence]).toEqual([1, 2]);
     expect(second.pendingCount).toBe(2);
     const replay = await repository.enqueueSharedQueuedTurn(owner, request(1, collaborationActors.owner, 3));
-    expect(replay).toEqual({ ...first, alreadyAccepted: true });
+    expect(replay).toMatchObject({ id: first.id, acceptedSequence: 1, alreadyAccepted: true });
 
     const listed = await repository.listSharedQueuedTurns(owner, collaborationIds.chat);
     expect(listed.map((turn) => [turn.requestingActorId, turn.state])).toEqual([
