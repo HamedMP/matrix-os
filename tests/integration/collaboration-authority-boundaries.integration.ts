@@ -117,11 +117,18 @@ describe("S00 authority probes: live Clerk organization membership", () => {
    */
   const pendingRestores = new Map<string, { role: string }>();
   /**
-   * Bound for `pendingRestores`. Entries are never evicted, because dropping one would
-   * abandon a fixture restore; instead a new mutation is refused (fail closed) while the
-   * map is full, and `afterAll` drains it. The live harness touches at most two users.
+   * Bound and eviction policy for `pendingRestores`: at most MAX_PENDING_RESTORES entries.
+   * Eviction is drain-on-full: when the map is full, every pending entry is restored
+   * (verified, with retries) and removed before a new mutation is admitted. An entry is
+   * never dropped unrestored, because that would abandon a shared fixture; if a drain
+   * cannot restore an entry the new mutation is refused (fail closed) and `afterAll`
+   * retries the remainder. The live harness touches at most two users.
    */
   const MAX_PENDING_RESTORES = 4;
+
+  async function drainPendingRestores(): Promise<void> {
+    for (const userId of [...pendingRestores.keys()]) await restoreOrThrow(userId);
+  }
 
   async function restoreMembership(userId: string, role: string): Promise<boolean> {
     for (let attempt = 1; attempt <= RESTORE_ATTEMPTS; attempt += 1) {
@@ -149,14 +156,15 @@ describe("S00 authority probes: live Clerk organization membership", () => {
     throw new Error(`fixture restore failed for ${userId}: manually set role ${pending.role} in organization ${fixtures.orgId}`);
   }
 
-  afterAll(async () => {
-    for (const userId of [...pendingRestores.keys()]) await restoreOrThrow(userId);
-  });
+  afterAll(drainPendingRestores);
 
   /** Registers the restore target before `body` runs any mutation; restore is verified. */
   async function withMembershipRestored(userId: string, body: (originalRole: string) => Promise<void>): Promise<void> {
     if (!pendingRestores.has(userId) && pendingRestores.size >= MAX_PENDING_RESTORES) {
-      throw new Error(`refusing to mutate ${userId}: ${pendingRestores.size} fixture restores are still pending`);
+      await drainPendingRestores();
+      if (pendingRestores.size >= MAX_PENDING_RESTORES) {
+        throw new Error(`refusing to mutate ${userId}: ${pendingRestores.size} fixture restores could not be drained`);
+      }
     }
     const original = await roleOf(userId);
     expect(original).not.toBeNull();
