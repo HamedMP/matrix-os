@@ -47,7 +47,7 @@ export function createPlatformCollaborationRoutes(options: {
     bearerToken: string;
   }): Promise<{ runtimeId: string; ownerId: string } | null>;
   resolveParticipant(actorId: string): Promise<{ actorId: string; displayName: string } | null>;
-  resolveInvitationIdentifier(identifier: string): Promise<{ actorId: string; displayName: string } | null>;
+  resolveInvitationIdentifier(identifier: string, organizationId: string): Promise<{ actorId: string; displayName: string } | null>;
   hydrate(input: {
     actorId: string;
     entry: CollaborationDirectoryEntry;

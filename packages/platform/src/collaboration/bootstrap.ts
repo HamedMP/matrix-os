@@ -77,7 +77,9 @@ export async function bootstrapPlatformCollaboration(
       const user = await getPlatformUserByClerkId(options.db, actorId);
       return user ? { actorId, displayName: user.displayName } : null;
     },
-    resolveInvitationIdentifier: (identifier) => identifierResolver.resolve(identifier),
+    // No membership projection is registered until S03 lands, so every identifier resolves to
+    // nothing: the organization is the only audience and there is no person-to-person path.
+    resolveInvitationIdentifier: (identifier, organizationId) => identifierResolver.resolve(identifier, organizationId),
     resolveRuntime: async (runtimeId) => {
       const machineId = parseVpsRuntimeId(runtimeId);
       if (!machineId) return null;

@@ -33,6 +33,7 @@ export const CollaborationOrganizationIdSchema = z.string()
   .regex(/^org_[A-Za-z0-9_-]+$/, "Invalid organization identifier");
 export const CollaborationInvitationIdentifierRequestSchema = z.object({
   identifier: CollaborationInvitationIdentifierSchema,
+  organizationId: CollaborationOrganizationIdSchema,
 }).strict();
 export const CollaborationRuntimeIdSchema = referenceId(128);
 export const CollaborationResourceIdSchema = referenceId(160);

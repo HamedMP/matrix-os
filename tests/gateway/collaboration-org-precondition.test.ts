@@ -24,6 +24,7 @@ import {
   type OrganizationMembershipSource,
 } from "../../packages/gateway/src/collaboration/organization-precondition.js";
 import { CollaborationRepository } from "../../packages/gateway/src/collaboration/repository.js";
+import { inventoryPersonToPersonRecords } from "../../packages/gateway/src/collaboration/person-to-person-inventory.js";
 import { bootstrapChatDatabase } from "../../packages/gateway/src/chat/database.js";
 import {
   collaborationActors,
@@ -357,7 +358,7 @@ describe("S20 / T101: every scope and grant carries its organization", () => {
       .toEqual([{ organization_id: "org_matrix_team" }]);
   });
 
-  it("refuses to widen a pre-organization scope", async () => {
+  it("refuses to widen a pre-organization scope and counts it in the person-to-person inventory", async () => {
     const repository = new CollaborationRepository(fixture.db, { now: () => now });
     await repository.createDirectScope({
       scopeId: collaborationIds.scope,
@@ -379,6 +380,25 @@ describe("S20 / T101: every scope and grant carries its organization", () => {
       payloadHash: "a".repeat(64),
       expiresAt: new Date(now.getTime() + 60_000).toISOString(),
     })).rejects.toMatchObject({ code: "conflict" });
+    await expect(inventoryPersonToPersonRecords(fixture.db)).resolves.toEqual({
+      scopesWithoutOrganization: 1,
+      grantsWithoutOrganization: 0,
+      pendingInvitationsWithoutOrganization: 0,
+      endedGrantsWithoutOrganization: 0,
+      total: 1,
+    });
+    await fixture.db.insertInto("collaboration_members").values({
+      scope_id: collaborationIds.scope, actor_id: collaborationActors.viewer, role: "viewer", status: "revoked",
+      organization_id: null, invitation_id: null, invited_by: collaborationActors.owner, accepted_at: null,
+      expires_at: null, revision: 2, joined_at: null, updated_at: now.toISOString(),
+    }).execute();
+    await expect(inventoryPersonToPersonRecords(fixture.db)).resolves.toMatchObject({
+      scopesWithoutOrganization: 1, endedGrantsWithoutOrganization: 1, total: 2,
+    });
+    await fixture.db.updateTable("collaboration_scopes").set({ organization_id: "org_matrix_team" })
+      .where("id", "=", collaborationIds.scope).execute();
+    await fixture.db.updateTable("collaboration_members").set({ organization_id: "org_matrix_team" }).execute();
+    await expect(inventoryPersonToPersonRecords(fixture.db)).resolves.toMatchObject({ total: 0 });
   });
 });
 
