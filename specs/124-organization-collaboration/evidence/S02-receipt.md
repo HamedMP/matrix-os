@@ -1,0 +1,43 @@
+# S02 receipt — freeze shared wire contracts (T010–T014)
+
+**Packet:** S02. **Tasks:** T010, T011, T012, T013, T014. **Date:** 2026-09-20.
+**Base:** `124/s20-audience` tip `45e970090` (S20 stack #1789 → #1790 → #1791 on the S01 stack, main `fb8b21346`).
+**Branch:** `124/s02`. Contracts only; no runtime behavior, migration or route wiring changed.
+
+## Files
+
+| Path | Lines | Purpose |
+| --- | --- | --- |
+| `packages/contracts/src/collaboration-capabilities.ts` | 282 | Presets, actions, audiences, resource kinds, grants, activations, effective access, readiness, generic errors |
+| `packages/contracts/src/collaboration-direct.ts` | 383 | Protocol version, limits, tickets, sessions, request signatures, handshake, runtime registration, directory entries, control assertions/denials/acks, exact V1 route table |
+| `packages/contracts/src/collaboration-execution.ts` | 286 | Execution policy per project or standalone Chat, effective submit mode, run submit/queue/run/binding, run control rules, Git action union and operation audit |
+| `packages/contracts/src/collaboration-peer.ts` | 70 | `@deferred` S11/S13 peer ticket, session and chunk manifest |
+| `packages/contracts/src/organization-billing.ts` | 54 | `@deferred` S14 payer ref, run payer binding, invite quote, member computer assignment |
+| `packages/contracts/package.json`, `packages/contracts/src/index.ts` | — | Import map and exports (T014) |
+| `tests/contracts/collaboration-capabilities.test.ts`, `collaboration-direct.test.ts`, `collaboration-execution.test.ts` | 199 / 236 / 232 | T010 |
+| `specs/124-organization-collaboration/contracts/organization-api.md` | +25 | "Frozen payload unions (S02)" and version negotiation (T014) |
+
+## RED → GREEN
+
+| Command | RED (`c2e42789f`) | GREEN (`07c129efb`) |
+| --- | --- | --- |
+| `pnpm exec vitest run tests/contracts/collaboration-capabilities.test.ts tests/contracts/collaboration-direct.test.ts tests/contracts/collaboration-execution.test.ts` | 30 failed / 0 passed (every schema undefined) | 30 passed |
+| `pnpm exec vitest run tests/contracts` | — | 38 files, 353 tests passed |
+| `pnpm --filter @matrix-os/contracts exec tsc --noEmit` | — | clean |
+| `bun run check:patterns` | — | 0 violations (5 pre-existing warnings) |
+| `bun run typecheck` | — | contracts, observability, integrations-mcp, gateway, platform, proxy, edge-router clean; `desktop` fails on two S20 layer-3 files that predate this packet (`DesktopProjectSharing.tsx`, `DesktopTerminalSharing.tsx` miss the `organizationId` prop introduced by T101); no desktop file is touched here |
+
+## Schema inventory (frozen vocabulary)
+
+- Presets: `viewer`, `contributor`. Viewer = chat.read, discussion.read, files.read, app.view, terminal.observe. Contributor adds discussion.post, ai.submit, ai.cancel_own, files.write, app.mutate, git.commit, git.push, git.pr, terminal.control.
+- Audience: `{ kind: "organization" }` or `{ kind: "member", actorId }`. Grant state: pending, active, revoked, expired. Activation state: active, declined (absence is pending).
+- Resource kinds: project, chat, terminal, app_instance, file, folder. Readiness items (project and chat only): ai_source, submit_mode, git_identity, chat_root_inventory.
+- Submit mode: follow_organization, owner_only; effective: members, owner_only; organization metadata: members, owner_only, absent, unknown (absent/unknown resolve to owner_only).
+- Run status: queued, claimed, running, waiting_for_approval, completed, failed, cancelled, interrupted (reasons: gateway_restart, scope_runtime_crash, run_unit_exit, control_partition). Control: cancel and tool_approval for requester or scope_owner; retry for requester.
+- Git actions: status, diff, commit, push, pr; operation states: pending, running, completed, failed, unknown, reconciling.
+- Ticket purposes: direct_session, events, terminal, control, peer. Protocol version 2; mismatch → `upgrade_required`.
+
+## Open gates
+
+- The desktop typecheck failure belongs to S20 layer 3 (`124/s20-audience`) and must be fixed there before the stack's typecheck gate is green.
+- S03 must register the membership projection before any `membership_assertion` is positive; S04 consumes `CollaborationGrantActivationSchema` and `CollaborationEffectiveAccessSchema`; S05 consumes the ticket, session and control schemas; S08/S09 consume the execution policy, run and Git schemas; S12 consumes `CollaborationResourceKindSchema` for standalone shares.
