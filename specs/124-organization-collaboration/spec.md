@@ -39,12 +39,12 @@ The interaction model confirmed by the product owner on 2026-09-17 in `specs/525
 | Terminal viewport controls (`SharedTerminalControls`) | Task profile / sandbox indicator |
 | Settings | No organization surface in V1; organizations and members are managed in the Clerk dashboard. The share dialog lists current members from the platform projection |
 
-Open UI decisions for the product owner (implementers must not resolve these by guessing):
+UI decisions, all confirmed by the product owner on 2026-09-20 (implementers must not reopen them):
 
 1. **Contributor composer.** Decided: when member submission is enabled, a member's composer behaves exactly like the owner's and submits shared AI requests. When a project is restricted to owner-only submission, the member's composer is disabled with copy pointing to the discussion drawer; the removed Discussion/Ask AI composer switch is not reintroduced.
 2. **Organization membership invitations.** Decided: Clerk's own flow; `Shared with me` stays resource-level and does not list org membership invites.
 3. **Settings › Organization visibility.** Decided: no organization Settings section in V1.
-4. **Share dialog audience picker.** Required by org-only sharing: replace the identifier field with an organization / member picker inside the existing dialog rather than a new dialog.
+4. **Share dialog audience picker.** Decided: replace the identifier field with an organization / member picker inside the existing dialog rather than a new dialog.
 
 ## Existing implementation and gaps
 
