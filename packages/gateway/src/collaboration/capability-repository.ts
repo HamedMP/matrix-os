@@ -8,9 +8,19 @@
  * same transaction. Accept and decline of an organization-wide grant are one
  * atomic upsert on `collaboration_grant_activations`; reads never activate.
  */
-import { sql, type Kysely, type Selectable, type Transaction } from "kysely";
+import { sql, type Kysely, type Transaction } from "kysely";
 import type { CollaborationAudience, CollaborationPreset } from "@matrix-os/contracts";
-import type { CollaborationGrantActivationsTable, CollaborationGrantsTable, OwnerCollaborationDatabase } from "./database.js";
+import {
+  toActivationRecord,
+  toGrantRecord,
+  type ActivationRecord,
+  type ActivationRow,
+  type GrantRecord,
+  type GrantRow,
+} from "./capability-records.js";
+import type { OwnerCollaborationDatabase } from "./database.js";
+
+export { toActivationRecord, toGrantRecord, type ActivationRecord, type GrantRecord, type GrantRow };
 import {
   appendMutationRecords,
   CollaborationRepositoryError,
@@ -19,39 +29,12 @@ import {
   readOperationReplay,
   requireAcceptedOwner,
   type ScopeRow,
-  toIso,
   updateScopeRevision,
   writeOperation,
 } from "./repository-shared.js";
 
 /** Contract limit: grants 100 per scope. */
 export const MAX_GRANTS_PER_SCOPE = 100;
-
-export type GrantRow = Selectable<CollaborationGrantsTable>;
-export type ActivationRow = Selectable<CollaborationGrantActivationsTable>;
-
-export interface GrantRecord {
-  grantId: string;
-  scopeId: string;
-  organizationId: string;
-  audience: CollaborationAudience;
-  preset: CollaborationPreset;
-  state: GrantRow["state"];
-  policyVersion: string;
-  legacyCeiling: "editor" | "viewer" | null;
-  expiresAt?: string;
-  grantRevision: number;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface ActivationRecord {
-  grantId: string;
-  actorId: string;
-  state: "active" | "declined";
-  decidedAt: string;
-  membershipEvidenceEpoch: number;
-}
 
 interface MutationKey {
   scopeId: string;
@@ -478,33 +461,4 @@ export class CollaborationCapabilityRepository {
       .where("grant_id", "=", grantId).where("state", "=", "active").limit(1_000).execute();
     return rows.map((row) => row.actor_id);
   }
-}
-
-export function toGrantRecord(row: GrantRow): GrantRecord {
-  return {
-    grantId: row.id,
-    scopeId: row.scope_id,
-    organizationId: row.organization_id,
-    audience: row.audience_kind === "organization"
-      ? { kind: "organization" }
-      : { kind: "member", actorId: row.audience_actor_id ?? "" },
-    preset: row.preset,
-    state: row.state,
-    policyVersion: row.policy_version,
-    legacyCeiling: row.legacy_ceiling,
-    ...(row.expires_at === null ? {} : { expiresAt: toIso(row.expires_at) }),
-    grantRevision: Number(row.revision),
-    createdAt: toIso(row.created_at),
-    updatedAt: toIso(row.updated_at),
-  };
-}
-
-export function toActivationRecord(row: ActivationRow): ActivationRecord {
-  return {
-    grantId: row.grant_id,
-    actorId: row.actor_id,
-    state: row.state,
-    decidedAt: toIso(row.decided_at),
-    membershipEvidenceEpoch: Number(row.membership_evidence_epoch),
-  };
 }
