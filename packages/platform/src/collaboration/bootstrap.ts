@@ -17,6 +17,8 @@ import {
   type PlatformCollaborationComposition,
 } from "./wiring.js";
 import { PlatformCollaborationIdentifierResolver } from "./identifier-resolver.js";
+import type { OrganizationPlatformDatabase } from "../organizations/database.js";
+import { createPlatformOrganizations } from "../organizations/wiring.js";
 
 export interface BootstrapPlatformCollaborationOptions {
   env: NodeJS.ProcessEnv;
@@ -25,6 +27,8 @@ export interface BootstrapPlatformCollaborationOptions {
   platformJwtSecret: string;
   clerkAuth?: ClerkAuth;
   customerVpsProxyDispatcher: Agent;
+  /** Recurring reconciliation/sweep timers; tests pass false. */
+  startTimers?: boolean;
 }
 
 /**
@@ -42,9 +46,55 @@ export async function bootstrapPlatformCollaboration(
     return createFailClosedPlatformCollaboration({ reason: "runtime_authentication_missing" });
   }
   const config = health.config;
+  const resolveActor = createJourneyUserResolver({
+    clerkAuth: options.clerkAuth,
+    syncJwtSecret: options.platformJwtSecret,
+  });
+  const authenticateRuntime = async ({ runtimeId, bearerToken }: { runtimeId: string; bearerToken: string }) => {
+    const machineId = parseVpsRuntimeId(runtimeId);
+    if (!machineId) return null;
+    const machine = await getUserMachine(options.db, machineId);
+    if (!machine || machine.status !== "running"
+      || !timingSafeTokenEquals(
+        bearerToken,
+        buildPlatformVerificationToken(machine.handle, options.platformSecret),
+      )) {
+      return null;
+    }
+    return { runtimeId, ownerId: machine.clerkUserId };
+  };
+
+  // S03: the Clerk membership projection is the only membership source. The
+  // identifier resolver and (through the gateway client) the home precondition
+  // consume it; without CLERK_SECRET_KEY nothing is ever verified and every
+  // assertion stays negative.
+  const organizations = await createPlatformOrganizations({
+    db: options.db.kysely as unknown as Kysely<OrganizationPlatformDatabase>,
+    ...(options.env.CLERK_SECRET_KEY ? { clerkSecretKey: options.env.CLERK_SECRET_KEY } : {}),
+    ...(options.env.CLERK_ORGANIZATION_WEBHOOK_SIGNING_SECRET
+      ? { webhookSigningSecret: options.env.CLERK_ORGANIZATION_WEBHOOK_SIGNING_SECRET }
+      : {}),
+    directory: {
+      listRuntimeIdsForActor: async (actorId, limit) => {
+        const rows = await (options.db.kysely as unknown as Kysely<CollaborationPlatformDatabase>)
+          .selectFrom("collaboration_user_index as user_index")
+          .innerJoin("collaboration_directory as directory", "directory.scope_id", "user_index.scope_id")
+          .select("directory.runtime_id")
+          .where("user_index.actor_id", "=", actorId)
+          .where("user_index.status", "in", ["invited", "accepted"])
+          .limit(limit)
+          .execute();
+        return rows.map((row) => row.runtime_id);
+      },
+    },
+    resolveActor,
+    authenticateRuntime,
+    startTimers: options.startTimers ?? true,
+  });
 
   const identifierResolver = new PlatformCollaborationIdentifierResolver({
     ...(options.env.CLERK_SECRET_KEY ? { clerkSecretKey: options.env.CLERK_SECRET_KEY } : {}),
+    membershipProjection: organizations.projection,
     getAccountByActorId: async (actorId) => {
       const user = await getPlatformUserByClerkId(options.db, actorId);
       return user?.status === "active" ? { actorId: user.clerkId, displayName: user.displayName } : null;
@@ -53,32 +103,18 @@ export async function bootstrapPlatformCollaboration(
       .map((user) => ({ actorId: user.clerkId, displayName: user.displayName })),
   });
 
-  return createPlatformCollaboration({
+  const collaboration = await createPlatformCollaboration({
     db: options.db.kysely as unknown as Kysely<CollaborationPlatformDatabase>,
     config,
-    resolveActor: createJourneyUserResolver({
-      clerkAuth: options.clerkAuth,
-      syncJwtSecret: options.platformJwtSecret,
-    }),
-    authenticateRuntime: async ({ runtimeId, bearerToken }) => {
-      const machineId = parseVpsRuntimeId(runtimeId);
-      if (!machineId) return null;
-      const machine = await getUserMachine(options.db, machineId);
-      if (!machine || machine.status !== "running"
-        || !timingSafeTokenEquals(
-          bearerToken,
-          buildPlatformVerificationToken(machine.handle, options.platformSecret),
-        )) {
-        return null;
-      }
-      return { runtimeId, ownerId: machine.clerkUserId };
-    },
+    organizations,
+    resolveActor,
+    authenticateRuntime,
     resolveParticipant: async (actorId) => {
       const user = await getPlatformUserByClerkId(options.db, actorId);
       return user ? { actorId, displayName: user.displayName } : null;
     },
-    // No membership projection is registered until S03 lands, so every identifier resolves to
-    // nothing: the organization is the only audience and there is no person-to-person path.
+    // Only current members of the scope's organization resolve (S20/S03); there is no
+    // person-to-person path.
     resolveInvitationIdentifier: (identifier, organizationId) => identifierResolver.resolve(identifier, organizationId),
     resolveRuntime: async (runtimeId) => {
       const machineId = parseVpsRuntimeId(runtimeId);
@@ -97,6 +133,7 @@ export async function bootstrapPlatformCollaboration(
       dispatcher: options.customerVpsProxyDispatcher,
     } as RequestInit & { dispatcher: import("undici").Dispatcher }),
   });
+  return collaboration;
 }
 
 function parseVpsRuntimeId(runtimeId: string): string | null {
