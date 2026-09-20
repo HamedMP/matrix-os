@@ -58,7 +58,7 @@ export function createCronChannelsRoutes(deps: CronChannelsRouteDeps): Hono {
     return c.json(job, 201);
   });
 
-  app.delete("/api/cron/:id", (c) => {
+  app.delete("/api/cron/:id", cronBodyLimit, (c) => {
     const id = c.req.param("id");
     const removed = deps.cronService.removeJob(id);
     if (!removed) return c.json({ error: "Not found" }, 404);

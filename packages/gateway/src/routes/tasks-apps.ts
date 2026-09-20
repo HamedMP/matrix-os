@@ -94,7 +94,7 @@ export function createTasksAppsRoutes(deps: TasksAppsRouteDeps): Hono {
     return c.json({ ok: true, newSlug: result.newSlug });
   });
 
-  app.delete("/api/apps/:slug", async (c) => {
+  app.delete("/api/apps/:slug", appIconBodyLimit, async (c) => {
     const slug = c.req.param("slug");
     const result = deleteApp(deps.homePath, slug);
     if (!result.success) {
