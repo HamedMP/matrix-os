@@ -68,7 +68,7 @@ Each packet has failing tests, exact file responsibilities and exit criteria in 
 | S09 | Shared Codex/Claude execution and resume isolation | S07,S08 | AI execution |
 | S10 | Git broker without approval; share-time root inventory (per-Chat worktrees deferred) | S09 | Worktrees |
 | S11 | Local/peer integration broker and action delegation (deferred from V1) | S07,S08 | Integrations |
-| S12 | Files/apps/project adapters (sync-client CLI mounts deferred) | S06,S07 | Resources |
+| S12 | Project and standalone Chat/terminal/app/file/folder adapters; standalone Chat read/discussion and terminal routes only, AI submission routes stay in S09 (sync-client CLI mounts deferred) | S06,S07 | Resources |
 | S13 | Peer resource transfer and recovery (deferred from V1) | S10,S11,S12 | Transfer |
 | S14 | Org payer, invite quote and member assignments (deferred from V1) | S03,S08 | Billing |
 | S15 | Ready-to-work Share UI | S06,S10,S12 | Shared UI |
