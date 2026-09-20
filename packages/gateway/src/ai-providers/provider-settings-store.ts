@@ -168,7 +168,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
         canonical, fundingSummary: this.#fundingSummary,
         genericModelCatalog: this.#genericModelCatalog, refresh,
         catalogFailureHarnesses: [...new Set(config.harnesses.flatMap((harness) =>
-          harness.enabled && (harness.harness === "pi" || harness.harness === "opencode")
+          harness.harness === "pi" || harness.harness === "opencode"
             ? [harness.harness]
             : []))],
       });
