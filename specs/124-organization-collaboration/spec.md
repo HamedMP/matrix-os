@@ -23,6 +23,29 @@ Keep actor, resource owner, host owner, assigned member, credential owner and pa
 
 Default project Chat creation is idempotent and binds the project audience. A new member's join preview includes existing shared Chat history. For a member with narrower data access, a Chat must use a data ceiling readable by its entire audience; mixed-sensitivity history requires a separate restricted Chat or reviewed history publication, never silent disclosure. This keeps the default full-project group experience simple without making advanced restrictions cosmetic.
 
+## UI baseline: the confirmed collaboration UX
+
+The interaction model confirmed by the product owner on 2026-09-17 in `specs/525-collaboration-ux-redesign` (implementation log, "Confirmed Interaction Model") is the collaboration UI for this release. Shared Chat uses the ordinary Matrix timeline, composer, AI rendering and responsive frame; human discussion is a right-side in-session drawer on desktop and a full-height bottom sheet on mobile; access is one compact summary popover with an owner-only second-level manager; `Shared with me` is a first-class Chat navigation row with a bounded pending badge; shared terminals keep the ordinary terminal viewport with compact access, discussion, role and controller controls. The shipped components under `packages/ui/src/collaboration/` and `shell/src/components/collaboration/` are the starting point.
+
+124 adds state and controls inside that chrome. It does not introduce a new collaboration header, transcript, composer, composer mode switch, share dialog, inbox or discovery surface. Implementers do not change the confirmed model on their own; a change to it is a product decision recorded in this section before the affected packet starts.
+
+| Confirmed surface | What 124 adds inside it |
+| --- | --- |
+| Access popover and owner manager (`SessionAccessControl`) | Readiness summary (ready, owner setup needed, approval needed, host offline, unsupported), capability presets and editor, exact access requests |
+| Share dialog (`ProjectSharingDialog`, `ShareChoiceDialog`, `ChatCollaboratorsDialog`) | Audience is the organization, a group or specific members instead of a free identifier field; preview shows the owner-selected AI source, submit mode and owner Git identity |
+| Ordinary timeline and composer (`SharedChatControls`) | Run queue with `owner_only` versus `delegated` submit state, Git operation approval cards alongside existing approvals, worktree/branch status through the ordinary Chat worktree context |
+| Discussion drawer / sheet (`SessionDiscussionLayer`) | Unchanged |
+| `Shared with me` navigation row | Unchanged; organization and group shares appear there with the same pending badge |
+| Terminal viewport controls (`SharedTerminalControls`) | Task profile / sandbox indicator |
+| Settings | Organization administration (members, groups, guests, shared resources, member computers, billing and invite quotes) is the only new surface and lives as a Settings section |
+
+Open UI decisions for the product owner (implementers must not resolve these by guessing):
+
+1. **Contributor composer in `owner_only` submit mode.** Proposed: the ordinary composer is disabled with copy pointing to the discussion drawer; the removed Discussion/Ask AI composer switch is not reintroduced.
+2. **Organization membership invitations.** Proposed: Clerk membership invites are accepted through Clerk's flow and Settings › Organization; `Shared with me` stays resource-level and does not list org membership invites.
+3. **Settings › Organization visibility.** Proposed: a new visible Settings section, not one of the sections currently hidden by `HIDDEN_SECTION_IDS`.
+4. **Share dialog audience picker.** Required by org-only sharing: replace the identifier field with an organization / group / member picker inside the existing dialog rather than a new dialog.
+
 ## Existing implementation and gaps
 
 | Area | Verified source baseline | Required work |

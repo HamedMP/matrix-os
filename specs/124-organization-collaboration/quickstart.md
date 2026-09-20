@@ -46,7 +46,7 @@ These new test paths are assigned in tasks.md and will exist after implementatio
 | Ownership | Sponsoring a personal host changes payer only; org-managed member assignment retains org data/backups after departure; personal data remains personal |
 | Transfer | Dirty worktree/app/Chat/file inventory staged with checksums; crashes at every phase leave one authority; credentials/memory/drafts absent; generation CAS prevents double-writable copies |
 | Cutover | IDs and old action ceilings preserved; legacy proxy/WS/V1 paths, rollout flag and cohort policy removed; person-to-person records dispositioned per S20 (zero expected); old clients upgrade-required; offline/ambiguous scopes unavailable with recovery; rollback never restores legacy auth |
-| Surfaces | Web Canvas then Web Desktop then Electron Desktop; applicable Web Mobile, Native Mobile and CLI share semantics/root/owner-source/Git-approval/error states |
+| Surfaces | Web Canvas then Web Desktop then Electron Desktop; applicable Web Mobile, Native Mobile and CLI share semantics/root/owner-source/Git-approval/error states; every surface uses the confirmed 525 chrome (ordinary timeline/composer, discussion drawer or sheet, access popover, Shared with me row, ordinary terminal viewport) with no new collaboration header, composer switch, share dialog or inbox |
 | Scale | Record control request/metadata byte rates separately from direct bytes; no refresh per keystroke/chunk; verify bounded host connection/process/transfer capacity and shutdown |
 | Matrix groups | Human/AI tokens cannot directly read/join private service rooms; managed group text expires during partition; no canonical AI Chat/files mirrored |
 
