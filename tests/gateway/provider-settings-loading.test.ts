@@ -53,7 +53,8 @@ it("does not project prefetched funding when canonical inventory has no Matrix s
     },
   }));
   const request = readProviderSettingsEnrichment({
-    canonical: inventory.promise, fundingSummary: { getFundingSummary }, refresh: false,
+    canonical: inventory.promise, fundingSummary: { getFundingSummary },
+    catalogFailureHarnesses: [], refresh: false,
   });
   expect(getFundingSummary).toHaveBeenCalledOnce();
   const canonical = providerSettingsCanonicalFixture();

@@ -242,6 +242,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
         readProviderSettingsEnrichment({
           canonical: inventory, fundingSummary: this.#fundingSummary,
           genericModelCatalog: this.#genericModelCatalog, refresh,
+          catalogFailureHarnesses: ["pi", "opencode"],
         }),
       ]);
       return await this.#project(canonical, await this.#configuration(canonical), refresh, enrichment);
