@@ -4,6 +4,7 @@ import { expect, collaborationTest as test } from "./fixtures/collaboration";
 test("owner publishes one complete project, then viewer downgrade and revoke apply to the same account", async ({ collaborationJourney }) => {
   const config = collaborationJourney;
   const projectId = process.env.MATRIX_COLLABORATION_E2E_PROJECT_ID!;
+  const organizationId = process.env.MATRIX_COLLABORATION_E2E_ORGANIZATION_ID!;
   const editorActorId = config.editorActorId;
   const ownerRequest = config.owner.context.request;
   const editorRequest = config.editor.context.request;
@@ -14,7 +15,7 @@ test("owner publishes one complete project, then viewer downgrade and revoke app
   const platform = config.platformUrl;
 
   const preflightResponse = await ownerRequest.post(`${platform}/api/collaboration/runtimes/${runtimeId}/scopes/preflight`, {
-    data: { kind: "project", resourceId: projectId },
+    data: { kind: "project", resourceId: projectId, organizationId },
   });
   expect(preflightResponse.ok()).toBe(true);
   const preflight = await preflightResponse.json() as { eligible: boolean; resourceRevision: string; confirmationToken: string };
@@ -23,6 +24,7 @@ test("owner publishes one complete project, then viewer downgrade and revoke app
     data: {
       kind: "project",
       resourceId: projectId,
+      organizationId,
       clientRequestId: randomUUID(),
       expectedRevision: preflight.resourceRevision,
       confirmationToken: preflight.confirmationToken,
