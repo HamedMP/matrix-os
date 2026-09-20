@@ -21,10 +21,17 @@
 
 ## Phase 6: Validation and delivery
 - [x] T010 Run relevant regression suites, scoped typechecks and diff review; record results in quickstart.md.
-- [ ] T011 Open implementation PR and separate public docs PR in FinnaAI/matrix-os-site.
+- [x] T011 Open implementation PR and separate public docs PR in FinnaAI/matrix-os-site.
 
 ## Dependencies and execution
 T001–T004 precede mutation UI; T005 precedes T006; T007 precedes T008; T009 reuses menus. T010/T011 follow all stories. Tests and implementation are sequential per story; research was delegated independently. No parallel writers required.
 
 ## Graphite Stack Plan
 Two reviewable layers: spec/backend foundation, then shared UI/tests; keep each below 1000 additions and 20 files. Public docs are a separate repository PR. Commit each phase; submit via Graphite once validated. Do not merge before Human Review.
+
+## Delivery
+
+- Backend/spec: https://github.com/HamedMP/matrix-os/pull/1771
+- Electron UI: https://github.com/HamedMP/matrix-os/pull/1772
+- Public docs: https://github.com/FinnaAI/matrix-os-site/pull/118
+- All PRs are drafts. Human Review, live runtime acceptance, CI/Greptile and landing remain pending.
