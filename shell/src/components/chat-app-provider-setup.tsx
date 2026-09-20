@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   CanonicalProviderCatalogSchema,
   type CanonicalChatModelSelection,
@@ -10,12 +10,14 @@ import {
 } from "@matrix-os/contracts";
 import {
   canonicalProviderAvailabilityLabel,
+  CompactChatProviderChoices,
+  HarnessIcon,
   deriveCanonicalProviderChoices,
   type CanonicalProviderChoice,
 } from "@matrix-os/ui";
 import { getGatewayUrl } from "@/lib/gateway";
 import { PROVIDER_SETTINGS_CHANGED_EVENT } from "@/lib/canonical-provider-setup";
-import { CheckIcon, CalendarIcon, GithubIcon, MailIcon, MessageSquareIcon } from "@/lib/hugeicons";
+import { CalendarIcon, GithubIcon, MailIcon, MessageSquareIcon } from "@/lib/hugeicons";
 
 const PROVIDER_SELECTION_STORAGE_KEY = "matrix:canonical-chat-provider-selection";
 const CHANNEL_OPTIONS = [
@@ -91,13 +93,10 @@ function applySavedSelection(
   return { ...choice, interactionMode, permissionMode, selectedOptions };
 }
 
-export function useChatProviderState(
-  currentSelection?: CanonicalChatModelSelection,
-  boundInstanceId?: string,
-) {
+export function useChatProviderState(boundSelection?: CanonicalChatModelSelection) {
   const [catalog, setCatalog] = useState<CanonicalProviderCatalog | null>(null);
   const [savedChoice, setSavedChoice] = useState(readSavedChoice);
-  const [chatDraft, setChatDraft] = useState<{
+  const [boundDraft, setBoundDraft] = useState<{
     bindingKey: string;
     selection: SavedProviderSelection;
   } | null>(null);
@@ -108,7 +107,9 @@ export function useChatProviderState(
     let cancelled = false;
     let refreshing = false;
     let pending = false;
-    const refresh = async () => {
+    let forcePending = false;
+    const refresh = async (force = false) => {
+      forcePending ||= force;
       if (refreshing) {
         pending = true;
         return;
@@ -116,8 +117,10 @@ export function useChatProviderState(
       refreshing = true;
       do {
         pending = false;
+        const forceRefresh = forcePending;
+        forcePending = false;
         try {
-          const response = await fetch(`${getGatewayUrl()}/api/chat-providers?refresh=true`, {
+          const response = await fetch(`${getGatewayUrl()}${forceRefresh ? "/api/chat-providers?refresh=true&includeConnectionLabels=true" : "/api/chat-providers?includeConnectionLabels=true"}`, {
             signal: AbortSignal.timeout(10_000),
           });
           if (!response.ok) throw new Error("ProviderCatalogUnavailable");
@@ -138,33 +141,35 @@ export function useChatProviderState(
     const onVisibilityChange = () => {
       if (document.visibilityState === "visible") refresh();
     };
+    const onFocus = () => { void refresh(); };
+    const onSettingsChange = () => { void refresh(true); };
     void refresh();
-    window.addEventListener("focus", refresh);
-    window.addEventListener(PROVIDER_SETTINGS_CHANGED_EVENT, refresh);
+    window.addEventListener("focus", onFocus);
+    window.addEventListener(PROVIDER_SETTINGS_CHANGED_EVENT, onSettingsChange);
     document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
       cancelled = true;
-      window.removeEventListener("focus", refresh);
-      window.removeEventListener(PROVIDER_SETTINGS_CHANGED_EVENT, refresh);
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener(PROVIDER_SETTINGS_CHANGED_EVENT, onSettingsChange);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, []);
 
   const choices = catalog ? deriveCanonicalProviderChoices(catalog) : [];
-  const bindingKey = currentSelection
-    ? `${currentSelection.instanceId}:${currentSelection.model}:${JSON.stringify(currentSelection.options ?? [])}`
+  const bindingKey = boundSelection
+    ? `${boundSelection.instanceId}:${boundSelection.model}:${JSON.stringify(boundSelection.options ?? [])}`
     : "";
-  const effectiveSaved = currentSelection
-    ? chatDraft?.bindingKey === bindingKey
-      ? chatDraft.selection
-      : { key: `${currentSelection.instanceId}:${currentSelection.model}`, options: currentSelection.options ?? [] }
+  const effectiveSaved = boundSelection
+    ? boundDraft?.bindingKey === bindingKey
+      ? boundDraft.selection
+      : { key: `${boundSelection.instanceId}:${boundSelection.model}`, options: boundSelection.options ?? [] }
     : savedChoice;
-  const chatChoice = choices.find((choice) => (!boundInstanceId || choice.instanceId === boundInstanceId)
+  const boundChoice = choices.find((choice) => choice.instanceId === boundSelection?.instanceId
     && choiceKey(choice) === effectiveSaved.key)
-    ?? choices.find((choice) => choice.instanceId === currentSelection?.instanceId
-      && choice.modelId === currentSelection.model);
-  const selectedBase = currentSelection
-    ? chatChoice ?? null
+    ?? choices.find((choice) => choice.instanceId === boundSelection?.instanceId
+      && choice.modelId === boundSelection.model);
+  const selectedBase = boundSelection
+    ? boundChoice ?? null
     : choices.find((choice) => choiceKey(choice) === effectiveSaved.key)
     ?? choices.find((choice) => {
       const instance = catalog?.instances.find((candidate) => candidate.id === choice.instanceId);
@@ -177,8 +182,8 @@ export function useChatProviderState(
     : null;
 
   const save = (next: SavedProviderSelection) => {
-    if (currentSelection) {
-      setChatDraft({ bindingKey, selection: next });
+    if (boundSelection) {
+      setBoundDraft({ bindingKey, selection: next });
       return;
     }
     setSavedChoice(next);
@@ -190,7 +195,7 @@ export function useChatProviderState(
   };
 
   const select = (choice: CanonicalProviderChoice) => {
-    if (boundInstanceId && choice.instanceId !== boundInstanceId) return;
+    if (boundSelection && choice.instanceId !== boundSelection.instanceId) return;
     const preserveControls = selected?.instanceId === choice.instanceId;
     save({
       key: choiceKey(choice),
@@ -258,10 +263,10 @@ export function ChatProviderSetupPanel({
   onOptionChange,
   onSetupAction,
   lockedInstanceId,
-  onNewChat,
   showChannels,
   channels,
   onToggleChannel,
+  onDismiss,
 }: {
   catalog: CanonicalProviderCatalog | null;
   choices: CanonicalProviderChoice[];
@@ -275,48 +280,45 @@ export function ChatProviderSetupPanel({
     action: CanonicalProviderSetupAction,
   ) => void;
   lockedInstanceId?: string;
-  onNewChat?: () => void;
   showChannels: boolean;
   channels: Set<string>;
   onToggleChannel: (channel: string) => void;
+  onDismiss: () => void;
 }) {
+  const panelRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const dismiss = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Element && !panelRef.current?.contains(target)
+        && !target.closest('[data-chat-model-trigger]')) onDismiss();
+    };
+    document.addEventListener("pointerdown", dismiss);
+    return () => document.removeEventListener("pointerdown", dismiss);
+  }, [onDismiss]);
   return (
-    <section className="border-b border-border/30 bg-muted/30 px-3 py-3">
-      <div className="mx-auto grid w-full max-w-[720px] gap-3 md:grid-cols-[1fr_1.1fr]">
+    <section ref={panelRef} role="dialog" aria-label="Choose model and connection"
+      onKeyDown={(event) => { if (event.key === "Escape") {
+        event.stopPropagation();
+        panelRef.current?.parentElement?.querySelector<HTMLButtonElement>('[data-chat-model-trigger]')?.focus();
+        onDismiss();
+      } }}
+      className="absolute right-3 top-14 z-30 w-[380px] max-w-[calc(100%-24px)] overflow-y-auto rounded-xl border border-border bg-background p-3 shadow-xl"
+      style={{ maxHeight: "min(520px, calc(100% - 72px))" }}>
+      <div className="grid min-w-0 gap-3">
         <div>
-          <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Harness and model</p>
-          {lockedInstanceId ? (
-            <div className="mb-2 flex items-start justify-between gap-3 rounded-md border border-border/50 bg-background/55 px-2.5 py-2 text-xs text-muted-foreground" role="note">
-              <span>This Chat is bound to its agent harness. Start or fork a new Chat to use another harness.</span>
-              {onNewChat ? (
-                <button type="button" className="shrink-0 font-medium text-foreground underline-offset-2 hover:underline" onClick={onNewChat}>
-                  New Chat
-                </button>
-              ) : null}
-            </div>
-          ) : null}
-          <div className="space-y-1.5">
-            {choices.map((choice) => {
-              const isSelected = choice.instanceId === selected?.instanceId && choice.modelId === selected.modelId;
-              const locked = lockedInstanceId !== undefined && choice.instanceId !== lockedInstanceId;
-              return (
-                <button
-                  key={`${choice.instanceId}:${choice.modelId}`}
-                  type="button"
-                  aria-label={`${choice.modelLabel} via ${choice.harnessLabel}`}
-                  aria-disabled={locked}
-                  disabled={locked}
-                  onClick={() => onSelect(choice)}
-                  className={`flex min-h-11 w-full items-center justify-between rounded-md border px-2.5 text-left text-xs transition ${isSelected ? "border-primary/35 bg-primary/10 text-foreground" : "border-border/50 bg-background/55 text-muted-foreground hover:text-foreground"}`}
-                >
-                  <span className="min-w-0">
-                    <span className="block truncate font-medium">{choice.modelLabel}</span>
-                    <span className="block truncate text-[10px] text-muted-foreground">{choice.harnessLabel}</span>
-                  </span>
-                  {isSelected && <CheckIcon className="size-3.5 shrink-0 text-primary" aria-hidden="true" />}
-                </button>
-              );
-            })}
+          <CompactChatProviderChoices choices={choices} selected={selected} lockedInstanceId={lockedInstanceId}
+            renderIcon={(choice) => choice.driverKind === "kernel" ? <span aria-hidden="true">✦</span> : (
+              <span className="inline-flex size-5 shrink-0 items-center justify-center [&_.matrix-ap-agent-logo]:!size-5 [&_.matrix-ap-agent-logo]:!rounded [&_img]:!size-3 [&_svg]:size-4">
+                <HarnessIcon harness={choice.driverKind === "claude_code" ? "claude" : choice.driverKind} />
+              </span>
+            )}
+            onSelect={(choice) => {
+              onSelect(choice);
+              panelRef.current?.parentElement?.querySelector<HTMLButtonElement>('[data-chat-model-trigger]')?.focus();
+              onDismiss();
+            }} />
+          <details className="mt-2 border-t border-border pt-2">
+            <summary className="cursor-pointer py-2 text-sm font-medium">Manage agents</summary>
             {catalog?.instances.filter((instance) => instance.availability !== "available").map((instance) => (
               <div key={instance.id} className="rounded-md border border-border/40 px-2.5 py-2 text-xs text-muted-foreground">
                 <p>{instance.displayName} — {canonicalProviderAvailabilityLabel(instance)}</p>
@@ -341,9 +343,11 @@ export function ChatProviderSetupPanel({
                 Connect a harness in Settings to start chatting.
               </p>
             )}
-          </div>
+          </details>
           {selected ? (
-            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            <details className="mt-2 border-t border-border pt-2">
+              <summary className="cursor-pointer py-2 text-sm font-medium">Execution options</summary>
+              <div className="grid gap-2 sm:grid-cols-2">
               <label className="grid gap-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
                 Interaction mode
                 <select
@@ -390,6 +394,7 @@ export function ChatProviderSetupPanel({
                 </label>
               ))}
             </div>
+            </details>
           ) : null}
         </div>
         {showChannels ? <div>
