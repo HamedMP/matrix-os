@@ -67,7 +67,6 @@ export function ChatInput({
   const mentionListRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const inputRef = useRef(input);
-  inputRef.current = input;
   const { attachments, addFiles, removeFile, clearAll, getBase64Files } = useAttachments();
   const [defaultSpeechClient] = useState(() => createBrowserSpeechClient());
   const [defaultSpeechCapture] = useState(() => createWebPcmSpeechCaptureAdapter());
@@ -83,8 +82,12 @@ export function ChatInput({
       setInput(current.length > 0 ? `${current} ${text}` : text);
     },
   });
-  const speechBusy = speech.phase === "recording" || speech.phase === "transcribing";
+  const speechBusy = speech.phase === "requesting_permission" || speech.phase === "recording" || speech.phase === "transcribing";
   const canSend = !speechBusy && canSendChatInput({ connected, sending, allowed: permission.allowed, busy, references: resources.length, text: input, attachments: attachments.length });
+
+  useEffect(() => {
+    inputRef.current = input;
+  }, [input]);
 
   useEffect(() => {
     // react-doctor-disable-next-line react-doctor/no-event-handler -- focusing a DOM ref when the composer mounts or autoFocus turns on is a legitimate effect, not a user-event side effect that belongs in a parent handler
@@ -119,9 +122,11 @@ export function ChatInput({
 
   const handleMicClick = () => {
     if (speech.phase === "recording") speech.stop();
-    else if (speech.phase === "transcribing") speech.cancel();
+    else if (speech.phase === "requesting_permission" || speech.phase === "transcribing") speech.cancel();
     else void speech.start();
   };
+
+  const speechIsActive = speechBusy;
 
   return (
     <div className="flex flex-col gap-2">
@@ -164,7 +169,7 @@ export function ChatInput({
             <Button
               type="button"
               aria-label={speech.phase === "requesting_permission"
-                ? "Requesting microphone permission"
+                ? "Cancel microphone request"
                 : speech.phase === "recording"
                   ? "Stop recording"
                   : speech.phase === "transcribing"
@@ -173,7 +178,7 @@ export function ChatInput({
               size="icon"
               variant="ghost"
               className={`size-8 rounded-full ${speech.phase === "recording" ? "text-destructive" : "text-muted-foreground hover:text-foreground"}`}
-              disabled={!connected || speech.phase === "requesting_permission"}
+              disabled={!connected && !speechIsActive}
               onClick={handleMicClick}
             >
               {speech.phase === "requesting_permission" ? <Loader2Icon className="size-4 animate-spin" />
