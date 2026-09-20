@@ -4,6 +4,17 @@ import type { ProviderAccessSource, ProviderGatewayPolicy, ProviderModelProvider
 import type { ProviderSettingsMutationIntent } from "./types.js";
 import { gatewayCreditLines, money, shortDate, titleCase } from "./utils.js";
 
+export function isMatrixGatewaySourceReady(
+  source: ProviderAccessSource | null,
+  policy: ProviderGatewayPolicy | null,
+  provider: ProviderModelProvider | null,
+): boolean {
+  if (source?.kind !== "matrix_gateway" || source.readiness.state !== "ready" || !policy || !provider) return false;
+  return provider.models.some((model) => model.enabled
+    && source.eligibleModelIds.includes(model.id)
+    && policy.allowedModelIds.includes(model.id));
+}
+
 export function GatewayPanel({
   source,
   policy,
@@ -60,8 +71,9 @@ export function GatewayPanel({
   }, [budget]);
   const credit = source ? gatewayCreditLines(source) : { primary: "Credit unavailable", secondary: null, stale: false };
   const usageAsOf = source?.usage.asOf ?? null;
-  const ready = source?.readiness.state === "ready" && policy?.accessSourceId === source.id;
-  const status = !source || !policy ? "Setup needed" : ready ? "Ready" : titleCase(source.readiness.state);
+  const ready = isMatrixGatewaySourceReady(source, policy, provider);
+  const status = !source || !policy ? "Setup needed" : ready ? "Ready"
+    : source.readiness.state === "ready" ? "Unavailable" : titleCase(source.readiness.state);
 
   const saveBudget = () => {
     const trimmed = budgetUsd.trim();

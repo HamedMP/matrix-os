@@ -356,6 +356,43 @@ describe("AgentsProvidersView", () => {
     expect(within(connection).getByRole("button", { name: /Own account/ })).toBeVisible();
   });
 
+  it("renders a selected policy-authorized Matrix source ready when the policy anchor uses another source", () => {
+    const next = snapshot();
+    const harness = next.harnesses[0]!;
+    const primary = next.accessSources[0]!;
+    next.modelProviders.push({
+      id: "cloudflare",
+      displayName: "Cloudflare Workers AI",
+      models: [{ id: "@cf/zai-org/glm-5.3-flash", displayName: "GLM", enabled: true }],
+    });
+    next.accessSources.push({
+      ...primary,
+      id: "matrix_cloudflare",
+      providerId: "cloudflare",
+      displayName: "Matrix AI Cloudflare",
+      eligibleModelIds: ["@cf/zai-org/glm-5.3-flash"],
+    });
+    next.gatewayPolicy!.allowedModelIds.push("@cf/zai-org/glm-5.3-flash");
+    Object.assign(harness, {
+      harness: "pi",
+      displayName: "Pi",
+      accessSourceId: "matrix_cloudflare",
+      route: { kind: "configurable", providerId: "cloudflare", modelId: "@cf/zai-org/glm-5.3-flash" },
+    });
+    const { rerender, props } = setup({ snapshot: next, selectedHarnessId: harness.id });
+    let gateway = screen.getByRole("region", { name: "Matrix AI" });
+    expect(within(gateway).getByText("Ready")).toBeVisible();
+    expect(within(gateway).getByText("Selected for Pi")).toBeVisible();
+
+    const unauthorized = structuredClone(next);
+    unauthorized.gatewayPolicy!.allowedModelIds = ["anthropic/claude-opus-5"];
+    rerender(<AgentsProvidersView {...props} snapshot={unauthorized} />);
+    gateway = screen.getByRole("region", { name: "Matrix AI" });
+    expect(within(gateway).queryByText("Ready")).not.toBeInTheDocument();
+    expect(within(gateway).queryByText("Selected for Pi")).not.toBeInTheDocument();
+    expect(within(gateway).getByRole("button", { name: "Check again" })).toBeVisible();
+  });
+
   it("asks for a runtime update before connecting a disabled agent on a legacy gateway", () => {
     const next = snapshot();
     delete next.atomicConnectSupported;
