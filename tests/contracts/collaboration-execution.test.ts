@@ -135,6 +135,10 @@ describe("collaboration execution contracts (S02 T012/T013)", () => {
     expect(CollaborationRunSchema.safeParse({ ...cancelled, decidedBy: { actorId: "user_mallory", relation: "scope_owner" } }).success).toBe(false);
     expect(CollaborationRunSchema.safeParse({ ...cancelled, decidedBy: { actorId: "user_2abc", relation: "scope_owner" } }).success).toBe(false);
     expect(CollaborationRunSchema.safeParse({ ...run, status: "cancelled", decidedBy: { actorId: "user_2abc", relation: "scope_owner" } }).success).toBe(false);
+    const { scopeOwnerId: _owner, ...ownerWithoutIdentity } = cancelled;
+    expect(CollaborationRunSchema.safeParse(ownerWithoutIdentity).success).toBe(false);
+    expect(CollaborationRunSchema.safeParse({ ...ownerWithoutIdentity, decidedBy: { actorId: "user_mallory", relation: "scope_owner" } }).success).toBe(false);
+    expect(CollaborationRunSchema.parse({ ...ownerWithoutIdentity, decidedBy: { actorId: "user_2abc", relation: "requester" } }).decidedBy.relation).toBe("requester");
     const ownerRequested = { ...run, requestingActorId: "user_owner", scopeOwnerId: "user_owner", status: "cancelled", decidedBy: { actorId: "user_owner", relation: "scope_owner" } };
     expect(CollaborationRunSchema.parse(ownerRequested).decidedBy.relation).toBe("scope_owner");
     expect(CollaborationRunSchema.safeParse({ ...run, status: "cancelled" }).success).toBe(false);
