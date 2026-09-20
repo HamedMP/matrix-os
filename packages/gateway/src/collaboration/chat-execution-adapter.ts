@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
+  type CanonicalChatModelSelection,
   CollaborationAiRequestAcceptedResponseSchema,
   CollaborationAiRequestSchema,
   CollaborationApprovalSchema,
@@ -38,7 +39,10 @@ export class CollaborationChatExecutionAdapter {
     commands: Pick<CollaborationChatCommands, "cancel" | "retry" | "decideApproval">;
     resolveParticipant(actorId: string): Promise<{ actorId: string; displayName: string }>;
     resolveEligibility(scopeId: string): Promise<unknown>;
-    resolveProviderReadiness?(ownerId: string): Promise<"ready" | "reconnect_required" | "unavailable">;
+    resolveProviderReadiness?(
+      ownerId: string,
+      selection: CanonicalChatModelSelection | null,
+    ): Promise<"ready" | "reconnect_required" | "unavailable">;
     resolveCanonicalProviderAuthority?(
       ownerId: string,
       selection: CollaborationAiRequest["selection"],
@@ -244,7 +248,10 @@ export class CollaborationChatExecutionAdapter {
 
     let readiness: "ready" | "reconnect_required" | "unavailable" = "ready";
     try {
-      readiness = await this.options.resolveProviderReadiness?.(context.ownerId) ?? "ready";
+      readiness = await this.options.resolveProviderReadiness?.(
+        context.ownerId,
+        capability.effectiveSelection ?? null,
+      ) ?? "ready";
     } catch (error: unknown) {
       console.warn("[collaboration] shared AI Provider readiness unavailable",
         error instanceof Error ? error.name : "UnknownError");

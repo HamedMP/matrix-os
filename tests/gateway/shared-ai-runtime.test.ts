@@ -9,6 +9,7 @@ import {
 } from "../../packages/gateway/src/collaboration/shared-ai-runtime.js";
 
 describe("shared AI Provider readiness", () => {
+  const selection = { instanceId: "claude_code_default", model: "opus" };
   const claudeSummary = (availability: "available" | "auth_required" | "unavailable",
     authStatus: "authenticated" | "expired" | "unknown") => ({
     id: "claude",
@@ -33,49 +34,90 @@ describe("shared AI Provider readiness", () => {
     ownerApiKey: { state: states.ownerApiKey ?? "setup_required" as const },
     ownerProfile: { state: states.ownerProfile ?? "setup_required" as const },
   });
+  const catalogWith = (instance: Record<string, unknown>) => ({
+    getCatalog: vi.fn(async () => ({ instances: [{
+      id: "claude_code_default", driverKind: "claude_code", availability: "available", models: [], ...instance,
+    }] } as never)),
+  });
 
-  it("reports the Matrix-included route ready even when the local Claude login needs auth", async () => {
+  it("reports the Matrix-included route ready without probing owner credentials", async () => {
     const listProviders = vi.fn(async () => [claudeSummary("auth_required", "expired")]);
+    const providerCatalog = catalogWith({ availability: "auth_required", unavailabilityReason: "authentication_required" });
     await expect(resolveClaudeProviderReadiness({
       resolveCredentialSources: async () => sources("matrix_included", { matrixIncluded: "ready" }),
       codingProviders: { listProviders },
-    }, "user_owner")).resolves.toBe("ready");
+      providerCatalog,
+    }, "user_owner", selection)).resolves.toBe("ready");
     expect(listProviders).not.toHaveBeenCalled();
+    expect(providerCatalog.getCatalog).not.toHaveBeenCalled();
   });
 
-  it("reports the owner API key route ready without consulting the Claude login", async () => {
+  it.each([
+    { route: "owner_anthropic_key", states: { ownerApiKey: "unverified" } },
+    { route: "owner_anthropic_profile", states: { ownerProfile: "unverified" } },
+  ] as const)("verifies the $route route through the trusted provider catalog", async ({ route, states }) => {
     const listProviders = vi.fn(async () => [claudeSummary("auth_required", "expired")]);
+    const available = catalogWith({});
+    await expect(resolveClaudeProviderReadiness({
+      resolveCredentialSources: async () => sources(route, states),
+      codingProviders: { listProviders },
+      providerCatalog: available,
+    }, "user_owner", selection)).resolves.toBe("ready");
+    expect(available.getCatalog).toHaveBeenCalledWith({ userId: "user_owner", source: "jwt" });
+    expect(listProviders).not.toHaveBeenCalled();
+
+    await expect(resolveClaudeProviderReadiness({
+      resolveCredentialSources: async () => sources(route, states),
+      providerCatalog: catalogWith({ availability: "auth_required", unavailabilityReason: "authentication_required" }),
+    }, "user_owner", selection)).resolves.toBe("reconnect_required");
+    await expect(resolveClaudeProviderReadiness({
+      resolveCredentialSources: async () => sources(route, states),
+      providerCatalog: catalogWith({ availability: "unavailable", unavailabilityReason: "runtime_unavailable" }),
+    }, "user_owner", selection)).resolves.toBe("unavailable");
+    await expect(resolveClaudeProviderReadiness({
+      resolveCredentialSources: async () => sources(route, states),
+      providerCatalog: catalogWith({ id: "codex_default", driverKind: "codex" }),
+    }, "user_owner", selection)).resolves.toBe("unavailable");
+  });
+
+  it("never treats unverified owner credential material as ready on its own", async () => {
     await expect(resolveClaudeProviderReadiness({
       resolveCredentialSources: async () => sources("owner_anthropic_key", { ownerApiKey: "unverified" }),
-      codingProviders: { listProviders },
-    }, "user_owner")).resolves.toBe("ready");
-    expect(listProviders).not.toHaveBeenCalled();
+    }, "user_owner", selection)).resolves.toBe("unavailable");
+    await expect(resolveClaudeProviderReadiness({
+      resolveCredentialSources: async () => sources("owner_anthropic_key", { ownerApiKey: "unverified" }),
+      providerCatalog: catalogWith({}),
+    }, "user_owner", null)).resolves.toBe("unavailable");
   });
 
   it.each([
     { summary: claudeSummary("available", "authenticated"), expected: "ready" },
     { summary: claudeSummary("auth_required", "expired"), expected: "reconnect_required" },
     { summary: claudeSummary("unavailable", "unknown"), expected: "unavailable" },
-  ] as const)("maps the owner Claude profile route from the login state ($expected)", async ({ summary, expected }) => {
+  ] as const)("falls back to the Claude login state for the profile route without a catalog ($expected)", async ({ summary, expected }) => {
     const listProviders = vi.fn(async () => [summary]);
     await expect(resolveClaudeProviderReadiness({
       resolveCredentialSources: async () => sources("owner_anthropic_profile", { ownerProfile: "unverified" }),
       codingProviders: { listProviders },
-    }, "user_owner")).resolves.toBe(expected);
+    }, "user_owner", selection)).resolves.toBe(expected);
     expect(listProviders).toHaveBeenCalledWith({ userId: "user_owner", source: "jwt" });
   });
 
   it("fails closed when the selected access source is not usable", async () => {
     const listProviders = vi.fn(async () => [claudeSummary("available", "authenticated")]);
+    const providerCatalog = catalogWith({});
     await expect(resolveClaudeProviderReadiness({
       resolveCredentialSources: async () => sources("matrix_included", { matrixIncluded: "disabled" }),
       codingProviders: { listProviders },
-    }, "user_owner")).resolves.toBe("unavailable");
+      providerCatalog,
+    }, "user_owner", selection)).resolves.toBe("unavailable");
     await expect(resolveClaudeProviderReadiness({
       resolveCredentialSources: async () => sources("owner_anthropic_profile", { ownerProfile: "invalid" }),
       codingProviders: { listProviders },
-    }, "user_owner")).resolves.toBe("unavailable");
+      providerCatalog,
+    }, "user_owner", selection)).resolves.toBe("unavailable");
     expect(listProviders).not.toHaveBeenCalled();
+    expect(providerCatalog.getCatalog).not.toHaveBeenCalled();
   });
 });
 
