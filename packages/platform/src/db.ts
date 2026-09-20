@@ -13,6 +13,8 @@ import {
 import pg from 'pg';
 import { runPlatformMigration } from './migration-runner.js';
 import { migratePlatformSchema } from './database/migrate.js';
+import { parseStringArray } from './database/json.js';
+import { mapUserMachine, type UserMachineProvisioningClass } from './database/user-machine-records.js';
 import { z } from 'zod/v4';
 import type {
   BillingEntitlementSource,
@@ -30,9 +32,6 @@ import {
 const DEFAULT_PLATFORM_DB_URL =
   process.env.PLATFORM_DATABASE_URL ??
   (process.env.POSTGRES_URL ? `${process.env.POSTGRES_URL}/matrixos_platform` : undefined);
-const HostBundleTimestampSchema = z.string().datetime({ offset: true })
-  .transform((value) => new Date(value).toISOString());
-
 type Executor = Kysely<PlatformDatabase> | Transaction<PlatformDatabase>;
 
 interface ContainersTable {
@@ -61,7 +60,7 @@ interface UsersTable {
   updated_at: Date;
 }
 
-interface UserMachinesTable {
+export interface UserMachinesTable {
   machine_id: string;
   clerk_user_id: string;
   handle: string;
@@ -272,7 +271,7 @@ export interface ProvisioningJobsTable {
   prebilling_intent_id: Generated<string | null>;
 }
 
-interface HostBundleReleasesTable {
+export interface HostBundleReleasesTable {
   version: string;
   channel: string | null;
   git_commit: string;
@@ -292,7 +291,7 @@ interface HostBundleReleasesTable {
   created_at: string;
 }
 
-interface HostBundleChannelsTable {
+export interface HostBundleChannelsTable {
   channel: string;
   version: string;
   updated_at: string;
@@ -450,7 +449,7 @@ export interface GoldenSnapshotAuditEventsTable {
   created_at: string;
 }
 
-interface ProviderDeletionQueueTable {
+export interface ProviderDeletionQueueTable {
   id: string;
   provider_server_id: number;
   reason: string;
@@ -960,13 +959,6 @@ export interface NewHostBundleRelease {
   createdAt?: string;
 }
 
-export class HostBundleReleaseConflictError extends Error {
-  constructor(version: string) {
-    super(`Host bundle release already exists with different artifact fields: ${version}`);
-    this.name = 'HostBundleReleaseConflictError';
-  }
-}
-
 export interface HostBundleChannelRecord {
   channel: string;
   version: string;
@@ -1177,15 +1169,6 @@ export interface NewUserMachine {
   activationAuthorizedAt?: string | null;
 }
 
-export const UserMachineProvisioningClassSchema = z.enum(['customer', 'preview']);
-export type UserMachineProvisioningClass = z.infer<typeof UserMachineProvisioningClassSchema>;
-const NullableProviderActionIdSchema = z.coerce.number().int().positive()
-  .max(Number.MAX_SAFE_INTEGER).nullable();
-
-export function parseNullableProviderActionId(value: number | string | null): number | null {
-  return NullableProviderActionIdSchema.parse(value);
-}
-
 export interface NewProviderDeletionQueueRecord {
   id: string;
   providerServerId: number;
@@ -1286,18 +1269,6 @@ export async function runBillingWebhookTransaction<T>(
   return db.transaction(fn);
 }
 
-export async function lockUserMachineProvisioning(
-  db: PlatformDB,
-  clerkUserId: string,
-): Promise<void> {
-  await db.ready;
-  await sql`
-    SELECT pg_advisory_xact_lock(
-      ('x' || substr(md5(${`user_machines:${clerkUserId}`}), 1, 16))::bit(64)::bigint
-    )
-  `.execute(db.executor);
-}
-
 function mapContainer(row: ContainersTable): ContainerRecord {
   return {
     handle: row.handle,
@@ -1357,224 +1328,6 @@ function toPlatformUserRow(record: NewPlatformUser): InsertObject<PlatformDataba
     created_at: sql`now()`,
     updated_at: sql`now()`,
   };
-}
-
-function mapUserMachine(row: Selectable<UserMachinesTable>): UserMachineRecord {
-  return {
-    machineId: row.machine_id,
-    clerkUserId: row.clerk_user_id,
-    handle: row.handle,
-    runtimeSlot: row.runtime_slot,
-    provisioningClass: UserMachineProvisioningClassSchema.parse(row.provisioning_class),
-    accessClerkUserIds: row.access_clerk_user_ids,
-    developerTools: parseDeveloperToolsJson(row.developer_tools),
-    hetznerServerId: row.hetzner_server_id,
-    publicIPv4: row.public_ipv4,
-    publicIPv6: row.public_ipv6,
-    status: row.status,
-    imageVersion: row.image_version,
-    sourceSnapshotId: row.source_snapshot_id,
-    sourceBaseGeneration: row.source_base_generation,
-    targetBundleVersion: row.target_bundle_version,
-    targetBundleSha256: row.target_bundle_sha256,
-    recoveryCreateActionId: parseNullableProviderActionId(
-      row.recovery_create_action_id as number | string | null,
-    ),
-    recoveryEncryptedPayload: row.recovery_encrypted_payload,
-    recoveryOldServerId: row.recovery_old_server_id,
-    recoveryOldPublicIPv4: row.recovery_old_public_ipv4,
-    serverType: row.server_type,
-    location: row.location,
-    registrationTokenHash: row.registration_token_hash,
-    registrationTokenExpiresAt: row.registration_token_expires_at,
-    provisionedAt: row.provisioned_at,
-    lastSeenAt: row.last_seen_at,
-    deletedAt: row.deleted_at,
-    failureCode: row.failure_code,
-    failureAt: row.failure_at,
-    resizeStartedAt: row.resize_started_at,
-    resizeTargetServerType: row.resize_target_server_type,
-    attempt: row.attempt,
-    activationState: z.enum(['awaiting_billing', 'authorized']).parse(row.activation_state ?? 'authorized'),
-    prebillingIntentId: row.prebilling_intent_id,
-    activationAuthorizedAt: row.activation_authorized_at,
-  };
-}
-
-function toUserMachineRow(record: NewUserMachine): Insertable<UserMachinesTable> {
-  return {
-    machine_id: record.machineId,
-    clerk_user_id: record.clerkUserId,
-    handle: record.handle,
-    runtime_slot: record.runtimeSlot ?? 'primary',
-    provisioning_class: record.provisioningClass ?? 'customer',
-    access_clerk_user_ids: record.accessClerkUserIds ?? [],
-    developer_tools: serializeDeveloperTools(record.developerTools ?? DEFAULT_DEVELOPER_TOOLS),
-    hetzner_server_id: record.hetznerServerId ?? null,
-    public_ipv4: record.publicIPv4 ?? null,
-    public_ipv6: record.publicIPv6 ?? null,
-    status: record.status,
-    image_version: record.imageVersion ?? null,
-    source_snapshot_id: record.sourceSnapshotId ?? null,
-    source_base_generation: record.sourceBaseGeneration ?? null,
-    target_bundle_version: record.targetBundleVersion ?? null,
-    target_bundle_sha256: record.targetBundleSha256 ?? null,
-    recovery_create_action_id: record.recoveryCreateActionId ?? null,
-    recovery_encrypted_payload: record.recoveryEncryptedPayload ?? null,
-    recovery_old_server_id: record.recoveryOldServerId ?? null,
-    recovery_old_public_ipv4: record.recoveryOldPublicIPv4 ?? null,
-    server_type: record.serverType ?? null,
-    location: record.location ?? null,
-    registration_token_hash: record.registrationTokenHash ?? null,
-    registration_token_expires_at: record.registrationTokenExpiresAt ?? null,
-    provisioned_at: record.provisionedAt,
-    last_seen_at: record.lastSeenAt ?? null,
-    deleted_at: record.deletedAt ?? null,
-    failure_code: record.failureCode ?? null,
-    failure_at: record.failureAt ?? null,
-    resize_started_at: record.resizeStartedAt ?? null,
-    resize_target_server_type: record.resizeTargetServerType ?? null,
-    attempt: record.attempt ?? 1,
-    activation_state: record.activationState ?? 'authorized',
-    prebilling_intent_id: record.prebillingIntentId ?? null,
-    activation_authorized_at: record.activationAuthorizedAt ?? null,
-  };
-}
-
-function toUserMachineUpdate(values: Partial<NewUserMachine>): Updateable<UserMachinesTable> {
-  const update: Updateable<UserMachinesTable> = {};
-  if (values.machineId !== undefined) update.machine_id = values.machineId;
-  if (values.clerkUserId !== undefined) update.clerk_user_id = values.clerkUserId;
-  if (values.handle !== undefined) update.handle = values.handle;
-  if (values.runtimeSlot !== undefined) update.runtime_slot = values.runtimeSlot;
-  if (values.provisioningClass !== undefined) update.provisioning_class = values.provisioningClass;
-  if (values.accessClerkUserIds !== undefined) update.access_clerk_user_ids = values.accessClerkUserIds;
-  if (values.developerTools !== undefined) update.developer_tools = serializeDeveloperTools(values.developerTools);
-  if (values.hetznerServerId !== undefined) update.hetzner_server_id = values.hetznerServerId;
-  if (values.publicIPv4 !== undefined) update.public_ipv4 = values.publicIPv4;
-  if (values.publicIPv6 !== undefined) update.public_ipv6 = values.publicIPv6;
-  if (values.status !== undefined) update.status = values.status;
-  if (values.imageVersion !== undefined) update.image_version = values.imageVersion;
-  if (values.sourceSnapshotId !== undefined) update.source_snapshot_id = values.sourceSnapshotId;
-  if (values.sourceBaseGeneration !== undefined) update.source_base_generation = values.sourceBaseGeneration;
-  if (values.targetBundleVersion !== undefined) update.target_bundle_version = values.targetBundleVersion;
-  if (values.targetBundleSha256 !== undefined) update.target_bundle_sha256 = values.targetBundleSha256;
-  if (values.recoveryCreateActionId !== undefined) update.recovery_create_action_id = values.recoveryCreateActionId;
-  if (values.recoveryEncryptedPayload !== undefined) update.recovery_encrypted_payload = values.recoveryEncryptedPayload;
-  if (values.recoveryOldServerId !== undefined) update.recovery_old_server_id = values.recoveryOldServerId;
-  if (values.recoveryOldPublicIPv4 !== undefined) update.recovery_old_public_ipv4 = values.recoveryOldPublicIPv4;
-  if (values.serverType !== undefined) update.server_type = values.serverType;
-  if (values.location !== undefined) update.location = values.location;
-  if (values.registrationTokenHash !== undefined) update.registration_token_hash = values.registrationTokenHash;
-  if (values.registrationTokenExpiresAt !== undefined) update.registration_token_expires_at = values.registrationTokenExpiresAt;
-  if (values.provisionedAt !== undefined) update.provisioned_at = values.provisionedAt;
-  if (values.lastSeenAt !== undefined) update.last_seen_at = values.lastSeenAt;
-  if (values.deletedAt !== undefined) update.deleted_at = values.deletedAt;
-  if (values.failureCode !== undefined) update.failure_code = values.failureCode;
-  if (values.failureAt !== undefined) update.failure_at = values.failureAt;
-  if (values.resizeStartedAt !== undefined) update.resize_started_at = values.resizeStartedAt;
-  if (values.resizeTargetServerType !== undefined) update.resize_target_server_type = values.resizeTargetServerType;
-  if (values.attempt !== undefined) update.attempt = values.attempt;
-  if (values.activationState !== undefined) update.activation_state = values.activationState;
-  if (values.prebillingIntentId !== undefined) update.prebilling_intent_id = values.prebillingIntentId;
-  if (values.activationAuthorizedAt !== undefined) update.activation_authorized_at = values.activationAuthorizedAt;
-  return update;
-}
-
-function mapHostBundleRelease(row: HostBundleReleasesTable): HostBundleReleaseRecord {
-  return {
-    version: row.version,
-    channel: row.channel,
-    gitCommit: row.git_commit,
-    gitRef: row.git_ref,
-    snapshotEligible: row.snapshot_eligible,
-    buildTime: row.build_time,
-    bundleKey: row.bundle_key,
-    checksumKey: row.checksum_key,
-    incrementalManifestKey: row.incremental_manifest_key,
-    incrementalManifestSha256: row.incremental_manifest_sha256,
-    sha256: row.sha256,
-    size: Number(row.size),
-    severity: row.severity,
-    updateType: row.update_type,
-    changelog: row.changelog,
-    createdAt: row.created_at,
-  };
-}
-
-function toHostBundleReleaseRow(record: NewHostBundleRelease): HostBundleReleasesTable {
-  const now = new Date().toISOString();
-  return {
-    version: record.version,
-    channel: record.channel ?? null,
-    git_commit: record.gitCommit,
-    git_ref: record.gitRef ?? null,
-    snapshot_eligible: record.snapshotEligible ?? false,
-    snapshot_eligibility_source: record.snapshotEligible === undefined ? 'legacy' : 'explicit',
-    build_time: HostBundleTimestampSchema.parse(record.buildTime),
-    bundle_key: record.bundleKey,
-    checksum_key: record.checksumKey ?? null,
-    incremental_manifest_key: record.incrementalManifestKey ?? null,
-    incremental_manifest_sha256: record.incrementalManifestSha256 ?? null,
-    sha256: record.sha256,
-    size: record.size,
-    severity: record.severity ?? 'normal',
-    update_type: record.updateType ?? 'manual',
-    changelog: record.changelog ?? null,
-    created_at: record.createdAt === undefined
-      ? now
-      : HostBundleTimestampSchema.parse(record.createdAt),
-  };
-}
-
-function mapHostBundleChannel(row: HostBundleChannelsTable): HostBundleChannelRecord {
-  return {
-    channel: row.channel,
-    version: row.version,
-    updatedAt: row.updated_at,
-  };
-}
-
-function mapProviderDeletion(row: ProviderDeletionQueueTable): ProviderDeletionQueueRecord {
-  return {
-    id: row.id,
-    providerServerId: row.provider_server_id,
-    reason: row.reason,
-    machineId: row.machine_id,
-    handle: row.handle,
-    attempts: row.attempts,
-    nextAttemptAt: row.next_attempt_at,
-    createdAt: row.created_at,
-    lastError: row.last_error,
-    completedAt: row.completed_at,
-  };
-}
-
-function toProviderDeletionRow(record: NewProviderDeletionQueueRecord): ProviderDeletionQueueTable {
-  return {
-    id: record.id,
-    provider_server_id: record.providerServerId,
-    reason: record.reason,
-    machine_id: record.machineId ?? null,
-    handle: record.handle ?? null,
-    attempts: record.attempts ?? 0,
-    next_attempt_at: record.nextAttemptAt,
-    created_at: record.createdAt,
-    last_error: record.lastError ?? null,
-    completed_at: record.completedAt ?? null,
-  };
-}
-
-function parseStringArray(value: string): string[] {
-  try {
-    const parsed = JSON.parse(value) as unknown;
-    return Array.isArray(parsed)
-      ? parsed.filter((item): item is string => typeof item === 'string')
-      : [];
-  } catch (err: unknown) {
-    if (err instanceof SyntaxError) return [];
-    throw err;
-  }
 }
 
 function mapBillingCustomer(row: BillingCustomersTable): BillingCustomerRecord {
@@ -2452,816 +2205,6 @@ export async function getBillingWebhookEvent(
   return row ? mapBillingWebhookEvent(row) : undefined;
 }
 
-export async function insertUserMachine(db: PlatformDB, record: NewUserMachine): Promise<void> {
-  await db.ready;
-  await db.executor.insertInto('user_machines').values(toUserMachineRow(record)).execute();
-}
-
-export async function getUserMachine(db: PlatformDB, machineId: string): Promise<UserMachineRecord | undefined> {
-  await db.ready;
-  const row = await db.executor
-    .selectFrom('user_machines')
-    .selectAll()
-    .where('machine_id', '=', machineId)
-    .executeTakeFirst();
-  return row ? mapUserMachine(row) : undefined;
-}
-
-export async function getActiveUserMachineByClerkId(
-  db: PlatformDB,
-  clerkUserId: string,
-  runtimeSlot?: string,
-): Promise<UserMachineRecord | undefined> {
-  await db.ready;
-  let query = db.executor
-    .selectFrom('user_machines')
-    .selectAll()
-    .where('clerk_user_id', '=', clerkUserId)
-    .where('deleted_at', 'is', null);
-  if (runtimeSlot) {
-    query = query.where('runtime_slot', '=', runtimeSlot);
-  } else {
-    query = query
-      .orderBy(sql`CASE WHEN runtime_slot = 'primary' THEN 0 ELSE 1 END`)
-      .orderBy('provisioned_at', 'desc');
-  }
-  const row = await query.executeTakeFirst();
-  return row ? mapUserMachine(row) : undefined;
-}
-
-export function accessibleUserMachinePredicate(clerkUserId: string) {
-  return sql<boolean>`(
-    clerk_user_id = ${clerkUserId}
-    OR (
-      provisioning_class = 'preview'
-      AND handle ~ '^pr-[1-9][0-9]{0,9}$'
-      AND (runtime_slot = handle OR runtime_slot = 'preview')
-      AND access_clerk_user_ids @> ARRAY[${clerkUserId}]::TEXT[]
-    )
-  )`;
-}
-
-export async function getAccessibleActiveUserMachineByClerkId(
-  db: PlatformDB,
-  clerkUserId: string,
-  runtimeSlot?: string,
-): Promise<UserMachineRecord | undefined> {
-  await db.ready;
-  let query = db.executor
-    .selectFrom('user_machines')
-    .selectAll()
-    .where(accessibleUserMachinePredicate(clerkUserId))
-    .where('activation_state', '=', 'authorized')
-    .where('deleted_at', 'is', null);
-  if (runtimeSlot) {
-    query = query.where('runtime_slot', '=', runtimeSlot);
-  } else {
-    query = query
-      .orderBy(sql`CASE WHEN clerk_user_id = ${clerkUserId} AND runtime_slot = 'primary' THEN 0 ELSE 1 END`)
-      .orderBy('provisioned_at', 'desc');
-  }
-  const row = await query.executeTakeFirst();
-  return row ? mapUserMachine(row) : undefined;
-}
-
-export async function getActiveUserMachineByHandle(
-  db: PlatformDB,
-  handle: string,
-  runtimeSlot?: string,
-): Promise<UserMachineRecord | undefined> {
-  await db.ready;
-  let query = db.executor
-    .selectFrom('user_machines')
-    .selectAll()
-    .where('handle', '=', handle)
-    .where('deleted_at', 'is', null);
-  if (runtimeSlot) {
-    query = query.where('runtime_slot', '=', runtimeSlot);
-  } else {
-    query = query
-      .orderBy(sql`CASE WHEN runtime_slot = 'primary' THEN 0 ELSE 1 END`)
-      .orderBy('provisioned_at', 'desc');
-  }
-  const row = await query.executeTakeFirst();
-  return row ? mapUserMachine(row) : undefined;
-}
-
-export async function getRunningUserMachineByHandle(
-  db: PlatformDB,
-  handle: string,
-  runtimeSlot?: string,
-): Promise<UserMachineRecord | undefined> {
-  await db.ready;
-  let query = db.executor
-    .selectFrom('user_machines')
-    .selectAll()
-    .where('handle', '=', handle)
-    .where('status', '=', 'running')
-    .where('activation_state', '=', 'authorized')
-    .where('deleted_at', 'is', null);
-  if (runtimeSlot) {
-    query = query.where('runtime_slot', '=', runtimeSlot);
-  } else {
-    query = query
-      .orderBy(sql`CASE WHEN runtime_slot = 'primary' THEN 0 ELSE 1 END`)
-      .orderBy('provisioned_at', 'desc');
-  }
-  const row = await query.executeTakeFirst();
-  return row ? mapUserMachine(row) : undefined;
-}
-
-export async function getRunningUserMachineByClerkId(
-  db: PlatformDB,
-  clerkUserId: string,
-  runtimeSlot = 'primary',
-): Promise<UserMachineRecord | undefined> {
-  await db.ready;
-  const row = await db.executor
-    .selectFrom('user_machines')
-    .selectAll()
-    .where('clerk_user_id', '=', clerkUserId)
-    .where('runtime_slot', '=', runtimeSlot)
-    .where('status', '=', 'running')
-    .where('activation_state', '=', 'authorized')
-    .where('deleted_at', 'is', null)
-    .executeTakeFirst();
-  return row ? mapUserMachine(row) : undefined;
-}
-
-export async function getAccessibleRunningUserMachineByClerkId(
-  db: PlatformDB,
-  clerkUserId: string,
-  runtimeSlot: string,
-): Promise<UserMachineRecord | undefined> {
-  await db.ready;
-  const row = await db.executor
-    .selectFrom('user_machines')
-    .selectAll()
-    .where(accessibleUserMachinePredicate(clerkUserId))
-    .where('runtime_slot', '=', runtimeSlot)
-    .where('status', '=', 'running')
-    .where('activation_state', '=', 'authorized')
-    .where('deleted_at', 'is', null)
-    .executeTakeFirst();
-  return row ? mapUserMachine(row) : undefined;
-}
-
-export async function getRunningUserMachineByClerkIdForUpdate(
-  db: PlatformDB,
-  clerkUserId: string,
-  runtimeSlot: string,
-): Promise<UserMachineRecord | undefined> {
-  await db.ready;
-  const row = await db.executor
-    .selectFrom('user_machines')
-    .selectAll()
-    .where('clerk_user_id', '=', clerkUserId)
-    .where('runtime_slot', '=', runtimeSlot)
-    .where('status', '=', 'running')
-    .where('activation_state', '=', 'authorized')
-    .where('deleted_at', 'is', null)
-    .forUpdate()
-    .executeTakeFirst();
-  return row ? mapUserMachine(row) : undefined;
-}
-
-export async function listUserMachines(
-  db: PlatformDB,
-  options: { includeDeleted?: boolean } = {},
-): Promise<UserMachineRecord[]> {
-  await db.ready;
-  let query = db.executor
-    .selectFrom('user_machines')
-    .selectAll()
-    .orderBy('provisioned_at', 'desc');
-  if (!options.includeDeleted) {
-    query = query.where('deleted_at', 'is', null);
-  }
-  const rows = await query.execute();
-  return rows.map(mapUserMachine);
-}
-
-export async function listActiveUserMachinesByClerkId(
-  db: PlatformDB,
-  clerkUserId: string,
-): Promise<UserMachineRecord[]> {
-  await db.ready;
-  const rows = await db.executor
-    .selectFrom('user_machines')
-    .selectAll()
-    .where('clerk_user_id', '=', clerkUserId)
-    .where('deleted_at', 'is', null)
-    .where('status', 'in', [
-      'running',
-      'provisioning',
-      'recovering',
-      'resizing',
-      'suspending',
-      'suspended',
-      'resuming',
-    ])
-    .orderBy(sql`CASE WHEN runtime_slot = 'primary' THEN 0 ELSE 1 END`)
-    .orderBy('provisioned_at', 'desc')
-    .execute();
-  return rows.map(mapUserMachine);
-}
-
-export async function listAccessibleActiveUserMachinesByClerkId(
-  db: PlatformDB,
-  clerkUserId: string,
-): Promise<UserMachineRecord[]> {
-  await db.ready;
-  const rows = await db.executor
-    .selectFrom('user_machines')
-    .selectAll()
-    .where(accessibleUserMachinePredicate(clerkUserId))
-    .where('deleted_at', 'is', null)
-    .where('status', 'in', ['running', 'provisioning', 'recovering', 'resizing'])
-    .orderBy(sql`CASE WHEN clerk_user_id = ${clerkUserId} AND runtime_slot = 'primary' THEN 0 ELSE 1 END`)
-    .orderBy('provisioned_at', 'desc')
-    .execute();
-  return rows.map(mapUserMachine);
-}
-
-export async function listNonDeletedUserMachinesByClerkId(
-  db: PlatformDB,
-  clerkUserId: string,
-): Promise<UserMachineRecord[]> {
-  await db.ready;
-  const rows = await db.executor
-    .selectFrom('user_machines')
-    .selectAll()
-    .where('clerk_user_id', '=', clerkUserId)
-    .where('deleted_at', 'is', null)
-    .orderBy(sql`CASE WHEN runtime_slot = 'primary' THEN 0 ELSE 1 END`)
-    .orderBy('provisioned_at', 'desc')
-    .execute();
-  return rows.map(mapUserMachine);
-}
-
-export async function updateUserMachine(
-  db: PlatformDB,
-  machineId: string,
-  values: Partial<NewUserMachine>,
-): Promise<void> {
-  await db.ready;
-  await db.executor
-    .updateTable('user_machines')
-    .set(toUserMachineUpdate(values))
-    .where('machine_id', '=', machineId)
-    .execute();
-}
-
-export async function claimRunningUserMachineResize(
-  db: PlatformDB,
-  machineId: string,
-  hetznerServerId: number,
-  resizeStartedAt: string,
-  resizeTargetServerType: string,
-): Promise<UserMachineRecord | undefined> {
-  await db.ready;
-  const row = await db.executor
-    .updateTable('user_machines')
-    .set({
-      status: 'resizing',
-      failure_code: null,
-      failure_at: null,
-      resize_started_at: resizeStartedAt,
-      resize_target_server_type: resizeTargetServerType,
-    })
-    .where('machine_id', '=', machineId)
-    .where('hetzner_server_id', '=', hetznerServerId)
-    .where('status', '=', 'running')
-    .where('deleted_at', 'is', null)
-    .returningAll()
-    .executeTakeFirst();
-  return row ? mapUserMachine(row) : undefined;
-}
-
-export async function completeUserMachineResize(
-  db: PlatformDB,
-  machineId: string,
-  hetznerServerId: number,
-  values: Partial<NewUserMachine>,
-): Promise<UserMachineRecord | undefined> {
-  await db.ready;
-  const row = await db.executor
-    .updateTable('user_machines')
-    .set(toUserMachineUpdate(values))
-    .where('machine_id', '=', machineId)
-    .where('hetzner_server_id', '=', hetznerServerId)
-    .where('status', '=', 'resizing')
-    .where('deleted_at', 'is', null)
-    .returningAll()
-    .executeTakeFirst();
-  return row ? mapUserMachine(row) : undefined;
-}
-
-export async function claimRunningUserMachineBillingSuspend(
-  db: PlatformDB,
-  machineId: string,
-  hetznerServerId: number,
-): Promise<UserMachineRecord | undefined> {
-  await db.ready;
-  const row = await db.executor
-    .updateTable('user_machines')
-    .set({ status: 'suspending', failure_code: null, failure_at: null })
-    .where('machine_id', '=', machineId)
-    .where('hetzner_server_id', '=', hetznerServerId)
-    .where('status', 'in', ['running', 'resuming'])
-    .where('deleted_at', 'is', null)
-    .returningAll()
-    .executeTakeFirst();
-  return row ? mapUserMachine(row) : undefined;
-}
-
-export async function completeUserMachineBillingSuspend(
-  db: PlatformDB,
-  machineId: string,
-  hetznerServerId: number,
-): Promise<UserMachineRecord | undefined> {
-  await db.ready;
-  const row = await db.executor
-    .updateTable('user_machines')
-    .set({ status: 'suspended', failure_code: null, failure_at: null })
-    .where('machine_id', '=', machineId)
-    .where('hetzner_server_id', '=', hetznerServerId)
-    .where('status', '=', 'suspending')
-    .where('deleted_at', 'is', null)
-    .returningAll()
-    .executeTakeFirst();
-  return row ? mapUserMachine(row) : undefined;
-}
-
-export async function claimSuspendedUserMachineBillingResume(
-  db: PlatformDB,
-  machineId: string,
-  hetznerServerId: number,
-): Promise<UserMachineRecord | undefined> {
-  await db.ready;
-  const row = await db.executor
-    .updateTable('user_machines')
-    .set({ status: 'resuming', failure_code: null, failure_at: null })
-    .where('machine_id', '=', machineId)
-    .where('hetzner_server_id', '=', hetznerServerId)
-    .where('status', 'in', ['suspended', 'suspending'])
-    .where('deleted_at', 'is', null)
-    .returningAll()
-    .executeTakeFirst();
-  return row ? mapUserMachine(row) : undefined;
-}
-
-export async function completeUserMachineBillingResume(
-  db: PlatformDB,
-  machineId: string,
-  hetznerServerId: number,
-): Promise<UserMachineRecord | undefined> {
-  await db.ready;
-  const row = await db.executor
-    .updateTable('user_machines')
-    .set({ status: 'running', failure_code: null, failure_at: null })
-    .where('machine_id', '=', machineId)
-    .where('hetzner_server_id', '=', hetznerServerId)
-    .where('status', '=', 'resuming')
-    .where('deleted_at', 'is', null)
-    .returningAll()
-    .executeTakeFirst();
-  return row ? mapUserMachine(row) : undefined;
-}
-
-export async function listStaleResizingUserMachines(
-  db: PlatformDB,
-  olderThanIso: string,
-  limit: number,
-): Promise<UserMachineRecord[]> {
-  await db.ready;
-  const rows = await db.executor
-    .selectFrom('user_machines')
-    .selectAll()
-    .where('status', '=', 'resizing')
-    .where('resize_started_at', 'is not', null)
-    .where('resize_started_at', '<', olderThanIso)
-    .where('deleted_at', 'is', null)
-    .orderBy('resize_started_at')
-    .limit(limit)
-    .execute();
-  return rows.map(mapUserMachine);
-}
-
-export async function completeUserMachineRegistration(
-  db: PlatformDB,
-  machineId: string,
-  hetznerServerId: number,
-  expectedRegistrationTokenHash: string,
-  expiresAfterIso: string,
-  values: Partial<NewUserMachine>,
-): Promise<UserMachineRecord | undefined> {
-  await db.ready;
-  const row = await db.executor
-    .updateTable('user_machines')
-    .set(toUserMachineUpdate(values))
-    .where('machine_id', '=', machineId)
-    .where('hetzner_server_id', '=', hetznerServerId)
-    .where('registration_token_hash', '=', expectedRegistrationTokenHash)
-    .where('registration_token_expires_at', '>=', expiresAfterIso)
-    .where('status', 'in', ['provisioning', 'recovering'])
-    .where('deleted_at', 'is', null)
-    .returningAll()
-    .executeTakeFirst();
-  return row ? mapUserMachine(row) : undefined;
-}
-
-export async function claimUserMachineRecovery(
-  db: PlatformDB,
-  clerkUserId: string,
-  runtimeSlot = 'primary',
-  intent?: {
-    machineId: string;
-    encryptedPayload: string;
-    serverType: string;
-    registrationTokenHash: string;
-    registrationTokenExpiresAt: string;
-  },
-): Promise<UserMachineRecord | undefined> {
-  await db.ready;
-  const row = await db.executor
-    .updateTable('user_machines')
-    .set(intent ? {
-      machine_id: intent.machineId,
-      recovery_encrypted_payload: intent.encryptedPayload,
-      recovery_old_server_id: sql<number | null>`hetzner_server_id`,
-      recovery_old_public_ipv4: sql<string | null>`public_ipv4`,
-      server_type: intent.serverType,
-      registration_token_hash: intent.registrationTokenHash,
-      registration_token_expires_at: intent.registrationTokenExpiresAt,
-      status: 'recovering',
-      hetzner_server_id: null,
-      recovery_create_action_id: null,
-      failure_code: null,
-      failure_at: null,
-    } : {
-      status: 'recovering',
-      hetzner_server_id: null,
-      public_ipv4: null,
-      public_ipv6: null,
-      recovery_old_public_ipv4: null,
-      failure_code: null,
-      failure_at: null,
-    })
-    .where('clerk_user_id', '=', clerkUserId)
-    .where('runtime_slot', '=', runtimeSlot)
-    .where('deleted_at', 'is', null)
-    .where('status', '!=', 'recovering')
-    .where('status', '!=', 'resizing')
-    .returningAll()
-    .executeTakeFirst();
-  return row ? mapUserMachine(row) : undefined;
-}
-
-/**
- * Soft-deletes a failed machine row so it stops occupying the active
- * (clerk_user_id, runtime_slot) unique slot, letting a retry provision a fresh
- * machine. The failure status is preserved for audit; only `deleted_at` is set.
- * The `status = 'failed'` guard encodes the invariant at the DB layer: this
- * helper must never silently retire a live (provisioning/recovering/running)
- * machine, even if a future caller forgets the status check.
- */
-export async function retireUserMachine(
-  db: PlatformDB,
-  machineId: string,
-  retiredAt: string,
-): Promise<void> {
-  await db.ready;
-  await db.executor
-    .updateTable('user_machines')
-    .set({ deleted_at: retiredAt })
-    .where('machine_id', '=', machineId)
-    .where('deleted_at', 'is', null)
-    .where('status', '=', 'failed')
-    .execute();
-}
-
-export async function claimUserMachineDelete(
-  db: PlatformDB,
-  machineId: string,
-  deletedAt: string,
-): Promise<UserMachineRecord | undefined> {
-  await db.ready;
-  const row = await db.executor
-    .updateTable('user_machines')
-    .set({ status: 'deleted', deleted_at: deletedAt })
-    .where('machine_id', '=', machineId)
-    .where('deleted_at', 'is', null)
-    .where('status', 'not in', ['resizing', 'suspending', 'resuming'])
-    .returningAll()
-    .executeTakeFirst();
-  return row ? mapUserMachine(row) : undefined;
-}
-
-export async function softDeleteUserMachine(db: PlatformDB, machineId: string, deletedAt: string): Promise<void> {
-  await claimUserMachineDelete(db, machineId, deletedAt);
-}
-
-export async function insertProviderDeletion(
-  db: PlatformDB,
-  record: NewProviderDeletionQueueRecord,
-): Promise<void> {
-  await db.ready;
-  await db.executor
-    .insertInto('provider_deletion_queue')
-    .values(toProviderDeletionRow(record))
-    .onConflict((oc) => oc.column('provider_server_id')
-      .where('completed_at', 'is', null).doNothing())
-    .execute();
-}
-
-export async function listPendingProviderDeletions(
-  db: PlatformDB,
-  nowIso: string,
-  limit: number,
-): Promise<ProviderDeletionQueueRecord[]> {
-  await db.ready;
-  const rows = await db.executor
-    .selectFrom('provider_deletion_queue')
-    .selectAll()
-    .where('completed_at', 'is', null)
-    .where('next_attempt_at', '<=', nowIso)
-    .orderBy('next_attempt_at')
-    .limit(limit)
-    .execute();
-  return rows.map(mapProviderDeletion);
-}
-
-export async function listRunningUserMachines(
-  db: PlatformDB,
-  limit: number,
-  filters: {
-    handle?: string;
-    provisioningClass?: UserMachineProvisioningClass;
-  } = {},
-): Promise<UserMachineRecord[]> {
-  await db.ready;
-  let query = db.executor
-    .selectFrom('user_machines')
-    .selectAll()
-    .where('status', '=', 'running')
-    .where('deleted_at', 'is', null);
-  if (filters.handle !== undefined) {
-    query = query.where('handle', '=', filters.handle);
-  }
-  if (filters.provisioningClass !== undefined) {
-    query = query.where('provisioning_class', '=', filters.provisioningClass);
-  }
-  const rows = await query
-    .orderBy('last_seen_at', 'desc')
-    .limit(limit)
-    .execute();
-  return rows.map(mapUserMachine);
-}
-
-export async function listAllUserMachines(
-  db: PlatformDB,
-  limit: number,
-): Promise<UserMachineRecord[]> {
-  await db.ready;
-  const rows = await db.executor
-    .selectFrom('user_machines')
-    .selectAll()
-    .where('status', '!=', 'deleted')
-    .where('deleted_at', 'is', null)
-    .orderBy('last_seen_at', 'desc')
-    .limit(limit)
-    .execute();
-  return rows.map(mapUserMachine);
-}
-
-export async function upsertHostBundleRelease(
-  db: PlatformDB,
-  record: NewHostBundleRelease,
-): Promise<HostBundleReleaseRecord> {
-  await db.ready;
-  const row = toHostBundleReleaseRow(record);
-  const saved = await db.executor
-      .insertInto('host_bundle_releases')
-      .values(row)
-      .onConflict((oc) =>
-        oc.column('version').doUpdateSet({
-          severity: row.severity,
-          update_type: row.update_type,
-          changelog: row.changelog,
-          incremental_manifest_key: row.incremental_manifest_key,
-          incremental_manifest_sha256: row.incremental_manifest_sha256,
-          snapshot_eligible: sql<boolean>`host_bundle_releases.snapshot_eligible OR ${row.snapshot_eligible}`,
-          snapshot_eligibility_source: sql<string>`CASE
-            WHEN ${row.snapshot_eligibility_source} = 'explicit' THEN 'explicit'
-            ELSE host_bundle_releases.snapshot_eligibility_source
-          END`,
-        })
-          .where(sql<boolean>`host_bundle_releases.bundle_key = ${row.bundle_key}`)
-          .where(sql<boolean>`host_bundle_releases.git_commit = ${row.git_commit}`)
-          .where(sql<boolean>`host_bundle_releases.git_ref IS NOT DISTINCT FROM ${row.git_ref}`)
-          .where(sql<boolean>`host_bundle_releases.build_time::timestamptz = ${row.build_time}::timestamptz`)
-          .where(sql<boolean>`host_bundle_releases.checksum_key IS NOT DISTINCT FROM ${row.checksum_key}`)
-          .where(sql<boolean>`host_bundle_releases.incremental_manifest_key IS NOT DISTINCT FROM ${row.incremental_manifest_key}`)
-          .where(sql<boolean>`host_bundle_releases.incremental_manifest_sha256 IS NOT DISTINCT FROM ${row.incremental_manifest_sha256}`)
-          .where(sql<boolean>`host_bundle_releases.sha256 = ${row.sha256}`)
-          .where(sql<boolean>`host_bundle_releases.size = ${row.size}`),
-      )
-      .returningAll()
-      .executeTakeFirst();
-  if (!saved) {
-    throw new HostBundleReleaseConflictError(row.version);
-  }
-  return mapHostBundleRelease(saved);
-}
-
-export async function getHostBundleRelease(
-  db: PlatformDB,
-  version: string,
-): Promise<HostBundleReleaseRecord | undefined> {
-  await db.ready;
-  const row = await db.executor
-    .selectFrom('host_bundle_releases')
-    .selectAll()
-    .where('version', '=', version)
-    .executeTakeFirst();
-  return row ? mapHostBundleRelease(row) : undefined;
-}
-
-export async function listHostBundleReleases(
-  db: PlatformDB,
-  limit = 50,
-  channel?: string,
-): Promise<HostBundleReleaseRecord[]> {
-  await db.ready;
-  if (channel) {
-    const rows = await db.executor
-      .selectFrom('host_bundle_release_channels')
-      .innerJoin('host_bundle_releases', 'host_bundle_releases.version', 'host_bundle_release_channels.version')
-      .selectAll('host_bundle_releases')
-      .where('host_bundle_release_channels.channel', '=', channel)
-      .orderBy('host_bundle_releases.created_at', 'desc')
-      .limit(limit)
-      .execute();
-    return rows.map(mapHostBundleRelease);
-  }
-  const rows = await db.executor
-    .selectFrom('host_bundle_releases')
-    .selectAll()
-    .orderBy('created_at', 'desc')
-    .limit(limit)
-    .execute();
-  return rows.map(mapHostBundleRelease);
-}
-
-export async function promoteHostBundleChannel(
-  db: PlatformDB,
-  channel: string,
-  version: string,
-  updatedAt = new Date().toISOString(),
-): Promise<HostBundleChannelRecord> {
-  await db.ready;
-  return db.transaction((trx) => promoteHostBundleChannelInTransaction(trx, channel, version, updatedAt));
-}
-
-export async function promoteHostBundleChannelInTransaction(
-  db: PlatformDB,
-  channel: string,
-  version: string,
-  updatedAt: string,
-): Promise<HostBundleChannelRecord> {
-    const release = await db.executor
-      .selectFrom('host_bundle_releases')
-      .selectAll()
-      .where('version', '=', version)
-      .forUpdate()
-      .executeTakeFirst();
-    if (!release) {
-      throw new Error('Cannot promote unknown host bundle release');
-    }
-    const row = await db.executor
-      .insertInto('host_bundle_channels')
-      .values({ channel, version, updated_at: updatedAt })
-      .onConflict((oc) =>
-        oc.column('channel').doUpdateSet({
-          version,
-          updated_at: updatedAt,
-        }),
-      )
-      .returningAll()
-      .executeTakeFirstOrThrow();
-    await db.executor
-      .insertInto('host_bundle_release_channels')
-      .values({ channel, version, promoted_at: updatedAt })
-      .onConflict((oc) => oc.columns(['channel', 'version']).doUpdateSet({
-        promoted_at: updatedAt,
-      }))
-      .executeTakeFirst();
-    return mapHostBundleChannel(row);
-}
-
-export async function registerHostBundleRelease(
-  db: PlatformDB,
-  record: NewHostBundleRelease,
-  channel?: string,
-): Promise<{ release: HostBundleReleaseRecord; channel?: HostBundleChannelRecord }> {
-  await db.ready;
-  return db.transaction(async (trx) => {
-    const release = await upsertHostBundleRelease(trx, record);
-    if (!channel) return { release };
-    return {
-      release,
-      channel: await promoteHostBundleChannelInTransaction(
-        trx, channel, release.version, new Date().toISOString(),
-      ),
-    };
-  });
-}
-
-export async function getHostBundleChannel(
-  db: PlatformDB,
-  channel: string,
-): Promise<HostBundleChannelRecord | undefined> {
-  await db.ready;
-  const row = await db.executor
-    .selectFrom('host_bundle_channels')
-    .selectAll()
-    .where('channel', '=', channel)
-    .executeTakeFirst();
-  return row ? mapHostBundleChannel(row) : undefined;
-}
-
-export async function getHostBundleReleaseByChannel(
-  db: PlatformDB,
-  channel: string,
-): Promise<HostBundleReleaseRecord | undefined> {
-  await db.ready;
-  const row = await db.executor
-    .selectFrom('host_bundle_channels')
-    .innerJoin('host_bundle_releases', 'host_bundle_releases.version', 'host_bundle_channels.version')
-    .selectAll('host_bundle_releases')
-    .where('host_bundle_channels.channel', '=', channel)
-    .executeTakeFirst();
-  return row ? mapHostBundleRelease(row) : undefined;
-}
-
-export async function markProviderDeletionCompleted(
-  db: PlatformDB,
-  id: string,
-  completedAt: string,
-): Promise<void> {
-  await db.ready;
-  await db.executor
-    .updateTable('provider_deletion_queue')
-    .set({ completed_at: completedAt, last_error: null })
-    .where('id', '=', id)
-    .execute();
-}
-
-export async function markProviderDeletionFailed(
-  db: PlatformDB,
-  id: string,
-  attempts: number,
-  nextAttemptAt: string,
-  lastError: string,
-): Promise<void> {
-  await db.ready;
-  await db.executor
-    .updateTable('provider_deletion_queue')
-    .set({
-      attempts,
-      next_attempt_at: nextAttemptAt,
-      last_error: lastError,
-    })
-    .where('id', '=', id)
-    .where('completed_at', 'is', null)
-    .execute();
-}
-
-export async function listStaleUserMachines(
-  db: PlatformDB,
-  statuses: string[],
-  olderThanIso: string,
-  limit: number,
-): Promise<UserMachineRecord[]> {
-  await db.ready;
-  if (statuses.length === 0) return [];
-  const rows = await db.executor
-    .selectFrom('user_machines')
-    .selectAll()
-    .where('status', 'in', statuses)
-    .where('provisioned_at', '<', olderThanIso)
-    .where('deleted_at', 'is', null)
-    .orderBy('provisioned_at')
-    .limit(limit)
-    .execute();
-  return rows.map(mapUserMachine);
-}
-
-// ---------------------------------------------------------------------------
-// Onboarding journey (spec 092)
-// ---------------------------------------------------------------------------
-
 function isCheckoutAttemptStatus(value: string): value is BillingCheckoutAttemptStatus {
   return value === 'creating' || value === 'open' || value === 'paid' || value === 'expired' || value === 'abandoned';
 }
@@ -3917,3 +2860,60 @@ export async function releasePort(db: PlatformDB, handle: string): Promise<void>
   await db.ready;
   await db.executor.deleteFrom('port_assignments').where('handle', '=', handle).execute();
 }
+
+// S01 / T007: focused database modules; db.ts remains the composition and export entrypoint.
+export {
+  UserMachineProvisioningClassSchema,
+  parseNullableProviderActionId,
+} from './database/user-machine-records.js';
+export type { UserMachineProvisioningClass } from './database/user-machine-records.js';
+export {
+  lockUserMachineProvisioning,
+  insertUserMachine,
+  getUserMachine,
+  getActiveUserMachineByClerkId,
+  accessibleUserMachinePredicate,
+  getAccessibleActiveUserMachineByClerkId,
+  getActiveUserMachineByHandle,
+  getRunningUserMachineByHandle,
+  getRunningUserMachineByClerkId,
+  getAccessibleRunningUserMachineByClerkId,
+  getRunningUserMachineByClerkIdForUpdate,
+  listUserMachines,
+  listActiveUserMachinesByClerkId,
+  listAccessibleActiveUserMachinesByClerkId,
+  listNonDeletedUserMachinesByClerkId,
+  updateUserMachine,
+  listRunningUserMachines,
+  listAllUserMachines,
+  listStaleUserMachines,
+} from './database/user-machines.js';
+export {
+  claimRunningUserMachineResize,
+  completeUserMachineResize,
+  claimRunningUserMachineBillingSuspend,
+  completeUserMachineBillingSuspend,
+  claimSuspendedUserMachineBillingResume,
+  completeUserMachineBillingResume,
+  listStaleResizingUserMachines,
+  completeUserMachineRegistration,
+  claimUserMachineRecovery,
+  retireUserMachine,
+  claimUserMachineDelete,
+  softDeleteUserMachine,
+  insertProviderDeletion,
+  listPendingProviderDeletions,
+  markProviderDeletionCompleted,
+  markProviderDeletionFailed,
+} from './database/user-machine-lifecycle.js';
+export {
+  HostBundleReleaseConflictError,
+  upsertHostBundleRelease,
+  getHostBundleRelease,
+  listHostBundleReleases,
+  promoteHostBundleChannel,
+  promoteHostBundleChannelInTransaction,
+  registerHostBundleRelease,
+  getHostBundleChannel,
+  getHostBundleReleaseByChannel,
+} from './database/host-bundles.js';
