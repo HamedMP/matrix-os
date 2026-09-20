@@ -22,20 +22,39 @@ import {
   type AuthorizedCollaborationContext,
 } from "./authority.js";
 
-const ScopeEligibilitySchema = z.object({
+const ScopeEligibilityBaseSchema = z.object({
   profileId: z.string().min(1).max(64),
   profileVersion: z.number().int().min(1),
   profileDigest: z.string().regex(/^[a-f0-9]{64}$/),
-  adapterId: z.literal("claude-code"),
+});
+const ScopeAdapterEligibilitySchema = z.object({
+  adapterId: z.enum(["claude-code", "codex"]),
   harnessVersion: z.string().regex(/^[0-9]+\.[0-9]+\.[0-9]+$/),
 }).strict();
+const ScopeEligibilitySchema = z.union([
+  ScopeEligibilityBaseSchema.extend({
+    adapters: z.array(ScopeAdapterEligibilitySchema).min(1).max(16)
+      .refine((items) => new Set(items.map((item) => item.adapterId)).size === items.length),
+  }).strict(),
+  ScopeEligibilityBaseSchema.extend({
+    adapterId: z.literal("claude-code"),
+    harnessVersion: z.string().regex(/^[0-9]+\.[0-9]+\.[0-9]+$/),
+  }).strict(),
+]).transform((value) => "adapters" in value ? value : {
+  profileId: value.profileId,
+  profileVersion: value.profileVersion,
+  profileDigest: value.profileDigest,
+  adapters: [{ adapterId: value.adapterId, harnessVersion: value.harnessVersion }],
+});
 
 export interface CollaborationAiExecutionEligibility {
   profileId: string;
   profileVersion: number;
   profileDigest: string;
-  adapterId: "claude-code";
-  harnessVersion: string;
+  adapters: Array<{
+    adapterId: "claude-code" | "codex";
+    harnessVersion: string;
+  }>;
 }
 
 export class CollaborationChatExecutionAdapter {

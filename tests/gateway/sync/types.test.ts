@@ -94,6 +94,7 @@ describe("ManifestSchema", () => {
 describe("PresignRequestSchema", () => {
   it("accepts a valid presign request", () => {
     const req = {
+      protocolVersion: 3,
       files: [
         { path: "apps/test.txt", action: "put" as const, hash: "sha256:" + "d".repeat(64), size: 100 },
       ],
@@ -125,8 +126,9 @@ describe("PresignRequestSchema", () => {
 describe("CommitRequestSchema", () => {
   it("accepts a valid commit request", () => {
     const req = {
+      protocolVersion: 3,
       files: [
-        { path: "apps/test.txt", hash: "sha256:" + "e".repeat(64), size: 200 },
+        { path: "apps/test.txt", hash: "sha256:" + "e".repeat(64), size: 200, stagingId: "11111111-1111-4111-8111-111111111111" },
       ],
       expectedVersion: 5,
     };

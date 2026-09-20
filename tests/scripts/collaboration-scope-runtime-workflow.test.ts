@@ -63,7 +63,32 @@ describe("collaboration scope-runtime production acceptance workflow", () => {
     expect(workflow).toContain('production_expected_head="MATRIX_SCOPE_EXPECTED_HEAD=$HEAD_SHA"');
     expect(workflow).toContain("scope_runtime_production_acceptance=passed");
     expect(workflow).toContain("scope-runtime-native-evidence-");
+    expect(workflow).toContain("nativeProof:$native[0], productionSupervisor:null");
     expect(workflow).toContain("retention-days: 7");
+  });
+
+  it("verifies the gateway broker re-attach after an originally active supervisor is restored", async () => {
+    const workflow = await readFile(workflowPath, "utf8");
+
+    // The harness runs inside the gateway, so it can only schedule the gateway
+    // restart. The workflow must observe that the gateway actually re-activated
+    // after the acceptance and recreated its broker socket before claiming a pass.
+    expect(workflow).toContain("gateway_activation_before=");
+    expect(workflow).toContain('"--property=ActiveEnterTimestampMonotonic"');
+    expect(workflow).toContain("scope_runtime_gateway_restart=scheduled");
+    expect(workflow).toContain('"/usr/bin/test","-S","/run/matrix-scope-runtime/broker.sock"');
+    expect(workflow).toContain("reattach_deadline=$((SECONDS + 420))");
+    expect(workflow).toContain("gatewayReattach:");
+    expect(workflow).toContain('reattach_status="verified"');
+    expect(workflow).toContain('reattach_status="not_required"');
+    expect(workflow).toContain("The gateway broker socket was not restored after the acceptance");
+    expect(workflow.indexOf("gateway_activation_before=")).toBeLessThan(
+      workflow.indexOf("matrix-scope-production-acceptance.mjs\")],"),
+    );
+    expect(workflow.indexOf('reattach_status="verified"')).toBeGreaterThan(
+      workflow.indexOf('contains("scope_runtime_codex_chat=passed")'),
+    );
+    expect(workflow).toContain('.gatewayReattach.status == "verified" or .gatewayReattach.status == "not_required"');
   });
 
   it("pins actions used by the privileged acceptance job to immutable commits", async () => {

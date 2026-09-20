@@ -1,3 +1,5 @@
+import { sealToolOutput } from "../coding-agents/protected-tool-output.mjs";
+import { coarseToolOutputText } from "../coding-agents/codex-tool-output.mjs";
 import { ChatInputNotDeliveredError } from "./input-delivery-error.js";
 import { BackgroundProjectionDetached } from "./background-run-control.js";
 import { createHash } from "node:crypto";
@@ -7,6 +9,7 @@ import type { CodingAgentProviderAdapter } from "../coding-agents/provider-adapt
 import {
   AgentModeSchema,
   CanonicalChatSafeErrorSchema,
+  CanonicalChatToolOutputTextSchema,
   type CanonicalChatAgentActivityKind,
   type AgentThreadEvent,
   type AgentThreadSnapshot,
@@ -109,6 +112,8 @@ function failedActivitySummary(kind: CanonicalChatAgentActivityKind): string {
 function normalizeEvent(
   event: AgentThreadEvent,
   toolActivities: Map<string, ToolActivity>,
+  providerId: "codex" | "claude" | "opencode" | "pi",
+  toolOutputKey?: Buffer,
 ): CanonicalProviderRunEvent[] {
   // External supervision can terminate a run after its runner died before publishing tool completion.
   // Settle every observed activity before the terminal event reaches any renderer.
@@ -116,7 +121,7 @@ function normalizeEvent(
     ? [...toolActivities.keys()].flatMap((toolCallId) => normalizeEvent({
       type: "tool.completed", eventId: event.eventId, threadId: event.threadId, occurredAt: event.occurredAt,
       toolCallId, outcome: event.type === "thread.error" || event.outcome === "failed" ? "failed" : "cancelled",
-    }, toolActivities)) : [];
+    }, toolActivities, providerId, toolOutputKey)) : [];
   if (event.type === "assistant.text.delta") {
     return [CanonicalProviderRunEventSchema.parse({
       type: "assistant.delta",
@@ -150,7 +155,16 @@ function normalizeEvent(
     })];
   }
   if (event.type === "tool.output") {
-    return [];
+    const text = CanonicalChatToolOutputTextSchema.safeParse(event.text);
+    if (!text.success) return [];
+    // Codex must seal before journaling; never recover unsealed legacy Codex text.
+    // Other coding harnesses retain their existing thread contract, but seal at
+    // this boundary before canonical activities/outbox persistence.
+    const protectedOutput = event.protectedOutput ?? (providerId !== "codex" && toolOutputKey
+      ? sealToolOutput(toolOutputKey, event.toolCallId, text.data) : undefined);
+    return [{ type: "tool.output", toolCallId: event.toolCallId,
+      text: coarseToolOutputText(text.data), truncated: event.truncated ?? false,
+      ...(protectedOutput ? { protectedOutput } : {}) }];
   }
   if (event.type === "tool.completed") {
     const toolActivity = toolActivities.get(event.toolCallId);
@@ -266,6 +280,7 @@ async function* normalizedEvents(
   initial: AgentThreadEvent[],
   inbox: ThreadEventInbox,
   providerId: "codex" | "claude" | "opencode" | "pi",
+  toolOutputKey?: Buffer,
 ): AsyncGenerator<CanonicalProviderRunEvent> {
   const recentEventIds = new Set<string>();
   const toolActivities = new Map<string, ToolActivity>();
@@ -303,7 +318,7 @@ async function* normalizedEvents(
         });
         continue;
       }
-      for (const normalized of normalizeEvent(event, toolActivities)) {
+      for (const normalized of normalizeEvent(event, toolActivities, providerId, toolOutputKey)) {
         if (normalized.type === "run.completed") {
           const tokenUsage = inbox.takeTokenUsage();
           yield CanonicalProviderRunEventSchema.parse({
@@ -336,6 +351,7 @@ function eventsForAcceptedRun(snapshot: AgentThreadSnapshot, requestId: string):
 export function createCanonicalCodingChatProviderAdapter(options: {
   providerId: "codex" | "claude" | "opencode" | "pi";
   threads: CodingThreads;
+  toolOutputKey?: Buffer;
   nativeInputProvider?: Pick<CodingAgentProviderAdapter, "deferInput">;
 }): CanonicalChatProviderAdapter<CodingState> {
   const kind = driverKind(options.providerId);
@@ -455,7 +471,7 @@ export function createCanonicalCodingChatProviderAdapter(options: {
           const recovered = await options.threads.getThread(principal(input.owner.ownerId), targetThreadId!, inbox.lastEventId);
           return recovered.events.items;
         });
-        for await (const event of normalizedEvents(created.snapshot.events.items, inbox, options.providerId)) {
+        for await (const event of normalizedEvents(created.snapshot.events.items, inbox, options.providerId, options.toolOutputKey)) {
           if (event.type === "run.completed") terminalObserved = true;
           yield event;
         }
@@ -506,7 +522,7 @@ export function createCanonicalCodingChatProviderAdapter(options: {
           const recovered = await options.threads.getThread(principal(input.owner.ownerId), targetThreadId, inbox.lastEventId);
           return recovered.events.items;
         });
-        for await (const event of normalizedEvents(eventsForAcceptedRun(current, requestId), inbox, options.providerId)) {
+        for await (const event of normalizedEvents(eventsForAcceptedRun(current, requestId), inbox, options.providerId, options.toolOutputKey)) {
           if (event.type === "run.completed") terminalObserved = true;
           yield event;
         }

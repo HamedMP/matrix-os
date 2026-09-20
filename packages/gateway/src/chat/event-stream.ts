@@ -1,3 +1,4 @@
+import type { OwnerToolOutputProjection } from "./owner-tool-output.js";
 import {
   CanonicalChatEventCursorSchema,
   CanonicalChatStreamEventSchema,
@@ -85,6 +86,7 @@ function sameOwner(left: ChatOwner, right: ChatOwner): boolean {
 
 export function createCanonicalChatEventStream(options: {
   repository: CanonicalChatEventRepository;
+  projectOwnerToolOutput?: OwnerToolOutputProjection;
   onCommittedEvent?: ChatOutboxSink;
   reconcileOwner?: (owner: ChatOwner) => Promise<unknown>;
   maxSubscribers?: number;
@@ -173,7 +175,8 @@ export function createCanonicalChatEventStream(options: {
         });
         if (parsed.success && sameOwner(parsed.data.content.record.chat.ownerScope, subscriber.owner)
           && new TextEncoder().encode(JSON.stringify(parsed.data)).byteLength < 512 * 1024 - 1024) {
-          return sendFrame(subscriber.sink, parsed.data);
+          return sendFrame(subscriber.sink, { ...parsed.data, content:
+            options.projectOwnerToolOutput?.(subscriber.owner, parsed.data.content) ?? parsed.data.content });
         }
         // Old/oversized persisted events retain the safe notification recovery path.
       }

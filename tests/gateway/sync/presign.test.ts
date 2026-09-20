@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const HASH_A = "sha256:" + "a".repeat(64);
+const STAGING_ID = "11111111-1111-4111-8111-111111111111";
 
 const mockR2 = {
   getPresignedGetUrl: vi.fn(),
@@ -26,7 +27,7 @@ describe("generatePresignedUrls", () => {
     vi.clearAllMocks();
     mockR2.getPresignedGetUrl.mockResolvedValue("https://r2.example.com/get");
     mockR2.getPresignedPutUrl.mockResolvedValue("https://r2.example.com/put");
-    deps = { r2: mockR2 };
+    deps = { r2: mockR2, stagingIdFactory: () => STAGING_ID };
   });
 
   it("generates GET presigned URLs for download actions", async () => {
@@ -48,9 +49,23 @@ describe("generatePresignedUrls", () => {
     expect(result).toHaveLength(1);
     expect(result[0]!.url).toBe("https://r2.example.com/put");
     expect(result[0]!.expiresIn).toBe(900);
+    expect(result[0]!.stagingId).toBe(STAGING_ID);
     expect(mockR2.getPresignedPutUrl).toHaveBeenCalledWith(
-      "matrixos-sync/user1/files/apps/test.ts",
+      `matrixos-sync/user1/staging/${STAGING_ID}`,
       500,
+      900,
+    );
+  });
+
+  it("generates PUT presigned URLs for zero-byte files", async () => {
+    const result = await generatePresignedUrls(deps, "user1", [
+      { path: "empty.txt", action: "put" as const, hash: HASH_A, size: 0 },
+    ]);
+
+    expect(result).toHaveLength(1);
+    expect(mockR2.getPresignedPutUrl).toHaveBeenCalledWith(
+      `matrixos-sync/user1/staging/${STAGING_ID}`,
+      0,
       900,
     );
   });

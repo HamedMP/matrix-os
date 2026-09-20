@@ -161,7 +161,10 @@ describe("sync routes: userId resolution from JWT", () => {
     expect(key).not.toContain(`/${HANDLE}/`);
 
     // ManifestDb metadata row is keyed by the same user id.
-    expect(mockDb.getManifestMeta).toHaveBeenCalledWith(CLERK_USER_ID, undefined);
+    expect(mockDb.getManifestMeta).toHaveBeenCalledWith(
+      { ownerId: CLERK_USER_ID, runtimeSlot: "primary" },
+      undefined,
+    );
   });
 
   it("GET /api/sync/manifest falls back to MATRIX_USER_ID before MATRIX_HANDLE in legacy bearer mode", async () => {
@@ -174,7 +177,10 @@ describe("sync routes: userId resolution from JWT", () => {
     expect(res.status).toBe(200);
     const key = mockR2.getObject.mock.calls[0][0] as string;
     expect(key).toBe(`matrixos-sync/${CLERK_USER_ID}/manifest.json`);
-    expect(mockDb.getManifestMeta).toHaveBeenCalledWith(CLERK_USER_ID, undefined);
+    expect(mockDb.getManifestMeta).toHaveBeenCalledWith(
+      { ownerId: CLERK_USER_ID, runtimeSlot: "primary" },
+      undefined,
+    );
   });
 
   it("returns 401 when auth is enabled but no sync identity can be resolved", async () => {

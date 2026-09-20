@@ -1,3 +1,4 @@
+import { describeScopeRuntimeFailure } from "./failure.js";
 import { createScopeRuntimeServer } from "./server.js";
 import { createScopeRuntimeController } from "./supervisor.js";
 import { createSystemdScopeRuntimeLauncher, nextExecutionGeneration } from "./systemd-launcher.js";
@@ -38,6 +39,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((error: unknown) => {
-  console.error("scope_runtime_supervisor_failed:", error instanceof Error ? error.name : "UnknownError");
+  console.error("scope_runtime_supervisor_failed:", describeScopeRuntimeFailure(error));
   process.exitCode = 1;
 });

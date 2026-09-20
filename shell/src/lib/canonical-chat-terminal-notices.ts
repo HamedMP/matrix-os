@@ -1,4 +1,4 @@
-import { canonicalChatInputs, canonicalChatApprovals, canonicalChatTerminalNotices, type CanonicalChatDetailResponse } from "@matrix-os/contracts";
+import { canonicalChatToolActivities, canonicalChatInputs, canonicalChatApprovals, canonicalChatTerminalNotices, type CanonicalChatDetailResponse } from "@matrix-os/contracts";
 import type { ChatMessage } from "./chat";
 import { projectCanonicalMessages } from "./canonical-chat-client";
 
@@ -11,6 +11,18 @@ export function projectCanonicalTranscript(detail: CanonicalChatDetailResponse):
     const source = sourceById[message.id];
     const context = source?.turnId ? contextsByTurn[source.turnId] : undefined;
     if (source?.role === "user" && context) message.metadata = { ...message.metadata, chatRunContext: context };
+  }
+  for (const run of detail.runs) {
+    const nextMessage = detail.messages.findLast((message) => message.role === "assistant" && message.runId === run.id)
+      ?? detail.messages.find((message) => message.role === "user" && message.seq > (detail.turns.find((turn) => turn.id === run.turnId)?.baseMessageSeq ?? 0) + 1);
+    const index = nextMessage ? messages.findIndex((message) => message.id === nextMessage.id) : -1;
+    const tools: ChatMessage[] = canonicalChatToolActivities(run, detail.activities).map((activity) => ({
+      id: `${run.id}:tool:${activity.id}`, role: "system", requestId: run.id,
+      tool: activity.label, toolDisplay: activity,
+      content: `${activity.state === "running" ? "Using" : "Used"} ${activity.label}`,
+      timestamp: Date.parse(run.startedAt ?? run.createdAt),
+    }));
+    messages.splice(index < 0 ? messages.length : index, 0, ...tools);
   }
   for (const approval of canonicalChatApprovals(detail)) {
     const existing = messages.find(message => message.id === approval.id);

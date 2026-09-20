@@ -18,7 +18,9 @@ export interface SharedAiRuntimeBinding {
   ownerId: string;
   actorId: string;
   executionGeneration: string;
-  accessSourceId: KernelCredentialAccessSourceId;
+  providerIdentity:
+    | { driverKind: "claude_code"; instanceId: "claude_shared"; accessSourceId: KernelCredentialAccessSourceId }
+    | { driverKind: "codex"; instanceId: "codex_default" };
   modelId?: string;
 }
 interface StoredBinding extends SharedAiRuntimeBinding {
@@ -79,13 +81,21 @@ export class SharedAiRuntimeRegistry {
     url?: string;
   }): ScopeRuntimeBrokerAuthorization {
     const entry = this.lookup(input);
-    if (!entry || input.action !== "inference.messages" || !entry.modelId
+    const expectedAction = entry?.providerIdentity.driverKind === "codex"
+      ? "inference.responses"
+      : "inference.messages";
+    if (!entry || input.action !== expectedAction || !entry.modelId
       || (input.modelId !== undefined && input.modelId !== entry.modelId)) {
       return { allowed: false };
     }
     return {
       allowed: true,
-      accessSourceId: entry.accessSourceId,
+      ...(entry.providerIdentity.driverKind === "claude_code"
+        ? { accessSourceId: entry.providerIdentity.accessSourceId }
+        : {}),
+      providerIdentity: entry.providerIdentity.driverKind === "codex"
+        ? { driverKind: "codex", instanceId: "codex_default" }
+        : { driverKind: "claude_code", instanceId: "claude_shared" },
       allowedModelIds: [entry.modelId],
       allowedEgressOrigins: [],
     };
@@ -112,7 +122,14 @@ function parseBinding(input: SharedAiRuntimeBinding): SharedAiRuntimeBinding {
     ownerId: ReferenceSchema.parse(input.ownerId),
     actorId: ReferenceSchema.parse(input.actorId),
     executionGeneration: GenerationSchema.parse(input.executionGeneration),
-    accessSourceId: KernelCredentialAccessSourceIdSchema.parse(input.accessSourceId),
+    providerIdentity: input.providerIdentity.driverKind === "codex"
+      ? z.object({ driverKind: z.literal("codex"), instanceId: z.literal("codex_default") })
+        .strict().parse(input.providerIdentity)
+      : z.object({
+          driverKind: z.literal("claude_code"),
+          instanceId: z.literal("claude_shared"),
+          accessSourceId: KernelCredentialAccessSourceIdSchema,
+        }).strict().parse(input.providerIdentity),
     ...(input.modelId === undefined ? {} : { modelId: ModelSchema.parse(input.modelId) }),
   };
 }

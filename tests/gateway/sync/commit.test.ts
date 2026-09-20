@@ -30,6 +30,7 @@ const mockR2 = {
 const mockDb = {
   getManifestMeta: vi.fn(),
   upsertManifestMeta: vi.fn(),
+  advanceManifestMeta: vi.fn(),
   withAdvisoryLock: vi.fn(),
 };
 
@@ -47,12 +48,29 @@ describe("handleCommit", () => {
     vi.clearAllMocks();
     mockDb.withAdvisoryLock.mockImplementation(async (_userId: string, fn: (executor: unknown) => Promise<unknown>) => fn(undefined));
     mockDb.getManifestMeta.mockResolvedValue(null);
+    mockDb.advanceManifestMeta.mockResolvedValue(true);
     mockR2.getObject.mockRejectedValue(Object.assign(new Error("NoSuchKey"), { name: "NoSuchKey" }));
     deps = {
       r2: mockR2,
       db: mockDb as any,
       broadcast: mockBroadcast,
+      finalizeStagedObject: vi.fn(async ({ expectedHash }) => ({
+        objectKey: `matrixos-sync/user1/objects/sha256/${expectedHash.slice("sha256:".length)}`,
+      })),
     };
+  });
+
+  it("does not accept files after the publication deadline expires", async () => {
+    const controller = new AbortController();
+    deps.signal = controller.signal;
+    deps.finalizeStagedObject = vi.fn(async () => {
+      controller.abort();
+      return { objectKey: "matrixos-sync/user1/objects/sha256/a" };
+    });
+    await expect(handleCommit(deps, "user1", "peer1", {
+      files: [{ path: "large.bin", hash: HASH_A, size: 100 }], expectedVersion: 0,
+    })).rejects.toMatchObject({ name: "AbortError" });
+    expect(mockDb.advanceManifestMeta).not.toHaveBeenCalled();
   });
 
   it("commits new files and returns updated version", async () => {
@@ -61,7 +79,7 @@ describe("handleCommit", () => {
     mockR2.getObject.mockResolvedValue({ body, etag: '"e1"' });
     mockDb.getManifestMeta.mockResolvedValue({ version: 0, etag: '"e1"' });
     mockR2.putObject.mockResolvedValue({ etag: '"e2"' });
-    mockDb.upsertManifestMeta.mockResolvedValue(undefined);
+    mockDb.advanceManifestMeta.mockResolvedValue(true);
 
     const result = await handleCommit(deps, "user1", "peer1", {
       files: [{ path: "new.txt", hash: HASH_A, size: 100 }],
@@ -74,6 +92,7 @@ describe("handleCommit", () => {
 
   it("returns version_conflict when expectedVersion does not match", async () => {
     mockDb.getManifestMeta.mockResolvedValue({ version: 5, etag: '"e"' });
+    mockR2.getObject.mockResolvedValue({ body: { text: async () => JSON.stringify({ ...makeManifest({}), manifestVersion: 5 }) } });
 
     const result = await handleCommit(deps, "user1", "peer1", {
       files: [{ path: "test.txt", hash: HASH_A, size: 100 }],
@@ -154,13 +173,10 @@ describe("handleCommit", () => {
     });
 
     expect(result.committed).toBe(1);
-    // Verify the R2 delete was called for the file content
-    expect(mockR2.deleteObject).toHaveBeenCalledWith(
-      "matrixos-sync/user1/files/deleted.txt",
-    );
+    expect(mockR2.deleteObject).not.toHaveBeenCalled();
   });
 
-  it("writes the new manifest before deleting file blobs", async () => {
+  it("retains immutable blobs after publishing a tombstone", async () => {
     const manifest = makeManifest({ "deleted.txt": { hash: HASH_A, size: 100 } });
     const body = { text: () => Promise.resolve(JSON.stringify(manifest)) };
     mockR2.getObject.mockResolvedValue({ body, etag: '"e"' });
@@ -173,19 +189,16 @@ describe("handleCommit", () => {
       expectedVersion: 2,
     });
 
-    expect(mockR2.putObject.mock.invocationCallOrder[0]).toBeLessThan(
-      mockR2.deleteObject.mock.invocationCallOrder[0],
-    );
+    expect(mockR2.putObject).toHaveBeenCalled();
+    expect(mockR2.deleteObject).not.toHaveBeenCalled();
   });
 
-  it("logs and continues when blob deletion fails after the manifest update", async () => {
+  it("does not attempt path-key deletion after the manifest update", async () => {
     const manifest = makeManifest({ "deleted.txt": { hash: HASH_A, size: 100 } });
     const body = { text: () => Promise.resolve(JSON.stringify(manifest)) };
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     mockR2.getObject.mockResolvedValue({ body, etag: '"e"' });
     mockDb.getManifestMeta.mockResolvedValue({ version: 2, etag: '"e"' });
     mockR2.putObject.mockResolvedValue({ etag: '"e2"' });
-    mockR2.deleteObject.mockRejectedValueOnce(new Error("r2 delete failed"));
     mockDb.upsertManifestMeta.mockResolvedValue(undefined);
 
     const result = await handleCommit(deps, "user1", "peer1", {
@@ -194,10 +207,7 @@ describe("handleCommit", () => {
     });
 
     expect(result).toEqual({ manifestVersion: 3, committed: 1 });
-    expect(warnSpy).toHaveBeenCalledWith(
-      "[sync/commit] Failed to delete stale file blob after manifest update:",
-      "r2 delete failed",
-    );
+    expect(mockR2.deleteObject).not.toHaveBeenCalled();
   });
 
   it("garbage-collects expired tombstones before writing the manifest", async () => {
@@ -272,7 +282,10 @@ describe("handleCommit", () => {
       expectedVersion: 0,
     });
 
-    expect(mockDb.withAdvisoryLock).toHaveBeenCalledWith("user1", expect.any(Function));
+    expect(mockDb.withAdvisoryLock).toHaveBeenCalledWith(
+      { ownerId: "user1", runtimeSlot: "primary" },
+      expect.any(Function),
+    );
   });
 
   it("uses the advisory-lock transaction executor for manifest metadata reads and writes", async () => {
@@ -292,9 +305,13 @@ describe("handleCommit", () => {
       expectedVersion: 0,
     });
 
-    expect(mockDb.getManifestMeta).toHaveBeenCalledWith("user1", txn);
-    expect(mockDb.upsertManifestMeta).toHaveBeenCalledWith(
-      "user1",
+    expect(mockDb.getManifestMeta).toHaveBeenCalledWith(
+      { ownerId: "user1", runtimeSlot: "primary" },
+      txn,
+    );
+    expect(mockDb.advanceManifestMeta).toHaveBeenCalledWith(
+      { ownerId: "user1", runtimeSlot: "primary" },
+      0,
       expect.objectContaining({ version: 1 }),
       txn,
     );

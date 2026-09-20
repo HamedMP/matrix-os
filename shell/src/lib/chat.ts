@@ -12,6 +12,7 @@ interface PersistedMessage {
   timestamp: number;
   tool?: string;
   toolInput?: Record<string, unknown>;
+  toolDisplay?: import("@matrix-os/contracts").CanonicalToolActivity;
 }
 
 export function hydrateMessages(messages: PersistedMessage[]): ChatMessage[] {
@@ -31,6 +32,7 @@ export interface ChatMessage {
   content: string;
   tool?: string;
   toolInput?: Record<string, unknown>;
+  toolDisplay?: import("@matrix-os/contracts").CanonicalToolActivity;
   requestId?: string;
   attachments?: Array<{ id: string; label: string; kind: "image" | "file"; path?: string; src?: string }>;
   metadata?: Record<string, unknown>;

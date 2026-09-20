@@ -1,6 +1,11 @@
-import type { CollaborationPolicy } from "@matrix-os/contracts";
+import {
+  CanonicalChatModelSelectionSchema,
+  type CanonicalProviderDriverKind,
+  type CollaborationPolicy,
+} from "@matrix-os/contracts";
 import {
   SCOPE_RUNTIME_HARNESS_VERSION,
+  SCOPE_RUNTIME_CODEX_VERSION,
   SCOPE_RUNTIME_PROFILE_DIGEST,
   SCOPE_RUNTIME_PROFILE_ID,
   SCOPE_RUNTIME_PROFILE_VERSION,
@@ -53,6 +58,10 @@ const PROFILE_CATALOG: ScopeRuntimeProfileCatalog = {
         harnessVersions: [SCOPE_RUNTIME_HARNESS_VERSION],
         workloads: ["chat_ai"],
       },
+      codex: {
+        harnessVersions: [SCOPE_RUNTIME_CODEX_VERSION],
+        workloads: ["chat_ai"],
+      },
     },
   },
 };
@@ -60,8 +69,10 @@ const ELIGIBILITY: CollaborationAiExecutionEligibility = {
   profileId: SCOPE_RUNTIME_PROFILE_ID,
   profileVersion: SCOPE_RUNTIME_PROFILE_VERSION,
   profileDigest: SCOPE_RUNTIME_PROFILE_DIGEST,
-  adapterId: "claude-code",
-  harnessVersion: SCOPE_RUNTIME_HARNESS_VERSION,
+  adapters: [
+    { adapterId: "claude-code", harnessVersion: SCOPE_RUNTIME_HARNESS_VERSION },
+    { adapterId: "codex", harnessVersion: SCOPE_RUNTIME_CODEX_VERSION },
+  ],
 };
 export async function createSharedAiRuntime(options: {
   db: Kysely<OwnerCollaborationDatabase>;
@@ -100,7 +111,19 @@ export async function createSharedAiRuntime(options: {
     await client.close();
     return { available: false as const, async shutdown(): Promise<void> {} };
   }
-  await options.chatScope.reconcileExecutionEligibility({ executionGeneration, eligibility: ELIGIBILITY });
+  const eligibility: CollaborationAiExecutionEligibility = {
+    ...ELIGIBILITY,
+    adapters: ELIGIBILITY.adapters.filter((expected) => capability.supportedAdapters.some((actual) =>
+      actual.adapterId === expected.adapterId
+      && actual.harnessVersion === expected.harnessVersion
+      && actual.workloads.includes("chat_ai"))),
+  };
+  if (eligibility.adapters.length === 0) {
+    await options.chatScope.reconcileExecutionEligibility({ executionGeneration: null, eligibility: null });
+    await client.close();
+    return { available: false as const, async shutdown(): Promise<void> {} };
+  }
+  await options.chatScope.reconcileExecutionEligibility({ executionGeneration, eligibility });
   const policy = new CollaborationPolicyClient({
     platformBaseUrl: options.platformBaseUrl,
     runtimeId: options.runtimeId,
@@ -153,10 +176,39 @@ export async function createSharedAiRuntime(options: {
           });
           if (context.resourceId !== chatId || context.ownerId.length === 0
             || execution.executionGeneration !== executionGeneration
-            || !eligibilityMatches(execution.executionEligibility)) {
+            || !eligibilityMatches(execution.executionEligibility, eligibility)) {
             throw new SharedChatRunPreparationError("unavailable");
           }
-          const accessSourceId = await resolveAccessSource();
+          const dispatchFence = await options.db.selectFrom("collaboration_scopes as scope")
+            .innerJoin("chats as chat", "chat.id", "scope.resource_id")
+            .select([
+              "scope.owner_id", "scope.resource_id", "scope.execution_generation",
+              "scope.execution_eligibility", "chat.lifecycle", "chat.bound_driver_kind",
+              "chat.bound_instance_id", "chat.current_selection",
+            ])
+            .where("scope.id", "=", scopeId)
+            .where("scope.kind", "=", "chat")
+            .where("scope.lifecycle", "=", "shared")
+            .whereRef("chat.owner_id", "=", "scope.owner_id")
+            .whereRef("chat.owner_type", "=", "scope.owner_type")
+            .executeTakeFirst();
+          if (!sharedDispatchFenceMatches(dispatchFence, {
+            ownerId: context.ownerId,
+            chatId,
+            executionGeneration: execution.executionGeneration,
+            executionEligibility: execution.executionEligibility,
+            driverKind: execution.driverKind,
+            selection: execution.selection,
+          })) throw new SharedChatRunPreparationError("unavailable");
+          const adapter = sharedAdapterFor(execution.driverKind, execution.selection.instanceId, eligibility);
+          if (!adapter) throw new SharedChatRunPreparationError("unavailable");
+          const providerIdentity = execution.driverKind === "codex"
+            ? { driverKind: "codex" as const, instanceId: "codex_default" as const }
+            : {
+                driverKind: "claude_code" as const,
+                instanceId: "claude_shared" as const,
+                accessSourceId: await resolveAccessSource(),
+              };
           return createScopeRuntimeChatProviderAdapter({
             client: scopedClient({
               client,
@@ -165,12 +217,12 @@ export async function createSharedAiRuntime(options: {
               chatId,
               ownerId: context.ownerId,
               actorId: context.actorId,
-              accessSourceId,
+              providerIdentity,
             }),
             scopeId,
             executionGeneration: capability.executionGeneration,
-            adapterId: "claude-code",
-            harnessVersion: SCOPE_RUNTIME_HARNESS_VERSION,
+            adapterId: adapter.adapterId,
+            harnessVersion: adapter.harnessVersion,
           });
         } catch (error: unknown) {
           if (error instanceof SharedChatRunPreparationError) throw error;
@@ -213,7 +265,7 @@ export async function createSharedAiRuntime(options: {
         .where("id", "=", scopeId).where("kind", "=", "chat")
         .where("lifecycle", "=", "shared").executeTakeFirst();
       if (!scope || Number(scope.execution_generation) !== executionGeneration
-        || !eligibilityMatches(scope.execution_eligibility)) {
+        || !eligibilityMatches(scope.execution_eligibility, eligibility)) {
         throw new Error("Shared AI execution eligibility changed");
       }
       return scope.execution_eligibility;
@@ -397,17 +449,72 @@ export function createSharedAiApprovalReconciler(options: {
     throw new Error("Shared approval Run remains active after reconciliation");
   };
 }
-function eligibilityMatches(value: unknown): boolean {
+function eligibilityMatches(
+  value: unknown,
+  expected: CollaborationAiExecutionEligibility = ELIGIBILITY,
+): boolean {
   try {
     const parsed = parseCollaborationAiEligibility(value);
-    return parsed.profileId === ELIGIBILITY.profileId
-      && parsed.profileVersion === ELIGIBILITY.profileVersion
-      && parsed.profileDigest === ELIGIBILITY.profileDigest
-      && parsed.adapterId === ELIGIBILITY.adapterId
-      && parsed.harnessVersion === ELIGIBILITY.harnessVersion;
+    return parsed.profileId === expected.profileId
+      && parsed.profileVersion === expected.profileVersion
+      && parsed.profileDigest === expected.profileDigest
+      && JSON.stringify(parsed.adapters) === JSON.stringify(expected.adapters);
   } catch (error: unknown) {
     console.warn("[collaboration] shared AI eligibility validation failed",
       error instanceof Error ? error.name : "UnknownError");
+    return false;
+  }
+}
+
+function sharedAdapterFor(
+  driverKind: string,
+  instanceId: string,
+  eligibility: CollaborationAiExecutionEligibility,
+): CollaborationAiExecutionEligibility["adapters"][number] | undefined {
+  const adapterId = driverKind === "claude_code" && instanceId === "claude_shared"
+    ? "claude-code"
+    : driverKind === "codex" && instanceId === "codex_default"
+      ? "codex"
+      : undefined;
+  return adapterId ? eligibility.adapters.find((adapter) => adapter.adapterId === adapterId) : undefined;
+}
+
+export function sharedDispatchFenceMatches(
+  current: {
+    owner_id: string;
+    resource_id: string;
+    execution_generation: number | null;
+    execution_eligibility: unknown;
+    lifecycle: string;
+    bound_driver_kind: string | null;
+    bound_instance_id: string | null;
+    current_selection: unknown;
+  } | undefined,
+  expected: {
+    ownerId: string;
+    chatId: string;
+    executionGeneration: number;
+    executionEligibility: unknown;
+    driverKind: CanonicalProviderDriverKind;
+    selection: { instanceId: string; model: string };
+  },
+): boolean {
+  if (!current || current.owner_id !== expected.ownerId || current.resource_id !== expected.chatId
+    || current.lifecycle !== "active"
+    || Number(current.execution_generation) !== expected.executionGeneration
+    || current.bound_driver_kind !== expected.driverKind
+    || current.bound_instance_id !== expected.selection.instanceId
+    || !eligibilityMatches(current.execution_eligibility, parseCollaborationAiEligibility(
+      expected.executionEligibility,
+    ))) return false;
+  try {
+    const raw = typeof current.current_selection === "string"
+      ? JSON.parse(current.current_selection) as unknown
+      : current.current_selection;
+    const selection = CanonicalChatModelSelectionSchema.parse(raw);
+    return JSON.stringify(selection) === JSON.stringify(expected.selection);
+  } catch (error: unknown) {
+    if (!(error instanceof Error)) throw new Error("Invalid shared execution selection");
     return false;
   }
 }
@@ -432,7 +539,9 @@ function scopedClient(input: {
   chatId: string;
   ownerId: string;
   actorId: string;
-  accessSourceId: KernelCredentialAccessSourceId;
+  providerIdentity:
+    | { driverKind: "claude_code"; instanceId: "claude_shared"; accessSourceId: KernelCredentialAccessSourceId }
+    | { driverKind: "codex"; instanceId: "codex_default" };
 }) {
   return {
     capability: () => input.client.capability(),
@@ -446,7 +555,7 @@ function scopedClient(input: {
           ownerId: input.ownerId,
           actorId: input.actorId,
           executionGeneration: created.executionGeneration,
-          accessSourceId: input.accessSourceId,
+          providerIdentity: input.providerIdentity,
         });
       } catch (error: unknown) {
         await input.client.stopRuntime({ runtimeHandle: created.runtimeHandle }).catch((stopError: unknown) => {

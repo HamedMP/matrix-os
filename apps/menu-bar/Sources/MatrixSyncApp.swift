@@ -22,13 +22,17 @@ final class SyncStatusModel: ObservableObject {
         case offline
         case conflict
         case paused
+        case error
     }
 
     @Published var status: Status = .offline
     @Published var connectedPeers: [PeerInfo] = []
+    @Published var peersAvailable = false
     @Published var recentActivity: [ActivityItem] = []
     @Published var pendingConflicts: [ConflictItem] = []
     @Published var pendingInvites: [ShareInvite] = []
+    @Published var invitesAvailable = false
+    @Published var lastError: String?
 
     var iconName: String {
         switch status {
@@ -37,6 +41,7 @@ final class SyncStatusModel: ObservableObject {
         case .offline:  return "wifi.slash"
         case .conflict: return "exclamationmark.triangle"
         case .paused:   return "pause.circle"
+        case .error:    return "exclamationmark.circle"
         }
     }
 
@@ -47,6 +52,7 @@ final class SyncStatusModel: ObservableObject {
         case .offline:  return "Offline"
         case .conflict: return "Conflicts"
         case .paused:   return "Paused"
+        case .error:    return "Sync needs attention"
         }
     }
 
@@ -75,22 +81,38 @@ final class SyncStatusModel: ObservableObject {
             let state = try await client.getStatus()
             status = state.status
             connectedPeers = state.peers
+            peersAvailable = state.peersAvailable
             recentActivity = state.activity
             pendingConflicts = state.conflicts
             pendingInvites = state.invites
+            invitesAvailable = state.invitesAvailable
+            lastError = nil
         } catch {
             status = .offline
+            lastError = error.localizedDescription
         }
     }
 
     func pauseSync() async {
-        try? await daemonClient?.sendCommand("pause")
-        status = .paused
+        guard let client = daemonClient else { return }
+        do {
+            try await client.sendCommand("pause")
+            status = .paused
+            lastError = nil
+        } catch {
+            lastError = error.localizedDescription
+        }
     }
 
     func resumeSync() async {
-        try? await daemonClient?.sendCommand("resume")
-        await refresh()
+        guard let client = daemonClient else { return }
+        do {
+            try await client.sendCommand("resume")
+            lastError = nil
+            await refresh()
+        } catch {
+            lastError = error.localizedDescription
+        }
     }
 }
 

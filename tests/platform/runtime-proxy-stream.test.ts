@@ -2,6 +2,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { fetchRuntimeProxy } from "../../packages/platform/src/session-routing-middleware.js";
 
 describe("runtime proxy response streaming", () => {
+  it.each([
+    ["POST", "/api/sync/commit", 300_000],
+    ["GET", "/api/sync/commit", 30_000],
+    ["POST", "/api/sync/presign", 30_000],
+  ])("bounds %s %s with the appropriate operation budget", async (method, path, expected) => {
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ ok: true }));
+    await fetchRuntimeProxy(`https://runtime.invalid${path}`, { method }, 30_000, false);
+    expect(timeout).toHaveBeenCalledWith(expected);
+  });
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();

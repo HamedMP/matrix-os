@@ -8,6 +8,7 @@
     "./collaboration": "./src/collaboration.ts"
   },
   "imports": {
+    "#sync": "./src/sync.ts",
     "#app-ai": "./src/app-ai.ts",
     "#file-download": "./src/file-download.ts",
     "#release-alignment": "./src/release-alignment.ts",
@@ -22,6 +23,8 @@
     "#agent-runtime-config": "./src/agent-runtime-config.ts",
     "#agent-thread-contracts": "./src/agent-thread-contracts.ts",
     "#canonical-chat": "./src/canonical-chat.ts",
+    "#canonical-chat-tool-activities": "./src/canonical-chat-tool-activities.ts",
+    "#canonical-chat-tool-details": "./src/canonical-chat-tool-details.ts",
     "#chat-agents": "./src/chat-agents.ts",
     "#chat-agent-context": "./src/chat-agent-context.ts",
     "#chat-agent-recipe": "./src/chat-agent-recipe.ts",

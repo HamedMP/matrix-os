@@ -1,5 +1,6 @@
 import {
   UserInputQuestionListSchema,
+  ProtectedToolOutputSchema,
   type CanonicalSubmitChatInputRequest,
   CanonicalChatAgentActivityPayloadSchema,
   CanonicalChatApprovalDecisionSchema,
@@ -38,6 +39,7 @@ export const CanonicalProviderRunEventSchema = z.discriminatedUnion("type", [
     type: z.literal("tool.output"),
     toolCallId: SafeProviderRefSchema,
     text: z.string().max(4_000),
+    protectedOutput: ProtectedToolOutputSchema.optional(),
     truncated: z.boolean(),
   }).strict(),
   z.object({

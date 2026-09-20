@@ -8,12 +8,15 @@ import {
 } from "@/components/ui/collapsible";
 import {
   WrenchIcon,
+  XIcon,
+  MinusIcon,
   CheckCircleIcon,
   LoaderCircleIcon,
   ChevronDownIcon,
 } from "@/lib/hugeicons";
 
 function toolContext(msg: ChatMessage): string | undefined {
+  if (msg.toolDisplay?.preview) return msg.toolDisplay.preview;
   const input = msg.toolInput;
   if (!input) return undefined;
   const tool = msg.tool;
@@ -38,8 +41,18 @@ interface ToolCallGroupProps {
   tools: ChatMessage[];
 }
 
+function ToolStatus({ tool }: { tool: ChatMessage }) {
+  const state = tool.toolDisplay?.state ?? (tool.content.startsWith("Using ") ? "running" : "completed");
+  if (state === "running") return <LoaderCircleIcon aria-label="Running" className="size-4 shrink-0 animate-spin" />;
+  if (state === "failed") return <XIcon aria-label="Failed" className="size-4 shrink-0 text-destructive" />;
+  if (state === "stopped" || state === "partial") return <MinusIcon aria-label={state === "stopped" ? "Cancelled" : "Partial"} className="size-4 shrink-0" />;
+  return <CheckCircleIcon aria-label="Completed" className="size-4 shrink-0 text-green-600" />;
+}
+
 export function ToolCallGroup({ tools }: ToolCallGroupProps) {
-  const hasRunning = tools.some((t) => t.content.startsWith("Using "));
+  const statusTool = tools.find((tool) => tool.toolDisplay?.state === "running" || (!tool.toolDisplay && tool.content.startsWith("Using ")))
+    ?? tools.find((tool) => tool.toolDisplay?.state === "failed") ?? tools[0];
+  if (!statusTool) return null;
   const count = tools.length;
   const singleContext = count === 1 ? toolContext(tools[0]) : undefined;
   const label =
@@ -56,30 +69,24 @@ export function ToolCallGroup({ tools }: ToolCallGroupProps) {
           {singleContext && (
             <span className="truncate text-xs text-muted-foreground font-mono">{singleContext}</span>
           )}
-          {hasRunning ? (
-            <LoaderCircleIcon className="size-4 shrink-0 animate-spin text-muted-foreground" />
-          ) : (
-            <CheckCircleIcon className="size-4 shrink-0 text-green-600" />
-          )}
+          <ToolStatus tool={statusTool} />
         </div>
-        {count > 1 && (
+        {(count > 1 || tools.some((tool) => tool.toolDisplay?.detail || tool.toolDisplay?.preview)) && (
           <ChevronDownIcon className="size-4 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
         )}
       </CollapsibleTrigger>
-      {count > 1 && (
+      {(count > 1 || tools.some((tool) => tool.toolDisplay?.detail || tool.toolDisplay?.preview)) && (
         <CollapsibleContent className="border-t px-3 py-2 space-y-1">
           {tools.map((t) => {
-            const isRunning = t.content.startsWith("Using ");
             const ctx = toolContext(t);
             return (
-              <div key={t.id} className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground py-0.5">
-                {isRunning ? (
-                  <LoaderCircleIcon className="size-3 shrink-0 animate-spin" />
-                ) : (
-                  <CheckCircleIcon className="size-3 shrink-0 text-green-600" />
-                )}
-                <span className="shrink-0">{t.tool}</span>
-                {ctx && <span className="truncate font-mono">{ctx}</span>}
+              <div key={t.id} className="min-w-0 text-xs text-muted-foreground py-0.5">
+                <div className="flex min-w-0 items-center gap-2">
+                  <ToolStatus tool={t} />
+                  <span className="shrink-0">{t.tool}</span>
+                  {ctx && <span className="break-all font-mono">{ctx}</span>}
+                </div>
+                {t.toolDisplay?.detail && <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words font-mono">{t.toolDisplay.detail}</pre>}
               </div>
             );
           })}
