@@ -2,28 +2,46 @@ import { spawn } from "node:child_process";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 const SUPERVISOR_START_TIMEOUT_MS = 10_000;
 const SUPERVISOR_CLEANUP_GRACE_MS = 1_000;
 
-async function waitForStartedMarker(path: string, closed: Promise<number | null>) {
+function cancellableDelay(ms: number, signal: AbortSignal) {
+  return new Promise<void>((resolve) => {
+    const finish = () => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", finish);
+      resolve();
+    };
+    const timer = setTimeout(finish, ms);
+    signal.addEventListener("abort", finish, { once: true });
+  });
+}
+
+async function waitForStartedMarker(path: string, closed: Promise<number | null>, readMarker = readFile) {
+  const controller = new AbortController();
   const marker = (async () => {
     const deadline = Date.now() + SUPERVISOR_START_TIMEOUT_MS;
-    while (Date.now() < deadline) {
+    while (!controller.signal.aborted && Date.now() < deadline) {
       try {
-        return JSON.parse(await readFile(path, "utf8")) as { fixture: string };
+        return JSON.parse(await readMarker(path, "utf8")) as { fixture: string };
       } catch (error) {
         if (!(error instanceof SyntaxError) && (error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       }
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await cancellableDelay(50, controller.signal);
     }
+    if (controller.signal.aborted) throw new Error("Zellij smoke startup poll cancelled");
     throw new Error("Zellij smoke supervisor did not start");
   })();
-  return Promise.race([
-    marker,
-    closed.then((code) => { throw new Error(`Zellij smoke supervisor exited before startup (${code})`); }),
-  ]);
+  try {
+    return await Promise.race([
+      marker,
+      closed.then((code) => { throw new Error(`Zellij smoke supervisor exited before startup (${code})`); }),
+    ]);
+  } finally {
+    controller.abort();
+  }
 }
 
 async function waitForClose(closed: Promise<number | null>, timeout: number) {
@@ -37,6 +55,26 @@ describe("Zellij smoke supervisor", () => {
   it("keeps supervisor startup bounded with saturated-CI headroom", () => {
     expect(SUPERVISOR_START_TIMEOUT_MS).toBeGreaterThanOrEqual(8_000);
     expect(SUPERVISOR_START_TIMEOUT_MS).toBeLessThanOrEqual(10_000);
+  });
+
+  it("cancels the marker poll when the supervisor exits before startup", async () => {
+    vi.useFakeTimers();
+    try {
+      let close!: (code: number | null) => void;
+      const closed = new Promise<number | null>((resolve) => { close = resolve; });
+      const missing = Object.assign(new Error("missing"), { code: "ENOENT" });
+      const waiting = waitForStartedMarker("/missing", closed, async () => { throw missing; });
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(vi.getTimerCount()).toBe(1);
+      close(1);
+      await expect(waiting).rejects
+        .toThrow("exited before startup");
+      await Promise.resolve();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it.each([false, true])("cleans an interrupted worker and preserves its error (cleanup fails: %s)", async (cleanupFails) => {
