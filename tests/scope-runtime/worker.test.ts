@@ -67,6 +67,20 @@ describe("scope runtime worker boundary", () => {
     expect(() => parseScopeRuntimeWorkerArguments([
       argumentsFixture[0]!, argumentsFixture[1]!, "terminal", "claude-code", "2.1.240", "7",
     ])).toThrow(expect.objectContaining({ name: "ScopeRuntimeInvocationError" }));
+
+    expect(parseScopeRuntimeWorkerArguments([
+      argumentsFixture[0]!, argumentsFixture[1]!, "chat_ai", "codex", "0.154.0", "7",
+    ])).toEqual({
+      runtimeHandle: argumentsFixture[0],
+      scopeHandle: argumentsFixture[1],
+      workload: "chat_ai",
+      adapterId: "codex",
+      harnessVersion: "0.154.0",
+      executionGeneration: "7",
+    });
+    expect(() => parseScopeRuntimeWorkerArguments([
+      argumentsFixture[0]!, argumentsFixture[1]!, "chat_ai", "codex", "0.155.0", "7",
+    ])).toThrow(expect.objectContaining({ name: "ScopeRuntimeInvocationError" }));
   });
 
   it("accepts only one bounded Chat job for its exact runtime generation", () => {

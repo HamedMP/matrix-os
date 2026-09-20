@@ -159,6 +159,97 @@ describe("shared Chat canonical queue", () => {
       });
   });
 
+  it("admits the exact immutable Codex binding when the isolated adapter is eligible", async () => {
+    await fixture.db.updateTable("chats").set({
+      current_selection: JSON.stringify({ instanceId: "codex_default", model: "gpt-5.6-sol" }),
+      bound_driver_kind: "codex",
+      bound_instance_id: "codex_default",
+      bound_at_turn_id: "cturn_original_codex",
+    }).where("id", "=", collaborationIds.chat).execute();
+    await fixture.db.updateTable("collaboration_scopes").set({
+      execution_eligibility: JSON.stringify({
+        profileId: "scope-runtime-chat-v1",
+        profileVersion: 2,
+        profileDigest: "b".repeat(64),
+        adapters: [
+          { adapterId: "claude-code", harnessVersion: "2.1.240" },
+          { adapterId: "codex", harnessVersion: "0.154.0" },
+        ],
+      }),
+    }).where("id", "=", collaborationIds.scope).execute();
+
+    const admitted = await repository.enqueueSharedQueuedTurn(
+      owner,
+      request(17, collaborationActors.editor),
+    );
+
+    expect(admitted.selection).toEqual({ instanceId: "codex_default", model: "gpt-5.6-sol" });
+    await expect(fixture.db.selectFrom("chats")
+      .select(["current_selection", "bound_driver_kind", "bound_instance_id", "bound_at_turn_id"])
+      .where("id", "=", collaborationIds.chat).executeTakeFirstOrThrow())
+      .resolves.toMatchObject({
+        current_selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+        bound_driver_kind: "codex",
+        bound_instance_id: "codex_default",
+        bound_at_turn_id: "cturn_original_codex",
+      });
+  });
+
+  it("rejects an accepted Codex request if the owner model selection changes before claim", async () => {
+    await fixture.db.updateTable("chats").set({
+      current_selection: JSON.stringify({ instanceId: "codex_default", model: "gpt-5.6-sol" }),
+      bound_driver_kind: "codex",
+      bound_instance_id: "codex_default",
+      bound_at_turn_id: "cturn_original_codex",
+    }).where("id", "=", collaborationIds.chat).execute();
+    await fixture.db.updateTable("collaboration_scopes").set({
+      execution_eligibility: JSON.stringify({
+        profileId: "scope-runtime-chat-v1",
+        profileVersion: 2,
+        profileDigest: "b".repeat(64),
+        adapters: [{ adapterId: "codex", harnessVersion: "0.154.0" }],
+      }),
+    }).where("id", "=", collaborationIds.scope).execute();
+    const admitted = await repository.enqueueSharedQueuedTurn(
+      owner,
+      request(20, collaborationActors.editor),
+    );
+    await fixture.db.updateTable("chats").set({
+      current_selection: JSON.stringify({ instanceId: "codex_default", model: "gpt-5.6-terra" }),
+    }).where("id", "=", collaborationIds.chat).execute();
+
+    await expect(repository.claimNextQueuedTurn(owner, {
+      chatId: collaborationIds.chat,
+      collaborationScopeId: collaborationIds.scope,
+      turnId: "cturn_stale_codex_model",
+      runId: "run_stale_codex_model",
+      messageId: "msg_stale_codex_model",
+      claimedAt: now,
+    })).resolves.toBeNull();
+    await expect(repository.listSharedQueuedTurns(owner, collaborationIds.chat))
+      .resolves.toEqual([expect.objectContaining({ id: admitted.id, state: "unavailable" })]);
+  });
+
+  it("rejects an accepted request after the execution generation changes", async () => {
+    const admitted = await repository.enqueueSharedQueuedTurn(
+      owner,
+      request(21, collaborationActors.editor),
+    );
+    await fixture.db.updateTable("collaboration_scopes").set({ execution_generation: 2 })
+      .where("id", "=", collaborationIds.scope).execute();
+
+    await expect(repository.claimNextQueuedTurn(owner, {
+      chatId: collaborationIds.chat,
+      collaborationScopeId: collaborationIds.scope,
+      turnId: "cturn_stale_execution_generation",
+      runId: "run_stale_execution_generation",
+      messageId: "msg_stale_execution_generation",
+      claimedAt: now,
+    })).resolves.toBeNull();
+    await expect(repository.listSharedQueuedTurns(owner, collaborationIds.chat))
+      .resolves.toEqual([expect.objectContaining({ id: admitted.id, state: "unavailable" })]);
+  });
+
   it("requires the owner to establish an unbound shared Chat Provider", async () => {
     await fixture.db.updateTable("chats").set({
       bound_driver_kind: null,

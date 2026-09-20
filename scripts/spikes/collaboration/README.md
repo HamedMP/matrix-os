@@ -102,3 +102,53 @@ The supervisor acceptance harness must additionally inject malformed and
 oversized IPC, crash the supervisor during a request, restart it, and verify a
 bounded shutdown drain. The gateway tests exercise the same lifecycle in
 isolation, but they do not replace this real-host record.
+
+## Codex shared-Chat proof and rollback
+
+The Codex adapter is accepted only when the production supervisor verifies the
+installed native executable as exactly `codex-cli 0.154.0` beneath the trusted
+runtime root. The worker runs `codex exec` as an ephemeral, single-turn process
+inside the same fixed systemd profile. It ignores user configuration and rules,
+has no owner credentials, cannot resume a private thread, and receives a fixed
+loopback Responses provider. Shell, image, sleep, planning, user-input,
+multi-agent, app, plugin, goal, web-search, and image-generation capabilities
+are disabled. The host broker accepts only `POST /v1/responses`, rejects any
+non-empty tool list, reauthorizes the current actor and exact owner Provider
+binding, and injects the owner's supported file-backed Codex identity only in
+the privileged upstream request.
+
+The exact-head disposable preview workflow must report
+`scope_runtime_codex_chat=passed`. That check launches the installed native
+Codex binary inside a real DynamicUser/PrivateUsers/PrivateNetwork chroot,
+observes a zero-tool Responses request at the fake broker, completes one bounded
+turn, and restores the preview's supervisor to the exact enabled/active state
+observed before the proof. Since #1602 activated shared AI, production bundles
+ship the supervisor enabled and running with no `SCOPE_RUNTIME_DISABLED`
+marker. The harness therefore stops an already-running supervisor only to obtain
+a cold start whose broker socket it can own, starts it again afterwards, and
+schedules a deferred `matrix-gateway` re-attach: the gateway executes the signed
+acceptance command itself and loses its production broker socket whenever the
+supervisor's runtime directory is recreated. The workflow then proves the
+re-attach happened by observing a later gateway activation timestamp and the
+recreated broker socket before it records a pass; a scheduled but unverified
+re-attach fails the run. A legacy dormant preview that still
+carries the marker is proved the same way and returned to dormant. A mock-only
+or local pass is insufficient.
+
+Rollback is fail-closed, Codex-specific, and does not rebind Chats. Removing or
+changing the pinned Codex executable causes the supervisor to omit the Codex
+adapter from eligibility while the Claude adapter keeps running; that is the
+Codex rollback. Stopping the supervisor, or placing the `SCOPE_RUNTIME_DISABLED`
+marker that production bundles no longer ship, is a host-wide emergency stop
+that also clears Claude shared AI, so it must not be used as a Codex rollback.
+In every case human discussion remains available. Existing `codex_default`
+bindings stay immutable and shared AI reports unavailable; they are never
+translated to `claude_shared`. Accepted work fenced to an older execution
+generation or eligibility document is terminalized as unavailable, and an
+uncertain active run is interrupted rather than replayed.
+
+The initial shared Codex surface intentionally does not support attachments,
+resources, tools, approvals, user input, steering, worktrees, session resume,
+or persistent thread state. Owner identity support is limited to Codex's
+file-backed API-key and ChatGPT OAuth forms; keyring-only, agent-identity,
+Bedrock, and custom-provider credentials remain unavailable to shared Codex.

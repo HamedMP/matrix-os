@@ -1,4 +1,9 @@
 import { Hono } from "hono";
+import {
+  buildSyncStoragePrefix,
+  SyncRuntimeSlotSchema,
+  type SyncScope,
+} from "@matrix-os/contracts";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
 import { getActiveUserMachineByHandle, getContainer, type PlatformDB } from "./db.js";
@@ -6,6 +11,7 @@ import { buildCustomerVpsR2Key } from "./customer-vps-r2.js";
 import { RuntimeSlotSchema } from "./customer-vps-schema.js";
 import {
   buildPlatformVerificationToken,
+  buildPlatformSyncVerificationToken,
   timingSafeTokenEquals,
 } from "./platform-token.js";
 
@@ -74,7 +80,7 @@ interface MultipartAbortInput extends MultipartCreateInput {
 }
 
 async function getAuthorizedUserId(db: PlatformDB, handle: string): Promise<string | null> {
-  const machine = await getActiveUserMachineByHandle(db, handle);
+  const machine = await getActiveUserMachineByHandle(db, handle, "primary");
   if (machine?.clerkUserId) {
     return machine.clerkUserId;
   }
@@ -85,15 +91,20 @@ async function getAuthorizedUserId(db: PlatformDB, handle: string): Promise<stri
   return null;
 }
 
-function buildManifestKey(userId: string): string {
-  if (!SAFE_USER_ID.test(userId)) {
+function buildManifestKey(scope: SyncScope): string {
+  if (!SAFE_USER_ID.test(scope.ownerId)) {
     throw new Error("Invalid sync user id");
   }
-  return `matrixos-sync/${userId}/manifest.json`;
+  return `${buildSyncStoragePrefix(scope)}/manifest.json`;
 }
 
-function keyAllowedForUser(key: string, userId: string): boolean {
-  return key === buildManifestKey(userId) || key.startsWith(`matrixos-sync/${userId}/files/`);
+function keyAllowedForScope(key: string, scope: SyncScope): boolean {
+  const prefix = buildSyncStoragePrefix(scope);
+  return key === buildManifestKey(scope)
+    || key.startsWith(`${prefix}/files/`)
+    || key.startsWith(`${prefix}/manifests/`)
+    || key.startsWith(`${prefix}/staging/`)
+    || key.startsWith(`${prefix}/objects/sha256/`);
 }
 
 const SystemStorageKeyInputSchema = z.object({
@@ -108,23 +119,29 @@ function isValidRuntimeSlot(value: string): boolean {
   return RuntimeSlotSchema.safeParse(value).success;
 }
 
-function systemStorageAccess(key: string): "read" | "write" | null {
-  if (key === "system/vps-meta.json") return "read";
-  if (key === "system/db/latest") return "write";
+function systemStorageAccess(
+  key: string,
+  runtimeSlot: string,
+): "read" | "write" | null {
+  if (key === "system/vps-meta.json") return runtimeSlot === "primary" ? "read" : null;
+  if (key === "system/db/latest") return runtimeSlot === "primary" ? "write" : null;
 
   const primarySnapshot = /^system\/db\/snapshots\/([^/]+)$/.exec(key);
   if (primarySnapshot) {
-    return SYSTEM_SNAPSHOT_NAME.test(primarySnapshot[1] ?? "") ? "write" : null;
+    return runtimeSlot === "primary" && SYSTEM_SNAPSHOT_NAME.test(primarySnapshot[1] ?? "")
+      ? "write"
+      : null;
   }
 
   const slotLatest = /^system\/runtime-slots\/([^/]+)\/db\/latest$/.exec(key);
   if (slotLatest) {
-    return isValidRuntimeSlot(slotLatest[1] ?? "") ? "write" : null;
+    return slotLatest[1] === runtimeSlot && runtimeSlot !== "primary" ? "write" : null;
   }
 
   const slotSnapshot = /^system\/runtime-slots\/([^/]+)\/db\/snapshots\/([^/]+)$/.exec(key);
   if (slotSnapshot) {
-    return isValidRuntimeSlot(slotSnapshot[1] ?? "") &&
+    return runtimeSlot !== "primary" && slotSnapshot[1] === runtimeSlot &&
+      isValidRuntimeSlot(slotSnapshot[1] ?? "") &&
       SYSTEM_SNAPSHOT_NAME.test(slotSnapshot[2] ?? "")
       ? "write"
       : null;
@@ -271,7 +288,10 @@ export function createInternalSyncRoutes(opts: {
   platformSecret: string;
   r2PrefixRoot: string;
 }): Hono<any> {
-  const app = new Hono<{ Variables: { internalSyncUserId: string } }>();
+  const app = new Hono<{ Variables: {
+    internalSyncUserId: string;
+    internalSyncScope: SyncScope;
+  } }>();
 
   app.use("*", async (c, next) => {
     const handle = c.req.param("handle");
@@ -283,29 +303,53 @@ export function createInternalSyncRoutes(opts: {
     }
     const auth = c.req.header("authorization");
     const token = auth?.startsWith("Bearer ") ? auth.slice(7) : undefined;
-    const expected = buildPlatformVerificationToken(handle, opts.platformSecret);
-    if (!timingSafeTokenEquals(token, expected)) {
-      return c.json({ error: "Unauthorized" }, 401);
+    const machineId = c.req.header("x-matrix-machine-id")?.trim();
+    const runtimeHeader = c.req.header("x-matrix-runtime-slot")?.trim();
+    let scope: SyncScope;
+    if (machineId || runtimeHeader) {
+      const runtime = SyncRuntimeSlotSchema.safeParse(runtimeHeader);
+      if (!machineId || machineId.length > 128 || !runtime.success) {
+        return c.json({ error: "Invalid runtime identity" }, 400);
+      }
+      const machine = await getActiveUserMachineByHandle(opts.db, handle, runtime.data);
+      if (!machine || machine.machineId !== machineId) {
+        return c.json({ error: "Unauthorized" }, 401);
+      }
+      const expected = buildPlatformSyncVerificationToken({
+        handle,
+        machineId: machine.machineId,
+        runtimeSlot: machine.runtimeSlot,
+      }, opts.platformSecret);
+      if (!timingSafeTokenEquals(token, expected)) {
+        return c.json({ error: "Unauthorized" }, 401);
+      }
+      scope = { ownerId: machine.clerkUserId, runtimeSlot: machine.runtimeSlot };
+    } else {
+      const expected = buildPlatformVerificationToken(handle, opts.platformSecret);
+      if (!timingSafeTokenEquals(token, expected)) {
+        return c.json({ error: "Unauthorized" }, 401);
+      }
+      const userId = await getAuthorizedUserId(opts.db, handle);
+      if (!userId) {
+        return c.json({ error: "Unknown handle" }, 404);
+      }
+      scope = { ownerId: userId, runtimeSlot: "primary" };
     }
 
-    const userId = await getAuthorizedUserId(opts.db, handle);
-    if (!userId) {
-      return c.json({ error: "Unknown handle" }, 404);
-    }
-
-    c.set("internalSyncUserId", userId);
+    c.set("internalSyncUserId", scope.ownerId);
+    c.set("internalSyncScope", scope);
     return next();
   });
 
   function requireAllowedKey(
-    c: { get: (key: "internalSyncUserId") => string; json: (body: unknown, status?: number) => Response },
+    c: { get: (key: "internalSyncScope") => SyncScope; json: (body: unknown, status?: number) => Response },
     key: string,
   ): string | Response {
-    const userId = c.get("internalSyncUserId");
-    if (!keyAllowedForUser(key, userId)) {
+    const scope = c.get("internalSyncScope");
+    if (!keyAllowedForScope(key, scope)) {
       return c.json({ error: "Forbidden key" }, 403);
     }
-    return userId;
+    return scope.ownerId;
   }
 
   app.post("/presign/get", bodyLimit({ maxSize: INTERNAL_SYNC_BODY_LIMIT }), async (c) => {
@@ -336,7 +380,10 @@ export function createInternalSyncRoutes(opts: {
 
   app.post("/system/exists", bodyLimit({ maxSize: INTERNAL_SYNC_BODY_LIMIT }), async (c) => {
     const parsed = SystemStorageKeyInputSchema.safeParse(await parseJsonBody(c));
-    if (!parsed.success || systemStorageAccess(parsed.data.key) === null) {
+    if (!parsed.success || systemStorageAccess(
+      parsed.data.key,
+      c.get("internalSyncScope").runtimeSlot,
+    ) === null) {
       return c.json({ error: "Validation error" }, 400);
     }
     try {
@@ -353,7 +400,10 @@ export function createInternalSyncRoutes(opts: {
 
   app.post("/system/presign/get", bodyLimit({ maxSize: INTERNAL_SYNC_BODY_LIMIT }), async (c) => {
     const parsed = SystemStorageKeyInputSchema.safeParse(await parseJsonBody(c));
-    if (!parsed.success || systemStorageAccess(parsed.data.key) === null) {
+    if (!parsed.success || systemStorageAccess(
+      parsed.data.key,
+      c.get("internalSyncScope").runtimeSlot,
+    ) === null) {
       return c.json({ error: "Validation error" }, 400);
     }
     const url = await opts.r2.getPresignedGetUrl(
@@ -368,7 +418,10 @@ export function createInternalSyncRoutes(opts: {
     if (!parsed.success) {
       return c.json({ error: "Validation error" }, 400);
     }
-    if (systemStorageAccess(parsed.data.key) !== "write") {
+    if (systemStorageAccess(
+      parsed.data.key,
+      c.get("internalSyncScope").runtimeSlot,
+    ) !== "write") {
       return c.json({ error: "Forbidden key" }, 403);
     }
     const url = await opts.r2.getPresignedPutUrl(
@@ -381,7 +434,7 @@ export function createInternalSyncRoutes(opts: {
 
   app.post("/system/multipart/create", bodyLimit({ maxSize: INTERNAL_SYNC_BODY_LIMIT }), async (c) => {
     const parsed = parseMultipartCreateInput(await parseJsonBody(c));
-    if (!parsed || systemStorageAccess(parsed.key) !== "write") {
+    if (!parsed || systemStorageAccess(parsed.key, c.get("internalSyncScope").runtimeSlot) !== "write") {
       return c.json({ error: "Validation error" }, 400);
     }
     try {
@@ -397,7 +450,7 @@ export function createInternalSyncRoutes(opts: {
 
   app.post("/system/multipart/part", bodyLimit({ maxSize: INTERNAL_SYNC_BODY_LIMIT }), async (c) => {
     const parsed = parseMultipartPartInput(await parseJsonBody(c));
-    if (!parsed || systemStorageAccess(parsed.key) !== "write") {
+    if (!parsed || systemStorageAccess(parsed.key, c.get("internalSyncScope").runtimeSlot) !== "write") {
       return c.json({ error: "Validation error" }, 400);
     }
     const url = await opts.r2.getPresignedPartUrl(
@@ -414,7 +467,7 @@ export function createInternalSyncRoutes(opts: {
     bodyLimit({ maxSize: INTERNAL_SYNC_MULTIPART_COMPLETE_LIMIT }),
     async (c) => {
       const parsed = parseMultipartCompleteInput(await parseJsonBody(c));
-      if (!parsed || systemStorageAccess(parsed.key) !== "write") {
+      if (!parsed || systemStorageAccess(parsed.key, c.get("internalSyncScope").runtimeSlot) !== "write") {
         return c.json({ error: "Validation error" }, 400);
       }
       try {
@@ -433,7 +486,7 @@ export function createInternalSyncRoutes(opts: {
 
   app.post("/system/multipart/abort", bodyLimit({ maxSize: INTERNAL_SYNC_BODY_LIMIT }), async (c) => {
     const parsed = parseMultipartUploadIdInput(await parseJsonBody(c));
-    if (!parsed || systemStorageAccess(parsed.key) !== "write") {
+    if (!parsed || systemStorageAccess(parsed.key, c.get("internalSyncScope").runtimeSlot) !== "write") {
       return c.json({ error: "Validation error" }, 400);
     }
     try {

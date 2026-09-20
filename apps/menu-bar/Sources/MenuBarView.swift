@@ -18,6 +18,12 @@ struct MenuBarView: View {
                 Divider()
                 invitesSection
             }
+            if !status.invitesAvailable {
+                Text("Share invitations unavailable")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 12)
+            }
             Divider()
             quickActions
         }
@@ -37,6 +43,12 @@ struct MenuBarView: View {
                 Text(status.statusText)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if let lastError = status.lastError {
+                    Text(lastError)
+                        .font(.caption2)
+                        .foregroundStyle(.red)
+                        .lineLimit(2)
+                }
             }
             Spacer()
         }
@@ -51,6 +63,7 @@ struct MenuBarView: View {
         case .offline:  return .gray
         case .conflict: return .orange
         case .paused:   return .yellow
+        case .error:    return .red
         }
     }
 
@@ -63,7 +76,7 @@ struct MenuBarView: View {
                 .padding(.top, 6)
 
             if status.connectedPeers.isEmpty {
-                Text("No peers connected")
+                Text(status.peersAvailable ? "No peers connected" : "Peer status unavailable")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
                     .padding(.horizontal, 12)
@@ -179,6 +192,16 @@ struct MenuBarView: View {
 
     private var quickActions: some View {
         VStack(spacing: 0) {
+            if status.status == .error {
+                Button {
+                    Task { await status.resumeSync() }
+                } label: {
+                    Label("Retry Sync", systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+            }
             if status.status == .paused {
                 Button {
                     Task { await status.resumeSync() }

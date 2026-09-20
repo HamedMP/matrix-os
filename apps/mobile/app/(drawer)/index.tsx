@@ -1,4 +1,5 @@
 import "@/lib/hermes-polyfills";
+import { ChatToolActivity } from "@/components/ChatToolActivity";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   FlatList,
@@ -27,7 +28,6 @@ import { useSendChatMessage } from "@/lib/queries/use-send-chat-message";
 import { canonicalChatRequestId } from "@/lib/requests";
 import {
   buildTranscript,
-  type TranscriptActivityState,
   type TranscriptMessage,
 } from "@/lib/canonical-chat-transcript";
 import { defaultCatalogSelection, defaultTurnModes } from "@/lib/canonical-chat-selection";
@@ -337,17 +337,6 @@ function MessageBubble({ message }: { message: TranscriptMessage }) {
   return <AssistantMessage message={message} />;
 }
 
-function activityStateGlyph(state: TranscriptActivityState): string {
-  switch (state) {
-    case "running": return "…";
-    case "completed": return "✓";
-    case "failed": return "✕";
-    case "partial":
-    case "stopped":
-      return "–";
-  }
-}
-
 function AssistantMessage({ message }: { message: TranscriptMessage }) {
   // Auto-expanded while the turn is running (so reasoning/tool activity is
   // visible live, matching desktop), until the user manually toggles it.
@@ -398,28 +387,7 @@ function AssistantMessage({ message }: { message: TranscriptMessage }) {
       ) : null}
       {expanded && hasWork ? (
         <View style={styles.toolCallsList}>
-          {message.activities.map((activity) => (
-            <View key={activity.id} style={styles.activityRow}>
-              <Text style={styles.activityGlyph}>{activityStateGlyph(activity.state)}</Text>
-              <Text
-                style={[
-                  styles.reasoningText,
-                  activity.state === "failed" && styles.activityTextFailed,
-                ]}
-              >
-                {activity.label}
-                {activity.preview ? (
-                  <Text
-                    style={activity.previewKind === "command" || activity.previewKind === "path"
-                      ? styles.activityPreviewMono
-                      : styles.activityPreview}
-                  >
-                    {" "}· {activity.preview}
-                  </Text>
-                ) : null}
-              </Text>
-            </View>
-          ))}
+          {message.activities.map((activity) => <ChatToolActivity key={activity.id} activity={activity} />)}
           {message.toolCalls.map((call) => (
             <Text key={call.id} style={styles.toolText}>{call.label}</Text>
           ))}
@@ -521,37 +489,6 @@ const styles = StyleSheet.create((theme) => ({
   toolText: {
     fontFamily: theme.v2.fonts.medium,
     fontSize: 13,
-    color: theme.v2.appColors.muted,
-  },
-  reasoningText: {
-    flexShrink: 1,
-    fontFamily: theme.v2.fonts.body,
-    fontStyle: "italic",
-    fontSize: 13,
-    color: theme.v2.appColors.muted,
-  },
-  activityRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 6,
-  },
-  activityGlyph: {
-    fontFamily: theme.v2.fonts.medium,
-    fontSize: 12,
-    color: theme.v2.appColors.muted,
-    lineHeight: 18,
-  },
-  activityTextFailed: {
-    color: theme.v2.appColors.danger,
-  },
-  activityPreview: {
-    fontStyle: "normal",
-    color: theme.v2.appColors.muted,
-  },
-  activityPreviewMono: {
-    fontFamily: theme.v2.fonts.mono,
-    fontStyle: "normal",
-    fontSize: 12,
     color: theme.v2.appColors.muted,
   },
   systemRow: {

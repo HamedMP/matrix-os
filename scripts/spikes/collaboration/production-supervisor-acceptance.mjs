@@ -14,9 +14,15 @@ const DISABLED_MARKER = "/opt/matrix/app/SCOPE_RUNTIME_DISABLED";
 const MARKER_BACKUP = "/var/tmp/matrix-scope-runtime-disabled.acceptance";
 const BUNDLE_VERSION = "/opt/matrix/app/BUNDLE_VERSION";
 const RELEASE_METADATA = "/opt/matrix/release.json";
-const EXPECTED_PROFILE_DIGEST = "6650e74684fd322251882f65c36e1226149087dac346eee8a43da426a57fad8e";
+const SUPERVISOR_STOP_TIMEOUT_MS = 15_000;
+const SUPERVISOR_START_TIMEOUT_MS = 30_000;
+// The gateway is executing this command, so its own restart must fire after
+// the signed response has been returned and the workflow's remote cleanup ran.
+const GATEWAY_REATTACH_DELAY_SECONDS = 45;
+const EXPECTED_PROFILE_DIGEST = "9f4e3e2ad9e63cb300854dfca7bc31370d4cbae6d15fab902841b2b50a6443c0";
 const EXPECTED_PROFILE_ID = "scope-runtime-chat-v1";
 const EXPECTED_HARNESS_VERSION = "2.1.240";
+const EXPECTED_CODEX_VERSION = "0.154.0";
 const MAX_FRAME_BYTES = 64 * 1024;
 const SUPERVISOR_QUERY_TIMEOUT_MS = 5_000;
 const SUPERVISOR_OPERATION_TIMEOUT_MS = 30_000;
@@ -24,6 +30,7 @@ const MAX_BROKER_REQUEST_BYTES = 512 * 1024;
 const MAX_PROVIDER_BODY_BYTES = 256 * 1024;
 const BROKER_SOCKET_TIMEOUT_MS = 5_000;
 const ACCEPTANCE_MODEL = "claude-haiku-4-5-20251001";
+const ACCEPTANCE_CODEX_MODEL = "gpt-5.6-sol";
 const SYSTEMD_EXEC_STEPS = [
   "ADDRESS_FAMILIES", "CAPABILITIES", "CHDIR", "CHROOT", "EXEC", "GROUP", "NAMESPACE", "SECCOMP", "USER",
 ];
@@ -178,7 +185,7 @@ function validateCapability(response) {
     "capability_invalid");
   assert(response.supervisorVersion === "1.0.0", "supervisor_version_invalid");
   const profile = response.profile;
-  assert(profile?.profileId === EXPECTED_PROFILE_ID && profile.profileVersion === 1,
+  assert(profile?.profileId === EXPECTED_PROFILE_ID && profile.profileVersion === 2,
     "profile_identity_invalid");
   assert(profile.profileDigest === EXPECTED_PROFILE_DIGEST, "profile_digest_invalid");
   assert(/^[1-9][0-9]{0,19}$/.test(profile.executionGeneration), "generation_invalid");
@@ -188,10 +195,13 @@ function validateCapability(response) {
     && profile.limits.cpuQuotaPercent === 200
     && profile.limits.tasksMax === 256
     && profile.limits.storageMaxBytes === 10_737_418_240, "profile_limits_invalid");
-  assert(profile.adapters?.length === 1
+  assert(profile.adapters?.length === 2
     && profile.adapters[0]?.adapterId === "claude-code"
     && profile.adapters[0]?.harnessVersion === EXPECTED_HARNESS_VERSION
-    && JSON.stringify(profile.adapters[0]?.workloads) === '["chat_ai"]',
+    && JSON.stringify(profile.adapters[0]?.workloads) === '["chat_ai"]'
+    && profile.adapters[1]?.adapterId === "codex"
+    && profile.adapters[1]?.harnessVersion === EXPECTED_CODEX_VERSION
+    && JSON.stringify(profile.adapters[1]?.workloads) === '["chat_ai"]',
   "adapter_capability_invalid");
   return profile;
 }
@@ -244,6 +254,31 @@ function providerResponse() {
   ].join("");
 }
 
+function codexProviderResponse() {
+  return [
+    providerEvent("response.created", {
+      type: "response.created", response: { id: "resp_scope_runtime_codex_acceptance" },
+    }),
+    providerEvent("response.output_item.done", {
+      type: "response.output_item.done",
+      item: {
+        type: "message", role: "assistant", id: "msg_scope_runtime_codex_acceptance",
+        content: [{ type: "output_text", text: "scope-codex-ok" }],
+      },
+    }),
+    providerEvent("response.completed", {
+      type: "response.completed",
+      response: {
+        id: "resp_scope_runtime_codex_acceptance",
+        usage: {
+          input_tokens: 1, input_tokens_details: null,
+          output_tokens: 1, output_tokens_details: null, total_tokens: 2,
+        },
+      },
+    }),
+  ].join("");
+}
+
 function parseBrokerRequest(raw) {
   let request;
   try {
@@ -254,8 +289,36 @@ function parseBrokerRequest(raw) {
   }
   const requestId = typeof request?.requestId === "string" ? request.requestId : randomUUID();
   const failure = (error) => ({ version: 1, requestId, ok: false, error });
-  if (request?.version !== 1 || request?.action !== "inference.messages") {
+  if (request?.version !== 1
+    || !["inference.messages", "inference.responses"].includes(request?.action)) {
     return failure("action_denied");
+  }
+  if (request.action === "inference.responses") {
+    if (request.method !== "POST" || request.path !== "/v1/responses") {
+      return failure("route_denied");
+    }
+    if (typeof request.body !== "string"
+      || Buffer.byteLength(request.body, "utf8") > MAX_PROVIDER_BODY_BYTES) {
+      return failure("request_too_large");
+    }
+    try {
+      const body = JSON.parse(request.body);
+      if (!Array.isArray(body.input) || body.model !== ACCEPTANCE_CODEX_MODEL || body.stream !== true
+        || (body.tools !== undefined && (!Array.isArray(body.tools) || body.tools.length !== 0))) {
+        return failure("invalid_request");
+      }
+    } catch (error) {
+      if (!(error instanceof SyntaxError)) throw error;
+      return failure("invalid_request");
+    }
+    return {
+      version: 1,
+      requestId,
+      ok: true,
+      status: 200,
+      headers: { "cache-control": "no-cache", "content-type": "text/event-stream" },
+      body: codexProviderResponse(),
+    };
   }
   if (request.method === "HEAD" && request.path === "/api/hello") {
     return {
@@ -362,6 +425,81 @@ async function captureSupervisorJournalCursor() {
   return cursor;
 }
 
+async function captureJournalCursor() {
+  const journal = await command("/usr/bin/journalctl", ["--show-cursor", "--lines=0", "--no-pager"]);
+  const cursor = /^-- cursor: ([A-Za-z0-9_=;.:+-]{1,1024})$/m.exec(journal.stdout)?.[1];
+  assert(journal.code === 0 && cursor, "journal_cursor_unavailable");
+  return cursor;
+}
+
+// Bounded, content-free reason for a supervisor that was started but never
+// published its socket: unit state, non-success result, restart count, main
+// exit status, failed unit conditions, the supervisor's own failure error
+// name, and the systemd exec step when the binary could not launch.
+async function supervisorStartFailureCode(cursor) {
+  const parts = [];
+  const show = await command("/usr/bin/systemctl", [
+    "show", SERVICE,
+    "--property=ActiveState",
+    "--property=SubState",
+    "--property=Result",
+    "--property=NRestarts",
+    "--property=ExecMainStatus",
+    "--property=ConditionResult",
+  ]);
+  if (show.code === 0) {
+    const field = (name, pattern) => new RegExp(`^${name}=(${pattern})$`, "m").exec(show.stdout)?.[1];
+    const activeState = field("ActiveState", "[a-z-]{1,16}");
+    const subState = field("SubState", "[a-z-]{1,24}");
+    if (activeState && subState) parts.push(`state_${activeState}_${subState}`);
+    const result = field("Result", "[a-z-]{1,24}");
+    if (result && result !== "success") parts.push(`result_${result}`);
+    const restarts = field("NRestarts", "[0-9]{1,6}");
+    if (restarts && restarts !== "0") parts.push(`restarts_${restarts}`);
+    const status = field("ExecMainStatus", "[0-9]{1,3}");
+    if (status && status !== "0") parts.push(`exit_${status}`);
+    if (field("ConditionResult", "yes|no") === "no") parts.push("condition_failed");
+  }
+  const failureJournal = await command("/usr/bin/journalctl", [
+    "--unit", SERVICE, "--after-cursor", cursor, "--grep", "^scope_runtime_supervisor_failed:",
+    "--no-pager", "--output=cat", "--lines=20",
+  ]);
+  const failure = /scope_runtime_supervisor_failed:\s+([A-Za-z]{0,64}Error)\b/
+    .exec(failureJournal.stdout)?.[1];
+  if (failureJournal.code === 0 && failure) {
+    parts.push(`error_${failure}`);
+    const code = /scope_runtime_supervisor_failed:\s+[A-Za-z]{0,64}Error\s+code=([A-Z][A-Z0-9_]{1,31})\b/
+      .exec(failureJournal.stdout)?.[1];
+    if (code) parts.push(`code_${code}`);
+    const message = /scope_runtime_supervisor_failed:\s+[A-Za-z]{0,64}Error\s+message=([A-Za-z0-9 ,.'-]{1,96})$/m
+      .exec(failureJournal.stdout)?.[1];
+    if (message) parts.push(`message_${message.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "")}`);
+  }
+  const unitJournal = await command("/usr/bin/journalctl", [
+    "--unit", SERVICE, "--after-cursor", cursor, "--no-pager", "--output=cat", "--lines=40",
+  ]);
+  if (unitJournal.code === 0) {
+    const step = /Failed at step ([A-Z][A-Z0-9_-]{0,31})\b/.exec(unitJournal.stdout)?.[1];
+    if (step && SYSTEMD_EXEC_STEPS.includes(step)) parts.push(`step_${step.toLowerCase()}`);
+    // Node module-load failures happen before main() and carry no marker line.
+    const nodeCode = /\b(ERR_[A-Z_]{1,48})\b/.exec(unitJournal.stdout)?.[1];
+    if (nodeCode && !parts.includes(`code_${nodeCode}`)) parts.push(`node_${nodeCode}`);
+  }
+  return parts.length > 0
+    ? `supervisor_socket_unavailable_${parts.join("_")}`
+    : "supervisor_socket_unavailable";
+}
+
+async function awaitSupervisorSocket(cursor) {
+  try {
+    await waitFor(async () => (await pathType(SUPERVISOR_SOCKET))?.isSocket(),
+      SUPERVISOR_START_TIMEOUT_MS, "supervisor_socket_unavailable");
+  } catch (error) {
+    if (!(error instanceof AcceptanceError)) throw error;
+    throw new AcceptanceError(await supervisorStartFailureCode(cursor));
+  }
+}
+
 async function runtimeCreationFailureCode(cursor) {
   const supervisorJournal = await command("/usr/bin/journalctl", [
     "--unit", SERVICE, "--after-cursor", cursor, "--grep", "fixed-profile launch failed:",
@@ -437,7 +575,11 @@ async function assertWorkloadBoundary(unit) {
   return uid;
 }
 
-async function createRuntime(profile) {
+async function createRuntime(
+  profile,
+  adapterId = "claude-code",
+  harnessVersion = EXPECTED_HARNESS_VERSION,
+) {
   const cursor = await captureSupervisorJournalCursor();
   const response = await supervisorRequest({
     version: 1,
@@ -446,8 +588,8 @@ async function createRuntime(profile) {
     scopeHandle: `scope_${"1".repeat(32)}`,
     profileId: profile.profileId,
     workload: "chat_ai",
-    adapterId: "claude-code",
-    harnessVersion: EXPECTED_HARNESS_VERSION,
+    adapterId,
+    harnessVersion,
   });
   if (!(response?.type === "runtime.result" && response.ok === true && response.state === "running")) {
     throw new AcceptanceError(await runtimeCreationFailureCode(cursor));
@@ -468,19 +610,24 @@ async function stopRuntime(runtimeHandle, generation) {
   "runtime_stop_failed");
 }
 
-async function runRuntimeChat(runtimeHandle, generation) {
+async function runRuntimeChat(
+  runtimeHandle,
+  generation,
+  model = ACCEPTANCE_MODEL,
+  expectedText = "scope-sdk-ok",
+) {
   const response = await supervisorRequest({
     version: 1,
     type: "runtime.chat",
     requestId: randomUUID(),
     runtimeHandle,
     executionGeneration: generation,
-    model: ACCEPTANCE_MODEL,
+    model,
     prompt: "Return the bounded acceptance response.",
   });
   assert(response?.type === "runtime.chat.result" && response.ok === true
     && response.runtimeHandle === runtimeHandle && response.executionGeneration === generation
-    && response.text === "scope-sdk-ok", "runtime_chat_failed");
+    && response.text === expectedText, "runtime_chat_failed");
 }
 
 async function openCrashRequest() {
@@ -501,24 +648,94 @@ async function openCrashRequest() {
   return { socket, closed };
 }
 
-async function restoreDormantService(runtimeUnits) {
+async function serviceEnabledState() {
+  const enabled = await command("/usr/bin/systemctl", ["is-enabled", SERVICE]);
+  return enabled.stdout;
+}
+
+async function serviceActive() {
+  return (await command("/usr/bin/systemctl", ["is-active", "--quiet", SERVICE])).code === 0;
+}
+
+// Since #1602 activated shared AI, production bundles ship the supervisor
+// enabled and running with no dormant marker. Older previews may still carry
+// the inverse ConditionPathExists marker. The proof observes whichever state
+// the exact preview has and restores that same state afterwards; it never
+// demands a dormant host and never disables an activated Claude runtime.
+async function captureOriginalServiceState() {
+  const marker = await pathType(DISABLED_MARKER);
+  assert(!marker || (marker.isFile() && !marker.isSymbolicLink()), "service_state_invalid");
+  const enabled = await serviceEnabledState();
+  assert(enabled === "enabled" || enabled === "disabled", "service_state_invalid");
+  const active = await serviceActive();
+  assert(!(marker && active), "service_state_invalid");
+  return { marker: Boolean(marker), enabled, active };
+}
+
+async function supervisorSocketReady() {
+  try {
+    await waitFor(async () => (await pathType(SUPERVISOR_SOCKET))?.isSocket(),
+      SUPERVISOR_STOP_TIMEOUT_MS, "supervisor_socket_unavailable");
+    return true;
+  } catch (error) {
+    if (error instanceof AcceptanceError) return false;
+    throw error;
+  }
+}
+
+async function stopServiceForProof() {
+  await mustCommand("/usr/bin/systemctl", ["stop", SERVICE], "supervisor_stop_failed");
+  await waitFor(async () => !(await serviceActive()) && !(await pathType(SUPERVISOR_SOCKET)),
+    SUPERVISOR_STOP_TIMEOUT_MS, "supervisor_stop_failed");
+}
+
+// Stopping the supervisor removes its systemd RuntimeDirectory, which also
+// holds the gateway-owned production broker socket, and every restart mints a
+// new execution generation. The gateway re-attaches both only at startup, and
+// it is the process running this acceptance, so the restart is deferred to a
+// transient timer outside the gateway's control group.
+async function scheduleGatewayReattach() {
+  const unit = `matrix-scope-acceptance-gateway-${randomUUID().replaceAll("-", "").slice(0, 12)}`;
+  const scheduled = await command("/usr/bin/systemd-run", [
+    "--quiet", "--collect", `--unit=${unit}`,
+    "--description=Matrix scope-runtime acceptance gateway re-attach",
+    `--on-active=${GATEWAY_REATTACH_DELAY_SECONDS}`,
+    "--timer-property=AccuracySec=1s",
+    "/usr/bin/systemctl", "try-restart", "matrix-gateway.service",
+  ]);
+  assert(scheduled.code === 0, "gateway_reattach_schedule_failed");
+}
+
+async function restoreOriginalService(original, runtimeUnits) {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     await command("/usr/bin/systemctl", ["stop", SERVICE]);
     for (const unit of runtimeUnits) {
       await command("/usr/bin/systemctl", ["stop", unit]);
       await command("/usr/bin/systemctl", ["reset-failed", unit]);
     }
-    await command("/usr/bin/systemctl", ["disable", SERVICE]);
+    await command("/usr/bin/systemctl", ["reset-failed", SERVICE]);
+    if (original.enabled === "disabled") {
+      await command("/usr/bin/systemctl", ["disable", SERVICE]);
+    } else {
+      await command("/usr/bin/systemctl", ["enable", SERVICE]);
+    }
 
-    const enabled = await command("/usr/bin/systemctl", ["is-enabled", SERVICE]);
-    const active = await command("/usr/bin/systemctl", ["is-active", "--quiet", SERVICE]);
     let runtimeActive = false;
     for (const unit of runtimeUnits) {
       if ((await command("/usr/bin/systemctl", ["is-active", "--quiet", unit])).code === 0) {
         runtimeActive = true;
       }
     }
-    if (enabled.stdout === "disabled" && active.code !== 0 && !runtimeActive) return;
+    const drained = (await serviceEnabledState()) === original.enabled
+      && !(await serviceActive()) && !runtimeActive;
+    if (drained) {
+      if (!original.active) return;
+      const started = await command("/usr/bin/systemctl", ["start", SERVICE]);
+      if (started.code === 0 && await supervisorSocketReady()) {
+        await scheduleGatewayReattach();
+        return;
+      }
+    }
 
     await command("/usr/bin/systemctl", ["kill", "--kill-whom=all", "--signal=SIGKILL", SERVICE]);
     await new Promise((resolve) => setTimeout(resolve, 250));
@@ -534,13 +751,11 @@ async function runAcceptance() {
   assert(/^[A-Za-z0-9._-]{1,128}$/.test(bundleVersion), "exact_bundle_required");
   const release = await readInstalledRelease();
   assert(release.gitCommit === expectedHead, "exact_bundle_required");
-  const marker = await pathType(DISABLED_MARKER);
-  assert(marker?.isFile() && !marker.isSymbolicLink(), "disabled_marker_required");
   assert(!(await pathType(MARKER_BACKUP)), "marker_backup_collision");
-  const enabled = await command("/usr/bin/systemctl", ["is-enabled", SERVICE]);
-  assert(enabled.stdout === "disabled", "service_enabled_unexpectedly");
-  const active = await command("/usr/bin/systemctl", ["is-active", "--quiet", SERVICE]);
-  assert(active.code !== 0, "service_active_unexpectedly");
+  const original = await captureOriginalServiceState();
+  // Emitted before the proof so a failed run still records the observed host state.
+  process.stdout.write(`scope_runtime_service_enabled_before=${original.enabled}\n`);
+  process.stdout.write(`scope_runtime_service_active_before=${original.active ? "active" : "inactive"}\n`);
 
   let markerMoved = false;
   let closeBroker;
@@ -550,11 +765,16 @@ async function runAcceptance() {
   let generationBefore;
   let generationAfter;
   try {
-    await rename(DISABLED_MARKER, MARKER_BACKUP);
-    markerMoved = true;
+    if (original.marker) {
+      await rename(DISABLED_MARKER, MARKER_BACKUP);
+      markerMoved = true;
+    }
+    // An already-running supervisor is stopped only to obtain a cold, drained
+    // start whose broker socket the proof can own; it is started again below.
+    if (original.active) await stopServiceForProof();
+    const startCursor = await captureJournalCursor();
     await mustCommand("/usr/bin/systemctl", ["start", SERVICE], "supervisor_start_failed");
-    await waitFor(async () => (await pathType(SUPERVISOR_SOCKET))?.isSocket(),
-      15_000, "supervisor_socket_unavailable");
+    await awaitSupervisorSocket(startCursor);
     closeBroker = await startBroker();
 
     const profileBefore = validateCapability(await supervisorRequest(capabilityRequest()));
@@ -577,6 +797,19 @@ async function runAcceptance() {
     runtimeUnits.push(firstUnit);
     uid = await assertWorkloadBoundary(firstUnit);
     await runRuntimeChat(firstHandle, generationBefore);
+
+    const codexHandle = await createRuntime(profileBefore, "codex", EXPECTED_CODEX_VERSION);
+    const codexUnit = unitForRuntime(codexHandle);
+    runtimeUnits.push(codexUnit);
+    await assertWorkloadBoundary(codexUnit);
+    await runRuntimeChat(
+      codexHandle,
+      generationBefore,
+      ACCEPTANCE_CODEX_MODEL,
+      "scope-codex-ok",
+    );
+    await stopRuntime(codexHandle, generationBefore);
+    runtimeUnits.splice(runtimeUnits.indexOf(codexUnit), 1);
 
     const crashRequest = await openCrashRequest();
     await mustCommand("/usr/bin/systemctl", ["kill", "--kill-whom=main", "--signal=SIGKILL", SERVICE],
@@ -625,7 +858,7 @@ async function runAcceptance() {
       }
     }
     try {
-      await restoreDormantService(runtimeUnits);
+      await restoreOriginalService(original, runtimeUnits);
     } finally {
       if (markerMoved) {
         const currentMarker = await pathType(DISABLED_MARKER);
@@ -635,18 +868,21 @@ async function runAcceptance() {
     }
   }
 
-  const finalEnabled = await command("/usr/bin/systemctl", ["is-enabled", SERVICE]);
-  const finalActive = await command("/usr/bin/systemctl", ["is-active", "--quiet", SERVICE]);
-  assert(productionPassed && (await pathType(DISABLED_MARKER))?.isFile()
-    && finalEnabled.stdout === "disabled" && finalActive.code !== 0, "disabled_marker_not_restored");
+  const finalMarker = await pathType(DISABLED_MARKER);
+  assert(productionPassed
+    && Boolean(finalMarker?.isFile()) === original.marker
+    && (await serviceEnabledState()) === original.enabled
+    && (await serviceActive()) === original.active, "service_state_not_restored");
   process.stdout.write("scope_runtime_production_acceptance=passed\n");
-  process.stdout.write("scope_runtime_service_default=disabled\n");
-  process.stdout.write("scope_runtime_disabled_marker=restored\n");
+  process.stdout.write("scope_runtime_service_state=restored\n");
+  process.stdout.write(`scope_runtime_disabled_marker=${markerMoved ? "restored" : "absent"}\n`);
+  process.stdout.write(`scope_runtime_gateway_restart=${original.active ? "scheduled" : "not_required"}\n`);
   process.stdout.write("malformed_frame=closed\n");
   process.stdout.write("multi_frame=closed\n");
   process.stdout.write("oversized_frame=closed\n");
   process.stdout.write("request_timeout=closed\n");
   process.stdout.write("scope_runtime_chat=passed\n");
+  process.stdout.write("scope_runtime_codex_chat=passed\n");
   process.stdout.write("restart_reconciliation=passed\n");
   process.stdout.write("shutdown_drain=passed\n");
   process.stdout.write("supervisor_version=1.0.0\n");

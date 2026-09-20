@@ -1,0 +1,98 @@
+import type { CustomerVpsConfig } from './customer-vps-config.js';
+import type { ProvisionRequest } from './customer-vps-schema.js';
+import type { HostBundleRef } from './customer-vps-host-bundle.js';
+import type { CustomerHostConfig } from './customer-vps-cloud-init.js';
+import { buildPlatformRuntimeVerificationToken, buildPlatformSyncVerificationToken, buildPlatformVerificationToken } from './platform-token.js';
+import { DEFAULT_DEVELOPER_TOOLS, developerToolsShellList } from './developer-tools.js';
+
+export const DEFAULT_CLOUD_INIT_TEMPLATE = [
+  '#cloud-config',
+  'write_files:',
+  '  - path: /opt/matrix/env/host.env',
+  '    content: |',
+  '      MATRIX_MACHINE_ID={{machineId}}',
+  '      MATRIX_CLERK_USER_ID={{clerkUserId}}',
+  '      MATRIX_HANDLE={{handle}}',
+  '      MATRIX_RUNTIME_SLOT={{runtimeSlot}}',
+  "      MATRIX_DEVELOPER_TOOLS='{{developerTools}}'",
+  '      MATRIX_IMAGE_VERSION={{imageVersion}}',
+  '      MATRIX_UPDATE_CHANNEL={{updateChannel}}',
+  '      MATRIX_COLLABORATION_ENABLED=false',
+  '      MATRIX_IMAGE_SOURCE={{imageSource}}',
+  '      MATRIX_TARGET_BUNDLE_SHA256={{targetBundleSha256}}',
+  '      MATRIX_SNAPSHOT_SOURCE_VERSION={{snapshotSourceVersion}}',
+  '      MATRIX_HOST_BUNDLE_URL={{hostBundleUrl}}',
+  '      MATRIX_PLATFORM_REGISTER_URL={{platformRegisterUrl}}',
+  '      PLATFORM_INTERNAL_URL={{platformInternalUrl}}',
+  '      UPGRADE_TOKEN={{platformVerificationToken}}',
+  '      MATRIX_AUTH_TOKEN={{platformVerificationToken}}',
+  '      MATRIX_SYNC_RUNTIME_TOKEN={{syncRuntimeToken}}',
+  '      MATRIX_FUNDED_AI_RUNTIME_TOKEN={{fundedAiRuntimeToken}}',
+  '      MATRIX_CODE_PROXY_TOKEN={{platformVerificationToken}}',
+  '      MATRIX_FUNDED_AI_ENABLED={{fundedAiEnabled}}',
+  '      MATRIX_FUNDED_AI_RELAY_URL={{fundedAiRelayUrl}}',
+  '      POSTHOG_TOKEN={{posthogToken}}',
+  '      POSTHOG_PROJECT_TOKEN={{posthogProjectToken}}',
+  '      POSTHOG_HOST={{posthogHost}}',
+  '      NEXT_PUBLIC_POSTHOG_KEY={{posthogToken}}',
+  '      NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN={{posthogProjectToken}}',
+  '      NEXT_PUBLIC_POSTHOG_HOST={{posthogPublicHost}}',
+  '      NEXT_PUBLIC_POSTHOG_API_HOST={{posthogApiHost}}',
+  '      DATABASE_URL=postgresql://matrix:{{postgresPassword}}@127.0.0.1:5432/matrix',
+  '  - path: /opt/matrix/env/postgres.env',
+  '    permissions: "0640"',
+  '    content: |',
+  '      POSTGRES_DB=matrix',
+  '      POSTGRES_USER=matrix',
+  '      POSTGRES_PASSWORD={{postgresPassword}}',
+  '  - path: /opt/matrix/env/registration.env',
+  '    permissions: "0640"',
+  '    content: |',
+  '      MATRIX_REGISTRATION_TOKEN={{registrationToken}}',
+  '      MATRIX_REGISTRATION_TOKEN_EXPIRES_AT={{registrationTokenExpiresAt}}',
+].join('\n');
+
+
+export function buildHostConfig(
+  config: CustomerVpsConfig,
+  input: ProvisionRequest,
+  machineId: string,
+  registrationToken: string,
+  registrationTokenExpiresAt: string,
+  postgresPassword: string,
+  bundleRef: HostBundleRef,
+): CustomerHostConfig {
+  return {
+    machineId,
+    clerkUserId: input.clerkUserId,
+    handle: input.handle,
+    runtimeSlot: input.runtimeSlot,
+    developerTools: developerToolsShellList(input.developerTools ?? DEFAULT_DEVELOPER_TOOLS),
+    imageVersion: bundleRef.imageVersion,
+    updateChannel: config.imageVersion,
+    hostBundleUrl: bundleRef.hostBundleUrl,
+    platformRegisterUrl: config.platformRegisterUrl,
+    platformInternalUrl: new URL(config.platformRegisterUrl).origin,
+    platformVerificationToken: buildPlatformVerificationToken(input.handle, config.platformSecret),
+    syncRuntimeToken: buildPlatformSyncVerificationToken({
+      handle: input.handle,
+      machineId,
+      runtimeSlot: input.runtimeSlot,
+    }, config.platformSecret),
+    fundedAiRuntimeToken: buildPlatformRuntimeVerificationToken({
+      handle: input.handle,
+      machineId,
+      runtimeSlot: input.runtimeSlot,
+    }, config.platformSecret),
+    registrationToken,
+    registrationTokenExpiresAt,
+    postgresPassword,
+    posthogToken: config.posthogToken,
+    posthogProjectToken: config.posthogProjectToken,
+    posthogHost: config.posthogHost,
+    posthogPublicHost: config.posthogPublicHost,
+    posthogApiHost: config.posthogApiHost,
+    fundedAiEnabled: config.fundedAiEnabled ? 'true' : 'false',
+    fundedAiRelayUrl: config.fundedAiRelayUrl,
+  };
+}

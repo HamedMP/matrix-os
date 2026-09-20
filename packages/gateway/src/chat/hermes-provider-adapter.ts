@@ -1,3 +1,4 @@
+import { hermesToolHasPrivateContext, hermesToolOutput } from "./hermes-tool-output.js";
 import { ChatSteerNotDeliveredError } from "./steer-delivery-error.js";
 import { createHermesInputController } from "./hermes-input-control.js";
 import { delimiter, join } from "node:path";
@@ -54,6 +55,7 @@ const HermesToolStartSchema = z.object({
   args: z.unknown().optional(),
 }).passthrough();
 const HermesToolCompleteSchema = HermesToolStartSchema.extend({
+  name: z.unknown().optional(),
   result: z.unknown().optional(),
 }).passthrough();
 const HermesStatusUpdateSchema = z.object({
@@ -288,6 +290,7 @@ function deferred<T>() {
 
 export function createHermesChatProviderAdapter(options: {
   homePath: string;
+  toolOutputKey?: Buffer;
   spawnFn?: HermesGatewaySpawn;
   timeoutMs?: number;
   readyTimeoutMs?: number;
@@ -330,7 +333,7 @@ export function createHermesChatProviderAdapter(options: {
     let deferAssistantAfterToolFailure = false;
     let deferredSegmentPrefixLength = 0;
     const unsafeToolFragments = new Set<string>();
-    const toolActivities = new Map<string, Pick<HermesActivity, "kind" | "label" | "preview" | "previewKind" | "detail">>();
+    const toolActivities = new Map<string, { activity: Pick<HermesActivity, "kind" | "label" | "preview" | "previewKind" | "detail">; privateContext: boolean; name: string }>();
     const statusActivities = new Map<string, Pick<HermesActivity, "activityId" | "kind" | "label" | "summary">>();
     let activeDelegationId: string | undefined;
     let releaseInputRun: (() => void) | undefined;
@@ -531,7 +534,7 @@ export function createHermesChatProviderAdapter(options: {
             executionRoot: input.executionRoot,
           }),
         };
-        setBounded(toolActivities, activityId, activity, MAX_ACTIVE_TOOL_ACTIVITIES);
+        setBounded(toolActivities, activityId, { activity, name: toolName, privateContext: hermesToolHasPrivateContext(parsed.data.args) }, MAX_ACTIVE_TOOL_ACTIVITIES);
         emitAgentActivity({
           activityId,
           ...activity,
@@ -542,7 +545,8 @@ export function createHermesChatProviderAdapter(options: {
         if (!parsed.success) return;
         const activityId = hermesToolReference(parsed.data.tool_id);
         if (!activityId) return;
-        const activity = toolActivities.get(activityId) ?? hermesToolActivity(hermesToolName(parsed.data.name));
+        const stored = toolActivities.get(activityId);
+        const activity = stored?.activity ?? hermesToolActivity(hermesToolName(parsed.data.name));
         toolActivities.delete(activityId);
         const failed = hermesToolFailed(parsed.data.result);
         if (failed) {
@@ -559,6 +563,10 @@ export function createHermesChatProviderAdapter(options: {
           status: failed ? "failed" : "completed",
           summary: hermesActivitySummary(activity.kind, failed),
         });
+        const output = hermesToolOutput(stored?.name ?? hermesToolName(parsed.data.name), parsed.data.result,
+          (stored?.privateContext ?? true) || hermesToolHasPrivateContext(parsed.data.args),
+          options.toolOutputKey ? { key: options.toolOutputKey, toolCallId: activityId } : undefined);
+        if (output) queue.push({ type: "tool.output", toolCallId: activityId, ...output });
       } else if (event.type === "subagent.start" || event.type === "subagent.spawn_requested") {
         const parsed = HermesSubagentStartSchema.parse(event.payload);
         activeDelegationId = providerReference("subagent_", parsed.subagent_id ?? String(parsed.task_index));

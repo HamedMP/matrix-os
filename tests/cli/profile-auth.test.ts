@@ -7,6 +7,7 @@ import { logoutCommand } from "../../packages/sync-client/src/cli/commands/logou
 import { statusCommand } from "../../packages/sync-client/src/cli/commands/status.js";
 import { whoamiCommand } from "../../packages/sync-client/src/cli/commands/whoami.js";
 import { saveProfileAuth } from "../../packages/sync-client/src/auth/token-store.js";
+import { loadProfileSyncConfig, saveProfileSyncConfig } from "../../packages/sync-client/src/lib/profile-sync-config.js";
 
 const roots: string[] = [];
 const originalHome = process.env.HOME;
@@ -40,6 +41,12 @@ afterEach(async () => {
 });
 
 describe("profile-aware auth CLI commands", () => {
+  it("keeps an existing cloud daemon binding when logging into local", async () => {
+    await saveProfileSyncConfig({ profile: "cloud", gatewayUrl: "https://app.matrix-os.com", platformUrl: "https://app.matrix-os.com", syncPath: "/tmp/cloud", gatewayFolder: "", peerId: "cloud", pauseSync: false });
+    captureLogs();
+    await loginCommand.run!({ args: { dev: true, json: true } } as never);
+    expect((await loadProfileSyncConfig())?.profileName).toBe("cloud");
+  });
   it("writes dev login credentials to the local profile only", async () => {
     const home = process.env.HOME!;
     const logs = captureLogs();
@@ -49,7 +56,8 @@ describe("profile-aware auth CLI commands", () => {
     const auth = JSON.parse(
       await readFile(join(home, ".matrixos", "profiles", "local", "auth.json"), "utf-8"),
     );
-    const config = JSON.parse(await readFile(join(home, ".matrixos", "config.json"), "utf-8"));
+    const config = JSON.parse(await readFile(join(home, ".matrixos", "profiles", "local", "config.json"), "utf-8"));
+    await expect(readFile(join(home, ".matrixos", "config.json"), "utf-8")).rejects.toMatchObject({ code: "ENOENT" });
     const profiles = JSON.parse(await readFile(join(home, ".matrixos", "profiles.json"), "utf-8"));
     await expect(readFile(join(home, ".matrixos", "auth.json"), "utf-8")).rejects.toMatchObject({ code: "ENOENT" });
     expect(auth).toMatchObject({ accessToken: "dev-token", userId: "user_dev", handle: "dev" });

@@ -201,8 +201,20 @@ describe("real terminal renderer soft-grid resizing", () => {
             return { x: rect.left + rect.width / 120 * 5.5, y: rect.top + rect.height / 36 * 34.5 };
           });
           await page.mouse.move(point.x, point.y);
+          // mouse.wheel resolves before delivery. Wait for the gesture to be
+          // processed at this height before the next iteration resizes: a late
+          // wheel at 300px deliberately pans away from the cursor under test.
+          await page.evaluate(() => {
+            delete document.documentElement.dataset.fixtureWheelHandled;
+            document.addEventListener("wheel", () => {
+              requestAnimationFrame(() => requestAnimationFrame(() => {
+                document.documentElement.dataset.fixtureWheelHandled = "true";
+              }));
+            }, { capture: true, once: true });
+          });
           await page.mouse.wheel(0, -100);
-          await expect.poll(() => page.evaluate(() =>
+          await page.waitForFunction(() => document.documentElement.dataset.fixtureWheelHandled === "true");
+          expect(await page.evaluate(() =>
             (window as unknown as { fixtureInputs: string[] }).fixtureInputs.some((data) => data.includes("\x1b[<64;6;35M")))).toBe(false);
         }
         await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
