@@ -10,6 +10,12 @@ import * as userMachineRecords from '../../packages/platform/src/database/user-m
 import * as userMachines from '../../packages/platform/src/database/user-machines.js';
 import * as userMachineLifecycle from '../../packages/platform/src/database/user-machine-lifecycle.js';
 import * as hostBundles from '../../packages/platform/src/database/host-bundles.js';
+import * as billingQueries from '../../packages/platform/src/database/billing.js';
+import * as billingEntitlements from '../../packages/platform/src/database/billing-entitlements.js';
+import * as checkoutAttempts from '../../packages/platform/src/database/checkout-attempts.js';
+import * as billingRoutes from '../../packages/platform/src/billing-routes.js';
+import * as webhookProjection from '../../packages/platform/src/billing/stripe-webhook-projection.js';
+import * as checkoutSupport from '../../packages/platform/src/billing/checkout-support.js';
 import { createTestPlatformDb, destroyTestPlatformDb, type TestPlatformDb } from './platform-db-test-helper.js';
 
 /**
@@ -166,5 +172,75 @@ describe('user machine seam behavior (S01 foundation)', () => {
     expect(viaModule).not.toBeNull();
     expect(viaLegacy).toEqual(viaModule);
     expect(await dbModule.getActiveUserMachineByHandle(fixture.db, 'alice')).toEqual(viaModule);
+  });
+});
+
+describe('personal billing seams (S01 foundation)', () => {
+  it('re-exports the billing queries from the focused modules by identity', () => {
+    const subscriptionExports = [
+      'upsertBillingCustomer', 'insertBillingCustomerIfAbsent', 'getBillingCustomerByClerkUserId',
+      'getBillingCustomerByStripeCustomerId', 'hasBillingSubscriptionHistory', 'upsertBillingSubscription',
+      'persistBillingSubscriptionPriceSnapshot', 'getBillingSubscription', 'getBillingSubscriptionByStripeId',
+      'projectTrialInvoiceEvent', 'listCurrentBillingSubscriptions',
+    ] as const;
+    for (const name of subscriptionExports) {
+      expect(dbModule[name], name).toBe(billingQueries[name]);
+    }
+    const entitlementExports = [
+      'upsertBillingEntitlement', 'getBillingEntitlement', 'upsertBillingOverride', 'getBillingOverride',
+      'getBillingEntitlementState', 'revokeBillingOverride', 'insertBillingWebhookEvent', 'getBillingWebhookEvent',
+    ] as const;
+    for (const name of entitlementExports) {
+      expect(dbModule[name], name).toBe(billingEntitlements[name]);
+    }
+    const checkoutExports = [
+      'insertCheckoutAttempt', 'claimCheckoutAttempt', 'claimCardTrialCheckoutAttempt', 'isCardTrialOfferEligible',
+      'consumeCardTrial', 'finalizeCheckoutAttempt', 'abandonCreatingCheckoutAttempt', 'getLatestCheckoutAttempt',
+      'getActiveCheckoutAttempt', 'getSettlingCheckoutAttempt', 'resolveCheckoutAttempt', 'sweepStaleCheckoutAttempts',
+    ] as const;
+    for (const name of checkoutExports) {
+      expect(dbModule[name], name).toBe(checkoutAttempts[name]);
+    }
+  });
+
+  it('keeps the billing route entrypoints and moves the Stripe helpers behind them', () => {
+    expect(typeof billingRoutes.createBillingRoutes).toBe('function');
+    expect(typeof billingRoutes.getPublicBillingPlans).toBe('function');
+    expect(billingRoutes.MATRIX_CARD_TRIAL_DAYS).toBe(3);
+    expect(webhookProjection.normalizeSubscriptionStatus('trialing')).toBe('trialing');
+    expect(webhookProjection.normalizeSubscriptionStatus('paused')).toBe('ended');
+    expect(webhookProjection.epochSecondsToIso(1_700_000_000)).toBe('2023-11-14T22:13:20.000Z');
+    expect(webhookProjection.isSubscriptionEvent('customer.subscription.trial_will_end')).toBe(true);
+    expect(webhookProjection.isSubscriptionEvent('invoice.paid')).toBe(false);
+    expect(webhookProjection.readClerkUserIdFromStripeMetadata({ clerk_user_id: 'user_abc123' })).toBe('user_abc123');
+    expect(webhookProjection.readClerkUserIdFromStripeMetadata({ clerk_user_id: 'nope' })).toBeNull();
+    expect(webhookProjection.readInvoiceProjection({
+      created: 1_700_000_000,
+      billing_reason: 'subscription_cycle',
+      amount_due: 1000,
+      amount_paid: 1000,
+      currency: 'usd',
+      subscription: 'sub_1',
+    })).toEqual({
+      stripeSubscriptionId: 'sub_1',
+      billingReason: 'subscription_cycle',
+      createdAt: '2023-11-14T22:13:20.000Z',
+      amountDueMinor: 1000,
+      amountPaidMinor: 1000,
+      currency: 'usd',
+    });
+    expect(webhookProjection.readInvoiceProjection({ created: 1, billing_reason: 'x' })).toBeNull();
+    expect(webhookProjection.isFirstPostTrialInvoice(
+      { stripeSubscriptionId: 'sub_1', billingReason: 'subscription_cycle', createdAt: '2026-02-01T00:00:00.000Z',
+        amountDueMinor: 1, amountPaidMinor: 1, currency: 'usd' },
+      '2026-01-31T00:00:00.000Z',
+      null,
+    )).toBe(true);
+    expect(checkoutSupport.resolveBillingReturnUrl({ MATRIX_APP_ORIGIN: 'https://app.example.test' } as NodeJS.ProcessEnv, 'success'))
+      .toBe('https://app.example.test/?billing=success&checkout=success');
+    // Off-allowlist return paths collapse to "/" through resolveReturnPath (guard preserved).
+    expect(checkoutSupport.resolveBillingReturnUrl({ MATRIX_APP_ORIGIN: 'https://app.example.test' } as NodeJS.ProcessEnv, 'canceled', '/settings'))
+      .toBe('https://app.example.test/?billing=canceled');
+    expect(checkoutSupport.planPriceUsd('starter' as never, 'annual')).toBeUndefined();
   });
 });
