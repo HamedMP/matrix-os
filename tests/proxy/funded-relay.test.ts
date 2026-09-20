@@ -127,6 +127,12 @@ function fundedRequest(body = requestBody(), headers: Record<string, string> = {
 }
 
 describe("funded relay configuration and pricing", () => {
+  it("explicitly selects usage admission without provider credentials", () => {
+    expect(resolveFundedRelayConfig(enabledEnv({ MATRIX_FUNDED_AI_RESERVATION_MODE: "usage" })))
+      .toHaveProperty("reservationMode", "usage");
+    expect(resolveFundedRelayConfig(enabledEnv())).toHaveProperty("reservationMode", "cloudflare-count");
+    expect(() => resolveFundedRelayConfig(enabledEnv({ MATRIX_FUNDED_AI_RESERVATION_MODE: "guess" }))).toThrow();
+  });
   it("stays disabled by default and fails closed without distinct dedicated authority", () => {
     expect(resolveFundedRelayConfig({})).toBeNull();
     expect(resolveFundedRelayConfig({ MATRIX_FUNDED_AI_ENABLED: "0" })).toBeNull();
@@ -168,7 +174,8 @@ describe("funded relay configuration and pricing", () => {
 });
 
 describe("Cloudflare funded relay control-plane ordering", () => {
-  it("checks policy, counts, reserves, acquires, starts, then generates with five opaque metadata fields", async () => {
+  it.each(["cloudflare-count", "usage"])("reserves before Cloudflare generation and settles actual usage (%s)", async (reservationMode) => {
+    const reservedMicrousd = reservationMode === "usage" ? 4_801_200 : RESERVED_MICROUSD;
     const events: string[] = [];
     const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input);
@@ -187,9 +194,13 @@ describe("Cloudflare funded relay control-plane ordering", () => {
         if (action === "authorize") {
           expect(body).toEqual({
             credential: CREDENTIAL, requestId: "request_123",
-            modelId: CANONICAL_MODEL, maxCostMicrousd: RESERVED_MICROUSD,
+            modelId: CANONICAL_MODEL, maxCostMicrousd: reservedMicrousd,
+            ...(reservationMode === "usage" ? { billingMode: "usage" } : {}),
           });
-          return json(authorizationResponse("request_123"));
+          const authorized = authorizationResponse("request_123");
+          authorized.reservation.reservedMicrousd = reservedMicrousd;
+          if (reservationMode === "usage") Object.assign(authorized.reservation, { billingMode: "usage" });
+          return json(authorized);
         }
         if (action === "start") {
           expect(body).toEqual({ reservationId: "reservation_123", tokenId: "credential_123" });
@@ -238,7 +249,7 @@ describe("Cloudflare funded relay control-plane ordering", () => {
         usage: { input_tokens: 1_000, output_tokens: 10 },
       });
     });
-    const relay = configuredRelay(fetchMock as typeof fetch);
+    const relay = configuredRelay(fetchMock as typeof fetch, { reservationMode });
     const app = new Hono();
     relay.register(app);
     const bodyWithCallerMetadata = JSON.stringify({
@@ -255,7 +266,7 @@ describe("Cloudflare funded relay control-plane ordering", () => {
     expect(response.status).toBe(200);
     await response.text();
     await vi.waitFor(() => expect(events).toContain("finalize"));
-    expect(events).toEqual(["check", "cloudflare_count", "authorize", "start", "cloudflare_generate", "finalize"]);
+    expect(events).toEqual(["check", ...(reservationMode === "cloudflare-count" ? ["cloudflare_count"] : []), "authorize", "start", "cloudflare_generate", "finalize"]);
     await relay.close();
   });
 

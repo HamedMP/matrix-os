@@ -6,7 +6,7 @@ export const ProviderModelReferenceSchema = z.string()
   .min(1)
   .max(160)
   .regex(
-    /^[A-Za-z0-9][A-Za-z0-9_.:-]*(?:\/[A-Za-z0-9][A-Za-z0-9_.:-]*)*$/,
+    /^(?:@cf\/)?[A-Za-z0-9][A-Za-z0-9_.:-]*(?:\/[A-Za-z0-9][A-Za-z0-9_.:-]*)*$/,
     "Invalid model reference",
   )
   .refine((value) => !value.includes(".."), {

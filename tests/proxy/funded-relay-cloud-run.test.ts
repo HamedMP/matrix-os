@@ -56,6 +56,9 @@ describe("funded relay Cloud Run service", () => {
     expect(dockerfile).not.toContain("packages/platform");
     expect(cloudbuild).toContain("Dockerfile.ai-relay");
     expect(workflow).toContain("MATRIX_FUNDED_AI_ENABLED=true");
+    expect(workflow).toContain("MATRIX_FUNDED_AI_RESERVATION_MODE=usage");
+    expect(workflow).toContain("CLOUDFLARE_WORKERS_AI_TOKEN=cloudflare-workers-ai-token-preview:latest");
+    expect(workflow).toContain("interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14");
     expect(workflow).toContain("CLOUDFLARE_AI_GATEWAY_TOKEN=cloudflare-ai-gateway-token:latest");
     expect(workflow).toContain("AI_RELAY_CONTROL_TOKEN=ai-relay-control-token:latest");
     expect(workflow).toContain("AI_RELAY_METADATA_SECRET=ai-relay-metadata-secret:latest");
