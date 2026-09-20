@@ -1,11 +1,13 @@
 import { CanonicalProviderCatalogSchema } from "@matrix-os/contracts";
 import { describe, expect, it, vi } from "vitest";
 import { CollaborationAuthorizationError } from "../../packages/gateway/src/collaboration/authority.js";
+import { collaborationExecutionEligibility } from "./collaboration-test-support.js";
 import {
   createSharedAiApprovalReconciler,
   createSharedAiCancellationDispatcher,
   recoverSharedAiQueue,
   resolveClaudeProviderReadiness,
+  resolveSharedProviderReadiness,
   sharedDispatchFenceMatches,
 } from "../../packages/gateway/src/collaboration/shared-ai-runtime.js";
 
@@ -162,17 +164,85 @@ describe("shared AI Provider readiness", () => {
   });
 });
 
+describe("shared AI readiness routing by immutable binding", () => {
+  const codexSelection = { instanceId: "codex_default", model: "gpt-5.6-sol" };
+  const codexCatalog = (instance: Record<string, unknown> = {}) => ({
+    getCatalog: vi.fn(async () => CanonicalProviderCatalogSchema.parse({
+      revision: "codex_catalog",
+      drivers: [
+        { kind: "codex", displayName: "Codex", adapterVersion: "1.0.0", capabilityClass: "coding_agent" },
+        { kind: "claude_code", displayName: "Claude", adapterVersion: "1.0.0", capabilityClass: "coding_agent" },
+      ],
+      instances: [{
+        id: "codex_default", driverKind: "codex", displayName: "Codex", availability: "available",
+        workspaceRequirement: "project_optional", catalogRevision: "codex_catalog",
+        models: [{ id: "gpt-5.6-sol", displayName: "Sol", availability: "available", capabilities: [],
+          supportsVision: false, supportsToolUse: false }],
+        options: [], skills: [], commands: [], setupActions: [],
+        supports: {
+          rootChat: true, resume: true, cancellation: true, steering: "same_run", attachments: [], tools: [],
+          approvals: false, userInput: false, worktrees: "optional", resources: [],
+          interactionModes: ["default"], permissionModes: ["supervised"],
+        },
+        ...instance,
+      }],
+    })),
+  });
+  const claudeSources = () => vi.fn(async () => ({
+    selectedMode: "platform" as const,
+    selectedAccessSourceId: "matrix_included" as const,
+    matrixIncluded: { state: "ready" as const },
+    ownerApiKey: { state: "setup_required" as const },
+    ownerProfile: { state: "setup_required" as const },
+  }));
+
+  it("verifies a Codex binding through the catalog without touching Claude credential routes", async () => {
+    const providerCatalog = codexCatalog();
+    const resolveCredentialSources = claudeSources();
+    await expect(resolveSharedProviderReadiness({
+      resolveCredentialSources,
+      providerCatalog,
+    }, "user_owner", codexSelection)).resolves.toBe("ready");
+    expect(providerCatalog.getCatalog).toHaveBeenCalledWith({ userId: "user_owner", source: "jwt" });
+    expect(resolveCredentialSources).not.toHaveBeenCalled();
+  });
+
+  it("fails a Codex binding closed as generic unavailability, never Claude reconnect guidance", async () => {
+    const resolveCredentialSources = claudeSources();
+    await expect(resolveSharedProviderReadiness({
+      resolveCredentialSources,
+      providerCatalog: codexCatalog({
+        availability: "auth_required", unavailabilityReason: "authentication_required",
+      }),
+    }, "user_owner", codexSelection)).resolves.toBe("unavailable");
+    await expect(resolveSharedProviderReadiness({
+      resolveCredentialSources,
+      providerCatalog: codexCatalog({ driverKind: "claude_code" }),
+    }, "user_owner", codexSelection)).resolves.toBe("unavailable");
+    await expect(resolveSharedProviderReadiness({
+      resolveCredentialSources,
+    }, "user_owner", codexSelection)).resolves.toBe("unavailable");
+    expect(resolveCredentialSources).not.toHaveBeenCalled();
+  });
+
+  it("routes every Claude Instance through the credential-aware Claude readiness", async () => {
+    const providerCatalog = codexCatalog();
+    const resolveCredentialSources = claudeSources();
+    await expect(resolveSharedProviderReadiness({
+      resolveCredentialSources,
+      providerCatalog,
+    }, "user_owner", { instanceId: "claude_code_default", model: "opus" })).resolves.toBe("ready");
+    expect(resolveCredentialSources).toHaveBeenCalledTimes(1);
+    expect(providerCatalog.getCatalog).not.toHaveBeenCalled();
+  });
+});
+
 describe("shared AI dispatch fence", () => {
   const expected = {
     ownerId: "user_owner",
     chatId: "chat_shared",
     executionGeneration: 7,
-    executionEligibility: {
-      profileId: "scope-runtime-chat-v1",
-      profileVersion: 2,
-      profileDigest: "a".repeat(64),
-      adapters: [{ adapterId: "codex" as const, harnessVersion: "0.154.0" }],
-    },
+    executionEligibility: collaborationExecutionEligibility({ adapters: ["codex"] }),
     driverKind: "codex" as const,
     selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
   };

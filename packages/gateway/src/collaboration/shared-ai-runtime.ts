@@ -36,7 +36,9 @@ import {
   CollaborationChatExecutionAdapter,
 } from "./chat-execution-adapter.js";
 import {
+  CODEX_SHARED_INSTANCE_ID,
   parseCollaborationAiEligibility,
+  sharedAiAdapterFor,
   type CollaborationAiExecutionEligibility,
 } from "./shared-ai-eligibility.js";
 import type { CollaborationChatScopeService } from "./chat-scope.js";
@@ -282,7 +284,7 @@ export async function createSharedAiRuntime(options: {
       }
       return scope.execution_eligibility;
     },
-    resolveProviderReadiness: (ownerId: string, selection) => resolveClaudeProviderReadiness({
+    resolveProviderReadiness: (ownerId: string, selection) => resolveSharedProviderReadiness({
       resolveCredentialSources: () => resolveKernelCredentialSources(
         options.homePath,
         process.env,
@@ -299,7 +301,13 @@ export async function createSharedAiRuntime(options: {
           selection,
           requirements: SHARED_RUN_SELECTION_REQUIREMENTS,
         });
-        if (!validated.ok || validated.instance.driverKind !== "claude_code") return null;
+        if (!validated.ok) return null;
+        // The owner's first binding may only name a driver this runtime can
+        // execute in isolation; the queue re-verifies the signed eligibility.
+        const adapterId = sharedAiAdapterFor(validated.instance.driverKind, validated.selection.instanceId);
+        if (!adapterId || !eligibility.adapters.some((adapter) => adapter.adapterId === adapterId)) {
+          return null;
+        }
         return { driverKind: validated.instance.driverKind, selection: validated.selection };
       },
     } : {}),
@@ -399,6 +407,53 @@ export async function createSharedAiRuntime(options: {
 
 const SHARED_RUN_SELECTION_REQUIREMENTS = { interactionMode: "default", permissionMode: "supervised" } as const;
 
+export type SharedProviderReadiness = "ready" | "reconnect_required" | "unavailable";
+
+interface SharedProviderReadinessInput {
+  resolveCredentialSources(): Promise<KernelCredentialSources>;
+  codingProviders?: Pick<CodingAgentProviderRegistry, "listProviders">;
+  providerCatalog?: Pick<ChatProviderCatalogService, "getCatalog">;
+}
+
+/**
+ * Readiness follows the immutable binding's driver. Codex executes only through
+ * its single pinned `codex_default` Instance (see `shared-ai-runtime-registry`
+ * and the scope broker), so that Instance id selects the Codex route without a
+ * catalog probe; every other selection is a Claude binding.
+ */
+export async function resolveSharedProviderReadiness(
+  input: SharedProviderReadinessInput,
+  ownerId: string,
+  selection?: CanonicalChatModelSelection | null,
+): Promise<SharedProviderReadiness> {
+  if (selection?.instanceId === CODEX_SHARED_INSTANCE_ID) {
+    return resolveCodexProviderReadiness(input, ownerId, selection);
+  }
+  return resolveClaudeProviderReadiness(input, ownerId, selection);
+}
+
+/**
+ * Codex owner identity lives in the owner's Codex auth file and is refreshed by
+ * the scope broker at inference time, so readiness is verified only through the
+ * trusted server-side provider catalog. Without a catalog it fails closed. An
+ * unauthenticated Codex Instance reports generic unavailability: the owner
+ * reconnect guidance names Claude credentials and must not be shown for Codex.
+ */
+async function resolveCodexProviderReadiness(
+  input: Pick<SharedProviderReadinessInput, "providerCatalog">,
+  ownerId: string,
+  selection: CanonicalChatModelSelection,
+): Promise<SharedProviderReadiness> {
+  if (!input.providerCatalog) return "unavailable";
+  const catalog = await input.providerCatalog.getCatalog({ userId: ownerId, source: "jwt" });
+  const validated = validateChatProviderSelection({
+    catalog,
+    selection,
+    requirements: SHARED_RUN_SELECTION_REQUIREMENTS,
+  });
+  return validated.ok && validated.instance.driverKind === "codex" ? "ready" : "unavailable";
+}
+
 /**
  * Readiness follows the kernel credential access source the scoped run will
  * actually use (see `scope-runtime-broker`): Matrix-included access, the owner's
@@ -411,14 +466,10 @@ const SHARED_RUN_SELECTION_REQUIREMENTS = { interactionMode: "default", permissi
  * owner API key route fails closed.
  */
 export async function resolveClaudeProviderReadiness(
-  input: {
-    resolveCredentialSources(): Promise<KernelCredentialSources>;
-    codingProviders?: Pick<CodingAgentProviderRegistry, "listProviders">;
-    providerCatalog?: Pick<ChatProviderCatalogService, "getCatalog">;
-  },
+  input: SharedProviderReadinessInput,
   ownerId: string,
   selection?: CanonicalChatModelSelection | null,
-): Promise<"ready" | "reconnect_required" | "unavailable"> {
+): Promise<SharedProviderReadiness> {
   const sources = await input.resolveCredentialSources();
   if (sources.selectedAccessSourceId === "matrix_included") {
     return sources.matrixIncluded.state === "ready" ? "ready" : "unavailable";
@@ -561,15 +612,11 @@ function eligibilityMatches(
 }
 
 function sharedAdapterFor(
-  driverKind: string,
+  driverKind: CanonicalProviderDriverKind,
   instanceId: string,
   eligibility: CollaborationAiExecutionEligibility,
 ): CollaborationAiExecutionEligibility["adapters"][number] | undefined {
-  const adapterId = driverKind === "claude_code" && instanceId === "claude_shared"
-    ? "claude-code"
-    : driverKind === "codex" && instanceId === "codex_default"
-      ? "codex"
-      : undefined;
+  const adapterId = sharedAiAdapterFor(driverKind, instanceId);
   return adapterId ? eligibility.adapters.find((adapter) => adapter.adapterId === adapterId) : undefined;
 }
 

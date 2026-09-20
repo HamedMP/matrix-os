@@ -1214,15 +1214,9 @@ describe("collaboration gateway routes", () => {
     }).execute();
     await fixture.db.updateTable("collaboration_scopes").set({
       execution_generation: 7,
-      execution_eligibility: JSON.stringify({
-        profileId: "scope-runtime-chat-v1",
-        profileVersion: 2,
-        profileDigest: "a".repeat(64),
-        adapters: [
-          { adapterId: "claude-code", harnessVersion: "2.1.240" },
-          { adapterId: "codex", harnessVersion: "0.154.0" },
-        ],
-      }),
+      execution_eligibility: JSON.stringify(
+        collaborationExecutionEligibility({ adapters: ["claude-code", "codex"] }),
+      ),
     }).where("id", "=", collaborationIds.scope).execute();
     await fixture.db.updateTable("chats").set({
       current_selection: JSON.stringify({ instanceId: "codex_default", model: "gpt-5.6-sol" }),

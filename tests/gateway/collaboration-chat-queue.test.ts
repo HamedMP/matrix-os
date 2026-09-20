@@ -170,15 +170,9 @@ describe("shared Chat canonical queue", () => {
       bound_at_turn_id: "cturn_original_codex",
     }).where("id", "=", collaborationIds.chat).execute();
     await fixture.db.updateTable("collaboration_scopes").set({
-      execution_eligibility: JSON.stringify({
-        profileId: "scope-runtime-chat-v1",
-        profileVersion: 2,
-        profileDigest: "b".repeat(64),
-        adapters: [
-          { adapterId: "claude-code", harnessVersion: "2.1.240" },
-          { adapterId: "codex", harnessVersion: "0.154.0" },
-        ],
-      }),
+      execution_eligibility: JSON.stringify(
+        collaborationExecutionEligibility({ adapters: ["claude-code", "codex"] }),
+      ),
     }).where("id", "=", collaborationIds.scope).execute();
 
     const admitted = await repository.enqueueSharedQueuedTurn(
@@ -206,12 +200,7 @@ describe("shared Chat canonical queue", () => {
       bound_at_turn_id: "cturn_original_codex",
     }).where("id", "=", collaborationIds.chat).execute();
     await fixture.db.updateTable("collaboration_scopes").set({
-      execution_eligibility: JSON.stringify({
-        profileId: "scope-runtime-chat-v1",
-        profileVersion: 2,
-        profileDigest: "b".repeat(64),
-        adapters: [{ adapterId: "codex", harnessVersion: "0.154.0" }],
-      }),
+      execution_eligibility: JSON.stringify(collaborationExecutionEligibility({ adapters: ["codex"] })),
     }).where("id", "=", collaborationIds.scope).execute();
     const admitted = await repository.enqueueSharedQueuedTurn(
       owner,
@@ -319,9 +308,7 @@ describe("shared Chat canonical queue", () => {
 
   it("requires current signed isolated-adapter eligibility at admission and claim", async () => {
     await fixture.db.updateTable("collaboration_scopes").set({
-      execution_eligibility: JSON.stringify({
-        ...collaborationExecutionEligibility(), adapterId: "codex",
-      }),
+      execution_eligibility: JSON.stringify(collaborationExecutionEligibility({ adapters: ["codex"] })),
     }).where("id", "=", collaborationIds.scope).execute();
     await expect(repository.enqueueSharedQueuedTurn(
       owner,
@@ -336,7 +323,8 @@ describe("shared Chat canonical queue", () => {
     await fixture.db.updateTable("collaboration_scopes").set({
       execution_generation: 14,
       execution_eligibility: JSON.stringify({
-        ...collaborationExecutionEligibility(), harnessVersion: "9.9.9",
+        ...collaborationExecutionEligibility(),
+        adapters: [{ adapterId: "claude-code", harnessVersion: "9.9.9" }],
       }),
     }).where("id", "=", collaborationIds.scope).execute();
 

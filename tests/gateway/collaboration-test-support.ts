@@ -3,6 +3,7 @@ import { KyselyPGlite } from "kysely-pglite";
 import { Kysely, PostgresDialect, sql } from "kysely";
 import { Pool } from "pg";
 import {
+  SCOPE_RUNTIME_CODEX_VERSION,
   SCOPE_RUNTIME_HARNESS_VERSION,
   SCOPE_RUNTIME_PROFILE_DIGEST,
   SCOPE_RUNTIME_PROFILE_ID,
@@ -25,13 +26,20 @@ export const collaborationIds = {
   runtime: "runtime_collaboration_owner",
 } as const;
 
-export function collaborationExecutionEligibility() {
+export type CollaborationTestAdapterId = "claude-code" | "codex";
+
+/** Signed eligibility for this build's pinned scope-runtime profile; Claude-only unless adapters are named. */
+export function collaborationExecutionEligibility(
+  input: { adapters: readonly CollaborationTestAdapterId[] } = { adapters: ["claude-code"] },
+) {
   return {
     profileId: SCOPE_RUNTIME_PROFILE_ID,
     profileVersion: SCOPE_RUNTIME_PROFILE_VERSION,
     profileDigest: SCOPE_RUNTIME_PROFILE_DIGEST,
-    adapterId: "claude-code" as const,
-    harnessVersion: SCOPE_RUNTIME_HARNESS_VERSION,
+    adapters: input.adapters.map((adapterId) => ({
+      adapterId,
+      harnessVersion: adapterId === "codex" ? SCOPE_RUNTIME_CODEX_VERSION : SCOPE_RUNTIME_HARNESS_VERSION,
+    })),
   };
 }
 

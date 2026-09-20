@@ -10,6 +10,9 @@ import { z } from "zod/v4";
 
 export type CollaborationAiAdapterId = "claude-code" | "codex";
 
+/** The single Instance the isolated Codex adapter, broker, and registry accept. */
+export const CODEX_SHARED_INSTANCE_ID = "codex_default";
+
 const ProfileSchema = z.object({
   profileId: z.literal(SCOPE_RUNTIME_PROFILE_ID),
   profileVersion: z.literal(SCOPE_RUNTIME_PROFILE_VERSION),
@@ -66,7 +69,7 @@ export function sharedAiAdapterFor(
   instanceId: string,
 ): CollaborationAiAdapterId | undefined {
   if (driverKind === "claude_code") return "claude-code";
-  if (driverKind === "codex" && instanceId === "codex_default") return "codex";
+  if (driverKind === "codex" && instanceId === CODEX_SHARED_INSTANCE_ID) return "codex";
   return undefined;
 }
 
