@@ -464,15 +464,26 @@ async function supervisorStartFailureCode(cursor) {
     "--unit", SERVICE, "--after-cursor", cursor, "--grep", "^scope_runtime_supervisor_failed:",
     "--no-pager", "--output=cat", "--lines=20",
   ]);
-  const failure = /scope_runtime_supervisor_failed:\s+([A-Za-z]{1,64}Error)\b/
+  const failure = /scope_runtime_supervisor_failed:\s+([A-Za-z]{0,64}Error)\b/
     .exec(failureJournal.stdout)?.[1];
-  if (failureJournal.code === 0 && failure) parts.push(`error_${failure}`);
+  if (failureJournal.code === 0 && failure) {
+    parts.push(`error_${failure}`);
+    const code = /scope_runtime_supervisor_failed:\s+[A-Za-z]{0,64}Error\s+code=([A-Z][A-Z0-9_]{1,31})\b/
+      .exec(failureJournal.stdout)?.[1];
+    if (code) parts.push(`code_${code}`);
+    const message = /scope_runtime_supervisor_failed:\s+[A-Za-z]{0,64}Error\s+message=([A-Za-z0-9 ,.'-]{1,96})$/m
+      .exec(failureJournal.stdout)?.[1];
+    if (message) parts.push(`message_${message.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "")}`);
+  }
   const unitJournal = await command("/usr/bin/journalctl", [
     "--unit", SERVICE, "--after-cursor", cursor, "--no-pager", "--output=cat", "--lines=40",
   ]);
-  const step = /Failed at step ([A-Z][A-Z0-9_-]{0,31})\b/.exec(unitJournal.stdout)?.[1];
-  if (unitJournal.code === 0 && step && SYSTEMD_EXEC_STEPS.includes(step)) {
-    parts.push(`step_${step.toLowerCase()}`);
+  if (unitJournal.code === 0) {
+    const step = /Failed at step ([A-Z][A-Z0-9_-]{0,31})\b/.exec(unitJournal.stdout)?.[1];
+    if (step && SYSTEMD_EXEC_STEPS.includes(step)) parts.push(`step_${step.toLowerCase()}`);
+    // Node module-load failures happen before main() and carry no marker line.
+    const nodeCode = /\b(ERR_[A-Z_]{1,48})\b/.exec(unitJournal.stdout)?.[1];
+    if (nodeCode && !parts.includes(`code_${nodeCode}`)) parts.push(`node_${nodeCode}`);
   }
   return parts.length > 0
     ? `supervisor_socket_unavailable_${parts.join("_")}`

@@ -150,7 +150,16 @@ describe("collaboration production scope-runtime acceptance", () => {
     expect(source).toContain("supervisorStartFailureCode");
     expect(source).toContain("await awaitSupervisorSocket(startCursor)");
     expect(source).toContain('"--grep", "^scope_runtime_supervisor_failed:"');
-    expect(source).toContain("scope_runtime_supervisor_failed:\\s+([A-Za-z]{1,64}Error)");
+    // A plain `Error` (fs errno failures, explicit `new Error(...)`) has no prefix, so
+    // the name capture must allow zero leading characters.
+    expect(source).toContain("scope_runtime_supervisor_failed:\\s+([A-Za-z]{0,64}Error)");
+    expect(source).not.toContain("([A-Za-z]{1,64}Error)");
+    // The supervisor entrypoint emits bounded `code=` and path-free `message=` fields;
+    // the harness slugs them and also picks up Node module-load codes from the unit journal.
+    expect(source).toContain("code=([A-Z][A-Z0-9_]{1,31})");
+    expect(source).toContain("message=([A-Za-z0-9 ,.'-]{1,96})");
+    expect(source).toContain("\\b(ERR_[A-Z_]{1,48})\\b");
+    expect(source).toContain("scope_runtime_supervisor_failed:\\s+[A-Za-z]{0,64}Error");
     expect(source).toContain('"--property=ActiveState"');
     expect(source).toContain('"--property=SubState"');
     expect(source).toContain('"--property=Result"');
