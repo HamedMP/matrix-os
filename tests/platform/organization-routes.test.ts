@@ -13,6 +13,7 @@ const member = "user_member0000000000000000";
 const admin = "user_admin00000000000000000";
 const outsider = "user_outsider00000000000000";
 const runtimeId = "vps:10000000-0000-4000-8000-000000000001";
+const logicalRuntimeId = "vps-10000000-0000-4000-8000-000000000001";
 const runtimeToken = "r".repeat(40);
 const secretBytes = Buffer.from("0123456789abcdef0123456789abcdef");
 const signingSecret = `whsec_${secretBytes.toString("base64")}`;
@@ -65,7 +66,7 @@ describe("platform organization routes (T018)", () => {
         members: members.map((actorId) => ({ membershipId: `orgmem_${actorId}`, actorId, role: actorId === admin ? "org:admin" : "org:member", sourceUpdatedAt: new Date(1_000) })),
       }) },
     });
-    authority = createCollaborationControlAuthority({ repository, now: () => clock, affectedRuntimes: async () => [runtimeId], projection });
+    authority = createCollaborationControlAuthority({ repository, now: () => clock, affectedRuntimes: async () => [logicalRuntimeId], projection });
     actor = member;
     app = createPlatformOrganizationRoutes({
       repository, projection, controlAuthority: authority, webhookSigningSecret: signingSecret, now: () => clock,
@@ -150,9 +151,9 @@ describe("platform organization routes (T018)", () => {
     expect(Date.parse(assertions[0]!.expiresAt) - Date.parse(assertions[0]!.requestStartedAt)).toBe(20_000);
     expect((await app.request("/internal/organizations/access/resolve", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status).toBe(401);
     expect((await app.request("/internal/organizations/access/resolve", { method: "POST", headers: authHeaders, body: JSON.stringify({ protocolVersion: 1, actors: [] }) })).status).toBe(422);
-    const ack = await app.request("/internal/collaboration/control/ack", { method: "POST", headers: authHeaders, body: JSON.stringify({ protocolVersion: 2, runtimeId, authorityGeneration: 1, fenceAt: clock.toISOString() }) });
+    const ack = await app.request("/internal/collaboration/control/ack", { method: "POST", headers: authHeaders, body: JSON.stringify({ protocolVersion: 2, runtimeId: logicalRuntimeId, authorityGeneration: 1, fenceAt: clock.toISOString() }) });
     expect(ack.status).toBe(204);
-    const foreign = await app.request("/internal/collaboration/control/ack", { method: "POST", headers: authHeaders, body: JSON.stringify({ protocolVersion: 2, runtimeId: "vps:10000000-0000-4000-8000-000000000009", authorityGeneration: 1, fenceAt: clock.toISOString() }) });
+    const foreign = await app.request("/internal/collaboration/control/ack", { method: "POST", headers: authHeaders, body: JSON.stringify({ protocolVersion: 2, runtimeId: "vps-10000000-0000-4000-8000-000000000009", authorityGeneration: 1, fenceAt: clock.toISOString() }) });
     expect(foreign.status).toBe(403);
   });
 });

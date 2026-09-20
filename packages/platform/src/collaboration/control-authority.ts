@@ -157,7 +157,7 @@ export function createCollaborationControlAuthority(options: {
           type: "membership_assertion" as const,
           organizationId: actor.organizationId,
           actorId: actor.actorId,
-          membershipEpoch: assertion.membershipEpoch,
+          membershipEpoch: String(assertion.membershipEpoch),
           member: assertion.member,
           requestStartedAt: assertion.requestStartedAt.toISOString(),
           expiresAt: assertion.expiresAt.toISOString(),

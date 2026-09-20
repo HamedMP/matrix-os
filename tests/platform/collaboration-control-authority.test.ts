@@ -7,8 +7,8 @@ import { createTestPlatformDb, destroyTestPlatformDb, type TestPlatformDb } from
 
 const org = "org_2ctrl00000000000000000001";
 const member = "user_member0000000000000000";
-const runtimeA = "vps:10000000-0000-4000-8000-00000000000a";
-const runtimeB = "vps:10000000-0000-4000-8000-00000000000b";
+const runtimeA = "vps-10000000-0000-4000-8000-00000000000a";
+const runtimeB = "vps-10000000-0000-4000-8000-00000000000b";
 
 describe("collaboration control authority (T017/T019)", () => {
   let fixture: TestPlatformDb;

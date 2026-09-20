@@ -162,13 +162,13 @@ describe.skipIf(!connectionString)("organization authority on real PostgreSQL (T
       repository,
       now: () => clock,
       leaseMs: 25_000,
-      affectedRuntimes: async () => ["vps:10000000-0000-4000-8000-000000000001", "vps:10000000-0000-4000-8000-000000000002"],
+      affectedRuntimes: async () => ["vps-10000000-0000-4000-8000-000000000001", "vps-10000000-0000-4000-8000-000000000002"],
     });
     const denial = await authority.fence({ organizationId: org, actorId: member, generation: 7 });
     expect(denial.state).toBe("pending");
     await Promise.all([
-      authority.acknowledge("vps:10000000-0000-4000-8000-000000000001", { protocolVersion: 2, runtimeId: "vps:10000000-0000-4000-8000-000000000001", authorityGeneration: 7, fenceAt: clock.toISOString() }),
-      authority.acknowledge("vps:10000000-0000-4000-8000-000000000001", { protocolVersion: 2, runtimeId: "vps:10000000-0000-4000-8000-000000000001", authorityGeneration: 7, fenceAt: clock.toISOString() }),
+      authority.acknowledge("vps-10000000-0000-4000-8000-000000000001", { protocolVersion: 2, runtimeId: "vps-10000000-0000-4000-8000-000000000001", authorityGeneration: 7, fenceAt: clock.toISOString() }),
+      authority.acknowledge("vps-10000000-0000-4000-8000-000000000001", { protocolVersion: 2, runtimeId: "vps-10000000-0000-4000-8000-000000000001", authorityGeneration: 7, fenceAt: clock.toISOString() }),
     ]);
     expect((await authority.describe(denial.denialId))?.state).toBe("pending");
     clock = new Date(clock.getTime() + 26_000);
