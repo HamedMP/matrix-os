@@ -100,7 +100,7 @@ export function registerChatRoutes(routes: Hono, options: CollaborationRouteOpti
   routes.get("/api/collaboration/scopes/:scopeId/chat/requests", async (c) => handle(c, async () => {
     const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
     const adapter = requireExecutionAdapter(options.chatExecutionAdapter);
-    const context = await authorize(options, c, new Uint8Array(), "read", scopeId, "m2");
+    const context = await authorize(options, c, new Uint8Array(), "read", scopeId);
     const requests = await adapter.list(context);
     return c.json(CollaborationAiRequestsResponseSchema.parse({
       requests,
@@ -113,7 +113,7 @@ export function registerChatRoutes(routes: Hono, options: CollaborationRouteOpti
     const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
     const adapter = requireExecutionAdapter(options.chatExecutionAdapter);
     const { value, bytes } = await readJson(c);
-    const context = await authorize(options, c, bytes, "request_ai", scopeId, "m2");
+    const context = await authorize(options, c, bytes, "request_ai", scopeId);
     return c.json(await adapter.submit(context, CollaborationCreateAiRequestSchema.parse(value)), 201);
   }));
 
@@ -122,7 +122,7 @@ export function registerChatRoutes(routes: Hono, options: CollaborationRouteOpti
     const requestId = CollaborationResourceIdSchema.parse(c.req.param("requestId"));
     const adapter = requireExecutionAdapter(options.chatExecutionAdapter);
     const { value, bytes } = await readJson(c);
-    const context = await authorize(options, c, bytes, "control_execution", scopeId, "m2");
+    const context = await authorize(options, c, bytes, "control_execution", scopeId);
     return c.json(await adapter.cancel(context, requestId, CollaborationAiRequestControlSchema.parse(value)));
   }));
 
@@ -131,7 +131,7 @@ export function registerChatRoutes(routes: Hono, options: CollaborationRouteOpti
     const requestId = CollaborationResourceIdSchema.parse(c.req.param("requestId"));
     const adapter = requireExecutionAdapter(options.chatExecutionAdapter);
     const { value, bytes } = await readJson(c);
-    const context = await authorize(options, c, bytes, "control_execution", scopeId, "m2");
+    const context = await authorize(options, c, bytes, "control_execution", scopeId);
     return c.json(await adapter.retry(context, requestId, CollaborationAiRequestControlSchema.parse(value)), 201);
   }));
 
@@ -140,7 +140,7 @@ export function registerChatRoutes(routes: Hono, options: CollaborationRouteOpti
     const approvalId = CollaborationResourceIdSchema.parse(c.req.param("approvalId"));
     const adapter = requireExecutionAdapter(options.chatExecutionAdapter);
     const { value, bytes } = await readJson(c);
-    const context = await authorize(options, c, bytes, "control_execution", scopeId, "m2");
+    const context = await authorize(options, c, bytes, "control_execution", scopeId);
     return c.json(await adapter.decideApproval(
       context,
       approvalId,
