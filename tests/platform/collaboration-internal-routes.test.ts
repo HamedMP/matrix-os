@@ -92,7 +92,7 @@ describe("platform internal collaboration routes", () => {
           "content-type": "application/json",
           ...(authenticated ? { authorization: `Bearer ${token}`, "x-matrix-runtime-id": runtimeId } : {}),
         },
-        body: JSON.stringify({ identifier }),
+        body: JSON.stringify({ identifier, organizationId: "org_matrix_team" }),
       },
     );
     expect((await request("nimanaderi", false)).status).toBe(401);
@@ -126,7 +126,7 @@ describe("platform internal collaboration routes", () => {
           "content-type": "application/json",
           "x-matrix-runtime-id": runtimeId,
         },
-        body: JSON.stringify({ identifier: `person-${index}` }),
+        body: JSON.stringify({ identifier: `person-${index}`, organizationId: "org_matrix_team" }),
       });
       statuses.push(response.status);
     }
