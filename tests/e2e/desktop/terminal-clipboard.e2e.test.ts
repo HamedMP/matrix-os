@@ -342,6 +342,11 @@ suite("packaged Electron production-mode terminal selection", () => {
     } | null;
   }
 
+  // Concrete enabled values of xterm IModes.mouseTrackingMode
+  // ("none" | "x10" | "vt200" | "drag" | "any"). Anything else ("unknown",
+  // "", missing hook) means tracking has not been observed yet.
+  const KNOWN_ENABLED_MOUSE_TRACKING_MODES = new Set(["x10", "vt200", "drag", "any"]);
+
   async function readTerminalDiagnostics(
     point?: { x: number; y: number },
   ): Promise<TerminalDiagnostics> {
@@ -409,15 +414,44 @@ suite("packaged Electron production-mode terminal selection", () => {
     }, count);
   }
 
+  async function waitForGatewayInputsToSettle(options?: { timeout?: number }): Promise<number> {
+    // Observable transport boundary for the stub gateway: renderer frames do
+    // not prove a mouse report reached gateway.state.terminalInputs. Wait
+    // until the input count is stable so an in-flight report cannot land
+    // after the caller records its baseline.
+    const timeout = options?.timeout ?? 5_000;
+    const deadline = Date.now() + timeout;
+    let lastCount = gateway.state.terminalInputs.length;
+    let stableSince = Date.now();
+    for (;;) {
+      await page.waitForTimeout(100);
+      const count = gateway.state.terminalInputs.length;
+      if (count !== lastCount) {
+        lastCount = count;
+        stableSince = Date.now();
+      } else if (Date.now() - stableSince >= 300) {
+        return lastCount;
+      }
+      if (Date.now() >= deadline) {
+        throw new Error(
+          `Gateway terminal inputs did not settle within ${timeout}ms (last count ${lastCount})`,
+        );
+      }
+    }
+  }
+
   async function waitForMouseTrackingMode(
     expected: "none" | "!none",
     options?: { timeout?: number },
   ): Promise<void> {
     await expect.poll(async () => {
       const diag = await readTerminalDiagnostics();
-      return expected === "none"
-        ? diag.mouseTrackingMode === "none"
-        : diag.mouseTrackingMode !== "none";
+      if (expected === "none") return diag.mouseTrackingMode === "none";
+      // readTerminalDiagnostics() defaults a missing hook to "unknown" — only
+      // accept the concrete enabled modes xterm reports via IModes
+      // ("x10" | "vt200" | "drag" | "any") so the wait cannot pass before
+      // mouse tracking is actually observed.
+      return KNOWN_ENABLED_MOUSE_TRACKING_MODES.has(diag.mouseTrackingMode);
     }, {
       timeout: options?.timeout ?? 10_000,
       message: `Terminal mouseTrackingMode did not settle to "${expected}"`,
@@ -506,7 +540,20 @@ suite("packaged Electron production-mode terminal selection", () => {
     const menu = page.getByRole("menu", { name: "Terminal actions" });
     if (await menu.isVisible().catch(() => false)) {
       await page.keyboard.press("Escape");
-      await menu.waitFor({ state: "hidden", timeout: 5_000 }).catch(() => null);
+      try {
+        await menu.waitFor({ state: "hidden", timeout: 5_000 });
+      } catch (err: unknown) {
+        // Do not swallow: a still-open menu intercepts pointer input in the
+        // next case and recreates the flake. Capture diagnostics then fail.
+        const diag = await readTerminalDiagnostics().catch(() => null);
+        const screenshotPath = join(EVIDENCE_DIR, `menu-dismiss-fail-${Date.now()}.png`);
+        await page.screenshot({ path: screenshotPath }).catch(() => null);
+        throw new Error(
+          `Terminal actions menu failed to dismiss; refusing to continue with pointer input obstructed. `
+          + `Diagnostics: ${JSON.stringify(diag)}. Evidence: ${screenshotPath}`,
+          { cause: err },
+        );
+      }
     }
   }
 
@@ -574,7 +621,10 @@ suite("packaged Electron production-mode terminal selection", () => {
       screenBox,
       resize: { cols, rows },
       point: (column: number, row: number) => ({
-        x: screenBox.x + (column + 0.5) * (screenBox.width / cols),
+        // Keep the x offset off the exact cell center (0.5): xterm's
+        // fractional-cell rounding can push a centered point into the
+        // adjacent cell and mis-aim selection endpoints.
+        x: screenBox.x + (column + 0.25) * (screenBox.width / cols),
         y: screenBox.y + (row + 0.5) * (screenBox.height / rows),
       }),
     };
@@ -615,7 +665,7 @@ suite("packaged Electron production-mode terminal selection", () => {
   beforeEach(async () => {
     await dismissOpenContextMenu();
     const diag = await readTerminalDiagnostics();
-    if (diag.mouseTrackingMode !== "none") {
+    if (KNOWN_ENABLED_MOUSE_TRACKING_MODES.has(diag.mouseTrackingMode)) {
       gateway.sendTerminalOutput("\u001b[?1003l\u001b[?1006l");
       await waitForMouseTrackingMode("none");
     }
@@ -686,11 +736,16 @@ suite("packaged Electron production-mode terminal selection", () => {
 
       await page.mouse.move(start.x, start.y);
       await waitForRenderFrames(1);
+      // Renderer frames do not prove the motion report from this move reached
+      // the stub gateway; settle at the transport boundary before baselining
+      // so a legitimate late report cannot false-fail the assertion below.
+      await waitForGatewayInputsToSettle();
       const beforeDrag = gateway.state.terminalInputs.length;
       await page.mouse.down();
       await page.mouse.move(end.x, end.y, { steps: 8 });
       await page.mouse.up();
       await waitForRenderFrames(1);
+      await waitForGatewayInputsToSettle();
       expect(gateway.state.terminalInputs.slice(beforeDrag)).toEqual([]);
 
       await expect.poll(readTerminalSelection).toBe(line);
