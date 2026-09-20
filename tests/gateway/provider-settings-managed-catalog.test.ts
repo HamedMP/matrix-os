@@ -80,8 +80,33 @@ describe("Matrix routes during native model catalog failure", () => {
     });
   });
 
+  it.each(["pi", "opencode"] as const)("keeps an authenticated %s own-account route ready without optional freshness metadata", async (harness) => {
+    const input = projectionInput(harness);
+    input.genericModelCatalog.failures = [];
+    input.config.harnesses[0]!.accessSourceId = "owner_anthropic_profile";
+    input.config.harnesses[0]!.selectedAccountId = "owner_anthropic";
+    const source = input.canonical.accessSources.find((candidate) => candidate.id === "owner_anthropic_profile")!;
+    source.checkedAt = null;
+    source.staleAfter = null;
+    const account = input.canonical.accounts.find((candidate) => candidate.id === "owner_anthropic")!;
+    account.checkedAt = null;
+    account.staleAfter = null;
+
+    const snapshot = await projectProviderSettings(input);
+
+    expect(snapshot.harnesses.find((agent) => agent.harness === harness)).toMatchObject({
+      enabled: true,
+      accessSourceId: "owner_anthropic_profile",
+      selectedAccountId: "owner_anthropic",
+      routeAvailability: "available",
+      authState: "authenticated",
+      connectivity: "online",
+    });
+  });
+
   it.each([
-    "missing", "wrong_harness", "auth_required", "stale", "unavailable",
+    "missing", "wrong_harness", "ineligible_model", "auth_required", "invalid_auth",
+    "stale_timestamp", "stale_state", "future_check", "unavailable",
   ] as const)("keeps a catalog-healthy native route disabled for a %s credential source", async (failure) => {
     const input = projectionInput("pi");
     input.genericModelCatalog.failures = [];
@@ -105,8 +130,12 @@ describe("Matrix routes during native model catalog failure", () => {
         usage: { kind: "unavailable", authority: "unavailable", state: "not_applicable", scope: "access_source", reason: "provider_does_not_report", asOf: now.toISOString() },
       }];
     }
+    if (failure === "ineligible_model") source.eligibleModelIds = [];
     if (failure === "auth_required") { source.state = "auth_required"; source.action = "open_terminal"; }
-    if (failure === "stale") source.staleAfter = now.toISOString();
+    if (failure === "invalid_auth") { source.state = "invalid"; source.action = "retry"; source.safeReason = "auth"; }
+    if (failure === "stale_timestamp") source.staleAfter = now.toISOString();
+    if (failure === "stale_state") { source.state = "stale"; source.action = "retry"; }
+    if (failure === "future_check") source.checkedAt = "2026-08-30T10:01:00.000Z";
     if (failure === "unavailable") { source.state = "unavailable"; source.action = "retry"; }
     const snapshot = await projectProviderSettings(input);
     expect(snapshot.harnesses.find((agent) => agent.harness === "pi")).toMatchObject({
@@ -138,6 +167,24 @@ describe("Matrix routes during native model catalog failure", () => {
       });
     },
   );
+
+  it("keeps an otherwise eligible own-account route disabled without its driver", async () => {
+    const input = projectionInput("pi");
+    input.genericModelCatalog.failures = [];
+    input.config.harnesses[0]!.accessSourceId = "owner_anthropic_profile";
+    input.config.harnesses[0]!.selectedAccountId = "owner_anthropic";
+    input.canonical.drivers = input.canonical.drivers.filter((driver) => driver.id !== "pi");
+
+    const snapshot = await projectProviderSettings(input);
+
+    expect(snapshot.harnesses.find((agent) => agent.harness === "pi")).toMatchObject({
+      enabled: false,
+      installState: "missing",
+      accessSourceId: "owner_anthropic_profile",
+      selectedAccountId: "owner_anthropic",
+      routeAvailability: "available",
+    });
+  });
 
   it("preserves fixed Claude enablement for its non-Matrix provider account", async () => {
     const input = projectionInput("pi");

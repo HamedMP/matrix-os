@@ -48,6 +48,14 @@ function isFreshReady(readiness: AiProviderReadiness, now: Date): boolean {
     && Number.isFinite(staleAfter) && staleAfter > now.getTime();
 }
 
+function isAuthenticatedProviderReady(readiness: AiProviderReadiness, now: Date): boolean {
+  if (readiness.state !== "ready") return false;
+  const checkedAt = readiness.checkedAt === null ? null : Date.parse(readiness.checkedAt);
+  const staleAfter = readiness.staleAfter === null ? null : Date.parse(readiness.staleAfter);
+  return (checkedAt === null || Number.isFinite(checkedAt) && checkedAt <= now.getTime())
+    && (staleAfter === null || Number.isFinite(staleAfter) && staleAfter > now.getTime());
+}
+
 function isAuthoritativeFundedPolicy(
   policy: FundedAiEffectivePolicy | undefined,
   authoritative: boolean,
@@ -323,8 +331,9 @@ function projectHarness(input: {
     || (input.catalogUnavailable && !managedCatalogRoute);
   const nativeCredentialRoute = input.stored.harness === "pi" || input.stored.harness === "opencode";
   const routeSourceEligible = sourceEligible === true && !routeCatalogUnavailable
-    && (source.kind !== "matrix_gateway" && !nativeCredentialRoute
-      || isFreshReady(source.readiness, input.now));
+    && (source.kind === "matrix_gateway"
+      ? isFreshReady(source.readiness, input.now)
+      : !nativeCredentialRoute || isAuthenticatedProviderReady(source.readiness, input.now));
   const executionRouteAvailable = source?.kind === "matrix_gateway" || nativeCredentialRoute
     ? routeSourceEligible
     : !routeCatalogUnavailable;
