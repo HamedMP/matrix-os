@@ -2,7 +2,6 @@ import {
   CanonicalChatModelSelectionSchema,
   type CanonicalChatModelSelection,
   type CanonicalProviderDriverKind,
-  type CollaborationPolicy,
 } from "@matrix-os/contracts";
 import {
   SCOPE_RUNTIME_HARNESS_VERSION,
@@ -43,10 +42,6 @@ import {
 import type { CollaborationChatScopeService } from "./chat-scope.js";
 import type { OwnerCollaborationDatabase } from "./database.js";
 import type { CollaborationEventRegistry } from "./events.js";
-import {
-  CollaborationPolicyClient,
-  CollaborationPolicyClientError,
-} from "./policy-client.js";
 import { createScopeRuntimeBroker, createScopeRuntimeBrokerServer } from "./scope-runtime-broker.js";
 import { createScopeRuntimeChatProviderAdapter } from "./scope-runtime-chat-adapter.js";
 import {
@@ -137,13 +132,6 @@ export async function createSharedAiRuntime(options: {
     return { available: false as const, async shutdown(): Promise<void> {} };
   }
   await options.chatScope.reconcileExecutionEligibility({ executionGeneration, eligibility });
-  const policy = new CollaborationPolicyClient({
-    platformBaseUrl: options.platformBaseUrl,
-    runtimeId: options.runtimeId,
-    serviceToken: options.serviceToken,
-    verifier: options.verifier,
-    ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
-  });
   const registry = new SharedAiRuntimeRegistry();
   const resolveAccessSource = options.resolveAccessSource
     ?? (async () => (await resolveKernelCredentialSources(
@@ -157,7 +145,6 @@ export async function createSharedAiRuntime(options: {
       throw new Error("The fixed shared Chat adapter does not expose approval callbacks");
     },
     submitCancellation: createSharedAiCancellationDispatcher({
-      policy,
       authority: options.authority,
       orchestrator: options.orchestrator,
     }),
@@ -172,20 +159,16 @@ export async function createSharedAiRuntime(options: {
     }),
   });
   const dispatch = async (scopeId: string, chatId: string): Promise<void> => {
-    const preflightPolicy = await policy.getM2();
-    if (preflightPolicy.mode === "off" || preflightPolicy.mode === "read_only") return;
     await options.orchestrator.dispatchNextSharedQueued(
       { type: "personal", ownerId: await ownerIdFor(options.db, scopeId, chatId) },
       chatId,
       scopeId,
       async (execution) => {
         try {
-          const currentPolicy = await policy.getM2();
           const context = await options.authority.authorize({
             scopeId,
             actorId: execution.requestingActorId,
             action: "request_ai",
-            executionPolicy: currentPolicy,
           });
           if (context.resourceId !== chatId || context.ownerId.length === 0
             || execution.executionGeneration !== executionGeneration
@@ -244,10 +227,8 @@ export async function createSharedAiRuntime(options: {
               error.code === "not_found" || error.code === "forbidden" ? "unauthorized" : "unavailable",
             );
           }
-          if (!(error instanceof CollaborationPolicyClientError)) {
-            console.warn("[collaboration] shared AI preparation unavailable",
-              error instanceof Error ? error.name : "UnknownError");
-          }
+          console.warn("[collaboration] shared AI preparation unavailable",
+            error instanceof Error ? error.name : "UnknownError");
           throw new SharedChatRunPreparationError("unavailable");
         }
       },
@@ -321,12 +302,10 @@ export async function createSharedAiRuntime(options: {
       const binding = registry.lookup(request);
       if (!binding) return { allowed: false };
       try {
-        const currentPolicy = await policy.getM2();
         const context = await options.authority.authorize({
           scopeId: binding.scopeId,
           actorId: binding.actorId,
           action: "request_ai",
-          executionPolicy: currentPolicy,
         });
         if (context.resourceId !== binding.chatId || context.ownerId !== binding.ownerId) {
           return { allowed: false };
@@ -375,7 +354,6 @@ export async function createSharedAiRuntime(options: {
             .execute();
           return rows.map((row) => ({ scopeId: row.scope_id, chatId: row.chat_id }));
         },
-        getPolicy: () => policy.getM2(),
         dispatch,
       });
     } catch (error: unknown) {
@@ -522,14 +500,11 @@ function usableCredentialState(state: KernelCredentialObservationState): boolean
 export async function recoverSharedAiQueue(options: {
   reconcilePendingApprovals(): Promise<void>;
   listQueued(): Promise<readonly { scopeId: string; chatId: string }[]>;
-  getPolicy(): Promise<Pick<CollaborationPolicy, "mode">>;
   dispatch(scopeId: string, chatId: string): Promise<void>;
 }): Promise<void> {
   await options.reconcilePendingApprovals();
   const rows = await options.listQueued();
   if (rows.length === 0) return;
-  const policy = await options.getPolicy();
-  if (policy.mode === "off" || policy.mode === "read_only") return;
   const scopes: Record<string, { scopeId: string; chatId: string }> = Object.create(null) as Record<
     string,
     { scopeId: string; chatId: string }
@@ -539,7 +514,6 @@ export async function recoverSharedAiQueue(options: {
 }
 
 export function createSharedAiCancellationDispatcher(options: {
-  policy: Pick<CollaborationPolicyClient, "getM2">;
   authority: Pick<CollaborationAuthority, "authorize">;
   orchestrator: Pick<CanonicalChatOrchestrator, "cancelSharedRun">;
 }) {
@@ -551,12 +525,10 @@ export function createSharedAiCancellationDispatcher(options: {
     clientRequestId: string;
     actorId: string;
   }): Promise<void> => {
-    const currentPolicy = await options.policy.getM2();
     const context = await options.authority.authorize({
       scopeId: input.scopeId,
       actorId: input.actorId,
       action: "control_execution",
-      executionPolicy: currentPolicy,
     });
     if (context.resourceKind !== "chat" || context.resourceId !== input.chatId) {
       throw new CollaborationAuthorizationError("not_found", "Shared Chat access is required");

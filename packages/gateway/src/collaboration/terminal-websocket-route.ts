@@ -15,7 +15,6 @@ import type { CollaborationTerminalDispatcher } from "./terminal-dispatcher.js";
 import type { CollaborationTerminalEventRegistry } from "./terminal-events.js";
 
 const PROOF_HEADER = "x-matrix-collaboration-proof";
-const POLICY_HEADER = "x-matrix-collaboration-policy";
 const MAX_FRAME_BYTES = 64 * 1024;
 const MAX_PENDING_FRAMES = 8;
 const TerminalQuerySchema = z.object({ after: CollaborationRevisionSchema.default("0") }).strict();
@@ -43,7 +42,7 @@ export function registerCollaborationTerminalWebSocketRoute(options: {
       let session: TerminalSession | null = null;
       let actorId: string | null = null;
       let connectionId: string | null = null;
-      let policyExpiry: ReturnType<typeof setTimeout> | null = null;
+      let proofExpiry: ReturnType<typeof setTimeout> | null = null;
       let socketClosed = false;
       let processing = Promise.resolve();
       const pendingFrames: string[] = [];
@@ -58,9 +57,7 @@ export function registerCollaborationTerminalWebSocketRoute(options: {
             return;
           }
           const action = CollaborationTerminalActionSchema.parse(parsed);
-          const policy = options.verifier.verifyPolicy(decodeHeader(context, POLICY_HEADER));
-          requireM3Policy(policy, actorId, undefined, true);
-          await options.dispatcher.dispatch({ scopeId, actorId, connectionId, policy, action });
+          await options.dispatcher.dispatch({ scopeId, actorId, connectionId, action });
           await options.registry.publishState(scopeId);
           session.touch();
         }).catch((error: unknown) => {
@@ -80,8 +77,6 @@ export function registerCollaborationTerminalWebSocketRoute(options: {
               query: rawQuery(context),
             });
             if (proof.scopeId !== scopeId) throw new Error("scope mismatch");
-            const policy = options.verifier.verifyPolicy(decodeHeader(context, POLICY_HEADER));
-            requireM3Policy(policy, proof.actorId, proof.ownerId);
             const authorized = await options.authority.authorize({
               scopeId,
               actorId: proof.actorId,
@@ -110,11 +105,14 @@ export function registerCollaborationTerminalWebSocketRoute(options: {
             connectionId = nextConnectionId;
             session = opened;
             const currentTime = options.now?.().getTime() ?? Date.now();
-            policyExpiry = setTimeout(() => {
+            // Fixed-expiry lease: the socket lives no longer than the proof
+            // that admitted it (S20 removed the policy lease; S05 replaces
+            // this with direct session leases).
+            proofExpiry = setTimeout(() => {
               sendError(ws);
-              ws.close(1008, "Policy expired");
-            }, Math.max(1, Date.parse(policy.expiresAt) - currentTime));
-            policyExpiry.unref?.();
+              ws.close(1008, "Lease expired");
+            }, Math.max(1, Date.parse(proof.expiresAt) - currentTime));
+            proofExpiry.unref?.();
             for (const frame of pendingFrames.splice(0)) processFrame(frame, ws);
           })().catch((error: unknown) => {
             console.warn("[collaboration-terminal-ws] socket setup failed", error instanceof Error ? error.name : "UnknownError");
@@ -145,7 +143,7 @@ export function registerCollaborationTerminalWebSocketRoute(options: {
         onClose() {
           socketClosed = true;
           pendingFrames.splice(0);
-          if (policyExpiry) clearTimeout(policyExpiry);
+          if (proofExpiry) clearTimeout(proofExpiry);
           if (connectionId) options.control.markDisconnected(scopeId, connectionId);
           session?.close();
           session = null;
@@ -153,17 +151,6 @@ export function registerCollaborationTerminalWebSocketRoute(options: {
       };
     }),
   );
-}
-
-function requireM3Policy(
-  policy: { milestone: string; mode: string; cohort: string[] },
-  actorId: string,
-  ownerId?: string,
-  control = false,
-): void {
-  if (policy.milestone !== "m3" || policy.mode === "off" || (control && policy.mode === "read_only")
-    || (policy.mode === "internal" && (!policy.cohort.includes(actorId)
-      || (ownerId !== undefined && !policy.cohort.includes(ownerId))))) throw new Error("policy unavailable");
 }
 
 function parseQuery(context: Context): z.infer<typeof TerminalQuerySchema> {

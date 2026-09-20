@@ -17,6 +17,11 @@ import { CollaborationDiscussionAdapter } from "./discussion-adapter.js";
 import { registerCollaborationEventWebSocketRoute } from "./event-websocket-route.js";
 import { CollaborationEventRegistry } from "./events.js";
 import { CollaborationParticipantResolver } from "./participant-resolver.js";
+import {
+  createOrganizationPrecondition,
+  type OrganizationMembershipSource,
+  type OrganizationPrecondition,
+} from "./organization-precondition.js";
 import { CollaborationRepository } from "./repository.js";
 import { createCollaborationRoutes } from "./routes.js";
 import { createSharedAiRuntime } from "./shared-ai-runtime.js";
@@ -57,6 +62,12 @@ export {
 } from "./config.js";
 export { registerFailClosedCollaborationRoutes } from "./fail-closed.js";
 export { constructGatewayCollaborationOrFailClosed } from "./construct.js";
+export {
+  createOrganizationPrecondition,
+  type OrganizationMembershipAssertion,
+  type OrganizationMembershipSource,
+  type OrganizationPrecondition,
+} from "./organization-precondition.js";
 
 export async function createGatewayCollaboration(options: {
   db: Kysely<OwnerCollaborationDatabase>;
@@ -71,6 +82,13 @@ export async function createGatewayCollaboration(options: {
   };
   startTimers?: boolean;
   projectSource?: CollaborationProjectSource;
+  /**
+   * Optional membership source registered at construction. Production leaves
+   * this unset until the S03 projection registers itself, so every request
+   * is denied by the organization precondition (S20).
+   */
+  organizationMembershipSource?: OrganizationMembershipSource;
+  organizationPrecondition?: OrganizationPrecondition;
 }) {
   await bootstrapCollaborationDatabase(options.db);
   await cleanupExpiredArtifacts(options.db, new Date());
@@ -86,7 +104,11 @@ export async function createGatewayCollaboration(options: {
     ?? ((actorId: string) => participantResolver!.resolve(actorId));
   const resolveInvitationIdentifier = options.resolveInvitationIdentifier
     ?? ((identifier: string) => participantResolver!.resolveInvitationIdentifier(identifier));
-  const authority = new CollaborationAuthority(repository);
+  const organizationPrecondition = options.organizationPrecondition
+    ?? createOrganizationPrecondition(options.organizationMembershipSource
+      ? { source: options.organizationMembershipSource }
+      : {});
+  const authority = new CollaborationAuthority(repository, { organizationPrecondition });
   const verifier = new CollaborationActorProofVerifier({
     runtimeId: options.config.runtimeId,
     keys: options.config.proofKeys,
@@ -153,6 +175,7 @@ export async function createGatewayCollaboration(options: {
   return {
     repository,
     authority,
+    organizationPrecondition,
     verifier,
     eventRegistry,
     chatScope,
