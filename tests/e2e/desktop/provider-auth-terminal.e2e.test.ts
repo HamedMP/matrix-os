@@ -59,7 +59,6 @@ it("reveals a closed Terminal for Connect and refreshes auth after logout", asyn
     await terminal.waitFor({ state: "hidden" });
     await settings();
     await page.getByRole("button", { name: "Log in Claude", exact: true }).click();
-    await page.getByRole("button", { name: "Continue in Terminal", exact: true }).click();
     await terminal.waitFor();
     await terminal.getByText("Connect Claude", { exact: true }).first().waitFor();
     expect(gateway.commands).toHaveLength(1);
@@ -74,8 +73,8 @@ it("reveals a closed Terminal for Connect and refreshes auth after logout", asyn
     expect(await page.getByRole("button", { name: "Log in Claude", exact: true }).count()).toBe(0);
     await page.screenshot({ path: join(output, "authenticated-disconnect.png") });
     await disconnect.click();
-    await terminal.waitFor({ state: "hidden" });
     await page.getByRole("button", { name: "Log in Claude", exact: true }).waitFor();
+    await terminal.waitFor({ state: "hidden" });
     expect(gateway.commands).toHaveLength(1);
     await page.screenshot({ path: join(output, "logged-out.png") });
   } catch (error) {
