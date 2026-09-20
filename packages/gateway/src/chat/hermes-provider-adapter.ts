@@ -290,6 +290,7 @@ function deferred<T>() {
 
 export function createHermesChatProviderAdapter(options: {
   homePath: string;
+  toolOutputKey?: Buffer;
   spawnFn?: HermesGatewaySpawn;
   timeoutMs?: number;
   readyTimeoutMs?: number;
@@ -563,7 +564,8 @@ export function createHermesChatProviderAdapter(options: {
           summary: hermesActivitySummary(activity.kind, failed),
         });
         const output = hermesToolOutput(stored?.name ?? hermesToolName(parsed.data.name), parsed.data.result,
-          (stored?.privateContext ?? true) || hermesToolHasPrivateContext(parsed.data.args));
+          (stored?.privateContext ?? true) || hermesToolHasPrivateContext(parsed.data.args),
+          options.toolOutputKey ? { key: options.toolOutputKey, toolCallId: activityId } : undefined);
         if (output) queue.push({ type: "tool.output", toolCallId: activityId, ...output });
       } else if (event.type === "subagent.start" || event.type === "subagent.spawn_requested") {
         const parsed = HermesSubagentStartSchema.parse(event.payload);

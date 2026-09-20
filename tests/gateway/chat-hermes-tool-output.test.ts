@@ -2,16 +2,25 @@ import { describe, expect, it, vi } from "vitest";
 import { createHermesChatProviderAdapter } from "../../packages/gateway/src/chat/hermes-provider-adapter.js";
 import { fakeGateway, baseInput } from "./hermes-test-gateway.js";
 
+import { openToolOutput } from "../../packages/gateway/src/coding-agents/protected-tool-output.mjs";
+const key = Buffer.alloc(32, 5);
+
 async function runTool(name: string, args: unknown, result: unknown) {
   const gateway = fakeGateway();
-  const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+  const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", toolOutputKey: key, spawnFn: gateway.spawnFn });
   const promise = (async () => { const events = []; for await (const event of adapter.start(baseInput)) events.push(event); return events; })();
   await vi.waitFor(() => expect(gateway.requests.some(r => r.method === "prompt.submit")).toBe(true));
   gateway.event("tool.start", { tool_id: "tool_test", name, args });
   // Official completions may omit the original arguments.
   gateway.event("tool.complete", { tool_id: "tool_test", result });
   gateway.event("message.complete", { text: "Done.", status: "complete" });
-  return promise;
+  const events = await promise;
+  return events.map(event => {
+    if (event.type !== "tool.output" || !event.protectedOutput) return event;
+    expect(event.text).toBe("Tool output is private to its owner.");
+    const { protectedOutput, ...coarse } = event;
+    return { ...coarse, text: openToolOutput(key, event.toolCallId, protectedOutput) };
+  });
 }
 
 describe("Hermes safe tool output publication", () => {

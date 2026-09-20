@@ -153,7 +153,8 @@ function normalizeEvent(
   if (event.type === "tool.output") {
     const text = CanonicalChatToolOutputTextSchema.safeParse(event.text);
     return text.success ? [{ type: "tool.output", toolCallId: event.toolCallId,
-      text: text.data, truncated: event.truncated ?? false }] : [];
+      text: text.data, truncated: event.truncated ?? false,
+      ...(event.protectedOutput ? { protectedOutput: event.protectedOutput } : {}) }] : [];
   }
   if (event.type === "tool.completed") {
     const toolActivity = toolActivities.get(event.toolCallId);

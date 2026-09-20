@@ -7,18 +7,42 @@ preview text cannot be displayed. A command preview uses the thread event's
 Rejected optional metadata is omitted independently. An incomplete preview/kind
 pair is omitted together, without discarding the start event.
 
-The detached Codex runner publishes bounded command output and text blocks from
-MCP results. Sensitive output or sensitive command/argument context is withheld
-before journal persistence. Unsupported result envelopes retain a coarse result
-notice. Output is capped at 4,000 characters and reports truncation. Canonical
-Chat independently validates tool output against its client-safe output contract;
-other coding harness outputs pass through that same publication boundary.
+All arbitrary tool result text is **private owner content**, including text that
+contains no recognizable secret marker. A denylist cannot prove a string safe.
+The detached Codex runner seals bounded results with AES-256-GCM before writing
+the journal. Hermes uses the same sealing path before yielding a provider event.
+The tool call ID is authenticated as associated data; tampering, a different
+identity or a different key fails closed. General `tool.output.text` remains a
+coarse notice, while `protectedOutput` carries only a bounded encrypted envelope.
+This applies equally to terminal, file-read and MCP text envelopes. Arbitrary
+objects and binary content are never serialized.
 
-Hermes also publishes bounded text results for terminal, file-read and MCP tools through
-the same privacy and canonical output validation boundary. It retains only the
-tool name and a private-context bit across start/completion frames, including
-when completion omits its original name or arguments. Unknown result envelopes
-remain summary-only; arbitrary objects and binary content are not serialized.
+The per-runtime 32-byte key is owner configuration under
+`system/.tool-output.key`, created atomically with mode 0600. Concurrent startup
+and gateway/runner restarts reuse the same key. Symlink keys, invalid lengths,
+other-user ownership and group/world permissions are rejected. The key must be
+preserved with owner configuration during backup/recovery; losing it leaves old
+results unavailable. New results without a configured key remain summary-only.
+No key or plaintext result is placed in the provider event or database outbox.
+
+Only the authenticated personal-owner Chat detail response and content stream
+may decrypt. They require both matching Chat ownership and the configured VPS
+owner, reject shared Chats, and never mutate repository/outbox objects. Legacy
+thread views, generic event consumers, telemetry, collaboration and share
+snapshots do not decrypt. Share snapshots select user/assistant text only, not
+activities. This does not prevent an assistant/user from deliberately quoting
+content in a message; message sharing remains an explicit separate action.
+Known credential/path patterns and sensitive command context are still withheld
+as defense in depth, but are not the privacy boundary. The authorized owner can
+see unmatched opaque private content; this is not a public-safe text guarantee.
+Host/process compromise and an owner reading their own runtime key are outside
+this boundary. No new cross-owner filesystem or provider authority is granted.
+
+Output remains capped at 4,000 UTF-16 units / 16 KiB and reports truncation.
+Hermes retains only the tool name and a private-context bit across
+start/completion frames, including when completion omits its name/arguments.
+Unknown envelopes remain summary-only. Unencrypted historical output is not
+backfilled or represented as retroactively encrypted by this change.
 
 Canonical activities remain the source of truth for live delivery and reload.
 Renderers combine working-directory/status detail with tool output instead of
@@ -34,7 +58,23 @@ new grouping rules, expose arbitrary raw argument objects, or reconstruct data
 that an older runner/parser already discarded. It does not change execution,
 authorization, database ownership, or share/export visibility rules.
 
+## Authorization and persistence checks
+
+| Path | Required identity | Result handling |
+| --- | --- | --- |
+| Personal Chat detail | Authenticated matching Chat owner and runtime owner | Decrypt response copy only |
+| Personal content stream, live/replay | Same owner checks after stream authorization | Decrypt frame copy only |
+| Wrong owner, shared Chat | No private output grant | Coarse notice |
+| Journal, Postgres activities, outbox | Runtime write authority | Ciphertext and coarse notice |
+| Share snapshot, telemetry, legacy thread | No private output grant | No decryption |
+
 ## Regression checks
+
+- `tests/gateway/protected-tool-output.test.ts`: opaque text, authenticated
+  encryption, concurrent key creation and restart key reuse.
+- `tests/gateway/owner-tool-output.test.ts`: owner/wrong-owner/shared boundaries,
+  live/replay delivery, and unchanged encrypted repository/outbox/telemetry.
+
 
 - `tests/gateway/codex-tool-display-contract.test.ts`: long commands, long
   directories, malformed/unsafe optional fields and multiline results.

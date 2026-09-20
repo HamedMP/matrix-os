@@ -10,7 +10,7 @@ export function hermesToolHasPrivateContext(args: unknown): boolean {
     || codexToolHasPrivateContext({ arguments: args, command: typeof command === "string" ? command : "" });
 }
 
-export function hermesToolOutput(name: string, result: unknown, privateContext: boolean) {
+export function hermesToolOutput(name: string, result: unknown, privateContext: boolean, protection?: { key: Buffer; toolCallId: string }) {
   const normalized = name.trim().toLowerCase();
   const supported = ["terminal", "shell", "bash", "execute", "execute_code", "run_command", "read", "read_file"].includes(normalized)
     || normalized.includes("mcp");
@@ -23,8 +23,8 @@ export function hermesToolOutput(name: string, result: unknown, privateContext: 
     : typeof record?.output === "string" ? record.output
     : typeof record?.content === "string" ? record.content
     : Array.isArray(record?.content) ? { content: record.content } : undefined;
-  const output = codexToolOutput({ result: value }, privateContext);
+  const output = codexToolOutput({ result: value }, privateContext, protection);
   if (!output) return undefined;
   const text = CanonicalChatToolOutputTextSchema.safeParse(output.text);
-  return text.success ? { text: text.data, truncated: output.truncated } : undefined;
+  return text.success ? { ...output, text: text.data } : undefined;
 }

@@ -28,6 +28,14 @@ const TerminalRefSchema = z.object({
 const ReviewIdSchema = referenceId(128);
 const CursorSchema = referenceId(160);
 const SafeDisplayStringSchema = boundedDisplayText(120, 512);
+// Opaque encrypted owner content. General activity consumers never decrypt it.
+export const ProtectedToolOutputSchema = z.object({
+  version: z.literal(1),
+  iv: z.string().length(16).regex(/^[A-Za-z0-9+/]+$/),
+  tag: z.string().length(24).regex(/^[A-Za-z0-9+/]+={0,2}$/),
+  data: z.string().min(4).max(22_000).regex(/^[A-Za-z0-9+/]+={0,2}$/),
+}).strict();
+
 export const AgentToolPreviewSchema = boundedDisplayText(1_000, 4_000);
 export const AgentToolDetailSchema = boundedDisplayText(2_000, 8_000);
 const AssistantTextDeltaSchema = z.string()
@@ -191,7 +199,7 @@ const CoreAgentThreadEventSchema = z.discriminatedUnion("type", [
       context.addIssue({ code: "custom", message: "Tool preview and kind must be provided together" });
     }
   }),
-  BaseThreadEventSchema.extend({ type: z.literal("tool.output"), toolCallId: referenceId(128), text: boundedText(4_000, 16 * 1024), truncated: z.boolean().optional() }).strict(),
+  BaseThreadEventSchema.extend({ type: z.literal("tool.output"), toolCallId: referenceId(128), text: boundedText(4_000, 16 * 1024), protectedOutput: ProtectedToolOutputSchema.optional(), truncated: z.boolean().optional() }).strict(),
   BaseThreadEventSchema.extend({ type: z.literal("tool.completed"), toolCallId: referenceId(128), outcome: z.enum(["success", "failed", "cancelled"]) }).strict(),
   BaseThreadEventSchema.extend({ type: z.literal("approval.requested"), approval: AgentApprovalRequestSchema }).strict(),
   BaseThreadEventSchema.extend({ type: z.literal("approval.resolved"), approvalId: ApprovalIdSchema, decision: ApprovalDecisionSchema }).strict(),

@@ -1,3 +1,4 @@
+import { loadToolOutputKey, openToolOutput } from "../../packages/gateway/src/coding-agents/protected-tool-output.mjs";
 import { spawn, type ChildProcess } from "node:child_process";
 import { chmod, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createConnection, type Socket } from "node:net";
@@ -147,7 +148,7 @@ async function startFakeRuntime(
     config,
   ], {
     cwd: homePath,
-    env: { ...process.env, ...options.env,
+    env: { ...process.env, ...options.env, MATRIX_HOME: homePath,
       ...(options.stubControlServer ? { NODE_OPTIONS: `--import=${stubControlServerPath}` } : {}),
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -200,8 +201,12 @@ describe("Codex app-server runner reliability", () => {
       await waitForTranscript(runtime.eventPath, /"type":"turn\.completed"/);
       const events = await replayTranscript(runtime.eventPath);
       expect(await readFile(runtime.eventPath, "utf8")).not.toContain("opaque-value");
+      expect(await readFile(runtime.eventPath, "utf8")).not.toContain("12 tests passed");
+      const result = events.find(event => event.type === "tool.output" && event.protectedOutput);
+      expect(result?.type).toBe("tool.output");
+      if (result?.type === "tool.output") expect(openToolOutput(await loadToolOutputKey(runtime.homePath), result.toolCallId, result.protectedOutput)).toBe("12 tests passed\n");
       expect(events).toContainEqual(expect.objectContaining({ type: "tool.started", displayName: "Run command", preview: command, previewKind: "command" }));
-      expect(events).toContainEqual(expect.objectContaining({ type: "tool.output", text: "12 tests passed\n", truncated: false }));
+      expect(events).toContainEqual(expect.objectContaining({ type: "tool.output", text: "Tool output is private to its owner.", truncated: false }));
     } finally {
       await cleanup(runtime);
     }

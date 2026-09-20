@@ -1,2 +1,2 @@
-export function codexToolOutput(item: Record<string, unknown>, privateContext?: boolean): { text: string; truncated: boolean } | undefined;
+export function codexToolOutput(item: Record<string, unknown>, privateContext?: boolean, protection?: { key: Buffer; toolCallId: string }): { text: string; truncated: boolean; protectedOutput?: import("./protected-tool-output.mjs").ProtectedToolOutput } | undefined;
 export function codexToolHasPrivateContext(item: Record<string, unknown>): boolean;

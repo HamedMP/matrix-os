@@ -1,7 +1,7 @@
 import { z } from "zod/v4";
 import { ChatRunContextSchema, isChatAgentDriver } from "#chat-agent-context";
 import { IsoTimestampSchema, ProviderModelReferenceSchema } from "#contract-primitives";
-import { UserInputQuestionListSchema, MAX_AGENT_ATTACHMENT_BYTES } from "#agent-thread-contracts";
+import { UserInputQuestionListSchema, MAX_AGENT_ATTACHMENT_BYTES, ProtectedToolOutputSchema } from "#agent-thread-contracts";
 import {
   CanonicalChatExecutionRootRefSchema,
   CanonicalProviderDriverKindSchema,
@@ -496,6 +496,7 @@ export const CanonicalChatRunActivitySchema = z.discriminatedUnion("type", [
     type: z.literal("tool.output"),
     toolCallId: canonicalReferenceId(128),
     text: CanonicalChatToolOutputTextSchema,
+    protectedOutput: ProtectedToolOutputSchema.optional(),
     truncated: z.boolean(),
   }).strict(),
   CanonicalChatRunActivityBaseSchema.extend({

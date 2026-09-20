@@ -5,6 +5,7 @@ import {
   AgentToolPreviewSchema,
   AgentToolDetailSchema,
   CanonicalChatToolOutputTextSchema,
+  ProtectedToolOutputSchema,
   ApprovalIdSchema,
   CorrelationIdSchema,
   RequestIdSchema,
@@ -152,6 +153,7 @@ const MatrixCodexRecordSchema = z.discriminatedUnion("type", [
     type: z.literal("matrix.codex.tool.output"),
     toolCallId: CodexItemIdSchema,
     text: CanonicalChatToolOutputTextSchema,
+    protectedOutput: ProtectedToolOutputSchema.optional(),
     truncated: z.boolean(),
   }).strict(),
   z.object({
@@ -291,6 +293,7 @@ function appServerRecordEvents(
       type: "tool.output",
       toolCallId: record.toolCallId,
       text: record.text,
+      ...(record.protectedOutput ? { protectedOutput: record.protectedOutput } : {}),
       truncated: record.truncated,
     })];
   }

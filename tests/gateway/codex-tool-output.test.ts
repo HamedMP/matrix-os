@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { codexToolOutput } from "../../packages/gateway/src/coding-agents/codex-tool-output.mjs";
+import { codexToolOutput as protectedOutput } from "../../packages/gateway/src/coding-agents/codex-tool-output.mjs";
+
+import { openToolOutput } from "../../packages/gateway/src/coding-agents/protected-tool-output.mjs";
+const key = Buffer.alloc(32, 5);
+function codexToolOutput(item: Record<string, unknown>) {
+  const output = protectedOutput(item, false, { key, toolCallId: "test_tool" });
+  if (!output?.protectedOutput) return output;
+  return { text: openToolOutput(key, "test_tool", output.protectedOutput), truncated: output.truncated };
+}
 
 describe("Codex safe tool result display", () => {
   it("preserves bounded command results", () => {
@@ -10,7 +18,7 @@ describe("Codex safe tool result display", () => {
     expect(codexToolOutput({ type: "mcpToolCall", result: { content: [{ type: "text", text: "Found 3 documents" }] } }))
       .toEqual({ text: "Found 3 documents", truncated: false });
   });
-  it.each(["API_TOKEN=private", "password: private", "Bearer private", "/Users/private/file", "postgresql://private/db", "-----BEGIN PRIVATE KEY-----\nprivate\n-----END PRIVATE KEY-----", "{\"access_token\":\"private\"}"])("withholds sensitive output: %s", (aggregatedOutput) => {
+  it.each(["eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ0ZXN0In0.c3ludGhldGlj", "API_TOKEN=private", "password: private", "Bearer private", "/Users/private/file", "postgresql://private/db", "-----BEGIN PRIVATE KEY-----\nprivate\n-----END PRIVATE KEY-----", "{\"access_token\":\"private\"}"])("withholds sensitive output: %s", (aggregatedOutput) => {
     expect(codexToolOutput({ type: "commandExecution", aggregatedOutput }))
       .toEqual({ text: "Output withheld because it may contain private data.", truncated: true });
   });

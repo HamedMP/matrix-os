@@ -1,3 +1,4 @@
+import { loadToolOutputKey } from "./protected-tool-output.mjs";
 import { codexToolHasPrivateContext, codexToolOutput } from "./codex-tool-output.mjs";
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
@@ -337,6 +338,8 @@ try {
 } catch (_error) {
   fail("Codex provider version is not verified.");
 }
+
+const toolOutputKey = process.env.MATRIX_HOME ? await loadToolOutputKey(process.env.MATRIX_HOME) : undefined;
 
 const controlPath = eventPath.replace(/\.jsonl$/, ".sock");
 await mkdir(dirname(eventPath), { recursive: true });
@@ -817,7 +820,7 @@ async function handleItemLifecycle(raw) {
     await persist({
       type: "matrix.codex.tool.output",
       toolCallId: matrixItemId,
-      ...(codexToolOutput(item, privateToolItems.has(matrixItemId)) ?? {
+      ...(codexToolOutput(item, privateToolItems.has(matrixItemId), toolOutputKey ? { key: toolOutputKey, toolCallId: matrixItemId } : undefined) ?? {
         text: item.type === "commandExecution" ? "Command produced output." : "Tool returned a result.",
         truncated: true,
       }),
