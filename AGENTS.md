@@ -536,5 +536,5 @@ Five canonical roles using default label names. See `docs/agents/triage-labels.m
 Single-context: `CONTEXT.md` + `docs/adr/` at repo root. See `docs/agents/domain.md`.
 
 <!-- SPECKIT START -->
-Current Spec Kit plan: `specs/121-collaboration-session-sharing/plan.md`.
+Current reliability plan: `specs/524-terminal-reliability/plan.md`
 <!-- SPECKIT END -->
