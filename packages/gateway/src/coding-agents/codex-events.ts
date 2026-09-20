@@ -1,4 +1,4 @@
-import { codexToolOutput } from "./codex-tool-output.mjs";
+import { codexToolOutput, coarseToolOutputText } from "./codex-tool-output.mjs";
 import { z } from "zod/v4";
 import {
   AgentThreadEventSchema,
@@ -292,7 +292,7 @@ function appServerRecordEvents(
     return [event(context, {
       type: "tool.output",
       toolCallId: record.toolCallId,
-      text: record.text,
+      text: coarseToolOutputText(record.text),
       ...(record.protectedOutput ? { protectedOutput: record.protectedOutput } : {}),
       truncated: record.truncated,
     })];

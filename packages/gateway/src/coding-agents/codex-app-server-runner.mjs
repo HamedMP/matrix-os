@@ -1,4 +1,4 @@
-import { loadToolOutputKey } from "./protected-tool-output.mjs";
+import { tryLoadToolOutputKey } from "./protected-tool-output.mjs";
 import { codexToolHasPrivateContext, codexToolOutput } from "./codex-tool-output.mjs";
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
@@ -339,7 +339,7 @@ try {
   fail("Codex provider version is not verified.");
 }
 
-const toolOutputKey = process.env.MATRIX_HOME ? await loadToolOutputKey(process.env.MATRIX_HOME) : undefined;
+const toolOutputKey = process.env.MATRIX_HOME ? await tryLoadToolOutputKey(process.env.MATRIX_HOME) : undefined;
 
 const controlPath = eventPath.replace(/\.jsonl$/, ".sock");
 await mkdir(dirname(eventPath), { recursive: true });

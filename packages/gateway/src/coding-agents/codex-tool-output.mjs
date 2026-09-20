@@ -29,3 +29,13 @@ export function codexToolOutput(item, privateContext = false, protection) {
     ...(protection ? { protectedOutput: sealToolOutput(protection.key, protection.toolCallId, bounded) } : {}),
   };
 }
+
+/** Old detached runners may survive a gateway update. Their arbitrary text is
+ * never a public-safe display field, even when a shallow schema accepts it.
+ * @param {string} text */
+export function coarseToolOutputText(text) {
+  return ["Command produced output.", "Tool returned a result.",
+    "Output withheld because it may contain private data.",
+    "Tool output is private to its owner."].includes(text)
+    ? text : "Tool output is private to its owner.";
+}

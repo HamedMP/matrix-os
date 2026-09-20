@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdtemp, rm, stat, symlink, writeFile, mkdir } from "node:fs/promises";
+import { mkdtemp, rm, stat, symlink, writeFile, mkdir, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadToolOutputKey, sealToolOutput, openToolOutput } from "../../packages/gateway/src/coding-agents/protected-tool-output.mjs";
+import { loadToolOutputKey, tryLoadToolOutputKey, sealToolOutput, openToolOutput } from "../../packages/gateway/src/coding-agents/protected-tool-output.mjs";
 import { codexToolOutput } from "../../packages/gateway/src/coding-agents/codex-tool-output.mjs";
 
 const homes: string[] = [];
@@ -26,6 +26,7 @@ describe("protected tool result boundary", () => {
     const home = await mkdtemp(join(tmpdir(), "tool-output-")); homes.push(home);
     const keys = await Promise.all([loadToolOutputKey(home), loadToolOutputKey(home)]);
     expect(keys[0]).toEqual(keys[1]);
+    expect(await readdir(join(home, "system"))).toEqual([".tool-output.key"]);
     expect(await loadToolOutputKey(home)).toEqual(keys[0]);
     expect((await stat(join(home, "system", ".tool-output.key"))).mode & 0o777).toBe(0o600);
   });
@@ -40,4 +41,12 @@ it("rejects symlink and permissive configuration keys", async () => {
   await expect(loadToolOutputKey(home)).rejects.toThrow();
   await rm(path); await writeFile(path, Buffer.alloc(32), { mode: 0o644 });
   await expect(loadToolOutputKey(home)).rejects.toThrow("Invalid tool output key");
+});
+
+it("degrades invalid keys to summary-only without leaving temporary files", async () => {
+  const home = await mkdtemp(join(tmpdir(), "tool-output-")); homes.push(home);
+  await mkdir(join(home, "system"));
+  await writeFile(join(home, "system", ".tool-output.key"), "invalid", { mode: 0o600 });
+  expect(await tryLoadToolOutputKey(home)).toBeUndefined();
+  expect(await readdir(join(home, "system"))).toEqual([".tool-output.key"]);
 });

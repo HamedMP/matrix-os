@@ -38,9 +38,9 @@ describe("Codex tool display contract", () => {
     }
   });
 
-  it("accepts bounded multiline tool output beyond short-label limits", () => {
+  it("retains a coarse event for legacy unsealed output", () => {
     const text = `${"test passed\n".repeat(30)}30 tests passed`;
     expect(parse({ type: "matrix.codex.tool.output", toolCallId: "command_1", text, truncated: false }))
-      .toEqual([expect.objectContaining({ type: "tool.output", text, truncated: false })]);
+      .toEqual([expect.objectContaining({ type: "tool.output", text: "Tool output is private to its owner.", truncated: false })]);
   });
 });

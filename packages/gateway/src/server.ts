@@ -1,4 +1,4 @@
-import { loadToolOutputKey } from "./coding-agents/protected-tool-output.mjs";
+import { tryLoadToolOutputKey } from "./coding-agents/protected-tool-output.mjs";
 import { createOwnerToolOutputProjection } from "./chat/owner-tool-output.js";
 import { createProjectChatCleanup } from "./chat/project-deletion.js";
 import { createRuntimeAppAiRoutes } from "./app-ai/runtime.js";
@@ -618,7 +618,7 @@ export async function createGateway(config: GatewayConfig) {
   const terminalRuntimeOwnerIds = terminalRuntimeOwnerId
     ? [terminalRuntimeOwnerId]
     : process.env.NODE_ENV === "production" ? [] : ["default"];
-  const toolOutputKey = await loadToolOutputKey(homePath);
+  const toolOutputKey = await tryLoadToolOutputKey(homePath);
   const projectOwnerToolOutput = createOwnerToolOutputProjection(toolOutputKey, terminalRuntimeOwnerIds);
   const codingAgentProjectManager = createProjectManager({ homePath });
   const conversationContextResolver = createConversationContextResolver(codingAgentProjectManager);

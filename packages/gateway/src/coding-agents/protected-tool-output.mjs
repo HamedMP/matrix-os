@@ -1,6 +1,6 @@
-import { createCipheriv, createDecipheriv, randomBytes, randomUUID } from "node:crypto";
+import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { constants } from "node:fs";
-import { mkdir, open, link, unlink, lstat } from "node:fs/promises";
+import { mkdir, open, lstat } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod/v4";
 
@@ -23,24 +23,42 @@ export async function loadToolOutputKey(home) {
     const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
     try {
       const info = await handle.stat();
-      if (!info.isFile() || info.size !== 32 || (info.mode & 0o077) !== 0
+      if (!info.isFile() || (info.mode & 0o077) !== 0
         || (process.getuid && info.uid !== process.getuid())) throw new Error("Invalid tool output key");
-      return await handle.readFile();
+      if (info.size === 0) throw Object.assign(new Error("Incomplete tool output key"), { code: "KEY_INCOMPLETE" });
+      if (info.size !== 32) throw new Error("Invalid tool output key");
+      const key = await handle.readFile();
+      if (key.length !== 32) throw new Error("Invalid tool output key");
+      return key;
     } finally { await handle.close(); }
   }
-  try { return await read(); }
-  catch (error) { if (error?.code !== "ENOENT") throw error; }
-  // Publish a completely written key atomically. Never overwrite another
-  // initializer's key or expose a partially written file to readers.
-  const temporary = join(directory, `.tool-output-${randomUUID()}.tmp`);
-  const handle = await open(temporary, "wx", 0o600);
-  try {
-    await handle.writeFile(randomBytes(32));
-    await handle.sync();
-    try { await link(temporary, path); }
-    catch (error) { if (error?.code !== "EEXIST") throw error; }
-  } finally { await handle.close(); await unlink(temporary); }
-  return read();
+  // Exclusive final-path creation needs no temporary files or crash-orphan
+  // cleanup. A reader never accepts a partial key, and an existing key is never
+  // replaced. A crash during creation degrades output until config is repaired.
+  let writer;
+  try { writer = await open(path, "wx", 0o600); }
+  catch (error) { if (error?.code !== "EEXIST") throw error; }
+  if (writer) {
+    try { await writer.writeFile(randomBytes(32)); await writer.sync(); }
+    finally { await writer.close(); }
+  }
+  for (let attempt = 0; ; attempt += 1) {
+    try { return await read(); }
+    catch (error) {
+      if (error?.code !== "KEY_INCOMPLETE" || attempt >= 4) throw error;
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+  }
+}
+
+/** Output protection is optional availability, never a gateway startup gate.
+ * @param {string} home */
+export async function tryLoadToolOutputKey(home) {
+  try { return await loadToolOutputKey(home); }
+  catch (error) {
+    console.warn("[chat/tool-output] Protection unavailable; using summaries:", error instanceof Error ? error.name : "UnknownError");
+    return undefined;
+  }
 }
 
 /** @param {Buffer} key @param {string} toolCallId @param {string} text */

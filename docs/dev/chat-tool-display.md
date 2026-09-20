@@ -18,11 +18,14 @@ This applies equally to terminal, file-read and MCP text envelopes. Arbitrary
 objects and binary content are never serialized.
 
 The per-runtime 32-byte key is owner configuration under
-`system/.tool-output.key`, created atomically with mode 0600. Concurrent startup
+`system/.tool-output.key`, created exclusively with mode 0600 and no temporary files. Bounded retries
+handle concurrent incomplete writes; partial keys are never used. Concurrent startup
 and gateway/runner restarts reuse the same key. Symlink keys, invalid lengths,
 other-user ownership and group/world permissions are rejected. The key must be
 preserved with owner configuration during backup/recovery; losing it leaves old
-results unavailable. New results without a configured key remain summary-only.
+results unavailable. Missing, unreadable or invalid keys degrade new results to summaries with a
+coarse server-side warning; they do not abort Gateway or runner startup. A key
+left incomplete by a crash requires operator repair and is never overwritten.
 No key or plaintext result is placed in the provider event or database outbox.
 
 Only the authenticated personal-owner Chat detail response and content stream
@@ -42,7 +45,9 @@ Output remains capped at 4,000 UTF-16 units / 16 KiB and reports truncation.
 Hermes retains only the tool name and a private-context bit across
 start/completion frames, including when completion omits its name/arguments.
 Unknown envelopes remain summary-only. Unencrypted historical output is not
-backfilled or represented as retroactively encrypted by this change.
+backfilled or represented as retroactively encrypted by this change. Old detached
+runner events are reduced to allowlisted coarse notices at ingestion and the
+canonical adapter; only sealed envelopes retain actual output across replay.
 
 Canonical activities remain the source of truth for live delivery and reload.
 Renderers combine working-directory/status detail with tool output instead of
@@ -97,3 +102,12 @@ For the Electron check, build with `bun run build:desktop`, then run
 Evidence is written to `output/chat-tool-details/`; the disposable profile and
 gateway are cleaned up after the test. This fixture check is not a production
 provider call or human approval.
+
+## Current visual evidence
+
+Built Electron Desktop, synthetic owner Chat: expanded long command, working
+directory and result after reload. This is the user-prioritized surface. Native
+Mobile physical-device acceptance remains deferred; its interaction regression
+is covered by the component test, not represented as device acceptance.
+
+![Electron Desktop expanded tool result](assets/chat-tool-details-electron.png)

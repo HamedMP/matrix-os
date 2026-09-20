@@ -66,6 +66,7 @@ async function startFakeRuntime(
   handlerLines: string[],
   options: {
     failFirstToolCompletionWrite?: boolean;
+    invalidToolOutputKey?: boolean;
     initialTranscriptBytes?: number;
     stubControlServer?: boolean;
     env?: Record<string, string>;
@@ -73,6 +74,10 @@ async function startFakeRuntime(
 ): Promise<FakeRuntime> {
   const shortName = name.slice(0, 8);
   const homePath = await mkdtemp(join("/tmp", `mx-${shortName}-`));
+  if (options.invalidToolOutputKey) {
+    await mkdir(join(homePath, "system"));
+    await writeFile(join(homePath, "system", ".tool-output.key"), "invalid", { mode: 0o600 });
+  }
   const fakePath = join(homePath, "fake-codex.mjs");
   const eventPath = codexProviderEventPath(homePath, `sess_${shortName}`);
   const controlPath = eventPath.replace(/\.jsonl$/, ".sock");
@@ -184,7 +189,7 @@ const initialize = "if (message.method === 'initialize') console.log(JSON.string
 const startThread = "else if (message.method === 'thread/start') console.log(JSON.stringify({ id: message.id, result: { thread: { id: 'native-thread' }, model: 'codex', modelProvider: 'openai', cwd: '/private/project', approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: {} } }));";
 
 describe("Codex app-server runner reliability", () => {
-  it("journals a long command and its bounded result for transcript replay", async () => {
+  it.each([false, true])("journals protected output or falls back when its key is invalid (%s)", async (invalidToolOutputKey) => {
     const command = `bun run test ${"tests/regression.test.ts ".repeat(10)}`.trim();
     const item = { id: "command", type: "commandExecution", command, cwd: "/private/project", aggregatedOutput: "12 tests passed\n", status: "completed" };
     const runtime = await startFakeRuntime("tool_details", [
@@ -196,14 +201,14 @@ describe("Codex app-server runner reliability", () => {
       "  console.log(JSON.stringify({ method: 'item/completed', params: { turnId: 'native-turn', item: { id: 'private-command', type: 'commandExecution', aggregatedOutput: 'opaque-value', status: 'completed' } } }));",
       "  console.log(JSON.stringify({ method: 'turn/completed', params: { turn: { status: 'completed' } } }));",
       "}",
-    ], { stubControlServer: true });
+    ], { stubControlServer: true, invalidToolOutputKey });
     try {
       await waitForTranscript(runtime.eventPath, /"type":"turn\.completed"/);
       const events = await replayTranscript(runtime.eventPath);
       expect(await readFile(runtime.eventPath, "utf8")).not.toContain("opaque-value");
       expect(await readFile(runtime.eventPath, "utf8")).not.toContain("12 tests passed");
       const result = events.find(event => event.type === "tool.output" && event.protectedOutput);
-      expect(result?.type).toBe("tool.output");
+      expect(result?.type).toBe(invalidToolOutputKey ? undefined : "tool.output");
       if (result?.type === "tool.output") expect(openToolOutput(await loadToolOutputKey(runtime.homePath), result.toolCallId, result.protectedOutput)).toBe("12 tests passed\n");
       expect(events).toContainEqual(expect.objectContaining({ type: "tool.started", displayName: "Run command", preview: command, previewKind: "command" }));
       expect(events).toContainEqual(expect.objectContaining({ type: "tool.output", text: "Tool output is private to its owner.", truncated: false }));

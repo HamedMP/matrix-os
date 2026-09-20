@@ -5,7 +5,7 @@ export type OwnerToolOutputProjection = <T extends Pick<CanonicalChatContent, "r
 
 /** Invoke only after repository/transport owner authorization. Never use on a
  * persistence, telemetry, collaboration, share or export path. Always copy. */
-export function createOwnerToolOutputProjection(key: Buffer, runtimeOwnerIds: readonly string[]): OwnerToolOutputProjection {
+export function createOwnerToolOutputProjection(key: Buffer | undefined, runtimeOwnerIds: readonly string[]): OwnerToolOutputProjection {
   return (owner, content) => {
     const scope = content.record.chat.ownerScope;
     const allowed = owner.type === "personal" && scope.type === "personal"
@@ -14,7 +14,7 @@ export function createOwnerToolOutputProjection(key: Buffer, runtimeOwnerIds: re
     return { ...content, ...(content.activities ? { activities: content.activities.map((activity) => {
       if (activity.type !== "tool.output" || !activity.protectedOutput) return activity;
       const { protectedOutput, ...coarse } = activity;
-      if (!allowed || activity.chatId !== content.record.chat.id) return coarse;
+      if (!key || !allowed || activity.chatId !== content.record.chat.id) return coarse;
       try {
         const result = CanonicalChatToolOutputTextSchema.safeParse(openToolOutput(key, activity.toolCallId, protectedOutput));
         return result.success ? { ...coarse, text: result.data } : coarse;

@@ -1,3 +1,4 @@
+import { coarseToolOutputText } from "../coding-agents/codex-tool-output.mjs";
 import { ChatInputNotDeliveredError } from "./input-delivery-error.js";
 import { BackgroundProjectionDetached } from "./background-run-control.js";
 import { createHash } from "node:crypto";
@@ -153,7 +154,7 @@ function normalizeEvent(
   if (event.type === "tool.output") {
     const text = CanonicalChatToolOutputTextSchema.safeParse(event.text);
     return text.success ? [{ type: "tool.output", toolCallId: event.toolCallId,
-      text: text.data, truncated: event.truncated ?? false,
+      text: coarseToolOutputText(text.data), truncated: event.truncated ?? false,
       ...(event.protectedOutput ? { protectedOutput: event.protectedOutput } : {}) }] : [];
   }
   if (event.type === "tool.completed") {
