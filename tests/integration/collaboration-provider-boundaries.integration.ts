@@ -9,7 +9,7 @@
  * never written to disk or logs.
  */
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, existsSync, accessSync, constants as fsConstants } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -43,30 +43,55 @@ afterEach(() => {
 
 /**
  * Codex reads credentials only from `$CODEX_HOME/auth.json`; there is no in-memory
- * mechanism. The copy therefore lives for one probe in a 0o700 per-run directory as a
- * 0o600 file and is removed in afterEach, afterAll and on process exit/SIGINT/SIGTERM so
- * an aborted run cannot leave the token on disk. Residual risk is recorded in
- * evidence/providers.md.
+ * handoff. The copy is therefore never written to disk: it lives in RAM-backed tmpfs
+ * (`/dev/shm`) in a 0o700 per-run directory as a 0o600 file, for the duration of one
+ * `codex exec`, and is removed right after the run, in afterEach/afterAll, and on process
+ * exit/SIGINT/SIGTERM. A SIGKILL cannot run handlers, so every harness start also sweeps
+ * stale `codex-cred-*` directories left by a killed run, and the tmpfs copy disappears on
+ * reboot regardless. If no RAM-backed tmpfs is available the probe fails instead of
+ * falling back to disk. Residual risk is recorded in evidence/providers.md.
  */
+const CREDENTIAL_TMPFS = "/dev/shm";
+const CREDENTIAL_PREFIX = "codex-cred-";
 const credentialDirs = new Set<string>();
+
 function removeCredentialDirs(): void {
   for (const dir of credentialDirs) rmSync(dir, { recursive: true, force: true });
   credentialDirs.clear();
+}
+function sweepStaleCredentialDirs(): void {
+  if (!existsSync(CREDENTIAL_TMPFS)) return;
+  for (const entry of readdirSync(CREDENTIAL_TMPFS)) {
+    if (entry.startsWith(CREDENTIAL_PREFIX)) rmSync(join(CREDENTIAL_TMPFS, entry), { recursive: true, force: true });
+  }
 }
 function onSignal(signal: NodeJS.Signals): void {
   removeCredentialDirs();
   process.off(signal, onSignal);
   process.kill(process.pid, signal);
 }
+sweepStaleCredentialDirs();
 process.once("exit", removeCredentialDirs);
 process.once("SIGINT", onSignal);
 process.once("SIGTERM", onSignal);
 afterAll(removeCredentialDirs);
 
+function ramBackedTmpfsAvailable(): boolean {
+  try {
+    if (!statSync(CREDENTIAL_TMPFS).isDirectory()) return false;
+    accessSync(CREDENTIAL_TMPFS, fsConstants.W_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function ephemeralCodexHome(authJsonPath: string): string {
-  const dir = mkdtempSync(join(tmpdir(), "codex-cred-"));
+  if (!ramBackedTmpfsAvailable()) {
+    throw new Error(`refusing to copy a credential to disk: ${CREDENTIAL_TMPFS} is not a writable RAM-backed tmpfs`);
+  }
+  const dir = mkdtempSync(join(CREDENTIAL_TMPFS, CREDENTIAL_PREFIX));
   credentialDirs.add(dir);
-  tempDirs.push(dir);
   writeFileSync(join(dir, "auth.json"), readFileSync(authJsonPath), { mode: 0o600, flag: "wx" });
   return dir;
 }
@@ -297,18 +322,24 @@ describe("S00 provider boundary probes: Codex API execution", () => {
     () => {
       const { worktreeRoot } = gitRepoWithWorktree();
       const codexHome = ephemeralCodexHome(fixtures.codexAuthJsonPath as string);
-      const result = spawnSync(codexBinary() as string, [
+      let result: ReturnType<typeof spawnSync>;
+      try {
+        result = spawnSync(codexBinary() as string, [
         "exec", "--json", "--sandbox", "read-only", "-C", worktreeRoot, "Reply with the single word ready.",
-      ], { encoding: "utf8", timeout: PROBE_TIMEOUT_MS, env: { ...process.env, CODEX_HOME: codexHome, OPENAI_API_KEY: "" } });
-      removeCredentialDirs();
-      const authRejected = /unauthori[sz]ed|not logged in|login|401|403|invalid.*token/i.test(result.stderr ?? "");
+        ], { encoding: "utf8", timeout: PROBE_TIMEOUT_MS, env: { ...process.env, CODEX_HOME: codexHome, OPENAI_API_KEY: "" } });
+      } finally {
+        removeCredentialDirs();
+      }
+      const stderr = String(result.stderr ?? "");
+      const stdout = String(result.stdout ?? "");
+      const authRejected = /unauthori[sz]ed|not logged in|login|401|403|invalid.*token/i.test(stderr);
       console.info("[s00-probe] codex subscription delegated request", { status: result.status, authRejected });
       // A delegated request is evidence of technical usability only when the provider
       // accepted it and a turn completed; a rejection or an auth error is a FAILED probe,
       // recorded as such in evidence/providers.md, never green.
-      expect(authRejected, `codex rejected the delegated credential: ${result.stderr?.slice(0, 200)}`).toBe(false);
+      expect(authRejected, `codex rejected the delegated credential: ${stderr.slice(0, 200)}`).toBe(false);
       expect(result.status).toBe(0);
-      expect(codexTurnCompleted(result.stdout ?? "")).toBe(true);
+      expect(codexTurnCompleted(stdout)).toBe(true);
     },
     PROBE_TIMEOUT_MS,
   );

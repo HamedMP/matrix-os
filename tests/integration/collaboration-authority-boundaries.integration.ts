@@ -8,7 +8,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { SignJWT, jwtVerify, generateKeyPair, errors as joseErrors } from "jose";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 
 const CLERK_API = "https://api.clerk.com/v1";
 const PROBE_TIMEOUT_MS = 60_000;
@@ -88,22 +88,55 @@ describe("S00 authority probes: local clock-skew and deadline rules (always run)
 
 describe("S00 authority probes: live Clerk organization membership", () => {
   const membershipPath = (userId: string) => `/organizations/${fixtures.orgId}/memberships/${userId}`;
+  const RESTORE_ATTEMPTS = 5;
 
   /**
-   * Restoration is registered BEFORE any mutation and runs in `finally`, so a failed
-   * assertion, API error or timeout inside `body` cannot leave the shared fixture user
-   * with a changed role. The restore is verified, not fire-and-forget.
+   * Fixture-safety protocol: the desired end state is recorded in `pendingRestores`
+   * BEFORE any mutation, restoration retries with backoff and verifies by reading back,
+   * and `afterAll` replays anything still pending (a test timeout can abandon a `finally`).
+   * A restore that still fails after retries throws loudly with the manual repair.
    */
-  async function withRoleRestored(userId: string, body: (original: string) => Promise<void>): Promise<void> {
+  const pendingRestores = new Map<string, { role: string }>();
+
+  async function restoreMembership(userId: string, role: string): Promise<boolean> {
+    for (let attempt = 1; attempt <= RESTORE_ATTEMPTS; attempt += 1) {
+      try {
+        const current = await roleOf(userId);
+        if (current === role) return true;
+        if (current === null) await clerk("POST", `/organizations/${fixtures.orgId}/memberships`, { user_id: userId, role });
+        else await clerk("PATCH", membershipPath(userId), { role });
+        if ((await roleOf(userId)) === role) return true;
+      } catch (error: unknown) {
+        console.warn("[s00-probe] clerk restore attempt failed", { attempt, name: error instanceof Error ? error.name : "UnknownError" });
+      }
+      await new Promise((r) => setTimeout(r, attempt * 1_000));
+    }
+    return false;
+  }
+
+  async function restoreOrThrow(userId: string): Promise<void> {
+    const pending = pendingRestores.get(userId);
+    if (!pending) return;
+    if (await restoreMembership(userId, pending.role)) {
+      pendingRestores.delete(userId);
+      return;
+    }
+    throw new Error(`fixture restore failed for ${userId}: manually set role ${pending.role} in organization ${fixtures.orgId}`);
+  }
+
+  afterAll(async () => {
+    for (const userId of [...pendingRestores.keys()]) await restoreOrThrow(userId);
+  });
+
+  /** Registers the restore target before `body` runs any mutation; restore is verified. */
+  async function withMembershipRestored(userId: string, body: (originalRole: string) => Promise<void>): Promise<void> {
     const original = await roleOf(userId);
     expect(original).not.toBeNull();
+    pendingRestores.set(userId, { role: original as string });
     try {
       await body(original as string);
     } finally {
-      const restored = await clerk("PATCH", membershipPath(userId), { role: original });
-      if (restored.status !== 200 || (await roleOf(userId)) !== original) {
-        throw new Error(`fixture restore failed for ${userId}: expected role ${original}`);
-      }
+      await restoreOrThrow(userId);
     }
   }
 
@@ -111,7 +144,7 @@ describe("S00 authority probes: live Clerk organization membership", () => {
     `direct role change is visible through the API within the removal bound (${unrun("COLLABORATION_PROBE_CLERK_SECRET_KEY/ORG_ID/MEMBER_USER_ID")})`,
     async () => {
       const memberUserId = fixtures.memberUserId as string;
-      await withRoleRestored(memberUserId, async (original) => {
+      await withMembershipRestored(memberUserId, async (original) => {
         const target = original === "org:member" ? "org:admin" : "org:member";
         const started = Date.now();
         const update = await clerk("PATCH", membershipPath(memberUserId), { role: target });
@@ -135,7 +168,7 @@ describe("S00 authority probes: live Clerk organization membership", () => {
     `concurrent role updates converge to one API-consistent value (${unrun("COLLABORATION_PROBE_CLERK_SECRET_KEY/ORG_ID/MEMBER_USER_ID")})`,
     async () => {
       const memberUserId = fixtures.memberUserId as string;
-      await withRoleRestored(memberUserId, async () => {
+      await withMembershipRestored(memberUserId, async () => {
         const results = await Promise.all([
           clerk("PATCH", membershipPath(memberUserId), { role: "org:admin" }),
           clerk("PATCH", membershipPath(memberUserId), { role: "org:member" }),
@@ -156,22 +189,17 @@ describe("S00 authority probes: live Clerk organization membership", () => {
       const rejoinUserId = fixtures.rejoinUserId as string;
       const before = (await listMemberships()).find((m) => m.public_user_data?.user_id === rejoinUserId);
       expect(before).toBeTruthy();
-      const originalRole = before?.role ?? "org:member";
-      // Re-admission is registered before the DELETE so an assertion failure, API error or
-      // timeout between removal and rejoin cannot leave the fixture user outside the org.
-      try {
+      // Re-admission is registered before the DELETE and verified with retries, so a failed
+      // assertion, API error or timeout between removal and rejoin cannot leave the fixture
+      // user outside the organization.
+      await withMembershipRestored(rejoinUserId, async (originalRole) => {
         const removed = await clerk("DELETE", membershipPath(rejoinUserId));
         expect(removed.status).toBe(200);
         expect(await roleOf(rejoinUserId)).toBeNull();
         const rejoined = await clerk<Membership>("POST", `/organizations/${fixtures.orgId}/memberships`, { user_id: rejoinUserId, role: originalRole });
         expect(rejoined.status).toBe(200);
         expect(rejoined.json.id).not.toBe(before?.id);
-      } finally {
-        if ((await roleOf(rejoinUserId)) === null) {
-          const readmitted = await clerk("POST", `/organizations/${fixtures.orgId}/memberships`, { user_id: rejoinUserId, role: originalRole });
-          if (readmitted.status !== 200) throw new Error(`fixture restore failed: could not re-admit ${rejoinUserId}`);
-        }
-      }
+      });
     },
     PROBE_TIMEOUT_MS,
   );
