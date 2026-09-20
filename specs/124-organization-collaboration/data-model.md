@@ -10,7 +10,7 @@ Use PostgreSQL/Kysely and existing migrations/repositories. Reuse equivalent tab
 
 | Record | Fields / invariant |
 | --- | --- |
-| organizations/memberships | Clerk IDs, explicit role/permission mapping, lifecycle, monotonic membership epoch; upstream request-start/expiry; verified webhook inbox and reconciliation; webhook alone does not create fresh positive authority |
+| organizations/memberships | Clerk IDs, default roles, AI submission enablement projected from Clerk organization public metadata (absent means owner-only), lifecycle, monotonic membership epoch; upstream request-start/expiry; verified webhook inbox and reconciliation; webhook alone does not create fresh positive authority |
 | groups/group_members/guests | Org-scoped IDs, generation, acceptance and expiry; groups contain current members; former members cannot revive access as guests without new admission |
 | organization_commands/inbox/outbox | Idempotency key + payload hash, provider event ID, pending/confirmed/failed/unknown; metadata only; external requests outside DB transactions |
 | runtime_endpoints | Runtime ID, relay-routable home address from existing customer-VPS enrollment, optional future direct origin, asymmetric public keys/key IDs, owner, protocol version, authority generation, health/last heartbeat; no caller-supplied arbitrary target URL |
@@ -34,7 +34,7 @@ V1 platform records are organizations/memberships, the organization command inbo
 | collaboration_access_requests | Actor, scope, requested capability, proposed bounded operation, approver class, state/expiry/revision; approval never creates a generic owner session |
 | direct_sessions/nonces | Actor/device key, resource, home generation, ticket nonce, expiry; bounded single-use handshake records and proof replay window |
 | collaboration_run_bindings | Existing canonical run ID plus requesting actor, executing owner, one project-selected V3 binding, payer/policy, worktree/root fingerprint, executor, Chat audience ceiling, session generation; immutable once admitted |
-| project_execution_policies | One active owner-selected V3 source, owner-only or eligible delegated submission mode, allowed harnesses/models, budget/concurrency, task profiles and integration grants; versioned owner approval |
+| project_execution_policies | One active owner-selected V3 source, submit mode (follow organization, or owner-only), owner provider-terms acknowledgement, allowed harnesses/models, budget/concurrency, task profiles and integration grants; versioned owner approval |
 | project_default_chat | Unique project ID to canonical Chat ID/root and audience binding; idempotent create/join, joining does not create a worktree or provider account |
 | project_git_operations | Requestor, owner approver, tree/ref digest, approved remote/branch/action, one-use expiry, commit/PR result and unknown/reconciling state; owner Git identity and broker-held forge credential, immutable operation audit |
 | worktree_leases | Worktree ID, Chat/run/terminal holders, fencing token, heartbeat/deadline and root fingerprint; one writer, bounded readers |

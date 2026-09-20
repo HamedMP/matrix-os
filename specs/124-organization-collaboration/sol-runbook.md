@@ -40,7 +40,7 @@ Read spec.md, plan.md, research.md, data-model.md, contracts/organization-api.md
 
 ## Gate handling
 
-Missing credentials/sandboxes do not permit fake passes. Complete unaffected work and mark the specific probe unrun. Every enrolled customer VPS is eligible through the relay; do not add per-home hostnames or certificates. Missing org prices disable those paid choices. Unsupported subscription modes require a supported API/source selection, never a personal owner default. A failed required Codex/Claude API/worktree/sandbox mode blocks release acceptance. Native Matrix participation is deferred; the managed group service still needs its enforcement evidence. Failed cutover keeps collaboration fenced until recovery, without a legacy proxy fallback.
+Missing credentials/sandboxes do not permit fake passes. Complete unaffected work and mark the specific probe unrun. Every enrolled customer VPS is eligible through the relay; do not add per-home hostnames or certificates. Missing org prices disable those paid choices. Member submission on any owner source is a product decision; do not add provider-eligibility enforcement. A failed required Codex/Claude API/worktree/sandbox mode blocks release acceptance. Native Matrix participation is deferred; the managed group service still needs its enforcement evidence. Failed cutover keeps collaboration fenced until recovery, without a legacy proxy fallback.
 
 ## Simplification receipt
 
