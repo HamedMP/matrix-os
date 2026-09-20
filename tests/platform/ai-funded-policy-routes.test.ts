@@ -374,6 +374,19 @@ describe("funded AI policy routes", () => {
     expect(await db.executor.selectFrom("ai_funded_credit_ledger")
       .selectAll().where("source_reference", "=", "first-launch-2026").execute()).toHaveLength(1);
 
+    const secondIdentity = { ownerId: "user_alice", machineId: "machine_second", runtimeSlot: "preview" };
+    await expect(enabled.repository.getFundingSummary(secondIdentity)).resolves.toMatchObject({
+      promotionalBalanceMicrousd: 250,
+      remainingBalanceMicrousd: 250,
+    });
+    const secondCredential = await enabled.repository.issueRuntimeCredential(secondIdentity);
+    await expect(enabled.repository.authorize({
+      credential: secondCredential.credential.token,
+      requestId: "owner-promotion-on-second-runtime",
+      modelId,
+      maxCostMicrousd: 250,
+    })).resolves.toMatchObject({ authorized: true, reservation: { reservedMicrousd: 250 } });
+
     const oversized = await app.request("/api/operator/ai/funded/runtimes/alice/promotional-grant", {
       method: "POST",
       headers,
@@ -396,6 +409,40 @@ describe("funded AI policy routes", () => {
     expect((await request()).status).toBe(200);
     expect(await db.executor.selectFrom("ai_funded_credit_ledger")
       .selectAll().where("source_reference", "=", "first-launch-2026").execute()).toHaveLength(1);
+  });
+
+  it.each([
+    ["disabled", async (repository: ReturnType<typeof createAiFundedPolicyRepository>) => {
+      await repository.setRuntimePolicy({
+        identity: { ownerId: "user_alice", machineId: "machine_123", runtimeSlot: "primary" },
+        expectedRevision: 1, enabled: false, allowedModelIds: [modelId], expiresAt: null,
+        monthlyBudgetMicrousd: 1_000,
+      });
+    }],
+    ["expired", async (repository: ReturnType<typeof createAiFundedPolicyRepository>) => {
+      await repository.setRuntimePolicy({
+        identity: { ownerId: "user_alice", machineId: "machine_123", runtimeSlot: "primary" },
+        expectedRevision: 1, enabled: true, allowedModelIds: [modelId], expiresAt: now,
+        monthlyBudgetMicrousd: 1_000,
+      });
+    }],
+    ["model-less", async (repository: ReturnType<typeof createAiFundedPolicyRepository>) => {
+      await repository.updateGlobalPolicy({ expectedRevision: 1, enabled: true, allowedModelIds: [] });
+    }],
+  ])("does not consume the owner starter grant for a %s policy", async (_label, makeIneligible) => {
+    const { app, repository } = await createTestApp({ promotionalGrantEnabled: true });
+    await makeIneligible(repository);
+
+    const response = await app.request("/internal/containers/alice/ai/funding-summary?runtimeSlot=primary", {
+      method: "POST",
+      headers: { authorization: `Bearer ${bearerFor("alice")}`, "content-type": "application/json" },
+      body: "{}",
+    });
+
+    expect(response.status).toBe(200);
+    expect(FundedAiRuntimeFundingSummaryResponseSchema.parse(await response.json()).policy.enabled).toBe(false);
+    expect(await db.executor.selectFrom("ai_funded_credit_ledger")
+      .selectAll().where("source_reference", "=", "first-launch-2026").execute()).toEqual([]);
   });
 
   it("issues a scoped credential from the authenticated running machine record", async () => {

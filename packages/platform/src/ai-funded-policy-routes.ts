@@ -243,6 +243,8 @@ export function createAiFundedRuntimeRoutes(options: {
       // mint it more than once.
       let summary = await options.repository.getRuntimeFundingSummary(identity);
       if (options.promotionalGrant?.enabled
+        && summary.policy.enabled
+        && summary.policy.allowedModelIds.length > 0
         && options.promotionalGrant.expiresAt > now().toISOString()) {
         await grantConfiguredPromotion(options.repository, identity, options.promotionalGrant);
         summary = await options.repository.getRuntimeFundingSummary(identity);

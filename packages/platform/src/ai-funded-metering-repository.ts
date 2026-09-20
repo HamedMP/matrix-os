@@ -157,6 +157,13 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       throw new AiFundedPolicyError("access_disabled");
     }
     await transaction.ready;
+    const ownerPromotion = grant.kind === "promotional_grant" && grant.entryId.startsWith("promotion:");
+    if (ownerPromotion) {
+      // Campaign grants are owner-scoped. Serialize their initial allocation
+      // and later runtime handoff before taking runtime balance locks.
+      await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-promotion:${grant.identity.ownerId}`}, 0))`
+        .execute(transaction.executor);
+    }
     const machine = await transaction.executor.selectFrom("user_machines").select([
         "machine_id", "clerk_user_id", "runtime_slot", "deleted_at",
       ]).where("machine_id", "=", grant.identity.machineId).forUpdate().executeTakeFirst();
@@ -181,8 +188,8 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
     const stored = await transaction.executor.selectFrom("ai_funded_credit_ledger")
       .selectAll().where("entry_id", "=", grant.entryId).executeTakeFirstOrThrow();
     // Starter campaign identities are owner-wide. Replaying the same grant on
-    // another owned runtime returns its original allocation, never new credit.
-    const ownerPromotion = grant.kind === "promotional_grant" && grant.entryId.startsWith("promotion:");
+    // another owned runtime may hand off its unallocated remainder, never mint
+    // another ledger entry or duplicate credit.
     if (stored.owner_id !== grant.identity.ownerId
       || (!ownerPromotion && (stored.machine_id !== grant.identity.machineId || stored.runtime_slot !== grant.identity.runtimeSlot))
       || stored.kind !== grant.kind
@@ -190,6 +197,62 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       || stored.source_reference !== grant.sourceReference || stored.reservation_id !== null
       || stored.expires_at !== grant.expiresAt) {
       throw new AiFundedPolicyError("idempotency_conflict");
+    }
+    if (!inserted && ownerPromotion
+      && (stored.machine_id !== grant.identity.machineId || stored.runtime_slot !== grant.identity.runtimeSlot)) {
+      const promotion = await transaction.executor.selectFrom("ai_funded_promotional_grant_balances")
+        .selectAll().where("grant_entry_id", "=", grant.entryId).forUpdate().executeTakeFirstOrThrow();
+      const remaining = exactInteger(promotion.remaining_microusd);
+      if (remaining > 0) {
+        const activeAllocation = await transaction.executor
+          .selectFrom("ai_funded_reservation_promotional_allocations as allocation")
+          .innerJoin("ai_funded_usage_reservations as reservation", "reservation.reservation_id", "allocation.reservation_id")
+          .select("allocation.reservation_id")
+          .where("allocation.grant_entry_id", "=", grant.entryId)
+          .where("reservation.status", "in", ["reserved", "starting", "in_flight", "settling"])
+          .limit(1).executeTakeFirst();
+        if (activeAllocation) throw new AiFundedPolicyError("rate_limited");
+        const targetGrantCount = await transaction.executor.selectFrom("ai_funded_promotional_grant_balances")
+          .select(({ fn }) => fn.countAll<number>().as("count"))
+          .where("owner_id", "=", grant.identity.ownerId)
+          .where("machine_id", "=", grant.identity.machineId)
+          .where("runtime_slot", "=", grant.identity.runtimeSlot)
+          .where("remaining_microusd", ">", 0).executeTakeFirstOrThrow();
+        if (exactInteger(targetGrantCount.count) >= MAX_PROMOTIONAL_GRANTS_PER_RUNTIME) {
+          throw new AiFundedPolicyError("rate_limited");
+        }
+        const sourceBalance = await transaction.executor.updateTable("ai_funded_runtime_balances").set({
+          credit_balance_microusd: sql<number>`credit_balance_microusd - ${remaining}`,
+          promotional_balance_microusd: sql<number>`promotional_balance_microusd - ${remaining}`,
+          updated_at: at,
+        }).where("owner_id", "=", promotion.owner_id)
+          .where("machine_id", "=", promotion.machine_id)
+          .where("runtime_slot", "=", promotion.runtime_slot)
+          .where("credit_balance_microusd", ">=", remaining)
+          .where("promotional_balance_microusd", ">=", remaining)
+          .returning("machine_id").executeTakeFirst();
+        if (!sourceBalance) throw new Error("Funded AI promotion source balance invariant violated");
+        const targetBalance = await transaction.executor.updateTable("ai_funded_runtime_balances").set({
+          credit_balance_microusd: sql<number>`credit_balance_microusd + ${remaining}`,
+          promotional_balance_microusd: sql<number>`promotional_balance_microusd + ${remaining}`,
+          updated_at: at,
+        }).where("owner_id", "=", grant.identity.ownerId)
+          .where("machine_id", "=", grant.identity.machineId)
+          .where("runtime_slot", "=", grant.identity.runtimeSlot)
+          .where(sql<boolean>`credit_balance_microusd <= ${Number.MAX_SAFE_INTEGER - remaining}`)
+          .where(sql<boolean>`promotional_balance_microusd <= ${Number.MAX_SAFE_INTEGER - remaining}`)
+          .returning("machine_id").executeTakeFirst();
+        if (!targetBalance) throw new Error("Funded AI promotion target balance invariant violated");
+        const moved = await transaction.executor.updateTable("ai_funded_promotional_grant_balances").set({
+          machine_id: grant.identity.machineId,
+          runtime_slot: grant.identity.runtimeSlot,
+          updated_at: at,
+          revision: promotion.revision + 1,
+        }).where("grant_entry_id", "=", grant.entryId)
+          .where("revision", "=", promotion.revision)
+          .returning("grant_entry_id").executeTakeFirst();
+        if (!moved) throw new Error("Funded AI promotion handoff invariant violated");
+      }
     }
     if (inserted) {
       if (grant.kind === "promotional_grant") {
