@@ -56,11 +56,13 @@ function TestComposer({
   onSubmit,
   client = speechClient(),
   adapter = captureAdapter,
+  unavailablePlaceholder,
 }: {
   connected?: boolean;
   onSubmit: ReturnType<typeof vi.fn>;
   client?: BrowserSpeechClient;
   adapter?: PlatformSpeechCaptureAdapter;
+  unavailablePlaceholder?: string;
 }) {
   const composer = useChatComposerDraft("chat-1", "owner-1");
   return <ChatInput
@@ -71,6 +73,7 @@ function TestComposer({
     busy={false}
     onSubmit={onSubmit}
     attachmentsEnabled={false}
+    unavailablePlaceholder={unavailablePlaceholder}
     speechClient={client}
     speechCaptureAdapter={adapter}
   />;
