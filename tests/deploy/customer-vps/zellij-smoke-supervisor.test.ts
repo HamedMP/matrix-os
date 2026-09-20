@@ -60,6 +60,40 @@ async function waitForClose(closed: Promise<number | null>, timeout: number) {
 }
 
 describe("Zellij smoke supervisor", () => {
+  it("resolves workspace packages from source when launched through its shebang", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mzc-source-resolution-"));
+    try {
+      const loader = join(root, "reject-built-terminal-runtime.mjs");
+      await writeFile(loader, `
+export async function resolve(specifier, context, nextResolve) {
+  const result = await nextResolve(specifier, context);
+  if (result.url.endsWith('/packages/terminal-runtime/dist/zellij-config.js')) {
+    throw new Error('blocked built terminal-runtime output');
+  }
+  return result;
+}
+`);
+      const script = join(process.cwd(), "scripts/smoke-zellij-session-config.ts");
+      const [shebang] = (await readFile(script, "utf8")).split("\n", 1);
+      const missingBinary = join(root, "missing-zellij");
+      const child = spawn("/usr/bin/env", [
+        "-S", shebang.replace(/^#!\/usr\/bin\/env -S /, ""), script, missingBinary,
+      ], {
+        cwd: process.cwd(),
+        env: { ...process.env, NODE_OPTIONS: `--experimental-loader=${loader}` },
+        stdio: ["ignore", "ignore", "pipe"],
+      });
+      let stderr = "";
+      child.stderr.on("data", (data) => { stderr += data; });
+      const code = await new Promise<number | null>((resolve) => child.once("close", resolve));
+      expect(code).not.toBe(0);
+      expect(stderr).not.toContain("blocked built terminal-runtime output");
+      expect(stderr).toContain(missingBinary);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("keeps supervisor startup bounded with saturated-CI headroom", () => {
     expect(SUPERVISOR_START_TIMEOUT_MS).toBeGreaterThanOrEqual(8_000);
     expect(SUPERVISOR_START_TIMEOUT_MS).toBeLessThanOrEqual(10_000);
@@ -128,7 +162,7 @@ await writeFile(join(fixture, 'session'), 'matrix-sess_1234abcd');
 await writeFile(${JSON.stringify(marker)}, JSON.stringify({pid:process.pid, fixture}));
 setInterval(() => {}, 60_000);
 `);
-      child = spawn(process.execPath, ["--import", "tsx", "scripts/smoke-zellij-session-config.ts", binary], {
+      child = spawn(process.execPath, ["--conditions=development", "--import", "tsx", "scripts/smoke-zellij-session-config.ts", binary], {
         cwd: process.cwd(), stdio: ["ignore", "pipe", "pipe"],
         env: { ...process.env, MATRIX_ZELLIJ_SMOKE_FIXTURE_WORKER: worker },
       });
