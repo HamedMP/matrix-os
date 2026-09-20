@@ -128,7 +128,10 @@ marker. The harness therefore stops an already-running supervisor only to obtain
 a cold start whose broker socket it can own, starts it again afterwards, and
 schedules a deferred `matrix-gateway` re-attach: the gateway executes the signed
 acceptance command itself and loses its production broker socket whenever the
-supervisor's runtime directory is recreated. A legacy dormant preview that still
+supervisor's runtime directory is recreated. The workflow then proves the
+re-attach happened by observing a later gateway activation timestamp and the
+recreated broker socket before it records a pass; a scheduled but unverified
+re-attach fails the run. A legacy dormant preview that still
 carries the marker is proved the same way and returned to dormant. A mock-only
 or local pass is insufficient.
 
