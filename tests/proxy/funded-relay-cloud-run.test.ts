@@ -61,7 +61,10 @@ describe("funded relay Cloud Run service", () => {
     expect(workflow).toContain("AI_RELAY_METADATA_SECRET=ai-relay-metadata-secret:latest");
     expect(workflow).toContain("--allow-unauthenticated");
     expect(workflow).toContain("traffic_flags=(--tag candidate --no-traffic)");
-    expect(workflow).not.toContain('gcloud run services describe "$AI_RELAY_CLOUD_RUN_SERVICE"');
+    expect(workflow).toContain("for _attempt in {1..10}; do");
+    expect(workflow).toContain('gcloud run services describe "$AI_RELAY_CLOUD_RUN_SERVICE"');
+    expect(workflow).toContain("sleep 3");
+    expect(workflow).toContain("Candidate relay metadata did not become ready.");
     expect(workflow).toContain(
       "actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6",
     );

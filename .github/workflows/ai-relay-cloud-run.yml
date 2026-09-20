@@ -135,7 +135,7 @@ jobs:
           # Keep the digest-pinned candidate off the default URL even when this
           # creates the service. Only the explicit promotion step may route it.
           traffic_flags=(--tag candidate --no-traffic)
-          deploy_json="$(gcloud run deploy "$AI_RELAY_CLOUD_RUN_SERVICE" \
+          gcloud run deploy "$AI_RELAY_CLOUD_RUN_SERVICE" \
             --project "$GCP_PROJECT_ID" \
             --region "$GCP_REGION" \
             --image "$IMAGE_DIGEST" \
@@ -153,11 +153,23 @@ jobs:
             "${traffic_flags[@]}" \
             --set-env-vars "MATRIX_FUNDED_AI_ENABLED=true,PLATFORM_INTERNAL_URL=${PLATFORM_INTERNAL_URL},CLOUDFLARE_AI_GATEWAY_URL=${CLOUDFLARE_AI_GATEWAY_URL},MATRIX_FUNDED_AI_GLOBAL_CONCURRENCY=16,MATRIX_FUNDED_AI_RUNTIME_CONCURRENCY=2,MATRIX_FUNDED_AI_GLOBAL_RATE_LIMIT=60,MATRIX_FUNDED_AI_RATE_LIMIT=20" \
             --set-secrets "CLOUDFLARE_AI_GATEWAY_TOKEN=cloudflare-ai-gateway-token:latest,AI_RELAY_CONTROL_TOKEN=ai-relay-control-token:latest,AI_RELAY_METADATA_SECRET=ai-relay-metadata-secret:latest" \
-            --format=json)"
-          candidate_url="$(printf '%s\n' "$deploy_json" | jq -r '.status.traffic[]? | select(.tag == "candidate") | .url // empty' | head -1)"
-          candidate_revision="$(printf '%s\n' "$deploy_json" | jq -r '.status.traffic[]? | select(.tag == "candidate") | .revisionName // empty' | head -1)"
+            --quiet
+          candidate_url=""
+          candidate_revision=""
+          for _attempt in {1..10}; do
+            service_json="$(gcloud run services describe "$AI_RELAY_CLOUD_RUN_SERVICE" \
+              --project "$GCP_PROJECT_ID" \
+              --region "$GCP_REGION" \
+              --format=json 2>/dev/null || true)"
+            candidate_url="$(printf '%s\n' "$service_json" | jq -r '.status.traffic[]? | select(.tag == "candidate") | .url // empty' | head -1)"
+            candidate_revision="$(printf '%s\n' "$service_json" | jq -r '.status.traffic[]? | select(.tag == "candidate") | .revisionName // empty' | head -1)"
+            if [ -n "$candidate_url" ] && [ -n "$candidate_revision" ]; then
+              break
+            fi
+            sleep 3
+          done
           if [ -z "$candidate_url" ] || [ -z "$candidate_revision" ]; then
-            echo "Could not resolve the candidate relay URL and revision." >&2
+            echo "Candidate relay metadata did not become ready." >&2
             exit 1
           fi
           echo "CANDIDATE_URL=$candidate_url" >> "$GITHUB_ENV"
