@@ -13,8 +13,7 @@ function routesFor(snapshot: ProviderSettingsSnapshot, harness: ProviderGenericH
     const provider = snapshot.modelProviders.find((item) => item.id === source.providerId);
     return (provider?.models ?? []).filter((model) => model.enabled
       && source.eligibleModelIds.includes(model.id)
-      && (source.kind !== "matrix_gateway" || (snapshot.gatewayPolicy?.accessSourceId === source.id
-        && snapshot.gatewayPolicy.allowedModelIds.includes(model.id)))
+      && (source.kind !== "matrix_gateway" || snapshot.gatewayPolicy?.allowedModelIds.includes(model.id))
       && isSupportedGenericHarnessCredentialRoute({
         harness, accessSourceId: source.id, route: { kind: "configurable", providerId: source.providerId, modelId: model.id },
       }, source)).map((model) => ({ source, model, provider: provider! }));

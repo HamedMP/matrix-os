@@ -37,6 +37,7 @@ function setup(value = snapshot(), overrides: Partial<React.ComponentProps<typeo
 
 function fundedSnapshot(): ProviderSettingsSnapshot {
   const value = snapshot();
+  value.atomicConnectSupported = true;
   value.accessSources = [{
     id: "matrix_included", kind: "matrix_gateway", fundingKind: "matrix_included",
     providerId: "anthropic", accountId: null, displayName: "Matrix AI", eligibleModelIds: ["sonnet"],
