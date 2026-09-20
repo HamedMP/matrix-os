@@ -2,22 +2,25 @@ import { createHmac } from "node:crypto";
 import type { Transaction } from "kysely";
 import {
   SPEECH_CONTRACT_VERSION,
+  SpeechCancellationResponseSchema,
   SpeechMediaTypeSchema,
   SpeechRequestIdSchema,
   SpeechSourceKindSchema,
+  SpeechStatusResponseSchema,
   type SpeechCapabilitiesResponse,
   type SpeechCancellationResponse,
   type SpeechStatusResponse,
   type SpeechTranscriptionResponse,
 } from "@matrix-os/contracts";
 import type { PlatformDatabase } from "../db.js";
-import type { FileTranscriptionAdapter } from "./adapters/openai.js";
+import { SpeechAdapterError, type FileTranscriptionAdapter } from "./adapters/openai.js";
 import { inspectSpeechWav, SpeechMediaError } from "./media.js";
 import {
   SpeechOperationConflictError,
   type SpeechOperationIdentity,
   type SpeechOperationRecord,
   type SpeechOperationsRepository,
+  SpeechOperationStateError,
 } from "./operations.js";
 
 const MAX_ACTIVE_TRANSCRIPTIONS = 4;
@@ -97,7 +100,7 @@ export interface PlatformSpeechService {
   transcribe(input: SpeechTranscriptionInput): Promise<SpeechTranscriptionResponse>;
   status(identity: SpeechOperationIdentity, requestId: string): Promise<SpeechStatusResponse | undefined>;
   cancel(identity: SpeechOperationIdentity, requestId: string): Promise<SpeechCancellationResponse>;
-  shutdown(): void;
+  shutdown(): Promise<void>;
 }
 
 function safeInteger(value: number, minimum: number, maximum: number, name: string): void {
@@ -132,7 +135,7 @@ function operationStatus(operation: SpeechOperationRecord): SpeechStatusResponse
     : operation.executionState === "cancelled"
       ? "terminal_no_retry_needed"
       : "same_request_safe_before_dispatch";
-  return {
+  return SpeechStatusResponseSchema.parse({
     contractVersion: SPEECH_CONTRACT_VERSION,
     requestId: operation.requestId,
     executionState: operation.executionState,
@@ -142,17 +145,17 @@ function operationStatus(operation: SpeechOperationRecord): SpeechStatusResponse
     outcomeCode: operation.outcomeCode,
     createdAt: operation.createdAt,
     updatedAt: operation.updatedAt,
-  };
+  });
 }
 
 function cancellation(operation: SpeechOperationRecord): SpeechCancellationResponse {
-  return {
+  return SpeechCancellationResponseSchema.parse({
     contractVersion: SPEECH_CONTRACT_VERSION,
     requestId: operation.requestId,
     executionState: operation.executionState,
     cancellationRequested: true,
     executionStarted: operation.executionStarted,
-  };
+  });
 }
 
 function microusdForDuration(durationMs: number, microusdPerMinute: number): number {
@@ -182,6 +185,8 @@ export function createPlatformSpeechService(options: {
   adapter: FileTranscriptionAdapter;
   fingerprintSecret: string;
   policy: PlatformSpeechPolicy;
+  cleanupIntervalMs?: number;
+  cleanupBatchSize?: number;
 }): PlatformSpeechService {
   validatePolicy(options.policy);
   if (new TextEncoder().encode(options.fingerprintSecret).byteLength < 32) {
@@ -190,6 +195,24 @@ export function createPlatformSpeechService(options: {
   const active = new Map<string, AbortController>();
   let activeSlots = 0;
   let shuttingDown = false;
+  const cleanupIntervalMs = options.cleanupIntervalMs ?? 60 * 60_000;
+  const cleanupBatchSize = options.cleanupBatchSize ?? 100;
+  if (!Number.isSafeInteger(cleanupIntervalMs) || cleanupIntervalMs < 1_000
+    || cleanupIntervalMs > 24 * 60 * 60_000
+    || !Number.isSafeInteger(cleanupBatchSize) || cleanupBatchSize < 1 || cleanupBatchSize > 1_000) {
+    throw new Error("Speech cleanup policy is invalid");
+  }
+  let cleanupPromise: Promise<void> | undefined;
+  const cleanupTimer = setInterval(() => {
+    if (cleanupPromise) return;
+    const running = options.operations.sweepExpired(cleanupBatchSize).then(() => undefined).catch((error: unknown) => {
+      console.warn("[platform-speech] metadata cleanup failed", error instanceof Error ? error.name : "UnknownError");
+    }).finally(() => {
+      if (cleanupPromise === running) cleanupPromise = undefined;
+    });
+    cleanupPromise = running;
+  }, cleanupIntervalMs);
+  cleanupTimer.unref?.();
 
   function capabilities(): SpeechCapabilitiesResponse {
     const dictation = { ...options.policy.dictation, supportedMediaTypes: [...options.policy.dictation.supportedMediaTypes] };
@@ -306,14 +329,18 @@ export function createPlatformSpeechService(options: {
       } catch (error: unknown) {
         if (error instanceof SpeechServiceError && error.code === "cancelled") throw error;
         const current = await options.operations.get(input.identity, parsedRequestId.data);
+        const providerTimedOut = error instanceof SpeechAdapterError && error.code === "timeout";
         if (current?.executionState === "dispatching") {
           await options.operations.complete(input.identity, parsedRequestId.data, {
             executionState: "uncertain",
-            outcomeCode: current.cancellationRequested ? "cancelled" : "provider_failure",
+            outcomeCode: current.cancellationRequested
+              ? "cancelled"
+              : providerTimedOut ? "timeout" : "provider_failure",
             actualCostMicrousd: current.reservedMicrousd ?? maximumCostMicrousd,
           }, (trx, reservationId) => options.funding.settle(trx, reservationId, { mode: "conservative" }));
         }
         if (current?.cancellationRequested || signal.aborted) throw new SpeechServiceError("cancelled");
+        if (providerTimedOut) throw new SpeechServiceError("timeout");
         throw new SpeechServiceError("transcription_failed");
       } finally {
         active.delete(operationKey);
@@ -329,18 +356,26 @@ export function createPlatformSpeechService(options: {
   }
 
   async function cancel(identity: SpeechOperationIdentity, requestId: string) {
-    const operation = await options.operations.cancel(identity, requestId, (trx, reservationId) => (
-      options.funding.release(trx, reservationId)
-    ));
+    let operation: SpeechOperationRecord;
+    try {
+      operation = await options.operations.cancel(identity, requestId, (trx, reservationId) => (
+        options.funding.release(trx, reservationId)
+      ));
+    } catch (error: unknown) {
+      if (error instanceof SpeechOperationStateError) throw new SpeechServiceError("result_not_replayable");
+      throw error;
+    }
     const operationKey = `${identity.ownerId}\0${identity.machineId}\0${identity.runtimeSlot}\0${requestId}`;
     active.get(operationKey)?.abort();
     return cancellation(operation);
   }
 
-  function shutdown(): void {
+  async function shutdown(): Promise<void> {
     shuttingDown = true;
+    clearInterval(cleanupTimer);
     for (const controller of active.values()) controller.abort();
     active.clear();
+    await cleanupPromise;
   }
 
   return { capabilities, transcribe, status, cancel, shutdown };
@@ -367,6 +402,6 @@ export function createUnavailablePlatformSpeechService(
     transcribe: unavailable,
     status: async () => undefined,
     cancel: unavailable,
-    shutdown: () => undefined,
+    shutdown: async () => undefined,
   };
 }

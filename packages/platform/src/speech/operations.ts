@@ -287,7 +287,9 @@ export function createSpeechOperationsRepository(options: {
     const identity = parseIdentity(identityInput);
     const requestId = SpeechRequestIdSchema.parse(requestIdInput);
     const completion = CompletionSchema.parse(completionInput);
-    const checkedAt = now().toISOString();
+    const checked = now();
+    const checkedAt = checked.toISOString();
+    const expiresAt = new Date(checked.getTime() + metadataRetentionMs).toISOString();
     await options.db.ready;
     return options.db.transaction(async (trx) => {
       const row = await scopedRow(trx.executor, identity, requestId, true);
@@ -306,6 +308,7 @@ export function createSpeechOperationsRepository(options: {
         safe_outcome_code: completion.outcomeCode,
         actual_microusd: completion.actualCostMicrousd,
         updated_at: checkedAt,
+        expires_at: expiresAt,
       }).where("owner_id", "=", identity.ownerId)
         .where("machine_id", "=", identity.machineId)
         .where("runtime_slot", "=", identity.runtimeSlot)
@@ -357,6 +360,10 @@ export function createSpeechOperationsRepository(options: {
       const row = await scopedRow(trx.executor, identity, requestId, true);
       if (!row) throw new SpeechOperationStateError();
       if (row.tombstone) return operationRecord(row);
+      if (row.execution_state === "cancelled" && row.cancellation_requested) return operationRecord(row);
+      if (["succeeded", "failed", "uncertain"].includes(row.execution_state)) {
+        throw new SpeechOperationStateError();
+      }
       if (row.execution_state === "reserved") {
         if (!row.funding_reservation_id) throw new SpeechOperationStateError();
         await releaseFunding(trx.executor as Transaction<PlatformDatabase>, row.funding_reservation_id);
@@ -365,6 +372,7 @@ export function createSpeechOperationsRepository(options: {
           cancellation_requested: true,
           safe_outcome_code: "cancelled",
           updated_at: checkedAt,
+          expires_at: expiresAt,
         }).where("owner_id", "=", identity.ownerId)
           .where("machine_id", "=", identity.machineId)
           .where("runtime_slot", "=", identity.runtimeSlot)
@@ -377,6 +385,7 @@ export function createSpeechOperationsRepository(options: {
         const updated = await trx.executor.updateTable("speech_operations").set({
           cancellation_requested: true,
           updated_at: checkedAt,
+          expires_at: expiresAt,
         }).where("owner_id", "=", identity.ownerId)
           .where("machine_id", "=", identity.machineId)
           .where("runtime_slot", "=", identity.runtimeSlot)
@@ -387,7 +396,39 @@ export function createSpeechOperationsRepository(options: {
     });
   }
 
-  return { admit, cancel, claimDispatch, complete, get };
+  async function sweepExpired(limit = 100): Promise<number> {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1_000) {
+      throw new Error("Speech operation sweep limit is invalid");
+    }
+    const checkedAt = now().toISOString();
+    await options.db.ready;
+    const candidates = await options.db.executor.selectFrom("speech_operations")
+      .select(["owner_id", "machine_id", "runtime_slot", "operation_id"])
+      .where("expires_at", "<=", checkedAt)
+      .where("execution_state", "in", ["succeeded", "failed", "uncertain", "cancelled"])
+      .orderBy("expires_at", "asc")
+      .limit(limit)
+      .execute();
+    if (candidates.length === 0) return 0;
+    return options.db.transaction(async (trx) => {
+      let deleted = 0;
+      for (const candidate of candidates) {
+        const result = await trx.executor.deleteFrom("speech_operations")
+          .where("owner_id", "=", candidate.owner_id)
+          .where("machine_id", "=", candidate.machine_id)
+          .where("runtime_slot", "=", candidate.runtime_slot)
+          .where("operation_id", "=", candidate.operation_id)
+          .where("expires_at", "<=", checkedAt)
+          .where("execution_state", "in", ["succeeded", "failed", "uncertain", "cancelled"])
+          .returning("operation_id")
+          .executeTakeFirst();
+        if (result) deleted += 1;
+      }
+      return deleted;
+    });
+  }
+
+  return { admit, cancel, claimDispatch, complete, get, sweepExpired };
 }
 
 export type SpeechOperationsRepository = ReturnType<typeof createSpeechOperationsRepository>;

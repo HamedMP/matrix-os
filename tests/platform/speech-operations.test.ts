@@ -3,6 +3,7 @@ import type { Transaction } from "kysely";
 import type { PlatformDatabase } from "../../packages/platform/src/db.js";
 import {
   SpeechOperationConflictError,
+  SpeechOperationStateError,
   createSpeechOperationsRepository,
 } from "../../packages/platform/src/speech/operations.js";
 import { createTestPlatformDb, destroyTestPlatformDb } from "./platform-db-test-helper.js";
@@ -116,7 +117,79 @@ describe("speech operation repository", () => {
     let releases = 0;
     const cancelled = await repo.cancel(identity, requestId, async () => { releases += 1; });
     expect(cancelled).toMatchObject({ executionStarted: true, cancellationRequested: true });
+    expect(await repo.cancel(identity, requestId, async () => { releases += 1; })).toEqual(cancelled);
     expect(releases).toBe(0);
     expect((await repo.get(identity, requestId))?.executionState).toBe("dispatching");
+  });
+
+  it("linearizes successful completion before a later cancellation", async () => {
+    const repo = repository();
+    await repo.admit(admission, async () => ({ reservationId: "funding_1", reservedMicrousd: 20 }));
+    await repo.claimDispatch(identity, requestId);
+    await repo.complete(identity, requestId, {
+      executionState: "succeeded",
+      outcomeCode: "transcript",
+      actualCostMicrousd: 15,
+    }, async () => undefined);
+    await expect(repo.cancel(identity, requestId, async () => undefined))
+      .rejects.toBeInstanceOf(SpeechOperationStateError);
+    expect(await repo.get(identity, requestId)).toMatchObject({
+      executionState: "succeeded",
+      cancellationRequested: false,
+    });
+  });
+
+  it("serializes cancellation racing a completion at the operation row", async () => {
+    const repo = repository();
+    await repo.admit(admission, async () => ({ reservationId: "funding_1", reservedMicrousd: 20 }));
+    await repo.claimDispatch(identity, requestId);
+    let releaseSettlement!: () => void;
+    const settlementBlocked = new Promise<void>((resolve) => { releaseSettlement = resolve; });
+    let settlementEntered!: () => void;
+    const entered = new Promise<void>((resolve) => { settlementEntered = resolve; });
+    const completing = repo.complete(identity, requestId, {
+      executionState: "succeeded",
+      outcomeCode: "transcript",
+      actualCostMicrousd: 15,
+    }, async () => {
+      settlementEntered();
+      await settlementBlocked;
+    });
+    await entered;
+    const cancelling = repo.cancel(identity, requestId, async () => undefined);
+    releaseSettlement();
+    const [completion, cancellationResult] = await Promise.all([
+      completing,
+      cancelling.catch((error: unknown) => error),
+    ]);
+    expect(completion).toMatchObject({ executionState: "succeeded", cancellationRequested: false });
+    expect(cancellationResult).toBeInstanceOf(SpeechOperationStateError);
+    expect(await repo.get(identity, requestId)).toMatchObject({
+      executionState: "succeeded",
+      cancellationRequested: false,
+    });
+  });
+
+  it("sweeps expired terminal metadata in bounded batches and preserves active operations", async () => {
+    const repo = repository();
+    await repo.admit(admission, async () => ({ reservationId: "funding_1", reservedMicrousd: 20 }));
+    await repo.claimDispatch(identity, requestId);
+    await repo.complete(identity, requestId, {
+      executionState: "succeeded",
+      outcomeCode: "transcript",
+      actualCostMicrousd: 15,
+    }, async () => undefined);
+    const activeRequestId = `sp_${now.getTime()}_qrstuvwxyzabcdef`;
+    await repo.admit({ ...admission, requestId: activeRequestId }, async () => ({
+      reservationId: "funding_2",
+      reservedMicrousd: 20,
+    }));
+    await db.executor.updateTable("speech_operations")
+      .set({ expires_at: "2026-09-09T00:00:00.000Z" })
+      .execute();
+    expect(await repo.sweepExpired(1)).toBe(1);
+    expect(await repo.get(identity, requestId)).toBeUndefined();
+    expect(await repo.get(identity, activeRequestId)).toMatchObject({ executionState: "reserved" });
+    expect(await repo.sweepExpired(1)).toBe(0);
   });
 });

@@ -52,6 +52,43 @@ describe("OpenAI file transcription adapter", () => {
     expect(JSON.stringify(error)).not.toMatch(/secret upstream failure|test-platform-key/i);
   });
 
+  it("preserves provider deadline identity", async () => {
+    const adapter = createOpenAiFileTranscriptionAdapter({
+      apiKey: "test-platform-key",
+      model: "gpt-transcribe",
+      fetchImpl: vi.fn(async (_url, init) => {
+        await new Promise((_, reject) => init?.signal?.addEventListener("abort", () => {
+          reject(init.signal?.reason);
+        }, { once: true }));
+        throw new Error("unreachable");
+      }),
+      timeoutMs: 1_000,
+    });
+    await expect(adapter.transcribe({
+      audio,
+      mediaType: "audio/wav",
+      signal: new AbortController().signal,
+    })).rejects.toMatchObject({ code: "timeout" });
+  });
+
+  it("preserves deadline identity when the response body stalls", async () => {
+    const adapter = createOpenAiFileTranscriptionAdapter({
+      apiKey: "test-platform-key",
+      model: "gpt-transcribe",
+      fetchImpl: vi.fn(async (_url, init) => new Response(new ReadableStream({
+        start(controller) {
+          init?.signal?.addEventListener("abort", () => controller.error(init.signal?.reason), { once: true });
+        },
+      }), { status: 200 })),
+      timeoutMs: 1_000,
+    });
+    await expect(adapter.transcribe({
+      audio,
+      mediaType: "audio/wav",
+      signal: new AbortController().signal,
+    })).rejects.toMatchObject({ code: "timeout" });
+  });
+
   it("rejects unverified language hints and oversized upstream bodies", async () => {
     const adapter = createOpenAiFileTranscriptionAdapter({
       apiKey: "test-platform-key",

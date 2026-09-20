@@ -13,7 +13,7 @@ This package is the only managed speech admission boundary. Runtime callers auth
 
 - Operation insertion, wallet reservation, and reservation linkage run in one Postgres/Kysely transaction.
 - Outcome metadata and wallet finalization run in one transaction. A settlement callback must be idempotent because a database failure can make the provider result uncertain.
-- Cancellation before registration creates a tombstone. Cancellation while reserved releases the hold in the same transaction. Cancellation after dispatch records intent, aborts local work best-effort, does not release a possibly billable hold, and suppresses transcript delivery.
+- Cancellation before registration creates a tombstone. Cancellation while reserved releases the hold in the same transaction. While dispatching, cancellation and terminal completion serialize on the operation row: cancellation that wins records intent, aborts local work best-effort, and suppresses server delivery; terminal completion that wins is the server delivery boundary and makes a later cancellation too late. The client draft-generation fence still rejects late results after local cancellation.
 - After a dispatch claim, this service never redispatches the operation. A crash or lost response may leave an uncertain operation and conservative settlement; recovery may reconcile metadata and money but cannot reconstruct or replay transcript content.
 
 ## Resource and privacy rules
