@@ -467,6 +467,8 @@ export const CanonicalChatAgentActivityPayloadSchema = z.object({
   }
 });
 
+export const CanonicalChatToolOutputTextSchema = canonicalSafeErrorText(4_000, 16 * 1024);
+
 export const CanonicalChatRunActivitySchema = z.discriminatedUnion("type", [
   CanonicalChatRunActivityBaseSchema.extend({
     type: z.literal("run.status"),
@@ -493,7 +495,7 @@ export const CanonicalChatRunActivitySchema = z.discriminatedUnion("type", [
   CanonicalChatRunActivityBaseSchema.extend({
     type: z.literal("tool.output"),
     toolCallId: canonicalReferenceId(128),
-    text: canonicalSafeErrorText(4_000, 16 * 1024),
+    text: CanonicalChatToolOutputTextSchema,
     truncated: z.boolean(),
   }).strict(),
   CanonicalChatRunActivityBaseSchema.extend({
@@ -589,3 +591,6 @@ export type CanonicalChatApprovalDecision = z.infer<typeof CanonicalChatApproval
 export type CanonicalChatSafeError = z.infer<typeof CanonicalChatSafeErrorSchema>;
 export type CanonicalChatAgentActivityKind = z.infer<typeof CanonicalChatAgentActivityKindSchema>;
 export type CanonicalChatAgentActivityStatus = z.infer<typeof CanonicalChatAgentActivityStatusSchema>;
+
+export { canonicalChatToolDetail } from "#canonical-chat-tool-details";
+export { canonicalChatToolActivities, type CanonicalToolActivity } from "#canonical-chat-tool-activities";

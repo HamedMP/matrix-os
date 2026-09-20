@@ -1,3 +1,4 @@
+import { codexToolHasPrivateContext, codexToolOutput } from "./codex-tool-output.mjs";
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { chmod, lstat, mkdir, open, rm } from "node:fs/promises";
@@ -387,6 +388,8 @@ const idleHibernation = createCodexIdleHibernation(() => ({
 const assistantItemsWithDelta = new Set();
 const assistantDeltaBuffers = new Map();
 const startedToolItems = new Set();
+// Same bounded lifecycle as startedToolItems; retain only a privacy bit.
+const privateToolItems = new Set();
 const toolItemsWithOutput = new Set();
 const toolBoundaryWaiters = new Set();
 let toolBoundaryVersion = 0;
@@ -781,6 +784,10 @@ async function handleItemLifecycle(raw) {
     return true;
   }
 
+  if (codexToolHasPrivateContext(item)) {
+    assertTrackedItemCapacity(privateToolItems, matrixItemId);
+    privateToolItems.add(matrixItemId);
+  }
   const presentation = toolPresentation(item);
   const details = safeToolDetails(item);
   if (parsed.data.method === "item/started") {
@@ -810,8 +817,10 @@ async function handleItemLifecycle(raw) {
     await persist({
       type: "matrix.codex.tool.output",
       toolCallId: matrixItemId,
-      text: item.type === "commandExecution" ? "Command produced output." : "Tool returned a result.",
-      truncated: true,
+      ...(codexToolOutput(item, privateToolItems.has(matrixItemId)) ?? {
+        text: item.type === "commandExecution" ? "Command produced output." : "Tool returned a result.",
+        truncated: true,
+      }),
     });
   }
   await persist({
@@ -820,6 +829,7 @@ async function handleItemLifecycle(raw) {
     outcome: toolOutcome(item.status),
   });
   startedToolItems.delete(matrixItemId);
+  privateToolItems.delete(matrixItemId);
   executionWatchdog.toolCompleted(matrixItemId);
   toolItemsWithOutput.delete(matrixItemId);
   publishToolBoundary(parsed.data.params.turnId);
@@ -1187,10 +1197,12 @@ async function finishTurn(outcome) {
       outcome: outcome === "failed" ? "failed" : "cancelled",
     });
     startedToolItems.delete(toolCallId);
+    privateToolItems.delete(toolCallId);
     toolItemsWithOutput.delete(toolCallId);
   }
   assistantDeltaBuffers.clear();
   toolItemsWithOutput.clear();
+  privateToolItems.clear();
   await persist({
     type: outcome === "completed" ? "turn.completed" : outcome === "aborted" ? "turn.aborted" : "turn.failed",
     ...(outcome === "completed" && tokenUsage ? { usage: tokenUsage } : {}),

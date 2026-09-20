@@ -1,6 +1,10 @@
+import { codexToolOutput } from "./codex-tool-output.mjs";
 import { z } from "zod/v4";
 import {
   AgentThreadEventSchema,
+  AgentToolPreviewSchema,
+  AgentToolDetailSchema,
+  CanonicalChatToolOutputTextSchema,
   ApprovalIdSchema,
   CorrelationIdSchema,
   RequestIdSchema,
@@ -138,14 +142,16 @@ const MatrixCodexRecordSchema = z.discriminatedUnion("type", [
     toolCallId: CodexItemIdSchema,
     displayName: SafeDisplayStringSchema,
     kind: z.enum(["command", "file_change", "tool", "agent", "search", "plan", "reasoning", "phase"]),
-    preview: SafeDisplayStringSchema.optional(),
-    previewKind: z.enum(["command", "path", "text"]).optional(),
-    detail: SafeDisplayStringSchema.optional(),
+    // Display metadata is optional evidence. A rejected field must not erase
+    // the tool identity and leave an orphan completion in Chat.
+    preview: AgentToolPreviewSchema.optional().catch(undefined),
+    previewKind: z.enum(["command", "path", "text"]).optional().catch(undefined),
+    detail: AgentToolDetailSchema.optional().catch(undefined),
   }).strict(),
   z.object({
     type: z.literal("matrix.codex.tool.output"),
     toolCallId: CodexItemIdSchema,
-    text: SafeDisplayStringSchema,
+    text: CanonicalChatToolOutputTextSchema,
     truncated: z.boolean(),
   }).strict(),
   z.object({
@@ -276,7 +282,7 @@ function appServerRecordEvents(
       toolCallId: record.toolCallId,
       displayName: record.displayName,
       kind: record.kind,
-      ...(record.preview ? { preview: record.preview, previewKind: record.previewKind } : {}),
+      ...(record.preview && record.previewKind ? { preview: record.preview, previewKind: record.previewKind } : {}),
       ...(record.detail ? { detail: record.detail } : {}),
     })];
   }
@@ -375,8 +381,7 @@ function completedItemEvents(
         ? [event(context, {
             type: "tool.output",
             toolCallId: item.id,
-            text: "Command produced output.",
-            truncated: true,
+            ...(codexToolOutput(item) ?? { text: "Command produced output.", truncated: true }),
           })]
         : []),
       toolCompleted(context, item.id, commandOutcome(item.status)),
@@ -400,8 +405,7 @@ function completedItemEvents(
         ? [event(context, {
             type: "tool.output",
             toolCallId: item.id,
-            text: "Tool returned a result.",
-            truncated: true,
+            ...(codexToolOutput(item) ?? { text: "Tool returned a result.", truncated: true }),
           })]
         : []),
       toolCompleted(context, item.id, item.status === "completed" ? "success" : "failed"),

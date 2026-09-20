@@ -7,6 +7,7 @@ import type { CodingAgentProviderAdapter } from "../coding-agents/provider-adapt
 import {
   AgentModeSchema,
   CanonicalChatSafeErrorSchema,
+  CanonicalChatToolOutputTextSchema,
   type CanonicalChatAgentActivityKind,
   type AgentThreadEvent,
   type AgentThreadSnapshot,
@@ -150,7 +151,9 @@ function normalizeEvent(
     })];
   }
   if (event.type === "tool.output") {
-    return [];
+    const text = CanonicalChatToolOutputTextSchema.safeParse(event.text);
+    return text.success ? [{ type: "tool.output", toolCallId: event.toolCallId,
+      text: text.data, truncated: event.truncated ?? false }] : [];
   }
   if (event.type === "tool.completed") {
     const toolActivity = toolActivities.get(event.toolCallId);

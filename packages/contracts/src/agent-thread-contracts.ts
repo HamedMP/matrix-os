@@ -28,6 +28,8 @@ const TerminalRefSchema = z.object({
 const ReviewIdSchema = referenceId(128);
 const CursorSchema = referenceId(160);
 const SafeDisplayStringSchema = boundedDisplayText(120, 512);
+export const AgentToolPreviewSchema = boundedDisplayText(1_000, 4_000);
+export const AgentToolDetailSchema = boundedDisplayText(2_000, 8_000);
 const AssistantTextDeltaSchema = z.string()
   .min(1)
   .max(4_000)
@@ -181,9 +183,9 @@ const CoreAgentThreadEventSchema = z.discriminatedUnion("type", [
     toolCallId: referenceId(128),
     displayName: SafeDisplayStringSchema,
     kind: SafeDisplayStringSchema,
-    preview: boundedDisplayText(1_000, 4_000).optional(),
+    preview: AgentToolPreviewSchema.optional(),
     previewKind: z.enum(["command", "path", "text"]).optional(),
-    detail: boundedDisplayText(2_000, 8_000).optional(),
+    detail: AgentToolDetailSchema.optional(),
   }).strict().superRefine((activity, context) => {
     if ((activity.preview === undefined) !== (activity.previewKind === undefined)) {
       context.addIssue({ code: "custom", message: "Tool preview and kind must be provided together" });

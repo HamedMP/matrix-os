@@ -351,6 +351,25 @@ describe("canonical coding Chat Provider adapter", () => {
     expect(JSON.stringify(events)).not.toMatch(/secret-value|API_TOKEN|\/Users\/private|tool\.output/);
   });
 
+  it("preserves safe command output through live and snapshot replay", async () => {
+    const started = event({ type: "tool.started", eventId: "evt_details_start", toolCallId: "tool_details", displayName: "Run command", kind: "command", preview: "bun run test", previewKind: "command", detail: "Working directory: projects/demo" });
+    const output = event({ type: "tool.output", eventId: "evt_details_output", toolCallId: "tool_details", text: "12 tests passed", truncated: false });
+    const completed = event({ type: "tool.completed", eventId: "evt_details_end", toolCallId: "tool_details", outcome: "success" });
+    const done = event({ type: "thread.completed", eventId: "evt_details_done", outcome: "completed" });
+    for (const live of [false, true]) {
+      const store = fakeStore(live ? [] : [started, output, completed, done]);
+      const adapter = createCanonicalCodingChatProviderAdapter({ providerId: "codex", threads: store.store });
+      const events: CanonicalProviderRunEvent[] = [];
+      const collect = (async () => { for await (const value of adapter.start(input())) events.push(value); })();
+      if (live) {
+        await vi.waitFor(() => expect(store.createThread).toHaveBeenCalled());
+        store.publish([started, output, completed, done]);
+      }
+      await collect;
+      expect(events).toContainEqual({ type: "tool.output", toolCallId: "tool_details", text: "12 tests passed", truncated: false });
+    }
+  });
+
   it("streams normalized Codex events from the shared Gateway thread seam", async () => {
     const started = event({
       type: "terminal.bound",

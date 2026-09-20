@@ -183,6 +183,30 @@ const initialize = "if (message.method === 'initialize') console.log(JSON.string
 const startThread = "else if (message.method === 'thread/start') console.log(JSON.stringify({ id: message.id, result: { thread: { id: 'native-thread' }, model: 'codex', modelProvider: 'openai', cwd: '/private/project', approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: {} } }));";
 
 describe("Codex app-server runner reliability", () => {
+  it("journals a long command and its bounded result for transcript replay", async () => {
+    const command = `bun run test ${"tests/regression.test.ts ".repeat(10)}`.trim();
+    const item = { id: "command", type: "commandExecution", command, cwd: "/private/project", aggregatedOutput: "12 tests passed\n", status: "completed" };
+    const runtime = await startFakeRuntime("tool_details", [
+      initialize, startThread,
+      "else if (message.method === 'turn/start') {",
+      "  console.log(JSON.stringify({ id: message.id, result: { turn: { id: 'native-turn' } } }));",
+      `  console.log(JSON.stringify({ method: 'item/completed', params: { turnId: 'native-turn', item: ${JSON.stringify(item)} } }));`,
+      "  console.log(JSON.stringify({ method: 'item/started', params: { turnId: 'native-turn', item: { id: 'private-command', type: 'commandExecution', command: 'echo $CUSTOM_TOKEN' } } }));",
+      "  console.log(JSON.stringify({ method: 'item/completed', params: { turnId: 'native-turn', item: { id: 'private-command', type: 'commandExecution', aggregatedOutput: 'opaque-value', status: 'completed' } } }));",
+      "  console.log(JSON.stringify({ method: 'turn/completed', params: { turn: { status: 'completed' } } }));",
+      "}",
+    ], { stubControlServer: true });
+    try {
+      await waitForTranscript(runtime.eventPath, /"type":"turn\.completed"/);
+      const events = await replayTranscript(runtime.eventPath);
+      expect(await readFile(runtime.eventPath, "utf8")).not.toContain("opaque-value");
+      expect(events).toContainEqual(expect.objectContaining({ type: "tool.started", displayName: "Run command", preview: command, previewKind: "command" }));
+      expect(events).toContainEqual(expect.objectContaining({ type: "tool.output", text: "12 tests passed\n", truncated: false }));
+    } finally {
+      await cleanup(runtime);
+    }
+  });
+
   it("allows a progressing build to run beyond the no-progress and connector budgets", async () => {
     const runtime = await startFakeRuntime("healthy_build", [
       initialize, startThread,
