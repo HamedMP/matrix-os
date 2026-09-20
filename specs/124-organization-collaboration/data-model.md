@@ -11,7 +11,7 @@ Use PostgreSQL/Kysely and existing migrations/repositories. Reuse equivalent tab
 | Record | Fields / invariant |
 | --- | --- |
 | organizations/memberships | Clerk IDs, default roles, AI submission enablement projected from Clerk organization public metadata (absent means owner-only), lifecycle, monotonic membership epoch; upstream request-start/expiry; verified webhook inbox and reconciliation; webhook alone does not create fresh positive authority |
-| groups/group_members/guests | Org-scoped IDs, generation, acceptance and expiry; groups contain current members; former members cannot revive access as guests without new admission |
+| groups/group_members/guests (deferred from V1) | Org-scoped IDs, generation, acceptance and expiry; groups contain current members; former members cannot revive access as guests without new admission |
 | organization_commands/inbox/outbox | Idempotency key + payload hash, provider event ID, pending/confirmed/failed/unknown; metadata only; external requests outside DB transactions |
 | runtime_endpoints | Runtime ID, relay-routable home address from existing customer-VPS enrollment, optional future direct origin, asymmetric public keys/key IDs, owner, protocol version, authority generation, health/last heartbeat; no caller-supplied arbitrary target URL |
 | resource_directory | Stable resource/scope ID, home runtime/generation, safe title/type, owner, audience discovery metadata and revision; index is never final authorization |
@@ -28,7 +28,7 @@ V1 platform records are organizations/memberships, the organization command inbo
 | Record | Fields / invariant |
 | --- | --- |
 | collaboration_scopes | Stable resource ID, owner, owning organization, home runtime/generation, parent scope, lifecycle, policy revision; one authoritative writer |
-| collaboration_grants | Audience, deriving organization, preset, explicit actions/selectors, pending/active/revoked/expired, source ID, exact legacy ceiling, revision; org grants do not fan out to every member; no grant outlives the membership or guest admission it derives from |
+| collaboration_grants | Audience, deriving organization, preset, explicit actions/selectors, pending/active/revoked/expired, source ID, exact legacy ceiling, revision; org grants do not fan out to every member; no grant outlives the membership it derives from |
 | capability_profiles/restrictions (deferred from V1) | Versioned action sets, file/folder/app/Chat selectors, denies, parent/org ceilings, approval requirements; V1 stores one whole-project preset per grant |
 | resource_catalog/app_instances | Non-reused file/folder/instance IDs, path incarnation, parent and namespace, revision/tombstone; app namespace is owner-controlled and not a shared slug |
 | collaboration_access_requests (deferred from V1) | Actor, scope, requested capability, proposed bounded operation, approver class, state/expiry/revision |
