@@ -74,7 +74,7 @@ describe("Native Mobile canonical Chat event source", () => {
   it("uses the versioned HTTP content stream and obtains fresh auth on foreground reconnect", async () => {
     const streams = [streamingResponse(), streamingResponse()];
     let openCount = 0;
-    const fetchFn = jest.fn(async () => streams[openCount++]!.response);
+    const fetchFn = jest.fn(async (_url: string, _init: RequestInit) => streams[openCount++]!.response);
     const getToken = jest.fn()
       .mockResolvedValueOnce("token-one")
       .mockResolvedValueOnce("token-two");
@@ -114,12 +114,10 @@ describe("Native Mobile canonical Chat event source", () => {
       expect(fetchFn).toHaveBeenNthCalledWith(2,
       "https://app.matrix-os.test/api/chats/events?runtime=primary&messageVersion=2",
       expect.objectContaining({
-        headers: expect.objectContaining({
-          Authorization: "Bearer token-two",
-          "Last-Event-ID": "1",
-        }),
+        headers: expect.objectContaining({ Authorization: "Bearer token-two" }),
       }),
       );
+      expect(fetchFn.mock.calls[1]?.[1]?.headers).not.toHaveProperty("Last-Event-ID");
     } finally {
       source.dispose();
     }
@@ -152,27 +150,34 @@ describe("Native Mobile canonical Chat event source", () => {
     }
   });
 
-  it("drops a lower out-of-order cursor after a newer event was applied", async () => {
-    const stream = streamingResponse();
+  it("applies unseen out-of-order cursors and resumes from the completed replay checkpoint", async () => {
+    const streams = [streamingResponse(), streamingResponse()];
+    let openCount = 0;
     const received: unknown[] = [];
+    const fetchFn = jest.fn(async () => streams[openCount++]!.response);
     const source = createCanonicalChatEventSource({
       url: "https://app.matrix-os.test/api/chats/events",
       getToken: async () => "token",
-      fetchFn: async () => stream.response,
+      fetchFn,
     });
     source.subscribe((event) => received.push(event));
     try {
       await source.start();
-      stream.emit({ type: "chat.stream.attached" });
-      stream.emit({ type: "chat.replay.end" });
-      stream.emit(contentFrame(5));
-      stream.emit(contentFrame(4));
-      await waitFor(() => expect(received).toHaveLength(1));
+      streams[0]!.emit({ type: "chat.stream.attached" });
+      streams[0]!.emit({ type: "chat.replay.end", nextCursor: 3 });
+      streams[0]!.emit(contentFrame(5));
+      streams[0]!.emit(contentFrame(4));
+      await waitFor(() => expect(received).toHaveLength(2));
 
-      expect(received).toEqual([expect.objectContaining({
-        type: "chat.changed",
-        cursor: 5,
-      })]);
+      expect(received).toEqual([
+        expect.objectContaining({ type: "chat.changed", cursor: 5 }),
+        expect.objectContaining({ type: "chat.changed", cursor: 4 }),
+      ]);
+
+      await source.reconnect();
+      expect(fetchFn).toHaveBeenLastCalledWith(expect.any(String), expect.objectContaining({
+        headers: expect.objectContaining({ "Last-Event-ID": "3" }),
+      }));
     } finally {
       source.dispose();
     }
@@ -263,6 +268,28 @@ describe("Native Mobile canonical Chat event source", () => {
       signal: expect.any(Object),
     }));
     source.dispose();
+  });
+
+  it("combines lifecycle cancellation with a bounded fetch timeout", async () => {
+    const stream = streamingResponse();
+    const timeout = jest.spyOn(AbortSignal, "timeout");
+    const fetchFn = jest.fn(async () => stream.response);
+    const source = createCanonicalChatEventSource({
+      url: "https://app.matrix-os.test/api/chats/events",
+      getToken: async () => "token",
+      fetchFn,
+    });
+
+    try {
+      await source.start();
+      expect(timeout).toHaveBeenCalledWith(5 * 60_000);
+      expect(fetchFn).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+        signal: expect.any(AbortSignal),
+      }));
+    } finally {
+      source.dispose();
+      timeout.mockRestore();
+    }
   });
 
   it("releases the stream in background and reconnects once on foreground", () => {

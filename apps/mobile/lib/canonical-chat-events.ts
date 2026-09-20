@@ -158,7 +158,10 @@ export function createCanonicalChatEventSource(options: {
   let rotationTimer: unknown;
   let controller: AbortController | undefined;
   let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
-  let lastCursor: number | undefined;
+  // Only a completed replay establishes a safe resume boundary. Live outbox
+  // notifications can commit out of cursor order, so advancing this checkpoint
+  // from a live event could permanently skip a lower cursor on reconnect.
+  let replayCheckpoint: number | undefined;
 
   const emit = (event: CanonicalChatInvalidation) => {
     for (const listener of [...listeners]) {
@@ -230,7 +233,7 @@ export function createCanonicalChatEventSource(options: {
     }
     if (frame.type === "chat.replay.end") {
       if (frame.nextCursor !== undefined) {
-        lastCursor = lastCursor === undefined ? frame.nextCursor : Math.max(lastCursor, frame.nextCursor);
+        replayCheckpoint = frame.nextCursor;
       }
       if (replay.gap || replay.sawMetadata) {
         emit({ type: "chat.full_refresh", ...(frame.nextCursor === undefined ? {} : { cursor: frame.nextCursor }) });
@@ -240,8 +243,6 @@ export function createCanonicalChatEventSource(options: {
       return;
     }
     if (frame.type === "chat.event" || frame.type === "chat.content") {
-      if (lastCursor !== undefined && frame.event.cursor <= lastCursor) return;
-      lastCursor = lastCursor === undefined ? frame.event.cursor : Math.max(lastCursor, frame.event.cursor);
       if (!rememberCursor(frame.event.cursor)) return;
       if (!replay.complete && frame.type === "chat.event") replay.sawMetadata = true;
       emit({
@@ -275,12 +276,13 @@ export function createCanonicalChatEventSource(options: {
         Accept: "text/event-stream",
         Authorization: authorizationHeader(token),
         "X-Matrix-Chat-Protocol": "2",
-        ...(lastCursor === undefined ? {} : { "Last-Event-ID": String(lastCursor) }),
+        ...(replayCheckpoint === undefined ? {} : { "Last-Event-ID": String(replayCheckpoint) }),
       };
+      const timeoutSignal = AbortSignal.timeout(CONNECTION_LIFETIME_MS);
       const response = await fetchFn(eventStreamUrl(options.url), {
         method: "GET",
         headers,
-        signal: nextController.signal,
+        signal: AbortSignal.any([nextController.signal, timeoutSignal]),
       });
       if (disposed || generation !== connectionGeneration) {
         nextController.abort();

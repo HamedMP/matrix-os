@@ -579,6 +579,7 @@ describe("platform speech service", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
   it("drains shutdown after admission before dispatch and releases the hold", async () => {
     const repository = createSpeechOperationsRepository({ db, now: () => now });
     const admissionFinished = Promise.withResolvers<void>();
