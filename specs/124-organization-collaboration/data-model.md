@@ -34,7 +34,7 @@ V1 platform records are organizations/memberships, the organization command inbo
 | collaboration_access_requests (deferred from V1) | Actor, scope, requested capability, proposed bounded operation, approver class, state/expiry/revision |
 | direct_sessions/nonces | Actor/device key, resource, home generation, ticket nonce, expiry; bounded single-use handshake records and proof replay window |
 | collaboration_run_bindings | Existing canonical run ID plus requesting actor, executing owner, one project-selected V3 binding, payer/policy, worktree/root fingerprint, executor, Chat audience ceiling, session generation; immutable once admitted |
-| project_execution_policies | One active owner-selected V3 source, submit mode (follow organization, or owner-only), owner provider-terms acknowledgement, allowed harnesses/models, budget/concurrency, task profiles and integration grants; versioned owner approval |
+| project_execution_policies | One active owner-selected V3 source, submit mode (follow organization, or owner-only), owner provider-terms acknowledgement, allowed harnesses/models, budget/concurrency; versioned owner approval of the policy itself (task profiles and integration grants deferred) |
 | project_default_chat | Unique project ID to canonical Chat ID/root and audience binding; idempotent create/join; joining creates no worktree, copy or provider account; share-time inventory of every Chat root in the project |
 | project_git_operations | Requesting member, run, operation (commit/push/PR), remote/branch, result and unknown/reconciling state; owner Git identity and broker-held forge credential; no owner approval in V1; immutable operation audit |
 | worktree_leases (deferred from V1) | Worktree ID, Chat/run/terminal holders, fencing token, heartbeat/deadline and root fingerprint |
@@ -48,7 +48,7 @@ Keep canonical Chat/project/worktree entities; extend them rather than adding an
 ## Evaluation and publication
 
 1. Resolve current lifecycle, runtime generation and actor identity.
-2. Resolve fresh membership evidence for every grant; a resource without a resolvable organization context, or an actor without current membership or guest admission in it, denies before any allow is considered. No environment flag or cohort record participates.
+2. Resolve fresh membership evidence for every grant; a resource without a resolvable organization context, or an actor without current membership in it, denies before any allow is considered. No environment flag or cohort record participates.
 3. Union matching explicit allows, intersect parent/resource/org hard ceilings and original migration action ceilings, subtract matching denies. No implicit management/funding privilege from editor or org admin.
 4. For a run, intersect actor capabilities with Chat audience data ceiling, the single project owner source and its submission mode, payer budget, task profile and sandbox capabilities. Commit/push/PR run through the Git broker under the owner identity with no approval in V1. Integration calls use the owner's existing connections.
 5. Reauthorize queue claim, each tool/terminal input, output publication, final upload/patch commit and stream batches. Previously started remote effects cannot be recalled; no next step gets expired authority.

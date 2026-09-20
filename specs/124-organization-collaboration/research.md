@@ -30,7 +30,7 @@ Official guidance checked on 2026-09-20:
 
 Decision (product owner, 2026-09-20): members may prompt the owner's AI on whatever source the owner configured, including personal subscriptions, when the organization enables member submission in Clerk organization public metadata and the owner has not restricted the project to owner-only. Matrix does not enforce provider eligibility; it shows the source kind to participants and records the owner's acknowledgement that the provider terms of the selected source are the owner's responsibility. Accepted risk: the provider documents above restrict sharing an individual account, and organization trust does not change those terms; if a provider objects, the mitigation is an API/business/Matrix AI source, which needs no code change. The submit-mode probes in T002 remain evidence, not release gates. No silent source fallback.
 
-Required probes: shared Codex/Claude project roots, owner source selection, owner-only versus delegated submission, safe project session resume, cancellation, approvals, exhaustion and bounded concurrent worktrees. Participant native sign-in/multi-account routing is future work.
+Evidence probes (not release gates): shared Codex/Claude project roots, owner source selection, effective submit mode, safe project session resume, cancellation, approvals and exhaustion. Participant native sign-in/multi-account routing is future work.
 
 ## R5 — Clerk handles coarse org permissions
 
