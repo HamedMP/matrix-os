@@ -13,7 +13,7 @@ afterEach(async () => {
 });
 
 describe("provider authentication gateway fixture", () => {
-  it("serves strict settings snapshots and terminal actions for both auth states", async () => {
+  it("serves strict settings snapshots and opens Terminal only for login", async () => {
     gateway = await startProviderAuthGateway();
 
     const headers = { authorization: "Bearer stub-token-1" };
@@ -65,10 +65,9 @@ describe("provider authentication gateway fixture", () => {
         }),
       },
     ).then((response) => response.json()));
-    expect(disconnect.kind).toBe("login_attempt");
-    expect(gateway.commands[1]).toMatchObject({
-      name: "Disconnect Claude",
-      command: ["sh", "-lc", expect.stringContaining("claude auth logout")],
-    });
+    expect(disconnect.kind).toBe("snapshot");
+    expect(disconnect.snapshot.accounts[0]?.authState).toBe("unauthenticated");
+    expect(disconnect.snapshot.supportedActions).toEqual(["start_login"]);
+    expect(gateway.commands).toHaveLength(1);
   });
 });

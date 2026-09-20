@@ -102,6 +102,15 @@ export async function startProviderAuthGateway() {
         res.end(JSON.stringify({ error: "unsupported fixture action" }));
         return;
       }
+      if (mutation.type === "logout_account") {
+        authenticated = false;
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({
+          kind: "snapshot",
+          snapshot: providerAuthSettingsSnapshot(authenticated),
+        }));
+        return;
+      }
       const summary = claudeSummary(authenticated);
       const action = providerAuthActions(summary)[0];
       if (!action || action.kind !== "foreground_terminal") throw new Error("Missing Claude fixture action");
