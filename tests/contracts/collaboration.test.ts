@@ -21,8 +21,6 @@ import {
   CollaborationScopeExportSchema,
   CollaborationSharedChatMessageSchema,
   CollaborationMemberPatchRequestSchema,
-  CollaborationCapabilityModeSchema,
-  CollaborationPolicySchema,
   CollaborationRoleSchema,
   CollaborationScopeSchema,
   CollaborationScopePreflightRequestSchema,
@@ -39,14 +37,8 @@ const invitationId = "30000000-0000-4000-8000-000000000001";
 const now = "2026-09-07T12:00:00.000Z";
 
 describe("collaboration contracts", () => {
-  it("keeps the role set and capability modes closed", () => {
+  it("keeps the role set closed", () => {
     expect(CollaborationRoleSchema.options).toEqual(["owner", "editor", "viewer"]);
-    expect(CollaborationCapabilityModeSchema.options).toEqual([
-      "off",
-      "internal",
-      "enabled",
-      "read_only",
-    ]);
     expect(CollaborationRoleSchema.safeParse("commenter").success).toBe(false);
   });
 
@@ -150,24 +142,7 @@ describe("collaboration contracts", () => {
     }).success).toBe(false);
   });
 
-  it("bounds rollout policy without exposing authority secrets", () => {
-    expect(CollaborationPolicySchema.parse({
-      milestone: "m1",
-      revision: "2",
-      mode: "internal",
-      cohort: ["user_owner", "user_editor"],
-      issuedAt: now,
-      expiresAt: "2026-09-14T12:00:00.000Z",
-    })).toMatchObject({ mode: "internal" });
-    expect(CollaborationPolicySchema.safeParse({
-      milestone: "m1",
-      revision: "2",
-      mode: "enabled",
-      cohort: Array.from({ length: 1_001 }, (_, index) => `user_${index}`),
-      issuedAt: now,
-      expiresAt: "2026-09-14T12:00:00.000Z",
-      signingSecret: "must-not-cross-the-boundary",
-    }).success).toBe(false);
+  it("keeps scope requests organization-bound and free of authority secrets", () => {
     expect(CollaborationScopePreflightRequestSchema.safeParse({
       kind: "chat",
       resourceId: "chat_release",
