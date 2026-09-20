@@ -26,6 +26,25 @@ const fixtures = {
 
 const unrun = (fixture: string): string => `unrun: fixture ${fixture} missing`;
 
+function errorName(error: unknown): string {
+  return error instanceof Error ? error.name : "UnknownError";
+}
+
+/**
+ * Clerk responses are parsed explicitly: a non-JSON body is a probe failure, never
+ * silently read as empty data. Only `SyntaxError` is expected from a bad body.
+ */
+async function parseJsonBody<T>(response: Response, context: string): Promise<T> {
+  const text = await response.text();
+  try {
+    return JSON.parse(text) as T;
+  } catch (error: unknown) {
+    if (!(error instanceof SyntaxError)) throw error;
+    console.warn("[s00-probe] non-JSON response", { context, status: response.status, length: text.length });
+    throw new Error(`${context}: expected JSON body, got HTTP ${response.status} with ${text.length} bytes`);
+  }
+}
+
 async function clerk<T>(method: string, path: string, body?: unknown): Promise<{ status: number; json: T }> {
   const response = await fetch(`${CLERK_API}${path}`, {
     method,
@@ -36,7 +55,7 @@ async function clerk<T>(method: string, path: string, body?: unknown): Promise<{
     body: body === undefined ? undefined : JSON.stringify(body),
     signal: AbortSignal.timeout(10_000),
   });
-  return { status: response.status, json: (await response.json().catch(() => null)) as T };
+  return { status: response.status, json: await parseJsonBody<T>(response, `${method} ${path}`) };
 }
 
 interface Membership {
@@ -97,6 +116,12 @@ describe("S00 authority probes: live Clerk organization membership", () => {
    * A restore that still fails after retries throws loudly with the manual repair.
    */
   const pendingRestores = new Map<string, { role: string }>();
+  /**
+   * Bound for `pendingRestores`. Entries are never evicted, because dropping one would
+   * abandon a fixture restore; instead a new mutation is refused (fail closed) while the
+   * map is full, and `afterAll` drains it. The live harness touches at most two users.
+   */
+  const MAX_PENDING_RESTORES = 4;
 
   async function restoreMembership(userId: string, role: string): Promise<boolean> {
     for (let attempt = 1; attempt <= RESTORE_ATTEMPTS; attempt += 1) {
@@ -107,7 +132,7 @@ describe("S00 authority probes: live Clerk organization membership", () => {
         else await clerk("PATCH", membershipPath(userId), { role });
         if ((await roleOf(userId)) === role) return true;
       } catch (error: unknown) {
-        console.warn("[s00-probe] clerk restore attempt failed", { attempt, name: error instanceof Error ? error.name : "UnknownError" });
+        console.warn("[s00-probe] clerk restore attempt failed", { attempt, name: errorName(error) });
       }
       await new Promise((r) => setTimeout(r, attempt * 1_000));
     }
@@ -130,6 +155,9 @@ describe("S00 authority probes: live Clerk organization membership", () => {
 
   /** Registers the restore target before `body` runs any mutation; restore is verified. */
   async function withMembershipRestored(userId: string, body: (originalRole: string) => Promise<void>): Promise<void> {
+    if (!pendingRestores.has(userId) && pendingRestores.size >= MAX_PENDING_RESTORES) {
+      throw new Error(`refusing to mutate ${userId}: ${pendingRestores.size} fixture restores are still pending`);
+    }
     const original = await roleOf(userId);
     expect(original).not.toBeNull();
     pendingRestores.set(userId, { role: original as string });
@@ -211,7 +239,7 @@ describe("S00 authority probes: live Clerk organization membership", () => {
       // only reads what arrived and records ordering/duplication for S03's inbox design.
       const response = await fetch(`${fixtures.webhookInboxUrl}?probe=${randomUUID()}`, { signal: AbortSignal.timeout(10_000) });
       expect(response.status).toBeLessThan(500);
-      const events = (await response.json().catch(() => [])) as Array<{ type?: string; svix_id?: string }>;
+      const events = await parseJsonBody<Array<{ type?: string; svix_id?: string }>>(response, "webhook inbox");
       const ids = events.map((e) => e.svix_id).filter(Boolean);
       console.info("[s00-probe] clerk webhook inbox", { count: events.length, duplicates: ids.length - new Set(ids).size });
       expect(Array.isArray(events)).toBe(true);
