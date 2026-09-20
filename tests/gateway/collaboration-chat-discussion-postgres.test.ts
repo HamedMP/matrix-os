@@ -10,6 +10,7 @@ import {
   collaborationIds,
   createRealCollaborationTestDatabase,
   type CollaborationTestDatabase,
+  allowAllOrganizationPrecondition,
 } from "./collaboration-test-support.js";
 
 const now = "2026-09-07T12:00:00.000Z";
@@ -26,7 +27,7 @@ realDescribe("shared Chat discussion real PostgreSQL transactions", () => {
     await bootstrapChatDatabase(fixture.db);
     await bootstrapCollaborationDatabase(fixture.db);
     repository = new CollaborationRepository(fixture.db, { now: () => new Date(now) });
-    authority = new CollaborationAuthority(repository, { now: () => new Date(now) });
+    authority = new CollaborationAuthority(repository, { now: () => new Date(now), organizationPrecondition: allowAllOrganizationPrecondition });
     adapter = new CollaborationChatAdapter({
       db: fixture.db,
       authority,

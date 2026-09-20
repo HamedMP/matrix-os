@@ -20,6 +20,7 @@ import {
 } from "../../packages/gateway/src/collaboration/wiring.js";
 import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
 import {
+  allowAllOrganizationPrecondition,
   collaborationIds,
   createCollaborationTestDatabase,
   type CollaborationTestDatabase,
@@ -62,6 +63,7 @@ describe("gateway collaboration wiring", () => {
 
   it("resolves dependencies before route registration and drains before database disposal", async () => {
     const runtime = await createGatewayCollaboration({
+      organizationPrecondition: allowAllOrganizationPrecondition,
       db: fixture.db,
       chatRepository: new ChatRepository(fixture.db),
       config: {
@@ -102,6 +104,7 @@ describe("gateway collaboration wiring", () => {
 
   it("registers M3 routes only after terminal dependencies are resolved and drains them on shutdown", async () => {
     const runtime = await createGatewayCollaboration({
+      organizationPrecondition: allowAllOrganizationPrecondition,
       db: fixture.db,
       chatRepository: new ChatRepository(fixture.db),
       config: {
@@ -178,6 +181,7 @@ describe("gateway collaboration wiring", () => {
     }).execute();
 
     const runtime = await createGatewayCollaboration({
+      organizationPrecondition: allowAllOrganizationPrecondition,
       db: fixture.db,
       chatRepository: new ChatRepository(fixture.db),
       config: {
@@ -204,6 +208,7 @@ describe("gateway collaboration wiring", () => {
     await bootstrapCollaborationDatabase(fixture.db);
     await seedSharedChat(fixture);
     const runtime = await createGatewayCollaboration({
+      organizationPrecondition: allowAllOrganizationPrecondition,
       db: fixture.db,
       chatRepository: new ChatRepository(fixture.db),
       config: {
@@ -294,6 +299,7 @@ describe("gateway collaboration wiring", () => {
     await bootstrapCollaborationDatabase(fixture.db);
     await seedSharedChat(fixture);
     const runtime = await createGatewayCollaboration({
+      organizationPrecondition: allowAllOrganizationPrecondition,
       db: fixture.db,
       chatRepository: new ChatRepository(fixture.db),
       config: {

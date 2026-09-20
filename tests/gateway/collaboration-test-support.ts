@@ -2,15 +2,9 @@ import { randomUUID } from "node:crypto";
 import { KyselyPGlite } from "kysely-pglite";
 import { Kysely, PostgresDialect, sql } from "kysely";
 import { Pool } from "pg";
-import {
-  SCOPE_RUNTIME_CODEX_VERSION,
-  SCOPE_RUNTIME_HARNESS_VERSION,
-  SCOPE_RUNTIME_PROFILE_DIGEST,
-  SCOPE_RUNTIME_PROFILE_ID,
-  SCOPE_RUNTIME_PROFILE_VERSION,
-} from "@matrix-os/scope-runtime/profile";
 import type { ChatDatabase } from "../../packages/gateway/src/chat/database.js";
 import type { CollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
+import type { OrganizationPrecondition } from "../../packages/gateway/src/collaboration/organization-precondition.js";
 
 export const collaborationActors = {
   owner: "user_collaboration_owner",
@@ -26,22 +20,17 @@ export const collaborationIds = {
   runtime: "runtime_collaboration_owner",
 } as const;
 
-export type CollaborationTestAdapterId = "claude-code" | "codex";
-
-/** Signed eligibility for this build's pinned scope-runtime profile; Claude-only unless adapters are named. */
-export function collaborationExecutionEligibility(
-  input: { adapters: readonly CollaborationTestAdapterId[] } = { adapters: ["claude-code"] },
-) {
-  return {
-    profileId: SCOPE_RUNTIME_PROFILE_ID,
-    profileVersion: SCOPE_RUNTIME_PROFILE_VERSION,
-    profileDigest: SCOPE_RUNTIME_PROFILE_DIGEST,
-    adapters: input.adapters.map((adapterId) => ({
-      adapterId,
-      harnessVersion: adapterId === "codex" ? SCOPE_RUNTIME_CODEX_VERSION : SCOPE_RUNTIME_HARNESS_VERSION,
-    })),
-  };
-}
+/**
+ * Test double that bypasses the S20 organization precondition so suites that
+ * exercise scope membership, roles and lifecycle can keep fixtures without an
+ * organization. The precondition itself is covered by
+ * collaboration-org-precondition.test.ts.
+ */
+export const allowAllOrganizationPrecondition: OrganizationPrecondition = {
+  async require() {},
+  registerSource() {},
+  describe: () => ({ source: "registered" }),
+};
 
 export interface CollaborationTestDatabase {
   db: Kysely<ChatDatabase & CollaborationDatabase>;

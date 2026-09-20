@@ -11,9 +11,9 @@ import {
   authorize,
   verifyHttp,
   requireProjectSharing,
-  requireM4Policy,
   readJson,
   requireOwnerLifecycleProof,
+  requireScopeOrganizationMembership,
   digest,
   handle,
   type CollaborationRouteOptions,
@@ -23,7 +23,6 @@ export function registerProjectRoutes(routes: Hono, options: CollaborationRouteO
   routes.get("/api/collaboration/scopes/:scopeId/project", async (c) => handle(c, async () => {
     const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
     const context = await authorize(options, c, new Uint8Array(), "read", scopeId);
-    requireM4Policy(options.verifier, c, context.actorId, context.ownerId, false);
     return c.json(CollaborationProjectSchema.parse(
       await requireProjectSharing(options.projectSharing).read({ scopeId }),
     ));
@@ -33,7 +32,7 @@ export function registerProjectRoutes(routes: Hono, options: CollaborationRouteO
     const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
     const proof = await verifyHttp(options.verifier, c, new Uint8Array());
     requireOwnerLifecycleProof(proof, scopeId);
-    requireM4Policy(options.verifier, c, proof.actorId, proof.ownerId, false);
+    await requireScopeOrganizationMembership(options, scopeId, proof.actorId);
     const inventory = await requireProjectSharing(options.projectSharing).preview({
       scopeId,
       actorId: proof.actorId,
@@ -58,7 +57,7 @@ export function registerProjectRoutes(routes: Hono, options: CollaborationRouteO
     const { value, bytes } = await readJson(c);
     const proof = await verifyHttp(options.verifier, c, bytes);
     requireOwnerLifecycleProof(proof, scopeId);
-    requireM4Policy(options.verifier, c, proof.actorId, proof.ownerId, true);
+    await requireScopeOrganizationMembership(options, scopeId, proof.actorId);
     const input = CollaborationProjectConfirmRequestSchema.parse(value);
     const transition = await requireProjectSharing(options.projectSharing).confirm({
       scopeId,

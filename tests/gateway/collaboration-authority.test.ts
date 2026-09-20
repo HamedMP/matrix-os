@@ -12,6 +12,7 @@ import {
   collaborationIds,
   createCollaborationTestDatabase,
   type CollaborationTestDatabase,
+  allowAllOrganizationPrecondition,
 } from "./collaboration-test-support.js";
 
 const now = "2026-09-07T12:00:00.000Z";
@@ -27,6 +28,7 @@ describe("CollaborationAuthority", () => {
     const repository = new CollaborationRepository(fixture.db, { now: () => new Date(now) });
     await repository.createDirectScope({
       scopeId: collaborationIds.scope,
+      organizationId: "org_matrix_team",
       ownerId: collaborationActors.owner,
       kind: "chat",
       resourceId: collaborationIds.chat,
@@ -41,7 +43,7 @@ describe("CollaborationAuthority", () => {
       member("user_expired", "editor", "pending", "2026-09-07T11:59:59.000Z"),
       member("user_revoked", "editor", "revoked"),
     ]).execute();
-    authority = new CollaborationAuthority(repository, { now: () => new Date(now) });
+    authority = new CollaborationAuthority(repository, { now: () => new Date(now), organizationPrecondition: allowAllOrganizationPrecondition });
   });
 
   afterEach(async () => {
@@ -104,92 +106,50 @@ describe("CollaborationAuthority", () => {
     }
   });
 
-  it("enables M2 requests only for an eligible scope, enabled cohort, and writable role", async () => {
+  it("enables shared execution only for an eligible scope and a writable role", async () => {
     await fixture.db.updateTable("collaboration_scopes").set({
       execution_generation: 1,
       execution_eligibility: JSON.stringify({ profileId: "scope-runtime-chat-v1" }),
     }).where("id", "=", collaborationIds.scope).execute();
-    const repository = new CollaborationRepository(fixture.db, { now: () => new Date(now) });
-    const m2 = new CollaborationAuthority(repository, { now: () => new Date(now) });
-    const executionPolicy = {
-      milestone: "m2" as const,
-      revision: "1",
-      mode: "internal" as const,
-      cohort: [
-        collaborationActors.owner,
-        collaborationActors.editor,
-        collaborationActors.viewer,
-        "user_pending",
-      ],
-      issuedAt: "2026-09-07T11:59:50.000Z",
-      expiresAt: "2026-09-07T12:00:20.000Z",
-    };
 
-    await expect(m2.authorize({
+    await expect(authority.authorize({
       scopeId: collaborationIds.scope,
       actorId: collaborationActors.editor,
       action: "request_ai",
-      executionPolicy,
     })).resolves.toMatchObject({ capability: "request_ai", role: "editor" });
-    await expect(m2.authorize({
-      scopeId: collaborationIds.scope,
-      actorId: collaborationActors.editor,
-      action: "request_ai",
-      executionPolicy: {
-        ...executionPolicy,
-        cohort: executionPolicy.cohort.filter((actorId) => actorId !== collaborationActors.viewer),
-      },
-    })).rejects.toMatchObject({ code: "unavailable" });
-    await expect(m2.authorize({
+    await expect(authority.authorize({
       scopeId: collaborationIds.scope,
       actorId: collaborationActors.viewer,
       action: "request_ai",
-      executionPolicy: {
-        ...executionPolicy,
-        cohort: executionPolicy.cohort.filter((actorId) => actorId !== collaborationActors.viewer),
-      },
-    })).rejects.toMatchObject({ code: "unavailable" });
-
-    await expect(m2.authorize({
-      scopeId: collaborationIds.scope,
-      actorId: collaborationActors.owner,
-      action: "control_execution",
-      executionPolicy: { ...executionPolicy, mode: "read_only" },
-    })).rejects.toMatchObject({ code: "unavailable" });
+    })).rejects.toMatchObject({ code: "forbidden" });
+    expect(authority.canRequestAi({
+      kind: "chat",
+      lifecycle: "shared",
+      owner_id: collaborationActors.owner,
+      execution_generation: 1,
+      execution_eligibility: { profileId: "scope-runtime-chat-v1" },
+    }, "editor")).toBe(true);
+    expect(authority.canRequestAi({
+      kind: "chat",
+      lifecycle: "shared",
+      owner_id: collaborationActors.owner,
+      execution_generation: null,
+      execution_eligibility: null,
+    }, "editor")).toBe(false);
   });
 
-  it("requires the resource-specific milestone for terminal control", async () => {
+  it("allows terminal control only on an eligible terminal scope for a writable role", async () => {
     await fixture.db.updateTable("collaboration_scopes").set({
       kind: "terminal",
       resource_id: "terminal_shared",
       execution_generation: 2,
       execution_eligibility: JSON.stringify({ profileId: "scope-runtime-terminal-v1" }),
     }).where("id", "=", collaborationIds.scope).execute();
-    const policy = {
-      milestone: "m3" as const,
-      revision: "1",
-      mode: "internal" as const,
-      cohort: [
-        collaborationActors.owner,
-        collaborationActors.editor,
-        collaborationActors.viewer,
-        "user_pending",
-      ],
-      issuedAt: "2026-09-07T11:59:50.000Z",
-      expiresAt: "2026-09-07T12:00:20.000Z",
-    };
 
     await expect(authority.authorize({
       scopeId: collaborationIds.scope,
       actorId: collaborationActors.editor,
       action: "control_execution",
-      executionPolicy: { ...policy, milestone: "m2" },
-    })).rejects.toMatchObject({ code: "unavailable" });
-    await expect(authority.authorize({
-      scopeId: collaborationIds.scope,
-      actorId: collaborationActors.editor,
-      action: "control_execution",
-      executionPolicy: policy,
     })).resolves.toMatchObject({
       resourceKind: "terminal",
       resourceId: "terminal_shared",
@@ -199,8 +159,12 @@ describe("CollaborationAuthority", () => {
       scopeId: collaborationIds.scope,
       actorId: collaborationActors.viewer,
       action: "control_execution",
-      executionPolicy: policy,
     })).rejects.toMatchObject({ code: "forbidden" });
+    await expect(authority.authorize({
+      scopeId: collaborationIds.scope,
+      actorId: collaborationActors.editor,
+      action: "request_ai",
+    })).rejects.toMatchObject({ code: "unavailable" });
   });
 
   it("resolves inherited membership only through an active project parent", async () => {
