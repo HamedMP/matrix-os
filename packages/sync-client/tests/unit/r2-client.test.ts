@@ -5,8 +5,10 @@ import { join } from "node:path";
 import { createHash } from "node:crypto";
 import {
     AuthRejectedError,
+    commitFiles,
     downloadFile,
     requestPresignedUrls,
+    SyncUpgradeRequiredError,
     uploadFile,
   } from "../../src/daemon/r2-client.js";
 
@@ -22,6 +24,20 @@ describe("daemon/r2-client", () => {
   afterEach(async () => {
     vi.restoreAllMocks();
     await rm(tempDir, { recursive: true, force: true });
+  });
+
+  it("allows bounded server publication time rather than the ordinary 10s API deadline", async () => {
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ manifestVersion: 2, committed: 1 }));
+    await commitFiles({ gatewayUrl: "https://gateway.test", token: "token" }, [], 1);
+    expect(timeout).toHaveBeenCalledWith(360_000);
+  });
+
+  it("logs malformed upgrade responses while preserving the actionable upgrade error", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("not JSON", { status: 426 }));
+    await expect(requestPresignedUrls({ gatewayUrl: "https://gateway.test", token: "token" }, [])).rejects.toBeInstanceOf(SyncUpgradeRequiredError);
+    expect(warn).toHaveBeenCalledOnce();
   });
 
   it("includes size in PUT presign requests", async () => {
@@ -41,6 +57,7 @@ describe("daemon/r2-client", () => {
 
     const [, init] = fetchMock.mock.calls[0]!;
     expect(JSON.parse(String(init?.body))).toEqual({
+      protocolVersion: 3,
       files: [
         {
           path: "notes/today.md",
@@ -63,6 +80,28 @@ describe("daemon/r2-client", () => {
         [{ path: "notes/today.md", action: "get" }],
       ),
     ).rejects.toBeInstanceOf(AuthRejectedError);
+  });
+
+  it("reports an actionable error when the gateway requires a newer sync protocol", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        error: "sync_upgrade_required",
+        requiredProtocolVersion: 4,
+      }), {
+        status: 426,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    await expect(
+      requestPresignedUrls(
+        { gatewayUrl: "https://app.matrix-os.com", token: "token" },
+        [{ path: "notes/today.md", action: "get" }],
+      ),
+    ).rejects.toMatchObject<Partial<SyncUpgradeRequiredError>>({
+      name: "SyncUpgradeRequiredError",
+      requiredProtocolVersion: 4,
+    });
   });
 
   it("uploads multipart presigned files and completes them through the gateway", async () => {
@@ -89,7 +128,9 @@ describe("daemon/r2-client", () => {
       if (href === "https://app.matrix-os.com/api/sync/multipart/complete") {
         expect(init?.method).toBe("POST");
         expect(JSON.parse(String(init?.body))).toEqual({
+          protocolVersion: 3,
           path: "large.bin",
+          stagingId: "11111111-1111-4111-8111-111111111111",
           uploadId: "upload-123",
           parts: [
             { partNumber: 1, etag: '"etag-1"' },
@@ -110,6 +151,7 @@ describe("daemon/r2-client", () => {
         path: "large.bin",
         url: "",
         expiresIn: 900,
+        stagingId: "11111111-1111-4111-8111-111111111111",
         multipart: {
           uploadId: "upload-123",
           partSize: 5,
@@ -154,6 +196,7 @@ describe("daemon/r2-client", () => {
           path: "large.bin",
           url: "",
           expiresIn: 900,
+          stagingId: "11111111-1111-4111-8111-111111111111",
           multipart: {
             uploadId: "upload-123",
             partSize: 5,
@@ -172,7 +215,12 @@ describe("daemon/r2-client", () => {
       "https://app.matrix-os.com/api/sync/multipart/abort",
       expect.objectContaining({
         method: "POST",
-        body: JSON.stringify({ path: "large.bin", uploadId: "upload-123" }),
+        body: JSON.stringify({
+          protocolVersion: 3,
+          path: "large.bin",
+          stagingId: "11111111-1111-4111-8111-111111111111",
+          uploadId: "upload-123",
+        }),
       }),
     );
   });

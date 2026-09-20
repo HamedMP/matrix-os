@@ -1,6 +1,12 @@
 import { sql, type Insertable, type Kysely, type Transaction } from "kysely";
 import { randomUUID } from "node:crypto";
-import type { ManifestDb, ManifestDbExecutor, ManifestMeta } from "./manifest.js";
+import {
+  normalizeManifestScope,
+  type ManifestDb,
+  type ManifestDbExecutor,
+  type ManifestMeta,
+  type ManifestScope,
+} from "./manifest.js";
 import type { SharingDb, ShareRow } from "./sharing.js";
 import type { ShareRole } from "./types.js";
 import type { SyncDatabase } from "./sharing-db.js";
@@ -12,13 +18,15 @@ export function createManifestDb(kysely: Kysely<SyncDatabase>): ManifestDb {
 
   return {
     async getManifestMeta(
-      userId: string,
+      scopeInput: ManifestScope,
       executor?: ManifestDbExecutor,
     ): Promise<ManifestMeta | null> {
+      const scope = normalizeManifestScope(scopeInput);
       const row = await getExecutor(executor)
         .selectFrom("sync_manifests")
         .selectAll()
-        .where("user_id", "=", userId)
+        .where("user_id", "=", scope.ownerId)
+        .where("runtime_slot", "=", scope.runtimeSlot)
         .executeTakeFirst();
 
       if (!row) return null;
@@ -28,6 +36,7 @@ export function createManifestDb(kysely: Kysely<SyncDatabase>): ManifestDb {
         file_count: row.file_count,
         total_size: BigInt(row.total_size),
         etag: row.etag,
+        accepted_manifest_key: row.accepted_manifest_key,
         updated_at: row.updated_at,
       };
     },
@@ -48,27 +57,31 @@ export function createManifestDb(kysely: Kysely<SyncDatabase>): ManifestDb {
     },
 
     async upsertManifestMeta(
-      userId: string,
+      scopeInput: ManifestScope,
       meta: Omit<ManifestMeta, "updated_at">,
       executor?: ManifestDbExecutor,
     ): Promise<void> {
+      const scope = normalizeManifestScope(scopeInput);
       await getExecutor(executor)
         .insertInto("sync_manifests")
         .values({
-          user_id: userId,
+          user_id: scope.ownerId,
+          runtime_slot: scope.runtimeSlot,
           version: meta.version,
           file_count: meta.file_count,
           total_size: meta.total_size,
           etag: meta.etag,
+          accepted_manifest_key: meta.accepted_manifest_key ?? null,
           updated_at: sql`CURRENT_TIMESTAMP`,
         })
         .onConflict((oc) =>
-          oc.column("user_id")
+          oc.columns(["user_id", "runtime_slot"])
             .doUpdateSet({
               version: meta.version,
               file_count: meta.file_count,
               total_size: meta.total_size,
               etag: meta.etag,
+              accepted_manifest_key: meta.accepted_manifest_key ?? null,
               updated_at: sql`CURRENT_TIMESTAMP`,
             })
             // readManifest() may repair stale DB metadata without holding the
@@ -79,12 +92,57 @@ export function createManifestDb(kysely: Kysely<SyncDatabase>): ManifestDb {
         .execute();
     },
 
+    async advanceManifestMeta(
+      scopeInput: ManifestScope,
+      expectedVersion: number,
+      meta: Omit<ManifestMeta, "updated_at">,
+      executor?: ManifestDbExecutor,
+    ): Promise<boolean> {
+      const scope = normalizeManifestScope(scopeInput);
+      const db = getExecutor(executor);
+      const values = {
+        version: meta.version,
+        file_count: meta.file_count,
+        total_size: meta.total_size,
+        etag: meta.etag,
+        accepted_manifest_key: meta.accepted_manifest_key ?? null,
+        updated_at: sql<Date>`CURRENT_TIMESTAMP`,
+      };
+      const updated = await db
+        .updateTable("sync_manifests")
+        .set(values)
+        .where("user_id", "=", scope.ownerId)
+        .where("runtime_slot", "=", scope.runtimeSlot)
+        .where("version", "=", expectedVersion)
+        .executeTakeFirst();
+      if (Number(updated.numUpdatedRows) === 1) {
+        return true;
+      }
+      if (expectedVersion !== 0) {
+        return false;
+      }
+
+      const inserted = await db
+        .insertInto("sync_manifests")
+        .values({
+          user_id: scope.ownerId,
+          runtime_slot: scope.runtimeSlot,
+          ...values,
+        })
+        .onConflict((oc) => oc.columns(["user_id", "runtime_slot"]).doNothing())
+        .executeTakeFirst();
+      return Number(inserted.numInsertedOrUpdatedRows ?? 0n) === 1;
+    },
+
     async withAdvisoryLock<T>(
-      userId: string,
+      scopeInput: ManifestScope,
       fn: (executor: ManifestDbExecutor) => Promise<T>,
     ): Promise<T> {
+      const scope = normalizeManifestScope(scopeInput);
+      const lockKey = JSON.stringify([scope.ownerId, scope.runtimeSlot]);
       return await kysely.transaction().execute(async (trx) => {
-        await sql`SELECT pg_advisory_xact_lock(hashtext(${userId}))`.execute(trx);
+        await sql`SELECT set_config('statement_timeout', '30000', true)`.execute(trx);
+        await sql`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`.execute(trx);
         return fn(trx);
       });
     },

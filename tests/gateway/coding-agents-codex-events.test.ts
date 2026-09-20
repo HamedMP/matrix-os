@@ -232,7 +232,7 @@ describe("Codex structured event normalization", () => {
       expect.objectContaining({
         type: "tool.output",
         toolCallId: "item_4",
-        text: "Command produced output.",
+        text: "Output withheld because it may contain private data.",
         truncated: true,
       }),
       expect.objectContaining({

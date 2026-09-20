@@ -1,4 +1,5 @@
 import { buildFileKey, buildManifestKey } from "./r2-keys.js";
+import type { Readable } from "node:stream";
 
 type S3ClientType = import("@aws-sdk/client-s3").S3Client;
 
@@ -45,7 +46,7 @@ export interface R2Client {
   ): Promise<{ body: ReadableStream | null; etag?: string; contentLength?: number }>;
   putObject(
     key: string,
-    body: string | Uint8Array | ReadableStream<Uint8Array>,
+    body: string | Uint8Array | ReadableStream<Uint8Array> | Readable,
     options?: { signal?: AbortSignal },
   ): Promise<{ etag?: string }>;
   deleteObject(key: string): Promise<void>;
@@ -201,7 +202,7 @@ export async function createR2Client(config: R2ClientConfig): Promise<R2Client> 
 
     async putObject(
       key: string,
-      body: string | Uint8Array | ReadableStream<Uint8Array>,
+      body: string | Uint8Array | ReadableStream<Uint8Array> | Readable,
       options?: { signal?: AbortSignal },
     ): Promise<{ etag?: string }> {
       const command = new PutObjectCommand({
@@ -228,4 +229,10 @@ export async function createR2Client(config: R2ClientConfig): Promise<R2Client> 
   };
 }
 
-export { buildFileKey, buildManifestKey } from "./r2-keys.js";
+export {
+  buildFileKey,
+  buildBlobKey,
+  buildManifestGenerationKey,
+  buildManifestKey,
+  buildStagingKey,
+} from "./r2-keys.js";

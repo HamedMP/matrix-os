@@ -1,3 +1,4 @@
+import { openToolOutput, sealToolOutput } from "../../packages/gateway/src/coding-agents/protected-tool-output.mjs";
 import {
   AgentThreadEventSchema,
   AgentThreadSnapshotSchema,
@@ -349,6 +350,53 @@ describe("canonical coding Chat Provider adapter", () => {
       { type: "run.completed", outcome: "failed" },
     ]);
     expect(JSON.stringify(events)).not.toMatch(/secret-value|API_TOKEN|\/Users\/private|tool\.output/);
+  });
+
+  it.each([false, true])("keeps only protected results through live and snapshot replay (sealed=%s)", async (sealed) => {
+    const started = event({ type: "tool.started", eventId: "evt_details_start", toolCallId: "tool_details", displayName: "Run command", kind: "command", preview: "bun run test", previewKind: "command", detail: "Working directory: projects/demo" });
+    const protectedOutput = sealed ? sealToolOutput(Buffer.alloc(32, 4), "tool_details", "12 tests passed") : undefined;
+    const output = event({ type: "tool.output", eventId: "evt_details_output", toolCallId: "tool_details", text: "12 tests passed", truncated: false, ...(protectedOutput ? { protectedOutput } : {}) });
+    const completed = event({ type: "tool.completed", eventId: "evt_details_end", toolCallId: "tool_details", outcome: "success" });
+    const done = event({ type: "thread.completed", eventId: "evt_details_done", outcome: "completed" });
+    for (const live of [false, true]) {
+      const store = fakeStore(live ? [] : [started, output, completed, done]);
+      const adapter = createCanonicalCodingChatProviderAdapter({ providerId: "codex", threads: store.store, toolOutputKey: Buffer.alloc(32, 4) });
+      const events: CanonicalProviderRunEvent[] = [];
+      const collect = (async () => { for await (const value of adapter.start(input())) events.push(value); })();
+      if (live) {
+        await vi.waitFor(() => expect(store.createThread).toHaveBeenCalled());
+        store.publish([started, output, completed, done]);
+      }
+      await collect;
+      expect(events).toContainEqual({ type: "tool.output", toolCallId: "tool_details", text: "Tool output is private to its owner.", truncated: false, ...(protectedOutput ? { protectedOutput } : {}) });
+      expect(JSON.stringify(events)).not.toContain("12 tests passed");
+    }
+  });
+
+  it.each(["pi", "opencode"] as const)("protects %s results without discarding owner output", async (providerId) => {
+    for (const live of [false, true]) {
+      for (const available of [false, true]) {
+        const key = Buffer.alloc(32, 6);
+        const output = event({ type: "tool.output", eventId: "evt_other_output", toolCallId: "tool_other", text: "private-result-17", truncated: true });
+        const done = event({ type: "thread.completed", eventId: "evt_other_done", outcome: "completed" });
+        const store = fakeStore(live ? [] : [output, done]);
+        store.createThread.mockImplementation(async () => ({ snapshot: { ...snapshot(live ? [] : [output, done]), thread: { ...snapshot([]).thread, providerId } }, existing: false }));
+        const adapter = createCanonicalCodingChatProviderAdapter({ providerId, threads: store.store, ...(available ? { toolOutputKey: key } : {}) });
+        const events: CanonicalProviderRunEvent[] = [];
+        const collect = (async () => { for await (const value of adapter.start(input({ selection: { instanceId: `${providerId}_default`, model: "test-model" } }))) events.push(value); })();
+        if (live) {
+          await vi.waitFor(() => expect(store.createThread).toHaveBeenCalled());
+          store.publish([output, done]);
+        }
+        await collect;
+        const result = events.find((value) => value.type === "tool.output");
+        expect(result).toMatchObject({ type: "tool.output", text: "Tool output is private to its owner.", truncated: true });
+        expect(JSON.stringify(events)).not.toContain("private-result-17");
+        if (result?.type !== "tool.output") throw new Error("Missing output");
+        if (available) expect(openToolOutput(key, "tool_other", result.protectedOutput)).toBe("private-result-17");
+        else expect(result.protectedOutput).toBeUndefined();
+      }
+    }
   });
 
   it("streams normalized Codex events from the shared Gateway thread seam", async () => {

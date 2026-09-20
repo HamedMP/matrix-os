@@ -21,12 +21,15 @@ describe("createManifestDb", () => {
         handle TEXT UNIQUE
       );
       CREATE TABLE sync_manifests (
-        user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        runtime_slot TEXT NOT NULL DEFAULT 'primary',
         version INTEGER NOT NULL,
         file_count INTEGER NOT NULL,
         total_size INTEGER NOT NULL,
         etag TEXT,
-        updated_at TEXT NOT NULL
+        accepted_manifest_key TEXT,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (user_id, runtime_slot)
       );
       CREATE TABLE sync_shares (
         id TEXT PRIMARY KEY,
@@ -112,6 +115,110 @@ describe("createManifestDb", () => {
       total_size: 42,
       etag: '"etag-1"',
     });
+  });
+
+  it("persists the accepted immutable manifest generation pointer", async () => {
+    const manifestDb = createManifestDb(db);
+    await ensureSyncUser(db, { id: "user1", handle: "alice" });
+
+    await manifestDb.upsertManifestMeta("user1", {
+      version: 4,
+      file_count: 1,
+      total_size: 42n,
+      etag: '"etag-4"',
+      accepted_manifest_key: "matrixos-sync/user1/manifests/4-" + "a".repeat(64) + ".json",
+    });
+
+    await expect(manifestDb.getManifestMeta("user1")).resolves.toMatchObject({
+      version: 4,
+      accepted_manifest_key: "matrixos-sync/user1/manifests/4-" + "a".repeat(64) + ".json",
+    });
+  });
+
+  it("advances the accepted generation only from the expected version", async () => {
+    const manifestDb = createManifestDb(db);
+    await ensureSyncUser(db, { id: "user1", handle: "alice" });
+    await manifestDb.upsertManifestMeta("user1", {
+      version: 4,
+      file_count: 1,
+      total_size: 42n,
+      etag: '"etag-4"',
+      accepted_manifest_key: "generation-4",
+    });
+
+    await expect(manifestDb.advanceManifestMeta("user1", 3, {
+      version: 5,
+      file_count: 2,
+      total_size: 84n,
+      etag: '"etag-5-stale"',
+      accepted_manifest_key: "generation-5-stale",
+    })).resolves.toBe(false);
+    await expect(manifestDb.getManifestMeta("user1")).resolves.toMatchObject({
+      version: 4,
+      accepted_manifest_key: "generation-4",
+    });
+
+    await expect(manifestDb.advanceManifestMeta("user1", 4, {
+      version: 5,
+      file_count: 2,
+      total_size: 84n,
+      etag: '"etag-5"',
+      accepted_manifest_key: "generation-5",
+    })).resolves.toBe(true);
+    await expect(manifestDb.getManifestMeta("user1")).resolves.toMatchObject({
+      version: 5,
+      accepted_manifest_key: "generation-5",
+    });
+  });
+
+  it("creates revision one only when no accepted metadata row exists", async () => {
+    const manifestDb = createManifestDb(db);
+    await ensureSyncUser(db, { id: "user1", handle: "alice" });
+    const revisionOne = {
+      version: 1,
+      file_count: 1,
+      total_size: 42n,
+      etag: '"etag-1"',
+      accepted_manifest_key: "generation-1",
+    };
+
+    await expect(manifestDb.advanceManifestMeta("user1", 0, revisionOne)).resolves.toBe(true);
+    await expect(manifestDb.advanceManifestMeta("user1", 0, {
+      ...revisionOne,
+      accepted_manifest_key: "generation-1-race",
+    })).resolves.toBe(false);
+    await expect(manifestDb.getManifestMeta("user1")).resolves.toMatchObject({
+      accepted_manifest_key: "generation-1",
+    });
+  });
+
+  it("keeps manifest metadata isolated between runtime slots", async () => {
+    const manifestDb = createManifestDb(db);
+    await ensureSyncUser(db, { id: "user1", handle: "alice" });
+
+    await manifestDb.upsertManifestMeta({ ownerId: "user1", runtimeSlot: "primary" }, {
+      version: 2,
+      file_count: 1,
+      total_size: 10n,
+      etag: '"primary"',
+      accepted_manifest_key: null,
+    });
+    await manifestDb.upsertManifestMeta({ ownerId: "user1", runtimeSlot: "studio" }, {
+      version: 8,
+      file_count: 3,
+      total_size: 30n,
+      etag: '"studio"',
+      accepted_manifest_key: null,
+    });
+
+    await expect(manifestDb.getManifestMeta({
+      ownerId: "user1",
+      runtimeSlot: "primary",
+    })).resolves.toMatchObject({ version: 2, etag: '"primary"' });
+    await expect(manifestDb.getManifestMeta({
+      ownerId: "user1",
+      runtimeSlot: "studio",
+    })).resolves.toMatchObject({ version: 8, etag: '"studio"' });
   });
 
   it("seeds sync users idempotently by id", async () => {

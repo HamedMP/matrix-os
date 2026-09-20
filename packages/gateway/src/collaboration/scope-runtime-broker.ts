@@ -15,6 +15,10 @@ import {
   type KernelCredentialAccessSourceId,
 } from "../kernel-credentials.js";
 import { validateCustomMcpUrl } from "../integrations/custom-mcp/security.js";
+import {
+  createCodexOwnerIdentityResolver,
+  type ResolveCodexOwnerIdentity,
+} from "./codex-owner-identity.js";
 
 const MAX_RESPONSE_BYTES = 512 * 1024;
 const MAX_IN_FLIGHT = 8;
@@ -30,6 +34,26 @@ const InferenceBodySchema = z.object({
   messages: z.array(z.unknown()).min(1).max(256),
   tools: z.array(z.unknown()).max(0).optional(),
 }).passthrough();
+const ResponsesBodySchema = z.object({
+  model: z.string().min(1).max(256),
+  stream: z.literal(true),
+  input: z.array(z.unknown()).max(512),
+  tools: z.array(z.unknown()).max(0).optional(),
+}).passthrough();
+const BearerHeaderSchema = z.string().min(8).max(64 * 1024).regex(/^Bearer [^\r\n]+$/);
+const CodexOwnerIdentitySchema = z.union([
+  z.object({
+    url: z.literal("https://api.openai.com/v1/responses"),
+    headers: z.object({ authorization: BearerHeaderSchema }).strict(),
+  }).strict(),
+  z.object({
+    url: z.literal("https://chatgpt.com/backend-api/codex/responses"),
+    headers: z.object({
+      authorization: BearerHeaderSchema,
+      "chatgpt-account-id": z.string().min(1).max(512).regex(/^[^\r\n]+$/),
+    }).strict(),
+  }).strict(),
+]);
 
 const UniqueModelsSchema = z.array(z.string().min(1).max(256)).max(128)
   .refine((values) => new Set(values).size === values.length, "Duplicate allowed model");
@@ -40,6 +64,16 @@ const BrokerAuthorizationSchema = z.union([
   z.object({
     allowed: z.literal(true),
     accessSourceId: KernelCredentialAccessSourceIdSchema.optional(),
+    providerIdentity: z.discriminatedUnion("driverKind", [
+      z.object({
+        driverKind: z.literal("claude_code"),
+        instanceId: z.literal("claude_shared"),
+      }).strict(),
+      z.object({
+        driverKind: z.literal("codex"),
+        instanceId: z.literal("codex_default"),
+      }).strict(),
+    ]).optional(),
     allowedModelIds: UniqueModelsSchema,
     allowedEgressOrigins: UniqueOriginsSchema,
   }).strict(),
@@ -50,6 +84,9 @@ export type ScopeRuntimeBrokerAuthorization =
   | {
       allowed: true;
       accessSourceId?: KernelCredentialAccessSourceId;
+      providerIdentity?:
+        | { driverKind: "claude_code"; instanceId: "claude_shared" }
+        | { driverKind: "codex"; instanceId: "codex_default" };
       allowedModelIds: readonly string[];
       allowedEgressOrigins: readonly string[];
     };
@@ -172,11 +209,14 @@ export function createScopeRuntimeBroker(options: {
   }): Promise<ScopeRuntimeBrokerAuthorization>;
   fundedCredentialProvider?: MatrixFundedCredentialProvider;
   resolveCredentials?: ResolveCredentials;
+  resolveCodexIdentity?: ResolveCodexOwnerIdentity;
   resolveEgress?: ResolveEgress;
   fetchImpl?: typeof fetch;
   maxInFlight?: number;
 }) {
   const resolveCredentials = options.resolveCredentials ?? buildKernelCredentialLaunch;
+  const resolveCodexIdentity = options.resolveCodexIdentity
+    ?? createCodexOwnerIdentityResolver({ homePath: options.homePath, fetchImpl: options.fetchImpl });
   const resolveEgress = options.resolveEgress ?? defaultResolveEgress;
   const fetchImpl = options.fetchImpl ?? fetch;
   const maxInFlight = Math.max(1, Math.min(Math.trunc(options.maxInFlight ?? MAX_IN_FLIGHT), MAX_IN_FLIGHT));
@@ -186,9 +226,11 @@ export function createScopeRuntimeBroker(options: {
 
   async function execute(request: ScopeRuntimeBrokerRequest): Promise<ScopeRuntimeBrokerResponse> {
     let modelId: string | undefined;
-    if (request.action === "inference.messages" && request.method === "POST") {
+    if ((request.action === "inference.messages" || request.action === "inference.responses")
+      && request.method === "POST") {
       try {
-        modelId = InferenceBodySchema.parse(JSON.parse(request.body)).model;
+        modelId = (request.action === "inference.messages" ? InferenceBodySchema : ResponsesBodySchema)
+          .parse(JSON.parse(request.body)).model;
       } catch (error: unknown) {
         if (!(error instanceof SyntaxError) && !(error instanceof z.ZodError)) {
           console.warn("[collaboration] scope broker inference validation failed:",
@@ -249,6 +291,53 @@ export function createScopeRuntimeBroker(options: {
         redirect: "error",
         signal: AbortSignal.any([lifetime.signal, AbortSignal.timeout(INFERENCE_TIMEOUT_MS)]),
       });
+      if (!response.ok) {
+        await discard(response);
+        return failure(request.requestId, "provider_unavailable");
+      }
+      const body = await readBoundedBody(response);
+      return ScopeRuntimeBrokerResponseSchema.parse({
+        version: 1,
+        requestId: request.requestId,
+        ok: true,
+        status: response.status,
+        headers: safeResponseHeaders(response, "inference"),
+        body,
+      });
+    }
+
+    if (request.action === "inference.responses") {
+      if (!modelId || !authorization.allowedModelIds.includes(modelId)
+        || authorization.providerIdentity?.driverKind !== "codex"
+        || authorization.providerIdentity.instanceId !== "codex_default") {
+        return failure(request.requestId, "action_denied");
+      }
+      const signal = AbortSignal.any([lifetime.signal, AbortSignal.timeout(INFERENCE_TIMEOUT_MS)]);
+      const send = async (forceRefresh = false) => {
+        const identity = CodexOwnerIdentitySchema.parse(
+          await resolveCodexIdentity(signal, ...(forceRefresh ? [true] as const : [])),
+        );
+        const headers = new Headers({
+          accept: "text/event-stream",
+          "content-type": "application/json",
+          ...identity.headers,
+        });
+        if (identity.url === "https://chatgpt.com/backend-api/codex/responses") {
+          headers.set("originator", "codex_cli_rs");
+        }
+        return fetchImpl(identity.url, {
+          method: "POST",
+          headers,
+          body: request.body,
+          redirect: "error",
+          signal,
+        });
+      };
+      let response = await send();
+      if (response.status === 401) {
+        await discard(response);
+        response = await send(true);
+      }
       if (!response.ok) {
         await discard(response);
         return failure(request.requestId, "provider_unavailable");

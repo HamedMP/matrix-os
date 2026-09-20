@@ -8,6 +8,7 @@ import {
   DESKTOP_APP_DOWNLOAD_URL,
   GETTING_STARTED_REFRESH_MS,
   GettingStartedPopover,
+  resolveDesktopDownloadSuggestion,
   loadWebGettingStartedSnapshot,
   webGettingStartedAutoOpenKey,
 } from "../../shell/src/components/onboarding/GettingStartedPopover.js";
@@ -88,8 +89,46 @@ describe("web getting started status", () => {
     );
   });
 
-  it("stays open until its title-bar trigger is clicked and offers the desktop download", async () => {
+  it("suggests a direct platform download without sending users to GitHub", () => {
+    expect(resolveDesktopDownloadSuggestion({ platform: "Win32", userAgent: "Windows NT 10.0" })).toEqual({
+      href: "https://matrix-os.com/api/desktop-release?platform=windowsX64",
+      label: "Download for Windows",
+      guidance: "SmartScreen: select More info, verify Finna Labs Inc., then select Run anyway. Run as administrator does not bypass it.",
+    });
+    expect(resolveDesktopDownloadSuggestion({ platform: "Linux x86_64", userAgent: "X11; Linux x86_64" })).toEqual({
+      href: "https://matrix-os.com/api/desktop-release?platform=linuxX64",
+      label: "Download for Linux",
+    });
+    expect(resolveDesktopDownloadSuggestion({ platform: "MacIntel", userAgent: "Macintosh" }, "arm")).toEqual({
+      href: "https://matrix-os.com/api/desktop-release?platform=macArm64",
+      label: "Download for macOS (Apple silicon)",
+    });
+    expect(resolveDesktopDownloadSuggestion({ platform: "MacIntel", userAgent: "Macintosh" }, "x86")).toEqual({
+      href: "https://matrix-os.com/api/desktop-release?platform=macX64",
+      label: "Download for macOS (Intel)",
+    });
+    expect(resolveDesktopDownloadSuggestion({ platform: "MacIntel", userAgent: "Macintosh" })).toEqual({
+      href: DESKTOP_APP_DOWNLOAD_URL,
+      label: "Choose macOS download",
+    });
+    expect(resolveDesktopDownloadSuggestion({ platform: "Win32", userAgent: "Windows NT 10.0" }, "arm64")).toEqual({
+      href: DESKTOP_APP_DOWNLOAD_URL,
+      label: "Choose desktop download",
+    });
+    expect(resolveDesktopDownloadSuggestion({ platform: "Linux", userAgent: "X11; Linux" }, "aarch64")).toEqual({
+      href: DESKTOP_APP_DOWNLOAD_URL,
+      label: "Choose desktop download",
+    });
+    expect(resolveDesktopDownloadSuggestion({ platform: "Linux", userAgent: "Linux; Android 14; Pixel 8" }, "x86_64")).toEqual({
+      href: DESKTOP_APP_DOWNLOAD_URL,
+      label: "Choose desktop download",
+    });
+    expect(DESKTOP_APP_DOWNLOAD_URL).toBe("https://matrix-os.com/desktop");
+  });
+
+  it("stays open until its title-bar trigger is clicked and offers the detected desktop download", async () => {
     vi.stubGlobal("PointerEvent", MouseEvent);
+    vi.stubGlobal("navigator", { platform: "Win32", userAgent: "Windows NT 10.0" });
     installSuccessfulFetch();
     window.localStorage.setItem(webGettingStartedAutoOpenKey("/"), "1");
     const onOpenSettings = vi.fn();
@@ -110,10 +149,11 @@ describe("web getting started status", () => {
     expect(screen.getByRole("dialog", { name: "Getting started" })).toBeTruthy();
     expect(screen.getByTestId("getting-started-counter").textContent).toBe("5 of 5");
 
-    const download = screen.getByRole("link", { name: "Download desktop app" });
-    expect(download.getAttribute("href")).toBe(DESKTOP_APP_DOWNLOAD_URL);
+    const download = screen.getByRole("link", { name: "Download for Windows" });
+    expect(download.getAttribute("href")).toBe("https://matrix-os.com/api/desktop-release?platform=windowsX64");
     expect(download.getAttribute("target")).toBe("_blank");
     expect(download.getAttribute("rel")).toBe("noopener noreferrer");
+    expect(screen.getByText("SmartScreen: select More info, verify Finna Labs Inc., then select Run anyway. Run as administrator does not bypass it.")).toBeTruthy();
     const dialogActions = screen
       .getByRole("dialog", { name: "Getting started" })
       .querySelectorAll("a, button");

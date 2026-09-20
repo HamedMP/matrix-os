@@ -16,6 +16,7 @@ export interface PresignedUrl {
   url: string;
   expiresIn: number;
   multipart?: MultipartInfo;
+  stagingId?: string;
 }
 
 export interface GatewayClient {
@@ -33,6 +34,28 @@ export class AuthRejectedError extends Error {
     super(message);
     this.name = "AuthRejectedError";
   }
+}
+
+export class SyncUpgradeRequiredError extends Error {
+  constructor(readonly requiredProtocolVersion?: number) {
+    super("This Matrix sync client is out of date. Update the Matrix CLI before resuming sync.");
+    this.name = "SyncUpgradeRequiredError";
+  }
+}
+
+async function throwIfUpgradeRequired(res: Response): Promise<void> {
+  if (res.status !== 426) return;
+  let requiredProtocolVersion: number | undefined;
+  try {
+    const data = await res.json() as { requiredProtocolVersion?: unknown };
+    if (typeof data.requiredProtocolVersion === "number") {
+      requiredProtocolVersion = data.requiredProtocolVersion;
+    }
+  } catch (err: unknown) {
+    // The status code remains authoritative if an older gateway omits JSON.
+    console.warn("[sync] Upgrade response could not be parsed", err instanceof Error ? err.name : "UnknownError");
+  }
+  throw new SyncUpgradeRequiredError(requiredProtocolVersion);
 }
 
 export class VersionConflictError extends Error {
@@ -60,13 +83,14 @@ export async function requestPresignedUrls(
       "Content-Type": "application/json",
       authorization: `Bearer ${client.token}`,
     },
-    body: JSON.stringify({ files }),
+    body: JSON.stringify({ protocolVersion: 3, files }),
     signal: AbortSignal.timeout(10_000),
   });
 
   if (res.status === 401 || res.status === 403) {
     throw new AuthRejectedError();
   }
+  await throwIfUpgradeRequired(res);
 
   if (!res.ok) {
     throw new Error(`Presign request failed: ${res.status}`);
@@ -80,6 +104,7 @@ export async function completeMultipartUpload(
   client: GatewayClient,
   path: string,
   uploadId: string,
+  stagingId: string,
   parts: MultipartUploadedPart[],
 ): Promise<void> {
   const res = await fetch(`${client.gatewayUrl}/api/sync/multipart/complete`, {
@@ -88,13 +113,14 @@ export async function completeMultipartUpload(
       "Content-Type": "application/json",
       authorization: `Bearer ${client.token}`,
     },
-    body: JSON.stringify({ path, uploadId, parts }),
+    body: JSON.stringify({ protocolVersion: 3, path, stagingId, uploadId, parts }),
     signal: AbortSignal.timeout(MULTIPART_COMPLETE_TIMEOUT_MS),
   });
 
   if (res.status === 401 || res.status === 403) {
     throw new AuthRejectedError();
   }
+  await throwIfUpgradeRequired(res);
 
   if (!res.ok) {
     throw new Error(`Multipart completion failed: ${res.status}`);
@@ -105,6 +131,7 @@ export async function abortMultipartUpload(
   client: GatewayClient,
   path: string,
   uploadId: string,
+  stagingId: string,
 ): Promise<void> {
   const res = await fetch(`${client.gatewayUrl}/api/sync/multipart/abort`, {
     method: "POST",
@@ -112,13 +139,14 @@ export async function abortMultipartUpload(
       "Content-Type": "application/json",
       authorization: `Bearer ${client.token}`,
     },
-    body: JSON.stringify({ path, uploadId }),
+    body: JSON.stringify({ protocolVersion: 3, path, stagingId, uploadId }),
     signal: AbortSignal.timeout(10_000),
   });
 
   if (res.status === 401 || res.status === 403) {
     throw new AuthRejectedError();
   }
+  await throwIfUpgradeRequired(res);
 
   if (!res.ok) {
     throw new Error(`Multipart abort failed: ${res.status}`);
@@ -132,6 +160,9 @@ async function uploadMultipartFile(
 ): Promise<void> {
   const fileStat = await stat(localPath);
   const { multipart } = presigned;
+  if (!presigned.stagingId) {
+    throw new Error("Multipart upload did not include a staging id");
+  }
   if (multipart.partSize <= 0) {
     throw new Error("Multipart upload returned an invalid part size");
   }
@@ -173,11 +204,12 @@ async function uploadMultipartFile(
       client,
       presigned.path,
       multipart.uploadId,
+      presigned.stagingId,
       parts,
     );
   } catch (err: unknown) {
     try {
-      await abortMultipartUpload(client, presigned.path, multipart.uploadId);
+      await abortMultipartUpload(client, presigned.path, multipart.uploadId, presigned.stagingId);
     } catch (abortErr: unknown) {
       console.warn(
         "[sync-client] Failed to abort multipart upload after upload failure:",
@@ -390,7 +422,7 @@ async function writeResponseBodyToTempFile(
 
 export async function commitFiles(
   client: GatewayClient,
-  files: { path: string; hash: string; size: number; action?: "delete" }[],
+  files: { path: string; hash: string; size: number; action?: "delete"; stagingId?: string }[],
   expectedVersion: number,
 ): Promise<{ manifestVersion: number; committed: number }> {
   const res = await fetch(`${client.gatewayUrl}/api/sync/commit`, {
@@ -399,13 +431,15 @@ export async function commitFiles(
       "Content-Type": "application/json",
       authorization: `Bearer ${client.token}`,
     },
-    body: JSON.stringify({ files, expectedVersion }),
-    signal: AbortSignal.timeout(10_000),
+    body: JSON.stringify({ protocolVersion: 3, files, expectedVersion }),
+    // Server publication has a four-minute batch budget plus bounded cleanup.
+    signal: AbortSignal.timeout(360_000),
   });
 
   if (res.status === 401 || res.status === 403) {
     throw new AuthRejectedError();
   }
+  await throwIfUpgradeRequired(res);
 
   if (res.status === 409) {
     const data = (await res.json()) as { error: string; currentVersion: number };

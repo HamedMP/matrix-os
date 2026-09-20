@@ -4,7 +4,45 @@ import {
   createSharedAiApprovalReconciler,
   createSharedAiCancellationDispatcher,
   recoverSharedAiQueue,
+  sharedDispatchFenceMatches,
 } from "../../packages/gateway/src/collaboration/shared-ai-runtime.js";
+
+describe("shared AI dispatch fence", () => {
+  const expected = {
+    ownerId: "user_owner",
+    chatId: "chat_shared",
+    executionGeneration: 7,
+    executionEligibility: {
+      profileId: "scope-runtime-chat-v1",
+      profileVersion: 2,
+      profileDigest: "a".repeat(64),
+      adapters: [{ adapterId: "codex" as const, harnessVersion: "0.154.0" }],
+    },
+    driverKind: "codex" as const,
+    selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+  };
+  const current = {
+    owner_id: "user_owner",
+    resource_id: "chat_shared",
+    execution_generation: 7,
+    execution_eligibility: expected.executionEligibility,
+    lifecycle: "active",
+    bound_driver_kind: "codex",
+    bound_instance_id: "codex_default",
+    current_selection: expected.selection,
+  };
+
+  it("requires current owner, generation, eligibility, provider, and model at dispatch", () => {
+    expect(sharedDispatchFenceMatches(current, expected)).toBe(true);
+    expect(sharedDispatchFenceMatches({ ...current, execution_generation: 8 }, expected)).toBe(false);
+    expect(sharedDispatchFenceMatches({
+      ...current,
+      current_selection: { instanceId: "codex_default", model: "gpt-5.6-terra" },
+    }, expected)).toBe(false);
+    expect(sharedDispatchFenceMatches({ ...current, bound_instance_id: "claude_shared" }, expected))
+      .toBe(false);
+  });
+});
 describe("shared AI runtime cancellation", () => {
   it("reauthorizes the actor immediately before stopping the external run", async () => {
     const policy = { getM2: vi.fn(async () => ({
