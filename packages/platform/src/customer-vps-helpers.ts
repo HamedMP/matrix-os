@@ -40,50 +40,7 @@ export interface StatusResponse {
   failureAt: string | null;
 }
 
-export const DEFAULT_CLOUD_INIT_TEMPLATE = [
-  '#cloud-config',
-  'write_files:',
-  '  - path: /opt/matrix/env/host.env',
-  '    content: |',
-  '      MATRIX_MACHINE_ID={{machineId}}',
-  '      MATRIX_CLERK_USER_ID={{clerkUserId}}',
-  '      MATRIX_HANDLE={{handle}}',
-  '      MATRIX_RUNTIME_SLOT={{runtimeSlot}}',
-  "      MATRIX_DEVELOPER_TOOLS='{{developerTools}}'",
-  '      MATRIX_IMAGE_VERSION={{imageVersion}}',
-  '      MATRIX_UPDATE_CHANNEL={{updateChannel}}',
-  '      MATRIX_IMAGE_SOURCE={{imageSource}}',
-  '      MATRIX_TARGET_BUNDLE_SHA256={{targetBundleSha256}}',
-  '      MATRIX_SNAPSHOT_SOURCE_VERSION={{snapshotSourceVersion}}',
-  '      MATRIX_HOST_BUNDLE_URL={{hostBundleUrl}}',
-  '      MATRIX_PLATFORM_REGISTER_URL={{platformRegisterUrl}}',
-  '      PLATFORM_INTERNAL_URL={{platformInternalUrl}}',
-  '      UPGRADE_TOKEN={{platformVerificationToken}}',
-  '      MATRIX_AUTH_TOKEN={{platformVerificationToken}}',
-  '      MATRIX_FUNDED_AI_RUNTIME_TOKEN={{fundedAiRuntimeToken}}',
-  '      MATRIX_CODE_PROXY_TOKEN={{platformVerificationToken}}',
-  '      MATRIX_FUNDED_AI_ENABLED={{fundedAiEnabled}}',
-  '      MATRIX_FUNDED_AI_RELAY_URL={{fundedAiRelayUrl}}',
-  '      POSTHOG_TOKEN={{posthogToken}}',
-  '      POSTHOG_PROJECT_TOKEN={{posthogProjectToken}}',
-  '      POSTHOG_HOST={{posthogHost}}',
-  '      NEXT_PUBLIC_POSTHOG_KEY={{posthogToken}}',
-  '      NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN={{posthogProjectToken}}',
-  '      NEXT_PUBLIC_POSTHOG_HOST={{posthogPublicHost}}',
-  '      NEXT_PUBLIC_POSTHOG_API_HOST={{posthogApiHost}}',
-  '      DATABASE_URL=postgresql://matrix:{{postgresPassword}}@127.0.0.1:5432/matrix',
-  '  - path: /opt/matrix/env/postgres.env',
-  '    permissions: "0640"',
-  '    content: |',
-  '      POSTGRES_DB=matrix',
-  '      POSTGRES_USER=matrix',
-  '      POSTGRES_PASSWORD={{postgresPassword}}',
-  '  - path: /opt/matrix/env/registration.env',
-  '    permissions: "0640"',
-  '    content: |',
-  '      MATRIX_REGISTRATION_TOKEN={{registrationToken}}',
-  '      MATRIX_REGISTRATION_TOKEN_EXPIRES_AT={{registrationTokenExpiresAt}}',
-].join('\n');
+export { DEFAULT_CLOUD_INIT_TEMPLATE, buildHostConfig } from './customer-vps-host-config.js';
 
 export function isAmbiguousProviderCreateError(err: unknown): boolean {
   return !(err instanceof CustomerVpsError)
@@ -95,44 +52,6 @@ export function toFailureCode(err: unknown): CustomerVpsFailureCode {
   return err instanceof CustomerVpsError ? err.code : genericProviderError(err).code;
 }
 
-export function buildHostConfig(
-  config: CustomerVpsConfig,
-  input: ProvisionRequest,
-  machineId: string,
-  registrationToken: string,
-  registrationTokenExpiresAt: string,
-  postgresPassword: string,
-  bundleRef: HostBundleRef,
-): CustomerHostConfig {
-  return {
-    machineId,
-    clerkUserId: input.clerkUserId,
-    handle: input.handle,
-    runtimeSlot: input.runtimeSlot,
-    developerTools: developerToolsShellList(input.developerTools ?? DEFAULT_DEVELOPER_TOOLS),
-    imageVersion: bundleRef.imageVersion,
-    updateChannel: config.imageVersion,
-    hostBundleUrl: bundleRef.hostBundleUrl,
-    platformRegisterUrl: config.platformRegisterUrl,
-    platformInternalUrl: new URL(config.platformRegisterUrl).origin,
-    platformVerificationToken: buildPlatformVerificationToken(input.handle, config.platformSecret),
-    fundedAiRuntimeToken: buildPlatformRuntimeVerificationToken({
-      handle: input.handle,
-      machineId,
-      runtimeSlot: input.runtimeSlot,
-    }, config.platformSecret),
-    registrationToken,
-    registrationTokenExpiresAt,
-    postgresPassword,
-    posthogToken: config.posthogToken,
-    posthogProjectToken: config.posthogProjectToken,
-    posthogHost: config.posthogHost,
-    posthogPublicHost: config.posthogPublicHost,
-    posthogApiHost: config.posthogApiHost,
-    fundedAiEnabled: config.fundedAiEnabled ? 'true' : 'false',
-    fundedAiRelayUrl: config.fundedAiRelayUrl,
-  };
-}
 
 export function buildServerName(handle: string): string {
   return `matrix-${handle}`;
