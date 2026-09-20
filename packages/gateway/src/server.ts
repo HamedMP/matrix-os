@@ -1162,6 +1162,18 @@ export async function createGateway(config: GatewayConfig) {
       // Collaboration fails closed without the owner database; the rest of the gateway keeps serving.
       if (collaborationConfig) collaborationFailClosedReason = "owner_database_missing";
       console.log("[app-db] Falling back to file-based storage");
+      // Tear down every partially built database-backed service so the gateway runs wholly in
+      // the file-storage fallback instead of a mixture of retained Postgres handles and files.
+      try {
+        await chatRepository?.release();
+        await canvasRepository?.destroy();
+        await appDb?.destroy();
+      } catch (teardownError: unknown) {
+        console.warn("[app-db] Fallback teardown failed:", teardownError instanceof Error ? teardownError.name : "UnknownError");
+      }
+      chatRepository = null;
+      canonicalChatCollaborationGuard = null;
+      kyselyInstance = null;
       appDb = null;
       queryEngine = null;
       kvStore = null;
