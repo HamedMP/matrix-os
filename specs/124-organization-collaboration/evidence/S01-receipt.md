@@ -47,6 +47,14 @@ Not run: no live Postgres races were needed (no lock or transaction moved); no R
 | `packages/gateway/src/collaboration/lifecycle-repository.ts` | S12 |
 | `packages/gateway/src/collaboration/database.ts`, `database-migrations.ts` | S04 adds versioned migrations ≥ 7 through the registry; S20 T100 removes cohort inputs elsewhere |
 
+## Invariants (all three layers)
+
+- **Source of truth**: unchanged. Platform Postgres tables (schema registered by `packages/platform/src/database/migrate.ts`, still the single ordered step list) and owner-home Postgres collaboration tables (`COLLABORATION_VERSIONED_MIGRATIONS` in `packages/gateway/src/collaboration/database-migrations.ts`). `db.ts`, `billing-routes.ts`, `routes.ts`, `repository.ts` and `database.ts` remain the composition and export entrypoints.
+- **Lock/transaction scope**: unchanged. The platform migration still runs every step inside the one `pg_advisory_xact_lock` transaction opened by `migration-runner.ts`; user machine claims, checkout attempt claims and the billing webhook transaction are byte-identical moves. On the gateway the base collaboration schema still runs unwrapped and versions 3–6 each in their own transaction; every grant mutation keeps its single transaction and `lockDirectScope` → member `forUpdate` lock order. No transaction boundary was added, removed or moved; no network call entered a transaction.
+- **Acceptable orphan states**: none introduced; idempotent `IF NOT EXISTS` migration steps and `ON CONFLICT` upserts are unchanged.
+- **Auth source of truth**: unchanged. Billing routes keep their Clerk checks in `billing-routes.ts`; collaboration handlers still call `authorize`/`verifyHttp` (moved verbatim into `route-support.ts`) before any repository access.
+- **Deferred scope**: no capability, preset, organization-precondition, relay or standalone Chat/terminal behavior (S02, S04, S05, S12 T061, S20 own those); the `createBillingRoutes` handler body stays in place because org billing (S14) is deferred from V1; the remaining `db.ts` queries (containers, users, onboarding, ports) are not extracted in S01.
+
 ## Gates
 
 - No open gates for S01. Registration/export changes needed by the coordinator: none beyond what is in the layers (every existing import path still resolves).
