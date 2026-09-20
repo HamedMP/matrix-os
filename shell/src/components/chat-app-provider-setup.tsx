@@ -93,7 +93,10 @@ function applySavedSelection(
   return { ...choice, interactionMode, permissionMode, selectedOptions };
 }
 
-export function useChatProviderState(boundSelection?: CanonicalChatModelSelection) {
+export function useChatProviderState(
+  boundSelection?: CanonicalChatModelSelection,
+  boundProviderInstanceId?: string,
+) {
   const [catalog, setCatalog] = useState<CanonicalProviderCatalog | null>(null);
   const [savedChoice, setSavedChoice] = useState(readSavedChoice);
   const [boundDraft, setBoundDraft] = useState<{
@@ -156,19 +159,22 @@ export function useChatProviderState(boundSelection?: CanonicalChatModelSelectio
   }, []);
 
   const choices = catalog ? deriveCanonicalProviderChoices(catalog) : [];
-  const bindingKey = boundSelection
-    ? `${boundSelection.instanceId}:${boundSelection.model}:${JSON.stringify(boundSelection.options ?? [])}`
+  const lockedSelection = boundSelection?.instanceId === boundProviderInstanceId
+    ? boundSelection
+    : undefined;
+  const bindingKey = lockedSelection
+    ? `${lockedSelection.instanceId}:${lockedSelection.model}:${JSON.stringify(lockedSelection.options ?? [])}`
     : "";
-  const effectiveSaved = boundSelection
+  const effectiveSaved = lockedSelection
     ? boundDraft?.bindingKey === bindingKey
       ? boundDraft.selection
-      : { key: `${boundSelection.instanceId}:${boundSelection.model}`, options: boundSelection.options ?? [] }
+      : { key: `${lockedSelection.instanceId}:${lockedSelection.model}`, options: lockedSelection.options ?? [] }
     : savedChoice;
-  const boundChoice = choices.find((choice) => choice.instanceId === boundSelection?.instanceId
+  const boundChoice = choices.find((choice) => choice.instanceId === lockedSelection?.instanceId
     && choiceKey(choice) === effectiveSaved.key)
-    ?? choices.find((choice) => choice.instanceId === boundSelection?.instanceId
-      && choice.modelId === boundSelection.model);
-  const selectedBase = boundSelection
+    ?? choices.find((choice) => choice.instanceId === lockedSelection?.instanceId
+      && choice.modelId === lockedSelection?.model);
+  const selectedBase = lockedSelection
     ? boundChoice ?? null
     : choices.find((choice) => choiceKey(choice) === effectiveSaved.key)
     ?? choices.find((choice) => {
@@ -182,7 +188,7 @@ export function useChatProviderState(boundSelection?: CanonicalChatModelSelectio
     : null;
 
   const save = (next: SavedProviderSelection) => {
-    if (boundSelection) {
+    if (lockedSelection) {
       setBoundDraft({ bindingKey, selection: next });
       return;
     }
@@ -195,7 +201,7 @@ export function useChatProviderState(boundSelection?: CanonicalChatModelSelectio
   };
 
   const select = (choice: CanonicalProviderChoice) => {
-    if (boundSelection && choice.instanceId !== boundSelection.instanceId) return;
+    if (lockedSelection && choice.instanceId !== lockedSelection.instanceId) return;
     const preserveControls = selected?.instanceId === choice.instanceId;
     save({
       key: choiceKey(choice),

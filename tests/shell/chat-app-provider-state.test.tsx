@@ -407,8 +407,8 @@ describe("Chat canonical provider state", () => {
     />);
 
     fireEvent.change(await screen.findByPlaceholderText("Ask anything..."), { target: { value: "Use OpenCode" } });
-    fireEvent.click(screen.getByRole("button", { name: "Setup" }));
-    const openCode = await screen.findByRole("button", { name: "GPT-5 via OpenCode" });
+    fireEvent.click(screen.getByRole("button", { name: "Choose model and connection" }));
+    const openCode = await screen.findByRole("option", { name: "GPT-5 via OpenCode" });
     expect(openCode).toBeEnabled();
     fireEvent.click(openCode);
     fireEvent.click(screen.getByRole("button", { name: "Send" }));

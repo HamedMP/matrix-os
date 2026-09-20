@@ -19,6 +19,7 @@ export function ConnectionChoices({ snapshot, harness, gatewaySource, gatewaySel
   if ((harness.harness !== "pi" && harness.harness !== "opencode") || harness.installState !== "installed") return null;
   const ownTargets = snapshot.accessSources.flatMap((source) => {
     if (source.kind === "matrix_gateway") return [];
+    if (source.readiness.state !== "ready") return [];
     const provider = snapshot.modelProviders.find((candidate) => candidate.id === source.providerId);
     return provider?.models.filter((model) => model.enabled && source.eligibleModelIds.includes(model.id)
       && isSupportedGenericHarnessCredentialRoute({ ...harness, accessSourceId: source.id,

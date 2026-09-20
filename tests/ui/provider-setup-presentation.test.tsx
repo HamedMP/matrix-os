@@ -108,6 +108,39 @@ describe("provider setup presentation", () => {
     expect(within(gateway).queryByText("Selected for Pi")).not.toBeInTheDocument();
   });
 
+  it("selects only a ready compatible own-account source and fails closed without one", async () => {
+    const value = fundedSnapshot();
+    const base = value.accessSources[0]!;
+    value.accessSources.push({
+      ...base,
+      id: "owner_anthropic_key",
+      kind: "provider_account",
+      fundingKind: "owner_api_key",
+      accountId: "account_ready",
+      displayName: "Ready account",
+    });
+    const { onMutate, rerender } = setup(value);
+
+    fireEvent.click(screen.getByRole("button", { name: /Own account/ }));
+    await waitFor(() => expect(onMutate).toHaveBeenCalledWith(expect.objectContaining({
+      type: "set_route",
+      accessSourceId: "owner_anthropic_key",
+      accountId: "account_ready",
+      enableHarness: true,
+    })));
+
+    onMutate.mockClear();
+    rerender(<AgentsProvidersView snapshot={{
+      ...value,
+      accessSources: value.accessSources.map((source) => source.accountId === "account_ready"
+        ? { ...source, readiness: { ...source.readiness, state: "auth_required" as const, action: "open_terminal" as const } }
+        : source),
+    }} selectedHarnessId="pi" onSelectHarness={vi.fn()} onRefresh={vi.fn()} onMutate={onMutate}
+    onOpenTerminal={vi.fn()} onOpenBrowser={vi.fn()} onAddCredit={vi.fn()} />);
+    expect(screen.getByRole("button", { name: /Own account/ })).toBeDisabled();
+    expect(onMutate).not.toHaveBeenCalled();
+  });
+
   it("never offers activation for a blocked model or read-only session", () => {
     const value = fundedSnapshot();
     value.gatewayPolicy!.allowedModelIds = [];

@@ -575,7 +575,6 @@ function ChatAppContent({
               void runProviderSetupAction(instance, action);
             }}
             lockedInstanceId={boundProviderInstanceId}
-            onNewChat={onNewChat}
             showChannels={providerState.selected?.driverKind === "hermes"}
             channels={channels}
             onToggleChannel={(channel) => {
