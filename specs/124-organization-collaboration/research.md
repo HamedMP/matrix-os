@@ -1,65 +1,65 @@
-# Research and decisions
+# Research and decisions — direct member-computer collaboration
 
-**Baseline:** fetched `origin/main` on 2026-09-20: `94985f02eeb2c39ad337b144778db35d0b66c393`. The spec branch contains only documentation. Findings are source inspections, not assertions about production enablement. All unimplemented file names in the plan/tasks are proposed additions.
+Inspected 2026-09-20 against main `94985f02e`. These are source findings and design decisions; no deployment or provider spike was run. The previous central-proxy/pooled-org-runtime delivery plan is superseded by this revision.
 
-## R1 — Keep Clerk membership and resource grants separate
+## R1 — Reuse authority; replace transport
 
-**Decision:** Clerk owns org identity, invitations, membership and role assignment. Platform holds a reconciled projection plus bounded freshness evidence; owner/org databases hold resource grants. Matrix room membership is a projection, never an application permission.
+`packages/platform/src/collaboration/proxy.ts` signs actor proofs and forwards allowlisted resource routes. `routes.ts` consumes request bodies; `websocket.ts` participates in tickets. Gateway `collaboration/authority.ts`, actor proofs, events, terminal control, directory outbox and transition journals are reuse points. Today the platform is in the payload path. Direct endpoints must be enrolled/TLS-verified; a hostname existing is not proof of safe direct exposure.
 
-**Evidence:** `packages/gateway/src/collaboration/authority.ts` authorizes through `repository.getMember(membershipScope.id, actorId)`; `packages/contracts/src/collaboration.ts` admits only Chat/terminal/project scopes and direct/inherited membership. `packages/gateway/src/collaboration/database.ts` already permits an organization owner type, but that is not a Clerk integration. `packages/platform/src/collaboration/proof.ts` signs actor/runtime/scope-bound 30-second proofs.
+Decision: ticket/discovery/control on platform, content on registered resource home. Browser-to-home and authenticated peer-to-peer HTTPS/WSS ship together. No collaboration payload relay fallback after cutover. Direct-ineligible hosts show offline/unavailable. Lightweight control refresh, billing metering and discovery still load the platform; measure this separately from content bandwidth.
 
-**Alternatives rejected:** replacing resource ACLs with Clerk roles (cannot express individual resource boundaries); expanding org membership into thousands of direct invitations (stale, capacity-limited and changes acceptance semantics); Matrix room membership as a second grant authority.
+## R2 — No organization-wide computer
 
-## R2 — Freshness deadlines must not add together
+A resource home is one member computer. Runtime ownership, assignment, resource ownership and payer differ. Org-managed member-assigned computers can retain org namespaces and recovery after departure; personally administered machines cannot promise org durability by storing an org ID alone. Keep personal resources personal unless explicit transfer targets a verified org-managed member assignment. This honors owner-controlled storage without provisioning a pooled org desktop.
 
-**Decision:** Org membership evidence expires 20 seconds after the start of a successful authoritative Clerk lookup. A cached entry, signed proof, runtime permit or stream refresh can never extend that original deadline. Refresh active identities after 10 seconds where capacity permits; deny at expiration if refresh fails. A dropped webhook therefore does not extend access indefinitely. Negative/revocation events immediately mark local evidence unusable; replayed positive events require a fresh lookup before access resumes.
+## R3 — Worktree support exists only in part
 
-**Rationale:** [Clerk documents webhook synchronization as eventually consistent](https://clerk.com/docs/guides/development/webhooks/syncing). Webhooks provide invalidation, not a hard timing guarantee. Rechecking only at WebSocket connect is insufficient. The 60-second target is a release acceptance requirement, not a claim about Clerk's consistency SLA.
+`packages/contracts/src/canonical-chat-primitives.ts` defines project/worktree execution roots. Gateway `chat/execution-root.ts` resolves managed paths and fingerprints. `chat/turn-admission.ts`, `queue-admission.ts` and `orchestrator.ts` persist/recheck execution roots; `chat/coding-provider-adapter.ts` forwards worktree IDs. Desktop stores already track worktree context.
 
-**Gate:** S00 must test lookup deletion/role behavior and budget the 60 seconds, including clock skew, in-flight operations and watchdogs. If Clerk can return stale positive membership without a bounded authoritative check, the strict guarantee for changes made outside Matrix cannot be claimed. Keep org sharing disabled until the product requirement or verification mechanism is explicitly resolved. Matrix-originated removal fences access before calling Clerk and remains locally denied across ambiguous failures.
+However `collaboration/scope-runtime-chat-adapter.ts` rejects `executionRoot`, resume state and non-text parts. `chat-execution-adapter.ts` reports worktrees none; `shared-ai-runtime.ts` has a Claude-only fixed profile. Thus shared Codex/Claude worktree execution and its Chat UI are required new integration work. Do not change capability flags to true without sandbox/provider/end-to-end evidence.
 
-## R3 — Organization ownership is a runtime change
+## R4 — One owner-selected AI source; participant accounts later
 
-**Decision:** Carry `{type: personal|organization, id}` separately from actor and payer. Provision a durable org-owned VPS/storage authority. Personal resources shared to an org remain on their personal owner runtime; explicit transfer stages data into an org authority and changes routing only at a fenced commit point.
+Provider V3 (`packages/contracts/src/ai-provider.ts`) already models accounts, access sources and instances. Reuse the owner's existing selection; one project binding and immutable run snapshot are enough for V1. Building isolated participant enrollment, account routing and cross-actor credential profiles is not a cheap UI toggle and is deferred. The shared session starts from authorized project history, not the owner's private harness state.
 
-**Evidence:** `packages/gateway/src/collaboration/chat-execution-adapter.ts` has a personal-only `ownerFor`; collaboration policy currently treats `scope.owner_id` as a cohort user. Existing funded policy/metering compares `machine.clerk_user_id` with the runtime owner. Simply storing an org ID in user columns is unsafe.
+Official guidance checked on 2026-09-20:
 
-**Alternatives rejected:** assigning ownership to the current admin; sharing their personal VPS/token with members; silently moving resources or switching the payer when an org audience is added.
+- [OpenAI terms](https://openai.com/policies/terms-of-use/) restrict making an individual account available to others. A process location does not establish delegated subscription rights.
+- [Claude Code legal/authentication guidance](https://code.claude.com/docs/en/legal-and-compliance) distinguishes a user signing into an unmodified hosted binary from third-party credential intermediation, and discusses customer-controlled API credentials. Verify the applicable hosted/customer contract before enabling a funding mode.
+- [Claude Agent SDK plan update](https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan) says the June usage-billing change was paused; it does not authorize pooling individual subscriptions.
 
-## R4 — One evaluator, exact legacy semantics
+Decision: honor owner-source simplicity. Owner subscription is available for eligible owner-submitted runs; contributor AI submission requires a source whose applicable terms support delegation. Otherwise contributors discuss/propose and only the owner initiates their own work, rather than an automatic approval proxy. Eligible owner-controlled API/business funding supplies direct collaborator requests without adding participant accounts. No silent paid fallback. Provider-specific verification is a capability gate, not a claim of legal clearance from these documents.
 
-**Decision:** Introduce principal grants for users/orgs/groups at the existing collaboration authority. Direct-user acceptance stays explicit. Organization/group grants are dynamic. Project inheritance remains singular; shared folders inherit into descendants. Cross-boundary moves use an inventory revision and explicit preview/commit, with no child exceptions in an already shared project/folder.
+Required probes: shared Codex/Claude project roots, owner source selection, owner-only versus delegated submission, safe project session resume, cancellation, approvals, exhaustion and bounded concurrent worktrees. Participant native sign-in/multi-account routing is future work.
 
-**Evidence:** `packages/gateway/src/sync/routes.ts` keeps grantee data access fail-closed. `sync/sharing.ts` implements viewer=get, editor=get/put, admin=get/put/delete; it does not implement admin reshare powers. Do not import the more permissive prose in 066 as existing behavior.
+## R5 — Clerk handles coarse org permissions
 
-**Migration decision:** import accepted/pending/expired grants with immutable identity mappings, source IDs and exact action ceilings. Legacy sync admin becomes an editor grant with a delete-content ceiling, never owner or org-admin. Normal new file editors may write/create/rename/delete contents but cannot delete the share root or change access. Legacy editor remains unable to delete until its owner explicitly upgrades it. Ambiguous handles, overlapping incompatible boundaries or unsupported resources enter a blocked report and stay inaccessible; never infer broader grants.
+[Clerk roles/permissions](https://clerk.com/docs/guides/organizations/control-access/roles-and-permissions) supports custom permissions; system permissions are not included in session claims. Configure Matrix custom permissions for server authorization and enforce the corresponding Clerk management authority for Clerk mutations. Do not create a Clerk role/claim for every folder, tool or project. Those selectors live with resource grants on the home computer. Membership freshness is independently checked; a signed old JWT alone is insufficient.
 
-## R5 — Share live instances, not installable copies
+## R6 — Granular access changes the project contract
 
-**Decision:** App sharing covers one instance and its data; reuse the project app adapter's actor-aware sandbox/bridge restrictions. File/folder sharing adds dedicated adapters, including mediated shared downloads, uploads and sync commits. References to resources outside the selected boundary remain inaccessible. App publishing and snapshot links stay independent.
+121/previous 124 whole-project unconditional inheritance cannot express selected folders/apps/tools. Replace it with inheritable defaults, explicit ceilings and deny-wins selectors. Migrate old broad grants faithfully, never silently restrict/widen them; owners may then deliberately narrow. A scoped shell with the entire Git object database can read denied files, so filtered workers cannot receive raw shared Git metadata. Arbitrary scripts also defeat executable-name-only policies. Enforce mounts, UID/process boundaries, network and credential broker capabilities.
 
-**Rationale:** Existing project file/app adapters are currently test-referenced rather than mounted through production collaboration routes. Connecting them is required work. They are reusable seams, not proof that an arbitrary app is safe for standalone collaboration. Unsupported app capabilities block activation, with a specific eligibility result. Direct R2 download capabilities cannot provide immediate revocation once issued; shared reads use an authorizing gateway stream. Uploads may stage inert objects, but only a fresh authorized commit makes them visible.
+Chat history is itself shared data. A broad Chat cannot receive narrow-only tool results. Admission checks the Chat audience's data ceiling, and restricted artifacts cannot be auto-published into a wider tree. New grants to historical Chats require inventory/history review; revocation cannot recall bytes already delivered.
 
-## R6 — Matrix groups require a separate enforcement gate
+## R7 — Integrations require custody and action delegation
 
-**Decision:** First rollout uses one managed org Space and one private room per org group, joined only by a service identity. Members read/send group text through authenticated Matrix OS routes with the same fresh group authority. Never invite human/AI user identities into these rooms or expose service tokens, direct room URLs or media URLs. Org groups remain platform records constrained to Clerk members. Do not mirror canonical AI transcripts, resource content or billing information. This explicitly refines the minimal draft’s membership-projection wording; native Matrix client participation is a later gated capability.
+`packages/gateway/src/integrations/custom-mcp/broker.ts` uses platform DB-backed connection records and projections. Existing registry/routes/bridge and custom MCP client are useful seams, not proof of per-project delegation. Inventory each connector's execution/credential location. Move direct-capable user-managed connections to a local encrypted broker and remove their legacy execution route at cutover. Provider-hosted connector services may remain explicit external processors; never promise that such requests avoid the vendor. Token migration requires documented custody authorization, staged encrypted transfer or reconnection; never copy OAuth tokens through Chat/transcript exports.
 
-**Rationale:** [Matrix Spaces](https://spec.matrix.org/latest/client-server-api/#spaces) organize rooms; their parent/child state is separate from room membership. A Space removal is not a recursive resource revocation mechanism. Async kick jobs cannot alone enforce an outage-time deadline for clients that can reach the homeserver directly.
+## R8 — Durable migration, not permanent compatibility
 
-**Gate:** S00/S13 must prove ordinary human/AI tokens cannot join or read these service-only rooms through direct `/sync`, history or state endpoints, and cannot send/invite. Use invite-only rooms, `m.federate:false`, `history_visibility:joined`, service-only power levels, and text-only content (no raw Matrix media capabilities). Matrix OS expires both read and send authority, including during a platform-to-homeserver partition. If any bypass exists, group communication remains disabled; org-group resource sharing may still ship. Direct Matrix clients require a separately reviewed server-side enforcement mechanism; asynchronous kicks are insufficient.
+Keep immutable source IDs, exact old action ceilings and recoverable journals. Offline/ambiguous sources cannot activate. Prepare and validate migrations during a maintenance gate, then activate only direct-capable clients/runtimes. Delete old serving fallback paths; rollback only to compatible builds. Data backup and transient migration readers are necessary for safe cutover and do not constitute a second long-lived product path.
 
-## R7 — Extend Stripe billing without inventing a price
+## R9 — Matrix communication remains separate
 
-**Decision:** Introduce typed personal/org payer accounts and explicit runtime sponsorship. Preserve current personal subscriptions. Org checkout selects operator-configured existing catalog entries; absent approved org prices/quotas, checkout is unavailable. Build and test with Stripe test fixtures. No seat pricing, automatic subscription consolidation or personal-card fallback is inferred.
+Use private service-only Matrix group text through fresh org/group authorization as previously planned; no AI transcript/file mirroring or native user token bypass. Spaces do not recursively enforce resource grants. This bounded messaging service is explicitly outside the computer-owned resource payload path. A homeserver partition test remains required.
 
-**Evidence:** `packages/platform/src/billing.ts` models `StripeSubscriptionProjection.clerkUserId`; `ai-funded-policy-repository.ts` and `ai-funded-metering-repository.ts` bind paid runtime identity to a personal machine owner. Sharing permission is not funding authorization.
+## R10 — Group Chat and Git owner are opinionated defaults
 
-## R8 — Reuse current UI and split large composition files first
+Idempotently create one default project group Chat and root. Join reuses both; additional task Chats/worktrees are optional. Everyone has a named Matrix actor; read-only viewers cannot post, normal Contributor includes discussion. Human discussion is separate from AI submission. The project owner controls the selected source and Git identity. New local commits use configured owner author/committer; pushes and PRs use the owner's configured forge account. Imported commit history is untouched; requestor attribution lives in Matrix audit, not fabricated Git authorship.
 
-**Decision:** Extend 525's normal session access controls and Shared with me; add organization settings/admin inventory, plus app/file/folder Share entrypoints. Keep presentation adapters thin across Web Canvas, Web Desktop, Electron Desktop, applicable mobile and CLI.
+Owner approval must bind exact tree/ref/remote/action and be enforced through a credential-holding Git broker even if generic task/integration permissions otherwise allow shell or forge actions. This is required for the simple owner-control promise; a UI-only approval is insufficient. Collaborators can propose changes without GitHub/AI onboarding.
 
-**Evidence:** At the baseline, platform `db.ts` is 5,316 lines, billing routes 1,650, gateway collaboration routes 1,059; contracts/repository/database are also large. Mandatory extraction packets precede behavior in these files. Keep new focused files below 500 lines and each PR ideally below 1,000 additions/20 files, with a hard split before 3,000/50.
+## R11 — Copy-and-continue is a future fork
 
-## Planning scope
-
-The user's follow-up authorizes this detailed plan, not implementation, deployment, billing activation or publishing. The optional Spec Kit before/after commit hooks are not needed for research; documentation is committed explicitly after validation. Product assumptions from the minimal draft remain visible in `spec.md`; S00 validates provider behavior instead of allowing later agents to guess it.
+An independent Git-based copy should pin SHA plus explicitly approved dirty/untracked snapshot, handle LFS/submodules, and create a new project under the destination member's own Git/AI configuration. It neither moves source authority nor copies its permissions/credentials. Restricted members must not receive invisible repository history. Chat and app database exports require separate explicit decisions. Document the extension now; do not implement it in the initial direct collaboration release.

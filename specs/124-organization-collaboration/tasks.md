@@ -1,278 +1,212 @@
-# Sol implementation tasks
+# Sol implementation tasks — revised direct architecture
 
-**Input:** [plan.md](plan.md), [data-model.md](data-model.md), [contracts](contracts/organization-api.md), [research.md](research.md).
-**Executor:** `gpt-5.6-sol`, high reasoning. These are future implementation tasks; none has been implemented by the planning run. Proposed new paths are intentional. Existing anchors were inspected at `94985f02e`.
+**Status:** all implementation tasks pending. This ledger replaces the previous 121-task S00–S24 ledger; old IDs must not be used to dispatch work. No agents were dispatched by this spec revision.
 
-Every S-packet is one bounded agent assignment with prerequisites from the plan. Tests are written and observed failing before implementation. Record red/green, exact head, changed paths and limits in `specs/124-organization-collaboration/implementation-log.md`. All shared composition/export edits go through the coordinator. The final receipt/test step is mandatory for every packet even when not repeated as a checkbox.
+Use `gpt-5.6-sol` with high reasoning, one coordinator and at most three workers. Each packet owns the files named below; coordinator owns shared composition/exports/package manifests. Paths not present at baseline are proposed new focused modules; integrate with equivalent existing seams rather than duplicate them. Before code changes read constitution/applicable instructions and write failing behavioral tests. Do not revert other workers; do not parallelize overlapping files. All packets join one coordinated release, not independent partial product launches.
 
-## Setup — S00: provider and boundary proofs
+## S00 — Baseline and live boundary probes
 
-**Owner:** coordinator/Sol. **Exit:** testable provider contracts and explicit rollout gates, without changing production.
+**Owner:** Coordinator. **Depends on:** None. **Exit:** Versioned evidence establishes the allowed execution/auth modes and direct host eligibility.
 
-- [ ] T001 Record fetched main SHA, dirty-worktree protection, available tools/Graphite auth and baseline relevant test failures in `specs/124-organization-collaboration/implementation-log.md`; re-read `.specify/memory/constitution.md`.
-- [ ] T002 [P] Add and run a sandbox-only Clerk probe in `scripts/spikes/organizations/clerk-membership-probe.ts`: verify installed SDK webhook raw-body API, role mapping, paging/rate limits and membership deletion/role read behavior; record sanitized results in `specs/124-organization-collaboration/provider-evidence.md`.
-- [ ] T003 [P] Add and run a service-only Matrix room probe in `scripts/spikes/organizations/matrix-room-boundary-probe.ts`: human/AI tokens cannot join/read/send/state/invite; platform-mediated text closes on expired membership under dropped webhook, Clerk outage and Synapse partition; record evidence in `specs/124-organization-collaboration/matrix-evidence.md`.
-- [ ] T004 Freeze freshness timing, actor/owner/payer separation, admin content policy, fixed role mapping, text-only Matrix boundary and missing-price disabled behavior in `specs/124-organization-collaboration/contracts/organization-api.md`; block only affected rollout if a probe cannot prove its requirement.
-- [ ] T005 Create the execution receipt and surface evidence templates in `specs/124-organization-collaboration/implementation-log.md` and `specs/124-organization-collaboration/evidence/README.md`; map every S-packet to a Graphite layer before coding.
+- [ ] T001 Inspect current main and record baseline SHA plus changed seams in research.md. Confirm canonical Chat roots, shared adapter limitations, endpoint wiring, provider V3 and connector custody; do not infer that source presence means deployed support.
+- [ ] T002 Add failing probe harnesses in tests/integration/collaboration-provider-boundaries.test.ts for Codex/Claude API execution, native owner subscription eligibility (owner-only versus delegated requests), owner source/root change resume, tool/approval/cancel semantics and worktree isolation. Record exact versions/auth modes and real outcomes in evidence/providers.md; never store tokens.
+- [ ] T003 Add tests/integration/collaboration-authority-boundaries.test.ts for Clerk direct role changes, lost webhooks, API consistency, clock skew and partition expiry. Freeze supported custom permission mapping and measured removal bound in contracts/organization-api.md.
+- [ ] T004 Add direct TLS/Origin/WS reachability and sandbox mount/Git-object/credential escape probes in tests/integration/collaboration-direct-boundaries.test.ts. Record browser/Electron/native endpoints and required supervisor facilities in evidence/direct.md.
+- [ ] T005 Inventory existing connection providers: credential storage, execution host, OAuth migration eligibility and vendor-hosted exceptions. Record per-mode supported/unavailable/reconnect-needed decisions in research.md; missing live evidence is an open gate, not a pass.
 
-## Foundation — S01: platform mechanical extraction
+## S01 — Extract large composition seams
 
-**Owner:** Platform Sol. **Exit:** identical existing behavior; huge files split before additions. Separate layers for each family; never one bulk 5,000-line move.
+**Owner:** Foundation Sol. **Depends on:** S00. **Exit:** Behavior preserved and focused seams exist before new behavior.
 
-- [ ] T006 Add characterization coverage for existing migration/query exports, personal owner routing and webhook outcomes in `tests/platform/platform-db-compatibility.test.ts`, retaining `tests/platform/billing-db.test.ts` and `tests/platform/customer-vps.test.ts`.
-- [ ] T007 Extract all schema/query families from `packages/platform/src/db.ts` into focused modules under `packages/platform/src/database/` (schema-core, users, runtimes, billing, funded-ai, matrix, onboarding and remaining domain modules); preserve facade exports and `runPlatformMigration` locking. Split each mechanical layer below review limits and leave the facade below 500 lines.
-- [ ] T008 Extract provisioning identity/locks, environment assembly and lifecycle orchestration from `packages/platform/src/customer-vps.ts` into focused `packages/platform/src/customer-vps/` modules; preserve current exports and personal provision/recovery tests before adding typed org owners.
-- [ ] T009 Extract Stripe projection/webhook/checkout helpers from `packages/platform/src/billing-routes.ts` into `packages/platform/src/billing/` modules; retain exact existing route paths and signed webhook behavior.
-- [ ] T010 Extract reserve/settle/credential-resolution logic from `packages/platform/src/ai-funded-metering-repository.ts` into `packages/platform/src/funded-ai/` modules; keep transaction ownership and personal ledger results unchanged, each responsibility below 500 lines.
+- [ ] T006 Add characterization tests for platform DB migration exports, collaboration route registration, personal billing and shared queue behavior in tests/platform/collaboration-foundation.test.ts and tests/gateway/collaboration-foundation.test.ts.
+- [ ] T007 Extract affected platform schema/query registration from packages/platform/src/db.ts into focused database/ modules and billing route handlers from billing-routes.ts into billing/ modules. Preserve runtime behavior and current migrations; no new ACL behavior here.
+- [ ] T008 Extract packages/gateway/src/collaboration/routes.ts, repository.ts and database.ts into resource-route, grant/lifecycle repository and migration modules before adding capabilities. Preserve transaction scopes and tested exports.
+- [ ] T009 Supply coordinator-only registration/export patches; run existing collaboration, customer-VPS and billing characterization suites. Record file ownership and refactor evidence before dependent branches.
 
-## Foundation — S02: gateway mechanical extraction
+## S02 — Freeze shared wire contracts
 
-**Owner:** Resource Sol. **Exit:** current collaboration routes and member transactions unchanged.
+**Owner:** Contracts Sol. **Depends on:** S00,S01. **Exit:** All consumers use one versioned direct/policy/funding protocol.
 
-- [ ] T011 Add exact registered-route/dependency characterization in `tests/gateway/collaboration-route-registration.test.ts`, alongside existing route/wiring/repository regressions.
-- [ ] T012 Extract existing routes from `packages/gateway/src/collaboration/routes.ts` into `routes-scope.ts`, `routes-members.ts`, `routes-chat.ts`, `routes-terminal.ts` and `routes-project.ts`; keep a small registration entrypoint and identical auth/body-limit/error mapping.
-- [ ] T013 Extract member mutation, lifecycle and migration helpers from `packages/gateway/src/collaboration/repository.ts` and `database.ts` into focused `member-repository.ts`, `lifecycle-repository.ts` and `database-migrations.ts`; preserve compatibility exports and current transaction scopes.
+- [ ] T010 Add failing strict-schema and serialization tests in tests/contracts/collaboration-direct.test.ts, collaboration-capabilities.test.ts and collaboration-execution.test.ts, covering forged owners/endpoints/payers, selectors, unknown actions and replay fields.
+- [ ] T011 Create packages/contracts/src/collaboration-direct.ts, collaboration-capabilities.ts and collaboration-peer.ts for tickets/sessions/control epochs, exact peer operations, selectors/presets/ceilings/denies and safe readiness/errors. Expand combined route-table rows into exact method/path schemas.
+- [ ] T012 Create packages/contracts/src/organization-billing.ts and collaboration-execution.ts for quotes/assignments, immutable run account-payer bindings, task profiles and connection delegation. Extend canonical Chat/root and V3 types without introducing competing stores.
+- [ ] T013 Freeze Clerk custom permissions and resource capability vocabulary with identity/runtime/billing owners. Define role preset expansion and old-role migration matrix with exact action ceilings. Freeze the default group Chat, owner-selected source and owner-only Git approval rules; participant account routing and copy-and-continue are deferred.
+- [ ] T014 Give coordinator index.ts exports and package dependency changes; verify package consumers and schemas compile. Update contracts/organization-api.md with final concrete payload unions and version negotiation.
 
-## Foundation — S03: typed contracts
+## S03 — Clerk roles and control authority
 
-**Owner:** Contracts Sol/coordinator. **Exit:** strict additive contracts; old personal clients continue working.
+**Owner:** Identity Sol. **Depends on:** S02. **Exit:** Current membership/permissions reach enrolled homes within tested fixed leases.
 
-- [ ] T014 Add failing owner/audience/resource/proof/payer/role-ceiling validation and V1 compatibility tests in `tests/contracts/organizations.test.ts`, `tests/contracts/collaboration-grants.test.ts` and `tests/contracts/organization-billing.test.ts`.
-- [ ] T015 Add `packages/contracts/src/ownership.ts`, `organizations.ts` and `collaboration-grants.ts`: immutable ActorId, OwnerRef, billing-account reference, six resource kinds, audience grants, capability explanations, guest generation and migration action ceilings.
-- [ ] T016 Add `packages/contracts/src/organization-billing.ts` and `organization-matrix.ts`: sponsorship/checkout/usage and text-room operations; extend proof V2 without broadening V1 parsing in `packages/contracts/src/collaboration.ts`.
-- [ ] T017 Register bounded strict exports/imports in `packages/contracts/src/index.ts` and `packages/contracts/package.json`; define every proposed request/action/response from the auth matrix and keep org IDs out of actor-only fields.
+- [ ] T015 Write failing real-Postgres tests in tests/platform/organization-authority-postgres.test.ts for duplicate/reordered webhook, last-owner, unknown-role, remove/rejoin, guests, group membership, concurrent command and outage cases.
+- [ ] T016 Implement packages/platform/src/organizations/{database,repository,commands,clerk-resolver,roles}.ts with configured custom permissions, verified inbox/outbox, tombstones, fixed-deadline upstream evidence and reconciliation. Clerk remains membership source of truth.
+- [ ] T017 Implement control generations/denial fences and batched active-actor assertions in packages/platform/src/collaboration/control-authority.ts. Never renew evidence from receipt time or trust selected org as membership.
+- [ ] T018 Implement org/group/guest/member routes from the contract with per-action permission checks, body limits, Origin checks, safe errors and audited idempotency. Keep membership mutations separate from billing effects.
+- [ ] T019 Prove platform revocation completes only after home acknowledgement or lease expiration. Add bounded caches, coalescing, recurring reconciliation, outbox retry/dead-letter and shutdown drains; record provider freshness evidence.
 
-## US1 — S04: Clerk lifecycle and authoritative freshness
+## S04 — Local granular authority
 
-**Owner:** Platform Sol. **Exit:** missing/reordered events and provider outages cannot extend evidence.
+**Owner:** Authority Sol. **Depends on:** S02. **Exit:** The same deny-wins policy controls all resource and execution paths.
 
-- [ ] T018 [US1] Add failing signed-webhook, replay/reorder, unknown-role, deleted-org, timeout and request-start-anchored TTL tests in `tests/platform/organization-clerk.test.ts` and `tests/platform/organization-membership-evidence.test.ts`.
-- [ ] T019 [US1] Add org/membership/inbox/outbox schema and repository in `packages/platform/src/organizations/database.ts` and `repository.ts`, using receipt+projection+epoch+audit/outbox transactions, CAS and idempotent migrations through the extracted platform schema registration.
-- [ ] T020 [US1] Implement platform user/profile upsert for org members without personal runtimes and bounded `clerk-client.ts`, `webhook.ts` and `reconciler.ts` under `packages/platform/src/organizations/`; verified events invalidate immediately and authoritative reads restore evidence, never stale event payloads.
-- [ ] T021 [US1] Implement `membership-evidence.ts` with fixed 20-second deadline, five-second authorization timeout, durable access-permit issuance/completion/revocation records, coalesced bounded cache and no TTL chaining; add active-identity refresh and unavailable state.
-- [ ] T022 [US1] Add `organizations/wiring.ts`, startup/shutdown registration patches for `packages/platform/src/platform-startup.ts` and `main.ts`, and a real-Postgres `tests/platform/organization-lifecycle-postgres.test.ts` for duplicate/reordered events, epoch races and worker shutdown.
+- [ ] T020 Write failing tests/gateway/collaboration-capabilities-postgres.test.ts covering conflicting user/org/group grants, parent ceilings, narrow children, moves, direct-grant departure, legacy ceilings and races.
+- [ ] T021 Implement collaboration/{capability-repository,capability-evaluator,policy-migrations}.ts and extend authority.ts. Support action/resource selectors, presets, restrictions, expiry and explicit management; no implicit editor funding or admin content privilege.
+- [ ] T022 Implement collaboration/{chat-audience-policy,artifact-publication-policy}.ts: audience data ceiling, historical Chat share preflight, policy-narrowing session invalidation and explicit restricted-to-broad publication. Test hidden tool results/history/search/attachments and output laundering.
+- [ ] T023 Implement collaboration/access-requests.ts and readiness evaluator for exact missing capabilities and designated approvers. Approval grants only reviewed scoped actions and revision, never broad role escalation.
+- [ ] T024 Wire evaluator into resource grant mutations and local epoch fences; prove conditional writes, audit/outbox atomicity, safe effective-access reasons and no permissive fallback on policy lookup failure.
 
-## US1 — S05: organization, group and guest management
+## S05 — Direct endpoints, tickets and revocation
 
-**Owner:** Platform Sol. **Exit:** admin manages Clerk-backed membership/local groups without a second org authority.
+**Owner:** Transport Sol. **Depends on:** S03,S04. **Exit:** Enrolled homes authenticate direct clients/peers without platform content proxying.
 
-- [ ] T023 [US1] Add failing org admin/member/outsider/last-admin tests, duplicate remote-command and ambiguous-outcome tests in `tests/platform/organization-commands.test.ts` and `tests/platform/organization-routes.test.ts`.
-- [ ] T024 [US1] Implement Clerk-backed create/update/delete/invite/cancel/role/remove/leave commands in `packages/platform/src/organizations/commands.ts`: pre-fence removals, call Clerk outside transactions, reconcile unknown outcomes before retries and never claim queued commands succeeded.
-- [ ] T025 [US1] Implement group and group-member records/actions in `packages/platform/src/organizations/groups.ts`; active Clerk membership is required in the committing operation, with revision predicates, epoch updates and outbox events.
-- [ ] T026 [US1] Implement explicit guest invitation/acceptance/revocation and generation checks in `packages/platform/src/organizations/guests.ts`; former member grants never become guest admission implicitly.
-- [ ] T027 [US1] Mount exact management/internal access-resolution routes from the auth matrix in `packages/platform/src/organizations/routes.ts` and `internal-routes.ts`; enforce raw webhook/session/runtime boundaries, body limits, Origin/CSRF and safe errors.
+- [ ] T025 Write tests/platform/collaboration-tickets.test.ts and tests/gateway/collaboration-direct-sessions.test.ts for audience/key/nonce tampering, ticket reuse, Origin, stale generation, endpoint forgery, unknown signing key and old protocol rejection.
+- [ ] T026 Implement platform collaboration/{runtime-endpoints,ticket-issuer,control-stream}.ts with asymmetric enrollment, exact registered TLS origin verification, SSRF-safe endpoint probes, signed actor/device/purpose binding and rotation. Metadata only.
+- [ ] T027 Implement gateway collaboration/{direct-auth,direct-sessions,control-client,direct-websocket}.ts with proof-of-possession, single-use ticket exchange, scoped HTTP/WS authorization and fixed-expiry control snapshots. Reuse local authority, not owner cookie authentication.
+- [ ] T028 Integrate expiry/fence checks before input/output batches, queue claims and publication; terminate denied isolated processes/control leases. Add replay limits, slow-reader bounds, quotas and shutdown drains.
+- [ ] T029 Run two-home + partition wiring tests in tests/e2e/collaboration-direct-transport.spec.ts. Prove no per-frame/chunk platform authorization call, no lease extension on reconnect and no generic owner endpoint reachable by collaborator.
 
-## US2 — S06: unified principal grants and direct-user migration
+## S06 — Direct clients and resource discovery
 
-**Owner:** Resource Sol. **Exit:** one transaction-aware evaluator with exact legacy direct behavior.
+**Owner:** Client Sol. **Depends on:** S05. **Exit:** Every client request reaches the discovered resource home with scoped auth.
 
-- [ ] T028 [US2] Add failing pure tests for user/org/group matching, overlapping action ceilings, admin management versus content, inherited scopes, expiry and explanations in `tests/gateway/collaboration-grants.test.ts`.
-- [ ] T029 [US2] Add grant/version schema and idempotent shadow backfill from member rows in `packages/gateway/src/collaboration/grant-migrations.ts`; preserve acceptance, invitation IDs, timestamps, expiry and seven-direct-invite capacity without org member expansion.
-- [ ] T030 [US2] Implement `grant-repository.ts` and `grant-evaluator.ts` under `packages/gateway/src/collaboration/`: optional transaction executor, lock root scope first, grant CAS, audit/outbox/replay records, capabilities and matching-source explanations.
-- [ ] T031 [US2] Implement compatible direct-invitation writes and grant/access routes in `packages/gateway/src/collaboration/routes-grants.ts`; dual-write only within the owner transaction during shadow comparison, then deploy/prove the minimum-runtime compatibility barrier and per-scope checkpoint before flipping `authority_version`; update direct-user member projections transactionally afterward but prohibit fallback authorization reads.
-- [ ] T032 [US2] Add real-Postgres grant/revoke/accept/role/migration races in `tests/gateway/collaboration-grants-postgres.test.ts`; prove restart-safe backfill, mismatch fail-closed, old binaries refusing V2 scopes before activation, and V1 snapshot independence.
+- [ ] T030 Add tests for resource-home versus selected-computer routing, endpoint generation changes, offline states, refresh failure and safe errors in tests/ui/collaboration-direct-client.test.ts.
+- [ ] T031 Implement shared transport in packages/ui/src/collaboration/direct-client.ts with ticket exchange, signed requests, WS ticket handshake, session renewal and reconnection. Native/CLI transport adapters consume the same protocol and derivations.
+- [ ] T032 Change platform collaboration discovery to metadata-only projections and safe org inventory. Clients hydrate content from the home; do not make platform hydration fetch full resource data.
+- [ ] T033 Wire shell and desktop collaboration clients, event streams, terminal attach, download/upload and sandboxed app origins through direct transport. Coordinator applies CSP/query-ticket allowlist/composition patches.
+- [ ] T034 Run browser and Electron cross-origin/session/logout tests; verify no reusable token leaks in referrers/logs, no fallback to platform forwarding and no stale resource content on computer switch.
 
-## US2 — S07: proofs, current action checks and revocation
+## S07 — Execution sandbox and task policies
 
-**Owner:** Integration Sol. **Exit:** all current action paths enforce V2; quiet streams and queued work lose access on time.
+**Owner:** Runtime Sol. **Depends on:** S04,S05. **Exit:** Commands/tools cannot escape the granted data, network or credential boundary.
 
-- [ ] T033 [US2] Add failing typed-owner/evidence-clamp/replay/cohort tests in `tests/platform/collaboration-organization-proof.test.ts` and gateway `tests/gateway/collaboration-organization-revocation.test.ts` with fake clocks plus real race coverage for app/file publish versus platform org denial fences and expiring permits; long operations must restage/reacquire authority before publication.
-- [ ] T034 [US2] Extend platform `collaboration/proof.ts`, `proxy.ts`, `websocket.ts` and `bootstrap.ts` with scope-candidate audience resolution, typed owner and fresh evidence; V1 remains personal-only, and sync JWTs are actor identity only.
-- [ ] T035 [US2] Replace direct member lookups with transaction-aware evaluation in gateway `collaboration/authority.ts`, `chat-adapter.ts`, `discussion-adapter.ts`, `project-layout-adapter.ts`, `chat/queue-repository.ts` and `chat/collaboration-commands.ts`; extract before growing oversized files, and inventory every remaining `collaboration_members` authorization read to prevent compatibility fallback bypasses.
-- [ ] T036 [US2] Generalize `collaboration/chat-execution-adapter.ts` owner resolution and cohort checks; refresh authority at AI dispatch/tool effects/approval/cancel/retry and every terminal control action, never treating the org ID as a user.
-- [ ] T037 [US2] Implement immediate post-commit invalidation, bounded evidence renewal and five-second quiet-connection sweeps in `collaboration/events.ts`, `terminal-events.ts`, both WebSocket route modules and platform WS proxy; drain both ends on shutdown and record revocation acknowledgement/expiry before completion.
-- [ ] T038 [US2] Add dropped-webhook, replayed stale proof, offline runtime, delayed mutation, queued AI and reconnect tests in `tests/e2e/organization-revocation.spec.ts`; require real Postgres and prove no fallback to direct owner routes.
+- [ ] T035 Write tests/scope-runtime/collaboration-policy-boundary.test.ts and disposable-host tests for symlink/hardlink escape, Git object/history leakage, subprocess/interpreter escape, proc/environment secrets, broker forgery and denied network.
+- [ ] T036 Extend packages/scope-runtime/ supervisor/profile/protocol seams and gateway collaboration/scope-runtime-client.ts with actor/scope/worktree mount manifests, isolated UID/process namespaces, resource caps and restricted network. No changes based only on prompt instructions.
+- [ ] T037 Implement gateway collaboration/{task-profiles,filtered-workspace,publication-broker}.ts for typed task commands, bounded arguments/cwd/env, restricted Git mediation and staged patch publication with ref/revision/visibility fences.
+- [ ] T038 Extend terminal adapter/control/dispatcher for sandbox-only terminal sessions and exact task profile capability. Arbitrary sandbox shell is explicit and cannot imply unrestricted host shell or connection secrets.
+- [ ] T039 Prove revocation stops new tools/terminal input and terminates isolated processes on lease loss. Expose unsupported profiles through readiness, with dependency/access requests rather than silent wider mounts.
 
-## US4 — S08: discovery and organization sharing inventory
+## S08 — Single owner source and run funding
 
-**Owner:** Platform Sol. **Exit:** dynamic audiences discover shares without per-member fanout; admin metadata does not grant content.
+**Owner:** AI Source Sol. **Depends on:** S02,S04. **Exit:** All permitted participants use one explicitly configured eligible owner source; no participant account onboarding required.
 
-- [ ] T039 [US4] Add failing discovery/join/leave/group/overlap/pagination/privacy tests in `tests/platform/organization-sharing-directory.test.ts` and `organization-sharing-inventory.test.ts`.
-- [ ] T040 [US4] Extend platform `collaboration/database.ts` and `repository.ts` with audience indexes/typed owners, and gateway `collaboration/directory-outbox.ts` with audience/generation projections; retain actor indexes only for direct invitations.
-- [ ] T041 [US4] Implement dynamic discovery and safe current-grant hydration in platform `collaboration/routes.ts` and `organizations/shared-resources.ts`; never enumerate the org into the eight-person member index or return stale revoked titles.
-- [ ] T042 [US4] Implement inbound-org grant denial fences and async owner removal in `organizations/inbound-grants.ts`, plus audit/operation routes; an offline personal owner yields pending cleanup but immediate authoritative denial, not a false removed result.
+- [ ] T040 Write tests/gateway/collaboration-owner-source.test.ts for multiple actors/one source, owner-only subscription mode, eligible delegated API mode, unsupported delegation, exhausted source, source change while queued and attempted participant account override.
+- [ ] T041 Implement collaboration/{execution-policy,run-account-binding,account-eligibility}.ts using AiProviderSnapshotV3. Store one selected project owner binding and pin requesting actor, executing owner, source/model/payer/policy/audience/root per run; validate stale policy before dispatch.
+- [ ] T042 Reuse existing owner provider/account setup and native sign-in only for verified modes. Expose owner setup/readiness and explicit owner-only versus delegated submission state. Do not create participant profile stores, login flows, automatic account routing or copy OAuth tokens.
+- [ ] T043 Implement explicit owner-funded eligible API/business/Matrix AI source and optional org sponsorship with configured models/budget. Owner consent cannot waive provider eligibility. A participant proposal is discussion, not a hidden execution request in subscription owner-only mode; no silent source/card fallback.
+- [ ] T044 Bind one project/Chat provider session to owner source/harness/root/audience generation, never the owner's private session. Owner source changes start fresh authorized continuation unless proven safe. Account selection in existing owner settings is reused; participant multi-account support stays in future scope.
 
-## US2 — S09: common sharing UI for existing sessions
+## S09 — Shared Codex and Claude execution
 
-**Owner:** UI Sol. **Exit:** eligible Chat/terminal org sharing works across Web Canvas/Web Desktop/Electron; project unavailable states remain truthful until S12.
+**Owner:** AI Execution Sol. **Depends on:** S07,S08. **Exit:** Both harnesses execute shared authorized work with attributable queues and tool events.
 
-- [ ] T043 [US2] Add failing audience/role/inheritance/overlap/loading/error/direct-acceptance tests in `tests/ui/organization-sharing-controls.test.tsx` and `shared-resource-directory.test.tsx`.
-- [ ] T044 [US2] Extract discovery from `packages/ui/src/collaboration/ChatCollaboration.tsx`; build `ResourceShareDialog.tsx`, `AudiencePicker.tsx`, `EffectiveAccessList.tsx`, `SharedResourceDirectory.tsx` and pure `resource-share-presentation.ts` with shared brand primitives.
-- [ ] T045 [US2] Extend `packages/ui/src/collaboration/client.ts` through a focused `organization-client.ts`; wire `SessionAccessControl.tsx`, `ChatCollaboratorsDialog.tsx`, `ProjectSharingDialog.tsx` and `TerminalSharingButton.tsx` to common grants without changing snapshot consent.
-- [ ] T046 [US2] Wire thin shell adapters in `shell/src/components/chat/ChatSharing.tsx`, `SharedWithMeNav.tsx`, `projects/ProjectSharing.tsx` and `terminal/TerminalSharing.tsx`; add corresponding tests in `tests/shell/organization-sharing.test.tsx`.
-- [ ] T047 [US2] Wire Electron adapters in `desktop/src/renderer/src/features/chat/DesktopChatCollaboration.tsx`, `features/project/DesktopProjectSharing.tsx`, `features/terminal/DesktopTerminalSharing.tsx` and `features/work/WorkRail.tsx`; test in `tests/desktop/organization-sharing.test.tsx`.
+- [ ] T045 Write tests/gateway/shared-coding-execution.test.ts against canonical Chat queue/run state for concurrent humans, cancellation, approvals, resume isolation, unsupported modes, edits after revoke and partial provider failures.
+- [ ] T046 Replace the standalone-text-only implementation in collaboration/scope-runtime-chat-adapter.ts with focused shared-codex-adapter.ts and shared-claude-adapter.ts behind the canonical provider contract. Reuse chat/coding-provider-adapter.ts seams where safe; preserve immutable harness binding.
+- [ ] T047 Extend shared-ai-runtime.ts, shared-ai-runtime-registry.ts and shared-execution-coordinator.ts for account/root/policy-bound execution, authorized history materialization and sandbox tool events. Never import the owner’s private provider state into the shared session.
+- [ ] T048 Wire queue claims and broker side effects through current authority/F bindings; serialize one active run per Chat, retain independent Chat concurrency with host/account limits. Persist initiating actor and exact approval/cancel actor. Shared discussion never implicitly invokes AI; enforce owner-only subscription versus eligible delegated submission mode.
+- [ ] T049 Run versioned real Codex/Claude API-backed shared run probes with approved test credentials and costs; record unsupported native-source modes explicitly. Capability flags become true only for observed supported paths.
 
-## US3 — S10: exact file/folder identities and reads
+## S10 — Chat worktrees and Git concurrency
 
-**Owner:** Resource Sol. **Exit:** exact file versus recursive folder reads, with no sibling/path/symlink leak.
+**Owner:** Worktree Sol. **Depends on:** S09. **Exit:** Multiple shared Chats use distinct roots safely with visible state and recoverable leases.
 
-- [ ] T048 [US3] Add failing file/folder, delete/recreate incarnation, private-project containment, symlink/TOCTOU and streamed-revoke tests in `tests/gateway/collaboration-file-boundary.test.ts` and `collaboration-file-read.test.ts`.
-- [ ] T049 [US3] Add `resource-catalog.ts` and its migration under `packages/gateway/src/collaboration/`, with non-reused UUIDs/incarnations, unique live owner+normalized-path, parent FK, scope binding, collision rejection, separate containment versus authority-parent relations and permanent grant tombstones as defined in data-model.md.
-- [ ] T050 [US3] Implement `file-adapter.ts` and `routes-files.ts` for scope creation/preflight, filtered list/search/metadata/content, using real filesystem drivers with lstat/realpath/no-follow protection and evidence-renewed bounded streams; never expose shared GET presigns.
-- [ ] T051 [US3] Extend exact platform proxy/CLI allowlists and registration-time gateway dependencies for file reads in `packages/platform/src/collaboration/proxy.ts`, `packages/gateway/src/collaboration/wiring.ts` and `tests/gateway/collaboration-file-wiring.test.ts`.
+- [ ] T050 Write tests/gateway/shared-chat-worktrees-postgres.test.ts for two Chats/two worktrees, shared Chat viewers, same-root competing writers, stale fingerprint, merge conflict, restart lease recovery and deletion during active run.
+- [ ] T051 Extend chat/execution-root.ts, worktree-manager.ts and focused collaboration/worktree-leases.ts with project capability-aware resolution, durable fencing tokens, safe explicit reuse and protected main. Use canonical executionRoot fields.
+- [ ] T052 Implement direct worktree routes and collaboration/{project-git-operations,project-git-broker}.ts for contributor proposals and owner-approved exact commit/merge/push/PR operations. Pin tree/ref/remote digest, configured owner Git identity, one-use expiry and requestor/approver audit. Forge credentials stay in broker; deny git/gh/MCP/shell bypass and reconcile ambiguous PR creation before retry. Filtered workers never get raw .git.
+- [ ] T053 Add shared Chat worktree/branch/status/restore controls under packages/ui/src/collaboration/. Default project group Chat/root creation is idempotent; joining reuses it without a new worktree. Additional coding Chats may create worktrees. Show owner Git setup/approval, missing-root/offline/lease-conflict states.
+- [ ] T054 Prove cleanup retains dirty worktrees and checks active runs/terminals plus merge state; no Chat-delete cascade removes uncommitted work. Validate concurrent Codex and Claude Chats under the same owner source and source-change continuation on pinned roots. Test non-owner commit/push/PR rejection and preserve imported Git authorship.
 
-## US3 — S11: writes, moves and inherited boundaries
+## S11 — Local and peer integration delegation
 
-**Owner:** Resource Sol. **Exit:** writes and access-impact transitions are safe under crashes, conflicting edits and revocation.
+**Owner:** Integration Sol. **Depends on:** S07,S08. **Exit:** Exact connection actions run with scoped credentials outside the platform content path.
 
-- [ ] T052 [US3] Add failing upload/revoke, move-preview revision, overwrite, inherited grant writer-fence races, crash-at-every-publication-phase and revocation between staging and publish in `tests/gateway/collaboration-file-write-postgres.test.ts` and `collaboration-file-move.test.ts`.
-- [ ] T053 [US3] Implement `file-mutations.ts` and `file-upload-staging.ts`: exclusive/atomic writes, bounded inert uploads, durable prepared/staged/publishing/committed byte-publication journal, fresh final permits/epoch CAS, recovering read fences, hash-verified crash reconciliation and recurring symlink-safe orphan cleanup; never claim SQL commits filesystem bytes atomically.
-- [ ] T054 [US3] Implement `resource-move.ts` and generalize `project-membership-transition.ts` for all audience/resource kinds; lock roots in sorted order, show gained/lost access, reconcile child grants, and prevent unconfirmed watcher-inferred moves.
-- [ ] T055 [US3] Wire every relevant file writer, agent broker and ordinary file/sync route through the same `project-fence.ts`/catalog admission in `packages/gateway/src/collaboration/project-path-admission.ts` and its production callers; add an explicit bypass inventory test in `tests/gateway/collaboration-writer-fences.test.ts`.
+- [ ] T055 Write tests/gateway/collaboration-integration-delegation.test.ts for connection-owner consent, tool/upstream scopes, read versus send/delete, approval races, revoked credentials, output audience and ambiguous remote effects.
+- [ ] T056 Implement integrations/{local-credential-store,delegated-action-broker,connection-policy}.ts reusing custom-mcp client/schema/SSRF protections. Encrypt secrets locally; sandbox agents receive capabilities, never raw tokens or unrestricted MCP endpoints.
+- [ ] T057 Add local and peer connection-action routes with exact connection/actor/project/tool/resource binding. Reauthorize after queued approval and before invocation; use upstream idempotency where supported and uncertain-outcome state otherwise.
+- [ ] T058 Migrate direct-capable custom MCP execution/custody from platform-backed paths using S00 inventory and explicit connection-owner consent or reconnect. Document vendor-hosted exceptions and block unsupported fine-grained delegation instead of pretending scopes exist.
+- [ ] T059 Wire app bridge/agent tool discovery/readiness/approval UI to the same action policy. Prove hidden integration results cannot enter broader Chat history and direct shell/network paths cannot bypass the broker.
 
-## US3 — S12: app instances and complete production project wiring
+## S12 — Direct resource adapters and sync
 
-**Owner:** Resource Sol. **Exit:** a real mixed project and standalone app work through production routes, not fake adapters.
+**Owner:** Resource Sol. **Depends on:** S06,S07. **Exit:** Apps/files/projects/sync enforce identical granular grants on the home computer.
 
-- [ ] T056 [US3] Add failing instance-isolation, viewer bridge bypass and production route dependency tests in `tests/gateway/collaboration-app-instance.test.ts` and `collaboration-project-production.test.ts`, including existing-install adoption/collisions/reinstall and failed-DDL restart recovery.
-- [ ] T057 [US3] Add `app-instances.ts` and its migration under `packages/gateway/src/collaboration/`: stable instance/artifact/version/owner/namespace/readiness, idempotent source-install mapping, reinstall incarnation, DDL-failure recovery and instance-scoped export/delete; stage DDL outside transactions through `packages/gateway/src/app-db-registry.ts` and activate grants only after storage readiness; fence/adopt existing slug-backed data and update its original readers so no second writable personal schema survives sharing.
-- [ ] T058 [US3] Implement standalone `app-adapter.ts`/`routes-apps.ts` and actor-aware real bridge integration with `packages/gateway/src/app-db.ts`, scoped view bootstrap/assets and the existing sandbox renderer; deny private slug schemas, generic `/api/bridge/query` bypass and unsupported app capabilities.
-- [ ] T059 [US3] Mount existing project file/Git/app/layout/child-Chat/child-Terminal/export routes in extracted gateway `collaboration/routes-project.ts` and instantiate real `project-adapters.ts`, `project-app-adapter.ts` and `project-layout-adapter.ts` drivers in `collaboration/wiring.ts`; keep M4 disabled if any dependency is absent; split instance catalog, standalone bridge and project wiring into sequential small PR layers.
-- [ ] T060 [US3] Supply a coordinator-owned production composition patch in `packages/gateway/src/server.ts` and extracted server registration modules: pass real `appRegistry`/`queryEngine`, project/file/Git/agent/canvas/export drivers into `enableSharedProject` and the standalone adapters; test every route through the actual composed server before S12 exits.
-- [ ] T061 [US3] Add `tests/gateway/collaboration-project-app-postgres.test.ts` and production-bundle filesystem/agent integration in `tests/e2e/organization-project.spec.ts`; prove app mutation and ACL recheck share the actual transaction and future children inherit org/group access.
+- [ ] T060 Write tests/gateway/direct-resource-policy-postgres.test.ts for file/folder identity, renamed/deleted incarnations, narrow app actions, parent ceilings, exports/search/thumbnails and simultaneous policy change/upload commit.
+- [ ] T061 Implement collaboration/resource-catalog.ts and production file/project/app routes using project-adapters.ts/project-app-adapter.ts, local owner namespaces and stable app instance IDs. No allowlisted-but-unmounted project endpoints.
+- [ ] T062 Implement direct streaming reads, staged uploads, multipart/resume, immutable checksums and final fresh commit. Do not issue reusable shared storage GET URLs; cancel on revoked leases and clean inert staging.
+- [ ] T063 Extend packages/sync-client shared transfer and CLI mounts to direct scoped endpoints; import sync grants into the single authority with exact legacy action ceilings. Personal sync remains its own non-collaboration operation.
+- [ ] T064 Wire app sandbox assets and action-specific bridges to scoped direct sessions. Prove viewer/limited app users cannot mutate through alternate HTTP/network/bridge paths and all applicable surfaces use the same selectors.
 
-## US6 — S13: managed Matrix-backed group communication
+## S13 — Computer-to-computer migration and recovery
 
-**Owner:** Matrix Sol. **Exit:** service-only private rooms; no direct human-token bypass.
+**Owner:** Transfer Sol. **Depends on:** S10,S11,S12. **Exit:** One authoritative home survives staged transfer and every injected failure point.
 
-- [ ] T062 [US6] Add failing idempotent Space/room creation, service power-level, hierarchy, org-scoped service credential rotation/revocation and partition tests in `tests/platform/organization-matrix-room-client.test.ts` and `organization-matrix-revocation.test.ts`.
-- [ ] T063 [US6] Implement `packages/platform/src/organization-matrix/service-identity.ts` and its migration with one service MXID per org, secret-manager references, versioned rotation, old-session revocation and disabled-on-unknown outcome; prove no reuse of `matrix_users` human/AI credentials.
-- [ ] T064 [US6] Implement `packages/platform/src/organization-matrix/room-client.ts` and `repository.ts` with private non-federated joined-history rooms, service-only membership/state/invite powers, bounded timeouts and secret references; never reuse trusted-private DM provisioning.
-- [ ] T065 [US6] Implement `reconciler.ts` and `outbox-worker.ts` in that module, using unique org/group bindings, generation-aware retries, archive/retention/leave-forget decommissioning and secret cleanup; missing ready enforcement leaves communication unavailable.
-- [ ] T066 [US6] Implement authenticated text-only `routes.ts` and stream delivery through current org/group evidence; server-derive actor attribution, paginate history, dedupe sends, filter event types and expose no Matrix tokens/room/media capabilities; add `tests/platform/organization-matrix-routes.test.ts` for attribution spoofing, idempotent sends, pagination, m.text-only filtering, quiet expiry, reconnect and Synapse failures.
-- [ ] T067 [US6] Register startup/shutdown and rerun the S00 live boundary probe against the produced service in `scripts/spikes/organizations/matrix-room-boundary-probe.ts`; record that direct Matrix-client membership remains unsupported.
+- [ ] T065 Write tests/gateway/collaboration-peer-transfer-postgres.test.ts for wrong peer/source/target, replay, chunk corruption, changing inventory, lost acknowledgements, revoked consent and crash at every transfer phase.
+- [ ] T066 Implement collaboration/{peer-auth,peer-transfer,peer-routes}.ts for exact actor-delegated source/target operation tickets, endpoint key validation, bounded encrypted streams/checkpoints and quota enforcement. No caller-selected URL or remote shell.
+- [ ] T067 Extend project-transition.ts/project-fence.ts with dual-consent inventory, source durable fence, platform directory-generation CAS and target activation. Reconcile uncertain cutover before opening either writer.
+- [ ] T068 Implement export/import drivers for project/Chat/app/file/folder and dirty worktree content; exclude credentials/private memory/drafts and do not assume native provider resume migrates. Target creates fresh authorized continuation when needed.
+- [ ] T069 Prove org-managed member assignment backup/key custody/reassignment supports creator departure. Personal hosts without that contract retain personal resource ownership; transfers to ineligible custody fail visibly. Add bounded recovery backup/staging retention and shutdown behavior.
 
-## US3 — S14: legacy sync grant reconciliation
+## S14 — Org billing and invitation compute choices
 
-**Owner:** Sync Sol. **Exit:** legacy metadata imports without creating unintended prefix access.
+**Owner:** Billing Sol. **Depends on:** S03,S08. **Exit:** Admins see reviewed costs and accept/provision/sponsor flows cannot double-charge.
 
-- [ ] T068 [US3] Add failing legacy viewer/editor/admin ceilings, handle ambiguity, absent path and restart migration tests in `tests/gateway/sync/share-migration-postgres.test.ts`.
-- [ ] T069 [US3] Implement `packages/gateway/src/sync/share-migration.ts` and source-ID idempotent mapping: resolve immutable owner/grantee, exact file/folder incarnation and scope, preserve acceptance/expiry, and keep imports dormant until the shared data plane is ready.
-- [ ] T070 [US3] Convert `sync/sharing.ts` and `sharing-db.ts` into compatibility adapters to the unified grants; block ambiguous conflicts with an owner-visible migration report and never maintain a second allow path after cutover.
-- [ ] T071 [US3] Update `specs/066-file-sync/spec.md` and `follow-ups.md` with the actual get/put/delete legacy semantics and the new staged activation/rollback plan, preserving honest F19 status until S16 passes.
+- [ ] T070 Write tests/platform/org-invite-billing-postgres.test.ts for new/existing members, zero-compute invite, stale quote, acceptance retries, concurrent invites, changed price, failed payment, duplicate/reordered Stripe events and sponsor departure.
+- [ ] T071 Implement extracted billing/{payer-accounts,sponsorships,invite-quotes}.ts with configured SKUs, current/incremental monthly totals, prorated/tax estimate and expiry. Missing prices are unavailable; no invented per-member fee.
+- [ ] T072 Implement organizations/{member-computer-assignments,invite-compute-commands}.ts for no-compute, sponsor-existing and provision-member choices. Pending invitations never provision/charge; accepted quote revalidation and confirmed entitlement precede provision.
+- [ ] T073 Extend Stripe/customer-VPS/funded-AI repositories through focused modules for separate payer/owner/assigned actor and original-payer ledger settlement/refund. Require explicit personal-subscription cancellation/continuation and owner consent before sponsorship changes.
+- [ ] T074 Implement leave/reassign/end-sponsorship and failed-payment recovery with retained owner data, org-managed backup access and no personal-card fallback. Integrate S13 transfer operation references without platform content payloads; test with Stripe sandbox fixtures.
 
-## US3 — S15: shared sync gateway data plane
+## S15 — Shared permission/readiness and org UI
 
-**Owner:** Sync Sol. **Exit:** scoped manifests/read/write/realtime across distinct accounts under real database races.
+**Owner:** Shared UI Sol. **Depends on:** S06,S10,S11,S12,S14. **Exit:** Owners can grant a usable bounded environment and recipients understand missing access.
 
-- [ ] T072 [US3] Add real-Postgres manifest/revoke/commit/multipart/action-ceiling tests in `tests/gateway/sync/shared-data-plane-postgres.test.ts`; include expired long-lived upload URLs and viewer delete attempts.
-- [ ] T073 [US3] Extract focused shared handlers from `packages/gateway/src/sync/routes.ts` into `shared-routes.ts`; server-resolve owner/catalog ancestry for manifest and mediated read operations, leaving existing personal namespace behavior intact.
-- [ ] T074 [US3] Implement inert shared upload/multipart staging and commit-time grant/resource/manifest/epoch checks in `packages/gateway/src/sync/shared-commit.ts`; no presigned PUT may overwrite a currently authoritative key.
-- [ ] T075 [US3] Extend `packages/gateway/src/sync/ws-events.ts` with scope/grant-indexed subscriptions, current-evidence batch checks, failed-send eviction, stale sweeps, revoke close and shutdown drain; test in `tests/gateway/sync/shared-events.test.ts`.
+- [ ] T075 Write tests/ui/collaboration-ready-to-work.test.tsx for presets, granular folders/apps/task/connection selection, overlapping deny explanation, hidden resource counts, missing dependencies and exact access-request approval.
+- [ ] T076 Build shared packages/ui/src/collaboration/{CapabilityEditor,ReadinessSummary,ProjectSourceSummary,AccessRequest}.tsx with stable server-derived state. Default join opens the shared group Chat with named humans; show one owner-configured source/payer and submit mode, not a participant account picker. Include audience-safe history preview and exact owner Git approval controls.
+- [ ] T077 Build packages/ui/src/organizations/{OrganizationSettings,SharedResources,MemberComputerAssignments,OrganizationBilling,InviteCostReview}.tsx using brand primitives, custom-role permissions and reviewed quote choice/expiry handling.
+- [ ] T078 Mount identical feature components in Web Canvas/Web Desktop/Electron Desktop normal Share/Chat/project/app/file surfaces. Worktree state, integration approvals, offline/blocked/unknown funding and upgrade-required states must remain truthful.
+- [ ] T079 Exercise admin/member/guest/billing-manager/integration-manager journeys; sharing never silently connects a personal integration, broadens a folder or picks a different payer. Record Web Canvas first, Web Desktop then Electron evidence.
 
-## US3 — S16: daemon mounts and file CLI
+## S16 — Managed Matrix group text
 
-**Owner:** Sync Sol. **Exit:** invite/org discovery→mount→edit→revoke preserves local bytes and stops future sync.
+**Owner:** Messaging Sol. **Depends on:** S03,S04. **Exit:** Matrix communication cannot bypass org/resource revocation.
 
-- [ ] T076 [US3] Add failing scoped-mount/event/reconnect/revoked-queued-write tests in `packages/sync-client/tests/unit/shared-mounts.test.ts` and `tests/cli/collaboration-files.test.ts`.
-- [ ] T077 [US3] Add `packages/sync-client/src/daemon/shared-mounts.ts`, wire its transport/event/scan callers, and persist owner/scope/resource incarnation; prohibit cross-share path traversal and silent parent mounting.
-- [ ] T078 [US3] Add explicit shared read/staged upload/commit transport to the daemon; cancel retries/watchers on revoke, retain already-local copies with revoked status, and require fresh authorization after reconnect in `packages/sync-client/src/daemon/shared-transfer.ts`.
-- [ ] T079 [US3] Add file/folder share/mount/unmount commands in `packages/sync-client/src/cli/commands/resource-sharing.ts`, exact route allowlists and safe errors; complete `tests/e2e/organization-sync.spec.ts` before activating dormant imported grants.
+- [ ] T080 Write tests/platform/organization-matrix-boundary.test.ts for direct human/AI token reads/joins, lost kick jobs, partition expiry and arbitrary room/media IDs.
+- [ ] T081 Implement platform organization-matrix service identity, private Space/group binding and bounded text routes with fresh group authority. Secret references stay in service custody; no AI/resource payload mirroring.
+- [ ] T082 Wire group text UI to safe actor attribution and current group rights, with independent membership generation. Native Matrix clients remain unavailable until a separately reviewed enforcement design.
+- [ ] T083 Prove direct homeserver tokens cannot join/read/send and managed routes expire during outage. Record this explicit bounded messaging-service exception in architecture evidence.
 
-## US4 — S17: typed runtime ownership and routing
+## S17 — Native Mobile and CLI parity
 
-**Owner:** Platform Sol. **Exit:** an org is a durable owner, never a fake user or preview invite list.
+**Owner:** Surface Sol. **Depends on:** S13,S15,S16. **Exit:** Every applicable surface honors direct protocol, permissions, funding and root binding.
 
-- [ ] T080 [US4] Add failing owner backfill/collision/slot uniqueness/member routing and creator-removal tests in `tests/platform/organization-runtime-ownership-postgres.test.ts` and `organization-runtime-routing.test.ts`.
-- [ ] T081 [US4] Extend the extracted runtime schema/queries under `packages/platform/src/database/` with owner_type/id, created_by_actor_id and unique owner+slot; additive personal backfill and nullable legacy Clerk user compatibility only.
-- [ ] T082 [US4] Add `packages/platform/src/organizations/runtime-access.ts` and route selected org context through `session-routing-identity.ts`, `app-session-routes.ts`, `computer-routes.ts` and WS/session middleware; members receive only permitted resource access, admins receive audited org administration.
-- [ ] T083 [US4] Update `packages/platform/src/collaboration/bootstrap.ts` runtime authentication/routing and gateway typed owner configuration without exposing owner tokens; test expired org evidence with an otherwise valid 24-hour sync JWT, members without personal runtimes, and explicit denial of generic owner-home/files/terminal/bridge routes. Admin shell access requires a separate expiring audited capability.
+- [ ] T084 Write mobile Jest and CLI integration tests for direct auth refresh/key custody, resource-home selection, worktree/root state, scoped integrations and stale policy handling.
+- [ ] T085 Wire apps/mobile and existing CLI collaboration clients to shared contracts and direct transport adapters, platform-native secure key storage, same permission/readiness derivations and safe error states.
+- [ ] T086 Expose applicable Share, worktree create/select, owner source/payer summary, group Chat and owner Git approvals/access requests, org invite-cost and member assignment flows; Web Mobile uses shared components. Record explicit genuine platform limitations in spec.md, never silently omit business state.
+- [ ] T087 Run native dev-client and CLI two-computer journeys with browser/Electron counterparts. Verify deep links obtain fresh tickets and do not embed reusable credentials; no recipient computer required to read a shared resource.
 
-## US4 — S18: org provisioning, backups and recovery
+## S18 — One coordinated migration and removal
 
-**Owner:** Platform Sol. **Exit:** typed provisioning/storage/recovery works with injected test entitlements; production admission remains unavailable until the S19 billing join.
+**Owner:** Cutover Sol. **Depends on:** S13,S14,S17. **Exit:** Direct protocol is the only serving collaboration path after activation.
 
-- [ ] T084 [US4] Add failing concurrent provision, billing-unavailable, Cloud-init identity, V1/V2 backup metadata and recovery tests in `tests/platform/organization-vps-provision.test.ts` and `organization-vps-recovery.test.ts`.
-- [ ] T085 [US4] Generalize extracted `customer-vps/` provision locks, labels, schema and runtime env to typed owner; add admin org runtime create/status APIs without a fake clerkUserId in `organizations/runtime-routes.ts` and `customer-vps-schema.ts`.
-- [ ] T086 [US4] Version owner metadata and backup prefixes in `packages/platform/src/customer-vps-r2.ts` and recovery consumers; preserve V1 personal reads and ensure org namespaces derive only from immutable org ownership.
-- [ ] T087 [US4] Add export/recovery access during suspended billing and staged org deletion in `organizations/runtime-lifecycle.ts`; preserve `$MATRIX_HOME`, prevent automatic deletion from Clerk events, and test restart cleanup/shutdown through the real provision wiring.
+- [ ] T088 Write tests/platform/collaboration-cutover-postgres.test.ts for idempotent import/count validation, ambiguous legacy handles, offline homes, exact old ceilings, failed freeze, interrupted CAS and compatible rollback.
+- [ ] T089 Implement collaboration cutover coordinator/journals under packages/platform/src/collaboration/cutover.ts and gateway collaboration/cutover.ts: backup inventory, maintenance fence, drain, shadow import, verification and direct-generation activation.
+- [ ] T090 Remove packages/platform/src/collaboration/proxy.ts serving behavior, collaboration payload WS forwarding and V1 proof/ACL fallback after migrated direct consumers are integrated. Update exact route registration/tests to reject retired endpoints; retain only metadata/control routes.
+- [ ] T091 Remove direct-capable integration central execution fallback and legacy sync/collaboration secondary allow readers. Temporary import code is migration-only with explicit completion/retention state; snapshots and unrelated personal routing remain separate.
+- [ ] T092 Run full dry-run with old client/home negative tests, two direct computers, multiple actors/one owner source, shared group Chat, owner-controlled commit/PR operations, integration grants and dirty worktrees. Record no collaboration payload traverses platform, no dual writer and recoverable rollback state before release approval.
 
-## US5 — S19: Stripe payer accounts and org billing administration
+## S19 — Release acceptance and docs
 
-**Owner:** Billing Sol. **Exit:** personal billing unchanged; org admin controls an independent payer through sandbox-tested flows.
+**Owner:** Coordinator. **Depends on:** S18. **Exit:** Full architecture is reviewable and ready for explicitly authorized deployment.
 
-- [ ] T088 [US5] Add failing personal backfill/admin replacement/forged payer/concurrent checkout/duplicate and reordered webhook tests in `tests/platform/organization-billing-postgres.test.ts` and `organization-billing-routes.test.ts`.
-- [ ] T089 [US5] Add payer accounts, sponsorship/checkout claims and subscription/entitlement bindings under extracted `packages/platform/src/database/` and `billing/`; backfill every table/consumer in data-model.md’s billing migration inventory (including prebilling/trial/override/status/runtime-action/credit paths), without changing personal Stripe customers or granting orgs an admin’s trial/override.
-- [ ] T090 [US5] Implement org status/checkout/portal/invoice/usage handlers in `packages/platform/src/organizations/billing-routes.ts`; server-resolve org customer and catalog, require fresh admin billing capability, and keep checkout unavailable without approved org price configuration.
-- [ ] T091 [US5] Extend `packages/platform/src/stripe-billing.ts` and extracted webhook projection with immutable payer/owner/actor metadata, receipt transaction and monotonic cursor; unknown mappings remain recoverable and cannot charge a default personal customer.
-- [ ] T092 [US5] Update `billing-entitlement-resolver.ts` and `billing-runtime-actions.ts` to target the correct sponsor; test payment/grace/cancel/refund scope, export access and no auto-adoption of existing personal subscriptions; join with S18 only after both land to prove paid org provisioning requires its own current entitlement.
+- [ ] T093 Run quickstart.md acceptance matrix with real Postgres, approved provider/Stripe/Clerk/Matrix sandboxes and disposable reachable computers. Capture exact SHA/version/result, not fabricated screenshots or skipped-required-tests passes.
+- [ ] T094 Profile platform requests/bytes separately from direct resource data under concurrent Chat/PTY/file workloads. Verify control request coalescing and host CPU/memory/network caps; flag managed inference/vendor exceptions clearly.
+- [ ] T095 Perform auth/atomicity/wiring review covering direct routes, dynamic policy/history, sandbox escapes, owner-source concurrency and Git identity/approval bypass, transfer failures and all-surface parity; resolve material findings before declaring release ready.
+- [ ] T096 Prepare separate FinnaAI/matrix-os-site/content/docs/ documentation PR deliverable for direct connectivity, group Chat/owner source/payer, owner Git/PR identity, worktrees, granular sharing, integration consent, invite quotes, outages and migration. External publication needs its own authorization.
+- [ ] T097 Record full implementation log, migration/rollback runbook and configured price/provider limitations. Obtain required CI/current-head Greptile 5/5 and ready-for-ci; do not infer deployment/merge authority from this planning request.
 
-## US4 — S20: explicit ownership transfer and lifecycle
+## Dispatch and completion rules
 
-**Owner:** Resource Sol. **Exit:** each supported resource moves once to org authority, with no credentials or dual writers.
+Sequential prerequisite integration is required even when packets are developed in parallel. S07/S09/S10 share runtime seams, S08/S11 share account custody, S12/S13 share resource/transfer drivers, S03/S14 share org commands: coordinate ownership rather than concurrent edits. No packet is complete without a red/green receipt and actual registration/export integration. Provider modes that fail probes remain explicitly unavailable; required shared API harness modes and direct architecture must pass before final release.
 
-- [ ] T093 [US4] Add crash-at-every-phase, changing inventory, revoked target admin, payer-unchanged and creator-departure tests in `tests/gateway/collaboration-owner-transfer-postgres.test.ts`.
-- [ ] T094 [US4] Implement `packages/gateway/src/collaboration/owner-transfer.ts` and exact transfer routes using existing `project-transition.ts`/`project-fence.ts` journals: target admin consent, staged data, final generation/CAS and labeled inaccessible source backup.
-- [ ] T095 [US4] Supply Chat/app/file/folder/project transfer and export drivers; update `project-membership-transition.ts` for every grant audience and instance/catalog binding, preserving private drafts and immutable harness binding while rejecting unsupported execution migration.
-- [ ] T096 [US4] Wire platform directory cutover/operation hydration and recover/delete/archive paths; add `tests/e2e/organization-owner-departure.spec.ts` proving only the durable org runtime stays authoritative after the creator leaves.
+Planning validation only checks document coherence. It is not evidence that SDK/native account isolation, subscription eligibility, direct TLS deployment, or authorization boundaries work.
 
-## US5 — S21: sponsored AI, add-on credits and attribution
+## Future scope — no V1 implementation checkboxes
 
-**Owner:** Billing Sol. **Exit:** a collaborator's run names actor/resource owner/runtime owner/payer and reserves only the approved budget.
-
-- [ ] T097 [US5] Add failing spoofed sponsorship, removed actor, expired proof, competing reserve/settle/refund and no-fallback tests in `tests/platform/organization-funded-ai-postgres.test.ts` and `tests/gateway/organization-shared-ai.test.ts`.
-- [ ] T098 [US5] Version `packages/contracts/src/funded-ai.ts` identity/proof and extracted funded tables/queries to include typed runtime owner, payer account, actor/resource scope and immutable sponsorship revision; preserve personal credential compatibility.
-- [ ] T099 [US5] Implement sponsorship consent/revoke and signed execution claims in `packages/platform/src/organizations/sponsorships.ts`; validate membership, a signed owner-gateway consent receipt (not admin/client assertion), admin budget policy and exact machine/request binding before atomic reservation.
-- [ ] T100 [US5] Wire `ai-funded-policy-repository.ts`, `ai-funded-policy-routes.ts`, extracted funded metering, `ai-credit-checkout-store.ts`, gateway `funded-ai-credential-manager.ts` and collaboration execution/broker paths; sharing alone never selects the org payer.
-- [ ] T101 [US5] Extend Stripe add-on/refund/dispute projection for org balances and add a sandbox end-to-end ledger test in `tests/e2e/organization-billing.spec.ts`, proving single attribution across retries, settlement against the originally captured payer after sponsorship changes, and no personal-key/payment fallback.
-
-## US3/US4/US5/US6 — S22: app/file sharing and org administration surfaces
-
-**Owner:** UI Sol. **Exit:** equivalent Web Canvas/Web Desktop/Electron controls and state semantics using shared components.
-
-- [ ] T102 [US4] Add failing privacy/admin actions/unknown-error/unavailable-payer/Matrix-group UI tests in `tests/ui/organization-settings.test.tsx`, `tests/shell/organization-resources.test.tsx` and `tests/desktop/organization-resources.test.tsx`; extend existing `tests/shell/file-browser-privacy.test.tsx`, `tests/desktop/files-workspace.test.tsx`, `app-launcher.test.tsx` and settings entrypoint tests for selection/protected paths/instance resolution.
-- [ ] T103 [US4] Add shared `packages/ui/src/organizations/OrganizationSettings.tsx`, `GroupSettings.tsx`, `SharedResources.tsx` and `OrganizationBilling.tsx` with stable selectors, server capability flags, pagination, safe errors and explicit owner/payer/transfer states.
-- [ ] T104 [US3] Add single-selection Share entrypoints in `shell/src/components/file-browser/FileContextMenu.tsx` and `AppTile.tsx`, plus Electron `features/files/ComputerFileBrowser.tsx` and `features/embeds/AppLauncher.tsx`; resolve app instance IDs, never slugs as shared authority.
-- [ ] T105 [US4] Mount shared org settings/inventory/transfer controls in `shell/src/components/Settings.tsx` and `desktop/src/renderer/src/features/settings/SettingsView.tsx`, with ordinary shared resource opening/deep links for app/file/folder; retain parent-project boundaries.
-- [ ] T106 [US6] Add text group conversation rendering/client under `packages/ui/src/organizations/` using S13 routes; show unavailable/reconnecting explicitly, and never expose direct Matrix room credentials/links or duplicate canonical AI Chat history.
-- [ ] T107 [US5] Integrate admin billing/usage/sponsorship views with existing billing components and brand primitives; capture grant/remove/transfer/failed-payment/remaining-access states in `specs/124-organization-collaboration/evidence/web-electron/README.md`.
-
-## Cross-surface — S23: Native Mobile and CLI parity
-
-**Owner:** Surfaces Sol. **Exit:** applicable native/CLI capabilities match the same contracts and rights.
-
-- [ ] T108 [US2] Add failing share/discovery/app/file/admin transport tests in `apps/mobile/__tests__/organization-sharing.test.tsx` and `requests-organizations.test.ts`, retaining current shared-screen/terminal/project coverage.
-- [ ] T109 [US2] Extract discovery/session orchestration from `apps/mobile/app/(drawer)/shared.tsx` into focused components; extend `apps/mobile/lib/requests/collaboration.ts` with `requests/organizations.ts` and common presentation derivations without importing DOM components.
-- [ ] T110 [US3] Add native share sheets/file/app actions and resource opening in `apps/mobile/components/collaboration/ResourceShareSheet.tsx`, `apps/mobile/app/(drawer)/files.tsx`, `apps/mobile/app/(drawer)/apps.tsx`, `apps/mobile/app/app-preview/[app].tsx`, `apps/mobile/app/file-browser/file.tsx` and stable-ID shared-resource routes; scope invitations/deep links safely after account/org switches.
-- [ ] T111 [US4] Add native org/group/inventory/billing controls in `apps/mobile/components/settings/OrganizationSettings.tsx` and the existing `SettingsSurface.tsx`, `apps/mobile/app/(drawer)/_layout.tsx` and `apps/mobile/components/shell/DrawerContent.tsx`; hosted Clerk/Stripe flows return to a freshly revalidated org context.
-- [ ] T112 [US2] Extract org/grant/inventory commands into `packages/sync-client/src/cli/commands/organizations.ts`, register them as subcommands of the existing collaboration command in `packages/sync-client/src/cli/index.ts` (no new top-level command), preserve strict endpoint allowlists and add `tests/cli/collaboration-organization.test.ts`.
-- [ ] T113 [US6] Implement `apps/mobile/components/organizations/GroupConversationScreen.tsx` and `apps/mobile/__tests__/organization-group.test.tsx` using the same mediated text/expiry contracts; record Web Mobile and Expo dev-client evidence in `specs/124-organization-collaboration/evidence/mobile-cli/README.md`.
-
-- [ ] T114 [US6] Add CLI group send/history/watch in `packages/sync-client/src/cli/commands/organization-groups.ts` and `tests/cli/organization-groups.test.ts`: exact group messages/events allowlist, one-use WS ticket, expiry/reconnect/current-role checks and safe output.
-
-## Final — S24: release acceptance, migration, documentation
-
-**Owner:** Integration Sol/coordinator. **Exit:** every enabled capability has current-head evidence; full product claim only after all stories pass.
-
-- [ ] T115 Add a shared admin/two-members/outsider/guest fixture and complete all five requested resource journeys plus terminal regression in `tests/e2e/fixtures/organizations.ts` and `tests/e2e/organization-collaboration.spec.ts`; include more than eight org members without direct-invite fanout.
-- [ ] T116 Run real-Postgres race/migration/restart suites and mixed-version binary rejection, plus the provider/Matrix probes, using `specs/124-organization-collaboration/quickstart.md`; record exact commands/head/results and no skipped required tests in `implementation-log.md`.
-- [ ] T117 Wire documented capability flags, readiness/health metrics, secret references and worker drains into `packages/platform/src/platform-startup.ts`, gateway registration and relevant VPS env templates; test registration-time dependencies and production bundle config in `tests/platform/organization-deployment.test.ts`.
-- [ ] T118 Record per-surface acceptance for Web Canvas, Web Desktop, Electron Desktop, Web Mobile, Native Mobile and CLI in `specs/124-organization-collaboration/evidence/README.md`; production-like validation uses disposable VPS-native hosts, exact bundles and scoped reviewed handles.
-- [ ] T119 Reconcile scope/authority/billing statements in `specs/058-app-gallery/spec.md`, `specs/066-file-sync/spec.md`, `specs/084-stripe-runtime-plans/spec.md`, `specs/118-ai-gateway-provider-auth/spec.md`, `specs/121-collaboration-session-sharing/spec.md` and `specs/525-collaboration-ux-redesign/spec.md`; do not mark unfinished legacy tasks complete without evidence.
-- [ ] T120 Create a separate documentation PR in `FinnaAI/matrix-os-site` under `content/docs/` describing sharing boundaries, org ownership/admin billing, revocation limitations and managed Matrix groups; record its URL in `specs/124-organization-collaboration/implementation-log.md`.
-- [ ] T121 Complete the three-pass review, current-head Greptile 5/5, proactive `ready-for-ci`, required CI and release/rollback evidence for each stack layer; record approved activation and cleanup outcomes in `specs/124-organization-collaboration/implementation-log.md` without merging or deploying merely because tests pass.
-
-## Dependencies and parallel work
-
-Use the plan's S-packet DAG as the source of truth. Within a packet, tests precede their implementation and later checkboxes depend on earlier contracts. `[P]` is limited to genuinely independent probes; other parallelism is at packet boundaries with disjoint file ownership.
-
-- First wave: S01 Platform extraction, S02 Gateway extraction, S03 Contracts after S00. The coordinator owns common exports/composition patches.
-- After S03: S04 and S06 can proceed on separate packages. S05 follows S04. S07 joins all three.
-- After S07: S08 discovery, S10 resource reads, S17 runtime ownership can proceed concurrently. S13 Matrix can replace a completed lane; it does not edit collaboration grant internals.
-- S09 UI may use finalized S08 APIs while S10/S11 progress. S12, S14 and S20 share catalog/transition seams and are serialized when their write sets intersect.
-- Billing S19/S21 follows runtime ownership; UI S22 waits for actual endpoints. Native S23 follows stable shared behavior. S24 joins all lanes.
-
-## Graphite Stack Plan
-
-Use manual persistent worktrees, Graphite for stacked branch operations, Conventional Commit titles and the mandatory invariants section. Initialize/authenticate Graphite before stack operations; do not flatten layers. Prefer under 1,000 additions/20 files; split before 3,000/50. Each extraction family in S01 and each gateway/app/sync sublayer that exceeds limits gets its own layer with the same task receipt, not an oversized PR.
-
-| Stack | Layers / proposed title scope | Join points |
-| --- | --- | --- |
-| Foundation | S00 `test(organizations)`; S01 `refactor(platform)` in bounded domain slices; S02 `refactor(collaboration)`; S03 `feat(contracts)` | S04 and S06 branch from their required merged/stacked dependencies |
-| Org access | S04 Clerk → S05 management → S06 grants join → S07 revocation → S08 discovery → S09 UI | S07 is the access gate for every resource/runtime/Matrix path |
-| Resources | S10 reads → S11 writes → S12 apps/project → S14 sync migration → S15 gateway sync → S16 daemon | S20 joins S12 with durable runtime S18 and entitlement S19 |
-| Org runtime/billing | S17 owner/routing → parallel S18 provision groundwork + S19 Stripe → S20 transfer join → S21 funded AI | S19 may prepare schema/tests in parallel, but activation waits for sponsor/runtime authority |
-| Matrix | S13 room primitives → mediated text/revocation evidence | Depends S05/S07; no direct-member fallback |
-| Surfaces/release | S22 shared UI → S23 native/CLI → S24 acceptance/ops; separate site-docs PR | All backend lanes required for full release |
-
-Graphite has one parent per branch: wait for prerequisite joins to merge or have the coordinator restack/cherry-pick the reviewed prerequisite commits in order. A worker must never pretend a multi-parent task DAG is already present in its checkout. Every packet receipt names exact prerequisite SHAs.
+Participant AI account enrollment/routing is deferred; existing owner account settings may be reused without new participant UI. Git-based copy-and-continue is deferred: pin the source commit plus reviewed dirty/untracked state, explicitly handle LFS/submodules, create a new destination project/permissions/identity, and never transfer credentials, subscription bindings, provider resume or invisible Git history. Chat/app data exports are separate. This independent fork must never masquerade as the current peer ownership-transfer operation.

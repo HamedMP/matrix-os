@@ -1,71 +1,63 @@
-# Validation and implementation quickstart
+# Validation and coordinated cutover
 
-Run from the packet's manual worktree. Paths below refer to planned tests until their corresponding packet adds them. This planning change does not run runtime tests or enable any feature.
+This is the future implementation acceptance recipe. No runtime tests or live probes were executed by the spec revision. Record exact commands, source SHA, runtime/harness/protocol versions, fixtures and outcomes in implementation-log.md. Use configured approved test credentials; do not provision paid infrastructure from this document alone.
 
-## Setup
+## Fixtures
 
-1. Read `.specify/memory/constitution.md`, `specs/124-organization-collaboration/sol-runbook.md` and your task packet.
-2. Verify current branch/base and clean ownership of its files. Record `git rev-parse HEAD` and `git rev-parse origin/main` in the implementation log.
-3. Use Node 24+, pinned pnpm 10.33.4, bun and the repo's normal environment. Install from repository root with `pnpm install --frozen-lockfile`; if dependencies change, use `pnpm install` at the root and include the lockfile.
-4. Configure a disposable real PostgreSQL database via `MATRIX_TEST_POSTGRES_URL`. Provider probes need separate Clerk/Stripe test-mode and disposable Matrix credentials supplied through the environment/secret manager. Never commit values. No customer org/VPS or live charge is a test fixture.
-5. The optional Spec Kit hooks are `/speckit.git.commit` before/after plan/tasks. Planning uses explicit documentation commits. To resolve this feature in scripts, use `SPECIFY_FEATURE=124-organization-collaboration`; the actual git branch keeps `codex/`.
+Two enrolled directly reachable member computers A/B, browser/Electron/native/CLI clients, a real Postgres test service, Clerk test org, admin, two members, outsider and separate billing/integration managers. Use one owner-selected source per project, exercising eligible API/Matrix AI delegation and owner-only subscription mode separately, Stripe sandbox and managed Matrix test rooms. Include a full project with two Chats/worktrees, a restricted folder, denied sibling/history in Git, dirty edits, app database, terminal and two integration connections (read-only and send-capable).
 
-## Targeted red/green commands
+Resource content lives on A; B can be a recipient/integration custodian/transfer target. Test an org-managed computer assigned to a member for recovery; no organization-wide shared computer is provisioned. Test a viewer with no personal computer.
 
-Use the concrete files assigned to the packet. Representative packet commands after tests are added:
+## Test commands
 
-```bash
-bun run test -- tests/contracts/organizations.test.ts tests/contracts/collaboration-grants.test.ts
-bun run test -- tests/platform/organization-clerk.test.ts tests/platform/organization-membership-evidence.test.ts
-bun run test -- tests/gateway/collaboration-grants.test.ts tests/gateway/collaboration-organization-revocation.test.ts
-bun run test -- tests/ui/organization-sharing-controls.test.tsx tests/ui/shared-resource-directory.test.tsx
-bun run test -- tests/platform/organization-matrix-room-client.test.ts tests/platform/organization-matrix-revocation.test.ts
-```
+Run from the implementation worktree using repository Vitest configuration, for example:
 
-For real database suites, refuse to count a missing-env skip as success:
-
-```bash
-test -n "$MATRIX_TEST_POSTGRES_URL"
-bun run test -- --maxWorkers=1 --no-file-parallelism tests/platform/organization-lifecycle-postgres.test.ts tests/gateway/collaboration-grants-postgres.test.ts tests/gateway/collaboration-file-write-postgres.test.ts tests/gateway/collaboration-project-app-postgres.test.ts tests/gateway/sync/shared-data-plane-postgres.test.ts tests/platform/organization-billing-postgres.test.ts tests/platform/organization-funded-ai-postgres.test.ts
-```
-
-Follow current fixtures' isolation/cleanup convention; these new tests must use actual PostgreSQL, not KyselyPGlite or a fake app bridge. Run additional packet-specific Postgres suites listed in tasks, including runtime ownership, transfer and migration tests.
-
-```bash
-bun run typecheck
-bun run check:patterns:diff
-bun run test
-bun run test:e2e
-pnpm --filter shell exec tsc --noEmit
-pnpm --filter desktop run typecheck
-pnpm --filter matrix-os-mobile test -- --runInBand __tests__/organization-sharing.test.tsx __tests__/requests-organizations.test.ts
+```sh
+pnpm exec vitest run tests/contracts/collaboration-direct.test.ts tests/contracts/collaboration-capabilities.test.ts tests/contracts/collaboration-execution.test.ts
+pnpm exec vitest run tests/platform/organization-authority-postgres.test.ts tests/gateway/collaboration-capabilities-postgres.test.ts tests/gateway/shared-chat-worktrees-postgres.test.ts
+pnpm exec vitest run tests/platform/collaboration-cutover-postgres.test.ts tests/gateway/collaboration-peer-transfer-postgres.test.ts tests/platform/org-invite-billing-postgres.test.ts
 bun run build:shell:production
 bun run build:desktop
 ```
 
-These are integration/review gates, not commands to repeat after every small edit. Baseline failures must be recorded with exact failing tests and assessed, not hidden. Native validation uses the Expo dev client, not Expo Go. Use the sync-client package's own test/build scripts after S16; confirm its package name from `packages/sync-client/package.json` when invoking pnpm filters.
+These new test paths are assigned in tasks.md and will exist after implementation. Use the repository's actual browser/native/CLI runners for their suites; do not claim these commands validate those surfaces. Add all packet-specific tests from tasks.md, required type/build checks and relevant existing regression suites. Skip is not pass for a required DB/provider/host gate.
 
-## End-to-end acceptance matrix
+## Acceptance matrix
 
-Create disposable admin A, members B/C, outsider D and explicitly admitted guest E; add more than eight org members for the no-fanout case. Exercise actual production registrations and compiled bundle paths.
-
-| Scenario | Expected evidence |
+| Journey | Required evidence |
 | --- | --- |
-| Org/group share for Chat/project/app/file/folder | Matching audiences discover/open; future members inherit; D sees neither existence nor content |
-| Viewer and legacy sync ceilings | Every API/bridge/agent/WS mutation denied, including hidden app controls and delete where legacy editor lacked it |
-| Standalone resource inside private project | No parent/sibling/attachment destination access; folder future descendants inherit |
-| Shared project | Real file/Git/app/layout/child Chat/terminal/export drivers; unsupported item blocks the complete transition |
-| Grant overlap/removal | Remaining independent access is explained; old member grant cannot become org guest access |
-| Revoke with missed webhook/outage/quiet socket | Original evidence deadline never slides; replay, queued work, tool effects and streams reject/close within the measured bound |
-| Matrix group | Human/AI token cannot read/join directly; mediated text checks current group; partition never permits stale delivery |
-| File move/upload/download | Revision-confirmed boundary move; same-path recreation cannot reuse grants; delayed upload cannot alter a live key; streaming stops on revoke |
-| Admin inventory | Only org-owned/org-addressed resources; personal unrelated shares absent; metadata alone grants no content |
-| Org transfer/creator departure | One authoritative org runtime remains; personal credentials/drafts absent; source backup is inaccessible |
-| Stripe/AI | Admin allowed/member denied; payer unchanged on admin change; concurrent retry charges once; no personal fallback |
-| Migration/restart/rollback | Exact prior rights preserved; no old-binary fallback on a V2 scope; staged orphans inaccessible and cleaned |
+| Direct open | Client authenticates with platform then streams Chat/files/PTY/app content directly to A; platform trace contains only permitted metadata; recipient needs no own computer |
+| Peer path | B performs exact delegated integration action or stages transfer from A over authenticated direct HTTPS; wrong peer/key/operation replay denied |
+| Membership | Lost/reordered webhook, direct Clerk edit and platform/control partition enforce fixed deadlines; revocation completion waits for ack/expiry; same local fence blocks REST/WS/queue/tools |
+| Coarse roles | Billing manager can manage quoted spend but cannot read resource content; integration manager cannot access arbitrary personal connections; unknown Clerk roles fail closed |
+| Granular profile | Contributor accesses selected folder/app/action/task only; overlapping broader allow cannot beat deny/ceiling; path moves and policy revisions preserve boundary |
+| Git/shell | Restricted worker cannot recover denied files via object database/history, worktree admin paths, symlinks, proc, hooks, shell/interpreter, raw network or alternate app bridge |
+| Chat disclosure | A tool result available only to one actor cannot enter a broader Chat; historical grant expansion requires reviewed audience; account/root change cannot resume hidden state; restricted artifact publish is separately approved |
+| One owner source | Multiple actors share one configured eligible source; subscription owner-only mode blocks collaborator execution while discussion works; owner source change is revision-checked; exhausted source pauses without fallback |
+| Group Chat | Repeated share/join creates one default shared Chat/root, named humans and explicit AI request; joining creates no worktree or account; audience ceiling protects historical content |
+| Git/PR owner | New host commits use configured owner identity, PRs use owner forge identity, imported history unchanged; contributor proposals need exact owner approval; git/gh/shell/MCP bypass and changed-tree replay fail; audit retains requesting actor |
+| Shared coding | Both Codex and Claude API-backed runs operate in their selected Chat worktrees with correct files/history, attributed approvals/cancellation and tool restrictions |
+| Root concurrency | Two Chats run concurrently in different worktrees; same-root writers conflict/queue safely; merge/push separate from edit; restart recovers lease; dirty worktree survives Chat deletion |
+| Integrations | Exact connection/tool/upstream scope; read cannot send/delete; approvals recheck policy; peer connection owner can revoke; direct-capable execution no longer traverses platform; vendor exceptions disclosed |
+| Ready-to-work | Share preflight names allowed environment and missing account/dependency/approval; recipient requests exact access without hidden widening; no sensitive hidden resource-name enumeration |
+| Invite costs | New/existing user sees no-compute/sponsor/provision choices; pending invite has no charge; expired quote requires renewed payer approval; duplicate accept/payment callback cannot double charge or provision |
+| Ownership | Sponsoring a personal host changes payer only; org-managed member assignment retains org data/backups after departure; personal data remains personal |
+| Transfer | Dirty worktree/app/Chat/file inventory staged with checksums; crashes at every phase leave one authority; credentials/memory/drafts absent; generation CAS prevents double-writable copies |
+| Cutover | IDs and old action ceilings preserved; legacy proxy/WS/V1 paths removed; old clients upgrade-required; offline/ambiguous scopes unavailable with recovery; rollback never restores legacy auth |
+| Surfaces | Web Canvas then Web Desktop then Electron Desktop; applicable Web Mobile, Native Mobile and CLI share semantics/root/owner-source/Git-approval/error states |
+| Scale | Record control request/metadata byte rates separately from direct bytes; no refresh per keystroke/chunk; verify bounded host connection/process/transfer capacity and shutdown |
+| Matrix groups | Human/AI tokens cannot directly read/join private service rooms; managed group text expires during partition; no canonical AI Chat/files mirrored |
 
-Capture separately in Web Canvas, Web Desktop, Electron Desktop, Web Mobile, Native Mobile and CLI wherever the capability exists. Record keyboard/focus/error/reduced-motion states for the shared controls. Document any genuine platform limitation in the governing spec; do not silently omit a surface.
+## Operational sequence
 
-## Production-like gate
+1. Verify prerequisites, approved provider modes, configured prices and endpoint readiness. Missing source eligibility blocks that choice; required shared API modes must pass.
+2. Inventory and back up owner/control data, connection custody and dirty worktrees. Record recovery key ownership and retention.
+3. Fence collaboration mutation/run admission, drain sessions and stage idempotent data/grant migration. Validate counts, IDs, policy outcomes and catalog bindings.
+4. Upgrade registered homes and applicable clients; snapshot current epochs, verify signing keys/TLS, require protocol acknowledgements.
+5. Activate the new directory generation and only the direct serving routes. Run synthetic cross-computer journeys before reopening normal work.
+6. If activation fails, keep collaboration fenced or use a compatible direct build; reconcile journals and directory generation before opening writes. Do not re-enable platform forwarding or V1 policy.
+7. After verified acceptance publish operator/user documentation through the separately authorized site PR. Paid VM cleanup follows explicit approval and preserves needed recovery evidence.
 
-Use a disposable VPS-native host, exact immutable bundle and reviewed test handle; verify release metadata, gateway/shell/sync services and local health. Do not treat Docker Compose or an unbuilt checkout as production evidence. Observe startup/shutdown drains, expired caches, worker failures and recovery. Keep flags off until the current head passes its gate. Paid infrastructure, publishing this local branch, production rollout and merge are separate actions requiring task authorization. Ask whether to delete the disposable VPS afterward; clean completed local worktrees only after safe merged-state checks.
+## Deferred checks
+
+Participant AI account switching and copy-and-continue are not release gates. Future clone tests must distinguish a pinned Git commit from dirty current state and from app/Chat data; validate fresh destination grants/identity and no secret/hidden-history export. V1 tests must assert these deferred endpoints/participant source selectors are not exposed accidentally.

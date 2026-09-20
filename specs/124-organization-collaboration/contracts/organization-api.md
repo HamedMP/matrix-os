@@ -1,114 +1,102 @@
-# Organization collaboration contracts
+# Direct collaboration contracts and auth matrix
 
-Proposed additive contracts. S03 owns shared schema changes; subsequent packets consume them. Existing exact route allowlists remain restrictive. No public resource or billing access is introduced.
+S02 freezes strict Zod 4 contracts and package exports before dependent packets. This replaces the previous platform-forwarded resource API design. Every endpoint below is private unless explicitly called signed public ingress. No resource route may be forwarded by the platform after cutover.
 
-## Common wire rules
+## Wire rules
 
-Use strict Zod 4 objects. All mutations carry UUID `clientRequestId`, decimal-string `expectedRevision` where a record exists, and a discriminated action schema. Same key/different payload returns conflict; retries return the same accepted operation. UUIDs identify scopes/groups/files/operations, Clerk IDs use bounded provider-specific schemas, paths use bounded relative segments and resolveWithinHome plus symlink-safe checks. No caller-selected owner directory, database schema, R2 prefix, price amount or payer identity is trusted.
+Mutations require UUID clientRequestId, record expectedRevision where applicable, and a bounded discriminated payload. Same idempotency key/different payload conflicts. Validate all identifiers/path/query/body at boundary; no arbitrary target URL, owner filesystem path, payer or DB namespace. Resolve paths by catalog identity with symlink/hardlink escape checks. POST/PUT/PATCH/DELETE apply bodyLimit before buffering. Conditional DELETE uses validated headers where existing clients need bodyless DELETE. Generic errors only; hidden resource existence returns not-found. Cookies require exact Origin/CSRF; direct proof-authenticated requests also validate allowed client origin and proof binding. No wildcard CORS.
 
-Responses expose safe data and capability flags, bounded error codes (`invalid_request`, `unauthorized`, `not_found`, `forbidden`, `conflict`, `capacity`, `unavailable`) and optional operation IDs. Unauthorized resource existence is hidden. Never return provider errors or Zod internals. POST/PUT/PATCH/DELETE use Hono bodyLimit before reading bytes; session-authenticated mutations validate Origin/CSRF, CORS is an explicit allowlist. Webhook signatures are the exception to session/Origin auth, not to body limits.
+`U`: verified Clerk/app/native/CLI actor; `O`: fresh Clerk org role/permission projection; `R`: enrolled runtime asymmetric identity; `T`: one-use platform-signed connection/operation ticket plus client proof of possession; `G`: local current grant/policy; `F`: exact approved funding/credential delegation; `P`: authenticated peer runtime plus T naming actor, operation and both endpoints. Selected org, custom headers or network reachability are never authority.
 
-## Auth matrix
+## Platform control endpoints
 
-`U` = existing verified Clerk/app/native/CLI user identity resolving to immutable actor ID; `O` = freshly verified org membership; `A` = mapped current org admin permission; `G` = current resource grant/capability at owner gateway; `R` = registered-runtime service auth; `P2` = platform-signed request-bound actor/owner/audience evidence. Session-selected org/header is only a selector and cannot satisfy O/A.
+| Method + path | Auth | Behavior |
+| --- | --- | --- |
+| GET/POST `/api/organizations` | U; create permission for POST | Clerk-backed org discovery/create |
+| GET/PATCH/DELETE `/api/organizations/:orgId` | U+O; profile/manage/delete permission for mutations | Idempotent Clerk commands; deletion fence and last-owner guard |
+| GET `/api/organizations/:orgId/members` | U+O member-read | Paginated membership |
+| POST `/api/organizations/:orgId/invitations/quote` | U+O members-manage; billing-manage for paid choices | No charge; server catalog and existing-computer eligibility |
+| POST `/api/organizations/:orgId/invitations` | U+O members-manage + valid payer consent if paid | Quote ID/digest and compute choice; Clerk invitation |
+| DELETE `/api/organizations/:orgId/invitations/:id` | U+O members-manage | Cancel pending command/invite without charge |
+| PATCH/DELETE `/api/organizations/:orgId/members/:actorId`; POST `/leave` | U+O members-manage; leave actor only | Pre-fence, reconcile Clerk result, no silent last-owner removal |
+| GET/POST `/api/organizations/:orgId/groups`; PATCH/DELETE `/:groupId`; PUT/DELETE `/:groupId/members/:actorId` | U+O; groups-manage for writes | Explicit current-member subsets |
+| POST `/api/organizations/:orgId/guests`; POST `/guests/:id/accept`; DELETE `/guests/:id` | U+O members-manage; accept only invited U | Explicit admission/expiry, no former-member bypass |
+| GET `/api/organizations/:orgId/shared-resources`; GET `/audit` | U+O resources-manage / audit-read | Metadata only, paginated |
+| DELETE `/api/organizations/:orgId/shared-resources/:scopeId/grants/:grantId` | U+O resources-manage + inbound audience binding | Control denial + signed command to home, no content forwarding |
+| GET `/api/organizations/:orgId/member-computers` | U+O plus assignment-read policy | Visible assignments, no org-wide computer |
+| POST `/api/organizations/:orgId/member-computer-commands` | U+O billing-manage and assignment-manage policy | Discriminated sponsor/provision-member/reassign/end; quote/consent/entitlement checked |
+| GET `/api/organizations/:orgId/billing`; POST `/billing/checkout`; POST `/billing/portal` | U+O billing-read/manage | Org customer only, server SKUs/return URLs |
+| PUT/DELETE `/api/organizations/:orgId/sponsorships/:scopeId` | U+O billing-manage + resource-owner signed consent | Payer/budget policy, no personal fallback |
+| GET `/api/collaboration/shared`; GET `/api/collaboration/inbox` | U+O as needed | Safe resource routing/discovery metadata; client hydrates direct |
+| POST `/api/collaboration/connections` | U+O as needed | Exact resource/purpose/client public key; directory-resolved endpoint and T, no content |
+| POST `/api/collaboration/peer-operations` | U+G consent receipts + R as applicable | Transfer/tool/policy-sync tickets, exact source/target/action/digest; no arbitrary command |
+| POST `/internal/collaboration/runtime-endpoints` | R plus enrollment bootstrap verification | Register exact verified TLS endpoint, protocol/key generation; SSRF-safe validation |
+| GET `/internal/collaboration/control` (WS) | R with one-use upgrade ticket | Signed epochs/assertions, no customer payload; reconnect snapshot before accepting work |
+| POST `/internal/organizations/access/resolve` | R + actor-bound T/session evidence | Batched fixed-expiry membership assertions for active relevant scopes |
+| POST `/internal/collaboration/control/ack` | R | Monotonic generation/fence acknowledgement |
+| PUT `/internal/collaboration/directory` | R matching resource authority | Idempotent content-free directory updates |
+| POST `/webhooks/clerk/organizations` | Verified signature on raw bounded body | Signed public ingress, replay/dedupe/reconciliation |
+| Existing Stripe webhook | Verified Stripe signature + dedupe | Signed public ingress, payer projection only |
+| GET `/api/organizations/:orgId/operations/:id` | U with initiating/management/recovery right | Sanitized asynchronous outcome |
 
-| Method + route | Service | Required authorization | Purpose/public? |
-| --- | --- | --- | --- |
-| GET `/api/organizations` | Platform | U | Actor's organizations only; no |
-| POST `/api/organizations` | Platform | U + Clerk create permission | Idempotent Clerk-backed create; no |
-| GET `/api/organizations/:orgId` | Platform | U+O | Safe org status/capabilities; no |
-| PATCH `/api/organizations/:orgId` | Platform | U+O+A | Rename/settings via Clerk command; no |
-| DELETE `/api/organizations/:orgId` | Platform | U+O+A + typed confirmation | Fence deletion then Clerk command/recovery; no |
-| GET `/api/organizations/:orgId/members` | Platform | U+O | Paginated safe member directory; no |
-| POST `/api/organizations/:orgId/invitations` | Platform | U+O+A | Clerk invitation; no |
-| DELETE `/api/organizations/:orgId/invitations/:invitationId` | Platform | U+O+A | Cancel Clerk invitation; no |
-| PATCH/DELETE `/api/organizations/:orgId/members/:actorId` | Platform | U+O+A; self-leave separate typed action | Map role/remove with pre-fence, last-admin guard; no |
-| POST `/api/organizations/:orgId/leave` | Platform | U+O; actor only | Fence self-leave; no |
-| GET/POST `/api/organizations/:orgId/groups` | Platform | GET U+O; POST U+O+A | List/create groups; no |
-| PATCH/DELETE `/api/organizations/:orgId/groups/:groupId` | Platform | U+O+A | Rename/delete; no |
-| GET/PUT/DELETE `/api/organizations/:orgId/groups/:groupId/members/:actorId` | Platform | GET U+O; writes U+O+A | Exact membership; actor must be current org member; no |
-| GET/POST `/api/organizations/:orgId/groups/:groupId/messages` | Platform→Matrix service room | U+O + current group membership (admin alone cannot read an unjoined group) | Text-only bounded history/send; no |
-| GET `/api/organizations/:orgId/groups/:groupId/events` (WS upgrade) | Platform | One-use ticket + U+O + current group membership, renewed per batch | Managed-room text delivery; no |
-| POST `/api/organizations/:orgId/guests` | Platform | U+O+A | Explicit guest invitation; no |
-| POST `/api/organizations/:orgId/guests/:guestId/accept` | Platform | U matches invited guest | Accept guest admission; no |
-| DELETE `/api/organizations/:orgId/guests/:guestId` | Platform | U+O+A | Revoke all guest access to this org; no |
-| POST `/webhooks/clerk/organizations` | Platform | Verified Clerk webhook signature, timestamp/replay checks on raw bounded body | Public ingress, authenticated by signature |
-| POST `/internal/organizations/access/resolve` | Platform | R + original platform-signed actor request and validated runtime/scope/audience binding | Bounded fresh assertions for relevant org/group IDs; no |
-| GET `/api/organizations/:orgId/shared-resources` | Platform | U+O+A | Paginated inventory; no |
-| DELETE `/api/organizations/:orgId/shared-resources/:scopeId/grants/:grantId` | Platform→gateway | U+O+A; grant addressed to this org/group | Inbound denial fence + idempotent owner removal; no |
-| GET `/api/organizations/:orgId/audit` | Platform | U+O+A | Bounded content-free admin audit; no |
-| GET `/api/organizations/:orgId/operations/:operationId` | Platform | U+O+A or exact initiating actor with retained recovery permission | Async outcome; no |
-| GET/POST `/api/organizations/:orgId/runtimes` | Platform | U+O for permitted reads; U+O+A + entitlement for create | Org-owned runtime discovery/provision; no |
-| GET `/api/organizations/:orgId/billing` | Platform | U+O+A billing capability | Status/invoices/usage; no |
-| POST `/api/organizations/:orgId/billing/checkout` | Platform | U+O+A billing capability | Server catalog SKU only; no |
-| POST `/api/organizations/:orgId/billing/portal` | Platform | U+O+A billing capability | Server-selected org Stripe customer/return URL; no |
-| PUT/DELETE `/api/organizations/:orgId/sponsorships/:scopeId` | Platform | U+O+A + verifiable resource-owner consent | Budget/payer approval/revoke; no |
-| GET/POST `/api/collaboration/scopes/:scopeId/grants` | Platform→gateway | U + P2 + G read/manage respectively | Principal grants; no |
-| PATCH/DELETE `/api/collaboration/scopes/:scopeId/grants/:grantId` | Platform→gateway | U + P2 + G manage | Revision-checked grant changes; no |
-| GET `/api/collaboration/scopes/:scopeId/access` | Platform→gateway | U + P2 + G read | Actor's effective permissions/reasons only; no |
-| GET `/api/collaboration/scopes/:scopeId/files` | Platform→gateway | U + P2 + G read | Scope-filtered paginated catalog; no |
-| GET `/api/collaboration/scopes/:scopeId/files/:fileId/content` | Platform→gateway | U + P2 + G read, renewed while streaming | Mediated download, safe headers/ranges; no |
-| POST `/api/collaboration/scopes/:scopeId/files/actions` | Platform→gateway | U + P2 + G per action | create/upload-init/commit/rename/delete/move-preview/move-confirm; no |
-| GET `/api/collaboration/scopes/:scopeId/apps/:appId` | Platform→gateway | U + P2 + G read | App instance metadata/eligibility; no |
-| POST `/api/collaboration/scopes/:scopeId/apps/:appId/view` | Platform→gateway | U + P2 + G read | Scoped app bootstrap; no owner session/token; no |
-| GET `/api/collaboration/scopes/:scopeId/apps/:appId/assets/*` | Platform→gateway | U + P2 + G read or exact short-lived view capability rechecked against G | Validated artifact asset only; no |
-| POST `/api/collaboration/scopes/:scopeId/apps/:appId/actions` | Platform→gateway | U + P2 + G per app action | Validated actor-aware app bridge; no |
-| POST `/api/collaboration/scopes/:scopeId/transfers` | Platform→gateway | U + P2 + G transfer + target org admin consent | preview/confirm typed transfer; no |
-| GET `/api/collaboration/shared` (extend) | Platform | U then fresh audience resolution/hydration | Personal/org/group discovery; no |
-| Existing scope preflight/create, invitation accept/decline, Chat/discussion/AI, terminal, project/lifecycle/export routes | Platform→gateway | Existing auth + P2/G for V2 scope; current actor/owner checks generalized | Preserve exact routes, add kinds through typed adapters; no |
-| Existing `/api/sync/manifest`, `/presign`, `/commit`, multipart and conflict routes (extend) | Gateway | Existing personal auth unchanged; shared mode requires scope proof+G for every operation | Namespace server-resolved, exact file/folder filters; no |
-| Existing collaboration events/terminal WS and shared sync event WS | Platform→gateway | One-use ticket; U + P2 + G at connect, replay, every frame/batch and renewal | No org/user query parameter as authority; no |
-| Existing Stripe webhook | Platform | Existing verified Stripe signature/event dedupe | Add payer-account mapping; public ingress with signature auth |
+Clerk organization acceptance uses Clerk's supported flow. A verified acceptance event triggers quote revalidation and entitlement command; no secret billing authority is trusted from the event payload. System Clerk permissions govern Clerk components/API; configure explicit Matrix custom permissions for application server checks, as system permissions are not JWT claims.
 
-Invitations to the Clerk organization are accepted through Clerk's supported flow, not a resource-grant endpoint. Native clients may open the hosted Clerk flow and then refresh authoritative state. Org admin role changes use an allowlisted mapping (`org:admin`→admin, `org:member`→member, configured creator role→owner); unknown roles deny until explicitly configured. Group management has no independent Matrix role override.
+## Direct home endpoints
 
-## Proof V2 and runtime checks
+All routes below terminate on the registered computer origin. `D` means direct session derived from T, proof-bound request plus G and fresh evidence. Native clients register their public keys; browsers generate session keys through Web Crypto. Never place reusable resource credentials in URLs/localStorage/logs. WebSocket upgrade uses a narrowly allowlisted single-use, short-lived ticket (redacted at ingress) and verifies possession in the first bounded frame before any output.
 
-Retain method/path/query/body/conditional-header digest, runtime/scope, nonce and key rotation binding. Add OwnerRef, actor membership/group/guest generations, evidence checkedAt/expiry, relevant audience IDs and denial-fence version. Verification requires `expiresAt <= min(issuedAt+30s, membershipEvidenceDeadline)`; an old cache cannot create a fresh lease. Every org authorization calls the platform resolver for current local revocations; positive upstream evidence may be reused only before its fixed deadline. No stale-positive fallback on timeout. V1 is accepted only for explicitly unmigrated personal/direct scopes.
-
-Streams renew evidence separately from their handshake, reauthorize before each send/input/replay batch, and close within a 5-second watchdog of an expired/denied permission. Queued AI reauthorizes at dispatch and before broker tool effects; terminals lose control leases on removal. Org resources require eligible scoped execution, never an admin's personal provider session. Cohort policy must evaluate actual actors/org enablement, not test whether an org ID is a user in the old cohort array.
-
-## Limits and lifecycle
-
-Initial caps: page 100; search 200 characters; JSON 96 KiB (webhook 256 KiB); 100 org/group grants per scope; preserve seven invited direct users per personal scope. Org directory pages do not count as invitations. Use existing connection limits (256/gateway, 32/scope, four/actor/scope) until load-tested changes are explicit. Cap active authority lookup keys at 10,000 with expired-first/LRU eviction; coalesce concurrent lookups per identity. Org/group/guest directories must paginate and reject unsupported requested batch sizes, never silently truncate an audience.
-
-Upstream API timeout 10 seconds; authorization lookup timeout five seconds; membership evidence lifetime 20 seconds from request start; refresh target 10 seconds; stream watchdog five seconds; max allowed clock skew five seconds, without extending evidence validity. Combined bounds must be measured, not summed into an untested 60-second claim. General outbox retry uses jittered 1s→60s backoff and at most 20 attempts before alert/dead-letter; revocation correctness cannot depend on retry completion. Inbox metadata retained 30 days; dedupe tombstones at least 90 days; staging uploads/transfers expire after 24 hours unless attached to an active recovery operation. Recurring cleanup uses lstat, skips symlinks and drains on shutdown.
-
-Shared downloads renew during transmission and stop on revocation; previously delivered bytes are not retractable. Shared upload URLs, if used, write only non-visible staging keys, never authoritative keys; commit validates current scope/role/generation and cleans rejected objects. Do not grant reusable R2 GET URLs for shared content. Reuse current configured file size limits and resumable upload protocols; add bounded streaming rather than buffering whole files.
-
-## Managed Matrix room boundary
-
-V1 rooms admit the service identity only; users interact through the two group routes above. User-authored events carry server-derived actor attribution; clients cannot choose the sender. Service tokens stay in platform secret storage. Private rooms are non-federated with joined-only history and service-only invitation/state powers. Serve text only; no generic Matrix proxy, arbitrary room ID, raw `mxc` URL, end-user room invite, direct Matrix deep link or resource-content mirroring. Group members see retained group history under the current group grant; removal denies subsequent retrieval even if they previously viewed it. Already delivered text remains outside recall. Existing unrelated Matrix messaging is unchanged.
-
-## App view boundary
-
-The view response binds an instance, actor, allowed actions, resource scope and generation to the existing sandboxed app renderer. Assets resolve only inside the approved artifact; validate wildcard segments before filesystem use. Use the existing isolated-origin/CSP policy with an exact gateway origin and narrowly scoped view capability; never give the iframe owner cookies or a generic app-slug bridge token. Recheck current grants on assets/actions; viewer controls cannot mutate by bypassing the UI. Dynamic app state stays in the instance namespace. If the current renderer cannot support these constraints, standalone activation is unavailable until S12 supplies the adapter.
-
-## Required project routes not yet mounted in the gateway
-
-The platform proxy already allowlists these; S12 must implement their gateway registrations and real dependencies. All use U+P2+G, are non-public and apply current project inheritance. Mutating forms use the common idempotency/revision/body-limit rules.
-
-| Method + path (prefix `/api/collaboration/scopes/:scopeId`) | Validation / capability |
+| Method + path | Auth / capability |
 | --- | --- |
-| GET `/project/files` | Bounded normalized relative path/query, read/list only within catalog bindings |
-| PUT `/project/files` | Typed write/staged-commit payload, expected catalog revision; edit capability |
-| DELETE `/project/files` | Validated relative target and conditional headers; delete-content capability, never project root |
-| GET `/project/git` | Bounded allowlisted status/diff query; read, no arbitrary shell command |
-| POST `/project/git/actions` | Discriminated allowed Git actions with bounded ref/path/message fields; edit plus scoped execution policy |
-| GET `/project/apps/:appId` | Resolved instance binding; read |
-| POST `/project/apps/:appId/actions` | Per-action app schema; actor-aware instance bridge capability |
-| GET/PATCH `/project/layout` | Read / revision-checked bounded node action union; edit |
-| POST `/project/chats` | Validated title/config; edit/create child with inherited grants atomically |
-| POST `/project/terminals` | Validated bounded launch profile; edit plus eligible isolated runtime, no owner shell |
+| POST `/api/collaboration/direct-sessions` | T + proof key + exact audience/origin/runtime generation; one-use exchange |
+| POST `/api/collaboration/direct-sessions/:id/renew`; DELETE same | Fresh T for renew; bound session for close; resource policy rechecked |
+| POST `/api/collaboration/runtimes/:runtimeId/scopes/preflight`; POST `/scopes` | D plus actual resource owner/delegated create authority |
+| GET `/api/collaboration/scopes/:scopeId`; GET `/access` | D read, effective capabilities/reasons only |
+| GET/POST `/scopes/:scopeId/grants`; PATCH/DELETE `/grants/:grantId` | D read/manage, expected revision |
+| POST `/scopes/:scopeId/invitations`; GET `/api/collaboration/invitations/:id`; POST `/:id/accept` or `/decline` | D manage / exact invitee; pending-invitation T permits only these actions |
+| GET/PUT `/scopes/:scopeId/policy`; POST `/policy/preflight` | D read/manage; resolved recipient profile, dependency/readiness report |
+| GET/POST `/scopes/:scopeId/access-requests`; POST `/access-requests/:id/decision` | D actor request or designated approver; exact actions and expiry |
+| GET `/scopes/:scopeId/chat`; GET/POST `/chat/messages`; GET/POST `/discussion/messages`; GET/PATCH `/user-state` | D per Chat content/read/discuss rights; private actor state |
+| GET/POST `/scopes/:scopeId/chat/requests`; POST `/chat/requests/:id/cancel` or `/retry`; POST `/chat/approvals/:id/decision` | D+F submit/cancel/approve; payload pins root and V3 funding selection |
+| GET `/scopes/:scopeId/project`; GET `/project/inventory`; POST `/project/confirm` | D project read/manage and inventory digest |
+| GET/POST `/scopes/:scopeId/project/worktrees`; GET/DELETE `/project/worktrees/:id` | D allowed worktree actions; cleanup/lease/fingerprint checks |
+| POST `/scopes/:scopeId/project/chats`; POST `/project/terminals` | D create with explicit Chat audience/root or sandbox terminal profile; default group Chat is created idempotently on share, join reuses it |
+| GET `/scopes/:scopeId/project/git`; POST `/project/git/actions` | D inspect/propose; commit/merge/push/PR execute only with exact owner-approved operation, typed refs/tree digest and CAS; no raw Git on restricted view |
+| POST `/scopes/:scopeId/project/git/operations/:operationId/decision` | D resource owner only; one-use expiring approval bound to tree/ref, remote/branch and exact action, never a generic forge token |
+| GET/PATCH `/scopes/:scopeId/project/layout` | D read/mutate filtered nodes; personal viewport separate |
+| GET `/scopes/:scopeId/files`; GET `/files/:fileId/content`; POST `/files/actions` | D exact catalog action; streaming download/staged upload/commit/rename/delete/move union |
+| GET `/scopes/:scopeId/apps/:appId`; POST `/apps/:appId/view`; GET `/apps/:appId/assets/*`; POST `/apps/:appId/actions` | D per-instance asset/view/action policy; isolated renderer origin/CSP, no owner cookies |
+| GET `/scopes/:scopeId/terminal`; POST `/terminal/actions`; GET `/terminal/ws` (WS) | D read/control profile; no generic owner PTY |
+| GET `/scopes/:scopeId/events` (WS); GET `/sync/events` (WS) | D every batch/replay/input + expiry watchdog; audience-filtered event payloads |
+| GET `/scopes/:scopeId/integrations`; POST `/integrations/:connectionId/actions` | D+F exact tool/upstream resource + required approval; output audience ceiling |
+| GET/PUT `/scopes/:scopeId/execution-policy` | D read; only owner changes the single selected V3 source and submit mode. Participants cannot override source/account IDs in run payloads |
+| POST `/scopes/:scopeId/lifecycle`; GET `/operations/:id`; GET `/exports/:id` | D distinct archive/delete/transfer/export/recovery capabilities |
+| POST `/scopes/:scopeId/transfers` | D transfer plus target signed consent; preview/confirm action union |
+| Existing shared sync manifest/stage/commit/multipart routes | D exact scope/capability; server-resolved namespace, no broad storage GET URL |
 
-Exports continue through the existing lifecycle/operation/export routes; S12 supplies their real drivers. The full concrete payload schemas reuse/refine `specs/121-collaboration-session-sharing/contracts/collaboration-api.md`; S03 freezes their allowlisted discriminants and rejects arbitrary command/record casts.
+Route suffixes in this table use `/api/collaboration` as prefix unless a complete prefix is shown. S02 expands combined method/path rows to exact router allowlists and schemas; there is no catch-all forwarding route. Personal unrelated gateway APIs keep their existing authentication and are inaccessible through D.
 
-## Additional privileged and permit operations
+## Peer protocol
 
-| Method + path | Authorization / purpose |
-| --- | --- |
-| POST `/api/organizations/:orgId/runtimes/:runtimeId/admin-access` | U+O+A runtime-admin capability, exact org owner binding; audited short-lived capability with explicit route allowlist. Ordinary members cannot use generic owner shell, files, bridge or terminal creation |
-| POST `/api/collaboration/scopes/:scopeId/sponsorship-consents` | U+P2+G owner/manage plus explicit owner confirmation; produces signed single-use scope/payer/policy consent receipt |
-| POST `/internal/organizations/access/permits/:permitId/complete` | R plus matching original platform actor proof and registered permit/runtime/request; idempotent completion acknowledgement, never caller-selected foreign permit |
+POST `/api/collaboration/peer/sessions` verifies P with exact purpose, actor, source/target keys and generation. GET `/peer/operations/:id/manifest`, GET `/peer/operations/:id/chunks/:chunkId`, PUT `/peer/operations/:id/chunks/:chunkId`, POST `/peer/operations/:id/commit`, and POST `/peer/operations/:id/cancel` require the resulting proof-bound P session plus current G on both endpoints. Manifest/chunk IDs are operation-bound, lengths/hashes checked and streaming bounded; commits require matching inventory/fence. No path supplied by a peer is an unchecked filesystem destination.
 
-`access/resolve` issues the recorded request-bound permit; revocation fences prevent issuance and completion waits for outstanding permits as defined in data-model.md. Read-only evidence may be cached to its fixed expiry; mutation publication must obtain a current permit, recheck local grant epochs and complete within the bounded lease. Inert long-running staging does not retain publication authority. No provider lookup executes while holding an owner DB transaction.
+POST `/peer/integrations/:delegationId/actions` requires P+F with exact tool/action/request hash and upstream scope; retry ambiguous remote effects only with connector idempotency or explicit reconciliation. Responses carry approved data only to the authorized requesting runtime/Chat audience. Peer sessions never grant a remote shell or provider token export.
+
+## Ticket/proof and limits
+
+Platform signing is asymmetric; distribute public verification keys, rotate with bounded old-key overlap. Tickets bind actor, nonce, proof-key thumbprint, resource/purpose, runtime/endpoint audience, generations, maximum actions and expiry. Request signatures bind method, canonical path/query, body digest, conditional headers, session and nonce. Ticket is maximum authority only: local policy may further restrict it. Changing grants invalidates sessions/queued runs; issuer cannot sign an unrestricted owner session.
+
+Initial limits: ticket 30 seconds; identity session five minutes; org evidence 20 seconds from authoritative request start; refresh target ten seconds; stream watchdog five seconds; skew allowance at most five seconds without extending authority. HTTP JSON 96 KiB; webhook 256 KiB; WS frame 64 KiB; paginated rows 100; grants 100/scope; active connections 256/home, 32/scope, four/actor/scope; replay cache 10,000 entries TTL expiry then LRU, rejecting admission if safe replay retention cannot be kept. Transfer four concurrent streams/home, 8 MiB chunks, 30-second idle timeout, resumable checkpoints; whole file quotas reuse configured owner limits. Control lookup five-second timeout; ordinary external APIs ten seconds. Staging TTL 24h except active recovery, recurring symlink-safe cleanup and shutdown drains.
+
+Signed control assertions are fixed-expiry and cannot be refreshed by receipt time. No platform round trip per content chunk; local checks plus control refresh enforce leases. Revocation pending/completed states follow data-model.md. Rate-limit auth, bytes, connections, execution and integrations on each home; metadata/control costs remain budgeted on platform.
+
+## Matrix group text exception
+
+GET/POST `/api/organizations/:orgId/groups/:groupId/messages` and GET `/events` (WS) terminate on the managed group service with U+O+current group membership, one-use stream ticket and expiry checks. Rooms contain service identity only; no user/AI token joins or direct Matrix bypass. Text only, no file/Chat payload mirroring. These explicit messaging routes are not a generic resource proxy.
+
+## Group Chat, owner source and Git contract
+
+Project share/create idempotently establishes the default shared Chat. Accept/join returns its Chat/resource ID and direct connection metadata, never a new personal copy or new worktree. Discussion is distinct from AI submission; Contributor includes discussion, Viewer is read-only. A run body may select allowed model/harness/root and request ID but never an arbitrary account; server pins the project owner's configured source/policy revision and original requesting actor. `owner_only` submit mode rejects collaborator execution while preserving discussion/proposals; `delegated` requires provider-eligible source and explicit actor capability. No participant OAuth/sign-in or source picker endpoints ship.
+
+Git actions form an explicit union: status/diff, propose-commit, propose-merge, propose-push, propose-pr, owner-approve and execute-approved. Requests/decisions use immutable payload hashes, expected refs/tree digest and exact owner identity. Broker checks grants, owner decision, protected branches, credential binding and freshness immediately before side effects. Ambiguous push/PR results reconcile by operation ID and observed refs before retry. Local agent commands and integration routes must enforce the same Git ceiling. No credential access/forge write bypass through unrestricted shell or broad MCP tokens.
+
+Copy-and-continue is a documented future capability, not an enabled peer action or route. Existing peer transfer keeps its move/fence semantics and cannot be used as a hidden clone API.
