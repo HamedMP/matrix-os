@@ -120,16 +120,29 @@ function route(providerSlug: string, modelSlug: string): GenericHarnessModelRout
 
 export function parsePiModelCatalog(output: string): GenericHarnessModelRoute[] {
   const routes: GenericHarnessModelRoute[] = [];
+  let providerColumn = -1;
+  let modelColumn = -1;
+  let tableWidth = 0;
   for (const raw of output.split(/\r?\n/)) {
     const columns = raw.trim().split(/\s+/);
-    // Pi also prints setup/diagnostic prose on stdout. Only accept complete
-    // table rows, never interpret the first two words of a message as a route.
-    if (columns.length !== 6
-      || !/^\d+(?:\.\d+)?[kKmM]?$/.test(columns[2]!)
-      || !/^\d+(?:\.\d+)?[kKmM]?$/.test(columns[3]!)
-      || !/^(yes|no)$/i.test(columns[4]!)
-      || !/^(yes|no)$/i.test(columns[5]!)) continue;
-    const candidate = route(columns[0]!, columns[1]!);
+    const normalized = columns.map((column) => column.toLowerCase().replace(/[^a-z]/g, ""));
+    const nextProviderColumn = normalized.indexOf("provider");
+    const nextModelColumn = normalized.indexOf("model");
+    if (nextProviderColumn >= 0 && nextModelColumn >= 0) {
+      providerColumn = nextProviderColumn;
+      modelColumn = nextModelColumn;
+      tableWidth = columns.length;
+      continue;
+    }
+    // Pi also prints setup/diagnostic prose on stdout. Anchor parsing to the
+    // advertised table schema instead of guessing from numeric/boolean cells,
+    // whose formatting may change between valid CLI releases.
+    if (providerColumn < 0 || modelColumn < 0 || columns.length !== tableWidth) continue;
+    const provider = columns[providerColumn]!;
+    const model = columns[modelColumn]!;
+    if (!/^[a-z0-9][a-z0-9_.:-]*$/.test(provider)
+      || !/^[A-Za-z0-9][A-Za-z0-9._:/+-]*$/.test(model)) continue;
+    const candidate = route(provider, model);
     if (candidate) routes.push(candidate);
     if (routes.length >= MAX_MODELS_PER_HARNESS) break;
   }

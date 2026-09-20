@@ -366,6 +366,21 @@ describe("AgentsProvidersView", () => {
     expect(within(dialog).queryByRole("radio", { name: "Claude" })).toBeNull();
   });
 
+  it("offers logout independently of login capabilities", () => {
+    const independentLogout = snapshot();
+    independentLogout.supportedActions = independentLogout.supportedActions.filter((action) => action !== "start_login");
+    const claude = independentLogout.harnesses.find((harness) => harness.id === "harness_claude")!;
+    claude.loginMethods = [];
+    claude.recommendedLoginMethod = null;
+    const { onMutate } = setup({ snapshot: independentLogout, selectedHarnessId: "harness_claude" });
+
+    fireEvent.click(within(screen.getByTestId("account-account_personal"))
+      .getByRole("button", { name: "Log out Personal" }));
+
+    expect(onMutate).toHaveBeenCalledWith({ type: "logout_account", accountId: "account_personal" });
+    expect(screen.queryByRole("button", { name: "Log in Personal" })).not.toBeInTheDocument();
+  });
+
   it("always shows all generic harnesses and explains why unavailable kinds cannot be added", () => {
     const limited = snapshot();
     limited.configurationHarnessKinds = ["hermes", "openclaw"];

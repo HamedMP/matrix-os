@@ -171,7 +171,7 @@ export function AccountsPanel({
                 {usage?.stale ? <span>Stale</span> : null}
               </div>
               <div className="matrix-ap-account-actions">
-                {account.authState === "authenticated" && canLogout && supportsLogin ? (
+                {account.authState === "authenticated" && canLogout ? (
                   <button
                     type="button"
                     className="matrix-ap-link-button"
