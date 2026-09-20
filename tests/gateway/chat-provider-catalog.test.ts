@@ -468,6 +468,53 @@ describe("canonical Chat Provider catalog", () => {
     },
   );
 
+  it.each([
+    ["pi", "throws"] as const,
+    ["pi", "returns no catalog"] as const,
+    ["opencode", "throws"] as const,
+    ["opencode", "returns no catalog"] as const,
+  ])("fails %s closed when authoritative model discovery %s", async (kind, failure) => {
+    const failedHarness = {
+      ...configuredHarness(kind, false),
+      authState: "unknown" as const,
+      connectivity: "offline" as const,
+      accessSourceId: null,
+      routeAvailability: "catalog_unavailable" as const,
+    };
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry([codingProvider({
+        id: kind,
+        displayName: kind === "pi" ? "Pi" : "OpenCode",
+        kind,
+        supportedModes: ["default"],
+        defaultModel: "openai:gpt-5.6-sol",
+        setupActions: [],
+      })]),
+      agentRuntimeSource: runtimeSource(),
+      harnessSettingsSource: harnessSettings([failedHarness]),
+      executableDriverKinds: [kind],
+      credentialedDriverKinds: [kind],
+      codingModelCatalogSource: failure === "throws"
+        ? async () => { throw new Error("private catalog failure"); }
+        : async () => null,
+    });
+
+    const catalog = await service.getCatalog(principal);
+    const instance = catalog.instances.find((candidate) => candidate.id === `${kind}_default`)!;
+
+    expect(instance).toMatchObject({
+      availability: "unavailable",
+      unavailabilityReason: "runtime_unavailable",
+      models: [],
+      options: [],
+    });
+    expect(instance.defaultSelection).toBeUndefined();
+    expect(validateChatProviderSelection({
+      catalog,
+      selection: { instanceId: instance.id, model: "openai:gpt-5.6-sol" },
+    })).toMatchObject({ ok: false, error: { code: "provider_unavailable" } });
+  });
+
   it.each(["pi", "opencode"] as const)(
     "keeps %s unavailable when its selected Claude OAuth profile is not portable",
     async (kind) => {
