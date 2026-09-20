@@ -2,7 +2,7 @@ import type { CustomerVpsConfig } from './customer-vps-config.js';
 import type { ProvisionRequest } from './customer-vps-schema.js';
 import type { HostBundleRef } from './customer-vps-host-bundle.js';
 import type { CustomerHostConfig } from './customer-vps-cloud-init.js';
-import { buildPlatformRuntimeVerificationToken, buildPlatformVerificationToken } from './platform-token.js';
+import { buildPlatformRuntimeVerificationToken, buildPlatformSyncVerificationToken, buildPlatformVerificationToken } from './platform-token.js';
 import { DEFAULT_DEVELOPER_TOOLS, developerToolsShellList } from './developer-tools.js';
 
 export const DEFAULT_CLOUD_INIT_TEMPLATE = [
@@ -26,6 +26,7 @@ export const DEFAULT_CLOUD_INIT_TEMPLATE = [
   '      PLATFORM_INTERNAL_URL={{platformInternalUrl}}',
   '      UPGRADE_TOKEN={{platformVerificationToken}}',
   '      MATRIX_AUTH_TOKEN={{platformVerificationToken}}',
+  '      MATRIX_SYNC_RUNTIME_TOKEN={{syncRuntimeToken}}',
   '      MATRIX_FUNDED_AI_RUNTIME_TOKEN={{fundedAiRuntimeToken}}',
   '      MATRIX_CODE_PROXY_TOKEN={{platformVerificationToken}}',
   '      MATRIX_FUNDED_AI_ENABLED={{fundedAiEnabled}}',
@@ -73,6 +74,11 @@ export function buildHostConfig(
     platformRegisterUrl: config.platformRegisterUrl,
     platformInternalUrl: new URL(config.platformRegisterUrl).origin,
     platformVerificationToken: buildPlatformVerificationToken(input.handle, config.platformSecret),
+    syncRuntimeToken: buildPlatformSyncVerificationToken({
+      handle: input.handle,
+      machineId,
+      runtimeSlot: input.runtimeSlot,
+    }, config.platformSecret),
     fundedAiRuntimeToken: buildPlatformRuntimeVerificationToken({
       handle: input.handle,
       machineId,

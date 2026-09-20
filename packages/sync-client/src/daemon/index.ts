@@ -1312,6 +1312,7 @@ export async function startDaemon(): Promise<void> {
                 path: remotePath,
                 hash: event.hash,
                 size: event.size,
+                stagingId: urls[0].stagingId,
               },
             ], syncState.manifestVersion);
             syncState.files[remotePath]!.lastSyncedHash = event.hash;

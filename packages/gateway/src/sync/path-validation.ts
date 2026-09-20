@@ -14,10 +14,20 @@ export type PathValidationResult =
   | { valid: true; key: string }
   | { valid: false; reason: string };
 
-export function resolveWithinPrefix(
-  userId: string,
+export function resolveWithinObjectPrefix(
+  objectPrefix: string,
   relativePath: string,
 ): PathValidationResult {
+  const path = validateRelativeSyncPath(relativePath);
+  if (!path.valid) return path;
+  return { valid: true, key: `${objectPrefix}/${path.normalized}` };
+}
+
+type RelativePathValidationResult =
+  | { valid: true; normalized: string }
+  | { valid: false; reason: string };
+
+function validateRelativeSyncPath(relativePath: string): RelativePathValidationResult {
   if (!relativePath || relativePath.length === 0) {
     return { valid: false, reason: "Path must not be empty" };
   }
@@ -50,8 +60,14 @@ export function resolveWithinPrefix(
     return { valid: false, reason: "Path resolves to empty after normalization" };
   }
 
-  const key = `matrixos-sync/${userId}/files/${normalized}`;
-  return { valid: true, key };
+  return { valid: true, normalized };
+}
+
+export function resolveWithinPrefix(
+  userId: string,
+  relativePath: string,
+): PathValidationResult {
+  return resolveWithinObjectPrefix(`matrixos-sync/${userId}/files`, relativePath);
 }
 
 export function validatePathBatch(

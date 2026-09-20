@@ -71,9 +71,12 @@ check_r2_exists() {
   exit 1
 }
 
-vps_meta_status=0
+vps_meta_status=44
 latest_pointer_status=0
-check_r2_exists system/vps-meta.json "VPS metadata" || vps_meta_status="$?"
+if [ "$runtime_slot" = "primary" ]; then
+  vps_meta_status=0
+  check_r2_exists system/vps-meta.json "VPS metadata" || vps_meta_status="$?"
+fi
 check_r2_exists "$latest_pointer_key" "latest snapshot pointer" || latest_pointer_status="$?"
 
 if [ "$vps_meta_status" -eq 44 ] && [ "$latest_pointer_status" -eq 44 ]; then
