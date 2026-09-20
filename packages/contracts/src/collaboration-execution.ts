@@ -167,11 +167,13 @@ export const CollaborationRunSchema = z.object({
     ctx.addIssue({ code: "custom", path: ["decidedBy", "actorId"], message: "A requester decision must come from the requesting actor" });
   }
   if (run.decidedBy?.relation === "scope_owner") {
+    if (run.scopeOwnerId === undefined) {
+      ctx.addIssue({ code: "custom", path: ["scopeOwnerId"], message: "An owner decision requires the scope owner identity" });
+    } else if (run.decidedBy.actorId !== run.scopeOwnerId) {
+      ctx.addIssue({ code: "custom", path: ["decidedBy", "actorId"], message: "An owner decision must come from the scope owner" });
+    }
     if (run.decidedBy.actorId === run.requestingActorId && run.scopeOwnerId !== run.requestingActorId) {
       ctx.addIssue({ code: "custom", path: ["decidedBy", "relation"], message: "The requesting actor decides as requester, not owner" });
-    }
-    if (run.scopeOwnerId !== undefined && run.decidedBy.actorId !== run.scopeOwnerId) {
-      ctx.addIssue({ code: "custom", path: ["decidedBy", "actorId"], message: "An owner decision must come from the scope owner" });
     }
   }
 });
