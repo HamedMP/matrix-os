@@ -51,6 +51,31 @@ function speechClient(): BrowserSpeechClient {
   };
 }
 
+function TestComposer({
+  connected = true,
+  onSubmit,
+  client = speechClient(),
+  adapter = captureAdapter,
+}: {
+  connected?: boolean;
+  onSubmit: ReturnType<typeof vi.fn>;
+  client?: BrowserSpeechClient;
+  adapter?: PlatformSpeechCaptureAdapter;
+}) {
+  const composer = useChatComposerDraft("chat-1", "owner-1");
+  return <ChatInput
+    composer={composer}
+    scope="chat-1"
+    permissionMode="supervised"
+    connected={connected}
+    busy={false}
+    onSubmit={onSubmit}
+    attachmentsEnabled={false}
+    speechClient={client}
+    speechCaptureAdapter={adapter}
+  />;
+}
+
 describe("shared chat platform speech input", () => {
   beforeEach(() => {
     stopCapture.mockClear();
@@ -58,21 +83,7 @@ describe("shared chat platform speech input", () => {
 
   it("appends transcription to the current editable draft and requires manual Send", async () => {
     const onSubmit = vi.fn();
-    function TestComposer() {
-      const composer = useChatComposerDraft("chat-1", "owner-1");
-      return <ChatInput
-        composer={composer}
-        scope="chat-1"
-        permissionMode="supervised"
-        connected
-        busy={false}
-        onSubmit={onSubmit}
-        attachmentsEnabled={false}
-        speechClient={speechClient()}
-        speechCaptureAdapter={captureAdapter}
-      />;
-    }
-    render(<TestComposer />);
+    render(<TestComposer onSubmit={onSubmit} />);
     const textarea = screen.getByPlaceholderText("Ask anything...");
     fireEvent.change(textarea, { target: { value: "Typed first" } });
     fireEvent.click(await screen.findByRole("button", { name: "Start voice input" }));
@@ -92,29 +103,14 @@ describe("shared chat platform speech input", () => {
 
   it("keeps local stop available after connectivity drops and does not submit with Enter while recording", async () => {
     const onSubmit = vi.fn();
-    const view = render(<ChatInput
-      speechScopeKey="chat-1"
-      connected
-      busy={false}
-      onSubmit={onSubmit}
-      attachmentsEnabled={false}
-      speechClient={speechClient()}
-      speechCaptureAdapter={captureAdapter}
-    />);
+    const client = speechClient();
+    const view = render(<TestComposer onSubmit={onSubmit} client={client} />);
     const textarea = screen.getByPlaceholderText("Ask anything...");
     fireEvent.change(textarea, { target: { value: "Keep this draft" } });
     fireEvent.click(await screen.findByRole("button", { name: "Start voice input" }));
     const stop = await screen.findByRole("button", { name: "Stop recording" });
 
-    view.rerender(<ChatInput
-      speechScopeKey="chat-1"
-      connected={false}
-      busy={false}
-      onSubmit={onSubmit}
-      attachmentsEnabled={false}
-      speechClient={speechClient()}
-      speechCaptureAdapter={captureAdapter}
-    />);
+    view.rerender(<TestComposer connected={false} onSubmit={onSubmit} client={client} />);
 
     expect(stop.hasAttribute("disabled")).toBe(false);
     fireEvent.keyDown(textarea, { key: "Enter" });
@@ -133,19 +129,17 @@ describe("shared chat platform speech input", () => {
       isSupported: () => true,
       start: vi.fn(() => new Promise((resolve) => { resolveCapture = resolve; })),
     };
-    render(<ChatInput
-      speechScopeKey="chat-1"
-      connected
-      busy={false}
-      onSubmit={vi.fn()}
-      attachmentsEnabled={false}
-      speechClient={speechClient()}
-      speechCaptureAdapter={pendingCapture}
-    />);
+    const onSubmit = vi.fn();
+    render(<TestComposer onSubmit={onSubmit} adapter={pendingCapture} />);
 
+    const textarea = screen.getByPlaceholderText("Ask anything...");
+    fireEvent.change(textarea, { target: { value: "Keep the pending draft" } });
     fireEvent.click(await screen.findByRole("button", { name: "Start voice input" }));
     const cancel = await screen.findByRole("button", { name: "Cancel microphone request" });
     expect(cancel.hasAttribute("disabled")).toBe(false);
+    expect(screen.getByRole("button", { name: "Send" }).hasAttribute("disabled")).toBe(true);
+    fireEvent.keyDown(textarea, { key: "Enter" });
+    expect(onSubmit).not.toHaveBeenCalled();
     fireEvent.click(cancel);
     await screen.findByRole("button", { name: "Start voice input" });
 
