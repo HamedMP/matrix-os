@@ -145,5 +145,5 @@ export function buildWorkRailModel(
     }
     recents.push(record);
   }
-  return { pinned, projects: groups, recents };
+  return { pinned, projects: groups.sort((a, b) => Number(Boolean(b.project.pinned)) - Number(Boolean(a.project.pinned))), recents };
 }
