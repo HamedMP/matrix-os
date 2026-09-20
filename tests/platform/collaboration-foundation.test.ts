@@ -6,11 +6,16 @@ import {
   PLATFORM_MIGRATION_STEPS,
   migratePlatformSchema,
 } from '../../packages/platform/src/database/migrate.js';
+import * as userMachineRecords from '../../packages/platform/src/database/user-machine-records.js';
+import * as userMachines from '../../packages/platform/src/database/user-machines.js';
+import * as userMachineLifecycle from '../../packages/platform/src/database/user-machine-lifecycle.js';
+import * as hostBundles from '../../packages/platform/src/database/host-bundles.js';
 import { createTestPlatformDb, destroyTestPlatformDb, type TestPlatformDb } from './platform-db-test-helper.js';
 
 /**
- * S01 / T006 characterization: the platform schema registration keeps its
- * observable behavior after extraction out of packages/platform/src/db.ts. The baseline fixture (tables,
+ * S01 / T006 characterization: the platform schema registration and the
+ * customer-VPS (user machine) query seams keep their observable behavior after
+ * extraction out of packages/platform/src/db.ts. The baseline fixture (tables,
  * columns, constraints and index definitions) was captured from the unextracted
  * migrateSchema at the 124/s00 base (8e44fe960) with the same queries used below.
  */
@@ -89,5 +94,77 @@ describe('platform schema registration (S01 foundation)', () => {
     await migratePlatformSchema(fixture.db.executor);
     await migratePlatformSchema(fixture.db.executor);
     expect(await capturePublicSchema(fixture.db)).toEqual(baseline);
+  });
+});
+
+describe('platform db.ts export compatibility (S01 foundation)', () => {
+  it('re-exports the user machine queries from the focused modules by identity', () => {
+    const machineExports = [
+      'insertUserMachine', 'getUserMachine', 'getActiveUserMachineByClerkId', 'accessibleUserMachinePredicate',
+      'getAccessibleActiveUserMachineByClerkId', 'getActiveUserMachineByHandle', 'getRunningUserMachineByHandle',
+      'getRunningUserMachineByClerkId', 'getAccessibleRunningUserMachineByClerkId',
+      'getRunningUserMachineByClerkIdForUpdate', 'listUserMachines', 'listActiveUserMachinesByClerkId',
+      'listAccessibleActiveUserMachinesByClerkId', 'listNonDeletedUserMachinesByClerkId', 'updateUserMachine',
+      'listRunningUserMachines', 'listAllUserMachines', 'listStaleUserMachines', 'lockUserMachineProvisioning',
+    ] as const;
+    for (const name of machineExports) {
+      expect(dbModule[name], name).toBe(userMachines[name]);
+    }
+    for (const name of ['UserMachineProvisioningClassSchema', 'parseNullableProviderActionId'] as const) {
+      expect(dbModule[name], name).toBe(userMachineRecords[name]);
+    }
+    const lifecycleExports = [
+      'claimRunningUserMachineResize', 'completeUserMachineResize', 'claimRunningUserMachineBillingSuspend',
+      'completeUserMachineBillingSuspend', 'claimSuspendedUserMachineBillingResume', 'completeUserMachineBillingResume',
+      'listStaleResizingUserMachines', 'completeUserMachineRegistration', 'claimUserMachineRecovery',
+      'retireUserMachine', 'claimUserMachineDelete', 'softDeleteUserMachine', 'insertProviderDeletion',
+      'listPendingProviderDeletions', 'markProviderDeletionCompleted', 'markProviderDeletionFailed',
+    ] as const;
+    for (const name of lifecycleExports) {
+      expect(dbModule[name], name).toBe(userMachineLifecycle[name]);
+    }
+    const bundleExports = [
+      'upsertHostBundleRelease', 'getHostBundleRelease', 'listHostBundleReleases', 'promoteHostBundleChannel',
+      'promoteHostBundleChannelInTransaction', 'registerHostBundleRelease', 'getHostBundleChannel',
+      'getHostBundleReleaseByChannel', 'HostBundleReleaseConflictError',
+    ] as const;
+    for (const name of bundleExports) {
+      expect(dbModule[name], name).toBe(hostBundles[name]);
+    }
+  });
+
+  it('keeps the composition entrypoints on db.ts', () => {
+    expect(typeof dbModule.createPlatformDb).toBe('function');
+    expect(typeof dbModule.getDb).toBe('function');
+    expect(typeof dbModule.resetDb).toBe('function');
+    expect(typeof dbModule.runInPlatformTransaction).toBe('function');
+  });
+});
+
+describe('user machine seam behavior (S01 foundation)', () => {
+  let fixture: TestPlatformDb;
+
+  beforeEach(async () => {
+    fixture = await createTestPlatformDb();
+  });
+
+  afterEach(async () => {
+    await destroyTestPlatformDb(fixture.db);
+  });
+
+  it('round-trips a machine through the extracted module and the legacy entrypoint identically', async () => {
+    const now = new Date('2026-09-20T12:00:00.000Z').toISOString();
+    await userMachines.insertUserMachine(fixture.db, {
+      machineId: 'machine_1',
+      clerkUserId: 'user_1',
+      handle: 'alice',
+      status: 'running',
+      provisionedAt: now,
+    });
+    const viaModule = await userMachines.getUserMachine(fixture.db, 'machine_1');
+    const viaLegacy = await dbModule.getUserMachine(fixture.db, 'machine_1');
+    expect(viaModule).not.toBeNull();
+    expect(viaLegacy).toEqual(viaModule);
+    expect(await dbModule.getActiveUserMachineByHandle(fixture.db, 'alice')).toEqual(viaModule);
   });
 });
