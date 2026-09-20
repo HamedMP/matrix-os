@@ -24,6 +24,7 @@ realDescribe("collaboration membership real PostgreSQL races", () => {
     repository = new CollaborationRepository(fixture.db, { now: () => now });
     await repository.createDirectScope({
       scopeId: collaborationIds.scope,
+      organizationId: "org_matrix_team",
       ownerId: collaborationActors.owner,
       kind: "chat",
       resourceId: collaborationIds.chat,

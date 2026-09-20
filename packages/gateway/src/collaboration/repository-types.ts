@@ -10,6 +10,8 @@ export type MemberRow = Selectable<CollaborationMembersTable>;
 export interface CollaborationScopeRecord {
   id: string;
   ownerId: string;
+  /** Owning organization; absent only on pre-organization rows that the precondition denies. */
+  organizationId?: string;
   kind: "chat" | "terminal" | "project";
   resourceId: string;
   parentScopeId?: string;
@@ -40,6 +42,7 @@ export interface CollaborationMemberRecord {
 export interface CreateDirectScopeInput {
   scopeId: string;
   ownerId: string;
+  organizationId: string;
   kind: "chat" | "terminal" | "project";
   resourceId: string;
   authorityRuntimeId: string;
@@ -141,6 +144,7 @@ export function toScope(row: ScopeRow): CollaborationScopeRecord {
     authorityRuntimeId: row.authority_runtime_id,
     authorityGeneration: Number(row.authority_generation),
     executionGeneration: row.execution_generation === null ? null : Number(row.execution_generation),
+    ...(row.organization_id === null || row.organization_id === undefined ? {} : { organizationId: row.organization_id }),
     executionEligibility: row.execution_eligibility,
   };
 }

@@ -95,6 +95,7 @@ export class CollaborationRepository {
         id: input.scopeId,
         owner_type: "personal",
         owner_id: input.ownerId,
+        organization_id: input.organizationId,
         kind: input.kind,
         resource_id: input.resourceId,
         parent_scope_id: null,
@@ -126,8 +127,13 @@ export class CollaborationRepository {
       if (scope.membership_mode !== "direct") {
         throw new CollaborationRepositoryError("conflict", "Resource uses inherited membership");
       }
+      if ((scope.organization_id ?? null) !== (input.organizationId ?? null)) {
+        // The resource is already shared inside another organization; never reuse that scope.
+        throw new CollaborationRepositoryError("conflict", "Resource is shared in another organization");
+      }
       await trx.insertInto("collaboration_members").values({
         scope_id: scope.id,
+        organization_id: input.organizationId,
         actor_id: input.ownerId,
         role: "owner",
         status: "accepted",

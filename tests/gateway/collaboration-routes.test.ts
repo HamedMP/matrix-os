@@ -270,7 +270,7 @@ describe("collaboration gateway routes", () => {
       actorId: collaborationActors.owner,
       method: "POST",
       path: `/api/collaboration/runtimes/${collaborationIds.runtime}/scopes/preflight`,
-      body: { kind: "chat", resourceId: collaborationIds.chat },
+      body: { kind: "chat", resourceId: collaborationIds.chat, organizationId: "org_matrix_team" },
     });
     expect(preflight.status).toBe(200);
     const eligibility = await preflight.json() as { confirmationToken: string; resourceRevision: string };
@@ -281,6 +281,8 @@ describe("collaboration gateway routes", () => {
       body: {
         kind: "chat",
         resourceId: collaborationIds.chat,
+
+        organizationId: "org_matrix_team",
         clientRequestId: "50000000-0000-4000-8000-000000000010",
         expectedRevision: eligibility.resourceRevision,
         confirmationToken: eligibility.confirmationToken,
@@ -370,7 +372,7 @@ describe("collaboration gateway routes", () => {
 
   it("prepares a private project scope only with a signed M4 policy", async () => {
     const preflightPath = `/api/collaboration/runtimes/${collaborationIds.runtime}/scopes/preflight`;
-    const body = { kind: "project", resourceId: "proj_alpha" };
+    const body = { kind: "project", resourceId: "proj_alpha", organizationId: "org_matrix_team" };
     expect((await signedJson({
       actorId: collaborationActors.owner,
       method: "POST",
@@ -437,7 +439,7 @@ describe("collaboration gateway routes", () => {
       method: "POST",
       path: preflightPath,
       m4Policy: true,
-      body: { kind: "project", resourceId: "proj_alpha" },
+      body: { kind: "project", resourceId: "proj_alpha", organizationId: "org_matrix_team" },
     });
     const eligibility = await preflight.json() as { confirmationToken: string; resourceRevision: string };
     await signedJson({
@@ -448,6 +450,8 @@ describe("collaboration gateway routes", () => {
       body: {
         kind: "project",
         resourceId: "proj_alpha",
+
+        organizationId: "org_matrix_team",
         clientRequestId: request(93),
         expectedRevision: eligibility.resourceRevision,
         confirmationToken: eligibility.confirmationToken,
@@ -537,7 +541,7 @@ describe("collaboration gateway routes", () => {
       actorId: collaborationActors.owner,
       method: "POST",
       path: preflightPath,
-      body: { kind: "terminal", resourceId: terminalId },
+      body: { kind: "terminal", resourceId: terminalId, organizationId: "org_matrix_team" },
     });
     const eligibility = await preflight.json() as { confirmationToken: string; resourceRevision: string };
     expect(preflight.status).toBe(200);
@@ -548,6 +552,8 @@ describe("collaboration gateway routes", () => {
       body: {
         kind: "terminal",
         resourceId: terminalId,
+
+        organizationId: "org_matrix_team",
         clientRequestId: request(90),
         expectedRevision: eligibility.resourceRevision,
         confirmationToken: eligibility.confirmationToken,
@@ -557,6 +563,7 @@ describe("collaboration gateway routes", () => {
     expect(await created.json()).toMatchObject({
       kind: "terminal",
       resourceId: terminalId,
+
       capabilities: { observeTerminal: true, controlTerminal: true, stopTerminal: true },
     });
 
@@ -603,7 +610,7 @@ describe("collaboration gateway routes", () => {
       actorId: collaborationActors.owner,
       method: "POST",
       path: preflightPath,
-      body: { kind: "terminal", resourceId: terminalId },
+      body: { kind: "terminal", resourceId: terminalId, organizationId: "org_matrix_team" },
     });
     const eligibility = await preflight.json() as { confirmationToken: string; resourceRevision: string };
     const created = await signedJson({
@@ -613,6 +620,8 @@ describe("collaboration gateway routes", () => {
       body: {
         kind: "terminal",
         resourceId: terminalId,
+
+        organizationId: "org_matrix_team",
         clientRequestId: request(92),
         expectedRevision: eligibility.resourceRevision,
         confirmationToken: eligibility.confirmationToken,
@@ -1570,7 +1579,7 @@ describe("collaboration gateway routes", () => {
       actorId: collaborationActors.owner,
       method: "POST",
       path: preflightPath,
-      body: { kind: "chat", resourceId: collaborationIds.chat },
+      body: { kind: "chat", resourceId: collaborationIds.chat, organizationId: "org_matrix_team" },
     });
     const eligibility = await preflight.json() as { confirmationToken: string; resourceRevision: string };
     await signedJson({
@@ -1580,6 +1589,8 @@ describe("collaboration gateway routes", () => {
       body: {
         kind: "chat",
         resourceId: collaborationIds.chat,
+
+        organizationId: "org_matrix_team",
         clientRequestId: "50000000-0000-4000-8000-000000000010",
         expectedRevision: eligibility.resourceRevision,
         confirmationToken: eligibility.confirmationToken,

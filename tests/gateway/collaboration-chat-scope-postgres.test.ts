@@ -52,13 +52,15 @@ realDescribe("CollaborationChatScopeService PostgreSQL capability lifecycle", ()
   it("does not strand a scope when activation races capability reconciliation and startup repeats it", async () => {
     const service = createService(fixture);
     const preflight = await service.preflight({
-      ownerId: collaborationActors.owner,
+      ownerId: collaborationActors.owner, organizationId: "org_matrix_team",
+      organizationId: "org_matrix_team",
       chatId: collaborationIds.chat,
     });
 
     await Promise.all([
       service.shareChat({
         ownerId: collaborationActors.owner,
+        organizationId: "org_matrix_team",
         chatId: collaborationIds.chat,
         clientRequestId: "50000000-0000-4000-8000-000000000010",
         payloadHash: "a".repeat(64),

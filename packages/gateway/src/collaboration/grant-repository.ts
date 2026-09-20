@@ -61,6 +61,11 @@ export class CollaborationGrantRepository {
       if (input.targetActorId === scope.owner_id) {
         throw new CollaborationRepositoryError("conflict", "Owner is already a member");
       }
+      if (!scope.organization_id) {
+        // A scope without an organization context is a pre-organization record; it can only be
+        // dispositioned at cutover (T102), never widened (S20 / T101).
+        throw new CollaborationRepositoryError("conflict", "Scope has no organization context");
+      }
 
       const occupied = await trx.selectFrom("collaboration_members")
         .select(({ fn }) => fn.countAll<number>().as("count"))
@@ -92,6 +97,7 @@ export class CollaborationGrantRepository {
         const renewed = await trx.updateTable("collaboration_members").set({
           role: input.role,
           status: "pending",
+          organization_id: scope.organization_id,
           invitation_id: invitationId,
           invited_by: input.actorId,
           accepted_at: null,
@@ -111,6 +117,7 @@ export class CollaborationGrantRepository {
           actor_id: input.targetActorId,
           role: input.role,
           status: "pending",
+          organization_id: scope.organization_id,
           invitation_id: invitationId,
           invited_by: input.actorId,
           accepted_at: null,
