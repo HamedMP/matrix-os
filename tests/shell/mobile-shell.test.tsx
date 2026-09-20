@@ -14,7 +14,6 @@ const settingsMock = vi.hoisted(() => ({
   onOpenAgentTerminal: undefined as undefined | ((action: "openclaw-install") => void),
   onOpenProviderTerminalSession: undefined as undefined | ((sessionId: string) => void),
 }));
-
 vi.mock("../../shell/src/hooks/useFileWatcher.js", () => ({
   useFileWatcher: (handler: typeof fileChangeHandler) => {
     fileChangeHandler = handler;
@@ -49,14 +48,17 @@ vi.mock("../../shell/src/components/Settings.js", () => ({
   Settings: ({
     onOpenAgentTerminal,
     onOpenProviderTerminalSession,
+    defaultSection,
   }: {
     onOpenAgentTerminal?: (action: "openclaw-install") => void;
     onOpenProviderTerminalSession?: (sessionId: string) => void;
+    defaultSection?: string;
   }) => {
     settingsMock.onOpenAgentTerminal = onOpenAgentTerminal;
     settingsMock.onOpenProviderTerminalSession = onOpenProviderTerminalSession;
     return (
       <>
+        <div data-testid="mobile-provider-settings-section">{defaultSection}</div>
         <button onClick={() => onOpenAgentTerminal?.("openclaw-install")}>Install OpenClaw from Settings</button>
         <button onClick={() => onOpenProviderTerminalSession?.("provider-login")}>Continue provider login</button>
       </>
@@ -142,6 +144,16 @@ describe("mobile shell", () => {
     settingsMock.onOpenAgentTerminal = undefined;
     settingsMock.onOpenProviderTerminalSession = undefined;
     window.sessionStorage.clear();
+  });
+
+  it("opens Agents & providers when Web Mobile Chat requests provider settings", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve({ ok: true, json: async () => [] })));
+    const MobileShell = await loadMobileShell();
+    render(<MobileShell />);
+
+    act(() => window.dispatchEvent(new CustomEvent("matrix:open-provider-settings")));
+
+    expect(screen.getByTestId("mobile-provider-settings-section").textContent).toBe("agents-providers");
   });
 
   afterEach(() => {

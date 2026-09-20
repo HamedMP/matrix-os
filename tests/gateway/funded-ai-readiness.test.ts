@@ -106,11 +106,15 @@ describe("funded AI readiness", () => {
   });
 
   it("requires fresh policy, positive credit/budget, and a bounded relay health check", async () => {
+    const timeoutSignal = new AbortController().signal;
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(timeoutSignal);
     const { reader, fetchFn } = setup();
     expect(await reader.read()).toMatchObject({ readiness: { state: "ready", staleAfter: "2026-09-05T12:00:30.000Z" }, allowedModelIds: ["claude-sonnet-5"] });
+    expect(timeout).toHaveBeenCalledWith(2_000);
     expect(fetchFn).toHaveBeenCalledWith("https://relay.example.test/health", expect.objectContaining({
       redirect: "error", signal: expect.any(AbortSignal),
     }));
+    expect(fetchFn.mock.calls[0]?.[1]?.signal).not.toBe(timeoutSignal);
   });
   it.each(["disabled", "expired", "future", "budget", "credit"])("fails closed for %s funding", async (reason) => {
     const { reader, state } = setup();

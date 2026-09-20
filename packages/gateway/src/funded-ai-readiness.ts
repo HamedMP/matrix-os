@@ -30,7 +30,9 @@ export function createFundedAiReadinessReader(options: {
       allowedModelIds: [],
     };
     const controller = new AbortController();
-    const signal = controller.signal;
+    // The controller cancels sibling work when either dependency settles with
+    // an error; the platform timeout independently bounds the external fetch.
+    const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(2_000)]);
     let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
       const deadline = new Promise<never>((_resolve, reject) => {
