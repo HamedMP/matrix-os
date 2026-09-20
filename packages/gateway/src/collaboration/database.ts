@@ -42,6 +42,8 @@ export interface CollaborationMembersTable {
   revision: ColumnType<number, number | undefined, number>;
   joined_at: NullableTimestamp;
   updated_at: Timestamp;
+  /** S04: set when a legacy role row was retired in favour of a preset grant; such rows never authorize. */
+  dispositioned_at: ColumnType<Date | string | null, Date | string | null | undefined, Date | string | null>;
 }
 
 export interface CollaborationOperationsTable {
