@@ -1,12 +1,13 @@
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 const root = process.cwd();
 const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
 const installer = readFileSync(join(root, 'scripts/install-server.sh'), 'utf8');
+const temporaryDirectories: string[] = [];
 const enabledEnv = {
   PLATFORM_SPEECH_ENABLED: 'true', MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED: 'true',
   MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED: 'true', MATRIX_FUNDED_AI_RUNTIME_ENABLED: 'false',
@@ -23,11 +24,18 @@ function run(mode: string, env: Record<string, string>) {
 
 function fakeGcloud(script: string) {
   const bin = mkdtempSync(join(tmpdir(), 'speech-gcloud-'));
+  temporaryDirectories.push(bin);
   const path = join(bin, 'gcloud');
   writeFileSync(path, `#!/usr/bin/env bash\nset -euo pipefail\n${script}\n`);
   chmodSync(path, 0o755);
   return bin;
 }
+
+afterEach(() => {
+  for (const directory of temporaryDirectories.splice(0)) {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 describe('production speech deployment contract', () => {
   it('keeps platform service, host provisioning, and text relay rollout independent', () => {
@@ -88,6 +96,26 @@ describe('production speech deployment contract', () => {
     }
     const bin = fakeGcloud(`cat <<'JSON'\n${fixture()}\nJSON`);
     expect(() => run('verify-revision', { ...enabledEnv, PATH: `${bin}:${process.env.PATH}`, GCP_PROJECT_ID: 'project', GCP_REGION: 'region', CANDIDATE_REVISION: 'candidate' })).not.toThrow();
+  });
+
+  it('accepts a disabled candidate and rejects retained speech secrets', () => {
+    const disabledEnv = {
+      ...enabledEnv,
+      PLATFORM_SPEECH_ENABLED: 'false',
+      PLATFORM_SPEECH_MODEL: '',
+      PLATFORM_SPEECH_POLICY_REVISION: '',
+      PLATFORM_SPEECH_MICROUSD_PER_MINUTE: '',
+      PLATFORM_SPEECH_FUNDING_SOURCES: '',
+      PLATFORM_SPEECH_OWNER_AUDIO_ENABLED: '',
+    };
+    const fixture = (staleSecret: boolean) => JSON.stringify({ spec: { containers: [{ env: [
+      ...Object.entries(disabledEnv).filter(([name]) => name !== 'MATRIX_FUNDED_AI_RELAY_URL').map(([name, value]) => ({ name, value })),
+      ...(staleSecret ? [{ name: 'PLATFORM_SPEECH_SECRET', valueFrom: { secretKeyRef: { name: 'platform-speech-secret', key: 'latest' } } }] : []),
+    ] }] } });
+    let bin = fakeGcloud(`cat <<'JSON'\n${fixture(false)}\nJSON`);
+    expect(() => run('verify-revision', { ...disabledEnv, PATH: `${bin}:${process.env.PATH}`, GCP_PROJECT_ID: 'project', GCP_REGION: 'region', CANDIDATE_REVISION: 'candidate' })).not.toThrow();
+    bin = fakeGcloud(`cat <<'JSON'\n${fixture(true)}\nJSON`);
+    expect(() => run('verify-revision', { ...disabledEnv, PATH: `${bin}:${process.env.PATH}`, GCP_PROJECT_ID: 'project', GCP_REGION: 'region', CANDIDATE_REVISION: 'candidate' })).toThrow();
   });
 
   it('forbids preview funding knobs in production', () => {
