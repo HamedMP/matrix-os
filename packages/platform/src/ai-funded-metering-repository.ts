@@ -159,9 +159,9 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
     await transaction.ready;
     const ownerPromotion = grant.kind === "promotional_grant" && grant.entryId.startsWith("promotion:");
     if (ownerPromotion) {
-      // Campaign grants are owner-scoped. Serialize their initial allocation
-      // and later runtime handoff before taking runtime balance locks.
-      await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-promotion:${grant.identity.ownerId}`}, 0))`
+      // Campaign grants and admission share one owner-wide lock namespace.
+      // This serializes handoff with new reservations across every runtime.
+      await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-owner:${grant.identity.ownerId}`}, 0))`
         .execute(transaction.executor);
     }
     const machine = await transaction.executor.selectFrom("user_machines").select([
@@ -170,6 +170,21 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
     if (!machine || machine.clerk_user_id !== grant.identity.ownerId
       || machine.runtime_slot !== grant.identity.runtimeSlot || machine.deleted_at !== null) {
       throw new AiFundedPolicyError("identity_mismatch");
+    }
+    if (ownerPromotion) {
+      const runtime = await transaction.executor.selectFrom("ai_funded_runtime_policies")
+        .select(["enabled", "allowed_model_ids", "expires_at"])
+        .where("machine_id", "=", grant.identity.machineId)
+        .where("owner_id", "=", grant.identity.ownerId)
+        .where("runtime_slot", "=", grant.identity.runtimeSlot)
+        .forUpdate().executeTakeFirst();
+      const global = await transaction.executor.selectFrom("ai_funded_global_policy")
+        .select(["enabled", "allowed_model_ids"])
+        .where("policy_id", "=", "default").forUpdate().executeTakeFirstOrThrow();
+      const eligible = runtime?.enabled === true && global.enabled
+        && (runtime.expires_at === null || runtime.expires_at > at)
+        && intersectModels(parseModels(global.allowed_model_ids), parseModels(runtime.allowed_model_ids)).length > 0;
+      if (!eligible) throw new AiFundedPolicyError("access_disabled");
     }
     const inserted = await transaction.executor.insertInto("ai_funded_credit_ledger").values({
       entry_id: grant.entryId,
@@ -198,10 +213,20 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       || stored.expires_at !== grant.expiresAt) {
       throw new AiFundedPolicyError("idempotency_conflict");
     }
-    if (!inserted && ownerPromotion
-      && (stored.machine_id !== grant.identity.machineId || stored.runtime_slot !== grant.identity.runtimeSlot)) {
+    if (!inserted && ownerPromotion) {
+      const location = await transaction.executor.selectFrom("ai_funded_promotional_grant_balances")
+        .select(["machine_id", "runtime_slot"])
+        .where("grant_entry_id", "=", grant.entryId).executeTakeFirstOrThrow();
+      const machineIds = [...new Set([location.machine_id, grant.identity.machineId])].sort();
+      await transaction.executor.selectFrom("ai_funded_runtime_balances")
+        .select("machine_id").where("machine_id", "in", machineIds)
+        .orderBy("machine_id").forUpdate().execute();
       const promotion = await transaction.executor.selectFrom("ai_funded_promotional_grant_balances")
         .selectAll().where("grant_entry_id", "=", grant.entryId).forUpdate().executeTakeFirstOrThrow();
+      if (promotion.machine_id === grant.identity.machineId
+        && promotion.runtime_slot === grant.identity.runtimeSlot) {
+        return { ...grant, createdAt: stored.created_at };
+      }
       const remaining = exactInteger(promotion.remaining_microusd);
       if (remaining > 0) {
         const activeAllocation = await transaction.executor
@@ -217,6 +242,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
           .where("owner_id", "=", grant.identity.ownerId)
           .where("machine_id", "=", grant.identity.machineId)
           .where("runtime_slot", "=", grant.identity.runtimeSlot)
+          .where("grant_entry_id", "!=", grant.entryId)
           .where("remaining_microusd", ">", 0).executeTakeFirstOrThrow();
         if (exactInteger(targetGrantCount.count) >= MAX_PROMOTIONAL_GRANTS_PER_RUNTIME) {
           throw new AiFundedPolicyError("rate_limited");

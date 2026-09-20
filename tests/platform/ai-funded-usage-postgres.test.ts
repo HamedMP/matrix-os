@@ -17,6 +17,7 @@ describe.skipIf(!databaseUrl)("usage admission on independent PostgreSQL connect
   let first: ReturnType<typeof createAiFundedPolicyRepository>;
   let second: ReturnType<typeof createAiFundedPolicyRepository>;
   let credentials: string[];
+  let identities: Array<{ ownerId: string; machineId: string; runtimeSlot: string }>;
 
   beforeEach(async () => {
     schema = `funded_usage_${randomUUID().replaceAll("-", "")}`;
@@ -33,14 +34,16 @@ describe.skipIf(!databaseUrl)("usage admission on independent PostgreSQL connect
     second = createAiFundedPolicyRepository({ ...options, db: secondDb });
     await first.updateGlobalPolicy({ expectedRevision: 0, enabled: true, allowedModelIds: [modelId] });
     credentials = [];
+    identities = [];
     for (let index = 0; index < 2; index++) {
       const identity = { ownerId: "shared_owner", machineId: `machine_${index}`, runtimeSlot: `runtime_${index}` };
+      identities.push(identity);
       await insertUserMachine(db, { machineId: identity.machineId, clerkUserId: identity.ownerId,
         handle: identity.machineId, runtimeSlot: identity.runtimeSlot, status: "running", imageVersion: "test",
         provisionedAt: options.now().toISOString(), activationState: "authorized" });
       await first.setRuntimePolicy({ identity, expectedRevision: 0, enabled: true, allowedModelIds: [modelId],
         monthlyBudgetMicrousd: 1_000, expiresAt: null });
-      await first.grantCredit({ entryId: `grant_${index}`, identity, kind: "promotional_grant",
+      await first.grantCredit({ entryId: `grant_${index}`, identity, kind: "addon_grant",
         amountMicrousd: 1_000, sourceReference: "test" });
       credentials.push((await first.issueRuntimeCredential(identity)).credential.token);
     }
@@ -64,5 +67,50 @@ describe.skipIf(!databaseUrl)("usage admission on independent PostgreSQL connect
     expect(results.find((result) => result.status === "rejected")).toMatchObject({ reason: { code: "rate_limited" } });
     const rows = await db.executor.selectFrom("ai_funded_usage_reservations").selectAll().execute();
     expect(rows).toHaveLength(1);
+  });
+
+  it("serializes campaign handoff with authorization without deadlock or duplicate credit", async () => {
+    const campaign = { entryId: "promotion:postgres-race", kind: "promotional_grant" as const,
+      amountMicrousd: 100, sourceReference: "postgres-race", expiresAt: "2026-10-01T00:00:00.000Z" };
+    await first.grantCredit({ ...campaign, identity: identities[0] });
+
+    const results = await Promise.allSettled([
+      first.authorize({ credential: credentials[0], requestId: "handoff-race", modelId, maxCostMicrousd: 100 }),
+      second.grantCredit({ ...campaign, identity: identities[1] }),
+    ]);
+    for (const result of results) {
+      if (result.status === "rejected") {
+        expect(result.reason).toMatchObject({ code: "rate_limited" });
+      }
+    }
+    expect(results.some((result) => result.status === "fulfilled")).toBe(true);
+    expect(await db.executor.selectFrom("ai_funded_credit_ledger")
+      .select("entry_id").where("entry_id", "=", campaign.entryId).execute()).toHaveLength(1);
+    const balances = await db.executor.selectFrom("ai_funded_runtime_balances")
+      .select("credit_balance_microusd").where("owner_id", "=", "shared_owner").execute();
+    expect(balances.reduce((sum, row) => sum + Number(row.credit_balance_microusd), 0)).toBe(2_100);
+  });
+
+  it("rechecks campaign eligibility after a concurrent policy disable commits", async () => {
+    let releaseUpdate!: () => void;
+    let policyLocked!: () => void;
+    const release = new Promise<void>((resolve) => { releaseUpdate = resolve; });
+    const locked = new Promise<void>((resolve) => { policyLocked = resolve; });
+    const disabling = secondDb.transaction(async (trx) => {
+      await trx.executor.updateTable("ai_funded_runtime_policies").set({ enabled: false })
+        .where("machine_id", "=", identities[0].machineId).execute();
+      policyLocked();
+      await release;
+    });
+    await locked;
+    const grantResult = first.grantCredit({
+      entryId: "promotion:policy-race", identity: identities[0], kind: "promotional_grant",
+      amountMicrousd: 100, sourceReference: "policy-race", expiresAt: "2026-10-01T00:00:00.000Z",
+    }).then(() => ({ code: "fulfilled" }), (error: unknown) => error);
+    releaseUpdate();
+    await disabling;
+    await expect(grantResult).resolves.toMatchObject({ code: "access_disabled" });
+    expect(await db.executor.selectFrom("ai_funded_credit_ledger")
+      .select("entry_id").where("entry_id", "=", "promotion:policy-race").execute()).toEqual([]);
   });
 });

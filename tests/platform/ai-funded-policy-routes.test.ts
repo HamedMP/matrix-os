@@ -379,6 +379,28 @@ describe("funded AI policy routes", () => {
       promotionalBalanceMicrousd: 250,
       remainingBalanceMicrousd: 250,
     });
+    const movedGrant = await db.executor.selectFrom("ai_funded_promotional_grant_balances")
+      .select(["grant_entry_id", "revision"]).executeTakeFirstOrThrow();
+    expect((await app.request("/api/operator/ai/funded/runtimes/alice-second/promotional-grant", {
+      method: "POST", headers, body: "{}",
+    })).status).toBe(200);
+    expect(await db.executor.selectFrom("ai_funded_promotional_grant_balances")
+      .select("revision").where("grant_entry_id", "=", movedGrant.grant_entry_id).executeTakeFirstOrThrow())
+      .toEqual({ revision: movedGrant.revision });
+
+    expect((await app.request("/api/operator/ai/funded/runtimes/alice/promotional-grant", {
+      method: "POST", headers, body: "{}",
+    })).status).toBe(200);
+    await expect(enabled.repository.getFundingSummary(secondIdentity)).resolves.toMatchObject({
+      promotionalBalanceMicrousd: 0,
+      remainingBalanceMicrousd: 0,
+    });
+    await expect(enabled.repository.getFundingSummary({
+      ownerId: "user_alice", machineId: "machine_123", runtimeSlot: "primary",
+    })).resolves.toMatchObject({ promotionalBalanceMicrousd: 1_250 });
+    expect((await app.request("/api/operator/ai/funded/runtimes/alice-second/promotional-grant", {
+      method: "POST", headers, body: "{}",
+    })).status).toBe(200);
     const secondCredential = await enabled.repository.issueRuntimeCredential(secondIdentity);
     await expect(enabled.repository.authorize({
       credential: secondCredential.credential.token,
