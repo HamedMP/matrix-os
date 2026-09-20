@@ -1296,13 +1296,14 @@ describe("WorkRail", () => {
     expect(onChatDeleted).not.toHaveBeenCalled();
   });
 
-  it("opens Project deletion from both hover and right-click actions", async () => {
+  it("opens Project deletion from the project context menu", async () => {
     setup();
     const project = await screen.findByRole("button", { name: "Alpha" });
 
-    expect(screen.getByRole("button", { name: "Delete Alpha project" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Delete Alpha project" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Actions for Alpha" })).toBeTruthy();
     fireEvent.contextMenu(project, { clientX: 100, clientY: 140 });
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Delete project" }));
 
     expect(await screen.findByRole("alertdialog", { name: "Delete project permanently?" })).toBeTruthy();
   });

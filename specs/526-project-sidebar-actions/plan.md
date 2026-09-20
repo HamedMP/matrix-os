@@ -6,7 +6,7 @@
 Replace inline deletion with shared project menus, persist pin/name/description changes, and open the existing project-scoped Files browser without translating runtime paths to host paths.
 
 ## Technical Context
-TypeScript, React 19, Radix menus/dialogs, Zustand, Hono and Zod 4. Existing atomic owner configuration files remain canonical. Vitest for service, route and renderer tests. No new dependencies. One shared row serves standalone and hosted WorkRail surfaces. Native Mobile only has a creation context picker and no project management navigation.
+TypeScript, React 19, Radix menus/dialogs, Zustand, Hono and Zod 4. Existing atomic owner configuration files remain canonical. Vitest for service, route and renderer tests. No new dependencies. One shared row serves standalone and hosted Electron Desktop WorkRail surfaces. Next.js Web Desktop, Web Canvas and Web Mobile currently have no project-group navigation; adding it is outside this issue. Native Mobile only has a creation context picker and no project management navigation.
 
 ## Constitution Check
 Owner configuration remains file-backed; no new database. Service stays headless. Strict authenticated mutation boundary and existing collaboration write fence. Atomic update under the same per-project lock as lifecycle. Tests first. Manual worktree created from origin/main; original dirty checkout untouched. Separate site-docs PR required. No production deployment or merge authorized.

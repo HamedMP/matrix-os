@@ -9,18 +9,18 @@
 - [x] T004 Implement project-metadata.ts and route registration; add pinned to registry/manager types.
 
 ## Phase 3: US1 Safe project menus
-- [ ] T005 [US1] Add failing menu-access regression tests in tests/desktop/project-sidebar-actions.test.tsx.
-- [ ] T006 [US1] Implement shared action descriptors and ellipsis/context menus in work-rail/WorkRailProjectGroup.tsx; preserve deletion confirmation.
+- [x] T005 [US1] Add failing menu-access regression tests in tests/desktop/project-sidebar-actions.test.tsx.
+- [x] T006 [US1] Implement shared action descriptors and ellipsis/context menus in work-rail/WorkRailProjectGroup.tsx; preserve deletion confirmation.
 
 ## Phase 4: US2 Pin and Edit
-- [ ] T007 [US2] Add failing client mutation/sort/edit tests in tests/desktop/project-sidebar-actions.test.tsx.
-- [ ] T008 [US2] Implement runtime-safe metadata action hook, edit dialog and stable pin sorting; update board projection.
+- [x] T007 [US2] Add failing client mutation/sort/edit tests in tests/desktop/project-sidebar-actions.test.tsx.
+- [x] T008 [US2] Implement runtime-safe metadata action hook, edit dialog and stable pin sorting; update board projection.
 
 ## Phase 5: US3 Locate files
-- [ ] T009 [US3] Test project-scoped file navigation and implement Files dialog using InspectorFilesPanel.
+- [x] T009 [US3] Test project-scoped file navigation and implement Files dialog using InspectorFilesPanel.
 
 ## Phase 6: Validation and delivery
-- [ ] T010 Run relevant regression suites, scoped typechecks and diff review; record results in quickstart.md.
+- [x] T010 Run relevant regression suites, scoped typechecks and diff review; record results in quickstart.md.
 - [ ] T011 Open implementation PR and separate public docs PR in FinnaAI/matrix-os-site.
 
 ## Dependencies and execution
