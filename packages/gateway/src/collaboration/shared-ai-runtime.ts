@@ -297,7 +297,7 @@ export async function createSharedAiRuntime(options: {
         const validated = validateChatProviderSelection({
           catalog,
           selection,
-          requirements: { interactionMode: "default", permissionMode: "supervised" },
+          requirements: SHARED_RUN_SELECTION_REQUIREMENTS,
         });
         if (!validated.ok || validated.instance.driverKind !== "claude_code") return null;
         return { driverKind: validated.instance.driverKind, selection: validated.selection };
@@ -397,13 +397,16 @@ export async function createSharedAiRuntime(options: {
   };
 }
 
+const SHARED_RUN_SELECTION_REQUIREMENTS = { interactionMode: "default", permissionMode: "supervised" } as const;
+
 /**
  * Readiness follows the kernel credential access source the scoped run will
  * actually use (see `scope-runtime-broker`): Matrix-included access, the owner's
  * API key, or the owner's Claude profile. Matrix-included access is platform
  * managed and needs no probe. Owner routes are never ready on credential material
- * alone: the trusted server-side provider catalog must report the bound Instance
- * available, and `authentication_required` maps to reconnect guidance. Without a
+ * alone: the trusted server-side provider catalog must validate the complete
+ * bound selection (Instance, model, options, shared-run requirements), and an
+ * `authentication_required` Instance maps to reconnect guidance. Without a
  * catalog, the owner-profile route falls back to the Claude login state and the
  * owner API key route fails closed.
  */
@@ -425,11 +428,20 @@ export async function resolveClaudeProviderReadiness(
     : sources.ownerProfile.state;
   if (!usableCredentialState(observed)) return "unavailable";
   if (input.providerCatalog && selection) {
+    // Validate the complete canonical selection (Instance, model, options, and
+    // shared-run requirements) exactly as the first-binding path does, so a
+    // removed or disabled model never reports ready.
     const catalog = await input.providerCatalog.getCatalog({ userId: ownerId, source: "jwt" });
+    const validated = validateChatProviderSelection({
+      catalog,
+      selection,
+      requirements: SHARED_RUN_SELECTION_REQUIREMENTS,
+    });
+    if (validated.ok) return validated.instance.driverKind === "claude_code" ? "ready" : "unavailable";
     const instance = catalog.instances.find((candidate) => candidate.id === selection.instanceId);
-    if (!instance || instance.driverKind !== "claude_code") return "unavailable";
-    if (instance.availability === "available") return "ready";
-    return instance.unavailabilityReason === "authentication_required" ? "reconnect_required" : "unavailable";
+    return instance?.driverKind === "claude_code" && instance.unavailabilityReason === "authentication_required"
+      ? "reconnect_required"
+      : "unavailable";
   }
   if (sources.selectedAccessSourceId === "owner_anthropic_profile" && input.codingProviders) {
     const summaries = await input.codingProviders.listProviders({ userId: ownerId, source: "jwt" });

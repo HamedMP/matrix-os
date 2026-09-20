@@ -95,7 +95,7 @@ function sharedComposerPresentation(
     : state.availability === "checking" ? "Checking shared AI…"
       : state.availability === "available" ? "One active run · up to 32 pending"
         : state.availability === "owner_reconnect_required"
-          ? "Reconnect your AI provider in Settings → Agents & providers to resume AI requests."
+          ? "Reconnect your Claude account or API key in Settings → Agents & providers to resume AI requests."
           : "AI requests are unavailable.";
   const relevantRequests = state.requests.filter((request) => request.state !== "completed");
   const retryable = relevantRequests.some((request) => ["cancelled", "interrupted", "unauthorized", "unavailable"].includes(request.state));

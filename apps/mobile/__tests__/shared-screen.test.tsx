@@ -419,7 +419,7 @@ describe("native shared Chat screen", () => {
     fireEvent.press(await screen.findByLabelText("Open Launch plan"));
 
     expect(await screen.findByText(
-      "Reconnect your AI provider in Settings → Agents & providers to resume AI requests.",
+      "Reconnect your Claude account or API key in Settings → Agents & providers to resume AI requests.",
     )).toBeTruthy();
     expect(screen.getByLabelText("Message Chat").props.editable).toBe(false);
     expect(screen.queryByText("Messages are unavailable while the owner's runtime is offline.")).toBeNull();
@@ -450,7 +450,7 @@ describe("native shared Chat screen", () => {
     render(<SharedScreen />);
     fireEvent.press(await screen.findByLabelText("Open Launch plan"));
     expect(await screen.findByText(
-      "Reconnect your AI provider in Settings → Agents & providers to resume AI requests.",
+      "Reconnect your Claude account or API key in Settings → Agents & providers to resume AI requests.",
     )).toBeTruthy();
     await waitFor(() => expect(sockets).toHaveLength(1));
     await act(async () => sockets[0]!.onmessage?.({ data: JSON.stringify({
@@ -459,7 +459,7 @@ describe("native shared Chat screen", () => {
     await waitFor(() => expect(mockFetchAiRequests).toHaveBeenCalledTimes(2));
 
     expect(screen.getByText(
-      "Reconnect your AI provider in Settings → Agents & providers to resume AI requests.",
+      "Reconnect your Claude account or API key in Settings → Agents & providers to resume AI requests.",
     )).toBeTruthy();
     expect(screen.getByLabelText("Message Chat").props.editable).toBe(false);
     expect(screen.queryByText("Queue updates are delayed. The last confirmed order is shown.")).toBeNull();

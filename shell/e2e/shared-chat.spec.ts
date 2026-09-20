@@ -331,7 +331,7 @@ test("owner sees actionable Claude reconnect guidance while discussion stays ava
   await expect(page.getByRole("button", { name: "Ask AI" })).toHaveCount(0);
   await expect(page.getByLabel("Message Chat")).toBeDisabled();
   await expect(page.getByRole("status").filter({ hasText: "Agents & providers" })).toHaveText(
-    "Reconnect your AI provider in Settings → Agents & providers to resume AI requests.",
+    "Reconnect your Claude account or API key in Settings → Agents & providers to resume AI requests.",
   );
   await page.getByRole("button", { name: "Open discussion" }).click();
   const discussionLayer = page.getByRole("dialog", { name: "Discussion" });

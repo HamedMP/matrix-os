@@ -151,7 +151,7 @@ describe("shared Chat AI controls", () => {
       sendDiscussion={vi.fn(async () => undefined)} refreshVersion={0} />);
 
     expect(await screen.findByRole("status")).toHaveTextContent(
-      "Reconnect your AI provider in Settings → Agents & providers to resume AI requests.",
+      "Reconnect your Claude account or API key in Settings → Agents & providers to resume AI requests.",
     );
     expect(screen.getByLabelText("Message Chat")).toBeDisabled();
     expect(screen.getByLabelText("Message Chat")).toHaveAttribute("placeholder", "AI is unavailable");
@@ -185,7 +185,7 @@ describe("shared Chat AI controls", () => {
       sendDiscussion={vi.fn(async () => undefined)} refreshVersion={1} />);
     await waitFor(() => expect(api.get).toHaveBeenCalledTimes(2));
     expect(screen.getByRole("status")).toHaveTextContent(
-      "Reconnect your AI provider in Settings → Agents & providers to resume AI requests.",
+      "Reconnect your Claude account or API key in Settings → Agents & providers to resume AI requests.",
     );
     expect(screen.getByLabelText("Message Chat")).toBeDisabled();
     expect(screen.queryByRole("alert")).toBeNull();

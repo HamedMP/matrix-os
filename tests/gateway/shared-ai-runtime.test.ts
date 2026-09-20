@@ -1,3 +1,4 @@
+import { CanonicalProviderCatalogSchema } from "@matrix-os/contracts";
 import { describe, expect, it, vi } from "vitest";
 import { CollaborationAuthorizationError } from "../../packages/gateway/src/collaboration/authority.js";
 import {
@@ -34,10 +35,27 @@ describe("shared AI Provider readiness", () => {
     ownerApiKey: { state: states.ownerApiKey ?? "setup_required" as const },
     ownerProfile: { state: states.ownerProfile ?? "setup_required" as const },
   });
-  const catalogWith = (instance: Record<string, unknown>) => ({
-    getCatalog: vi.fn(async () => ({ instances: [{
-      id: "claude_code_default", driverKind: "claude_code", availability: "available", models: [], ...instance,
-    }] } as never)),
+  const catalogWith = (instance: Record<string, unknown>, model: Record<string, unknown> = {}) => ({
+    getCatalog: vi.fn(async () => CanonicalProviderCatalogSchema.parse({
+      revision: "readiness_catalog",
+      drivers: [
+        { kind: "claude_code", displayName: "Claude", adapterVersion: "1.0.0", capabilityClass: "coding_agent" },
+        { kind: "codex", displayName: "Codex", adapterVersion: "1.0.0", capabilityClass: "coding_agent" },
+      ],
+      instances: [{
+        id: "claude_code_default", driverKind: "claude_code", displayName: "Claude", availability: "available",
+        workspaceRequirement: "project_optional", catalogRevision: "readiness_catalog",
+        models: [{ id: "opus", displayName: "Opus", availability: "available", capabilities: [],
+          supportsVision: false, supportsToolUse: false, ...model }],
+        options: [], skills: [], commands: [], setupActions: [],
+        supports: {
+          rootChat: true, resume: true, cancellation: true, steering: "same_run", attachments: [], tools: [],
+          approvals: false, userInput: false, worktrees: "optional", resources: [],
+          interactionModes: ["default"], permissionModes: ["supervised"],
+        },
+        ...instance,
+      }],
+    })),
   });
 
   it("reports the Matrix-included route ready without probing owner credentials", async () => {
@@ -78,6 +96,29 @@ describe("shared AI Provider readiness", () => {
       resolveCredentialSources: async () => sources(route, states),
       providerCatalog: catalogWith({ id: "codex_default", driverKind: "codex" }),
     }, "user_owner", selection)).resolves.toBe("unavailable");
+  });
+
+  it("requires the bound model and shared-run requirements, not only a healthy Instance", async () => {
+    await expect(resolveClaudeProviderReadiness({
+      resolveCredentialSources: async () => sources("owner_anthropic_key", { ownerApiKey: "unverified" }),
+      providerCatalog: catalogWith({}, { availability: "unavailable" }),
+    }, "user_owner", selection)).resolves.toBe("unavailable");
+    await expect(resolveClaudeProviderReadiness({
+      resolveCredentialSources: async () => sources("owner_anthropic_key", { ownerApiKey: "unverified" }),
+      providerCatalog: catalogWith({}, { id: "sonnet" }),
+    }, "user_owner", selection)).resolves.toBe("unavailable");
+    await expect(resolveClaudeProviderReadiness({
+      resolveCredentialSources: async () => sources("owner_anthropic_profile", { ownerProfile: "unverified" }),
+      providerCatalog: catalogWith({ supports: {
+        rootChat: true, resume: true, cancellation: true, steering: "same_run", attachments: [], tools: [],
+        approvals: false, userInput: false, worktrees: "optional", resources: [],
+        interactionModes: ["default"], permissionModes: ["autonomous"],
+      } }),
+    }, "user_owner", selection)).resolves.toBe("unavailable");
+    await expect(resolveClaudeProviderReadiness({
+      resolveCredentialSources: async () => sources("owner_anthropic_profile", { ownerProfile: "unverified" }),
+      providerCatalog: catalogWith({}, { availability: "unavailable" }),
+    }, "user_owner", { ...selection, model: "sonnet" })).resolves.toBe("unavailable");
   });
 
   it("never treats unverified owner credential material as ready on its own", async () => {

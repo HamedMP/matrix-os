@@ -13,7 +13,7 @@ export function deriveSharedChatComposerPresentation(state: SharedChatComposerSt
     : state.aiAvailability === "checking" ? "Connecting to Matrix…"
       : aiAvailable ? ""
         : state.aiAvailability === "owner_reconnect_required"
-          ? "Reconnect your AI provider in Settings → Agents & providers to resume AI requests."
+          ? "Reconnect your Claude account or API key in Settings → Agents & providers to resume AI requests."
           : "Messages are unavailable while the owner's runtime is offline.";
   return {
     aiAvailable,
