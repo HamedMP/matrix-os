@@ -53,16 +53,42 @@ afterEach(() => {
  */
 const CREDENTIAL_TMPFS = "/dev/shm";
 const CREDENTIAL_PREFIX = "codex-cred-";
+const CREDENTIAL_OWNER_FILE = "owner.pid";
+/** Hard cap on staged credential directories per process; a probe stages one at a time. */
+const MAX_CREDENTIAL_DIRS = 2;
 const credentialDirs = new Set<string>();
+
+function errorName(error: unknown): string {
+  return error instanceof Error ? `${error.name}${"code" in error && typeof error.code === "string" ? `:${error.code}` : ""}` : "UnknownError";
+}
 
 function removeCredentialDirs(): void {
   for (const dir of credentialDirs) rmSync(dir, { recursive: true, force: true });
   credentialDirs.clear();
 }
+function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error: unknown) {
+    // ESRCH means no such process; EPERM means it exists but belongs to another user.
+    return errorName(error).endsWith(":EPERM");
+  }
+}
+/** Removes only stale directories whose owning harness process is gone, never a concurrent run's. */
 function sweepStaleCredentialDirs(): void {
   if (!existsSync(CREDENTIAL_TMPFS)) return;
   for (const entry of readdirSync(CREDENTIAL_TMPFS)) {
-    if (entry.startsWith(CREDENTIAL_PREFIX)) rmSync(join(CREDENTIAL_TMPFS, entry), { recursive: true, force: true });
+    if (!entry.startsWith(CREDENTIAL_PREFIX)) continue;
+    const dir = join(CREDENTIAL_TMPFS, entry);
+    let ownerPid = Number.NaN;
+    try {
+      ownerPid = Number(readFileSync(join(dir, CREDENTIAL_OWNER_FILE), "utf8").trim());
+    } catch (error: unknown) {
+      console.warn("[s00-probe] stale credential dir has no readable owner marker", { entry, error: errorName(error) });
+    }
+    if (Number.isInteger(ownerPid) && ownerPid > 0 && processAlive(ownerPid)) continue;
+    rmSync(dir, { recursive: true, force: true });
   }
 }
 function onSignal(signal: NodeJS.Signals): void {
@@ -81,7 +107,12 @@ function ramBackedTmpfsAvailable(): boolean {
     if (!statSync(CREDENTIAL_TMPFS).isDirectory()) return false;
     accessSync(CREDENTIAL_TMPFS, fsConstants.W_OK);
     return true;
-  } catch {
+  } catch (error: unknown) {
+    // ENOENT/EACCES mean "not usable"; anything else is unexpected and is logged before refusing.
+    const name = errorName(error);
+    if (!name.endsWith(":ENOENT") && !name.endsWith(":EACCES")) {
+      console.warn("[s00-probe] unexpected error probing RAM-backed tmpfs", { error: name });
+    }
     return false;
   }
 }
@@ -90,8 +121,13 @@ function ephemeralCodexHome(authJsonPath: string): string {
   if (!ramBackedTmpfsAvailable()) {
     throw new Error(`refusing to copy a credential to disk: ${CREDENTIAL_TMPFS} is not a writable RAM-backed tmpfs`);
   }
+  if (credentialDirs.size >= MAX_CREDENTIAL_DIRS) {
+    // Evict everything: a staged credential from an earlier probe in this process must not outlive it.
+    removeCredentialDirs();
+  }
   const dir = mkdtempSync(join(CREDENTIAL_TMPFS, CREDENTIAL_PREFIX));
   credentialDirs.add(dir);
+  writeFileSync(join(dir, CREDENTIAL_OWNER_FILE), String(process.pid), { mode: 0o600, flag: "wx" });
   writeFileSync(join(dir, "auth.json"), readFileSync(authJsonPath), { mode: 0o600, flag: "wx" });
   return dir;
 }
@@ -103,7 +139,10 @@ function codexTurnCompleted(stdout: string): boolean {
     try {
       const event = JSON.parse(line) as { type?: string; item?: { type?: string } };
       return event.type === "turn.completed" || event.item?.type === "agent_message";
-    } catch {
+    } catch (error: unknown) {
+      // Codex interleaves plain-text diagnostics with JSONL; only a SyntaxError is expected here.
+      if (!(error instanceof SyntaxError)) throw error;
+      console.warn("[s00-probe] non-JSON line in codex --json output", { length: line.length });
       return false;
     }
   });
