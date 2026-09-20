@@ -209,20 +209,4 @@ describe("collaboration actor proofs", () => {
     })).resolves.toMatchObject({ actorId: "user_viewer" });
   });
 
-  it("signs a short-lived content-free rollout policy independently from HTTP proofs", () => {
-    const { signer, verifier } = createPair();
-    const signed = signer.signPolicy({
-      milestone: "m1",
-      revision: "1",
-      mode: "internal",
-      cohort: ["user_owner", "user_editor"],
-      issuedAt: now.toISOString(),
-      expiresAt: "2026-09-07T12:00:30.000Z",
-    });
-    expect(verifier.verifyPolicy(signed)).toMatchObject({ mode: "internal", revision: "1" });
-    expect(() => verifier.verifyPolicy({
-      ...signed,
-      policy: { ...signed.policy, mode: "enabled" },
-    })).toThrowError(CollaborationActorProofError);
-  });
 });

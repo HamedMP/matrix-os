@@ -141,32 +141,12 @@ describe("PlatformCollaborationRepository", () => {
     expect(second.nextCursor).toBeUndefined();
   });
 
-  it("keeps rollout policy server-managed, bounded, and initially off", async () => {
-    expect(await repository.getPolicy("m1")).toMatchObject({ mode: "off", revision: 0, cohort: [] });
-    await repository.setPolicy({
-      milestone: "m1",
-      expectedRevision: 0,
-      mode: "internal",
-      cohort: [platformCollaborationActors.owner, platformCollaborationActors.recipientWithoutComputer],
-      changedBy: "operator_release",
-    });
-    expect(await repository.getPolicy("m1")).toMatchObject({ mode: "internal", revision: 1 });
-    await expect(repository.setPolicy({
-      milestone: "m1",
-      expectedRevision: 0,
-      mode: "enabled",
-      cohort: [],
-      changedBy: "operator_release",
-    })).rejects.toMatchObject({ code: "conflict" });
-  });
-
   it("stores only hashed one-use tickets, enforces expiry, and caps outstanding tickets", async () => {
     const first = await repository.createConnectionTicket({
       token: "ticket-secret-one",
       actorId: platformCollaborationActors.recipientWithoutComputer,
       scopeId,
       purpose: "events",
-      policyRevision: 1,
       expiresAt: "2026-09-07T12:00:30.000Z",
     });
     const rows = await fixture.collaborationDb.selectFrom("collaboration_connection_tickets")
@@ -192,7 +172,6 @@ describe("PlatformCollaborationRepository", () => {
         actorId: platformCollaborationActors.outsider,
         scopeId,
         purpose: "events",
-        policyRevision: 1,
         expiresAt: "2026-09-07T12:00:30.000Z",
       });
     }
@@ -201,7 +180,6 @@ describe("PlatformCollaborationRepository", () => {
       actorId: platformCollaborationActors.outsider,
       scopeId,
       purpose: "events",
-      policyRevision: 1,
       expiresAt: "2026-09-07T12:00:30.000Z",
     })).rejects.toBeInstanceOf(PlatformCollaborationRepositoryError);
   });

@@ -15,7 +15,6 @@ export const COLLABORATION_TERMINAL_FRAME_BYTE_LIMIT = 64 * 1024;
 export const COLLABORATION_CLIENT_REQUEST_ID_HEADER = "x-matrix-client-request-id";
 export const COLLABORATION_EXPECTED_REVISION_HEADER = "x-matrix-expected-revision";
 export const COLLABORATION_EXPECTED_MEMBER_REVISION_HEADER = "x-matrix-expected-member-revision";
-export const COLLABORATION_POLICY_HEADER = "x-matrix-collaboration-policy";
 
 export const CollaborationIdSchema = z.uuid();
 export const CollaborationActorIdSchema = z.string()
@@ -51,12 +50,6 @@ export const CollaborationLifecycleSchema = z.enum([
   "deleting",
   "deleted",
   "recovering",
-]);
-export const CollaborationCapabilityModeSchema = z.enum([
-  "off",
-  "internal",
-  "enabled",
-  "read_only",
 ]);
 export const CollaborationSafeErrorCodeSchema = z.enum([
   "not_found",
@@ -634,21 +627,6 @@ export const CollaborationSignedActorProofSchema = z.object({
   signature: z.string().min(43).max(172).regex(/^[A-Za-z0-9_-]+$/),
 }).strict();
 
-export const CollaborationPolicySchema = z.object({
-  milestone: z.enum(["m1", "m2", "m3", "m4"]),
-  revision: CollaborationRevisionSchema,
-  mode: CollaborationCapabilityModeSchema,
-  cohort: z.array(CollaborationActorIdSchema).max(1_000),
-  issuedAt: z.iso.datetime(),
-  expiresAt: z.iso.datetime(),
-}).strict();
-
-export const CollaborationSignedPolicySchema = z.object({
-  policy: CollaborationPolicySchema,
-  keyId: referenceId(80),
-  signature: z.string().min(43).max(172).regex(/^[A-Za-z0-9_-]+$/),
-}).strict();
-
 export const CollaborationConnectionTicketRequestSchema = z.object({
   clientRequestId: CollaborationIdSchema,
   purpose: z.enum(["events", "terminal"]),
@@ -835,7 +813,6 @@ export type CollaborationLifecycleRequest = z.infer<typeof CollaborationLifecycl
 export type CollaborationMember = z.infer<typeof CollaborationMemberSchema>;
 export type CollaborationOperation = z.infer<typeof CollaborationOperationSchema>;
 export type CollaborationParticipant = z.infer<typeof CollaborationParticipantSchema>;
-export type CollaborationPolicy = z.infer<typeof CollaborationPolicySchema>;
 export type CollaborationProjectConfirmRequest = z.infer<typeof CollaborationProjectConfirmRequestSchema>;
 export type CollaborationProjectInventory = z.infer<typeof CollaborationProjectInventorySchema>;
 export type CollaborationProjectInventoryItem = z.infer<typeof CollaborationProjectInventoryItemSchema>;
