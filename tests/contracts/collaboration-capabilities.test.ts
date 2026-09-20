@@ -181,6 +181,12 @@ describe("collaboration capability contracts (S02 T013)", () => {
     expect(CollaborationReadinessSchema.safeParse({ ...ready, state: "owner_setup_needed" }).success).toBe(false);
     expect(CollaborationReadinessSchema.safeParse({ ...ready, missingOwnerSetup: ["ai_source"] }).success).toBe(false);
     expect(CollaborationReadinessSchema.safeParse({ ...ready, resourceKind: "file" }).success).toBe(false);
+    const { sourceKind: _sourceKind, ...noSource } = ready;
+    expect(CollaborationReadinessSchema.safeParse(noSource).success).toBe(false);
+    const { effectiveSubmitMode: _mode, ...noMode } = ready;
+    expect(CollaborationReadinessSchema.safeParse(noMode).success).toBe(false);
+    expect(CollaborationReadinessSchema.safeParse({ ...noSource, resourceKind: "chat" }).success).toBe(false);
+    expect(CollaborationReadinessSchema.parse({ ...noSource, state: "host_offline", items: ready.items.map((item) => ({ ...item, status: "unavailable" })) }).state).toBe("host_offline");
     const fileReady = { resourceKind: "file", state: "ready", missingOwnerSetup: [], items: [] };
     expect(CollaborationReadinessSchema.parse(fileReady)).toEqual(fileReady);
     expect(CollaborationReadinessSchema.safeParse({ ...fileReady, sourceKind: "owner_account" }).success).toBe(false);
