@@ -11,7 +11,6 @@ import type {
   CanonicalUpdateQueuedChatTurnRequest,
 } from "@matrix-os/contracts";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
-import { canonicalChatRunFailure } from "@matrix-os/ui";
 import type {
   CanonicalChatClient,
   CanonicalChatEventConsumer,
@@ -882,7 +881,7 @@ export function useCanonicalChatRouteController({
       ? streamedMessagesRef.current.ids
       : [],
     status,
-    error: error ?? (detail?.record.chat.id === activeChatId ? canonicalChatRunFailure(detail) : null),
+    error,
     selectChat,
     search,
     refresh: load,

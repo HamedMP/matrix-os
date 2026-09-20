@@ -16,7 +16,6 @@ import {
   type CanonicalChatDetailResponse,
   type CanonicalChatRecord,
 } from "@matrix-os/contracts";
-import { canonicalChatRunFailure } from "@matrix-os/ui";
 import {
   createChatMentionRequestTracker,
   createSharedCanonicalChatEventSource,
@@ -635,9 +634,8 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView }
   }, [client]);
 
   const messages = detail ? projectCanonicalTranscript(detail) : [];
-  const visibleError = safeError ?? (detail?.record.chat.id === activeChatId ? canonicalChatRunFailure(detail) : null);
-  if (visibleError) {
-    messages.push({ id: "canonical-safe-error", role: "system", content: visibleError, timestamp: Date.now() });
+  if (safeError) {
+    messages.push({ id: "canonical-safe-error", role: "system", content: safeError, timestamp: Date.now() });
   }
   const activeRecord = detail && detail.record.chat.id === activeChatId
     ? detail.record

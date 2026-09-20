@@ -5,6 +5,7 @@ import type { CanonicalChatDetailResponse } from "@matrix-os/contracts";
 import { CanonicalChatDetailResponseSchema } from "@matrix-os/contracts";
 import type { CanonicalChatClient } from "@desktop/renderer/src/lib/canonical-chat-client";
 import { useCanonicalChatRouteController } from "@desktop/renderer/src/features/chat/use-canonical-chat-route-controller";
+import { canonicalChatPresentation } from "@desktop/renderer/src/features/chat/canonical-chat-presentation";
 import { useCanonicalChatState } from "../../shell/src/hooks/useCanonicalChatState.js";
 import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat.js";
 
@@ -34,6 +35,8 @@ describe("persisted Chat run failures across desktop surfaces", () => {
     )));
     const { result } = renderHook(() => useCanonicalChatState());
     await waitFor(() => expect(result.current.messages.some(m => m.content === COPY)).toBe(true));
+    expect(result.current.messages.filter((message) => message.role === "system")).toHaveLength(1);
+    expect(result.current.messages.map((message) => message.content)).not.toContain("Agent work failed. Please try again.");
     expect(JSON.stringify(result.current.messages)).not.toContain("sk-secret");
     expect(result.current.busy).toBe(false);
     expect(result.current.composerDraftRequest).toBeNull();
@@ -48,7 +51,9 @@ describe("persisted Chat run failures across desktop surfaces", () => {
       getDetail: vi.fn(async () => detail), acknowledgeCompletion: vi.fn(),
     } as unknown as CanonicalChatClient;
     const { result } = renderHook(() => useCanonicalChatRouteController({client, projectId:null, active:true}));
-    await waitFor(() => expect(result.current.error).toBe(COPY));
+    await waitFor(() => expect(result.current.detail).not.toBeNull());
+    expect(result.current.error).toBeNull();
+    expect(JSON.stringify(canonicalChatPresentation(result.current.detail!)).split(COPY)).toHaveLength(2);
     detail.runs.push({ ...detail.runs[0]!, id: "run_retry", attempt: 2, status: "completed", outcome: "completed",
       createdAt: "2026-08-25T00:01:00.000Z", updatedAt: "2026-08-25T00:02:00.000Z" });
     detail.record.chat.revision += 1;
