@@ -208,14 +208,10 @@ describe("shared chat platform speech input", () => {
     const retryingClient = speechClient();
     vi.mocked(retryingClient.capabilities)
       .mockRejectedValueOnce(new Error("temporary network failure"));
-    render(<TestChatInput
-      speechScopeKey="chat-1"
-      connected
-      busy={false}
+    render(<TestComposer
       onSubmit={vi.fn()}
-      attachmentsEnabled={false}
-      speechClient={retryingClient}
-      speechCaptureAdapter={captureAdapter}
+      client={retryingClient}
+      adapter={captureAdapter}
     />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Retry voice input" }));
