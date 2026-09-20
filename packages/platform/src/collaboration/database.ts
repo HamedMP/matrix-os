@@ -1,4 +1,5 @@
-import { sql, type ColumnType, type Kysely } from "kysely";
+import { sql, type ColumnType, type Kysely, type Transaction } from "kysely";
+import { runPlatformMigration } from "../migration-runner.js";
 
 type Timestamp = ColumnType<Date | string, Date | string | undefined, Date | string>;
 type NullableTimestamp = ColumnType<Date | string | null, Date | string | null | undefined, Date | string | null>;
@@ -30,6 +31,12 @@ export interface CollaborationConnectionTicketsTable {
   actor_id: string;
   scope_id: string;
   purpose: "events" | "terminal";
+  /**
+   * Unused since S20: the rollout policy is gone. Kept nullable so a rollback
+   * to a pre-S20 build (which inserts it NOT NULL) still works; S18 drops it
+   * once pre-S20 builds are no longer rollback targets.
+   */
+  policy_revision: ColumnType<number | null, number | null | undefined, number | null>;
   expires_at: Timestamp;
   consumed_at: NullableTimestamp;
   created_at: Timestamp;
@@ -44,6 +51,12 @@ export interface CollaborationPlatformDatabase {
 export async function bootstrapPlatformCollaborationDatabase(
   db: Kysely<CollaborationPlatformDatabase>,
 ): Promise<void> {
+  // One locked transaction through the platform migration path: the rollout-table drop, the
+  // ticket-table setup, the index and the column relaxation apply atomically or not at all.
+  await runPlatformMigration(db, (trx) => applyCollaborationSchema(trx));
+}
+
+async function applyCollaborationSchema(trx: Transaction<CollaborationPlatformDatabase>): Promise<void> {
   await sql`
     CREATE TABLE IF NOT EXISTS collaboration_directory (
       scope_id UUID PRIMARY KEY,
@@ -55,7 +68,7 @@ export async function bootstrapPlatformCollaborationDatabase(
       last_event_id UUID NOT NULL,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
-  `.execute(db);
+  `.execute(trx);
   await sql`
     CREATE TABLE IF NOT EXISTS collaboration_user_index (
       actor_id TEXT NOT NULL CHECK (char_length(actor_id) BETWEEN 1 AND 128),
@@ -67,16 +80,16 @@ export async function bootstrapPlatformCollaborationDatabase(
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       PRIMARY KEY (actor_id, scope_id)
     )
-  `.execute(db);
-  await sql`ALTER TABLE collaboration_user_index ADD COLUMN IF NOT EXISTS invitation_id UUID`.execute(db);
+  `.execute(trx);
+  await sql`ALTER TABLE collaboration_user_index ADD COLUMN IF NOT EXISTS invitation_id UUID`.execute(trx);
   await sql`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_collaboration_user_invitation
     ON collaboration_user_index(invitation_id)
     WHERE invitation_id IS NOT NULL
-  `.execute(db);
+  `.execute(trx);
   // S20 / T100: the rollout cohort table is dropped without replacement. The
   // organization precondition on the home is the only gate.
-  await sql`DROP TABLE IF EXISTS collaboration_rollout_policy`.execute(db);
+  await sql`DROP TABLE IF EXISTS collaboration_rollout_policy`.execute(trx);
   await sql`
     CREATE TABLE IF NOT EXISTS collaboration_connection_tickets (
       token_hash TEXT PRIMARY KEY CHECK (token_hash ~ '^[a-f0-9]{64}$'),
@@ -84,19 +97,22 @@ export async function bootstrapPlatformCollaborationDatabase(
       actor_id TEXT NOT NULL CHECK (char_length(actor_id) BETWEEN 1 AND 128),
       scope_id UUID NOT NULL,
       purpose TEXT NOT NULL CHECK (purpose IN ('events', 'terminal')),
+      policy_revision BIGINT CHECK (policy_revision IS NULL OR policy_revision >= 0),
       expires_at TIMESTAMPTZ NOT NULL,
       consumed_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
-  `.execute(db);
+  `.execute(trx);
   await sql`
     CREATE INDEX IF NOT EXISTS idx_collaboration_user_index_actor
     ON collaboration_user_index(actor_id, status, updated_at DESC)
-  `.execute(db);
+  `.execute(trx);
   await sql`
     CREATE INDEX IF NOT EXISTS idx_collaboration_tickets_outstanding
     ON collaboration_connection_tickets(actor_id, expires_at)
     WHERE consumed_at IS NULL
-  `.execute(db);
-  await sql`ALTER TABLE collaboration_connection_tickets DROP COLUMN IF EXISTS policy_revision`.execute(db);
+  `.execute(trx);
+  // Pre-S20 tables declared policy_revision NOT NULL; relax it so tickets issued without a
+  // policy revision can be stored while pre-S20 builds remain rollback targets (S18 drops it).
+  await sql`ALTER TABLE collaboration_connection_tickets ALTER COLUMN policy_revision DROP NOT NULL`.execute(trx);
 }

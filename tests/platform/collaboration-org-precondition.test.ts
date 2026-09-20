@@ -4,6 +4,7 @@
  * configuration is missing. No release flag exists.
  */
 import { Hono } from "hono";
+import { readFile } from "node:fs/promises";
 import type { Agent } from "undici";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PlatformDB } from "../../packages/platform/src/db.js";
@@ -102,7 +103,7 @@ describe("S20 platform organization precondition: fail-closed composition", () =
 });
 
 describe("S20 / T100: the rollout cohort table is gone", () => {
-  it("drops collaboration_rollout_policy on bootstrap and keeps the ticket table without a policy revision", async () => {
+  it("drops collaboration_rollout_policy atomically and keeps a nullable, unused policy revision on tickets", async () => {
     const fixture = await createPlatformCollaborationTestDatabase();
     try {
       await bootstrapPlatformCollaborationDatabase(fixture.collaborationDb);
@@ -110,10 +111,14 @@ describe("S20 / T100: the rollout cohort table is gone", () => {
         .select("tablename" as never).where("tablename" as never, "=", "collaboration_rollout_policy").execute();
       expect(tables).toEqual([]);
       const columns = await fixture.collaborationDb.selectFrom("information_schema.columns" as never)
-        .select("column_name" as never)
+        .select(["column_name", "is_nullable"] as never)
         .where("table_name" as never, "=", "collaboration_connection_tickets")
         .where("column_name" as never, "=", "policy_revision").execute();
-      expect(columns).toEqual([]);
+      // Kept nullable and unused so a pre-S20 build remains a rollback target; S18 drops it.
+      expect(columns).toEqual([{ column_name: "policy_revision", is_nullable: "YES" }]);
+      const source = await readFile("packages/platform/src/collaboration/database.ts", "utf8");
+      expect(source).toContain("runPlatformMigration(db, (trx) => applyCollaborationSchema(trx))");
+      expect(source).not.toContain(".execute(db)");
     } finally {
       await destroyPlatformCollaborationTestDatabase(fixture);
     }
