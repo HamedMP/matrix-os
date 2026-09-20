@@ -254,4 +254,55 @@ describe("S00 authority probes: live Clerk organization membership", () => {
     },
     PROBE_TIMEOUT_MS,
   );
+  it.skipIf(!fixtures.secretKey || !fixtures.orgId || !fixtures.memberUserId)(
+    `S03 projection observes a live removal within the ${REMOVAL_BOUND_SECONDS}s bound and never renews evidence past its deadline (${unrun("COLLABORATION_PROBE_CLERK_SECRET_KEY/ORG_ID/MEMBER_USER_ID")})`,
+    async () => {
+      const { createTestPlatformDb, destroyTestPlatformDb } = await import("../platform/platform-db-test-helper.js");
+      const { bootstrapPlatformOrganizationDatabase } = await import("../../packages/platform/src/organizations/database.js");
+      const { PlatformOrganizationRepository } = await import("../../packages/platform/src/organizations/repository.js");
+      const { createOrganizationMembershipProjection } = await import("../../packages/platform/src/organizations/projection.js");
+      const { ClerkOrganizationUpstreamClient } = await import("../../packages/platform/src/organizations/clerk-resolver.js");
+      const memberUserId = fixtures.memberUserId!;
+      const fixture = await createTestPlatformDb();
+      try {
+        const db = fixture.db.kysely as unknown as import("kysely").Kysely<import("../../packages/platform/src/organizations/database.js").OrganizationPlatformDatabase>;
+        await bootstrapPlatformOrganizationDatabase(db);
+        const repository = new PlatformOrganizationRepository(db);
+        const projection = createOrganizationMembershipProjection({
+          repository,
+          upstream: new ClerkOrganizationUpstreamClient({ secretKey: fixtures.secretKey! }),
+        });
+        try {
+          await projection.reconcile(fixtures.orgId!);
+          const before = await projection.assert({ organizationId: fixtures.orgId!, actorId: memberUserId, requestStartedAt: new Date() });
+          expect(before.member).toBe(true);
+          expect(before.expiresAt.getTime() - before.requestStartedAt.getTime()).toBe(ORG_EVIDENCE_DEADLINE_SECONDS * 1_000);
+          await withMembershipRestored(memberUserId, async () => {
+            const removed = await clerk("DELETE", membershipPath(memberUserId));
+            expect(removed.status).toBe(200);
+            const startedAt = Date.now();
+            let observedNegative = false;
+            while (Date.now() - startedAt < REMOVAL_BOUND_SECONDS * 1_000) {
+              const result = await projection.reconcile(fixtures.orgId!);
+              const assertion = await projection.assert({ organizationId: fixtures.orgId!, actorId: memberUserId, requestStartedAt: new Date() });
+              if (result.verified && !assertion.member) {
+                observedNegative = true;
+                break;
+              }
+              await new Promise((resolve) => setTimeout(resolve, 2_000));
+            }
+            const elapsedMs = Date.now() - startedAt;
+            console.log("[s00-probe] S03 projection removal observed", { observedNegative, elapsedMs });
+            expect(observedNegative).toBe(true);
+            expect(elapsedMs).toBeLessThan(REMOVAL_BOUND_SECONDS * 1_000);
+          });
+        } finally {
+          await projection.shutdown();
+        }
+      } finally {
+        await destroyTestPlatformDb(fixture.db);
+      }
+    },
+    PROBE_TIMEOUT_MS * 3,
+  );
 });
