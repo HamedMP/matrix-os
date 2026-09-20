@@ -137,8 +137,14 @@ export function createPlatformOrganizationRoutes(options: {
         payloadHash: createHash("sha256").update(body).digest("hex"),
       });
       if (result.outcome === "conflict") return safeJson(c, "Conflicting delivery", 409);
-      for (const ended of result.endedMemberships) {
-        await options.controlAuthority.fence({ ...ended, generation: Math.max(1, result.membershipEpoch ?? 1) });
+      // The membership transition and its revocation intent are already durable; draining
+      // here is best-effort and the recurring sweep retries anything that fails now.
+      if (result.endedMemberships.length > 0) {
+        try {
+          await options.controlAuthority.drainRevocations();
+        } catch (error: unknown) {
+          console.warn("[organizations] revocation drain deferred", error instanceof Error ? error.name : "UnknownError");
+        }
       }
       return c.json({ received: true, outcome: result.outcome });
     } catch (error: unknown) {

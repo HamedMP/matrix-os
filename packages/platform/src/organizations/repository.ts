@@ -169,6 +169,19 @@ export class PlatformOrganizationRepository {
         updated_at: now,
       })).execute();
       const ended = input.state === "removed" && existing?.state === "active";
+      if (ended) {
+        // Durable revocation intent in the same transaction: a fence can be created
+        // later by the control authority's drain even if this request fails afterwards.
+        await repo.db.insertInto("organization_revocation_outbox").values({
+          intent_id: randomUUID(),
+          organization_id: input.organizationId,
+          actor_id: input.actorId,
+          membership_epoch: epoch,
+          created_at: now,
+          denial_id: null,
+          next_attempt_at: now,
+        }).execute();
+      }
       return { outcome: "applied", membershipEpoch: epoch, ended };
     });
   }
@@ -279,6 +292,35 @@ export class PlatformOrganizationRepository {
     return rows.length > limit ? { members, nextActorId: members[members.length - 1]!.actorId } : { members };
   }
 
+  // --- revocation intents (durable outbox drained by the control authority) --------------------
+
+  async listDueRevocationIntents(now: Date, limit = 100): Promise<Array<{ intentId: string; organizationId: string; actorId: string; membershipEpoch: number; attempts: number }>> {
+    const rows = await this.db.selectFrom("organization_revocation_outbox").selectAll()
+      .where("denial_id", "is", null).where("dead_letter", "=", false).where("next_attempt_at", "<=", now)
+      .orderBy("created_at").limit(Math.min(Math.max(limit, 1), 1_000)).execute();
+    return rows.map((row) => ({
+      intentId: row.intent_id, organizationId: row.organization_id, actorId: row.actor_id,
+      membershipEpoch: asNumber(row.membership_epoch), attempts: row.attempts,
+    }));
+  }
+
+  async completeRevocationIntent(intentId: string, denialId: string): Promise<void> {
+    await this.db.updateTable("organization_revocation_outbox").set({ denial_id: denialId })
+      .where("intent_id", "=", intentId).where("denial_id", "is", null).execute();
+  }
+
+  async recordRevocationIntentFailure(input: { intentId: string; nextAttemptAt: Date; deadLetter: boolean }): Promise<void> {
+    await this.db.updateTable("organization_revocation_outbox")
+      .set({ attempts: sql`attempts + 1`, next_attempt_at: input.nextAttemptAt, dead_letter: input.deadLetter })
+      .where("intent_id", "=", input.intentId).execute();
+  }
+
+  async describeRevocationIntents(input: { organizationId: string; actorId: string }): Promise<Array<{ intentId: string; denialId: string | null; attempts: number; deadLetter: boolean }>> {
+    const rows = await this.db.selectFrom("organization_revocation_outbox").selectAll()
+      .where("organization_id", "=", input.organizationId).where("actor_id", "=", input.actorId).orderBy("created_at").execute();
+    return rows.map((row) => ({ intentId: row.intent_id, denialId: row.denial_id, attempts: row.attempts, deadLetter: row.dead_letter }));
+  }
+
   // --- control authority: denials, fences, acknowledgements -------------------------------------
 
   async createDenial(input: {
@@ -335,14 +377,19 @@ export class PlatformOrganizationRepository {
     }));
   }
 
-  /** A runtime acknowledging a fence at time T completes its part of every pending denial fenced at or before T. Returns the denials completed by this ack. */
-  async acknowledgeRuntime(input: { runtimeId: string; fenceAt: Date; acknowledgedAt: Date }): Promise<string[]> {
+  /**
+   * A runtime acknowledging generation G with a fence at time T completes its
+   * part of every pending denial fenced at or before T whose generation is at
+   * most G; a stale generation cannot acknowledge a newer denial.
+   */
+  async acknowledgeRuntime(input: { runtimeId: string; fenceAt: Date; generation: number; acknowledgedAt: Date }): Promise<string[]> {
     return this.transaction(async (repo) => {
       const pending = await repo.db.selectFrom("collaboration_denial_runtimes as r")
         .innerJoin("collaboration_denials as d", "d.denial_id", "r.denial_id")
         .select(["r.denial_id"])
         .where("r.runtime_id", "=", input.runtimeId).where("r.acknowledged_at", "is", null)
         .where("d.state", "=", "pending").where("d.fenced_at", "<=", input.fenceAt)
+        .where("d.generation", "<=", input.generation)
         .forUpdate().execute();
       const completed: string[] = [];
       for (const { denial_id } of pending) {

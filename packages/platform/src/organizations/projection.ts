@@ -48,7 +48,7 @@ export function createOrganizationMembershipProjection(options: {
   refreshIntervalMs?: number;
   maxTrackedOrganizations?: number;
   startTimers?: boolean;
-  onMembershipEnded?: (ended: EndedMembership, membershipEpoch: number) => Promise<void>;
+  onMembershipEnded?: (ended: readonly EndedMembership[], membershipEpoch: number) => Promise<void>;
 }): OrganizationMembershipProjection {
   const now = options.now ?? (() => new Date());
   const evidenceTtlMs = options.evidenceTtlMs ?? ORGANIZATION_EVIDENCE_TTL_MS;
@@ -85,9 +85,9 @@ export function createOrganizationMembershipProjection(options: {
       return { verified: false, endedMemberships: [] as EndedMembership[] };
     }
     const result = await options.repository.reconcileOrganization(snapshot, now());
-    for (const ended of result.endedMemberships) {
+    if (result.endedMemberships.length > 0) {
       try {
-        await options.onMembershipEnded?.(ended, result.membershipEpoch);
+        await options.onMembershipEnded?.(result.endedMemberships, result.membershipEpoch);
       } catch (error: unknown) {
         console.warn("[organizations] membership-ended handler failed", error instanceof Error ? error.name : "UnknownError");
       }

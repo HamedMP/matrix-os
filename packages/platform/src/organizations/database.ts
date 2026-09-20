@@ -7,7 +7,8 @@
  * time instead of joining `PLATFORM_MIGRATION_STEPS`, whose exact table set
  * the S01 characterization fixture pins.
  */
-import { sql, type ColumnType, type Kysely } from "kysely";
+import { sql, type ColumnType, type Kysely, type Transaction } from "kysely";
+import { runPlatformMigration } from "../migration-runner.js";
 
 type Timestamp = ColumnType<Date | string, Date | string | undefined, Date | string>;
 type NullableTimestamp = ColumnType<Date | string | null, Date | string | null | undefined, Date | string | null>;
@@ -73,17 +74,39 @@ export interface CollaborationDenialRuntimesTable {
   dead_letter: Generated<boolean>;
 }
 
+export interface OrganizationRevocationOutboxTable {
+  intent_id: string;
+  organization_id: string;
+  actor_id: string;
+  membership_epoch: number | string;
+  created_at: Timestamp;
+  denial_id: string | null;
+  attempts: Generated<number>;
+  next_attempt_at: Timestamp;
+  dead_letter: Generated<boolean>;
+}
+
 export interface OrganizationPlatformDatabase {
   organizations: OrganizationsTable;
   organization_memberships: OrganizationMembershipsTable;
   organization_webhook_inbox: OrganizationWebhookInboxTable;
+  organization_revocation_outbox: OrganizationRevocationOutboxTable;
   collaboration_denials: CollaborationDenialsTable;
   collaboration_denial_runtimes: CollaborationDenialRuntimesTable;
 }
 
+/**
+ * Runs the DDL under the platform schema-migration advisory lock inside one
+ * transaction with deadlock retry, so concurrent platform revisions cannot
+ * race each other into 40P01 during readiness.
+ */
 export async function bootstrapPlatformOrganizationDatabase(
   db: Kysely<OrganizationPlatformDatabase>,
 ): Promise<void> {
+  await runPlatformMigration(db, (transaction) => createOrganizationTables(transaction));
+}
+
+async function createOrganizationTables(db: Transaction<OrganizationPlatformDatabase>): Promise<void> {
   await sql`
     CREATE TABLE IF NOT EXISTS organizations (
       organization_id TEXT PRIMARY KEY CHECK (char_length(organization_id) BETWEEN 1 AND 128),
@@ -126,6 +149,23 @@ export async function bootstrapPlatformOrganizationDatabase(
   `.execute(db);
   await sql`
     CREATE INDEX IF NOT EXISTS idx_organization_webhook_inbox_received_at ON organization_webhook_inbox(received_at)
+  `.execute(db);
+  await sql`
+    CREATE TABLE IF NOT EXISTS organization_revocation_outbox (
+      intent_id UUID PRIMARY KEY,
+      organization_id TEXT NOT NULL CHECK (char_length(organization_id) BETWEEN 1 AND 128),
+      actor_id TEXT NOT NULL CHECK (char_length(actor_id) BETWEEN 1 AND 128),
+      membership_epoch BIGINT NOT NULL CHECK (membership_epoch >= 0),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      denial_id UUID,
+      attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+      next_attempt_at TIMESTAMPTZ NOT NULL,
+      dead_letter BOOLEAN NOT NULL DEFAULT false
+    )
+  `.execute(db);
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_organization_revocation_outbox_due
+      ON organization_revocation_outbox(next_attempt_at) WHERE denial_id IS NULL AND dead_letter = false
   `.execute(db);
   await sql`
     CREATE TABLE IF NOT EXISTS collaboration_denials (
