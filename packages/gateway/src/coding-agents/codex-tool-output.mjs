@@ -7,7 +7,7 @@ const PRIVATE_INPUT = /secret|password|credential|api[_-]?key|token|id_rsa|\.env
 
 /** @param {Record<string, any>} item */
 export function codexToolHasPrivateContext(item) {
-  return PRIVATE_INPUT.test(item.command ?? "") || PRIVATE_INPUT.test(JSON.stringify(item.arguments ?? {}));
+  return PRIVATE_OUTPUT.test(item.command ?? "") || PRIVATE_INPUT.test(item.command ?? "") || PRIVATE_INPUT.test(JSON.stringify(item.arguments ?? {}));
 }
 
 /** @param {Record<string, any>} item */

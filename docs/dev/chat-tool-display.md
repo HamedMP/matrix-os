@@ -14,6 +14,12 @@ notice. Output is capped at 4,000 characters and reports truncation. Canonical
 Chat independently validates tool output against its client-safe output contract;
 other coding harness outputs pass through that same publication boundary.
 
+Hermes also publishes bounded text results for terminal, file-read and MCP tools through
+the same privacy and canonical output validation boundary. It retains only the
+tool name and a private-context bit across start/completion frames, including
+when completion omits its original name or arguments. Unknown result envelopes
+remain summary-only; arbitrary objects and binary content are not serialized.
+
 Canonical activities remain the source of truth for live delivery and reload.
 Renderers combine working-directory/status detail with tool output instead of
 letting one hide the other, cap expanded detail at 16,000 characters, and mark
