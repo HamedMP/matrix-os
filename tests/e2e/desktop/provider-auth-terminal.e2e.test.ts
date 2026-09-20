@@ -58,7 +58,7 @@ it("reveals a closed Terminal for Connect and Disconnect and refreshes auth on r
     await terminal.getByRole("button", { name: "Close", exact: true }).click();
     await terminal.waitFor({ state: "hidden" });
     await settings();
-    await page.getByRole("button", { name: "Open provider setup Connect Claude", exact: true }).first().click();
+    await page.getByRole("button", { name: "Log in Claude", exact: true }).click();
     await terminal.waitFor();
     await terminal.getByText("Connect Claude", { exact: true }).first().waitFor();
     expect(gateway.commands).toHaveLength(1);
@@ -68,9 +68,9 @@ it("reveals a closed Terminal for Connect and Disconnect and refreshes auth on r
     gateway.setAuthenticated(true);
     await terminal.getByRole("button", { name: "Close", exact: true }).click();
     await settings();
-    const disconnect = page.getByRole("button", { name: "Open provider setup Disconnect Claude", exact: true }).first();
+    const disconnect = page.getByRole("button", { name: "Log out Claude", exact: true });
     await disconnect.waitFor();
-    expect(await page.getByRole("button", { name: "Open provider setup Connect Claude", exact: true }).count()).toBe(0);
+    expect(await page.getByRole("button", { name: "Log in Claude", exact: true }).count()).toBe(0);
     await page.screenshot({ path: join(output, "authenticated-disconnect.png") });
     await disconnect.click();
     await terminal.waitFor();
@@ -82,7 +82,7 @@ it("reveals a closed Terminal for Connect and Disconnect and refreshes auth on r
     gateway.setAuthenticated(false);
     await terminal.getByRole("button", { name: "Close", exact: true }).click();
     await settings();
-    await page.getByRole("button", { name: "Open provider setup Connect Claude", exact: true }).first().waitFor();
+    await page.getByRole("button", { name: "Log in Claude", exact: true }).waitFor();
   } catch (error) {
     await page.screenshot({ path: join(output, "failure.png") });
     throw error;
