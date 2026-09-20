@@ -16,6 +16,11 @@ jest.mock("react-native-safe-area-context", () => ({
   useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
 }));
 
+jest.mock("expo-audio", () => ({
+  useAudioStream: () => ({ stream: { start: jest.fn(), stop: jest.fn() } }),
+  requestRecordingPermissionsAsync: jest.fn(),
+}));
+
 jest.mock("@/lib/canonical-chat-session-context", () => ({
   useCanonicalChatSession: () => ({
     activeChatId: mockActiveChatId,
