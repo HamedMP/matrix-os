@@ -11,7 +11,7 @@ Use `gpt-5.6-sol` with high reasoning, one coordinator and at most three workers
 - [ ] T001 Inspect current main and record baseline SHA plus changed seams in research.md. Confirm canonical Chat roots, shared adapter limitations, endpoint wiring, provider V3 and connector custody; do not infer that source presence means deployed support.
 - [ ] T002 Add failing probe harnesses in tests/integration/collaboration-provider-boundaries.test.ts for Codex/Claude API execution, native owner subscription eligibility (owner-only versus delegated requests), owner source/root change resume, tool/approval/cancel semantics and worktree isolation. Record exact versions/auth modes and real outcomes in evidence/providers.md; never store tokens.
 - [ ] T003 Add tests/integration/collaboration-authority-boundaries.test.ts for Clerk direct role changes, lost webhooks, API consistency, clock skew and partition expiry. Freeze supported custom permission mapping and measured removal bound in contracts/organization-api.md.
-- [ ] T004 Add direct TLS/Origin/WS reachability and sandbox mount/Git-object/credential escape probes in tests/integration/collaboration-direct-boundaries.test.ts. Record browser/Electron/native endpoints and required supervisor facilities in evidence/direct.md.
+- [ ] T004 Add relay/Origin/WS pass-through and home ticket verification probes plus sandbox mount/Git-object/credential escape probes in tests/integration/collaboration-direct-boundaries.test.ts. Record browser/Electron/native ingress paths, relay byte-limit behavior and required supervisor facilities in evidence/direct.md.
 - [ ] T005 Inventory existing connection providers: credential storage, execution host, OAuth migration eligibility and vendor-hosted exceptions. Record per-mode supported/unavailable/reconnect-needed decisions in research.md; missing live evidence is an open gate, not a pass.
 
 ## S01 — Extract large composition seams
@@ -58,20 +58,21 @@ Use `gpt-5.6-sol` with high reasoning, one coordinator and at most three workers
 **Owner:** Transport Sol. **Depends on:** S03,S04. **Exit:** Enrolled homes authenticate direct clients/peers without platform content proxying.
 
 - [ ] T025 Write tests/platform/collaboration-tickets.test.ts and tests/gateway/collaboration-direct-sessions.test.ts for audience/key/nonce tampering, ticket reuse, Origin, stale generation, endpoint forgery, unknown signing key and old protocol rejection.
-- [ ] T026 Implement platform collaboration/{runtime-endpoints,ticket-issuer,control-stream}.ts with asymmetric enrollment, exact registered TLS origin verification, SSRF-safe endpoint probes, signed actor/device/purpose binding and rotation. Metadata only.
+- [ ] T026 Implement platform collaboration/{runtime-endpoints,ticket-issuer,control-stream}.ts with asymmetric enrollment, relay-routable home registration reusing existing customer-VPS enrollment, SSRF-safe validation, signed actor/device/purpose binding and rotation. Tickets bind logical runtime ID and generation, never a TLS hostname. Metadata only; no per-home hostname or certificate work.
 - [ ] T027 Implement gateway collaboration/{direct-auth,direct-sessions,control-client,direct-websocket}.ts with proof-of-possession, single-use ticket exchange, scoped HTTP/WS authorization and fixed-expiry control snapshots. Reuse local authority, not owner cookie authentication.
 - [ ] T028 Integrate expiry/fence checks before input/output batches, queue claims and publication; terminate denied isolated processes/control leases. Add replay limits, slow-reader bounds, quotas and shutdown drains.
-- [ ] T029 Run two-home + partition wiring tests in tests/e2e/collaboration-direct-transport.spec.ts. Prove no per-frame/chunk platform authorization call, no lease extension on reconnect and no generic owner endpoint reachable by collaborator.
+- [ ] T029 Run two-home + partition wiring tests in tests/e2e/collaboration-direct-transport.spec.ts through the relay. Prove no per-frame/chunk platform authorization call, no relay allow/deny decision, no lease extension on reconnect and no generic owner endpoint reachable by collaborator.
+- [ ] T103 Extract a transparent relay mode from packages/platform/src/collaboration/proxy.ts and websocket.ts into collaboration/relay.ts: TLS termination and HTTP/WebSocket byte forwarding to the directory-resolved home, coarse byte/connection limits, no policy lookup, no body or frame parsing, no payload logging or tracing. Add tests proving the relay forwards forged/expired tickets untouched and the home rejects them, and that platform policy storage being unavailable does not affect an in-flight session.
 
 ## S06 — Direct clients and resource discovery
 
 **Owner:** Client Sol. **Depends on:** S05. **Exit:** Every client request reaches the discovered resource home with scoped auth.
 
 - [ ] T030 Add tests for resource-home versus selected-computer routing, endpoint generation changes, offline states, refresh failure and safe errors in tests/ui/collaboration-direct-client.test.ts.
-- [ ] T031 Implement shared transport in packages/ui/src/collaboration/direct-client.ts with ticket exchange, signed requests, WS ticket handshake, session renewal and reconnection. Native/CLI transport adapters consume the same protocol and derivations.
+- [ ] T031 Implement shared transport in packages/ui/src/collaboration/direct-client.ts with directory-resolved origins (never hardcoded), ticket exchange, signed requests, WS ticket handshake, session renewal and reconnection. Native/CLI transport adapters consume the same protocol and derivations.
 - [ ] T032 Change platform collaboration discovery to metadata-only projections and safe org inventory. Clients hydrate content from the home; do not make platform hydration fetch full resource data.
 - [ ] T033 Wire shell and desktop collaboration clients, event streams, terminal attach, download/upload and sandboxed app origins through direct transport. Coordinator applies CSP/query-ticket allowlist/composition patches.
-- [ ] T034 Run browser and Electron cross-origin/session/logout tests; verify no reusable token leaks in referrers/logs, no fallback to platform forwarding and no stale resource content on computer switch.
+- [ ] T034 Run browser and Electron cross-origin/session/logout tests; verify no reusable token leaks in referrers/logs, no fallback to platform-side authorization and no stale resource content on computer switch.
 
 ## S07 — Execution sandbox and task policies
 
@@ -187,16 +188,16 @@ Use `gpt-5.6-sol` with high reasoning, one coordinator and at most three workers
 
 - [ ] T088 Write tests/platform/collaboration-cutover-postgres.test.ts for idempotent import/count validation, ambiguous legacy handles, offline homes, exact old ceilings, failed freeze, interrupted CAS, compatible rollback and the T102 person-to-person record disposition (zero expected; any found are terminated with notice or owner re-homed, never imported as personal grants).
 - [ ] T089 Implement collaboration cutover coordinator/journals under packages/platform/src/collaboration/cutover.ts and gateway collaboration/cutover.ts: backup inventory, maintenance fence, drain, shadow import, verification and direct-generation activation.
-- [ ] T090 Remove packages/platform/src/collaboration/proxy.ts serving behavior, collaboration payload WS forwarding, V1 proof/ACL fallback and `MATRIX_COLLABORATION_PREFLIGHT_SECRET` after migrated direct consumers are integrated. Update exact route registration/tests to reject retired endpoints; retain only metadata/control routes. The rollout flag and cohort policy are already gone from S20; assert their absence here.
+- [ ] T090 Remove per-request authorization, policy lookups, body parsing, V1 proof/ACL fallback and `MATRIX_COLLABORATION_PREFLIGHT_SECRET` from packages/platform/src/collaboration/proxy.ts and websocket.ts after migrated consumers are integrated, leaving only the transparent relay extracted in T103. Update exact route registration/tests to reject retired endpoints; retain only metadata/control routes. The rollout flag and cohort policy are already gone from S20; assert their absence here.
 - [ ] T091 Remove direct-capable integration central execution fallback and legacy sync/collaboration secondary allow readers. Temporary import code is migration-only with explicit completion/retention state; snapshots and unrelated personal routing remain separate.
-- [ ] T092 Run full dry-run with old client/home negative tests, two direct computers, multiple actors/one owner source, shared group Chat, owner-controlled commit/PR operations, integration grants and dirty worktrees. Record no collaboration payload traverses platform, no dual writer and recoverable rollback state before release approval.
+- [ ] T092 Run full dry-run with old client/home negative tests, two direct computers, multiple actors/one owner source, shared group Chat, owner-controlled commit/PR operations, integration grants and dirty worktrees. Record that the relay makes no authorization decision and parses or logs no payload, no dual writer and recoverable rollback state before release approval.
 
 ## S19 — Release acceptance and docs
 
 **Owner:** Coordinator. **Depends on:** S18. **Exit:** Full architecture is reviewable and ready for explicitly authorized deployment.
 
 - [ ] T093 Run quickstart.md acceptance matrix with real Postgres, approved provider/Stripe/Clerk/Matrix sandboxes and disposable reachable computers. Capture exact SHA/version/result, not fabricated screenshots or skipped-required-tests passes.
-- [ ] T094 Profile platform requests/bytes separately from direct resource data under concurrent Chat/PTY/file workloads. Verify control request coalescing and host CPU/memory/network caps; flag managed inference/vendor exceptions clearly.
+- [ ] T094 Profile platform control requests separately from relayed resource bytes under concurrent Chat/PTY/file workloads and report relay bandwidth cost. Verify control request coalescing and host CPU/memory/network caps; flag managed inference/vendor exceptions clearly.
 - [ ] T095 Perform auth/atomicity/wiring review covering direct routes, dynamic policy/history, sandbox escapes, owner-source concurrency and Git identity/approval bypass, transfer failures and all-surface parity; resolve material findings before declaring release ready.
 - [ ] T096 Prepare separate FinnaAI/matrix-os-site/content/docs/ documentation PR deliverable for direct connectivity, group Chat/owner source/payer, owner Git/PR identity, worktrees, granular sharing, integration consent, invite quotes, outages and migration. External publication needs its own authorization.
 - [ ] T097 Record full implementation log, migration/rollback runbook and configured price/provider limitations. Obtain required CI/current-head Greptile 5/5 and ready-for-ci; do not infer deployment/merge authority from this planning request.

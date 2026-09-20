@@ -1,6 +1,6 @@
 # Direct collaboration contracts and auth matrix
 
-S02 freezes strict Zod 4 contracts and package exports before dependent packets. This replaces the previous platform-forwarded resource API design. Every endpoint below is private unless explicitly called signed public ingress. No resource route may be forwarded by the platform after cutover.
+S02 freezes strict Zod 4 contracts and package exports before dependent packets. This replaces the previous platform-forwarded resource API design. Every endpoint below is private unless explicitly called signed public ingress. The platform relay forwards resource routes as opaque bytes: it makes no allow/deny decision, parses no body or frame, logs no payload and enforces coarse byte/connection limits only. The home is the sole authorization point for every route below.
 
 ## Wire rules
 
@@ -30,7 +30,7 @@ Mutations require UUID clientRequestId, record expectedRevision where applicable
 | GET `/api/collaboration/shared`; GET `/api/collaboration/inbox` | U+O as needed | Safe resource routing/discovery metadata; client hydrates direct |
 | POST `/api/collaboration/connections` | U+O as needed | Exact resource/purpose/client public key; directory-resolved endpoint and T, no content |
 | POST `/api/collaboration/peer-operations` | U+G consent receipts + R as applicable | Transfer/tool/policy-sync tickets, exact source/target/action/digest; no arbitrary command |
-| POST `/internal/collaboration/runtime-endpoints` | R plus enrollment bootstrap verification | Register exact verified TLS endpoint, protocol/key generation; SSRF-safe validation |
+| POST `/internal/collaboration/runtime-endpoints` | R plus enrollment bootstrap verification | Register relay-routable home address from existing customer-VPS enrollment, protocol/key generation and optional future direct origin; SSRF-safe validation |
 | GET `/internal/collaboration/control` (WS) | R with one-use upgrade ticket | Signed epochs/assertions, no customer payload; reconnect snapshot before accepting work |
 | POST `/internal/organizations/access/resolve` | R + actor-bound T/session evidence | Batched fixed-expiry membership assertions for active relevant scopes |
 | POST `/internal/collaboration/control/ack` | R | Monotonic generation/fence acknowledgement |
@@ -44,7 +44,7 @@ Clerk organization acceptance uses Clerk's supported flow. A verified acceptance
 
 ## Direct home endpoints
 
-All routes below terminate on the registered computer origin. `D` means direct session derived from T, proof-bound request plus G and fresh evidence. Native clients register their public keys; browsers generate session keys through Web Crypto. Never place reusable resource credentials in URLs/localStorage/logs. WebSocket upgrade uses a narrowly allowlisted single-use, short-lived ticket (redacted at ingress) and verifies possession in the first bounded frame before any output.
+All routes below terminate on the home computer; in this release bytes reach it through the platform relay at the origin the resource directory returns, and the home verifies T/D identically regardless of ingress. `D` means direct session derived from T, proof-bound request plus G and fresh evidence. Native clients register their public keys; browsers generate session keys through Web Crypto. Never place reusable resource credentials in URLs/localStorage/logs. WebSocket upgrade uses a narrowly allowlisted single-use, short-lived ticket (redacted at ingress) and verifies possession in the first bounded frame before any output.
 
 | Method + path | Auth / capability |
 | --- | --- |
@@ -84,11 +84,11 @@ POST `/peer/integrations/:delegationId/actions` requires P+F with exact tool/act
 
 ## Ticket/proof and limits
 
-Platform signing is asymmetric; distribute public verification keys, rotate with bounded old-key overlap. Tickets bind actor, nonce, proof-key thumbprint, resource/purpose, runtime/endpoint audience, generations, maximum actions and expiry. Request signatures bind method, canonical path/query, body digest, conditional headers, session and nonce. Ticket is maximum authority only: local policy may further restrict it. Changing grants invalidates sessions/queued runs; issuer cannot sign an unrestricted owner session.
+Platform signing is asymmetric; distribute public verification keys, rotate with bounded old-key overlap. Tickets bind actor, nonce, proof-key thumbprint, resource/purpose, logical runtime ID and generation (never a TLS hostname),  maximum actions and expiry. Request signatures bind method, canonical path/query, body digest, conditional headers, session and nonce. Ticket is maximum authority only: local policy may further restrict it. Changing grants invalidates sessions/queued runs; issuer cannot sign an unrestricted owner session.
 
 Initial limits: ticket 30 seconds; identity session five minutes; org evidence 20 seconds from authoritative request start; refresh target ten seconds; stream watchdog five seconds; skew allowance at most five seconds without extending authority. HTTP JSON 96 KiB; webhook 256 KiB; WS frame 64 KiB; paginated rows 100; grants 100/scope; active connections 256/home, 32/scope, four/actor/scope; replay cache 10,000 entries TTL expiry then LRU, rejecting admission if safe replay retention cannot be kept. Transfer four concurrent streams/home, 8 MiB chunks, 30-second idle timeout, resumable checkpoints; whole file quotas reuse configured owner limits. Control lookup five-second timeout; ordinary external APIs ten seconds. Staging TTL 24h except active recovery, recurring symlink-safe cleanup and shutdown drains.
 
-Signed control assertions are fixed-expiry and cannot be refreshed by receipt time. No platform round trip per content chunk; local checks plus control refresh enforce leases. Revocation pending/completed states follow data-model.md. Rate-limit auth, bytes, connections, execution and integrations on each home; metadata/control costs remain budgeted on platform.
+Signed control assertions are fixed-expiry and cannot be refreshed by receipt time. No platform round trip per content chunk; the relay is a byte path, not an authorization call. Local checks plus control refresh enforce leases. Revocation pending/completed states follow data-model.md. Rate-limit auth, bytes, connections, execution and integrations on each home; metadata/control costs remain budgeted on platform.
 
 ## Matrix group text exception
 

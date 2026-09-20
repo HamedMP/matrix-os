@@ -13,7 +13,7 @@ Use PostgreSQL/Kysely and existing migrations/repositories. Reuse equivalent tab
 | organizations/memberships | Clerk IDs, explicit role/permission mapping, lifecycle, monotonic membership epoch; upstream request-start/expiry; verified webhook inbox and reconciliation; webhook alone does not create fresh positive authority |
 | groups/group_members/guests | Org-scoped IDs, generation, acceptance and expiry; groups contain current members; former members cannot revive access as guests without new admission |
 | organization_commands/inbox/outbox | Idempotency key + payload hash, provider event ID, pending/confirmed/failed/unknown; metadata only; external requests outside DB transactions |
-| runtime_endpoints | Runtime ID, registered exact HTTPS origin, asymmetric public keys/key IDs, owner, protocol version, authority generation, health/last heartbeat; no caller-supplied arbitrary target URL |
+| runtime_endpoints | Runtime ID, relay-routable home address from existing customer-VPS enrollment, optional future direct origin, asymmetric public keys/key IDs, owner, protocol version, authority generation, health/last heartbeat; no caller-supplied arbitrary target URL |
 | resource_directory | Stable resource/scope ID, home runtime/generation, safe title/type, owner, audience discovery metadata and revision; index is never final authorization |
 | collaboration_denials | Org/actor/resource generations, fence timestamp and affected runtime acknowledgement/lease deadline; unavailable acknowledgement cannot claim completed revocation |
 | member_computer_assignments | Org, actor, machine, resource owner policy, sponsorship, lifecycle, recovery owner; one effective assignment role per machine; no pooled org runtime required |
@@ -56,7 +56,7 @@ Keep canonical Chat/project/worktree entities; extend them rather than adding an
 
 ## Lease and revocation protocol
 
-Connection tickets expire within 30 seconds and bind the client's ephemeral proof key, actor, resource, exact endpoint audience, home generation, purpose, nonce and permitted maximum actions. They are exchanged once on the home endpoint, never a generic gateway login. Identity session maximum is five minutes with explicit reauthentication; org authorization remains separately limited by a 20-second evidence deadline anchored to the upstream request start. A long identity session cannot extend an org grant.
+Connection tickets expire within 30 seconds and bind the client's ephemeral proof key, actor, resource, logical runtime ID (never a TLS hostname), home generation, purpose, nonce and permitted maximum actions. They are exchanged once on the home endpoint, never a generic gateway login. Identity session maximum is five minutes with explicit reauthentication; org authorization remains separately limited by a 20-second evidence deadline anchored to the upstream request start. A long identity session cannot extend an org grant.
 
 Homes consume signed platform org/group/denial epochs over one authenticated control stream and check local resource policy on every operation. Coalesce membership refresh for active actors (target ten seconds), not for every file chunk or keystroke. On disconnect, evidence expires at its original deadline and operations stop; positive caches never refresh themselves. Watchdogs run at most five seconds apart, check before every output/input batch, and terminate isolated processes that lose required authority. Enforce deadline before admitted writes/side effects and use final revision/epoch conditional writes. Long staging confers no right to publish.
 
@@ -72,7 +72,7 @@ Admission quote/entitlement/provision use durable command state and idempotent S
 
 ## Cutover
 
-Back up and freeze collaboration writes; drain runs/streams; inventory all IDs, grant ceilings and assigned homes. Stage idempotent shadow import and validate counts/digests/authorization. Upgrade all applicable clients/homes and signing keys, CAS direct protocol activation, then remove legacy content proxy/readers from serving. Unsupported old clients receive upgrade-required, never a fallback session. Temporary migration readers/backups are not runtime compatibility. Rollback keeps compatible direct authorization or disables collaboration pending recovery. Ordinary personal billing remains intact.
+Back up and freeze collaboration writes; drain runs/streams; inventory all IDs, grant ceilings and assigned homes. Stage idempotent shadow import and validate counts/digests/authorization. Upgrade all applicable clients/homes and signing keys, CAS direct protocol activation, then remove per-request authorization, policy readers and V1 fallback from the proxy, leaving the transparent relay. Unsupported old clients receive upgrade-required, never a fallback session. Temporary migration readers/backups are not runtime compatibility. Rollback keeps compatible direct authorization or disables collaboration pending recovery. Ordinary personal billing remains intact.
 
 ## Single-source first release
 

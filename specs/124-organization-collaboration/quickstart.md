@@ -4,7 +4,7 @@ This is the future implementation acceptance recipe. No runtime tests or live pr
 
 ## Fixtures
 
-Two enrolled directly reachable member computers A/B, browser/Electron/native/CLI clients, a real Postgres test service, Clerk test org, admin, two members, an outsider with a valid Clerk session and no org relationship, and separate billing/integration managers. Fixtures set no `MATRIX_COLLABORATION_ENABLED` value and seed no rollout cohort; both must be absent from the codebase. Use one owner-selected source per project, exercising eligible API/Matrix AI delegation and owner-only subscription mode separately, Stripe sandbox and managed Matrix test rooms. Include a full project with two Chats/worktrees, a restricted folder, denied sibling/history in Git, dirty edits, app database, terminal and two integration connections (read-only and send-capable).
+Two enrolled member computers A/B reached through the platform relay (existing customer-VPS routing; self-signed host certificates are acceptable), browser/Electron/native/CLI clients, a real Postgres test service, Clerk test org, admin, two members, an outsider with a valid Clerk session and no org relationship, and separate billing/integration managers. Fixtures set no `MATRIX_COLLABORATION_ENABLED` value and seed no rollout cohort; both must be absent from the codebase. Use one owner-selected source per project, exercising eligible API/Matrix AI delegation and owner-only subscription mode separately, Stripe sandbox and managed Matrix test rooms. Include a full project with two Chats/worktrees, a restricted folder, denied sibling/history in Git, dirty edits, app database, terminal and two integration connections (read-only and send-capable).
 
 Resource content lives on A; B can be a recipient/integration custodian/transfer target. Test an org-managed computer assigned to a member for recovery; no organization-wide shared computer is provisioned. Test a viewer with no personal computer.
 
@@ -28,7 +28,7 @@ These new test paths are assigned in tasks.md and will exist after implementatio
 | Journey | Required evidence |
 | --- | --- |
 | Org-only gate | Outsider with a valid session and direct reachability is denied on every route, WebSocket, queue claim, tool and integration path; no environment flag or cohort record is consulted; missing signing/origin configuration fails closed with a generic error; a person-to-person invitation identifier outside the organization is not resolved; departure or guest expiry ends every derived grant |
-| Direct open | Client authenticates with platform then streams Chat/files/PTY/app content directly to A; platform trace contains only permitted metadata; recipient needs no own computer |
+| Relay transparency | Client authenticates with platform, obtains a ticket and streams Chat/files/PTY/app content to A through the relay; the relay makes no authorization decision, parses no payload and logs none (platform trace contains only permitted metadata); a forged, expired or wrong-generation ticket delivered by the relay is rejected by A; disabling platform-side policy storage does not affect an in-flight session; recipient needs no own computer |
 | Peer path | B performs exact delegated integration action or stages transfer from A over authenticated direct HTTPS; wrong peer/key/operation replay denied |
 | Membership | Lost/reordered webhook, direct Clerk edit and platform/control partition enforce fixed deadlines; revocation completion waits for ack/expiry; same local fence blocks REST/WS/queue/tools |
 | Coarse roles | Billing manager can manage quoted spend but cannot read resource content; integration manager cannot access arbitrary personal connections; unknown Clerk roles fail closed |
@@ -47,7 +47,7 @@ These new test paths are assigned in tasks.md and will exist after implementatio
 | Transfer | Dirty worktree/app/Chat/file inventory staged with checksums; crashes at every phase leave one authority; credentials/memory/drafts absent; generation CAS prevents double-writable copies |
 | Cutover | IDs and old action ceilings preserved; legacy proxy/WS/V1 paths, rollout flag and cohort policy removed; person-to-person records dispositioned per S20 (zero expected); old clients upgrade-required; offline/ambiguous scopes unavailable with recovery; rollback never restores legacy auth |
 | Surfaces | Web Canvas then Web Desktop then Electron Desktop; applicable Web Mobile, Native Mobile and CLI share semantics/root/owner-source/Git-approval/error states; every surface uses the confirmed 525 chrome (ordinary timeline/composer, discussion drawer or sheet, access popover, Shared with me row, ordinary terminal viewport) with no new collaboration header, composer switch, share dialog or inbox |
-| Scale | Record control request/metadata byte rates separately from direct bytes; no refresh per keystroke/chunk; verify bounded host connection/process/transfer capacity and shutdown |
+| Scale | Record control request/metadata byte rates separately from relayed resource bytes and report relay bandwidth cost; no refresh per keystroke/chunk; verify bounded host connection/process/transfer capacity and shutdown |
 | Matrix groups | Human/AI tokens cannot directly read/join private service rooms; managed group text expires during partition; no canonical AI Chat/files mirrored |
 
 ## Operational sequence
@@ -56,8 +56,8 @@ These new test paths are assigned in tasks.md and will exist after implementatio
 2. Inventory and back up owner/control data, connection custody and dirty worktrees. Record recovery key ownership and retention.
 3. Fence collaboration mutation/run admission, drain sessions and stage idempotent data/grant migration. Validate counts, IDs, policy outcomes and catalog bindings.
 4. Upgrade registered homes and applicable clients; snapshot current epochs, verify signing keys/TLS, require protocol acknowledgements.
-5. Activate the new directory generation and only the direct serving routes. Run synthetic cross-computer journeys before reopening normal work.
-6. If activation fails, keep collaboration fenced or use a compatible direct build; reconcile journals and directory generation before opening writes. Do not re-enable platform forwarding or V1 policy.
+5. Activate the new directory generation, the transparent relay and only the home-authorized routes. Run synthetic cross-computer journeys before reopening normal work.
+6. If activation fails, keep collaboration fenced or use a compatible direct build; reconcile journals and directory generation before opening writes. Do not re-enable platform-side authorization or V1 policy.
 7. After verified acceptance publish operator/user documentation through the separately authorized site PR. Paid VM cleanup follows explicit approval and preserves needed recovery evidence.
 
 ## Deferred checks

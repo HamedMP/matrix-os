@@ -6,7 +6,7 @@
 
 ## Result
 
-Ship one coordinated replacement of collaboration transport and authorization. The platform coordinates identity, routing, generations, quotes and sponsorship; registered member computers serve canonical data, shared Codex/Claude execution, worktrees, apps, PTYs, integration actions and peer transfers. No pooled organization-wide computer, permanent compatibility proxy or rollout fallback to V1 authorization. No sharing outside an organization, and no release flag or rollout cohort: the organization is the only gate.
+Ship one coordinated replacement of collaboration transport and authorization. The platform coordinates identity, routing, generations, quotes and sponsorship; registered member computers serve canonical data, shared Codex/Claude execution, worktrees, apps, PTYs, integration actions and peer transfers. The platform relay is a retained transparent transport with no authorization, parsing or payload logging; it is not a compatibility path. No pooled organization-wide computer or rollout fallback to V1 authorization. No sharing outside an organization, and no release flag or rollout cohort: the organization is the only gate.
 
 Reuse current authority/transition/Chat/worktree/provider/integration seams. Replace the current platform payload forwarding path and the standalone-only shared-AI adapter's capability limitations through tested adapters. Do not rewrite canonical Chat, provider V3 or worktree state into separate collaboration stores.
 
@@ -20,7 +20,7 @@ Personal subscription support is conditional on actual provider eligibility; run
 
 TypeScript strict/ESM, Node 24+, Hono HTTPS/WSS, Zod 4, Kysely/Postgres, Next.js/React, Electron, Expo and existing CLI/sync daemon. Use enrolled asymmetric runtime identity, proof-bound scoped sessions and OS-enforced per-run isolation. Provider APIs remain external inference; the existing managed Matrix AI service and vendor-hosted connectors are named exceptions to local execution custody, not collaboration payload relays.
 
-Storage: platform metadata/billing only; canonical records/files and connection credentials on the appropriate member computer; existing object storage for owner-governed backups. Shared content must not go through platform request bodies, logs, traces or generic forwarding. Control metadata and membership checks still impose bounded platform cost.
+Storage: platform metadata/billing only; canonical records/files and connection credentials on the appropriate member computer; existing object storage for owner-governed backups. Shared content traverses the platform relay as opaque bytes and must not be parsed, authorized, logged or traced there. Control metadata and membership checks still impose bounded platform cost.
 
 ## Runtime wiring
 
@@ -28,7 +28,7 @@ Storage: platform metadata/billing only; canonical records/files and connection 
 flowchart LR
   C[Web / native / CLI] -->|Identity, discovery, short ticket| P[Platform control plane]
   P -->|Fresh evidence, epochs, revocation| H[Resource home: member computer]
-  C -->|Direct scoped HTTPS / WSS| H
+  C -->|Scoped HTTPS / WSS, opaque bytes via platform relay| H
   H -->|Local policy and sandbox| A[Codex / Claude / PTY / app / connection broker]
   H <-->|Authenticated exact peer operation| T[Another member computer]
   P -->|Quotes, entitlements, usage metadata| B[Org or personal payer]
@@ -36,7 +36,7 @@ flowchart LR
 
 Platform bootstrap registers org projection, role mapping, runtime endpoint/key directory, ticket issuer, control stream/fences, quote/assignment services and discovery. Gateway bootstrap registers direct verifier/session store, current policy resolver, local resource catalog, isolation supervisor, run/account binder, local connection broker, worktree leases, transfer journal, resource/peer routes, then event fanout. Resolve dependencies at registration; unavailable dependencies deny affected capabilities. Register exact WS query-ticket paths. Shutdown fences admission, drains sessions/processes/staging/outboxes, and closes owned pools.
 
-Browser clients hydrate resources directly after metadata discovery, including app iframe assets/bridges and downloads. The client transport chooses the registered resource home, not the user's selected personal runtime. Endpoint changes require a fresh generation-bound ticket. Home registration requires ownership verification, TLS validation and SSRF-safe address checks. Physical/NAT-only computers are ineligible until direct reachability is configured; general tunnels/mesh are deferred.
+Browser clients hydrate resources directly after metadata discovery, including app iframe assets/bridges and downloads. The client transport dials the origin the resource directory returns for the resource home, never the user's selected personal runtime and never a hardcoded origin; in this release that origin is the platform relay. Endpoint changes require a fresh generation-bound ticket. Home registration reuses existing customer-VPS enrollment and routing; every enrolled VPS is eligible. Three rules keep a later direct upgrade protocol-compatible: clients resolve origins from the directory; tickets bind logical runtime ID and generation, not a TLS hostname; the home verifies tickets identically regardless of ingress. Per-home hostnames, browser-trusted certificates, physical/NAT computers and tunnels/mesh are deferred.
 
 ## Authority and execution decisions
 
@@ -61,7 +61,7 @@ Each packet has failing tests, exact file responsibilities and exit criteria in 
 | S02 | Direct identity, capability, funding and peer contracts | S00,S01,S20 | Contracts |
 | S03 | Clerk permissions, groups, freshness and control epochs | S02 | Identity |
 | S04 | Local granular grants, ceilings and history audience rules | S02 | Authority |
-| S05 | Endpoint enrollment, direct sessions and control transport | S03,S04 | Transport |
+| S05 | Transparent relay, home sessions, tickets and control transport | S03,S04 | Transport |
 | S06 | Direct clients, WS and resource routing | S05 | Clients |
 | S07 | OS sandbox, task profiles and publication boundaries | S04,S05 | Runtime |
 | S08 | Single owner source and funding eligibility | S02,S04 | Owner AI source |
@@ -86,7 +86,7 @@ Packet numbers are stable labels, not execution order. S20 executes immediately 
 2. Snapshot owner metadata/data and control metadata; inventory live scopes, pending invites, exact old action ceilings, accounts, connector custody and dirty worktrees. Apply the S20 disposition to any person-to-person record (terminate with notice or owner re-homes into an organization); zero is expected. No other user data cleanup is inferred.
 3. Enter collaboration maintenance: reject new mutations/runs; drain/cancel running work with explicit states; freeze directory updates under a migration generation.
 4. Run idempotent imports and compare IDs/counts/authorization; ambiguous or offline scopes are marked unavailable with recovery steps. Finish direct-capable connector migration/reconnect; do not retain central execution fallback for those connectors.
-5. Install compatible clients/homes/control services, verify endpoint keys and policy snapshot acknowledgement, then activate the new generation. Release-level checks prove old proxy/WS/V1 paths, the rollout flag and the cohort policy are absent and old clients get upgrade-required.
+5. Install compatible clients/homes/control services, verify endpoint keys and policy snapshot acknowledgement, then activate the new generation. Release-level checks prove the relay performs no authorization, policy lookup or payload logging, and that V1 proof/ACL paths, the rollout flag and the cohort policy are absent and old clients get upgrade-required.
 6. Resume collaboration only after the full acceptance matrix. Backup retention and recovery jobs are bounded and documented. Failed cutover keeps collaboration unavailable or returns to a compatible direct build; never activate old ACL or content forwarding as rollback.
 
 This revision updates the existing specification PR. No paid test machine, provisioning or production rollout is executed by this planning task. Implementation validation should use disposable enrolled VPSes with separately authorized spend. One product cutover does not require a single giant code PR.
