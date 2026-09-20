@@ -29,7 +29,7 @@ V1 platform endpoints are `GET /api/organizations`, `GET /api/organizations/:org
 | POST `/api/organizations/:orgId/member-computer-commands` | U+O billing-manage and assignment-manage policy | Discriminated sponsor/provision-member/reassign/end; quote/consent/entitlement checked |
 | GET `/api/organizations/:orgId/billing`; POST `/billing/checkout`; POST `/billing/portal` | U+O billing-read/manage | Org customer only, server SKUs/return URLs |
 | PUT/DELETE `/api/organizations/:orgId/sponsorships/:scopeId` | U+O billing-manage + resource-owner signed consent | Payer/budget policy, no personal fallback |
-| GET `/api/collaboration/shared`; GET `/api/collaboration/inbox` | U+O as needed | Safe resource routing/discovery metadata, including organization-wide shares still pending for this member; client hydrates direct |
+| GET `/api/collaboration/shared`; GET `/api/collaboration/inbox` | U+O as needed | Safe resource routing/discovery metadata; client hydrates direct |
 | POST `/api/collaboration/connections` | U+O as needed | Exact resource/purpose/client public key; directory-resolved endpoint and T, no content |
 | POST `/api/collaboration/peer-operations` | U+G consent receipts + R as applicable | Transfer/tool/policy-sync tickets, exact source/target/action/digest; no arbitrary command |
 | POST `/internal/collaboration/runtime-endpoints` | R plus enrollment bootstrap verification | Register relay-routable home address from existing customer-VPS enrollment, protocol/key generation and optional future direct origin; SSRF-safe validation |
@@ -55,15 +55,15 @@ All routes below terminate on the home computer; in this release bytes reach it 
 | POST `/api/collaboration/runtimes/:runtimeId/scopes/preflight`; POST `/scopes` | D plus actual resource owner/delegated create authority |
 | GET `/api/collaboration/scopes/:scopeId`; GET `/access` | D read, effective capabilities/reasons only |
 | GET/POST `/scopes/:scopeId/grants`; PATCH/DELETE `/grants/:grantId` | D read/manage, expected revision |
-| POST `/scopes/:scopeId/invitations`; GET `/api/collaboration/invitations/:id`; POST `/:id/accept` or `/decline` | D manage / exact invitee who is a current member of the scope's organization; identifiers outside that organization are not resolved; an organization-wide share is accepted per member through the same accept action and grants nothing to a member who has not accepted; pending-invitation T permits only these actions |
+| POST `/scopes/:scopeId/invitations`; GET `/api/collaboration/invitations/:id`; POST `/:id/accept` or `/decline` | D manage / exact invitee who is a current member of the scope's organization; identifiers outside that organization are not resolved; pending-invitation T permits only these actions |
 | GET/PUT `/scopes/:scopeId/policy`; POST `/policy/preflight` | D read/manage; resolved recipient profile, dependency/readiness report |
 | GET/POST `/scopes/:scopeId/access-requests`; POST `/access-requests/:id/decision` (deferred from V1) | D actor request or designated approver |
 | GET `/scopes/:scopeId/chat`; GET/POST `/chat/messages`; GET/POST `/discussion/messages`; GET/PATCH `/user-state` | D per Chat content/read/discuss rights; private actor state |
-| GET/POST `/scopes/:scopeId/chat/requests`; POST `/chat/requests/:id/cancel` or `/retry`; POST `/chat/approvals/:id/decision` | D+F submit; cancel, retry and tool-approval decisions only for the requesting member or the project owner; payload pins root and V3 funding selection |
+| GET/POST `/scopes/:scopeId/chat/requests`; POST `/chat/requests/:id/cancel` or `/retry`; POST `/chat/approvals/:id/decision` | D+F submit/cancel/approve; payload pins root and V3 funding selection |
 | GET `/scopes/:scopeId/project`; GET `/project/inventory`; POST `/project/confirm` | D project read/manage and inventory digest |
 | GET/POST `/scopes/:scopeId/project/worktrees`; GET/DELETE `/project/worktrees/:id` (deferred from V1) | D allowed worktree actions |
 | POST `/scopes/:scopeId/project/chats`; POST `/project/terminals` | D create with explicit Chat audience/root or sandbox terminal profile; default group Chat is created idempotently on share, join reuses it |
-| GET `/scopes/:scopeId/project/git`; POST `/project/git/actions` | D inspect; commit/push/PR execute through the broker under the owner identity for Contributor, no owner approval in V1, requesting member audited |
+| GET `/scopes/:scopeId/project/git`; POST `/project/git/actions` | D inspect; commit/push/PR execute through the broker under the owner identity for Contributor and above, no owner approval in V1, requesting member audited |
 | POST `/scopes/:scopeId/project/git/operations/:operationId/decision` (deferred from V1) | D resource owner only; one-use expiring approval bound to tree/ref |
 | GET/PATCH `/scopes/:scopeId/project/layout` | D read/mutate filtered nodes; personal viewport separate |
 | GET `/scopes/:scopeId/files`; GET `/files/:fileId/content`; POST `/files/actions` | D exact catalog action; streaming download/staged upload/commit/rename/delete/move union |
