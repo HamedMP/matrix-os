@@ -4,7 +4,6 @@
  * configuration is missing. No release flag exists.
  */
 import { Hono } from "hono";
-import { readFile } from "node:fs/promises";
 import type { Agent } from "undici";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PlatformDB } from "../../packages/platform/src/db.js";
@@ -12,7 +11,12 @@ import { bootstrapPlatformCollaboration } from "../../packages/platform/src/coll
 import { createFailClosedPlatformCollaboration } from "../../packages/platform/src/collaboration/fail-closed.js";
 import { describePlatformCollaborationConfiguration } from "../../packages/platform/src/collaboration/wiring.js";
 import { COLLABORATION_HTTP_BODY_LIMIT } from "@matrix-os/contracts";
+import {
+  CollaborationIdentifierResolutionError,
+  PlatformCollaborationIdentifierResolver,
+} from "../../packages/platform/src/collaboration/identifier-resolver.js";
 import { bootstrapPlatformCollaborationDatabase } from "../../packages/platform/src/collaboration/database.js";
+import { inventoryPlatformPersonToPersonRecords } from "../../packages/platform/src/collaboration/person-to-person-inventory.js";
 import {
   createPlatformCollaborationTestDatabase,
   destroyPlatformCollaborationTestDatabase,
@@ -102,23 +106,56 @@ describe("S20 platform organization precondition: fail-closed composition", () =
   });
 });
 
-describe("S20 / T100: the rollout cohort table is gone", () => {
-  it("drops collaboration_rollout_policy atomically and keeps a nullable, unused policy revision on tickets", async () => {
+describe("S20 / T101: invitation identifiers resolve only inside the organization", () => {
+  const member = { actorId: "user_member", displayName: "Member" };
+  const outsider = { actorId: "user_outsider", displayName: "Outsider" };
+  const accounts = new Map([[member.actorId, member], [outsider.actorId, outsider]]);
+
+  function resolver(projection?: { isCurrentMember(input: { organizationId: string; actorId: string }): Promise<boolean> }) {
+    return new PlatformCollaborationIdentifierResolver({
+      getAccountByActorId: async (actorId) => accounts.get(actorId) ?? null,
+      listAccountsByUsername: async (username) => username === "member" ? [member] : username === "outsider" ? [outsider] : [],
+      ...(projection ? { membershipProjection: projection } : {}),
+    });
+  }
+
+  it("resolves nothing while no membership projection is registered", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await expect(resolver().resolve(member.actorId, "org_matrix_team"))
+      .rejects.toMatchObject({ code: "unavailable" });
+    await expect(resolver().resolve("member", "org_matrix_team"))
+      .rejects.toBeInstanceOf(CollaborationIdentifierResolutionError);
+    expect(warn).toHaveBeenCalledWith("[platform-collaboration] invitation identifier refused: no membership projection registered");
+  });
+
+  it("returns only current members of the scope's organization and the same safe failure for everyone else", async () => {
+    const calls: { organizationId: string; actorId: string }[] = [];
+    const withProjection = resolver({
+      isCurrentMember: async (input) => { calls.push(input); return input.organizationId === "org_matrix_team" && input.actorId === member.actorId; },
+    });
+    await expect(withProjection.resolve("@member", "org_matrix_team")).resolves.toEqual(member);
+    await expect(withProjection.resolve("outsider", "org_matrix_team")).rejects.toMatchObject({ code: "unresolved" });
+    await expect(withProjection.resolve(member.actorId, "org_other")).rejects.toMatchObject({ code: "unresolved" });
+    await expect(withProjection.resolve(member.actorId, "not-an-org")).rejects.toMatchObject({ code: "unresolved" });
+    expect(calls).toEqual([
+      { organizationId: "org_matrix_team", actorId: member.actorId },
+      { organizationId: "org_matrix_team", actorId: outsider.actorId },
+      { organizationId: "org_other", actorId: member.actorId },
+    ]);
+  });
+});
+
+describe("S20 / T102: platform person-to-person inventory", () => {
+  it("counts directory and index rows, which are all pre-organization records", async () => {
     const fixture = await createPlatformCollaborationTestDatabase();
     try {
       await bootstrapPlatformCollaborationDatabase(fixture.collaborationDb);
-      const tables = await fixture.collaborationDb.selectFrom("pg_tables" as never)
+      await expect(inventoryPlatformPersonToPersonRecords(fixture.collaborationDb)).resolves.toEqual({
+        directoryScopes: 0, invitedIndexRows: 0, acceptedIndexRows: 0, revokedIndexRows: 0, total: 0,
+      });
+      const rolloutTable = await fixture.collaborationDb.selectFrom("pg_tables" as never)
         .select("tablename" as never).where("tablename" as never, "=", "collaboration_rollout_policy").execute();
-      expect(tables).toEqual([]);
-      const columns = await fixture.collaborationDb.selectFrom("information_schema.columns" as never)
-        .select(["column_name", "is_nullable"] as never)
-        .where("table_name" as never, "=", "collaboration_connection_tickets")
-        .where("column_name" as never, "=", "policy_revision").execute();
-      // Kept nullable and unused so a pre-S20 build remains a rollback target; S18 drops it.
-      expect(columns).toEqual([{ column_name: "policy_revision", is_nullable: "YES" }]);
-      const source = await readFile("packages/platform/src/collaboration/database.ts", "utf8");
-      expect(source).toContain("runPlatformMigration(db, (trx) => applyCollaborationSchema(trx))");
-      expect(source).not.toContain(".execute(db)");
+      expect(rolloutTable).toEqual([]);
     } finally {
       await destroyPlatformCollaborationTestDatabase(fixture);
     }

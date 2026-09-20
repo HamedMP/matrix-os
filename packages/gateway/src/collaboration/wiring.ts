@@ -74,7 +74,7 @@ export async function createGatewayCollaboration(options: {
   chatRepository: ChatRepository;
   config: GatewayCollaborationConfig;
   resolveParticipant?(actorId: string): Promise<{ actorId: string; displayName: string }>;
-  resolveInvitationIdentifier?(identifier: string): Promise<{ actorId: string; displayName: string }>;
+  resolveInvitationIdentifier?(identifier: string, organizationId: string): Promise<{ actorId: string; displayName: string }>;
   outboxFetch?: typeof fetch;
   projectLifecycleDrivers?: {
     stageTransfer: ProjectTransferStager;
@@ -103,7 +103,7 @@ export async function createGatewayCollaboration(options: {
   const resolveParticipant = options.resolveParticipant
     ?? ((actorId: string) => participantResolver!.resolve(actorId));
   const resolveInvitationIdentifier = options.resolveInvitationIdentifier
-    ?? ((identifier: string) => participantResolver!.resolveInvitationIdentifier(identifier));
+    ?? ((identifier: string, organizationId: string) => participantResolver!.resolveInvitationIdentifier(identifier, organizationId));
   const organizationPrecondition = options.organizationPrecondition
     ?? createOrganizationPrecondition(options.organizationMembershipSource
       ? { source: options.organizationMembershipSource }

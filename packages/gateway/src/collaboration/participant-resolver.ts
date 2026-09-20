@@ -1,6 +1,7 @@
 import {
   CollaborationActorIdSchema,
   CollaborationInvitationIdentifierSchema,
+  CollaborationOrganizationIdSchema,
   CollaborationParticipantSchema,
   CollaborationRuntimeIdSchema,
 } from "@matrix-os/contracts";
@@ -102,8 +103,12 @@ export class CollaborationParticipantResolver {
     }
   }
 
-  async resolveInvitationIdentifier(identifierInput: string): Promise<{ actorId: string; displayName: string }> {
+  async resolveInvitationIdentifier(
+    identifierInput: string,
+    organizationIdInput: string,
+  ): Promise<{ actorId: string; displayName: string }> {
     const identifier = CollaborationInvitationIdentifierSchema.parse(identifierInput);
+    const organizationId = CollaborationOrganizationIdSchema.parse(organizationIdInput);
     try {
       const response = await this.fetchImpl(this.resolutionEndpoint, {
         method: "POST",
@@ -115,7 +120,7 @@ export class CollaborationParticipantResolver {
           "content-type": "application/json",
           "x-matrix-runtime-id": this.options.runtimeId,
         },
-        body: JSON.stringify({ identifier }),
+        body: JSON.stringify({ identifier, organizationId }),
       });
       if (!response.ok) {
         await response.body?.cancel();
