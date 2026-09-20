@@ -2,23 +2,27 @@
 
 **Packet:** S01. **Tasks:** T006, T007, T008, T009. **Date:** 2026-09-20.
 **Base:** `124/s00` tip `3571cdb17` (on `main` `326108a39`; prerequisite PRs #1761 and #1765 baseline verified at `3b4662d28`).
-**Result:** behavior-preserving extraction; no new ACL behavior, no new migration, no changed transaction scope or lock order. Three stacked Graphite layers, each under the 3,000-addition / 50-file limit.
+**Result:** behavior-preserving extraction; no new ACL behavior, no new migration, no changed transaction scope or lock order. Four stacked Graphite layers, each under the 3,000-addition / 50-file limit (the schema-registration layer was split from the user machine layer after the extended schema fixture pushed one PR over the limit).
 
 ## Layers
 
-| Layer | Branch / head | Tasks | Diff vs parent | Contents |
+| Layer | Branch | Tasks | Diff vs parent | Contents |
 | --- | --- | --- | --- | --- |
-| 1 | `124/s01` `6c2f3e204` | T006, T007 | 22 files, +2,932 / −2,558 | Platform schema registration (`database/migrate.ts` + 11 ordered `database/migrations/*.ts`), user machine records/queries/lifecycle, host bundle queries, `tests/platform/collaboration-foundation.test.ts`, schema baseline fixture |
-| 2 | `124/s01-billing` `31e9ceabe` | T006, T007 | 11 files, +2,130 / −1,805 | Billing records/subscription/entitlement queries and checkout attempt claims out of `db.ts`; Stripe client contracts, checkout schemas/support and webhook projection out of `billing-routes.ts` |
-| 3 | `124/s01-gateway` `eef098241` | T006, T008, T009 | 14 files, +2,837 / −2,173 | Gateway collaboration routes split into per-resource modules + `route-support.ts`; repository facade + `grant-repository.ts` + `lifecycle-repository.ts` + `repository-types.ts`; `database-migrations.ts` versioned registry; `tests/gateway/collaboration-foundation.test.ts`; this receipt |
+| 1 | `124/s01` | T006, T007 | 16 files, +2,476 / −1,399 | Platform schema registration (`database/migrate.ts` + 11 ordered `database/migrations/*.ts`), `tests/platform/collaboration-foundation.test.ts` schema block, full schema baseline fixture (48 tables, 546 columns, 183 constraints, 138 index definitions) |
+| 2 | `124/s01-machines` | T006, T007 | 8 files, +1,257 / −1,066 | User machine records/queries/lifecycle, provider deletion queue, host bundle queries out of `db.ts`; identity and round-trip characterization |
+| 3 | `124/s01-billing` | T006, T007 | 11 files, +2,130 / −1,805 | Billing records/subscription/entitlement queries and checkout attempt claims out of `db.ts`; Stripe client contracts, checkout schemas/support and webhook projection out of `billing-routes.ts` |
+| 4 | `124/s01-gateway` | T006, T008, T009 | 15 files, +2,916 / −2,173 | Gateway collaboration routes split into per-resource modules + `route-support.ts`; repository facade + `grant-repository.ts` + `lifecycle-repository.ts` + `repository-types.ts`; `database-migrations.ts` versioned registry; `tests/gateway/collaboration-foundation.test.ts`; this receipt |
+
+Exact head SHAs are on the PRs (Graphite restacks rewrite them); the stack order above is the merge order.
 
 ## RED → GREEN
 
 | Test | RED (before extraction) | GREEN (after) |
 | --- | --- | --- |
-| `tests/platform/collaboration-foundation.test.ts` (schema/user-machine block) | `Cannot find module '../../packages/platform/src/database/migrate.js'` | 6/6 pass; baseline tables (48) and indexes (138) identical to the unextracted `migrateSchema` on `3b4662d28`; re-run idempotent; re-exports identical by reference |
+| `tests/platform/collaboration-foundation.test.ts` (schema block, layer 1) | `Cannot find module '../../packages/platform/src/database/migrate.js'` | 3/3 pass; every public table, column, constraint and index definition identical to the unextracted `migrateSchema` at the `124/s00` base; re-run idempotent |
+| `tests/platform/collaboration-foundation.test.ts` (user machine block, layer 2) | `Cannot find module '../../packages/platform/src/database/user-machines.js'` | 3/3 pass; re-exports identical by reference; machine round trip equal through both entrypoints |
 | `tests/platform/collaboration-foundation.test.ts` (personal billing block) | `Cannot find module '../../packages/platform/src/database/billing.js'` | 2/2 pass; off-allowlist return path still collapses to `/` (guard preserved) |
-| `tests/gateway/collaboration-foundation.test.ts` | `Cannot find module '../../packages/gateway/src/collaboration/database-migrations.js'` | 7/7 pass; 33 handler routes in baseline order from both `createCollaborationRoutes` and the per-resource registrars; prefix middleware `ALL/POST/PATCH/DELETE`; facade delegates to grant/lifecycle repositories; versions 1–6 recorded idempotently; shared queue FIFO, one active run, actor-scoped replay |
+| `tests/gateway/collaboration-foundation.test.ts` | `Cannot find module '../../packages/gateway/src/collaboration/database-migrations.js'` | 7/7 pass; 33 handler routes in baseline order from both `createCollaborationRoutes` and the per-resource registrars; prefix middleware `ALL/POST/PATCH/DELETE`; facade delegates to grant/lifecycle repositories; versions 1–6 recorded idempotently; shared queue FIFO, one active run, and idempotency scoped to the requesting actor (a second actor reusing the same client request ID gets its own queued turn) |
 
 Regression suites run against the extracted code (`pnpm exec vitest run … --maxWorkers=4`, PGlite fixtures):
 
@@ -47,7 +51,7 @@ Not run: no live Postgres races were needed (no lock or transaction moved); no R
 | `packages/gateway/src/collaboration/lifecycle-repository.ts` | S12 |
 | `packages/gateway/src/collaboration/database.ts`, `database-migrations.ts` | S04 adds versioned migrations ≥ 7 through the registry; S20 T100 removes cohort inputs elsewhere |
 
-## Invariants (all three layers)
+## Invariants (all four layers)
 
 - **Source of truth**: unchanged. Platform Postgres tables (schema registered by `packages/platform/src/database/migrate.ts`, still the single ordered step list) and owner-home Postgres collaboration tables (`COLLABORATION_VERSIONED_MIGRATIONS` in `packages/gateway/src/collaboration/database-migrations.ts`). `db.ts`, `billing-routes.ts`, `routes.ts`, `repository.ts` and `database.ts` remain the composition and export entrypoints.
 - **Lock/transaction scope**: unchanged. The platform migration still runs every step inside the one `pg_advisory_xact_lock` transaction opened by `migration-runner.ts`; user machine claims, checkout attempt claims and the billing webhook transaction are byte-identical moves. On the gateway the base collaboration schema still runs unwrapped and versions 3–6 each in their own transaction; every grant mutation keeps its single transaction and `lockDirectScope` → member `forUpdate` lock order. No transaction boundary was added, removed or moved; no network call entered a transaction.
