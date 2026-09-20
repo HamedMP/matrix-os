@@ -5,6 +5,7 @@ import {
   SpeechServiceError,
   createPlatformSpeechService,
 } from "../../packages/platform/src/speech/service.js";
+import { SpeechAdapterError } from "../../packages/platform/src/speech/adapters/openai.js";
 import { createTestPlatformDb, destroyTestPlatformDb } from "./platform-db-test-helper.js";
 
 const now = new Date("2026-09-10T00:00:00.000Z");
@@ -45,7 +46,7 @@ describe("platform speech service", () => {
 
   afterEach(async () => destroyTestPlatformDb(db));
 
-  function service() {
+  function service(cleanup?: { cleanupIntervalMs: number; cleanupBatchSize: number }) {
     const operations = createSpeechOperationsRepository({ db, now: () => now });
     const funding = {
       reserve: vi.fn(async () => ({ reservationId: "funding_1", reservedMicrousd: 120 })),
@@ -76,7 +77,9 @@ describe("platform speech service", () => {
           },
           ownerAudio: { enabled: false },
         },
+        ...cleanup,
       }),
+      operations,
     };
   }
 
@@ -99,6 +102,13 @@ describe("platform speech service", () => {
     expect(await speech.status(identity, requestId)).toMatchObject({
       executionState: "succeeded",
       outcomeCode: "transcript",
+    });
+    await expect(speech.cancel(identity, requestId)).rejects.toMatchObject({
+      code: "result_not_replayable",
+    });
+    expect(await speech.status(identity, requestId)).toMatchObject({
+      executionState: "succeeded",
+      cancellationRequested: false,
     });
   });
 
@@ -133,5 +143,44 @@ describe("platform speech service", () => {
     expect(error).toMatchObject({ code: "cancelled" });
     expect(adapter.transcribe).not.toHaveBeenCalled();
     expect(JSON.stringify(error)).not.toMatch(/openai|funding_1|machine_123/i);
+  });
+
+  it("preserves provider timeout identity for 504 route mapping", async () => {
+    const { speech, adapter } = service();
+    adapter.transcribe.mockRejectedValueOnce(new SpeechAdapterError("timeout", "private timeout detail"));
+    await expect(speech.transcribe({
+      identity,
+      requestId,
+      sourceKind: "dictation",
+      audio: oneSecondWav(),
+      mediaType: "audio/wav",
+      signal: new AbortController().signal,
+    })).rejects.toMatchObject({ code: "timeout" });
+    expect(await speech.status(identity, requestId)).toMatchObject({
+      executionState: "uncertain",
+      outcomeCode: "timeout",
+    });
+  });
+
+  it("runs bounded metadata cleanup until shutdown", async () => {
+    vi.useFakeTimers();
+    try {
+      const { speech, operations } = service({ cleanupIntervalMs: 1_000, cleanupBatchSize: 7 });
+      let releaseSweep!: () => void;
+      const blockedSweep = new Promise<number>((resolve) => { releaseSweep = () => resolve(0); });
+      const sweep = vi.spyOn(operations, "sweepExpired").mockReturnValue(blockedSweep);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(sweep).toHaveBeenCalledWith(7);
+      let shutdownFinished = false;
+      const shutdown = speech.shutdown().then(() => { shutdownFinished = true; });
+      await Promise.resolve();
+      expect(shutdownFinished).toBe(false);
+      releaseSweep();
+      await shutdown;
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(sweep).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -45,4 +45,8 @@ export async function migrateSpeech(db: PlatformMigrationExecutor): Promise<void
     CREATE INDEX IF NOT EXISTS idx_speech_operations_active
     ON speech_operations(machine_id, runtime_slot, execution_state, expires_at)
   `.execute(db);
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_speech_operations_expiry
+    ON speech_operations(expires_at, execution_state)
+  `.execute(db);
 }

@@ -11,6 +11,7 @@ const ResponseSchema = z.object({ text: z.string().max(MAX_TRANSCRIPT_CHARS) }).
 export type SpeechAdapterErrorCode =
   | "misconfigured"
   | "unsupported_options"
+  | "timeout"
   | "request_failed"
   | "invalid_response";
 
@@ -91,23 +92,35 @@ export function createOpenAiFileTranscriptionAdapter(options: {
       form.set("model", options.model);
       form.set("file", new Blob([Uint8Array.from(input.audio)], { type: input.mediaType }), "recording.wav");
       let response: Response;
+      const timeoutSignal = AbortSignal.timeout(timeoutMs);
       try {
         response = await fetchImpl(TRANSCRIPTIONS_ENDPOINT, {
           method: "POST",
           redirect: "error",
           headers: { authorization: `Bearer ${options.apiKey}` },
           body: form,
-          signal: AbortSignal.any([input.signal, AbortSignal.timeout(timeoutMs)]),
+          signal: AbortSignal.any([input.signal, timeoutSignal]),
         });
       } catch (error: unknown) {
         if (error instanceof SpeechAdapterError) throw error;
+        if (timeoutSignal.aborted && !input.signal.aborted) {
+          throw new SpeechAdapterError("timeout", "Transcription request timed out");
+        }
         throw new SpeechAdapterError("request_failed", "Transcription request failed");
       }
       if (!response.ok) {
         await response.body?.cancel();
         throw new SpeechAdapterError("request_failed", "Transcription request failed");
       }
-      const body = await readBoundedText(response, maxResponseBytes);
+      let body: string;
+      try {
+        body = await readBoundedText(response, maxResponseBytes);
+      } catch (error: unknown) {
+        if (timeoutSignal.aborted && !input.signal.aborted) {
+          throw new SpeechAdapterError("timeout", "Transcription request timed out");
+        }
+        throw error;
+      }
       let decoded: unknown;
       try {
         decoded = JSON.parse(body);
