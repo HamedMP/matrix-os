@@ -20,7 +20,15 @@ import {
   type CollaborationPreset,
 } from "@matrix-os/contracts";
 import { CollaborationAuthorizationError } from "./authority-error.js";
-import type { ActorGrantResolution, CollaborationCapabilityRepository, CreateGrantInput, GrantMutationResult, GrantRow } from "./capability-repository.js";
+import type {
+  ActorGrantResolution,
+  CollaborationCapabilityRepository,
+  CreateGrantInput,
+  GrantMutationResult,
+  GrantRow,
+  PatchGrantPresetInput,
+  RevokeGrantInput,
+} from "./capability-repository.js";
 import type { OwnerCollaborationDatabase } from "./database.js";
 import type { OrganizationPrecondition } from "./organization-precondition.js";
 import { CollaborationRepositoryError } from "./repository-shared.js";
@@ -165,6 +173,49 @@ export class CollaborationCapabilityEvaluator {
       await this.options.organizationPrecondition.require({ organizationId: scope.organization_id, actorId: input.audience.actorId });
     }
     return this.options.grants.createGrant(input);
+  }
+
+  /**
+   * Participants with fresh membership only: an actor whose membership ended is dropped even if
+   * their activation row has not been swept yet, so departure never leaves them enumerable.
+   */
+  async listParticipants(scopeId: string): Promise<string[]> {
+    const scope = await this.options.db.selectFrom("collaboration_scopes").select("organization_id")
+      .where("id", "=", scopeId).where("deleted_at", "is", null).executeTakeFirst();
+    if (!scope?.organization_id) return [];
+    const candidates = await this.options.grants.listParticipants(scopeId);
+    const fresh: string[] = [];
+    for (const actorId of candidates) {
+      try {
+        await this.options.organizationPrecondition.require({ organizationId: scope.organization_id, actorId });
+        fresh.push(actorId);
+      } catch (error: unknown) {
+        if (!(error instanceof CollaborationAuthorizationError)) throw error;
+      }
+    }
+    return fresh;
+  }
+
+  /** Preset changes require the owner's fresh membership and, for a member grant, the target's. */
+  async patchGrantPreset(input: PatchGrantPresetInput): Promise<GrantMutationResult> {
+    const grant = await this.requireOwnerAndGrant(input);
+    if (grant.audience.kind === "member") {
+      await this.options.organizationPrecondition.require({ organizationId: grant.organizationId, actorId: grant.audience.actorId });
+    }
+    return this.options.grants.patchGrantPreset(input);
+  }
+
+  /** Revocation requires only the owner's fresh membership: ending a departed member's grant must stay possible. */
+  async revokeGrant(input: RevokeGrantInput): Promise<GrantMutationResult> {
+    await this.requireOwnerAndGrant(input);
+    return this.options.grants.revokeGrant(input);
+  }
+
+  private async requireOwnerAndGrant(input: { scopeId: string; actorId: string; grantId: string }) {
+    const grant = await this.options.grants.getGrant(input.grantId);
+    if (!grant || grant.scopeId !== input.scopeId) throw new CollaborationAuthorizationError("not_found", "Grant not found");
+    await this.options.organizationPrecondition.require({ organizationId: grant.organizationId, actorId: input.actorId });
+    return grant;
   }
 
   /** Opening the share is the accept; the actor's fresh membership is re-checked inside the same request. */

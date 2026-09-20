@@ -12,7 +12,9 @@
  * Legacy `collaboration_members` rows (pre-organization editor/viewer roles)
  * are never auto-converted at bootstrap. `dispositionLegacyMembers` is the
  * explicit, owner-invoked (or S18 cutover) conversion that records the exact
- * old ceiling so a converted editor never gains actions the old role lacked.
+ * old ceiling so a converted editor never gains actions the old role lacked,
+ * and retires the legacy row (`status = 'revoked'`, `dispositioned_at`) in the
+ * same transaction so the new grant is the only authority for that actor.
  */
 import { sql, type Kysely, type Transaction } from "kysely";
 import type { OwnerCollaborationDatabase } from "./database.js";
@@ -83,6 +85,7 @@ export async function migrateCapabilityGrantsV8(trx: Transaction<OwnerCollaborat
     CREATE INDEX IF NOT EXISTS idx_collaboration_grant_activations_actor
     ON collaboration_grant_activations(actor_id, state)
   `.execute(trx);
+  await sql`ALTER TABLE collaboration_members ADD COLUMN IF NOT EXISTS dispositioned_at TIMESTAMPTZ`.execute(trx);
   await sql`
     INSERT INTO collaboration_schema_migrations (version)
     VALUES (${COLLABORATION_GRANTS_MIGRATION_VERSION})
@@ -124,11 +127,13 @@ export async function dispositionLegacyMembers(
       throw new CollaborationRepositoryError("conflict", "Scope has no organization context");
     }
     const legacy = await trx.selectFrom("collaboration_members")
-      .select(["actor_id", "role", "expires_at"])
+      .select(["actor_id", "role", "expires_at", "revision"])
       .where("scope_id", "=", input.scopeId)
       .where("status", "=", "accepted")
       .where("role", "in", ["editor", "viewer"])
+      .where("dispositioned_at", "is", null)
       .orderBy("actor_id")
+      .forUpdate()
       .execute();
     const existing = await trx.selectFrom("collaboration_grants")
       .select("audience_actor_id")
@@ -163,6 +168,19 @@ export async function dispositionLegacyMembers(
         updated_at: now,
         revoked_at: null,
       }).execute();
+      // Retire the legacy row in the same transaction so the grant is the only authority for this actor:
+      // revoking the grant later must end access, and the authority evaluator never reads a retired row.
+      const retired = await trx.updateTable("collaboration_members").set({
+        status: "revoked",
+        dispositioned_at: now,
+        revision: Number(row.revision) + 1,
+        updated_at: now,
+      }).where("scope_id", "=", input.scopeId)
+        .where("actor_id", "=", row.actor_id)
+        .where("revision", "=", Number(row.revision))
+        .returning("actor_id")
+        .executeTakeFirst();
+      if (!retired) throw new CollaborationRepositoryError("conflict", "Membership revision changed");
       await appendMutationRecords(trx, {
         scope,
         actorId: input.actorId,

@@ -331,6 +331,15 @@ export class CollaborationCapabilityRepository {
     const nowDate = this.options.now();
     const now = nowDate.toISOString();
     await this.db.transaction().execute(async (trx) => {
+      // Home lock order: scope row first, then the grant row, so two actors deciding different
+      // grants on one scope serialize on the scope and never race on the event sequence.
+      const located = await trx.selectFrom("collaboration_grants").select("scope_id").where("id", "=", input.grantId).executeTakeFirst();
+      if (!located) throw new CollaborationRepositoryError("not_found", "Grant not found");
+      const scope = await trx.selectFrom("collaboration_scopes").selectAll()
+        .where("id", "=", located.scope_id).where("deleted_at", "is", null).forUpdate().executeTakeFirst();
+      if (!scope || scope.lifecycle !== "shared") {
+        throw new CollaborationRepositoryError("conflict", "Scope is not available");
+      }
       const grant = await trx.selectFrom("collaboration_grants")
         .selectAll()
         .where("id", "=", input.grantId)
@@ -341,10 +350,6 @@ export class CollaborationCapabilityRepository {
       }
       if (grant.expires_at !== null && new Date(grant.expires_at).getTime() <= nowDate.getTime()) {
         throw new CollaborationRepositoryError("expired", "Grant has expired");
-      }
-      const scope = await trx.selectFrom("collaboration_scopes").selectAll().where("id", "=", grant.scope_id).executeTakeFirst();
-      if (!scope || scope.lifecycle !== "shared") {
-        throw new CollaborationRepositoryError("conflict", "Scope is not available");
       }
       const changed = await apply(trx, grant, now);
       if (!changed) return;
@@ -357,6 +362,47 @@ export class CollaborationCapabilityRepository {
         now,
       });
     });
+  }
+
+  /**
+   * Departure ends every grant derived from the membership: member grants of
+   * the actor in that organization are revoked and their activations of
+   * organization-wide grants are deleted, in one transaction per scope with the
+   * scope row locked, with an audit record per ended grant. S03 calls this from
+   * the membership projection when it observes removal; it is idempotent.
+   */
+  async endActorGrants(input: { organizationId: string; actorId: string }): Promise<{ ended: number }> {
+    const now = this.options.now().toISOString();
+    const scopes = await this.db.selectFrom("collaboration_grants").select("scope_id").distinct()
+      .where("organization_id", "=", input.organizationId)
+      .where((eb) => eb.or([
+        eb.and([eb("audience_kind", "=", "member"), eb("audience_actor_id", "=", input.actorId), eb("state", "in", ["pending", "active"])]),
+        eb("audience_kind", "=", "organization"),
+      ]))
+      .limit(1_000).execute();
+    let ended = 0;
+    for (const { scope_id: scopeId } of scopes) {
+      ended += await this.db.transaction().execute(async (trx) => {
+        const scope = await trx.selectFrom("collaboration_scopes").selectAll().where("id", "=", scopeId).forUpdate().executeTakeFirst();
+        if (!scope) return 0;
+        const revoked = await trx.updateTable("collaboration_grants").set({ state: "revoked", revoked_at: now, updated_at: now, revision: sql<number>`revision + 1` })
+          .where("scope_id", "=", scopeId).where("audience_kind", "=", "member").where("audience_actor_id", "=", input.actorId)
+          .where("state", "in", ["pending", "active"]).returning("id").execute();
+        const deleted = await trx.deleteFrom("collaboration_grant_activations")
+          .where("actor_id", "=", input.actorId)
+          .where("grant_id", "in", trx.selectFrom("collaboration_grants").select("id").where("scope_id", "=", scopeId).where("audience_kind", "=", "organization"))
+          .returning("grant_id").execute();
+        const count = revoked.length + deleted.length;
+        if (count > 0) {
+          await appendMutationRecords(trx, {
+            scope, actorId: input.actorId, action: "grant.ended_by_departure",
+            recipients: [{ actorId: input.actorId }], discoveryState: "revoked", now, reasonCode: "membership_ended",
+          });
+        }
+        return count;
+      });
+    }
+    return { ended };
   }
 
   /** Lazily marks expired grants; effective access treats expiry by timestamp regardless. */

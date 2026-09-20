@@ -37,6 +37,8 @@ export interface CollaborationMemberRecord {
   revision: number;
   joinedAt?: string;
   updatedAt: string;
+  /** S04: present when the legacy row was retired in favour of a preset grant. */
+  dispositionedAt?: string;
 }
 
 export interface CreateDirectScopeInput {
@@ -162,5 +164,6 @@ export function toMember(row: MemberRow): CollaborationMemberRecord {
     revision: Number(row.revision),
     ...(row.joined_at === null ? {} : { joinedAt: toIso(row.joined_at) }),
     updatedAt: toIso(row.updated_at),
+    ...(row.dispositioned_at === null || row.dispositioned_at === undefined ? {} : { dispositionedAt: toIso(row.dispositioned_at) }),
   };
 }
