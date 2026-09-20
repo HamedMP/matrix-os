@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { listApps, type AppEntry } from "./apps.js";
-import { resolveSystemIconMetadata } from "./icon-metadata.js";
+import { listAppCatalog, type AppEntry } from "./apps.js";
+import { resolveSystemIconMetadata, type SystemIconMetadata } from "./icon-metadata.js";
 
 export interface ShellBootstrapIcon {
   url: string;
@@ -41,31 +41,28 @@ function normalizeModules(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
 }
 
-async function resolveBootstrapIcon(homePath: string, slug: string): Promise<ShellBootstrapIcon | null> {
-  if (!SAFE_ICON_SLUG.test(slug)) return null;
-  return resolveSystemIconMetadata(homePath, slug);
+function toBootstrapIcon(icon: SystemIconMetadata): ShellBootstrapIcon {
+  return { url: icon.url, etag: icon.etag, versionedUrl: icon.versionedUrl };
 }
 
 export async function buildShellBootstrap(homePath: string): Promise<ShellBootstrap> {
-  const [layoutValue, modulesValue, apps] = await Promise.all([
+  const [layoutValue, modulesValue, catalog] = await Promise.all([
     readJsonFile(join(homePath, "system/layout.json")),
     readJsonFile(join(homePath, "system/modules.json")),
-    listApps(homePath),
+    listAppCatalog(homePath),
   ]);
+  const { apps } = catalog;
 
-  const iconSlugs = new Set<string>(BOOTSTRAP_BUILT_IN_ICON_SLUGS);
-  for (const app of apps) {
-    if (typeof app.icon === "string" && SAFE_ICON_SLUG.test(app.icon)) {
-      iconSlugs.add(app.icon);
-    } else if (typeof app.slug === "string" && SAFE_ICON_SLUG.test(app.slug)) {
-      iconSlugs.add(app.slug);
-    }
-  }
-
+  // The catalog already resolved and stat'ed every app icon; only the built-in
+  // launcher icons that no app claimed still need a lookup.
   const icons: Record<string, ShellBootstrapIcon> = {};
-  await Promise.all(Array.from(iconSlugs).map(async (slug) => {
-    const icon = await resolveBootstrapIcon(homePath, slug);
-    if (icon) icons[slug] = icon;
+  for (const [slug, icon] of Object.entries(catalog.icons)) {
+    if (SAFE_ICON_SLUG.test(slug)) icons[slug] = toBootstrapIcon(icon);
+  }
+  const missingBuiltIns = BOOTSTRAP_BUILT_IN_ICON_SLUGS.filter((slug) => !(slug in icons));
+  await Promise.all(missingBuiltIns.map(async (slug) => {
+    const icon = await resolveSystemIconMetadata(homePath, slug);
+    if (icon) icons[slug] = toBootstrapIcon(icon);
   }));
 
   return {
