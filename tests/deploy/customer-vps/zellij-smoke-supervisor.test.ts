@@ -19,7 +19,12 @@ function cancellableDelay(ms: number, signal: AbortSignal) {
   });
 }
 
-async function waitForStartedMarker(path: string, closed: Promise<number | null>, readMarker = readFile) {
+async function waitForStartedMarker(
+  path: string,
+  closed: Promise<number | null>,
+  readMarker = readFile,
+  readStderr = () => "",
+) {
   const controller = new AbortController();
   const marker = (async () => {
     const deadline = Date.now() + SUPERVISOR_START_TIMEOUT_MS;
@@ -37,7 +42,10 @@ async function waitForStartedMarker(path: string, closed: Promise<number | null>
   try {
     return await Promise.race([
       marker,
-      closed.then((code) => { throw new Error(`Zellij smoke supervisor exited before startup (${code})`); }),
+      closed.then((code) => {
+        const stderr = readStderr().replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "").slice(-4_096).trim();
+        throw new Error(`Zellij smoke supervisor exited before startup (${code})${stderr ? `\nSupervisor stderr:\n${stderr}` : ""}`);
+      }),
     ]);
   } finally {
     controller.abort();
@@ -77,11 +85,23 @@ describe("Zellij smoke supervisor", () => {
     }
   });
 
+  it("reports bounded supervisor stderr when startup exits early", async () => {
+    const closed = Promise.resolve(1);
+    const missing = Object.assign(new Error("missing"), { code: "ENOENT" });
+    await expect(waitForStartedMarker(
+      "/missing",
+      closed,
+      async () => { throw missing; },
+      () => "fixture startup failed\u0000with control bytes",
+    )).rejects.toThrow("Supervisor stderr:\nfixture startup failedwith control bytes");
+  });
+
   it.each([false, true])("cleans an interrupted worker and preserves its error (cleanup fails: %s)", async (cleanupFails) => {
     const root = await mkdtemp(join(tmpdir(), "mzc-supervisor-"));
     const marker = join(root, "started.json");
     const cleaned = join(root, "cleaned");
     const binary = join(root, "fake-zellij");
+    const worker = join(root, "fixture-worker.mjs");
     let child: ReturnType<typeof spawn> | undefined;
     let closed: Promise<number | null> | undefined;
     try {
@@ -98,14 +118,25 @@ fs.writeFileSync(${JSON.stringify(marker)}, JSON.stringify({pid:process.pid, fix
 setTimeout(() => process.exit(0), 10000);
 `);
       await chmod(binary, 0o700);
+      await writeFile(worker, `
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+const root = process.argv[3];
+const fixture = join(root, 'case-fixture');
+await mkdir(fixture);
+await writeFile(join(fixture, 'session'), 'matrix-sess_1234abcd');
+await writeFile(${JSON.stringify(marker)}, JSON.stringify({pid:process.pid, fixture}));
+setInterval(() => {}, 60_000);
+`);
       child = spawn(process.execPath, ["--import", "tsx", "scripts/smoke-zellij-session-config.ts", binary], {
         cwd: process.cwd(), stdio: ["ignore", "pipe", "pipe"],
+        env: { ...process.env, MATRIX_ZELLIJ_SMOKE_FIXTURE_WORKER: worker },
       });
       let stderr = "";
       child.stderr!.on("data", (data) => { stderr = (stderr + data).slice(-65_536); });
       child.stdout!.resume();
       closed = new Promise<number | null>((done) => child!.once("close", done));
-      const { fixture } = await waitForStartedMarker(marker, closed);
+      const { fixture } = await waitForStartedMarker(marker, closed, readFile, () => stderr);
       child.kill("SIGTERM");
       expect(await closed).not.toBe(0);
       expect(stderr).toContain("AbortError");
