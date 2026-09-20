@@ -189,6 +189,9 @@ export function createCodexModelCatalogSource(options: {
 
   return async (provider: AgentProviderSummary): Promise<CodingModelCatalogProjection | null> => {
     if (provider.kind !== "codex" && provider.id !== "codex") return null;
+    // Do not launch an app-server (or return a previously ready catalog) after
+    // the canonical provider inventory reports that this connection is unavailable.
+    if (provider.availability !== "available") return null;
     const now = Date.now();
     if (cached && cached.expiresAt > now) return cached.value;
     if (!pending) {

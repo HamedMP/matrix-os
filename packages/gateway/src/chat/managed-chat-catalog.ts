@@ -29,6 +29,7 @@ export function managedChatInstances(
       id: instance.id,
       driverKind: "kernel" as const,
       displayName: "Matrix AI",
+      connectionLabel: "Matrix AI",
       availability: "available" as const,
       workspaceRequirement: "none" as const,
       models: eligible.map((model) => ({

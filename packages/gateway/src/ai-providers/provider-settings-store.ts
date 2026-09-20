@@ -2,8 +2,6 @@ import { randomUUID } from "node:crypto";
 import { basename, dirname, join, resolve } from "node:path";
 import {
   AiProviderSnapshotV3Schema,
-  FundedAiEffectivePolicySchema,
-  FundedAiFundingSummarySchema,
   ProviderConnectionAttemptSchema,
   ProviderDependencyCountsSchema,
   ProviderSettingsMutationResponseSchema,
@@ -39,10 +37,7 @@ import type {
   ProviderSettingsRuntimeMutationInput,
   ProviderSettingsRuntimeCoordinator,
 } from "./provider-settings-coordinators.js";
-import type {
-  GenericHarnessModelCatalog,
-  GenericHarnessModelCatalogReader,
-} from "./generic-harness-model-catalog.js";
+import type { GenericHarnessModelCatalogReader } from "./generic-harness-model-catalog.js";
 import {
   assertProviderSettingsAction,
   coordinatorLoginHarness,
@@ -56,6 +51,7 @@ import {
   sameProviderDependencyCounts,
 } from "./provider-settings-receipts.js";
 import type { FundedAiFundingSummaryReader } from "../funded-ai-funding-summary-client.js";
+import { readProviderSettingsEnrichment } from "./provider-settings-enrichment.js";
 
 const CONFIG_PATH = "system/ai-providers/settings.json";
 const PRIVATE_DIRECTORY = ".matrix-private";
@@ -168,40 +164,14 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
 
   async #project(canonical: AiProviderSnapshotV3, config: ProviderSettingsConfiguration, refresh = false) {
     try {
-      let fundingSummary;
-      let fundedPolicy;
-      let genericModelCatalog;
-      if (this.#fundingSummary && canonical.accessSources.some((source) =>
-        source.fundingKind === "matrix_included" || source.fundingKind === "matrix_addon")) {
-        try {
-          const state = await this.#fundingSummary.getFundingSummary();
-          fundingSummary = FundedAiFundingSummarySchema.parse(state.funding);
-          fundedPolicy = FundedAiEffectivePolicySchema.parse(state.policy);
-        } catch (error) {
-          console.warn(
-            "[provider-settings] Matrix funding summary unavailable:",
-            error instanceof Error ? error.name : "UnknownError",
-          );
-        }
-      }
-      if (this.#genericModelCatalog) {
-        try {
-          genericModelCatalog = await this.#genericModelCatalog.getCatalog({ refresh });
-        } catch (error) {
-          console.warn(
-            "[provider-settings] Generic harness model catalog unavailable:",
-            error instanceof Error ? error.name : "UnknownError",
-          );
-          genericModelCatalog = {
-            providers: [],
-            accessSources: [],
-            failures: [...new Set(config.harnesses.flatMap((harness) =>
-              harness.enabled && (harness.harness === "pi" || harness.harness === "opencode")
-                ? [harness.harness]
-                : []))],
-          } satisfies GenericHarnessModelCatalog;
-        }
-      }
+      const { fundingSummary, fundedPolicy, genericModelCatalog } = await readProviderSettingsEnrichment({
+        canonical, fundingSummary: this.#fundingSummary,
+        genericModelCatalog: this.#genericModelCatalog, refresh,
+        catalogFailureHarnesses: [...new Set(config.harnesses.flatMap((harness) =>
+          harness.enabled && (harness.harness === "pi" || harness.harness === "opencode")
+            ? [harness.harness]
+            : []))],
+      });
       return await projectProviderSettings({
         canonical,
         config,
