@@ -81,15 +81,64 @@ import {
   isSafeMarketingLandingPath,
 } from './reddit-purchase-attribution.js';
 
+import {
+  MAX_STRIPE_API_TIMEOUT_MS,
+  type StripeBillingClient,
+  type StripeWebhookEvent,
+} from './billing/stripe-client.js';
+import {
+  CheckoutBillingRegionSlugSchema,
+  CheckoutPreparationStatusQuerySchema,
+  CheckoutRequestSchema,
+  CLERK_USER_ID_PATTERN,
+  HistoricalBillingRegionSlugSchema,
+  MarketingAttributionSchema,
+  MATRIX_CARD_TRIAL_DAYS,
+  PortalRequestSchema,
+  type CheckoutRequest,
+} from './billing/checkout-schemas.js';
+import {
+  buildCheckoutTelemetryProperties,
+  buildSubscriptionTelemetryProperties,
+  planPriceUsd,
+  resolveBillingReturnUrl,
+  resolveCardTrialDays,
+  resolvePriceId,
+  resolvePublicRecurringPrice,
+  resolveRuntimePlacement,
+  storedRecurringPrice,
+} from './billing/checkout-support.js';
+import {
+  epochSecondsToIso,
+  isFirstPostTrialInvoice,
+  isSubscriptionEvent,
+  normalizeSubscriptionStatus,
+  projectSubscription,
+  readClerkUserIdFromCheckoutSession,
+  readClerkUserIdFromStripeMetadata,
+  readExpandableStripeId,
+  readInvoiceProjection,
+  readPrebillingIntentIdFromStripeMetadata,
+  readRegionSlugFromStripeMetadata,
+  readRuntimeSlotFromStripeMetadata,
+  readStripeObjectId,
+  recomputeStripeSummary,
+} from './billing/stripe-webhook-projection.js';
+
+// S01 / T007: keep the public surface of billing-routes.ts stable for existing consumers.
+export { MATRIX_CARD_TRIAL_DAYS } from './billing/checkout-schemas.js';
+export type { MarketingAttribution } from './billing/checkout-schemas.js';
+export type {
+  StripeAiCreditCheckoutSessionInput,
+  StripeBillingClient,
+  StripeCheckoutSessionInput,
+  StripeCheckoutSessionProjection,
+  StripeRecurringPriceProjection,
+  StripeWebhookEvent,
+} from './billing/stripe-client.js';
+
 const BILLING_BODY_LIMIT = 16 * 1024;
 const STRIPE_WEBHOOK_BODY_LIMIT = 1024 * 1024;
-const MAX_STRIPE_API_TIMEOUT_MS = 10_000;
-export const MATRIX_CARD_TRIAL_DAYS = 3;
-const MatrixCardTrialDaysSchema = z.string()
-  .regex(/^[0-9]+$/)
-  .transform(Number)
-  .pipe(z.number().int().min(1).max(30));
-const CLERK_USER_ID_PATTERN = /^user_[A-Za-z0-9]{1,128}$/;
 const BILLING_UNAVAILABLE_RESPONSE = {
   error: 'Billing unavailable',
   code: 'billing_unavailable',
@@ -116,145 +165,6 @@ const BILLING_TRIAL_WILL_END_EVENT = MATRIX_TELEMETRY_EVENTS.BILLING_TRIAL_WILL_
 const BILLING_TRIAL_CONVERTED_EVENT = MATRIX_TELEMETRY_EVENTS.BILLING_TRIAL_CONVERTED;
 const BILLING_TRIAL_PAYMENT_FAILED_EVENT = MATRIX_TELEMETRY_EVENTS.BILLING_TRIAL_PAYMENT_FAILED;
 const TRIAL_PAYMENT_SUSPEND_DELAY_MS = 24 * 60 * 60 * 1000;
-const CheckoutBillingRegionSlugSchema = z.enum([
-  'region_fsn1',
-  'region_nbg1',
-  'region_ash',
-  'region_hil',
-]);
-const HistoricalBillingRegionSlugSchema = z.enum([
-  'region_fsn1',
-  'region_nbg1',
-  'region_ash',
-  'region_hil',
-]);
-
-const MarketingAttributionSchema = z.object({
-  rdt_cid: z.string().min(1).max(256).optional(),
-  utm_source: z.string().min(1).max(256).optional(),
-  utm_medium: z.string().min(1).max(256).optional(),
-  utm_campaign: z.string().min(1).max(256).optional(),
-  utm_content: z.string().min(1).max(256).optional(),
-  utm_term: z.string().min(1).max(256).optional(),
-  landing_path: z.string().min(1).max(512).refine(
-    (value) => isSafeMarketingLandingPath(value),
-    { message: 'Invalid marketing landing path' },
-  ).optional(),
-}).strict();
-export type MarketingAttribution = z.infer<typeof MarketingAttributionSchema>;
-
-const CheckoutRequestSchema = z.object({
-  planSlug: z.enum(['matrix_starter', 'matrix_builder', 'matrix_max']),
-  interval: z.literal('monthly').default('monthly'),
-  regionSlug: CheckoutBillingRegionSlugSchema.default('region_fsn1'),
-  serverType: HetznerServerTypeSchema.optional(),
-  developerTools: DeveloperToolsWithDefaultSchema,
-  runtimeSlot: RuntimeSlotSchema.optional().default('primary'),
-  attribution: MarketingAttributionSchema.optional(),
-  returnPath: z.string().min(1).max(2048).optional().refine(
-    // Safe iff it is already a same-origin allowlisted path (origins.ts is the
-    // single source of truth for redirect-target validation).
-    (value) => value === undefined || resolveReturnPath(value) === value,
-    { message: 'Invalid return path' },
-  ),
-});
-type CheckoutRequest = z.infer<typeof CheckoutRequestSchema>;
-
-const PortalRequestSchema = z.object({
-  intent: z.literal('manage').default('manage'),
-  returnPath: z.string().min(1).max(2048).optional().refine(
-    (value) => value === undefined || resolveReturnPath(value) === value,
-    { message: 'Invalid return path' },
-  ),
-}).strict();
-
-const CheckoutPreparationStatusQuerySchema = z.object({
-  attemptId: z.uuid(),
-}).strict();
-
-export interface StripeCheckoutSessionInput {
-  idempotencyKey: string;
-  clerkUserId: string;
-  customerId?: string;
-  priceId: string;
-  mode: 'subscription';
-  automaticTax: boolean;
-  allowPromotionCodes: boolean;
-  regionSlug: string;
-  runtimeSlot: string;
-  redditAttributionExpiresAt: string;
-  trialPeriodDays?: number | null;
-  paymentMethodMode?: 'card_required' | 'dynamic';
-  prebillingIntentId?: string;
-  attribution?: MarketingAttribution;
-  expiresAt?: string;
-  successUrl: string;
-  cancelUrl: string;
-}
-
-export interface StripeCheckoutSessionProjection {
-  status: 'open' | 'complete' | 'expired';
-  url: string | null;
-  clerkUserId: string | null;
-  priceId: string | null;
-  regionSlug: string | null;
-}
-
-export interface StripeAiCreditCheckoutSessionInput {
-  idempotencyKey: string;
-  requestId: string;
-  clerkUserId: string;
-  machineId: string;
-  runtimeSlot: string;
-  packageId: string;
-  priceId: string;
-  amountMicrousd: number;
-  automaticTax: boolean;
-  successUrl: string;
-  cancelUrl: string;
-}
-
-export interface StripeRecurringPriceProjection {
-  priceId: string;
-  unitAmountMinor: number;
-  currency: string;
-  interval: MatrixBillingInterval;
-  intervalCount: number;
-}
-
-export interface StripeBillingClient {
-  apiTimeoutMs: number;
-  /**
-   * Implementations must use a bounded network timeout. Checkout creates the
-   * Stripe Customer when needed; the signed subscription webhook links it back
-   * to the Clerk user from server-written metadata.
-   */
-  createCheckoutSession(input: StripeCheckoutSessionInput): Promise<{
-    url: string;
-    id: string;
-    expiresAt?: string;
-  }>;
-  clearSubscriptionAttribution?(subscriptionId: string): Promise<void>;
-  createAiCreditCheckoutSession(input: StripeAiCreditCheckoutSessionInput): Promise<{
-    url: string;
-    id: string;
-  }>;
-  retrieveCheckoutSession(id: string): Promise<StripeCheckoutSessionProjection>;
-  retrieveRecurringPrice(id: string): Promise<StripeRecurringPriceProjection>;
-  createPortalSession(input: {
-    customerId: string;
-    returnUrl: string;
-  }): Promise<{ url: string }>;
-  constructWebhookEvent(rawBody: string, signature: string, webhookSecret: string): StripeWebhookEvent;
-}
-
-export interface StripeWebhookEvent {
-  id: string;
-  type: string;
-  created: number;
-  data: { object: unknown };
-}
-
 export interface PrebillingCheckoutCoordinator {
   createIntent(input: {
     checkoutAttemptId: string;
@@ -1155,489 +1065,6 @@ export function createBillingRoutes(options: {
   });
 
   return app;
-}
-
-function resolveCardTrialDays(env: NodeJS.ProcessEnv): number {
-  const configured = env.MATRIX_CARD_TRIAL_DAYS;
-  if (configured === undefined) return MATRIX_CARD_TRIAL_DAYS;
-  const parsed = MatrixCardTrialDaysSchema.safeParse(configured);
-  if (!parsed.success) {
-    throw new Error('MATRIX_CARD_TRIAL_DAYS must be an integer from 1 to 30');
-  }
-  return parsed.data;
-}
-
-function resolvePriceId(
-  env: NodeJS.ProcessEnv,
-  planSlug: MatrixBillingPlanSlug,
-  interval: MatrixBillingInterval,
-): string | undefined {
-  const key = `STRIPE_PRICE_${planSlug.toUpperCase()}_${interval.toUpperCase()}`;
-  return env[key];
-}
-
-function buildCheckoutTelemetryProperties(data: CheckoutRequest): Record<string, string | number | boolean | undefined> {
-  return {
-    plan_slug: data.planSlug,
-    billing_interval: data.interval,
-    region_slug: data.regionSlug,
-    return_path_present: Boolean(data.returnPath),
-    developer_tools_count: data.developerTools.length,
-    selected_catalog_price_usd: planPriceUsd(data.planSlug, data.interval),
-    utm_source: data.attribution?.utm_source,
-    utm_medium: data.attribution?.utm_medium,
-    utm_campaign: data.attribution?.utm_campaign,
-    utm_content: data.attribution?.utm_content,
-    utm_term: data.attribution?.utm_term,
-    reddit_click_present: Boolean(data.attribution?.rdt_cid),
-  };
-}
-
-function storedRecurringPrice(
-  subscription: BillingSubscriptionRecord,
-): MatrixBillingPublicEntitlement['recurringPrice'] {
-  if (
-    subscription.priceUnitAmountMinor === null
-    || !Number.isSafeInteger(subscription.priceUnitAmountMinor)
-    || subscription.priceUnitAmountMinor < 0
-    || subscription.priceCurrency === null
-    || !/^[a-z]{3}$/.test(subscription.priceCurrency)
-    || subscription.billingInterval === null
-    || subscription.priceIntervalCount === null
-    || !Number.isSafeInteger(subscription.priceIntervalCount)
-    || subscription.priceIntervalCount < 1
-    || subscription.priceQuantity === null
-    || !Number.isSafeInteger(subscription.priceQuantity)
-    || subscription.priceQuantity < 1
-  ) {
-    return null;
-  }
-  return {
-    unitAmountMinor: subscription.priceUnitAmountMinor,
-    currency: subscription.priceCurrency,
-    interval: subscription.billingInterval,
-    intervalCount: subscription.priceIntervalCount,
-    quantity: subscription.priceQuantity,
-  };
-}
-
-async function resolvePublicRecurringPrice(
-  db: PlatformDB,
-  stripe: StripeBillingClient,
-  subscription: BillingSubscriptionRecord,
-  currentTime: Date,
-): Promise<MatrixBillingPublicEntitlement['recurringPrice']> {
-  const stored = storedRecurringPrice(subscription);
-  if (stored) return stored;
-  if (stripe.apiTimeoutMs > MAX_STRIPE_API_TIMEOUT_MS) return null;
-
-  try {
-    const price = await stripe.retrieveRecurringPrice(subscription.stripePriceId);
-    if (price.priceId !== subscription.stripePriceId) return null;
-    const quantity = subscription.priceQuantity ?? 1;
-    const persisted = await persistBillingSubscriptionPriceSnapshot(db, {
-      stripeSubscriptionId: subscription.stripeSubscriptionId,
-      expectedStripePriceId: subscription.stripePriceId,
-      unitAmountMinor: price.unitAmountMinor,
-      currency: price.currency,
-      interval: price.interval,
-      intervalCount: price.intervalCount,
-      quantity,
-      updatedAt: currentTime.toISOString(),
-    });
-    if (!persisted) return null;
-    return {
-      unitAmountMinor: price.unitAmountMinor,
-      currency: price.currency,
-      interval: price.interval,
-      intervalCount: price.intervalCount,
-      quantity,
-    };
-  } catch (err: unknown) {
-    console.warn(
-      '[billing] recurring price snapshot unavailable:',
-      err instanceof Error ? err.name : typeof err,
-    );
-    return null;
-  }
-}
-
-function buildSubscriptionTelemetryProperties(input: {
-  entitlement: BillingEntitlement;
-  recurringItem: StripeSubscriptionProjection['items'][number] | undefined;
-  runtimeSlot: string;
-  regionSlug: MatrixHostedBillingRegionSlug | null;
-  machine: Pick<UserMachineRecord, 'serverType' | 'location' | 'hetznerServerId'> | undefined;
-}): Record<string, string | number | boolean | undefined> {
-  const { entitlement, recurringItem, runtimeSlot, machine } = input;
-  const planSlug = entitlement.planSlug === 'internal' ? undefined : entitlement.planSlug;
-  const placement = resolveRuntimePlacement(machine?.location, input.regionSlug);
-  const hasRecurringPrice = recurringItem?.unitAmountMinor !== null
-    && recurringItem?.unitAmountMinor !== undefined
-    && recurringItem.currency !== null
-    && recurringItem.currency !== undefined
-    && recurringItem.interval !== null
-    && recurringItem.interval !== undefined
-    && recurringItem.intervalCount !== null
-    && recurringItem.intervalCount !== undefined
-    && recurringItem.quantity !== null
-    && recurringItem.quantity !== undefined;
-  return {
-    plan_slug: planSlug,
-    subscription_status: entitlement.status,
-    billing_interval: recurringItem?.interval ?? entitlement.billingInterval ?? undefined,
-    ...(hasRecurringPrice ? {
-      recurring_unit_amount_minor: recurringItem.unitAmountMinor!,
-      recurring_total_amount_minor: recurringItem.unitAmountMinor! * recurringItem.quantity!,
-      currency: recurringItem.currency!,
-      price_interval_count: recurringItem.intervalCount!,
-      price_quantity: recurringItem.quantity!,
-    } : {}),
-    runtime_slot: runtimeSlot,
-    ...(placement ? {
-      region_slug: placement.slug,
-      location_code: placement.location,
-      location_label: placement.label,
-      country: placement.countryLabel,
-      network_zone: placement.networkZone,
-    } : {}),
-    ...(machine?.serverType ? { server_type: machine.serverType } : {}),
-    ...(machine ? { provider: 'hetzner' } : {}),
-    included_runtime_slots: entitlement.includedRuntimeSlots,
-    addon_runtime_slots: entitlement.addonRuntimeSlots,
-    max_runtime_slots: entitlement.maxRuntimeSlots,
-  };
-}
-
-function resolveRuntimePlacement(
-  machineLocation: string | null | undefined,
-  fallbackRegionSlug: MatrixHostedBillingRegionSlug | null = null,
-) {
-  return MATRIX_HOSTED_BILLING_REGIONS.find((region) => region.location === machineLocation)
-    ?? MATRIX_HOSTED_BILLING_REGIONS.find((region) => region.slug === fallbackRegionSlug)
-    ?? null;
-}
-
-function planPriceUsd(planSlug: MatrixBillingPlanSlug, interval: MatrixBillingInterval): number | undefined {
-  const plan = DEFAULT_BILLING_PLAN_DEFINITIONS.find((candidate) => candidate.slug === planSlug);
-  if (!plan) return undefined;
-  return interval === 'monthly' ? plan.monthlyUsd : undefined;
-}
-
-function resolveBillingReturnUrl(
-  env: NodeJS.ProcessEnv,
-  state: 'success' | 'canceled' | 'portal',
-  returnPath?: string,
-): string {
-  const appUrl = appOrigin(env);
-  if (returnPath && state === 'portal') {
-    return new URL(resolveReturnPath(returnPath), new URL(appUrl).origin).toString();
-  }
-  if (returnPath && state !== 'portal') {
-    const appBase = new URL(appUrl);
-    // resolveReturnPath is the authoritative allowlist guard — never build the
-    // redirect from the raw client path (off-allowlist values collapse to "/").
-    const url = new URL(resolveReturnPath(returnPath), appBase.origin);
-    url.searchParams.set('billing', state);
-    if (state === 'success') url.searchParams.set('checkout', 'success');
-    return url.toString();
-  }
-  if (state === 'success' && env.STRIPE_CHECKOUT_SUCCESS_URL) return env.STRIPE_CHECKOUT_SUCCESS_URL;
-  if (state === 'canceled' && env.STRIPE_CHECKOUT_CANCEL_URL) return env.STRIPE_CHECKOUT_CANCEL_URL;
-  if (state === 'portal' && env.STRIPE_PORTAL_RETURN_URL) return env.STRIPE_PORTAL_RETURN_URL;
-  const url = new URL(appUrl);
-  url.searchParams.set('billing', state);
-  if (state === 'success') url.searchParams.set('checkout', 'success');
-  return url.toString();
-}
-
-function isSubscriptionEvent(type: string): boolean {
-  return (
-    type === 'customer.subscription.created' ||
-    type === 'customer.subscription.updated' ||
-    type === 'customer.subscription.deleted' ||
-    type === 'customer.subscription.trial_will_end'
-  );
-}
-
-async function projectSubscription(
-  db: PlatformDB,
-  value: unknown,
-  currentTime: Date,
-): Promise<(StripeSubscriptionProjection & {
-  runtimeSlot: string;
-  regionSlug: MatrixHostedBillingRegionSlug | null;
-  prebillingIntentId: string | null;
-}) | null> {
-  if (!value || typeof value !== 'object') return null;
-  const sub = value as {
-    id?: unknown;
-    customer?: unknown;
-    status?: unknown;
-    current_period_end?: unknown;
-    trial_start?: unknown;
-    trial_end?: unknown;
-    metadata?: unknown;
-    items?: { data?: unknown };
-  };
-  if (typeof sub.id !== 'string' || typeof sub.customer !== 'string') return null;
-  let customer = await getBillingCustomerByStripeCustomerId(db, sub.customer);
-  if (!customer) {
-    const clerkUserId = readClerkUserIdFromStripeMetadata(sub.metadata);
-    if (!clerkUserId) return null;
-    const nowIso = currentTime.toISOString();
-    await upsertBillingCustomer(db, {
-      clerkUserId,
-      stripeCustomerId: sub.customer,
-      createdAt: nowIso,
-      updatedAt: nowIso,
-    });
-    customer = await getBillingCustomerByStripeCustomerId(db, sub.customer);
-    if (!customer) return null;
-  }
-  const status = normalizeSubscriptionStatus(sub.status);
-  const existing = await getBillingSubscriptionByStripeId(db, sub.id);
-  const runtimeSlot = readRuntimeSlotFromStripeMetadata(sub.metadata) ?? 'primary';
-  const data = Array.isArray(sub.items?.data) ? sub.items.data : [];
-  const itemPeriodBoundaries = data.flatMap((item) => {
-    if (!item || typeof item !== 'object') return [];
-    const candidate = item as {
-      current_period_start?: unknown;
-      current_period_end?: unknown;
-    };
-    const boundary = status === 'past_due' || status === 'unpaid'
-      ? candidate.current_period_start
-      : candidate.current_period_end;
-    return typeof boundary === 'number' ? [boundary] : [];
-  });
-  const itemPeriodBoundary = itemPeriodBoundaries.length > 0
-    ? Math.min(...itemPeriodBoundaries)
-    : null;
-  return {
-    clerkUserId: customer.clerkUserId,
-    stripeCustomerId: customer.stripeCustomerId,
-    stripeSubscriptionId: sub.id,
-    runtimeSlot,
-    regionSlug: readRegionSlugFromStripeMetadata(sub.metadata),
-    prebillingIntentId: readPrebillingIntentIdFromStripeMetadata(sub.metadata),
-    status,
-    currentPeriodEnd: typeof sub.current_period_end === 'number'
-      ? epochSecondsToIso(sub.current_period_end)
-      : (itemPeriodBoundary === null ? null : epochSecondsToIso(itemPeriodBoundary)),
-    trialStartedAt: typeof sub.trial_start === 'number'
-      ? epochSecondsToIso(sub.trial_start)
-      : (existing?.trialStartedAt ?? null),
-    trialEndsAt: typeof sub.trial_end === 'number'
-      ? epochSecondsToIso(sub.trial_end)
-      : (existing?.trialEndsAt ?? null),
-    trialConvertedAt: existing?.trialConvertedAt ?? null,
-    firstTrialPaymentFailedAt: existing?.firstTrialPaymentFailedAt ?? null,
-    items: data.flatMap((item) => {
-      if (!item || typeof item !== 'object') return [];
-      const candidate = item as {
-        price?: {
-          id?: unknown;
-          unit_amount?: unknown;
-          currency?: unknown;
-          recurring?: { interval?: unknown; interval_count?: unknown };
-        };
-        quantity?: unknown;
-      };
-      if (typeof candidate.price?.id !== 'string') return [];
-      const interval = candidate.price.recurring?.interval === 'month'
-        ? 'monthly'
-        : candidate.price.recurring?.interval === 'year'
-          ? 'annual'
-          : null;
-      return [{
-        priceId: candidate.price.id,
-        quantity: typeof candidate.quantity === 'number' && Number.isInteger(candidate.quantity) && candidate.quantity > 0
-          ? candidate.quantity
-          : 1,
-        unitAmountMinor: typeof candidate.price.unit_amount === 'number'
-          && Number.isInteger(candidate.price.unit_amount)
-          && candidate.price.unit_amount >= 0
-          ? candidate.price.unit_amount
-          : null,
-        currency: typeof candidate.price.currency === 'string' && /^[a-z]{3}$/.test(candidate.price.currency)
-          ? candidate.price.currency
-          : null,
-        interval,
-        intervalCount: typeof candidate.price.recurring?.interval_count === 'number'
-          && Number.isInteger(candidate.price.recurring.interval_count)
-          && candidate.price.recurring.interval_count > 0
-          ? candidate.price.recurring.interval_count
-          : null,
-      }];
-    }),
-  };
-}
-
-function readRuntimeSlotFromStripeMetadata(metadata: unknown): string | null {
-  if (!metadata || typeof metadata !== 'object') return null;
-  const parsed = RuntimeSlotSchema.safeParse((metadata as { matrix_runtime_slot?: unknown }).matrix_runtime_slot);
-  return parsed.success ? parsed.data : null;
-}
-
-function readRegionSlugFromStripeMetadata(metadata: unknown): MatrixHostedBillingRegionSlug | null {
-  if (!metadata || typeof metadata !== 'object') return null;
-  const parsed = HistoricalBillingRegionSlugSchema.safeParse(
-    (metadata as { matrix_region_slug?: unknown }).matrix_region_slug,
-  );
-  return parsed.success ? parsed.data : null;
-}
-
-function readPrebillingIntentIdFromStripeMetadata(metadata: unknown): string | null {
-  if (!metadata || typeof metadata !== 'object') return null;
-  const parsed = z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/).safeParse(
-    (metadata as { matrix_prebilling_intent_id?: unknown }).matrix_prebilling_intent_id,
-  );
-  return parsed.success ? parsed.data : null;
-}
-
-async function recomputeStripeSummary(
-  db: PlatformDB,
-  clerkUserId: string,
-  priceCatalog: StripePriceCatalog,
-  env: NodeJS.ProcessEnv,
-  now: Date,
-): Promise<BillingEntitlement | null> {
-  const subscriptions = await listCurrentBillingSubscriptions(db, clerkUserId, now.toISOString());
-  if (subscriptions.length === 0) return null;
-  const runtimeCatalog = loadRuntimeCatalog(env);
-  const projected = subscriptions.map((subscription) => ({
-    runtimeSlot: subscription.runtimeSlot,
-    entitlement: deriveStripeEntitlement({
-      clerkUserId: subscription.clerkUserId,
-      stripeCustomerId: subscription.stripeCustomerId,
-      stripeSubscriptionId: subscription.stripeSubscriptionId,
-      status: subscription.status,
-      currentPeriodEnd: subscription.currentPeriodEnd,
-      trialStartedAt: subscription.trialStartedAt,
-      trialEndsAt: subscription.trialEndsAt,
-      trialConvertedAt: subscription.trialConvertedAt,
-      firstTrialPaymentFailedAt: subscription.firstTrialPaymentFailedAt,
-      items: [{ priceId: subscription.stripePriceId, quantity: 1 }],
-    }, { priceCatalog, runtimeCatalog, now }),
-  }));
-  const accessible = projected.filter(({ entitlement }) => getRuntimeAccessDecision(entitlement, now).runtimeProxyAllowed);
-  const representative = accessible.find(({ runtimeSlot }) => runtimeSlot === 'primary')
-    ?? accessible[0]
-    ?? projected.find(({ runtimeSlot }) => runtimeSlot === 'primary')
-    ?? projected[0];
-  if (!representative) return null;
-  return {
-    ...representative.entitlement,
-    maxRuntimeSlots: accessible.length,
-    includedRuntimeSlots: accessible.length,
-    addonRuntimeSlots: 0,
-    updatedAt: now.toISOString(),
-  };
-}
-
-interface StripeInvoiceProjection {
-  stripeSubscriptionId: string;
-  billingReason: string;
-  createdAt: string;
-  amountDueMinor: number;
-  amountPaidMinor: number;
-  currency: string;
-}
-
-function readInvoiceProjection(value: unknown): StripeInvoiceProjection | null {
-  if (!value || typeof value !== 'object') return null;
-  const invoice = value as {
-    created?: unknown;
-    billing_reason?: unknown;
-    amount_due?: unknown;
-    amount_paid?: unknown;
-    currency?: unknown;
-    subscription?: unknown;
-    parent?: { subscription_details?: { subscription?: unknown } };
-  };
-  const subscription = readExpandableStripeId(
-    invoice.parent?.subscription_details?.subscription ?? invoice.subscription,
-  );
-  if (
-    !subscription
-    || typeof invoice.created !== 'number'
-    || typeof invoice.billing_reason !== 'string'
-    || typeof invoice.amount_due !== 'number'
-    || !Number.isSafeInteger(invoice.amount_due)
-    || invoice.amount_due < 0
-    || typeof invoice.amount_paid !== 'number'
-    || !Number.isSafeInteger(invoice.amount_paid)
-    || invoice.amount_paid < 0
-    || typeof invoice.currency !== 'string'
-    || !/^[a-z]{3}$/.test(invoice.currency)
-  ) {
-    return null;
-  }
-  return {
-    stripeSubscriptionId: subscription,
-    billingReason: invoice.billing_reason,
-    createdAt: epochSecondsToIso(invoice.created),
-    amountDueMinor: invoice.amount_due,
-    amountPaidMinor: invoice.amount_paid,
-    currency: invoice.currency,
-  };
-}
-
-function isFirstPostTrialInvoice(
-  invoice: StripeInvoiceProjection,
-  trialEndsAt: string | null,
-  trialConvertedAt: string | null,
-): boolean {
-  return invoice.billingReason === 'subscription_cycle'
-    && trialEndsAt !== null
-    && trialConvertedAt === null
-    && Date.parse(invoice.createdAt) >= Date.parse(trialEndsAt);
-}
-
-function readExpandableStripeId(value: unknown): string | null {
-  if (typeof value === 'string' && value.length > 0) return value;
-  return readStripeObjectId(value);
-}
-
-function readStripeObjectId(value: unknown): string | null {
-  if (!value || typeof value !== 'object') return null;
-  const id = (value as { id?: unknown }).id;
-  return typeof id === 'string' && id.length > 0 ? id : null;
-}
-
-function readClerkUserIdFromCheckoutSession(value: unknown): string | null {
-  if (!value || typeof value !== 'object') return null;
-  const session = value as { client_reference_id?: unknown; metadata?: unknown };
-  if (typeof session.client_reference_id === 'string' && CLERK_USER_ID_PATTERN.test(session.client_reference_id)) {
-    return session.client_reference_id;
-  }
-  return readClerkUserIdFromStripeMetadata(session.metadata);
-}
-
-function readClerkUserIdFromStripeMetadata(metadata: unknown): string | null {
-  if (!metadata || typeof metadata !== 'object') return null;
-  const clerkUserId = (metadata as { clerk_user_id?: unknown }).clerk_user_id;
-  return typeof clerkUserId === 'string' && CLERK_USER_ID_PATTERN.test(clerkUserId)
-    ? clerkUserId
-    : null;
-}
-
-function normalizeSubscriptionStatus(value: unknown): BillingEntitlementStatus {
-  if (
-    value === 'active' ||
-    value === 'trialing' ||
-    value === 'past_due' ||
-    value === 'canceled' ||
-    value === 'incomplete' ||
-    value === 'unpaid'
-  ) {
-    return value;
-  }
-  return 'ended';
-}
-
-function epochSecondsToIso(value: number): string {
-  return new Date(value * 1000).toISOString();
 }
 
 export function getPublicBillingPlans() {

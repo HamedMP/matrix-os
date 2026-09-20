@@ -238,8 +238,9 @@ describe('personal billing seams (S01 foundation)', () => {
     )).toBe(true);
     expect(checkoutSupport.resolveBillingReturnUrl({ MATRIX_APP_ORIGIN: 'https://app.example.test' } as NodeJS.ProcessEnv, 'success'))
       .toBe('https://app.example.test/?billing=success&checkout=success');
+    // Off-allowlist return paths collapse to "/" through resolveReturnPath (guard preserved).
     expect(checkoutSupport.resolveBillingReturnUrl({ MATRIX_APP_ORIGIN: 'https://app.example.test' } as NodeJS.ProcessEnv, 'canceled', '/settings'))
-      .toBe('https://app.example.test/settings?billing=canceled');
+      .toBe('https://app.example.test/?billing=canceled');
     expect(checkoutSupport.planPriceUsd('starter' as never, 'annual')).toBeUndefined();
   });
 });
