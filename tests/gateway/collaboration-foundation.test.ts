@@ -244,12 +244,12 @@ describe("shared Chat queue behavior (S01 foundation)", () => {
     await fixture.destroy();
   });
 
-  function request(index: number, actorId: string, expectedRevision: number) {
+  function request(index: number, actorId: string, expectedRevision: number, clientRequestIndex = index) {
     return {
       chatId: collaborationIds.chat,
       scopeId: collaborationIds.scope,
-      queuedTurnId: `qturn_foundation_${index}`,
-      clientRequestId: `00000000-0000-4000-8000-${index.toString().padStart(12, "0")}`,
+      queuedTurnId: `qturn_foundation_${index}_${actorId}`,
+      clientRequestId: `00000000-0000-4000-8000-${clientRequestIndex.toString().padStart(12, "0")}`,
       requestingActorId: actorId,
       acceptedAuthEpoch: 1,
       payloadHash: index.toString(16).padStart(64, "0"),
@@ -275,10 +275,29 @@ describe("shared Chat queue behavior (S01 foundation)", () => {
     const replay = await repository.enqueueSharedQueuedTurn(owner, request(1, collaborationActors.owner, 3));
     expect(replay).toMatchObject({ id: first.id, acceptedSequence: 1, alreadyAccepted: true });
 
+    // Idempotency is scoped to the requesting actor: the editor reusing the
+    // owner's client request ID gets its own queued turn instead of the replay,
+    // and the owner's replay keeps deduplicating afterwards.
+    const editorSameRequestId = await repository.enqueueSharedQueuedTurn(
+      owner,
+      request(3, collaborationActors.editor, 3, 1),
+    );
+    expect(editorSameRequestId.clientRequestId).toBe(first.clientRequestId);
+    expect(editorSameRequestId).toMatchObject({
+      requestingActorId: collaborationActors.editor,
+      acceptedSequence: 3,
+      alreadyAccepted: false,
+      pendingCount: 3,
+    });
+    expect(editorSameRequestId.id).not.toBe(first.id);
+    const ownerReplayAgain = await repository.enqueueSharedQueuedTurn(owner, request(1, collaborationActors.owner, 4));
+    expect(ownerReplayAgain).toMatchObject({ id: first.id, acceptedSequence: 1, alreadyAccepted: true });
+
     const listed = await repository.listSharedQueuedTurns(owner, collaborationIds.chat);
-    expect(listed.map((turn) => [turn.requestingActorId, turn.state])).toEqual([
-      [collaborationActors.owner, "queued"],
-      [collaborationActors.editor, "queued"],
+    expect(listed.map((turn) => [turn.requestingActorId, turn.clientRequestId, turn.state])).toEqual([
+      [collaborationActors.owner, first.clientRequestId, "queued"],
+      [collaborationActors.editor, request(2, collaborationActors.editor, 2).clientRequestId, "queued"],
+      [collaborationActors.editor, first.clientRequestId, "queued"],
     ]);
 
     const claimed = await repository.claimNextQueuedTurn(owner, {
