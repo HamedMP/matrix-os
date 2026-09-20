@@ -11,7 +11,7 @@ import {
 } from '../../packages/platform/src/db.js';
 import { createDisabledOrchestrator, createOrchestrator } from '../../packages/platform/src/orchestrator.js';
 import { createApp } from '../../packages/platform/src/main.js';
-import { metricsRegistry } from '../../packages/gateway/src/domains/observability/metrics.js';
+import { metricsRegistry } from '../../packages/platform/src/metrics.js';
 
 function createMockDocker() {
   const mockContainer = {

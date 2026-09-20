@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { appendFile, chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, sep } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { buildAgentLaunch } from "../../packages/gateway/src/domains/sessions/agent-launcher.js";
 import { createCanonicalCodingChatProviderAdapter } from "../../packages/gateway/src/chat/coding-provider-adapter.js";
@@ -76,7 +77,11 @@ describe("Codex structured event runtime", () => {
     });
 
     expect(launch.command).toBe(process.execPath);
-    expect(launch.args[0]).toMatch(/coding-agents\/codex-app-server-runner\.mjs$/);
+    const runnerScript = launch.args[0]!.split(sep).join("/");
+    expect(runnerScript).toMatch(/coding-agents\/codex-app-server-runner\.mjs$/);
+    // The regex above also matches a mis-resolved path under the launcher's
+    // own directory — assert the script really ships where the launcher points.
+    expect(existsSync(launch.args[0]!)).toBe(true);
     expect(launch.args.slice(1, 4)).toEqual([
       "/home/matrix/home/system/coding-agents/provider-events/sess_test.jsonl",
       CODEX_VERIFIED_VERSION,

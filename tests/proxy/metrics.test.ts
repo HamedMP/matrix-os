@@ -4,7 +4,7 @@ import {
   apiCallsTotal,
   apiCostTotal,
   quotaRejections,
-} from "../../packages/gateway/src/domains/observability/metrics.js";
+} from "../../packages/proxy/src/metrics.js";
 
 describe("T1203: Proxy metrics module", () => {
   beforeEach(async () => {

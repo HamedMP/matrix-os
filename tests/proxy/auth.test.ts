@@ -4,7 +4,7 @@ import {
   isFundedProxyApiKey,
   isAuthorizedProxyAdminRequest,
   parseProxyApiKey,
-} from "../../packages/gateway/src/domains/identity/auth.js";
+} from "../../packages/proxy/src/auth.js";
 
 describe("proxy auth", () => {
   it("rejects admin requests when no proxy auth token is configured", () => {

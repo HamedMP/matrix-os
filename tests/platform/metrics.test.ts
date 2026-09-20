@@ -12,7 +12,7 @@ import {
   refreshReleaseChannelMetrics,
   refreshVpsMetrics,
   refreshVpsRuntimeMetrics,
-} from '../../packages/gateway/src/domains/observability/metrics.js';
+} from '../../packages/platform/src/metrics.js';
 
 describe('platform/metrics', () => {
   beforeEach(async () => {

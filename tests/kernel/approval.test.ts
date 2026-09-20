@@ -3,7 +3,7 @@ import {
   shouldRequireApproval,
   DEFAULT_APPROVAL_POLICY,
   type ApprovalPolicy,
-} from "../../packages/gateway/src/domains/sessions/approval.js";
+} from "../../packages/kernel/src/approval.js";
 import { createApprovalHook, type HookInput } from "../../packages/kernel/src/hooks.js";
 
 describe("Approval policy", () => {

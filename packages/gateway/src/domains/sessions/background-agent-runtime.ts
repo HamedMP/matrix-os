@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { lstat, mkdir, opendir, chmod, realpath, open, rm, writeFile } from "node:fs/promises";
-import { join, resolve, relative, isAbsolute } from "node:path";
+import { join, resolve, relative, isAbsolute, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { z } from "zod/v4";
@@ -25,7 +25,9 @@ type RunCommand = (command: string, args: string[], options: {
   env: NodeJS.ProcessEnv; timeout: number; maxBuffer: number; encoding: "utf8";
 }) => Promise<{ stdout: string; stderr: string }>;
 const runDefault = promisify(execFile);
-const RUNNER_PATH = fileURLToPath(new URL("./coding-agents/background-agent-runner.mjs", import.meta.url));
+// sessions/ is two levels below src/, where the runner ships
+// (src/coding-agents/ in source, dist/coding-agents/ in the built layout).
+const RUNNER_PATH = fileURLToPath(new URL("../../coding-agents/background-agent-runner.mjs", import.meta.url));
 const MAX_RECORDS = 512;
 const RETENTION_MS = 24 * 60 * 60_000;
 const SessionIdSchema = z.string().regex(/^sess_[A-Za-z0-9_-]{1,128}$/);
@@ -72,7 +74,7 @@ export function createBackgroundAgentRuntime(options: {
     const rel = relative(home, path);
     if (!rel || rel.startsWith("..") || isAbsolute(rel)) throw new Error("Background runtime storage unavailable");
     let current = await realpath(home);
-    for (const part of rel.split("/")) {
+    for (const part of rel.split(sep)) {
       current = join(current, part);
       try { await mkdir(current, { mode: 0o700 }); }
       catch (error: unknown) { if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error; }

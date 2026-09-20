@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { existsSync } from "node:fs";
 import { mkdtemp, symlink, lstat, utimes, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { createBackgroundAgentRuntime } from "../../packages/gateway/src/domains/sessions/background-agent-runtime.js";
 
 const homes: string[] = [];
@@ -33,6 +34,12 @@ describe("background agent runtime", () => {
     const args = h.runCommand.mock.calls.find(([command]) => command.endsWith("systemd-run"))![1];
     expect(args).toEqual(expect.arrayContaining(["--user", "--property=KillMode=control-group", "--property=TasksMax=1024"]));
     expect(args.join(" ")).not.toMatch(/zellij|secret-value/);
+    // The executable path must resolve to the shipped background-agent
+    // runner, not to a nonexistent path under the runtime module's directory.
+    const runnerIndex = args.indexOf(process.execPath);
+    const runnerPath = args[runnerIndex + 1]!;
+    expect(runnerPath.split(sep).join("/")).toMatch(/coding-agents\/background-agent-runner\.mjs$/);
+    expect(existsSync(runnerPath)).toBe(true);
     expect(ref).not.toHaveProperty("terminalRef");
     await h.runtime.stop(ref);
     expect(await h.runtime.isRunning(ref)).toBe(false);

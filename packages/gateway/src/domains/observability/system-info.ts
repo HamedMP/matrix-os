@@ -8,7 +8,7 @@ import {
   readSync,
   statfsSync,
 } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import { cpus, freemem, loadavg, totalmem } from "node:os";
 import { loadSkills, resolveKernelConfigFile } from "@matrix-os/kernel";
 import type { HostBundleRelease } from "./system-update.js";
@@ -99,6 +99,33 @@ function parseSafeSystemVersion(value: unknown): string | undefined {
   return /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(trimmed) ? trimmed : undefined;
 }
 
+let cachedRepoRoot: string | null | undefined;
+function resolveRepoRoot(): string | null {
+  // system-info.ts lives at <root>/packages/gateway/{src|dist}/domains/observability/
+  // in source and built layouts, so no fixed ".." count reaches the repo root in
+  // both. Ascend to the directory that owns the root package.json and the home/
+  // template tree instead; without it these fallbacks stay at their defaults.
+  if (cachedRepoRoot !== undefined) return cachedRepoRoot;
+  let dir = import.meta.dirname;
+  for (let i = 0; i < 10; i++) {
+    try {
+      if (existsSync(join(dir, "package.json")) && existsSync(join(dir, "home"))) {
+        cachedRepoRoot = dir;
+        return dir;
+      }
+    } catch (err) {
+      logSystemInfoReadFailure("Failed to resolve repository root", err);
+      cachedRepoRoot = null;
+      return null;
+    }
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  cachedRepoRoot = null;
+  return null;
+}
+
 function parseReleaseChannel(value: unknown): string | undefined {
   return typeof value === "string" && ["stable", "canary", "beta", "dev"].includes(value)
     ? value
@@ -146,16 +173,19 @@ export function getVersion(release?: HostBundleRelease): string {
       logSystemInfoReadFailure("Failed to read /app/VERSION", err);
     }
   }
-  try {
-    const pkg = JSON.parse(
-      readFileSync(
-        join(import.meta.dirname, "..", "..", "..", "package.json"),
-        "utf-8",
-      ),
-    );
-    return parseSafeSystemVersion(pkg.version) ?? "0.0.0";
-  } catch (err) {
-    logSystemInfoReadFailure("Failed to read package.json version", err);
+  const repoRoot = resolveRepoRoot();
+  if (repoRoot) {
+    try {
+      const pkg = JSON.parse(
+        readFileSync(
+          join(repoRoot, "package.json"),
+          "utf-8",
+        ),
+      );
+      return parseSafeSystemVersion(pkg.version) ?? "0.0.0";
+    } catch (err) {
+      logSystemInfoReadFailure("Failed to read package.json version", err);
+    }
   }
   return "0.0.0";
 }
@@ -380,12 +410,13 @@ export function getSystemInfo(
   }
 
   let templateVersion = "unknown";
-  const templateVersionPath = resolve(
-    import.meta.dirname, "..", "..", "..", "home", ".matrix-version",
-  );
+  const templateVersionPath = resolveRepoRoot();
+  const templateVersionFile = templateVersionPath
+    ? join(templateVersionPath, "home", ".matrix-version")
+    : null;
   try {
-    if (existsSync(templateVersionPath)) {
-      templateVersion = readFileSync(templateVersionPath, "utf-8").trim();
+    if (templateVersionFile && existsSync(templateVersionFile)) {
+      templateVersion = readFileSync(templateVersionFile, "utf-8").trim();
     }
   } catch (err) {
     logSystemInfoReadFailure("Failed to read template version", err);

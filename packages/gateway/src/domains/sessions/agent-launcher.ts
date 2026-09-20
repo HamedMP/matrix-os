@@ -80,7 +80,9 @@ const ProviderEventPathSchema = z.string()
   .refine(isAbsolute)
   .regex(/^[^\u0000\r\n]+\.jsonl$/);
 const CODEX_APP_SERVER_RUNNER_PATH = fileURLToPath(
-  new URL("./coding-agents/codex-app-server-runner.mjs", import.meta.url),
+  // sessions/ is two levels below src/, where the runner ships
+  // (src/coding-agents/ in source, dist/coding-agents/ in the built layout).
+  new URL("../../coding-agents/codex-app-server-runner.mjs", import.meta.url),
 );
 const CodexAppServerConfigSchema = z.object({
   prompt: z.string().trim().min(1).max(64 * 1024),

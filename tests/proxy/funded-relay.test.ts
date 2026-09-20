@@ -1,7 +1,7 @@
 import { createHmac } from "node:crypto";
 import { Hono } from "hono";
 import { describe, expect, it, vi } from "vitest";
-import { buildProxyApiKey } from "../../packages/gateway/src/domains/identity/auth.js";
+import { buildProxyApiKey } from "../../packages/proxy/src/auth.js";
 import { createFundedRelay, resolveFundedRelayConfig } from "../../packages/proxy/src/funded-relay.js";
 import { estimateWorstCaseMicrousd, mapFundedModel } from "../../packages/proxy/src/funded-relay-model.js";
 import { boundedBody } from "../../packages/proxy/src/funded-relay-stream.js";

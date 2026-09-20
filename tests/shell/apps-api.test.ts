@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { QueryClient } from "@tanstack/react-query";
-import { appKeys, appsQueryOptions, listApps } from "../../packages/gateway/src/domains/apps/apps";
+import { appKeys, appsQueryOptions, listApps } from "../../shell/src/api/apps";
 
 describe("web app catalog query", () => {
   it("keeps the complete validated catalog", async () => {
