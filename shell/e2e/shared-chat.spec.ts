@@ -23,6 +23,19 @@ async function mockShell(
   },
 ) {
   await page.setExtraHTTPHeaders({ "x-matrix-platform-session": "platform" });
+  // The getting-started checklist auto-opens once per route when its gateway status
+  // probes report incomplete steps. Those probes are not part of this spec, so mark the
+  // route as already auto-opened to keep the shared Chat header and copy assertions hermetic.
+  await page.addInitScript(() => {
+    try {
+      window.localStorage.setItem(
+        `matrix:getting-started:auto-opened:web:${encodeURIComponent(window.location.pathname)}`,
+        "1",
+      );
+    } catch (error: unknown) {
+      console.warn("[e2e] unable to seed getting-started state:", error instanceof Error ? error.name : typeof error);
+    }
+  });
   await page.route("**/api/settings/**", (route) => {
     const pathname = new URL(route.request().url()).pathname;
     return fulfill(route, pathname.endsWith("/onboarding-status")
@@ -49,6 +62,11 @@ async function mockShell(
           });
   });
   await page.route("**/api/identity", (route) => fulfill(route, { handle: "test", displayName: "Test User" }));
+  // The chat sidebar's "Shared with me" entry probes the routed VPS capability before rendering.
+  await page.route("**/api/system/info", (route) => fulfill(route, {
+    runtime: { handle: "test", runtimeSlot: "primary", machineId: "11111111-1111-4111-8111-111111111111" },
+    capabilities: { collaboration: true },
+  }));
   await page.route("**/api/apps**", (route) => fulfill(route, []));
   await page.route("**/api/shell/bootstrap", (route) => fulfill(route, { layout: { windows: [] }, apps: [], modules: [], icons: {} }));
   await page.route("**/api/layout", (route) => fulfill(route, { ok: true }));
