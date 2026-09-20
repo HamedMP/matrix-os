@@ -16,7 +16,9 @@ describe.skipIf(!databaseUrl)("usage admission on independent PostgreSQL connect
   let secondDb: PlatformDB;
   let first: ReturnType<typeof createAiFundedPolicyRepository>;
   let second: ReturnType<typeof createAiFundedPolicyRepository>;
+  let clock: Date;
   let credentials: string[];
+  let tokenIds: string[];
   let identities: Array<{ ownerId: string; machineId: string; runtimeSlot: string }>;
 
   beforeEach(async () => {
@@ -29,11 +31,14 @@ describe.skipIf(!databaseUrl)("usage admission on independent PostgreSQL connect
     await db.ready;
     secondDb = createPlatformDb(url.toString());
     await secondDb.ready;
-    const options = { credentialHashSecret: "h".repeat(32), now: () => new Date("2026-09-10T12:00:00Z") };
+    clock = new Date("2026-09-10T12:00:00Z");
+    const options = { credentialHashSecret: "h".repeat(32), now: () => new Date(clock),
+      reservationTtlMs: 30_000, inFlightTtlMs: 60_000 };
     first = createAiFundedPolicyRepository({ ...options, db });
     second = createAiFundedPolicyRepository({ ...options, db: secondDb });
     await first.updateGlobalPolicy({ expectedRevision: 0, enabled: true, allowedModelIds: [modelId] });
     credentials = [];
+    tokenIds = [];
     identities = [];
     for (let index = 0; index < 2; index++) {
       const identity = { ownerId: "shared_owner", machineId: `machine_${index}`, runtimeSlot: `runtime_${index}` };
@@ -45,7 +50,9 @@ describe.skipIf(!databaseUrl)("usage admission on independent PostgreSQL connect
         monthlyBudgetMicrousd: 1_000, expiresAt: null });
       await first.grantCredit({ entryId: `grant_${index}`, identity, kind: "addon_grant",
         amountMicrousd: 1_000, sourceReference: "test" });
-      credentials.push((await first.issueRuntimeCredential(identity)).credential.token);
+      const issued = await first.issueRuntimeCredential(identity);
+      credentials.push(issued.credential.token);
+      tokenIds.push(issued.credential.tokenId);
     }
   });
 
@@ -67,6 +74,40 @@ describe.skipIf(!databaseUrl)("usage admission on independent PostgreSQL connect
     expect(results.find((result) => result.status === "rejected")).toMatchObject({ reason: { code: "rate_limited" } });
     const rows = await db.executor.selectFrom("ai_funded_usage_reservations").selectAll().execute();
     expect(rows).toHaveLength(1);
+  });
+
+  it("keeps expired usage capacity held across cleanup until exact settlement", async () => {
+    const authorization = await first.authorize({ credential: credentials[0], requestId: "unresolved_usage",
+      modelId, maxCostMicrousd: 100, billingMode: "usage" });
+    await first.startReservation({
+      reservationId: authorization.reservation.reservationId,
+      tokenId: tokenIds[0],
+    });
+    clock = new Date(clock.getTime() + 61_000);
+
+    await expect(second.cleanupExpiredReservations({ limit: 1 })).resolves.toBe(0);
+    await expect(second.authorize({ credential: credentials[1], requestId: "held_capacity",
+      modelId, maxCostMicrousd: 100, billingMode: "usage" }))
+      .rejects.toMatchObject({ code: "rate_limited" });
+    expect(await db.executor.selectFrom("ai_funded_usage_reservations")
+      .select(["status", "actual_microusd"])
+      .where("reservation_id", "=", authorization.reservation.reservationId)
+      .executeTakeFirstOrThrow()).toEqual({ status: "in_flight", actual_microusd: null });
+
+    await expect(second.finalizeReservation({
+      reservationId: authorization.reservation.reservationId,
+      tokenId: tokenIds[0],
+      mode: "exact",
+      actualCostMicrousd: 40,
+    })).resolves.toMatchObject({
+      status: "settled", actualCostMicrousd: 40, chargedCostMicrousd: 40, releasedMicrousd: 60,
+    });
+    expect((await db.executor.selectFrom("ai_funded_credit_ledger").select("amount_microusd")
+      .where("reservation_id", "=", authorization.reservation.reservationId).execute())
+      .reduce((total, row) => total + Number(row.amount_microusd), 0)).toBe(-40);
+    await expect(second.authorize({ credential: credentials[1], requestId: "after_exact_settlement",
+      modelId, maxCostMicrousd: 100, billingMode: "usage" }))
+      .resolves.toMatchObject({ authorized: true });
   });
 
   it("serializes campaign handoff with authorization without deadlock or duplicate credit", async () => {

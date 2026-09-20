@@ -2,7 +2,7 @@ import { FundedAiSettlementResponseSchema } from "@matrix-os/contracts";
 import { sql } from "kysely";
 import { z } from "zod/v4";
 import type { AiFundedMeteringRepositoryOptions } from "./ai-funded-metering-repository.js";
-import { exactInteger, utcMonthStart, fundingSummary, recordUsageFunding, usageReservationLimit } from "./ai-funded-metering-helpers.js";
+import { exactInteger, utcMonthStart, fundingSummary, recordUsageFunding } from "./ai-funded-metering-helpers.js";
 import { reconcileExpiredPromotionalCredit, reservationDebitSplit, debitAttributedPromotionalGrants, debitPromotionalGrants } from "./ai-funded-reservation-sources.js";
 export const CleanupSchema = z.object({ limit: z.number().int().min(1).max(1_000) }).strict();
 
@@ -17,9 +17,12 @@ export async function cleanupExpiredReservations(options: AiFundedMeteringReposi
         .select([
           "reservation_id", "request_id", "token_id", "owner_id", "machine_id", "runtime_slot",
           "period_start", "reserved_microusd", "promotional_reserved_microusd",
-          "addon_reserved_microusd", "status", "authorization_response",
+          "addon_reserved_microusd", "status",
         ])
         .where("status", "in", ["reserved", "in_flight"]).where("expires_at", "<=", checkedAt)
+        // Exact provider usage is the only safe release signal for usage-mode
+        // liability. Keep its hold and owner admission barrier until finalization.
+        .where(sql<boolean>`authorization_response::jsonb #>> '{reservation,billingMode}' IS DISTINCT FROM 'usage'`)
         .orderBy("expires_at").orderBy("reservation_id").limit(limit).forUpdate().skipLocked().execute();
       let cleaned = 0;
       for (const reservation of expired) {
@@ -38,12 +41,7 @@ export async function cleanupExpiredReservations(options: AiFundedMeteringReposi
             checkedAt,
           );
         }
-        const usageInFlight = reservation.status === "in_flight"
-          && usageReservationLimit(reservation.authorization_response) !== null;
-        // Lost exact usage is not evidence of spend. Expire the bounded hold so
-        // it cannot block the owner forever, while retaining the reservation as
-        // an auditable unresolved record with no fabricated usage or settlement.
-        const claimedStatus = reservation.status === "in_flight" && !usageInFlight ? "settling" : "expired";
+        const claimedStatus = reservation.status === "in_flight" ? "settling" : "expired";
         const claimed = await trx.executor.updateTable("ai_funded_usage_reservations")
           .set({ status: claimedStatus }).where("reservation_id", "=", reservation.reservation_id)
           .where("status", "=", reservation.status).returning("reservation_id").executeTakeFirst();
@@ -56,7 +54,7 @@ export async function cleanupExpiredReservations(options: AiFundedMeteringReposi
           month_reserved_microusd: sql<number>`CASE WHEN month_period_start = ${currentPeriod} THEN month_reserved_microusd ELSE 0 END`,
           updated_at: checkedAt,
         }).where("machine_id", "=", reservation.machine_id).returningAll().executeTakeFirstOrThrow();
-        if (reservation.status === "in_flight" && !usageInFlight) {
+        if (reservation.status === "in_flight") {
           const { promotionalDebit, addonDebit, attributed } = await reservationDebitSplit(
             trx.executor,
             reservationIdentity,

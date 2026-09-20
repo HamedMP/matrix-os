@@ -79,25 +79,38 @@ describe("usage-based funded AI admission", () => {
     });
   });
 
-  it("expires stale usage holds without manufacturing usage or blocking the owner forever", async () => {
+  it("keeps stale usage holds until exact provider usage arrives", async () => {
     const auth = await repo.authorize(request(credential.token));
     const key = { reservationId: auth.reservation.reservationId, tokenId: credential.tokenId };
     await repo.startReservation(key);
     await expect(repo.finalizeReservation({ ...key, mode: "conservative" }))
       .rejects.toMatchObject({ code: "unavailable" });
     clock = new Date(clock.getTime() + 61_000);
-    expect(await repo.cleanupExpiredReservations({ limit: 10 })).toBe(1);
+    expect(await repo.cleanupExpiredReservations({ limit: 10 })).toBe(0);
     expect(await repo.getFundingSummary(identity)).toMatchObject({
-      reservedMicrousd: 0, settledThisMonthMicrousd: 0,
+      reservedMicrousd: 1_000_000, settledThisMonthMicrousd: 0,
+      remainingBalanceMicrousd: 0, remainingBudgetMicrousd: 0,
     });
     const stale = await db.executor.selectFrom("ai_funded_usage_reservations")
       .select(["status", "actual_microusd", "settlement_response"])
       .where("reservation_id", "=", key.reservationId).executeTakeFirstOrThrow();
-    expect(stale).toEqual({ status: "expired", actual_microusd: null, settlement_response: null });
+    expect(stale).toEqual({ status: "in_flight", actual_microusd: null, settlement_response: null });
     expect(await db.executor.selectFrom("ai_funded_credit_ledger")
       .selectAll().where("reservation_id", "=", key.reservationId).execute()).toEqual([]);
+    await expect(repo.authorize(request(credential.token, "blocked_while_unresolved")))
+      .rejects.toMatchObject({ code: "rate_limited" });
     await expect(repo.finalizeReservation({ ...key, mode: "exact", actualCostMicrousd: 100 }))
-      .rejects.toMatchObject({ code: "reservation_expired" });
+      .resolves.toMatchObject({
+        status: "settled", actualCostMicrousd: 100, chargedCostMicrousd: 100,
+        releasedMicrousd: 999_900,
+      });
+    expect(await db.executor.selectFrom("ai_funded_usage_reservations")
+      .select(["status", "actual_microusd", "finalization_mode"])
+      .where("reservation_id", "=", key.reservationId).executeTakeFirstOrThrow())
+      .toEqual({ status: "settled", actual_microusd: 100, finalization_mode: "exact" });
+    expect((await db.executor.selectFrom("ai_funded_credit_ledger").select("amount_microusd")
+      .where("reservation_id", "=", key.reservationId).execute())
+      .reduce((total, row) => total + Number(row.amount_microusd), 0)).toBe(-100);
     expect((await repo.authorize(request(credential.token, "reconciled"))).authorized).toBe(true);
   });
 
