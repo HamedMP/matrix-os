@@ -56,6 +56,26 @@ describe("usage-based funded AI admission", () => {
       .rejects.toMatchObject({ code: "rate_limited" });
   });
 
+  it("releases an expired usage reservation that never started", async () => {
+    const second = await fundRuntime({ ...identity, machineId: "usage_second", runtimeSlot: "preview" });
+    const authorization = await repo.authorize(request(credential.token, "never_started"));
+    clock = new Date(clock.getTime() + 301_000);
+
+    await expect(repo.cleanupExpiredReservations({ limit: 10 })).resolves.toBe(1);
+    await expect(repo.getFundingSummary(identity)).resolves.toMatchObject({
+      reservedMicrousd: 0,
+      reservedThisMonthMicrousd: 0,
+      remainingBalanceMicrousd: 1_000_000,
+      remainingBudgetMicrousd: 1_000_000,
+    });
+    await expect(db.executor.selectFrom("ai_funded_usage_reservations")
+      .select(["status", "actual_microusd"])
+      .where("reservation_id", "=", authorization.reservation.reservationId)
+      .executeTakeFirstOrThrow()).resolves.toEqual({ status: "expired", actual_microusd: null });
+    await expect(repo.authorize(request(second.token, "after_never_started_expiry")))
+      .resolves.toMatchObject({ authorized: true });
+  });
+
   it("audits the final overrun without debt or later credit clawback", async () => {
     const auth = await repo.authorize(request(credential.token));
     const key = { reservationId: auth.reservation.reservationId, tokenId: credential.tokenId };

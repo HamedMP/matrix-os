@@ -20,9 +20,10 @@ export async function cleanupExpiredReservations(options: AiFundedMeteringReposi
           "addon_reserved_microusd", "status",
         ])
         .where("status", "in", ["reserved", "in_flight"]).where("expires_at", "<=", checkedAt)
-        // Exact provider usage is the only safe release signal for usage-mode
-        // liability. Keep its hold and owner admission barrier until finalization.
-        .where(sql<boolean>`authorization_response::jsonb #>> '{reservation,billingMode}' IS DISTINCT FROM 'usage'`)
+        // Exact provider usage is the only safe release signal after a usage-mode
+        // request starts. Never-started reservations have no provider liability,
+        // so their bounded authorization hold can expire normally.
+        .where(sql<boolean>`(status <> 'in_flight' OR authorization_response::jsonb #>> '{reservation,billingMode}' IS DISTINCT FROM 'usage')`)
         .orderBy("expires_at").orderBy("reservation_id").limit(limit).forUpdate().skipLocked().execute();
       let cleaned = 0;
       for (const reservation of expired) {
