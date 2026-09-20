@@ -40,6 +40,26 @@ function connectivity(readiness: AiProviderReadiness): ProviderHarnessInstance["
   return "unknown";
 }
 
+function isFreshReady(readiness: AiProviderReadiness, now: Date): boolean {
+  const checkedAt = Date.parse(readiness.checkedAt ?? "");
+  const staleAfter = Date.parse(readiness.staleAfter ?? "");
+  return readiness.state === "ready"
+    && Number.isFinite(checkedAt) && checkedAt <= now.getTime()
+    && Number.isFinite(staleAfter) && staleAfter > now.getTime();
+}
+
+function isAuthoritativeFundedPolicy(
+  policy: FundedAiEffectivePolicy | undefined,
+  authoritative: boolean,
+  now: Date,
+): policy is FundedAiEffectivePolicy {
+  if (!authoritative || policy?.enabled !== true) return false;
+  const checkedAt = Date.parse(policy.checkedAt);
+  const staleAfter = Date.parse(policy.staleAfter);
+  return Number.isFinite(checkedAt) && checkedAt <= now.getTime()
+    && Number.isFinite(staleAfter) && staleAfter > now.getTime();
+}
+
 function defaultLoginMethods(kind: ProviderHarnessKind) {
   return kind === "codex"
     ? ["terminal", "oauth", "api_key"] as const
@@ -88,13 +108,13 @@ function projectAccessSources(
     // Platform policy replaces the bundled Matrix allowlist. The canonical
     // catalog still bounds projection to runnable models assigned to this
     // exact access source; vendor membership alone is not route eligibility.
-    const availableModelIds = matrix && fundedPolicyAuthoritative
-      ? new Set(canonical.models
+    const availableModelIds = matrix
+      ? fundedPolicyAuthoritative ? new Set(canonical.models
         .filter((model) => model.vendor === source.vendor
           && model.status !== "retired" && model.status !== "unavailable"
           && source.eligibleModelIds.includes(model.id)
           && model.eligibleAccessSourceIds.includes(source.id))
-        .map((model) => model.id))
+        .map((model) => model.id)) : new Set<string>()
       : null;
     const fundedModelIds = availableModelIds
       ? (fundedPolicy?.allowedModelIds ?? []).flatMap((policyModelId) => {
@@ -277,6 +297,7 @@ function projectHarness(input: {
   sources: ProviderAccessSource[];
   allowedGatewayModels: ReadonlySet<string>;
   catalogUnavailable: boolean;
+  now: Date;
   loginMethods?: (harness: HarnessConfiguration) => readonly ProviderLoginMethod[];
 }): ProviderHarnessInstance | null {
   const modelProvider = input.modelProviders.find((candidate) => candidate.id === input.stored.route.providerId);
@@ -296,12 +317,22 @@ function projectHarness(input: {
     && source.eligibleModelIds.includes(input.stored.route.modelId)
     && (source.kind !== "harness_profile" || source.harness === input.stored.harness)
     && (source.kind !== "matrix_gateway" || input.allowedGatewayModels.has(input.stored.route.modelId));
-  const routeCatalogUnavailable = input.catalogUnavailable || !routeAvailable;
-  const routeSourceEligible = sourceEligible === true && !routeCatalogUnavailable;
+  const routeCatalogUnavailable = !routeAvailable
+    || (input.catalogUnavailable && source?.kind !== "matrix_gateway");
+  const nativeCredentialRoute = input.stored.harness === "pi" || input.stored.harness === "opencode";
+  const routeSourceEligible = sourceEligible === true && !routeCatalogUnavailable
+    && (source.kind !== "matrix_gateway" && !nativeCredentialRoute
+      || isFreshReady(source.readiness, input.now));
+  const executionRouteAvailable = nativeCredentialRoute
+    ? routeSourceEligible
+    : !routeCatalogUnavailable;
   const selectedAccountId = routeSourceEligible && source?.kind === "provider_account"
     && source.accountId && input.accounts.some((account) => account.id === source.accountId)
     ? source.accountId : null;
-  const readiness = routeSourceEligible ? source!.readiness : {
+  const readiness = source && !routeCatalogUnavailable
+    && (source.kind === "matrix_gateway" || sourceEligible)
+    ? source.readiness
+    : {
     state: input.catalogUnavailable ? "unavailable" as const : "unknown" as const,
     checkedAt: null,
     staleAfter: null,
@@ -317,7 +348,7 @@ function projectHarness(input: {
     harness: input.stored.harness,
     displayName: input.stored.displayName,
     accentColor: input.stored.accentColor,
-    enabled: Boolean(routeAvailable && !routeCatalogUnavailable
+    enabled: Boolean(executionRouteAvailable
       && input.stored.enabled && driver?.installState === "installed"),
     version: null,
     installState: driver?.installState ?? "missing",
@@ -349,6 +380,11 @@ export async function projectProviderSettings(input: {
   configurationHarnessKinds?: ProviderHarnessKind[];
   loginMethods?: (harness: HarnessConfiguration) => readonly ProviderLoginMethod[];
 }): Promise<ProviderSettingsSnapshot> {
+  const fundedPolicyAuthoritative = isAuthoritativeFundedPolicy(
+    input.fundedPolicy,
+    input.fundedPolicyAuthoritative === true,
+    input.now,
+  );
   const supportedActions = input.fundingSummary?.topUpEnabled === true
     && !input.supportedActions.includes("add_credit")
     ? [...input.supportedActions, "add_credit" as const]
@@ -358,7 +394,7 @@ export async function projectProviderSettings(input: {
     input.config,
     input.fundingSummary,
     input.fundedPolicy,
-    input.fundedPolicyAuthoritative,
+    fundedPolicyAuthoritative,
     input.now,
   );
   const sources: ProviderAccessSource[] = [
@@ -416,12 +452,12 @@ export async function projectProviderSettings(input: {
     && sources.some((source) => source.id === input.config.gatewayPolicy?.accessSourceId && source.kind === "matrix_gateway")
     ? {
         ...input.config.gatewayPolicy,
-        allowedModelIds: input.fundedPolicyAuthoritative
+        allowedModelIds: fundedPolicyAuthoritative
           ? [...new Set(sources.filter((source) => source.kind === "matrix_gateway").flatMap((source) => source.eligibleModelIds))]
-          : input.config.gatewayPolicy.allowedModelIds,
-        monthlyBudgetMicrousd: input.fundedPolicyAuthoritative
+          : [],
+        monthlyBudgetMicrousd: fundedPolicyAuthoritative
           ? input.fundingSummary?.monthlyBudgetMicrousd ?? null
-          : input.config.gatewayPolicy.monthlyBudgetMicrousd,
+          : null,
         // Only the machine-authenticated platform funding response can enable
         // purchase. Owner-controlled provider JSON remains incapable of doing so.
         topUpEnabled: input.fundingSummary?.topUpEnabled === true,
@@ -440,6 +476,7 @@ export async function projectProviderSettings(input: {
       sources,
       allowedGatewayModels,
       catalogUnavailable: failedCatalogs.has(stored.harness),
+      now: input.now,
       loginMethods: input.loginMethods,
     });
     return harness ? [harness] : [];

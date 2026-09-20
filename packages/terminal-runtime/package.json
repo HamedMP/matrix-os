@@ -11,6 +11,7 @@
     },
     "./zellij-config": {
       "types": "./src/zellij-config.ts",
+      "development": "./src/zellij-config.ts",
       "default": "./dist/zellij-config.js"
     },
     "./user-systemd-capacity": {

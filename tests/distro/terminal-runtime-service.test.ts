@@ -1,5 +1,9 @@
 import { readFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
+
+const execFileAsync = promisify(execFile);
 
 describe("matrix terminal runtime host service", () => {
   it("runs a bounded control plane while user units own project Zellij processes", async () => {
@@ -70,6 +74,29 @@ describe("matrix terminal runtime host service", () => {
       development: "./src/index.ts",
       default: "./dist/index.js",
     });
+    expect(runtimePackage.exports["./zellij-config"]?.development)
+      .toBe("./src/zellij-config.ts");
+    expect(runtimePackage.exports["./zellij-config"]?.default)
+      .toBe("./dist/zellij-config.js");
+    await expect(readFile(new URL(
+      `../../packages/terminal-runtime/${runtimePackage.exports["./zellij-config"]!.development.slice(2)}`,
+      import.meta.url,
+    ), "utf8")).resolves.toContain("renderMatrixZellijConfig");
+    const runtimeCwd = new URL("../../packages/terminal-runtime/", import.meta.url);
+    const development = await execFileAsync(process.execPath, [
+      "--conditions=development",
+      "--experimental-strip-types",
+      "--input-type=module",
+      "--eval",
+      "const value = await import('@matrix-os/terminal-runtime/zellij-config'); process.stdout.write(typeof value.renderMatrixZellijConfig)",
+    ], { cwd: runtimeCwd });
+    expect(development.stdout).toBe("function");
+    const production = await execFileAsync(process.execPath, [
+      "--input-type=module",
+      "--eval",
+      "process.stdout.write(import.meta.resolve('@matrix-os/terminal-runtime/zellij-config'))",
+    ], { cwd: runtimeCwd });
+    expect(production.stdout).toMatch(/\/dist\/zellij-config\.js$/);
     expect(runtimePackage.exports["./user-systemd-capacity"]?.development)
       .toBe("./src/user-systemd-capacity.ts");
     expect(runtimePackage.exports["./user-systemd-capacity"]?.default)

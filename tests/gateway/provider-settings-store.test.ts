@@ -426,7 +426,7 @@ describe("ProviderSettingsStore", () => {
     }));
   });
 
-  it("fails a generic harness route closed when its catalog fails despite a portable source", async () => {
+  it("fails a native credential-backed generic harness route closed when its catalog fails", async () => {
     const store = createStore({
       genericModelCatalog: { providers: [], accessSources: [], failures: ["opencode"] },
     });
@@ -441,8 +441,8 @@ describe("ProviderSettingsStore", () => {
         displayName: "OpenCode Matrix",
         accentColor: null,
         enabled: true,
-        selectedAccountId: null,
-        accessSourceId: "matrix_included",
+        selectedAccountId: "owner_anthropic",
+        accessSourceId: "owner_anthropic_profile",
         route: {
           kind: "configurable",
           providerId: "anthropic",
@@ -461,7 +461,7 @@ describe("ProviderSettingsStore", () => {
 
     const projected = await store.getSnapshot();
 
-    expect(projected.accessSources).toContainEqual(expect.objectContaining({ id: "matrix_included" }));
+    expect(projected.accessSources).toContainEqual(expect.objectContaining({ id: "owner_anthropic_profile" }));
     expect(projected.harnesses).toContainEqual(expect.objectContaining({
       id: "harness_opencode_matrix",
       enabled: false,
