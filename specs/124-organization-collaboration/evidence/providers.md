@@ -28,8 +28,13 @@ when absent. Tokens are read from the environment only and never written anywher
 | Claude API run stops promptly on cancellation | `COLLABORATION_PROBE_ANTHROPIC_API_KEY` | unrun: fixture missing |
 | Claude session resume with a changed root (evidence for S09 fresh-continuation rule) | `COLLABORATION_PROBE_ANTHROPIC_API_KEY` | unrun: fixture missing |
 | Codex API run writes only inside the selected worktree root | `COLLABORATION_PROBE_OPENAI_API_KEY` + `codex` binary | unrun: fixture missing |
-| Codex native subscription auth file used from another `CODEX_HOME` (delegated request) | `COLLABORATION_PROBE_CODEX_AUTH_JSON` + `codex` binary | unrun: fixture missing |
-| Claude subscription OAuth token used by a non-owner process (delegated request) | `COLLABORATION_PROBE_CLAUDE_OAUTH_TOKEN` | unrun: fixture missing |
+| Codex native subscription auth used from another `CODEX_HOME` completes an authenticated turn (delegated request) | `COLLABORATION_PROBE_CODEX_AUTH_JSON` + `codex` binary | unrun: fixture missing |
+| Claude subscription OAuth token used by a non-owner process completes an authenticated turn (delegated request) | `COLLABORATION_PROBE_CLAUDE_OAUTH_TOKEN` | unrun: fixture missing |
+
+## Probe semantics and residual risk
+
+- A delegated-request probe passes only on an authenticated successful turn: Codex must exit 0 with a `turn.completed`/`agent_message` JSON event and no auth rejection on stderr; Claude must yield a `result` message with `subtype: "success"`. A provider rejection or a thrown authentication error is a FAILED probe and is recorded here as `failed`, never as a pass.
+- Codex reads credentials only from `$CODEX_HOME/auth.json`; there is no in-memory path. The probe copies the fixture file into a fresh `0o700` temp directory as a `0o600` file created with `wx`, deletes it immediately after the single `codex exec`, and also removes it in `afterEach`, `afterAll` and on process `exit`/`SIGINT`/`SIGTERM`. Residual risk: a `SIGKILL` or power loss between the copy and the run leaves the file in the OS temp directory until the next probe run or temp cleanup; run the probe only on a disposable machine with a disposable test credential, never with an owner's real `auth.json`.
 
 ## Auth modes and their status
 

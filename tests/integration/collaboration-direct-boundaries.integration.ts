@@ -71,13 +71,45 @@ describe("S00 direct probes: required supervisor facilities in the scope-runtime
 });
 
 describe("S00 direct probes: relay pass-through and home ticket verification", () => {
+  const scopeUrl = () => `${fixtures.relayUrl}/api/collaboration/scopes/${fixtures.scopeId}`;
+  const authHeaders = () => ({ authorization: `Bearer ${fixtures.sessionToken}` });
+
+  /**
+   * Every negative probe first proves reachability with a valid request, so a DNS
+   * failure, an unreachable relay or the probe's own timeout can never be mistaken
+   * for a rejection.
+   */
+  async function assertRelayReachable(): Promise<void> {
+    const control = await fetch(scopeUrl(), { headers: authHeaders(), signal: AbortSignal.timeout(10_000) });
+    expect(control.status, "control request with valid auth must succeed before a negative probe").toBe(200);
+  }
+
+  async function loadWebSocket(): Promise<typeof import("ws").WebSocket> {
+    const { createRequire } = await import("node:module");
+    const gatewayRequire = createRequire(join(REPO_ROOT, "packages/gateway/package.json"));
+    return ((await import(gatewayRequire.resolve("ws"))) as typeof import("ws")).WebSocket;
+  }
+
+  type UpgradeOutcome = { kind: "open" } | { kind: "refused"; status: number } | { kind: "closed"; code: number } | { kind: "error" } | { kind: "timeout" };
+
+  async function upgradeWith(origin: string): Promise<UpgradeOutcome> {
+    const WebSocket = await loadWebSocket();
+    const url = `${(fixtures.relayUrl as string).replace(/^http/, "ws")}/api/collaboration/scopes/${fixtures.scopeId}/events?token=${encodeURIComponent(fixtures.sessionToken as string)}`;
+    return new Promise<UpgradeOutcome>((resolveOutcome) => {
+      const socket = new WebSocket(url, { headers: { origin } });
+      const timer = setTimeout(() => { socket.terminate(); resolveOutcome({ kind: "timeout" }); }, 10_000);
+      const settle = (outcome: UpgradeOutcome) => { clearTimeout(timer); resolveOutcome(outcome); };
+      socket.once("open", () => { settle({ kind: "open" }); socket.close(); });
+      socket.once("unexpected-response", (_req, res) => settle({ kind: "refused", status: res.statusCode ?? 0 }));
+      socket.once("close", (code) => settle({ kind: "closed", code }));
+      socket.once("error", () => settle({ kind: "error" }));
+    });
+  }
+
   it.skipIf(!relayReady)(
     `authenticated read reaches the home through the relay (${unrun("COLLABORATION_PROBE_RELAY_URL/SESSION_TOKEN/SCOPE_ID")})`,
     async () => {
-      const response = await fetch(`${fixtures.relayUrl}/api/collaboration/scopes/${fixtures.scopeId}`, {
-        headers: { authorization: `Bearer ${fixtures.sessionToken}` },
-        signal: AbortSignal.timeout(10_000),
-      });
+      const response = await fetch(scopeUrl(), { headers: authHeaders(), signal: AbortSignal.timeout(10_000) });
       console.info("[s00-probe] relay authenticated read", { status: response.status });
       expect(response.status).toBe(200);
     },
@@ -85,52 +117,51 @@ describe("S00 direct probes: relay pass-through and home ticket verification", (
   );
 
   it.skipIf(!relayReady)(
-    `a forged proof header is rejected and the response carries no upstream detail (${unrun("COLLABORATION_PROBE_RELAY_URL/SESSION_TOKEN/SCOPE_ID")})`,
+    `a forged proof header is rejected with 401/403 and no upstream detail (${unrun("COLLABORATION_PROBE_RELAY_URL/SESSION_TOKEN/SCOPE_ID")})`,
     async () => {
+      await assertRelayReachable();
       const forged = Buffer.from(JSON.stringify({ keyId: "forged", signature: "AAAA", payload: { actorId: "user_forged" } })).toString("base64url");
-      const response = await fetch(`${fixtures.relayUrl}/api/collaboration/scopes/${fixtures.scopeId}`, {
-        headers: { authorization: `Bearer ${fixtures.sessionToken}`, "x-matrix-collaboration-proof": forged },
+      const response = await fetch(scopeUrl(), {
+        headers: { ...authHeaders(), "x-matrix-collaboration-proof": forged },
         signal: AbortSignal.timeout(10_000),
       });
       const body = await response.text();
       console.info("[s00-probe] relay forged proof", { status: response.status });
-      expect([400, 401, 403, 404]).toContain(response.status);
+      // A generic 404 or 400 would not prove the proof was verified and refused.
+      expect([401, 403]).toContain(response.status);
       expect(body).not.toMatch(/postgres|kysely|ECONN|stack|at .*\.ts:/i);
     },
     PROBE_TIMEOUT_MS,
   );
 
   it.skipIf(!relayReady || !fixtures.allowedOrigin)(
-    `a WebSocket upgrade with a foreign Origin is refused (${unrun("COLLABORATION_PROBE_ALLOWED_ORIGIN")})`,
+    `a WebSocket upgrade with a foreign Origin is refused with 403 or policy-violation close (${unrun("COLLABORATION_PROBE_ALLOWED_ORIGIN")})`,
     async () => {
-      const { createRequire } = await import("node:module");
-      const gatewayRequire = createRequire(join(REPO_ROOT, "packages/gateway/package.json"));
-      const { WebSocket } = (await import(gatewayRequire.resolve("ws"))) as typeof import("ws");
-      const url = `${(fixtures.relayUrl as string).replace(/^http/, "ws")}/api/collaboration/scopes/${fixtures.scopeId}/events?token=${encodeURIComponent(fixtures.sessionToken as string)}`;
-      const outcome = await new Promise<string>((resolveOutcome) => {
-        const socket = new WebSocket(url, { headers: { origin: "https://attacker.example" } });
-        const timer = setTimeout(() => { socket.terminate(); resolveOutcome("timeout"); }, 10_000);
-        socket.once("open", () => { clearTimeout(timer); socket.close(); resolveOutcome("open"); });
-        socket.once("unexpected-response", (_req, res) => { clearTimeout(timer); resolveOutcome(`refused:${res.statusCode}`); });
-        socket.once("error", () => { clearTimeout(timer); resolveOutcome("error"); });
-      });
-      console.info("[s00-probe] relay ws foreign origin", { outcome });
-      expect(outcome).not.toBe("open");
+      await assertRelayReachable();
+      const control = await upgradeWith(fixtures.allowedOrigin as string);
+      console.info("[s00-probe] relay ws allowed origin", control);
+      expect(control.kind, "upgrade with the allowed Origin must open before the negative probe").toBe("open");
+      const foreign = await upgradeWith("https://attacker.example");
+      console.info("[s00-probe] relay ws foreign origin", foreign);
+      const refused = (foreign.kind === "refused" && foreign.status === 403)
+        || (foreign.kind === "closed" && (foreign.code === 1008 || foreign.code === 4403));
+      expect(refused, `expected 403 or close 1008/4403, observed ${JSON.stringify(foreign)}`).toBe(true);
     },
     PROBE_TIMEOUT_MS,
   );
 
   it.skipIf(!relayReady)(
-    `an oversized body is refused before the home processes it (${unrun("COLLABORATION_PROBE_RELAY_URL/SESSION_TOKEN/SCOPE_ID")})`,
+    `an oversized body is refused with 413 before the home processes it (${unrun("COLLABORATION_PROBE_RELAY_URL/SESSION_TOKEN/SCOPE_ID")})`,
     async () => {
-      const response = await fetch(`${fixtures.relayUrl}/api/collaboration/scopes/${fixtures.scopeId}/discussion/messages`, {
+      await assertRelayReachable();
+      const response = await fetch(`${scopeUrl()}/discussion/messages`, {
         method: "POST",
-        headers: { authorization: `Bearer ${fixtures.sessionToken}`, "content-type": "application/json" },
+        headers: { ...authHeaders(), "content-type": "application/json" },
         body: JSON.stringify({ clientRequestId: "0b1f5f8e-2f0e-4c1e-9d5e-6a7b8c9d0e1f", text: "x".repeat(2 * 1024 * 1024) }),
         signal: AbortSignal.timeout(15_000),
       });
       console.info("[s00-probe] relay oversized body", { status: response.status });
-      expect([400, 413]).toContain(response.status);
+      expect(response.status).toBe(413);
     },
     PROBE_TIMEOUT_MS,
   );

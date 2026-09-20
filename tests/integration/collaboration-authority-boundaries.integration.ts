@@ -87,30 +87,46 @@ describe("S00 authority probes: local clock-skew and deadline rules (always run)
 });
 
 describe("S00 authority probes: live Clerk organization membership", () => {
+  const membershipPath = (userId: string) => `/organizations/${fixtures.orgId}/memberships/${userId}`;
+
+  /**
+   * Restoration is registered BEFORE any mutation and runs in `finally`, so a failed
+   * assertion, API error or timeout inside `body` cannot leave the shared fixture user
+   * with a changed role. The restore is verified, not fire-and-forget.
+   */
+  async function withRoleRestored(userId: string, body: (original: string) => Promise<void>): Promise<void> {
+    const original = await roleOf(userId);
+    expect(original).not.toBeNull();
+    try {
+      await body(original as string);
+    } finally {
+      const restored = await clerk("PATCH", membershipPath(userId), { role: original });
+      if (restored.status !== 200 || (await roleOf(userId)) !== original) {
+        throw new Error(`fixture restore failed for ${userId}: expected role ${original}`);
+      }
+    }
+  }
+
   it.skipIf(!fixtures.secretKey || !fixtures.orgId || !fixtures.memberUserId)(
     `direct role change is visible through the API within the removal bound (${unrun("COLLABORATION_PROBE_CLERK_SECRET_KEY/ORG_ID/MEMBER_USER_ID")})`,
     async () => {
       const memberUserId = fixtures.memberUserId as string;
-      const original = await roleOf(memberUserId);
-      expect(original).not.toBeNull();
-      const target = original === "org:member" ? "org:admin" : "org:member";
-      const started = Date.now();
-      const update = await clerk("PATCH", `/organizations/${fixtures.orgId}/memberships/${memberUserId}`, { role: target });
-      expect(update.status).toBe(200);
-      let observed: string | null = null;
-      while (Date.now() - started < REMOVAL_BOUND_SECONDS * 1_000) {
-        observed = await roleOf(memberUserId);
-        if (observed === target) break;
-        await new Promise((r) => setTimeout(r, 1_000));
-      }
-      const elapsedMs = Date.now() - started;
-      console.info("[s00-probe] clerk role change read-after-write", { elapsedMs });
-      try {
+      await withRoleRestored(memberUserId, async (original) => {
+        const target = original === "org:member" ? "org:admin" : "org:member";
+        const started = Date.now();
+        const update = await clerk("PATCH", membershipPath(memberUserId), { role: target });
+        expect(update.status).toBe(200);
+        let observed: string | null = null;
+        while (Date.now() - started < REMOVAL_BOUND_SECONDS * 1_000) {
+          observed = await roleOf(memberUserId);
+          if (observed === target) break;
+          await new Promise((r) => setTimeout(r, 1_000));
+        }
+        const elapsedMs = Date.now() - started;
+        console.info("[s00-probe] clerk role change read-after-write", { elapsedMs });
         expect(observed).toBe(target);
         expect(elapsedMs).toBeLessThan(REMOVAL_BOUND_SECONDS * 1_000);
-      } finally {
-        await clerk("PATCH", `/organizations/${fixtures.orgId}/memberships/${memberUserId}`, { role: original });
-      }
+      });
     },
     PROBE_TIMEOUT_MS * 2,
   );
@@ -119,21 +135,17 @@ describe("S00 authority probes: live Clerk organization membership", () => {
     `concurrent role updates converge to one API-consistent value (${unrun("COLLABORATION_PROBE_CLERK_SECRET_KEY/ORG_ID/MEMBER_USER_ID")})`,
     async () => {
       const memberUserId = fixtures.memberUserId as string;
-      const original = await roleOf(memberUserId);
-      expect(original).not.toBeNull();
-      const results = await Promise.all([
-        clerk("PATCH", `/organizations/${fixtures.orgId}/memberships/${memberUserId}`, { role: "org:admin" }),
-        clerk("PATCH", `/organizations/${fixtures.orgId}/memberships/${memberUserId}`, { role: "org:member" }),
-      ]);
-      try {
+      await withRoleRestored(memberUserId, async () => {
+        const results = await Promise.all([
+          clerk("PATCH", membershipPath(memberUserId), { role: "org:admin" }),
+          clerk("PATCH", membershipPath(memberUserId), { role: "org:member" }),
+        ]);
         expect(results.every((r) => r.status === 200 || r.status === 422)).toBe(true);
         const first = await roleOf(memberUserId);
         const second = await roleOf(memberUserId);
         expect(["org:admin", "org:member"]).toContain(first);
         expect(second).toBe(first);
-      } finally {
-        await clerk("PATCH", `/organizations/${fixtures.orgId}/memberships/${memberUserId}`, { role: original });
-      }
+      });
     },
     PROBE_TIMEOUT_MS,
   );
@@ -144,13 +156,22 @@ describe("S00 authority probes: live Clerk organization membership", () => {
       const rejoinUserId = fixtures.rejoinUserId as string;
       const before = (await listMemberships()).find((m) => m.public_user_data?.user_id === rejoinUserId);
       expect(before).toBeTruthy();
-      const removed = await clerk("DELETE", `/organizations/${fixtures.orgId}/memberships/${rejoinUserId}`);
-      expect(removed.status).toBe(200);
-      const gone = await roleOf(rejoinUserId);
-      expect(gone).toBeNull();
-      const rejoined = await clerk<Membership>("POST", `/organizations/${fixtures.orgId}/memberships`, { user_id: rejoinUserId, role: before?.role ?? "org:member" });
-      expect(rejoined.status).toBe(200);
-      expect(rejoined.json.id).not.toBe(before?.id);
+      const originalRole = before?.role ?? "org:member";
+      // Re-admission is registered before the DELETE so an assertion failure, API error or
+      // timeout between removal and rejoin cannot leave the fixture user outside the org.
+      try {
+        const removed = await clerk("DELETE", membershipPath(rejoinUserId));
+        expect(removed.status).toBe(200);
+        expect(await roleOf(rejoinUserId)).toBeNull();
+        const rejoined = await clerk<Membership>("POST", `/organizations/${fixtures.orgId}/memberships`, { user_id: rejoinUserId, role: originalRole });
+        expect(rejoined.status).toBe(200);
+        expect(rejoined.json.id).not.toBe(before?.id);
+      } finally {
+        if ((await roleOf(rejoinUserId)) === null) {
+          const readmitted = await clerk("POST", `/organizations/${fixtures.orgId}/memberships`, { user_id: rejoinUserId, role: originalRole });
+          if (readmitted.status !== 200) throw new Error(`fixture restore failed: could not re-admit ${rejoinUserId}`);
+        }
+      }
     },
     PROBE_TIMEOUT_MS,
   );

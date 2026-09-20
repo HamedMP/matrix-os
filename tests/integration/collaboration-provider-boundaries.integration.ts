@@ -13,7 +13,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it } from "vitest";
 import {
   SCOPE_RUNTIME_CLAUDE_HARNESS_VERSION,
   SCOPE_RUNTIME_CODEX_HARNESS_VERSION,
@@ -40,6 +40,58 @@ const tempDirs: string[] = [];
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
+
+/**
+ * Codex reads credentials only from `$CODEX_HOME/auth.json`; there is no in-memory
+ * mechanism. The copy therefore lives for one probe in a 0o700 per-run directory as a
+ * 0o600 file and is removed in afterEach, afterAll and on process exit/SIGINT/SIGTERM so
+ * an aborted run cannot leave the token on disk. Residual risk is recorded in
+ * evidence/providers.md.
+ */
+const credentialDirs = new Set<string>();
+function removeCredentialDirs(): void {
+  for (const dir of credentialDirs) rmSync(dir, { recursive: true, force: true });
+  credentialDirs.clear();
+}
+function onSignal(signal: NodeJS.Signals): void {
+  removeCredentialDirs();
+  process.off(signal, onSignal);
+  process.kill(process.pid, signal);
+}
+process.once("exit", removeCredentialDirs);
+process.once("SIGINT", onSignal);
+process.once("SIGTERM", onSignal);
+afterAll(removeCredentialDirs);
+
+function ephemeralCodexHome(authJsonPath: string): string {
+  const dir = mkdtempSync(join(tmpdir(), "codex-cred-"));
+  credentialDirs.add(dir);
+  tempDirs.push(dir);
+  writeFileSync(join(dir, "auth.json"), readFileSync(authJsonPath), { mode: 0o600, flag: "wx" });
+  return dir;
+}
+
+/** A Codex `exec --json` run counts as authenticated success only with a completed turn event. */
+function codexTurnCompleted(stdout: string): boolean {
+  return stdout.split("\n").some((line) => {
+    if (!line.startsWith("{")) return false;
+    try {
+      const event = JSON.parse(line) as { type?: string; item?: { type?: string } };
+      return event.type === "turn.completed" || event.item?.type === "agent_message";
+    } catch {
+      return false;
+    }
+  });
+}
+
+/** A Claude SDK run counts as authenticated success only with a non-error `result` message. */
+async function claudeRunSucceeded(run: AsyncIterable<{ type: string; subtype?: string; is_error?: boolean }>): Promise<boolean> {
+  let ok = false;
+  for await (const message of run) {
+    if (message.type === "result") ok = message.subtype === "success" && message.is_error !== true;
+  }
+  return ok;
+}
 
 function gitRepoWithWorktree(): { projectRoot: string; worktreeRoot: string } {
   const base = mkdtempSync(join(tmpdir(), "collab-probe-"));
@@ -190,13 +242,16 @@ describe("S00 provider boundary probes: Claude API execution", () => {
       const { projectRoot, worktreeRoot } = gitRepoWithWorktree();
       const sdk = await loadAgentSdk();
       let sessionId: string | undefined;
+      let firstSucceeded = false;
       const first = sdk.query({
         prompt: "Reply with the single word ready.",
         options: { cwd: worktreeRoot, model: "claude-haiku-4-5-20251001", maxTurns: 1, env: { ...process.env, ANTHROPIC_API_KEY: fixtures.anthropicApiKey } },
       });
       for await (const message of first) {
         if ("session_id" in message && typeof message.session_id === "string") sessionId = message.session_id;
+        if (message.type === "result") firstSucceeded = message.subtype === "success" && message.is_error !== true;
       }
+      expect(firstSucceeded).toBe(true);
       expect(sessionId).toBeTruthy();
       let resumedType: string | undefined;
       let resumeError: string | undefined;
@@ -238,19 +293,22 @@ describe("S00 provider boundary probes: Codex API execution", () => {
   );
 
   it.skipIf(!fixtures.codexAuthJsonPath || !codexBinary())(
-    `Codex native subscription auth file used from a different CODEX_HOME records delegated-request behavior (${unrun("COLLABORATION_PROBE_CODEX_AUTH_JSON or codex binary")})`,
+    `Codex native subscription auth used from a different CODEX_HOME completes an authenticated turn (${unrun("COLLABORATION_PROBE_CODEX_AUTH_JSON or codex binary")})`,
     () => {
       const { worktreeRoot } = gitRepoWithWorktree();
-      const codexHome = mkdtempSync(join(tmpdir(), "codex-home-"));
-      tempDirs.push(codexHome);
-      writeFileSync(join(codexHome, "auth.json"), readFileSync(fixtures.codexAuthJsonPath as string));
+      const codexHome = ephemeralCodexHome(fixtures.codexAuthJsonPath as string);
       const result = spawnSync(codexBinary() as string, [
         "exec", "--json", "--sandbox", "read-only", "-C", worktreeRoot, "Reply with the single word ready.",
       ], { encoding: "utf8", timeout: PROBE_TIMEOUT_MS, env: { ...process.env, CODEX_HOME: codexHome, OPENAI_API_KEY: "" } });
-      // Evidence only: whether a copied subscription credential is technically usable from
-      // another process is recorded; provider terms remain the owner's responsibility (R4).
-      console.info("[s00-probe] codex subscription delegated request", { status: result.status });
-      expect(typeof result.status).toBe("number");
+      removeCredentialDirs();
+      const authRejected = /unauthori[sz]ed|not logged in|login|401|403|invalid.*token/i.test(result.stderr ?? "");
+      console.info("[s00-probe] codex subscription delegated request", { status: result.status, authRejected });
+      // A delegated request is evidence of technical usability only when the provider
+      // accepted it and a turn completed; a rejection or an auth error is a FAILED probe,
+      // recorded as such in evidence/providers.md, never green.
+      expect(authRejected, `codex rejected the delegated credential: ${result.stderr?.slice(0, 200)}`).toBe(false);
+      expect(result.status).toBe(0);
+      expect(codexTurnCompleted(result.stdout ?? "")).toBe(true);
     },
     PROBE_TIMEOUT_MS,
   );
@@ -258,23 +316,19 @@ describe("S00 provider boundary probes: Codex API execution", () => {
 
 describe("S00 provider boundary probes: Claude native subscription", () => {
   it.skipIf(!fixtures.claudeOauthToken)(
-    `Claude subscription OAuth token used by a non-owner process records delegated-request behavior (${unrun("COLLABORATION_PROBE_CLAUDE_OAUTH_TOKEN")})`,
+    `Claude subscription OAuth token used by a non-owner process completes an authenticated turn (${unrun("COLLABORATION_PROBE_CLAUDE_OAUTH_TOKEN")})`,
     async () => {
       const { worktreeRoot } = gitRepoWithWorktree();
       const sdk = await loadAgentSdk();
-      let resultType: string | undefined;
-      let failure: string | undefined;
-      try {
-        const run = sdk.query({
-          prompt: "Reply with the single word ready.",
-          options: { cwd: worktreeRoot, model: "claude-haiku-4-5-20251001", maxTurns: 1, env: { ...process.env, ANTHROPIC_API_KEY: "", CLAUDE_CODE_OAUTH_TOKEN: fixtures.claudeOauthToken } },
-        });
-        for await (const message of run) resultType = message.type;
-      } catch (error: unknown) {
-        failure = error instanceof Error ? error.name : "UnknownError";
-      }
-      console.info("[s00-probe] claude subscription delegated request", { resultType, failure });
-      expect(resultType !== undefined || failure !== undefined).toBe(true);
+      // Any thrown error here (authentication included) fails the probe: it must never
+      // read as a successful delegated request.
+      const run = sdk.query({
+        prompt: "Reply with the single word ready.",
+        options: { cwd: worktreeRoot, model: "claude-haiku-4-5-20251001", maxTurns: 1, env: { ...process.env, ANTHROPIC_API_KEY: "", CLAUDE_CODE_OAUTH_TOKEN: fixtures.claudeOauthToken } },
+      });
+      const succeeded = await claudeRunSucceeded(run);
+      console.info("[s00-probe] claude subscription delegated request", { succeeded });
+      expect(succeeded).toBe(true);
     },
     PROBE_TIMEOUT_MS,
   );
