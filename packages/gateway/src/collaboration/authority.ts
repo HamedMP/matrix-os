@@ -80,7 +80,7 @@ export class CollaborationAuthority {
       actorId: input.actorId,
     });
     const member = await this.repository.getMember(membershipScope.id, input.actorId);
-    const legacyRole = member && member.status === "accepted"
+    const legacyRole = member && member.status === "accepted" && !member.dispositionedAt
       && !(member.expiresAt && new Date(member.expiresAt).getTime() <= this.now().getTime())
       ? member.role
       : null;

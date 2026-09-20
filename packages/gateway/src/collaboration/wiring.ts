@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { sql, type Kysely } from "kysely";
 import type { GatewayCollaborationConfig } from "./config.js";
 import type { Hono } from "hono";
@@ -9,6 +10,7 @@ import type { CodingAgentProviderRegistry } from "../coding-agents/provider-regi
 import type { MatrixFundedCredentialProvider } from "../funded-ai-credential-manager.js";
 import { CollaborationActorProofVerifier } from "./actor-proof.js";
 import { CollaborationAuthority } from "./authority.js";
+import { CollaborationCapabilityRepository } from "./capability-repository.js";
 import { CollaborationChatAdapter } from "./chat-adapter.js";
 import { CollaborationChatScopeService } from "./chat-scope.js";
 import { bootstrapCollaborationDatabase, type OwnerCollaborationDatabase } from "./database.js";
@@ -109,7 +111,9 @@ export async function createGatewayCollaboration(options: {
     ?? (options.organizationPrecondition ? undefined : createDefaultMembershipSource(options.config));
   const organizationPrecondition = options.organizationPrecondition
     ?? createOrganizationPrecondition(organizationMembershipSource ? { source: organizationMembershipSource } : {});
-  const authority = new CollaborationAuthority(repository, { organizationPrecondition });
+  // S04: whole-project preset grants are the V1 membership; the authority resolves them at registration time.
+  const capabilities = new CollaborationCapabilityRepository(options.db, { now: () => new Date(), createId: randomUUID });
+  const authority = new CollaborationAuthority(repository, { organizationPrecondition, capabilities });
   const verifier = new CollaborationActorProofVerifier({
     runtimeId: options.config.runtimeId,
     keys: options.config.proofKeys,
@@ -175,6 +179,7 @@ export async function createGatewayCollaboration(options: {
 
   return {
     repository,
+    capabilities,
     authority,
     organizationPrecondition,
     verifier,
