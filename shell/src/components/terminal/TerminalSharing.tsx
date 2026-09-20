@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useBrowserOrigin } from "@/hooks/useBrowserOrigin";
 import { getGatewayUrl } from "@/lib/gateway";
 import { collaborationRuntimeFromSystemInfo, createShellCollaborationApi } from "@/lib/collaboration";
+import { CollaborationOrganization } from "@/lib/collaboration-organization";
 
 export function TerminalSharing({ terminalId }: { terminalId: string }) {
   const platformHost = useBrowserOrigin();
@@ -25,5 +26,6 @@ export function TerminalSharing({ terminalId }: { terminalId: string }) {
     });
     return () => { active = false; };
   }, []);
-  return api && runtimeId ? <TerminalSharingButton api={api} runtimeId={runtimeId} terminalId={terminalId} /> : null;
+  return api && runtimeId ? <CollaborationOrganization>{(organizationId) => <TerminalSharingButton api={api} runtimeId={runtimeId}
+    organizationId={organizationId} terminalId={terminalId} />}</CollaborationOrganization> : null;
 }

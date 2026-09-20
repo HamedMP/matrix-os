@@ -29,19 +29,20 @@ describe("terminal sharing button", () => {
         : scope),
       patch: vi.fn(), delete: vi.fn(),
     };
-    render(<TerminalSharingButton api={api} runtimeId="runtime_owner" terminalId="terminal_release" />);
+    render(<TerminalSharingButton api={api} runtimeId="runtime_owner" organizationId="org_matrix_team" terminalId="terminal_release" />);
     fireEvent.click(screen.getByRole("button", { name: "Share terminal" }));
     expect(await screen.findByRole("heading", { name: "Share this whole terminal?" })).toBeVisible();
     expect(screen.getByText(/complete retained output and future live output/i)).toBeVisible();
     expect(screen.getByText(/does not share its parent project/i)).toBeVisible();
     expect(api.post).toHaveBeenCalledTimes(1);
 
-    fireEvent.click(screen.getByRole("button", { name: "Confirm and invite" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm and invite members" }));
     await waitFor(() => expect(api.post).toHaveBeenCalledWith(
       "/api/collaboration/runtimes/runtime_owner/scopes",
       expect.objectContaining({
         kind: "terminal",
         resourceId: "terminal_release",
+        organizationId: "org_matrix_team",
         expectedRevision: "4",
         confirmationToken: "a".repeat(64),
       }),
@@ -57,7 +58,7 @@ describe("terminal sharing button", () => {
       post: vi.fn(async () => ({ eligible: false, reason: "unsupported", resourceRevision: "1" })),
       delete: vi.fn(),
     };
-    render(<TerminalSharingButton api={api} runtimeId="runtime_owner" terminalId="legacy_terminal" />);
+    render(<TerminalSharingButton api={api} runtimeId="runtime_owner" organizationId="org_matrix_team" terminalId="legacy_terminal" />);
     fireEvent.click(screen.getByRole("button", { name: "Share terminal" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("cannot be shared safely");
     expect(api.post).toHaveBeenCalledTimes(1);

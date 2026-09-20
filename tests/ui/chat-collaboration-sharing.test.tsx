@@ -17,7 +17,7 @@ const chatId = "chat_one";
 describe("Chat collaboration sharing", () => {
   it("keeps snapshot sharing and live invitations as distinct choices", () => {
     const api = { baseUrl: "https://gateway.test", get: vi.fn(), post: vi.fn(), delete: vi.fn() };
-    render(<ChatSharingButton api={api} collaborationEnabled collaborationApi={api} runtimeId="runtime_owner" chatId={chatId}
+    render(<ChatSharingButton api={api} collaborationEnabled collaborationApi={api} runtimeId="runtime_owner" organizationId="org_matrix_team" chatId={chatId}
       handle="owner" runtimeSlot="primary" platformHost="https://app.matrix-os.com" copyText={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: "Share" }));
     expect((screen.getByRole("dialog", { name: "Share Chat" }).firstElementChild as HTMLElement).style.background)
@@ -60,13 +60,13 @@ describe("Chat collaboration sharing", () => {
       patch: vi.fn(),
     };
     const snapshotApi = { baseUrl: "https://gateway.test", get: vi.fn(), post: vi.fn(), delete: vi.fn() };
-    render(<ChatSharingButton api={snapshotApi} collaborationEnabled collaborationApi={collaborationApi} runtimeId="runtime_owner"
+    render(<ChatSharingButton api={snapshotApi} collaborationEnabled collaborationApi={collaborationApi} runtimeId="runtime_owner" organizationId="org_matrix_team"
       chatId={chatId} handle="owner" runtimeSlot="primary" platformHost="https://app.matrix-os.com" copyText={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: "Share" }));
     fireEvent.click(screen.getByRole("button", { name: "Invite collaborators" }));
     await screen.findByRole("dialog", { name: "Invite collaborators" });
-    expect(screen.getByText(/must already have a Matrix account/i)).toBeVisible();
-    const identifier = screen.getByLabelText("Email or username");
+    expect(screen.getByText(/Only current members of your organization can be invited/i)).toBeVisible();
+    const identifier = screen.getByLabelText("Member email or username");
     expect(identifier).toHaveAttribute("placeholder", "name@example.com or @username");
     fireEvent.change(identifier, { target: { value: "@nimanaderi" } });
     fireEvent.change(screen.getByLabelText("Role"), { target: { value: "editor" } });

@@ -5,6 +5,7 @@ import { ChatSharingButton } from "@matrix-os/ui";
 import { useBrowserOrigin } from "@/hooks/useBrowserOrigin";
 import { getGatewayUrl } from "@/lib/gateway";
 import { collaborationRuntimeFromSystemInfo, createShellCollaborationApi } from "@/lib/collaboration";
+import { CollaborationOrganization } from "@/lib/collaboration-organization";
 
 export function ChatSharing({ chatId }: { chatId: string }) {
   const platformHost = useBrowserOrigin();
@@ -28,10 +29,10 @@ function BrowserChatSharing({ chatId, platformHost }: { chatId: string; platform
     });
     return () => { active = false; };
   }, [api]);
-  return <ChatSharingButton api={api} collaborationEnabled={runtime.collaborationEnabled}
-    collaborationApi={collaborationApi} runtimeId={runtime.runtimeId}
+  return <CollaborationOrganization>{(organizationId) => <ChatSharingButton api={api} collaborationEnabled={runtime.collaborationEnabled}
+    collaborationApi={collaborationApi} runtimeId={runtime.runtimeId} organizationId={organizationId}
     chatId={chatId} handle={runtime.handle} runtimeSlot={runtime.runtimeSlot}
-    platformHost={platformHost} copyText={(text) => navigator.clipboard.writeText(text)} />;
+    platformHost={platformHost} copyText={(text) => navigator.clipboard.writeText(text)} />}</CollaborationOrganization>;
 }
 
 function createChatSharingApi(baseUrl: string) {

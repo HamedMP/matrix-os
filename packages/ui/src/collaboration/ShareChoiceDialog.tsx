@@ -29,7 +29,7 @@ export function ShareChoiceDialog({ collaborationAvailable, pending, onSnapshot,
       {collaborationAvailable ? <button type="button" aria-label="Invite collaborators" className={actionClass} disabled={pending} onClick={onCollaborate}>
         <span className="block font-medium">Invite collaborators</span>
         <span className="mt-1 block text-sm" style={{ color: "var(--text-secondary)" }}>
-          Give named people access to this ongoing Chat and its discussion.
+          Give members of your organization access to this ongoing Chat and its discussion.
         </span>
       </button> : null}
     </div>

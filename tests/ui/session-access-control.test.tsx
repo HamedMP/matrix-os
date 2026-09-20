@@ -98,7 +98,7 @@ describe("SessionAccessControl", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Collaboration access" }));
     fireEvent.click(await screen.findByRole("button", { name: "Manage access" }));
-    fireEvent.change(screen.getByLabelText("Email or username"), { target: { value: "ada@example.com" } });
+    fireEvent.change(screen.getByLabelText("Member email or username"), { target: { value: "ada@example.com" } });
     fireEvent.click(screen.getByRole("button", { name: "Send invitation" }));
 
     await waitFor(() => expect(collaborationApi.post).toHaveBeenCalledWith(
