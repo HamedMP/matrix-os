@@ -1152,8 +1152,11 @@ export async function createGateway(config: GatewayConfig) {
         chatEventStream: canonicalChatEventStream,
         chatRepository,
         canvasRepository,
+        canvasSubscriptionHub,
+        canvasCleanupTimer,
         appDb,
       });
+      canvasCleanupTimer = null;
       gatewayCollaboration = null;
       canonicalChatEventStream = null;
       chatRepository = null;
