@@ -88,6 +88,8 @@ describe("Chat collaboration sharing", () => {
     render(<ChatCollaboration view={{ kind: "home" }} api={api} actorId="user_editor" openChat={openChat} />);
     expect(await screen.findByText("Shared with your organization")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Open" })).toBeNull();
+    expect(screen.queryByText(/opens when you join/i)).toBeNull();
+    expect(screen.getByText(/Access will be available when this share is enabled/i)).toBeVisible();
     expect(openChat).not.toHaveBeenCalled();
   });
 
