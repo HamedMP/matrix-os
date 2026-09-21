@@ -21,6 +21,7 @@ import { z } from "zod/v4";
 import { type DirectSigningKey, toLogicalRuntimeId } from "./direct-auth.js";
 import type { DirectSessionService } from "./direct-sessions.js";
 import type { CollaborationCapabilityRepository } from "./capability-repository.js";
+import { requireSecureCollaborationPlatformBaseUrl } from "./platform-base-url.js";
 
 /** Fence a home reports before it has applied any denial: asserts nothing. */
 const NO_FENCE_AT = "1970-01-01T00:00:00.000Z";
@@ -96,8 +97,8 @@ export class CollaborationControlClient {
     this.now = options.now ?? (() => new Date());
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.generation = options.initialGeneration ?? 1;
-    const base = new URL(options.platformBaseUrl);
-    if (!["https:", "http:"].includes(base.protocol)) throw new Error("Platform base URL must be http(s)");
+    // Bearer token and one-use control ticket travel on this origin: https, or http only to loopback.
+    const base = requireSecureCollaborationPlatformBaseUrl(options.platformBaseUrl);
     this.endpoint = `${base.origin}/internal/collaboration/runtime-endpoints`;
   }
 
@@ -145,41 +146,18 @@ export class CollaborationControlClient {
     const connect = this.options.connect ?? await loadDefaultConnector();
     const url = `${new URL(this.options.platformBaseUrl).origin.replace(/^http/, "ws")}/internal/collaboration/control?ticket=${controlTicket}`;
     let socket: ControlSocketLike | undefined;
+    // Frames are applied strictly in arrival order: an acknowledgement covers every denial fenced
+    // at or before it, so a later frame must never be acknowledged while an earlier denial's
+    // grant cleanup is still pending.
+    let inbound: Promise<void> = Promise.resolve();
     const handle: ControlStreamHandle = {
-      receive: async (raw) => {
-        if (Buffer.byteLength(raw) > COLLABORATION_DIRECT_LIMITS.wsFrameBytes) throw new Error("Control frame too large");
-        const assertion = CollaborationControlAssertionSchema.parse(JSON.parse(raw) as unknown);
-        this.snapshotExpiresAt = this.now().getTime() + CONTROL_SNAPSHOT_TTL_MS;
-        if (assertion.type === "denial") {
-          const { denial } = assertion;
-          this.options.sessions.revoke(denial);
-          if (denial.organizationId) {
-            this.options.membership?.evict({ organizationId: denial.organizationId, ...(denial.actorId ? { actorId: denial.actorId } : {}) });
-          }
-          if (denial.generation > this.generation) this.generation = denial.generation;
-          if (denial.organizationId && denial.actorId && this.options.capabilities) {
-            try {
-              await this.options.capabilities.endActorGrants({ organizationId: denial.organizationId, actorId: denial.actorId });
-            } catch (error: unknown) {
-              // Not fully applied: no fence is acknowledged, so the denial completes only at its lease
-              // deadline; access is already closed because the evidence was evicted and sessions ended.
-              console.warn("[collaboration-control-client] departure grant cleanup failed", error instanceof Error ? error.name : "UnknownError");
-              return;
-            }
-          }
-          this.lastFenceAt = this.now().toISOString();
-          this.sendAck(socket, denial.generation);
-          return;
-        }
-        if (assertion.type === "generation") {
-          if (assertion.runtimeId === toLogicalRuntimeId(this.options.runtimeId) && assertion.authorityGeneration > this.generation) {
-            this.generation = assertion.authorityGeneration;
-          }
-          // Keepalive: acknowledge with the unchanged fence so the platform records liveness without completing anything new.
-          this.sendAck(socket, this.generation);
-          return;
-        }
-        // membership_assertion frames are pull-authoritative through the membership client; pushed copies only refresh the snapshot.
+      receive: (raw) => {
+        const run = inbound.then(() => this.applyFrame(raw, () => socket));
+        // The caller rejects with the same error and closes the stream; the chain itself must keep going.
+        inbound = run.catch((error: unknown) => {
+          console.warn("[collaboration-control-client] frame rejected", error instanceof Error ? error.name : "UnknownError");
+        });
+        return run;
       },
       close: () => {
         socket?.close(1001, "Control client closed");
@@ -188,8 +166,8 @@ export class CollaborationControlClient {
     };
     socket = await connect(url, this.runtimeHeaders(), (raw) => {
       handle.receive(raw).catch((error: unknown) => {
-        console.warn("[collaboration-control-client] frame rejected", error instanceof Error ? error.name : "UnknownError");
-        handle.close();
+        // Already logged by the inbound chain (by error name); a rejected frame ends this control stream.
+        if (error !== undefined) handle.close();
       });
     }, () => {
       if (this.stream === handle) this.stream = undefined;
@@ -197,6 +175,42 @@ export class CollaborationControlClient {
     });
     this.stream = handle;
     return handle;
+  }
+
+  private async applyFrame(raw: string, socket: () => ControlSocketLike | undefined): Promise<void> {
+    if (Buffer.byteLength(raw) > COLLABORATION_DIRECT_LIMITS.wsFrameBytes) throw new Error("Control frame too large");
+    const assertion = CollaborationControlAssertionSchema.parse(JSON.parse(raw) as unknown);
+    this.snapshotExpiresAt = this.now().getTime() + CONTROL_SNAPSHOT_TTL_MS;
+    if (assertion.type === "denial") {
+      const { denial } = assertion;
+      this.options.sessions.revoke(denial);
+      if (denial.organizationId) {
+        this.options.membership?.evict({ organizationId: denial.organizationId, ...(denial.actorId ? { actorId: denial.actorId } : {}) });
+      }
+      if (denial.generation > this.generation) this.generation = denial.generation;
+      if (denial.organizationId && denial.actorId && this.options.capabilities) {
+        try {
+          await this.options.capabilities.endActorGrants({ organizationId: denial.organizationId, actorId: denial.actorId });
+        } catch (error: unknown) {
+          // Not fully applied: no fence is acknowledged, so the denial completes only at its lease
+          // deadline; access is already closed because the evidence was evicted and sessions ended.
+          console.warn("[collaboration-control-client] departure grant cleanup failed", error instanceof Error ? error.name : "UnknownError");
+          return;
+        }
+      }
+      this.lastFenceAt = this.now().toISOString();
+      this.sendAck(socket(), denial.generation);
+      return;
+    }
+    if (assertion.type === "generation") {
+      if (assertion.runtimeId === toLogicalRuntimeId(this.options.runtimeId) && assertion.authorityGeneration > this.generation) {
+        this.generation = assertion.authorityGeneration;
+      }
+      // Keepalive: acknowledge with the unchanged fence so the platform records liveness without completing anything new.
+      this.sendAck(socket(), this.generation);
+      return;
+    }
+    // membership_assertion frames are pull-authoritative through the membership client; pushed copies only refresh the snapshot.
   }
 
   /** Registers and connects, retrying with bounded backoff; used at startup. */
