@@ -133,6 +133,20 @@ describe("CollaborationRelay", () => {
     expect([...sent.keys()].some((name) => name.startsWith("x-matrix-collaboration-client"))).toBe(false);
   });
 
+  it("resolves null and never rejects when the directory lookup fails during a socket upgrade", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const { instance } = relay({ resolveScopeHome: async () => { throw new Error("connection terminated unexpectedly: postgres://user:secret@db"); } });
+      await expect(instance.prepareSocket({ actorId: "user_a", rawPath: `/ws/collaboration/direct/scopes/${scopeId}/events?ticket=abc`, incomingHeaders: {}, externalHost: "app.matrix-os.com" })).resolves.toBeNull();
+      expect(instance.connectionCounts()).toEqual({ homes: 0, actors: 0 });
+      // Only the error name is logged, never the message with connection details.
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("[collaboration-relay]"), "Error");
+      expect(JSON.stringify(warn.mock.calls)).not.toContain("secret");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("prepares socket upgrades with no proof header and bounded connections", async () => {
     const { instance } = relay({ limits: { connectionsPerActor: 1 } });
     const prepared = await instance.prepareSocket({ actorId: "user_a", rawPath: `/ws/collaboration/direct/scopes/${scopeId}/terminal?ticket=abc`, incomingHeaders: { upgrade: "websocket", connection: "Upgrade", cookie: "x", "sec-websocket-key": "k" }, externalHost: "app.matrix-os.com" });
