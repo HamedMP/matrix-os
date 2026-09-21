@@ -78,6 +78,7 @@ export async function migrateExecutionPoliciesV10(trx: Transaction<OwnerCollabor
       audience_generation BIGINT NOT NULL CHECK (audience_generation >= 0),
       execution_root JSONB NOT NULL,
       root_fingerprint TEXT NOT NULL CHECK (root_fingerprint ~ '^[a-f0-9]{64}$'),
+      session_key TEXT NOT NULL CHECK (session_key ~ '^[a-f0-9]{64}$'),
       session_generation BIGINT NOT NULL CHECK (session_generation > 0),
       admitted_at TIMESTAMPTZ NOT NULL
     )
@@ -109,8 +110,25 @@ export class CollaborationExecutionPolicyError extends Error {
 }
 
 export interface OrganizationAiSubmissionSource {
-  /** Current `collaboration.aiSubmission` projection for the organization; `unknown` when it cannot be read. */
-  resolve(organizationId: string): Promise<CollaborationOrganizationAiSubmission>;
+  /**
+   * Current `collaboration.aiSubmission` projection for the organization as
+   * seen for the scope owner (a current member); `unknown` when it cannot be read.
+   */
+  resolve(organizationId: string, ownerId: string): Promise<CollaborationOrganizationAiSubmission>;
+}
+
+/**
+ * The effective submit mode with the owner's provider-terms acknowledgement
+ * as a hard precondition: without it a `follow_organization` policy stays
+ * owner-only even when the organization enables member submission later.
+ */
+export function effectiveSubmitModeWithAcknowledgement(input: {
+  organizationAiSubmission: CollaborationOrganizationAiSubmission;
+  submitMode: CollaborationSubmitMode;
+  providerTermsAcknowledged: boolean;
+}): CollaborationEffectiveSubmitMode {
+  const derived = resolveCollaborationEffectiveSubmitMode(input);
+  return derived === "members" && input.providerTermsAcknowledged ? "members" : "owner_only";
 }
 
 /** Fail-closed default until a projection is registered: every organization reads as `unknown`. */
@@ -119,22 +137,19 @@ export const unknownOrganizationAiSubmission: OrganizationAiSubmissionSource = {
 };
 
 /**
- * ADAPTER POINT (S03 seam, pending in 124/s03 commit 1ecb9c693): once
- * `OrganizationMembershipClient.organizationAiSubmission({ organizationId, actorId })`
- * reaches this branch's ancestry, gateway wiring should pass
- * `organizationAiSubmission: organizationAiSubmissionFromMembershipClient(client, ownerId)`
- * instead of leaving the default. The owner's own membership is the actor
- * used for the lookup because the policy is the owner's. Any lookup failure
- * reads as `unknown`, which resolves to owner-only.
+ * Adapts S03's `OrganizationMembershipClient.organizationAiSubmission` seam.
+ * Gateway wiring installs it for the default membership client; the scope
+ * owner's own membership is the actor used for the lookup because the policy
+ * is the owner's. Any lookup failure reads as `unknown`, which resolves to
+ * owner-only.
  */
 export function organizationAiSubmissionFromMembershipClient(
   client: { organizationAiSubmission(input: { organizationId: string; actorId: string }): Promise<CollaborationOrganizationAiSubmission> },
-  actorId: string,
 ): OrganizationAiSubmissionSource {
   return {
-    async resolve(organizationId) {
+    async resolve(organizationId, ownerId) {
       try {
-        return await client.organizationAiSubmission({ organizationId, actorId });
+        return await client.organizationAiSubmission({ organizationId, actorId: ownerId });
       } catch (error: unknown) {
         console.warn("[collaboration] organization AI submission lookup failed",
           error instanceof Error ? error.name : "UnknownError");
@@ -266,7 +281,7 @@ export class CollaborationExecutionPolicyRepository {
       if (request.allowedModelIds.some((modelId) => !resolved.modelIds.includes(modelId))) {
         throw new CollaborationExecutionPolicyError("invalid_source", "Model is not served by the selected source");
       }
-      const organizationAiSubmission = await this.readOrganizationAiSubmission(scope.organization_id);
+      const organizationAiSubmission = await this.readOrganizationAiSubmission(scope.organization_id, scope.owner_id);
       const effective = resolveCollaborationEffectiveSubmitMode({ organizationAiSubmission, submitMode: request.submitMode });
       if (effective === "members" && !request.acknowledgeProviderTerms) {
         throw new CollaborationExecutionPolicyError("provider_terms_required", "Member submission needs the provider-terms acknowledgement");
@@ -323,14 +338,14 @@ export class CollaborationExecutionPolicyRepository {
   }
 
   /** Live organization metadata; null context or a failed lookup reads as `unknown` (owner-only). */
-  async organizationAiSubmissionFor(organizationId: string | null): Promise<CollaborationOrganizationAiSubmission> {
-    return this.readOrganizationAiSubmission(organizationId);
+  async organizationAiSubmissionFor(organizationId: string | null, ownerId: string): Promise<CollaborationOrganizationAiSubmission> {
+    return this.readOrganizationAiSubmission(organizationId, ownerId);
   }
 
-  private async readOrganizationAiSubmission(organizationId: string | null): Promise<CollaborationOrganizationAiSubmission> {
+  private async readOrganizationAiSubmission(organizationId: string | null, ownerId: string): Promise<CollaborationOrganizationAiSubmission> {
     if (organizationId === null) return "unknown";
     try {
-      return await this.organizationAiSubmission.resolve(organizationId);
+      return await this.organizationAiSubmission.resolve(organizationId, ownerId);
     } catch (error: unknown) {
       console.warn("[collaboration] organization AI submission lookup failed",
         error instanceof Error ? error.name : "UnknownError");
@@ -343,15 +358,27 @@ export class CollaborationExecutionPolicyRepository {
     resolution: ExecutionScopeResolution,
     organizationAiSubmission?: CollaborationOrganizationAiSubmission,
   ): Promise<CollaborationExecutionPolicy> {
-    const aiSubmission = organizationAiSubmission
-      ?? await this.readOrganizationAiSubmission(resolution.scope.organization_id);
+    const liveAiSubmission = organizationAiSubmission
+      ?? await this.readOrganizationAiSubmission(resolution.scope.organization_id, row.owner_id);
+    const providerTermsAcknowledged = row.provider_terms_acknowledged_at !== null;
+    const effectiveSubmitMode = effectiveSubmitModeWithAcknowledgement({
+      organizationAiSubmission: liveAiSubmission, submitMode: row.submit_mode, providerTermsAcknowledged,
+    });
+    // The frozen contract derives `effectiveSubmitMode` from the organization value and
+    // requires the acknowledgement whenever it is `members`. An organization that enabled
+    // member submission after the owner chose `follow_organization` without acknowledging
+    // is therefore presented as not enabling it for this scope: the owner sees owner-only
+    // until they acknowledge, and admission below uses the same gate.
+    const aiSubmission = effectiveSubmitMode === "owner_only" && liveAiSubmission === "members" && !providerTermsAcknowledged
+      ? "owner_only"
+      : liveAiSubmission;
     return CollaborationExecutionPolicySchema.parse({
       scope: resolution.ref,
       ownerId: row.owner_id,
       source: { accessSourceId: row.access_source_id, providerInstanceId: row.provider_instance_id, harness: row.harness },
       submitMode: row.submit_mode,
       organizationAiSubmission: aiSubmission,
-      effectiveSubmitMode: resolveCollaborationEffectiveSubmitMode({ organizationAiSubmission: aiSubmission, submitMode: row.submit_mode }),
+      effectiveSubmitMode,
       providerTermsAcknowledgedAt: row.provider_terms_acknowledged_at === null ? null : toIso(row.provider_terms_acknowledged_at),
       allowedModelIds: parseJson<string[]>(row.allowed_model_ids),
       ...(row.concurrency === null ? {} : { concurrency: row.concurrency }),

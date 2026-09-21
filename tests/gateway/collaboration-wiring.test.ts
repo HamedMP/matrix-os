@@ -19,6 +19,7 @@ import {
   loadGatewayCollaborationConfig,
 } from "../../packages/gateway/src/collaboration/wiring.js";
 import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
+import { OrganizationMembershipClient } from "../../packages/gateway/src/collaboration/organization-membership-client.js";
 import {
   allowAllOrganizationPrecondition,
   collaborationIds,
@@ -494,6 +495,53 @@ async function seedSharedChat(fixture: CollaborationTestDatabase): Promise<void>
 }
 
 describe("S08 owner source wiring", () => {
+  it("production path: the default membership client supplies organization AI submission and the lazy V3 reader constructs policies, bindings and the owner source", async () => {
+    const fixture = await createCollaborationTestDatabase();
+    await bootstrapChatDatabase(fixture.db);
+    const seen: string[] = [];
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const body = JSON.parse(String(init?.body)) as { actors: Array<{ organizationId: string; actorId: string }> };
+      seen.push(String(input));
+      const now = Date.now();
+      return new Response(JSON.stringify(body.actors.map((actor) => ({
+        protocolVersion: 2, type: "membership_assertion", organizationId: actor.organizationId, actorId: actor.actorId,
+        membershipEpoch: "3", member: true, aiSubmission: "members",
+        requestStartedAt: new Date(now).toISOString(), expiresAt: new Date(now + 15_000).toISOString(),
+      }))), { status: 200, headers: { "content-type": "application/json" } });
+    };
+    const client = new OrganizationMembershipClient({
+      platformBaseUrl: "https://platform.internal", runtimeId: collaborationIds.runtime, serviceToken: "c".repeat(32), fetchImpl,
+    });
+    const runtime = await createGatewayCollaboration({
+      // Same construction as server.ts: the membership client is the default source, no precondition override.
+      organizationMembershipSource: client,
+      db: fixture.db,
+      chatRepository: new ChatRepository(fixture.db),
+      config: {
+        runtimeId: collaborationIds.runtime,
+        activeKeyId: "key-1",
+        proofKeys: { "key-1": "a".repeat(32) },
+        preflightSecret: "b".repeat(32),
+        platformBaseUrl: "https://platform.internal",
+        serviceToken: "c".repeat(32),
+      },
+      resolveParticipant: async (actorId: string) => ({ actorId, displayName: actorId }),
+      resolveInvitationIdentifier: async (identifier: string) => ({ actorId: identifier, displayName: identifier }),
+      startTimers: false,
+      providerSnapshotReader: { async getSnapshot() { throw new Error("ProviderSnapshotUnavailable"); } },
+    });
+    try {
+      expect(runtime.executionPolicies).toBeDefined();
+      expect(runtime.runBindings).toBeDefined();
+      expect(runtime.ownerSource).toBeDefined();
+      expect(await runtime.executionPolicies!.organizationAiSubmissionFor("org_wiring_primary", "user_wiring_owner")).toBe("members");
+      expect(seen).toEqual(["https://platform.internal/internal/organizations/access/resolve"]);
+    } finally {
+      await runtime.shutdown();
+      await fixture.destroy();
+    }
+  });
+
   it("constructs execution policies, run bindings and the owner source only when a V3 snapshot reader is provided", async () => {
     const fixture = await createCollaborationTestDatabase();
     await bootstrapChatDatabase(fixture.db);

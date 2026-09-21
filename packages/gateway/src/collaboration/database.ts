@@ -269,6 +269,7 @@ export interface CollaborationRunBindingsTable {
   audience_generation: number;
   execution_root: JsonValue;
   root_fingerprint: string;
+  session_key: string;
   session_generation: number;
   admitted_at: Timestamp;
 }
