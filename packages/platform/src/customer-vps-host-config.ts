@@ -18,7 +18,6 @@ export const DEFAULT_CLOUD_INIT_TEMPLATE = [
   "      MATRIX_DEVELOPER_TOOLS='{{developerTools}}'",
   '      MATRIX_IMAGE_VERSION={{imageVersion}}',
   '      MATRIX_UPDATE_CHANNEL={{updateChannel}}',
-  '      MATRIX_COLLABORATION_ENABLED=false',
   '      MATRIX_IMAGE_SOURCE={{imageSource}}',
   '      MATRIX_TARGET_BUNDLE_SHA256={{targetBundleSha256}}',
   '      MATRIX_SNAPSHOT_SOURCE_VERSION={{snapshotSourceVersion}}',

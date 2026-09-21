@@ -1,4 +1,5 @@
 import { sql, type Kysely } from "kysely";
+import type { GatewayCollaborationConfig } from "./config.js";
 import type { Hono } from "hono";
 import type { UpgradeWebSocket } from "hono/ws";
 import type { ChatRepository } from "../chat/repository.js";
@@ -44,52 +45,18 @@ import {
   type CollaborationProjectSource,
 } from "./project-scope.js";
 
-const MAX_PROOF_KEYS = 8;
 const ARTIFACT_CLEANUP_INTERVAL_MS = 60 * 60 * 1_000;
 const ARTIFACT_CLEANUP_BATCH_SIZE = 1_000;
-const MACHINE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-export interface GatewayCollaborationConfig {
-  runtimeId: string;
-  activeKeyId: string;
-  proofKeys: Readonly<Record<string, string>>;
-  preflightSecret: string;
-  platformBaseUrl: string;
-  serviceToken: string;
-}
-
-export function loadGatewayCollaborationConfig(env: NodeJS.ProcessEnv): GatewayCollaborationConfig | null {
-  if (env.MATRIX_COLLABORATION_ENABLED !== "true") return null;
-  const configuredRuntimeId = env.MATRIX_RUNTIME_ID?.trim();
-  const machineId = env.MATRIX_MACHINE_ID?.trim();
-  const runtimeId = configuredRuntimeId
-    || (machineId && MACHINE_ID_PATTERN.test(machineId) ? `vps:${machineId.toLowerCase()}` : undefined);
-  const activeKeyId = env.MATRIX_COLLABORATION_ACTIVE_KEY_ID?.trim();
-  const preflightSecret = env.MATRIX_COLLABORATION_PREFLIGHT_SECRET;
-  const platformBaseUrl = env.PLATFORM_INTERNAL_URL?.trim();
-  const serviceToken = env.UPGRADE_TOKEN;
-  if (!runtimeId || !activeKeyId || !preflightSecret || !platformBaseUrl || !serviceToken) return null;
-  let proofKeys: Record<string, string>;
-  try {
-    const parsed = JSON.parse(env.MATRIX_COLLABORATION_PROOF_KEYS ?? "null") as unknown;
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-    proofKeys = Object.fromEntries(Object.entries(parsed).filter(
-      (entry): entry is [string, string] => typeof entry[1] === "string",
-    ));
-  } catch (error: unknown) {
-    if (!(error instanceof SyntaxError)) {
-      console.warn("[collaboration] proof key configuration parse failed", error instanceof Error ? error.name : "UnknownError");
-    }
-    return null;
-  }
-  const entries = Object.entries(proofKeys);
-  if (entries.length < 1 || entries.length > MAX_PROOF_KEYS
-    || entries.some(([keyId, key]) => !/^[A-Za-z0-9_.-]{1,80}$/.test(keyId) || Buffer.byteLength(key) < 32)
-    || !proofKeys[activeKeyId] || Buffer.byteLength(preflightSecret) < 32 || Buffer.byteLength(serviceToken) < 32) {
-    return null;
-  }
-  return { runtimeId, activeKeyId, proofKeys, preflightSecret, platformBaseUrl, serviceToken };
-}
+export {
+  describeGatewayCollaborationConfiguration,
+  loadGatewayCollaborationConfig,
+  type GatewayCollaborationConfig,
+  type GatewayCollaborationConfigurationFailure,
+  type GatewayCollaborationConfigurationHealth,
+} from "./config.js";
+export { registerFailClosedCollaborationRoutes } from "./fail-closed.js";
+export { constructGatewayCollaborationOrFailClosed } from "./construct.js";
 
 export async function createGatewayCollaboration(options: {
   db: Kysely<OwnerCollaborationDatabase>;
@@ -370,6 +337,43 @@ export async function createGatewayCollaboration(options: {
           dispatcher: terminalDispatcher,
           registry: terminalEventRegistry,
           control: terminalControl,
+        });
+      }
+    },
+    /**
+     * Synchronous fence for a startup fallback that cannot wait for a full
+     * drain: refuse new registrations and work, stop every timer and detach
+     * adapters/registries so nothing dispatches against dependencies the
+     * caller is about to destroy. Effective and idempotent even when
+     * shutdown() has already started and is still awaiting a drain: every
+     * detach below is safe to repeat, so a timed-out shutdown cannot leave a
+     * registry or adapter attached. Async drains are started best-effort.
+     */
+    fence(): void {
+      closing = true;
+      if (cleanupTimer) clearInterval(cleanupTimer);
+      const drainingSharedAi = sharedAiRuntime;
+      sharedAiRuntime = undefined;
+      chatExecutionAdapter = undefined;
+      eventRegistry.shutdown();
+      terminalEventRegistry?.shutdown();
+      terminalEventRegistry = undefined;
+      terminalControl?.close();
+      terminalControl = undefined;
+      terminalDispatcher = undefined;
+      terminalAdapter = undefined;
+      const drainingTransitions = projectTransitionCoordinator;
+      projectTransitionCoordinator = undefined;
+      projectSharing = undefined;
+      participantResolver?.shutdown();
+      verifier.shutdown();
+      for (const [name, drain] of [
+        ["shared AI", () => drainingSharedAi?.shutdown()],
+        ["project transitions", () => drainingTransitions?.shutdown()],
+        ["directory outbox", () => outbox.shutdown()],
+      ] as const) {
+        void Promise.resolve().then(drain).catch((error: unknown) => {
+          console.warn(`[collaboration] fenced ${name} drain failed`, error instanceof Error ? error.name : "UnknownError");
         });
       }
     },
