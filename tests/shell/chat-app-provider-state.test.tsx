@@ -328,18 +328,26 @@ describe("Chat canonical provider state", () => {
     ));
   });
 
-  it("disables submission and explains settings-disabled harnesses", async () => {
+  it("keeps offline drafts editable while disabling submission for settings-disabled harnesses", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => Response.json(providerCatalog(false))));
+    const onSubmit = vi.fn();
     render(<ChatApp
       messages={[]} sessionId={undefined} busy={false} connected conversations={[]}
-      onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()}
+      onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={onSubmit}
     />);
 
     expect(await screen.findByText("Connect a harness in Settings to start chatting.")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Choose model and connection" }));
     fireEvent.click(screen.getByText("Manage agents"));
     expect(await screen.findByText("Pi — Disabled in Settings")).toBeVisible();
-    expect(screen.getByPlaceholderText("AI harness unavailable")).toBeDisabled();
+    const draft = screen.getByPlaceholderText("AI harness unavailable");
+    expect(draft).toBeEnabled();
+    fireEvent.change(draft, { target: { value: "Keep this offline draft" } });
+    expect(draft).toHaveValue("Keep this offline draft");
+    const send = screen.getByRole("button", { name: "Send" });
+    expect(send).toBeDisabled();
+    fireEvent.click(send);
+    expect(onSubmit).not.toHaveBeenCalled();
   });
 
   it("renders canonical setup actions for shared Canvas and web desktop Chat", async () => {
@@ -368,17 +376,25 @@ describe("Chat canonical provider state", () => {
     );
   });
 
-  it("fails closed when an existing chat's bound harness route is unavailable", async () => {
+  it("keeps the draft editable but fails submission closed when a bound harness route is unavailable", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => Response.json(providerCatalog())));
+    const onSubmit = vi.fn();
     render(<ChatApp
       messages={[]} sessionId="chat_bound" busy={false} connected conversations={[]}
       providerSelection={{ instanceId: "opencode_default", model: "openai:gpt-5" }}
       boundProviderInstanceId="opencode_default"
-      onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()}
+      onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={onSubmit}
     />);
 
     expect(await screen.findByText("Connect a harness in Settings to start chatting.")).toBeVisible();
-    expect(screen.getByPlaceholderText("AI harness unavailable")).toBeDisabled();
+    const draft = screen.getByPlaceholderText("AI harness unavailable");
+    expect(draft).toBeEnabled();
+    fireEvent.change(draft, { target: { value: "Keep this bound draft" } });
+    expect(draft).toHaveValue("Keep this bound draft");
+    const send = screen.getByRole("button", { name: "Send" });
+    expect(send).toBeDisabled();
+    fireEvent.click(send);
+    expect(onSubmit).not.toHaveBeenCalled();
   });
 
   it("locks an existing chat to its instance while allowing its model and run controls to change", async () => {
