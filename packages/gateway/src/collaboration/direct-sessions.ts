@@ -41,6 +41,8 @@ interface SessionRecord {
   connections: number;
   /** Signed `maxActions` from the admitting ticket; every authorized request or stream input spends one. */
   actionsRemaining: number;
+  pendingActions: number;
+  budgetVersion: number;
 }
 
 export type DirectSessionEndReason = "expired" | "denied" | "revoked" | "closed" | "shutdown" | "exhausted";
@@ -127,7 +129,7 @@ export class DirectSessionService {
       evidenceExpiresAt: new Date(Math.min(evidenceExpiresAt, issuedAt.getTime() + EVIDENCE_TTL_MS)).toISOString(),
       renewAfter: new Date(issuedAt.getTime() + RENEW_AFTER_MS).toISOString(),
     });
-    this.sessions.set(session.id, { session, proofPublicKey: parsed.data.proofPublicKey, connections: 0, actionsRemaining: ticket.maxActions });
+    this.sessions.set(session.id, { session, proofPublicKey: parsed.data.proofPublicKey, connections: 0, actionsRemaining: ticket.maxActions, pendingActions: 0, budgetVersion: 0 });
     return session;
   }
 
@@ -161,6 +163,8 @@ export class DirectSessionService {
     });
     record.session = session;
     record.actionsRemaining = ticket.maxActions;
+    record.pendingActions = 0;
+    record.budgetVersion += 1;
     return session;
   }
 
@@ -194,23 +198,34 @@ export class DirectSessionService {
     }
     this.options.verifier.admitRequestNonce(record.session.id, signature.nonce, issuedAt + REQUEST_WINDOW_MS + SKEW_MS);
     await this.refreshEvidence(record);
-    this.spend(record);
     return { ...record.session };
   }
 
   /** Charges one action from the ticket-signed budget; exhaustion ends the session. */
   spend(record: SessionRecord): void {
     if (record.actionsRemaining <= 0) {
-      this.end(record, "exhausted");
+      if (record.pendingActions === 0) this.end(record, "exhausted");
       throw new DirectAuthError("limit", "Session action budget is exhausted");
     }
     record.actionsRemaining -= 1;
   }
 
-  /** Stream input (terminal actions, resume requests) spends from the same budget. */
-  spendStreamInput(sessionId: string): void {
-    const record = this.live(sessionId);
-    this.spend(record);
+  /** Charge a signed operation that authenticates without a local authority action (session close). */
+  spendAuthenticatedAction(sessionId: string): void {
+    this.spend(this.live(sessionId));
+  }
+
+  /** Reserve before asynchronous stream work; rejected local work returns its action to the same live budget. */
+  async runStreamInput<T>(sessionId: string, action: () => Promise<T> | T): Promise<T> {
+    const reservation = this.reserve(this.live(sessionId));
+    try {
+      const result = await action();
+      reservation.commit();
+      return result;
+    } catch (error: unknown) {
+      reservation.rollback();
+      throw error;
+    }
   }
 
   actionsRemaining(sessionId: string): number | null {
@@ -233,6 +248,7 @@ export class DirectSessionService {
       if (record) this.end(record, "expired");
       throw new DirectAuthError("expired", "Authority generation changed");
     }
+    this.spend(this.live(session.id));
     return context;
   }
 
@@ -244,7 +260,7 @@ export class DirectSessionService {
   async openStream(input: {
     ticket: CollaborationConnectionTicket;
     handshake: { sessionId: string; ticketNonce: string; possession: string };
-  }): Promise<{ session: CollaborationDirectSession; release(): void }> {
+  }): Promise<{ session: CollaborationDirectSession; context: AuthorizedCollaborationContext; commitAdmission(): void; release(): void }> {
     const record = this.live(input.handshake.sessionId);
     const { ticket } = input;
     if (ticket.nonce !== input.handshake.ticketNonce || ticket.actorId !== record.session.actorId
@@ -256,9 +272,31 @@ export class DirectSessionService {
     this.options.verifier.verifyPossession({ ticket, proofPublicKey: record.proofPublicKey, possession: input.handshake.possession, sessionId: record.session.id });
     this.options.verifier.consume(ticket);
     await this.refreshEvidence(record);
-    this.spend(record);
+    let context: AuthorizedCollaborationContext;
+    try {
+      context = await this.options.authority.authorize({ scopeId: record.session.scopeId, actorId: record.session.actorId, action: "read" });
+    } catch (error: unknown) {
+      if (error instanceof CollaborationAuthorizationError) throw new DirectAuthError(error.code === "unavailable" ? "unavailable" : "denied", "Stream access is unavailable");
+      throw error;
+    }
+    if (context.authorityGeneration !== record.session.authorityGeneration) {
+      this.end(record, "expired");
+      throw new DirectAuthError("expired", "Authority generation changed");
+    }
+    if (context.resourceKind !== ticket.resource.kind || (ticket.purpose === "terminal" && context.resourceKind !== "terminal")) throw denied();
     const connection = this.connections.open({ sessionId: record.session.id });
-    return { session: { ...record.session }, release: connection.release };
+    let reservation: ReturnType<DirectSessionService["reserve"]>;
+    try {
+      reservation = this.reserve(this.live(record.session.id));
+    } catch (error: unknown) {
+      connection.release();
+      throw error;
+    }
+    return {
+      session: { ...record.session }, context,
+      commitAdmission: reservation.commit,
+      release: () => { reservation.rollback(); connection.release(); },
+    };
   }
 
   /** Ends every session the denial covers and reports their ids. */
@@ -329,6 +367,21 @@ export class DirectSessionService {
       throw new DirectAuthError("expired", "Session has expired");
     }
     return record;
+  }
+
+  private reserve(record: SessionRecord): { commit(): void; rollback(): void } {
+    this.spend(record);
+    record.pendingActions += 1;
+    const version = record.budgetVersion;
+    let pending = true;
+    const settle = (refund: boolean) => {
+      if (!pending) return;
+      pending = false;
+      if (this.sessions.get(record.session.id) !== record || record.budgetVersion !== version) return;
+      record.pendingActions -= 1;
+      if (refund) record.actionsRemaining += 1;
+    };
+    return { commit: () => settle(false), rollback: () => settle(true) };
   }
 
   /** Admission at exchange: scope exists on this home in the ticket's organization; actor is a member or an invitee; evidence is fresh. */
