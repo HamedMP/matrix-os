@@ -204,8 +204,13 @@ export class CollaborationRelay {
     // Overflow errors the stream, which aborts the upstream request mid-body; `overflowed`
     // tells the rejection apart from a genuine upstream failure.
     let overflowed = false;
+    let settleRequestBody: (() => void) | undefined;
+    // Settles when the upload finishes, overflows, or is abandoned by whoever was reading it.
+    const requestBodySettled = input.body instanceof ReadableStream
+      ? new Promise<void>((resolve) => { settleRequestBody = resolve; })
+      : Promise.resolve();
     const requestBody = input.body instanceof ReadableStream
-      ? boundedRequestStream(input.body, this.limits.requestBytes, () => { overflowed = true; })
+      ? boundedRequestStream(input.body, this.limits.requestBytes, () => { overflowed = true; }, () => { settleRequestBody?.(); })
       : input.body;
     const headers = new Headers();
     input.headers.forEach((value, name) => {
@@ -231,6 +236,13 @@ export class CollaborationRelay {
       console.warn("[collaboration-relay] upstream unavailable", error instanceof Error ? error.name : "UnknownError");
       finish(503, "upstream_error", home.runtimeId);
       return plain("Collaboration unavailable", 503);
+    }
+    // The home may answer before the upload is done. Waiting for the body to settle first
+    // makes the outcome deterministic: an overflow can never be discovered after the client
+    // has already been handed the home's status. The wait is bounded, and abandonment counts
+    // as settled, so an upload nobody is reading cannot stall the reply.
+    if (requestBody instanceof ReadableStream) {
+      await settleWithin(requestBodySettled, isExport ? this.limits.exportTimeoutMs : this.limits.requestTimeoutMs);
     }
     if (overflowed) {
       await response.body?.cancel();
@@ -388,7 +400,12 @@ export class CollaborationRelay {
  * the overflowing chunk is not enqueued, the source is cancelled and the stream errors, which
  * aborts the in-flight upstream request.
  */
-function boundedRequestStream(source: ReadableStream<Uint8Array>, maxBytes: number, onOverflow: () => void): ReadableStream<Uint8Array> {
+function boundedRequestStream(
+  source: ReadableStream<Uint8Array>,
+  maxBytes: number,
+  onOverflow: () => void,
+  onSettled: () => void,
+): ReadableStream<Uint8Array> {
   const reader = source.getReader();
   let size = 0;
   return new ReadableStream<Uint8Array>({
@@ -398,6 +415,7 @@ function boundedRequestStream(source: ReadableStream<Uint8Array>, maxBytes: numb
         if (chunk.done) {
           controller.close();
           reader.releaseLock();
+          onSettled();
           return;
         }
         size += chunk.value.byteLength;
@@ -405,18 +423,34 @@ function boundedRequestStream(source: ReadableStream<Uint8Array>, maxBytes: numb
           onOverflow();
           await reader.cancel();
           controller.error(new Error("Collaboration request exceeds safe limits"));
+          onSettled();
           return;
         }
         controller.enqueue(chunk.value);
       } catch (error: unknown) {
         console.warn("[collaboration-relay] request stream failed", error instanceof Error ? error.name : "UnknownError");
         controller.error(new Error("Collaboration unavailable"));
+        onSettled();
       }
     },
     async cancel(reason) {
       await reader.cancel(reason);
+      onSettled();
     },
   });
+}
+
+/** Waits for a settled signal without letting it become an unbounded wait. */
+async function settleWithin(settled: Promise<void>, timeoutMs: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      settled,
+      new Promise<void>((resolve) => { timer = setTimeout(resolve, timeoutMs); timer.unref?.(); }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 function boundedStream(source: ReadableStream<Uint8Array>, maxBytes: number, onBytes: (bytes: number) => void, onDone: () => void): ReadableStream<Uint8Array> {
