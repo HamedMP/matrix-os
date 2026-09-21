@@ -194,9 +194,8 @@ import {
 } from "./chat/service.js";
 import { createDiscussionOnlyChatExecutionGuard } from "./collaboration/chat-scope.js";
 import { teardownOwnerDatabaseServices } from "./startup/owner-database-fallback.js";
+import { constructOwnerCollaboration } from "./startup/collaboration.js";
 import {
-  constructGatewayCollaborationOrFailClosed,
-  createGatewayCollaboration,
   describeGatewayCollaborationConfiguration,
   loadGatewayCollaborationConfig,
   registerFailClosedCollaborationRoutes,
@@ -204,8 +203,6 @@ import {
   type GatewayCollaborationRuntime,
 } from "./collaboration/wiring.js";
 import { createLegacyProjectPathAdmission } from "./collaboration/project-path-admission.js";
-import { createProjectGitDriver } from "./collaboration/project-git-operations.js";
-import { enableOwnerCollaborationSurfaces } from "./collaboration/owner-runtime-surfaces.js";
 import { createCodingAgentFilePreviewWiring } from "./coding-agents/file-preview-wiring.js";
 import { createCodingAgentSourceControlStore } from "./coding-agents/source-control.js";
 import { registerCodingAgentAttentionNotifications } from "./coding-agents/attention-notifications.js";
@@ -970,49 +967,12 @@ export async function createGateway(config: GatewayConfig) {
       canonicalChatCollaborationGuard = createDiscussionOnlyChatExecutionGuard(chatRepository.kysely as Kysely<any>);
       await bootstrapChatSharing(chatRepository.kysely);
       if (collaborationConfig) {
-        const ownerChatRepository = chatRepository;
-        const projectGitDriver = createProjectGitDriver({
-          resolveProjectRoot: async ({ ownerId, projectId }) => {
-            const root = await ownerChatExecutionRoots.resolve(
-              { type: "personal", ownerId }, { kind: "project", projectId },
-            );
-            return root.primaryWorkspaceRoot;
-          },
-        });
-        const construction = await constructGatewayCollaborationOrFailClosed(
-          () => createGatewayCollaboration({
-          db: ownerChatRepository.kysely as Kysely<any>,
-          chatRepository: ownerChatRepository,
-          config: collaborationConfig,
+        const construction = await constructOwnerCollaboration({
+          homePath, chatRepository, appRegistry, canvasRepository,
+          collaborationConfig,
           providerSnapshotReader: collaborationProviderSnapshots.reader,
-          projectSource: {
-            getProject: async (ownerId, projectId) => {
-              const result = await codingAgentProjectManager.getProjectById(
-                { type: "user", id: ownerId },
-                projectId,
-              );
-              if (!result.ok) return null;
-              const revision = Date.parse(result.project.updatedAt);
-              if (!Number.isSafeInteger(revision) || revision < 0) {
-                throw new Error("ProjectRevisionUnavailable");
-              }
-              return { id: result.project.id, ownerId, revision };
-            },
-          },
-        }),
-          {
-          onPartialRuntime: (runtime) => enableOwnerCollaborationSurfaces(runtime, {
-            homePath,
-            ownerId: collaborationConfig.ownerId,
-            appRegistry,
-            canvasRepository,
-            chatRepository: ownerChatRepository,
-            chatExecutionRoots: ownerChatExecutionRoots,
-            projectManager: codingAgentProjectManager,
-            projectGitDriver,
-            terminalWorkspaces: terminalWorkspaceRuntime,
-          }) },
-        );
+          codingAgentProjectManager, ownerChatExecutionRoots, terminalWorkspaceRuntime,
+        });
         if (construction.ok) gatewayCollaboration = construction.runtime;
         else collaborationFailClosedReason = construction.reason;
       }
