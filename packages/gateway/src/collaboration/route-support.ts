@@ -83,6 +83,7 @@ import {
   CollaborationTerminalDispatcherError,
   type CollaborationTerminalDispatcher,
 } from "./terminal-dispatcher.js";
+import type { CollaborationExecutionPolicyRepository } from "./execution-policy.js";
 import {
   CollaborationRepositoryError,
   type CollaborationMemberRecord,
@@ -117,6 +118,8 @@ export interface CollaborationRouteOptions {
   >;
   projectScope?: CollaborationProjectScopeService;
   projectSharing?: ProjectSharingService;
+  /** S08: owner-selected execution policy repository; routes report unavailable when absent. */
+  executionPolicies?: CollaborationExecutionPolicyRepository;
   resolveParticipant(actorId: string): Promise<Participant>;
   resolveInvitationIdentifier(identifier: string, organizationId: string): Promise<Participant>;
   invitationResolutionRateLimiter?: RateLimiter;

@@ -2,6 +2,7 @@ import { COLLABORATION_HTTP_BODY_LIMIT } from "@matrix-os/contracts";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { registerChatRoutes } from "./chat-routes.js";
+import { registerExecutionPolicyRoutes } from "./execution-policy-routes.js";
 import { registerLifecycleRoutes } from "./lifecycle-routes.js";
 import { registerProjectRoutes } from "./project-routes.js";
 import type { CollaborationRouteOptions } from "./route-support.js";
@@ -32,6 +33,8 @@ export function createCollaborationRoutes(options: CollaborationRouteOptions): H
   registerTerminalRoutes(routes, options);
   registerProjectRoutes(routes, options);
   registerLifecycleRoutes(routes, options);
+  // S08: owner-selected execution policy (GET/PUT) registers after the baseline routes.
+  registerExecutionPolicyRoutes(routes, options);
 
   return routes;
 }
