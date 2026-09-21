@@ -1,11 +1,23 @@
 import { randomUUID } from "node:crypto";
-import { sql, type Selectable, type Transaction } from "kysely";
+import { sql, type Kysely, type Selectable, type Transaction } from "kysely";
 import type { CollaborationScopesTable, OwnerCollaborationDatabase } from "./database.js";
 
 export const OPERATION_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
 export const MAX_SCOPE_PARTICIPANTS = 8;
 
 export type ScopeRow = Selectable<CollaborationScopesTable>;
+
+/** Once direct authority is activated, old member rows can never grant access again. */
+export async function hasRetiredLegacyAuthority(
+  db: Kysely<OwnerCollaborationDatabase> | Transaction<OwnerCollaborationDatabase>,
+  scopeId: string,
+): Promise<boolean> {
+  const cutover = await sql<{ retired: boolean }>`SELECT EXISTS (
+    SELECT 1 FROM collaboration_cutover_journal WHERE scope_id = ${scopeId}
+      AND phase IN ('active', 'rolled_back', 'blocked')
+  ) AS retired`.execute(db);
+  return cutover.rows[0]?.retired === true;
+}
 
 export type CollaborationRepositoryErrorCode =
   | "not_found"
