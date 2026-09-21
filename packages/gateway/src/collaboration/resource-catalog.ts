@@ -123,6 +123,12 @@ export class CollaborationResourceCatalog {
     return row ? toRecord(row) : null;
   }
 
+  /** Exact live owner/path lookup for the owner-only Share resolver. */
+  async getLiveByPath(input: { ownerId: string; projectId: string | null; kind: CatalogKind; path: string }, executor: Executor = this.db): Promise<CatalogEntryRecord | null> {
+    if (!isSafeCollaborationRelativePath(input.path)) throw new ResourceCatalogError("invalid");
+    return this.findLive(executor, input.ownerId, input.projectId, input.kind, input.path);
+  }
+
   async get(id: string, executor: Executor = this.db): Promise<CatalogEntryRecord | null> {
     const row = await executor.selectFrom("collaboration_resource_catalog").selectAll()
       .where("id", "=", id).where("deleted_at", "is", null).executeTakeFirst();
