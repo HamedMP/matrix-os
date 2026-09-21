@@ -534,6 +534,19 @@ describe("S12 direct resource policy", () => {
     const hash = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
     const path = `/api/collaboration/scopes/${PROJECT_SCOPE}/files/actions`;
 
+    it("rejects empty chunks and excessive part indexes before storing them", async () => {
+      const bytes = new TextEncoder().encode("x");
+      const uploadId = requestId();
+      expect((await signed({ actorId: collaborationActors.editor, scopeId: PROJECT_SCOPE, method: "POST", path,
+        body: { type: "upload_stage", fileId: ids.readme, size: bytes.length, sha256: hash(bytes), clientRequestId: uploadId } })).status).toBe(200);
+      const part = (index: number, chunk: Uint8Array) => signed({ actorId: collaborationActors.editor, scopeId: PROJECT_SCOPE,
+        method: "POST", path, body: { type: "upload_part", uploadId, index, sha256: hash(chunk), chunk: Buffer.from(chunk).toString("base64") } });
+      expect((await part(0, new Uint8Array())).status).toBe(400);
+      expect((await part(8_192, bytes)).status).toBe(400);
+      const parts = await fixture.db.selectFrom("collaboration_upload_parts").select("part_index").where("upload_id", "=", uploadId).execute();
+      expect(parts).toEqual([]);
+    });
+
     it("resumes immutable parts and commits only after the whole checksum matches", async () => {
       const bytes = new TextEncoder().encode("replacement through two parts");
       const first = bytes.slice(0, 12);
