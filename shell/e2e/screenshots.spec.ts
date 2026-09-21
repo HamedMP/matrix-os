@@ -220,6 +220,30 @@ test.describe("Visual regression", () => {
     });
   });
 
+  test("disconnected Chat keeps speech drafts editable while send stays unavailable", async ({ page }) => {
+    await exposeSpeechReady(page);
+    await page.route("**/api/chat-providers**", (route) => route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ revision: 1, instances: [] }),
+    }));
+    await page.keyboard.press("Meta+k");
+    await page.keyboard.type("Chat");
+    await page.keyboard.press("Enter");
+
+    const draft = page.getByPlaceholder("Write or dictate a draft — connect a harness to send");
+    await expect(draft).toBeEditable();
+    await draft.fill("A disconnected draft stays editable");
+    await expect(draft).toHaveValue("A disconnected draft stays editable");
+    await expect(page.getByRole("button", { name: "Start voice input" })).toBeEnabled();
+    await expect(page.getByRole("button", { name: "Send" })).toBeDisabled();
+    await draft.fill("");
+    await expect(draft).toHaveValue("");
+    await expect(page).toHaveScreenshot("chat-speech-disconnected-draft.png", {
+      maxDiffPixelRatio: 0.01,
+    });
+  });
+
   test("speech-ready Chat exposes the manual recording entry point in Web Canvas", async ({ page }) => {
     await exposeSpeechReady(page);
     await page.keyboard.press("Meta+k");
