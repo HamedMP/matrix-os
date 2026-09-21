@@ -171,7 +171,8 @@ export function createGatewayProjectInventorySource(
           return {
             id: record.id,
             revision: String(record.revision),
-            compatibility: root?.readiness === "blocked" ? "blocked" as const : "ready" as const,
+            compatibility: options.chatRoots && (!root || root.readiness === "blocked") ? "blocked" as const : "ready" as const,
+            ...(options.chatRoots && !root ? { blocker: "chat_root_unavailable" as const } : {}),
             ...(root?.blocker ? { blocker: root.blocker } : {}),
             ...(root?.executionRoot ? { executionRoot: root.executionRoot } : {}),
             ...(root?.fingerprint ? { rootFingerprint: root.fingerprint } : {}),
