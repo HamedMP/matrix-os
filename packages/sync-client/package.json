@@ -44,6 +44,9 @@
     "README.md",
     "LICENSE"
   ],
+  "bundledDependencies": [
+    "@matrix-os/contracts"
+  ],
   "publishConfig": {
     "access": "public",
     "registry": "https://registry.npmjs.org/"

@@ -41,7 +41,7 @@ describe("customer VPS Symphony systemd unit", () => {
     expect(buildScript).toContain("\"$STAGE_DIR/bin/matrix-symphony-control\"");
   });
 
-  it("provisions Erlang runtime and enables Symphony during customer VPS bootstrap", async () => {
+  it("provisions Erlang runtime with Symphony installed but idle", async () => {
     const cloudInit = await readFile("distro/customer-vps/cloud-init.yaml", "utf8");
 
     expect(cloudInit).toContain("erlang-base");
@@ -53,9 +53,9 @@ describe("customer VPS Symphony systemd unit", () => {
     expect(cloudInit).toContain("PLATFORM_INTERNAL_URL={{platformInternalUrl}}");
     expect(cloudInit).toContain("UPGRADE_TOKEN={{platformVerificationToken}}");
     expect(cloudInit).toContain("Environment=SYMPHONY_PORT=4766");
-    expect(cloudInit).toContain("systemctl enable matrix-restore.service matrix-scope-runtime.service matrix-gateway.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-sync-agent.service matrix-symphony.service");
+    expect(cloudInit).toContain("systemctl enable matrix-restore.service matrix-scope-runtime.service matrix-gateway.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-sync-agent.service");
     expect(cloudInit).toContain("systemctl start matrix-restore.service matrix-scope-runtime.service");
-    expect(cloudInit).toContain("systemctl start matrix-gateway.service matrix-shell.service matrix-sync-agent.service matrix-symphony.service");
+    expect(cloudInit).toContain("systemctl start matrix-gateway.service matrix-shell.service matrix-sync-agent.service");
     expect(cloudInit).toContain("systemctl enable --now matrix-terminal-runtime.service");
     expect(cloudInit).toContain("systemctl enable --now matrix-vps-registration.service");
     expect(cloudInit).toContain("systemctl start --no-block matrix-code-server.service");
@@ -131,7 +131,7 @@ describe("customer VPS Symphony systemd unit", () => {
     expect(proxy).toContain('app.post("/service/stop"');
   });
 
-  it("enables and starts bundled Symphony units during existing VPS updates", async () => {
+  it("preserves Symphony activation during existing VPS updates", async () => {
     const syncAgent = await readFile("distro/customer-vps/host-bin/matrix-sync-agent", "utf8");
 
     expect(syncAgent).not.toContain("ensure_symphony_runtime");
@@ -149,7 +149,8 @@ describe("customer VPS Symphony systemd unit", () => {
     expect(syncAgent).toContain("sudo install -o root -g matrix -m 0640 \"$temp_file\" \"$SYMPHONY_ENV_FILE\" || status=$?");
     expect(syncAgent).toContain("rm -f \"$temp_file\"");
     expect(syncAgent).toContain("return \"$status\"");
-    expect(syncAgent).toContain("sudo systemctl enable matrix-symphony.service");
+    expect(syncAgent).not.toContain("sudo systemctl enable matrix-symphony.service");
+    expect(syncAgent).toContain("resume_symphony_after_update");
     expect(syncAgent).toContain("sudo systemctl start --no-block matrix-symphony.service");
     expect(syncAgent).toContain("stop_runtime_services()");
     expect(syncAgent).toContain("local runtime_services=(matrix-symphony matrix-gateway matrix-shell)");
@@ -222,9 +223,9 @@ describe("customer VPS Symphony systemd unit", () => {
     expect(appServer).toContain("issue_id = issue_value(issue, :id)");
     expect(appServer).toContain('Map.get(issue, Atom.to_string(key))');
     expect(dynamicTool).toContain("resolve_workpad_path");
-    expect(dynamicTool).toContain("File.realpath(expanded_root)");
+    expect(dynamicTool).toContain("PathSafety.canonicalize(expanded_root)");
     expect(dynamicTool).toContain("file path must stay inside the workspace");
-    expect(linearClient).toContain("receive_timeout: 30_000");
+    expect(linearClient).toContain("receive_timeout: 10_000");
     expect(linearClient).toContain("@max_pages 200");
     expect(linearClient).toContain("Linear pagination hit the #{@max_pages}-page limit");
     expect(linearClient).toContain("{:ok, issues, %{has_next_page: false, end_cursor: nil}}");
@@ -253,13 +254,12 @@ describe("customer VPS Symphony systemd unit", () => {
     );
     const workflow = await readFile("packages/symphony-elixir/WORKFLOW.md", "utf8");
 
-    expect(workflow).toContain("interval_ms: 5000");
+    expect(workflow).toContain("interval_ms: 30000");
     expect(orchestrator).toMatch(
       /SymphonyElixir\.PollingPolicy\.next_delay_ms\(\s*state\.last_tracker_status,\s*state\.poll_interval_ms\s*\)/,
     );
-    expect(pollingPolicy).toContain("@setup_required_poll_interval_ms 300_000");
-    expect(pollingPolicy).toContain("def next_delay_ms(:setup_required, poll_interval_ms)");
-    expect(pollingPolicy).toContain("max(poll_interval_ms, @setup_required_poll_interval_ms)");
+    expect(pollingPolicy).toContain("max(interval, 300_000)");
+    expect(orchestrator).toContain("RequestGate.snapshot().next_retry_in_ms");
   });
 
   it("uses Matrix-owned repository and runtime endpoint secrets", async () => {
@@ -340,14 +340,11 @@ describe("customer VPS Symphony systemd unit", () => {
     expect(linearClient).toContain("URI.encode(handle, &URI.char_unreserved?/1)");
     expect(linearClient).not.toContain("URI.encode_www_form(handle)");
     expect(linearClient).toContain('service: "linear"');
-    expect(linearClient).toContain('action: "graphql"');
-    expect(linearClient).toContain(":matrix_linear_bridge_error");
-    // A 404 whose error says "not connected" means Linear is not connected;
-    // classify it distinctly so the orchestrator surfaces "setup_required". Other
-    // 404s (e.g. unknown handle) stay generic so they are not misreported.
-    expect(linearClient).toContain(":linear_not_connected");
-    expect(linearClient).toContain("status: 404, body: %{\"error\" => error}");
-    expect(linearClient).toContain("linear_not_connected_error?");
-    expect(linearClient).toContain('String.contains?(String.downcase(error), "not connected")');
+    expect(linearClient).not.toContain('action: "graphql"');
+    expect(linearClient).toContain('"symphony_poll"');
+    expect(linearClient).toContain("RequestGate.checkout_request(");
+    expect(linearClient).toContain("{:linear_api_status, status}");
+    expect(linearClient).toContain("retry: false");
+    expect(linearClient).not.toContain("linear_not_connected_error?");
   });
 });

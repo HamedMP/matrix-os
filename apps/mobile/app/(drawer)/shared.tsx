@@ -65,7 +65,7 @@ type ScreenState = {
   hasMoreMessages: boolean;
   loadingMoreMessages: boolean;
   aiDraft: string;
-  aiAvailability: "checking" | "available" | "unavailable";
+  aiAvailability: "checking" | "available" | "unavailable" | "owner_reconnect_required";
   aiRequests: CollaborationAiRequest[];
   approvals: CollaborationApproval[];
   aiError: string;
@@ -96,13 +96,31 @@ const initialState: ScreenState = {
   error: "",
 };
 
+function sharedAiAvailability(
+  status: "available" | "unavailable" | "owner_binding_required" | "owner_reconnect_required",
+): ScreenState["aiAvailability"] {
+  if (status === "available" || status === "owner_reconnect_required") return status;
+  return "unavailable";
+}
+
 type ScreenAction =
   | { type: "patch"; patch: Partial<ScreenState> }
   | { type: "ai_request_accepted"; scopeId: string; chatId: string; request: CollaborationAiRequest; resourceRevision: string }
+  | { type: "ai_refresh_failed"; retainQueue: boolean }
   | { type: "append_items"; additions: DiscoveryItem[]; inboxCursor?: string | null; sharedCursor?: string | null };
 
 function screenReducer(state: ScreenState, action: ScreenAction): ScreenState {
   if (action.type === "patch") return { ...state, ...action.patch };
+  if (action.type === "ai_refresh_failed") {
+    // Keep the last confirmed readiness: retain an available queue with a notice,
+    // and never promote or degrade an owner reconnect requirement.
+    return {
+      ...state,
+      aiAvailability: action.retainQueue ? "available"
+        : state.aiAvailability === "owner_reconnect_required" ? "owner_reconnect_required" : "unavailable",
+      ...(action.retainQueue ? { aiError: "Queue updates are delayed. The last confirmed order is shown." } : {}),
+    };
+  }
   if (action.type === "ai_request_accepted") {
     if (state.view.kind !== "chat" || state.view.scopeId !== action.scopeId || state.chat?.id !== action.chatId) return state;
     return {
@@ -237,7 +255,7 @@ export default function SharedScreen() {
           const refreshedChat = { ...nextChat, revision: ai.resourceRevision };
           chatRef.current = refreshedChat;
           dispatch({ type: "patch", patch: {
-            aiAvailability: ai.capability.status === "available" ? "available" : "unavailable",
+            aiAvailability: sharedAiAvailability(ai.capability.status),
             aiRequests: ai.requests, approvals: ai.approvals,
             aiError: "", chat: refreshedChat,
           } });
@@ -325,7 +343,7 @@ export default function SharedScreen() {
         const refreshedChat = { ...nextChat, revision: ai.resourceRevision };
         chatRef.current = refreshedChat;
         dispatch({ type: "patch", patch: {
-          aiAvailability: ai.capability.status === "available" ? "available" : "unavailable",
+          aiAvailability: sharedAiAvailability(ai.capability.status),
           aiRequests: ai.requests, approvals: ai.approvals,
           aiError: "", chat: refreshedChat,
         } });
@@ -333,10 +351,7 @@ export default function SharedScreen() {
     } catch (failure: unknown) {
       console.warn("[mobile-collaboration] shared AI refresh unavailable", failure instanceof Error ? failure.name : "UnknownError");
       if (generation === chatLoadGeneration.current && eventScopeRef.current === scopeId) {
-        dispatch({ type: "patch", patch: {
-          aiAvailability: aiWasAvailableRef.current ? "available" : "unavailable",
-          ...(aiWasAvailableRef.current ? { aiError: "Queue updates are delayed. The last confirmed order is shown." } : {}),
-        } });
+        dispatch({ type: "ai_refresh_failed", retainQueue: aiWasAvailableRef.current });
       }
     }
     const sequence = combined.at(-1)?.sequence;
@@ -550,7 +565,7 @@ export default function SharedScreen() {
     const refreshedChat = currentChat ? { ...currentChat, revision: ai.resourceRevision } : null;
     if (refreshedChat) chatRef.current = refreshedChat;
     dispatch({ type: "patch", patch: {
-      aiAvailability: ai.capability.status === "available" ? "available" : "unavailable",
+      aiAvailability: sharedAiAvailability(ai.capability.status),
       aiRequests: ai.requests, approvals: ai.approvals,
       aiError: "", ...(refreshedChat ? { chat: refreshedChat } : {}),
     } });

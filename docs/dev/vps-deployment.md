@@ -1019,7 +1019,11 @@ Promtail tails interaction logs (`~/matrixos/system/logs/*.jsonl`), activity log
 
 ### Browser Cache Headers
 
-The gateway serves icon and image files with `Cache-Control: public, max-age=86400, immutable` and ETag headers. This means browsers cache images for 24 hours and only re-download when the ETag changes.
+The gateway serves icon and image files with ETag headers. Bare icon URLs (`/icons/<slug>.png`) get `Cache-Control: public, max-age=86400, immutable`, so browsers cache them for 24 hours. Content-versioned icon URLs (`/icons/<file>.png?v=<etag>`, where `v` matches the current ETag) get a one-year immutable lifetime because the URL changes whenever the bytes change.
+
+`GET /api/apps` and `GET /api/shell/bootstrap` return the versioned URL as `iconUrl` for every app whose icon exists on disk, including generated custom-app logos. The shell binds that path to the current computer, persists it in the local shell snapshot, and the service worker keeps `/icons/` responses cache-first, so custom app logos render from the local cache on later opens instead of re-downloading.
+
+The platform proxy mirrors the same rule on `app.matrix-os.com`: version-matched icons get `private, max-age=31536000, immutable` and drop `Vary: Cookie`, because Clerk rotates the session cookie roughly every minute and a cookie-varied entry would otherwise be a cache miss on every shell open. Unversioned or stale-version icon responses keep the 24-hour `Vary: Cookie` policy.
 
 ### Cloudflare Cache Behavior
 
@@ -1036,8 +1040,8 @@ Cloudflare sits between the browser and the origin (gateway). It has its own cac
 
 ### Image Cache-Busting Strategy
 
-- **On page load**: Use bare URLs (e.g. `/files/system/icons/app.png`) -- browser cache handles it.
-- **After regeneration**: Append `?v={timestamp}` to force the browser to re-download the new version.
+- **On page load**: Prefer the catalog's versioned `iconUrl` (`/icons/<file>.png?v=<etag>`); fall back to the bare slug URL only when the catalog has no icon yet.
+- **After regeneration**: `POST /api/apps/:slug/icon` returns the new `iconUrl` and ETag; the shell swaps to the new `?v=` URL, which is a different cache key, so no manual busting is needed.
 - **Never use `?t=Date.now()` on every load** -- this defeats caching by creating a unique URL each time.
 
 ## Troubleshooting

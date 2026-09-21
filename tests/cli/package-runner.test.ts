@@ -12,6 +12,21 @@ const testDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(testDir, "../..");
 
 describe("published CLI package runners", () => {
+  it("bundles private contracts and uses workspace-aware release packing", async () => {
+    const pkg = JSON.parse(await readFile(resolve(repoRoot, "packages/sync-client/package.json"), "utf8"));
+    expect(pkg.bundledDependencies).toContain("@matrix-os/contracts");
+    for (const path of [".github/workflows/cli-release.yml", ".github/workflows/release.yml"]) {
+      const workflow = await readFile(resolve(repoRoot, path), "utf8");
+      expect(workflow).toContain("pnpm publish --config.node-linker=hoisted");
+      expect(workflow).not.toContain("run: npm publish");
+    }
+    const validator = await readFile(resolve(repoRoot, "packages/sync-client/scripts/validate-package-runners.mjs"), "utf8");
+    expect(validator).toContain('run("pnpm", [');
+    expect(validator).toContain("node_modules/@matrix-os/contracts/package.json");
+    const collaboration = await readFile(resolve(repoRoot, "packages/sync-client/src/cli/commands/collaboration.ts"), "utf8");
+    expect(collaboration).toContain('from "@matrix-os/contracts/collaboration"');
+  });
+
   it("keeps package metadata compatible with npx and pnpm dlx", async () => {
     const packageJson = JSON.parse(
       await readFile(resolve(repoRoot, "packages/sync-client/package.json"), "utf8"),

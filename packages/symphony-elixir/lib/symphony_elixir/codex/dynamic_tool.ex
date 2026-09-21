@@ -3,7 +3,8 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   Executes client-side tool calls requested by Codex app-server turns.
   """
 
-  alias SymphonyElixir.Linear.Client
+  alias SymphonyElixir.Linear.{Client, Adapter, Bridge}
+  alias SymphonyElixir.{Config, PathSafety}
 
   @linear_graphql_tool "linear_graphql"
   @linear_graphql_description """
@@ -28,8 +29,6 @@ defmodule SymphonyElixir.Codex.DynamicTool do
 
   @sync_workpad_tool "sync_workpad"
   @sync_workpad_description "Create or update a workpad comment on a Linear issue. Reads the body from a local file to keep the conversation context small."
-  @sync_workpad_create "mutation($issueId: String!, $body: String!) { commentCreate(input: { issueId: $issueId, body: $body }) { success comment { id url } } }"
-  @sync_workpad_update "mutation($id: String!, $body: String!) { commentUpdate(id: $id, input: { body: $body }) { success comment { id url } } }"
   @sync_workpad_input_schema %{
     "type" => "object",
     "additionalProperties" => false,
@@ -53,6 +52,9 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   @spec execute(String.t() | nil, term(), keyword()) :: map()
   def execute(tool, arguments, opts \\ []) do
     case tool do
+      "linear" ->
+        execute_linear_operation(arguments, opts)
+
       @linear_graphql_tool ->
         execute_linear_graphql(arguments, opts)
 
@@ -71,7 +73,30 @@ defmodule SymphonyElixir.Codex.DynamicTool do
 
   @spec tool_specs() :: [map()]
   def tool_specs do
-    [
+    specs = [
+      %{
+        "name" => "linear",
+        "description" =>
+          "Linear workpad operations. get_issue: issueId; create_comment: issueId, body; update_comment: id, body; resolve_state: issueId, stateName; update_state: issueId, stateId. Use params for these fields.",
+        "inputSchema" => %{
+          "type" => "object",
+          "additionalProperties" => false,
+          "required" => ["operation", "params"],
+          "properties" => %{
+            "operation" => %{
+              "type" => "string",
+              "enum" => [
+                "get_issue",
+                "create_comment",
+                "update_comment",
+                "resolve_state",
+                "update_state"
+              ]
+            },
+            "params" => %{"anyOf" => Adapter.operation_params_schemas()}
+          }
+        }
+      },
       %{
         "name" => @linear_graphql_tool,
         "description" => @linear_graphql_description,
@@ -83,7 +108,27 @@ defmodule SymphonyElixir.Codex.DynamicTool do
         "inputSchema" => @sync_workpad_input_schema
       }
     ]
+
+    if Config.settings!().tracker.api_key == Bridge.credential(),
+      do: Enum.reject(specs, &(&1["name"] == @linear_graphql_tool)),
+      else: specs
   end
+
+  defp execute_linear_operation(%{"operation" => operation, "params" => params}, opts)
+       when is_map(params) do
+    linear_client = Keyword.get(opts, :linear_client, &Client.graphql/3)
+
+    with :ok <- Adapter.validate_operation_params(operation, params),
+         {:ok, query} <- Adapter.operation_query(operation),
+         {:ok, response} <- linear_client.(query, params, []) do
+      graphql_response(response)
+    else
+      {:error, reason} -> failure_response(tool_error_payload(reason))
+    end
+  end
+
+  defp execute_linear_operation(_, _),
+    do: failure_response(tool_error_payload(:invalid_arguments))
 
   defp execute_linear_graphql(arguments, opts) do
     linear_client = Keyword.get(opts, :linear_client, &Client.graphql/3)
@@ -100,12 +145,12 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   defp execute_sync_workpad(args, opts) do
     with {:ok, issue_id, file_path, comment_id} <- normalize_sync_workpad_args(args),
          {:ok, body} <- read_workpad_file(file_path, opts) do
-      {query, variables} =
+      {operation, params} =
         if comment_id,
-          do: {@sync_workpad_update, %{"id" => comment_id, "body" => body}},
-          else: {@sync_workpad_create, %{"issueId" => issue_id, "body" => body}}
+          do: {"update_comment", %{"id" => comment_id, "body" => body}},
+          else: {"create_comment", %{"issueId" => issue_id, "body" => body}}
 
-      execute_linear_graphql(%{"query" => query, "variables" => variables}, opts)
+      execute_linear_operation(%{"operation" => operation, "params" => params}, opts)
     else
       {:error, reason} -> failure_response(tool_error_payload(reason))
     end
@@ -135,10 +180,22 @@ defmodule SymphonyElixir.Codex.DynamicTool do
 
   defp read_workpad_file(path, opts) do
     with {:ok, safe_path} <- resolve_workpad_path(path, Keyword.get(opts, :workspace)) do
-      case File.read(safe_path) do
-        {:ok, ""} -> {:error, {:sync_workpad, "file is empty"}}
-        {:ok, body} -> {:ok, body}
-        {:error, reason} -> {:error, {:sync_workpad, "cannot read file: #{:file.format_error(reason)}"}}
+      # Bound the read itself, including files that grow after opening.
+      case File.open(safe_path, [:read, :binary], &IO.binread(&1, 10_001)) do
+        {:ok, :eof} ->
+          {:error, {:sync_workpad, "file is empty"}}
+
+        {:ok, body} when is_binary(body) and byte_size(body) <= 10_000 ->
+          {:ok, body}
+
+        {:ok, body} when is_binary(body) ->
+          {:error, {:sync_workpad, "workpad exceeds 10000 bytes"}}
+
+        {:ok, {:error, _reason}} ->
+          {:error, {:sync_workpad, "cannot read workpad"}}
+
+        {:error, _reason} ->
+          {:error, {:sync_workpad, "cannot open workpad"}}
       end
     end
   end
@@ -147,13 +204,16 @@ defmodule SymphonyElixir.Codex.DynamicTool do
     expanded_root = Path.expand(workspace)
     expanded_path = Path.expand(path, expanded_root)
 
-    with {:ok, real_root} <- File.realpath(expanded_root),
-         {:ok, real_path} <- File.realpath(expanded_path),
+    with {:ok, real_root} <- PathSafety.canonicalize(expanded_root),
+         {:ok, real_path} <- PathSafety.canonicalize(expanded_path),
          true <- path_within?(real_path, real_root) do
       {:ok, real_path}
     else
-      false -> {:error, {:sync_workpad, "file path must stay inside the workspace"}}
-      {:error, reason} -> {:error, {:sync_workpad, "cannot resolve file: #{:file.format_error(reason)}"}}
+      false ->
+        {:error, {:sync_workpad, "file path must stay inside the workspace"}}
+
+      {:error, reason} ->
+        {:error, {:sync_workpad, "cannot resolve file: #{:file.format_error(reason)}"}}
     end
   end
 
@@ -269,7 +329,8 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   defp tool_error_payload(:invalid_arguments) do
     %{
       "error" => %{
-        "message" => "`linear_graphql` expects either a GraphQL query string or an object with `query` and optional `variables`."
+        "message" =>
+          "`linear_graphql` expects either a GraphQL query string or an object with `query` and optional `variables`."
       }
     }
   end
@@ -285,7 +346,8 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   defp tool_error_payload(:missing_linear_api_token) do
     %{
       "error" => %{
-        "message" => "Symphony is missing Linear auth. Connect Linear in Matrix or configure the Symphony credential bridge."
+        "message" =>
+          "Symphony is missing Linear auth. Connect Linear in Matrix or configure the Symphony credential bridge."
       }
     }
   end

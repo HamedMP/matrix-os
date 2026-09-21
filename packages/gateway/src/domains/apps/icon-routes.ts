@@ -3,6 +3,12 @@ import { extname } from "node:path";
 import type { Context, Hono } from "hono";
 import { resolveBundledSystemIconPath, resolveSystemIconPath } from "./default-icons.js";
 import { getMimeType } from "../files/file-utils.js";
+import {
+  iconEtag,
+  iconVersion,
+  UNVERSIONED_ICON_MAX_AGE_SECONDS,
+  VERSIONED_ICON_MAX_AGE_SECONDS,
+} from "../../icon-metadata.js";
 
 type IconPathResolver = (homePath: string, requestedFile: string) => Promise<string | null>;
 
@@ -32,11 +38,15 @@ function createIconHandler(homePath: string, resolveIconPath: IconPathResolver) 
     } catch (err) {
       return iconReadErrorResponse(c, err, "stat");
     }
-    const etag = `"${iconStat.mtimeMs.toString(36)}-${iconStat.size.toString(36)}"`;
+    const etag = iconEtag(iconStat);
+    const hasCurrentVersion = c.req.query("v") === iconVersion(etag);
+    const maxAge = hasCurrentVersion
+      ? VERSIONED_ICON_MAX_AGE_SECONDS
+      : UNVERSIONED_ICON_MAX_AGE_SECONDS;
     const headers = {
       "Content-Type": getMimeType(extname(target)),
-      "Cache-Control": "public, max-age=86400, immutable",
-      "CDN-Cache-Control": "public, max-age=86400",
+      "Cache-Control": `public, max-age=${maxAge}, immutable`,
+      "CDN-Cache-Control": `public, max-age=${maxAge}`,
       "ETag": etag,
     };
     if (c.req.header("if-none-match") === etag) return c.body(null, 304, headers);

@@ -3,6 +3,7 @@ import { promisify } from "node:util";
 import type { AgentProviderSummary } from "@matrix-os/contracts";
 import {
   buildPiChildEnvironment,
+  resolveOpenCodeCommand,
   resolvePiCommand,
 } from "../coding-agents/pi-process-environment.js";
 import type { CodingModelCatalogProjection } from "./provider-catalog.js";
@@ -145,7 +146,7 @@ export function createNativeCodingModelCatalogSource(options: {
     env.NO_COLOR = "1";
     const command = kind === "pi"
       ? resolvePiCommand(options.piCommand, env)
-      : options.openCodeCommand ?? "opencode";
+      : resolveOpenCodeCommand(options.openCodeCommand, env);
     const args = kind === "pi"
       ? [
           "--list-models",

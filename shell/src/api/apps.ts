@@ -1,6 +1,7 @@
 import { queryOptions } from "@tanstack/react-query";
 import { shellApi, type RequestOptions } from "./http";
 import { canonicalOsViewCatalogPath } from "@matrix-os/contracts";
+import { gatewayAssetUrl } from "@/lib/gateway";
 
 export interface ApiAppEntry {
   name: string;
@@ -19,6 +20,9 @@ type AppIconSnapshots = Record<string, AppIconSnapshot>;
 type AppsLoader = (options?: RequestOptions) => Promise<ApiAppEntry[]>;
 
 const MAX_ICON_URL_PRESERVATION_LOOKUPS = 1_000;
+// Only gateway-owned, content-versioned icon paths may come from the catalog;
+// anything else falls back to the slug-derived icon URL.
+const SAFE_CATALOG_ICON_URL = /^\/icons\/[A-Za-z0-9_-]{1,64}\.(?:png|svg)(?:\?v=[A-Za-z0-9._~%-]{1,160})?$/;
 
 export const appKeys = {
   all: () => ["apps"] as const,
@@ -33,8 +37,25 @@ export async function listApps(options?: RequestOptions): Promise<ApiAppEntry[]>
     const raw = entry as Partial<ApiAppEntry> & { file?: unknown };
     if (typeof raw.name !== "string" || raw.name.length === 0 || raw.name.length > 256) return [];
     const path = canonicalOsViewCatalogPath({ path: raw.path, file: raw.file });
-    return path ? [{ ...raw, name: raw.name, path } as ApiAppEntry] : [];
+    if (!path) return [];
+    const { iconUrl: rawIconUrl, ...rest } = raw;
+    const iconUrl = resolveCatalogIconUrl(rawIconUrl);
+    return [{ ...rest, name: raw.name, path, ...(iconUrl ? { iconUrl } : {}) } as ApiAppEntry];
   });
+}
+
+/**
+ * Bind a catalog-provided `/icons/<file>?v=<etag>` path to the current
+ * explicit computer. The gateway returns portable root-relative paths; the
+ * `?v=` version keeps the URL stable until the icon bytes change, which lets
+ * the browser cache, the service worker, and the shell snapshot all reuse it.
+ */
+export function resolveCatalogIconUrl(
+  value: unknown,
+  resolveAssetUrl: (path: string) => string | undefined = gatewayAssetUrl,
+): string | undefined {
+  if (typeof value !== "string" || !SAFE_CATALOG_ICON_URL.test(value)) return undefined;
+  return resolveAssetUrl(value);
 }
 
 export function hydrateAppIconUrls(

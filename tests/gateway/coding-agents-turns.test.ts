@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { CreateAgentTurnResponseSchema } from "../../packages/contracts/src/index.js";
-import { createCodingAgentThreadStore } from "../../packages/gateway/src/coding-agents/thread-store.js";
+import {
+  CodingAgentTurnError,
+  createCodingAgentThreadStore,
+} from "../../packages/gateway/src/coding-agents/thread-store.js";
 import { CodingAgentThreadRelationError } from "../../packages/gateway/src/coding-agents/thread-relations.js";
 import type { RequestPrincipal } from "../../packages/gateway/src/domains/identity/request-principal.js";
 import { MissingRequestPrincipalError } from "../../packages/gateway/src/domains/identity/request-principal.js";
@@ -83,6 +86,27 @@ describe("coding agent same-thread turns", () => {
         threadId: harness.threadId,
         status: "accepted",
       });
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("distinguishes a failed initial run without provider resume state from admission pressure", async () => {
+    const harness = await createHarness({
+      provider: {
+        providerId: "codex",
+        startThread() {
+          throw new Error("fixture provider failed before establishing a session");
+        },
+        resumeTurn: vi.fn(),
+      },
+    });
+    try {
+      await expect(harness.threads.acceptTurn(
+        ownerPrincipal,
+        harness.threadId,
+        turnBody,
+      )).rejects.toEqual(new CodingAgentTurnError("thread_not_resumable"));
     } finally {
       await harness.cleanup();
     }

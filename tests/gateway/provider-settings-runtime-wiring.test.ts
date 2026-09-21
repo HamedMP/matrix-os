@@ -91,7 +91,7 @@ describe("provider settings runtime capability wiring", () => {
         type: "start_login",
         expectedRevision: 0,
         idempotencyKey: "unsupported_oauth_1",
-        harnessInstanceId: "harness_kernel",
+        harnessInstanceId: "harness_claude_code",
         accountId: null,
         method: "oauth",
       })).rejects.toMatchObject({ code: "invalid_request" });
@@ -111,11 +111,19 @@ describe("provider settings runtime capability wiring", () => {
     }
   });
 
-  it("keeps real driver rows inventory-only until they have a canonical provider instance", () => {
+  it("auto-projects installed route-capable drivers without requiring a per-harness instance", () => {
     const base = providerSettingsCanonicalFixture();
     const config = initialProviderSettingsConfiguration(AiProviderSnapshotV3Schema.parse({
       ...base,
       drivers: [...base.drivers, {
+        id: "hermes",
+        displayName: "Hermes",
+        kind: "cli",
+        installState: "installed",
+        health: "ready",
+        capabilities: ["tools", "resume"],
+        setupActions: [],
+      }, {
         id: "codex",
         displayName: "Codex",
         kind: "cli",
@@ -125,7 +133,10 @@ describe("provider settings runtime capability wiring", () => {
         setupActions: ["connect_account", "open_terminal"],
       }],
     }));
-    expect(config.harnesses.map((harness) => harness.id)).toEqual(["harness_kernel"]);
+    expect(config.harnesses.map((harness) => harness.id)).toEqual([
+      "harness_claude_code",
+      "harness_hermes",
+    ]);
   });
 
   it("returns an expired terminal attempt instead of reviving a stale durable receipt", async () => {
@@ -158,7 +169,7 @@ describe("provider settings runtime capability wiring", () => {
         type: "start_login" as const,
         expectedRevision: 0,
         idempotencyKey: "expiring_login_1",
-        harnessInstanceId: "harness_kernel",
+        harnessInstanceId: "harness_claude_code",
         accountId: null,
         method: "terminal" as const,
       };

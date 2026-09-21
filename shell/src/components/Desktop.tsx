@@ -58,7 +58,7 @@ import {
   enqueueTerminalLaunch,
   type TerminalLaunchAction,
 } from "@/lib/terminal-launch";
-import { enqueueExistingTerminalSession } from "@/lib/provider-terminal-session";
+import { enqueueExistingProviderTerminal } from "@/lib/provider-terminal-session";
 import {
   OPEN_PROVIDER_SETTINGS_EVENT,
   OPEN_PROVIDER_TERMINAL_EVENT,
@@ -457,7 +457,7 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
 
   const openExistingProviderTerminal = useCallback((sessionId: string) => {
     focusTerminalForHandoff((targetId) => {
-      if (targetId) enqueueExistingTerminalSession(sessionId, targetId);
+      if (targetId) enqueueExistingProviderTerminal(sessionId, targetId);
     });
   }, [focusTerminalForHandoff]);
 
