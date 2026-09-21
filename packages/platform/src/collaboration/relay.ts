@@ -117,6 +117,17 @@ export function parseRelaySocketPath(rawPath: string): { scopeId: string; purpos
   return { scopeId: match[1]!, purpose: match[2] as "events" | "terminal", path: url.pathname, query: url.search.slice(1) };
 }
 
+/** Reserve the collaboration socket namespace so old and malformed paths cannot fall into generic VPS routing. */
+export function isCollaborationWebSocketCandidate(rawPath: string): boolean {
+  if (rawPath.length > MAX_RAW_PATH || /[\r\n]/.test(rawPath)) return false;
+  try {
+    return new URL(rawPath, "https://relay.invalid").pathname.startsWith("/ws/collaboration/");
+  } catch (error: unknown) {
+    if (!(error instanceof TypeError)) console.warn("[collaboration-relay] socket path classification failed", error instanceof Error ? error.name : "UnknownError");
+    return false;
+  }
+}
+
 export class CollaborationRelay {
   private readonly limits: RelayLimits;
   private readonly fetchImpl: typeof fetch;
