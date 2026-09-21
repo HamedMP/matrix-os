@@ -35,6 +35,8 @@ import {
 
 /** Contract limit: grants 100 per scope. */
 export const MAX_GRANTS_PER_SCOPE = 100;
+/** Bound on any in-memory participant/activation enumeration; larger audiences page through listActivations. */
+export const MAX_LISTED_PARTICIPANTS = 1_000;
 
 interface MutationKey {
   scopeId: string;
@@ -430,11 +432,14 @@ export class CollaborationCapabilityRepository {
 
   async listActivations(grantId: string): Promise<ActivationRecord[]> {
     const rows = await this.db.selectFrom("collaboration_grant_activations").selectAll()
-      .where("grant_id", "=", grantId).orderBy("actor_id").limit(1_000).execute();
+      .where("grant_id", "=", grantId).orderBy("actor_id").limit(MAX_LISTED_PARTICIPANTS).execute();
     return rows.map(toActivationRecord);
   }
 
-  /** Owner plus every actor with an active member grant or an active activation of the organization grant. */
+  /**
+   * Owner plus every actor with an active member grant or an active activation of the organization grant,
+   * bounded by MAX_LISTED_PARTICIPANTS (member grants are already capped by MAX_GRANTS_PER_SCOPE).
+   */
   async listParticipants(scopeId: string): Promise<string[]> {
     const nowIso = this.options.now().toISOString();
     const scope = await this.db.selectFrom("collaboration_scopes").select("owner_id").where("id", "=", scopeId).executeTakeFirst();
@@ -442,6 +447,7 @@ export class CollaborationCapabilityRepository {
     const members = await this.db.selectFrom("collaboration_grants").select("audience_actor_id")
       .where("scope_id", "=", scopeId).where("audience_kind", "=", "member").where("state", "=", "active")
       .where((eb) => eb.or([eb("expires_at", "is", null), eb("expires_at", ">", nowIso)]))
+      .limit(MAX_GRANTS_PER_SCOPE)
       .execute();
     const activations = await this.db.selectFrom("collaboration_grant_activations as a")
       .innerJoin("collaboration_grants as g", "g.id", "a.grant_id")
@@ -449,10 +455,12 @@ export class CollaborationCapabilityRepository {
       .where("g.scope_id", "=", scopeId).where("g.audience_kind", "=", "organization").where("g.state", "=", "active")
       .where("a.state", "=", "active")
       .where((eb) => eb.or([eb("g.expires_at", "is", null), eb("g.expires_at", ">", nowIso)]))
+      .orderBy("a.decided_at").orderBy("a.actor_id")
+      .limit(MAX_LISTED_PARTICIPANTS)
       .execute();
     const set = new Set<string>([scope.owner_id]);
-    for (const row of members) if (row.audience_actor_id) set.add(row.audience_actor_id);
-    for (const row of activations) set.add(row.actor_id);
+    for (const row of members) if (row.audience_actor_id && set.size < MAX_LISTED_PARTICIPANTS) set.add(row.audience_actor_id);
+    for (const row of activations) if (set.size < MAX_LISTED_PARTICIPANTS) set.add(row.actor_id);
     return [...set];
   }
 
@@ -485,16 +493,19 @@ export class CollaborationCapabilityRepository {
     const scope = await this.db.selectFrom("collaboration_scopes").selectAll()
       .where("id", "=", scopeId).where("deleted_at", "is", null).where("lifecycle", "!=", "deleted").executeTakeFirst();
     if (!scope) return null;
+    // Live grants win over historical ones explicitly; among equals the newest by created_at, then id, is deterministic.
     const rows = await this.db.selectFrom("collaboration_grants").selectAll()
       .where("scope_id", "=", scopeId)
       .where((eb) => eb.or([
         eb("audience_kind", "=", "organization"),
         eb.and([eb("audience_kind", "=", "member"), eb("audience_actor_id", "=", actorId)]),
       ]))
-      .orderBy("created_at desc").limit(MAX_GRANTS_PER_SCOPE).execute();
+      .orderBy(sql`CASE WHEN state IN ('active', 'pending') THEN 0 ELSE 1 END`)
+      .orderBy("created_at", "desc")
+      .orderBy("id", "desc")
+      .limit(MAX_GRANTS_PER_SCOPE).execute();
     const memberGrant = rows.find((row) => row.audience_kind === "member") ?? null;
-    const organizationGrant = rows.find((row) => row.audience_kind === "organization" && (row.state === "active" || row.state === "pending"))
-      ?? rows.find((row) => row.audience_kind === "organization") ?? null;
+    const organizationGrant = rows.find((row) => row.audience_kind === "organization") ?? null;
     const activation = organizationGrant
       ? await this.db.selectFrom("collaboration_grant_activations").selectAll()
         .where("grant_id", "=", organizationGrant.id).where("actor_id", "=", actorId).executeTakeFirst() ?? null
@@ -504,7 +515,7 @@ export class CollaborationCapabilityRepository {
 
   private async activeActors(trx: Transaction<OwnerCollaborationDatabase>, grantId: string): Promise<string[]> {
     const rows = await trx.selectFrom("collaboration_grant_activations").select("actor_id")
-      .where("grant_id", "=", grantId).where("state", "=", "active").limit(1_000).execute();
+      .where("grant_id", "=", grantId).where("state", "=", "active").limit(MAX_LISTED_PARTICIPANTS).execute();
     return rows.map((row) => row.actor_id);
   }
 }
