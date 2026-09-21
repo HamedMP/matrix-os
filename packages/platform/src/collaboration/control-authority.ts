@@ -147,9 +147,24 @@ export function createCollaborationControlAuthority(options: {
     for (const intent of claimed) {
       if (closed) break;
       try {
-        const denial = await fence({ organizationId: intent.organizationId, actorId: intent.actorId, generation: Math.max(1, intent.membershipEpoch) });
-        const completed = await options.repository.completeRevocationIntent({ intentId: intent.intentId, denialId: denial.denialId, drainerId });
-        if (!completed) console.warn("[collaboration-control] revocation intent completed by another drainer");
+        // Runtime discovery happens outside the transaction; the denial insert (keyed by the
+        // intent id, ON CONFLICT DO NOTHING) and the intent completion commit together, so a
+        // retry after a crash at any point finds the same denial and never creates a second one.
+        const fencedAt = now();
+        const runtimeIds = await options.affectedRuntimes({ organizationId: intent.organizationId, actorId: intent.actorId });
+        await options.repository.transaction(async (repo) => {
+          await repo.createDenial({
+            denialId: intent.intentId,
+            organizationId: intent.organizationId,
+            actorId: intent.actorId,
+            generation: Math.max(1, intent.membershipEpoch),
+            fencedAt,
+            ackDeadline: new Date(fencedAt.getTime() + leaseMs),
+            runtimeIds,
+          });
+          const completed = await repo.completeRevocationIntent({ intentId: intent.intentId, denialId: intent.intentId, drainerId });
+          if (!completed) console.warn("[collaboration-control] revocation intent completed by another drainer");
+        });
         fenced += 1;
       } catch (error: unknown) {
         console.warn("[collaboration-control] revocation fence failed", error instanceof Error ? error.name : "UnknownError");

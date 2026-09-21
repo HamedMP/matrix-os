@@ -24,7 +24,7 @@ describe("gateway organization membership client (S03 seam for the S20 precondit
       return assertionResponse({ member: true, requestStartedAt: clock });
     });
     const client = new OrganizationMembershipClient({ platformBaseUrl: "https://platform.example", runtimeId, serviceToken: "t".repeat(40), fetchImpl: fetchImpl as unknown as typeof fetch, now: () => clock });
-    await expect(client.assertMembership({ organizationId: org, actorId: member })).resolves.toEqual({ member: true, expiresAt: new Date(clock.getTime() + 20_000).toISOString(), aiSubmission: "members" });
+    await expect(client.assertMembership({ organizationId: org, actorId: member })).resolves.toEqual({ member: true, expiresAt: new Date(clock.getTime() + 20_000).toISOString(), aiSubmission: "members", membershipEpoch: "3" });
     expect(String(fetchImpl.mock.calls[0]![0])).toBe("https://platform.example/internal/organizations/access/resolve");
   });
 
@@ -34,7 +34,7 @@ describe("gateway organization membership client (S03 seam for the S20 precondit
     const client = new OrganizationMembershipClient({ platformBaseUrl: "https://platform.example", runtimeId, serviceToken: "t".repeat(40), fetchImpl: fetchImpl as unknown as typeof fetch, now: () => clock });
     await client.assertMembership({ organizationId: org, actorId: member });
     clock = new Date(clock.getTime() + 19_000);
-    await client.assertMembership({ organizationId: org, actorId: member });
+    await expect(client.assertMembership({ organizationId: org, actorId: member })).resolves.toMatchObject({ member: true, membershipEpoch: "3", aiSubmission: "members" });
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     clock = new Date(clock.getTime() + 2_000);
     await client.assertMembership({ organizationId: org, actorId: member });

@@ -55,6 +55,27 @@ describe("collaboration control authority (T017/T019)", () => {
     await authority.shutdown();
   });
 
+  it("fences a revocation intent atomically with a denial keyed by the intent id, so a retry after a crash reuses it", async () => {
+    const db = fixture.db.kysely as unknown as Kysely<OrganizationPlatformDatabase>;
+    await repository.applyOrganization({ organizationId: org, name: "Org", slug: "org", aiSubmission: "owner_only", sourceUpdatedAt: new Date(1) });
+    await repository.applyMembership({ organizationId: org, membershipId: "m1", actorId: member, role: "org:member", sourceUpdatedAt: new Date(1), state: "active" });
+    clock = new Date(clock.getTime() + 1_000);
+    await repository.applyMembership({ organizationId: org, membershipId: "m1", actorId: member, role: "org:member", sourceUpdatedAt: new Date(2), state: "removed" });
+    const [intent] = await repository.describeRevocationIntents({ organizationId: org, actorId: member });
+    // Simulate a crash after the denial committed but before the intent was completed.
+    clock = new Date(clock.getTime() + 1_000);
+    const claimed = await repository.claimDueRevocationIntents({ now: clock, drainerId: "crashed", leaseMs: 1_000, maxAttempts: 8 });
+    expect(claimed).toHaveLength(1);
+    await repository.createDenial({ denialId: intent!.intentId, organizationId: org, actorId: member, generation: 2, fencedAt: clock, ackDeadline: new Date(clock.getTime() + 25_000), runtimeIds: [runtimeA] });
+    clock = new Date(clock.getTime() + 2_000);
+    const authority = createCollaborationControlAuthority({ repository, now: () => clock, affectedRuntimes: async () => [runtimeA], drainerId: "survivor" });
+    expect((await authority.drainRevocations()).fenced).toBe(1);
+    const denials = await db.selectFrom("collaboration_denials").select(["denial_id", "actor_id"]).execute();
+    expect(denials).toEqual([{ denial_id: intent!.intentId, actor_id: member }]);
+    expect((await repository.describeRevocationIntents({ organizationId: org, actorId: member }))[0]).toMatchObject({ denialId: intent!.intentId, attempts: 2 });
+    await authority.shutdown();
+  });
+
   it("rejects an acknowledgement whose runtime does not match the authenticated runtime", async () => {
     const authority = createCollaborationControlAuthority({ repository, now: () => clock, affectedRuntimes: async () => [runtimeA] });
     await expect(authority.acknowledge(runtimeB, { protocolVersion: 2, runtimeId: runtimeA, authorityGeneration: 1, fenceAt: clock.toISOString() })).rejects.toThrow(/runtime/i);

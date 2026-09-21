@@ -167,6 +167,9 @@ async function createOrganizationTables(db: Transaction<OrganizationPlatformData
       claimed_until TIMESTAMPTZ
     )
   `.execute(db);
+  // Upgrade for outboxes created by the revision before claims existed (idempotent, same locked transaction).
+  await sql`ALTER TABLE organization_revocation_outbox ADD COLUMN IF NOT EXISTS claimed_by TEXT`.execute(db);
+  await sql`ALTER TABLE organization_revocation_outbox ADD COLUMN IF NOT EXISTS claimed_until TIMESTAMPTZ`.execute(db);
   await sql`
     CREATE INDEX IF NOT EXISTS idx_organization_revocation_outbox_due
       ON organization_revocation_outbox(next_attempt_at) WHERE denial_id IS NULL AND dead_letter = false
