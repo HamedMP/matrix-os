@@ -4,6 +4,7 @@ import {
   canonicalProviderAvailabilityLabel,
   deriveCanonicalProviderChoices,
 } from "../../packages/ui/src/canonical-provider-choice.js";
+import { createCanonicalComposerSelection } from "../../desktop/src/renderer/src/features/chat/canonical-composer-state.js";
 
 const catalog = CanonicalProviderCatalogSchema.parse({
   revision: "catalog_test",
@@ -54,6 +55,21 @@ const catalog = CanonicalProviderCatalogSchema.parse({
     },
     catalogRevision: "catalog_test",
   }],
+});
+
+describe("managed model default parity", () => {
+  it("prefers available GLM on Matrix for new chats while retaining an explicit instance", () => {
+    const value = structuredClone(catalog);
+    const base = value.instances[0]!;
+    base.defaultSelection = { instanceId: base.id, model: base.models[0]!.id };
+    const glm = { ...structuredClone(base), id: "opencode_matrix", driverKind: "opencode" as const, connectionLabel: "Matrix AI",
+      models: [{ ...base.models[0]!, id: "cloudflare:@cf/zai-org/glm-5.3-flash", displayName: "GLM 5.3 Flash" }],
+      defaultSelection: { instanceId: "opencode_matrix", model: "cloudflare:@cf/zai-org/glm-5.3-flash" } };
+    value.instances.push(glm);
+    expect(deriveCanonicalProviderChoices(value)[0]?.instanceId).toBe(glm.id);
+    expect(createCanonicalComposerSelection(value)?.instanceId).toBe(glm.id);
+    expect(createCanonicalComposerSelection(value, base.id)?.instanceId).toBe(base.id);
+  });
 });
 
 describe("canonical Provider choice presentation", () => {

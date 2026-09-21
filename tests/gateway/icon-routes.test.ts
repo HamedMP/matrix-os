@@ -23,14 +23,25 @@ describe("GET /icons/:file", () => {
   it("serves icon bytes directly with immutable cache headers instead of redirecting", async () => {
     writeFileSync(join(homePath, "system/icons/workspace.png"), "png-bytes");
 
-    const res = await app.request("/icons/workspace.png?v=abc123");
+    const initial = await app.request("/icons/workspace.png", { method: "HEAD" });
+    const version = initial.headers.get("etag")?.replaceAll('"', "");
+    const res = await app.request(`/icons/workspace.png?v=${version}`);
 
     expect(res.status).toBe(200);
     expect(await res.text()).toBe("png-bytes");
     expect(res.headers.get("content-type")).toBe("image/png");
+    expect(res.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
+    expect(res.headers.get("cdn-cache-control")).toBe("public, max-age=31536000");
+    expect(res.headers.get("etag")).toMatch(/^".+"$/);
+  });
+
+  it("keeps unversioned icon URLs short-lived so regenerated icons can refresh", async () => {
+    writeFileSync(join(homePath, "system/icons/workspace.png"), "png-bytes");
+
+    const res = await app.request("/icons/workspace.png");
+
     expect(res.headers.get("cache-control")).toBe("public, max-age=86400, immutable");
     expect(res.headers.get("cdn-cache-control")).toBe("public, max-age=86400");
-    expect(res.headers.get("etag")).toMatch(/^".+"$/);
   });
 
   it("returns 304 when if-none-match matches the etag", async () => {

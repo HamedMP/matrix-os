@@ -19,7 +19,7 @@ import {
   CollaborationResourceIdSchema,
   CollaborationTerminalFrameSchema,
   CollaborationTerminalSchema,
-} from "@matrix-os/contracts";
+} from "@matrix-os/contracts/collaboration";
 import { defineCommand } from "citty";
 import { z } from "zod/v4";
 import { requireCliAuthToken } from "../auth-state.js";

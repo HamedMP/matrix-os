@@ -15,6 +15,7 @@ export const AiProviderVendorSchema = z.enum([
   "openrouter",
   "openai",
   "baseten",
+  "cloudflare",
 ]);
 
 export const AiProviderReadinessStateSchema = z.enum([

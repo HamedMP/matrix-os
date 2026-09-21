@@ -12,7 +12,10 @@ import {
   writeProviderJsonAtomic,
   type ProviderSettingsConfiguration,
 } from "../../packages/gateway/src/ai-providers/provider-settings-persistence.js";
-import { providerSettingsCanonicalFixture } from "./provider-settings-test-support.js";
+import {
+  providerSettingsCanonicalFixture,
+  providerSettingsFundingSummaryFixture,
+} from "./provider-settings-test-support.js";
 
 function genericCanonical(): AiProviderSnapshotV3 {
   const canonical = providerSettingsCanonicalFixture();
@@ -1384,6 +1387,9 @@ describe("generic provider harness lifecycle coordinator", () => {
         getSnapshot: async () => structuredClone(canonical),
       },
       runtimeCoordinator: coordinator,
+      fundingSummaryReader: {
+        getFundingSummary: async () => providerSettingsFundingSummaryFixture(),
+      },
       now: () => new Date(canonical.refreshedAt),
       idGenerator: () => `generic_${++nextId}`,
     });
@@ -1398,7 +1404,7 @@ describe("generic provider harness lifecycle coordinator", () => {
       accessSourceId: "matrix_included",
       accountId: null,
     });
-    const pi = result.snapshot.harnesses.find((harness) => harness.harness === "pi")!;
+    const pi = result.snapshot.harnesses.find((harness) => harness.id === "harness_generic_1")!;
     expect(pi).toMatchObject({ enabled: false, installState: "installed" });
 
     result = await store.mutate({
