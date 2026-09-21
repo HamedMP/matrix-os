@@ -1609,6 +1609,31 @@ describe("collaboration gateway routes", () => {
       },
       body,
     })).status).toBe(413);
+
+    // The shared mutation limit is registered for every mutating method on the collaboration
+    // composition, so the terminal PATCH is bounded before its handler buffers anything.
+    const terminalPath = `/api/collaboration/scopes/${collaborationIds.scope}/terminal`;
+    const patchBody = JSON.stringify({ contributorControl: true, padding: oversized });
+    const patchBytes = new TextEncoder().encode(patchBody);
+    const patchProof = signer.signHttp({
+      actorId: collaborationActors.owner,
+      ownerId: collaborationActors.owner,
+      runtimeId: collaborationIds.runtime,
+      scopeId: collaborationIds.scope,
+      method: "PATCH",
+      path: terminalPath,
+      query: "",
+      body: patchBytes,
+    });
+    expect((await app.request(terminalPath, {
+      method: "PATCH",
+      headers: {
+        "content-length": String(patchBytes.byteLength),
+        "content-type": "application/json",
+        "x-matrix-collaboration-proof": Buffer.from(JSON.stringify(patchProof)).toString("base64url"),
+      },
+      body: patchBody,
+    })).status).toBe(413);
   });
 
   it("returns generic not-found to outsiders without weakening viewer denials", async () => {
