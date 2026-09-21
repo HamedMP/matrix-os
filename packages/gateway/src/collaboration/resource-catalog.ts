@@ -344,9 +344,21 @@ export async function migrateResourceCatalogV12(trx: Transaction<OwnerCollaborat
       next_index INTEGER NOT NULL DEFAULT 0 CHECK (next_index >= 0),
       state TEXT NOT NULL CHECK (state IN ('staging', 'committed', 'cancelled', 'expired')),
       staging_ref TEXT NOT NULL CHECK (char_length(staging_ref) BETWEEN 1 AND 512),
+      commit_request_id UUID,
+      committed_revision BIGINT CHECK (committed_revision IS NULL OR committed_revision >= 0),
       created_at TIMESTAMPTZ NOT NULL,
       updated_at TIMESTAMPTZ NOT NULL,
       expires_at TIMESTAMPTZ NOT NULL
+    )
+  `.execute(trx);
+  await sql`
+    CREATE TABLE IF NOT EXISTS collaboration_upload_parts (
+      upload_id UUID NOT NULL REFERENCES collaboration_upload_stages(id) ON DELETE CASCADE,
+      part_index INTEGER NOT NULL CHECK (part_index >= 0),
+      sha256 TEXT NOT NULL CHECK (sha256 ~ '^[a-f0-9]{64}$'),
+      bytes BYTEA NOT NULL,
+      byte_count INTEGER NOT NULL CHECK (byte_count BETWEEN 0 AND 49152),
+      PRIMARY KEY (upload_id, part_index)
     )
   `.execute(trx);
   await sql`
