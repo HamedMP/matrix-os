@@ -46,6 +46,8 @@ import {
   CollaborationSharedSessionBinder,
   sharedSessionKey,
 } from "../../packages/gateway/src/collaboration/run-account-binding.js";
+import { SharedChatRunPreparationError } from "../../packages/gateway/src/chat/shared-execution-coordinator.js";
+import { SharedRunOwnerSource } from "../../packages/gateway/src/collaboration/shared-run-owner-source.js";
 import { CollaborationProofSigner } from "../../packages/platform/src/collaboration/proof.js";
 import {
   collaborationActors,
@@ -100,6 +102,7 @@ function ownerSnapshot(overrides: Partial<AiProviderSnapshotV3> = {}): AiProvide
     revision: 4,
     refreshedAt: NOW,
     accessSources: [
+      { ...readiness(), id: "owner_anthropic_profile", displayName: "Claude profile", fundingKind: "owner_account", vendor: "anthropic", accountLabel: "owner@example.com", eligibleModelIds: ["claude-opus-5"], policyVersion: "policy-1" },
       { ...readiness(), id: "src_claude_sub", displayName: "Claude subscription", fundingKind: "owner_account", vendor: "anthropic", accountLabel: "owner@example.com", eligibleModelIds: ["claude-opus-5", "claude-sonnet-5"], policyVersion: "policy-1" },
       { ...readiness(), id: "src_openai_key", displayName: "OpenAI API key", fundingKind: "owner_api_key", vendor: "openai", accountLabel: null, eligibleModelIds: ["gpt-5.6"], policyVersion: "policy-1" },
     ],
@@ -109,6 +112,7 @@ function ownerSnapshot(overrides: Partial<AiProviderSnapshotV3> = {}): AiProvide
     ],
     drivers: [],
     instances: [
+      { id: "inst_claude_profile", driverId: "claude_code", vendor: "anthropic", accountId: "acct_claude", accessSourceId: "owner_anthropic_profile", label: "Claude Code (profile)", readiness: readiness(), capabilitySnapshot: [], modelIds: ["claude-opus-5"], defaultModelId: "claude-opus-5", catalogVersion: "catalog-1" },
       { id: "inst_claude", driverId: "claude_code", vendor: "anthropic", accountId: "acct_claude", accessSourceId: "src_claude_sub", label: "Claude Code", readiness: readiness(), capabilitySnapshot: [], modelIds: ["claude-opus-5", "claude-sonnet-5"], defaultModelId: "claude-opus-5", catalogVersion: "catalog-1" },
       { id: "inst_codex", driverId: "codex", vendor: "openai", accountId: "acct_openai", accessSourceId: "src_openai_key", label: "Codex", readiness: readiness(), capabilitySnapshot: [], modelIds: ["gpt-5.6"], defaultModelId: "gpt-5.6", catalogVersion: "catalog-1" },
       { id: "inst_hermes", driverId: "hermes", vendor: "openrouter", accountId: null, accessSourceId: "src_openai_key", label: "Hermes", readiness: readiness(), capabilitySnapshot: [], modelIds: ["gpt-5.6"], defaultModelId: null, catalogVersion: "catalog-1" },
@@ -117,6 +121,16 @@ function ownerSnapshot(overrides: Partial<AiProviderSnapshotV3> = {}): AiProvide
     active: { providerInstanceId: "inst_claude", accessSourceId: "src_claude_sub", modelId: "claude-opus-5" },
     ...overrides,
   };
+}
+
+/** The owner snapshot with one access source moved to a non-ready state (exhausted, expired, disabled...). */
+function withSourceState(id: string, state: "expired" | "unavailable" | "disabled") {
+  const base = ownerSnapshot();
+  return ownerSnapshot({
+    accessSources: base.accessSources.map((source) => source.id === id
+      ? { ...source, ...readiness(state), action: state === "expired" ? "connect" as const : "retry" as const, safeReason: state === "expired" ? "auth" as const : "provider_unavailable" as const }
+      : source),
+  });
 }
 
 const CLAUDE = { accessSourceId: "src_claude_sub", providerInstanceId: "inst_claude" };
@@ -338,12 +352,7 @@ describe("S08 owner-selected AI source", () => {
 
     it("an exhausted or unavailable source pauses admission without a fallback source", async () => {
       const policy = await ownerPolicy();
-      snapshot = ownerSnapshot({
-        accessSources: [
-          { ...ownerSnapshot().accessSources[0]!, ...readiness("expired"), action: "connect", safeReason: "auth" },
-          ownerSnapshot().accessSources[1]!,
-        ],
-      });
+      snapshot = withSourceState("src_claude_sub", "expired");
       await expect(bindings.admit(admission(collaborationActors.editor, policy.revision))).rejects.toMatchObject({ code: "source_unavailable" });
       expect(await bindings.list(PROJECT_CHAT_SCOPE)).toEqual([]);
       expect((await policies.resolve(PROJECT_SCOPE))?.source).toEqual({ ...CLAUDE, harness: "claude_code" });
@@ -442,8 +451,51 @@ describe("S08 owner-selected AI source", () => {
 
     it("an unavailable source is not ready and is never swapped for another", async () => {
       await ownerPolicy();
-      snapshot = ownerSnapshot({ accessSources: [{ ...ownerSnapshot().accessSources[0]!, ...readiness("unavailable"), action: "retry", safeReason: "provider_unavailable" }, ownerSnapshot().accessSources[1]!] });
+      snapshot = withSourceState("src_claude_sub", "unavailable");
       expect(await probes().aiSource(subject)).toEqual({ configured: false });
+    });
+  });
+
+  describe("shared run owner source (T044)", () => {
+    const source = () => new SharedRunOwnerSource({ policies, eligibility, bindings });
+    const run = (requestingActorId: string, driverKind: "codex" | "claude_code" = "claude_code") => ({
+      scopeId: PROJECT_CHAT_SCOPE, chatId: collaborationIds.chat, ownerId: collaborationActors.owner, requestingActorId, driverKind,
+    });
+
+    it("returns null without a policy so the runtime keeps its pre-S08 path", async () => {
+      expect(await source().prepare(run(collaborationActors.owner))).toBeNull();
+    });
+
+    it("maps the owner's Claude source to the kernel access source and pins the policy revision", async () => {
+      const policy = await ownerPolicy(PROJECT_SCOPE, collaborationActors.owner, { accessSourceId: "owner_anthropic_profile", providerInstanceId: "inst_claude_profile" });
+      const decision = await source().prepare(run(collaborationActors.editor));
+      expect(decision).toEqual({
+        policyRevision: policy.revision,
+        harness: "claude_code",
+        providerInstanceId: "inst_claude_profile",
+        accessSourceId: "owner_anthropic_profile",
+        allowedModelIds: ["claude-opus-5"],
+        effectiveSubmitMode: "members",
+      });
+    });
+
+    it("gives Codex no kernel access source and refuses a run whose harness differs from the policy", async () => {
+      await ownerPolicy(PROJECT_SCOPE, collaborationActors.owner, CODEX, { allowedModelIds: ["gpt-5.6"] });
+      const decision = await source().prepare(run(collaborationActors.editor, "codex"));
+      expect(decision?.accessSourceId).toBeNull();
+      expect(decision?.harness).toBe("codex");
+      await expect(source().prepare(run(collaborationActors.editor, "claude_code")))
+        .rejects.toMatchObject({ requestState: "unavailable" });
+    });
+
+    it("refuses a member under owner-only as unauthorized and an unavailable source as unavailable, never falling back", async () => {
+      aiSubmission = "absent";
+      await ownerPolicy();
+      await expect(source().prepare(run(collaborationActors.editor))).rejects.toBeInstanceOf(SharedChatRunPreparationError);
+      await expect(source().prepare(run(collaborationActors.editor))).rejects.toMatchObject({ requestState: "unauthorized" });
+      expect(await source().prepare(run(collaborationActors.owner))).toMatchObject({ effectiveSubmitMode: "owner_only" });
+      snapshot = withSourceState("src_claude_sub", "expired");
+      await expect(source().prepare(run(collaborationActors.owner))).rejects.toMatchObject({ requestState: "unavailable" });
     });
   });
 
