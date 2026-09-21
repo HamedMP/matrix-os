@@ -450,8 +450,15 @@ describe("gateway collaboration wiring", () => {
         .select(["execution_generation", "execution_eligibility"])
         .where("id", "=", collaborationIds.scope).executeTakeFirstOrThrow())
         .resolves.toMatchObject({ execution_generation: null, execution_eligibility: null });
-      // The readiness seam the preflight composition reads is false whenever shared AI is not running.
-      await expect(runtime.sandboxSupported({ resourceKind: "chat", ownerId: "user_owner", scopeId: collaborationIds.scope, organizationId: "org_1" })).resolves.toBe(false);
+      // The readiness seam the preflight composition reads is false whenever shared AI is not running,
+      // but only for the kinds that execute: a file or folder share needs no sandbox at all.
+      const subject = { ownerId: "user_owner", scopeId: collaborationIds.scope, organizationId: "org_1" };
+      for (const resourceKind of ["chat", "project"] as const) {
+        await expect(runtime.sandboxSupported({ ...subject, resourceKind })).resolves.toBe(false);
+      }
+      for (const resourceKind of ["file", "folder", "app_instance", "terminal"] as const) {
+        await expect(runtime.sandboxSupported({ ...subject, resourceKind })).resolves.toBe(true);
+      }
     } finally {
       await runtime.shutdown();
       await new Promise<void>((resolve) => supervisor.close(() => resolve()));
