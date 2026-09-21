@@ -108,6 +108,44 @@ describe("platform speech draft recording", () => {
     expect(onDraft).not.toHaveBeenCalled();
   });
 
+  it("contains stale microphone cleanup failures after the active chat changes", async () => {
+    let resolveCapture!: (capture: Awaited<ReturnType<PlatformSpeechCaptureAdapter["start"]>>) => void;
+    const pendingCapture = new Promise<Awaited<ReturnType<PlatformSpeechCaptureAdapter["start"]>>>((resolve) => {
+      resolveCapture = resolve;
+    });
+    const cleanupError = new Error("private microphone cleanup detail");
+    const capture = {
+      stop: vi.fn(async () => new Blob([new Uint8Array(44)], { type: "audio/wav" })),
+      cancel: vi.fn(async () => { throw cleanupError; }),
+    };
+    const adapter: PlatformSpeechCaptureAdapter = {
+      isSupported: () => true,
+      start: vi.fn(async () => pendingCapture),
+    };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const hook = renderHook(({ scopeKey }) => usePlatformSpeechDraft({
+      scopeKey,
+      client: client(),
+      captureAdapter: adapter,
+      onDraft: vi.fn(),
+    }), { initialProps: { scopeKey: "chat-1" } });
+    await waitFor(() => expect(hook.result.current.phase).toBe("idle"));
+
+    let start!: Promise<void>;
+    act(() => {
+      start = hook.result.current.start();
+    });
+    await waitFor(() => expect(hook.result.current.phase).toBe("requesting_permission"));
+    hook.rerender({ scopeKey: "chat-2" });
+    await act(async () => {
+      resolveCapture(capture);
+      await expect(start).resolves.toBeUndefined();
+    });
+    expect(capture.cancel).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith("[speech-draft] microphone cleanup failed", "Error");
+    expect(warn).not.toHaveBeenCalledWith(expect.anything(), cleanupError);
+  });
+
   it("does not expose recording controls when platform capability is unavailable", async () => {
     const speech = client({
       capabilities: vi.fn(async () => ({
