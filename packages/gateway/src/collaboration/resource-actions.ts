@@ -54,8 +54,16 @@ export function createFileActionExecutor(options: {
     const scope = await trx.selectFrom("collaboration_scopes").selectAll().where("id", "=", context.scopeId)
       .where("deleted_at", "is", null).forUpdate().executeTakeFirst();
     if (!scope || scope.lifecycle !== "shared" || scope.resource_id !== context.resourceId || scope.owner_id !== context.ownerId
-      || scope.authority_runtime_id !== context.authorityRuntimeId || Number(scope.authority_generation) !== context.authorityGeneration) {
+      || scope.authority_runtime_id !== context.authorityRuntimeId || Number(scope.authority_generation) !== context.authorityGeneration
+      || Number(scope.auth_epoch) !== context.authEpoch) {
       throw new ResourceCatalogError("not_found");
+    }
+    const member = await trx.selectFrom("collaboration_members").select(["status", "role", "expires_at"])
+      .where("scope_id", "=", context.membershipScopeId).where("actor_id", "=", context.actorId)
+      .forShare().executeTakeFirst();
+    if (member && (member.status !== "accepted" || member.role === "viewer"
+      || (member.expires_at && new Date(member.expires_at).getTime() <= now().getTime()))) {
+      throw new ResourceCatalogError("forbidden");
     }
     return scope;
   }
