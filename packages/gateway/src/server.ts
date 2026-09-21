@@ -363,6 +363,9 @@ import { registerHomeUtilityRoutes } from "./server/home-utility-routes.js";
 import { registerSystemOperatorRoutes } from "./server/system-operator-routes.js";
 import { registerShellTerminalRoutes } from "./server/shell-terminal-routes.js";
 import { registerOperationalRoutes } from "./server/operational-routes.js";
+import { registerCanvasGatewayRoutes } from "./server/canvas-gateway-routes.js";
+import { registerCollaborationChatRoutes } from "./server/collaboration-chat-routes.js";
+import { registerDeferredRuntimeRoutes } from "./server/deferred-runtime-routes.js";
 import { initializeGatewayChannels } from "./startup/channels.js";
 
 export {
@@ -385,7 +388,6 @@ export async function resetVolatilePtySessionList(persistPath: string): Promise<
   await writeFileAsync(persistPath, "[]\n");
 }
 
-const INTEGRATION_PROXY_BODY_LIMIT = 64 * 1024;
 const MAX_MAIN_WS_CLIENTS = 100;
 
 export async function createGateway(config: GatewayConfig) {
@@ -1438,99 +1440,11 @@ export async function createGateway(config: GatewayConfig) {
     canonicalChatExecutionRoots, gatewayCollaboration,
   });
 
-  // HKDF master secret for per-app session cookies. In production MATRIX_AUTH_TOKEN
-  // is the source. When it is absent (local dev, .env.example default) we mint an
-  // ephemeral process-scoped secret so the HKDF input is never predictable — an
-  // empty master secret combined with the public info string would otherwise let
-  // anyone forge matrix_app_session cookies for any installed slug. The trade-off
-  // is that app-session cookies do not survive a gateway restart in dev mode.
-  const envMasterSecret = process.env.MATRIX_AUTH_TOKEN;
-  const appSessionMasterSecret = envMasterSecret && envMasterSecret.length >= 16
-    ? envMasterSecret
-    : (() => {
-        const reason = !envMasterSecret
-          ? "MATRIX_AUTH_TOKEN not set"
-          : "MATRIX_AUTH_TOKEN too short (<16 bytes)";
-        console.warn(
-          `[gateway] ${reason}; using ephemeral app-session master secret (app-session cookies will not survive gateway restart).`,
-        );
-        return randomBytes(32).toString("hex");
-      })();
-
-  // Deferred route mounts -- must come AFTER auth middleware
-  if (integrationRoutes) {
-    app.route("/api/integrations", integrationRoutes);
-    console.log("[platform-db] Integration routes mounted (after auth)");
-  } else if (internalIntegrationBaseUrl && internalPlatformToken && internalPlatformUrl) {
-    app.all("/api/integrations", bodyLimit({ maxSize: INTEGRATION_PROXY_BODY_LIMIT }), async (c) =>
-      proxyIntegrationRequest(c, internalIntegrationBaseUrl, internalPlatformToken),
-    );
-    app.all("/api/integrations/*", bodyLimit({ maxSize: INTEGRATION_PROXY_BODY_LIMIT }), async (c) => {
-      const isPublic =
-        c.req.path === "/api/integrations/available" ||
-        c.req.path.startsWith("/api/integrations/webhook/");
-      const targetBase = isPublic
-        ? `${internalPlatformUrl}/api/integrations`
-        : internalIntegrationBaseUrl;
-      return proxyIntegrationRequest(c, targetBase, isPublic ? undefined : internalPlatformToken);
-    });
-    console.log("[platform-db] Integration routes proxied via platform internal API");
-  }
-  registerCustomMcpGatewayRoutes(app, {
-    homePath,
-    clerkUserId: process.env.MATRIX_CLERK_USER_ID ?? process.env.MATRIX_USER_ID,
-    projectionToken: process.env.UPGRADE_TOKEN,
-    ...(internalPlatformUrl && internalHandle && internalPlatformToken
-      ? {
-          platformProxy: {
-            internalPlatformUrl,
-            handle: internalHandle,
-            token: internalPlatformToken,
-            request: (
-              context: Context,
-              targetBase: string,
-              routePrefix: "/api/mcp-servers",
-              token: string,
-            ) => proxyIntegrationRequest(context, targetBase, token, routePrefix),
-          },
-        }
-      : {}),
-  });
-
-  const processManager = registerAppRuntimeRoutes(app, {
-    homePath,
-    appSessionMasterSecret,
-    devAppAuthBypass: APP_AUTH_DEV_BYPASS,
-    publicHost: process.env.PUBLIC_HOST ?? "localhost",
-    onAppError: ({ errorKind, appSlug }) => {
-      void posthogErrorTracker.captureEvent("gateway_app_runtime", {
-        distinctId: ownerTelemetryDistinctId,
-        properties: {
-          source: "gateway-app-runtime",
-          event: "app_error",
-          error_kind: errorKind,
-          app_slug: appSlug,
-        },
-      });
-    },
-  });
-
-  app.use("*", async (c, next) => {
-    const start = performance.now();
-    await next();
-    const duration = (performance.now() - start) / 1000;
-    const path = normalizePath(c.req.path);
-    const method = c.req.method;
-    const status = String(c.res.status);
-    httpRequestsTotal.inc({ method, path, status });
-    httpRequestDuration.observe({ method, path }, duration);
-  });
-
-  app.get("/metrics", async (c) => {
-    const output = await metricsRegistry.metrics();
-    return c.text(output, 200, {
-      "Content-Type": metricsRegistry.contentType,
-    });
+  const processManager = registerDeferredRuntimeRoutes({
+    app, homePath, integrationRoutes, internalIntegrationBaseUrl,
+    internalPlatformToken, internalPlatformUrl, internalHandle,
+    proxyIntegrationRequest, devAppAuthBypass: APP_AUTH_DEV_BYPASS,
+    posthogErrorTracker, ownerTelemetryDistinctId,
   });
 
   registerMainWebSocketRoutes({
@@ -1856,63 +1770,13 @@ export async function createGateway(config: GatewayConfig) {
     console.warn("[gateway] Workspace startup recovery completed with degraded steps");
   }
 
-  if (canonicalChatEventStream) {
-    registerCanonicalChatEventWebSocketRoute({
-      app,
-      upgradeWebSocket,
-      getPrincipal: (context) => requireRequestPrincipal(context as Context),
-      stream: canonicalChatEventStream,
-    });
-    registerCanonicalChatEventHttpRoute({
-      app,
-      getPrincipal: (context) => requireRequestPrincipal(context as Context),
-      stream: canonicalChatEventStream,
-    });
-  }
-  app.route("/", createChatSharingRoutes(chatRepository ? new ChatSharing(chatRepository.kysely) : null));
-  if (gatewayCollaboration) {
-    gatewayCollaboration.register({ app, upgradeWebSocket });
-  } else {
-    registerFailClosedCollaborationRoutes({
-      app,
-      upgradeWebSocket,
-      reason: collaborationFailClosedReason ?? "owner_database_missing",
-    });
-  }
-  app.route("/", createCanonicalChatRoutes({
-    service: chatRepository
-        ? createCanonicalChatService(chatRepository, {
-          projectOwnerToolOutput,
-          ...(canonicalChatOrchestrator ? { orchestrator: canonicalChatOrchestrator } : {}),
-          ...(canonicalChatExecutionRoots ? { executionRoots: canonicalChatExecutionRoots } : {}),
-          ...(canonicalChatCollaborationGuard ? { collaborationGuard: canonicalChatCollaborationGuard } : {}),
-        })
-      : createUnavailableCanonicalChatService(),
-    getPrincipal: (c) => requireRequestPrincipal(c),
-  }));
-  app.route("/", createChatAgentRoutes({
-    ...(canonicalChatRuntime && chatRepository ? {
-      agents: canonicalChatRuntime.agents,
-      context: canonicalChatRuntime.context,
-      recipes: canonicalChatRuntime.recipes,
-      repository: chatRepository,
-    } : {}),
-    enabled: () => true,
-    catalog: canonicalChatProviderCatalog,
-    getPrincipal: (c) => requireRequestPrincipal(c),
-  }));
-  app.route("/", createChatProviderRoutes({
-    catalog: canonicalChatProviderCatalog,
-    getPrincipal: (c) => requireRequestPrincipal(c),
-  }));
-  app.route("/api/ai", createAiProviderRoutes({
-    service: aiProviderService,
-    getPrincipal: (c) => requireRequestPrincipal(c),
-  }));
-  app.route("/api/ai", createProviderSettingsRoutes({
-    store: providerSettingsStore,
-    getPrincipal: (c) => requireRequestPrincipal(c),
-  }));
+  if (!providerSettingsStore) throw new Error("Provider settings are unavailable");
+  registerCollaborationChatRoutes({
+    app, upgradeWebSocket, canonicalChatEventStream, chatRepository, gatewayCollaboration,
+    collaborationFailClosedReason, canonicalChatOrchestrator, canonicalChatExecutionRoots,
+    canonicalChatCollaborationGuard, projectOwnerToolOutput, canonicalChatRuntime,
+    canonicalChatProviderCatalog, aiProviderService, providerSettingsStore,
+  });
 
   // T978-T979: Settings API routes
   const settingsRoutes = createSettingsRoutes({
@@ -1951,97 +1815,10 @@ export async function createGateway(config: GatewayConfig) {
     app.all("/api/messages", (c) => c.json({ error: { code: "misconfigured", message: "Messaging is not configured" } }, 503));
   }
 
-  if (canvasService) {
-    // Global authMiddleware is mounted before route registration; routes still resolve user IDs defensively.
-    app.route("/api/canvases", createCanvasRoutes({
-      service: canvasService,
-      getUserId: (c) => requireRequestPrincipal(c).userId,
-      broadcastCanvasUpdate: (canvasId, message) => canvasSubscriptionHub?.broadcast(canvasId, message),
-      ...(gatewayCollaboration ? {
-        projectOperationAdmission: gatewayCollaboration.projectOperationAdmission,
-      } : {}),
-    }));
-
-    app.get(
-      "/api/canvases/:canvasId/ws",
-      upgradeWebSocket((c) => {
-        const connectionId = `canvas_${randomBytes(12).toString("hex")}`;
-        let canvasId: string;
-        let userId: string;
-        try {
-          canvasId = CanvasIdSchema.parse(c.req.param("canvasId"));
-          userId = requireRequestPrincipal(c).userId;
-        } catch (err: unknown) {
-          console.error("[canvas/ws] Upgrade rejected:", err instanceof Error ? err.message : String(err));
-          return {
-            onOpen(_evt, ws) {
-              try {
-                ws.send(JSON.stringify({ type: "error", error: "Canvas realtime failed" }));
-              } catch (sendErr: unknown) {
-                logUnexpectedWsSendFailure("Canvas WebSocket rejected error send failed", sendErr);
-              } finally {
-                ws.close();
-              }
-            },
-          };
-        }
-
-        return {
-          async onOpen(_evt, ws) {
-            try {
-              await canvasSubscriptionHub?.subscribe({
-                connectionId,
-                canvasId,
-                userId,
-                send: (message) => {
-                  try {
-                    ws.send(message);
-                  } catch (err: unknown) {
-                    logUnexpectedWsSendFailure("Canvas WebSocket send failed", err);
-                  }
-                },
-              });
-              ws.send(JSON.stringify({ type: "canvas:subscribed", canvasId }));
-            } catch (err: unknown) {
-              console.error("[canvas/ws] Subscribe failed:", err instanceof Error ? err.message : String(err));
-              try {
-                ws.send(JSON.stringify({ type: "error", error: "Canvas realtime failed" }));
-              } catch (sendErr: unknown) {
-                logUnexpectedWsSendFailure("Canvas WebSocket error send failed", sendErr);
-              } finally {
-                ws.close();
-              }
-            }
-          },
-          onMessage(evt) {
-            try {
-              const parsed = canvasSubscriptionHub?.validateInboundFrame(
-                typeof evt.data === "string" ? evt.data : "",
-              );
-              if (
-                typeof parsed === "object" &&
-                parsed !== null &&
-                (parsed as { type?: unknown }).type === "presence"
-              ) {
-                canvasSubscriptionHub?.updatePresence(
-                  connectionId,
-                  canvasSubscriptionHub.validatePresenceFrame(parsed),
-                );
-              }
-            } catch (err: unknown) {
-              canvasSubscriptionHub?.sendSafeError(connectionId, err);
-            }
-          },
-          onClose() {
-            canvasSubscriptionHub?.unsubscribe(connectionId);
-          },
-        };
-      }),
-    );
-  } else {
-    app.all("/api/canvases/*", (c) => c.json({ error: "Database not configured (no DATABASE_URL)" }, 503));
-    app.all("/api/canvases", (c) => c.json({ error: "Database not configured (no DATABASE_URL)" }, 503));
-  }
+  registerCanvasGatewayRoutes({
+    app, upgradeWebSocket, canvasService, canvasSubscriptionHub,
+    gatewayCollaboration, logUnexpectedWsSendFailure,
+  });
 
   // 066: Sync API routes
   if (syncDeps) {
