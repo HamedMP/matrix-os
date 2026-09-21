@@ -71,6 +71,13 @@ describe("CollaborationRelay", () => {
     expect(parseRelaySocketPath(`/ws/collaboration/scopes/${scopeId}/events?ticket=abc`)).toBeNull();
   });
 
+  it("relays exact owner catalog resolution to the named runtime", () => {
+    expect(parseRelayRoute("POST", "/api/collaboration/runtimes/runtime_owner/catalog/resolve"))
+      .toEqual({ kind: "runtime", identifier: "runtime_owner" });
+    expect(parseRelayRoute("GET", "/api/collaboration/runtimes/runtime_owner/catalog/resolve")).toBeNull();
+    expect(parseRelayRoute("POST", "/api/collaboration/runtimes/runtime_owner/catalog/resolve/extra")).toBeNull();
+  });
+
   it("forwards a forged ticket untouched and returns the home's rejection verbatim, logging metadata only", async () => {
     const forgedBody = JSON.stringify({ clientRequestId: "x", signedTicket: { ticket: { actorId: "user_victim" }, keyId: "nope", signature: "forged" } });
     const fetchImpl = vi.fn(async (url: string, init: RequestInit) => {
