@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createScopeRuntimeClient } from "../../packages/gateway/src/collaboration/scope-runtime-client.js";
 import { createSandboxReadinessProbe } from "../../packages/gateway/src/collaboration/sandbox-readiness.js";
+import { SHARED_AI_PROFILE_CATALOG, deriveSharedAiEligibility } from "../../packages/gateway/src/collaboration/shared-ai-runtime.js";
 import {
   SCOPE_RUNTIME_PROFILE_DIGEST,
   SCOPE_RUNTIME_PROFILE_ID,
@@ -139,5 +140,32 @@ describe("sandbox readiness probe", () => {
     await expect(ready.supported({ ...subject, resourceKind: "project" })).resolves.toBe(true);
     await expect(ready.sandboxTerminalSupported()).resolves.toBe(false);
     await available.close();
+  });
+});
+
+describe("shared AI production sandbox wiring", () => {
+  it("pins the sandbox policy in the production profile catalog", () => {
+    expect(SHARED_AI_PROFILE_CATALOG[SCOPE_RUNTIME_PROFILE_ID]?.sandbox).toEqual({
+      policyVersion: SCOPE_RUNTIME_SANDBOX_POLICY_VERSION,
+      policyDigest: SCOPE_RUNTIME_SANDBOX_POLICY_DIGEST,
+    });
+  });
+
+  it("advertises shared AI eligibility only when the sandbox probe and a manifest source are both available", async () => {
+    const capture: unknown[] = [];
+    const source = { resolve: async () => manifest };
+    const withoutPolicy = createScopeRuntimeClient({ socketPath: await supervisor({ sandbox: false, capture }), profileCatalog: catalog(false) });
+    const bare = await withoutPolicy.refreshCapability();
+    expect(bare).toMatchObject({ available: true });
+    await expect(deriveSharedAiEligibility({ client: withoutPolicy, sandboxManifests: source })).resolves.toBeNull();
+    await withoutPolicy.close();
+    const withPolicy = createScopeRuntimeClient({ socketPath: await supervisor({ sandbox: true, capture }), profileCatalog: catalog(true) });
+    await withPolicy.refreshCapability();
+    await expect(deriveSharedAiEligibility({ client: withPolicy })).resolves.toBeNull();
+    await expect(deriveSharedAiEligibility({ client: withPolicy, sandboxManifests: source })).resolves.toMatchObject({
+      profileId: SCOPE_RUNTIME_PROFILE_ID,
+      adapters: [{ adapterId: "claude-code", harnessVersion: SCOPE_RUNTIME_HARNESS_VERSION }],
+    });
+    await withPolicy.close();
   });
 });
