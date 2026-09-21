@@ -11,13 +11,10 @@ const baseEnv = Object.fromEntries([
   'CLOUD_RUN_SERVICE_ACCOUNT', 'PLATFORM_PUBLIC_URL', 'MATRIX_API_ORIGIN',
   'MATRIX_COLLABORATION_ACTIVE_KEY_ID', 'MATRIX_COLLABORATION_ALLOWED_ORIGINS',
   'MATRIX_APP_URL', 'MATRIX_APP_DOMAIN_HOSTS', 'MATRIX_CODE_DOMAIN_HOSTS',
-  'PLATFORM_SPEECH_ENABLED', 'MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED',
   'MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED', 'MATRIX_FUNDED_AI_RUNTIME_ENABLED',
 ].map((name) => [name, 'fixture']));
 baseEnv.PLATFORM_PUBLIC_URL = 'https://app.example.com';
 baseEnv.MATRIX_API_ORIGIN = 'https://api.example.com';
-baseEnv.PLATFORM_SPEECH_ENABLED = 'false';
-baseEnv.MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED = 'false';
 baseEnv.MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED = 'false';
 baseEnv.MATRIX_FUNDED_AI_RUNTIME_ENABLED = 'false';
 
@@ -43,6 +40,10 @@ function deploy(enabled: boolean) {
 }
 
 describe('Custom MCP Cloud Run deployment', () => {
+  it('keeps fixture environment names aligned with workflow inputs', () => {
+    expect(Object.keys(baseEnv).filter((name) => !(name in workflow.jobs.deploy.env))).toEqual([]);
+  });
+
   it('passes the broker configuration and dedicated secret to the actual deploy command', () => {
     for (const key of ['CUSTOM_MCP_ENABLED', 'MCP_OAUTH_CLIENT_ID', 'MCP_OAUTH_CALLBACK_URL']) {
       expect(workflow.jobs.deploy.env[key]).toContain(`vars.${key}`);
