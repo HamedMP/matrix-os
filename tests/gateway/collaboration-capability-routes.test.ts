@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono, type Context } from "hono";
@@ -28,6 +28,7 @@ describe("collaboration capability HTTP routes", () => {
   let app: Hono;
   let signer: CollaborationProofSigner;
   let homePath: string;
+  let projectRoot: string;
 
   beforeEach(async () => {
     fixture = await createCollaborationTestDatabase();
@@ -67,9 +68,14 @@ describe("collaboration capability HTTP routes", () => {
       joined_at: now, updated_at: now, dispositioned_at: null,
     }).execute();
     homePath = await mkdtemp(join(tmpdir(), "collaboration-owner-catalog-"));
+    projectRoot = join(homePath, "projects", "demo");
+    await mkdir(projectRoot, { recursive: true });
     await writeFile(join(homePath, "notes.txt"), "one");
     runtime.enableSharedResources({ driver: createOwnerResourceDriver({
-      homePath, resolveProjectWorkingDirectory: async () => null, resolveAppAssetRoot: async () => null,
+      homePath,
+      listOwnedProjectIds: async () => ["proj_demo"],
+      resolveProjectWorkingDirectory: async (_ownerId, projectId) => projectId === "proj_demo" ? projectRoot : null,
+      resolveAppAssetRoot: async () => null,
     }) });
     signer = new CollaborationProofSigner({
       activeKeyId: "key-1", keys: { "key-1": key }, now: () => new Date(), createNonce: () => randomUUID().replaceAll("-", ""),
@@ -171,6 +177,7 @@ describe("collaboration capability HTTP routes", () => {
     const second = await resolve();
     expect(second.status).toBe(200);
     expect((await second.json() as { id: string }).id).toBe(firstEntry.id);
+    await rm(join(homePath, "notes.txt"));
     await writeFile(join(homePath, "notes.txt"), "different bytes");
     const replaced = await resolve();
     expect(replaced.status).toBe(200);
@@ -179,6 +186,28 @@ describe("collaboration capability HTTP routes", () => {
       body: { kind: "file", path: "notes.txt" },
     });
     expect(outsider.status).toBe(403);
+  });
+
+  it("derives the project namespace for a selected owner file and rejects an enclosing folder", async () => {
+    await writeFile(join(projectRoot, "source.ts"), "export const value = 1;");
+    const route = `/api/collaboration/runtimes/${collaborationIds.runtime}/catalog/resolve`;
+    const resolved = await signed({ actorId: ownerId, method: "POST", path: route, scopeId: null,
+      body: { kind: "file", path: "projects/demo/source.ts" },
+    });
+    expect(resolved.status).toBe(200);
+    expect(await resolved.json()).toMatchObject({ kind: "file", path: "projects/demo/source.ts" });
+    const projectEntry = await fixture.db.selectFrom("collaboration_resource_catalog").selectAll()
+      .where("owner_id", "=", ownerId).where("project_id", "=", "proj_demo")
+      .where("kind", "=", "file").where("path", "=", "source.ts").where("deleted_at", "is", null)
+      .executeTakeFirst();
+    expect(projectEntry?.id).toBeDefined();
+    expect(await fixture.db.selectFrom("collaboration_resource_catalog").select("id")
+      .where("owner_id", "=", ownerId).where("project_id", "is", null)
+      .where("kind", "=", "file").where("path", "=", "projects/demo/source.ts")
+      .where("deleted_at", "is", null).executeTakeFirst()).toBeUndefined();
+    expect((await signed({ actorId: ownerId, method: "POST", path: route, scopeId: null,
+      body: { kind: "folder", path: "projects" },
+    })).status).toBe(403);
   });
 
 });
