@@ -2,6 +2,7 @@ import type { Selectable, Transaction } from "kysely";
 import type { OwnerCollaborationDatabase, CollaborationScopesTable } from "./database.js";
 import { CollaborationAuthorizationError, type AuthorizedCollaborationContext } from "./authority.js";
 import { isActivationCurrent } from "./capability-evaluator.js";
+import { hasRetiredLegacyAuthority } from "./repository-shared.js";
 
 /** Fresh Clerk and grant evidence is supplied by CollaborationAuthority before the transaction. */
 export type SharedChatAuthorizer = (
@@ -51,6 +52,7 @@ export async function fenceSharedChatAuthority(
   const now = Date.now();
   const legacyRole = member?.status === "accepted" && member.dispositioned_at === null
     && (member.expires_at === null || new Date(member.expires_at).getTime() > now)
+    && (actorId === membershipScope.owner_id || !await hasRetiredLegacyAuthority(trx, membershipScope.id))
     ? member.role : null;
   let currentRole = legacyRole;
   if (!currentRole) {
