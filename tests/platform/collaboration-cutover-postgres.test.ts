@@ -1,4 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
+import { Hono } from "hono";
 import { Kysely, PostgresDialect, sql } from "kysely";
 import { Pool } from "pg";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -9,6 +10,8 @@ import {
 import { inventoryPlatformPersonToPersonRecords } from "../../packages/platform/src/collaboration/person-to-person-inventory.js";
 import { PlatformCollaborationCutover, cutoverTicketAdmission } from "../../packages/platform/src/collaboration/cutover.js";
 import { createGatewayCutoverHomeAdapter } from "../../packages/platform/src/collaboration/cutover-home-adapter.js";
+import { createPlatformCutoverHomeResolver } from "../../packages/platform/src/collaboration/cutover-home-transport.js";
+import { canonicalJson, ed25519PrivateKeyFromSeed, ed25519PublicKeyRaw, verifyEd25519 } from "../../packages/platform/src/collaboration/ticket-crypto.js";
 import { PlatformCollaborationRepository } from "../../packages/platform/src/collaboration/repository.js";
 import { CollaborationTicketIssuer } from "../../packages/platform/src/collaboration/ticket-issuer.js";
 
@@ -258,6 +261,75 @@ describe.skipIf(!connectionString)("collaboration cutover on real PostgreSQL (T0
     })).run(scopeId, { backupRef: "restricted-backup-1" });
     expect(result).toMatchObject({ phase: "blocked", blockReason: "home_unavailable" });
     expect(client.freeze).not.toHaveBeenCalled();
+  });
+
+  it("sends authenticated signed commands through the owner-home route for every cutover phase", async () => {
+    const scopeId = await orgScope();
+    const seed = randomBytes(32).toString("base64url");
+    const publicKey = ed25519PublicKeyRaw(ed25519PrivateKeyFromSeed(seed));
+    const bearerToken = randomBytes(32).toString("hex");
+    const called: string[] = [];
+    const app = new Hono();
+    app.post("/internal/collaboration/cutover/:scopeId/:phase", async (c) => {
+      const envelope = await c.req.json() as {
+        command: Record<string, unknown> & { phase: string; path: string; runtimeId: string; ownerId: string; scopeId: string };
+        keyId: string; signature: string;
+      };
+      const command = envelope.command;
+      if (c.req.header("authorization") !== `Bearer ${bearerToken}` || envelope.keyId !== "test"
+        || command.scopeId !== scopeId || command.ownerId !== "owner-a" || command.runtimeId !== runtimeId
+        || command.phase !== c.req.param("phase") || command.path !== c.req.path
+        || !verifyEd25519(publicKey, `matrix-collaboration-cutover-v1\n${canonicalJson(command)}`, envelope.signature)) {
+        return c.json({ error: "Unavailable", code: "unavailable" }, 503);
+      }
+      called.push(command.phase);
+      const phase = command.phase;
+      return c.json({
+        scopeId, organizationId: "org_current", phase: phase === "inventory" ? "inventoried"
+          : phase === "freeze" ? "fenced" : phase === "drain" ? "drained"
+            : phase === "stage" ? "staged" : phase === "verify" ? "verified" : "active",
+        authorityGeneration: phase === "activate" ? 2 : 1,
+        legacyCount: 1, grantCount: 1, invitationCount: 0, nonOrganizationCount: 0,
+        idsDigest, ceilingDigest, backupInventoryRef: "owner-inventory-1", backupRef: "owner-inventory-1",
+        fenceEpoch: phase === "inventory" ? null : 3, fenceDigest: phase === "inventory" ? null : fenceDigest,
+        ...(phase === "drain" ? { interrupted: 1 } : {}),
+      });
+    });
+    const resolver = createPlatformCutoverHomeResolver({
+      keyring: { activeKeyId: "test", keys: { test: seed } },
+      resolveRuntime: async () => ({ status: "ready" as const, origin: "https://owner.example", bearerToken }),
+      fetchImpl: async (input, init) => app.request(new Request(input, init)),
+    });
+    const result = await new PlatformCollaborationCutover({ db, resolveHome: resolver })
+      .run(scopeId, { backupRef: "restricted-backup-1" });
+    expect(result.phase).toBe("active");
+    expect(called).toEqual(["inventory", "freeze", "drain", "stage", "verify", "activate"]);
+  });
+
+  it("keeps the transport journal blocked when the home is offline or returns a different scope", async () => {
+    const offlineScope = await orgScope();
+    const noFetch = vi.fn(async () => { throw new Error("Unexpected request"); });
+    const offline = createPlatformCutoverHomeResolver({
+      keyring: { activeKeyId: "test", keys: { test: randomBytes(32).toString("base64url") } },
+      resolveRuntime: async () => ({ status: "offline" as const }), fetchImpl: noFetch,
+    });
+    expect(await new PlatformCollaborationCutover({ db, resolveHome: offline })
+      .run(offlineScope, { backupRef: "restricted-backup-1" })).toMatchObject({ phase: "blocked", blockReason: "offline" });
+    expect(noFetch).not.toHaveBeenCalled();
+
+    const mismatchScope = await orgScope();
+    const mismatch = createPlatformCutoverHomeResolver({
+      keyring: { activeKeyId: "test", keys: { test: randomBytes(32).toString("base64url") } },
+      resolveRuntime: async () => ({ status: "ready" as const, origin: "https://owner.example", bearerToken: randomBytes(32).toString("hex") }),
+      fetchImpl: async () => Response.json({
+        scopeId: randomUUID(), organizationId: "org_current", phase: "inventoried", authorityGeneration: 1,
+        legacyCount: 0, grantCount: 0, invitationCount: 0, nonOrganizationCount: 0,
+        idsDigest, ceilingDigest, backupInventoryRef: "owner-inventory-1", backupRef: "owner-inventory-1",
+        fenceEpoch: null, fenceDigest: null,
+      }),
+    });
+    expect(await new PlatformCollaborationCutover({ db, resolveHome: mismatch })
+      .run(mismatchScope, { backupRef: "restricted-backup-1" })).toMatchObject({ phase: "blocked", blockReason: "home_unavailable" });
   });
 
   it("rejects a new direct ticket after disabled rollback", async () => {
