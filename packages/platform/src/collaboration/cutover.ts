@@ -123,15 +123,16 @@ export class PlatformCollaborationCutover {
     return this.advance(scopeId);
   }
 
-  async rollback(scopeId: string, mode: string): Promise<CutoverJournal> {
+  async rollback(scopeId: string, mode: string, proof?: { compatibleDirectBuild: true }): Promise<CutoverJournal> {
     if (mode !== "compatible_direct" && mode !== "disable") throw new Error("Legacy collaboration rollback is forbidden");
     const row = await this.requireRow(scopeId);
     if (mode === "compatible_direct") {
+      if (proof?.compatibleDirectBuild !== true) throw new Error("A compatible direct build must be verified before rollback");
       if (row.phase !== "active") throw new Error("Compatible rollback requires an active direct generation");
       const resolution = await this.readyHome(row);
       if (resolution.status !== "ready") return this.block(row, resolution.status, "verified");
       try {
-        const result = await resolution.home.rollbackCompatible(this.homeRequest(row, true));
+        const result = await resolution.home.rollbackCompatible(this.homeRequest(row));
         if (result.authorityGeneration !== Number(row.target_generation)) return this.block(row, "rollback_generation_mismatch", "verified");
       } catch (error: unknown) {
         console.warn("[collaboration-cutover] compatible rollback unavailable", error instanceof Error ? error.name : "UnknownError");
@@ -147,7 +148,7 @@ export class PlatformCollaborationCutover {
     const resolution = await this.readyHome(row);
     if (resolution.status === "ready") {
       try {
-        await resolution.home.disable(this.homeRequest(row, true));
+        await resolution.home.disable(this.homeRequest(row));
       } catch (error: unknown) {
         console.warn("[collaboration-cutover] home disable pending reconciliation", error instanceof Error ? error.name : "UnknownError");
       }
@@ -281,11 +282,11 @@ export class PlatformCollaborationCutover {
     return { counts: row.counts, idsDigest: row.ids_digest, ceilingDigest: row.ceiling_digest };
   }
 
-  private homeRequest(row: JournalRow, active = false): CutoverHomeRequest {
+  private homeRequest(row: JournalRow): CutoverHomeRequest {
     return {
       scopeId: row.scope_id, ownerId: row.owner_id, runtimeId: row.runtime_id,
       organizationId: row.organization_id,
-      expectedSourceGeneration: active ? Number(row.target_generation) : Number(row.source_generation),
+      expectedSourceGeneration: Number(row.source_generation),
       targetGeneration: Number(row.target_generation), idempotencyKey: row.cutover_id,
     };
   }
