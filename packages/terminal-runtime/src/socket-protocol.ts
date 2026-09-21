@@ -57,7 +57,9 @@ export const TerminalRuntimeRequestSchema = z.discriminatedUnion("operation", [
       baseRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
     }).strict(),
   }).strict(),
-  z.object({ ...RequestBase, operation: z.literal("TerminateTab"), input: TerminalRefSchema }).strict(),
+  z.object({ ...RequestBase, operation: z.literal("TerminateTab"), input: TerminalRefSchema.extend({
+    expectedCreatedAt: z.iso.datetime().optional(),
+  }).strict() }).strict(),
   z.object({ ...RequestBase, operation: z.literal("DeleteTab"), input: TerminalRefSchema }).strict(),
   z.object({
     ...RequestBase,
@@ -67,7 +69,8 @@ export const TerminalRuntimeRequestSchema = z.discriminatedUnion("operation", [
   z.object({
     ...RequestBase,
     operation: z.literal("WriteInput"),
-    input: TerminalRefSchema.extend({ data: z.string().min(1).max(64 * 1024) }).strict(),
+    input: TerminalRefSchema.extend({ data: z.string().min(1).max(64 * 1024),
+      expectedCreatedAt: z.iso.datetime().optional() }).strict(),
   }).strict(),
   z.object({
     ...RequestBase,
@@ -102,6 +105,7 @@ export const TerminalRuntimeRequestSchema = z.discriminatedUnion("operation", [
     operation: z.literal("Attach"),
     input: TerminalRefSchema.extend({
       viewerId: z.string().min(1).max(128).regex(/^[A-Za-z0-9_.:-]+$/),
+      expectedCreatedAt: z.iso.datetime().optional(),
       fromSeq: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).default(0),
       mode: z.enum(["hard", "soft"]),
       size: z.object({ cols: z.number().int().min(20).max(500), rows: z.number().int().min(5).max(200) }).strict(),
