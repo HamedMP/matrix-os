@@ -4,7 +4,7 @@ import { AppState, type AppStateStatus } from 'react-native';
 const mockCancel = jest.fn();
 const mockRetryCapabilities = jest.fn();
 const mockSpeech = { phase: 'idle', isSupported: true, error: null as string | null, unavailableReason: null as string | null, inputLevel: 0, inputLevelSequence: 0, elapsedMs: 0, start: jest.fn(), stop: jest.fn(), cancel: mockCancel, retryCapabilities: mockRetryCapabilities };
-jest.mock('@matrix-os/ui/speech', () => ({ usePlatformSpeechDraft: () => mockSpeech }), { virtual: true });
+jest.mock('@matrix-os/ui/speech', () => ({ usePlatformSpeechDraft: () => mockSpeech }));
 jest.mock('expo-audio', () => ({ useAudioStream: () => ({ stream: { start: jest.fn(), stop: jest.fn() } }), requestRecordingPermissionsAsync: jest.fn() }));
 jest.mock('expo-crypto', () => ({ getRandomBytes: () => new Uint8Array(12).fill(7) }));
 jest.mock('../lib/speech/client', () => ({ createNativeSpeechClient: jest.fn() }));
