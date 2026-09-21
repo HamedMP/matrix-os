@@ -14,6 +14,15 @@ import type { ReadinessProbes, ReadinessSubject } from "./readiness-evaluator.js
 
 const EXECUTING_KINDS: ReadonlySet<CollaborationResourceKind> = new Set(["project", "chat"]);
 
+/**
+ * True for the shared resources that run code and therefore need the pinned sandbox policy.
+ * Files, folders, app instances and observable terminals execute nothing, so they stay
+ * shareable even when shared AI is unavailable. Every caller derives that rule from here.
+ */
+export function sandboxRequiredForResourceKind(resourceKind: CollaborationResourceKind): boolean {
+  return EXECUTING_KINDS.has(resourceKind);
+}
+
 export interface SandboxReadinessProbe extends Pick<ReadinessProbes, "supported"> {
   /** True when the supervisor can launch a sandbox-only terminal workload. */
   sandboxTerminalSupported(): Promise<boolean>;
@@ -31,7 +40,7 @@ export function createSandboxReadinessProbe(options: {
   }
   return {
     async supported(subject: ReadinessSubject): Promise<boolean> {
-      if (!EXECUTING_KINDS.has(subject.resourceKind)) return true;
+      if (!sandboxRequiredForResourceKind(subject.resourceKind)) return true;
       return sandboxFor("chat_ai");
     },
     async sandboxTerminalSupported(): Promise<boolean> {
