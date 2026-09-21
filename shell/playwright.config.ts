@@ -22,9 +22,10 @@ export default defineConfig({
     screenshot: "only-on-failure",
     trace: "on-first-retry",
     ...devices["Desktop Chrome"],
-    launchOptions: chromiumExecutablePath
-      ? { executablePath: chromiumExecutablePath }
-      : undefined,
+    launchOptions: {
+      ...(chromiumExecutablePath ? { executablePath: chromiumExecutablePath } : {}),
+      args: ["--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream"],
+    },
     viewport: { width: 1440, height: 900 },
   },
   webServer: {
