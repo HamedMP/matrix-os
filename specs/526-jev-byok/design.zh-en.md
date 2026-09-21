@@ -1,146 +1,91 @@
-# Built-in Jev: Gateway + Personal API / 整体与前后端设计
+# Jev recipes + use-jevs / 设计
 
-Updated: 2026-09-21. Proposed design, not implemented. Governing product requirements: [spec.md](spec.md). Tracking: [OM-286](https://linear.app/matrix-os/issue/OM-286), [GitHub #1800](https://github.com/HamedMP/matrix-os/issues/1800).
+Updated: 2026-09-21. [Governing spec](spec.md). Proposed architecture, not implemented.
 
-## Product and billing / 产品与计费
+## Scope / 产品范围
 
-用户可以选择 **Matrix AI Gateway** 或 **Personal API**。Gateway 不要求用户提供 TypeSafe key，调用计入该用户 Matrix AI 余额；个人 API 使用用户自己的 TypeSafe key，费用由 TypeSafe 收取，同一推理不再扣 Matrix AI 余额。两种方式共用内置 Jev MCP、recipe 和 Ultrafast。主模型继续负责规划、文本生成和最终判断。
+首版只做三个 recipes、一个共享 Jev tool 和 `use-jevs` skill。全部 Jev 请求走我们的 AI Gateway，使用执行用户的 Matrix AI 额度。主模型可以继续用个人账号，二者的鉴权与计费独立。
 
-Gateway 经验证可用时作为推荐选项；用户仍须明确启用并接受费用/数据传输说明。可以同时保留两个来源的配置，但每次 run 只绑定一个来源。失败时不自动切换。旧 BYOK 用户升级后保留 personal_api，不迁移付款来源。来源选择是 owner 设置；recipe 导出不包含它。
+用户通过现有 recipe/skill 入口使用，不填写 TypeSafe key、不配置 MCP URL、不选择 Jev 费用来源。MCP 是复用现有工具分发能力的内部接入方式，不新增独立 Jev 连接管理产品。个人 key、Ultrafast、原生 OS 导航均不在首版范围。
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-  U[Shared Jev settings] --> C[Owner configuration and policy]
-  R[Recipe Jev dependency] --> A[Run admission: pin owner and source]
-  C --> A
-  A --> M[Agent / matrix-integrations MCP]
-  M --> B[Trusted Jev broker]
-  B --> G[Gateway adapter: scoped runtime authority]
-  G --> F[Matrix credit admission and settlement]
-  F --> J[Jev evaluation upstream]
-  B --> P[Personal adapter: encrypted owner key]
-  P --> T[TypeSafe direct API]
+  R[Bundled recipes] --> A[Current coding agent and main model]
+  S[use-jevs skill] --> A
+  A --> T[Shared jev_judge tool]
+  T --> G[Existing Matrix Jev Gateway API]
+  G --> P[Owner/runtime authorization and credit policy]
+  P --> J[Jev evaluation]
+  J --> G --> T --> A
 ```
 
-`jev_judge` remains one capability. Source resolution belongs to trusted server context, never tool arguments. Keep remote MCP transport distinct from builtin dispatch; TypeSafe REST is not an MCP endpoint.
+The authenticated runtime/run supplies owner authority outside the model's arguments. Main-model personal credentials never become Gateway credentials. Gateway service keys never enter recipe text, skill instructions, tool arguments, UI, logs or exports.
 
-```ts
-type JevSource = 'gateway' | 'personal_api';
-type McpBackend =
-  | { kind: 'remote'; url: string }
-  | { kind: 'builtin'; provider: 'typesafe_jev' };
-type JevConfig = {
-  enabled: boolean;
-  selectedSource: JevSource | null;
-  revision: number;
-  personalCredentialPresent: boolean;
-};
-```
+Reuse `matrix-integrations` or the equivalent existing trusted tool registry for the coding agent. Prefer one built-in tool registration over a custom remote-MCP server record and settings UI. Resolve dependencies at registration and advertise readiness honestly. The skill describes when/how to use the tool; it is not an alternative HTTP client carrying a global API key.
 
-One owner/preset singleton. `selectedSource=null` means setup has not been completed. GET includes safe per-source readiness, latest validation, capability version and allowed actions. No keys, gateway service tokens or private URLs in projections.
+## Shared tool
 
-## Frontend / 前端
+Proposed name: `jev_judge`. Input is a strict Zod 4 object containing text state and uniquely identified choice/score/noul questions, with an optional operating confidence threshold. Recipes initially use only the question types they need. Normalize the actual Gateway evaluation response into stable question IDs, typed answers, available confidence/usage, model version, latency and completed/unavailable status. Validate IDs, choice membership and finite probabilities; do not invent confidence for a probability-only result.
 
-Use the existing MCP settings entry with a shared Jev card, source selector and source-specific setup:
+No owner, billing source, key, endpoint or approval arguments. Fixed server-configured model and route, never user-controlled URLs. Initial product limits: 32 KiB text, 64 KiB total request, 1–16 questions, 2–32 choice options, 2–10 score levels, 128 KiB response; default confidence preference 0.80. Low/missing confidence or invalid output hands back to the main agent. The main agent interprets the decision and retains action authorization.
 
-| Source | Setup | Readiness and recovery | Billing copy |
-|---|---|---|---|
-| Matrix AI Gateway | Enable with existing Matrix account; no TypeSafe key | Available; unsupported runtime/model; permission required; insufficient balance; unavailable. Link to existing balance/top-up where available | Uses your Matrix AI balance |
-| Personal API | Enter/test/replace/remove TypeSafe key | Not connected; testing; ready; invalid key; quota/rate limit; unavailable | Billed to your TypeSafe account |
+10-second external-call deadline, abort propagation, redirects rejected and bounded streamed responses. Reuse Gateway rate/concurrency controls; initial proposed ceiling two concurrent calls and 30/minute per owner, adjustable through existing policy. No automatic inference retries.
 
-Readiness queries are metadata-only. An explicit Test action uses one tiny fixed safe sample and discloses which source is billed. A successful test reports a time-limited observation, not perpetual availability. Choosing Gateway must not silently make a paid test request.
+## Gateway integration and accounting
 
-Source changes save with revision checks. Show that existing runs keep their admitted source; changing an active run requires stopping and starting a new run. Preserve both configurations when switching. Remove personal key affects personal-source dispatch only; Disable Jev blocks both sources. Neither alters Matrix balance, other AI features or provider-side key validity.
+First identify Hamed's existing Jev API, authentication scheme, model mapping, input/output contract and usage data. Verify ordinary owner-runtime authorization and a real settled request. General chat-completions or catalog support does not imply evaluation support. If the route is elsewhere, add a narrow adapter to that verified route; do not rebuild the Gateway.
 
-Key form memory is transient: clear on success/cancel/navigation, never store in localStorage, URL, analytics, recipe or generic client store. Ignore late responses after owner/runtime changes. Keep unsaved recipe edits through connection/setup navigation.
+Reuse the existing scoped runtime credential lifecycle and owner credit ledger, budget admission and atomic settlement. Each Jev call has a trusted owner/runtime/request identity, validated before dispatch. No dependency on whether the main model selected Matrix AI. Policy denial or unavailable credit prevents dispatch; missing service configuration is unavailable, not an instruction to enter a personal key.
 
-Recipe editor adds an MCP tools section beside Skills and Integrations. Jev dependency has optional/required behavior; current source readiness is shown from the executing owner's settings. Selecting the recipe is not permission to spend. Missing optional dependency continues with the primary model's existing billing path; required dependency blocks/pauses affected work.
+Use existing idempotent invocation/accounting mechanisms where sufficient. Duplicate delivery cannot trigger another inference/debit. Accounting retry is distinct from inference retry. Unknown upstream outcomes follow existing reservation reconciliation; do not claim no charge or refund an unknown call as if it never ran. No separate source-binding subsystem is needed: all Jev calls have one Gateway path.
 
-Chat activity shows `Jev · Decision`, source (`Matrix AI Gateway` / `Personal API`), execution and available usage status. Gateway cost displays only authoritative settlement; unknown remains pending/unknown. Personal API must not claim exact vendor billing without evidence. Browser readiness/execution location is independent of inference readiness.
+If existing receipts need a narrow extension, persist only bounded execution/usage metadata in PostgreSQL/Kysely with defined retention (initial deduplication window 24 hours); funding ledger retention remains governed by existing accounting. Related writes use transactions and revision predicates; no DB transaction spans inference. Raw user evidence is not logged by default, and necessary Chat records retain owner storage/deletion policy.
 
-Shared contracts/components/presenter serve Web Desktop, Web Canvas and Electron Desktop; mobile surfaces exposing these settings/recipes inherit the same semantics or require a documented platform limitation.
+## Auth matrix and boundaries
 
-## Backend and execution
+Reuse existing routes where possible. Exact Jev route naming is intentionally left to the verified existing API rather than inventing a second endpoint family.
 
-### Decision contract
-
-Strict Zod 4 input: bounded text state, 1–16 uniquely identified choice/score/noul questions and optional confidenceThreshold (default 0.80). No caller-supplied owner, source, key, endpoint or approval fields.
-
-Initial Matrix limits: state 32 KiB UTF-8; total body 64 KiB; choice 2–32 options; score 2–10 levels; question/option descriptions 1 KiB; output 128 KiB. Validate returned IDs/types/options and finite values/probabilities. Confidence is not an accuracy guarantee; missing/low confidence or malformed output hands judgment back to the primary model. Noul probability is not manufactured provider confidence.
-
-Adapters normalize to the same result: completed/unavailable, typed verdicts, escalation, model version, latency, available usage and safe error code. Broker adds admitted-source/activity metadata. Dynamic Ultrafast tables must fit the schema; unsupported pages hand back rather than silently dropping targets.
-
-### Source adapters
-
-- **Gateway**: reuse scoped runtime credentials and authoritative owner/runtime policy. Add or verify an evaluation-capable route, approved Jev model mapping, versioned pricing and usage parser. A chat model catalog entry does not establish evaluation support. Use existing atomic funded admission/reservation/settlement, not a second credit ledger. Gateway credentials and upstream provider keys remain server-side.
-- **Personal API**: existing encrypted owner-bound key, fixed `https://api.typesafe.ai/v1/systemone`, no Matrix AI inference debit. Preserve direct credential rotation/removal and safe validation.
-- Both: 10-second external API deadline, cancellation propagation, redirect rejection, bounded streamed response reads, configured model IDs, safe normalized errors. No hidden inference retries or source fallback. Unknown paid outcomes reconcile under their original source. Limit each owner to two concurrent judgments and 30/minute via shared atomic admission.
-
-Do not promise exactly-once upstream billing. A receipt claimed before dispatch prevents duplicate outbound inference and may sacrifice availability after a crash. Repeated delivery never creates a second call or credit debit; Gateway settlement retries are idempotent accounting only, not inference retries. Known pre-dispatch failures release reservations; dispatched/unknown outcomes follow authoritative funded reconciliation and are not blindly refunded as unbilled.
-
-### Run binding and consistency
-
-At run admission resolve the owner's selected source and persist an immutable server-only binding with owner/runtime, source, configuration revision and capability version. No recipe, model field or untrusted header can supply payer authority. Source preferences apply to new runs; an existing run cannot switch sources. Credential renewal within the same authorized owner/source is allowed without pinning a secret into run state.
-
-Recheck enabled state, live source authorization and relevant budgets before each dispatch. Disabling Jev prevents future dispatches in all runs. Removing the personal key prevents personal-source dispatch while preserving Gateway configuration. Revocation cannot retract an already dispatched call. Settlement remains bound to the admitted payer even if settings change.
-
-Use PostgreSQL/Kysely; related status/credential/revision writes are transactional with revision predicates. External validation occurs outside transactions, followed by generation/revision checks; stale tests never revive disabled state. Upsert singleton creation with ON CONFLICT. Projection propagation uses an outbox with bounded retention/retry; the authoritative broker decides admission.
-
-Store source/request identity and execution/settlement status in 24-hour deduplication receipts with recurring cleanup; durable funding ledger retention follows existing accounting policy, independently of receipt expiry. Raw task text is not logged by default. Necessary Chat content lives in owner storage with existing retention/deletion policy. Credentials use existing AES-GCM owner/record binding and key rotation; no secret is included in runtime projections or exports.
-
-### Proposed endpoint/auth matrix
-
-Paths are proposed extensions to existing custom MCP APIs, not verified existing Jev routes.
-
-| Operation | Auth and owner enforcement | Contract |
+| Operation | Authentication and authorization | Required behavior |
 |---|---|---|
-| GET /api/mcp-servers | Authenticated personal session; server owner | Safe builtin/remote metadata plus per-source readiness |
-| POST /api/mcp-servers/builtin/jev | Personal session, owner, idempotent request | Create config, selected source and explicit tool-use policy; no automatic inference |
-| PATCH /api/mcp-servers/:id | Personal session, owner + base revision | Change source, enable/disable or policy; never inject a payer |
-| PUT /api/mcp-servers/:id/credential | Personal session, owner + revision | Test explicitly approved personal key replacement; atomically swap only on success |
-| DELETE /api/mcp-servers/:id/credential | Personal session, owner + revision | Remove personal key only |
-| POST /api/mcp-servers/:id/test | Personal session, owner, explicit source + expected revision and spending policy | Fixed sample; cannot change run source or accept arbitrary state |
-| DELETE /api/mcp-servers/:id | Personal session, owner + revision | Disable/remove Jev config and saved personal secret; preserve Matrix balance/other AI features |
-| Internal Jev invocation | Authenticated owner runtime/run + live tool policy | Resolve pinned source; Gateway additionally checks entitlement/credit/model policy |
-| Browser start/next/execute/close | Authenticated owner/run + browser policy; execute rechecks action permission | Owned session, one-use decision, observed target; no authority from session ID alone |
+| Discover skill/recipe/tool | Existing authenticated runtime/user scope | Return bundled definitions and safe readiness; no secrets or billable test |
+| Invoke jev_judge | Trusted owner/runtime/run and current tool-use policy | Bounded validated judgment input; no model-supplied payer |
+| Gateway evaluation | Existing scoped runtime authority, Jev allowlist, owner credit/budget | Reserve/admit, dispatch and settle through existing accounting |
+| Read Matrix AI availability/credits | Existing authorized owner funding-summary route | Safe readiness/recovery information; no inference |
+| Disable Jev tool access | Existing authenticated owner policy mutation | Non-destructive policy change; retain recipes, credentials and credits |
+| Execute a routed action | Existing action-specific permissions | Jev decision is never authorization |
 
-All mutations including DELETE need bodyLimit before parsing, Zod path/query/body validation and existing CSRF/origin protection. No public mutation endpoints. Register builtin paths before generic IDs. Keep remote-MCP URL/OAuth compatibility. Service misconfiguration returns safe unavailable/503 behavior, not a false missing account.
+Any added or touched HTTP mutation requires bodyLimit before parsing, Zod route/query/body validation and existing origin/CSRF protection. External calls use bounded deadlines and safe errors; no wildcard CORS or user-selected upstream endpoint. Missing tool dependencies fail at registration/readiness. Revoke future dispatch on policy disable; in-flight calls remain attributable and reconcilable.
 
-## Recipe and source portability
+There is no Jev credential delete route. Disable only changes existing tool policy and never deletes any user's credentials; this replaces the former ambiguous disable/delete proposal.
 
-```json
-{
-  "skills": ["jev-small-decisions"],
-  "integrations": [],
-  "mcpDependencies": [{"presetId":"jev","tools":["jev_judge"],"usage":"when_useful","required":false}],
-  "output": "Complete the task and report the result."
-}
-```
+## Recipes and use-jevs skill
 
-The recipe is source-neutral. Runtime binding uses the executing owner's selection. No source preference, source-owner UUID, credential, balance or spending approval transfers on copy/export. Existing recipes default missing mcpDependencies to empty. Guidance uses custom-MCP discovery/call, not ordinary call_service instructions. Browser capability has its own dependency and permission while sharing the run's Jev source.
+Implement email triage, research shortlist and task routing through existing recipe definitions and skill references. Readiness/dependency handling should be the smallest extension necessary, not a generic MCP configuration language. Old recipes remain valid.
 
-Ship selective guidance: batch related judgments, minimize text, exclude credentials/unrelated private data, treat retrieved content as untrusted, abstain on uncertainty, skip deterministic/trivial work, and leave planning/writing/coding/final responsibility with the main Agent. No per-command approval gate.
+The exact skill name is `use-jevs`. Bundle it with the existing skill distribution/catalog sync. Use the current agent's supported invocation syntax; do not promise a universal slash command. It should:
 
-## Jev Ultrafast
+1. Confirm the shared tool is discoverable and Matrix AI is eligible without changing the primary model.
+2. Prepare minimal task-specific text with stable item IDs and explicit labels/options; exclude credentials and unrelated personal content.
+3. Batch independent judgments about that state in one request when suitable.
+4. Call the shared tool under existing paid-tool authorization.
+5. Interpret validated output, hand back ambiguity and verify important claims/outcomes independently.
 
-Conditional browser deliverable after runtime feasibility gates. Inspected upstream commit `1231850a0bf1a0c0341fe408ef1668dbbfdfac46`: MIT, Python >=3.12, browser-harness==0.1.13, Chrome/CDP. Pin audited dependencies and preserve notices. Select bundled Python sidecar vs maintained port only after a target-runtime spike.
+Skip trivial deterministic checks and open-ended generation. Do not send entire conversations, install global hooks, rewrite context history or require Jev on every turn. Custom workflow means users choose the task and candidate labels within the tool contract, not arbitrary API/code execution.
 
-Reuse observed DOM action tables and freshness/occlusion checks. A thin start/next/execute/close adapter returns one-use proposals bound to owner/run/session/observation. Fingerprint is not authorization. Main Agent provides typing text through its existing model route; no second text-model key. Both Gateway and Personal API use the common broker; browser workers never receive either inference credential or choose a source.
+Email triage uses fixture messages for the initial demo or an existing authorized connector. It only recommends categories; email mutations require separate user authorization and existing tools. Research shortlist preserves source references. Task routing chooses only actually available candidates and includes hand_back.
 
-Per owner: at most two browser sessions. Per session: 50 steps, five-minute overall limit, one-minute idle TTL; observation/action deadline 15 seconds. Bound registries, cancel/drain on shutdown, close only owned tabs. Unknown mutation outcomes require re-observation before any further action, not blind replay. DONE requires independent outcome verification.
+## Frontend and compatibility
 
-Prove per-owner browser isolation and VPS connectivity; local Chrome access needs a separately authenticated bridge. No public debug port or shared customer profile. Server-hosted browsing needs destination controls against internal/private/metadata addresses across redirects and subresources. Minimize/redact sensitive state or hand back if safe observation is impossible. Frames, shadow roots, canvas, uploads, popups and arbitrary widgets remain unsupported unless explicitly verified. Chrome support does not imply Electron native window control.
+Reuse the existing recipe browser/editor, skill discovery, Matrix AI status/credit recovery and Chat tool activity. Add concise Jev labels and readiness hints where necessary; do not add a source selector or credential form. Activity states distinguish running/completed/unavailable/main-model fallback; show only actual usage/settlement data.
 
-## OS navigation follow-up
+A personal-main-model user may need Matrix AI enabled/credit for the Jev step, but must not be forced to select a Gateway conversational model. Optional Jev failures allow normal primary-model continuation; an explicitly required step stops and offers the existing repair path. Do not silently label fallback as Jev success.
 
-Separate observation/action/acknowledgement bridge: identify authorized owner/runtime/client session, return fresh app/window/section IDs, execute bounded open/focus/settings navigation through existing renderer helpers, and report success only after renderer acknowledgement. No broadcast to all devices or billing/security-setting changes. Test missing/stale clients, duplicate actions and existing-window focus across applicable surfaces. This follow-up shares the selected-source broker but is not delivered merely by adding Ultrafast.
+Share state semantics in Web Desktop, Web Canvas and Electron Desktop; include mobile where the existing skill/recipe features are present. Test owner/runtime switches and stale responses using existing shared UI patterns. Capability-gate unsupported runtimes/agents; never silently lose a recipe requirement.
 
-## Rollout and evidence
+## Validation and release
 
-Both sources are product scope with independent readiness gates. Never claim Gateway Jev works because the general funded relay is live. Last inspected main `e62d3fc62` has Sonnet/GLM mappings; Jev evaluation and billing acceptance remain unverified. Merged #1780–#1782 provide reusable funded foundations. Research notes remain historical source evidence.
+Start with Matrix's real Hermes execution path for both recipes and the skill, plus a real personal-main-model/Gateway-Jev run. Name additional supported agents only after verifying their skill distribution, shared tool registration, runtime credentials and actual invocation. No endpoint availability or token savings claim is established by source inspection.
 
-Backend capability negotiation precedes UI enablement; older clients/runtimes must not treat builtin entries as URLs or silently drop source/dependency fields. Migrate existing Jev BYOK settings to personal_api only. Feature disable stops new dispatch without deleting settings, secrets or recipes.
-
-Release requires both adapters' contract/failure tests, owner isolation, accounting/idempotency, source-switch races, secret checks, actual Hermes execution, presentation parity and exact-head Human Review. Ultrafast requires its own two-source live acceptance. Report measured success/usage/latency only. Deliver public setup/billing/fallback docs via a separate site-repository PR. This design does not authorize production rollout.
+Deliver focused contract/auth/accounting/fallback tests, all three recipe demos, actual custom use-jevs workflow, applicable presentation parity and exact-head Human Review. Public docs ship through the separate site repository. No runtime implementation or deployment is included in this specification PR.

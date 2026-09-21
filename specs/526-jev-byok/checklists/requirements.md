@@ -1,16 +1,16 @@
-# Specification checklist: Jev Gateway + Personal API
+# Checklist: Jev recipes and use-jevs
 
 Updated: 2026-09-21. [Spec](../spec.md).
 
-- [x] Both sources are in scope; Gateway requires no personal TypeSafe key.
-- [x] Gateway and personal inference charging are explicit and do not double debit.
-- [x] Explicit source selection, immutable run binding and live revocation are specified.
-- [x] No automatic cross-source fallback; primary-model fallback is distinguished.
-- [x] Two-source readiness, testing, lifecycle, migration and error UX are defined.
-- [x] Recipes are source-neutral and portable; private/billing authority never transfers.
-- [x] Source/owner races, duplicate calls and unknown billing have acceptance criteria.
-- [x] Ultrafast uses both sources through the common broker, with separate browser permissions.
-- [x] Gateway availability remains a verified release gate, not an assumed shipped capability.
-- [x] Frontend/backend plan, auth matrix, parity, documentation and real acceptance are aligned.
+- [x] Gateway-only Jev funding is explicit; primary-model personal accounts remain supported.
+- [x] First release is three concrete recipes, one shared tool and the exact use-jevs skill.
+- [x] Personal keys, source switching, Ultrafast and native OS navigation are outside first release.
+- [x] Existing Gateway, accounting, recipe/skill distribution and UI are reused.
+- [x] Custom workflows use the same authenticated tool with no secret-bearing alternative path.
+- [x] Availability, permissions, cost and optional/required failures are specified.
+- [x] Disable is non-destructive; no credential deletion endpoint remains.
+- [x] Owner isolation, idempotency, ambiguity and actual runtime acceptance are covered.
+- [x] Supported agents require individual discovery/invocation proof.
+- [x] Product spec, design and implementation plan describe the same scope.
 
-This checklist reviews the documents, not implementation or runtime results.
+Document review only; no implementation or runtime test results are claimed.
