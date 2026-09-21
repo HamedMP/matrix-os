@@ -313,7 +313,9 @@ export function createPlatformSpeechService(options: {
       }
       let cancellationAttempt: Promise<void> | undefined;
       let cancellationFailure: { error: unknown } | undefined;
+      let completionCommitted = false;
       const requestCancellation = () => {
+        if (completionCommitted) return;
         cancellationAttempt ??= options.operations.cancel(
           input.identity,
           parsedRequestId.data,
@@ -361,7 +363,7 @@ export function createPlatformSpeechService(options: {
             throw new SpeechServiceError("transcription_failed");
           }
           if (await persistCancellationIfAborted(signal)) throw new SpeechServiceError("cancelled");
-          const completed = await options.operations.complete(input.identity, parsedRequestId.data, {
+          await options.operations.complete(input.identity, parsedRequestId.data, {
             executionState: "succeeded",
             outcomeCode: text.length > 0 ? "transcript" : "no_speech",
             actualCostMicrousd,
@@ -369,8 +371,17 @@ export function createPlatformSpeechService(options: {
             mode: "exact",
             actualCostMicrousd,
           }));
-          if (await persistCancellationIfAborted(signal) || completed.cancellationRequested) {
-            throw new SpeechServiceError("cancelled");
+          // A durable successful completion is the delivery boundary. An abort
+          // observed after this point cannot rewrite or suppress that result.
+          completionCommitted = true;
+          signal.removeEventListener("abort", requestCancellation);
+          if (cancellationAttempt) await cancellationAttempt;
+          if (cancellationFailure
+            && !(cancellationFailure.error instanceof SpeechOperationStateError)) {
+            console.warn(
+              "[platform-speech] late cancellation persistence failed",
+              cancellationFailure.error instanceof Error ? cancellationFailure.error.name : "UnknownError",
+            );
           }
           return text.length > 0
             ? {

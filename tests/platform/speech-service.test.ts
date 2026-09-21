@@ -478,6 +478,45 @@ describe("platform speech service", () => {
     });
   });
 
+  it("delivers success when caller aborts after durable completion", async () => {
+    const caller = new AbortController();
+    const repository = createSpeechOperationsRepository({ db, now: () => now });
+    const operations: SpeechOperationsRepository = {
+      ...repository,
+      cancel: vi.fn(repository.cancel),
+      complete: vi.fn(async (...args) => {
+        const completed = await repository.complete(...args);
+        caller.abort();
+        return completed;
+      }),
+    };
+    const { speech, funding } = service({ operations });
+
+    await expect(speech.transcribe({
+      identity,
+      requestId,
+      sourceKind: "dictation",
+      audio: oneSecondWav(),
+      mediaType: "audio/wav",
+      signal: caller.signal,
+    })).resolves.toMatchObject({
+      status: "succeeded",
+      outcome: "transcript",
+      text: "hello world",
+    });
+    expect(funding.release).not.toHaveBeenCalled();
+    expect(operations.cancel).toHaveBeenCalledTimes(1);
+    expect(funding.settle).toHaveBeenCalledWith(expect.anything(), "funding_1", {
+      mode: "exact",
+      actualCostMicrousd: 1,
+    });
+    expect(await speech.status(identity, requestId)).toMatchObject({
+      executionState: "succeeded",
+      cancellationRequested: false,
+      outcomeCode: "transcript",
+    });
+  });
+
   it("preserves adapter deadline semantics through conservative settlement", async () => {
     const adapter: FileTranscriptionAdapter = {
       id: "openai-file",
@@ -526,6 +565,7 @@ describe("platform speech service", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
   it("drains shutdown after admission before dispatch and releases the hold", async () => {
     const repository = createSpeechOperationsRepository({ db, now: () => now });
     const admissionFinished = Promise.withResolvers<void>();

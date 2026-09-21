@@ -97,6 +97,7 @@ export function createSpeechGatewayRoutes(options: {
   if (typeof options.getOwnerId !== "function") throw new Error("Speech route owner resolver is missing");
   const app = new Hono();
   let activeTranscriptions = 0;
+  const authorizedTranscriptions = new WeakMap<Context, PlatformSpeechClient>();
   app.use("*", async (c, next) => {
     noStore(c);
     return next();
@@ -137,6 +138,19 @@ export function createSpeechGatewayRoutes(options: {
   });
 
   app.post("/transcriptions", async (c, next) => {
+    const resolved = resolveClient(c);
+    if ("response" in resolved) return resolved.response;
+    const { client } = resolved;
+    if (!client) {
+      return c.json(safeError(options.client ? "not_found" : "unavailable"), options.client ? 404 : 503);
+    }
+    authorizedTranscriptions.set(c, client);
+    try {
+      return await next();
+    } finally {
+      authorizedTranscriptions.delete(c);
+    }
+  }, async (c, next) => {
     if (activeTranscriptions >= MAX_ACTIVE_GATEWAY_TRANSCRIPTIONS) {
       return c.json(safeError("rate_limited"), 429);
     }
@@ -150,10 +164,8 @@ export function createSpeechGatewayRoutes(options: {
     maxSize: MAX_MULTIPART_BYTES,
     onError: (c) => c.json(safeError("invalid_request"), 413),
   }), async (c) => {
-    const resolved = resolveClient(c);
-    if ("response" in resolved) return resolved.response;
-    const { client } = resolved;
-    if (!client) return c.json(safeError(options.client ? "not_found" : "unavailable"), options.client ? 404 : 503);
+    const client = authorizedTranscriptions.get(c);
+    if (!client) return c.json(safeError("unavailable"), 503);
     let body: Awaited<ReturnType<typeof c.req.parseBody>>;
     try {
       body = await c.req.parseBody({ all: true });
