@@ -581,13 +581,44 @@ describe('CI workflows', () => {
     expect(readme).not.toContain('Sync Client Package (Node 20/24)');
   });
 
-  it('uses Node 20 for the dedicated installable CLI release jobs', () => {
+  it('uses Node 24 and tokenless OIDC for dedicated CLI publication', () => {
     const root = process.cwd();
     const cliReleaseWorkflow = readFileSync(join(root, '.github/workflows/cli-release.yml'), 'utf8');
 
-    const setupNodeBlocks = cliReleaseWorkflow.match(/uses: actions\/setup-node@v6[\s\S]*?node-version: \d+/g) ?? [];
-    expect(setupNodeBlocks.length).toBeGreaterThan(0);
-    expect(setupNodeBlocks.every((block) => block.includes('node-version: 20'))).toBe(true);
+    const packageJob = cliReleaseWorkflow.match(/  package:\n[\s\S]*?\n  publish:/)?.[0] ?? '';
+    const publishJob = cliReleaseWorkflow.match(/  publish:\n[\s\S]*?\n  build-binaries:/)?.[0] ?? '';
+    expect(packageJob).toContain('permissions:\n      contents: read');
+    expect(packageJob).not.toContain('id-token: write');
+    expect(packageJob).toContain('uses: actions/upload-artifact@v7');
+    expect(packageJob).toContain('path: ${{ steps.pack.outputs.tarball }}');
+    expect(publishJob).toContain('permissions:\n      contents: read\n      id-token: write');
+    expect(publishJob).toContain('uses: actions/download-artifact@v7');
+    expect(publishJob).toContain('uses: actions/setup-node@v7');
+    expect(publishJob).toContain('node-version: 24');
+    expect(publishJob).toContain('package-manager-cache: false');
+    expect(publishJob).toContain('npm CLI 11.5.1 or newer is required for trusted publishing');
+    expect(packageJob).toContain('manual CLI releases must run from refs/heads/main');
+    expect(publishJob).toContain('EXPECTED_NAME: "@finnaai/matrix"');
+    expect(publishJob).toContain('EXPECTED_VERSION: ${{ needs.package.outputs.version }}');
+    expect(publishJob).toContain('tar -xOf "$TARBALL" package/package.json');
+    expect(publishJob).toContain('unexpected npm tarball identity');
+    expect(publishJob).toContain('npm publish "${TARBALLS[0]}" --provenance --access public');
+    expect(publishJob).not.toContain('NODE_AUTH_TOKEN');
+    expect(publishJob).not.toContain('secrets.NPM_TOKEN');
+    expect(cliReleaseWorkflow).not.toMatch(/^permissions:\n(?:  .+\n)*  id-token: write/m);
+
+    const parsed = parse(cliReleaseWorkflow) as {
+      jobs?: { publish?: { steps?: Array<{ name?: string; run?: string }> } };
+    };
+    const versionGuard = parsed.jobs?.publish?.steps?.find(
+      (step) => step.name === 'Verify npm trusted-publishing support',
+    )?.run;
+    expect(versionGuard).toBeDefined();
+    const script = versionGuard?.match(/node -e '([\s\S]*?)' "\$NPM_VERSION"/)?.[1];
+    expect(script).toBeDefined();
+    expect(spawnSync(process.execPath, ['-e', script ?? '', '11.5.0']).status).not.toBe(0);
+    expect(spawnSync(process.execPath, ['-e', script ?? '', '11.5.1']).status).toBe(0);
+    expect(spawnSync(process.execPath, ['-e', script ?? '', '12.0.0']).status).toBe(0);
   });
 
   it('publishes the installable CLI from cli-v tags without requiring manual inputs', () => {

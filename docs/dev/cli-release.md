@@ -21,10 +21,12 @@ The installable Matrix CLI is the `@finnaai/matrix` package in `packages/sync-cl
 ## Preflight
 
 The CLI bundles the private `@matrix-os/contracts` workspace dependency. Pack
-and publish with `pnpm --config.node-linker=hoisted`, as the release workflows
-do: plain `npm pack` preserves `workspace:*`, and a registry-only dependency
-cannot resolve this private package. Keep the isolated package-runner check;
-it verifies bundled contract files and installs the tarball outside the repo.
+with `pnpm --config.node-linker=hoisted`, as the release workflows do: plain
+`npm pack` preserves `workspace:*`, and a registry-only dependency cannot
+resolve this private package. The dedicated CLI workflow publishes that exact
+tarball through npm CLI using trusted-publisher OIDC. Keep the isolated
+package-runner check; it verifies bundled contract files and installs the
+tarball outside the repo.
 
 Run these from the repo root before dispatching the release workflow:
 
@@ -45,6 +47,13 @@ git tag -l 'cli-v*'
 
 ## Release
 
+The npm package must trust the GitHub Actions publisher
+`HamedMP/matrix-os` / `cli-release.yml` with direct `npm publish` permission.
+The packaging job has read-only repository access and uploads the exact
+workspace-aware tarball. A separate publish-only job uses setup-node v7,
+Node 24, npm 11.5.1 or newer, and job-scoped `id-token: write`; it disables
+package-manager caching and must not receive a long-lived `NPM_TOKEN`.
+
 Use the manual GitHub Actions workflow named `CLI Release` with `version=0.3.16` and `update_homebrew=true` after this release-preparation PR merges. The workflow:
 
 1. Validates the requested semver, local package version, npm availability, and `cli-v<version>` tag availability.
@@ -53,6 +62,11 @@ Use the manual GitHub Actions workflow named `CLI Release` with `version=0.3.16`
 4. Creates GitHub release `cli-v<version>`.
 5. Builds standalone Linux/macOS CLI binaries and attaches them to the GitHub release.
 6. Updates `FinnaAI/homebrew-tap` with the npm tarball URL and SHA-256 when `update_homebrew` is enabled.
+
+Manual releases must be dispatched from `main`. If npm publication succeeded
+but a downstream release job failed, select the existing `cli-v<version>` tag
+as the workflow ref and rerun with `allow_existing_npm=true`; this preserves the
+published source revision while completing the GitHub release and Homebrew work.
 
 ## Post-Release Verification
 

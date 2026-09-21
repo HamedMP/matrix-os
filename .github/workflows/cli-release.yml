@@ -26,18 +26,19 @@ on:
         type: boolean
 
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 
 concurrency:
   group: cli-release-${{ github.ref_type == 'tag' && github.ref_name || format('cli-v{0}', inputs.version) }}
   cancel-in-progress: false
 
 jobs:
-  publish:
-    name: Publish CLI to npm
+  package:
+    name: Validate and pack CLI
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
     outputs:
       version: ${{ steps.version.outputs.version }}
       npm_exists: ${{ steps.version.outputs.npm_exists }}
@@ -48,7 +49,7 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 24
           cache: pnpm
           registry-url: "https://registry.npmjs.org"
 
@@ -61,7 +62,14 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            if [[ "$GITHUB_REF_NAME" != cli-v* ]]; then
+              echo "tag releases must use the cli-v<version> namespace" >&2
+              exit 1
+            fi
             VERSION="${GITHUB_REF_NAME#cli-v}"
+          elif [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "manual CLI releases must run from refs/heads/main" >&2
+            exit 1
           fi
           if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
             echo "version '$VERSION' is not valid semver (expected X.Y.Z or X.Y.Z-prerelease)" >&2
@@ -107,19 +115,110 @@ jobs:
         run: pnpm --filter @finnaai/matrix exec node ./scripts/validate-package-runners.mjs
 
       - name: Pack CLI package
+        id: pack
         working-directory: packages/sync-client
-        run: pnpm pack --config.node-linker=hoisted --pack-destination "$RUNNER_TEMP"
+        run: |
+          set -euo pipefail
+          PACK_JSON="$(pnpm pack --config.node-linker=hoisted --pack-destination "$RUNNER_TEMP" --json)"
+          printf '%s\n' "$PACK_JSON"
+          TARBALL="$(printf '%s' "$PACK_JSON" | node -e '
+            const { resolve } = require("node:path");
+            let input = "";
+            process.stdin.on("data", (chunk) => { input += chunk; });
+            process.stdin.on("end", () => {
+              const result = JSON.parse(input);
+              if (!result || typeof result.filename !== "string" || result.filename.length === 0) {
+                throw new Error("pnpm pack did not return a filename");
+              }
+              process.stdout.write(resolve(process.env.RUNNER_TEMP, result.filename));
+            });
+          ')"
+          test -f "$TARBALL"
+          echo "tarball=$TARBALL" >> "$GITHUB_OUTPUT"
+
+      - name: Upload npm package
+        uses: actions/upload-artifact@v7
+        with:
+          name: cli-npm-package
+          path: ${{ steps.pack.outputs.tarball }}
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Publish CLI to npm
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      version: ${{ needs.package.outputs.version }}
+      npm_exists: ${{ needs.package.outputs.npm_exists }}
+    steps:
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          registry-url: "https://registry.npmjs.org"
+          package-manager-cache: false
+
+      - name: Verify npm trusted-publishing support
+        run: |
+          set -euo pipefail
+          NPM_VERSION="$(npm --version)"
+          node -e '
+            const version = process.argv[1];
+            const match = /^(\d+)\.(\d+)\.(\d+)/.exec(version);
+            const supported = match && (
+              Number(match[1]) > 11 ||
+              (Number(match[1]) === 11 && (
+                Number(match[2]) > 5 ||
+                (Number(match[2]) === 5 && Number(match[3]) >= 1)
+              ))
+            );
+            if (!supported) {
+              console.error(`npm CLI 11.5.1 or newer is required for trusted publishing; found ${version}`);
+              process.exit(1);
+            }
+          ' "$NPM_VERSION"
+
+      - name: Download npm package
+        uses: actions/download-artifact@v7
+        with:
+          name: cli-npm-package
+          path: dist/npm-package
 
       - name: Publish to npm
-        if: ${{ steps.version.outputs.npm_exists != 'true' }}
-        working-directory: packages/sync-client
+        if: ${{ needs.package.outputs.npm_exists != 'true' }}
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: pnpm publish --config.node-linker=hoisted --provenance --access public --no-git-checks
+          EXPECTED_NAME: "@finnaai/matrix"
+          EXPECTED_VERSION: ${{ needs.package.outputs.version }}
+        run: |
+          set -euo pipefail
+          mapfile -t TARBALLS < <(find dist/npm-package -maxdepth 1 -type f -name '*.tgz' -print)
+          if [ "${#TARBALLS[@]}" -ne 1 ]; then
+            echo "expected exactly one npm tarball, found ${#TARBALLS[@]}" >&2
+            exit 1
+          fi
+          TARBALL="${TARBALLS[0]}"
+          tar -xOf "$TARBALL" package/package.json | node -e '
+            let input = "";
+            process.stdin.on("data", (chunk) => { input += chunk; });
+            process.stdin.on("end", () => {
+              const pkg = JSON.parse(input);
+              if (pkg.name !== process.env.EXPECTED_NAME || pkg.version !== process.env.EXPECTED_VERSION) {
+                console.error(
+                  `unexpected npm tarball identity: ${pkg.name}@${pkg.version}; expected ${process.env.EXPECTED_NAME}@${process.env.EXPECTED_VERSION}`,
+                );
+                process.exit(1);
+              }
+            });
+          '
+          npm publish "${TARBALLS[0]}" --provenance --access public
 
       - name: Verify npm publish
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ needs.package.outputs.version }}
         run: |
           set -euo pipefail
           for _ in $(seq 1 30); do
@@ -166,6 +265,8 @@ jobs:
     needs: [publish, build-binaries]
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v6
 
