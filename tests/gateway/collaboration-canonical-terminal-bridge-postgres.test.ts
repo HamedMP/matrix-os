@@ -3,6 +3,8 @@ import { bootstrapChatDatabase } from "../../packages/gateway/src/chat/database.
 import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
 import { CollaborationRepository } from "../../packages/gateway/src/collaboration/repository.js";
 import { CollaborationTerminalAdapter } from "../../packages/gateway/src/collaboration/terminal-adapter.js";
+import { migrateTerminalBindingsV15 } from "../../packages/gateway/src/collaboration/terminal-bindings.js";
+import { sql } from "kysely";
 import { createCanonicalTerminalCollaborationBridge } from "../../packages/gateway/src/collaboration/canonical-terminal-bridge.js";
 import { createCollaborationTestDatabase, type CollaborationTestDatabase } from "./collaboration-test-support.js";
 
@@ -17,7 +19,7 @@ const createdAt = "2026-09-21T12:00:00.000Z";
 
 describe("canonical terminal collaboration bridge", () => {
   let fixture: CollaborationTestDatabase;
-  let tab: { id: string; workspaceId: string; createdAt: string; status: string; revision: number };
+  let tab: { id: string; workspaceId: string; createdAt: string; incarnation: string; status: string; revision: number };
   let runtime: {
     listWorkspaces: ReturnType<typeof vi.fn>;
     writeInput: ReturnType<typeof vi.fn>;
@@ -28,7 +30,7 @@ describe("canonical terminal collaboration bridge", () => {
     fixture = await createCollaborationTestDatabase();
     await bootstrapChatDatabase(fixture.db);
     await bootstrapCollaborationDatabase(fixture.db);
-    tab = { id: tabId, workspaceId, createdAt, status: "running", revision: 4 };
+    tab = { id: tabId, workspaceId, createdAt, incarnation: `ti_${"a".repeat(32)}`, status: "running", revision: 4 };
     runtime = {
       listWorkspaces: vi.fn(async () => [{ id: workspaceId, scope: "main", tabs: [tab] }]),
       writeInput: vi.fn(async () => undefined),
@@ -37,6 +39,31 @@ describe("canonical terminal collaboration bridge", () => {
   });
 
   afterEach(async () => { await fixture.destroy(); });
+
+  it("rolls back the version-15 binding migration atomically and retries", async () => {
+    await sql`DROP TABLE collaboration_terminal_bindings`.execute(fixture.db);
+    await fixture.db.deleteFrom("collaboration_schema_migrations").where("version", "=", 15).execute();
+    await expect(fixture.db.transaction().execute(async (trx) => {
+      await migrateTerminalBindingsV15(trx);
+      throw new Error("interrupt migration");
+    })).rejects.toThrow("interrupt migration");
+    const table = await sql<{ count: number }>`SELECT count(*)::integer AS count FROM information_schema.tables
+      WHERE table_schema = current_schema() AND table_name = 'collaboration_terminal_bindings'`.execute(fixture.db);
+    expect(table.rows).toEqual([{ count: 0 }]);
+    expect(await fixture.db.selectFrom("collaboration_schema_migrations")
+      .select("version").where("version", "=", 15).execute()).toEqual([]);
+    await bootstrapCollaborationDatabase(fixture.db);
+    expect(await fixture.db.selectFrom("collaboration_schema_migrations")
+      .select("version").where("version", "=", 15).execute()).toEqual([{ version: 15 }]);
+  });
+
+  it("refuses a canonical runtime response with no verified tab incarnation", async () => {
+    const bridge = createCanonicalTerminalCollaborationBridge({ db: fixture.db, ownerId, runtime: runtime as never });
+    const withoutIncarnation = { ...tab } as Partial<typeof tab>;
+    delete withoutIncarnation.incarnation;
+    runtime.listWorkspaces.mockResolvedValueOnce([{ id: workspaceId, scope: "main", tabs: [withoutIncarnation] }]);
+    await expect(bridge.registry.get(terminalId)).rejects.toThrow("Shared terminal is unavailable");
+  });
 
   it("binds only the current owner tab and persists its exact incarnation", async () => {
     const repository = new CollaborationRepository(fixture.db);
@@ -53,11 +80,12 @@ describe("canonical terminal collaboration bridge", () => {
       collaborationScopeId: scopeId, sessionIncarnation: eligible.sessionIncarnation, sharedControlMode: "shared",
     });
     const row = await fixture.db.selectFrom("collaboration_terminal_bindings")
-      .select(["scope_id", "terminal_id", "tab_created_at", "incarnation"]).executeTakeFirstOrThrow();
+      .select(["scope_id", "terminal_id", "tab_created_at", "tab_incarnation", "incarnation"]).executeTakeFirstOrThrow();
     expect(row).toMatchObject({ scope_id: scopeId, terminal_id: terminalId, incarnation: eligible.sessionIncarnation });
     expect(new Date(row.tab_created_at).toISOString()).toBe(createdAt);
+    expect(row.tab_incarnation).toBe(tab.incarnation);
 
-    tab = { ...tab, createdAt: "2026-09-21T12:01:00.000Z" };
+    tab = { ...tab, incarnation: `ti_${"b".repeat(32)}` };
     expect(await bridge.registry.get(terminalId)).toBeNull();
     await expect(bridge.runtime.input({ terminalId, data: "secret", scopeId, incarnation: eligible.sessionIncarnation,
       actorId: ownerId, connectionId: "connection", leaseEpoch: 1, revalidate: vi.fn() })).rejects.toThrow();
@@ -77,7 +105,7 @@ describe("canonical terminal collaboration bridge", () => {
       connectionId: "connection", leaseEpoch: 1, revalidate };
     await bridge.runtime.input({ ...action, data: "echo safe" });
     expect(revalidate).toHaveBeenCalledOnce();
-    expect(runtime.writeInput).toHaveBeenCalledWith({ workspaceId, tabId }, "echo safe", createdAt);
+    expect(runtime.writeInput).toHaveBeenCalledWith({ workspaceId, tabId }, "echo safe", tab.incarnation);
     await expect(bridge.runtime.resize({ ...action, cols: 90, rows: 30 })).rejects.toThrow();
     await bridge.registry.unbindCollaboration(terminalId, { scopeId, sessionIncarnation: eligible.sessionIncarnation });
     await expect(bridge.runtime.input({ ...action, data: "after revoke" })).rejects.toThrow();
@@ -109,7 +137,7 @@ describe("canonical terminal collaboration bridge", () => {
       scopeId, terminalId, incarnation: expect.stringMatching(/^terminal-[a-f0-9]{32}$/),
       creatorActorId: ownerId,
     });
-    tab = { ...tab, createdAt: "2026-09-21T12:01:00.000Z" };
+    tab = { ...tab, incarnation: `ti_${"b".repeat(32)}` };
     expect(await adapter.get(scopeId, terminalId)).toBeNull();
     const stale = await adapter.preflight({ ownerId, organizationId, terminalId });
     expect(stale.eligible).toBe(false);
