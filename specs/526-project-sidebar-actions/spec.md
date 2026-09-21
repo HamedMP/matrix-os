@@ -2,9 +2,9 @@
 
 **Feature Branch**: `codex/project-sidebar-actions`
 **Created**: 2026-09-20
-**Status**: Ready for implementation
+**Status**: Requirements corrected; implementation paused
 **Issue**: https://github.com/HamedMP/matrix-os/issues/1770
-**Input**: Codex-inspired project row; move accidental-delete affordance into a menu and add Pin, Edit, and Reveal in Finder.
+**Input**: Codex-inspired project row; move accidental-delete affordance into a menu and add Pin, Edit, and Show in Files (open the existing mapped folder in the full Files app).
 
 ## User Scenarios & Testing
 
@@ -31,9 +31,9 @@ Users open the actual project folder from its menu.
 **Why this priority**: Project files should be reachable from their project context.
 **Independent Test**: Locate a project on the connected runtime and verify the opened directory.
 **Acceptance Scenarios**:
-1. Given a verified local macOS project, when Reveal in Finder is chosen, then Finder reveals its actual folder.
-2. Given a remote project or browser client, when Open in Files is chosen, then Matrix Files opens its runtime folder; the client never interprets a remote path as a local path.
-3. Given an unavailable folder/capability, then the action is disabled or returns safe actionable feedback without opening a guessed directory.
+1. Given a project, when Show in Files is chosen, then the full Matrix Files app opens at its existing mapped directory.
+2. Given Files is already open, when Show in Files is chosen, then focus Files and navigate to the canonical mapped folder, reusing the folder tab when already open.
+3. Given an unavailable folder, then the action is disabled or returns safe actionable feedback without opening a guessed directory.
 
 ### Edge Cases
 - Long names, duplicate display names, empty/oversized edits, archived/deleted projects.
@@ -49,7 +49,7 @@ Users open the actual project folder from its menu.
 - **FR-003**: Persist pin state in the authoritative owner project model; keep stable ordering within pin groups.
 - **FR-004**: Edit display name and description only; preserve immutable identity, slug, workspace and related resources.
 - **FR-005**: Reuse existing deletion confirmation and semantics, with honest permanent-deletion copy.
-- **FR-006**: Resolve folder location against the connected runtime; enable Finder only with verified local capability.
+- **FR-006**: Resolve folder location against the connected runtime; open the full Files app at the canonical home-relative directory, reusing its existing window and folder tab.
 - **FR-007**: Equivalent actions and state must be available on Web Canvas, Web Desktop and Electron Desktop wherever project navigation is mounted. Web Mobile and Native Mobile must receive equivalent actions where their project navigation exists; document actual platform limitations.
 - **FR-008**: Menus support keyboard, focus return and touch; actions provide pending/error feedback and prevent duplicate submissions.
 - **FR-009**: Mutations require owner authorization, bounded validated input, safe error handling and runtime-scoped state updates.
@@ -68,8 +68,8 @@ The screenshots are visual references, not instructions to copy every Codex feat
 - **SC-001**: Zero inline destructive project buttons remain in the affected navigation.
 - **SC-002**: Every menu action is reachable through mouse and keyboard; touch clients can open the menu directly.
 - **SC-003**: Pin and display edits survive reload with unchanged project identity and Chat associations.
-- **SC-004**: Local and remote location tests open only the corresponding runtime folder.
+- **SC-004**: Managed and imported project location tests open only the corresponding runtime folder.
 - **SC-005**: All regression tests for menu access, persistence, cancellation, failure and runtime switching pass.
 
 ## Confirmed platform limitations
-Electron Desktop currently connects to runtime-owned projects with no trusted local Mac mapping or Finder IPC. Ship Open in Files through the existing project-scoped file browser; do not expose a nonfunctional Finder command. Finder support requires a future trusted local mapping capability. Native Mobile has a creation-only project picker, not a project-management sidebar; this change does not introduce a native project manager. Shared hosted navigation supplies Web Desktop and Web Canvas; reuse that component wherever mounted, including browser mobile presentations.
+Electron Desktop currently connects to runtime-owned projects with no trusted local Mac mapping or Finder IPC. Show in Files opens the full Files app at the project’s existing runtime directory. No Finder mapping is required or requested. Native Mobile has a creation-only project picker, not a project-management sidebar; this change does not introduce a native project manager. The hosted sidebar is an Electron Desktop presentation, not the Next.js Web Desktop/Web Canvas Chat sidebar. Current Web Desktop, Web Canvas and Web Mobile Chat have no project-group navigation. This issue updates existing Electron Desktop project navigation only; introducing project navigation on those surfaces is a separate prerequisite. The metadata API is renderer-neutral.
