@@ -186,6 +186,8 @@ export class CollaborationTicketIssuer {
     endpoints: Pick<CollaborationRuntimeEndpointRegistry, "resolveEnrolled">;
     /** Resolves the owning organization of a shared scope; null denies. */
     resolveOrganization(scopeId: string): Promise<string | null>;
+    /** S18: deny an unactivated or disabled migrated scope before signing. */
+    cutoverAdmission?(scopeId: string): Promise<boolean>;
     projection: { isCurrentMember(input: { organizationId: string; actorId: string }): Promise<boolean> };
     relayOrigin: string;
     now?: () => Date;
@@ -252,6 +254,15 @@ export class CollaborationTicketIssuer {
     if (!status && (!pendingGrantId || purpose !== "direct_session")) throw denied();
     if (status === "invited" && purpose !== "direct_session") throw denied();
     if (purpose === "terminal" && directory.kind !== "terminal") throw denied();
+    if (this.options.cutoverAdmission) {
+      let admitted = false;
+      try {
+        admitted = await this.options.cutoverAdmission(scopeId);
+      } catch (error: unknown) {
+        console.warn("[collaboration-tickets] cutover admission unavailable", error instanceof Error ? error.name : "UnknownError");
+      }
+      if (!admitted) throw new CollaborationTicketIssuerError("unavailable", "Collaboration cutover is unavailable");
+    }
     if (!(await this.options.projection.isCurrentMember({ organizationId, actorId: input.actorId }))) throw denied();
     // The endpoint proves the home is enrolled for this owner; the ticket binds
     // the resource's own authority generation, because one home hosts scopes at

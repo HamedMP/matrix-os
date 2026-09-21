@@ -79,6 +79,17 @@ export class PlatformCollaborationRepository {
         .where("scope_id", "=", input.scopeId)
         .forUpdate()
         .executeTakeFirst();
+      const cutover = await trx.selectFrom("collaboration_cutover_journal")
+        .select(["phase", "target_generation"])
+        .where("scope_id", "=", input.scopeId)
+        .executeTakeFirst();
+      // The cutover journal freezes directory writes under the same row lock
+      // used by generation activation. A delayed pre-cutover event cannot
+      // reopen an older authority generation after direct activation.
+      if (cutover && (cutover.phase !== "active"
+        || input.authorityGeneration < Number(cutover.target_generation))) {
+        throw new PlatformCollaborationRepositoryError("conflict", "Directory is fenced for collaboration cutover");
+      }
       if (existing && (existing.owner_id !== input.ownerId || existing.runtime_id !== input.runtimeId)) {
         throw new PlatformCollaborationRepositoryError("conflict", "Directory authority changed without transition");
       }
