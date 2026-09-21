@@ -31,10 +31,10 @@ export interface VoiceNoteResult {
   error?: string;
 }
 
-<<<<<<< HEAD
 function isMissingFile(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
-=======
+}
+
 function diagnosticErrorKind(error: unknown): string {
   if (!(error instanceof Error)) return "UnknownError";
   switch (error.name) {
@@ -48,11 +48,6 @@ function diagnosticErrorKind(error: unknown): string {
     default:
       return "UnknownError";
   }
->>>>>>> 255884f37 (fix(speech): bound voice diagnostics)
-}
-
-function diagnosticErrorKind(error: unknown): string {
-  return error instanceof Error ? error.name : typeof error;
 }
 
 async function readBoundedResponse(response: Response): Promise<Buffer | undefined> {
