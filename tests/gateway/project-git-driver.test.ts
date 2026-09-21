@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
-import { createProjectGitDriver } from "../../packages/gateway/src/collaboration/project-git-operations.js";
+import { classifyPushFailure, createProjectGitDriver } from "../../packages/gateway/src/collaboration/project-git-operations.js";
 
 const run = promisify(execFile);
 const HEAD_SHA = /^[a-f0-9]{40}$/;
@@ -45,6 +45,19 @@ function driverFor(root: string, home: string) {
 
 afterEach(async () => {
   await Promise.all(rootPaths.splice(0).map((path) => rm(path, { recursive: true, force: true })));
+});
+
+describe("push failure classification", () => {
+  it("treats spawn, rejected-ref and pre-transfer failures as failed and only transfer-phase loss as unknown", () => {
+    expect(classifyPushFailure({ code: "E2BIG" })).toBe("failed");
+    expect(classifyPushFailure({ code: "ENOENT" })).toBe("failed");
+    expect(classifyPushFailure({ code: 1, stdout: "!\trefs/heads/feature/member:refs/heads/feature/member\t[rejected] (fetch first)\nDone\n", stderr: "error: failed to push some refs to 'https://github.com/owner/repo.git'\n" })).toBe("failed");
+    expect(classifyPushFailure({ code: 128, stderr: "fatal: could not read Username for 'https://github.com': terminal prompts disabled\n" })).toBe("failed");
+    expect(classifyPushFailure({ code: 128, stderr: "remote: Permission to owner/repo.git denied to member.\nfatal: unable to access 'https://github.com/owner/repo.git/': The requested URL returned error: 403\n" })).toBe("failed");
+    expect(classifyPushFailure({ code: 128, stderr: "fatal: unable to access 'https://github.com/owner/repo.git/': Could not resolve host: github.com\n" })).toBe("failed");
+    expect(classifyPushFailure({ code: 1, stderr: "error: RPC failed; curl 56 Recv failure: Connection reset by peer\nsend-pack: unexpected disconnect while reading sideband packet\n" })).toBe("unknown");
+    expect(classifyPushFailure({ code: null, killed: true, signal: "SIGTERM" })).toBe("unknown");
+  });
 });
 
 describe("owner Git driver", () => {

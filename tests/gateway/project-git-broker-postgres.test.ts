@@ -183,6 +183,59 @@ describe("project Git broker PostgreSQL boundary", () => {
     expect(reconcile).toHaveBeenCalledTimes(1);
   });
 
+  it("settles a definite driver failure as failed so later distinct operations are not busy", async () => {
+    const run = vi.fn()
+      .mockImplementationOnce(async () => { throw new ProjectGitBrokerError("unavailable"); })
+      .mockImplementationOnce(async () => ({ commitSha: "a".repeat(40) }));
+    const broker = createProjectGitBroker({
+      db: fixture.db,
+      authorize: async () => ({ ownerId: collaborationActors.owner, projectId: PROJECT }),
+      resolveOwnerIdentity: async () => ({ name: "Owner", email: "owner@example.test", label: "Owner <owner@example.test>" }),
+      driver: { run, reconcile: async () => null },
+    });
+    const first = await broker.submit({ scopeId: collaborationIds.scope, actorId: collaborationActors.editor, request: action("push", { branch: "feature/member", expectedHeadSha: "a".repeat(40) }) });
+    expect(first.state).toBe("failed");
+    const second = await broker.submit({ scopeId: collaborationIds.scope, actorId: collaborationActors.editor, request: action("commit", { message: "feat: after failure", expectedHeadSha: "b".repeat(40) }) });
+    expect(second.state).toBe("completed");
+    expect(run).toHaveBeenCalledTimes(2);
+  });
+
+  it("lets only the owner expire an unresolved effect, with audit, and unblocks later operations", async () => {
+    const run = vi.fn()
+      .mockImplementationOnce(async () => { throw new AmbiguousProjectGitEffect(); })
+      .mockImplementationOnce(async () => ({ commitSha: "a".repeat(40) }));
+    const broker = createProjectGitBroker({
+      db: fixture.db,
+      authorize: async () => ({ ownerId: collaborationActors.owner, projectId: PROJECT }),
+      resolveOwnerIdentity: async () => ({ name: "Owner", email: "owner@example.test", label: "Owner <owner@example.test>" }),
+      driver: { run, reconcile: async () => null },
+      now: () => new Date(NOW),
+    });
+    const unresolved = await broker.submit({ scopeId: collaborationIds.scope, actorId: collaborationActors.editor, request: action("push", { branch: "feature/member", expectedHeadSha: "a".repeat(40) }) });
+    expect(unresolved.state).toBe("unknown");
+    const later = action("commit", { message: "feat: after unknown", expectedHeadSha: "b".repeat(40) });
+    await expect(broker.submit({ scopeId: collaborationIds.scope, actorId: collaborationActors.editor, request: later }))
+      .rejects.toMatchObject({ code: "busy" });
+    await expect(broker.expireUnresolved({ scopeId: collaborationIds.scope, actorId: collaborationActors.editor, operationId: unresolved.id }))
+      .rejects.toMatchObject({ code: "forbidden" });
+    const expired = await broker.expireUnresolved({ scopeId: collaborationIds.scope, actorId: collaborationActors.owner, operationId: unresolved.id });
+    expect(expired).toMatchObject({ id: unresolved.id, state: "failed" });
+    await expect(broker.expireUnresolved({ scopeId: collaborationIds.scope, actorId: collaborationActors.owner, operationId: unresolved.id }))
+      .rejects.toMatchObject({ code: "conflict" });
+    const audit = await fixture.db.selectFrom("collaboration_audit").select(["actor_id", "action", "outcome", "reason_code", "detail"]).execute();
+    expect(audit).toContainEqual(expect.objectContaining({
+      actor_id: collaborationActors.owner,
+      action: "git.push",
+      outcome: "failed",
+      reason_code: "effect_expired_by_owner",
+      detail: expect.objectContaining({ operationId: unresolved.id, requestingActorId: collaborationActors.editor, ownerId: collaborationActors.owner }),
+    }));
+    // The unresolved request itself is not replayed after expiry; a distinct operation now proceeds.
+    const resumed = await broker.submit({ scopeId: collaborationIds.scope, actorId: collaborationActors.editor, request: later });
+    expect(resumed.state).toBe("completed");
+    expect(run).toHaveBeenCalledTimes(2);
+  });
+
   it("reconciles an ambiguous PR by operation ID without opening a duplicate", async () => {
     const run = vi.fn(async () => { throw new AmbiguousProjectGitEffect(); });
     const reconcile = vi.fn(async () => ({ commitSha: "a".repeat(40), remoteBranch: "feature/member", prUrl: "https://github.com/owner/repo/pull/42" }));

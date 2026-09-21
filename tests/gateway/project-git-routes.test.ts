@@ -18,9 +18,10 @@ const operation = {
   updatedAt: "2026-09-21T10:00:00.000Z",
 };
 
-function fixture(input: { submit?: () => Promise<unknown> } = {}) {
+function fixture(input: { submit?: () => Promise<unknown>; expireUnresolved?: () => Promise<unknown> } = {}) {
   const submit = vi.fn(input.submit ?? (async () => operation));
   const list = vi.fn(async () => [operation]);
+  const expireUnresolved = vi.fn(input.expireUnresolved ?? (async () => ({ ...operation, type: "push" as const, state: "failed" as const })));
   const verifyAndAuthorize = vi.fn(async () => ({
     actorId,
     ownerId: "user_git_owner",
@@ -43,11 +44,11 @@ function fixture(input: { submit?: () => Promise<unknown> } = {}) {
   const app = new Hono();
   registerProjectRoutes(app, {
     verifier: { verifyAndAuthorize },
-    projectGit: { submit, list },
+    projectGit: { submit, list, expireUnresolved },
     projectReadiness: { get: getReadiness },
   } as unknown as CollaborationRouteOptions);
   const headers = { "content-type": "application/json", "x-matrix-collaboration-proof": "e30" };
-  return { app, submit, list, getReadiness, verifyAndAuthorize, headers };
+  return { app, submit, list, expireUnresolved, getReadiness, verifyAndAuthorize, headers };
 }
 
 describe("project Git routes", () => {
@@ -82,6 +83,25 @@ describe("project Git routes", () => {
     expect(await response.json()).toMatchObject({ scopeId, chatRoots: [expect.objectContaining({ chatId: "chat_one", dirty: true })] });
     expect(getReadiness).toHaveBeenCalledWith({ scopeId });
     expect(verifyAndAuthorize).toHaveBeenCalledWith(expect.objectContaining({ action: "read" }));
+  });
+
+  it("lets the authenticated owner expire an unresolved operation by validated ID only", async () => {
+    const { app, expireUnresolved, verifyAndAuthorize, headers } = fixture();
+    const response = await app.request(`/api/collaboration/scopes/${scopeId}/project/git/${operation.id}/expire`, { method: "POST", headers });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ id: operation.id, state: "failed" });
+    expect(verifyAndAuthorize).toHaveBeenCalledWith(expect.objectContaining({ action: "mutate_project" }));
+    expect(expireUnresolved).toHaveBeenCalledWith({ scopeId, actorId, operationId: operation.id });
+    const invalid = await app.request(`/api/collaboration/scopes/${scopeId}/project/git/not-a-uuid/expire`, { method: "POST", headers });
+    expect(invalid.status).toBe(400);
+    expect(expireUnresolved).toHaveBeenCalledTimes(1);
+  });
+
+  it("maps a member expiry attempt to a generic forbidden response", async () => {
+    const { app, headers } = fixture({ expireUnresolved: async () => { throw new ProjectGitBrokerError("forbidden"); } });
+    const response = await app.request(`/api/collaboration/scopes/${scopeId}/project/git/${operation.id}/expire`, { method: "POST", headers });
+    expect(response.status).toBe(403);
+    expect(JSON.stringify(await response.json())).not.toContain("Project Git operation");
   });
 
   it("returns a generic denial and lists only through read authorization", async () => {
