@@ -601,3 +601,22 @@ async function seedScopes(fixture: CollaborationTestDatabase): Promise<void> {
     member(STANDALONE_CHAT_SCOPE, collaborationActors.editor, "editor"),
   ]).execute();
 }
+
+describe("S08 organization AI submission adapter point", () => {
+  it("delegates to the S03 membership client seam with the owner as actor and fails closed on errors", async () => {
+    const { organizationAiSubmissionFromMembershipClient } = await import(
+      "../../packages/gateway/src/collaboration/execution-policy.js"
+    );
+    const calls: Array<{ organizationId: string; actorId: string }> = [];
+    const source = organizationAiSubmissionFromMembershipClient({
+      async organizationAiSubmission(input) {
+        calls.push(input);
+        if (input.organizationId === "org_broken") throw new Error("boom");
+        return "members";
+      },
+    }, "user_owner");
+    expect(await source.resolve("org_ok")).toBe("members");
+    expect(await source.resolve("org_broken")).toBe("unknown");
+    expect(calls).toEqual([{ organizationId: "org_ok", actorId: "user_owner" }, { organizationId: "org_broken", actorId: "user_owner" }]);
+  });
+});
