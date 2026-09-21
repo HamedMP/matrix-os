@@ -148,6 +148,7 @@ import {
 } from "./session-runtime-bridge.js";
 import { createGatewaySpeechRuntime } from "./speech/gateway-runtime.js";
 import { initializeOwnerDatabaseServices } from "./startup/owner-database.js";
+import { enableOwnerSharedAi } from "./startup/collaboration.js";
 import { initializePlatformIntegrations } from "./startup/platform-integrations.js";
 import { createSymphonyRunner } from "./symphony-runner.js";
 import { createElixirSymphonyProxyRoutes } from "./symphony/proxy.js";
@@ -1580,11 +1581,12 @@ export async function createGateway(config: GatewayConfig) {
     backgroundChatProjection.setReconciler(ownerId => canonicalChatOrchestrator?.reconcileActiveRuns({ type: "personal", ownerId }) ?? Promise.resolve());
     // Shared AI marks runs the previous process lost (gateway_restart) before the
     // owner reconcile loop below finishes them; the reverse order loses attribution.
-    if (gatewayCollaboration) {
-      // S07: this layer has no execution-root resolver, so no `sandboxManifests` source is passed
-      // and shared AI reports no eligibility instead of offering runs that would fail at launch.
-      // S09 supplies the resolver; a shared run never falls back to an unsandboxed profile.
-      const sharedAi = await gatewayCollaboration.enableSharedAi({
+    // S07: this layer has no execution-root resolver, so no `sandboxManifests` source is passed
+    // and shared AI reports no eligibility instead of offering runs that would fail at launch.
+    // S09 supplies the resolver; a shared run never falls back to an unsandboxed profile.
+    await enableOwnerSharedAi({
+      gatewayCollaboration,
+      input: {
         orchestrator: canonicalChatOrchestrator,
         homePath,
         providerCatalog: canonicalChatProviderCatalog,
@@ -1593,9 +1595,8 @@ export async function createGateway(config: GatewayConfig) {
         // shared AI reports no eligibility instead of launching unmounted runs.
         ...(canonicalChatExecutionRoots ? { executionRoots: canonicalChatExecutionRoots } : {}),
         ...(fundedCredentialProvider ? { fundedCredentialProvider } : {}),
-      });
-      console.log(`[collaboration] shared AI ${sharedAi.available ? "ready" : "disabled"}`);
-    }
+      },
+    });
     for (const ownerId of new Set(codingAgentOwnerIds)) {
       await canonicalChatOrchestrator.reconcileActiveRuns({ type: "personal", ownerId });
     }
