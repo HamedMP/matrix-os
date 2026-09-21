@@ -82,6 +82,14 @@ function supportedMediaType(
   return capabilities.fileTranscription.dictation.supportedMediaTypes.find((mediaType) => mediaType === "audio/wav");
 }
 
+async function cancelCaptureSafely(capture: PlatformSpeechCapture): Promise<void> {
+  try {
+    await capture.cancel();
+  } catch (caught: unknown) {
+    console.warn("[speech-draft] microphone cleanup failed", caught instanceof Error ? caught.name : "UnknownError");
+  }
+}
+
 export function usePlatformSpeechDraft(options: {
   scopeKey: string;
   onDraft(text: string): void;
@@ -114,9 +122,7 @@ export function usePlatformSpeechDraft(options: {
     if (recording) {
       clearTimeout(recording.timeout);
       clearInterval(recording.elapsedTimer);
-      void recording.capture.cancel().catch((caught: unknown) => {
-        console.warn("[speech-draft] microphone cleanup failed", caught instanceof Error ? caught.name : "UnknownError");
-      });
+      void cancelCaptureSafely(recording.capture);
     }
     const request = requestRef.current;
     requestRef.current = null;
@@ -241,7 +247,7 @@ export function usePlatformSpeechDraft(options: {
     }
     if (captureStartRef.current === controller) captureStartRef.current = null;
     if (generationRef.current !== generation) {
-      await capture.cancel();
+      await cancelCaptureSafely(capture);
       return;
     }
     const policy = capabilities.fileTranscription.dictation;
