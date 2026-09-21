@@ -250,9 +250,19 @@ export function registerPlatformWebSocketUpgradeHandler(
         socket.destroy();
         return;
       }
-      directUpgrade = await collaborationDirect!.relay.prepareSocket({ actorId: identity.userId, rawPath: path, incomingHeaders: req.headers, externalHost: host }) ?? undefined;
-      const machineId = directUpgrade ? parseCollaborationRuntimeId(directUpgrade.home.runtimeId.replace(/^vps-/, "vps:")) : null;
-      const authorityMachine = machineId ? await getUserMachine(db, machineId) : undefined;
+      let authorityMachine: UserMachineRecord | undefined;
+      try {
+        directUpgrade = await collaborationDirect!.relay.prepareSocket({ actorId: identity.userId, rawPath: path, incomingHeaders: req.headers, externalHost: host }) ?? undefined;
+        const machineId = directUpgrade ? parseCollaborationRuntimeId(directUpgrade.home.runtimeId.replace(/^vps-/, "vps:")) : null;
+        authorityMachine = machineId ? await getUserMachine(db, machineId) : undefined;
+      } catch (err: unknown) {
+        // Every failure on this branch settles here: the socket is destroyed, never left open.
+        console.warn(`[platform] collaboration direct socket preparation failed error=${describeError(err)}`);
+        directUpgrade?.release();
+        directUpgrade = undefined;
+        socket.destroy();
+        return;
+      }
       if (!directUpgrade || !authorityMachine || authorityMachine.status !== 'running' || !authorityMachine.publicIPv4) {
         directUpgrade?.release();
         socket.destroy();
