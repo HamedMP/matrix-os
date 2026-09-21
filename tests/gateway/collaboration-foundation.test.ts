@@ -19,6 +19,7 @@ import { registerTerminalRoutes } from "../../packages/gateway/src/collaboration
 import { registerProjectRoutes } from "../../packages/gateway/src/collaboration/project-routes.js";
 import { registerLifecycleRoutes } from "../../packages/gateway/src/collaboration/lifecycle-routes.js";
 import { registerExecutionPolicyRoutes } from "../../packages/gateway/src/collaboration/execution-policy-routes.js";
+import { registerResourceRoutes } from "../../packages/gateway/src/collaboration/resource-routes.js";
 import { handle } from "../../packages/gateway/src/collaboration/route-support.js";
 import {
   collaborationActors,
@@ -76,6 +77,14 @@ const ROUTE_BASELINE: ReadonlyArray<readonly [string, string]> = [
   // S08 execution policy routes register after the S01 baseline.
   ["GET", "/api/collaboration/scopes/:scopeId/execution-policy"],
   ["PUT", "/api/collaboration/scopes/:scopeId/execution-policy"],
+  // S12 shared files, folders and app instances register after the execution policy routes.
+  ["GET", "/api/collaboration/scopes/:scopeId/files"],
+  ["GET", "/api/collaboration/scopes/:scopeId/files/:fileId/content"],
+  ["POST", "/api/collaboration/scopes/:scopeId/files/actions"],
+  ["GET", "/api/collaboration/scopes/:scopeId/apps/:appId"],
+  ["POST", "/api/collaboration/scopes/:scopeId/apps/:appId/view"],
+  ["GET", "/api/collaboration/scopes/:scopeId/apps/:appId/assets/:assetPath{.+}"],
+  ["POST", "/api/collaboration/scopes/:scopeId/apps/:appId/actions"],
 ];
 
 const stubOptions = {
@@ -115,6 +124,7 @@ describe("gateway collaboration route registration (S01 foundation)", () => {
     registerProjectRoutes(app, stubOptions);
     registerLifecycleRoutes(app, stubOptions);
     registerExecutionPolicyRoutes(app, stubOptions);
+    registerResourceRoutes(app, stubOptions);
     expect(handlerRoutes(app)).toEqual(ROUTE_BASELINE);
   });
 
@@ -168,14 +178,14 @@ describe("gateway collaboration schema bootstrap (S01 foundation)", () => {
   });
 
   it("registers the versioned migrations in order and records every version idempotently", async () => {
-    // S10 adds migration 13 (project Git operations); 12 belongs to a later layer.
-    expect(COLLABORATION_VERSIONED_MIGRATIONS.map((step) => step.version)).toEqual([3, 4, 5, 6, 7, 8, 9, 10, 11, 13]);
+    // S12 adds migration 12 (resource catalog); 13 is the S10 project Git migration below it.
+    expect(COLLABORATION_VERSIONED_MIGRATIONS.map((step) => step.version)).toEqual([3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
     expect(typeof applyCollaborationBaseSchema).toBe("function");
     await bootstrapCollaborationDatabase(fixture.db);
     await bootstrapCollaborationDatabase(fixture.db);
     const versions = await fixture.db.selectFrom("collaboration_schema_migrations")
       .select("version").orderBy("version").execute();
-    expect(versions.map((row) => Number(row.version))).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13]);
+    expect(versions.map((row) => Number(row.version))).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
   });
 });
 
