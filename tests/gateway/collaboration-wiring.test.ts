@@ -4,7 +4,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:net";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   SCOPE_RUNTIME_HARNESS_VERSION,
   SCOPE_RUNTIME_PROFILE_DIGEST,
@@ -20,6 +20,7 @@ import {
 } from "../../packages/gateway/src/collaboration/wiring.js";
 import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
 import { OrganizationMembershipClient } from "../../packages/gateway/src/collaboration/organization-membership-client.js";
+import { createLazyProviderSnapshotReader } from "../../packages/gateway/src/collaboration/lazy-provider-snapshot-reader.js";
 import {
   allowAllOrganizationPrecondition,
   collaborationIds,
@@ -539,6 +540,41 @@ describe("S08 owner source wiring", () => {
     } finally {
       await runtime.shutdown();
       await fixture.destroy();
+    }
+  });
+
+  it("gives production construction a lazy reader that fails closed until the provider service attaches", async () => {
+    // server.ts builds the collaboration runtime before the owner's Provider V3 service exists.
+    const lazy = createLazyProviderSnapshotReader();
+    await expect(lazy.reader.getSnapshot()).rejects.toThrow(/ProviderSnapshotUnavailable/);
+    const snapshot = { schemaVersion: 3 } as unknown as Awaited<ReturnType<typeof lazy.reader.getSnapshot>>;
+    const getSnapshot = vi.fn(async () => snapshot);
+    lazy.attach({ getSnapshot });
+    await expect(lazy.reader.getSnapshot({ refresh: true })).resolves.toBe(snapshot);
+    expect(getSnapshot).toHaveBeenCalledWith({ refresh: true });
+    expect(() => lazy.attach({ getSnapshot })).toThrow(/already attached/i);
+    const runtime = await createGatewayCollaboration({
+      organizationPrecondition: allowAllOrganizationPrecondition,
+      db: fixture.db,
+      chatRepository: new ChatRepository(fixture.db),
+      config: {
+        runtimeId: collaborationIds.runtime,
+        activeKeyId: "key-1",
+        proofKeys: { "key-1": "a".repeat(32) },
+        preflightSecret: "b".repeat(32),
+        platformBaseUrl: "https://platform.internal",
+        serviceToken: "c".repeat(32),
+      },
+      resolveParticipant: async (actorId: string) => ({ actorId, displayName: actorId }),
+      startTimers: false,
+      providerSnapshotReader: lazy.reader,
+    });
+    try {
+      expect(runtime.executionPolicies).toBeDefined();
+      expect(runtime.runBindings).toBeDefined();
+      expect(runtime.ownerSource).toBeDefined();
+    } finally {
+      await runtime.shutdown();
     }
   });
 
