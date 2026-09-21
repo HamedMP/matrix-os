@@ -27,6 +27,9 @@ function mountedRoutes() {
     terminalWorkspaceProjectAdmission: {} as never,
     captureTerminalEvent: vi.fn(),
     getPrincipal,
+    logBestEffortFailure: vi.fn(),
+    logUnexpectedJsonParseFailure: vi.fn(),
+    logUnexpectedWsSendFailure: vi.fn(),
   });
 
   const socket = () => {
