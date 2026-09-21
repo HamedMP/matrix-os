@@ -147,6 +147,7 @@ import {
   createSessionRuntimeBridge,
 } from "./session-runtime-bridge.js";
 import { initializeOwnerDatabaseServices } from "./startup/owner-database.js";
+import { enableOwnerSharedAi } from "./startup/collaboration.js";
 import { initializePlatformIntegrations } from "./startup/platform-integrations.js";
 import { createSymphonyRunner } from "./symphony-runner.js";
 import { createElixirSymphonyProxyRoutes } from "./symphony/proxy.js";
@@ -1579,16 +1580,16 @@ export async function createGateway(config: GatewayConfig) {
     for (const ownerId of new Set(codingAgentOwnerIds)) {
       await canonicalChatOrchestrator.reconcileActiveRuns({ type: "personal", ownerId });
     }
-    if (gatewayCollaboration) {
-      const sharedAi = await gatewayCollaboration.enableSharedAi({
+    await enableOwnerSharedAi({
+      gatewayCollaboration,
+      input: {
         orchestrator: canonicalChatOrchestrator,
         homePath,
         providerCatalog: canonicalChatProviderCatalog,
         codingProviders: codingAgentProviderRegistry,
         ...(fundedCredentialProvider ? { fundedCredentialProvider } : {}),
-      });
-      console.log(`[collaboration] shared AI ${sharedAi.available ? "ready" : "disabled"}`);
-    }
+      },
+    });
     if (codingAgentThreadStore && codingAgentWorkspaceRuntime && codexEventBridge) {
       const repository = chatRepository;
       const bridge = codexEventBridge;
