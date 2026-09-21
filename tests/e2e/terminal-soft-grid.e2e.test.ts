@@ -204,6 +204,12 @@ describe("real terminal renderer soft-grid resizing", () => {
           await page.mouse.wheel(0, -100);
           await expect.poll(() => page.evaluate(() =>
             (window as unknown as { fixtureInputs: string[] }).fixtureInputs.some((data) => data.includes("\x1b[<64;6;35M")))).toBe(false);
+          // The wheel gesture may pan the outer grid before xterm consumes its
+          // remainder. Restore bottom-follow so the next resize starts from
+          // the same state regardless of font metrics and banner hit-testing.
+          await page.locator("[data-terminal-viewport]").evaluate((host) => { host.scrollTop = host.scrollHeight; });
+          await expect.poll(async () => { const g = await geometry(page); return g.scrollHeight - g.clientHeight - g.panTop; })
+            .toBeLessThanOrEqual(1);
         }
         await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
         await page.screenshot({ fullPage: true, path: resolve(evidence, `${nativeElectron ? "native-" : ""}${surface}-${zoom}-${height}.png`) });
