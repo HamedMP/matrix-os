@@ -28,3 +28,8 @@
 - S12/S15 mount the grant routes (`/scopes/:scopeId/grants*`, invitation accept/decline for organization shares) on `CollaborationCapabilityEvaluator`; `listPendingForActor` backs `Shared with me`.
 - S08 supplies `aiSource` / `submitMode` probes, S10 supplies `gitIdentity` / `forgeCredential` / `chatRootInventory`, transport supplies `hostOnline`.
 - S18 executes `dispositionLegacyMembers` as part of the recorded disposition.
+
+## Review fixes (2026-09-21)
+
+- **F5 departure cleanup (P2), S04 part.** `endActorGrants` (transactional per scope with the scope row locked; revokes member grants and deletes activations of organization-wide grants) was implemented here but called from nowhere; the S05 gateway control client now calls it on a pushed denial (see the S05 receipt). This layer adds the membership-cache half: RED `50ef4e5b1` (`evict is not a function`), GREEN `ab36fb67f`: `OrganizationMembershipClient.evict({ organizationId, actorId? })` drops cached evidence for one actor or for every actor of an organization, and marks in-flight lookups so their result is delivered but never cached (bounded by the in-flight cap). `organization-membership-client.ts` lives on `124/s03-gateway`; the change is committed on `124/s04` for the coordinator to move down if wanted.
+- Gates: `organization-membership-client` + `collaboration-org-precondition` + `collaboration-precondition-unavailable` + `collaboration-membership-races` → 26 passed / 4 skipped; gateway `tsc` clean; full `bun run typecheck` exit 0; patterns 0 violations / 5 inherited warnings.
