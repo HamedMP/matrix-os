@@ -176,7 +176,7 @@ export async function createGatewayCollaboration(options: {
     : undefined;
   const verifier = new CollaborationActorProofVerifier({
     runtimeId: options.config.runtimeId,
-    keys: options.config.proofKeys,
+    keys: options.config.proofKeys ?? {},
     authority,
   });
   // S05: direct transport. The platform relay signs nothing on this path; the
