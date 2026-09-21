@@ -49,7 +49,7 @@ export function TerminalSharingButton({ api, runtimeId, organizationId, terminal
     setError(null);
     try {
       const result = CollaborationScopePreflightResponseSchema.parse(await api.post(
-        `/api/collaboration/runtimes/${runtimeId}/scopes/preflight`,
+        `/api/collaboration/runtimes/${encodeURIComponent(runtimeId)}/scopes/preflight`,
         { kind: "terminal", resourceId: terminalId, organizationId },
       ));
       if (!result.eligible || !result.confirmationToken) {
@@ -71,7 +71,7 @@ export function TerminalSharingButton({ api, runtimeId, organizationId, terminal
     setError(null);
     try {
       const created = CollaborationScopeSchema.parse(await api.post(
-        `/api/collaboration/runtimes/${runtimeId}/scopes`,
+        `/api/collaboration/runtimes/${encodeURIComponent(runtimeId)}/scopes`,
         {
           kind: "terminal",
           resourceId: terminalId, organizationId,
