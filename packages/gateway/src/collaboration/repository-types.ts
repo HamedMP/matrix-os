@@ -12,7 +12,7 @@ export interface CollaborationScopeRecord {
   ownerId: string;
   /** Owning organization; absent only on pre-organization rows that the precondition denies. */
   organizationId?: string;
-  kind: "chat" | "terminal" | "project";
+  kind: "chat" | "terminal" | "project" | "file" | "folder" | "app";
   resourceId: string;
   parentScopeId?: string;
   membershipMode: "direct" | "inherited";
@@ -45,7 +45,7 @@ export interface CreateDirectScopeInput {
   scopeId: string;
   ownerId: string;
   organizationId: string;
-  kind: "chat" | "terminal" | "project";
+  kind: "chat" | "terminal" | "project" | "file" | "folder" | "app";
   resourceId: string;
   authorityRuntimeId: string;
 }
