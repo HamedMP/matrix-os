@@ -64,6 +64,7 @@ import {
 import { SharedAiRuntimeRegistry } from "./shared-ai-runtime-registry.js";
 import type { CollaborationActorProofVerifier } from "./actor-proof.js";
 import type { SharedRunOwnerSource } from "./shared-run-owner-source.js";
+import type { CollaborationExecutionPolicyRepository } from "./execution-policy.js";
 const SUPERVISOR_SOCKET = "/run/matrix-scope-runtime/supervisor.sock";
 const BROKER_SOCKET = "/run/matrix-scope-runtime/broker.sock";
 const QUEUE_WAKE_INTERVAL_MS = 10_000;
@@ -116,6 +117,7 @@ export async function createSharedAiRuntime(options: {
   codingProviders?: Pick<CodingAgentProviderRegistry, "listProviders">;
   /** S08: owner-selected source decision consulted before every shared adapter is prepared. */
   ownerSource?: SharedRunOwnerSource;
+  executionPolicies?: Pick<CollaborationExecutionPolicyRepository, "effectiveSubmitMode">;
   /** S09: immutable loss and control records; required for interrupted-run attribution. */
   runLoss?: CollaborationRunLossRepository;
   /** S07: registry that stops sandboxed runtimes when the requesting actor loses its lease. */
@@ -155,6 +157,9 @@ export async function createSharedAiRuntime(options: {
   }
   await options.chatScope.reconcileExecutionEligibility({ executionGeneration, eligibility });
   const registry = new SharedAiRuntimeRegistry();
+  const authorizeSharedChat = (scopeId: string, actorId: string, action: "request_ai" | "control_execution") =>
+    options.authority.authorize({ scopeId, actorId, action });
+  options.repository.setSharedAuthorizer(authorizeSharedChat);
   const resolveAccessSource = options.resolveAccessSource
     ?? (async () => (await resolveKernelCredentialSources(
       options.homePath,
@@ -163,6 +168,7 @@ export async function createSharedAiRuntime(options: {
     )).selectedAccessSourceId);
   const commands = new CollaborationChatCommands({
     db: options.db,
+    authorize: authorizeSharedChat,
     ...(options.runLoss ? { runControls: options.runLoss } : {}),
     submitApproval: async () => {
       throw new Error("The fixed shared Chat adapter does not expose approval callbacks");
@@ -310,6 +316,8 @@ export async function createSharedAiRuntime(options: {
   const chatExecutionAdapter = new CollaborationChatExecutionAdapter({
     repository: options.repository,
     commands,
+    resolveEffectiveSubmitMode: (scopeId) => options.executionPolicies?.effectiveSubmitMode(scopeId)
+      ?? Promise.resolve("owner_only"),
     resolveParticipant: options.resolveParticipant,
     resolveResourceRevision: async (scopeId, chatId) => {
       const row = await options.db.selectFrom("chats")

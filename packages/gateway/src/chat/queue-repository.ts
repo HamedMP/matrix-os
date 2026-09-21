@@ -24,7 +24,12 @@ import {
   type CanonicalUpdateQueuedChatTurnRequest,
 } from "@matrix-os/contracts";
 import { sql, type Kysely, type Selectable, type Transaction } from "kysely";
-import type { OwnerCollaborationDatabase } from "../collaboration/database.js";
+import type { CollaborationScopesTable, OwnerCollaborationDatabase } from "../collaboration/database.js";
+import { CollaborationAuthorizationError } from "../collaboration/authority.js";
+import {
+  fenceSharedChatAuthority,
+  type SharedChatAuthorizer,
+} from "../collaboration/shared-chat-authority.js";
 import { sharedAiEligibilitySupportsDriver } from "../collaboration/shared-ai-eligibility.js";
 import type {
   ChatDatabase,
@@ -223,6 +228,8 @@ async function ownedChat(
 }
 
 export class ChatQueueRepository {
+  private sharedAuthorizer?: SharedChatAuthorizer;
+
   constructor(
     private readonly kysely: Kysely<ChatDatabase>,
     private readonly transact: <T>(fn: (executor: Executor) => Promise<T>) => Promise<T>,
@@ -235,6 +242,10 @@ export class ChatQueueRepository {
       payload: Record<string, unknown>,
     ) => Promise<void>,
   ) {}
+
+  setSharedAuthorizer(authorize: SharedChatAuthorizer): void {
+    this.sharedAuthorizer = authorize;
+  }
 
   async findAdmission(ownerInput: ChatOwner, chatId: string, clientRequestId: string, requestHash?: string): Promise<EnqueuedQueuedTurn | null> {
     const owner = CanonicalOwnerScopeSchema.parse(ownerInput);
@@ -276,6 +287,8 @@ export class ChatQueueRepository {
       throw new SharedChatQueueError("conflict");
     }
 
+    const authority = await this.sharedAuthorizer?.(scopeId, requestingActorId, "request_ai");
+
     return this.transact(async (executor) => {
       const trx = executor as unknown as Transaction<OwnerCollaborationDatabase>;
       const scope = await trx.selectFrom("collaboration_scopes").selectAll()
@@ -286,23 +299,26 @@ export class ChatQueueRepository {
         || scope.kind !== "chat" || scope.resource_id !== chatId) {
         throw new SharedChatQueueError("not_found");
       }
-      if (scope.lifecycle !== "shared" || scope.membership_mode !== "direct"
-        || Number(scope.auth_epoch) !== input.acceptedAuthEpoch
+      if (scope.lifecycle !== "shared"
+        || (authority ? authority.authEpoch : Number(scope.auth_epoch)) !== input.acceptedAuthEpoch
         || scope.execution_generation === null
         || !Number.isSafeInteger(Number(scope.execution_generation))
         || Number(scope.execution_generation) < 1) {
         throw new SharedChatQueueError("unavailable");
       }
-      const member = await trx.selectFrom("collaboration_members").select(["role", "status", "expires_at"])
-        .where("scope_id", "=", scopeId)
-        .where("actor_id", "=", requestingActorId)
-        .forUpdate()
-        .executeTakeFirst();
-      if (!member || member.status !== "accepted"
-        || (member.expires_at !== null && new Date(member.expires_at).getTime() <= new Date(acceptedAt).getTime())) {
-        throw new SharedChatQueueError("not_found");
+      if (authority) {
+        await fenceSharedChatAuthority(trx, scope, authority, requestingActorId, "request_ai");
+      } else {
+        if (scope.membership_mode !== "direct") throw new SharedChatQueueError("unavailable");
+        const member = await trx.selectFrom("collaboration_members").select(["role", "status", "expires_at"])
+          .where("scope_id", "=", scopeId).where("actor_id", "=", requestingActorId)
+          .forUpdate().executeTakeFirst();
+        if (!member || member.status !== "accepted"
+          || (member.expires_at !== null && new Date(member.expires_at).getTime() <= new Date(acceptedAt).getTime())) {
+          throw new SharedChatQueueError("not_found");
+        }
+        if (member.role === "viewer") throw new SharedChatQueueError("forbidden");
       }
-      if (member.role === "viewer") throw new SharedChatQueueError("forbidden");
 
       const chat = await ownedChat(executor, owner, chatId);
       if (!chat) throw new SharedChatQueueError("not_found");
@@ -788,10 +804,36 @@ export class ChatQueueRepository {
       ? undefined
       : CollaborationIdSchema.parse(input.collaborationScopeId);
     const claimedAt = new Date(input.claimedAt).toISOString();
+    // Clerk membership and grant evidence must be fresh at re-admission. Do not
+    // hold a Chat row lock while consulting the platform projection.
+    const preflight = this.sharedAuthorizer
+      ? await this.kysely.selectFrom("chat_queued_turns")
+        .select(["id", "collaboration_scope_id", "requesting_actor_id"])
+        .where("chat_id", "=", chatId).where("status", "=", "queued")
+        .$if(collaborationScopeId !== undefined, (query) => query.where("collaboration_scope_id", "=", collaborationScopeId!))
+        .orderBy("position").executeTakeFirst()
+      : undefined;
+    let freshAuthority: Awaited<ReturnType<SharedChatAuthorizer>> | undefined;
+    let membershipDenied = false;
+    if (preflight?.collaboration_scope_id && preflight.requesting_actor_id) {
+      try {
+        freshAuthority = await this.sharedAuthorizer!(
+          preflight.collaboration_scope_id, preflight.requesting_actor_id, "request_ai",
+        );
+      } catch (error: unknown) {
+        if (error instanceof CollaborationAuthorizationError && error.code !== "unavailable") {
+          membershipDenied = true;
+        } else {
+          console.warn("[chat/queue] shared membership evidence unavailable",
+            error instanceof Error ? error.name : "UnknownError");
+          return null;
+        }
+      }
+    }
     return this.transact(async (trx) => {
       const candidateScope = await trx.selectFrom("chat_queued_turns")
         .select([
-          "collaboration_scope_id", "requesting_actor_id", "accepted_auth_epoch",
+          "id", "collaboration_scope_id", "requesting_actor_id", "accepted_auth_epoch",
           "accepted_execution_generation", "accepted_execution_eligibility",
         ])
         .where("chat_id", "=", chatId)
@@ -800,23 +842,14 @@ export class ChatQueueRepository {
           query.where("collaboration_scope_id", "=", collaborationScopeId!))
         .orderBy("position")
         .executeTakeFirst();
-      let sharedScope: {
-        id: string;
-        authority_generation: number;
-        lifecycle: string;
-        auth_epoch: number;
-        execution_generation: number | null;
-        execution_eligibility: unknown;
-      } | undefined;
+      if (preflight && candidateScope?.id !== preflight.id) return null;
+      let sharedScope: Selectable<CollaborationScopesTable> | undefined;
       let sharedCandidateId: string | undefined;
       let sharedAdmission: "allowed" | "unauthorized" | "unavailable" = "allowed";
       if (candidateScope?.collaboration_scope_id) {
         const sharedTrx = trx as unknown as Transaction<OwnerCollaborationDatabase>;
         sharedScope = await sharedTrx.selectFrom("collaboration_scopes")
-          .select([
-            "id", "authority_generation", "lifecycle", "auth_epoch",
-            "execution_generation", "execution_eligibility",
-          ])
+          .selectAll()
           .where("id", "=", candidateScope.collaboration_scope_id)
           .forUpdate()
           .executeTakeFirst();
@@ -828,9 +861,11 @@ export class ChatQueueRepository {
           .where("collaboration_scope_id", "=", sharedScope.id)
           .orderBy("position")
           .executeTakeFirst();
-        if (!authorizedCandidate) return null;
+        if (!authorizedCandidate || authorizedCandidate.id !== candidateScope?.id) return null;
         sharedCandidateId = authorizedCandidate.id;
-        if (sharedScope.lifecycle !== "shared" || sharedScope.execution_generation === null
+        if (membershipDenied) {
+          sharedAdmission = "unauthorized";
+        } else if (sharedScope.lifecycle !== "shared" || sharedScope.execution_generation === null
           || !Number.isSafeInteger(Number(sharedScope.execution_generation))
           || Number(sharedScope.execution_generation) < 1
           || sharedScope.execution_eligibility === null) {
@@ -847,8 +882,20 @@ export class ChatQueueRepository {
         // which callers may retry under the current authority. This prevents a
         // revoke or downgrade race without inventing a second member revision.
         } else if (!authorizedCandidate.requesting_actor_id || authorizedCandidate.accepted_auth_epoch === null
-          || Number(authorizedCandidate.accepted_auth_epoch) !== Number(sharedScope.auth_epoch)) {
+          || Number(authorizedCandidate.accepted_auth_epoch) !== (freshAuthority?.authEpoch ?? Number(sharedScope.auth_epoch))) {
           sharedAdmission = "unauthorized";
+        } else if (this.sharedAuthorizer) {
+          if (!freshAuthority || freshAuthority.actorId !== authorizedCandidate.requesting_actor_id) {
+            sharedAdmission = "unauthorized";
+          } else {
+            try {
+              await fenceSharedChatAuthority(sharedTrx, sharedScope, freshAuthority,
+                authorizedCandidate.requesting_actor_id, "request_ai");
+            } catch (error: unknown) {
+              if (!(error instanceof CollaborationAuthorizationError)) throw error;
+              sharedAdmission = "unauthorized";
+            }
+          }
         } else {
           const member = await sharedTrx.selectFrom("collaboration_members")
             .select(["role", "status", "expires_at"])
