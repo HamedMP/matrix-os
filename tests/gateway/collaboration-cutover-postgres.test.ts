@@ -118,6 +118,9 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("S18 home cutover on real
     await fixture.db.insertInto("collaboration_members").values(member(revivedActor, "editor", ORG)).execute();
     await expect(authority.authorize({ scopeId: key.scopeId, actorId: revivedActor, action: "read" }))
       .rejects.toMatchObject({ code: "not_found" });
+    await cutover.rollbackCompatible(key, { compatibleDirectBuild: true });
+    await expect(authority.authorize({ scopeId: key.scopeId, actorId: revivedActor, action: "read" }))
+      .rejects.toMatchObject({ code: "not_found" });
   });
 
   it("never reopens a revived legacy role inside the locked shared Chat fence", async () => {
