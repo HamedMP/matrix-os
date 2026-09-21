@@ -58,6 +58,7 @@ describe("persisted Chat run failures across desktop surfaces", () => {
       createdAt: "2026-08-25T00:01:00.000Z", updatedAt: "2026-08-25T00:02:00.000Z" });
     detail.record.chat.revision += 1;
     await act(async () => { await result.current.refresh(); });
-    await waitFor(() => expect(result.current.error).toBeNull());
+    await waitFor(() => expect(result.current.detail?.record.chat.revision).toBe(detail.record.chat.revision));
+    expect(canonicalChatPresentation(result.current.detail!).some((turn) => turn.final?.markdown === COPY)).toBe(false);
   });
 });

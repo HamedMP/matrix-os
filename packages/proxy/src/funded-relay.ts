@@ -27,9 +27,12 @@ import { createFundedUsageTracker, type FundedFinalization } from "./funded-rela
 const MESSAGES_PATH = "/v1/messages";
 const COUNT_TOKENS_PATH = "/v1/messages/count_tokens";
 const CHAT_COMPLETIONS_PATH = "/v1/chat/completions";
+const CLAUDE_CODE_BETA_QUERY = "?beta=true";
 const CountTokensResponseSchema = z.object({
   input_tokens: z.number().int().nonnegative().max(10_000_000),
 }).strict();
+const SAFE_DIAGNOSTIC_KEY = /^[a-zA-Z0-9_-]{1,64}$/;
+const SENSITIVE_DIAGNOSTIC_KEY = /(authorization|cookie|password|secret|token|api.?key)/i;
 
 interface FundedRelayDependencies extends FundedRelayConfig {
   fetch?: typeof fetch;
@@ -56,6 +59,30 @@ interface ActiveRequestState {
 export interface FundedRelay {
   register(app: Hono): void;
   close(): Promise<void>;
+}
+
+function safeDiagnosticKey(key: string): string {
+  return SAFE_DIAGNOSTIC_KEY.test(key) && !SENSITIVE_DIAGNOSTIC_KEY.test(key)
+    ? key
+    : "<redacted>";
+}
+
+function requestRejectionDiagnostic(error: unknown): {
+  errorName: string;
+  issues?: Array<{ code: string; path: string; keys?: string[] }>;
+} {
+  const errorName = error instanceof Error ? error.name : "UnknownError";
+  if (!(error instanceof z.ZodError)) return { errorName };
+  return {
+    errorName,
+    issues: error.issues.slice(0, 16).map((issue) => ({
+      code: issue.code,
+      path: issue.path.map(String).join(".") || "<root>",
+      ...(issue.code === "unrecognized_keys"
+        ? { keys: issue.keys.slice(0, 16).map(safeDiagnosticKey) }
+        : {}),
+    })),
+  };
 }
 
 function opaqueRef(secret: string, domain: string, value: string): string {
@@ -253,6 +280,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     let anthropicBeta: string | null;
     let model: ReturnType<typeof mapFundedModel>;
     const isOpenAi = c.req.path === CHAT_COMPLETIONS_PATH;
+    const requestSearch = new URL(c.req.url).search;
     try {
       const body: unknown = JSON.parse(await c.req.text());
       const serialized = isOpenAi ? serializeFundedOpenAiRequest(body) : serializeFundedRequest(body);
@@ -266,6 +294,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       if (error instanceof Error && error.message === "Unsupported funded AI model") {
         return errorResponse(c, 403, "permission_error", "This model is not enabled");
       }
+      console.warn("[proxy] Funded AI request rejected", requestRejectionDiagnostic(error));
       return errorResponse(c, 400, "invalid_request_error", "Invalid AI request");
     }
     if (c.req.path === MESSAGES_PATH && parsedBody.max_tokens === undefined) {
@@ -405,7 +434,9 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       firstResponseController.abort(new DOMException("AI first response timed out", "TimeoutError"));
     }, config.firstResponseTimeoutMs);
     const generationSignal = AbortSignal.any([state.lifetimeSignal, firstResponseController.signal]);
-    const generationUrl = isOpenAi ? workersAiTarget(config.gatewayBaseUrl).url : `${config.gatewayBaseUrl}${MESSAGES_PATH}`;
+    const generationUrl = isOpenAi
+      ? workersAiTarget(config.gatewayBaseUrl).url
+      : `${config.gatewayBaseUrl}${MESSAGES_PATH}${requestSearch}`;
     const generationInit: RequestInit = {
       method: "POST",
       headers: upstreamHeaders,
@@ -495,7 +526,11 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         if (c.req.path !== MESSAGES_PATH && c.req.path !== COUNT_TOKENS_PATH && c.req.path !== CHAT_COMPLETIONS_PATH) {
           return errorResponse(c, 404, "not_found_error", "AI route not found");
         }
-        if (new URL(c.req.url).search !== "") return errorResponse(c, 404, "not_found_error", "AI route not found");
+        const search = new URL(c.req.url).search;
+        const isAnthropicMessagesPath = c.req.path === MESSAGES_PATH || c.req.path === COUNT_TOKENS_PATH;
+        if (search !== "" && !(isAnthropicMessagesPath && search === CLAUDE_CODE_BETA_QUERY)) {
+          return errorResponse(c, 404, "not_found_error", "AI route not found");
+        }
         if (!c.req.header("content-type")?.toLowerCase().startsWith("application/json")) {
           return errorResponse(c, 415, "invalid_request_error", "Content-Type must be application/json");
         }

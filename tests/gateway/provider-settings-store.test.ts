@@ -26,6 +26,38 @@ import {
   providerSettingsCanonicalFixture,
 } from "./provider-settings-test-support.js";
 
+function authoritativeMatrixFunding(): {
+  funding: FundedAiFundingSummary;
+  policy: FundedAiEffectivePolicy;
+} {
+  const funding: FundedAiFundingSummary = {
+    asOf: NOW.toISOString(),
+    periodStart: "2026-08-01T00:00:00.000Z",
+    monthlyBudgetMicrousd: 5_000_000,
+    settledThisMonthMicrousd: 0,
+    reservedMicrousd: 0,
+    reservedThisMonthMicrousd: 0,
+    promotionalBalanceMicrousd: 5_000_000,
+    addonBalanceMicrousd: 0,
+    creditBalanceMicrousd: 5_000_000,
+    fundingShortfallMicrousd: 0,
+    remainingBalanceMicrousd: 5_000_000,
+    remainingBudgetMicrousd: 5_000_000,
+  };
+  return {
+    funding,
+    policy: {
+      enabled: true,
+      globalRevision: 1,
+      runtimeRevision: 1,
+      allowedModelIds: ["anthropic/claude-sonnet-5"],
+      monthlyBudgetMicrousd: funding.monthlyBudgetMicrousd,
+      checkedAt: NOW.toISOString(),
+      staleAfter: "2026-08-30T10:01:00.000Z",
+    },
+  };
+}
+
 describe("ProviderSettingsStore", () => {
   let homePath: string;
   let privateRootPath: string;
@@ -185,7 +217,8 @@ describe("ProviderSettingsStore", () => {
       reason: "ledger_not_available",
     });
 
-    const response = await store.mutate({
+    const fundedStore = createStore({ fundingSummary: authoritativeMatrixFunding() });
+    const response = await fundedStore.mutate({
       type: "add_harness",
       expectedRevision: 0,
       idempotencyKey: "add_opencode_1",
@@ -200,8 +233,8 @@ describe("ProviderSettingsStore", () => {
     expect(response.snapshot.harnesses).toEqual(expect.arrayContaining([
       expect.objectContaining({ harness: "opencode", enabled: false, installState: "missing" }),
     ]));
-    const stored = await readFile(store.configurationPath, "utf8");
-    expect((await stat(store.configurationPath)).mode & 0o777).toBe(0o600);
+    const stored = await readFile(fundedStore.configurationPath, "utf8");
+    expect((await stat(fundedStore.configurationPath)).mode & 0o777).toBe(0o600);
     expect(stored).not.toMatch(/"readiness"|"usage"|apiKey|accessToken/);
   });
 
@@ -426,7 +459,7 @@ describe("ProviderSettingsStore", () => {
     }));
   });
 
-  it("fails a generic harness route closed when its catalog fails despite a portable source", async () => {
+  it("fails a native credential-backed generic harness route closed when its catalog fails", async () => {
     const store = createStore({
       genericModelCatalog: { providers: [], accessSources: [], failures: ["opencode"] },
     });
@@ -441,8 +474,8 @@ describe("ProviderSettingsStore", () => {
         displayName: "OpenCode Matrix",
         accentColor: null,
         enabled: true,
-        selectedAccountId: null,
-        accessSourceId: "matrix_included",
+        selectedAccountId: "owner_anthropic",
+        accessSourceId: "owner_anthropic_profile",
         route: {
           kind: "configurable",
           providerId: "anthropic",
@@ -461,7 +494,7 @@ describe("ProviderSettingsStore", () => {
 
     const projected = await store.getSnapshot();
 
-    expect(projected.accessSources).toContainEqual(expect.objectContaining({ id: "matrix_included" }));
+    expect(projected.accessSources).toContainEqual(expect.objectContaining({ id: "owner_anthropic_profile" }));
     expect(projected.harnesses).toContainEqual(expect.objectContaining({
       id: "harness_opencode_matrix",
       enabled: false,
@@ -528,7 +561,7 @@ describe("ProviderSettingsStore", () => {
     });
     login.supportedMethods = vi.fn(({ driverId, installState }) =>
       driverId === "claude_code" && installState === "installed" ? ["terminal"] : []);
-    const store = createStore();
+    const store = createStore({ fundingSummary: authoritativeMatrixFunding() });
     await mkdir(dirname(store.configurationPath), { recursive: true });
     await writeFile(store.configurationPath, JSON.stringify({
       schemaVersion: 1,
@@ -936,6 +969,7 @@ describe("ProviderSettingsStore", () => {
   it("rolls runtime configuration back when canonical refresh fails", async () => {
     let reads = 0;
     const store = createStore({
+      fundingSummary: authoritativeMatrixFunding(),
       snapshot: () => {
         reads += 1;
         if (reads === 2) throw new Error("refresh failed at /private/provider");
@@ -963,7 +997,7 @@ describe("ProviderSettingsStore", () => {
   });
 
   it("rolls runtime configuration back when owner configuration persistence fails", async () => {
-    const store = createStore();
+    const store = createStore({ fundingSummary: authoritativeMatrixFunding() });
     await store.getSnapshot();
     const tempPath = join(dirname(store.configurationPath), ".settings.json.tmp");
     const sentinelPath = join(homePath, "runtime-rollback-sentinel.txt");
@@ -995,6 +1029,7 @@ describe("ProviderSettingsStore", () => {
     });
     const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const store = createStore({
+      fundingSummary: authoritativeMatrixFunding(),
       snapshot: () => {
         reads += 1;
         if (reads === 2) throw new Error("canonical refresh failed");
@@ -1171,7 +1206,7 @@ describe("ProviderSettingsStore", () => {
   });
 
   it("keeps logout distinct and blocks removal until exact dependencies are reassigned", async () => {
-    const store = createStore();
+    const store = createStore({ fundingSummary: authoritativeMatrixFunding() });
     let response = await store.mutate({
       type: "select_account",
       expectedRevision: 0,
