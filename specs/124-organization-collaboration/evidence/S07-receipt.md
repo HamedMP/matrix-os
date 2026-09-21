@@ -57,3 +57,33 @@ Unresolved Greptile threads on #1808 at head `52c2790ef`:
 | P2 `revocation-enforcer.ts` runtime bindings never evict | Valid. RED `043241c30` (2 failures: capacity throw, no age sweep). GREEN `04bc9652e`: at capacity the oldest binding is stopped and evicted instead of refusing the new one; bindings older than `maxAgeMs` (default 6h, bounded 1s–7d) are stopped and evicted by `sweep()`, run on every bind and by an unref'd 60s timer (`startTimer:false` for tests, `close()` clears it); eviction stops are awaitable through `settle()`. Fail closed: a runtime never outlives its revocation tracking. |
 
 Checks: terminal sandbox/control/scope/authorization/websocket and wiring suites → **43/43** with the terminal-scope suite on real Postgres (`MATRIX_TEST_POSTGRES_URL`); `bun run typecheck` exit 0 (all packages); `bun run check:patterns` 0 violations, 5 pre-existing warnings. No production caller constructs `SandboxRuntimeRegistry` on this layer; S09 wires it and should pass nothing extra (defaults start the sweep timer) and call `close()` on shutdown.
+
+## Review round 3 (2026-09-21, #1808 at `ab4bab247`)
+
+Greptile scored **4/5** with one thread and a two-part verdict.
+
+**P2 "Missing request body limit" (`terminal-routes.ts:44`, PATCH terminal). The finding is wrong.**
+The PATCH handler is already behind Hono `bodyLimit`: the collaboration composition registers one
+shared mutation limit for every mutating method before any resource module registers a handler
+(`routes.ts:21-29`, `routes.on(["POST", "PATCH", "DELETE"], "/api/collaboration/*", mutationLimit)`
+with `COLLABORATION_HTTP_BODY_LIMIT` = 96 KiB), and `registerTerminalRoutes` runs after it
+(`routes.ts:33`). So the limit applies before `readJson` buffers anything, exactly as the
+repository directive requires; a per-route limit here would be a second copy of the same rule.
+
+Proven rather than argued: the oversized-body case in `collaboration-routes.test.ts` now drives a
+97 KiB PATCH at `/api/collaboration/scopes/:scopeId/terminal` with a valid actor proof over the
+exact bytes and asserts **413**, alongside the existing POST case. That also guards the shared
+registration, since dropping `PATCH` from the method list would fail the test.
+
+**Verdict part 2, "relay teardown can leave a still-connecting upstream socket orphaned".** Not
+this layer. `packages/platform/src/platform-websocket-upgrade.ts` belongs to `124/s05-relay`, where
+the client-close path was already fixed (`3378857c7`). The residual is the connect race:
+`activeUpstream` is assigned only inside the TLS connect callback, so a client socket destroyed
+while the handshake is in flight tears down nothing and the callback then writes and pipes into a
+destroyed socket; on an idle stream no byte flows to raise the error that would clean it up.
+Reported to the coordinator for that layer, with the same evidence recorded in the S06 receipt.
+
+**Gates.** `collaboration-routes`, `collaboration-terminal-scope` (real Postgres),
+`collaboration-terminal-authorization` and `collaboration-terminal-control` → **50/50 across 4
+files**; `bun run typecheck` exit 0; `bun run check:patterns` 0 violations, 5 pre-existing
+warnings. No React file changed.
