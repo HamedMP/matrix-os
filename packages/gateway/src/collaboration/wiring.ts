@@ -566,6 +566,8 @@ export async function createGatewayCollaboration(options: {
         directSessions,
         authority,
         repository,
+        capabilities,
+        capabilityEvaluator: new CollaborationCapabilityEvaluator({ db: options.db, grants: capabilities, organizationPrecondition }),
         chatScope,
         chatAdapter,
         discussionAdapter,
