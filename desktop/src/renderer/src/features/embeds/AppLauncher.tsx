@@ -2,6 +2,7 @@ import { LayoutGrid, Monitor, Plus, Search } from "@renderer/lib/hugeicons";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button, EmptyState } from "../../design/primitives";
 import { appIconUrl, useAppsQuery, type MatrixApp } from "../apps/apps.api";
+import { DesktopResourceSharing } from "../files/DesktopResourceSharing";
 import { useConnection } from "../../stores/connection";
 import { useTabs } from "../../stores/tabs";
 import { trackDesktopEvent } from "../../lib/desktop-analytics";
@@ -295,6 +296,10 @@ export default function AppLauncher({
         </div>
       </div>
       <div className={`flex flex-1 flex-col gap-4 overflow-y-auto px-6 pb-24 ${presentation === "launchpad" ? "mx-auto w-full max-w-6xl" : ""}`}>
+        {filtered[activeIndex]?.type === "installed" && filtered[activeIndex].app.path ? <div className="flex items-center justify-end gap-2 text-xs">
+          <span className="truncate" style={{ color: "var(--text-tertiary)" }}>{filtered[activeIndex].name}</span>
+          <DesktopResourceSharing key={filtered[activeIndex].app.path} kind="app" path={filtered[activeIndex].app.path} />
+        </div> : null}
         {filtered.length === 0 ? (
           <p className="px-1 text-sm" style={{ color: "var(--text-tertiary)" }}>No apps match “{query}”.</p>
         ) : (

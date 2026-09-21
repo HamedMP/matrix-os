@@ -16,6 +16,7 @@ import { StatusBar } from "./StatusBar";
 import { FileContextMenu } from "./FileContextMenu";
 import { QuickLook } from "./QuickLook";
 import { FileDownloadProvider } from "./FileDownloadProvider";
+import { FileResourceSharing } from "./FileResourceSharing";
 import { XpExplorer } from "./XpExplorer";
 
 interface FileBrowserProps {
@@ -276,6 +277,11 @@ export function FileBrowser({ windowId, mobile = false }: FileBrowserProps) {
       }
   };
 
+  const selectedName = selectedPaths.size === 1 ? Array.from(selectedPaths)[0] : null;
+  const selectedEntry = selectedName ? entries.find((entry) => entry.name === selectedName) : null;
+  const selectedKind = selectedEntry?.type === "file" ? "file" : selectedEntry?.type === "directory" ? "folder" : null;
+  const selectedPath = selectedName ? (currentPath ? `${currentPath}/${selectedName}` : selectedName) : null;
+
   return (
     <div
       ref={containerRef}
@@ -289,6 +295,9 @@ export function FileBrowser({ windowId, mobile = false }: FileBrowserProps) {
       onKeyDown={handleKeyDown}
     >
       <FileDownloadProvider>
+      {selectedKind && selectedPath && !showingTrash && !searchResults ? <div className="flex justify-end border-b px-3 py-1.5">
+        <FileResourceSharing key={`${selectedKind}:${selectedPath}`} kind={selectedKind} path={selectedPath} />
+      </div> : null}
       {isXpExplorer ? (
         <XpExplorer
           renamingPath={renamingPath}

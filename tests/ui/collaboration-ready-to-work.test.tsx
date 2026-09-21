@@ -6,6 +6,7 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 import type { CollaborationReadiness, CollaborationScope } from "@matrix-os/contracts";
 import { ReadinessSummary } from "../../packages/ui/src/collaboration/ReadinessSummary";
 import { AudienceGrantPicker } from "../../packages/ui/src/collaboration/AudienceGrantPicker";
+import { ResourceSharingButton } from "../../packages/ui/src/collaboration/ResourceSharingButton";
 import { ChatCollaboratorsDialog } from "../../packages/ui/src/collaboration/ChatCollaboratorsDialog";
 
 beforeAll(() => {
@@ -45,6 +46,15 @@ describe("organization ready-to-work presentation", () => {
     expect(screen.queryByText(/Owner account/)).toBeNull();
   });
 
+
+  it("does not show Git details for an unrooted standalone Chat", () => {
+    render(<ReadinessSummary readiness={{ ...projectReady, resourceKind: "chat", items: projectReady.items.map((item) => item.item === "chat_root_inventory"
+      ? { ...item, chatRootCount: 0, dirtyRootCount: 0 } : item) }} />);
+    expect(screen.getByText(/Owner account/)).toBeVisible();
+    expect(screen.queryByText(/Git identity:/)).toBeNull();
+    expect(screen.queryByText(/Chat roots/)).toBeNull();
+  });
+
   it("shows no AI or Git readiness for files, folders or apps", () => {
     for (const resourceKind of ["file", "folder", "app_instance"] as const) {
       const { unmount } = render(<ReadinessSummary readiness={{ resourceKind, state: "ready", missingOwnerSetup: [], items: [] }} />);
@@ -55,10 +65,17 @@ describe("organization ready-to-work presentation", () => {
   });
 
   it("creates only Viewer or Contributor grants for a current organization member or the organization", async () => {
+    let revision = "4";
     const api = {
       baseUrl: "http://localhost", get: vi.fn(async (path: string) => path.endsWith("/members")
         ? { members: [{ actorId: "user_ada", role: "member", joinedAt: "2026-01-01T00:00:00.000Z" }] }
-        : []), post: vi.fn(async () => ({ id: "20000000-0000-4000-8000-000000000401" })), delete: vi.fn(async () => null),
+        : path.endsWith("/grants") ? [] : { ...scope, revision }),
+      post: vi.fn(async (_path: string, body: { audience: unknown; preset: string }) => {
+        revision = "5";
+        return { id: "20000000-0000-4000-8000-000000000401", scopeId: scope.id,
+          organizationId: scope.organizationId, audience: body.audience, preset: body.preset, state: "pending",
+          policyVersion: "v1", revision: "1", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" };
+      }), delete: vi.fn(async () => null),
     };
     render(<AudienceGrantPicker api={api} scope={scope} />);
     expect(await screen.findByRole("option", { name: /user_ada/ })).toBeVisible();
@@ -77,8 +94,38 @@ describe("organization ready-to-work presentation", () => {
     })));
   });
 
+  it("resolves an exact file identity before creating a standalone scope", async () => {
+    const api = { baseUrl: "http://localhost", get: vi.fn(async (path: string) => path.endsWith("/members") ? { members: [] }
+      : path.endsWith("/grants") ? [] : { ...scope, kind: "file", resourceId: "30000000-0000-4000-8000-000000000401" }),
+      post: vi.fn(async (path: string) => path.endsWith("/catalog/resolve")
+        ? { id: "30000000-0000-4000-8000-000000000401", kind: "file", path: "notes/plan.md", incarnation: "file_v1", revision: "1" }
+        : path.endsWith("/scopes/preflight") ? { eligible: true, resourceRevision: "1", confirmationToken: "a".repeat(64) }
+        : path.endsWith("/scopes") ? { ...scope, kind: "file", resourceId: "30000000-0000-4000-8000-000000000401" }
+        : undefined), delete: vi.fn() };
+    render(<ResourceSharingButton api={api} runtimeId="vps:owner" organizationId="org_matrix_team" kind="file" path="notes/plan.md" />);
+    fireEvent.click(screen.getByRole("button", { name: "Share file" }));
+    expect(await screen.findByRole("dialog", { name: "Invite collaborators" })).toBeVisible();
+    expect(api.post).toHaveBeenCalledWith("/api/collaboration/runtimes/vps%3Aowner/catalog/resolve", {
+      kind: "file", path: "notes/plan.md",
+    });
+    expect(api.post).toHaveBeenCalledWith("/api/collaboration/runtimes/vps%3Aowner/scopes/preflight", {
+      kind: "file", resourceId: "30000000-0000-4000-8000-000000000401", organizationId: "org_matrix_team",
+    });
+  });
+
+  it("fails closed when catalog resolves a different folder path", async () => {
+    const api = { baseUrl: "http://localhost", get: vi.fn(), post: vi.fn(async () => ({
+      id: "30000000-0000-4000-8000-000000000401", kind: "folder", path: "notes", incarnation: "folder_v1", revision: "1",
+    })), delete: vi.fn() };
+    render(<ResourceSharingButton api={api} runtimeId="vps:owner" organizationId="org_matrix_team" kind="folder" path="notes/private" />);
+    fireEvent.click(screen.getByRole("button", { name: "Share folder" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/Sharing unavailable/);
+    expect(api.post).toHaveBeenCalledTimes(1);
+  });
+
   it("places the organization member picker in the existing owner manager", async () => {
-    const api = { baseUrl: "http://localhost", get: vi.fn(async () => ({ members: [] })), post: vi.fn(), delete: vi.fn() };
+    const api = { baseUrl: "http://localhost", get: vi.fn(async (path: string) => path.endsWith("/members") ? { members: [] }
+      : path.endsWith("/grants") ? [] : scope), post: vi.fn(async () => undefined), delete: vi.fn() };
     render(<ChatCollaboratorsDialog api={api} scope={scope} members={[]} onRefresh={async () => ({ scope, members: [] })} onClose={vi.fn()} />);
     expect(await screen.findByLabelText("Share with")).toBeVisible();
     expect(screen.queryByLabelText("Member email or username")).toBeNull();
