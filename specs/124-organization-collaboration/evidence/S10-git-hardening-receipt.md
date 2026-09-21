@@ -9,7 +9,7 @@
 | P1-A: member-writable `.git/config` reached owner-credentialed host `git push`/`ls-remote` (`http.proxy`, `http.sslVerify`, `include.path` → `url.*.pushInsteadOf`); the `git config --local` insteadOf guard ignored includes. | Sandbox policy (`packages/scope-runtime/src/sandbox.ts`): `<root>/.git` is its own bind mount (`BindPaths=-<root>/.git:/workspace/project/.git`, read-only bind for `ro` worktrees) so it cannot be renamed or replaced; `ReadOnlyPaths=-` for `.git/config`, `.git/hooks`, `.git/info`, `.git/objects/info`. The sandbox policy digest changes; gateway and scope-runtime pin the same constant. Broker driver: `requireTrustedRepositoryConfig` runs `git config --local --includes --name-only --list -z` (with `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null`) before every remote operation and fails closed (`unavailable`) on `http.*`, `https.*`, `include.*`, `includeIf.*`, `url.*`, `credential.*`, `core.sshCommand/gitProxy/askPass/hooksPath/fsmonitor/alternateRefsCommand/pager`, `remote.*.receivepack/uploadpack/proxy/proxyAuthMethod`, `diff.external`, `diff.*.command`, `filter.*`, `gpg.program`/`gpg.*.program`, `protocol.*`, `ssh.*`. | `a2d75fce9`, `8dafe380a` |
 | P1-B: owner identity was read from the member-writable repository config with the global config disabled. | `createProjectGitDriver({ ownerHome })` resolves `user.name`/`user.email` with `git config --global --get` under `HOME=<ownerHome>` (owner `~/.gitconfig` and `~/.config/git/config`, both unreachable from the sandbox), never from the repository. Missing global identity is `identity: missing` (owner setup action). The identity is passed via `GIT_AUTHOR_*`/`GIT_COMMITTER_*` and the audit detail records `ownerIdentityLabel`. `server.ts` passes `process.env.HOME`. No `~/system/git-identity.json` convention exists in `home/system/` or any reader, so no new persisted format was invented; the gateway's `git-env.ts` "Matrix OS" fallback is deliberately not used because the spec forbids inventing an identity. | `614dc0d77`, `96441f135` |
 | P2-C: `.git` could be a gitdir file or symlink pointing at another owner repository. | Driver `requireRepositoryRoot`: `lstat(<root>/.git)` must be a non-symlink directory, `--show-toplevel` must realpath to the root and `--absolute-git-dir` must equal `<root>/.git`. Chat root inventory: project roots use the same rule; registered worktrees must be a non-symlink gitdir file or directory whose `--git-common-dir` realpaths to their own project's `.git`; violations block the Chat root (`chat_root_unavailable`) without leaking the aliased repository. | `4ef0ac6ac`, `ffa64974f` |
-| P2-D: every push/PR failure became `AmbiguousProjectGitEffect` → `unknown` → permanent `busy` for the scope (member-triggerable DoS). | Exported `classifyPushFailure`: spawn errors (string `code`: ENOENT, E2BIG, EACCES), a `!` rejected ref in `--porcelain` output and pre-transfer stderr (auth, DNS, connect, discovery, bad refspec) are `failed`; timeout/signal or transfer-phase loss is observed once through the existing `reconcile` path (visible effect → `completed`, definite absence → `failed`, unobservable remote → `unknown`). PR creation: spawn failure → `failed`, otherwise settled by observing the forge. Broker `expireUnresolved({ scopeId, actorId, operationId })`: owner-only (actor must equal the scope owner from fresh authorization), one transaction (`FOR UPDATE` + `UPDATE ... WHERE state = 'unknown'` + audit row `outcome=failed`, `reason_code=effect_expired_by_owner`, detail with requesting actor, run, identity label); wrong state → `conflict`. Route `POST /api/collaboration/scopes/:scopeId/project/git/:operationId/expire` (`mutate_project` proof, Zod-validated IDs, global collaboration `bodyLimit`), added to the direct route table. The expired request is never replayed by that path. | `246fd0d98`, `d738cab57` |
+| P2-D: every push/PR failure became `AmbiguousProjectGitEffect` → `unknown` → permanent `busy` for the scope (member-triggerable DoS). | Exported `classifyPushFailure`: spawn errors (string `code`: ENOENT, E2BIG, EACCES), a `!` rejected ref in `--porcelain` output and pre-transfer stderr (auth, DNS, connect, discovery, bad refspec) are `failed`; timeout/signal or transfer-phase loss is observed once through the existing `reconcile` path (visible effect → `completed`, definite absence → `failed`, unobservable remote → `unknown`). PR creation: spawn failure → `failed`, otherwise settled by observing the forge. Broker `expireUnresolved({ scopeId, actorId, operationId })`: owner-only (actor must equal the scope owner from fresh authorization), one transaction (`FOR UPDATE` + `UPDATE ... WHERE state = 'unknown'` + audit row `outcome=failed`, `reason_code=effect_expired_by_owner`, detail with requesting actor, run, identity label); wrong state → `conflict`. Reached as `{ type: "expire", operationId }` on the frozen `POST /api/collaboration/scopes/:scopeId/project/git/actions` endpoint (`mutate_project` proof over the body, Zod-validated ids, global collaboration `bodyLimit`); see the addendum below. The expired request is never replayed by that path. | `246fd0d98`, `d738cab57` |
 | P2-E: PR body (≤256 KiB) passed as one argv exceeded `MAX_ARG_STRLEN` (E2BIG). | `gh pr create ... --body-file -` with the body on stdin through a bounded `spawn` helper (64 KiB output cap, 30 s kill, execFile-shaped errors). | `32a1b7256`, `d2774cf76` |
 | P2-F: `gh` ran with cwd inside the member repository and the owner's full HOME. | `gh` runs in a lazily created owner-only temp dir (`mkdtemp`, mode 0700, empty) with `HOME=<ownerHome>` (credential store), `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_TERMINAL_PROMPT=0`, `GH_PROMPT_DISABLED=1`, `GH_NO_UPDATE_NOTIFIER=1`, explicit `--repo`, and no passthrough of process environment (a `GH_TOKEN` in the gateway environment does not reach gh). `driver.close()` removes the directory; the collaboration wiring drains it on `fence()` and `shutdown()`. | `32a1b7256`, `d2774cf76` |
 
@@ -46,6 +46,50 @@ Final focused matrix on real Postgres (`MATRIX_TEST_POSTGRES_URL`/`CHAT_TEST_DAT
 ## Notes for the coordinator
 
 - The sandbox policy digest changed; scope-runtime and gateway derive it from the same constant, so both packages ship together.
-- `packages/contracts/src/collaboration-direct.ts` gained one route entry (`POST .../project/git/:operationId/expire`). The frozen-route test only requires uniqueness and shape; if the contract owner rejects the addition, `expireUnresolved` remains usable from the broker and the route registration in `project-routes.ts` can be dropped.
+- `packages/contracts/src/collaboration-direct.ts` is unchanged from the S02 freeze: owner expiry is a member of `CollaborationGitActionRequestSchema` on the existing actions endpoint, not a new route. See the addendum below.
 - `git rev-parse --path-format=absolute` (inventory worktree check) needs Git ≥ 2.31; the customer image ships 2.43.
 - A worktree-kind Chat root is pinned to its own project's common directory; a project-kind root must own a real `.git` directory. Non-Git project roots still inventory as non-Git.
+
+## Addendum: owner expiry moved into the frozen Git action union (2026-09-21)
+
+**Why it moved.** This layer had added `POST .../project/git/:operationId/expire` as a new row in
+`COLLABORATION_DIRECT_ROUTES`, which S02 froze. It survived review only because the freeze test checks
+uniqueness, per-route shape and a few forbidden prefixes rather than the exact surface. The contract already
+expresses Git as one action endpoint over a discriminated union, and AGENTS.md requires action endpoints to
+use a per-action schema keyed by `type`, so expiry belongs in that union. The route row is removed and the
+frozen table matches S02 again.
+
+**Shape, and why it carries no queue fields.** `{ type: "expire", operationId }`, `.strict()`. The five
+effect members share `clientRequestId`, `expectedRevision` and `payloadHash` because they queue an effect
+row: the client request id is the idempotency key, the expected revision is the optimistic check, and the
+payload hash is compared against the stored row. Expiry queues nothing. It resolves one existing operation,
+and its concurrency check is the broker's `UPDATE ... WHERE state = 'unknown'`, so a repeat is a `conflict`
+rather than a second tombstone. Adding those three fields would invent preconditions the endpoint never had.
+The body is still bound to the actor: `authorize()` verifies the proof over the exact bytes, which now
+include the operation id, where the removed route authorized over an empty body.
+
+**Union split.** `CollaborationGitEffectRequestSchema` is the five queued effects and is what the broker
+stores and the Git driver executes; `CollaborationGitActionRequestSchema` is that plus expiry and is what the
+endpoint accepts. `ProjectGitExecution.request` is typed as the effect union, so an expiry cannot reach the
+driver by construction, and `submit` rejects an expire action explicitly before any row is written.
+
+**Owner-only on the action path.** The actions endpoint is reachable by contributors for the other action
+types, so the owner rule is enforced past it, unchanged: `expireUnresolved` re-authorizes, requires
+`authorization.ownerId === actorId`, and performs `FOR UPDATE` plus `UPDATE ... WHERE state = 'unknown'` plus
+the `effect_expired_by_owner` audit row in one transaction. Proven end to end on real Postgres through the
+registered route: a contributor posting the expire action gets 403 and the operation stays `unknown`; the
+owner gets 200 with `failed` and exactly one audit row; a repeat gets 409.
+
+**Freeze guard.** `tests/contracts/collaboration-direct.test.ts` now asserts the project Git surface is
+exactly `GET .../project/git` and `POST .../project/git/actions`, so a future Git route cannot slip past the
+freeze the way this one did. A full exact-list assertion for the whole table is worth considering by the S02
+owner; this layer froze only the surface it touched.
+
+**Commits.** RED `test(collaboration): reach owner Git expiry through the frozen action union`; GREEN
+`fix(collaboration): express owner Git expiry as a Git action, not a route`.
+
+**Gates.** `collaboration-execution` and `collaboration-direct` contracts, `project-git-routes`,
+`project-git-broker-postgres`, `project-git-driver`, `project-share-inventory-postgres` and
+`collaboration-wiring` → **67/67 across 7 files**, on real Postgres where the suite uses it;
+`bun run typecheck` exit 0; `bun run check:patterns` 0 violations, 5 pre-existing warnings. No React files
+changed.
