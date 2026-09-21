@@ -121,6 +121,8 @@ export class PlatformCollaborationCutover {
     resolveHome(input: { scopeId: string; runtimeId: string; ownerId: string }): Promise<
       { status: "ready"; home: CutoverHome } | { status: "offline" | "ambiguous" }
     >;
+    /** Fresh, authenticated proof of the exact installed owner's compatible direct build. */
+    verifyCompatibleDirectBuild?(input: { scopeId: string; runtimeId: string; ownerId: string; targetGeneration: number }): Promise<boolean>;
   }) {}
 
   async run(scopeId: string, input: { backupRef: string }): Promise<CutoverJournal> {
@@ -147,6 +149,16 @@ export class PlatformCollaborationCutover {
     if (mode === "compatible_direct") {
       if (proof?.compatibleDirectBuild !== true) throw new Error("A compatible direct build must be verified before rollback");
       if (row.phase !== "active") throw new Error("Compatible rollback requires an active direct generation");
+      let verified = false;
+      try {
+        verified = await this.options.verifyCompatibleDirectBuild?.({
+          scopeId, runtimeId: row.runtime_id, ownerId: row.owner_id,
+          targetGeneration: Number(row.target_generation),
+        }) === true;
+      } catch (error: unknown) {
+        console.warn("[collaboration-cutover] compatible build verification unavailable", error instanceof Error ? error.name : "UnknownError");
+      }
+      if (!verified) throw new Error("A compatible direct build must be verified before rollback");
       const resolution = await this.readyHome(row);
       if (resolution.status !== "ready") return this.block(row, resolution.status, "verified");
       try {
