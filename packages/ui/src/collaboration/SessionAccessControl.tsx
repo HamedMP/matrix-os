@@ -44,8 +44,9 @@ export function SessionAccessControl({ api, scope, zIndex }: {
       const currentMembers = z.strictObject({ members: z.array(CollaborationMemberSchema).max(8) }).parse(memberValue).members;
       setCurrentScope(currentScope);
       setMembers(currentMembers);
-      setReadiness(readinessResult.status === "fulfilled" && readinessResult.value
-        ? CollaborationReadinessSchema.safeParse(readinessResult.value).data ?? null : null);
+      const parsedReadiness = readinessResult.status === "fulfilled" && readinessResult.value
+        ? CollaborationReadinessSchema.safeParse(readinessResult.value) : null;
+      setReadiness(parsedReadiness?.success && parsedReadiness.data.resourceKind === scope.kind ? parsedReadiness.data : null);
       setProjectReadiness(projectResult.status === "fulfilled" && projectResult.value
         ? CollaborationProjectAccessReadinessSchema.safeParse(projectResult.value).data ?? null : null);
       return { scope: currentScope, members: currentMembers };
