@@ -30,7 +30,7 @@ import { createDirectSessionRoutes } from "./direct-routes.js";
 import { DirectSessionService } from "./direct-sessions.js";
 import { OwnerRuntimeSessionService } from "./owner-runtime-sessions.js";
 import { registerCollaborationDirectWebSocketRoutes } from "./direct-websocket.js";
-import { ensureRuntimeIdentity } from "./runtime-identity.js";
+import { confirmationKeyFromRuntimeIdentity, ensureRuntimeIdentity } from "./runtime-identity.js";
 import { CollaborationEventRegistry } from "./events.js";
 import { CollaborationParticipantResolver } from "./participant-resolver.js";
 import {
@@ -184,6 +184,7 @@ export async function createGatewayCollaboration(options: {
   // and holds every session. Without registered keys or client origins the
   // direct routes fail closed while the rest keeps serving.
   const runtimeIdentity = await ensureRuntimeIdentity(options.db);
+  const confirmationSecret = confirmationKeyFromRuntimeIdentity(runtimeIdentity, options.config.runtimeId);
   let controlClient: CollaborationControlClient | undefined;
   const directVerifier = new DirectTicketVerifier({
     runtimeId: options.config.runtimeId,
@@ -234,7 +235,7 @@ export async function createGatewayCollaboration(options: {
   }
   const chatScope = new CollaborationChatScopeService(options.db, {
     runtimeId: options.config.runtimeId,
-    preflightSecret: options.config.preflightSecret,
+    preflightSecret: confirmationSecret,
   });
   const projectTransitions = createProjectTransitionJournal({ db: options.db });
   const projectFence = createProjectFence({ db: options.db, transitions: projectTransitions });
@@ -244,7 +245,7 @@ export async function createGatewayCollaboration(options: {
   if (projectLifecycle) await projectLifecycle.recoverPending();
   const projectScope = options.projectSource ? new CollaborationProjectScopeService(options.db, {
     runtimeId: options.config.runtimeId,
-    preflightSecret: options.config.preflightSecret,
+    preflightSecret: confirmationSecret,
     source: options.projectSource,
   }) : undefined;
   const outbox = new CollaborationDirectoryOutbox({
@@ -390,7 +391,7 @@ export async function createGatewayCollaboration(options: {
         resourceServices = { catalog, driver: input.driver, uploads, ...(apps ? { apps } : {}),
           ...(input.resolveAppIncarnation ? { resolveAppIncarnation: input.resolveAppIncarnation } : {}) };
         standaloneScope = new StandaloneResourceScopeService({ resources: resourceServices,
-          runtimeId: options.config.runtimeId, preflightSecret: options.config.preflightSecret });
+          runtimeId: options.config.runtimeId, preflightSecret: confirmationSecret });
         ownerResourceDriver = input.driver;
       } catch (error: unknown) {
         uploads.close();
@@ -451,7 +452,7 @@ export async function createGatewayCollaboration(options: {
         runtime: input.runtime,
         runtimeId: options.config.runtimeId,
         executionEligibility: input.executionEligibility,
-        preflightSecret: options.config.preflightSecret,
+        preflightSecret: confirmationSecret,
       });
       terminalControl = new TerminalControlCoordinator({
         startTimer: options.startTimers,
@@ -483,7 +484,7 @@ export async function createGatewayCollaboration(options: {
       const inventory = createProjectInventoryService({
         homePath: input.homePath,
         source: input.inventorySource,
-        confirmationSecret: options.config.preflightSecret,
+        confirmationSecret,
       });
       projectTransitionCoordinator = createProjectTransitionCoordinator({
         db: options.db,
