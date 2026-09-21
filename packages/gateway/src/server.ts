@@ -4376,6 +4376,9 @@ export async function createGateway(config: GatewayConfig) {
         homePath,
         providerCatalog: canonicalChatProviderCatalog,
         codingProviders: codingAgentProviderRegistry,
+        // S09: the canonical resolver is the S07 sandbox manifest source; without it
+        // shared AI reports no eligibility instead of launching unmounted runs.
+        ...(canonicalChatExecutionRoots ? { executionRoots: canonicalChatExecutionRoots } : {}),
         ...(fundedCredentialProvider ? { fundedCredentialProvider } : {}),
       });
       console.log(`[collaboration] shared AI ${sharedAi.available ? "ready" : "disabled"}`);
