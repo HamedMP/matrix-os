@@ -139,12 +139,16 @@ async function capture(browser, surface, scenario) {
     const text = (await page.locator("main").filter({ hasText: "Shared with me" }).first().innerText().catch(() => "")).replace(/\s+/g, " ");
     console.log(surface.name, scenario, "cards:", text.slice(0, 400));
     await shot(page, `${surface.name}-${scenario}`);
+    return true;
   } catch (error) {
     console.log("FAILED", surface.name, scenario, error.message.split("\n")[0]);
-    await page.screenshot({ path: `${OUT}/failure-${surface.name}-${scenario}.png` }).catch(() => {});
+    await page.screenshot({ path: `${OUT}/failure-${surface.name}-${scenario}.png` })
+      .catch((captureError) => console.warn("Failure screenshot unavailable", captureError instanceof Error ? captureError.name : "UnknownError"));
     console.log("body:", (await page.locator("body").innerText().catch(() => "")).slice(0, 400).replace(/\n+/g, " | "));
+    return false;
+  } finally {
+    await context.close();
   }
-  await context.close();
 }
 
 const browser = await chromium.launch();
@@ -154,7 +158,11 @@ const surfaces = [
   { name: "web-mobile", viewport: { width: 390, height: 844 }, presentation: null },
 ].filter((surface) => !ONLY_SURFACE || surface.name === ONLY_SURFACE);
 const scenarios = ["org-pending", "offline", "denied", "all"].filter((scenario) => !ONLY_SCENARIO || scenario === ONLY_SCENARIO);
-for (const surface of surfaces) for (const scenario of scenarios) await capture(browser, surface, scenario);
+let failures = 0;
+for (const surface of surfaces) for (const scenario of scenarios) {
+  if (!await capture(browser, surface, scenario)) failures += 1;
+}
 console.log("connection calls:", connectionCalls.join(", ") || "none");
 console.log("unmocked:", [...unmocked].join(", ") || "none");
 await browser.close();
+if (failures > 0) process.exitCode = 1;
