@@ -224,5 +224,13 @@ describe("collaboration actor proofs", () => {
       ...signed,
       policy: { ...signed.policy, mode: "enabled" },
     })).toThrowError(CollaborationActorProofError);
+    expect(() => verifier.verifyPolicy({
+      ...signed,
+      policy: { ...signed.policy, expiresAt: now.toISOString() },
+    })).toThrowError(CollaborationActorProofError);
+    expect(() => verifier.verifyPolicy({
+      ...signed,
+      policy: { ...signed.policy, issuedAt: "2026-09-07T11:59:00.000Z" },
+    })).toThrowError(CollaborationActorProofError);
   });
 });
