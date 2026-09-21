@@ -44,6 +44,7 @@ import type { OwnerCollaborationDatabase } from "./database.js";
 import type { CollaborationEventRegistry } from "./events.js";
 import { createScopeRuntimeBroker, createScopeRuntimeBrokerServer } from "./scope-runtime-broker.js";
 import { createHash } from "node:crypto";
+import { isAbsolute, join, relative, sep } from "node:path";
 import type { CanonicalChatExecutionRootRef, CollaborationRunInterruptionReason } from "@matrix-os/contracts";
 import type { ScopeRuntimeSandboxManifest } from "@matrix-os/scope-runtime";
 import type { ChatExecutionRootResolver } from "../chat/execution-root.js";
@@ -247,13 +248,14 @@ export async function createSharedAiRuntime(options: {
               };
           // S09: a rooted run mounts the owner's project or worktree through the S07
           // sandbox; without the sandbox capability or a root resolver it is unavailable.
-          const sandbox = await sandboxManifestFor({
+          const sandbox = await createSharedChatSandboxManifest({
             run,
             scopeId,
             actorId: execution.requestingActorId,
             capability: client.capability(),
             executionRoots: options.executionRoots,
             owner: { type: "personal", ownerId: context.ownerId },
+            homePath: options.homePath,
           });
           // S08/S09: pin actor, owner, source, policy revision, audience and root per run
           // before any provider work; a refusal keeps the queued request in place.
@@ -269,7 +271,7 @@ export async function createSharedAiRuntime(options: {
               audienceGeneration: String(execution.authorityGeneration),
               harness: ownerDecision.harness,
               modelId: execution.selection.model,
-              rootFingerprint: sandbox?.worktree.fingerprint ?? run.executionRootFingerprint ?? null,
+              rootFingerprint: sandbox.worktree.fingerprint,
             });
           }
           const factory = adapter.adapterId === "codex" ? createSharedCodexAdapter : createSharedClaudeAdapter;
@@ -286,7 +288,7 @@ export async function createSharedAiRuntime(options: {
             scopeId,
             executionGeneration: capability.executionGeneration,
             harnessVersion: adapter.harnessVersion,
-            ...(sandbox ? { sandbox } : {}),
+            sandbox,
             ...(options.sandboxRuntimes ? { runtimes: options.sandboxRuntimes } : {}),
             onLoss: (reason) => {
               void recordLoss(options.runLoss, {
@@ -814,21 +816,25 @@ async function recordLoss(
   }
 }
 
-async function sandboxManifestFor(input: {
+export async function createSharedChatSandboxManifest(input: {
   run: SharedDispatchRun;
   scopeId: string;
   actorId: string;
-  capability: ReturnType<ReturnType<typeof createScopeRuntimeClient>["capability"]>;
+  capability: { available: boolean; sandbox?: { workloads: readonly ("chat_ai" | "terminal")[] } };
   executionRoots: Pick<ChatExecutionRootResolver, "resolve"> | undefined;
   owner: { type: "personal"; ownerId: string };
-}): Promise<ScopeRuntimeSandboxManifest | undefined> {
-  if (!input.run.executionRoot) return undefined;
+  homePath: string;
+}): Promise<ScopeRuntimeSandboxManifest> {
+  if (!input.run.executionRoot || !input.run.executionRootFingerprint) {
+    throw new SharedChatRunPreparationError("unavailable");
+  }
   if (!input.executionRoots || !input.capability.available || !input.capability.sandbox
     || !input.capability.sandbox.workloads.includes("chat_ai")) {
     throw new SharedChatRunPreparationError("unavailable");
   }
   const resolved = await input.executionRoots.resolve(input.owner, input.run.executionRoot);
-  if (input.run.executionRootFingerprint && resolved.fingerprint !== input.run.executionRootFingerprint) {
+  if (resolved.fingerprint !== input.run.executionRootFingerprint
+    || !isAllowedSandboxRoot(input.homePath, resolved.primaryWorkspaceRoot)) {
     throw new SharedChatRunPreparationError("unavailable");
   }
   return {
@@ -838,6 +844,14 @@ async function sandboxManifestFor(input: {
     worktree: { hostPath: resolved.primaryWorkspaceRoot, mode: "rw", fingerprint: resolved.fingerprint },
     network: "broker_only",
   };
+}
+
+function isAllowedSandboxRoot(homePath: string, candidate: string): boolean {
+  if (!isAbsolute(candidate)) return false;
+  return [join(homePath, "projects"), join(homePath, "worktrees")].some((root) => {
+    const child = relative(root, candidate);
+    return child.length > 0 && child !== ".." && !child.startsWith(`..${sep}`) && !isAbsolute(child);
+  });
 }
 
 async function admitRun(input: {

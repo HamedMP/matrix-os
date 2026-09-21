@@ -41,7 +41,7 @@ export function createScopeRuntimeChatProviderAdapter(options: {
   executionGeneration: string;
   adapterId: "claude-code" | "codex";
   harnessVersion: string;
-  /** S09: sandbox manifest mounting the run's execution root; required for any `executionRoot`. */
+  /** S09: sandbox manifest mounting the authoritative shared Chat execution root. */
   sandbox?: ScopeRuntimeSandboxManifest;
   /** S07: registry that stops the runtime when the actor's lease is lost. */
   runtimes?: SharedRuntimeBindingRegistry;
@@ -79,7 +79,10 @@ export function createScopeRuntimeChatProviderAdapter(options: {
     serializeState: (value) => StateSchema.parse(value),
     async *start(value) {
       const input = parseCanonicalProviderRunInput(value);
-      if ((input.executionRoot && !options.sandbox) || input.resumeState !== undefined
+      if (!input.executionRoot || !options.sandbox
+        || input.executionRoot !== options.sandbox.worktree.hostPath
+        || options.sandbox.scopeHandle !== scopeHandle
+        || input.resumeState !== undefined
         || input.parts.some((part) => part.type !== "text")) {
         yield failure("Shared AI supports only the visible Chat transcript on the owner's sandboxed root.");
         return;
