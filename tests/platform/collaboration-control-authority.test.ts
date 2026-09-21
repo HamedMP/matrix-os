@@ -110,7 +110,8 @@ describe("collaboration control authority (T017/T019)", () => {
       member: input.actorId === member, membershipEpoch: 4, requestStartedAt: input.requestStartedAt, expiresAt: new Date(input.requestStartedAt.getTime() + 20_000),
     }));
     const authority = createCollaborationControlAuthority({ repository, now: () => clock, affectedRuntimes: async () => [], projection: { assert } });
-    const assertions = await authority.assertActors(runtimeA, [
+    const runtime = { runtimeId: runtimeA, ownerId: member };
+    const assertions = await authority.assertActors(runtime, [
       { organizationId: org, actorId: member },
       { organizationId: org, actorId: member },
       { organizationId: org, actorId: "user_other000000000000000000" },
@@ -118,7 +119,26 @@ describe("collaboration control authority (T017/T019)", () => {
     expect(assert).toHaveBeenCalledTimes(2);
     expect(assertions.map((a) => a.type === "membership_assertion" && a.member)).toEqual([true, false]);
     expect(assertions.every((a) => a.type === "membership_assertion" && a.requestStartedAt === clock.toISOString())).toBe(true);
-    await expect(authority.assertActors(runtimeA, Array.from({ length: 101 }, (_, i) => ({ organizationId: org, actorId: `user_${String(i).padStart(24, "0")}` })))).rejects.toThrow(/batch/i);
+    await expect(authority.assertActors(runtime, Array.from({ length: 101 }, (_, i) => ({ organizationId: org, actorId: `user_${String(i).padStart(24, "0")}` })))).rejects.toThrow(/batch/i);
+    await authority.shutdown();
+  });
+
+  it("resolves only organizations the runtime owner belongs to and never consults the projection for other actors there", async () => {
+    const assert = vi.fn(async (input: { organizationId: string; actorId: string; requestStartedAt: Date }) => ({
+      member: input.actorId === member, membershipEpoch: 4, requestStartedAt: input.requestStartedAt, expiresAt: new Date(input.requestStartedAt.getTime() + 20_000),
+    }));
+    const authority = createCollaborationControlAuthority({ repository, now: () => clock, affectedRuntimes: async () => [], projection: { assert } });
+    const outsiderOwner = "user_outsider00000000000000";
+    const assertions = await authority.assertActors({ runtimeId: runtimeB, ownerId: outsiderOwner }, [
+      { organizationId: org, actorId: member },
+      { organizationId: "org_2other0000000000000000001", actorId: member },
+    ]);
+    // Only the owner's own membership was checked, once per organization; the actors were never looked up.
+    expect(assert.mock.calls.map(([input]) => input.actorId)).toEqual([outsiderOwner, outsiderOwner]);
+    expect(assertions).toHaveLength(2);
+    for (const assertion of assertions) {
+      expect(assertion).toMatchObject({ type: "membership_assertion", member: false, membershipEpoch: "0", aiSubmission: "owner_only", requestStartedAt: clock.toISOString() });
+    }
     await authority.shutdown();
   });
 

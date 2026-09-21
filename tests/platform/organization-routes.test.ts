@@ -15,6 +15,8 @@ const outsider = "user_outsider00000000000000";
 const runtimeId = "vps:10000000-0000-4000-8000-000000000001";
 const logicalRuntimeId = "vps-10000000-0000-4000-8000-000000000001";
 const runtimeToken = "r".repeat(40);
+const foreignRuntimeId = "vps:10000000-0000-4000-8000-000000000002";
+const foreignRuntimeToken = "f".repeat(40);
 const secretBytes = Buffer.from("0123456789abcdef0123456789abcdef");
 const signingSecret = `whsec_${secretBytes.toString("base64")}`;
 
@@ -71,7 +73,11 @@ describe("platform organization routes (T018)", () => {
     app = createPlatformOrganizationRoutes({
       repository, projection, controlAuthority: authority, webhookSigningSecret: signingSecret, now: () => clock,
       resolveActor: async () => actor,
-      authenticateRuntime: async (input) => input.runtimeId === runtimeId && input.bearerToken === runtimeToken ? { runtimeId, ownerId: admin } : null,
+      authenticateRuntime: async (input) => {
+        if (input.runtimeId === runtimeId && input.bearerToken === runtimeToken) return { runtimeId, ownerId: admin };
+        if (input.runtimeId === foreignRuntimeId && input.bearerToken === foreignRuntimeToken) return { runtimeId: foreignRuntimeId, ownerId: outsider };
+        return null;
+      },
     });
   });
 
@@ -193,5 +199,25 @@ describe("platform organization routes (T018)", () => {
     expect(ack.status).toBe(204);
     const foreign = await app.request("/internal/collaboration/control/ack", { method: "POST", headers: authHeaders, body: JSON.stringify({ protocolVersion: 2, runtimeId: "vps-10000000-0000-4000-8000-000000000009", authorityGeneration: 1, fenceAt: clock.toISOString() }) });
     expect(foreign.status).toBe(403);
+  });
+
+  it("never resolves membership for a runtime whose owner is outside the organization (no cross-tenant oracle)", async () => {
+    await projection.reconcile(org);
+    const foreignHeaders = { authorization: `Bearer ${foreignRuntimeToken}`, "x-matrix-runtime-id": foreignRuntimeId, "content-type": "application/json" };
+    const resolve = await app.request("/internal/organizations/access/resolve", {
+      method: "POST", headers: foreignHeaders,
+      body: JSON.stringify({ protocolVersion: 2, actors: [{ organizationId: org, actorId: member }, { organizationId: org, actorId: admin }] }),
+    });
+    expect(resolve.status).toBe(200);
+    const assertions = await resolve.json() as Array<{ type: string; actorId: string; member: boolean; membershipEpoch: string; aiSubmission?: string }>;
+    // The outsider's home learns nothing: every actor reads as a non-member with no epoch or policy detail.
+    expect(assertions.map((a) => [a.type, a.actorId, a.member, a.membershipEpoch, a.aiSubmission]))
+      .toEqual([["membership_assertion", member, false, "0", "owner_only"], ["membership_assertion", admin, false, "0", "owner_only"]]);
+    // The member's own home still resolves the same actors truthfully.
+    const own = await app.request("/internal/organizations/access/resolve", {
+      method: "POST", headers: { authorization: `Bearer ${runtimeToken}`, "x-matrix-runtime-id": runtimeId, "content-type": "application/json" },
+      body: JSON.stringify({ protocolVersion: 2, actors: [{ organizationId: org, actorId: member }] }),
+    });
+    expect((await own.json() as Array<{ member: boolean }>)[0]!.member).toBe(true);
   });
 });
