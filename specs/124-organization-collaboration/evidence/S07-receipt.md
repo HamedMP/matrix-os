@@ -24,3 +24,15 @@ Base: `124/s06` @ 8c3e761f4 (S06 in progress; S07 is restacked by the coordinato
 - The scope-runtime worker does not yet run a PTY, so `terminal` workloads are advertised by the policy but not by the launcher's adapters: readiness reports sandbox terminals as unsupported (honest) until the worker gains the adapter.
 - Hardlink check is bounded to the worktree's top-level files; deeper hardlinks are a residual risk recorded here, mitigated by `ProtectSystem=strict` and `ProtectHome`.
 - Coordinator patches: `packages/scope-runtime/package.json` gains the `./sandbox` export; `wiring.ts` constructs `CollaborationRevocationEnforcer` and passes `onEnded` to `DirectSessionService`; the launcher's `sandboxRoots` and S08/S09's `SandboxRuntimeRegistry.bind` calls are wired by the packet that creates sandboxed runs (S09 T047/T048).
+
+## Review repairs — 2026-09-21
+
+Base: `124/s07-terminal` @ `eb6a4b4c7`. Test commit: `7386bb2fe`. Fix commit: `62daf9e52`.
+
+- Fresh verified direct-session creation and renewal notify the revocation enforcer, clearing the actor/scope block. Action-budget `exhausted` is session-local and no longer releases another valid session's terminal controller.
+- Pending runtime stops keep a bounded 256-entry tracking map with oldest-entry eviction; a separate count retains `settle()` awareness of every in-flight stop, including evicted entries. Runtime RPCs retain their existing request cap and timeout.
+- The shell registry now persists `contributorControl` at creation and bind, supports exact owner/incarnation-checked withdrawal, and clears the flag when a terminal process is recreated. The terminal adapter carries the setting into bind.
+- Real Postgres exposed an existing terminal directory-outbox JSONB serialization defect; the terminal adapter now writes its JSONB fields with explicit casts.
+- RED: five focused review regressions failed before the fix. Real Postgres terminal-scope activation/reopen failed 2/8 on invalid JSONB input before the serialization fix.
+- GREEN: four focused suites passed 103/103 on PGlite/filesystem; terminal-scope suite passed 8/8 on real Postgres (`MATRIX_TEST_POSTGRES_URL` from the local test environment). `bun run typecheck` passed; `bun run check:patterns` found 0 violations and 5 existing warnings; `git diff --check` passed.
+- Host systemd sandbox probes remain unrun and are not claimed. The `124/s07` core layer is updating advertised workloads and launcher roots separately; reconcile the capability wording above after the lower layer is restacked.
