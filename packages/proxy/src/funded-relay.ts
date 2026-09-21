@@ -527,7 +527,8 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
           return errorResponse(c, 404, "not_found_error", "AI route not found");
         }
         const search = new URL(c.req.url).search;
-        if (search !== "" && !(c.req.path === MESSAGES_PATH && search === CLAUDE_CODE_BETA_QUERY)) {
+        const isAnthropicMessagesPath = c.req.path === MESSAGES_PATH || c.req.path === COUNT_TOKENS_PATH;
+        if (search !== "" && !(isAnthropicMessagesPath && search === CLAUDE_CODE_BETA_QUERY)) {
           return errorResponse(c, 404, "not_found_error", "AI route not found");
         }
         if (!c.req.header("content-type")?.toLowerCase().startsWith("application/json")) {

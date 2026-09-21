@@ -307,29 +307,32 @@ describe("Cloudflare funded relay control-plane ordering", () => {
     await relay.close();
   });
 
-  it("uses a zero-cost policy check for count_tokens without reserving or starting", async () => {
-    const events: string[] = [];
-    const fetchMock = vi.fn(async (input: string | URL | Request) => {
-      const url = String(input);
-      if (url.endsWith("/check")) { events.push("check"); return json(checkResponse()); }
-      if (url.endsWith("/v1/messages/count_tokens")) {
-        events.push("cloudflare_count");
-        return json({ input_tokens: 42 });
-      }
-      throw new Error(`unexpected fetch ${url}`);
-    });
-    const relay = configuredRelay(fetchMock as typeof fetch);
-    const app = new Hono();
-    relay.register(app);
-    const response = await app.request(
-      "/v1/messages/count_tokens",
-      fundedRequest(JSON.stringify({ model: NATIVE_MODEL, messages: [{ role: "user", content: "hello" }] })),
-    );
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ input_tokens: 42 });
-    expect(events).toEqual(["check", "cloudflare_count"]);
-    await relay.close();
-  });
+  it.each(["", "?beta=true"])(
+    "uses a zero-cost policy check for count_tokens%s without reserving or starting",
+    async (query) => {
+      const events: string[] = [];
+      const fetchMock = vi.fn(async (input: string | URL | Request) => {
+        const url = String(input);
+        if (url.endsWith("/check")) { events.push("check"); return json(checkResponse()); }
+        if (url.endsWith("/v1/messages/count_tokens")) {
+          events.push("cloudflare_count");
+          return json({ input_tokens: 42 });
+        }
+        throw new Error(`unexpected fetch ${url}`);
+      });
+      const relay = configuredRelay(fetchMock as typeof fetch);
+      const app = new Hono();
+      relay.register(app);
+      const response = await app.request(
+        `/v1/messages/count_tokens${query}`,
+        fundedRequest(JSON.stringify({ model: NATIVE_MODEL, messages: [{ role: "user", content: "hello" }] })),
+      );
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ input_tokens: 42 });
+      expect(events).toEqual(["check", "cloudflare_count"]);
+      await relay.close();
+    },
+  );
 
   it("never reaches Cloudflare when platform policy denies an opaque or legacy credential", async () => {
     const cloudflareFetch = vi.fn();
@@ -692,6 +695,7 @@ describe("Cloudflare funded relay control-plane ordering", () => {
     relay.register(app);
     expect((await app.request("/v1/complete", fundedRequest())).status).toBe(404);
     expect((await app.request("/v1/messages?debug=1", fundedRequest())).status).toBe(404);
+    expect((await app.request("/v1/messages/count_tokens?debug=1", fundedRequest())).status).toBe(404);
     expect((await app.request("/v1/messages", {
       ...fundedRequest(), headers: { "content-type": "text/plain", "x-api-key": CREDENTIAL },
     })).status).toBe(415);
