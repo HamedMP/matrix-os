@@ -38,7 +38,7 @@ const scope: CollaborationScope = {
 describe("whole-project sharing confirmation", () => {
   it("keeps the share action disabled until runtime identity is ready", () => {
     const api = apiFixture();
-    render(<ProjectSharingButton api={api} runtimeId={null} projectId="proj_launch" projectName="Launch" />);
+    render(<ProjectSharingButton api={api} runtimeId={null} organizationId="org_matrix_team" projectId="proj_launch" projectName="Launch" />);
 
     expect(screen.getByRole("button", { name: "Share project" })).toBeDisabled();
     expect(screen.getByText("Loading share…")).toBeVisible();
@@ -54,13 +54,14 @@ describe("whole-project sharing confirmation", () => {
       .mockResolvedValueOnce(scope)
       .mockResolvedValueOnce({ members: [] })
       .mockResolvedValueOnce(completeInventory());
-    render(<ProjectSharingButton api={api} runtimeId="vps:runtime" projectId="proj_launch" projectName="Launch" />);
+    render(<ProjectSharingButton api={api} runtimeId="vps:runtime" organizationId="org_matrix_team" projectId="proj_launch" projectName="Launch" />);
 
     fireEvent.click(screen.getByRole("button", { name: "Share project" }));
     expect(await screen.findByRole("heading", { name: "Share the whole Launch project?" })).toBeVisible();
     expect(api.post).toHaveBeenNthCalledWith(1, "/api/collaboration/runtimes/vps:runtime/scopes/preflight", {
       kind: "project",
       resourceId: "proj_launch",
+      organizationId: "org_matrix_team",
     });
     expect(api.post).toHaveBeenNthCalledWith(2, "/api/collaboration/runtimes/vps:runtime/scopes", expect.objectContaining({
       kind: "project",

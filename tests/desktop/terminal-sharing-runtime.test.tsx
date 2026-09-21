@@ -5,6 +5,8 @@ import { act, render, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DesktopTerminalSharing } from "../../desktop/src/renderer/src/features/terminal/DesktopTerminalSharing";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
+import { DesktopCollaborationOrganization } from "../../desktop/src/renderer/src/features/collaboration/DesktopCollaborationOrganization";
+import { useState } from "react";
 
 const sharingButton = vi.hoisted(() => vi.fn(() => null));
 
@@ -16,7 +18,22 @@ vi.mock("@matrix-os/ui", () => ({
 describe("DesktopTerminalSharing", () => {
   beforeEach(() => {
     sharingButton.mockClear();
-    useConnection.setState({ api: null, platformHost: "https://app.matrix-os.com" });
+    useConnection.setState({ api: null, platformHost: "https://app.matrix-os.com", organizationId: null });
+  });
+
+  it("passes the active organization from the connection state and disables sharing without one", async () => {
+    const api = { get: vi.fn(async () => ({ runtime: { machineId: "10000000-0000-4000-8000-000000000001" }, capabilities: { collaboration: true } })) };
+    useConnection.setState({ api: api as never, organizationId: null });
+    render(<DesktopTerminalSharing terminalId="terminal_release" />);
+    await waitFor(() => expect(sharingButton).toHaveBeenLastCalledWith(
+      expect.objectContaining({ runtimeId: "vps:10000000-0000-4000-8000-000000000001", organizationId: null }),
+      undefined,
+    ));
+    act(() => useConnection.setState({ organizationId: "org_matrix_team" }));
+    await waitFor(() => expect(sharingButton).toHaveBeenLastCalledWith(
+      expect.objectContaining({ organizationId: "org_matrix_team" }),
+      undefined,
+    ));
   });
 
   it("clears the previous runtime identity while a replacement computer loads", async () => {
@@ -70,5 +87,25 @@ describe("DesktopTerminalSharing", () => {
 
     await act(async () => { await Promise.resolve(); });
     expect(sharingButton).not.toHaveBeenCalled();
+  });
+});
+
+describe("DesktopCollaborationOrganization gate", () => {
+  it("remounts the sharing subtree when the active organization changes", async () => {
+    function StatefulChild({ organizationId }: { organizationId: string | null }) {
+      const [token, setToken] = useState<string | null>(null);
+      return <div>
+        <span data-testid="organization">{organizationId ?? "none"}</span>
+        <span data-testid="token">{token ?? "none"}</span>
+        <button type="button" onClick={() => setToken(`preflight-for-${organizationId ?? "none"}`)}>preflight</button>
+      </div>;
+    }
+    useConnection.setState({ organizationId: "org_alpha" });
+    const view = render(<DesktopCollaborationOrganization>{(id) => <StatefulChild organizationId={id} />}</DesktopCollaborationOrganization>);
+    act(() => { view.getByRole("button", { name: "preflight" }).click(); });
+    await waitFor(() => expect(view.getByTestId("token").textContent).toBe("preflight-for-org_alpha"));
+    act(() => useConnection.setState({ organizationId: "org_beta" }));
+    await waitFor(() => expect(view.getByTestId("organization").textContent).toBe("org_beta"));
+    expect(view.getByTestId("token").textContent).toBe("none");
   });
 });

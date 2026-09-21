@@ -130,16 +130,16 @@ export function ChatCollaboratorsDialog({ api, scope, members, onRefresh, onClos
         <h2 className="text-lg font-semibold">Invite collaborators</h2>
         <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>
           {scope.kind === "project"
-            ? "Invite access applies to this whole project and its future project-owned contents. External references and unrelated resources stay outside the share."
-            : `Invite access applies only to this ongoing ${resourceLabel}. It does not grant access to its project, sibling Chats or terminals, files, or apps.`}
+            ? "Sharing is limited to current members of your organization. Access applies to this whole project and its future project-owned contents; external references and unrelated resources stay outside the share."
+            : `Sharing is limited to current members of your organization. Access applies only to this ongoing ${resourceLabel} and does not grant access to its project, sibling Chats or terminals, files, or apps.`}
         </p>
       </div>
       <button type="button" className={buttonClass} disabled={pending} onClick={onClose}>Close</button>
     </div>
     <section aria-labelledby="invite-person-heading" className="rounded-xl border p-4">
-      <h3 id="invite-person-heading" className="font-medium">Invite a person</h3>
+      <h3 id="invite-person-heading" className="font-medium">Invite an organization member</h3>
       <div className="mt-3 grid gap-3 sm:grid-cols-[1fr_9rem_auto]">
-        <label className="grid gap-1 text-sm">Email or username
+        <label className="grid gap-1 text-sm">Member email or username
           <input value={identifier} disabled={pending} onChange={(event) => setIdentifier(event.target.value)}
             placeholder="name@example.com or @username" autoComplete="off"
             className="min-w-0 rounded-lg border bg-transparent px-3 py-2" />
@@ -156,7 +156,7 @@ export function ChatCollaboratorsDialog({ api, scope, members, onRefresh, onClos
         </button>
       </div>
       <p className="mt-3 text-xs" style={{ color: "var(--text-secondary)" }}>
-        The person must already have a Matrix account. Enter their exact email address or username.
+        Only current members of your organization can be invited. Enter their exact email address or username; people outside the organization cannot be found.
       </p>
       <p className="mt-3 text-xs" style={{ color: "var(--text-secondary)" }}>
         {scope.kind === "terminal"
