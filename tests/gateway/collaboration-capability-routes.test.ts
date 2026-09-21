@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { Hono, type Context } from "hono";
 import type { UpgradeWebSocket, WSEvents } from "hono/ws";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { CollaborationGrantSchema } from "@matrix-os/contracts";
+import { CollaborationGrantSchema, CollaborationReadinessSchema } from "@matrix-os/contracts";
 import { bootstrapChatDatabase } from "../../packages/gateway/src/chat/database.js";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
 import { createGatewayCollaboration } from "../../packages/gateway/src/collaboration/wiring.js";
@@ -132,6 +132,18 @@ describe("collaboration capability HTTP routes", () => {
     const revoked = CollaborationGrantSchema.parse(await revokedResponse.json());
     expect(revoked).toMatchObject({ id: created.id, state: "revoked", revision: "3" });
     expect((await signed({ actorId: ownerId, method: "GET", path })).status).toBe(200);
+  });
+
+
+  it("returns a bounded server-derived readiness preflight only after scope authorization", async () => {
+    const path = `/api/collaboration/scopes/${scopeId}/policy/preflight`;
+    const ownerResponse = await signed({ actorId: ownerId, method: "POST", path, body: {} });
+    expect(ownerResponse.status).toBe(200);
+    const readiness = CollaborationReadinessSchema.parse(await ownerResponse.json());
+    expect(readiness).toMatchObject({ resourceKind: "project", state: "unsupported", missingOwnerSetup: [] });
+    expect(readiness.items).toHaveLength(4);
+    const outsiderResponse = await signed({ actorId: outsiderId, method: "POST", path, body: {} });
+    expect(outsiderResponse.status).toBe(404);
   });
 
 });
