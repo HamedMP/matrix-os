@@ -3,10 +3,13 @@
  *
  * Registers this home with the platform by its enrollment identity, learns
  * the platform ticket verification keys and a one-use control ticket, then
- * holds the control stream: pushed denials end matching direct sessions and
- * are acknowledged with a fence; generation frames move this home's
- * authority generation. Reconnects with bounded backoff; control snapshots
- * have fixed expiry and are never extended by a reconnect.
+ * holds the control stream: pushed denials end matching direct sessions,
+ * end the actor's grants and activations, evict cached membership evidence
+ * and are acknowledged with a fence; generation frames move this home's
+ * authority generation and, as the platform's keepalive, are acknowledged
+ * with the unchanged fence so the platform reads the home as live.
+ * Reconnects with bounded backoff; control snapshots have fixed expiry and
+ * are extended only by an inbound frame, never by a reconnect.
  */
 import {
   COLLABORATION_DIRECT_LIMITS,
@@ -17,6 +20,19 @@ import {
 import { z } from "zod/v4";
 import { type DirectSigningKey, toLogicalRuntimeId } from "./direct-auth.js";
 import type { DirectSessionService } from "./direct-sessions.js";
+import type { CollaborationCapabilityRepository } from "./capability-repository.js";
+
+/** Fence a home reports before it has applied any denial: asserts nothing. */
+const NO_FENCE_AT = "1970-01-01T00:00:00.000Z";
+
+/** Membership source that can drop cached evidence for a denied actor or organization. */
+export interface MembershipEvidenceEvictor {
+  evict(input: { organizationId: string; actorId?: string }): void;
+}
+
+export function isMembershipEvidenceEvictor(source: object): source is MembershipEvidenceEvictor {
+  return typeof (source as Partial<MembershipEvidenceEvictor>).evict === "function";
+}
 
 const RegistrationResponseSchema = z.object({
   protocolVersion: z.literal(COLLABORATION_DIRECT_PROTOCOL_VERSION),
@@ -55,6 +71,8 @@ export class CollaborationControlClient {
   private readonly now: () => Date;
   private readonly fetchImpl: typeof fetch;
   private readonly endpoint: string;
+  /** Time of the last denial this home applied and acknowledged; keepalive acks repeat it. */
+  private lastFenceAt = NO_FENCE_AT;
 
   constructor(private readonly options: {
     platformBaseUrl: string;
@@ -64,6 +82,10 @@ export class CollaborationControlClient {
     serviceToken: string;
     identity: { keyId: string; publicKey: string };
     sessions: Pick<DirectSessionService, "revoke">;
+    /** Ends the denied actor's grants and activations (transactional per scope) before the fence is acknowledged. */
+    capabilities?: Pick<CollaborationCapabilityRepository, "endActorGrants">;
+    /** Drops cached membership evidence for the denied actor or organization. */
+    membership?: MembershipEvidenceEvictor;
     fetchImpl?: typeof fetch;
     /** Opens the control WebSocket; production uses `ws` through `loadDefaultConnector`, tests pass a fake. */
     connect?(url: string, headers: Record<string, string>, onMessage: (raw: string) => void, onClose: () => void): ControlSocketLike | Promise<ControlSocketLike>;
@@ -129,21 +151,32 @@ export class CollaborationControlClient {
         const assertion = CollaborationControlAssertionSchema.parse(JSON.parse(raw) as unknown);
         this.snapshotExpiresAt = this.now().getTime() + CONTROL_SNAPSHOT_TTL_MS;
         if (assertion.type === "denial") {
-          this.options.sessions.revoke(assertion.denial);
-          if (assertion.denial.generation > this.generation) this.generation = assertion.denial.generation;
-          const ack: CollaborationControlAck = {
-            protocolVersion: COLLABORATION_DIRECT_PROTOCOL_VERSION,
-            runtimeId: toLogicalRuntimeId(this.options.runtimeId),
-            authorityGeneration: assertion.denial.generation,
-            fenceAt: this.now().toISOString(),
-          };
-          socket?.send(JSON.stringify(ack));
+          const { denial } = assertion;
+          this.options.sessions.revoke(denial);
+          if (denial.organizationId) {
+            this.options.membership?.evict({ organizationId: denial.organizationId, ...(denial.actorId ? { actorId: denial.actorId } : {}) });
+          }
+          if (denial.generation > this.generation) this.generation = denial.generation;
+          if (denial.organizationId && denial.actorId && this.options.capabilities) {
+            try {
+              await this.options.capabilities.endActorGrants({ organizationId: denial.organizationId, actorId: denial.actorId });
+            } catch (error: unknown) {
+              // Not fully applied: no fence is acknowledged, so the denial completes only at its lease
+              // deadline; access is already closed because the evidence was evicted and sessions ended.
+              console.warn("[collaboration-control-client] departure grant cleanup failed", error instanceof Error ? error.name : "UnknownError");
+              return;
+            }
+          }
+          this.lastFenceAt = this.now().toISOString();
+          this.sendAck(socket, denial.generation);
           return;
         }
         if (assertion.type === "generation") {
           if (assertion.runtimeId === toLogicalRuntimeId(this.options.runtimeId) && assertion.authorityGeneration > this.generation) {
             this.generation = assertion.authorityGeneration;
           }
+          // Keepalive: acknowledge with the unchanged fence so the platform records liveness without completing anything new.
+          this.sendAck(socket, this.generation);
           return;
         }
         // membership_assertion frames are pull-authoritative through the membership client; pushed copies only refresh the snapshot.
@@ -206,6 +239,20 @@ export class CollaborationControlClient {
       void this.registerAndConnect();
     }, delay);
     this.reconnectTimer.unref?.();
+  }
+
+  private sendAck(socket: ControlSocketLike | undefined, authorityGeneration: number): void {
+    const ack: CollaborationControlAck = {
+      protocolVersion: COLLABORATION_DIRECT_PROTOCOL_VERSION,
+      runtimeId: toLogicalRuntimeId(this.options.runtimeId),
+      authorityGeneration,
+      fenceAt: this.lastFenceAt,
+    };
+    try {
+      socket?.send(JSON.stringify(ack));
+    } catch (error: unknown) {
+      console.warn("[collaboration-control-client] acknowledgement send failed", error instanceof Error ? error.name : "UnknownError");
+    }
   }
 
   private runtimeHeaders(): Record<string, string> {
