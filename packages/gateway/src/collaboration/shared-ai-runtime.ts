@@ -63,6 +63,8 @@ import {
   type ScopeRuntimeProfileCatalog,
 } from "./scope-runtime-client.js";
 import { SharedAiRuntimeRegistry } from "./shared-ai-runtime-registry.js";
+import { createSandboxReadinessProbe } from "./sandbox-readiness.js";
+import type { ReadinessSubject } from "./readiness-evaluator.js";
 import type { CollaborationActorProofVerifier } from "./actor-proof.js";
 import type { SharedRunOwnerSource } from "./shared-run-owner-source.js";
 import type { CollaborationExecutionPolicyRepository } from "./execution-policy.js";
@@ -130,6 +132,7 @@ export async function createSharedAiRuntime(options: {
     socketPath: options.supervisorSocket ?? SUPERVISOR_SOCKET,
     profileCatalog: PROFILE_CATALOG,
   });
+  const sandboxProbe = createSandboxReadinessProbe({ client });
   const capability = await client.refreshCapability();
   if (!capability.available) {
     await options.chatScope.reconcileExecutionEligibility({ executionGeneration: null, eligibility: null });
@@ -460,6 +463,12 @@ export async function createSharedAiRuntime(options: {
   return {
     available: true as const,
     chatExecutionAdapter,
+    async sandboxSupported(subject: ReadinessSubject): Promise<boolean> {
+      // A startup capability is only a snapshot. Recheck the supervisor before
+      // showing a share as ready after policy or host capability changes.
+      await client.refreshCapability();
+      return sandboxProbe.supported(subject);
+    },
     /**
      * S09: the home lost its control authority (or its scope runtime): every
      * active shared run is recorded as lost and stopped; queued requests are
