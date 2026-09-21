@@ -12,6 +12,7 @@ HTMLDialogElement.prototype.close = vi.fn(function (this: HTMLDialogElement) { t
 const scope = {
   id: "10000000-0000-4000-8000-000000000001",
   ownerId: "user_owner",
+  organizationId: "org_matrix_team",
   kind: "chat" as const,
   resourceId: "chat_shared",
   membershipMode: "direct" as const,
@@ -109,22 +110,29 @@ describe("SessionAccessControl", () => {
     await waitFor(() => expect(trigger).toHaveFocus());
   });
 
-  it("uses the refreshed scope revision for member management", async () => {
+  it("uses the refreshed scope revision for preset grants", async () => {
     const currentScope = { ...scope, revision: "3" };
     const collaborationApi = api();
-    collaborationApi.get.mockImplementation(async (path: string) => path.endsWith("/members")
-      ? { members }
-      : currentScope);
+    collaborationApi.get.mockImplementation(async (path: string) => path.startsWith("/api/organizations/")
+      ? { members: [{ actorId: "user_ada", role: "member", joinedAt: "2026-09-17T12:00:00.000Z" }] }
+      : path.endsWith("/grants") ? [] : path.endsWith("/members") ? { members } : currentScope);
+    collaborationApi.post.mockImplementation(async (path: string, body: { audience?: unknown; preset?: string }) =>
+      path.endsWith("/policy/preflight") ? undefined : {
+        id: "20000000-0000-4000-8000-000000000001", scopeId: scope.id,
+        organizationId: scope.organizationId, audience: body.audience, preset: body.preset,
+        state: "pending", policyVersion: "v1", revision: "1",
+        createdAt: "2026-09-17T12:00:00.000Z", updatedAt: "2026-09-17T12:00:00.000Z",
+      });
     render(<SessionAccessControl api={collaborationApi} scope={scope} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Collaboration access" }));
     fireEvent.click(await screen.findByRole("button", { name: "Manage access" }));
-    fireEvent.change(screen.getByLabelText("Member email or username"), { target: { value: "ada@example.com" } });
-    fireEvent.click(screen.getByRole("button", { name: "Send invitation" }));
+    fireEvent.change(await screen.findByLabelText("Share with"), { target: { value: "user_ada" } });
+    fireEvent.click(screen.getByRole("button", { name: "Grant access" }));
 
     await waitFor(() => expect(collaborationApi.post).toHaveBeenCalledWith(
-      `/api/collaboration/scopes/${scope.id}/invitations`,
-      expect.objectContaining({ expectedRevision: "3" }),
+      `/api/collaboration/scopes/${scope.id}/grants`,
+      expect.objectContaining({ expectedRevision: "3", audience: { kind: "member", actorId: "user_ada" }, preset: "viewer" }),
     ));
   });
 });
