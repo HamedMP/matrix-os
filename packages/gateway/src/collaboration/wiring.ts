@@ -38,6 +38,7 @@ import type { CanonicalProviderSnapshotReader } from "../ai-providers/provider-s
 import { OwnerAccountEligibility } from "./account-eligibility.js";
 import {
   CollaborationExecutionPolicyRepository,
+  organizationAiSubmissionFromMembershipClient,
   type OrganizationAiSubmissionSource,
 } from "./execution-policy.js";
 import { CollaborationRunBindingRepository } from "./run-account-binding.js";
@@ -140,10 +141,16 @@ export async function createGatewayCollaboration(options: {
   const eligibility = options.providerSnapshotReader
     ? new OwnerAccountEligibility({ snapshots: { getSnapshotV3: () => options.providerSnapshotReader!.getSnapshot() } })
     : undefined;
+  // The organization's AI-submission enablement comes from the same fixed-deadline
+  // membership evidence (S03 seam) unless a caller injects its own source.
+  const organizationAiSubmission = options.organizationAiSubmission
+    ?? (organizationMembershipSource instanceof OrganizationMembershipClient
+      ? organizationAiSubmissionFromMembershipClient(organizationMembershipSource)
+      : undefined);
   const executionPolicies = eligibility
     ? new CollaborationExecutionPolicyRepository(options.db, {
       eligibility,
-      ...(options.organizationAiSubmission ? { organizationAiSubmission: options.organizationAiSubmission } : {}),
+      ...(organizationAiSubmission ? { organizationAiSubmission } : {}),
     })
     : undefined;
   const runBindings = eligibility && executionPolicies

@@ -20,7 +20,6 @@ import {
   CanonicalChatExecutionRootRefSchema,
   CollaborationRunBindingSchema,
   CollaborationSharedHarnessSchema,
-  resolveCollaborationEffectiveSubmitMode,
   type CanonicalChatExecutionRootRef,
   type CollaborationExecutionScopeRef,
   type CollaborationRunBinding,
@@ -28,6 +27,7 @@ import {
 import type { OwnerAccountEligibility } from "./account-eligibility.js";
 import type { OwnerCollaborationDatabase } from "./database.js";
 import {
+  effectiveSubmitModeWithAcknowledgement,
   resolveExecutionScope,
   type CollaborationExecutionPolicyRepository,
 } from "./execution-policy.js";
@@ -135,6 +135,7 @@ interface BindingRow {
   audience_generation: number | string;
   execution_root: unknown;
   root_fingerprint: string;
+  session_key: string;
   session_generation: number | string;
   admitted_at: Date | string;
 }
@@ -206,7 +207,12 @@ export class CollaborationRunBindingRepository {
       }
       const ownerId = policyRow.owner_id;
       if (input.requestingActorId !== ownerId) {
-        const effective = await this.effectiveSubmitMode(resolution.scope.organization_id, policyRow.submit_mode);
+        const effective = await this.effectiveSubmitMode({
+          organizationId: resolution.scope.organization_id,
+          ownerId,
+          submitMode: policyRow.submit_mode,
+          providerTermsAcknowledged: policyRow.provider_terms_acknowledged_at !== null,
+        });
         if (effective !== "members") {
           throw new CollaborationRunBindingError("owner_only", "Only the owner may submit AI work on this scope");
         }
@@ -233,14 +239,15 @@ export class CollaborationRunBindingRepository {
       const sessionKey = sharedSessionKey({
         source, executionRoot: input.executionRoot, rootFingerprint: input.rootFingerprint, audienceGeneration: input.audienceGeneration,
       });
-      const latest = await trx.selectFrom("collaboration_run_bindings").select("session_generation")
+      // The generation is derived from the persisted latest binding, so a restart or
+      // cache eviction can never reuse a generation for a changed key: the same key
+      // continues the latest generation, any other key allocates strictly above it.
+      const latest = await trx.selectFrom("collaboration_run_bindings").select(["session_generation", "session_key"])
         .where("scope_id", "=", input.scopeId).orderBy("session_generation", "desc").limit(1).executeTakeFirst();
-      const sessionGeneration = this.sessions.generationFor({
-        scopeId: resolution.ref.scopeId,
-        chatId: input.scopeId,
-        sessionKey,
-        floor: latest ? Number(latest.session_generation) - 1 : 0,
-      });
+      const sessionGeneration = latest === undefined
+        ? 1
+        : latest.session_key === sessionKey ? Number(latest.session_generation) : Number(latest.session_generation) + 1;
+      this.sessions.generationFor({ scopeId: resolution.ref.scopeId, chatId: input.scopeId, sessionKey, floor: sessionGeneration - 1 });
       try {
         await trx.insertInto("collaboration_run_bindings").values({
           run_id: input.runId,
@@ -260,6 +267,7 @@ export class CollaborationRunBindingRepository {
           audience_generation: Number(input.audienceGeneration),
           execution_root: jsonb(input.executionRoot),
           root_fingerprint: input.rootFingerprint,
+          session_key: sessionKey,
           session_generation: sessionGeneration,
           admitted_at: nowIso,
         }).execute();
@@ -285,11 +293,13 @@ export class CollaborationRunBindingRepository {
     return rows.map(toBinding);
   }
 
-  private async effectiveSubmitMode(
-    organizationId: string | null,
-    submitMode: "follow_organization" | "owner_only",
-  ): Promise<"members" | "owner_only"> {
-    const organizationAiSubmission = await this.policies.organizationAiSubmissionFor(organizationId);
-    return resolveCollaborationEffectiveSubmitMode({ organizationAiSubmission, submitMode });
+  private async effectiveSubmitMode(input: {
+    organizationId: string | null;
+    ownerId: string;
+    submitMode: "follow_organization" | "owner_only";
+    providerTermsAcknowledged: boolean;
+  }): Promise<"members" | "owner_only"> {
+    const organizationAiSubmission = await this.policies.organizationAiSubmissionFor(input.organizationId, input.ownerId);
+    return effectiveSubmitModeWithAcknowledgement({ organizationAiSubmission, ...input });
   }
 }
