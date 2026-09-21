@@ -1,5 +1,6 @@
 import type { ColumnType, Generated, Kysely } from "kysely";
 import type { CollaborationRuntimeIdentityTable } from "./runtime-identity.js";
+import type { CollaborationGitOperationsTable } from "./project-git-operations.js";
 import { applyCollaborationBaseSchema, COLLABORATION_VERSIONED_MIGRATIONS } from "./database-migrations.js";
 import type { ChatDatabase } from "../chat/database.js";
 
@@ -82,6 +83,7 @@ export interface CollaborationAuditTable {
   outcome: string;
   revision: number;
   reason_code: string | null;
+  detail: ColumnType<unknown | null, unknown | null | undefined, unknown | null>;
   created_at: Timestamp;
 }
 
@@ -310,6 +312,7 @@ export interface CollaborationDatabase {
   collaboration_events: CollaborationEventsTable;
   collaboration_exports: CollaborationExportsTable;
   collaboration_audit: CollaborationAuditTable;
+  collaboration_git_operations: CollaborationGitOperationsTable;
   collaboration_directory_outbox: CollaborationDirectoryOutboxTable;
   collaboration_schema_migrations: CollaborationSchemaMigrationsTable;
   collaboration_transitions: CollaborationTransitionsTable;
