@@ -193,7 +193,7 @@ export function createProjectGitBroker(options: {
       const authorization = await options.authorize({ scopeId, actorId, action: capability(request.type) });
       const ownerIdentity = OwnerIdentitySchema.parse(await options.resolveOwnerIdentity(authorization));
       const id = randomUUID();
-      const row = await options.db.transaction().execute(async (trx) => {
+      let row = await options.db.transaction().execute(async (trx) => {
         const scope = await trx.selectFrom("collaboration_scopes")
           .select(["owner_id", "resource_id", "revision", "lifecycle", "kind"])
           .where("id", "=", scopeId)
@@ -236,6 +236,16 @@ export function createProjectGitBroker(options: {
       });
       if (row.payload_hash !== request.payloadHash) throw new ProjectGitBrokerError("conflict");
       if (row.state === "completed" || row.state === "failed") return toOperation(row);
+      if (row.state === "running") {
+        // A crashed gateway cannot attest whether a remote side effect happened. Reconcile the same ID.
+        const recovered = await options.db.updateTable("collaboration_git_operations")
+          .set({ state: "unknown", updated_at: now() })
+          .where("id", "=", row.id).where("state", "=", "running")
+          .where("updated_at", "<", new Date(now().getTime() - 60_000))
+          .returningAll().executeTakeFirst();
+        if (!recovered) return waitForSettled(row.id);
+        row = recovered;
+      }
       const execution: ProjectGitExecution = {
         operationId: row.id,
         scopeId,
