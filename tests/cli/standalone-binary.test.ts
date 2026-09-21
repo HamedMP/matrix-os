@@ -1,24 +1,23 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const repoRoot = resolve(import.meta.dirname, "../..");
 
-async function waitForLog(path: string, expected: string): Promise<string> {
+async function waitForDirectory(path: string): Promise<void> {
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
     try {
-      const contents = await readFile(path, "utf8");
-      if (contents.includes(expected)) return contents;
+      if ((await stat(path)).isDirectory()) return;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      // The daemon creates the log asynchronously after startup.
+      // The daemon creates its private log directory asynchronously at startup.
     }
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 100));
   }
-  throw new Error(`Timed out waiting for standalone daemon log: ${path}`);
+  throw new Error(`Timed out waiting for standalone daemon directory: ${path}`);
 }
 
 describe("standalone CLI binary", () => {
@@ -55,11 +54,10 @@ describe("standalone CLI binary", () => {
         env: { ...runtimeEnv, HOME: homeDir },
         stdio: "ignore",
       });
-      const log = await waitForLog(
-        join(homeDir, ".matrixos/logs/sync.log"),
-        "No config found. Run 'matrixos sync <path>' first.",
-      );
-      expect(log).not.toContain("Unknown command");
+      // startDaemon creates this directory before reading configuration. Its
+      // presence proves __daemon reached the daemon entrypoint without relying
+      // on transport buffering before process.exit on a missing configuration.
+      await waitForDirectory(join(homeDir, ".matrixos/logs"));
     } finally {
       if (daemon && daemon.exitCode === null && daemon.signalCode === null) {
         const closed = new Promise<void>((resolveClose) => daemon?.once("close", () => resolveClose()));
