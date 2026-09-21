@@ -56,7 +56,8 @@ const AdmissionSchema = z.object({
   scopeId: z.string().uuid(),
   requestingActorId: z.string().min(1).max(128),
   expectedPolicyRevision: z.string().regex(/^(0|[1-9][0-9]{0,19})$/),
-  executionRoot: CanonicalChatExecutionRootRefSchema,
+  /** Null for a standalone Chat that has no execution root (S09). */
+  executionRoot: CanonicalChatExecutionRootRefSchema.nullable(),
   rootFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
   audienceGeneration: z.string().regex(/^(0|[1-9][0-9]{0,19})$/),
   harness: CollaborationSharedHarnessSchema.optional(),
@@ -68,7 +69,7 @@ export type CollaborationRunAdmission = z.infer<typeof AdmissionSchema>;
 /** Stable digest of everything a shared provider session is bound to. */
 export function sharedSessionKey(input: {
   source: { accessSourceId: string; providerInstanceId: string; harness: string };
-  executionRoot: CanonicalChatExecutionRootRef;
+  executionRoot: CanonicalChatExecutionRootRef | null;
   rootFingerprint: string;
   audienceGeneration: string;
 }): string {

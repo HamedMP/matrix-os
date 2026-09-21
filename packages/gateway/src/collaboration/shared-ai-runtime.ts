@@ -51,6 +51,19 @@ import { createScopeRuntimeBroker, createScopeRuntimeBrokerServer } from "./scop
 import { createSandboxReadinessProbe, type SandboxReadinessProbe } from "./sandbox-readiness.js";
 import type { ReadinessSubject } from "./readiness-evaluator.js";
 import { createScopeRuntimeChatProviderAdapter } from "./scope-runtime-chat-adapter.js";
+import { createHash } from "node:crypto";
+import type { CanonicalChatExecutionRootRef, CollaborationRunInterruptionReason } from "@matrix-os/contracts";
+import type { ChatExecutionRootResolver } from "../chat/execution-root.js";
+import type { SharedDispatchRun } from "../chat/shared-execution-coordinator.js";
+import type { SandboxRuntimeRegistry } from "./revocation-enforcer.js";
+import { CollaborationRunBindingError } from "./run-account-binding.js";
+import { createSharedClaudeAdapter } from "./shared-claude-adapter.js";
+import { createSharedCodexAdapter } from "./shared-codex-adapter.js";
+import {
+  interruptActiveSharedRuns,
+  markLostSharedRunsOnStartup,
+  type CollaborationRunLossRepository,
+} from "./shared-run-loss.js";
 import {
   createScopeRuntimeClient,
   type ScopeRuntimeCapability,
@@ -106,7 +119,28 @@ export interface SharedChatSandboxManifestSource {
     ownerId: string;
     requestingActorId: string;
     scopeHandle: string;
+    /** S09: the dispatched run whose canonical execution root the manifest mounts. */
+    run: SharedDispatchRun;
   }): Promise<ScopeRuntimeSandboxManifest | null>;
+}
+
+/** S09: the execution-root resolver as the S07 manifest source. */
+function executionRootSandboxManifests(input: {
+  executionRoots: Pick<ChatExecutionRootResolver, "resolve">;
+  client: { capability(): ScopeRuntimeCapability };
+}): SharedChatSandboxManifestSource {
+  return {
+    async resolve(request) {
+      return await sandboxManifestFor({
+        run: request.run,
+        scopeId: request.scopeId,
+        actorId: request.requestingActorId,
+        capability: input.client.capability(),
+        executionRoots: input.executionRoots,
+        owner: { type: "personal", ownerId: request.ownerId },
+      }) ?? null;
+    },
+  };
 }
 
 /**
@@ -154,8 +188,14 @@ export async function createSharedAiRuntime(options: {
   codingProviders?: Pick<CodingAgentProviderRegistry, "listProviders">;
   /** S08: owner-selected source decision consulted before every shared adapter is prepared. */
   ownerSource?: SharedRunOwnerSource;
-  /** S07: mounts the authoritative execution root for each shared run; absent, shared AI is not eligible. */
+  /** S07: mounts the authoritative execution root for each shared run; defaults to the S09 `executionRoots` resolver. */
   sandboxManifests?: SharedChatSandboxManifestSource;
+  /** S09: immutable loss and control records; required for interrupted-run attribution. */
+  runLoss?: CollaborationRunLossRepository;
+  /** S07: registry that stops sandboxed runtimes when the requesting actor loses its lease. */
+  sandboxRuntimes?: Pick<SandboxRuntimeRegistry, "bind" | "release">;
+  /** S09: resolves a rooted Chat's project/worktree to the host path the sandbox mounts. */
+  executionRoots?: Pick<ChatExecutionRootResolver, "resolve">;
 }) {
   const client = createScopeRuntimeClient({
     socketPath: options.supervisorSocket ?? SUPERVISOR_SOCKET,
@@ -176,7 +216,13 @@ export async function createSharedAiRuntime(options: {
     return { available: false as const, async shutdown(): Promise<void> {} };
   }
   const sandboxProbe: SandboxReadinessProbe = createSandboxReadinessProbe({ client });
-  const eligibility = await deriveSharedAiEligibility({ client, sandboxManifests: options.sandboxManifests });
+  // S07 seam, S09 resolver: an explicit manifest source wins; otherwise the execution-root
+  // resolver mounts each rooted run. Without either, shared AI is not eligible.
+  const sandboxManifests: SharedChatSandboxManifestSource | undefined = options.sandboxManifests
+    ?? (options.executionRoots
+      ? executionRootSandboxManifests({ executionRoots: options.executionRoots, client })
+      : undefined);
+  const eligibility = await deriveSharedAiEligibility({ client, sandboxManifests });
   if (!eligibility) {
     await options.chatScope.reconcileExecutionEligibility({ executionGeneration: null, eligibility: null });
     await client.close();
@@ -192,6 +238,7 @@ export async function createSharedAiRuntime(options: {
     )).selectedAccessSourceId);
   const commands = new CollaborationChatCommands({
     db: options.db,
+    ...(options.runLoss ? { runControls: options.runLoss } : {}),
     submitApproval: async () => {
       throw new Error("The fixed shared Chat adapter does not expose approval callbacks");
     },
@@ -214,7 +261,7 @@ export async function createSharedAiRuntime(options: {
       { type: "personal", ownerId: await ownerIdFor(options.db, scopeId, chatId) },
       chatId,
       scopeId,
-      async (execution) => {
+      async (execution, run) => {
         try {
           const context = await options.authority.authorize({
             scopeId,
@@ -267,18 +314,38 @@ export async function createSharedAiRuntime(options: {
                 instanceId: "claude_shared" as const,
                 accessSourceId: ownerDecision?.accessSourceId ?? await resolveAccessSource(),
               };
-          // S07: every shared run mounts exactly the authoritative root; no manifest, no launch.
-          const sandbox = options.sandboxManifests
-            ? await options.sandboxManifests.resolve({
+          // S07/S09: every shared run mounts exactly the authoritative root through the
+          // manifest source (the S09 execution-root resolver by default); no manifest, no launch.
+          const sandbox = sandboxManifests
+            ? await sandboxManifests.resolve({
                 scopeId,
                 chatId,
                 ownerId: context.ownerId,
                 requestingActorId: execution.requestingActorId,
                 scopeHandle: `scope_${scopeId.replaceAll("-", "")}`,
+                run,
               })
             : null;
           if (!sandbox) throw new SharedChatRunPreparationError("unavailable");
-          return createScopeRuntimeChatProviderAdapter({
+          // S08/S09: pin actor, owner, source, policy revision, audience and root per run
+          // before any provider work; a refusal keeps the queued request in place.
+          if (ownerDecision && options.ownerSource?.bindings) {
+            await admitRun({
+              bindings: options.ownerSource.bindings,
+              run,
+              scopeId,
+              chatId,
+              requestId: execution.queuedTurnId,
+              requestingActorId: execution.requestingActorId,
+              policyRevision: ownerDecision.policyRevision,
+              audienceGeneration: String(execution.authorityGeneration),
+              harness: ownerDecision.harness,
+              modelId: execution.selection.model,
+              rootFingerprint: sandbox.worktree.fingerprint,
+            });
+          }
+          const factory = adapter.adapterId === "codex" ? createSharedCodexAdapter : createSharedClaudeAdapter;
+          return factory({
             client: scopedClient({
               client,
               registry,
@@ -290,12 +357,21 @@ export async function createSharedAiRuntime(options: {
             }),
             scopeId,
             executionGeneration: capability.executionGeneration,
-            adapterId: adapter.adapterId,
             harnessVersion: adapter.harnessVersion,
             sandbox,
+            ...(options.sandboxRuntimes ? { runtimes: options.sandboxRuntimes } : {}),
+            onLoss: (reason) => {
+              void recordLoss(options.runLoss, {
+                runId: run.id, scopeId, chatId, requestId: execution.queuedTurnId,
+                requestingActorId: execution.requestingActorId, reason,
+              });
+            },
           });
         } catch (error: unknown) {
           if (error instanceof SharedChatRunPreparationError) throw error;
+          if (error instanceof CollaborationRunBindingError) {
+            throw new SharedChatRunPreparationError(error.code === "owner_only" ? "unauthorized" : "unavailable");
+          }
           if (error instanceof CollaborationAuthorizationError) {
             throw new SharedChatRunPreparationError(
               error.code === "not_found" || error.code === "forbidden" ? "unauthorized" : "unavailable",
@@ -367,6 +443,7 @@ export async function createSharedAiRuntime(options: {
     } : {}),
     requestDispatch: dispatch,
     onCommitted: (scopeId) => options.eventRegistry.broadcastScope(scopeId),
+    ...(options.runLoss ? { runLoss: options.runLoss } : {}),
   });
 
   const broker = createScopeRuntimeBroker({
@@ -409,8 +486,14 @@ export async function createSharedAiRuntime(options: {
   }
   let stopped = false;
   let wakeInFlight: Promise<void> | undefined;
+  let lostRunsMarked = false;
   const runQueueWake = async (): Promise<void> => {
     try {
+      if (!lostRunsMarked && options.runLoss) {
+        // Every shared run still active in the database was lost with the previous process.
+        await markLostSharedRunsOnStartup({ db: options.db, loss: options.runLoss });
+        lostRunsMarked = true;
+      }
       await recoverSharedAiQueue({
         reconcilePendingApprovals: async () => {
           await commands.reconcilePendingApprovals();
@@ -454,6 +537,20 @@ export async function createSharedAiRuntime(options: {
     async sandboxSupported(subject: ReadinessSubject): Promise<boolean> {
       await client.refreshCapability();
       return sandboxProbe.supported(subject);
+    },
+    /**
+     * S09: the home lost its control authority (or its scope runtime): every
+     * active shared run is recorded as lost and stopped; queued requests are
+     * preserved and re-admit on fresh membership once control returns.
+     */
+    async interruptForLoss(reason: CollaborationRunInterruptionReason): Promise<string[]> {
+      if (!options.runLoss) return [];
+      return interruptActiveSharedRuns({
+        db: options.db,
+        loss: options.runLoss,
+        reason,
+        orchestrator: options.orchestrator,
+      });
     },
     async shutdown(): Promise<void> {
       stopped = true;
@@ -782,4 +879,72 @@ function scopedClient(input: {
       return input.client.stopRuntime(request);
     },
   };
+}
+
+async function recordLoss(
+  loss: CollaborationRunLossRepository | undefined,
+  input: Parameters<CollaborationRunLossRepository["recordInterruption"]>[0],
+): Promise<void> {
+  if (!loss) return;
+  try {
+    await loss.recordInterruption(input);
+  } catch (error: unknown) {
+    console.warn("[collaboration] shared run loss record failed",
+      error instanceof Error ? error.name : "UnknownError");
+  }
+}
+
+async function sandboxManifestFor(input: {
+  run: SharedDispatchRun;
+  scopeId: string;
+  actorId: string;
+  capability: ReturnType<ReturnType<typeof createScopeRuntimeClient>["capability"]>;
+  executionRoots: Pick<ChatExecutionRootResolver, "resolve"> | undefined;
+  owner: { type: "personal"; ownerId: string };
+}): Promise<ScopeRuntimeSandboxManifest | undefined> {
+  if (!input.run.executionRoot) return undefined;
+  if (!input.executionRoots || !input.capability.available || !input.capability.sandbox
+    || !input.capability.sandbox.workloads.includes("chat_ai")) {
+    throw new SharedChatRunPreparationError("unavailable");
+  }
+  const resolved = await input.executionRoots.resolve(input.owner, input.run.executionRoot);
+  if (input.run.executionRootFingerprint && resolved.fingerprint !== input.run.executionRootFingerprint) {
+    throw new SharedChatRunPreparationError("unavailable");
+  }
+  return {
+    version: 1,
+    scopeHandle: `scope_${input.scopeId.replaceAll("-", "")}`,
+    actorId: input.actorId,
+    worktree: { hostPath: resolved.primaryWorkspaceRoot, mode: "rw", fingerprint: resolved.fingerprint },
+    network: "broker_only",
+  };
+}
+
+async function admitRun(input: {
+  bindings: NonNullable<SharedRunOwnerSource["bindings"]>;
+  run: SharedDispatchRun;
+  scopeId: string;
+  chatId: string;
+  requestId: string;
+  requestingActorId: string;
+  policyRevision: string;
+  audienceGeneration: string;
+  harness: "codex" | "claude_code";
+  modelId: string;
+  rootFingerprint: string | null;
+}): Promise<void> {
+  const executionRoot: CanonicalChatExecutionRootRef | null = input.run.executionRoot ?? null;
+  await input.bindings.admit({
+    runId: input.run.id,
+    requestId: input.requestId,
+    scopeId: input.scopeId,
+    requestingActorId: input.requestingActorId,
+    expectedPolicyRevision: input.policyRevision,
+    executionRoot,
+    rootFingerprint: input.rootFingerprint
+      ?? createHash("sha256").update(`no-root:${input.chatId}`).digest("hex"),
+    audienceGeneration: input.audienceGeneration,
+    harness: input.harness,
+    modelId: input.modelId,
+  });
 }
