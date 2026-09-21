@@ -3,9 +3,9 @@ import { readdir, readFile } from "node:fs/promises";
 import { basename, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod/v4";
-import { createProjectRegistry } from "../project-registry.js";
-import { PROJECT_SLUG_REGEX } from "../project-manager.js";
-import { createWorktreeManager } from "../worktree-manager.js";
+import { createProjectRegistry } from "../domains/workspace/project-registry.js";
+import { PROJECT_SLUG_REGEX } from "../domains/workspace/project-manager.js";
+import { createWorktreeManager } from "../domains/git/worktree-manager.js";
 
 const MAX_CACHE_ENTRIES = 128;
 const MAX_SESSION_FILES = 256;

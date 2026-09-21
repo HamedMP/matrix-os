@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import type { AppRegistry, RegisterOpts } from "../../packages/gateway/src/app-db-registry.js";
-import { registerNativeAppStorage } from "../../packages/gateway/src/native-app-storage.js";
+import type { AppRegistry, RegisterOpts } from "../../packages/gateway/src/domains/apps/db/app-db-registry.js";
+import { registerNativeAppStorage } from "../../packages/gateway/src/domains/apps/native-app-storage.js";
 
 function registryWith(register: (options: RegisterOpts) => Promise<void>): AppRegistry {
   return {

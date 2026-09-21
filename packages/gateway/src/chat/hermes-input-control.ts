@@ -4,7 +4,7 @@ import type { CanonicalOwnerScope, CanonicalSubmitChatInputRequest } from "@matr
 import { CanonicalProviderRunEventSchema, type CanonicalProviderRunEvent } from "./provider-adapter.js";
 import type { HermesStdioClient } from "./hermes-stdio-client.js";
 import { inputSubmissionGate, nativeInputId, questionAnswers, secretQuestion } from "./native-input-control.js";
-import { boundedOperation } from "../bounded-operation.js";
+import { boundedOperation } from "../_shared/bounded-operation.js";
 import { ASYNC_QUESTION_NOTICE } from "../coding-agents/async-input-notice.mjs";
 const QuestionSchema = z.object({
   qid: z.string().min(1).max(256).optional(), question: z.string().min(1).max(600),

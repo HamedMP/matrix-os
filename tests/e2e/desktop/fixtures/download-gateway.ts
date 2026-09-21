@@ -5,7 +5,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Hono } from "hono";
-import { createFileBlobRoutes } from "../../../../packages/gateway/src/file-blob-routes";
+import { createFileBlobRoutes } from "../../../../packages/gateway/src/domains/files/file-blob-routes";
 import { sanitizeProxyResponseHeaders } from "../../../../packages/platform/src/proxy-headers";
 import { buildAppDomainProxyResponse } from "../../../../packages/platform/src/session-routing-proxy";
 import { startStubGateway } from "./stub-gateway";

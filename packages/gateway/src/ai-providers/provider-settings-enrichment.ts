@@ -4,7 +4,7 @@ import {
   type AiProviderSnapshotV3,
   type ProviderGenericHarnessKind,
 } from "@matrix-os/contracts";
-import type { FundedAiFundingSummaryReader } from "../funded-ai-funding-summary-client.js";
+import type { FundedAiFundingSummaryReader } from "../domains/integrations/funded-ai-funding-summary-client.js";
 import type { GenericHarnessModelCatalogReader } from "./generic-harness-model-catalog.js";
 
 /** Independent reads run together; canonical state still gates funded projection. */

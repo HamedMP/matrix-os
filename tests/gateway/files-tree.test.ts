@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { listDirectory, clearGitStatusCache } from "../../packages/gateway/src/files-tree.js";
+import { listDirectory, clearGitStatusCache } from "../../packages/gateway/src/domains/files/files-tree.js";
 import { execFileSync } from "node:child_process";
 
 const TEST_HOME = join(import.meta.dirname ?? __dirname, ".tmp-files-tree-test");

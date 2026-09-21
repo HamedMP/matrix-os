@@ -13,7 +13,7 @@ import {
   type OpenCodeSpawnFn,
 } from "../../packages/gateway/src/coding-agents/opencode-provider.js";
 import { createCodingHarnessCredentialResolver } from "../../packages/gateway/src/coding-agents/harness-credentials.js";
-import type { RequestPrincipal } from "../../packages/gateway/src/request-principal.js";
+import type { RequestPrincipal } from "../../packages/gateway/src/domains/identity/request-principal.js";
 import { providerSettingsCanonicalFixture } from "./provider-settings-test-support.js";
 
 const principal: RequestPrincipal = { userId: "owner_user", source: "jwt" };

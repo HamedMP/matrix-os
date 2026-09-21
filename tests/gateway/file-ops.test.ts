@@ -15,7 +15,7 @@ import {
   fileRename,
   fileCopy,
   fileDuplicate,
-} from "../../packages/gateway/src/file-ops.js";
+} from "../../packages/gateway/src/domains/files/file-ops.js";
 
 describe("fileMkdir", () => {
   let testDir: string;

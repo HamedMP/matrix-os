@@ -1,6 +1,6 @@
 import type { Context } from "hono";
 import { describe, expect, it } from "vitest";
-import { requestHasBody } from "../../packages/gateway/src/http-body.js";
+import { requestHasBody } from "../../packages/gateway/src/_shared/http-body.js";
 
 function contextWithHeaders(headers: Record<string, string | undefined>, body: ReadableStream<Uint8Array> | null): Context {
   const normalized = Object.fromEntries(

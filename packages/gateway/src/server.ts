@@ -3,7 +3,7 @@ import { createOwnerToolOutputProjection } from "./chat/owner-tool-output.js";
 import { createProjectChatCleanup } from "./chat/project-deletion.js";
 import { createRuntimeAppAiRoutes } from "./app-ai/runtime.js";
 import { restoreBackgroundChatThread, createBackgroundChatProjection } from "./coding-agents/background-chat-recovery.js";
-import { createBackgroundAgentRuntime } from "./background-agent-runtime.js";
+import { createBackgroundAgentRuntime } from "./domains/sessions/background-agent-runtime.js";
 import { bootstrapChatSharing, ChatSharing } from "./chat/sharing.js";
 import { withAsyncChatInput } from "./chat/async-input-adapter.js";
 import { createChatSharingRoutes } from "./chat/sharing-routes.js";
@@ -23,75 +23,75 @@ import { createNodeWebSocket } from "@hono/node-ws";
 import { installPostHogHonoErrorTracking, resolveOwnerTelemetryDistinctId } from "@matrix-os/observability";
 import { TerminalRuntimeSocketClient, TerminalFrameQueue } from "@matrix-os/terminal-runtime";
 import { CanonicalChatIdSchema, TerminalRefSchema, TerminalTabClientFrameSchema } from "@matrix-os/contracts";
-import { createDispatcher, type Dispatcher, type BatchEntry, type DispatchContext } from "./dispatcher.js";
+import { createDispatcher, type Dispatcher, type BatchEntry, type DispatchContext } from "./domains/sessions/dispatcher.js";
 import {
   createFundedAiCredentialManager,
   loadFundedAiRuntimeConfig,
-} from "./funded-ai-credential-manager.js";
-import { createFundedAiFundingSummaryClient } from "./funded-ai-funding-summary-client.js";
+} from "./domains/integrations/funded-ai-credential-manager.js";
+import { createFundedAiFundingSummaryClient } from "./domains/integrations/funded-ai-funding-summary-client.js";
 import { createFundedAiReadinessReader } from "./funded-ai-readiness.js";
-import { buildKernelCredentialLaunch } from "./kernel-credentials.js";
-import { createAllowedOriginController } from "./allowed-origins.js";
-import { createAiGenerationRecorder } from "./ai-analytics.js";
-import { createWatcher, type Watcher } from "./watcher.js";
-import { createPtyHandler, type PtyMessage } from "./pty.js";
-import { createConversationStore, type ConversationStore } from "./conversations.js";
+import { buildKernelCredentialLaunch } from "./domains/integrations/kernel-credentials.js";
+import { createAllowedOriginController } from "./domains/identity/allowed-origins.js";
+import { createAiGenerationRecorder } from "./domains/observability/ai-analytics.js";
+import { createWatcher, type Watcher } from "./domains/files/watcher.js";
+import { createPtyHandler, type PtyMessage } from "./domains/terminal/pty.js";
+import { createConversationStore, type ConversationStore } from "./domains/sessions/conversations.js";
 import {
   createConversationLifecycle,
   providerResumeSessionId,
-} from "./conversation-lifecycle.js";
-import { createConversationContextResolver } from "./conversation-context.js";
-import { createConversationMutationLock } from "./conversation-mutation-lock.js";
-import { stampApprovalRequestForReplay } from "./conversation-approval-replay.js";
-import { buildDispatchFailureReplayMessage } from "./conversation-dispatch-failure.js";
+} from "./domains/sessions/conversation-lifecycle.js";
+import { createConversationContextResolver } from "./domains/sessions/conversation-context.js";
+import { createConversationMutationLock } from "./domains/sessions/conversation-mutation-lock.js";
+import { stampApprovalRequestForReplay } from "./domains/sessions/conversation-approval-replay.js";
+import { buildDispatchFailureReplayMessage } from "./domains/sessions/conversation-dispatch-failure.js";
 import {
   conversationHistoryRefreshRequired,
   ConversationRunRegistry,
   type ConversationRunMessage,
-} from "./conversation-run-registry.js";
+} from "./domains/sessions/conversation-run-registry.js";
 import {
   clearReconnectAbortTimersForSession as clearReconnectAbortTimers,
   drainReconnectableAbortEntries,
   replaceReconnectableAbortEntry,
   scheduleReconnectAbortTimersForDisconnectedClient,
   type ReconnectableAbortEntry,
-} from "./conversation-reconnect-aborts.js";
-import { summarizeConversation, saveSummary } from "./conversation-summary.js";
-import { extractMemoriesLocal } from "./memory-extractor.js";
-import { createWorkspaceRoutes } from "./workspace-routes.js";
-import { createPreviewManager } from "./preview-manager.js";
-import { createProjectManager } from "./project-manager.js";
-import { createTaskManager } from "./task-manager.js";
-import { createReviewStore } from "./review-store.js";
+} from "./domains/sessions/conversation-reconnect-aborts.js";
+import { summarizeConversation, saveSummary } from "./domains/sessions/conversation-summary.js";
+import { extractMemoriesLocal } from "./domains/observability/memory-extractor.js";
+import { createWorkspaceRoutes } from "./domains/workspace/workspace-routes.js";
+import { createPreviewManager } from "./domains/apps/preview-manager.js";
+import { createProjectManager } from "./domains/workspace/project-manager.js";
+import { createTaskManager } from "./domains/workspace/task-manager.js";
+import { createReviewStore } from "./domains/review/review-store.js";
 import { createElixirSymphonyProxyRoutes } from "./symphony/proxy.js";
 import { createSymphonyRunner } from "./symphony-runner.js";
-import { createAgentLauncher } from "./agent-launcher.js";
+import { createAgentLauncher } from "./domains/sessions/agent-launcher.js";
 import { resolveAgentCredentialProbe } from "./onboarding/agent-credential-probe.js";
 import {
   createAgentSessionManager,
   hasActiveWorkspaceSessionForTerminalRef,
-} from "./agent-session-manager.js";
-import { createAgentSandbox } from "./agent-sandbox.js";
-import { createWorktreeManager } from "./worktree-manager.js";
+} from "./domains/sessions/agent-session-manager.js";
+import { createAgentSandbox } from "./domains/sessions/agent-sandbox.js";
+import { createWorktreeManager } from "./domains/git/worktree-manager.js";
 import {
   createWorkspaceSessionOrchestrator,
   type WorkspaceSessionOrchestrator,
-} from "./workspace-session-orchestrator.js";
-import { createWorkspaceEventStore } from "./workspace-events.js";
-import { createWorkspaceEventPublisher } from "./workspace-event-publisher.js";
+} from "./domains/workspace/workspace-session-orchestrator.js";
+import { createWorkspaceEventStore } from "./domains/workspace/workspace-events.js";
+import { createWorkspaceEventPublisher } from "./domains/workspace/workspace-event-publisher.js";
 import {
   createProviderLoginTerminalRegistry,
   createSessionRuntimeBridge,
   resolveTerminalAttachmentMode,
   terminalAttachmentAllowsFrame,
-} from "./session-runtime-bridge.js";
+} from "./domains/sessions/session-runtime-bridge.js";
 import {
   parseTerminalInputCapabilityRequest,
   terminalFrameForInputCapabilities,
-} from "./terminal-input-capabilities.js";
+} from "./domains/terminal/terminal-input-capabilities.js";
 import { createTerminalSizeLease } from "./terminal-size-lease.js";
 import { createTerminalLiveOwnership } from "./terminal-live-ownership.js";
-import { createWorkspaceStartupRecovery } from "./workspace-startup-recovery.js";
+import { createWorkspaceStartupRecovery } from "./domains/workspace/workspace-startup-recovery.js";
 import { createChannelManager, type ChannelManager } from "./channels/manager.js";
 import { createOutboundQueue } from "./security/outbound-queue.js";
 import { createRateLimiter } from "./security/rate-limiter.js";
@@ -99,7 +99,7 @@ import { timingSafeStringEquals } from "./security/timing-safe.js";
 import { createTelegramAdapter, type TelegramAdapter } from "./channels/telegram.js";
 import { createTelegramStream } from "./channels/telegram-stream.js";
 import { createPushAdapter } from "./channels/push.js";
-import { createSessionStore } from "./session-store.js";
+import { createSessionStore } from "./domains/sessions/session-store.js";
 import { formatForChannel } from "./channels/format.js";
 import type { ChannelConfig, ChannelId } from "./channels/types.js";
 import { createCronStore } from "./cron/store.js";
@@ -129,14 +129,14 @@ import { createProvisioner } from "./provisioner.js";
 import {
   authMiddleware,
   readPreviewTerminalOwner,
-} from "./auth.js";
+} from "./domains/identity/auth.js";
 import {
   isRequestPrincipalError,
   mapRequestPrincipalError,
   ownerScopeFromPrincipal,
   requireRequestPrincipal,
   type RequestPrincipal,
-} from "./request-principal.js";
+} from "./domains/identity/request-principal.js";
 import { createOnboardingHandler } from "./onboarding/ws-handler.js";
 import { InMemoryReadinessRepository } from "./onboarding/readiness-repository.js";
 import { createReadinessService } from "./onboarding/readiness-service.js";
@@ -228,11 +228,11 @@ import { createDraftActionReadinessService } from "./onboarding/draft-action-rea
 import { createDraftActionRoutes } from "./onboarding/draft-action-routes.js";
 import { createVocalHandler } from "./vocal/ws-handler.js";
 import type { GeminiLiveConnection } from "./onboarding/gemini-live.js";
-import { resolveDefaultAppIconUrl, resolveSystemIconUrl } from "./default-icons.js";
-import { registerIconRoutes } from "./icon-routes.js";
-import { buildShellBootstrap } from "./shell-bootstrap.js";
+import { resolveDefaultAppIconUrl, resolveSystemIconUrl } from "./domains/apps/default-icons.js";
+import { registerIconRoutes } from "./domains/apps/icon-routes.js";
+import { buildShellBootstrap } from "./domains/apps/shell-bootstrap.js";
 import { securityHeadersMiddleware } from "./security/headers.js";
-import { getSystemInfo, getVersion } from "./system-info.js";
+import { getSystemInfo, getVersion } from "./domains/observability/system-info.js";
 import { collectSystemActivity } from "./system-activity/collector.js";
 import { CleanupCandidateRegistry, executeCleanupAction } from "./system-activity/cleanup.js";
 import { ActivityHistoryStore, AutoCleanupPolicyStore } from "./system-activity/history.js";
@@ -248,19 +248,19 @@ import {
   startSystemUpdate,
   startSystemUpdateRepair,
   writeInternalUpgradeTrigger,
-} from "./system-update.js";
-import { createInteractionLogger, type InteractionLogger } from "./logger.js";
-import { createApprovalBridge, type ApprovalBridge } from "./approval.js";
+} from "./domains/observability/system-update.js";
+import { createInteractionLogger, type InteractionLogger } from "./_shared/logger.js";
+import { createApprovalBridge, type ApprovalBridge } from "./domains/sessions/approval.js";
 import { DEFAULT_APPROVAL_POLICY, type ApprovalPolicy } from "@matrix-os/kernel";
-import { listApps } from "./apps.js";
-import { createAppDb, type AppDb } from "./app-db.js";
-import { createAppRegistry, type AppRegistry } from "./app-db-registry.js";
-import { registerNativeAppStorage } from "./native-app-storage.js";
-import { createQueryEngine, type QueryEngine } from "./app-db-query.js";
-import { BridgeQueryBodySchema } from "./app-db-contracts.js";
-import { isSafeName, normalizeAppStorageSlug } from "./app-db-types.js";
-import { createKvStore, type KvStore } from "./app-db-kv.js";
-import { renameApp, deleteApp } from "./app-ops.js";
+import { listApps } from "./domains/apps/apps.js";
+import { createAppDb, type AppDb } from "./domains/apps/db/app-db.js";
+import { createAppRegistry, type AppRegistry } from "./domains/apps/db/app-db-registry.js";
+import { registerNativeAppStorage } from "./domains/apps/native-app-storage.js";
+import { createQueryEngine, type QueryEngine } from "./domains/apps/db/app-db-query.js";
+import { BridgeQueryBodySchema } from "./domains/apps/db/app-db-contracts.js";
+import { isSafeName, normalizeAppStorageSlug } from "./domains/apps/db/app-db-types.js";
+import { createKvStore, type KvStore } from "./domains/apps/db/app-db-kv.js";
+import { renameApp, deleteApp } from "./domains/apps/app-ops.js";
 import { createPlatformDb, type PlatformDb } from "./platform-db.js";
 import { createPipedreamClient, type PipedreamConnectClient } from "./integrations/pipedream.js";
 import { registerCustomMcpGatewayRoutes } from "./integrations/custom-mcp/gateway-routes.js";
@@ -313,8 +313,8 @@ import {
   type SyncDatabase,
 } from "./sync/sharing-db.js";
 import { sql, type Kysely } from "kysely";
-import { createSocialRoutes, insertPost, bootstrapSocialSchema, type SocialRoutes } from "./social.js";
-import { createActivityService } from "./social-activity.js";
+import { createSocialRoutes, insertPost, bootstrapSocialSchema, type SocialRoutes } from "./domains/social/social.js";
+import { createActivityService } from "./domains/social/social-activity.js";
 import { CanvasRepository } from "./canvas/repository.js";
 import { CanvasConfigurationError, CanvasService } from "./canvas/service.js";
 import { createCanvasRoutes } from "./canvas/routes.js";
@@ -334,7 +334,7 @@ import type { WSContext } from "hono/ws";
 import {
   MainWsClientMessageSchema,
   type MainWsClientMessage,
-} from "./ws-message-schema.js";
+} from "./domains/integrations/ws-message-schema.js";
 import type { GatewayConfig, ServerMessage } from "./server/types.js";
 import {
   kernelEventToServerMessage,
@@ -356,7 +356,7 @@ import {
   httpRequestDuration,
   wsConnectionsActive,
   normalizePath,
-} from "./metrics.js";
+} from "./domains/observability/metrics.js";
 import {
   createShellRoutes,
   SHELL_SESSION_CREATE_RATE_LIMIT,
@@ -376,18 +376,18 @@ import {
   ClientErrorReportSchema,
   forwardClientErrorToPostHog,
   writeClientErrorReport,
-} from "./client-error-log.js";
-import { createForwardTunnelHub } from "./forward-ws.js";
+} from "./domains/observability/client-error-log.js";
+import { createForwardTunnelHub } from "./_shared/forward-ws.js";
 
 export {
   buildAllowedOrigins,
   createAllowedOriginController,
-} from "./allowed-origins.js";
+} from "./domains/identity/allowed-origins.js";
 export {
   registerTerminalSessionRoutes,
   TERMINAL_SESSION_DELETE_BODY_LIMIT_BYTES,
   type TerminalSessionRouteRegistry,
-} from "./terminal-session-routes.js";
+} from "./domains/terminal/terminal-session-routes.js";
 export type { GatewayConfig, ServerMessage } from "./server/types.js";
 export {
   readInitialSymphonyPort,
@@ -870,7 +870,7 @@ export async function createGateway(config: GatewayConfig) {
     if (!registry || !storageSlug || provisionedAppSlugs.has(storageSlug)) return;
     if (!isSafeName(storageSlug)) return;
     try {
-      const { loadAppManifest } = await import("./app-manifest.js");
+      const { loadAppManifest } = await import("./domains/apps/app-manifest.js");
       const apps = await listApps(homePath, { includeInactiveDesigns: true });
       let shouldCacheProvisionAttempt = false;
       for (const app of apps) {
@@ -1093,7 +1093,7 @@ export async function createGateway(config: GatewayConfig) {
       const migrated = await kvStore.read("_system", `migration_v1_${handle}`);
       if (!migrated) {
         try {
-          const { migrateJsonToKv } = await import("./app-db-migration.js");
+          const { migrateJsonToKv } = await import("./domains/apps/db/app-db-migration.js");
           const jsonResult = await migrateJsonToKv(homePath, kvStore);
           if (jsonResult.keys > 0) {
             console.log(`[app-db] JSON migration: ${jsonResult.apps} apps, ${jsonResult.keys} keys`);
@@ -1110,7 +1110,7 @@ export async function createGateway(config: GatewayConfig) {
 
       // Register apps with storage declarations
       try {
-        const { loadAppManifest } = await import("./app-manifest.js");
+        const { loadAppManifest } = await import("./domains/apps/app-manifest.js");
         const apps = await listApps(homePath, { includeInactiveDesigns: true });
         let registered = 0;
         for (const app of apps) {
@@ -4648,7 +4648,7 @@ export async function createGateway(config: GatewayConfig) {
   });
 
   // T2063: Leaderboard API routes
-  const { getLeaderboard } = await import("./leaderboard.js");
+  const { getLeaderboard } = await import("./domains/social/leaderboard.js");
 
   app.get("/api/games/leaderboard", (c) => {
     return c.json(getLeaderboard(homePath));

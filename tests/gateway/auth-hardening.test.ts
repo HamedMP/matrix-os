@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { authMiddleware } from "../../packages/gateway/src/auth.js";
+import { authMiddleware } from "../../packages/gateway/src/domains/identity/auth.js";
 
 function mockContext(path: string, authHeader?: string) {
   let status = 200;

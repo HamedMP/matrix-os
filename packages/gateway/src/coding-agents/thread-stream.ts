@@ -5,7 +5,7 @@ import {
   ThreadIdSchema,
   type AgentThreadEvent,
 } from "@matrix-os/contracts";
-import type { RequestPrincipal } from "../request-principal.js";
+import type { RequestPrincipal } from "../domains/identity/request-principal.js";
 import {
   CodingAgentThreadError,
   safeThreadError,

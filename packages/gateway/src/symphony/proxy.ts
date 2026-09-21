@@ -3,8 +3,8 @@ import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { z } from "zod/v4";
-import { requestHasBody } from "../http-body.js";
-import { isRequestPrincipalError, mapRequestPrincipalError, requireRequestPrincipal, type RequestPrincipal } from "../request-principal.js";
+import { requestHasBody } from "../_shared/http-body.js";
+import { isRequestPrincipalError, mapRequestPrincipalError, requireRequestPrincipal, type RequestPrincipal } from "../domains/identity/request-principal.js";
 import {
   ElixirIssueSchema,
   ElixirRefreshSchema,

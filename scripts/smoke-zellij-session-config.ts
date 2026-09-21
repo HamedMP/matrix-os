@@ -9,7 +9,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { createZellijAdapter, type ShellAttachProcess } from "../packages/gateway/src/shell/zellij.js";
-import { createZellijRuntime } from "../packages/gateway/src/zellij-runtime.js";
+import { createZellijRuntime } from "../packages/gateway/src/domains/terminal/zellij-runtime.js";
 
 const run = promisify(execFile);
 const binary = resolve(process.argv[2] ?? "");

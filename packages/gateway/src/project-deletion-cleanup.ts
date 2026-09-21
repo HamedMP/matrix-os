@@ -1,10 +1,10 @@
 import { TerminalRuntimeError, type TerminalRuntimeSocketClient } from "@matrix-os/terminal-runtime";
-import type { createAgentSessionManager } from "./agent-session-manager.js";
+import type { createAgentSessionManager } from "./domains/sessions/agent-session-manager.js";
 import type { CodingAgentThreadStore } from "./coding-agents/thread-store.js";
-import type { ProjectConfig } from "./project-manager.js";
-import type { RequestPrincipal } from "./request-principal.js";
-import type { createWorktreeManager } from "./worktree-manager.js";
-import type { createReviewStore } from "./review-store.js";
+import type { ProjectConfig } from "./domains/workspace/project-manager.js";
+import type { RequestPrincipal } from "./domains/identity/request-principal.js";
+import type { createWorktreeManager } from "./domains/git/worktree-manager.js";
+import type { createReviewStore } from "./domains/review/review-store.js";
 
 export type ProjectChatCleanup = (project: ProjectConfig, principal: RequestPrincipal) => Promise<void>;
 
