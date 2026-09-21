@@ -15,6 +15,12 @@ const MAX_BUFFERED_BYTES = 1024 * 1024;
 const STALE_AFTER_MS = 30_000;
 const SWEEP_INTERVAL_MS = 5_000;
 const HEARTBEAT_INTERVAL_MS = 10_000;
+/**
+ * A shared terminal is legitimately idle, so a client cannot tell an idle home from a lost
+ * one. A connection that has received nothing for this long is given a state frame on its own
+ * socket, which is the liveness its client sweeps on; a busy connection needs no keepalive.
+ */
+const KEEPALIVE_SILENCE_MS = 2 * HEARTBEAT_INTERVAL_MS;
 
 export class CollaborationTerminalEventError extends Error {
   constructor(public readonly code: "capacity" | "unavailable") {
@@ -53,6 +59,8 @@ interface TerminalConnection {
   authorityGeneration: number;
   lastSequence: number;
   lastTouchedAt: number;
+  /** Last frame this home sent on this socket; drives the keepalive, never the client's own frames. */
+  lastSentAt: number;
   socket: CollaborationTerminalEventSocket;
   delivery: Promise<void>;
 }
@@ -131,6 +139,7 @@ export class CollaborationTerminalEventRegistry {
       authorityGeneration: input.authorityGeneration,
       lastSequence: input.afterSequence ?? 0,
       lastTouchedAt: this.now().getTime(),
+      lastSentAt: this.now().getTime(),
       socket: input.socket,
       delivery: Promise.resolve(),
     };
@@ -355,6 +364,7 @@ export class CollaborationTerminalEventRegistry {
   private send(connection: TerminalConnection, frame: CollaborationTerminalFrame): void {
     connection.socket.send(JSON.stringify(CollaborationTerminalFrameSchema.parse(frame)));
     connection.lastTouchedAt = this.now().getTime();
+    connection.lastSentAt = connection.lastTouchedAt;
   }
 
   private sendBestEffort(connection: TerminalConnection, frame: CollaborationTerminalFrame): boolean {
@@ -387,13 +397,29 @@ export class CollaborationTerminalEventRegistry {
     return active;
   }
 
-  private async heartbeat(): Promise<void> {
+  /**
+   * Re-authorizes every live connection and keeps silent ones evidenced. A client sweeps its
+   * terminal socket on the frames that arrive on it, so a connection that has heard nothing
+   * for `KEEPALIVE_SILENCE_MS` is given the scope's current state frame.
+   */
+  async heartbeat(at: Date = this.now()): Promise<void> {
+    const silentScopes = new Set<string>();
+    const cutoff = at.getTime() - KEEPALIVE_SILENCE_MS;
     for (const connection of [...this.connections.values()]) {
       try {
         await this.options.authorize(connection.scopeId, connection.actorId);
       } catch (error: unknown) {
         console.warn("[collaboration-terminal-events] heartbeat authorization failed", error instanceof Error ? error.name : "UnknownError");
         this.remove(connection, 1008, "Unavailable");
+        continue;
+      }
+      if (connection.lastSentAt <= cutoff) silentScopes.add(connection.scopeId);
+    }
+    for (const scopeId of silentScopes) {
+      try {
+        await this.publishState(scopeId);
+      } catch (error: unknown) {
+        console.warn("[collaboration-terminal-events] keepalive state failed", error instanceof Error ? error.name : "UnknownError");
       }
     }
   }
