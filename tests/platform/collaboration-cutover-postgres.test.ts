@@ -45,15 +45,17 @@ describe.skipIf(!connectionString)("collaboration cutover on real PostgreSQL (T0
     }
     await db.insertInto("collaboration_user_index").values([
       { actor_id: "legacy-actor", scope_id: legacyScope, status: "invited", invitation_id: randomUUID(), locator_generation: 1, last_event_id: randomUUID(), updated_at: new Date() },
+      { actor_id: "legacy-ended", scope_id: legacyScope, status: "revoked", invitation_id: null, locator_generation: 1, last_event_id: randomUUID(), updated_at: new Date() },
       { actor_id: "org-actor", scope_id: organizationScope, status: "accepted", invitation_id: null, locator_generation: 1, last_event_id: randomUUID(), updated_at: new Date() },
+      { actor_id: "org-ended", scope_id: organizationScope, status: "revoked", invitation_id: null, locator_generation: 1, last_event_id: randomUUID(), updated_at: new Date() },
     ]).execute();
 
     expect(await inventoryPlatformPersonToPersonRecords(db)).toEqual({
       directoryScopes: 1,
       invitedIndexRows: 1,
       acceptedIndexRows: 0,
-      revokedIndexRows: 0,
-      total: 2,
+      revokedIndexRows: 1,
+      total: 3,
     });
   });
 });
