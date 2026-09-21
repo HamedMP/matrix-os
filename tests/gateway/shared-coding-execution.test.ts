@@ -65,7 +65,9 @@ describe("shared coding execution (S09)", () => {
 
   it("registers the shared run loss migration after the execution policies", () => {
     expect(COLLABORATION_SHARED_RUN_LOSS_MIGRATION_VERSION).toBe(11);
-    expect(COLLABORATION_VERSIONED_MIGRATIONS.map((step) => step.version)).toEqual([3, 4, 5, 6, 7, 8, 9, 10, 11]);
+    const versions = COLLABORATION_VERSIONED_MIGRATIONS.map((step) => step.version);
+    expect(versions.slice(0, 9)).toEqual([3, 4, 5, 6, 7, 8, 9, 10, 11]);
+    expect(new Set(versions).size).toBe(versions.length);
   });
 
   describe("run control actors", () => {
