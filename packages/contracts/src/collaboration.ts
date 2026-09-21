@@ -635,6 +635,7 @@ export const CollaborationDiscoveryItemSchema = z.discriminatedUnion("status", [
   CollaborationDirectoryBaseSchema.extend({
     status: z.literal("organization_pending"),
     organizationId: CollaborationOrganizationIdSchema,
+    grantId: CollaborationIdSchema,
     home: CollaborationDiscoveryHomeStateSchema.optional(),
   }).strict(),
 ]).superRefine((item, context) => {
@@ -799,6 +800,8 @@ export const CollaborationDirectoryEventSchema = z.object({
   organizationId: CollaborationOrganizationIdSchema.optional(),
   /** S06: `organization` when an active organization-wide grant exists on the home, so the platform can list the share as pending for members. */
   audience: z.enum(["members", "organization"]).optional(),
+  /** Opaque owner-home grant pointer for explicit organization activation; never an authorization claim. */
+  organizationGrantId: CollaborationIdSchema.optional(),
   authorityGeneration: z.number().int().positive(),
   metadataRevision: z.number().int().nonnegative(),
   recipients: z.array(z.object({
