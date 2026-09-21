@@ -38,6 +38,7 @@ import {
 } from "../../packages/platform/src/collaboration/ticket-crypto.js";
 import { CollaborationControlStream, ControlStreamNotConnectedError } from "../../packages/platform/src/collaboration/control-stream.js";
 import { createPlatformCollaborationDirect } from "../../packages/platform/src/collaboration/direct-wiring.js";
+import { createPlatformCollaborationDirectRoutes } from "../../packages/platform/src/collaboration/direct-routes.js";
 import { createCollaborationControlUpgradeHandler } from "../../packages/platform/src/collaboration/control-upgrade.js";
 import {
   createPlatformCollaborationTestDatabase,
@@ -439,6 +440,42 @@ describe("S05 platform tickets, endpoints and control", () => {
       }
     });
 
+    it("refuses more keys than the issuer can publish, counting active and retired together", () => {
+      // The loader caps the active map and the retired map separately, while the issuer counts
+      // the keys it publishes -- active plus retired -- against one limit. A rotation that
+      // stays under both halves can therefore exceed the whole, and the issuer's refusal is a
+      // thrown configuration error the composition root cannot serve a ticket route from.
+      const seedFor = (index: number) => Buffer.alloc(32, index).toString("base64url");
+      const mapOf = (prefix: string, count: number, offset: number) => Object.fromEntries(
+        Array.from({ length: count }, (_, index) => [`${prefix}-${index + 1}`, seedFor(offset + index + 1)]),
+      );
+      const active = mapOf("active-key", 5, 0);
+      const retired = mapOf("retired-key", 5, 10);
+      const retiredAt = Object.fromEntries(Object.keys(retired).map((keyId) => [keyId, new Date(clock.getTime() - 60_000).toISOString()]));
+      const environment = {
+        MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID: "active-key-1",
+        MATRIX_COLLABORATION_TICKET_KEYS: JSON.stringify(active),
+        MATRIX_COLLABORATION_TICKET_RETIRED_KEYS: JSON.stringify(retired),
+        MATRIX_COLLABORATION_TICKET_RETIRED_AT: JSON.stringify(retiredAt),
+      };
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      try {
+        expect(loadTicketSigningKeyring(environment, { now: () => clock })).toBeNull();
+        // Eight distinct keys is the most the issuer publishes, and it still loads.
+        const eight = {
+          ...environment,
+          MATRIX_COLLABORATION_TICKET_KEYS: JSON.stringify(mapOf("active-key", 4, 0)),
+          MATRIX_COLLABORATION_TICKET_RETIRED_KEYS: JSON.stringify(mapOf("retired-key", 4, 10)),
+          MATRIX_COLLABORATION_TICKET_RETIRED_AT: JSON.stringify(Object.fromEntries(Object.keys(mapOf("retired-key", 4, 10)).map((keyId) => [keyId, new Date(clock.getTime() - 60_000).toISOString()]))),
+        };
+        const admitted = loadTicketSigningKeyring(eight, { now: () => clock });
+        expect(admitted).not.toBeNull();
+        expect(new CollaborationTicketIssuer({ keyring: admitted!, repository, endpoints, resolveOrganization: async () => organizationId, projection: { isCurrentMember: async () => true }, relayOrigin: "https://app.matrix-os.com", now: () => clock }).publicKeys()).toHaveLength(8);
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
     it("answers the ticket route unavailable and publishes no key when the keyring does not load", async () => {
       // What a refused keyring looks like from outside: the composition still builds, tickets
       // are unavailable, and no signing key at all is handed to a home.
@@ -475,6 +512,48 @@ describe("S05 platform tickets, endpoints and control", () => {
       } finally {
         await direct.shutdown();
       }
+    });
+  });
+
+  describe("runtime registration atomicity (T026)", () => {
+    it("commits the endpoint registration and its upgrade ticket together or not at all", async () => {
+      // The upgrade ticket is issued for a registration that has just been recorded. If the
+      // two commit separately, a failed issuance answers 503 while the generation bump and the
+      // merged keys stay committed, and the home is told nothing was recorded.
+      const stream = new CollaborationControlStream({
+        controlAuthority: { registerTransport: () => undefined, acknowledge: async () => ({ completedDenialIds: [] }) },
+        tickets: endpoints,
+        onAttach: (id) => endpoints.heartbeat(id),
+        now: () => clock,
+        // One fixed token, so the second registration collides on the ticket's primary key.
+        createToken: () => "c".repeat(43),
+      });
+      const app = new Hono();
+      app.route("/", createPlatformCollaborationDirectRoutes({
+        endpoints,
+        issuer,
+        controlStream: stream,
+        relayOrigin: "https://app.matrix-os.com",
+        resolveActor: async () => platformCollaborationActors.owner,
+        authenticateRuntime: async () => ({ runtimeId, ownerId: platformCollaborationActors.owner }),
+        resolveRelayHandle: async () => "owner-handle",
+      }));
+      const headers = { "content-type": "application/json", "x-matrix-runtime-id": runtimeId, authorization: `Bearer ${"b".repeat(48)}` };
+      const register = (authorityGeneration: number) => app.request("/internal/collaboration/runtime-endpoints", {
+        method: "POST", headers, body: JSON.stringify(registration({ authorityGeneration })),
+      });
+      const first = await register(1);
+      expect(first.status).toBe(200);
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      try {
+        const second = await register(4);
+        expect(second.status).toBe(503);
+      } finally {
+        warn.mockRestore();
+      }
+      // Nothing from the refused registration survives: the generation never advanced.
+      expect((await endpoints.resolve(logicalRuntimeId))?.authorityGeneration).toBe(1);
+      await stream.shutdown();
     });
   });
 

@@ -84,12 +84,27 @@ describe("platform collaboration bootstrap", () => {
     // A mistimed key rotation must cost the ticket route, not the platform. Each of these
     // three shapes is refused by the keyring loader, so the composition still comes up whole
     // with no issuer and no published signing key.
+    const seedFor = (index: number) => Buffer.alloc(32, index).toString("base64url");
+    const manyKeys = (prefix: string, count: number, offset: number) => Object.fromEntries(
+      Array.from({ length: count }, (_, index) => [`${prefix}-${index + 1}`, seedFor(offset + index + 1)]),
+    );
+    const recent = new Date(Date.now() - 60_000).toISOString();
     const unusable = [
-      { name: "future-dated retirement", MATRIX_COLLABORATION_TICKET_RETIRED_AT: JSON.stringify({ "ticket-key-1": new Date(Date.now() + 3 * 60 * 60_000).toISOString() }) },
-      { name: "malformed JSON", MATRIX_COLLABORATION_TICKET_RETIRED_AT: "{not json" },
-      { name: "unparseable date", MATRIX_COLLABORATION_TICKET_RETIRED_AT: JSON.stringify({ "ticket-key-1": "yesterday" }) },
+      { name: "future-dated retirement", env: { MATRIX_COLLABORATION_TICKET_RETIRED_AT: JSON.stringify({ "ticket-key-1": new Date(Date.now() + 3 * 60 * 60_000).toISOString() }) } },
+      { name: "malformed JSON", env: { MATRIX_COLLABORATION_TICKET_RETIRED_AT: "{not json" } },
+      { name: "unparseable date", env: { MATRIX_COLLABORATION_TICKET_RETIRED_AT: JSON.stringify({ "ticket-key-1": "yesterday" }) } },
+      {
+        // Under each half of the key cap, over the combined total the issuer publishes.
+        name: "more keys than the issuer publishes",
+        env: {
+          MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID: "active-key-1",
+          MATRIX_COLLABORATION_TICKET_KEYS: JSON.stringify(manyKeys("active-key", 5, 0)),
+          MATRIX_COLLABORATION_TICKET_RETIRED_KEYS: JSON.stringify(manyKeys("retired-key", 5, 10)),
+          MATRIX_COLLABORATION_TICKET_RETIRED_AT: JSON.stringify(Object.fromEntries(Object.keys(manyKeys("retired-key", 5, 10)).map((keyId) => [keyId, recent]))),
+        },
+      },
     ];
-    for (const { name, MATRIX_COLLABORATION_TICKET_RETIRED_AT } of unusable) {
+    for (const { name, env: unusableEnv } of unusable) {
       const fixture = await createPlatformCollaborationTestDatabase();
       const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
       try {
@@ -99,7 +114,7 @@ describe("platform collaboration bootstrap", () => {
             MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID: "ticket-key-2",
             MATRIX_COLLABORATION_TICKET_KEYS: JSON.stringify({ "ticket-key-2": Buffer.alloc(32, 2).toString("base64url") }),
             MATRIX_COLLABORATION_TICKET_RETIRED_KEYS: JSON.stringify({ "ticket-key-1": Buffer.alloc(32, 1).toString("base64url") }),
-            MATRIX_COLLABORATION_TICKET_RETIRED_AT,
+            ...unusableEnv,
           },
           db: { kysely: fixture.collaborationDb } as unknown as PlatformDB,
           platformSecret: "platform-secret",
