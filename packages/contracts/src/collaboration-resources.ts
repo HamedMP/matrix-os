@@ -49,7 +49,7 @@ export const CollaborationFileListResponseSchema = z.object({
   nextCursor: z.string().min(1).max(4_096).optional(),
 }).strict();
 
-const InlineContentSchema = z.string().refine((value) => Buffer.byteLength(value, "utf8") <= COLLABORATION_INLINE_CONTENT_BYTES);
+const InlineContentSchema = z.string().refine((value) => new TextEncoder().encode(value).byteLength <= COLLABORATION_INLINE_CONTENT_BYTES);
 
 export const CollaborationFileActionRequestSchema = z.discriminatedUnion("type", [
   z.object({
