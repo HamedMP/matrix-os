@@ -7,6 +7,8 @@
 import {
   createHash,
 } from "node:crypto";
+import { directErrorResponse, readDirectCredentials } from "./direct-routes.js";
+import type { DirectSessionService } from "./direct-sessions.js";
 import {
   COLLABORATION_CLIENT_REQUEST_ID_HEADER,
   COLLABORATION_EXPECTED_MEMBER_REVISION_HEADER,
@@ -99,6 +101,8 @@ export type Participant = { actorId: string; displayName: string };
 export interface CollaborationRouteOptions {
   runtimeId: string;
   verifier: CollaborationActorProofVerifier;
+  /** S05: direct sessions; when a request carries session credentials they replace the relay proof. */
+  directSessions?: DirectSessionService;
   authority: CollaborationAuthority;
   repository: CollaborationRepository;
   chatScope: CollaborationChatScopeService;
@@ -123,12 +127,29 @@ export interface CollaborationRouteOptions {
 }
 
 export async function authorize(
-  options: { verifier: CollaborationActorProofVerifier },
+  options: { verifier: CollaborationActorProofVerifier; directSessions?: DirectSessionService },
   c: Context,
   body: Uint8Array,
   action: CollaborationAction,
   scopeId: string,
 ): Promise<AuthorizedCollaborationContext> {
+  // S05: a direct session authenticates the request on the home; the relay signed nothing.
+  const credentials = readDirectCredentials(c);
+  if (credentials) {
+    if (!options.directSessions) throw new CollaborationAuthorizationError("unavailable", "Direct sessions are unavailable");
+    const conditional = optionalDeleteConditions(c);
+    const context = await options.directSessions.authorize({
+      ...credentials,
+      method: method(c),
+      path: c.req.path,
+      query: rawQuery(c),
+      body,
+      ...(conditional ? { conditionalHeadersDigest: digestDeleteConditions(conditional) } : {}),
+      action,
+    });
+    if (context.scopeId !== scopeId) throw new CollaborationAuthorizationError("forbidden", "Scope access is required");
+    return context;
+  }
   const context = await options.verifier.verifyAndAuthorize({
     signedProof: decodeProof(c),
     method: method(c),
@@ -435,6 +456,8 @@ export async function handle(c: Context, operation: () => Promise<Response>): Pr
   try {
     return await operation();
   } catch (error: unknown) {
+    const direct = directErrorResponse(c, error);
+    if (direct) return direct;
     if (error instanceof CollaborationActorProofError) {
       if (error.code === "rate_limited") {
         return c.json({ error: "Try again later", code: "rate_limited" }, 429);
