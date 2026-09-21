@@ -67,12 +67,12 @@ export function ChatSharingButton({ api, collaborationEnabled, collaborationApi,
     setPending(true); setError(false); setNotice("");
     try {
       const preflight = CollaborationScopePreflightResponseSchema.parse(await collaborationApi.post(
-        `/api/collaboration/runtimes/${runtimeId}/scopes/preflight`,
+        `/api/collaboration/runtimes/${encodeURIComponent(runtimeId)}/scopes/preflight`,
         { kind: "chat", resourceId: chatId, organizationId },
       ));
       if (!preflight.eligible || !preflight.confirmationToken) throw new Error("ChatActivityMustSettle");
       const created = CollaborationScopeSchema.parse(await collaborationApi.post(
-        `/api/collaboration/runtimes/${runtimeId}/scopes`,
+        `/api/collaboration/runtimes/${encodeURIComponent(runtimeId)}/scopes`,
         {
           kind: "chat",
           resourceId: chatId, organizationId,
