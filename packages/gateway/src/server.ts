@@ -192,6 +192,7 @@ import {
   createUnavailableCanonicalChatService,
 } from "./chat/service.js";
 import { createDiscussionOnlyChatExecutionGuard } from "./collaboration/chat-scope.js";
+import { teardownOwnerDatabaseServices } from "./startup/owner-database-fallback.js";
 import {
   constructGatewayCollaborationOrFailClosed,
   createGatewayCollaboration,
@@ -1156,21 +1157,22 @@ export async function createGateway(config: GatewayConfig) {
         console.error("[app-db] App registration error:", (regErr as Error).message);
       }
     } catch (err) {
-      await gatewayCollaboration?.shutdown();
-      gatewayCollaboration = null;
       console.error("[app-db] Failed to connect to Postgres:", (err as Error).message);
       // Collaboration fails closed without the owner database; the rest of the gateway keeps serving.
       if (collaborationConfig) collaborationFailClosedReason = "owner_database_missing";
       console.log("[app-db] Falling back to file-based storage");
-      // Tear down every partially built database-backed service so the gateway runs wholly in
-      // the file-storage fallback instead of a mixture of retained Postgres handles and files.
-      try {
-        await chatRepository?.release();
-        await canvasRepository?.destroy();
-        await appDb?.destroy();
-      } catch (teardownError: unknown) {
-        console.warn("[app-db] Fallback teardown failed:", teardownError instanceof Error ? teardownError.name : "UnknownError");
-      }
+      // Tear down every partially built database-backed service (event stream before its
+      // repository, pool last) so the gateway runs wholly in the file-storage fallback instead
+      // of a mixture of retained Postgres handles and files.
+      await teardownOwnerDatabaseServices({
+        collaboration: gatewayCollaboration,
+        chatEventStream: canonicalChatEventStream,
+        chatRepository,
+        canvasRepository,
+        appDb,
+      });
+      gatewayCollaboration = null;
+      canonicalChatEventStream = null;
       chatRepository = null;
       canonicalChatCollaborationGuard = null;
       kyselyInstance = null;
