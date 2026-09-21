@@ -75,6 +75,8 @@ export const CollaborationLogicalRuntimeRefSchema = z.object({
 export const CollaborationTicketResourceSchema = z.object({
   scopeId: CollaborationIdSchema,
   kind: CollaborationResourceKindSchema,
+  /** Directory-backed organization grant for an accept-only pending session. */
+  pendingGrantId: CollaborationIdSchema.optional(),
 }).strict();
 
 export const CollaborationConnectionTicketSchema = z.object({
@@ -126,6 +128,7 @@ export const CollaborationDirectSessionSchema = z.object({
   actorId: CollaborationActorIdSchema,
   organizationId: CollaborationOrganizationIdSchema,
   scopeId: CollaborationIdSchema,
+  pendingGrantId: CollaborationIdSchema.optional(),
   runtimeId: CollaborationLogicalRuntimeIdSchema,
   authorityGeneration: CollaborationAuthorityGenerationSchema,
   purpose: CollaborationTicketPurposeSchema,

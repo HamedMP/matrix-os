@@ -125,6 +125,7 @@ export class DirectSessionService {
       actorId: ticket.actorId,
       organizationId: ticket.organizationId,
       scopeId: ticket.resource.scopeId,
+      ...(ticket.resource.pendingGrantId ? { pendingGrantId: ticket.resource.pendingGrantId } : {}),
       runtimeId: ticket.runtime.runtimeId,
       authorityGeneration: ticket.runtime.authorityGeneration,
       purpose: ticket.purpose,
@@ -158,6 +159,7 @@ export class DirectSessionService {
     if (!parsed.success) throw new DirectAuthError("invalid_ticket", "Renewal request is invalid");
     const ticket = this.options.verifier.verifyTicket(parsed.data.signedTicket);
     if (ticket.purpose !== "direct_session" || ticket.actorId !== record.session.actorId || ticket.resource.scopeId !== record.session.scopeId
+      || ticket.resource.pendingGrantId !== record.session.pendingGrantId
       || ticket.organizationId !== record.session.organizationId || ticket.proofKeyThumbprint !== record.session.proofKeyThumbprint) {
       throw new DirectAuthError("invalid_ticket", "Renewal ticket does not match the session");
     }
@@ -246,6 +248,7 @@ export class DirectSessionService {
 
   async authorize(input: DirectAuthorizeInput): Promise<AuthorizedCollaborationContext> {
     const session = await this.authenticate(input);
+    if (session.pendingGrantId) throw new DirectAuthError("invalid_signature", "Pending grant sessions only permit acceptance");
     let context: AuthorizedCollaborationContext;
     try {
       context = await this.options.authority.authorize({ scopeId: session.scopeId, actorId: session.actorId, action: input.action });
@@ -408,6 +411,18 @@ export class DirectSessionService {
     }
     const evidence = await this.evidenceFor(ticket.organizationId, ticket.actorId);
     const membershipScopeId = scope.membership_mode === "inherited" && scope.parent_scope_id ? scope.parent_scope_id : scope.id;
+    if (ticket.resource.pendingGrantId) {
+      if (ticket.purpose !== "direct_session") throw denied();
+      const member = await this.options.repository.getMember(membershipScopeId, ticket.actorId);
+      if (member?.status === "revoked" || member?.status === "expired") throw denied();
+      const grant = await this.options.repository.db.selectFrom("collaboration_grants")
+        .select(["scope_id", "organization_id", "audience_kind", "state", "expires_at"])
+        .where("id", "=", ticket.resource.pendingGrantId).executeTakeFirst();
+      if (!grant || grant.scope_id !== scope.id || grant.organization_id !== ticket.organizationId
+        || grant.audience_kind !== "organization" || grant.state !== "active"
+        || (grant.expires_at !== null && new Date(grant.expires_at).getTime() <= this.now().getTime())) throw denied();
+      return evidence;
+    }
     try {
       await this.options.authority.authorize({ scopeId: ticket.resource.scopeId, actorId: ticket.actorId, action: "read" });
       return evidence;
