@@ -1,3 +1,5 @@
+import { realpath } from "node:fs/promises";
+import { relative, isAbsolute } from "node:path";
 import { z } from "zod/v4";
 import { createProjectRegistry, PROJECT_SLUG_REGEX } from "./project-registry.js";
 import type { createProjectManager } from "./project-manager.js";
@@ -32,5 +34,26 @@ export function createProjectMetadataService(options: {
         return { ok: false as const, status: 500, error: { code: "update_failed", message: "Project could not be updated" } };
       }
     });
+  };
+}
+
+export function createProjectFilesLocationService(options: {
+  homePath: string;
+  projectManager: Pick<ReturnType<typeof createProjectManager>, "getProject" | "resolveProjectWorkingDirectory">;
+}) {
+  return async (slug: string, ownerScope: OwnerScope) => {
+    try {
+      const current = await options.projectManager.getProject(slug, ownerScope);
+      if (!current.ok) return current;
+      const directory = await options.projectManager.resolveProjectWorkingDirectory(current.project);
+      if (directory) {
+        const path = relative(await realpath(options.homePath), directory);
+        if (path && !isAbsolute(path) && path !== ".." && !path.startsWith("../")) return { ok: true as const, path };
+      }
+      return { ok: false as const, status: 404, error: { code: "not_found", message: "Project folder is unavailable" } };
+    } catch (error: unknown) {
+      console.error("[project-files] Resolve failed:", error instanceof Error ? error.name : "UnknownError");
+      return { ok: false as const, status: 500, error: { code: "unavailable", message: "Project folder is unavailable" } };
+    }
   };
 }

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createWorkspaceRoutes } from "../../packages/gateway/src/workspace-routes.js";
@@ -23,6 +23,30 @@ describe("project metadata route", () => {
     });
     return { manager, original: created.project, app, patch };
   }
+  it("resolves managed and imported project directories for Files", async () => {
+    const { app, manager } = await setup();
+    expect(await (await app.request("/api/projects/alpha/files-location")).json()).toEqual({ path: "projects/alpha/repo" });
+    await mkdir(join(homePath, "workspaces/original"), { recursive: true });
+    expect(await manager.createProject({ mode: "folder", name: "Imported", slug: "imported", path: "workspaces/original", ownerScope })).toMatchObject({ ok: true });
+    expect(await (await app.request("/api/projects/imported/files-location")).json()).toEqual({ path: "workspaces/original" });
+    await rm(join(homePath, "workspaces/original"), { recursive: true });
+    expect((await app.request("/api/projects/imported/files-location")).status).toBe(404);
+    expect((await app.request("/api/projects/INVALID/files-location")).status).toBe(400);
+    const other = createWorkspaceRoutes({ homePath, getOwnerScope: () => ({ type: "user", id: "other" }) });
+    expect((await other.request("/api/projects/alpha/files-location")).status).toBe(404);
+    expect((await createWorkspaceRoutes({ homePath }).request("/api/projects/alpha/files-location")).status).not.toBe(200);
+  });
+  it("does not resolve inactive, escaped or symlinked project folders", async () => {
+    const { app, original } = await setup();
+    for (const changed of [{ archivedAt: new Date().toISOString() }, { deletingAt: new Date().toISOString() }, { localPath: tmpdir() }]) {
+      await writeFile(createProjectRegistry({ homePath }).configPath("alpha"), JSON.stringify({ ...original, ...changed }));
+      expect((await app.request("/api/projects/alpha/files-location")).status).toBe(404);
+    }
+    const link = join(homePath, "linked");
+    await symlink(original.localPath, link);
+    await writeFile(createProjectRegistry({ homePath }).configPath("alpha"), JSON.stringify({ ...original, kind: "folder", localPath: link }));
+    expect((await app.request("/api/projects/alpha/files-location")).status).toBe(404);
+  });
   it("persists pin and edits without changing identity or path", async () => {
     const { manager, original, patch } = await setup();
     expect((await patch({ pinned: true, name: " New name ", description: " Notes " })).status).toBe(200);

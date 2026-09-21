@@ -2,7 +2,7 @@ import { useRef } from "react";
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
 import { Folder, FolderOpen, SquarePen, PinIcon, PinOffIcon, Settings, Trash2 } from "@renderer/lib/hugeicons";
 import { ProjectActionsMenu, ProjectActionsButton, type ProjectMenuAction } from "./ProjectActionsMenu";
-import { ProjectEditDialog, ProjectFilesDialog } from "./ProjectActionDialogs";
+import { ProjectEditDialog } from "./ProjectActionDialogs";
 import { useProjectActions } from "./use-project-actions";
 import type { Project } from "../../../stores/board";
 import type { WorkRailProjectGroup as WorkRailProjectGroupModel } from "../work-rail-model";
@@ -52,7 +52,7 @@ export function WorkRailProjectGroup({
   const items: ProjectMenuAction[] = [
     { label: group.project.pinned ? "Unpin" : "Pin", icon: group.project.pinned ? <PinOffIcon size={16} aria-hidden /> : <PinIcon size={16} aria-hidden />, disabled: !actions.available || actions.pending, onSelect: () => { void actions.update({ pinned: !group.project.pinned }); } },
     { label: "Edit", icon: <Settings size={16} aria-hidden />, disabled: !actions.available || actions.pending, onSelect: () => actions.setDialog("edit") },
-    { label: "Open in Files", icon: <FolderOpen size={16} aria-hidden />, disabled: !actions.available, onSelect: () => actions.setDialog("files") },
+    { label: "Show in Files", icon: <FolderOpen size={16} aria-hidden />, disabled: !actions.available || actions.pending, onSelect: () => { void actions.showInFiles(); } },
     { label: "Delete project", icon: <Trash2 size={16} aria-hidden />, danger: true, disabled: actions.pending, onSelect: () => onDeleteProject(group.project) },
   ];
   return (
@@ -89,7 +89,6 @@ export function WorkRailProjectGroup({
       </ProjectActionsMenu>
       {actions.error && actions.dialog !== "edit" ? <p role="alert" className="px-2 text-xs" style={{ color: "var(--danger)" }}>{actions.error}</p> : null}
       {actions.dialog === "edit" ? <ProjectEditDialog returnFocusRef={actionButtonRef} project={group.project} pending={actions.pending} error={actions.error} onClose={() => actions.setDialog(null)} onSave={actions.update} /> : null}
-      {actions.dialog === "files" ? <ProjectFilesDialog returnFocusRef={actionButtonRef} project={group.project} onClose={() => actions.setDialog(null)} /> : null}
       {expanded ? (
         <div className="flex flex-col gap-0.5 pl-5">
           {group.chats.map((record) => (

@@ -7,9 +7,8 @@ import { buildWorkRailModel } from "@desktop/renderer/src/features/work/work-rai
 import { useBoard, parseProject } from "@desktop/renderer/src/stores/board";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
 
-vi.mock("@desktop/renderer/src/features/panels/InspectorFilesPanel", () => ({
-  InspectorFilesPanel: ({ scope }: { scope: { projectId: string } }) => <div data-testid="files-scope">{scope.projectId}</div>,
-}));
+import { useTabs } from "@desktop/renderer/src/stores/tabs";
+import { useFilesNavigation } from "@desktop/renderer/src/stores/files-navigation";
 import { useProjectActions } from "@desktop/renderer/src/features/work/work-rail/use-project-actions";
 import { advanceRuntimeGeneration } from "@desktop/renderer/src/stores/runtime-generation";
 
@@ -39,7 +38,7 @@ describe("project sidebar actions", () => {
   });
   it("exposes the same actions by ellipsis and right click", () => {
     setup(); openMenu();
-    const expected = ["Pin", "Edit", "Open in Files", "Delete project"];
+    const expected = ["Pin", "Edit", "Show in Files", "Delete project"];
     expect(screen.getAllByRole("menuitem").map(item => item.textContent)).toEqual(expected);
     fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
     fireEvent.contextMenu(screen.getByRole("button", { name: "Alpha" }));
@@ -82,9 +81,53 @@ describe("project sidebar actions", () => {
     expect((screen.getByLabelText("Project name") as HTMLInputElement).value).toBe("Keep draft");
     expect(screen.queryByText(/secret database/)).toBeNull();
   });
-  it("opens Files using project scope rather than localPath", () => {
-    setup(); openMenu(); fireEvent.click(screen.getByRole("menuitem", { name: "Open in Files" }));
-    expect(screen.getByTestId("files-scope").textContent).toBe("alpha");
+  it("opens the singleton Files app at the resolved imported directory", async () => {
+    setup();
+    const get = vi.fn().mockResolvedValue({ path: "workspaces/original" });
+    act(() => { useConnection.setState({ api: { get } as never }); useTabs.setState({ tabs: [], activeTabId: null }); });
+    openMenu(); fireEvent.click(screen.getByRole("menuitem", { name: "Show in Files" }));
+    await waitFor(() => expect(useFilesNavigation.getState().request?.path).toBe("workspaces/original"));
+    expect(get).toHaveBeenCalledWith("/api/projects/alpha/files-location");
+    expect(useTabs.getState().tabs.filter(tab => tab.kind === "files")).toHaveLength(1);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+  it("ignores a files location response after switching runtime", async () => {
+    let resolve!: (value: unknown) => void;
+    const get = vi.fn(() => new Promise(value => { resolve = value; }));
+    useConnection.setState({ api: { get } as never });
+    useFilesNavigation.setState({ request: null });
+    const { result } = renderHook(() => useProjectActions(alpha));
+    act(() => { void result.current.showInFiles(); });
+    act(() => { advanceRuntimeGeneration(); });
+    await act(async () => { resolve({ path: "projects/alpha/repo" }); });
+    expect(useFilesNavigation.getState().request).toBeNull();
+  });
+  it.each([null, "../other", "/runtime/projects/alpha", "projects//alpha", "projects/./alpha"])("rejects an invalid Files location %j without navigating", async path => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    useConnection.setState({ api: { get: vi.fn().mockResolvedValue({ path }) } as never });
+    useFilesNavigation.setState({ request: null });
+    const openTab = vi.spyOn(useTabs.getState(), "openTab");
+    const { result } = renderHook(() => useProjectActions(alpha));
+    await act(async () => { await result.current.showInFiles(); });
+    expect(result.current.error).toBe("The project folder could not be opened. Try again.");
+    expect(result.current.pending).toBe(false);
+    expect(openTab).not.toHaveBeenCalled();
+    expect(useFilesNavigation.getState().request).toBeNull();
+  });
+  it("keeps Files closed when location lookup fails and allows retry", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const get = vi.fn().mockRejectedValueOnce(new Error("private runtime path")).mockResolvedValue({ path: "projects/alpha/repo" });
+    useConnection.setState({ api: { get } as never });
+    useFilesNavigation.setState({ request: null });
+    useTabs.setState({ tabs: [], activeTabId: null });
+    const { result } = renderHook(() => useProjectActions(alpha));
+    await act(async () => { await result.current.showInFiles(); });
+    expect(useTabs.getState().tabs).toHaveLength(0);
+    expect(result.current.error).not.toContain("private");
+    await act(async () => { await result.current.showInFiles(); });
+    await act(async () => { await result.current.showInFiles(); });
+    expect(useTabs.getState().tabs.filter(tab => tab.kind === "files")).toHaveLength(1);
+    expect(result.current.error).toBeNull();
   });
   it("parses pinned state and stably orders pinned projects first", () => {
     const pinned = { ...alpha, id: "proj_beta", slug: "beta", name: "Beta", pinned: true };

@@ -21,3 +21,9 @@
 
 ## Requirement correction — 2026-09-21
 PR #1772 is closed. Previous component-fixture/test evidence is historical and does not validate the corrected Files navigation. Implementation is paused; no new navigation implementation has been published.
+
+## Resumed implementation — 2026-09-21
+- Full Files navigation implemented with owner-scoped location resolution and a bounded runtime-scoped navigation intent.
+- Desktop/Gateway TypeScript and Electron production build passed.
+- Targeted regression suites cover canonical/imported paths, invalid/missing folders, same-folder reuse, metadata persistence, stale runtime responses and existing WorkRail behavior.
+- Preview VPS and authenticated Electron Desktop validation in progress.

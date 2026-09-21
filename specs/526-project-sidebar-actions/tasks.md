@@ -17,7 +17,7 @@
 - [x] T008 [US2] Implement runtime-safe metadata action hook, edit dialog and stable pin sorting; update board projection.
 
 ## Phase 5: US3 Locate files
-- [ ] T009 [US3] Test full Files navigation and implement Show in Files using the canonical project directory.
+- [x] T009 [US3] Test full Files navigation and implement Show in Files using the canonical project directory.
 
 ## Phase 6: Validation and delivery
 - [x] T010 Run relevant regression suites, scoped typechecks and diff review; record results in quickstart.md.
@@ -35,9 +35,9 @@ Two reviewable layers: spec/backend foundation, then shared UI/tests; keep each 
 - Previous Electron UI: https://github.com/HamedMP/matrix-os/pull/1772 — closed; modal behavior rejected. Replacement pending.
 - Public docs: https://github.com/FinnaAI/matrix-os-site/pull/118
 - Retained backend and docs PRs are drafts. Human Review, live runtime acceptance, CI/Greptile and landing remain pending.
-- Implementation is paused at the user’s request; the prior UI tests do not establish acceptance of corrected Show in Files navigation.
+- Implementation resumed on user request. Corrected navigation has targeted regression coverage; Preview VPS and Electron Desktop acceptance are in progress.
 
 ## Clarification correction
-- [ ] T012 Replace project Files modal with full Files navigation; test canonical directory, repeat navigation, unavailable directory and stale runtime.
+- [x] T012 Replace project Files modal with full Files navigation; test canonical directory, repeat navigation, unavailable directory and stale runtime.
 - [x] T013 Close incompatible PR #1772 and correct PR/spec/public documentation and Linear requirements.
 - [ ] T014 Resume implementation when requested, then publish a replacement UI PR and prepare Human Review.

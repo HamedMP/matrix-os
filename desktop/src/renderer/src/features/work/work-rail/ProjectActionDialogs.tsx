@@ -1,7 +1,6 @@
 import { useState, type RefObject } from "react";
 import { Button, Dialog } from "../../../design/primitives";
 import type { Project } from "../../../stores/board";
-import { InspectorFilesPanel } from "../../panels/InspectorFilesPanel";
 
 export function ProjectEditDialog({ project, pending, error, onClose, onSave, returnFocusRef }: {
   project: Project;
@@ -32,17 +31,5 @@ export function ProjectEditDialog({ project, pending, error, onClose, onSave, re
         <Button type="submit" variant="primary" disabled={pending || !name.trim()}>{pending ? "Saving…" : "Save"}</Button>
       </div>
     </form>
-  </Dialog>;
-}
-
-export function ProjectFilesDialog({ project, onClose, returnFocusRef }: { project: Project; onClose(): void; returnFocusRef: RefObject<HTMLButtonElement | null> }) {
-  return <Dialog open title={`Files — ${project.name}`} onClose={onClose} width={760} onCloseAutoFocus={event => { event.preventDefault(); returnFocusRef.current?.focus(); }}>
-    <div className="flex items-center justify-between border-b p-3">
-      <h2 className="truncate font-medium">Files — {project.name}</h2>
-      <Button onClick={onClose}>Close</Button>
-    </div>
-    <div className="flex h-[60vh] min-h-0 flex-col overflow-auto p-3">
-      <InspectorFilesPanel scope={{ kind: "project", projectId: project.slug, chatId: `project-files:${project.id ?? project.slug}`, label: project.name }} />
-    </div>
   </Dialog>;
 }
