@@ -28,7 +28,7 @@ it("refreshes changed share previews and requires confirmation again before crea
   const updated = { ...old, revision: 2, fingerprint: "b".repeat(64), messages: [...old.messages, { role: "assistant", text: "New reply" }] };
   const get = vi.fn().mockResolvedValueOnce(old).mockResolvedValueOnce({ shares: [] }).mockResolvedValue(updated);
   const post = vi.fn().mockResolvedValue({ id: "123e4567-e89b-42d3-a456-426614174000", token: "c".repeat(64) });
-  render(<ChatSharingButton api={{ baseUrl: "https://matrix.test", get, post, delete: vi.fn() }} collaborationEnabled={false} chatId="chat_test" handle="example" runtimeSlot="primary" platformHost="https://matrix.test" copyText={vi.fn()} />);
+  render(<ChatSharingButton api={{ baseUrl: "https://matrix.test", get, post, delete: vi.fn() }} collaborationEnabled={false} organizationId={null} chatId="chat_test" handle="example" runtimeSlot="primary" platformHost="https://matrix.test" copyText={vi.fn()} />);
   fireEvent.click(screen.getByRole("button", { name: "Share" }));
   fireEvent.click(screen.getByRole("button", { name: "Share snapshot" }));
   fireEvent.click(await screen.findByRole("checkbox"));
@@ -48,7 +48,7 @@ it("refreshes a reply committed between preflight and share creation without ret
   const updated = { ...old, revision: 2, fingerprint: "b".repeat(64), messages: [{ role: "assistant", text: "Racing reply" }] };
   const get = vi.fn().mockResolvedValueOnce(old).mockResolvedValueOnce({ shares: [] }).mockResolvedValueOnce(old).mockResolvedValueOnce(updated);
   const post = vi.fn().mockRejectedValue(new Error("Conflict"));
-  render(<ChatSharingButton api={{ baseUrl: "https://matrix.test", get, post, delete: vi.fn() }} collaborationEnabled={false} chatId="chat_test" handle="example" runtimeSlot="primary" platformHost="https://matrix.test" copyText={vi.fn()} />);
+  render(<ChatSharingButton api={{ baseUrl: "https://matrix.test", get, post, delete: vi.fn() }} collaborationEnabled={false} organizationId={null} chatId="chat_test" handle="example" runtimeSlot="primary" platformHost="https://matrix.test" copyText={vi.fn()} />);
   fireEvent.click(screen.getByRole("button", { name: "Share" }));
   fireEvent.click(screen.getByRole("button", { name: "Share snapshot" }));
   const checkbox = await screen.findByRole("checkbox");
