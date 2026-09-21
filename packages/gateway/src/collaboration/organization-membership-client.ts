@@ -35,7 +35,7 @@ export class OrganizationMembershipClient implements OrganizationMembershipSourc
   private readonly fetchImpl: typeof fetch;
   private readonly now: () => Date;
   private readonly maxEntries: number;
-  private readonly cache = new Map<string, { member: boolean; expiresAt: string; aiSubmission: OrganizationAiSubmission }>();
+  private readonly cache = new Map<string, { member: boolean; expiresAt: string; aiSubmission: OrganizationAiSubmission; membershipEpoch: string }>();
   private readonly inflight = new Map<string, Promise<OrganizationMembershipAssertion>>();
 
   constructor(private readonly options: {
@@ -63,7 +63,9 @@ export class OrganizationMembershipClient implements OrganizationMembershipSourc
     if (cached && Date.parse(cached.expiresAt) > this.now().getTime()) {
       this.cache.delete(key);
       this.cache.set(key, cached);
-      return cached.member ? { member: true, expiresAt: cached.expiresAt, aiSubmission: cached.aiSubmission } : { member: false };
+      return cached.member
+        ? { member: true, expiresAt: cached.expiresAt, aiSubmission: cached.aiSubmission, membershipEpoch: cached.membershipEpoch }
+        : { member: false };
     }
     if (cached) this.cache.delete(key);
     const pending = this.inflight.get(key);
@@ -118,13 +120,15 @@ export class OrganizationMembershipClient implements OrganizationMembershipSourc
     if (!assertion || assertion.type !== "membership_assertion") throw new OrganizationMembershipClientError();
     // Additive contract field: a platform that predates it means owner-only (fail closed).
     const aiSubmission: OrganizationAiSubmission = assertion.aiSubmission === "members" ? "members" : "owner_only";
-    this.cache.set(key, { member: assertion.member, expiresAt: assertion.expiresAt, aiSubmission });
+    this.cache.set(key, { member: assertion.member, expiresAt: assertion.expiresAt, aiSubmission, membershipEpoch: assertion.membershipEpoch });
     while (this.cache.size > this.maxEntries) {
       const oldest = this.cache.keys().next().value;
       if (oldest === undefined) break;
       this.cache.delete(oldest);
     }
-    return assertion.member ? { member: true, expiresAt: assertion.expiresAt, aiSubmission } : { member: false };
+    return assertion.member
+      ? { member: true, expiresAt: assertion.expiresAt, aiSubmission, membershipEpoch: assertion.membershipEpoch }
+      : { member: false };
   }
 
   /**

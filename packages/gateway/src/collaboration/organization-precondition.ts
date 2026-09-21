@@ -16,7 +16,13 @@ import { CollaborationAuthorizationError } from "./authority-error.js";
 export type OrganizationAiSubmission = "members" | "owner_only";
 
 export type OrganizationMembershipAssertion =
-  | { member: true; expiresAt: string; aiSubmission: OrganizationAiSubmission }
+  | {
+    member: true;
+    expiresAt: string;
+    aiSubmission: OrganizationAiSubmission;
+    /** The platform projection's monotonic membership epoch (decimal string), carried on fresh and cached paths. */
+    membershipEpoch: string;
+  }
   | { member: false };
 
 export interface OrganizationMembershipSource {
