@@ -25,7 +25,7 @@ import {
   requireTerminalAdapter,
   requireProjectScope,
   readJson,
-  requireOwnerCreationProof,
+  ownerRuntimeIdentity,
   requireOrganizationMembership,
   requireScopeOrganizationMembership,
   scopeProjection,
@@ -44,9 +44,9 @@ export function registerScopeRoutes(routes: Hono, options: CollaborationRouteOpt
   const now = options.now ?? (() => new Date());
   routes.post("/api/collaboration/runtimes/:runtimeId/scopes/preflight", async (c) => handle(c, async () => {
     const { value, bytes } = await readJson(c);
-    const proof = await verifyHttp(options.verifier, c, bytes);
-    requireOwnerCreationProof(proof, CollaborationRuntimeIdSchema.parse(c.req.param("runtimeId")), options.runtimeId);
     const input = CollaborationScopePreflightRequestSchema.parse(value);
+    const proof = await ownerRuntimeIdentity(options, c, bytes,
+      CollaborationRuntimeIdSchema.parse(c.req.param("runtimeId")), input.organizationId);
     // The owner must be a current member of the organization the share is scoped to (S20 / T101).
     await requireOrganizationMembership(options, proof.actorId, input.organizationId);
     const result = input.kind === "chat"
@@ -83,9 +83,9 @@ export function registerScopeRoutes(routes: Hono, options: CollaborationRouteOpt
 
   routes.post("/api/collaboration/runtimes/:runtimeId/scopes", async (c) => handle(c, async () => {
     const { value, bytes } = await readJson(c);
-    const proof = await verifyHttp(options.verifier, c, bytes);
-    requireOwnerCreationProof(proof, CollaborationRuntimeIdSchema.parse(c.req.param("runtimeId")), options.runtimeId);
     const input = CollaborationCreateScopeRequestSchema.parse(value);
+    const proof = await ownerRuntimeIdentity(options, c, bytes,
+      CollaborationRuntimeIdSchema.parse(c.req.param("runtimeId")), input.organizationId);
     // Membership is proven before any write; the confirmation token also binds this organization.
     await requireOrganizationMembership(options, proof.actorId, input.organizationId);
     const scope = input.kind === "chat"

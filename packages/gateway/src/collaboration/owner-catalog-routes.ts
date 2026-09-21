@@ -7,16 +7,16 @@ import {
 import type { Hono } from "hono";
 import { CollaborationAuthorizationError } from "./authority-error.js";
 import {
-  handle, readJson, requireOwnerCreationProof, verifyHttp,
+  handle, ownerRuntimeIdentity, readJson,
   type CollaborationRouteOptions,
 } from "./route-support.js";
 
 export function registerOwnerCatalogRoutes(routes: Hono, options: CollaborationRouteOptions): void {
   routes.post("/api/collaboration/runtimes/:runtimeId/catalog/resolve", async (c) => handle(c, async () => {
     const { value, bytes } = await readJson(c);
-    const proof = await verifyHttp(options.verifier, c, bytes);
-    requireOwnerCreationProof(proof, CollaborationRuntimeIdSchema.parse(c.req.param("runtimeId")), options.runtimeId);
     const input = CollaborationOwnerCatalogResolveRequestSchema.parse(value);
+    const proof = await ownerRuntimeIdentity(options, c, bytes,
+      CollaborationRuntimeIdSchema.parse(c.req.param("runtimeId")), input.organizationId);
     const resources = options.resources;
     if (!resources?.driver.inspect || !resources.driver.resolveOwnerNamespace) {
       throw new CollaborationAuthorizationError("unavailable", "Resource catalog is unavailable");
