@@ -79,7 +79,10 @@ describe("project membership publication transition", () => {
       ])
       .where("id", "in", [CHAT_SCOPE_ID, TERMINAL_SCOPE_ID])
       .orderBy("id", "asc")
-      .execute()).resolves.toEqual([
+      .execute()
+      // Real Postgres returns BIGINT columns as strings; PGlite returns numbers.
+      .then((rows) => rows.map((row) => ({ ...row, auth_epoch: Number(row.auth_epoch), authority_generation: Number(row.authority_generation) })))
+    ).resolves.toEqual([
       {
         id: CHAT_SCOPE_ID,
         parent_scope_id: PROJECT_SCOPE_ID,

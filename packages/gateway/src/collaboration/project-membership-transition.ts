@@ -1,5 +1,6 @@
 import type { Transaction } from "kysely";
 import type { OwnerCollaborationDatabase } from "./database.js";
+import { jsonb } from "./repository-shared.js";
 
 const MAX_PROJECT_RESOURCE_SCOPES = 100_000;
 const MAX_DIRECT_SCOPE_MEMBERS = 8;
@@ -128,7 +129,7 @@ export async function reconcileProjectMembershipAtPublication(
         await trx.insertInto("collaboration_directory_outbox").values({
           event_id: input.createEventId(),
           scope_id: child.id,
-          recipient_actor_ids: recipients,
+          recipient_actor_ids: jsonb(recipients),
           authority_runtime_id: input.destinationAuthorityRuntimeId,
           authority_generation: input.destinationAuthorityGeneration,
           resource_kind: child.kind,
