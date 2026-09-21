@@ -3,10 +3,7 @@ import {
   COLLABORATION_EXPECTED_MEMBER_REVISION_HEADER,
   COLLABORATION_EXPECTED_REVISION_HEADER,
   COLLABORATION_HTTP_BODY_LIMIT,
-  COLLABORATION_POLICY_HEADER,
   CollaborationDeleteConditionSchema,
-  CollaborationCreateScopeRequestSchema,
-  CollaborationScopePreflightRequestSchema,
 } from "@matrix-os/contracts";
 import type { CollaborationProofSigner } from "./proof.js";
 import type { PlatformCollaborationRepository } from "./repository.js";
@@ -66,29 +63,6 @@ const SCOPE_ROUTES = [
   ["POST", new RegExp(`^/api/collaboration/scopes/(${UUID})/project/terminals$`)],
 ] as const;
 
-const M2_SCOPE_ROUTES = [
-  ["GET", new RegExp(`^/api/collaboration/scopes/${UUID}/chat/requests$`)],
-  ["POST", new RegExp(`^/api/collaboration/scopes/${UUID}/chat/requests$`)],
-  ["POST", new RegExp(`^/api/collaboration/scopes/${UUID}/chat/requests/${RESOURCE}/cancel$`)],
-  ["POST", new RegExp(`^/api/collaboration/scopes/${UUID}/chat/requests/${RESOURCE}/retry$`)],
-  ["POST", new RegExp(`^/api/collaboration/scopes/${UUID}/chat/approvals/${RESOURCE}/decision$`)],
-] as const;
-
-const M3_SCOPE_ROUTES = [
-  ["GET", new RegExp(`^/api/collaboration/scopes/${UUID}/terminal$`)],
-  ["POST", new RegExp(`^/api/collaboration/scopes/${UUID}/terminal/actions$`)],
-] as const;
-
-const M4_SCOPE_ROUTES = [
-  ["GET", new RegExp(`^/api/collaboration/scopes/${UUID}/project(?:/inventory|/files|/git|/layout)?$`)],
-  ["POST", new RegExp(`^/api/collaboration/scopes/${UUID}/project/(?:confirm|git/actions|chats|terminals)$`)],
-  ["PUT", new RegExp(`^/api/collaboration/scopes/${UUID}/project/files$`)],
-  ["DELETE", new RegExp(`^/api/collaboration/scopes/${UUID}/project/files$`)],
-  ["PATCH", new RegExp(`^/api/collaboration/scopes/${UUID}/project/layout$`)],
-  ["GET", new RegExp(`^/api/collaboration/scopes/${UUID}/project/apps/${RESOURCE}$`)],
-  ["POST", new RegExp(`^/api/collaboration/scopes/${UUID}/project/apps/${RESOURCE}/actions$`)],
-] as const;
-
 const INVITATION_ROUTES = [
   ["GET", new RegExp(`^/api/collaboration/invitations/(${UUID})$`)],
   ["POST", new RegExp(`^/api/collaboration/invitations/(${UUID})/accept$`)],
@@ -120,18 +94,6 @@ export function parseCollaborationProxyRoute(
     if (match) return { kind: "invitation", identifier: match[1]! };
   }
   return null;
-}
-
-export function collaborationMilestoneForRoute(
-  method: string,
-  path: string,
-): "m1" | "m2" | "m3" | "m4" | null {
-  const route = parseCollaborationProxyRoute(method, path);
-  if (!route) return null;
-  if (M2_SCOPE_ROUTES.some(([allowedMethod, pattern]) => method === allowedMethod && pattern.test(path))) return "m2";
-  if (M3_SCOPE_ROUTES.some(([allowedMethod, pattern]) => method === allowedMethod && pattern.test(path))) return "m3";
-  if (M4_SCOPE_ROUTES.some(([allowedMethod, pattern]) => method === allowedMethod && pattern.test(path))) return "m4";
-  return "m1";
 }
 
 export interface CollaborationRuntimeRoute {
@@ -185,19 +147,8 @@ export class CollaborationProxy {
       if (route.kind !== "runtime" && !directory) return safeResponse("Collaboration route not found", 404);
       const ownerId = runtime?.ownerId ?? directory!.ownerId;
       const scopeId = directory?.scopeId;
-      const milestone = route.kind === "runtime"
-        ? runtimeMilestone(input.path, input.body)
-        : directory?.kind === "project"
-          ? "m4"
-          : collaborationMilestoneForRoute(input.method, input.path);
-      if (!milestone) return safeResponse("Collaboration route not found", 404);
-      const policy = await this.options.repository.getPolicy(milestone);
-      const participants = scopeId
-        ? await this.options.repository.listScopeActors(scopeId)
-        : [input.actorId];
-      if (!policyAllows(policy, input.actorId, ownerId, participants, input.method, input.path)) {
-        return safeResponse("Collaboration unavailable", policy.mode === "read_only" ? 403 : 404);
-      }
+      // S20 / T100: no rollout policy or cohort lookup. The relay forwards the
+      // signed actor proof; the home is the sole authorization point.
       runtime ??= await this.options.resolveRuntime(directory!.runtimeId);
       if (!runtime || (directory && (runtime.runtimeId !== directory.runtimeId || runtime.ownerId !== directory.ownerId))) {
         return safeResponse("Collaboration unavailable", 503);
@@ -227,28 +178,6 @@ export class CollaborationProxy {
       }
       headers.set("accept", "application/json");
       headers.set(PROOF_HEADER, Buffer.from(JSON.stringify(signedProof)).toString("base64url"));
-      let forwardedPolicy = milestone === "m1" ? undefined : policy;
-      if (shouldAttachM2ProjectionPolicy(input.method, input.path, input.body, directory?.kind)) {
-        try {
-          forwardedPolicy = await this.options.repository.getPolicy("m2");
-        } catch (error: unknown) {
-          console.warn("[collaboration-proxy] M2 projection policy unavailable",
-            error instanceof Error ? error.name : "UnknownError");
-          forwardedPolicy = undefined;
-        }
-      }
-      if (forwardedPolicy) {
-        const issuedAt = (this.options.now ?? (() => new Date()))();
-        const signedPolicy = this.options.signer.signPolicy({
-          milestone: forwardedPolicy.milestone,
-          revision: String(forwardedPolicy.revision),
-          mode: forwardedPolicy.mode,
-          cohort: forwardedPolicy.cohort,
-          issuedAt: issuedAt.toISOString(),
-          expiresAt: new Date(issuedAt.getTime() + 30_000).toISOString(),
-        });
-        headers.set(COLLABORATION_POLICY_HEADER, Buffer.from(JSON.stringify(signedPolicy)).toString("base64url"));
-      }
       const response = await (this.options.fetchImpl ?? fetch)(
         `${baseUrl.origin}${input.path}${input.query ? `?${input.query}` : ""}`,
         {
@@ -302,43 +231,7 @@ export class CollaborationProxy {
   }
 }
 
-function runtimeMilestone(path: string, body: Uint8Array): "m1" | "m4" {
-  try {
-    const value = JSON.parse(new TextDecoder().decode(body)) as unknown;
-    const parsed = path.endsWith("/scopes/preflight")
-      ? CollaborationScopePreflightRequestSchema.safeParse(value)
-      : CollaborationCreateScopeRequestSchema.safeParse(value);
-    return parsed.success && parsed.data.kind === "project" ? "m4" : "m1";
-  } catch (error: unknown) {
-    if (!(error instanceof SyntaxError)) {
-      console.warn("[collaboration-proxy] runtime route classification failed", error instanceof Error ? error.name : "UnknownError");
-    }
-    return "m1";
-  }
-}
 
-function shouldAttachM2ProjectionPolicy(
-  method: string,
-  path: string,
-  body: Uint8Array,
-  scopeKind?: "chat" | "terminal" | "project",
-): boolean {
-  if (method === "GET" && scopeKind === "chat"
-    && new RegExp(`^/api/collaboration/scopes/${UUID}$`).test(path)) return true;
-  if (method !== "POST" || !new RegExp(`^/api/collaboration/runtimes/${RUNTIME}/scopes$`).test(path)) return false;
-  try {
-    const parsed = CollaborationCreateScopeRequestSchema.safeParse(
-      JSON.parse(new TextDecoder().decode(body)) as unknown,
-    );
-    return parsed.success && parsed.data.kind === "chat";
-  } catch (error: unknown) {
-    if (!(error instanceof SyntaxError)) {
-      console.warn("[collaboration-proxy] scope projection classification failed",
-        error instanceof Error ? error.name : "UnknownError");
-    }
-    return false;
-  }
-}
 
 function isExportRequest(method: string, path: string): boolean {
   return method === "GET" && new RegExp(`^/api/collaboration/scopes/${UUID}/exports/${UUID}$`).test(path);
@@ -376,40 +269,7 @@ function boundedResponseStream(response: Response, maxBytes: number): ReadableSt
   });
 }
 
-function policyAllows(
-  policy: { mode: "off" | "internal" | "enabled" | "read_only"; cohort: string[] },
-  actorId: string,
-  ownerId: string,
-  participants: string[],
-  method: string,
-  path: string,
-): boolean {
-  if (ownerRecoveryRoute(actorId, ownerId, method, path)) return true;
-  if (policy.mode === "off") return false;
-  if (policy.mode === "read_only") return method === "GET";
-  if (policy.mode === "enabled") return true;
-  const cohort = new Set(policy.cohort);
-  return cohort.has(actorId) && cohort.has(ownerId) && participants.every((actor) => cohort.has(actor));
-}
 
-function ownerRecoveryRoute(
-  actorId: string,
-  ownerId: string,
-  method: string,
-  path: string,
-): boolean {
-  if (actorId !== ownerId) return false;
-  if (method === "DELETE") {
-    return new RegExp(`^/api/collaboration/scopes/${UUID}/(?:invitations/${UUID}|members/${ACTOR})$`).test(path);
-  }
-  if (method === "POST") {
-    return new RegExp(`^/api/collaboration/scopes/${UUID}/lifecycle$`).test(path);
-  }
-  if (method === "GET") {
-    return new RegExp(`^/api/collaboration/scopes/${UUID}(?:|/members|/operations/${UUID}|/exports/${UUID})$`).test(path);
-  }
-  return false;
-}
 
 function parseRuntimeBaseUrl(value: string): URL | null {
   try {

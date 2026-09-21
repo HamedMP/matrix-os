@@ -4,6 +4,7 @@
  * configuration is missing. No release flag exists.
  */
 import { Hono } from "hono";
+import { readFile } from "node:fs/promises";
 import type { Agent } from "undici";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PlatformDB } from "../../packages/platform/src/db.js";
@@ -11,6 +12,11 @@ import { bootstrapPlatformCollaboration } from "../../packages/platform/src/coll
 import { createFailClosedPlatformCollaboration } from "../../packages/platform/src/collaboration/fail-closed.js";
 import { describePlatformCollaborationConfiguration } from "../../packages/platform/src/collaboration/wiring.js";
 import { COLLABORATION_HTTP_BODY_LIMIT } from "@matrix-os/contracts";
+import { bootstrapPlatformCollaborationDatabase } from "../../packages/platform/src/collaboration/database.js";
+import {
+  createPlatformCollaborationTestDatabase,
+  destroyPlatformCollaborationTestDatabase,
+} from "./collaboration-test-support.js";
 
 const signing = {
   MATRIX_COLLABORATION_ACTIVE_KEY_ID: "key-1",
@@ -93,5 +99,28 @@ describe("S20 platform organization precondition: fail-closed composition", () =
     });
     expect("failClosed" in composition && composition.failClosed.reason).toBe("runtime_authentication_missing");
     expect(composition.sockets).toBeUndefined();
+  });
+});
+
+describe("S20 / T100: the rollout cohort table is gone", () => {
+  it("drops collaboration_rollout_policy atomically and keeps a nullable, unused policy revision on tickets", async () => {
+    const fixture = await createPlatformCollaborationTestDatabase();
+    try {
+      await bootstrapPlatformCollaborationDatabase(fixture.collaborationDb);
+      const tables = await fixture.collaborationDb.selectFrom("pg_tables" as never)
+        .select("tablename" as never).where("tablename" as never, "=", "collaboration_rollout_policy").execute();
+      expect(tables).toEqual([]);
+      const columns = await fixture.collaborationDb.selectFrom("information_schema.columns" as never)
+        .select(["column_name", "is_nullable"] as never)
+        .where("table_name" as never, "=", "collaboration_connection_tickets")
+        .where("column_name" as never, "=", "policy_revision").execute();
+      // Kept nullable and unused so a pre-S20 build remains a rollback target; S18 drops it.
+      expect(columns).toEqual([{ column_name: "policy_revision", is_nullable: "YES" }]);
+      const source = await readFile("packages/platform/src/collaboration/database.ts", "utf8");
+      expect(source).toContain("runPlatformMigration(db, (trx) => applyCollaborationSchema(trx))");
+      expect(source).not.toContain(".execute(db)");
+    } finally {
+      await destroyPlatformCollaborationTestDatabase(fixture);
+    }
   });
 });

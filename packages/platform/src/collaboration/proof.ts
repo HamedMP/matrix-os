@@ -1,12 +1,9 @@
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import {
   CollaborationActorProofSchema,
-  CollaborationPolicySchema,
   CollaborationSignedActorProofSchema,
-  CollaborationSignedPolicySchema,
   type CollaborationActorProof,
   type CollaborationDeleteCondition,
-  type CollaborationPolicy,
 } from "@matrix-os/contracts";
 
 const PROOF_LIFETIME_MS = 30_000;
@@ -96,14 +93,6 @@ export class CollaborationProofSigner {
     });
   }
 
-  signPolicy(policyInput: CollaborationPolicy) {
-    const policy = CollaborationPolicySchema.parse(policyInput);
-    return CollaborationSignedPolicySchema.parse({
-      policy,
-      keyId: this.keyring.activeKeyId,
-      signature: sign("policy", policy, requireKey(this.keyring.keys[this.keyring.activeKeyId])),
-    });
-  }
 }
 
 export function digestBody(body: Uint8Array): string {
@@ -119,8 +108,8 @@ export function digestConditionalHeaders(value: CollaborationDeleteCondition | u
 }
 
 function sign(
-  domain: "http" | "events" | "terminal" | "policy",
-  value: CollaborationActorProof | CollaborationPolicy,
+  domain: "http" | "events" | "terminal",
+  value: CollaborationActorProof,
   key: string,
 ): string {
   return createHmac("sha256", key).update(`${domain}\n${JSON.stringify(value)}`).digest("base64url");

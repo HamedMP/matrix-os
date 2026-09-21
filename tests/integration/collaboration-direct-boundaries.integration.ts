@@ -35,16 +35,21 @@ describe("S00 direct probes: baseline characterization of the platform proxy (al
   const proxy = readFileSync(join(REPO_ROOT, "packages/platform/src/collaboration/proxy.ts"), "utf8");
   const websocket = readFileSync(join(REPO_ROOT, "packages/platform/src/collaboration/websocket.ts"), "utf8");
 
-  it("today the platform makes a per-request policy decision and parses request bodies (S05/S18 must invert this)", () => {
-    expect(proxy).toContain("getPolicy(");
-    expect(proxy).toContain("policyAllows(");
-    expect(proxy).toContain("JSON.parse(new TextDecoder().decode(body))");
+  it("after S20 the platform consults no rollout policy or cohort on any request (S05/S18 still remove proof signing)", () => {
+    for (const source of [proxy, websocket]) {
+      expect(source).not.toContain("getPolicy(");
+      expect(source).not.toContain("policyAllows(");
+      expect(source).not.toContain("requirePolicy(");
+      expect(source).not.toContain("x-matrix-collaboration-policy");
+      expect(source).not.toContain("collaboration_rollout_policy");
+    }
     expect(proxy).toContain("x-matrix-collaboration-proof");
   });
 
-  it("today the platform WebSocket bridge requires a platform policy before forwarding", () => {
-    expect(websocket).toContain("requirePolicy(");
-    expect(websocket).toContain("x-matrix-collaboration-policy");
+  it("today the platform still signs actor proofs and parses DELETE conditions before forwarding (S18 must invert this)", () => {
+    expect(proxy).toContain("signHttp(");
+    expect(proxy).toContain("CollaborationDeleteConditionSchema.safeParse(");
+    expect(websocket).toContain("signSocket(");
   });
 });
 
