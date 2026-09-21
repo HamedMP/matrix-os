@@ -296,6 +296,35 @@ describe("collaboration direct client", () => {
     expect(world.platform.tickets.filter((ticket) => ticket.purpose === "terminal")).toHaveLength(2);
   });
 
+  it("drops a terminal stream when its scope's event stream proves the home is gone", async () => {
+    vi.useFakeTimers();
+    const direct = client();
+    const disconnected = vi.fn();
+    direct.subscribeEvents(scopeId, eventHandlers());
+    direct.subscribeTerminal(scopeId, { onReady: vi.fn(), onOutput: vi.fn(), onState: vi.fn(), onRefreshRequired: vi.fn(), onUnavailable: vi.fn(), onDisconnected: disconnected });
+    await vi.waitFor(() => expect(world.sockets).toHaveLength(2));
+    const events = world.sockets.find((socket) => socket.url.includes("/events"))!;
+    const terminal = world.sockets.find((socket) => socket.url.includes("/terminal"))!;
+    events.onopen?.();
+    terminal.onopen?.();
+    events.onmessage?.(ready(scopeId, "4"));
+    // The home heartbeats every event stream every 10 s. While those frames arrive the
+    // peer is alive, so an idle terminal socket on the same scope must be kept.
+    await vi.advanceTimersByTimeAsync(30_000);
+    events.onmessage?.({ data: JSON.stringify({ version: 1, type: "heartbeat", scopeId, resourceId: "chat-1", authorityGeneration: "3", sequence: "4" }) });
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(terminal.close).not.toHaveBeenCalled();
+    // Nothing from the home on any of the scope's streams: the terminal socket lost the
+    // same peer and must be dropped and re-dialed with a fresh ticket, not left open.
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(events.close).toHaveBeenCalled();
+    expect(terminal.close).toHaveBeenCalled();
+    expect(disconnected).toHaveBeenCalled();
+    await vi.waitFor(() => expect(world.sockets).toHaveLength(4));
+    expect(world.platform.tickets.filter((ticket) => ticket.purpose === "terminal")).toHaveLength(2);
+    expect(world.platform.tickets.filter((ticket) => ticket.purpose === "events")).toHaveLength(2);
+  });
+
   it("stores nothing reusable: keys stay in memory and non-extractable, nothing touches browser storage", async () => {
     const storage = { setItem: vi.fn(), getItem: vi.fn(), removeItem: vi.fn() };
     (globalThis as { localStorage?: unknown }).localStorage = storage;
