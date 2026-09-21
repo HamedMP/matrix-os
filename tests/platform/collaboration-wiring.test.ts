@@ -33,7 +33,7 @@ describe("platform collaboration wiring", () => {
     })).toMatchObject({ activeKeyId: "key-1", enabledPurposes: ["events"] });
   });
 
-  it("registers local and exact proxy routes after migrations", async () => {
+  it("retires legacy content proxy routes while retaining metadata discovery", async () => {
     const terminalScopeId = "10000000-0000-4000-8000-000000000002";
     const projectScopeId = "10000000-0000-4000-8000-000000000003";
     const upstream = vi.fn(async (input: string | URL | Request) => new Response(JSON.stringify(
@@ -132,11 +132,8 @@ describe("platform collaboration wiring", () => {
     const response = await app.request(`/api/collaboration/scopes/${scopeId}`, {
       headers: { "x-test-actor": platformCollaborationActors.recipientWithoutComputer },
     });
-    expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ id: scopeId, role: "editor" });
-    expect(upstream).toHaveBeenCalledOnce();
-    const [, init] = upstream.mock.calls[0]!;
-    expect(new Headers(init?.headers).has("x-matrix-collaboration-proof")).toBe(true);
+    expect(response.status).toBe(404);
+    expect(upstream).not.toHaveBeenCalled();
 
     const discovery = await app.request("/api/collaboration/shared", {
       headers: { "x-test-actor": platformCollaborationActors.recipientWithoutComputer },

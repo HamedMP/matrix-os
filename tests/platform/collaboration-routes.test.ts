@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { bootstrapPlatformCollaborationDatabase } from "../../packages/platform/src/collaboration/database.js";
 import { CollaborationProofSigner } from "../../packages/platform/src/collaboration/proof.js";
 import { PlatformCollaborationRepository } from "../../packages/platform/src/collaboration/repository.js";
+import { CollaborationRelay } from "../../packages/platform/src/collaboration/relay.js";
 import { createPlatformCollaborationRoutes } from "../../packages/platform/src/collaboration/routes.js";
 import { CollaborationWebSocketAuthorizer } from "../../packages/platform/src/collaboration/websocket.js";
 import {
@@ -117,6 +118,45 @@ describe("platform collaboration routes", () => {
     }]);
   });
 
+  it("wires a direct session request through the transparent relay without a platform proof", async () => {
+    await repository.applyDirectoryEvent({ ...directoryEvent("accepted"), metadataRevision: 2 });
+    const upstream = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      expect(new Headers(init?.headers).get("x-matrix-collaboration-session")).toBe("opaque-session");
+      expect(new Headers(init?.headers).has("x-matrix-collaboration-proof")).toBe(false);
+      return new Response(JSON.stringify({ scopeId }), { headers: { "content-type": "application/json" } });
+    });
+    const relay = new CollaborationRelay({
+      resolveScopeHome: async () => ({ runtimeId: "runtime_owner", origin: "https://home.example" }),
+      resolveInvitationHome: async () => null,
+      resolveRuntimeHome: async () => null,
+      resolveSessionHome: async () => null,
+      fetchImpl: upstream as typeof fetch,
+    });
+    const signer = new CollaborationProofSigner({
+      activeKeyId: "key-1", keys: { "key-1": "a".repeat(32) }, now: () => now,
+    });
+    const sockets = new CollaborationWebSocketAuthorizer({
+      repository, signer, allowedOrigins: ["https://app.matrix-os.com"], enabledPurposes: ["events"], now: () => now,
+    });
+    const directApp = new Hono();
+    directApp.route("/", createPlatformCollaborationRoutes({
+      repository, signer, sockets, relay,
+      resolveActor: async (c) => c.req.header("x-test-actor") ?? null,
+      authenticateRuntime: async () => null,
+      resolveParticipant: async () => null,
+      resolveInvitationIdentifier: async () => null,
+    }));
+    const response = await directApp.request(`/api/collaboration/scopes/${scopeId}`, {
+      headers: {
+        "x-test-actor": platformCollaborationActors.recipientWithoutComputer,
+        "x-matrix-collaboration-session": "opaque-session",
+      },
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ scopeId });
+    expect(upstream).toHaveBeenCalledOnce();
+  });
+
   it("lists organization-wide shares as pending only for current members who have not opened them", async () => {
     const orgScopeId = "10000000-0000-4000-8000-000000000077";
     await repository.applyDirectoryEvent({
@@ -191,7 +231,7 @@ describe("platform collaboration routes", () => {
     })).status).toBe(422);
   });
 
-  it("issues an events-only ticket to an accepted current member", async () => {
+  it("retires the V1 per-scope connection-ticket route", async () => {
     await repository.applyDirectoryEvent({ ...directoryEvent("accepted"), metadataRevision: 2 });
     const response = await app.request(`/api/collaboration/scopes/${scopeId}/connection-tickets`, {
       method: "POST",
@@ -204,11 +244,7 @@ describe("platform collaboration routes", () => {
         purpose: "events",
       }),
     });
-    expect(response.status).toBe(201);
-    expect(await response.json()).toMatchObject({
-      ticket: "c".repeat(43),
-      actorId: platformCollaborationActors.recipientWithoutComputer,
-    });
+    expect(response.status).toBe(404);
   });
 
   it("serves bounded participant identity only to an authenticated runtime", async () => {
