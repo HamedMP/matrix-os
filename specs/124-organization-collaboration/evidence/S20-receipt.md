@@ -2,7 +2,7 @@
 
 **Packet:** S20. **Tasks:** T098, T099, T100, T101, T102. **Date:** 2026-09-20 (re-cut after review on the same day).
 **Base:** `124/s01-gateway` tip `ec3c25343` (S01 four-layer stack on main).
-**Result:** six stacked Graphite layers, each under the 3,000-addition / 50-file limit and coherent on its own head. No release flag, rollout cohort or person-to-person audience remains; the organization precondition on the home is the only gate and denies every request until the S03 membership projection registers a source.
+**Result:** six implementation layers plus one local evidence child, each under the 3,000-addition / 50-file limit and coherent on its own head. The evidence child awaits Graphite tracking after the lower layers merge. No release flag, rollout cohort or person-to-person audience remains; the organization precondition on the home is the only gate and denies every request until the S03 membership projection registers a source.
 
 ## Layers
 
@@ -13,7 +13,8 @@
 | 3 | `124/s20-cohort` `d3422bbc6` | T100 (home) | 32 | `organization-precondition.ts`; the authority evaluator takes one precondition and consults it before any allow; proof-only owner operations (scope creation, project inventory/confirm, lifecycle, operations, exports, invitation reads/decisions) require current membership; gateway policy client, milestone/mode/cohort branches and the policy header removed from every route, socket, queue and terminal path |
 | 4 | `124/s20-cohort-platform` `1edc71d26` | T100 (platform) | 17 | `collaboration_rollout_policy` dropped, `CollaborationPolicy` contract and header removed, `/internal/collaboration/policy` gone, proxy and WebSocket bridge make no policy decision, tickets carry no policy revision |
 | 5 | `124/s20-audience` `e933fb54c` | T101 (resolution), T102 | 21 | Invitation identifiers resolve only to current members of the scope's organization and to nothing without a projection; person-to-person inventories (all grant statuses, revoked index rows) plus `scripts/collaboration/inventory-person-to-person.ts`; research.md procedure and local zero result |
-| 6 | `124/s20-audience-ui` (this commit) | T101 (surfaces) | 19 + evidence | Organization-member copy and `organizationId` on the share dialogs/buttons; shell `CollaborationOrganization` gate (Clerk, bypass-safe); Electron Desktop `DesktopCollaborationOrganization` gate over the connection state; UI/desktop tests; screenshot evidence under `evidence/S20-audience/` |
+| 6 | `124/s20-audience-ui` local `ff0d94493` | T101 (surfaces) | 26 | Organization-member copy and `organizationId` on share dialogs/buttons; shell and Electron organization gates; UI/desktop tests and Clerk fixture repairs |
+| 7 | `124/s20-audience-evidence` local child | T101 (evidence) | 29 | Web and Electron captures, reproduction instructions, this receipt, and a regression-tested renderer backup/restore helper |
 
 ## RED → GREEN and gates
 
@@ -45,3 +46,25 @@ The full `bun run test` and `bun run typecheck` runs were killed by the host for
 - The S03 membership projection registers itself through `OrganizationPrecondition.registerSource` and `PlatformCollaborationIdentifierResolver.membershipProjection`; until then every collaboration request and identifier resolution is denied by design.
 - The S15 audience picker supplies `organizationId`; today the shell passes the active Clerk organization and Electron Desktop reads `organizationId` from the connection state, which the trusted-core auth status does not populate yet, so Electron share controls stay disabled until S06/S15 surface the organization there.
 - Web Desktop cannot reach the project and terminal share controls on this branch (TerminalApp renders the sharing chrome only in the mobile layout and DesktopTerminalSidebar has no project rows); pre-existing and out of S20 scope, see `evidence/S20-audience/README.md`.
+
+
+## 2026-09-21 CI repair and evidence-layer recut
+
+The dispatched full S20 stack CI run `35584963094` on `e5f2fca10` failed 19 shell cases in `chat-agent-mentions`/`chat-app-provider-state`, five `chat-agents-page` cases, and one gateway project-lifecycle case. The 24 shell RED cases threw `useOrganization can only be used within ClerkProvider`; the shell fixture tests in UI commit `ff0d94493` now provide Clerk organization state. The gateway lifecycle fixture was repaired in #1791, whose supplemental `S20-audience-core-receipt.md` records 1/6 RED and 6/6 GREEN. The three shell suites passed **35/35** on the original combined local top head `7c3100fcb` and again on the recut combined tree.
+
+The original top layer was 53 files (+763/−49) against its original audience parent `40179567a`, over the 50-file review limit. Backup ref `refs/backup/124-s20-audience-ui-before-codex-20260921-1238` retains that head; binary patches were saved as `/tmp/s20-audience-{full,evidence}-before-recut.patch` (SHA256 `087494414c3673f58d26030cd730ea25ea732de39be91a600216a0097eb9f65e` and `de309a0887930702a644115f86f438c56cacb0f2265b542a08b6fc3d966bacb9`). The recut UI commit `ff0d94493` is 26 files (+261/−49); evidence child `8c2beb0bd` was 27 files (+502). Their combined tree was byte-identical to the backed-up head before the evidence-script fix. The child then added `2dc9602e1` for safe renderer restoration. No Graphite restack, submit, push, or merge has run for the recut heads.
+
+| Validation on the recut combined tree | Result |
+| --- | --- |
+| Full `bun run typecheck` with worktree-local frozen pnpm links | Exit 0, including gateway, platform, shell dependencies and Electron Desktop. |
+| Focused shell, Electron, shared UI and capture-restoration suite (`--maxWorkers=2`) | 10 files, **75/75 passed**. The three previously failing shell suites account for 35 of those tests. |
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` set to a non-secret test-format key; `bun run build:shell:production` | Exit 0: Next compilation, TypeScript and all static pages completed. |
+| `bun run check:patterns` | Exit 0: 0 violations, 5 existing warnings. |
+| `npx react-doctor@latest shell` | Exit 1 from 240 repository-wide diagnostics; no S20-specific finding established. |
+| `npx react-doctor@latest --verbose --scope changed` | Exit 0, score 88/100; one inherited gateway `owner-database-fallback.ts` sequential-await warning, no S20 UI finding. |
+| RED `tests/desktop/s20-renderer-asset.test.ts` before helper | Suite failed because `renderer-asset.js` did not exist; a partial built-renderer write had no tested restoration path. |
+| GREEN same focused helper test | 2/2 passed. A fault-injected write truncates then throws; the helper restores the exact original bytes. The second test covers ordinary post-capture restoration. |
+
+Greptile's #1794 review singled out a changed `deriveChatPermissions().aiExplanation` string for lacking visual evidence. Inspection found this field is unused by rendered shared Chat controls: `ChatCollaboration` reads only `.canDiscuss`, while `SharedChatControls` derives visible capability status independently. #1794 removes that unused change. This UI layer does not claim a screenshot for it or introduce misleading owner-computer wording into unrelated provider-unavailable states. The existing Web Canvas, Web Desktop, Electron Desktop, Web Mobile and Native Mobile evidence/limitations remain in `evidence/S20-audience/README.md` and the five-surface PR body; no new interactive capture was run after the capture-helper fix.
+
+Open gates: the recut UI and evidence heads need coordinator restack and new current-head Greptile/CI after #1791 merges. Web Desktop share-control reachability and Electron project share reachability remain tracked under #1798/S15 T078. No production Clerk, owner VPS, provider, deployment or external publication was exercised here.
