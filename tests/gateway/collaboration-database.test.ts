@@ -43,6 +43,7 @@ describe("collaboration owner database", () => {
       "collaboration_operations",
       "collaboration_project_view_states",
       "collaboration_resource_bindings",
+      "collaboration_resource_catalog",
       "collaboration_run_bindings",
       "collaboration_run_decisions",
       "collaboration_run_interruptions",
@@ -50,6 +51,8 @@ describe("collaboration owner database", () => {
       "collaboration_schema_migrations",
       "collaboration_scopes",
       "collaboration_transitions",
+      "collaboration_upload_parts",
+      "collaboration_upload_stages",
     ]);
 
     const indexes = await sql<{ indexname: string }>`
