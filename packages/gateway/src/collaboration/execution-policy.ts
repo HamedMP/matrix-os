@@ -118,6 +118,32 @@ export const unknownOrganizationAiSubmission: OrganizationAiSubmissionSource = {
   async resolve() { return "unknown"; },
 };
 
+/**
+ * ADAPTER POINT (S03 seam, pending in 124/s03 commit 1ecb9c693): once
+ * `OrganizationMembershipClient.organizationAiSubmission({ organizationId, actorId })`
+ * reaches this branch's ancestry, gateway wiring should pass
+ * `organizationAiSubmission: organizationAiSubmissionFromMembershipClient(client, ownerId)`
+ * instead of leaving the default. The owner's own membership is the actor
+ * used for the lookup because the policy is the owner's. Any lookup failure
+ * reads as `unknown`, which resolves to owner-only.
+ */
+export function organizationAiSubmissionFromMembershipClient(
+  client: { organizationAiSubmission(input: { organizationId: string; actorId: string }): Promise<CollaborationOrganizationAiSubmission> },
+  actorId: string,
+): OrganizationAiSubmissionSource {
+  return {
+    async resolve(organizationId) {
+      try {
+        return await client.organizationAiSubmission({ organizationId, actorId });
+      } catch (error: unknown) {
+        console.warn("[collaboration] organization AI submission lookup failed",
+          error instanceof Error ? error.name : "UnknownError");
+        return "unknown";
+      }
+    },
+  };
+}
+
 export interface ExecutionScopeResolution {
   ref: CollaborationExecutionScopeRef;
   scope: ScopeRow;
