@@ -37,8 +37,6 @@ describe("home-local collaboration confirmation key", () => {
   it("does not require a deployed preflight secret in gateway configuration", () => {
     const loaded = loadGatewayCollaborationConfig({
       MATRIX_RUNTIME_ID: runtimeId,
-      MATRIX_COLLABORATION_ACTIVE_KEY_ID: "key-1",
-      MATRIX_COLLABORATION_PROOF_KEYS: JSON.stringify(config.proofKeys),
       PLATFORM_INTERNAL_URL: config.platformBaseUrl,
       UPGRADE_TOKEN: config.serviceToken,
     });

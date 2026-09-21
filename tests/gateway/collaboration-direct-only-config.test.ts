@@ -18,6 +18,8 @@ const directEnvironment = {
   UPGRADE_TOKEN: "c".repeat(32),
   DATABASE_URL: "postgres://owner@localhost/owner",
   MATRIX_COLLABORATION_CLIENT_ORIGINS: "https://app.matrix-os.com",
+  MATRIX_USER_ID: "user_owner",
+  MATRIX_HANDLE: "owner-home",
 };
 
 describe("S18 direct-only gateway startup configuration", () => {
@@ -54,6 +56,7 @@ describe("S18 direct-only gateway startup configuration", () => {
       startTimers: false,
     });
     try {
+      expect(runtime.controlClient).toBeDefined();
       const method = "GET" as const;
       const path = "/api/collaboration/scopes/10000000-0000-4000-8000-000000000001";
       const body = new Uint8Array();
