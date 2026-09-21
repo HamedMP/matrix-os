@@ -229,3 +229,73 @@ exit 0; `bun run check:patterns` 0 violations, 5 inherited warnings.
 ## Operator note — retired ticket signing keys (2026-09-21)
 
 The retired-key fix is **fail-closed by configuration**: if `MATRIX_COLLABORATION_TICKET_RETIRED_AT` does not carry a retirement timestamp for **every** configured retired key (and no stray entries), the keyring does not load and the ticket route answers unavailable rather than publishing a key that outlives its rotation. Operators rotating collaboration ticket signing keys must set that variable alongside the retired key. A retirement dated further ahead than the protocol clock skew is also refused, because it would never reach the end of its overlap.
+
+## Verdict follow-up (2026-09-21, PRs #1805 / #1806 verdicts routed back to S05)
+
+Two blocking findings on higher PRs were caused by S05 code. Both are follow-ups to the
+"Routed round" above. Fixes stay on the layer that owns the file; both write-ups stay here.
+
+**Ticket signing misconfiguration aborted platform startup (`124/s05`,
+`packages/platform/src/collaboration/direct-wiring.ts`, from the #1805 verdict).** The
+routed-round fix made a retired signing key fail closed: a key with no recorded retirement,
+or a retirement dated further ahead than the protocol clock skew, is refused by the
+`CollaborationTicketIssuer` constructor. The refusal was never contained.
+`createPlatformCollaborationDirect` built the issuer outside any catch, so the error rejected
+the composition root, `bootstrapPlatformCollaboration` (which exists to return a fail-closed
+composition) never got to answer, and the unguarded `await` in `platform-startup.ts` took the
+whole platform process down. Confirmed against the three configuration shapes: malformed JSON
+and an unparseable date are already rejected inside `loadTicketSigningKeyring`, which returns
+null and leaves the ticket route fail-closed; a *parseable but far-future* retirement passes
+the loader and reached the throwing constructor.
+
+The refusal is now caught where the issuer is built. The issuer stays null, exactly as it is
+when no signing keys are configured: `POST /api/collaboration/connections` answers 503 and
+runtime registration publishes `platformSigningKeys: []`, so the key whose retirement could
+not be honoured is never handed to a home, while the control stream, the endpoint registry and
+every other collaboration surface start normally. Only the error's `code` is logged, never the
+configured timestamp or any seed. Non-`CollaborationTicketIssuerError` failures still
+propagate. The security property is unchanged: a retired key without a recorded retirement is
+never published, the loader still requires exact correspondence between retired keys and
+retirement times, there is still no load-time fallback, and `RETIRED_KEY_OVERLAP_MS` is still
+15 minutes.
+
+RED `test(platform): expose ticket signing misconfiguration aborting platform startup`
+(`9f79784f9`, 23/24 — the new case threw out of `createPlatformCollaborationDirect`). GREEN
+`fix(platform): contain refused ticket signing configuration in the ticket route`
+(`70791739c`).
+
+Gates: `collaboration-tickets` **24/24** on real Postgres, plus `collaboration-bootstrap`,
+`collaboration-wiring`, `collaboration-routes`, `collaboration-direct-transport-postgres` and
+`collaboration-control-delivery-postgres` **16/16**. `bun run typecheck` exit 0;
+`bun run check:patterns` 0 violations, 5 inherited warnings.
+
+**Relay shutdown leaked an upstream opened after eviction (`124/s05-relay`,
+`packages/platform/src/platform-websocket-upgrade.ts`, from the #1806 verdict).** The routed
+round made every teardown destroy both halves of a relayed pair, but only once the pair
+existed. A direct socket reserves, then dials the home, and `activeUpstream` was assigned
+inside the TLS connect callback. In the window between those two steps the reservation can be
+evicted by the idle sweep or drained by `relay.close()`: `onEvict` destroys the client socket,
+its `close` handler finds `activeUpstream` still null and destroys nothing, and the handshake
+that completes afterwards installs its pipes into a dead pair. The connection to the
+customer's VPS then outlived the relay with nothing owning it, and repeated evictions
+accumulated them. `prepareSocket()` already refuses after shutdown, so the gap was only ever
+the connect already under way.
+
+Adoption is now explicit: a teardown marks the upstream disposed, and a connect callback that
+finds the pair disposed or the client socket destroyed destroys the new connection
+immediately and writes nothing to it, so a dead reservation cannot adopt it. The client
+socket's single `close` still releases the reservation exactly once and `release()` stays
+idempotent, so a late upstream never double-releases counts. The legacy container upstream
+path adopts through the same check.
+
+RED `test(platform): expose an upstream connection adopted after its reservation died`
+(`087a2433d`, 4/6 — the late upstream survived both eviction and the drain). GREEN
+`fix(platform): refuse an upstream that connects after the pair is gone` (`4f7145043`). The
+new cases hold the faked TLS handshake open across `sweepStaleSockets()` and across
+`relay.close()`, then complete it and require the upstream destroyed, unspoken-to, with the
+counts still at zero.
+
+Gates: `collaboration-direct-upgrade` **6/6** (4/6 RED), plus `collaboration-relay`,
+`collaboration-websocket`, `collaboration-wiring`, `preview-terminal-flow` and
+`app-session-runtime-routing` — **33/33**. `bun run typecheck` exit 0;
+`bun run check:patterns` 0 violations, 5 inherited warnings.
