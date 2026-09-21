@@ -58,6 +58,7 @@ describe("T135: System info", () => {
       expect(getSystemInfo(homePath).runtimeCompatibility).toEqual({
         schemaVersion: 1, minDesktopProtocol: 1, maxDesktopProtocol: 1,
       });
+      expect(getSystemInfo(homePath).capabilities.collaborationDirectProtocolVersion).toBe(2);
     } finally {
       rmSync(homePath, { recursive: true, force: true });
     }
