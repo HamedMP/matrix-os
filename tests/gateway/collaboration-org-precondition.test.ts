@@ -219,7 +219,7 @@ describe("S20 organization precondition: membership evidence is the only gate", 
     expect(precondition.describe()).toEqual({ source: "none" });
     for (const actorId of [collaborationActors.owner, collaborationActors.editor, collaborationActors.outsider]) {
       await expect(authority.authorize({ scopeId: collaborationIds.scope, actorId, action: "read" }))
-        .rejects.toMatchObject({ code: "not_found", message: "Current membership is required" });
+        .rejects.toMatchObject({ code: "unavailable", message: "Collaboration unavailable" });
     }
     expect(console.warn).toHaveBeenCalledWith("[collaboration-org-precondition] denied", "no_membership_source");
   });
@@ -269,7 +269,7 @@ describe("S20 organization precondition: membership evidence is the only gate", 
     expect(console.warn).toHaveBeenCalledWith("[collaboration-org-precondition] denied", "evidence_expired");
 
     reply = new Error("upstream");
-    await expect(authorize()).rejects.toMatchObject({ code: "not_found" });
+    await expect(authorize()).rejects.toMatchObject({ code: "unavailable" });
     expect(console.warn).toHaveBeenCalledWith("[collaboration-org-precondition] denied", "source_failure");
 
     reply = { member: true, expiresAt: new Date(now.getTime() + 20_000).toISOString() };
@@ -284,11 +284,11 @@ describe("S20 organization precondition: membership evidence is the only gate", 
     const precondition = createOrganizationPrecondition({ now: () => new Date(clock) });
     const warn = console.warn as unknown as ReturnType<typeof vi.fn>;
     warn.mockClear();
-    await expect(precondition.require({ organizationId, actorId: "user_a" })).rejects.toMatchObject({ code: "not_found" });
-    await expect(precondition.require({ organizationId, actorId: "user_b" })).rejects.toMatchObject({ code: "not_found" });
+    await expect(precondition.require({ organizationId, actorId: "user_a" })).rejects.toMatchObject({ code: "unavailable" });
+    await expect(precondition.require({ organizationId, actorId: "user_b" })).rejects.toMatchObject({ code: "unavailable" });
     expect(warn).toHaveBeenCalledTimes(1);
     clock += 60_001;
-    await expect(precondition.require({ organizationId, actorId: "user_c" })).rejects.toMatchObject({ code: "not_found" });
+    await expect(precondition.require({ organizationId, actorId: "user_c" })).rejects.toMatchObject({ code: "unavailable" });
     expect(warn).toHaveBeenCalledTimes(2);
   });
 });
