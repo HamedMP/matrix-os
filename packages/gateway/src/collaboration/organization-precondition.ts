@@ -37,9 +37,14 @@ export type OrganizationPreconditionDenialReason =
   | "evidence_expired"
   | "source_failure";
 
+/** Fresh positive evidence: the authoritative expiry of the membership assertion that satisfied the check. */
+export interface OrganizationMembershipEvidence {
+  expiresAt: string;
+}
+
 export interface OrganizationPrecondition {
-  /** Throws a generic not-found authorization error unless fresh membership is proven. */
-  require(input: { organizationId: string | null | undefined; actorId: string }): Promise<void>;
+  /** Throws a generic not-found authorization error unless fresh membership is proven; returns the evidence deadline. */
+  require(input: { organizationId: string | null | undefined; actorId: string }): Promise<OrganizationMembershipEvidence>;
   /** S03 registers the Clerk membership projection here; only one source may be registered. */
   registerSource(source: OrganizationMembershipSource): void;
   describe(): { source: "none" | "registered" };
@@ -89,6 +94,7 @@ export function createOrganizationPrecondition(options: {
       if (!assertion.member) return deny("not_a_member");
       const expiresAt = Date.parse(assertion.expiresAt);
       if (!Number.isFinite(expiresAt) || expiresAt <= now().getTime()) return deny("evidence_expired");
+      return { expiresAt: new Date(expiresAt).toISOString() };
     },
     registerSource(next) {
       if (source) throw new Error("Organization membership source is already registered");

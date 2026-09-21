@@ -34,7 +34,9 @@ export const collaborationIds = {
  * collaboration-org-precondition.test.ts.
  */
 export const allowAllOrganizationPrecondition: OrganizationPrecondition = {
-  async require() {},
+  async require() {
+    return { expiresAt: "2999-01-01T00:00:00.000Z" };
+  },
   registerSource() {},
   describe: () => ({ source: "registered" }),
 };

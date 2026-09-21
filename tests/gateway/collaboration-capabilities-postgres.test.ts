@@ -456,6 +456,42 @@ describe("S04 capability grants and effective access", () => {
   });
 
   describe("owner, legacy ceilings and authority integration", () => {
+    it("never advertises access past the authoritative membership evidence", async () => {
+      const shortLived = createOrganizationPrecondition({
+        source: {
+          async assertMembership() { return { member: true, expiresAt: new Date(clock + 3_000).toISOString() }; },
+        },
+        now,
+      });
+      const bounded = new CollaborationCapabilityEvaluator({ db: fixture.db, grants, organizationPrecondition: shortLived, now });
+      const access = await bounded.evaluateEffectiveAccess({ scopeId: collaborationIds.scope, actorId: collaborationActors.owner });
+      expect(Date.parse(access.evidenceExpiresAt)).toBe(clock + 3_000);
+      const longLived = await evaluator.evaluateEffectiveAccess({ scopeId: collaborationIds.scope, actorId: collaborationActors.owner });
+      expect(Date.parse(longLived.evidenceExpiresAt)).toBe(clock + 20_000);
+    });
+
+    it("prefers the live replacement grant over a revoked one created in the same instant", async () => {
+      const first = await grants.createGrant({
+        scopeId: collaborationIds.scope, actorId: collaborationActors.owner, ...request(1),
+        audience: { kind: "member", actorId: collaborationActors.editor }, preset: "contributor", policyVersion: "v1",
+      });
+      await evaluator.acceptGrant({ grantId: first.grantId, actorId: collaborationActors.editor });
+      await grants.revokeGrant({
+        scopeId: collaborationIds.scope, actorId: collaborationActors.owner, ...request(2),
+        grantId: first.grantId, expectedGrantRevision: first.grantRevision + 1,
+      });
+      const replacement = await grants.createGrant({
+        scopeId: collaborationIds.scope, actorId: collaborationActors.owner, ...request(3),
+        audience: { kind: "member", actorId: collaborationActors.editor }, preset: "viewer", policyVersion: "v1",
+      });
+      // Same created_at as the revoked grant (the clock is frozen); the live one must still win, and a
+      // lexically smaller id must not beat it either.
+      await fixture.db.updateTable("collaboration_grants").set({ id: "00000000-0000-4000-8000-000000000001" }).where("id", "=", first.grantId).execute();
+      await evaluator.acceptGrant({ grantId: replacement.grantId, actorId: collaborationActors.editor });
+      const access = await evaluator.evaluateEffectiveAccess({ scopeId: collaborationIds.scope, actorId: collaborationActors.editor });
+      expect(access).toMatchObject({ preset: "viewer", reasons: [] });
+    });
+
     it("gives the owner the full contributor expansion without a grant", async () => {
       const access = await evaluator.evaluateEffectiveAccess({ scopeId: collaborationIds.scope, actorId: collaborationActors.owner });
       expect(CollaborationEffectiveAccessSchema.parse(access)).toMatchObject({ preset: "contributor", reasons: [] });
