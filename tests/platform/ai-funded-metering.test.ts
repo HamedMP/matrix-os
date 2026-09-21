@@ -351,6 +351,46 @@ describe("funded AI metering", () => {
     );
   });
 
+  it("isolates a malformed reservation identity rejected by promotional reconciliation", async () => {
+    const credential = await enableAndFund({ budget: 200, credit: 200 });
+    await insertLegacyReservation({
+      tokenId: credential.tokenId,
+      reservationId: "cleanup_malformed_identity",
+      requestId: "cleanup_malformed_identity_request",
+      reservedMicrousd: 100,
+      status: "in_flight",
+      expiresAt: "2026-08-30T20:04:00.000Z",
+    });
+    await db.executor.updateTable("ai_funded_usage_reservations")
+      .set({ owner_id: "user_wrong_owner" })
+      .where("reservation_id", "=", "cleanup_malformed_identity").executeTakeFirstOrThrow();
+    await insertLegacyReservation({
+      tokenId: credential.tokenId,
+      reservationId: "cleanup_after_malformed_identity",
+      requestId: "cleanup_after_malformed_identity_request",
+      reservedMicrousd: 10,
+      status: "reserved",
+      expiresAt: "2026-08-30T20:05:00.000Z",
+    });
+    clock = new Date("2026-08-30T20:06:00.000Z");
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    await expect(repo.cleanupExpiredReservations({ limit: 10 })).resolves.toBe(1);
+
+    expect(await db.executor.selectFrom("ai_funded_usage_reservations")
+      .select(["reservation_id", "status"])
+      .where("reservation_id", "in", ["cleanup_malformed_identity", "cleanup_after_malformed_identity"])
+      .orderBy("reservation_id").execute()).toEqual([
+      { reservation_id: "cleanup_after_malformed_identity", status: "expired" },
+      { reservation_id: "cleanup_malformed_identity", status: "in_flight" },
+    ]);
+    expect(warning).toHaveBeenCalledWith(
+      "[funded-ai] reservation cleanup candidate failed",
+      "cleanup_malformed_identity",
+      "AiFundedPolicyError",
+    );
+  });
+
   it("surfaces systemic transaction failures instead of reporting cleanup success", async () => {
     const credential = await enableAndFund({ budget: 100, credit: 100 });
     await insertLegacyReservation({

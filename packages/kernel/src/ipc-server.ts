@@ -84,10 +84,9 @@ export async function createIpcServer(
   ownerAudioTranscriber?: OwnerAudioTranscriber,
 ) {
   const { createSdkMcpServer, tool } = await import("@anthropic-ai/claude-agent-sdk");
-  const transcribeOwnerAudio = createTranscribeAudioToolHandler({
-    homePath,
-    transcriber: ownerAudioTranscriber,
-  });
+  const transcribeOwnerAudio = homePath && ownerAudioTranscriber
+    ? createTranscribeAudioToolHandler({ homePath, transcriber: ownerAudioTranscriber })
+    : undefined;
   return createSdkMcpServer({
     name: "matrix-os-ipc",
     tools: [
@@ -811,14 +810,14 @@ export async function createIpcServer(
         },
       ),
 
-      tool(
+      ...(transcribeOwnerAudio ? [tool(
         "transcribe",
         "Convert an owner-controlled audio file to text using the managed speech service.",
         {
           audio_path: z.string().describe("Path to audio file to transcribe"),
         },
         transcribeOwnerAudio,
-      ),
+      )] : []),
 
       // NOTE: "call" IPC tool removed -- telephony requires CallManager which lives
       // in the gateway process. The kernel runs as a separate process via Agent SDK,

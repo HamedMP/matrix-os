@@ -2,6 +2,7 @@ import { FundedAiSettlementResponseSchema } from "@matrix-os/contracts";
 import { NoResultError, sql } from "kysely";
 import { z } from "zod/v4";
 import type { PlatformDB } from "./db.js";
+import { AiFundedPolicyError } from "./ai-funded-policy-errors.js";
 import { exactInteger, utcMonthStart, fundingSummary, recordUsageFunding } from "./ai-funded-metering-helpers.js";
 import { reconcileExpiredPromotionalCredit, reservationDebitSplit, debitAttributedPromotionalGrants, debitPromotionalGrants } from "./ai-funded-reservation-sources.js";
 export const CleanupSchema = z.object({ limit: z.number().int().min(1).max(1_000) }).strict();
@@ -21,7 +22,9 @@ interface CleanupCursor {
 const cleanupCursors = new WeakMap<PlatformDB, CleanupCursor>();
 
 function isCandidateDataError(error: unknown): boolean {
-  if (error instanceof NoResultError || error instanceof z.ZodError) return true;
+  if (error instanceof AiFundedPolicyError || error instanceof NoResultError || error instanceof z.ZodError) {
+    return true;
+  }
   if (!(error instanceof Error)) return false;
   return /^Funded AI .* invariant violated$/.test(error.message)
     || error.message === "Funded AI monetary total exceeds safe integer range"
