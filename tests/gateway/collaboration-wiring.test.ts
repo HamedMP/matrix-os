@@ -696,6 +696,97 @@ describe("gateway collaboration wiring", () => {
       await rm(temp, { recursive: true, force: true });
     }
   });
+
+  it("stops the sandbox runtimes a revoked actor holds through the production revocation enforcer", async () => {
+    const temp = await mkdtemp(join(tmpdir(), "matrix-shared-ai-sandbox-"));
+    const stopped: string[] = [];
+    const supervisor = await startSupervisor(join(temp, "supervisor.sock"), { stopped });
+    await bootstrapCollaborationDatabase(fixture.db);
+    await seedSharedAiChat(fixture);
+    const chatRepository = new ChatRepository(fixture.db);
+    const runtime = await createGatewayCollaboration({
+      organizationPrecondition: allowAllOrganizationPrecondition,
+      db: fixture.db,
+      chatRepository,
+      config: sharedAiConfig(),
+      resolveParticipant: async (actorId) => ({ actorId, displayName: actorId }),
+      outboxFetch: async () => new Response(null, { status: 204 }),
+      startTimers: false,
+      providerSnapshotReader: { async getSnapshot() { throw new Error("snapshot never read at construction"); } },
+    });
+    try {
+      const orchestrator = { cancelSharedRun: vi.fn(), reconcileActiveRuns: vi.fn(async () => 0) } as unknown as CanonicalChatOrchestrator;
+      await expect(runtime.enableSharedAi({
+        orchestrator, homePath: temp, supervisorSocket: join(temp, "supervisor.sock"), brokerSocket: join(temp, "broker.sock"),
+        sandboxManifests,
+      })).resolves.toEqual({ available: true });
+      runtime.enableSharedTerminal({
+        registry: {
+          get: async () => { throw Object.assign(new Error("missing"), { code: "session_not_found" }); },
+          bindCollaboration: async () => { throw new Error("not called"); },
+          unbindCollaboration: async () => undefined,
+        },
+        runtime: {
+          input: async () => undefined,
+          paste: async () => undefined,
+          resize: async () => undefined,
+          stop: async () => undefined,
+        },
+        executionEligibility: {
+          profileId: "scope-runtime-terminal-v1",
+          profileVersion: 1,
+          profileDigest: "d".repeat(64),
+          adapterId: "terminal",
+          harnessVersion: "1.0.0",
+        },
+      });
+      // The registry production wiring hands to the shared adapters is the same one the
+      // revocation enforcer consults, and it is backed by the live supervisor client.
+      const handle = `runtime_${"d".repeat(32)}`;
+      expect(runtime.sandboxRuntimes).toBeDefined();
+      runtime.sandboxRuntimes!.bind({ scopeId: collaborationIds.scope, actorId: collaborationActors.editor, runtimeHandle: handle });
+      runtime.revocationEnforcer!.onSessionEnded(
+        { scopeId: collaborationIds.scope, actorId: collaborationActors.editor }, "revoked",
+      );
+      await runtime.revocationEnforcer!.settle();
+      expect(stopped).toEqual([handle]);
+      expect(runtime.sandboxRuntimes!.size).toBe(0);
+    } finally {
+      await runtime.shutdown();
+      await new Promise<void>((resolve) => supervisor.close(() => resolve()));
+      await rm(temp, { recursive: true, force: true });
+    }
+  });
+
+  it("disables shared AI rather than running without its loss store or sandbox registry", async () => {
+    const temp = await mkdtemp(join(tmpdir(), "matrix-shared-ai-closed-"));
+    const supervisor = await startSupervisor(join(temp, "supervisor.sock"));
+    await bootstrapCollaborationDatabase(fixture.db);
+    await seedSharedAiChat(fixture);
+    const runtime = await createGatewayCollaboration({
+      organizationPrecondition: allowAllOrganizationPrecondition,
+      db: fixture.db,
+      chatRepository: new ChatRepository(fixture.db),
+      config: sharedAiConfig(),
+      resolveParticipant: async (actorId) => ({ actorId, displayName: actorId }),
+      outboxFetch: async () => new Response(null, { status: 204 }),
+      startTimers: false,
+      // No Provider V3 reader: there is no owner source, so shared AI must not come up.
+    });
+    try {
+      const orchestrator = { cancelSharedRun: vi.fn(), reconcileActiveRuns: vi.fn(async () => 0) } as unknown as CanonicalChatOrchestrator;
+      await expect(runtime.enableSharedAi({
+        orchestrator, homePath: temp, supervisorSocket: join(temp, "supervisor.sock"), brokerSocket: join(temp, "broker.sock"),
+      })).resolves.toEqual({ available: false });
+      expect(runtime.sandboxRuntimes).toBeUndefined();
+      expect(await fixture.db.selectFrom("collaboration_scopes").select("execution_eligibility")
+        .where("id", "=", collaborationIds.scope).executeTakeFirstOrThrow()).toEqual({ execution_eligibility: null });
+    } finally {
+      await runtime.shutdown();
+      await new Promise<void>((resolve) => supervisor.close(() => resolve()));
+      await rm(temp, { recursive: true, force: true });
+    }
+  });
 });
 
 // S09: the production execution-root resolver the gateway hands shared AI.
@@ -773,13 +864,28 @@ async function seedSharedAiChat(fixture: CollaborationTestDatabase): Promise<voi
   }))).execute();
 }
 
-async function startSupervisor(path: string, options: { sandbox?: boolean | (() => boolean) } = {}): Promise<Server> {
+async function startSupervisor(
+  path: string,
+  options: { sandbox?: boolean | (() => boolean); stopped?: string[] } = {},
+): Promise<Server> {
   const server = createServer((socket) => {
     socket.setEncoding("utf8");
     let body = "";
     socket.on("data", (chunk) => { body += chunk; });
     socket.once("end", () => {
-      const request = JSON.parse(body.trim()) as { requestId: string; type: string };
+      const request = JSON.parse(body.trim()) as { requestId: string; type: string; runtimeHandle?: string };
+      if (request.type === "runtime.stop" && request.runtimeHandle) {
+        options.stopped?.push(request.runtimeHandle);
+        return void socket.end(`${JSON.stringify({
+          version: 1,
+          type: "runtime.result",
+          requestId: request.requestId,
+          ok: true,
+          runtimeHandle: request.runtimeHandle,
+          executionGeneration: "7",
+          state: "stopped",
+        })}\n`);
+      }
       if (request.type !== "capability.get") return socket.destroy();
       socket.end(`${JSON.stringify({
         version: 1,

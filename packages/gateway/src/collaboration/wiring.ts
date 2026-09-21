@@ -302,6 +302,9 @@ export async function createGatewayCollaboration(options: {
     directSessions,
     directVerifier,
     controlClient,
+    /** S07/S09: the live sandbox runtime registry, present only while shared AI is available. */
+    get sandboxRuntimes() { return sharedAiRuntime?.available ? sharedAiRuntime.sandboxRuntimes : undefined; },
+    get revocationEnforcer() { return revocationEnforcer; },
     projectOperationAdmission: {
       withLegacyAdmission<T>(input: {
         ownerType: "personal" | "organization";
@@ -414,7 +417,15 @@ export async function createGatewayCollaboration(options: {
         startTimer: options.startTimers,
         onChanged: ({ scopeId }) => terminalEventRegistry?.publishState(scopeId),
       });
-      revocationEnforcer = new CollaborationRevocationEnforcer({ control: terminalControl });
+      revocationEnforcer = new CollaborationRevocationEnforcer({
+        control: terminalControl,
+        // Late-bound: shared AI owns the registry because it owns the supervisor
+        // client, and it may be enabled before or after the shared terminal.
+        runtimes: {
+          stopForActor: (scopeId, actorId) =>
+            sharedAiRuntime?.available ? sharedAiRuntime.sandboxRuntimes.stopForActor(scopeId, actorId) : Promise.resolve(0),
+        },
+      });
       terminalDispatcher = new CollaborationTerminalDispatcher({
         authority,
         terminal: terminalAdapter,

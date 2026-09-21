@@ -56,7 +56,7 @@ import { isAbsolute, join, relative, sep } from "node:path";
 import type { CanonicalChatExecutionRootRef, CollaborationRunInterruptionReason } from "@matrix-os/contracts";
 import type { ChatExecutionRootResolver } from "../chat/execution-root.js";
 import type { SharedDispatchRun } from "../chat/shared-execution-coordinator.js";
-import type { SandboxRuntimeRegistry } from "./revocation-enforcer.js";
+import { SandboxRuntimeRegistry } from "./revocation-enforcer.js";
 import { CollaborationRunBindingError } from "./run-account-binding.js";
 import { createSharedClaudeAdapter } from "./shared-claude-adapter.js";
 import { createSharedCodexAdapter } from "./shared-codex-adapter.js";
@@ -200,8 +200,6 @@ export async function createSharedAiRuntime(options: {
   executionPolicies: Pick<CollaborationExecutionPolicyRepository, "effectiveSubmitMode">;
   /** S09: immutable loss and control records; required for interrupted-run attribution and control audit. */
   runLoss: CollaborationRunLossRepository;
-  /** S07: registry that stops sandboxed runtimes when the requesting actor loses its lease. */
-  sandboxRuntimes?: Pick<SandboxRuntimeRegistry, "bind" | "release">;
   /** S09: resolves a rooted Chat's project/worktree to the host path the sandbox mounts. */
   executionRoots?: Pick<ChatExecutionRootResolver, "resolve">;
 }) {
@@ -224,6 +222,10 @@ export async function createSharedAiRuntime(options: {
     return { available: false as const, async shutdown(): Promise<void> {} };
   }
   const sandboxProbe: SandboxReadinessProbe = createSandboxReadinessProbe({ client });
+  // S07/S09: every sandboxed run this runtime creates is bound here, and the
+  // revocation enforcer stops them from the same supervisor connection that
+  // created them. Built from this client so the registry cannot outlive it.
+  const sandboxRuntimes = new SandboxRuntimeRegistry({ client });
   // S07 seam, S09 resolver: an explicit manifest source wins; otherwise the execution-root
   // resolver mounts each rooted run. Without either, shared AI is not eligible.
   const sandboxManifests: SharedChatSandboxManifestSource | undefined = options.sandboxManifests
@@ -369,7 +371,7 @@ export async function createSharedAiRuntime(options: {
             executionGeneration: capability.executionGeneration,
             harnessVersion: adapter.harnessVersion,
             sandbox,
-            ...(options.sandboxRuntimes ? { runtimes: options.sandboxRuntimes } : {}),
+            runtimes: sandboxRuntimes,
             // Awaited by the adapter before it yields the failed terminal event, so the
             // recorded reason is visible by the time the request reads as interrupted.
             onLoss: (reason) => recordLoss(options.runLoss, {
@@ -550,6 +552,8 @@ export async function createSharedAiRuntime(options: {
   return {
     available: true as const,
     chatExecutionAdapter,
+    /** S07: bound by the shared adapters, read by the revocation enforcer on lease loss. */
+    sandboxRuntimes,
     /**
      * S07: `supported` for the readiness composition. A shared project or Chat
      * executes, so it is shareable only while the supervisor still advertises
