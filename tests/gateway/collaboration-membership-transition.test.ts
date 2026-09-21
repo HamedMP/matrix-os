@@ -4,6 +4,7 @@ import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/colla
 import { createProjectTransitionJournal } from "../../packages/gateway/src/collaboration/project-transition.js";
 import {
   createCollaborationTestDatabase,
+  createRealCollaborationTestDatabase,
   type CollaborationTestDatabase,
 } from "./collaboration-test-support.js";
 
@@ -24,7 +25,10 @@ describe("project membership publication transition", () => {
   let fixture: CollaborationTestDatabase;
 
   beforeEach(async () => {
-    fixture = await createCollaborationTestDatabase();
+    // Real Postgres rejects a raw JS array in a json/jsonb column; PGlite hides that.
+    fixture = process.env.MATRIX_TEST_POSTGRES_URL
+      ? await createRealCollaborationTestDatabase()
+      : await createCollaborationTestDatabase();
     await bootstrapChatDatabase(fixture.db);
     await bootstrapCollaborationDatabase(fixture.db);
     await seedProjectAndDirectChildren(fixture);
