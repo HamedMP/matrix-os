@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { Kysely, PostgresDialect, sql } from "kysely";
 import { Pool } from "pg";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -7,10 +7,13 @@ import {
   type CollaborationPlatformDatabase,
 } from "../../packages/platform/src/collaboration/database.js";
 import { inventoryPlatformPersonToPersonRecords } from "../../packages/platform/src/collaboration/person-to-person-inventory.js";
-import { PlatformCollaborationCutover } from "../../packages/platform/src/collaboration/cutover.js";
+import { PlatformCollaborationCutover, cutoverTicketAdmission } from "../../packages/platform/src/collaboration/cutover.js";
 import { PlatformCollaborationRepository } from "../../packages/platform/src/collaboration/repository.js";
+import { CollaborationTicketIssuer } from "../../packages/platform/src/collaboration/ticket-issuer.js";
 
 const connectionString = process.env.MATRIX_TEST_POSTGRES_URL;
+const runtimeId = "vps:11111111-1111-4111-8111-111111111111";
+const logicalRuntimeId = "vps-11111111-1111-4111-8111-111111111111";
 
 describe.skipIf(!connectionString)("collaboration cutover on real PostgreSQL (T088)", () => {
   let adminDb: Kysely<Record<string, never>>;
@@ -64,7 +67,7 @@ describe.skipIf(!connectionString)("collaboration cutover on real PostgreSQL (T0
   async function orgScope(): Promise<string> {
     const scopeId = randomUUID();
     await db.insertInto("collaboration_directory").values({
-      scope_id: scopeId, runtime_id: "vps:owner-runtime", owner_id: "owner-a", kind: "project",
+      scope_id: scopeId, runtime_id: runtimeId, owner_id: "owner-a", kind: "project",
       organization_id: "org_current", audience: "organization", organization_grant_id: randomUUID(),
       authority_generation: 1, metadata_revision: 1, last_event_id: randomUUID(), updated_at: new Date(),
     }).execute();
@@ -92,6 +95,7 @@ describe.skipIf(!connectionString)("collaboration cutover on real PostgreSQL (T0
       verify: vi.fn(async () => ({ counts, idsDigest, ceilingDigest, nonOrganizationRecords: 0 })),
       activate: vi.fn(async () => ({ authorityGeneration: 2 })),
       rollbackCompatible: vi.fn(async () => ({ authorityGeneration: 2 })),
+      disable: vi.fn(async () => ({ fenced: true as const })),
     };
   }
 
@@ -151,7 +155,7 @@ describe.skipIf(!connectionString)("collaboration cutover on real PostgreSQL (T0
     expect(result.resumePhase).toBe("inventoried");
     const repository = new PlatformCollaborationRepository(db);
     await expect(repository.applyDirectoryEvent({
-      eventId: randomUUID(), scopeId, runtimeId: "vps:owner-runtime", ownerId: "owner-a", kind: "project",
+      eventId: randomUUID(), scopeId, runtimeId, ownerId: "owner-a", kind: "project",
       organizationId: "org_current", audience: "organization", authorityGeneration: 1, metadataRevision: 2,
       recipients: [],
     })).rejects.toMatchObject({ code: "conflict" });
@@ -187,6 +191,34 @@ describe.skipIf(!connectionString)("collaboration cutover on real PostgreSQL (T0
     const disabled = await coordinator.rollback(scopeId, "disable");
     expect(disabled.phase).toBe("blocked");
     expect(disabled.blockReason).toBe("disabled_for_recovery");
+    expect(ownerHome.disable).toHaveBeenCalledOnce();
+  });
+
+  it("rejects a new direct ticket after disabled rollback", async () => {
+    const scopeId = await orgScope();
+    const coordinator = cutover(home(scopeId));
+    await coordinator.run(scopeId, { backupRef: "restricted-backup-1" });
+    await coordinator.rollback(scopeId, "disable");
+    const repository = new PlatformCollaborationRepository(db);
+    const issuer = new CollaborationTicketIssuer({
+      keyring: { activeKeyId: "test", keys: { test: randomBytes(32).toString("base64url") } },
+      repository,
+      endpoints: { resolveEnrolled: vi.fn(async () => ({
+        runtimeId: logicalRuntimeId, ownerId: "owner-a", authorityGeneration: 2,
+        lastControlAt: new Date().toISOString(),
+      })) } as never,
+      resolveOrganization: async () => "org_current",
+      projection: { isCurrentMember: async () => true },
+      relayOrigin: "https://relay.example",
+      cutoverAdmission: (id) => cutoverTicketAdmission(db, id),
+    });
+    await expect(issuer.issue({
+      actorId: "member-a",
+      request: {
+        clientRequestId: randomUUID(), scopeId, purpose: "direct_session",
+        proofPublicKey: randomBytes(32).toString("base64url"),
+      },
+    })).rejects.toMatchObject({ code: "unavailable" });
   });
 
   it("never imports a person-to-person row until a noticed disposition is recorded", async () => {
