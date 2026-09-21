@@ -494,3 +494,38 @@ Keep the handoff document updated as the living state ledger (append a dated "Pr
 on branch 124/handoff) so the next takeover is as clean as this one. Report to the owner in
 plain language: what merged, what is in flight, what is blocked and why.
 ```
+
+## 11. Addendum from the stopped Claude coordinator (received 10:08 UTC, verify before acting)
+
+The Claude coordinator job stopped itself at 10:08 UTC (job state `done`; the daemon will not
+respawn it). Before exiting it reported these facts that the 09:30 snapshot above lacks:
+
+1. **#1789 is mergeable now.** The E2E failure at 09:2x was one unrelated test
+   (`tests/e2e/terminal-soft-grid.e2e.test.ts`, passes on main); the failed jobs were rerun at
+   09:43 and the run was fully green (22 jobs, 0 failed) at 10:06. Base `main`, Greptile 5/5 on
+   `b3d2dc546`, `ready-for-ci` present. This is the first merge (section 6.5).
+2. A full-matrix CI run was dispatched at 09:44 on `124/s20-audience-ui` (`e5f2fca10`) as
+   evidence for the whole S20 stack: https://github.com/HamedMP/matrix-os/actions/runs/35584963094.
+   It was still `in_progress` at 10:10. Read its outcome before merging the S20 layers.
+3. S06 evidence (`88895d988`, 16 PNGs + README under `evidence/S06-direct-client/`) is on
+   `124/s06` and pushed. #1808's head `eb6a4b4c7` is an evidence-only rebase of S07. The
+   temporary `124/s06-evidence` branch and capture worktree were removed.
+4. **Greptile findings already triaged, never dispatched** (assign as packet fix work):
+   - #1806: duplicate `organizationId` key in `tests/gateway/collaboration-directory-outbox.test.ts:79-82` breaks type-check.
+   - #1807: shared Chat `createRuntime` calls lack a sandbox manifest; production launcher has no `sandboxRoots` (`main.ts`); terminal advertised but unlaunchable; `sandbox-readiness.ts` unwired.
+   - #1808: `revocationEnforcer.admit` never called on session create/renew; `exhausted` treated as actor-wide; `contributorControl` not persisted on the terminal-session schema; unbounded `pending` Set.
+   - #1802: `lastControlAt` not refreshed by pong; `listDueDeliveries` head-of-line blocking.
+   - #1803: action budget decremented before local authorization.
+   - #1796: 3,239 additions (over the 3,000 limit, split required); the threads on
+     `organizations/database.ts` and `control-authority.ts` are believed addressed by head
+     `d858e446f`; verify against the diff, then resolve.
+5. S12's uncommitted work includes an in-progress member-seed fix in its test ("column the
+   table doesn't have"); expect the suite to need that finished before it runs.
+6. **S09's 7 uncommitted files are the worker's GREEN step**: its suite was passing (19 tests,
+   the real-Postgres race case skipped under PGlite) and it was about to commit and restack
+   onto `eb6a4b4c7` when the session limit hit. Re-run the suite to confirm, then commit it as
+   the `feat(...)` GREEN commit rather than a WIP.
+7. Follow-ups #1798 (widened to Electron project share control) and #1799 (server.ts
+   extraction + startup harness) were opened by that job.
+8. Owner instructions on record: ignore the failing `claude-review` job; live S00 fixtures
+   (Clerk test org, Codex/Claude test credentials, disposable VPS) remain unapproved.
