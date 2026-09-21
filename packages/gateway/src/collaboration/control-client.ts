@@ -211,6 +211,9 @@ export class CollaborationControlClient {
   }
 
   private async applyFrame(raw: string, socket: () => ControlSocketLike | undefined): Promise<void> {
+    // A drained client has released the sessions, capabilities and membership handles this
+    // frame would touch, so no frame starts after the drain.
+    if (this.closed) throw new Error("Control client is shutting down");
     if (Buffer.byteLength(raw) > COLLABORATION_DIRECT_LIMITS.wsFrameBytes) throw new Error("Control frame too large");
     const assertion = CollaborationControlAssertionSchema.parse(JSON.parse(raw) as unknown);
     this.snapshotExpiresAt = this.now().getTime() + CONTROL_SNAPSHOT_TTL_MS;
@@ -230,6 +233,10 @@ export class CollaborationControlClient {
           console.warn("[collaboration-control-client] departure grant cleanup failed", error instanceof Error ? error.name : "UnknownError");
           return;
         }
+        // The drain may have landed while the cleanup was in flight. The runtime has stopped
+        // serving, so the denial is left to complete at its lease deadline rather than being
+        // acknowledged on behalf of a fenced home.
+        if (this.closed) return;
       }
       this.lastFenceAt = this.now().toISOString();
       this.sendAck(socket(), denial.generation);
@@ -258,12 +265,27 @@ export class CollaborationControlClient {
     this.registerTimer.unref?.();
   }
 
-  async shutdown(): Promise<void> {
+  /**
+   * Synchronous drain, used by the gateway's synchronous fence. Refuses new frames and
+   * reconnects, stops both timers and terminates the stream, which drops every frame
+   * queued behind it. Work already inside a frame cannot be cancelled, but it is
+   * abandoned at its next resumption point rather than touching torn-down dependencies.
+   * Idempotent: a second fence closes nothing twice.
+   */
+  fence(): void {
     this.closed = true;
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = undefined;
     if (this.registerTimer) clearInterval(this.registerTimer);
-    this.stream?.close();
+    this.registerTimer = undefined;
+    const stream = this.stream;
     this.stream = undefined;
+    stream?.close();
+  }
+
+  /** Kept async for the ordinary shutdown path; the drain itself has nothing to await. */
+  async shutdown(): Promise<void> {
+    this.fence();
   }
 
   private async registerAndConnect(): Promise<void> {
@@ -295,6 +317,7 @@ export class CollaborationControlClient {
       authorityGeneration,
       fenceAt: this.lastFenceAt,
     };
+    if (this.closed) return;
     try {
       socket?.send(JSON.stringify(ack));
     } catch (error: unknown) {

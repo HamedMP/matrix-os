@@ -451,6 +451,10 @@ export async function createGatewayCollaboration(options: {
     fence(): void {
       closing = true;
       if (cleanupTimer) clearInterval(cleanupTimer);
+      // The control client is drained first: its frames revoke sessions, evict membership
+      // evidence and end grants, so it must stop before the registries detach and the
+      // verifier shuts down. Its drain is synchronous, like this fence.
+      controlClient?.fence();
       const drainingSharedAi = sharedAiRuntime;
       sharedAiRuntime = undefined;
       chatExecutionAdapter = undefined;
