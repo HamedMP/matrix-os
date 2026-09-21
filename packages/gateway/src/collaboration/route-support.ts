@@ -91,6 +91,7 @@ import { ProjectAppAdapterError } from "./project-app-adapter.js";
 import { ProjectResourceAdapterError } from "./project-adapters.js";
 import { ResourceCatalogError } from "./resource-catalog.js";
 import type { CollaborationResourceServices } from "./resource-routes.js";
+import type { StandaloneResourceScopeService } from "./standalone-resource-scope.js";
 import type { CollaborationCapabilityRepository } from "./capability-repository.js";
 import type { CollaborationCapabilityEvaluator } from "./capability-evaluator.js";
 import type { ReadinessProbes } from "./readiness-evaluator.js";
@@ -139,6 +140,7 @@ export interface CollaborationRouteOptions {
   executionPolicies?: CollaborationExecutionPolicyRepository;
   /** S12: catalog, file driver and app instances; file/app routes report unavailable when absent. */
   resources?: CollaborationResourceServices;
+  standaloneScope?: StandaloneResourceScopeService;
   resolveParticipant(actorId: string): Promise<Participant>;
   resolveInvitationIdentifier(identifier: string, organizationId: string): Promise<Participant>;
   invitationResolutionRateLimiter?: RateLimiter;
