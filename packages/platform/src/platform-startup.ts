@@ -61,7 +61,7 @@ import {
   type R2CapabilityGate,
 } from './r2-capability.js';
 import { bootstrapPlatformCollaboration } from './collaboration/bootstrap.js';
-import type { PlatformCollaborationRuntime } from './collaboration/wiring.js';
+import type { PlatformCollaborationComposition } from './collaboration/wiring.js';
 
 interface GatewayPlatformUser {
   id: string;
@@ -202,7 +202,7 @@ type CreatePlatformApp = (deps: {
   internalFundedAiRelayRoutes?: Hono<any>;
   internalFundedAiOperatorRoutes?: Hono<any>;
   fundedAiRepository?: AiFundedPolicyRepository;
-  collaboration?: PlatformCollaborationRuntime;
+  collaboration?: PlatformCollaborationComposition;
   customerVpsService?: CustomerVpsService;
   goldenSnapshotService?: GoldenSnapshotService;
   goldenSnapshotConfig?: GoldenSnapshotRuntimeConfig;

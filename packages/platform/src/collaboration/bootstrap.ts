@@ -10,10 +10,11 @@ import {
 import { createJourneyUserResolver } from "../journey-routes.js";
 import { buildPlatformVerificationToken, timingSafeTokenEquals } from "../platform-token.js";
 import type { CollaborationPlatformDatabase } from "./database.js";
+import { createFailClosedPlatformCollaboration } from "./fail-closed.js";
 import {
   createPlatformCollaboration,
-  loadPlatformCollaborationConfig,
-  type PlatformCollaborationRuntime,
+  describePlatformCollaborationConfiguration,
+  type PlatformCollaborationComposition,
 } from "./wiring.js";
 import { PlatformCollaborationIdentifierResolver } from "./identifier-resolver.js";
 
@@ -26,17 +27,21 @@ export interface BootstrapPlatformCollaborationOptions {
   customerVpsProxyDispatcher: Agent;
 }
 
+/**
+ * Always returns a composition: the real runtime when signing/origin/runtime
+ * authentication configuration is complete, otherwise the fail-closed
+ * registrar that denies every collaboration route with a logged generic
+ * reason. There is no release flag (S20 / T099).
+ */
 export async function bootstrapPlatformCollaboration(
   options: BootstrapPlatformCollaborationOptions,
-): Promise<PlatformCollaborationRuntime | undefined> {
-  const config = loadPlatformCollaborationConfig(options.env);
-  if (options.env.MATRIX_COLLABORATION_ENABLED === "true" && !config) {
-    throw new Error("Platform collaboration configuration is incomplete");
-  }
-  if (!config) return undefined;
+): Promise<PlatformCollaborationComposition> {
+  const health = describePlatformCollaborationConfiguration(options.env);
+  if (!health.configured) return createFailClosedPlatformCollaboration({ reason: health.reason });
   if (!options.platformSecret) {
-    throw new Error("Platform collaboration runtime authentication is unavailable");
+    return createFailClosedPlatformCollaboration({ reason: "runtime_authentication_missing" });
   }
+  const config = health.config;
 
   const identifierResolver = new PlatformCollaborationIdentifierResolver({
     ...(options.env.CLERK_SECRET_KEY ? { clerkSecretKey: options.env.CLERK_SECRET_KEY } : {}),
