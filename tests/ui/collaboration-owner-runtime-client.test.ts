@@ -95,6 +95,7 @@ describe("owner runtime direct client", () => {
       }
       if (url.pathname === "/api/collaboration/owner-runtime/sessions") {
         expect(new Headers(init?.headers).get("authorization")).toBeNull();
+        expect(new Headers(init?.headers).get("x-matrix-collaboration-runtime")).toBe(logicalRuntimeId);
         const request = JSON.parse(String(init?.body)) as { proofPublicKey: string; possession: string };
         expect(request.proofPublicKey).toBe(proofPublicKey);
         expect(request.possession).toMatch(/^[A-Za-z0-9_-]{86}$/);
@@ -110,6 +111,7 @@ describe("owner runtime direct client", () => {
       const headers = new Headers(init?.headers);
       expect(headers.get("authorization")).toBeNull();
       expect(headers.get("x-matrix-collaboration-session")).toBe("20000000-0000-4000-8000-000000000001");
+      expect(headers.get("x-matrix-collaboration-runtime")).toBe(logicalRuntimeId);
       const envelope = JSON.parse(Buffer.from(headers.get("x-matrix-collaboration-request")!, "base64url").toString("utf8")) as {
         signature: { path: string; bodyDigest: string }; proof: string;
       };
