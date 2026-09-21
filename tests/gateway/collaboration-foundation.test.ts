@@ -14,6 +14,8 @@ import { CollaborationGrantRepository } from "../../packages/gateway/src/collabo
 import { CollaborationLifecycleRepository } from "../../packages/gateway/src/collaboration/lifecycle-repository.js";
 import { createCollaborationRoutes } from "../../packages/gateway/src/collaboration/routes.js";
 import { registerScopeRoutes } from "../../packages/gateway/src/collaboration/scope-routes.js";
+import { registerCapabilityRoutes } from "../../packages/gateway/src/collaboration/capability-routes.js";
+import { registerOwnerCatalogRoutes } from "../../packages/gateway/src/collaboration/owner-catalog-routes.js";
 import { registerChatRoutes } from "../../packages/gateway/src/collaboration/chat-routes.js";
 import { registerTerminalRoutes } from "../../packages/gateway/src/collaboration/terminal-routes.js";
 import { registerProjectRoutes } from "../../packages/gateway/src/collaboration/project-routes.js";
@@ -47,6 +49,14 @@ const ROUTE_BASELINE: ReadonlyArray<readonly [string, string]> = [
   ["DELETE", "/api/collaboration/scopes/:scopeId/invitations/:invitationId"],
   ["PATCH", "/api/collaboration/scopes/:scopeId/members/:actorId"],
   ["DELETE", "/api/collaboration/scopes/:scopeId/members/:actorId"],
+  // S15 organization grants, whole-project preset preflight and owner catalog resolution.
+  ["POST", "/api/collaboration/scopes/:scopeId/grants/:grantId/accept"],
+  ["GET", "/api/collaboration/scopes/:scopeId/grants"],
+  ["POST", "/api/collaboration/scopes/:scopeId/grants"],
+  ["PATCH", "/api/collaboration/scopes/:scopeId/grants/:grantId"],
+  ["DELETE", "/api/collaboration/scopes/:scopeId/grants/:grantId"],
+  ["POST", "/api/collaboration/scopes/:scopeId/policy/preflight"],
+  ["POST", "/api/collaboration/runtimes/:runtimeId/catalog/resolve"],
   ["GET", "/api/collaboration/scopes/:scopeId/user-state"],
   ["PATCH", "/api/collaboration/scopes/:scopeId/user-state"],
   ["GET", "/api/collaboration/scopes/:scopeId/chat"],
@@ -119,6 +129,8 @@ describe("gateway collaboration route registration (S01 foundation)", () => {
   it("composes the same handler set from the per-resource registration modules", () => {
     const app = new Hono();
     registerScopeRoutes(app, stubOptions);
+    registerCapabilityRoutes(app, stubOptions);
+    registerOwnerCatalogRoutes(app, stubOptions);
     registerChatRoutes(app, stubOptions);
     registerTerminalRoutes(app, stubOptions);
     registerProjectRoutes(app, stubOptions);

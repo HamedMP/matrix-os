@@ -71,7 +71,6 @@ import {
   type ScopeRuntimeProfileCatalog,
 } from "./scope-runtime-client.js";
 import { SharedAiRuntimeRegistry } from "./shared-ai-runtime-registry.js";
-import type { ReadinessSubject } from "./readiness-evaluator.js";
 import type { CollaborationActorProofVerifier } from "./actor-proof.js";
 import type { SharedRunOwnerSource, SharedRunOwnerSourceDecision } from "./shared-run-owner-source.js";
 import type { CollaborationExecutionPolicyRepository } from "./execution-policy.js";
