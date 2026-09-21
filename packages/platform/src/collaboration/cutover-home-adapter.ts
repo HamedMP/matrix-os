@@ -60,7 +60,8 @@ function snapshot(result: FlatHomeCutoverResult) {
 /** The scoped drain callback belongs to the owner runtime; it is never sent across the relay. */
 export function createGatewayCutoverHomeAdapter(options: {
   client: FlatHomeCutoverClient;
-  drainRuns(key: CutoverHomeRequest): Promise<{ interrupted: number; remaining: number }>;
+  /** In-process homes inject the canonical drain here; the remote home route owns it locally. */
+  drainRuns?(key: CutoverHomeRequest): Promise<{ interrupted: number; remaining: number }>;
 }): CutoverHome {
   const { client } = options;
   return {
@@ -83,7 +84,10 @@ export function createGatewayCutoverHomeAdapter(options: {
       return { fenceEpoch: result.fenceEpoch, fenceDigest: result.fenceDigest };
     },
     async drain(key) {
-      const result = await client.drain(key, () => options.drainRuns(key));
+      const result = await client.drain(key, () => {
+        if (!options.drainRuns) throw new Error("Local cutover drain is unavailable");
+        return options.drainRuns(key);
+      });
       verifyBinding(result, key, "drained");
       if (result.interrupted === undefined || !Number.isSafeInteger(result.interrupted) || result.interrupted < 0) {
         throw new Error("Owner-home cutover drain is incomplete");
