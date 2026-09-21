@@ -5,6 +5,7 @@ import type {
   CollaborationTerminalMetadata,
   CollaborationTerminalRuntime,
 } from "./terminal-dispatcher.js";
+import { resolveTerminalTaskPolicy } from "./terminal-task-profile.js";
 
 const PREFLIGHT_LIFETIME_MS = 60_000;
 const OPERATION_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
@@ -18,6 +19,13 @@ const TerminalSessionSchema = z.object({
   sessionIncarnation: z.string().regex(/^terminal-[a-f0-9]{32}$/).optional(),
   executionGeneration: z.number().int().positive().optional(),
   sharedControlMode: z.enum(["eligible", "shared"]).optional(),
+  /** S07: present only for a scope-runtime terminal launched under the sandbox policy. */
+  sandbox: z.object({
+    profileId: z.literal("scope-runtime-terminal-v1"),
+    policyDigest: z.string().regex(/^[a-f0-9]{64}$/),
+  }).strict().optional(),
+  /** S07: owner's explicit grant that Contributors may control this host shell. */
+  contributorControl: z.boolean().optional(),
 }).passthrough();
 const PreflightPayloadSchema = z.object({
   version: z.literal(1),
@@ -196,6 +204,7 @@ export class CollaborationTerminalAdapter implements CollaborationTerminalRuntim
       creatorActorId: session.creatorActorId,
       createdAt: session.createdAt,
       status: session.status,
+      ...resolveTerminalTaskPolicy(session),
     };
   }
 

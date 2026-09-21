@@ -17,6 +17,7 @@ import {
   type TerminalControlIdentity,
   type TerminalControlLease,
 } from "./terminal-control.js";
+import { terminalControlAllowed, type TerminalTaskProfile } from "./terminal-task-profile.js";
 
 export type CollaborationTerminalDispatcherErrorCode =
   | "invalid_request"
@@ -43,6 +44,9 @@ export interface CollaborationTerminalMetadata {
   createdAt: string;
   status: "active" | "exited";
   exitedAt?: string;
+  /** S07: sandbox-only terminals let a Contributor hold the controller; a host shell needs the owner's grant. */
+  taskProfile?: TerminalTaskProfile;
+  contributorControl?: boolean;
 }
 
 export interface CollaborationTerminalRuntime {
@@ -73,6 +77,8 @@ export class CollaborationTerminalDispatcher {
     terminal: CollaborationTerminalRuntime;
     control: TerminalControlCoordinator;
     resolveParticipant?(actorId: string): Promise<CollaborationParticipant>;
+    /** S07 / T039: actors whose direct-session lease was lost are refused until re-admitted. */
+    revocations?: { isRevoked(scopeId: string, actorId: string): boolean };
   }) {}
 
   async read(context: AuthorizedCollaborationContext): Promise<CollaborationTerminal> {
@@ -108,6 +114,18 @@ export class CollaborationTerminalDispatcher {
       if (!terminal || terminal.scopeId !== context.scopeId || terminal.terminalId !== context.resourceId
         || terminal.incarnation !== action.incarnation || terminal.status !== "active") {
         throw new CollaborationTerminalDispatcherError("not_found");
+      }
+      if (this.options.revocations?.isRevoked(context.scopeId, context.actorId)) {
+        throw new CollaborationTerminalDispatcherError("forbidden");
+      }
+      if (context.role !== "owner" && !terminalControlAllowed({
+        role: context.role,
+        policy: {
+          taskProfile: terminal.taskProfile ?? "host_shell",
+          contributorControl: terminal.contributorControl !== false,
+        },
+      })) {
+        throw new CollaborationTerminalDispatcherError("forbidden");
       }
       const identity: TerminalControlIdentity = {
         scopeId: context.scopeId,
