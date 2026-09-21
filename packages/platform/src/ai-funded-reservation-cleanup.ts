@@ -1,5 +1,5 @@
 import { FundedAiSettlementResponseSchema } from "@matrix-os/contracts";
-import { sql } from "kysely";
+import { NoResultError, sql } from "kysely";
 import { z } from "zod/v4";
 import type { PlatformDB } from "./db.js";
 import { exactInteger, utcMonthStart, fundingSummary, recordUsageFunding } from "./ai-funded-metering-helpers.js";
@@ -11,20 +11,54 @@ export interface AiFundedReservationCleanupOptions {
   now: () => Date;
 }
 
+interface CleanupCursor {
+  expiresAt: string;
+  reservationId: string;
+}
+
+// Keep fair-scan state for the lifetime of each owned database without retaining
+// destroyed pools. Candidate attempts remain bounded by the caller's limit.
+const cleanupCursors = new WeakMap<PlatformDB, CleanupCursor>();
+
+function isCandidateDataError(error: unknown): boolean {
+  if (error instanceof NoResultError || error instanceof z.ZodError) return true;
+  if (!(error instanceof Error)) return false;
+  return /^Funded AI .* invariant violated$/.test(error.message)
+    || error.message === "Funded AI monetary total exceeds safe integer range"
+    || error.message === "Funded AI usage debit exceeds provider actual";
+}
+
 export async function cleanupExpiredReservations(options: AiFundedReservationCleanupOptions, input: z.input<typeof CleanupSchema>): Promise<number> {
   const { limit } = CleanupSchema.parse(input);
   const checked = options.now();
   const checkedAt = checked.toISOString();
   const currentPeriod = utcMonthStart(checked);
   await options.db.ready;
-  const candidates = await options.db.executor.selectFrom("ai_funded_usage_reservations")
-    .select("reservation_id")
-    .where("status", "in", ["reserved", "in_flight"]).where("expires_at", "<=", checkedAt)
-    // Exact provider usage is the only safe release signal after a usage-mode
-    // request starts. Never-started reservations have no provider liability,
-    // so their bounded authorization hold can expire normally.
-    .where(sql<boolean>`(status <> 'in_flight' OR authorization_response::jsonb #>> '{reservation,billingMode}' IS DISTINCT FROM 'usage')`)
-    .orderBy("expires_at").orderBy("reservation_id").limit(limit).execute();
+  const selectCandidates = (
+    after: CleanupCursor | undefined,
+    candidateLimit: number,
+    atOrBefore?: CleanupCursor,
+  ) => {
+    let query = options.db.executor.selectFrom("ai_funded_usage_reservations")
+      .select(["reservation_id", "expires_at"])
+      .where("status", "in", ["reserved", "in_flight"]).where("expires_at", "<=", checkedAt)
+      // Exact provider usage is the only safe release signal after a usage-mode
+      // request starts. Never-started reservations have no provider liability,
+      // so their bounded authorization hold can expire normally.
+      .where(sql<boolean>`(status <> 'in_flight' OR authorization_response::jsonb #>> '{reservation,billingMode}' IS DISTINCT FROM 'usage')`);
+    if (after) {
+      query = query.where(sql<boolean>`(expires_at, reservation_id) > (${after.expiresAt}, ${after.reservationId})`);
+    }
+    if (atOrBefore) {
+      query = query.where(sql<boolean>`(expires_at, reservation_id) <= (${atOrBefore.expiresAt}, ${atOrBefore.reservationId})`);
+    }
+    return query.orderBy("expires_at").orderBy("reservation_id").limit(candidateLimit).execute();
+  };
+  const cursor = cleanupCursors.get(options.db);
+  const candidates = await selectCandidates(cursor, limit);
+  if (cursor && candidates.length < limit) {
+    candidates.push(...await selectCandidates(undefined, limit - candidates.length, cursor));
+  }
 
   let cleaned = 0;
   for (const candidate of candidates) {
@@ -151,12 +185,21 @@ export async function cleanupExpiredReservations(options: AiFundedReservationCle
         return true;
       });
       if (didClean) cleaned += 1;
+      cleanupCursors.set(options.db, {
+        expiresAt: candidate.expires_at,
+        reservationId: candidate.reservation_id,
+      });
     } catch (error: unknown) {
+      if (!isCandidateDataError(error)) throw error;
       console.warn(
         "[funded-ai] reservation cleanup candidate failed",
         candidate.reservation_id,
         error instanceof Error ? error.name : "UnknownError",
       );
+      cleanupCursors.set(options.db, {
+        expiresAt: candidate.expires_at,
+        reservationId: candidate.reservation_id,
+      });
     }
   }
   return cleaned;

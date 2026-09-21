@@ -31,6 +31,14 @@ export interface VoiceNoteResult {
   error?: string;
 }
 
+function isMissingFile(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === "ENOENT";
+}
+
+function cleanupErrorKind(error: unknown): string {
+  return error instanceof Error ? error.name : typeof error;
+}
+
 async function readBoundedResponse(response: Response): Promise<Buffer | undefined> {
   const contentLength = Number(response.headers?.get?.("content-length"));
   if (Number.isFinite(contentLength) && contentLength > MAX_CHANNEL_VOICE_BYTES) {
@@ -71,9 +79,16 @@ async function preserveOwnerAudio(filePath: string, buffer: Buffer): Promise<boo
     file = undefined;
     await rename(temporaryPath, filePath);
     return true;
-  } catch (_error: unknown) {
-    await file?.close().catch(() => undefined);
-    await unlink(temporaryPath).catch(() => undefined);
+  } catch (error: unknown) {
+    console.warn("[voice] Failed to preserve owner audio:", cleanupErrorKind(error));
+    await file?.close().catch((cleanupError: unknown) => {
+      console.warn("[voice] Failed to close temporary audio file:", cleanupErrorKind(cleanupError));
+    });
+    await unlink(temporaryPath).catch((cleanupError: unknown) => {
+      if (!isMissingFile(cleanupError)) {
+        console.warn("[voice] Failed to remove temporary audio file:", cleanupErrorKind(cleanupError));
+      }
+    });
     return false;
   }
 }

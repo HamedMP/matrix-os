@@ -39,6 +39,15 @@ describe("handleVoiceNote", () => {
     rmSync(homePath, { recursive: true, force: true });
   });
 
+  it("inspects and logs unexpected temporary audio cleanup failures", () => {
+    const source = readFileSync("packages/gateway/src/voice/channel-voice.ts", "utf8");
+
+    expect(source).not.toContain(".catch(() => undefined)");
+    expect(source).toContain("Failed to close temporary audio file");
+    expect(source).toContain("Failed to remove temporary audio file");
+    expect(source).toContain("isMissingFile(cleanupError)");
+  });
+
   it("downloads audio from URL", async () => {
     const audioData = Buffer.from("fake-ogg-audio");
     globalThis.fetch = vi.fn().mockResolvedValue({

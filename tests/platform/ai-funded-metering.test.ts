@@ -351,6 +351,65 @@ describe("funded AI metering", () => {
     );
   });
 
+  it("surfaces systemic transaction failures instead of reporting cleanup success", async () => {
+    const credential = await enableAndFund({ budget: 100, credit: 100 });
+    await insertLegacyReservation({
+      tokenId: credential.tokenId,
+      reservationId: "cleanup_systemic_failure",
+      requestId: "cleanup_systemic_failure_request",
+      reservedMicrousd: 10,
+      status: "reserved",
+      expiresAt: "2026-08-30T20:04:00.000Z",
+    });
+    clock = new Date("2026-08-30T20:06:00.000Z");
+    const databaseFailure = new Error("database unavailable");
+    vi.spyOn(db, "transaction").mockRejectedValueOnce(databaseFailure);
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    await expect(repo.cleanupExpiredReservations({ limit: 10 })).rejects.toBe(databaseFailure);
+    expect(warning).not.toHaveBeenCalled();
+  });
+
+  it("rotates a bounded candidate window past persistently inconsistent oldest rows", async () => {
+    const credential = await enableAndFund({ budget: 300, credit: 300 });
+    for (const [index, expiresAt] of [
+      "2026-08-30T20:03:00.000Z",
+      "2026-08-30T20:04:00.000Z",
+    ].entries()) {
+      await insertLegacyReservation({
+        tokenId: credential.tokenId,
+        reservationId: `cleanup_poison_${index}`,
+        requestId: `cleanup_poison_request_${index}`,
+        reservedMicrousd: 100,
+        status: "reserved",
+        expiresAt,
+      });
+    }
+    await insertLegacyReservation({
+      tokenId: credential.tokenId,
+      reservationId: "cleanup_after_poison",
+      requestId: "cleanup_after_poison_request",
+      reservedMicrousd: 10,
+      status: "reserved",
+      expiresAt: "2026-08-30T20:05:00.000Z",
+    });
+    await db.executor.updateTable("ai_funded_runtime_balances").set({
+      reserved_microusd: 10,
+      month_reserved_microusd: 10,
+    }).where("machine_id", "=", identity.machineId).executeTakeFirstOrThrow();
+    clock = new Date("2026-08-30T20:06:00.000Z");
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const transactions = vi.spyOn(db, "transaction");
+
+    await expect(repo.cleanupExpiredReservations({ limit: 2 })).resolves.toBe(0);
+    await expect(repo.cleanupExpiredReservations({ limit: 2 })).resolves.toBe(1);
+
+    expect(transactions).toHaveBeenCalledTimes(4);
+    expect(await db.executor.selectFrom("ai_funded_usage_reservations")
+      .select("status").where("reservation_id", "=", "cleanup_after_poison")
+      .executeTakeFirstOrThrow()).toEqual({ status: "expired" });
+  });
+
   it("conservatively charges the full reservation when in-flight usage expires", async () => {
     const credential = await enableAndFund({ budget: 100, credit: 100 });
     const authorization = await repo.authorize({
