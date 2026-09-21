@@ -56,11 +56,18 @@ export interface ControlStreamHandle {
 }
 
 const REGISTRATION_TIMEOUT_MS = COLLABORATION_DIRECT_LIMITS.externalApiTimeoutMs;
+/**
+ * Control frames awaiting ordered application on one stream. A deeper backlog means this home
+ * cannot keep up with the platform, so the stream is torn down and re-registered rather than
+ * acknowledging stale frames late; unacknowledged denials are redelivered after the reconnect.
+ */
+const MAX_PENDING_CONTROL_FRAMES = 128;
 const CONTROL_SNAPSHOT_TTL_MS = COLLABORATION_DIRECT_LIMITS.organizationEvidenceTtlSeconds * 1_000;
 const REREGISTER_INTERVAL_MS = 5 * 60_000;
 const MAX_BACKOFF_MS = 60_000;
 
 export class CollaborationControlClient {
+  static readonly MAX_PENDING_CONTROL_FRAMES = MAX_PENDING_CONTROL_FRAMES;
   private keys: DirectSigningKey[] = [];
   private generation = 1;
   private snapshotExpiresAt = 0;
@@ -150,12 +157,37 @@ export class CollaborationControlClient {
     // at or before it, so a later frame must never be acknowledged while an earlier denial's
     // grant cleanup is still pending.
     let inbound: Promise<void> = Promise.resolve();
-    // `run` rejects to the caller (tests observe it); `settled` logs, closes the stream and keeps the chain going.
+    // A failed frame, an overflowing backlog or an explicit close terminates this stream: every frame
+    // queued behind that point is dropped, so no denial, fence or acknowledgement is applied after it.
+    let terminated = false;
+    let pending = 0;
+    const terminate = (): void => {
+      if (terminated) return;
+      terminated = true;
+      handle.close();
+    };
+    // `run` rejects to the caller (tests observe it); `settled` logs and terminates the stream.
+    const refuse = (message: string): { run: Promise<void>; settled: Promise<void> } => {
+      const run = Promise.reject(new Error(message));
+      const settled = run.catch((error: unknown) => {
+        console.warn("[collaboration-control-client] frame refused", error instanceof Error ? error.message : "UnknownError");
+      });
+      return { run, settled };
+    };
     const enqueue = (raw: string): { run: Promise<void>; settled: Promise<void> } => {
-      const run = inbound.then(() => this.applyFrame(raw, () => socket));
+      if (terminated) return refuse("Control stream is terminated");
+      if (pending >= MAX_PENDING_CONTROL_FRAMES) {
+        terminate();
+        return refuse("Control frame backlog exceeded");
+      }
+      pending += 1;
+      const run = inbound.then(() => {
+        if (terminated) throw new Error("Control stream is terminated");
+        return this.applyFrame(raw, () => socket);
+      }).finally(() => { pending -= 1; });
       const settled = run.catch((error: unknown) => {
         console.warn("[collaboration-control-client] frame rejected", error instanceof Error ? error.name : "UnknownError");
-        handle.close();
+        terminate();
       });
       inbound = settled;
       return { run, settled };
@@ -163,6 +195,7 @@ export class CollaborationControlClient {
     const handle: ControlStreamHandle = {
       receive: (raw) => enqueue(raw).run,
       close: () => {
+        terminated = true;
         socket?.close(1001, "Control client closed");
         if (this.stream === handle) this.stream = undefined;
       },
