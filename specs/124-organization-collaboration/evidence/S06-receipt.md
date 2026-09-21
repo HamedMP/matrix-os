@@ -78,3 +78,44 @@ Unresolved Greptile threads on #1806 at head `322a667d5`, worked bottom-up:
 | P2 `direct-streams.ts` stale streams consume limits | RED `d8fc378f0`: partitioned event socket never reconnected, stalled terminal socket kept, cap evicted by insertion order (3 failures + 1 lock). GREEN `328c024da`: per-stream `lastTouched` (open/inbound frame), a 15s sweep drops event sockets silent >45s (home heartbeats every 10s) and any socket whose `bufferedAmount` stops draining for >45s, re-dialling with a fresh ticket; the scope cap sweeps first and evicts the least-recently-active scope. |
 
 Checks: `tests/ui/collaboration-direct-client.test.ts` 16/16, plus hygiene/shell/desktop wiring suites → **24/24**; `packages/ui` `tsc --noEmit` exit 0; `bun run check:patterns` 0 violations, 5 pre-existing warnings. No React file changed in this round.
+
+## Verdict round (2026-09-21)
+
+Greptile left no unresolved inline thread on #1806 at head `c1eef3a19`, but the summary
+verdict blocked the merge: *"The PR should not merge until the explicit stale-connection
+eviction requirement is fully satisfied for terminal streams."*
+
+**Gap.** The previous round's sweep gated its silence rule on `purpose === "events"`
+(`packages/ui/src/collaboration/direct-streams.ts`), so a terminal socket was only ever
+dropped when its own sends stopped draining. A home that disappears without a close frame
+therefore kept its terminal socket forever: the scope's event stream was dropped and
+re-dialled while the terminal socket held a dead peer, a stream-registry slot and its
+session's stream budget.
+
+**Why terminal silence alone is not the rule.** The home pushes terminal frames only on
+output or a state change, so an idle shared terminal is legitimately silent; the home's
+terminal registry answers the client's 10 s heartbeat by touching the connection and sends
+nothing back (`packages/gateway/src/collaboration/terminal-events.ts`). Copying the event
+rule verbatim would re-dial every idle terminal every 45 s. The event stream reaches the
+same home over the same connection and *is* heartbeated every 10 s, so its newest frame is
+the peer's liveness for every stream on that scope.
+
+**RED** `test(collaboration): expose terminal streams that survive a dead home`: one scope
+with an event stream and a terminal stream, both silent past the window. The event socket
+closes and re-dials; the terminal socket is never closed, never reconnects and takes no
+second ticket.
+
+**GREEN** `fix(collaboration): evict terminal streams whose scope lost the home`: the sweep
+reads each scope's newest event-stream frame once, before any handle re-dials and resets its
+own clock, and passes it to every handle on that scope. An event stream is still judged by
+its own silence; a terminal stream is judged by that scope liveness and now falls to the same
+45 s rule, closing and re-dialling with a fresh ticket. A scope with no event stream keeps
+the undrained-send rule as its only silence signal, so the pre-existing
+"drops a terminal stream whose sends stop draining" case (terminal-only scope, silent 120 s,
+not closed) still passes unchanged.
+
+**Gates.** `tests/ui/collaboration-direct-client.test.ts` 17/17 (RED 16/17 before the fix);
+with `chat-collaboration-sharing`, shell/desktop direct wiring, platform routes and gateway
+owner-source: **92/92**. `bun run typecheck` exit 0. `bun run check:patterns` 0 violations,
+5 pre-existing warnings. No React (`.tsx`/`.jsx`) file changed in this round, so no
+react-doctor run is required.
