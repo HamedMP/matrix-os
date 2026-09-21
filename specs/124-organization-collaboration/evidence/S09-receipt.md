@@ -37,3 +37,12 @@ Additional regression checks: `collaboration-routes.test.ts`, `collaboration-cha
 
 - T049 remains open until the owner approves test credentials and cost. A failed required live mode blocks release acceptance in S19; this receipt does not mark it passed.
 - S04's `acceptGrant`, `declineGrant`, and `endActorGrants` paths do not currently advance `auth_epoch` when changing grant/activation rows. S09's transaction-local recheck closes the queue/control race, but S04 should correct its broader epoch and stream-invalidation behavior in its review-fix layer.
+
+## S07 sandbox integration — 2026-09-21
+
+Base for this local follow-up: `124/s09` @ `f90627de4`. RED test commit: `5209f7abf`. GREEN fix commit: `bcdddcfb8`.
+
+- The S07 scope-runtime client now rejects `chat_ai` creation without a sandbox manifest. S09 builds one from the claimed Run's canonical project/worktree reference through `ChatExecutionRootResolver`, checks its stored fingerprint, and mounts only a resolved child of the owner's `projects` or `worktrees` root. Actor, scope handle, host path and root fingerprint are supplied to runtime creation. A second adapter check refuses absent or mismatched provider execution roots before creating a runtime.
+- A shared Chat with no canonical execution root, stale provenance, unsupported sandbox capability, or a root outside the managed project/worktree trees is marked unavailable before external execution. There is no fallback to the owner's home directory. A standalone Chat needing AI execution therefore requires an approved managed project/worktree root; this remains a release acceptance consideration.
+- RED: three focused cases failed before the fix: the manifest builder was absent and an unrooted shared Chat reached runtime creation. GREEN: `shared-coding-execution.test.ts` and `shared-ai-runtime.test.ts` passed 44 tests locally with one real-Postgres-only skip; `shared-coding-execution.test.ts` passed 25/25 on real Postgres including the concurrent claim race. `bun run typecheck` passed and `bun run check:patterns` found 0 violations (5 existing warnings).
+- This follow-up changes no database schema or migration. T049 live Codex/Claude probes and host sandbox probes remain unrun; no live provider or systemd result is claimed.
