@@ -28,6 +28,7 @@ import { CollaborationControlClient, loadDefaultConnector } from "../../packages
 import {
   collaborationActors,
   collaborationIds,
+  createRealCollaborationTestDatabase,
   createCollaborationTestDatabase,
   type CollaborationTestDatabase,
 } from "./collaboration-test-support.js";
@@ -94,7 +95,9 @@ describe("S05 direct sessions on the home", () => {
   beforeEach(async () => {
     clock = new Date(now);
     controlFresh = true;
-    fixture = await createCollaborationTestDatabase();
+    fixture = process.env.MATRIX_TEST_POSTGRES_URL
+      ? await createRealCollaborationTestDatabase()
+      : await createCollaborationTestDatabase();
     await bootstrapChatDatabase(fixture.db as never);
     await bootstrapCollaborationDatabase(fixture.db);
     await fixture.db.insertInto("collaboration_scopes").values({
@@ -270,13 +273,92 @@ describe("S05 direct sessions on the home", () => {
     };
     expect(service.actionsRemaining(session.id)).toBe(2);
     await expect(service.authorize(sign())).resolves.toBeTruthy();
-    expect(() => service.spendStreamInput(session.id)).not.toThrow();
+    await expect(service.runStreamInput(session.id, async () => undefined)).resolves.toBeUndefined();
     expect(service.actionsRemaining(session.id)).toBe(0);
     const ended: string[] = [];
     service.subscribeEnded((s, reason) => { ended.push(`${s.id}:${reason}`); });
     await expect(service.authorize(sign())).rejects.toMatchObject({ code: "limit" });
     expect(ended).toEqual([`${session.id}:exhausted`]);
     expect(service.describe(session.id)).toBeNull();
+  });
+
+  it("keeps the signed action budget when a correctly signed request fails local authorization", async () => {
+    const { body, key } = sessionRequest(collaborationActors.editor, clientKey(), { overrides: { maxActions: 1 } });
+    const session = await service.create(body);
+    const sign = (action: "read" | "manage_members") => {
+      const signature = { protocolVersion: 2, sessionId: session.id, method: "GET", path: `/api/collaboration/scopes/${scopeId}`, query: "",
+        bodyDigest: sha256Hex(new Uint8Array()), conditionalHeadersDigest: sha256Hex(new Uint8Array()),
+        nonce: randomUUID().replaceAll("-", ""), issuedAt: clock.toISOString() };
+      return { sessionId: session.id, signature, proof: key.sign(requestSigningPayload(signature)), method: "GET" as const,
+        path: signature.path, query: "", body: new Uint8Array(), action };
+    };
+    await expect(service.authorize(sign("manage_members"))).rejects.toMatchObject({ code: "invalid_signature" });
+    expect(service.actionsRemaining(session.id)).toBe(1);
+    await expect(service.authorize(sign("read"))).resolves.toMatchObject({ actorId: collaborationActors.editor });
+    expect(service.actionsRemaining(session.id)).toBe(0);
+  });
+
+  it("does not spend stream admission when local authorization rejects it", async () => {
+    const { body, key } = sessionRequest(collaborationActors.editor, clientKey(), { overrides: { maxActions: 3 } });
+    const session = await service.create(body);
+    const open = async () => {
+      const ticket = service["options"].verifier.verifyTicket(ticketFor({ actorId: collaborationActors.editor, key, purpose: "events" }));
+      return service.openStream({ ticket, handshake: { sessionId: session.id, ticketNonce: ticket.nonce,
+        possession: key.sign(possessionPayload({ ticketNonce: ticket.nonce, purpose: "events", sessionId: session.id })) } });
+    };
+    await fixture.db.updateTable("collaboration_members").set({ status: "revoked" })
+      .where("scope_id", "=", scopeId).where("actor_id", "=", collaborationActors.editor).execute();
+    await expect(open()).rejects.toMatchObject({ code: "denied" });
+    expect(service.actionsRemaining(session.id)).toBe(3);
+  });
+
+  it("does not spend stream admission when the connection limit rejects it or a downstream open fails", async () => {
+    const { body, key } = sessionRequest(collaborationActors.editor, clientKey(), { overrides: { maxActions: 3 } });
+    const session = await service.create(body);
+    const open = async () => {
+      const ticket = service["options"].verifier.verifyTicket(ticketFor({ actorId: collaborationActors.editor, key, purpose: "events" }));
+      return service.openStream({ ticket, handshake: { sessionId: session.id, ticketNonce: ticket.nonce,
+        possession: key.sign(possessionPayload({ ticketNonce: ticket.nonce, purpose: "events", sessionId: session.id })) } });
+    };
+    const first = await open();
+    const second = await open();
+    expect(service.actionsRemaining(session.id)).toBe(1);
+    await expect(open()).rejects.toMatchObject({ code: "limit" });
+    expect(service.actionsRemaining(session.id)).toBe(1);
+    first.commitAdmission();
+    first.release();
+    second.release();
+    expect(service.actionsRemaining(session.id)).toBe(2);
+  });
+
+  it("reserves concurrent stream inputs and refunds a rejected operation without ending the session", async () => {
+    const session = await service.create(sessionRequest(collaborationActors.editor, clientKey(), { overrides: { maxActions: 1 } }).body);
+    let rejectFirst!: (error: Error) => void;
+    const work = new Promise<void>((_resolve, reject) => { rejectFirst = reject; });
+    const first = service.runStreamInput(session.id, () => work);
+    expect(service.actionsRemaining(session.id)).toBe(0);
+    await expect(service.runStreamInput(session.id, async () => undefined)).rejects.toMatchObject({ code: "limit" });
+    expect(service.describe(session.id)).not.toBeNull();
+    rejectFirst(new Error("local authorization denied"));
+    await expect(first).rejects.toThrow("local authorization denied");
+    expect(service.actionsRemaining(session.id)).toBe(1);
+    await expect(service.runStreamInput(session.id, async () => undefined)).resolves.toBeUndefined();
+    expect(service.actionsRemaining(session.id)).toBe(0);
+  });
+
+  it("does not refund an old pending action into a renewed ticket budget", async () => {
+    const { body, key } = sessionRequest(collaborationActors.editor, clientKey(), { overrides: { maxActions: 1 } });
+    const session = await service.create(body);
+    let rejectFirst!: (error: Error) => void;
+    const pending = service.runStreamInput(session.id, () => new Promise<void>((_resolve, reject) => { rejectFirst = reject; }));
+    expect(service.actionsRemaining(session.id)).toBe(0);
+    const fresh = sessionRequest(collaborationActors.editor, key, { overrides: { maxActions: 1 } });
+    await service.renew(session.id, { clientRequestId: randomUUID(), signedTicket: fresh.body.signedTicket });
+    rejectFirst(new Error("old action rejected"));
+    await expect(pending).rejects.toThrow("old action rejected");
+    expect(service.actionsRemaining(session.id)).toBe(1);
+    await service.runStreamInput(session.id, async () => undefined);
+    expect(service.actionsRemaining(session.id)).toBe(0);
   });
 
   it("re-checks the stream ticket's expiry when the possession frame is consumed and notifies subscribers on denial", async () => {
