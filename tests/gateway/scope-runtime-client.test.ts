@@ -7,6 +7,7 @@ import {
   ScopeRuntimeRequestSchema,
   type ScopeRuntimeResponse,
 } from "../../packages/scope-runtime/src/protocol.js";
+import { SCOPE_RUNTIME_SANDBOX_POLICY_DIGEST, SCOPE_RUNTIME_SANDBOX_POLICY_VERSION } from "../../packages/scope-runtime/src/sandbox.js";
 import {
   ScopeRuntimeClientError,
   createScopeRuntimeClient,
@@ -22,10 +23,17 @@ const catalog: ScopeRuntimeProfileCatalog = {
     profileVersion: 1,
     profileDigest: PROFILE_DIGEST,
     identity: { mode: "dynamic", uidMin: 61_184, uidMax: 65_519 },
+    sandbox: { policyVersion: SCOPE_RUNTIME_SANDBOX_POLICY_VERSION, policyDigest: SCOPE_RUNTIME_SANDBOX_POLICY_DIGEST },
     supportedAdapters: {
       "claude-code": { harnessVersions: ["2.1.240"], workloads: ["chat_ai"] },
     },
   },
+};
+
+const sharedSandbox = {
+  version: 1 as const, scopeHandle: SCOPE_HANDLE, actorId: "user_member",
+  worktree: { hostPath: "/srv/shared/project", mode: "rw" as const, fingerprint: "a".repeat(64) },
+  network: "none" as const,
 };
 
 const cleanup: Array<() => Promise<void>> = [];
@@ -95,6 +103,7 @@ function capabilityResponse(requestId = REQUEST_ID): ScopeRuntimeResponse {
         storageMaxBytes: 10_737_418_240,
       },
       adapters: [{ adapterId: "claude-code", harnessVersion: "2.1.240", workloads: ["chat_ai"] }],
+      sandbox: { policyVersion: SCOPE_RUNTIME_SANDBOX_POLICY_VERSION, policyDigest: SCOPE_RUNTIME_SANDBOX_POLICY_DIGEST, workloads: ["chat_ai"] },
     },
   };
 }
@@ -292,6 +301,7 @@ describe("scope runtime client", () => {
       workload: "chat_ai",
       adapterId: "claude-code",
       harnessVersion: "2.1.240",
+      sandbox: sharedSandbox,
     })).resolves.toEqual({
       runtimeHandle: RUNTIME_HANDLE,
       executionGeneration: "1",
@@ -366,12 +376,14 @@ describe("scope runtime client", () => {
       workload: "chat_ai",
       adapterId: "claude-code",
       harnessVersion: "2.1.240",
+      sandbox: sharedSandbox,
     }).catch((error: unknown) => error));
     await expect(client.createRuntime({
       scopeHandle: SCOPE_HANDLE,
       workload: "chat_ai",
       adapterId: "claude-code",
       harnessVersion: "2.1.240",
+      sandbox: sharedSandbox,
     })).rejects.toMatchObject({ code: "client_capacity" });
 
     await client.close();
