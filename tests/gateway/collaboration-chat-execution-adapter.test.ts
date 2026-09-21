@@ -2,7 +2,11 @@ import { describe, expect, it, vi } from "vitest";
 import type { SharedQueuedTurn } from "../../packages/gateway/src/chat/repository.js";
 import type { AuthorizedCollaborationContext } from "../../packages/gateway/src/collaboration/authority.js";
 import { CollaborationChatExecutionAdapter } from "../../packages/gateway/src/collaboration/chat-execution-adapter.js";
-import { collaborationActors, collaborationIds } from "./collaboration-test-support.js";
+import {
+  collaborationActors,
+  collaborationExecutionEligibility,
+  collaborationIds,
+} from "./collaboration-test-support.js";
 
 const now = "2026-09-09T12:00:00.000Z";
 const context: AuthorizedCollaborationContext = {
@@ -18,7 +22,7 @@ const context: AuthorizedCollaborationContext = {
   authorityGeneration: 1,
   capability: "request_ai",
 };
-const selection = { instanceId: "claude_shared", model: "claude-opus-4-6" };
+const selection = { instanceId: "claude_code_default", model: "opus" };
 const queued: SharedQueuedTurn = {
   id: "qturn_shared_adapter_1",
   chatId: collaborationIds.chat,
@@ -151,6 +155,79 @@ describe("CollaborationChatExecutionAdapter", () => {
       });
   });
 
+  it("resolves readiness by the immutable bound driver and never exposes it to clients", async () => {
+    const resolveProviderReadiness = vi.fn(async () => "ready" as const);
+    const adapter = createAdapter({
+      getSharedAiCapability: vi.fn(async () => ({
+        status: "available" as const,
+        effectiveSelection: selection,
+        boundDriverKind: "claude_code" as const,
+      })),
+      resolveProviderReadiness,
+    });
+
+    await expect(adapter.capability({ ...context, capability: "read" }, []))
+      .resolves.toEqual({
+        capability: { status: "available", effectiveSelection: selection },
+        approvals: [],
+      });
+    expect(resolveProviderReadiness).toHaveBeenCalledWith(collaborationActors.owner, selection, "claude_code");
+  });
+
+  it("surfaces expired Claude readiness only as an actionable owner state", async () => {
+    const adapter = createAdapter({
+      resolveProviderReadiness: vi.fn(async () => "reconnect_required"),
+    });
+
+    await expect(adapter.capability({
+      ...context,
+      actorId: collaborationActors.owner,
+      role: "owner",
+      capability: "read",
+    }, [])).resolves.toMatchObject({
+      capability: { status: "owner_reconnect_required", effectiveSelection: selection },
+    });
+    await expect(adapter.capability({ ...context, capability: "read" }, []))
+      .resolves.toMatchObject({
+        capability: { status: "unavailable", effectiveSelection: selection },
+      });
+  });
+
+  it("lets only the owner submit validated canonical authority for a first binding", async () => {
+    const enqueueSharedQueuedTurn = vi.fn(async () => ({
+      ...queued, pendingCount: 1, alreadyAccepted: false, resourceRevision: 13,
+    }));
+    const canonicalProviderAuthority = { driverKind: "claude_code" as const, selection };
+    const adapter = createAdapter({
+      enqueueSharedQueuedTurn,
+      getSharedAiCapability: vi.fn(async () => ({
+        status: "owner_binding_required" as const,
+        effectiveSelection: selection,
+      })),
+      resolveCanonicalProviderAuthority: vi.fn(async () => canonicalProviderAuthority),
+    });
+    const ownerContext = {
+      ...context,
+      actorId: collaborationActors.owner,
+      role: "owner" as const,
+    };
+
+    await expect(adapter.submit(ownerContext, {
+      clientRequestId: queued.clientRequestId,
+      expectedRevision: "12",
+      text: "Establish the canonical binding",
+    })).resolves.toMatchObject({ resourceRevision: "13" });
+    expect(enqueueSharedQueuedTurn).toHaveBeenCalledWith(
+      { type: "personal", ownerId: collaborationActors.owner },
+      expect.objectContaining({ canonicalProviderAuthority }),
+    );
+    await expect(adapter.submit(context, {
+      clientRequestId: "50000000-0000-4000-8000-000000000004",
+      expectedRevision: "13",
+      text: "Editors cannot establish provider authority",
+    })).rejects.toMatchObject({ code: "unavailable" });
+  });
+
   it("forwards attributed controls and refuses a mismatched capability", async () => {
     const cancel = vi.fn(async () => ({ id: "command-1", kind: "cancel" as const, state: "completed" as const }));
     const adapter = createAdapter({ cancel });
@@ -200,15 +277,19 @@ function createAdapter(overrides: Record<string, unknown> = {}) {
     commands,
     resolveParticipant: async (actorId) => ({ actorId, displayName: "Ada Editor" }),
     resolveResourceRevision: async () => 13,
-    resolveEligibility: async () => ({
-      profileId: "scope-runtime-chat-v1",
-      profileVersion: 1,
-      profileDigest: "a".repeat(64),
-      adapterId: "claude-code",
-      harnessVersion: "2.1.240",
-    }),
+    resolveEligibility: async () => collaborationExecutionEligibility(),
     requestDispatch: (overrides.requestDispatch as (scopeId: string, chatId: string) => Promise<void>)
       ?? (async () => undefined),
+    resolveProviderReadiness: (overrides.resolveProviderReadiness as (
+      ownerId: string,
+      selection: typeof queued.selection | null,
+      boundDriverKind: "claude_code" | "codex" | null,
+    ) => Promise<"ready" | "reconnect_required" | "unavailable">) ?? (async () => "ready"),
+    resolveCanonicalProviderAuthority: (overrides.resolveCanonicalProviderAuthority as (
+      ownerId: string,
+      selection: typeof queued.selection,
+    ) => Promise<{ driverKind: "claude_code"; selection: typeof queued.selection } | null>)
+      ?? (async () => ({ driverKind: "claude_code", selection })),
     onCommitted: overrides.onCommitted as ((scopeId: string) => Promise<void>) | undefined,
     now: () => new Date(now),
     createQueuedTurnId: () => queued.id,

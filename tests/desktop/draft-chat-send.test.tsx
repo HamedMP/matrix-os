@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   type ProjectAgentWorkspace,
@@ -364,11 +364,14 @@ describe("draft chat implicit thread creation", () => {
     fireEvent.keyDown(composer, { key: "Enter" });
 
     fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
-    const harness = screen.getByRole("button", { name: `Codex harness, ${availability}` });
-    expect(harness.className).toContain("opacity-35");
-    if (action) {
-      fireEvent.click(harness);
-      expect(screen.getByRole("button", { name: action })).toBeTruthy();
+    const choices = screen.getByRole("listbox", { name: "Models and connections" });
+    expect(within(choices).queryAllByRole("option")).toHaveLength(0);
+    expect(screen.getByRole("status").textContent)
+      .toBe("No ready connections. Open Manage agents to connect.");
+    if (providers.length > 0) {
+      fireEvent.click(screen.getByText("Manage agents"));
+      expect(screen.getByText(`Codex — ${availability}`)).toBeTruthy();
+      if (action) expect(screen.getByRole("button", { name: action })).toBeTruthy();
     }
     expect(composer.getAttribute("contenteditable")).toBe("true");
     expect(composer.textContent).toBe(prompt);

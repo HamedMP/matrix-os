@@ -51,7 +51,10 @@ defmodule SymphonyElixir.Config.Schema do
       field(:project_slug, :string)
       field(:assignee, :string)
       field(:active_states, {:array, :string}, default: ["Todo", "In Progress"])
-      field(:terminal_states, {:array, :string}, default: ["Closed", "Cancelled", "Canceled", "Duplicate", "Done"])
+
+      field(:terminal_states, {:array, :string},
+        default: ["Closed", "Cancelled", "Canceled", "Duplicate", "Done"]
+      )
     end
 
     @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
@@ -120,7 +123,12 @@ defmodule SymphonyElixir.Config.Schema do
       schema
       |> cast(
         attrs,
-        [:max_concurrent_agents, :max_turns, :max_retry_backoff_ms, :max_concurrent_agents_by_state],
+        [
+          :max_concurrent_agents,
+          :max_turns,
+          :max_retry_backoff_ms,
+          :max_concurrent_agents_by_state
+        ],
         empty_values: []
       )
       |> validate_number(:max_concurrent_agents, greater_than: 0)
@@ -197,7 +205,9 @@ defmodule SymphonyElixir.Config.Schema do
     @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
     def changeset(schema, attrs) do
       schema
-      |> cast(attrs, [:after_create, :before_run, :after_run, :before_remove, :timeout_ms], empty_values: [])
+      |> cast(attrs, [:after_create, :before_run, :after_run, :before_remove, :timeout_ms],
+        empty_values: []
+      )
       |> validate_number(:timeout_ms, greater_than: 0)
     end
   end
@@ -340,21 +350,34 @@ defmodule SymphonyElixir.Config.Schema do
   end
 
   defp finalize_settings(settings) do
-    linear_api_key_fallback =
+    explicit_linear_credential =
       first_present_env([
         "SYMPHONY_LINEAR_CREDENTIAL",
         "SYMPHONY_LINEAR_API_KEY",
         "MATRIX_LINEAR_API_KEY",
         "LINEAR_API_KEY"
-      ]) || matrix_linear_bridge_credential()
+      ])
+
+    api_key =
+      resolve_secret_setting(
+        settings.tracker.api_key,
+        explicit_linear_credential || matrix_linear_bridge_credential()
+      )
+
+    # Preserve explicitly configured legacy users, without making automatic
+    # bridge credentials sufficient to invent a project on every VPS.
+    legacy_project =
+      if explicit_linear_credential || (is_binary(api_key) && api_key != Bridge.credential()),
+        do: "matrix-os",
+        else: nil
 
     tracker = %{
       settings.tracker
-      | api_key: resolve_secret_setting(settings.tracker.api_key, linear_api_key_fallback),
+      | api_key: api_key,
         project_slug:
           resolve_text_value(
             settings.tracker.project_slug,
-            System.get_env("SYMPHONY_LINEAR_PROJECT_SLUG") || "matrix-os"
+            System.get_env("SYMPHONY_LINEAR_PROJECT_SLUG") || legacy_project
           ),
         assignee:
           resolve_secret_setting(
@@ -370,14 +393,19 @@ defmodule SymphonyElixir.Config.Schema do
 
     codex = %{
       settings.codex
-      | command: resolve_text_value(settings.codex.command, System.get_env("SYMPHONY_CODEX_COMMAND") || "codex app-server"),
+      | command:
+          resolve_text_value(
+            settings.codex.command,
+            System.get_env("SYMPHONY_CODEX_COMMAND") || "codex app-server"
+          ),
         approval_policy: normalize_keys(settings.codex.approval_policy),
         turn_sandbox_policy: normalize_optional_map(settings.codex.turn_sandbox_policy)
     }
 
     server = %{
       settings.server
-      | host: resolve_text_value(settings.server.host, System.get_env("SYMPHONY_HOST") || "127.0.0.1")
+      | host:
+          resolve_text_value(settings.server.host, System.get_env("SYMPHONY_HOST") || "127.0.0.1")
     }
 
     %{settings | tracker: tracker, workspace: workspace, codex: codex, server: server}
@@ -418,6 +446,8 @@ defmodule SymphonyElixir.Config.Schema do
       resolved -> resolved
     end
   end
+
+  defp resolve_text_value(nil, fallback), do: normalize_secret_value(fallback)
 
   defp resolve_text_value(value, fallback) when is_binary(value) do
     case resolve_env_value(value, fallback) do

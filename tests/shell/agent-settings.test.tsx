@@ -374,7 +374,7 @@ describe("Canvas Agent runtime settings", () => {
     ));
   });
 
-  it("never saves an unavailable Chat model", async () => {
+  it("preserves an unavailable saved Chat model until an explicit replacement is chosen", async () => {
     const initial = makeView();
     initial.providers[0].models = [
       {
@@ -397,7 +397,9 @@ describe("Canvas Agent runtime settings", () => {
     vi.stubGlobal("fetch", fetcher);
     render(<AgentRuntimePanel />);
 
-    expect(await screen.findByRole("combobox", { name: "Chat model" })).toHaveValue("claude-sonnet-4-6");
+    expect(await screen.findByRole("combobox", { name: "Chat model" })).toHaveValue("claude-opus-4-6");
+    expect(screen.getByRole("button", { name: "Save Chat model" })).toBeDisabled();
+    fireEvent.change(screen.getByRole("combobox", { name: "Chat model" }), { target: { value: "claude-sonnet-4-6" } });
     fireEvent.click(screen.getByRole("button", { name: "Save Chat model" }));
 
     await waitFor(() => expect(fetcher).toHaveBeenCalledWith(
@@ -435,7 +437,8 @@ describe("Canvas Agent runtime settings", () => {
     vi.stubGlobal("fetch", fetcher);
     render(<AgentRuntimePanel />);
 
-    expect(await screen.findByRole("combobox", { name: "Chat model" })).toHaveValue("claude-sonnet-4-6");
+    await screen.findByRole("combobox", { name: "Chat model" });
+    fireEvent.change(screen.getByRole("combobox", { name: "Chat model" }), { target: { value: "claude-sonnet-4-6" } });
     expect(screen.getByRole("combobox", { name: "Chat effort" })).toHaveValue("");
     fireEvent.click(screen.getByRole("button", { name: "Save Chat model" }));
 
@@ -481,7 +484,9 @@ describe("Canvas Agent runtime settings", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Save Chat model" }));
     await waitFor(() => expect(putCalls).toBe(1));
-    expect(screen.getByRole("combobox", { name: "Chat model" })).toHaveValue("claude-sonnet-4-6");
+    expect(screen.getByRole("combobox", { name: "Chat model" })).toHaveValue("claude-opus-4-6");
+    expect(screen.getByRole("button", { name: "Save Chat model" })).toBeDisabled();
+    fireEvent.change(screen.getByRole("combobox", { name: "Chat model" }), { target: { value: "claude-sonnet-4-6" } });
     fireEvent.click(screen.getByRole("button", { name: "Save Chat model" }));
 
     await waitFor(() => expect(fetcher).toHaveBeenCalledWith(

@@ -15,8 +15,10 @@ import {
   AI_PROVIDER_CATALOG_VERSION,
   buildBundledModelCatalog,
   eligibleModelsForSource,
+  OWNER_OPENAI_MODEL_IDS,
 } from "./model-catalog.js";
 import type { MatrixFundedCredentialProvider } from "../domains/integrations/funded-ai-credential-manager.js";
+import type { FundedAiReadinessReader } from "../funded-ai-readiness.js";
 
 const HEALTH_TIMEOUT_MS = 2_000;
 const KERNEL_CAPABILITIES = [
@@ -45,6 +47,7 @@ interface AiProviderServiceOptions {
   healthTimeoutMs?: number;
   driverInventory?: (signal: AbortSignal) => Promise<AiProviderSnapshotV3["drivers"]>;
   fundedCredentialProvider?: MatrixFundedCredentialProvider;
+  fundedReadinessReader?: FundedAiReadinessReader;
 }
 
 function readinessForObservation(
@@ -108,6 +111,49 @@ function accountReadinessFromSource(
   };
 }
 
+function readinessForDriver(
+  driver: AiProviderSnapshotV3["drivers"][number] | undefined,
+  now: string,
+): AiProviderReadiness {
+  if (driver?.installState !== "installed") {
+    return {
+      state: "setup_required",
+      checkedAt: null,
+      staleAfter: null,
+      action: "open_terminal",
+      safeReason: null,
+    };
+  }
+  if (driver.health === "ready" || driver.health === "degraded") {
+    return { state: "ready", checkedAt: now, staleAfter: null, action: "none", safeReason: null };
+  }
+  if (driver.health === "stopped" && driver.setupActions.includes("connect_account")) {
+    return {
+      state: "auth_required",
+      checkedAt: now,
+      staleAfter: null,
+      action: "open_terminal",
+      safeReason: "auth",
+    };
+  }
+  if (driver.health === "unavailable") {
+    return {
+      state: "unavailable",
+      checkedAt: now,
+      staleAfter: null,
+      action: "retry",
+      safeReason: "provider_unavailable",
+    };
+  }
+  return {
+    state: "unknown",
+    checkedAt: now,
+    staleAfter: null,
+    action: "retry",
+    safeReason: "unknown",
+  };
+}
+
 export class AiProviderService implements AiProviderSnapshotReader {
   readonly #credentials: ProviderCredentialStore;
   readonly #now: () => Date;
@@ -116,6 +162,7 @@ export class AiProviderService implements AiProviderSnapshotReader {
   readonly #ownsHealthCache: boolean;
   readonly #healthTimeoutMs: number;
   readonly #driverInventory?: AiProviderServiceOptions["driverInventory"];
+  readonly #fundedReadiness?: FundedAiReadinessReader;
 
   constructor(options: AiProviderServiceOptions) {
     if (!options.homePath) throw new Error("AI provider home path is required");
@@ -133,12 +180,13 @@ export class AiProviderService implements AiProviderSnapshotReader {
       Math.min(options.healthTimeoutMs ?? HEALTH_TIMEOUT_MS, HEALTH_TIMEOUT_MS),
     );
     this.#driverInventory = options.driverInventory;
+    this.#fundedReadiness = options.fundedReadinessReader;
   }
 
   async #drivers(): Promise<AiProviderSnapshotV3["drivers"]> {
     const kernel = AiProviderDriverViewSchema.parse({
       id: "kernel",
-      displayName: "Matrix Agent",
+      displayName: "Claude SDK",
       kind: "agent_sdk",
       installState: "installed",
       health: "ready",
@@ -227,35 +275,46 @@ export class AiProviderService implements AiProviderSnapshotReader {
   async getSnapshot(options: { refresh?: boolean } = {}): Promise<AiProviderSnapshotV3> {
     const now = this.#now().toISOString();
     const { credentials, savedModel } = await this.#credentials.read();
-    const matrixReadiness = readinessForObservation(
-      credentials.matrixIncluded.state,
+    // These observations are independent. A slow CLI must not serialize the
+    // funding and credential checks behind its bounded inventory deadline.
+    const [drivers, funded, apiKeyReadiness, profileReadiness] = await Promise.all([
+      this.#drivers(),
+      credentials.matrixIncluded.state === "ready" && this.#fundedReadiness
+        ? this.#fundedReadiness.read()
+        : undefined,
+      this.#resolveOwnerReadiness(
+        "owner_anthropic_key", credentials.ownerApiKey.state, "api_key", now, options.refresh === true,
+      ),
+      this.#resolveOwnerReadiness(
+        "owner_anthropic_profile", credentials.ownerProfile.state, "profile", now, options.refresh === true,
+      ),
+    ]);
+    const codexDriver = drivers.find((driver) => driver.id === "codex");
+    const codexReadiness = readinessForDriver(codexDriver, now);
+    const matrixReadiness = funded?.readiness ?? readinessForObservation(
+      credentials.matrixIncluded.state === "ready" ? "unverified" : credentials.matrixIncluded.state,
       "matrix",
       now,
-    );
-    const apiKeyReadiness = await this.#resolveOwnerReadiness(
-      "owner_anthropic_key",
-      credentials.ownerApiKey.state,
-      "api_key",
-      now,
-      options.refresh === true,
-    );
-    const profileReadiness = await this.#resolveOwnerReadiness(
-      "owner_anthropic_profile",
-      credentials.ownerProfile.state,
-      "profile",
-      now,
-      options.refresh === true,
     );
     const catalog = buildBundledModelCatalog();
 
     const accessSources: AiAccessSourceView[] = [
+      sourceFromReadiness({
+        id: "matrix_cloudflare", displayName: "Matrix AI", fundingKind: "matrix_included",
+        vendor: "cloudflare", accountLabel: "Included",
+        eligibleModelIds: eligibleModelsForSource("matrix_cloudflare", catalog)
+          .filter((model) => funded?.allowedModelIds.includes(model.id)).map((model) => model.id),
+        policyVersion: AI_PROVIDER_CATALOG_VERSION,
+      }, matrixReadiness),
       sourceFromReadiness({
         id: "matrix_included",
         displayName: "Matrix AI",
         fundingKind: "matrix_included",
         vendor: "anthropic",
         accountLabel: "Included",
-        eligibleModelIds: eligibleModelsForSource("matrix_included", catalog).map((model) => model.id),
+        eligibleModelIds: eligibleModelsForSource("matrix_included", catalog)
+          .filter((model) => funded?.allowedModelIds.includes(model.id))
+          .map((model) => model.id),
         policyVersion: AI_PROVIDER_CATALOG_VERSION,
       }, matrixReadiness),
       sourceFromReadiness({
@@ -285,6 +344,15 @@ export class AiProviderService implements AiProviderSnapshotReader {
         eligibleModelIds: [],
         policyVersion: AI_PROVIDER_CATALOG_VERSION,
       }, readinessForObservation("setup_required", "profile", now)),
+      sourceFromReadiness({
+        id: "owner_openai_profile",
+        displayName: "Codex account",
+        fundingKind: "owner_account",
+        vendor: "openai",
+        accountLabel: "Codex",
+        eligibleModelIds: [...OWNER_OPENAI_MODEL_IDS],
+        policyVersion: AI_PROVIDER_CATALOG_VERSION,
+      }, codexReadiness),
     ];
 
     const selectedOwnerReadiness = credentials.selectedMode === "api_key"
@@ -308,12 +376,20 @@ export class AiProviderService implements AiProviderSnapshotReader {
         accountLabel: null,
         ...readinessForObservation("setup_required", "profile", now),
       },
+      {
+        id: "owner_codex",
+        vendor: "openai",
+        authMethod: codexReadiness.state === "setup_required" ? null : "provider_profile",
+        accountLabel: "Codex",
+        ...codexReadiness,
+      },
     ];
 
-    const instances = accessSources
+    const kernelInstances = accessSources
       .filter((source) => source.vendor === "anthropic")
       .map((source) => {
-        const sourceModels = eligibleModelsForSource(source.id, catalog);
+        const sourceModels = eligibleModelsForSource(source.id, catalog)
+          .filter((model) => source.eligibleModelIds.includes(model.id));
         // A persisted selection is an explicit route request. If the selected
         // access source cannot serve it, fail closed instead of silently
         // replacing it with a cheaper or differently governed model.
@@ -344,6 +420,23 @@ export class AiProviderService implements AiProviderSnapshotReader {
           catalogVersion: AI_PROVIDER_CATALOG_VERSION,
         };
       });
+    const codexInstance = {
+      id: "codex_owner_openai_profile",
+      driverId: "codex",
+      vendor: "openai" as const,
+      accountId: "owner_codex",
+      accessSourceId: "owner_openai_profile",
+      label: "Codex",
+      readiness: codexReadiness,
+      capabilitySnapshot: codexDriver?.capabilities ?? ["tools", "resume", "reasoning"],
+      modelIds: [...OWNER_OPENAI_MODEL_IDS],
+      defaultModelId: codexReadiness.state === "ready" ? OWNER_OPENAI_MODEL_IDS[0] : null,
+      catalogVersion: AI_PROVIDER_CATALOG_VERSION,
+    };
+    const instances = [
+      ...kernelInstances,
+      ...(codexDriver ? [codexInstance] : []),
+    ];
 
     const selectedInstance = instances.find(
       (instance) => instance.accessSourceId === credentials.selectedAccessSourceId,
@@ -363,7 +456,7 @@ export class AiProviderService implements AiProviderSnapshotReader {
       refreshedAt: now,
       accessSources,
       accounts,
-      drivers: await this.#drivers(),
+      drivers,
       instances,
       models: catalog,
       active,

@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   drainExistingTerminalSessionQueue,
   drainExistingTerminalSessionQueueWithRetry,
+  enqueueExistingProviderTerminal,
   enqueueExistingTerminalRef,
   enqueueExistingTerminalSession,
   hasQueuedExistingTerminalSession,
@@ -37,6 +38,19 @@ afterEach(() => {
 });
 
 describe("provider terminal session handoff", () => {
+  it("selects the exact browser-created provider tab by canonical reference", async () => {
+    expect(enqueueExistingProviderTerminal(providerRef, "window-a")).toBe(true);
+    expect(JSON.parse(sessionStorage.getItem("matrix:provider-terminal-session-queue") ?? "[]"))
+      .toEqual([expect.objectContaining({ terminalRef: providerRef, targetId: "window-a" })]);
+
+    const fetcher = vi.fn(async () => Response.json(workspaceResponse([
+      tab(PROVIDER_TAB_ID, "setup-opencode", "running"),
+      tab(OTHER_TAB_ID, "setup-opencode", "running"),
+    ])));
+    await expect(drainExistingTerminalSessionQueue("window-a", { fetcher }))
+      .resolves.toEqual([providerRef]);
+  });
+
   it("queues only opaque canonical session ids and targets the active terminal", () => {
     expect(enqueueExistingTerminalSession("term_observe_abc123", "window-a")).toBe(false);
     expect(enqueueExistingTerminalSession("provider-login", "window-a")).toBe(true);
@@ -58,6 +72,20 @@ describe("provider terminal session handoff", () => {
       expect.objectContaining({ cache: "no-store", signal: expect.any(AbortSignal) }),
     );
     expect(fetcher.mock.calls.every(([, init]) => init?.method !== "POST")).toBe(true);
+  });
+
+  it("hands off full-length provider login IDs after validation against the live session list", async () => {
+    const sessionId = `provider-auth-${"a".repeat(50)}`;
+    const fetcher = vi.fn(async () => Response.json(workspaceResponse([
+      tab(PROVIDER_TAB_ID, sessionId, "running"),
+    ])));
+    expect(enqueueExistingTerminalSession(sessionId, "window-login")).toBe(true);
+    expect(enqueueExistingTerminalSession(`${sessionId}a`, "window-login")).toBe(false);
+    expect(enqueueExistingTerminalSession("550e8400-e29b-41d4-a716-446655440000", "window-login"))
+      .toBe(false);
+    await expect(drainExistingTerminalSessionQueue("window-login", { fetcher }))
+      .resolves.toEqual([providerRef]);
+    expect(hasQueuedExistingTerminalSession("window-login")).toBe(false);
   });
 
   it("fails closed on malformed lists and keeps other terminal targets queued", async () => {

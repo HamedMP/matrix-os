@@ -7,6 +7,7 @@ import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/colla
 import { createScopeRuntimeChatProviderAdapter } from "../../packages/gateway/src/collaboration/scope-runtime-chat-adapter.js";
 import {
   collaborationActors,
+  collaborationExecutionEligibility,
   collaborationIds,
   createCollaborationTestDatabase,
   type CollaborationTestDatabase,
@@ -238,10 +239,7 @@ describe("canonical shared Chat orchestration", () => {
       kind: "chat", resource_id: collaborationIds.chat, parent_scope_id: null, membership_mode: "direct",
       lifecycle: "shared", revision: 1, auth_epoch: 1, authority_runtime_id: collaborationIds.runtime,
       authority_generation: 1, execution_generation: 7,
-      execution_eligibility: JSON.stringify({
-        profileId: "scope-runtime-chat-v1", profileVersion: 1, profileDigest: "a".repeat(64),
-        adapterId: "claude-code", harnessVersion: "2.1.240",
-      }),
+      execution_eligibility: JSON.stringify(collaborationExecutionEligibility()),
       deleted_at: null, created_at: now, updated_at: now,
     }).execute();
     await fixture.db.insertInto("collaboration_members").values([

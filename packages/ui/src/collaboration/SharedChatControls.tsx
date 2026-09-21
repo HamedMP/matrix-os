@@ -9,7 +9,7 @@ import { useCallback, useEffect, useReducer, useRef } from "react";
 import type { CollaborationApi } from "./ChatCollaboratorsDialog.js";
 import type { CollaborationDraft } from "./chat-state.js";
 
-type AiAvailability = "checking" | "available" | "unavailable";
+type AiAvailability = "checking" | "available" | "unavailable" | "owner_reconnect_required";
 type SharedAiError = "request" | "control" | "recovery" | null;
 type SharedAiState = {
   availability: AiAvailability;
@@ -20,7 +20,8 @@ type SharedAiState = {
 };
 type SharedAiAction =
   | { type: "loaded"; response: ReturnType<typeof CollaborationAiRequestsResponseSchema.parse> }
-  | { type: "unavailable"; retainQueue: boolean }
+  | { type: "unavailable" }
+  | { type: "refresh_failed"; retainQueue: boolean }
   | { type: "action_started"; key: string }
   | { type: "action_finished" }
   | { type: "action_failed"; error: Exclude<SharedAiError, null> }
@@ -93,7 +94,9 @@ function sharedComposerPresentation(
   const status = !writableRole ? "Viewers can read this Chat but cannot post messages or request AI."
     : state.availability === "checking" ? "Checking shared AI…"
       : state.availability === "available" ? "One active run · up to 32 pending"
-        : "AI requests are unavailable.";
+        : state.availability === "owner_reconnect_required"
+          ? "Reconnect your Claude account or API key in Settings → Agents & providers to resume AI requests."
+          : "AI requests are unavailable.";
   const relevantRequests = state.requests.filter((request) => request.state !== "completed");
   const retryable = relevantRequests.some((request) => ["cancelled", "interrupted", "unauthorized", "unavailable"].includes(request.state));
   return {
@@ -157,13 +160,13 @@ function useSharedAiController({ api, scope, actorId, resourceRevision, draft, u
     } catch (failure: unknown) {
       console.warn("[chat-collaboration] shared AI recovery failed",
         failure instanceof Error ? failure.name : "UnknownError");
-      dispatch({ type: "unavailable", retainQueue: hadAvailable.current });
+      dispatch({ type: "refresh_failed", retainQueue: hadAvailable.current });
     }
   }, [api, endpoint]);
 
   useEffect(() => {
     if (!scope.capabilities.requestAi) {
-      dispatch({ type: "unavailable", retainQueue: false });
+      dispatch({ type: "unavailable" });
       return;
     }
     void load();
@@ -241,15 +244,21 @@ function reduceSharedAi(state: SharedAiState, action: SharedAiAction): SharedAiS
     case "loaded":
       return {
         ...state,
-        availability: action.response.capability.status === "available" ? "available" : "unavailable",
+        availability: sharedAiAvailability(action.response.capability.status),
         requests: action.response.requests,
         approvals: action.response.approvals,
         error: null,
       };
     case "unavailable":
+      return { ...state, availability: "unavailable", error: null };
+    case "refresh_failed":
+      // A failed refresh keeps the last confirmed state: an available queue is
+      // retained with a recovery notice, and an owner reconnect requirement is
+      // never promoted to available or degraded to the generic copy.
       return {
         ...state,
-        availability: action.retainQueue ? "available" : "unavailable",
+        availability: action.retainQueue ? "available"
+          : state.availability === "owner_reconnect_required" ? "owner_reconnect_required" : "unavailable",
         error: action.retainQueue ? "recovery" : null,
       };
     case "action_started": return { ...state, pendingAction: action.key, error: null };
@@ -260,6 +269,13 @@ function reduceSharedAi(state: SharedAiState, action: SharedAiAction): SharedAiS
         ? state
         : { ...state, requests: [...state.requests, action.request].sort(compareAcceptedSequence) };
   }
+}
+
+function sharedAiAvailability(
+  status: "available" | "unavailable" | "owner_binding_required" | "owner_reconnect_required",
+): AiAvailability {
+  if (status === "available" || status === "owner_reconnect_required") return status;
+  return "unavailable";
 }
 
 function SharedAiErrors({ discussionError, error }: { discussionError: boolean; error: SharedAiError }) {
