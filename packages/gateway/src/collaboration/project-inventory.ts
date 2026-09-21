@@ -3,7 +3,7 @@ import { constants, type BigIntStats } from "node:fs";
 import { lstat, open, opendir, realpath } from "node:fs/promises";
 import { relative, resolve, sep } from "node:path";
 import { z } from "zod/v4";
-import { CanonicalChatExecutionRootRefSchema, type CanonicalChatExecutionRootRef } from "@matrix-os/contracts";
+import { CanonicalChatExecutionRootRefSchema, CollaborationProjectGitSetupSchema, type CanonicalChatExecutionRootRef, type CollaborationProjectGitSetup } from "@matrix-os/contracts";
 
 const CONFIRMATION_LIFETIME_MS = 10 * 60 * 1_000;
 const MAX_INVENTORY_ENTRIES = 100_000;
@@ -77,6 +77,7 @@ export interface ProjectInventoryResourceSource {
   listApps(ownerId: string, projectId: string): Promise<ProjectInventoryResourceRecord[]>;
   getLayout(ownerId: string, projectId: string): Promise<ProjectInventoryResourceRecord | null>;
   listTerminals(ownerId: string, projectId: string): Promise<ProjectInventoryResourceRecord[]>;
+  getGitSetup?(ownerId: string, projectId: string): Promise<CollaborationProjectGitSetup>;
 }
 
 export interface ProjectInventoryItem {
@@ -458,11 +459,15 @@ export function createProjectInventoryService(options: {
 
       try {
         const files = await collectFiles(rootPath);
-        const [chats, apps, layout, terminals] = await Promise.all([
+        const [chats, apps, layout, terminals, gitSetup] = await Promise.all([
           options.source.listChats(ownerId, projectId),
           options.source.listApps(ownerId, projectId),
           options.source.getLayout(ownerId, projectId),
           options.source.listTerminals(ownerId, projectId),
+          options.source.getGitSetup?.(ownerId, projectId) ?? Promise.resolve({
+            identity: { status: "unavailable" as const },
+            forgeCredential: { status: "unavailable" as const },
+          }),
         ]);
         const ownedItems = [...files.items];
         const externalReferences: ProjectInventoryReference[] = [];
@@ -497,7 +502,8 @@ export function createProjectInventoryService(options: {
         const blockers = ownedItems
           .filter((item): item is ProjectInventoryItem & { blocker: string } => item.compatibility === "blocked" && Boolean(item.blocker))
           .map((item) => ({ kind: item.kind, id: item.id, code: item.blocker }));
-        const inventoryHash = hashJson({ projectId, projectRevision: project.revision, ownedItems, externalReferences });
+        const parsedGitSetup = CollaborationProjectGitSetupSchema.parse(gitSetup);
+        const inventoryHash = hashJson({ projectId, projectRevision: project.revision, ownedItems, externalReferences, gitSetup: parsedGitSetup });
         const membershipHash = hashJson(effects);
         const expiresAt = new Date(now().getTime() + CONFIRMATION_LIFETIME_MS).toISOString();
         const payload = ConfirmationPayloadSchema.parse({
@@ -516,6 +522,7 @@ export function createProjectInventoryService(options: {
           externalReferences,
           blockers,
           membershipEffects: effects,
+          gitSetup: parsedGitSetup,
           inventoryHash,
           membershipHash,
           inventoryToken: signConfirmation(payload, options.confirmationSecret),

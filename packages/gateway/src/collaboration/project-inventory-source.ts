@@ -1,6 +1,6 @@
 import { relative, resolve, sep } from "node:path";
 import { z } from "zod/v4";
-import { TerminalRefSchema, TerminalWorkspaceSchema } from "@matrix-os/contracts";
+import { CollaborationProjectGitSetupSchema, TerminalRefSchema, TerminalWorkspaceSchema, type CollaborationProjectGitSetup } from "@matrix-os/contracts";
 import { resolveWithinHome } from "../path-security.js";
 import type { ProjectChatRootInventoryItem } from "./project-chat-root-inventory.js";
 import type {
@@ -68,6 +68,9 @@ interface Dependencies {
   };
   chatRoots?: {
     list(input: { ownerId: string; projectId: string }): Promise<ProjectChatRootInventoryItem[]>;
+  };
+  gitSetup?: {
+    get(input: { ownerId: string; projectId: string }): Promise<CollaborationProjectGitSetup>;
   };
   canvases: {
     getProjectCanvas(ownerId: string, projectId: string): Promise<unknown | null>;
@@ -178,6 +181,22 @@ export function createGatewayProjectInventorySource(
         });
       } catch (error: unknown) {
         return unavailable(error);
+      }
+    },
+
+    async getGitSetup(ownerId, projectId) {
+      if (!options.gitSetup) return {
+        identity: { status: "unavailable" as const },
+        forgeCredential: { status: "unavailable" as const },
+      };
+      try {
+        return CollaborationProjectGitSetupSchema.parse(await options.gitSetup.get({ ownerId, projectId }));
+      } catch (error: unknown) {
+        console.warn("[collaboration-project] Git setup probe failed", error instanceof Error ? error.name : "UnknownError");
+        return {
+          identity: { status: "unavailable" as const },
+          forgeCredential: { status: "unavailable" as const },
+        };
       }
     },
 
