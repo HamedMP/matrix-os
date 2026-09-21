@@ -329,14 +329,25 @@ export interface CollaborationUploadStagesTable {
   next_index: ColumnType<number, number | undefined, number>;
   state: "staging" | "committed" | "cancelled" | "expired";
   staging_ref: string;
+  commit_request_id: string | null;
+  committed_revision: number | null;
   created_at: Timestamp;
   updated_at: Timestamp;
   expires_at: Timestamp;
 }
 
+export interface CollaborationUploadPartsTable {
+  upload_id: string;
+  part_index: number;
+  sha256: string;
+  bytes: Uint8Array;
+  byte_count: number;
+}
+
 export interface CollaborationDatabase {
   collaboration_resource_catalog: CollaborationResourceCatalogTable;
   collaboration_upload_stages: CollaborationUploadStagesTable;
+  collaboration_upload_parts: CollaborationUploadPartsTable;
   collaboration_grants: CollaborationGrantsTable;
   collaboration_grant_activations: CollaborationGrantActivationsTable;
   collaboration_execution_policies: CollaborationExecutionPoliciesTable;
