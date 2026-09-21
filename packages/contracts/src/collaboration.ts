@@ -760,6 +760,8 @@ export const CollaborationDirectoryEventSchema = z.object({
   kind: CollaborationScopeKindSchema,
   /** S05: the scope's owning organization so the platform can bind tickets to it; absent only for pre-organization rows. */
   organizationId: CollaborationOrganizationIdSchema.optional(),
+  /** S06: `organization` when an active organization-wide grant exists on the home, so the platform can list the share as pending for members. */
+  audience: z.enum(["members", "organization"]).optional(),
   authorityGeneration: z.number().int().positive(),
   metadataRevision: z.number().int().nonnegative(),
   recipients: z.array(z.object({

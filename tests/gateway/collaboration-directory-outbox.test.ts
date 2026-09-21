@@ -78,6 +78,7 @@ describe("CollaborationDirectoryOutbox", () => {
       organizationId: "org_matrix_team",
       ownerId: collaborationActors.owner,
       kind: "chat",
+      organizationId: "org_matrix_team",
       authorityGeneration: 1,
       metadataRevision: 1,
       recipients: [{
@@ -91,6 +92,41 @@ describe("CollaborationDirectoryOutbox", () => {
       .select(["attempts", "delivered_at"]).executeTakeFirstOrThrow()).toMatchObject({ attempts: 1 });
     expect((await fixture.db.selectFrom("collaboration_directory_outbox")
       .select("delivered_at").executeTakeFirstOrThrow()).delivered_at).not.toBeNull();
+    await worker.shutdown();
+  });
+
+  it("flags an active organization-wide grant as the organization audience without naming members", async () => {
+    await fixture.db.insertInto("collaboration_grants").values({
+      id: "70000000-0000-4000-8000-000000000001",
+      scope_id: collaborationIds.scope,
+      organization_id: "org_matrix_team",
+      audience_kind: "organization",
+      audience_actor_id: null,
+      preset: "contributor",
+      state: "active",
+      policy_version: "v1",
+      source_id: null,
+      legacy_ceiling: null,
+      expires_at: null,
+      created_by: collaborationActors.owner,
+      created_at: now.toISOString(),
+      updated_at: now.toISOString(),
+      revoked_at: null,
+    }).execute();
+    const fetchImpl = vi.fn(async () => new Response(null, { status: 204 }));
+    const worker = new CollaborationDirectoryOutbox({
+      db: fixture.db,
+      platformBaseUrl: "https://platform.internal",
+      runtimeId: collaborationIds.runtime,
+      serviceToken: "runtime-service-secret-0123456789abcdef",
+      fetchImpl,
+      now: () => now,
+      startTimer: false,
+    });
+    expect(await worker.runOnce()).toBe(1);
+    const payload = JSON.parse((fetchImpl.mock.calls[0] as [string, RequestInit])[1].body as string) as { audience?: string; recipients: unknown[] };
+    expect(payload.audience).toBe("organization");
+    expect(payload.recipients).toHaveLength(1);
     await worker.shutdown();
   });
 
