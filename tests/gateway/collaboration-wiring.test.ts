@@ -115,7 +115,7 @@ describe("gateway collaboration wiring", () => {
     await expect(runtime.outbox.runOnce()).resolves.toBe(0);
   });
 
-  it("constructs project Git and readiness before route registration", async () => {
+  it("constructs project Git and readiness before route registration and closes the driver on shutdown", async () => {
     const runtime = await createGatewayCollaboration({
       organizationPrecondition: allowAllOrganizationPrecondition,
       db: fixture.db,
@@ -132,11 +132,13 @@ describe("gateway collaboration wiring", () => {
       outboxFetch: async () => new Response(null, { status: 204 }),
       startTimers: false,
     });
+    const closeDriver = vi.fn(async () => {});
     runtime.enableProjectGit({
       driver: {
         run: async () => ({}),
         reconcile: async () => null,
         resolveOwnerIdentity: async () => ({ name: "Owner", email: "owner@example.test", label: "Owner <owner@example.test>" }),
+        close: closeDriver,
       },
       source: {
         listChats: async () => [],
@@ -149,8 +151,10 @@ describe("gateway collaboration wiring", () => {
     runtime.register({ app, upgradeWebSocket: () => (async () => new Response(null, { status: 426 })) as never });
     expect(app.routes.some((route) => route.path === "/api/collaboration/scopes/:scopeId/project/git" && route.method === "GET")).toBe(true);
     expect(app.routes.some((route) => route.path === "/api/collaboration/scopes/:scopeId/project/readiness" && route.method === "GET")).toBe(true);
+    expect(app.routes.some((route) => route.path === "/api/collaboration/scopes/:scopeId/project/git/:operationId/expire" && route.method === "POST")).toBe(true);
+    expect(closeDriver).not.toHaveBeenCalled();
     await runtime.shutdown();
-
+    expect(closeDriver).toHaveBeenCalledTimes(1);
   });
 
   it("mounts owner resource services before registration and closes their driver on shutdown", async () => {

@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -37,6 +37,33 @@ async function ownerHome(): Promise<string> {
   rootPaths.push(home);
   await writeFile(join(home, ".gitconfig"), "[user]\n\tname = Project Owner\n\temail = owner@example.test\n");
   return home;
+}
+
+/** A recording `gh` stand-in: no forge is contacted, every invocation is appended to `record`. */
+async function fakeGh(): Promise<{ bin: string; record: string; failMarker: string }> {
+  const bin = await mkdtemp(join(tmpdir(), "matrix-fake-gh-"));
+  rootPaths.push(bin);
+  const record = join(bin, "record.jsonl");
+  const failMarker = join(bin, "fail-create");
+  await writeFile(join(bin, "gh"), `#!/usr/bin/env node
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+const stdin = args.includes("--body-file") ? fs.readFileSync(0, "utf8") : "";
+fs.appendFileSync(${JSON.stringify(record)}, JSON.stringify({ args, cwd: process.cwd(), env: process.env, stdinLength: stdin.length }) + "\\n");
+if (args[0] === "auth") process.exit(0);
+if (args[0] === "pr" && args[1] === "list") { process.stdout.write("[]"); process.exit(0); }
+if (args[0] === "pr" && args[1] === "create") {
+  if (fs.existsSync(${JSON.stringify(failMarker)})) { process.stderr.write("GraphQL: validation failed\\n"); process.exit(1); }
+  process.stdout.write("https://github.com/owner/repo/pull/7\\n");
+  process.exit(0);
+}
+process.exit(2);
+`, { mode: 0o755 });
+  return { bin, record, failMarker };
+}
+
+async function recorded(record: string): Promise<{ args: string[]; cwd: string; env: Record<string, string>; stdinLength: number }[]> {
+  return (await readFile(record, "utf8")).split("\n").filter(Boolean).map((line) => JSON.parse(line));
 }
 
 function driverFor(root: string, home: string) {
@@ -130,6 +157,58 @@ describe("owner Git driver", () => {
     await git(root, "config", "include.path", "member.inc");
     await expect(driver.run(execution)).rejects.toMatchObject({ name: "ProjectGitBrokerError", code: "unavailable" });
     await expect(driver.reconcile(execution)).rejects.toMatchObject({ name: "ProjectGitBrokerError", code: "unavailable" });
+  });
+
+  it("streams a large PR body over stdin and runs gh in an empty private cwd without repository or global Git config", async () => {
+    const root = await repository();
+    await git(root, "remote", "add", "origin", "https://github.com/owner/repo.git");
+    const home = await ownerHome();
+    const gh = await fakeGh();
+    const originalPath = process.env.PATH;
+    const originalToken = process.env.GH_TOKEN;
+    process.env.PATH = `${gh.bin}:${originalPath ?? ""}`;
+    process.env.GH_TOKEN = "must-not-leak";
+    const driver = driverFor(root, home);
+    try {
+      const body = "x".repeat(200 * 1024);
+      const execution = {
+        operationId: "80000000-0000-4000-8000-000000000001",
+        scopeId: "80000000-0000-4000-8000-000000000002",
+        ownerId: OWNER,
+        projectId: PROJECT,
+        requestingActorId: "user_member",
+        ownerIdentity: { name: "Project Owner", email: "owner@example.test", label: "Project Owner <owner@example.test>" },
+        request: { type: "pr" as const, clientRequestId: "80000000-0000-4000-8000-000000000007", expectedRevision: "1", payloadHash: "e".repeat(64), title: "Large body", baseBranch: "main", headBranch: "feature/member", body, expectedHeadSha: await git(root, "rev-parse", "HEAD") },
+      };
+      const result = await driver.run(execution);
+      expect(result).toEqual({ commitSha: execution.request.expectedHeadSha, remoteBranch: "feature/member", prUrl: "https://github.com/owner/repo/pull/7" });
+      const calls = await recorded(gh.record);
+      const create = calls.find((call) => call.args[0] === "pr" && call.args[1] === "create");
+      expect(create).toBeDefined();
+      expect(create!.args).toEqual(expect.arrayContaining(["--repo", "owner/repo", "--base", "main", "--head", "feature/member", "--title", "Large body", "--body-file", "-"]));
+      expect(create!.args).not.toContain("--body");
+      expect(create!.args.join("\n")).not.toContain("xxxx");
+      expect(create!.stdinLength).toBe(body.length);
+      for (const call of calls) {
+        expect(call.cwd).not.toBe(root);
+        expect(call.cwd.startsWith(root)).toBe(false);
+        expect(call.cwd.startsWith(home)).toBe(false);
+        expect(await readdir(call.cwd)).toEqual([]);
+        expect((await stat(call.cwd)).mode & 0o077).toBe(0);
+        expect(call.env).toMatchObject({ HOME: home, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", GH_PROMPT_DISABLED: "1" });
+        expect(call.env.GH_TOKEN).toBeUndefined();
+      }
+      await writeFile(gh.failMarker, "");
+      await expect(driver.run({ ...execution, request: { ...execution.request, clientRequestId: "80000000-0000-4000-8000-000000000008" } }))
+        .rejects.toMatchObject({ name: "ProjectGitBrokerError", code: "unavailable" });
+      const cwd = calls[0]!.cwd;
+      await driver.close();
+      await expect(stat(cwd)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      process.env.PATH = originalPath;
+      if (originalToken === undefined) delete process.env.GH_TOKEN;
+      else process.env.GH_TOKEN = originalToken;
+    }
   });
 
   it("refuses a project root whose .git is a gitdir file or symlink pointing at another repository", async () => {
