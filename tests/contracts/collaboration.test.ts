@@ -184,18 +184,18 @@ describe("collaboration contracts", () => {
     }).success).toBe(false);
   });
 
-  it("admits only the scope kinds the home can create", () => {
+  it("admits every scope kind the home can create, catalog kinds included", () => {
     for (const kind of ["chat", "terminal", "project"]) {
       expect(CollaborationScopePreflightRequestSchema.safeParse({
         kind, resourceId: "resource_release", organizationId: "org_matrix_team",
       }).success).toBe(true);
     }
-    // A catalog kind is served as a scope but has no creation path, and its
-    // catalog id is not a project id.
+    // A catalog kind now has its own creation path through the standalone
+    // resource scope service, which is what binds its id to one catalog entry.
     for (const kind of ["file", "folder", "app"]) {
       expect(CollaborationScopePreflightRequestSchema.safeParse({
         kind, resourceId: "70000000-0000-4000-8000-0000000000a1", organizationId: "org_matrix_team",
-      }).success).toBe(false);
+      }).success).toBe(true);
       expect(CollaborationCreateScopeRequestSchema.safeParse({
         kind,
         resourceId: "70000000-0000-4000-8000-0000000000a1",
@@ -203,7 +203,7 @@ describe("collaboration contracts", () => {
         clientRequestId: requestId,
         expectedRevision: "0",
         confirmationToken: "a".repeat(64),
-      }).success).toBe(false);
+      }).success).toBe(true);
       expect(CollaborationScopeKindSchema.safeParse(kind).success).toBe(true);
     }
   });
