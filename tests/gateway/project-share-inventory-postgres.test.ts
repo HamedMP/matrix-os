@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -9,6 +9,8 @@ import { bootstrapChatDatabase } from "../../packages/gateway/src/chat/database.
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
 import { createChatExecutionRootResolver } from "../../packages/gateway/src/chat/execution-root.js";
 import { createProjectChatRootInventory } from "../../packages/gateway/src/collaboration/project-chat-root-inventory.js";
+import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
+import { CollaborationRepository } from "../../packages/gateway/src/collaboration/repository.js";
 import { createGatewayProjectInventorySource } from "../../packages/gateway/src/collaboration/project-inventory-source.js";
 import { createProjectInventoryService } from "../../packages/gateway/src/collaboration/project-inventory.js";
 import {
@@ -23,6 +25,7 @@ const PROJECT = "proj_inventory";
 const SLUG = "inventory";
 const WORKTREE = "wt_abc123def456";
 const NOW = "2026-09-21T10:00:00.000Z";
+const SCOPE_ID = "70000000-0000-4000-8000-000000000051";
 
 async function git(cwd: string, ...args: string[]): Promise<string> {
   const { stdout } = await run("git", args, {
@@ -190,6 +193,34 @@ describe("share-time project Chat root inventory", () => {
     });
     const chats = await source.listChats(OWNER, PROJECT);
     expect(chats).toContainEqual(expect.objectContaining({ id: "chat_orphan", compatibility: "blocked", blocker: "chat_root_unavailable" }));
+  });
+
+  it("joins a member to the project without creating or copying a worktree", async () => {
+    await bootstrapCollaborationDatabase(fixture.db);
+    const repository = new CollaborationRepository(fixture.db, { now: () => new Date(NOW) });
+    await repository.createDirectScope({
+      scopeId: SCOPE_ID, organizationId: "org_inventory_team", ownerId: OWNER,
+      kind: "project", resourceId: PROJECT, authorityRuntimeId: "vps:inventory_owner",
+    });
+    await fixture.db.updateTable("collaboration_scopes").set({ lifecycle: "shared" }).where("id", "=", SCOPE_ID).execute();
+    const draft = join(worktreeRoot, "draft.txt");
+    await writeFile(draft, "keep member join out of Git\n");
+    const before = await git(projectRoot, "worktree", "list", "--porcelain");
+    const dirsBefore = await readdir(join(homePath, "worktrees", SLUG));
+    const invitation = await repository.createInvitation({
+      scopeId: SCOPE_ID, actorId: OWNER, targetActorId: "user_member", role: "editor",
+      clientRequestId: "70000000-0000-4000-8000-000000000052", expectedRevision: 0,
+      payloadHash: "a".repeat(64), expiresAt: "2026-09-22T10:00:00.000Z",
+    });
+    await repository.acceptInvitation({
+      invitationId: invitation.invitationId, actorId: "user_member",
+      clientRequestId: "70000000-0000-4000-8000-000000000053", expectedRevision: 1,
+      payloadHash: "b".repeat(64),
+    });
+    expect(await repository.getMember(SCOPE_ID, "user_member")).toMatchObject({ status: "accepted", role: "editor" });
+    expect(await git(projectRoot, "worktree", "list", "--porcelain")).toBe(before);
+    expect(await readdir(join(homePath, "worktrees", SLUG))).toEqual(dirsBefore);
+    expect(await readFile(draft, "utf8")).toBe("keep member join out of Git\n");
   });
 
   it("retains a dirty registered worktree after hard deleting its Chat", async () => {
