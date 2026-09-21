@@ -1,6 +1,6 @@
 import { createHmac } from "node:crypto";
 import type { Kysely } from "kysely";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { bootstrapPlatformOrganizationDatabase, type OrganizationPlatformDatabase } from "../../packages/platform/src/organizations/database.js";
 import { PlatformOrganizationRepository } from "../../packages/platform/src/organizations/repository.js";
 import { createOrganizationMembershipProjection } from "../../packages/platform/src/organizations/projection.js";
@@ -219,5 +219,29 @@ describe("platform organization routes (T018)", () => {
       body: JSON.stringify({ protocolVersion: 2, actors: [{ organizationId: org, actorId: member }] }),
     });
     expect((await own.json() as Array<{ member: boolean }>)[0]!.member).toBe(true);
+  });
+
+  it("never tracks or evaluates a foreign organization before the owner-membership gate", async () => {
+    await projection.reconcile(org);
+    const foreignOrganization = "org_2gwforeign000000000000000";
+    const touch = vi.spyOn(projection, "touch");
+    const assert = vi.spyOn(projection, "assert");
+    const trackedBefore = projection.describe().tracked;
+    const resolve = await app.request("/internal/organizations/access/resolve", {
+      method: "POST",
+      headers: { authorization: `Bearer ${foreignRuntimeToken}`, "x-matrix-runtime-id": foreignRuntimeId, "content-type": "application/json" },
+      body: JSON.stringify({ protocolVersion: 2, actors: [
+        { organizationId: org, actorId: member },
+        { organizationId: foreignOrganization, actorId: admin },
+      ] }),
+    });
+    expect(resolve.status).toBe(200);
+    expect((await resolve.json() as Array<{ member: boolean }>).map((a) => a.member)).toEqual([false, false]);
+    // Neither organization was scheduled for reconciliation or evaluated through the projection.
+    expect(touch).not.toHaveBeenCalled();
+    expect(assert).not.toHaveBeenCalled();
+    expect(projection.describe().tracked).toBe(trackedBefore);
+    touch.mockRestore();
+    assert.mockRestore();
   });
 });
