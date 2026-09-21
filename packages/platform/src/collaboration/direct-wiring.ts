@@ -14,6 +14,7 @@ import type { CollaborationControlAuthority } from "./control-authority.js";
 import { CollaborationControlStream } from "./control-stream.js";
 import { createCollaborationControlUpgradeHandler } from "./control-upgrade.js";
 import { createPlatformCollaborationDirectRoutes, type AuthenticatedRuntime } from "./direct-routes.js";
+import { cutoverTicketAdmission } from "./cutover.js";
 import type { PlatformCollaborationRepository } from "./repository.js";
 import {
   bootstrapPlatformRuntimeEndpointDatabase,
@@ -73,6 +74,7 @@ export async function createPlatformCollaborationDirect(options: {
       repository: options.repository,
       endpoints,
       resolveOrganization: options.resolveOrganization,
+      cutoverAdmission: (scopeId) => cutoverTicketAdmission(options.repository.db, scopeId),
       projection: options.projection,
       relayOrigin: options.relayOrigin,
       now: options.now,
