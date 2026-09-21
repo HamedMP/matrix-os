@@ -299,6 +299,47 @@ export function createProjectGitBroker(options: {
       }
     },
 
+    /**
+     * Owner-only: an effect the remote could not confirm blocks every later
+     * operation on the scope. The owner, who can inspect the forge directly,
+     * may expire it as failed. The request is never replayed by this path.
+     */
+    async expireUnresolved(input: { scopeId: string; actorId: string; operationId: string }): Promise<CollaborationGitOperation> {
+      const scopeId = IdSchema.parse(input.scopeId);
+      const actorId = ActorIdSchema.parse(input.actorId);
+      const operationId = IdSchema.parse(input.operationId);
+      const authorization = await options.authorize({ scopeId, actorId, action: "read" });
+      if (authorization.ownerId !== actorId) throw new ProjectGitBrokerError("forbidden");
+      await options.db.transaction().execute(async (trx) => {
+        const existing = await trx.selectFrom("collaboration_git_operations").select(["id", "state"])
+          .where("id", "=", operationId).where("scope_id", "=", scopeId).where("owner_id", "=", authorization.ownerId)
+          .forUpdate().executeTakeFirst();
+        if (!existing) throw new ProjectGitBrokerError("not_found");
+        const row = await trx.updateTable("collaboration_git_operations")
+          .set({ state: "failed", updated_at: now() })
+          .where("id", "=", operationId).where("state", "=", "unknown")
+          .returningAll().executeTakeFirst();
+        if (!row) throw new ProjectGitBrokerError("conflict");
+        await trx.insertInto("collaboration_audit").values({
+          scope_id: row.scope_id,
+          actor_id: actorId,
+          action: `git.${row.type}`,
+          outcome: "failed",
+          revision: Number(row.expected_revision),
+          reason_code: "effect_expired_by_owner",
+          detail: {
+            operationId: row.id,
+            ownerId: row.owner_id,
+            requestingActorId: row.actor_id,
+            ownerIdentityLabel: row.owner_identity_label,
+            ...(row.run_id ? { runId: row.run_id } : {}),
+          },
+          created_at: now(),
+        }).execute();
+      });
+      return toOperation(await getRow(operationId));
+    },
+
     async list(input: { scopeId: string; actorId: string }): Promise<CollaborationGitOperation[]> {
       const scopeId = IdSchema.parse(input.scopeId);
       const actorId = ActorIdSchema.parse(input.actorId);

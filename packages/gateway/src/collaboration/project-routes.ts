@@ -83,6 +83,15 @@ export function registerProjectRoutes(routes: Hono, options: CollaborationRouteO
     return c.json(CollaborationGitOperationSchema.parse(operation), 202);
   }));
 
+  routes.post("/api/collaboration/scopes/:scopeId/project/git/:operationId/expire", async (c) => handle(c, async () => {
+    const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
+    const operationId = CollaborationIdSchema.parse(c.req.param("operationId"));
+    const context = await authorize(options, c, new Uint8Array(), "mutate_project", scopeId);
+    if (!options.projectGit) throw new CollaborationAuthorizationError("unavailable", "Project Git broker is unavailable");
+    const operation = await options.projectGit.expireUnresolved({ scopeId, actorId: context.actorId, operationId });
+    return c.json(CollaborationGitOperationSchema.parse(operation));
+  }));
+
   routes.post("/api/collaboration/scopes/:scopeId/project/confirm", async (c) => handle(c, async () => {
     const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
     const { value, bytes } = await readJson(c);

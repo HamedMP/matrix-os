@@ -69,6 +69,7 @@ import { validateGitHubUrl } from "../project-manager.js";
 import {
   AmbiguousProjectGitEffect,
   ProjectGitBrokerError,
+  type ProjectGitActionResult,
   type ProjectGitDriver,
   type ProjectGitExecution,
   type ProjectGitOwnerIdentity,
@@ -157,6 +158,37 @@ async function ownerGlobalConfig(ownerHome: string, key: "user.name" | "user.ema
 
 function isGitExitCode(error: unknown, code: string): boolean {
   return error instanceof Error && "code" in error && String((error as NodeJS.ErrnoException).code) === code;
+}
+
+export interface GitProcessFailure {
+  /** A string code is a spawn failure (ENOENT, E2BIG, EACCES); a number is the exit status. */
+  code?: string | number | null;
+  signal?: string | null;
+  killed?: boolean;
+  stdout?: string;
+  stderr?: string;
+}
+
+/** stderr lines Git prints before any ref transfer starts (discovery, auth, DNS, connect). */
+const PRE_TRANSFER_PUSH_FAILURE = /could not read Username|Authentication failed|Permission denied|Permission to .* denied|Repository not found|Could not resolve host|Connection refused|Failed to connect|unable to access|requested URL returned error|does not appear to be a git repository|src refspec .* does not match any|terminal prompts disabled/i;
+
+function processFailure(error: unknown): GitProcessFailure {
+  if (!(error instanceof Error)) return {};
+  const failure = error as Error & GitProcessFailure;
+  return { code: failure.code, signal: failure.signal, killed: failure.killed, stdout: failure.stdout, stderr: failure.stderr };
+}
+
+/**
+ * Only a loss during the transfer phase leaves the remote outcome unknown.
+ * Spawn failures, a rejected ref in `--porcelain` output and pre-transfer
+ * errors certainly had no remote effect and must not block the scope.
+ */
+export function classifyPushFailure(failure: GitProcessFailure): "failed" | "unknown" {
+  if (typeof failure.code === "string") return "failed";
+  if (failure.killed || failure.signal) return "unknown";
+  const refLines = (failure.stdout ?? "").split("\n").filter((line) => /^[ +\-*!=]\t/.test(line));
+  if (refLines.length > 0) return refLines.some((line) => line.startsWith("!")) ? "failed" : "unknown";
+  return PRE_TRANSFER_PUSH_FAILURE.test(failure.stderr ?? "") ? "failed" : "unknown";
 }
 
 async function ghCommand(cwd: string, args: string[]): Promise<GitCommandResult> {
@@ -273,6 +305,23 @@ export function createProjectGitDriver(options: {
     }
   }
 
+  /**
+   * Observe the remote once before giving up: a visible effect completes the
+   * operation, a definite absence fails it, and only an unobservable remote
+   * leaves the operation unknown for later reconciliation by the same ID.
+   */
+  async function settleAfterTransferLoss(input: ProjectGitExecution): Promise<ProjectGitActionResult> {
+    let observed: ProjectGitActionResult | null;
+    try {
+      observed = await driver.reconcile(input);
+    } catch (error: unknown) {
+      console.warn("[collaboration-git] remote outcome unobservable", error instanceof Error ? error.name : "UnknownError");
+      throw new AmbiguousProjectGitEffect();
+    }
+    if (observed) return observed;
+    throw new ProjectGitBrokerError("unavailable");
+  }
+
   const driver: ProjectGitDriver & {
     resolveOwnerIdentity(input: { ownerId: string; projectId: string }): Promise<ProjectGitOwnerIdentity>;
     getGitSetup(input: { ownerId: string; projectId: string }): Promise<CollaborationProjectGitSetup>;
@@ -342,8 +391,10 @@ export function createProjectGitDriver(options: {
           await gitCommand(cwd, ["push", "--porcelain", remote.url, `refs/heads/${request.branch}:refs/heads/${request.branch}`], input.ownerIdentity, true);
           return { commitSha: request.expectedHeadSha, remoteBranch: request.branch };
         } catch (error: unknown) {
-          console.warn("[collaboration-git] push outcome ambiguous", error instanceof Error ? error.name : "UnknownError");
-          throw new AmbiguousProjectGitEffect();
+          const outcome = classifyPushFailure(processFailure(error));
+          console.warn(`[collaboration-git] push ${outcome}`, error instanceof Error ? error.name : "UnknownError");
+          if (outcome === "failed") throw new ProjectGitBrokerError("unavailable");
+          return settleAfterTransferLoss(input);
         }
       }
       await requireBranch(cwd, request.headBranch);
@@ -356,8 +407,11 @@ export function createProjectGitDriver(options: {
         const url = z.url({ protocol: /^https$/ }).max(512).parse(result.stdout.trim());
         return { commitSha: request.expectedHeadSha, remoteBranch: request.headBranch, prUrl: url };
       } catch (error: unknown) {
-        console.warn("[collaboration-git] PR outcome ambiguous", error instanceof Error ? error.name : "UnknownError");
-        throw new AmbiguousProjectGitEffect();
+        const failure = processFailure(error);
+        console.warn("[collaboration-git] PR create failed", error instanceof Error ? error.name : "UnknownError");
+        // A spawn failure never reached the forge; anything else is settled by observing the forge.
+        if (typeof failure.code === "string") throw new ProjectGitBrokerError("unavailable");
+        return settleAfterTransferLoss(input);
       }
     },
 
