@@ -279,7 +279,7 @@ import {
 } from "./plugins/index.js";
 import { createSettingsRoutes } from "./routes/settings.js";
 import { AiProviderService } from "./ai-providers/service.js";
-import type { CanonicalProviderSnapshotReader } from "./ai-providers/provider-settings-coordinators.js";
+import { createLazyProviderSnapshotReader } from "./collaboration/lazy-provider-snapshot-reader.js";
 import { createAiProviderRoutes } from "./ai-providers/routes.js";
 import { ProviderSettingsStore } from "./ai-providers/provider-settings-store.js";
 import { createProviderSettingsRoutes } from "./ai-providers/provider-settings-routes.js";
@@ -655,13 +655,7 @@ export async function createGateway(config: GatewayConfig) {
   // S08: the owner's Provider V3 snapshot reader is built after the owner database, so the
   // collaboration runtime receives a lazy reader; it is only consulted at policy writes and
   // run admission, never during construction, and reads fail closed until the service exists.
-  let collaborationProviderSnapshotReader: CanonicalProviderSnapshotReader | undefined;
-  const lazyCollaborationProviderSnapshotReader: CanonicalProviderSnapshotReader = {
-    getSnapshot: (readOptions) => {
-      if (!collaborationProviderSnapshotReader) throw new Error("ProviderSnapshotUnavailable");
-      return collaborationProviderSnapshotReader.getSnapshot(readOptions);
-    },
-  };
+  const collaborationProviderSnapshots = createLazyProviderSnapshotReader();
   const harnessSettingsReader = {
     getSnapshot: () => {
       if (!providerSettingsStore) throw new Error("Provider settings are unavailable");
@@ -966,7 +960,7 @@ export async function createGateway(config: GatewayConfig) {
           db: ownerChatRepository.kysely as Kysely<any>,
           chatRepository: ownerChatRepository,
           config: collaborationConfig,
-          providerSnapshotReader: lazyCollaborationProviderSnapshotReader,
+          providerSnapshotReader: collaborationProviderSnapshots.reader,
           projectSource: {
             getProject: async (ownerId, projectId) => {
               const result = await codingAgentProjectManager.getProjectById(
@@ -4235,7 +4229,7 @@ export async function createGateway(config: GatewayConfig) {
       runtimeSource: agentRuntimeServices.source,
     }),
   });
-  collaborationProviderSnapshotReader = aiProviderService;
+  collaborationProviderSnapshots.attach(aiProviderService);
   const providerLoginCoordinator = createProviderTerminalLoginCoordinator({
     homePath,
     registry: providerLoginTerminalRegistry,
