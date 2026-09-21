@@ -5,17 +5,21 @@ same machine (`/home/nima`). Read it top to bottom before touching anything. It 
 where every piece of work lives, what is finished, what is half-done, what is next, and how
 the orchestration works. Nothing here is a suggestion; the decisions are locked.
 
-Companion artifacts in this directory:
+Companion artifacts in this directory (section 10 has the paste-ready prompt that starts Codex):
 
 - `s09-uncommitted-2026-09-21.patch` — snapshot of the uncommitted S09 edits (also live in the worktree).
 - `s12-uncommitted-2026-09-21.patch` — snapshot of the uncommitted S12 edits (also live in the worktree).
 
 ## 0. First five actions (do these before anything else)
 
-1. **Stop the Claude agents.** Two Claude workers were editing `/home/nima/matrix-os-124-s09`
-   and `/home/nima/matrix-os-124-s12` (last write 09:21 UTC). The owner is killing the Claude
-   session that spawned them. Do not start work in those two worktrees until no other process
-   is writing there (`lsof +D <worktree>/packages 2>/dev/null` should be empty).
+1. **The Claude agents are already stopped.** The coordinating Claude background job
+   `98b4e810` ("org collaboration implementation") and its four workers were terminated at
+   10:12 UTC on 2026-09-21 after their last write at 09:21 UTC; both worktrees were verified
+   byte-identical to the patch snapshots afterwards. Before you edit, confirm nothing respawned:
+   `ps -eo pid,cmd | grep -E "claude (bg-spare|agents)" ` should show no session whose bash
+   children sit in a `matrix-os-124-*` worktree, and `lsof +D <worktree>/packages` should be
+   empty. If the owner reopens `claude agents` and that job shows as resumable, it must be
+   deleted there, not resumed.
 2. **Verify the worktree map** in section 3 against `git -C /home/nima/matrix-os worktree list`
    and `git -C <wt> status --short`. If a worktree has *more* uncommitted changes than listed
    here, the Claude worker kept writing after this handoff; keep those edits, they are newer.
@@ -397,3 +401,94 @@ Then S18 (one worker, real Postgres, cutover journal), then S19 (coordinator).
 | Contracts | `packages/contracts/src/collaboration*.ts` |
 | UI baseline (525) | `packages/ui/src/collaboration/`, `shell/src/components/` share dialog / access popover / `SharedTerminalControls`; spec `specs/525-collaboration-ux-redesign/` |
 | Stack rules | `docs/dev/stacked-prs.md`, `docs/dev/review-pipeline.md`, `.claude/commands/monitor-stack-reviews.md` |
+
+## 10. Paste-ready prompt for the Codex coordinator
+
+Start Codex in the main checkout (`cd /home/nima/matrix-os && codex`) and paste this:
+
+```
+You are taking over as coordinator of the spec 124 "organization collaboration" implementation
+for HamedMP/matrix-os on this machine, continuing work a Claude coordinator ran until
+2026-09-21 09:21 UTC. That Claude job and its workers are stopped; you own everything now.
+
+FIRST, read in this order and do not skip:
+1. /home/nima/matrix-os-124-handoff/specs/124-organization-collaboration/handoff/codex-handoff-2026-09-21.md
+   (branch 124/handoff, draft PR #1810). It is the state ledger: goal, locked decisions,
+   worktree map, in-flight S09/S12 detail, per-PR review state, release path, orchestration,
+   worker prompt, merge procedure, environment, gates.
+2. /home/nima/matrix-os/AGENTS.md and .specify/memory/constitution.md.
+3. specs/124-organization-collaboration/{spec,plan,research,data-model,quickstart,tasks,sol-runbook}.md,
+   contracts/, and every evidence/S*-receipt.md (read them from the 124/s07 worktree
+   /home/nima/matrix-os-124-s07, which has receipts through S08 and S20).
+4. docs/dev/stacked-prs.md and docs/dev/review-pipeline.md.
+
+STATE IN ONE PARAGRAPH: main is at e62d3fc62. Merged: spec #1769, clarify #1773, baseline
+#1761/#1765, S00 #1784, S01 #1785/#1788/#1786/#1787. Open Graphite stack bottom-up:
+#1789 124/s20 -> #1793 -> #1790 -> #1794 -> #1791 -> #1795 (S20, six layers) -> #1792 124/s02
+-> #1796 124/s03 -> #1797 124/s04 -> #1802 124/s05 -> #1803 124/s05-gateway -> #1804 124/s05-relay
+-> #1805 124/s08 -> #1806 124/s06 -> #1807 124/s07 -> #1808 124/s07-terminal. Every PR has a
+manual worktree at /home/nima/matrix-os-124-<packet>. Two packets are half done with
+UNCOMMITTED edits sitting in their worktrees: S09 shared Codex/Claude execution in
+/home/nima/matrix-os-124-s09 (branch 124/s09 @ c4fd0f594, 7 modified files) and S12 resource
+adapters in /home/nima/matrix-os-124-s12 (branch 124/s12 @ 24df3dbc3, 13 modified + 6 new
+files; needs restack onto 124/s07-terminal eb6a4b4c7). Both branches are pushed; the
+uncommitted diffs are also saved as verified patches next to the handoff doc. S10, S15, S18,
+S19 are not started. Gateway collaboration migration versions: S20=7, S04=8, S05=9, S08=10,
+S09=11, S12=12; append at 13+. Greptile is 5/5 on nine PRs but 0/5, 1/5, 2/5 on #1806, #1807,
+#1808 with unresolved P1 threads, 3/5 on #1802, 4/5 on #1796 and #1803. Only #1789 (base main)
+runs the real CI matrix; the workflow ignores PRs whose base is a 124/* branch.
+
+GOAL: ship organization collaboration V1 exactly as spec.md defines it, as one coordinated
+release: every packet on the release path S20 -> S02 -> S03 -> S04 -> S05 -> S08 -> S06 -> S07
+-> S09 -> S10 -> S12 -> S15 -> S18 -> S19 merged to main with current-head Greptile 5/5, green
+CI, receipts in evidence/, the S18 cutover proven on real Postgres, and the S19 acceptance
+matrix recorded. S11, S13, S14, S16, S17, T063, T077 are deferred; do not build them. The
+product decisions in handoff section 2 are locked; never reopen them or ask about them.
+
+DO NOW, in order:
+1. Confirm no process is writing to the 124 worktrees (handoff section 0 step 1).
+2. In matrix-os-124-s09 and matrix-os-124-s12: git add -A && git commit -m "wip(collaboration):
+   S0N handoff snapshot" && git push. You will re-cut these into test/feat/docs commits later.
+3. Spawn three worker subagents, each pinned to one worktree, using the worker prompt in
+   handoff section 6.3 verbatim with the packet filled in:
+   W1 -> S09 in /home/nima/matrix-os-124-s09 (finish T046-T048 until
+        tests/gateway/shared-coding-execution.test.ts is green; T049 live probes stay unrun
+        unless the owner supplies credentials; write evidence/S09-receipt.md; gt submit).
+   W2 -> S12 in /home/nima/matrix-os-124-s12 (gt restack --only onto 124/s07-terminal first;
+        finish T061/T062/T064 until tests/gateway/direct-resource-policy-postgres.test.ts is
+        green on real Postgres; do NOT mount /chat/requests* or /chat/approvals*, S09 owns
+        them; write evidence/S12-receipt.md; gt submit).
+   W3 -> S10 in a new worktree: git -C /home/nima/matrix-os worktree add -b 124/s10
+        ../matrix-os-124-s10 124/s09, then gt track --parent 124/s09 inside it; T050 failing
+        tests/gateway/project-share-inventory-postgres.test.ts first, then T051/T052;
+        coordinate chat/execution-root.ts changes with W1 through you.
+4. Yourself, as coordinator: drive the 16 open PRs to merge per handoff section 6.5. Merge
+   #1789 first once its CI is green, then land strictly one PR at a time bottom-up with gt
+   merge, restacking (gt restack --only per branch inside its worktree, gt sync --no-restack)
+   and resubmitting (gt submit --stack, --force when remote heads were Graphite auto-rebases)
+   after each merge. Assign the Greptile P1 fixes on #1802/#1803 and #1806/#1807/#1808 to
+   workers as packet work when a worker frees up; batch fixes per layer so S09/S12 restack once.
+   Request a Greptile re-review with one "@greptileai please review" comment per new head,
+   then poll; never spam. Add the five-surface matrix to every user-visible PR body.
+5. When W1 finishes, W3 continues S10 to completion. When W2 and W3 finish, restack 124/s12
+   onto 124/s10 and start S15 (React; needs Web Canvas, then Web Desktop, then Electron
+   evidence and npx react-doctor@latest shell). Then S18 (real Postgres cutover journal, and
+   land the server.ts extraction from issue #1799 before T090). Then S19 yourself.
+
+RULES: never commit on main; every change ships from a manual git worktree as a Graphite
+layer under 3000 additions / 50 files with a Conventional Commit title; tests first, real
+Postgres for races/migrations/leases (container matrixos-staging-postgres at 172.18.0.7:5432,
+user matrixos, db matrixos_test_124, export CHAT_TEST_DATABASE_URL and
+MATRIX_TEST_POSTGRES_URL; password is in the owner's local env); host is 15 GB, so
+--maxWorkers=2 and one wide run at a time; pnpm exec vitest run <path> for focused suites;
+bun at /home/nima/.bun/bin/bun; gh and gt are authenticated as Nima-Naderi. Receipts follow
+evidence/S01-receipt.md. PR bodies carry the Invariants section. Never fake test evidence or
+live-probe passes; mark unrun probes unrun. Do not merge a PR whose base is not main, never
+--delete-branch while later PRs are open, never loop gh pr merge. The claude-review CI job is
+known-failing and ignored. Do not deploy, provision paid infrastructure or publish externally
+without the owner's explicit go. Use as many subagents as the work needs, but at most three
+packet workers writing at once, each in its own worktree; workers commit after every task.
+Keep the handoff document updated as the living state ledger (append a dated "Progress" section
+on branch 124/handoff) so the next takeover is as clean as this one. Report to the owner in
+plain language: what merged, what is in flight, what is blocked and why.
+```
