@@ -504,10 +504,10 @@ export const ProviderSettingsSnapshotSchema = z.object({
       ctx.addIssue({ code: "custom", path: ["gatewayPolicy", "accessSourceId"], message: "Gateway policy requires a Matrix gateway source" });
     } else {
       snapshot.gatewayPolicy.allowedModelIds.forEach((modelId, index) => {
-        if (!source.eligibleModelIds.includes(modelId)) ctx.addIssue({ code: "custom", path: ["gatewayPolicy", "allowedModelIds", index], message: "Model is not gateway eligible" });
+        if (!snapshot.accessSources.some((candidate) => candidate.kind === "matrix_gateway" && candidate.eligibleModelIds.includes(modelId))) ctx.addIssue({ code: "custom", path: ["gatewayPolicy", "allowedModelIds", index], message: "Model is not gateway eligible" });
       });
       snapshot.harnesses.forEach((harness, index) => {
-        if (harness.accessSourceId === source.id && !snapshot.gatewayPolicy?.allowedModelIds.includes(harness.route.modelId)) {
+        if (sources.get(harness.accessSourceId ?? "")?.kind === "matrix_gateway" && !snapshot.gatewayPolicy?.allowedModelIds.includes(harness.route.modelId)) {
           ctx.addIssue({ code: "custom", path: ["harnesses", index, "route"], message: "Route model is not allowed by gateway policy" });
         }
       });
@@ -631,20 +631,22 @@ export function isPortableGenericHarnessCredentialRoute(
 ): boolean {
   if ((harness.harness !== "pi" && harness.harness !== "opencode")
     || harness.route.kind !== "configurable"
-    || harness.route.providerId !== "anthropic"
     || harness.accessSourceId === null
     || source === null
     || source === undefined
     || source.id !== harness.accessSourceId
-    || source.providerId !== "anthropic") {
+    || source.providerId !== harness.route.providerId) {
     return false;
   }
   if (source.kind === "matrix_gateway") {
-    return source.id === "matrix_included"
+    return ((source.id === "matrix_included" && source.providerId === "anthropic")
+      || (source.id === "matrix_cloudflare" && source.providerId === "cloudflare"
+        && harness.route.modelId === "@cf/zai-org/glm-5.3-flash"))
       && source.accountId === null
       && (source.fundingKind === "matrix_included" || source.fundingKind === "matrix_addon");
   }
   return source.kind === "provider_account"
+    && source.providerId === "anthropic"
     && source.id === "owner_anthropic_key"
     && source.accountId !== null
     && source.fundingKind === "owner_api_key";
