@@ -14,6 +14,7 @@ import {
   createLocalSpeechFixturePlan,
   LocalFixtureSignalController,
   parseLocalPostgresAdminUrl,
+  waitForBoundedChildProcess,
 } from "../../scripts/lib/platform-speech-local-fixture.js";
 
 describe("local speech fixture planning", () => {
@@ -145,6 +146,45 @@ setInterval(() => {}, 1000);
     } finally {
       if (child.pid) {
         try { process.kill(-child.pid, "SIGKILL"); }
+        catch (error: unknown) {
+          if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+        }
+      }
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("escalates and reaps a Docker-style admin subprocess after its deadline", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "matrix-speech-fixture-timeout-"));
+    const script = join(directory, "child.mjs");
+    const signalPath = join(directory, "signal.txt");
+    await writeFile(script, `
+import { writeFileSync } from "node:fs";
+process.on("SIGTERM", () => writeFileSync(process.argv[2], "SIGTERM"));
+writeFileSync(process.argv[2], "ready");
+setInterval(() => {}, 1000);
+`);
+    const child = spawn(process.execPath, [script, signalPath], { detached: true, stdio: "ignore" });
+    const pid = child.pid;
+    expect(pid).toBeTypeOf("number");
+    try {
+      const readyDeadline = Date.now() + 5_000;
+      while (Date.now() < readyDeadline) {
+        const state = await readFile(signalPath, "utf8").catch(() => "");
+        if (state === "ready") break;
+        await new Promise((resolveWait) => setTimeout(resolveWait, 10));
+      }
+      expect(await readFile(signalPath, "utf8")).toBe("ready");
+      await expect(waitForBoundedChildProcess(child, {
+        timeoutMs: 100,
+        terminationGraceMs: 100,
+        processGroup: true,
+      })).rejects.toThrow("timed out");
+      expect(await readFile(signalPath, "utf8")).toBe("SIGTERM");
+      expect(() => process.kill(pid!, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
+    } finally {
+      if (pid) {
+        try { process.kill(-pid, "SIGKILL"); }
         catch (error: unknown) {
           if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
         }

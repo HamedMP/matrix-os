@@ -20,6 +20,7 @@ import {
   createLocalSpeechFixturePlan,
   LocalFixtureSignalController,
   LOCAL_SPEECH_FIXTURE_PORTS,
+  waitForBoundedChildProcess,
   type LocalSpeechFixturePlan,
 } from "./lib/platform-speech-local-fixture.js";
 
@@ -79,17 +80,27 @@ async function runDockerPsql(options: {
     "psql", "--no-psqlrc", "--quiet", "--set", "ON_ERROR_STOP=1",
     "--username", options.adminUser, "--dbname", "postgres",
   ], { detached: true, stdio: ["pipe", "ignore", "ignore"] });
-  signals?.attach(child);
+  child.stdin?.on("error", () => undefined);
   child.stdin?.end(options.sql);
-  const result = await childCompletion(child).finally(() => signals?.detach(child));
+  const result = await waitForBoundedChildProcess(child, {
+    timeoutMs: 10_000,
+    terminationGraceMs: 1_000,
+    processGroup: true,
+    signals,
+  });
+  signals?.throwIfReceived();
   if (result.code !== 0) throw new Error("Local PostgreSQL container administration failed");
 }
 
-async function readDockerPostgresUser(container: string): Promise<string> {
+async function readDockerPostgresUser(
+  container: string,
+  signals: LocalFixtureSignalController,
+): Promise<string> {
   if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$/.test(container)) {
     throw new Error("Local PostgreSQL container configuration is invalid");
   }
   const child = spawn("docker", ["exec", container, "printenv", "POSTGRES_USER"], {
+    detached: true,
     stdio: ["ignore", "pipe", "ignore"],
   });
   let output = "";
@@ -97,7 +108,13 @@ async function readDockerPostgresUser(container: string): Promise<string> {
   child.stdout?.on("data", (chunk: string) => {
     if (output.length <= 1_024) output += chunk;
   });
-  const result = await childCompletion(child);
+  const result = await waitForBoundedChildProcess(child, {
+    timeoutMs: 10_000,
+    terminationGraceMs: 1_000,
+    processGroup: true,
+    signals,
+  });
+  signals.throwIfReceived();
   const user = output.trim();
   if (result.code !== 0 || output.length > 1_024
     || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$/.test(user)) {
@@ -200,23 +217,26 @@ async function run(): Promise<number> {
   });
   await assertFixturePortsAvailable();
 
+  const signals = new LocalFixtureSignalController();
+  let stack: ChildProcess | undefined;
+  const forwardSignal = (signal: "SIGINT" | "SIGTERM") => {
+    signals.receive(signal);
+    stack?.kill(signal);
+  };
+  process.once("SIGINT", () => forwardSignal("SIGINT"));
+  process.once("SIGTERM", () => forwardSignal("SIGTERM"));
+
   const admin = explicitAdminUrl ? createBoundedLocalPostgresAdminClient(plan.adminUrl) : undefined;
   const dockerContainer = process.env.MATRIX_SPEECH_FIXTURE_POSTGRES_CONTAINER ?? "matrix-postgres";
-  const dockerAdmin = explicitAdminUrl ? undefined : {
-    container: dockerContainer,
-    adminUser: process.env.MATRIX_SPEECH_FIXTURE_POSTGRES_ADMIN_USER
-      ?? await readDockerPostgresUser(dockerContainer),
-  };
+  let dockerAdmin: { container: string; adminUser: string } | undefined;
   let adminConnected = false;
   let adminCancelled = false;
   let adminEnd: Promise<void> | undefined;
   let db: PlatformDB | undefined;
   let fixturePool: ReturnType<typeof createBoundedLocalPostgresPool> | undefined;
   let databaseEnd: Promise<void> | undefined;
-  let stack: ChildProcess | undefined;
   let plannedStop = false;
   let resultCode = 1;
-  const signals = new LocalFixtureSignalController();
   const cancelAdmin = () => {
     if (!admin) return;
     adminCancelled = true;
@@ -233,15 +253,15 @@ async function run(): Promise<number> {
       }
     });
   };
-  const forwardSignal = (signal: "SIGINT" | "SIGTERM") => {
-    signals.receive(signal);
-    stack?.kill(signal);
-  };
-  process.once("SIGINT", () => forwardSignal("SIGINT"));
-  process.once("SIGTERM", () => forwardSignal("SIGTERM"));
-
   let stage = "local PostgreSQL preflight";
   try {
+    if (!explicitAdminUrl) {
+      dockerAdmin = {
+        container: dockerContainer,
+        adminUser: process.env.MATRIX_SPEECH_FIXTURE_POSTGRES_ADMIN_USER
+          ?? await readDockerPostgresUser(dockerContainer, signals),
+      };
+    }
     if (admin) {
       signals.attachCancellation(cancelAdmin);
       try {

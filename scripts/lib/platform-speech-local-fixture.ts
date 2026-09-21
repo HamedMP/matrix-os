@@ -83,6 +83,108 @@ export class LocalFixtureSignalController {
   }
 }
 
+export interface BoundedChildProcessOptions {
+  timeoutMs: number;
+  terminationGraceMs?: number;
+  processGroup?: boolean;
+  signals?: LocalFixtureSignalController;
+}
+
+type ChildProcessResult = {
+  code: number | null;
+  signal: NodeJS.Signals | null;
+  error?: Error;
+};
+
+function boundedChildCompletion(child: ChildProcess): Promise<ChildProcessResult> {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return Promise.resolve({ code: child.exitCode, signal: child.signalCode });
+  }
+  return new Promise((resolveCompletion) => {
+    let spawnError: Error | undefined;
+    child.once("error", (error) => {
+      spawnError = error;
+    });
+    child.once("close", (code, signal) => {
+      resolveCompletion({ code, signal, error: spawnError });
+    });
+  });
+}
+
+function signalOwnedChild(
+  child: ChildProcess,
+  signal: NodeJS.Signals,
+  processGroup: boolean,
+): void {
+  const pid = child.pid;
+  if (pid === undefined || child.exitCode !== null || child.signalCode !== null) return;
+  try {
+    if (processGroup) process.kill(-pid, signal);
+    else child.kill(signal);
+  } catch (error: unknown) {
+    if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+  }
+}
+
+export async function terminateAndReapChildProcess(
+  child: ChildProcess,
+  options: { terminationGraceMs?: number; processGroup?: boolean } = {},
+  completion = boundedChildCompletion(child),
+): Promise<void> {
+  const terminationGraceMs = options.terminationGraceMs ?? 1_000;
+  if (!Number.isSafeInteger(terminationGraceMs) || terminationGraceMs < 10 || terminationGraceMs > 10_000) {
+    throw new Error("Child process termination grace period is out of bounds");
+  }
+  const processGroup = options.processGroup ?? false;
+  signalOwnedChild(child, "SIGTERM", processGroup);
+  let timer: NodeJS.Timeout | undefined;
+  const exited = await Promise.race([
+    completion.then(() => true),
+    new Promise<false>((resolveTimeout) => {
+      timer = setTimeout(() => resolveTimeout(false), terminationGraceMs);
+    }),
+  ]);
+  if (timer) clearTimeout(timer);
+  if (!exited) signalOwnedChild(child, "SIGKILL", processGroup);
+  await completion;
+}
+
+export async function waitForBoundedChildProcess(
+  child: ChildProcess,
+  options: BoundedChildProcessOptions,
+): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
+  if (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs < 10 || options.timeoutMs > 300_000) {
+    throw new Error("Child process timeout is out of bounds");
+  }
+  const completion = boundedChildCompletion(child);
+  options.signals?.attach(child);
+  let signalTermination: Promise<void> | undefined;
+  const terminateForSignal = () => {
+    signalTermination ??= terminateAndReapChildProcess(child, options, completion);
+  };
+  options.signals?.attachCancellation(terminateForSignal);
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    const outcome = await Promise.race([
+      completion.then((result) => ({ kind: "complete" as const, result })),
+      new Promise<{ kind: "timeout" }>((resolveTimeout) => {
+        timer = setTimeout(() => resolveTimeout({ kind: "timeout" }), options.timeoutMs);
+      }),
+    ]);
+    if (outcome.kind === "timeout") {
+      await (signalTermination ?? terminateAndReapChildProcess(child, options, completion));
+      throw new Error("Child process timed out");
+    }
+    if (signalTermination) await signalTermination;
+    if (outcome.result.error) throw outcome.result.error;
+    return { code: outcome.result.code, signal: outcome.result.signal };
+  } finally {
+    if (timer) clearTimeout(timer);
+    options.signals?.detachCancellation(terminateForSignal);
+    options.signals?.detach(child);
+  }
+}
+
 export async function completeLocalSpeechFixtureCleanup(
   exitCode: number,
   steps: Array<{ label: string; run: () => Promise<void> }>,

@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -7,6 +7,7 @@ import type { PlatformDB } from "../../packages/platform/src/db.js";
 import {
   LOCAL_SPEECH_FIXTURE_PORTS,
   LOCAL_SPEECH_FIXTURE_TRANSCRIPT,
+  terminateAndReapChildProcess,
   type LocalSpeechFixturePlan,
 } from "./platform-speech-local-fixture.js";
 
@@ -40,14 +41,6 @@ function syntheticWav(): Buffer {
   return bytes;
 }
 
-function childCompletion(child: ChildProcess): Promise<void> {
-  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
-  return new Promise((resolveCompletion, reject) => {
-    child.once("error", reject);
-    child.once("close", () => resolveCompletion());
-  });
-}
-
 async function verificationStep<T>(code: string, action: () => Promise<T>): Promise<T> {
   try {
     return await action();
@@ -57,19 +50,27 @@ async function verificationStep<T>(code: string, action: () => Promise<T>): Prom
   }
 }
 
-async function startOwnedXvfb(): Promise<{ display: string; close: () => Promise<void> } | undefined> {
-  if (process.platform !== "linux" || process.env.DISPLAY) return undefined;
-  const xvfb = spawn("Xvfb", ["-displayfd", "3", "-screen", "0", "1280x800x24", "-nolisten", "tcp"], {
+export async function startOwnedXvfb(options: {
+  command?: string;
+  platform?: NodeJS.Platform;
+  display?: string;
+  startupTimeoutMs?: number;
+  terminationGraceMs?: number;
+} = {}): Promise<{ display: string; close: () => Promise<void> } | undefined> {
+  if ((options.platform ?? process.platform) !== "linux" || (options.display ?? process.env.DISPLAY)) return undefined;
+  const xvfb = spawn(options.command ?? "Xvfb", ["-displayfd", "3", "-screen", "0", "1280x800x24", "-nolisten", "tcp"], {
     stdio: ["ignore", "ignore", "ignore", "pipe"],
   });
   const displayPipe = xvfb.stdio[3];
   if (!displayPipe || typeof displayPipe === "number" || !("setEncoding" in displayPipe)) {
+    await terminateAndReapChildProcess(xvfb, { terminationGraceMs: options.terminationGraceMs });
     throw new LocalFixtureVerificationError("xvfb_unavailable");
   }
   let output = "";
   displayPipe.setEncoding("utf8");
-  const display = await Promise.race([
-    new Promise<string>((resolveDisplay, reject) => {
+  let startupTimer: NodeJS.Timeout | undefined;
+  try {
+    const display = await new Promise<string>((resolveDisplay, reject) => {
       displayPipe.on("data", (chunk: string) => {
         output += chunk;
         if (output.length > 16) reject(new LocalFixtureVerificationError("xvfb_invalid_display"));
@@ -78,19 +79,23 @@ async function startOwnedXvfb(): Promise<{ display: string; close: () => Promise
       });
       xvfb.once("error", () => reject(new LocalFixtureVerificationError("xvfb_unavailable")));
       xvfb.once("close", () => reject(new LocalFixtureVerificationError("xvfb_exited")));
-    }),
-    new Promise<never>((_, reject) => setTimeout(
-      () => reject(new LocalFixtureVerificationError("xvfb_start_timeout")),
-      5_000,
-    )),
-  ]);
-  return {
-    display,
-    close: async () => {
-      if (xvfb.exitCode === null && xvfb.signalCode === null) xvfb.kill("SIGTERM");
-      await childCompletion(xvfb).catch(() => undefined);
-    },
-  };
+      startupTimer = setTimeout(
+        () => reject(new LocalFixtureVerificationError("xvfb_start_timeout")),
+        options.startupTimeoutMs ?? 5_000,
+      );
+    });
+    return {
+      display,
+      close: () => terminateAndReapChildProcess(xvfb, {
+        terminationGraceMs: options.terminationGraceMs,
+      }),
+    };
+  } catch (error: unknown) {
+    await terminateAndReapChildProcess(xvfb, { terminationGraceMs: options.terminationGraceMs });
+    throw error;
+  } finally {
+    if (startupTimer) clearTimeout(startupTimer);
+  }
 }
 
 async function launchVerificationPage(plan: LocalSpeechFixturePlan): Promise<{
