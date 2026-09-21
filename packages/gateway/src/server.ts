@@ -4360,6 +4360,9 @@ export async function createGateway(config: GatewayConfig) {
       await canonicalChatOrchestrator.reconcileActiveRuns({ type: "personal", ownerId });
     }
     if (gatewayCollaboration) {
+      // S07: this layer has no execution-root resolver, so no `sandboxManifests` source is passed
+      // and shared AI reports no eligibility instead of offering runs that would fail at launch.
+      // S09 supplies the resolver; a shared run never falls back to an unsandboxed profile.
       const sharedAi = await gatewayCollaboration.enableSharedAi({
         orchestrator: canonicalChatOrchestrator,
         homePath,

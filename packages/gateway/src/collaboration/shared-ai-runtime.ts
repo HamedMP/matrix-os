@@ -49,6 +49,7 @@ import type { OwnerCollaborationDatabase } from "./database.js";
 import type { CollaborationEventRegistry } from "./events.js";
 import { createScopeRuntimeBroker, createScopeRuntimeBrokerServer } from "./scope-runtime-broker.js";
 import { createSandboxReadinessProbe, type SandboxReadinessProbe } from "./sandbox-readiness.js";
+import type { ReadinessSubject } from "./readiness-evaluator.js";
 import { createScopeRuntimeChatProviderAdapter } from "./scope-runtime-chat-adapter.js";
 import {
   createScopeRuntimeClient,
@@ -174,7 +175,7 @@ export async function createSharedAiRuntime(options: {
     await client.close();
     return { available: false as const, async shutdown(): Promise<void> {} };
   }
-  const readiness: SandboxReadinessProbe = createSandboxReadinessProbe({ client });
+  const sandboxProbe: SandboxReadinessProbe = createSandboxReadinessProbe({ client });
   const eligibility = await deriveSharedAiEligibility({ client, sandboxManifests: options.sandboxManifests });
   if (!eligibility) {
     await options.chatScope.reconcileExecutionEligibility({ executionGeneration: null, eligibility: null });
@@ -444,8 +445,16 @@ export async function createSharedAiRuntime(options: {
   return {
     available: true as const,
     chatExecutionAdapter,
-    /** S07: the sandbox readiness probe for the preflight readiness composition. */
-    readiness,
+    /**
+     * S07: `supported` for the readiness composition. A shared project or Chat
+     * executes, so it is shareable only while the supervisor still advertises
+     * the pinned sandbox policy. The startup capability is only a snapshot, so
+     * the supervisor is rechecked before a share is reported as ready.
+     */
+    async sandboxSupported(subject: ReadinessSubject): Promise<boolean> {
+      await client.refreshCapability();
+      return sandboxProbe.supported(subject);
+    },
     async shutdown(): Promise<void> {
       stopped = true;
       clearInterval(wakeTimer);

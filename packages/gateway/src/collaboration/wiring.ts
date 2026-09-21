@@ -34,6 +34,7 @@ import { OrganizationMembershipClient } from "./organization-membership-client.j
 import { CollaborationRepository } from "./repository.js";
 import { createCollaborationRoutes } from "./routes.js";
 import { createSharedAiRuntime, type SharedChatSandboxManifestSource } from "./shared-ai-runtime.js";
+import type { ReadinessSubject } from "./readiness-evaluator.js";
 import type { CanonicalProviderSnapshotReader } from "../ai-providers/provider-settings-coordinators.js";
 import { OwnerAccountEligibility } from "./account-eligibility.js";
 import {
@@ -340,6 +341,15 @@ export async function createGatewayCollaboration(options: {
       });
       if (sharedAiRuntime.available) chatExecutionAdapter = sharedAiRuntime.chatExecutionAdapter;
       return { available: sharedAiRuntime.available };
+    },
+    /**
+     * S07: the `supported` readiness input for shareable resources. Projects and
+     * Chats execute, so they are supported only while shared AI is running on a
+     * supervisor that advertises the pinned sandbox policy; with shared AI
+     * disabled the answer is false rather than an offer that would fail at launch.
+     */
+    async sandboxSupported(subject: ReadinessSubject): Promise<boolean> {
+      return sharedAiRuntime?.available === true ? sharedAiRuntime.sandboxSupported(subject) : false;
     },
     enableSharedTerminal(input: {
       registry: ConstructorParameters<typeof CollaborationTerminalAdapter>[0]["registry"];
