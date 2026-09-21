@@ -90,3 +90,70 @@ Test-first on the owning layer; receipt kept on the top S05 layer. Commit subjec
 - Full transport path untested: new `collaboration-direct-transport-postgres.test.ts` (real Postgres) drives the registration route with runtime headers (401 without them), a one-use control upgrade over a real `ws` socket, ticket replay refused 401, a denial fenced by the real control authority and pushed through the stream transport, the acknowledgement persisted (`completed`, outbox `acknowledgedAt`, endpoint `lastControlAt`), and an oversized frame closing the socket.
 - Already fixed on the current head (evidence): offline homes remain ticket-eligible — issuer answers `host_offline` unless `last_control_at` is within 60 s (test "reports host_offline for a home that never attached…"); healthy idle homes become offline — ws pong refreshes `last_control_at` and the stream's generation keepalive is acknowledged by the home (tests "keeps a pong-responsive idle home ticket-ready…", "keeps an idle attached home ticket-ready through generation keepalives…"); disconnected homes block delivery — `listDueDeliveries` filters by the stream's connected runtimes (`collaboration-control-delivery-postgres`); outdated threads (generation domains, instance-local control state, outbox retryability, concurrent registrations) were fixed in `fix(platform): bind resource generations, share control tickets and serialize registrations` and `fix(collaboration): refresh control liveness and select connected deliveries`.
 - Gates: tickets + bootstrap + control-delivery-postgres + wiring + control-authority + direct-transport 35/35 on real Postgres; platform `tsc` clean; patterns 0 violations / 5 inherited warnings.
+
+## Verdict round (2026-09-21, PRs #1802 / #1804)
+
+Both PRs carried no unresolved inline thread; each was blocked by the Greptile summary
+verdict alone. Fixes stay on the layer owning the file; the receipt stays on the top S05
+layer so the three S05 layers do not conflict on restack.
+
+**#1802 (`124/s05`, head `665886601`)** — verdict: *"The acknowledgement resource-management
+requirement remains only partly satisfied and should be completed before merging."*
+
+Two gaps remained in `packages/platform/src/collaboration/control-stream.ts`.
+
+- *The drain was not the whole drain.* `receive()` checked only the frame size and the
+  per-connection queue depth, so a frame arriving after `entry.close()` — or after
+  `shutdown()` began — still chained new `controlAuthority.acknowledge` work. `shutdown()`
+  captures a connection's chain at close, so that work was invisible to it: the stream
+  reported shut down while acknowledgement transactions were still running against a
+  database the caller was about to destroy. `receive()` now refuses once the connection is
+  closed or the stream is shutting down, which makes the captured chain the complete drain.
+- *The connection registry was capped but never swept.* `connections` shrank only through the
+  socket's close handler. A half-open socket raises no close event and keeps accepting
+  `send()` into the kernel buffer, so a home that is gone held its slot against the 4 096 cap
+  and stayed in `connectedRuntimes()`, which is what the control authority filters due
+  deliveries by — denials were repeatedly selected for a runtime nobody was holding. Each
+  connection now carries a `lastTouched` refreshed at attach, on the upgrade handler's ws
+  pong (`heartbeat()`) and on every acknowledgement; connections silent past
+  `DEFAULT_CONNECTION_IDLE_TTL_MS` (60 s, the ticket issuer's `host_offline` window) are
+  released and their sockets closed. The sweep runs before the cap can refuse a live home,
+  on `connectedRuntimes()`, and on a 15 s interval that exists only while the registry holds
+  a connection and is cleared by `shutdown()`.
+
+RED `test(platform): expose unbounded post-close acks and unswept control connections`
+(3 failures: the post-close frame hung the suite instead of rejecting, the cap refused a live
+home behind a silent one, and the silent connection survived its own sweep). GREEN
+`fix(platform): close post-close ack admission and sweep silent control connections`.
+
+Gates: `collaboration-tickets` **22/22** on real Postgres (19/22 RED), plus
+`collaboration-control-delivery-postgres`, `collaboration-direct-transport-postgres`,
+`collaboration-wiring`, `collaboration-bootstrap` and `collaboration-authority` **9/9**.
+`bun run typecheck` exit 0; `bun run check:patterns` 0 violations, 5 inherited warnings.
+
+**#1804 (`124/s05-relay`, head `2ba8cc512`)** — verdict: *"The PR should not merge until the
+relay drains active reservations during shutdown and the outstanding repository TDD
+requirement is resolved."*
+
+`CollaborationRelay.close()` cleared the idle sweep timer and nothing else. Every live socket
+reservation kept its home and actor counts, its `onEvict` hook never ran so the platform
+upgrade listener never destroyed the relayed socket, and `prepareSocket()` kept reserving
+after the relay had shut down — reservations nothing would ever drain, pointing at a
+directory and dispatcher that were about to be torn down. `close()` now releases every
+reservation and runs its eviction hook before returning, logs a failing hook by `error.name`
+and continues with the reservations behind it, clears the registry and both count maps,
+leaves the sweep stopped for good, and refuses `prepareSocket()`. Closing twice is a no-op.
+`direct-wiring.ts` already orders `relay.close()` ahead of `controlStream.shutdown()`, so the
+sockets are gone before the control path is torn down.
+
+RED `test(platform): expose relay reservations that survive shutdown`. GREEN
+`fix(platform): drain relay socket reservations on shutdown`.
+
+Gates: `collaboration-relay` **11/11** (10/11 RED), plus `collaboration-direct-upgrade`,
+`collaboration-wiring`, `collaboration-websocket` and `preview-terminal-flow` — **30/30**.
+`bun run typecheck` exit 0; `bun run check:patterns` 0 violations, 5 inherited warnings.
+
+The second half of the #1804 verdict is the "tests were not test-first" receipt thread
+answered in the Greptile round 2 section above: the original S05 relay suites were written
+alongside the implementation, as this receipt has always stated, and every round since has
+been RED → GREEN. That history is recorded, not rewritten; this round is test-first.
