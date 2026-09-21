@@ -156,6 +156,32 @@ describe("platform collaboration routes", () => {
     expect(await shared.json()).toMatchObject({ items: [{ scopeId: orgScopeId, status: "accepted" }] });
   });
 
+  it("paginates organization-pending shares after ordinary invitations without losing any", async () => {
+    await repository.applyDirectoryEvent(directoryEvent("invited"));
+    for (const suffix of ["071", "072", "073"]) {
+      await repository.applyDirectoryEvent({
+        ...directoryEvent("accepted"), scopeId: `10000000-0000-4000-8000-000000000${suffix}`,
+        eventId: `20000000-0000-4000-8000-000000000${suffix}`,
+        organizationId: "org_1", audience: "organization", recipients: [],
+      });
+    }
+    organizationIds = ["org_1"];
+    const seen: Array<{ scopeId: string; status: string }> = [];
+    let cursor: string | undefined;
+    for (let pageNumber = 0; pageNumber < 5; pageNumber += 1) {
+      const response = await app.request(`/api/collaboration/inbox?limit=1${cursor ? `&cursor=${cursor}` : ""}`,
+        { headers: { "x-test-actor": platformCollaborationActors.recipientWithoutComputer } });
+      expect(response.status).toBe(200);
+      const page = await response.json() as { items: Array<{ scopeId: string; status: string }>; nextCursor?: string };
+      seen.push(...page.items);
+      cursor = page.nextCursor;
+      if (!cursor) break;
+    }
+    expect(seen).toHaveLength(4);
+    expect(new Set(seen.map((item) => item.scopeId)).size).toBe(4);
+    expect(seen.filter((item) => item.status === "organization_pending")).toHaveLength(3);
+  });
+
   it("returns opaque actor/status-bound discovery pages and rejects malformed cursors", async () => {
     await repository.applyDirectoryEvent({ ...directoryEvent("accepted"), metadataRevision: 2 });
     await repository.applyDirectoryEvent({
