@@ -1,4 +1,8 @@
 import { test, expect } from "@playwright/test";
+import { mkdirSync } from "node:fs";
+import { resolve } from "node:path";
+
+const GENERATED_EVIDENCE_DIR = resolve(__dirname, "../../output/playwright/pr-1620-disconnected-chat");
 
 function agentSettingsView() {
   const chat = {
@@ -218,6 +222,27 @@ test.describe("Visual regression", () => {
     await expect(page).toHaveScreenshot("chat-speech-ready.png", {
       maxDiffPixelRatio: 0.01,
     });
+  });
+
+  test("disconnected Chat keeps its draft editable with voice input while Send stays disabled", async ({ page }) => {
+    await exposeSpeechReady(page);
+    await page.keyboard.press("Meta+k");
+    await page.waitForTimeout(300);
+    await page.keyboard.type("Chat");
+    await page.keyboard.press("Enter");
+
+    const draft = page.getByRole("textbox", { name: "Message chat" });
+    const microphone = page.getByRole("button", { name: "Start voice input" });
+    const send = page.getByRole("button", { name: "Send" });
+    await expect(page.getByText("Offline", { exact: true })).toBeVisible();
+    await expect(draft).toBeEditable();
+    await draft.fill("Draft stays editable while the AI harness reconnects.");
+    await expect(draft).toHaveValue("Draft stays editable while the AI harness reconnects.");
+    await expect(microphone).toBeEnabled();
+    await expect(send).toBeDisabled();
+    await page.mouse.move(720, 450);
+    mkdirSync(GENERATED_EVIDENCE_DIR, { recursive: true });
+    await page.screenshot({ path: resolve(GENERATED_EVIDENCE_DIR, "web-desktop.png") });
   });
 
   test("speech-ready Chat exposes the manual recording entry point in Web Canvas", async ({ page }) => {
