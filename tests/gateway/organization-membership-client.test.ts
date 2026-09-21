@@ -140,10 +140,11 @@ describe("gateway organization membership client (S03 seam for the S20 precondit
     await expect(client.assertMembership({ organizationId: org, actorId: other })).resolves.toMatchObject({ member: true });
     expect(fetchImpl).toHaveBeenCalledTimes(2);
     // Evidence that was in flight when the denial arrived is settled but never cached.
+    client.evict({ organizationId: org, actorId: member });
     let release!: () => void;
     fetchImpl.mockImplementationOnce(() => new Promise((resolve) => { release = () => resolve(assertionResponse({ member: true, requestStartedAt: clock, actorId: member })); }));
     const pending = client.assertMembership({ organizationId: org, actorId: member });
-    await Promise.resolve();
+    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(3));
     client.evict({ organizationId: org, actorId: member });
     release();
     await expect(pending).resolves.toMatchObject({ member: true });
