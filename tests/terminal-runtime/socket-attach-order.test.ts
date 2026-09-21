@@ -82,7 +82,7 @@ it("refuses a stale collaboration observer after the same tab ID is recreated", 
     const onFrame = vi.fn();
     const onError = vi.fn();
     observer = new TerminalRuntimeSocketClient({ socketPath }).attach({
-      ref, expectedCreatedAt: original.createdAt, viewerId: "shared-observer",
+      ref, expectedIncarnation: original.incarnation, viewerId: "shared-observer",
       mode: "soft", size: { cols: 120, rows: 36 }, onFrame, onClose() {}, onError,
     });
     await vi.waitFor(() => expect(onError).toHaveBeenCalled());

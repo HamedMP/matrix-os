@@ -13,6 +13,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod/v4";
 import { openBufferedAttachment } from "./attachment-bootstrap.js";
 import { TerminalRuntimeError } from "./errors.js";
+import { terminalTabIncarnation } from "./incarnation.js";
 import { TerminalMouseModeState } from "./mouse-mode-state.js";
 import { applyWorkspaceResize, workspaceResizeProposal, type TerminalSizeListener } from "./workspace-resize.js";
 import { createViewerOutput } from "./viewer-output.js";
@@ -351,12 +352,12 @@ export class TerminalRuntime {
   resize(refInput: TerminalRef, input: {
     mode: "hard" | "soft";
     size: { cols: number; rows: number };
-  }, viewerId?: string, expectedCreatedAt?: string): Promise<TerminalWorkspace> {
+  }, viewerId?: string, expectedIncarnation?: string): Promise<TerminalWorkspace> {
     return this.runWorkspaceMutation(async () => {
       const ref = TerminalRefSchema.parse(refInput);
       const workspace = await this.requireRuntimeWorkspace(ref.workspaceId);
       const tab = workspace.tabs[ref.tabId];
-      if (!tab || (expectedCreatedAt && tab.createdAt !== expectedCreatedAt)) throw new TerminalRuntimeError("not_found");
+      if (!tab || (expectedIncarnation && terminalTabIncarnation(tab) !== expectedIncarnation)) throw new TerminalRuntimeError("not_found");
       if (input.mode === "soft" && !viewerId) return (await this.listWorkspaces()).find((item) => item.id === ref.workspaceId)!;
       await this.sweepStaleViewers();
       const size = workspaceResizeProposal({ ref, size: input.size, mode: input.mode, viewerId, attachments: this.attachments.values() });
@@ -372,15 +373,15 @@ export class TerminalRuntime {
     });
   }
 
-  async terminateTab(refInput: TerminalRef, expectedCreatedAt?: string): Promise<void> {
-    await this.finishTab(refInput, false, expectedCreatedAt);
+  async terminateTab(refInput: TerminalRef, expectedIncarnation?: string): Promise<void> {
+    await this.finishTab(refInput, false, expectedIncarnation);
   }
 
   async deleteTab(refInput: TerminalRef): Promise<void> {
     await this.finishTab(refInput, true);
   }
 
-  private async finishTab(refInput: TerminalRef, removeCanonicalRecord: boolean, expectedCreatedAt?: string): Promise<void> {
+  private async finishTab(refInput: TerminalRef, removeCanonicalRecord: boolean, expectedIncarnation?: string): Promise<void> {
     const ref = TerminalRefSchema.parse(refInput);
     const key = refKey(ref);
     if (this.terminatingTabKeys.has(key)) throw new TerminalRuntimeError("conflict");
@@ -392,7 +393,7 @@ export class TerminalRuntime {
       await this.runWorkspaceMutation(async () => {
         const workspace = await this.requireRuntimeWorkspace(ref.workspaceId);
         const tab = workspace.tabs[ref.tabId];
-        if (!tab || (expectedCreatedAt && tab.createdAt !== expectedCreatedAt)) throw new TerminalRuntimeError("not_found");
+        if (!tab || (expectedIncarnation && terminalTabIncarnation(tab) !== expectedIncarnation)) throw new TerminalRuntimeError("not_found");
         const terminalAlreadyExited = tab.status === "exited" || tab.status === "failed";
         let zellijTabId = terminalAlreadyExited ? null : tab.zellijTabId;
         if (removeCanonicalRecord && terminalAlreadyExited) {
@@ -426,13 +427,13 @@ export class TerminalRuntime {
     }
   }
 
-  async writeInput(refInput: TerminalRef, dataInput: string, expectedCreatedAt?: string): Promise<void> {
+  async writeInput(refInput: TerminalRef, dataInput: string, expectedIncarnation?: string): Promise<void> {
     const ref = TerminalRefSchema.parse(refInput);
     await this.enqueueWrite(ref, dataInput, async (data) => {
       const workspace = await this.requireRuntimeWorkspace(ref.workspaceId);
       const tab = workspace.tabs[ref.tabId];
       if (!tab || tab.zellijPaneId === null
-        || (expectedCreatedAt && tab.createdAt !== expectedCreatedAt)) throw new TerminalRuntimeError("not_found");
+        || (expectedIncarnation && terminalTabIncarnation(tab) !== expectedIncarnation)) throw new TerminalRuntimeError("not_found");
       if (
         (tab.status !== "running" && tab.status !== "idle") ||
         !this.zellij.writeToPane
@@ -543,7 +544,7 @@ export class TerminalRuntime {
 
   attach(refInput: TerminalRef, input: TerminalSizeListener & {
     viewerId: string;
-    expectedCreatedAt?: string;
+    expectedIncarnation?: string;
     send: (data: Uint8Array) => void | Promise<void>;
     onExit?: (exitCode: number | null) => void | Promise<void>;
   }): Promise<TerminalViewer> {
@@ -552,15 +553,16 @@ export class TerminalRuntime {
 
   private async attachNow(refInput: TerminalRef, input: TerminalSizeListener & {
     viewerId: string;
-    expectedCreatedAt?: string;
+    expectedIncarnation?: string;
     send: (data: Uint8Array) => void | Promise<void>;
     onExit?: (exitCode: number | null) => void | Promise<void>;
   }): Promise<TerminalViewer> {
     const ref = TerminalRefSchema.parse(refInput);
     const viewerId = z.string().min(1).max(128).regex(/^[A-Za-z0-9_.:-]+$/).parse(input.viewerId);
-    if (input.expectedCreatedAt) {
+    if (input.expectedIncarnation) {
       const workspace = await this.requireRuntimeWorkspace(ref.workspaceId);
-      if (workspace.tabs[ref.tabId]?.createdAt !== input.expectedCreatedAt) throw new TerminalRuntimeError("not_found");
+      const tab = workspace.tabs[ref.tabId];
+      if (!tab || terminalTabIncarnation(tab) !== input.expectedIncarnation) throw new TerminalRuntimeError("not_found");
     }
     await this.sweepStaleViewers();
     const key = refKey(ref);

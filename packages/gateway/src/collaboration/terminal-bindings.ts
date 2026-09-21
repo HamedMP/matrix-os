@@ -8,6 +8,7 @@ export interface CollaborationTerminalBindingsTable {
   workspace_id: string;
   tab_id: string;
   tab_created_at: Date | string;
+  tab_incarnation: string;
   incarnation: string;
   execution_generation: number;
   created_at: Date | string;
@@ -22,6 +23,7 @@ export async function migrateTerminalBindingsV15(trx: Transaction<OwnerCollabora
       workspace_id TEXT NOT NULL CHECK (workspace_id ~ '^tws_[a-f0-9]{32}$'),
       tab_id TEXT NOT NULL CHECK (tab_id ~ '^tt_[a-f0-9]{32}$'),
       tab_created_at TIMESTAMPTZ NOT NULL,
+      tab_incarnation TEXT NOT NULL CHECK (tab_incarnation ~ '^ti_[a-f0-9]{32}$'),
       incarnation TEXT NOT NULL CHECK (incarnation ~ '^terminal-[a-f0-9]{32}$'),
       execution_generation BIGINT NOT NULL CHECK (execution_generation > 0),
       created_at TIMESTAMPTZ NOT NULL,
