@@ -220,6 +220,82 @@ describe("collaboration direct client", () => {
     expect(direct.inspectKeys(ids.at(-1)!)).not.toBeNull();
   });
 
+  const manyScopes = (count: number) => Array.from({ length: count }, (_, index) => `20000000-0000-4000-8000-${(index + 1).toString(16).padStart(12, "0")}`);
+  const eventHandlers = () => ({ onEvent: vi.fn(), onUnavailable: vi.fn() });
+  const ready = (id: string, sequence: string) => ({ data: JSON.stringify({ version: 1, type: "ready", scopeId: id, resourceId: "chat-1", authorityGeneration: "3", sequence }) });
+  const socketFor = (id: string) => world.sockets.find((socket) => socket.url.includes(`/scopes/${id}/`))!;
+
+  it("forgets closed stream scopes so the scope cap never evicts a live stream in their place", async () => {
+    vi.useFakeTimers();
+    const direct = client();
+    const ids = manyScopes(129);
+    for (const id of ids.slice(0, 128)) direct.subscribeEvents(id, eventHandlers());
+    await vi.waitFor(() => expect(world.sockets).toHaveLength(128));
+    direct.close(ids[0]!);
+    expect(socketFor(ids[0]!).close).toHaveBeenCalled();
+    direct.subscribeEvents(ids[128]!, eventHandlers());
+    await vi.waitFor(() => expect(world.sockets).toHaveLength(129));
+    for (const id of ids.slice(1)) expect(socketFor(id).close).not.toHaveBeenCalled();
+  });
+
+  it("evicts the least recently active stream scope, not the oldest registration, when the scope cap is reached", async () => {
+    vi.useFakeTimers();
+    const direct = client();
+    const ids = manyScopes(129);
+    for (const id of ids.slice(0, 128)) direct.subscribeEvents(id, eventHandlers());
+    await vi.waitFor(() => expect(world.sockets).toHaveLength(128));
+    await vi.advanceTimersByTimeAsync(1_000);
+    for (const id of ids.slice(0, 128)) { socketFor(id).onopen?.(); socketFor(id).onmessage?.(ready(id, "1")); }
+    await vi.advanceTimersByTimeAsync(1_000);
+    socketFor(ids[5]!).onmessage?.(ready(ids[5]!, "2"));
+    direct.subscribeEvents(ids[128]!, eventHandlers());
+    await vi.waitFor(() => expect(world.sockets).toHaveLength(129));
+    expect(socketFor(ids[5]!).close).not.toHaveBeenCalled();
+    expect(ids.slice(0, 128).filter((id) => socketFor(id).close.mock.calls.length > 0)).toHaveLength(1);
+  });
+
+  it("drops an event stream whose server heartbeats stopped and reconnects with a fresh ticket", async () => {
+    vi.useFakeTimers();
+    const direct = client();
+    const states: string[] = [];
+    direct.subscribeEvents(scopeId, { ...eventHandlers(), onConnectionChange: (state) => states.push(state) });
+    await vi.waitFor(() => expect(world.sockets).toHaveLength(1));
+    const socket = world.sockets[0]!;
+    socket.onopen?.();
+    socket.onmessage?.(ready(scopeId, "4"));
+    await vi.advanceTimersByTimeAsync(30_000);
+    socket.onmessage?.({ data: JSON.stringify({ version: 1, type: "heartbeat", scopeId, resourceId: "chat-1", authorityGeneration: "3", sequence: "4" }) });
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(socket.close).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(socket.close).toHaveBeenCalled();
+    await vi.waitFor(() => expect(world.sockets).toHaveLength(2));
+    expect(states).toContain("reconnecting");
+    expect(new URL(world.sockets[1]!.url).searchParams.get("after")).toBe("4");
+    expect(world.platform.tickets.filter((ticket) => ticket.purpose === "events")).toHaveLength(2);
+    socket.onclose?.();
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(world.sockets).toHaveLength(2);
+  });
+
+  it("drops a terminal stream whose sends stop draining and reconnects with a fresh ticket", async () => {
+    vi.useFakeTimers();
+    const direct = client();
+    const disconnected = vi.fn();
+    direct.subscribeTerminal(scopeId, { onReady: vi.fn(), onOutput: vi.fn(), onState: vi.fn(), onRefreshRequired: vi.fn(), onUnavailable: vi.fn(), onDisconnected: disconnected });
+    await vi.waitFor(() => expect(world.sockets).toHaveLength(1));
+    const socket = world.sockets[0]! as typeof world.sockets[number] & { bufferedAmount?: number };
+    socket.onopen?.();
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(socket.close).not.toHaveBeenCalled();
+    socket.bufferedAmount = 64;
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(socket.close).toHaveBeenCalled();
+    expect(disconnected).toHaveBeenCalled();
+    await vi.waitFor(() => expect(world.sockets).toHaveLength(2));
+    expect(world.platform.tickets.filter((ticket) => ticket.purpose === "terminal")).toHaveLength(2);
+  });
+
   it("stores nothing reusable: keys stay in memory and non-extractable, nothing touches browser storage", async () => {
     const storage = { setItem: vi.fn(), getItem: vi.fn(), removeItem: vi.fn() };
     (globalThis as { localStorage?: unknown }).localStorage = storage;
