@@ -1,10 +1,8 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import {
   CollaborationSignedActorProofSchema,
-  CollaborationSignedPolicySchema,
   type CollaborationActorProof,
   type CollaborationDeleteCondition,
-  type CollaborationPolicy,
 } from "@matrix-os/contracts";
 import type {
   AuthorizedCollaborationContext,
@@ -151,22 +149,6 @@ export class CollaborationActorProofVerifier {
     return proof;
   }
 
-  verifyPolicy(signedPolicy: unknown): CollaborationPolicy {
-    const parsed = CollaborationSignedPolicySchema.safeParse(signedPolicy);
-    if (!parsed.success) throw invalidProof();
-    const { policy, keyId, signature } = parsed.data;
-    const key = this.options.keys[keyId];
-    if (!key || Buffer.byteLength(key) < 32
-      || !constantTimeSignatureMatches("policy", policy, key, signature)) throw invalidProof();
-    const now = this.now().getTime();
-    const issuedAt = Date.parse(policy.issuedAt);
-    const expiresAt = Date.parse(policy.expiresAt);
-    if (issuedAt > now + MAX_CLOCK_SKEW_MS
-      || expiresAt <= now
-      || expiresAt - issuedAt > MAX_PROOF_LIFETIME_MS) throw invalidProof();
-    return policy;
-  }
-
   shutdown(): void {
     this.seenNonces.clear();
   }
@@ -196,8 +178,8 @@ export class CollaborationActorProofVerifier {
 }
 
 function constantTimeSignatureMatches(
-  domain: "http" | "events" | "terminal" | "policy",
-  value: CollaborationActorProof | CollaborationPolicy,
+  domain: "http" | "events" | "terminal",
+  value: CollaborationActorProof,
   key: string,
   signature: string,
 ): boolean {
