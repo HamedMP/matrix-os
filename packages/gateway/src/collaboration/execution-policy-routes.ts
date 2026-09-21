@@ -3,7 +3,7 @@
  *
  * Any current participant may read the policy that governs a scope; only
  * the scope owner may change it, and the repository enforces that. Both
- * routes pass the signed actor proof and the organization precondition
+ * routes pass the signed direct session and the organization precondition
  * before touching the policy. PUT is a mutating verb the shared prefix limit
  * does not cover, so this module applies its own body limit.
  */
@@ -23,12 +23,15 @@ import {
   type CollaborationExecutionPolicyRepository,
 } from "./execution-policy.js";
 import type { CollaborationRepository } from "./repository.js";
-import { digest, handle, readJson, verifyHttp } from "./route-support.js";
+import type { DirectSessionService } from "./direct-sessions.js";
+import { authorizeCurrentScope, authorizeOwnerScope, digest, handle, readJson } from "./route-support.js";
 
 const POLICY_PATH = "/api/collaboration/scopes/:scopeId/execution-policy";
 
 export interface ExecutionPolicyRouteOptions {
   verifier: CollaborationActorProofVerifier;
+  directSessions?: DirectSessionService;
+  runtimeId?: string;
   authority: CollaborationAuthority;
   repository: CollaborationRepository;
   executionPolicies?: CollaborationExecutionPolicyRepository;
@@ -68,8 +71,7 @@ export function registerExecutionPolicyRoutes(routes: Hono, options: ExecutionPo
 
   routes.get(POLICY_PATH, async (c) => handlePolicy(c, async () => {
     const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
-    const proof = await verifyHttp(options.verifier, c, new Uint8Array());
-    await options.authority.authorize({ scopeId, actorId: proof.actorId, action: "read" });
+    await authorizeCurrentScope(options, c, new Uint8Array(), "read", scopeId);
     const policy = await requirePolicies(options).resolve(scopeId);
     if (!policy) throw new CollaborationExecutionPolicyError("not_found", "No execution policy");
     return c.json(CollaborationExecutionPolicySchema.parse(policy));
@@ -78,11 +80,10 @@ export function registerExecutionPolicyRoutes(routes: Hono, options: ExecutionPo
   routes.put(POLICY_PATH, async (c) => handlePolicy(c, async () => {
     const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
     const { value, bytes } = await readJson(c);
-    const proof = await verifyHttp(options.verifier, c, bytes);
-    await options.authority.authorize({ scopeId, actorId: proof.actorId, action: "read" });
+    const context = await authorizeOwnerScope(options, c, bytes, scopeId);
     const request = CollaborationExecutionPolicyPutRequestSchema.parse(value);
     const policy = await requirePolicies(options).put({
-      scopeId, actorId: proof.actorId, request, payloadHash: digest(bytes),
+      scopeId, actorId: context.actorId, request, payloadHash: digest(bytes),
     });
     if (options.onScopeCommitted) {
       try {
