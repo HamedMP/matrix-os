@@ -742,12 +742,18 @@ realDescribe("project transition real PostgreSQL publication race", () => {
       membershipHash: MEMBERSHIP_HASH,
       destinationAuthorityRuntimeId: DESTINATION_RUNTIME,
       destinationAuthorityGeneration: 1,
+      clientRequestId: CLIENT_REQUEST_ID,
+      payloadHash: PAYLOAD_HASH,
     };
     const firstJournal = createJournal("20000000-0000-4000-8000-000000000061");
     const secondJournal = createJournal("20000000-0000-4000-8000-000000000062");
     const preparations = await Promise.allSettled([
       firstJournal.prepare(prepareInput),
-      secondJournal.prepare(prepareInput),
+      secondJournal.prepare({
+        ...prepareInput,
+        clientRequestId: "50000000-0000-4000-8000-000000000062",
+        payloadHash: "e".repeat(64),
+      }),
     ]);
     expect(preparations.filter((result) => result.status === "fulfilled")).toHaveLength(1);
     const accepted = preparations.find((result) => result.status === "fulfilled");
