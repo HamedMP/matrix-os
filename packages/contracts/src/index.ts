@@ -59,6 +59,7 @@ export * from "#collaboration-capabilities";
 export * from "#collaboration-direct";
 export * from "#collaboration-execution";
 export * from "#collaboration-peer";
+export * from "#collaboration-resources";
 export * from "#organization-billing";
 export * from "#custom-mcp-policy";
 export * from "#hermes-configuration";
