@@ -32,6 +32,8 @@ const MUTATION_ACTIONS: readonly BridgeQueryBody["action"][] = ["insert", "bulkI
 export interface ProjectAppBridge {
   execute(input: {
     namespace: string;
+    appId: string;
+    storageSchema: string;
     scopeId: string;
     actorId: string;
     action: BridgeQueryBody;
@@ -151,10 +153,13 @@ export function createProjectAppAdapter(options: {
       || scope.authority_runtime_id !== context.authorityRuntimeId
       || Number(scope.authority_generation) !== context.authorityGeneration
       || Number(scope.auth_epoch) !== context.authEpoch
-      || !member || member.status !== "accepted" || expired) {
+      || (member !== undefined && (member.status !== "accepted" || expired))) {
       throw new ProjectAppAdapterError("not_found");
     }
-    if (requireWrite && !["owner", "editor"].includes(member.role)) {
+    // S04 grants do not create legacy member rows. The scope lock and epoch
+    // fence serialize grant mutation against this transaction; the fresh
+    // authorization above resolved the grant to `context.role`.
+    if (requireWrite && (context.role === "viewer" || (member && !["owner", "editor"].includes(member.role)))) {
       throw new ProjectAppAdapterError("forbidden");
     }
   }
@@ -202,6 +207,8 @@ export function createProjectAppAdapter(options: {
         await requireBinding(trx, current, appId.data, "share");
         return jsonValue(await options.bridge.execute({
           namespace: app.namespace,
+          appId: appId.data,
+          storageSchema: app.bridgeAppId,
           scopeId: current.scopeId,
           actorId: current.actorId,
           action: { ...action, app: app.namespace } as BridgeQueryBody,
@@ -253,6 +260,8 @@ export function createProjectAppAdapter(options: {
         }
         const result = jsonValue(await options.bridge.execute({
           namespace: app.namespace,
+          appId: envelope.data.appId,
+          storageSchema: app.bridgeAppId,
           scopeId: current.scopeId,
           actorId: current.actorId,
           action: { ...action, app: app.namespace } as BridgeQueryBody,
