@@ -1,5 +1,8 @@
 /** Build the owner-backed collaboration runtime after Chat and canvas bootstrap. */
-import type { Kysely } from "kysely";
+import { join } from "node:path";
+import type { Hono } from "hono";
+import type { createNodeWebSocket } from "@hono/node-ws";
+import { sql, type Kysely } from "kysely";
 import type { TerminalRuntimeSocketClient } from "@matrix-os/terminal-runtime";
 import type { AppRegistry } from "../app-db-registry.js";
 import type { CanonicalProviderSnapshotReader } from "../ai-providers/provider-settings-coordinators.js";
@@ -8,12 +11,48 @@ import type { ChatExecutionRootResolver } from "../chat/execution-root.js";
 import type { ChatRepository } from "../chat/repository.js";
 import { enableOwnerCollaborationSurfaces } from "../collaboration/owner-runtime-surfaces.js";
 import { createProjectGitDriver } from "../collaboration/project-git-operations.js";
+import { createOwnerResourceDriver } from "../collaboration/owner-resource-driver.js";
+import { createScopedAppBridge } from "../collaboration/scoped-app-bridge.js";
+import { registerFailClosedCollaborationRoutes } from "../collaboration/fail-closed.js";
 import {
   constructGatewayCollaborationOrFailClosed,
   createGatewayCollaboration,
   type GatewayCollaborationConfig,
+  type GatewayCollaborationConfigurationFailure,
+  type GatewayCollaborationRuntime,
 } from "../collaboration/wiring.js";
 import type { createProjectManager } from "../project-manager.js";
+
+export interface OwnerCollaborationRouteOptions {
+  app: Hono;
+  upgradeWebSocket: ReturnType<typeof createNodeWebSocket>["upgradeWebSocket"];
+  gatewayCollaboration: GatewayCollaborationRuntime | null;
+  collaborationFailClosedReason: GatewayCollaborationConfigurationFailure | null;
+}
+
+/** Preserve registration order and make the owner-database fallback explicit. */
+export function registerOwnerCollaborationRoutes(options: OwnerCollaborationRouteOptions): void {
+  const { app, upgradeWebSocket, gatewayCollaboration, collaborationFailClosedReason } = options;
+  if (gatewayCollaboration) {
+    gatewayCollaboration.register({ app, upgradeWebSocket });
+  } else {
+    registerFailClosedCollaborationRoutes({
+      app,
+      upgradeWebSocket,
+      reason: collaborationFailClosedReason ?? "owner_database_missing",
+    });
+  }
+}
+
+export async function enableOwnerSharedAi(options: {
+  gatewayCollaboration: GatewayCollaborationRuntime | null;
+  input: Parameters<GatewayCollaborationRuntime["enableSharedAi"]>[0];
+  log?: (message: string) => void;
+}): Promise<void> {
+  if (!options.gatewayCollaboration) return;
+  const sharedAi = await options.gatewayCollaboration.enableSharedAi(options.input);
+  (options.log ?? console.log)(`[collaboration] shared AI ${sharedAi.available ? "ready" : "disabled"}`);
+}
 
 export interface OwnerCollaborationStartupOptions {
   homePath: string;
