@@ -4,7 +4,7 @@ import {
   KERNEL_MODELS,
   LEGACY_KERNEL_MODEL_IDS,
   resolveKernelModelOption,
-} from "../kernel-settings.js";
+} from "../domains/integrations/kernel-settings.js";
 
 export const AI_PROVIDER_CATALOG_VERSION = "bundled_2026_09_10";
 export const MATRIX_DEFAULT_MODEL_ID = "@cf/zai-org/glm-5.3-flash";

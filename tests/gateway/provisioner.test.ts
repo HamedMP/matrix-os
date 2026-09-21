@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import {
   createDispatcher,
   type SpawnFn,
-} from "../../packages/gateway/src/dispatcher.js";
+} from "../../packages/gateway/src/domains/sessions/dispatcher.js";
 import { createProvisioner } from "../../packages/gateway/src/provisioner.js";
 import type { ServerMessage } from "../../packages/gateway/src/server.js";
 import type { KernelEvent } from "@matrix-os/kernel";

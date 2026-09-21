@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { bootstrapChatDatabase } from "../../packages/gateway/src/chat/database.js";
 import { CollaborationChatCommands } from "../../packages/gateway/src/chat/collaboration-commands.js";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
-import { authMiddleware } from "../../packages/gateway/src/auth.js";
+import { authMiddleware } from "../../packages/gateway/src/domains/identity/auth.js";
 import { CollaborationActorProofVerifier } from "../../packages/gateway/src/collaboration/actor-proof.js";
 import { CollaborationAuthority } from "../../packages/gateway/src/collaboration/authority.js";
 import { CollaborationChatAdapter } from "../../packages/gateway/src/collaboration/chat-adapter.js";

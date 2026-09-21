@@ -8,7 +8,7 @@ import {
   type SessionHandle,
   type PtyServerMessage,
   type SessionRegistryOptions,
-} from "../../packages/gateway/src/session-registry.js";
+} from "../../packages/gateway/src/domains/sessions/session-registry.js";
 
 function createMockPty() {
   return {

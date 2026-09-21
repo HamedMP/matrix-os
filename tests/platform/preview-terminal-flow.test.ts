@@ -9,8 +9,8 @@ import { insertUserMachine, updateUserMachine, getActiveUserMachineByHandle, typ
 import { registerPlatformWebSocketUpgradeHandler } from "../../packages/platform/src/platform-websocket-upgrade.js";
 import { buildPlatformVerificationToken } from "../../packages/platform/src/platform-token.js";
 import { verifySyncJwt } from "../../packages/platform/src/sync-jwt.js";
-import { authMiddleware, readPreviewTerminalOwner } from "../../packages/gateway/src/auth.js";
-import { requireRequestPrincipal } from "../../packages/gateway/src/request-principal.js";
+import { authMiddleware, readPreviewTerminalOwner } from "../../packages/gateway/src/domains/identity/auth.js";
+import { requireRequestPrincipal } from "../../packages/gateway/src/domains/identity/request-principal.js";
 import {
   createTerminalWorkspaceRoutes,
   terminalResourceOwnerId,

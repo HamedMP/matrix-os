@@ -8,7 +8,7 @@ import {
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
-import { isRequestPrincipalError, mapRequestPrincipalError, type RequestPrincipal } from "../request-principal.js";
+import { isRequestPrincipalError, mapRequestPrincipalError, type RequestPrincipal } from "../domains/identity/request-principal.js";
 import { ChatAgentStoreError, type ChatAgentStore } from "./agent-store.js";
 import { ChatAgentContextError, type ChatAgentContext } from "./agent-context.js";
 import type { ChatAgentRecipeResolver } from "./agent-recipe.js";

@@ -1,6 +1,6 @@
 import type { AgentThreadEvent } from "@matrix-os/contracts";
-import type { AiTokenUsage } from "../ai-analytics.js";
-import { boundedOperation } from "../bounded-operation.js";
+import type { AiTokenUsage } from "../domains/observability/ai-analytics.js";
+import { boundedOperation } from "../_shared/bounded-operation.js";
 
 export const MAX_BUFFERED_EVENTS = 10_000;
 export const MAX_BUFFERED_EVENT_BYTES = 2 * 1024 * 1024;

@@ -4,11 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   createConversationContextResolver,
-} from "../../packages/gateway/src/conversation-context.js";
+} from "../../packages/gateway/src/domains/sessions/conversation-context.js";
 import {
   createProjectManager,
   type ProjectConfig,
-} from "../../packages/gateway/src/project-manager.js";
+} from "../../packages/gateway/src/domains/workspace/project-manager.js";
 
 describe("conversation project context", () => {
   let homePath: string;
