@@ -47,6 +47,23 @@ describe("organization ready-to-work presentation", () => {
   });
 
 
+  it("does not imply an AI source or submit permission when the owner host is offline", () => {
+    render(<ReadinessSummary readiness={{ ...projectReady, state: "host_offline", sourceKind: undefined,
+      effectiveSubmitMode: undefined, items: projectReady.items.map((item) => ({ ...item, status: "unavailable" })) }} />);
+    expect(screen.getByText(/owner computer is offline/i)).toBeVisible();
+    expect(screen.queryByText(/Owner approves AI requests/)).toBeNull();
+    expect(screen.queryByText(/Owner account/)).toBeNull();
+  });
+
+  it("shows canonical owner readiness inside the existing manager", async () => {
+    const api = { baseUrl: "http://localhost", get: vi.fn(async (path: string) => path.startsWith("/api/organizations/")
+      ? { members: [] } : path.endsWith("/grants") ? [] : scope),
+      post: vi.fn(async () => projectReady), delete: vi.fn() };
+    render(<ChatCollaboratorsDialog api={api} scope={scope} members={[]} onRefresh={async () => ({ scope, members: [] })} onClose={vi.fn()} />);
+    expect(await screen.findByText(/Owner account/)).toBeVisible();
+    expect(api.post).toHaveBeenCalledWith(`/api/collaboration/scopes/${scope.id}/policy/preflight`, {});
+  });
+
   it("does not show Git details for an unrooted standalone Chat", () => {
     render(<ReadinessSummary readiness={{ ...projectReady, resourceKind: "chat", items: projectReady.items.map((item) => item.item === "chat_root_inventory"
       ? { ...item, chatRootCount: 0, dirtyRootCount: 0 } : item) }} />);
@@ -92,6 +109,37 @@ describe("organization ready-to-work presentation", () => {
     await waitFor(() => expect(api.post).toHaveBeenLastCalledWith(`/api/collaboration/scopes/${scope.id}/grants`, expect.objectContaining({
       audience: { kind: "organization" }, preset: "contributor",
     })));
+  });
+
+  it("changes and revokes grants with scope and grant revisions", async () => {
+    const grant = { id: "20000000-0000-4000-8000-000000000401", scopeId: scope.id,
+      organizationId: scope.organizationId!, audience: { kind: "member" as const, actorId: "user_ada" },
+      preset: "viewer" as const, state: "active" as const, policyVersion: "v1", revision: "2",
+      createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" };
+    let currentScope = scope;
+    let currentGrants = [grant];
+    const api = { baseUrl: "http://localhost",
+      get: vi.fn(async (path: string) => path.startsWith("/api/organizations/")
+        ? { members: [{ actorId: "user_ada", role: "member", joinedAt: "2026-01-01T00:00:00.000Z" }] }
+        : path.endsWith("/grants") ? currentGrants : currentScope),
+      post: vi.fn(),
+      patch: vi.fn(async () => {
+        currentScope = { ...scope, revision: "5" };
+        currentGrants = [{ ...grant, preset: "contributor", revision: "3" }];
+        return currentGrants[0];
+      }),
+      delete: vi.fn(async () => {
+        currentScope = { ...scope, revision: "6" };
+        currentGrants = [];
+      }),
+    };
+    render(<AudienceGrantPicker api={api} scope={scope} />);
+    fireEvent.change(await screen.findByLabelText("Preset for user_ada"), { target: { value: "contributor" } });
+    await waitFor(() => expect(api.patch).toHaveBeenCalledWith(`/api/collaboration/scopes/${scope.id}/grants/${grant.id}`,
+      expect.objectContaining({ expectedRevision: "4", expectedGrantRevision: "2", preset: "contributor" })));
+    fireEvent.click(await screen.findByRole("button", { name: "Revoke" }));
+    await waitFor(() => expect(api.delete).toHaveBeenCalledWith(`/api/collaboration/scopes/${scope.id}/grants/${grant.id}`,
+      expect.objectContaining({ expectedRevision: "5", expectedMemberRevision: "3" })));
   });
 
   it("resolves an exact file identity before creating a standalone scope", async () => {
