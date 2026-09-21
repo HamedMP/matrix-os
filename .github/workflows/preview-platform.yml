@@ -432,19 +432,26 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.connect_share_preview
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    outputs:
+      head_sha: ${{ steps.runtime.outputs.head_sha }}
     env:
       PR_NUMBER: ${{ inputs.pr }}
       GH_TOKEN: ${{ github.token }}
-      EXPECTED_HEAD_SHA: ${{ github.sha }}
     steps:
       - name: Select exact-head preview runtime artifact
         id: runtime
         run: |
           set -euo pipefail
           [[ "$PR_NUMBER" =~ ^[1-9][0-9]{0,8}$ ]]
+          pull_request="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
+          expected_head_sha="$(jq -er --arg repository "$GITHUB_REPOSITORY" '
+            select(.state == "open" and .head.repo.full_name == $repository)
+            | .head.sha
+            | select(type == "string" and test("^[a-f0-9]{40}$"))
+          ' <<< "$pull_request")"
           expected_artifact="preview-runtime-access-$PR_NUMBER"
           run_id=""
-          mapfile -t candidate_runs < <(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/preview-vps.yml/runs?head_sha=${EXPECTED_HEAD_SHA}&event=pull_request&status=success&per_page=20" \
+          mapfile -t candidate_runs < <(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/preview-vps.yml/runs?head_sha=${expected_head_sha}&event=pull_request&status=success&per_page=20" \
             --jq '.workflow_runs | sort_by(.created_at) | reverse | .[].id')
           for candidate in "${candidate_runs[@]}"; do
             artifact_id="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${candidate}/artifacts" | \
@@ -458,6 +465,7 @@ jobs:
             echo "A successful exact-head Preview VPS run is required before connecting speech." >&2
             exit 1
           fi
+          echo "head_sha=$expected_head_sha" >> "$GITHUB_OUTPUT"
           echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
       - uses: actions/download-artifact@v8
         with:
@@ -500,8 +508,7 @@ jobs:
       PR_NUMBER: ${{ inputs.pr }}
       PREVIEW_CLERK_USER_ID: ${{ secrets.PREVIEW_CLERK_USER_ID }}
       CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
-      PLATFORM_PUBLIC_URL: https://app.matrix-os.com
-      EXPECTED_HEAD_SHA: ${{ github.sha }}
+      EXPECTED_HEAD_SHA: ${{ needs.select-share-preview.outputs.head_sha }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v6
@@ -531,7 +538,73 @@ jobs:
           gcloud help secrets versions access >/dev/null
           preview_db="$(gcloud secrets versions access latest --secret platform-database-url-staging --project "$GCP_PROJECT_ID" --quiet)"
           echo "::add-mask::$preview_db"
-          PREVIEW_DATABASE_URL="$preview_db" node scripts/chat-share-preview-fixture.mjs
+          PREVIEW_DATABASE_URL="$preview_db" PREVIEW_CLERK_USER_ID="$PREVIEW_CLERK_USER_ID" \
+            node --input-type=module <<'NODE'
+          import { readFile } from "node:fs/promises";
+          import { Client } from "pg";
+          import { selectSharePreviewMachine } from "./scripts/chat-share-preview-fixture.mjs";
+
+          const actorId = process.env.PREVIEW_CLERK_USER_ID ?? "";
+          const prNumber = process.env.PR_NUMBER ?? "";
+          if (!/^user_[A-Za-z0-9]+$/.test(actorId)) {
+            console.error("Preview fixture authorization is invalid.");
+            process.exit(1);
+          }
+          const client = new Client({
+            connectionString: process.env.PREVIEW_DATABASE_URL,
+            connectionTimeoutMillis: 10_000,
+            statement_timeout: 10_000,
+          });
+          try {
+            const fixture = JSON.parse(await readFile("preview-share-route.json", "utf8"));
+            const { handle, address } = selectSharePreviewMachine({ machines: [{
+              handle: fixture.handle,
+              runtimeSlot: fixture.handle,
+              publicIPv4: fixture.address,
+              provisioningClass: "preview",
+              status: "running",
+            }] }, prNumber);
+            await client.connect();
+            const result = await client.query(`INSERT INTO user_machines
+              (machine_id, clerk_user_id, handle, runtime_slot, provisioning_class, public_ipv4,
+               status, provisioned_at, developer_tools, access_clerk_user_ids)
+              VALUES ($1, 'chat-share-preview-fixture', $2, $2, 'preview', $3,
+                      'running', $4, '[]', ARRAY[$5]::TEXT[])
+              ON CONFLICT (machine_id) DO UPDATE SET
+                public_ipv4 = EXCLUDED.public_ipv4,
+                status = 'running',
+                deleted_at = NULL,
+                provisioned_at = EXCLUDED.provisioned_at,
+                access_clerk_user_ids = CASE
+                  WHEN $5 = ANY(user_machines.access_clerk_user_ids)
+                    THEN user_machines.access_clerk_user_ids
+                  ELSE array_append(user_machines.access_clerk_user_ids, $5)
+                END
+              WHERE user_machines.clerk_user_id = 'chat-share-preview-fixture'
+                AND user_machines.handle = EXCLUDED.handle
+                AND user_machines.runtime_slot = EXCLUDED.runtime_slot
+                AND user_machines.provisioning_class = 'preview'
+                AND $5 <> user_machines.clerk_user_id
+                AND ($5 = ANY(user_machines.access_clerk_user_ids)
+                  OR cardinality(user_machines.access_clerk_user_ids) < 8)
+              RETURNING $5 = ANY(access_clerk_user_ids) AS authorized`, [
+              `chat-share-preview-${handle}`, handle, address, new Date().toISOString(), actorId,
+            ]);
+            if (result.rowCount !== 1 || result.rows[0]?.authorized !== true) {
+              throw new Error("authorization rejected");
+            }
+          } catch {
+            console.error("Preview fixture authorization failed.");
+            process.exitCode = 1;
+          } finally {
+            try {
+              await client.end();
+            } catch {
+              console.error("Preview fixture cleanup failed.");
+              process.exitCode = 1;
+            }
+          }
+          NODE
       - name: Enable the existing tagged host without moving traffic
         run: |
           set -euo pipefail
@@ -592,7 +665,7 @@ jobs:
             <<< "$session_token_payload")"
           echo "::add-mask::$preview_session_token"
           unset sessions session_token_payload
-          terminal_url="${PLATFORM_PUBLIC_URL}/vm/${handle}/api/terminal/run"
+          terminal_url="${url}/vm/${handle}/api/terminal/run"
           preview_platform_secret="$(gcloud secrets versions access latest \
             --secret platform-preview-secret --project "$GCP_PROJECT_ID" --quiet)"
           echo "::add-mask::$preview_platform_secret"

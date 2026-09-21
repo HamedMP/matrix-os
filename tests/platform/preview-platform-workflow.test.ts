@@ -70,6 +70,12 @@ describe("preview platform workflow", () => {
     expect(connectJobHeader).not.toContain("PREVIEW_RUNTIME_HANDOFF_PRIVATE_KEY_B64");
     expect(connectJob.indexOf("Register only the PR preview route in staging"))
       .toBeLessThan(connectJob.indexOf("Enable the existing tagged host without moving traffic"));
+    expect(connectJob).toContain("access_clerk_user_ids");
+    expect(connectJob).toContain("INSERT INTO user_machines");
+    expect(connectJob).not.toContain("node scripts/chat-share-preview-fixture.mjs");
+    expect(connectJob).toContain('PREVIEW_CLERK_USER_ID="$PREVIEW_CLERK_USER_ID"');
+    expect(connectJob.indexOf("access_clerk_user_ids"))
+      .toBeLessThan(connectJob.indexOf("Enable the existing tagged host without moving traffic"));
     expect(workflow).toContain("trap cleanup_preview_connection EXIT");
     expect(workflow).toContain("metadata.st_gid");
     expect(workflow).not.toContain("os.fchown(fd, 0, 0)");
@@ -77,8 +83,7 @@ describe("preview platform workflow", () => {
     expect(workflow).not.toContain("PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}");
     expect(workflow).toContain("systemctl\",\"is-active\",\"--quiet\",\"matrix-gateway.service");
     expect(workflow).toContain("--retry 5 --retry-all-errors --retry-delay 2 --retry-max-time 30");
-    expect(connectJob).toContain('PLATFORM_PUBLIC_URL: https://app.matrix-os.com');
-    expect(connectJob).toContain('terminal_url="${PLATFORM_PUBLIC_URL}/vm/${handle}/api/terminal/run"');
+    expect(connectJob).toContain('terminal_url="${url}/vm/${handle}/api/terminal/run"');
     expect(connectJob).toContain('-H "authorization: Bearer ${preview_session_token}"');
     expect(connectJob).toContain('CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}');
     expect(connectJob).toContain('echo "::add-mask::$preview_session_token"');
@@ -97,6 +102,29 @@ describe("preview platform workflow", () => {
     expect(workflow).toContain('--arg token "$speech_token"');
     expect(workflow).toContain("MATRIX_PLATFORM_SPEECH_RUNTIME_TOKEN:$token");
     expect(workflow).not.toContain("MATRIX_FUNDED_AI_RUNTIME_TOKEN:$token");
+  });
+
+  it("resolves the requested pull request head before selecting exact-head artifacts", () => {
+    const workflow = YAML.parse(readFileSync(
+      join(root, ".github/workflows/preview-platform.yml"),
+      "utf8",
+    ));
+    const selectJob = workflow.jobs["select-share-preview"];
+    const selectStep = selectJob.steps.find(
+      (step: { name?: string }) => step.name === "Select exact-head preview runtime artifact",
+    ).run as string;
+    const pullLookup = selectStep.indexOf('gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}"');
+    const artifactLookup = selectStep.indexOf("actions/workflows/preview-vps.yml/runs?head_sha=${expected_head_sha}");
+
+    expect(selectJob.outputs.head_sha).toBe("${{ steps.runtime.outputs.head_sha }}");
+    expect(pullLookup).toBeGreaterThan(-1);
+    expect(artifactLookup).toBeGreaterThan(pullLookup);
+    expect(selectStep).toContain('expected_head_sha="$(jq -er');
+    expect(selectStep).toContain('.head.repo.full_name == $repository');
+    expect(selectStep).toContain('echo "head_sha=$expected_head_sha" >> "$GITHUB_OUTPUT"');
+    expect(selectStep).not.toContain("EXPECTED_HEAD_SHA");
+    expect(workflow.jobs["connect-share-preview"].env.EXPECTED_HEAD_SHA)
+      .toBe("${{ needs.select-share-preview.outputs.head_sha }}");
   });
 
   it("publishes only handle-scoped preview runtime access for the connector workflow", () => {
