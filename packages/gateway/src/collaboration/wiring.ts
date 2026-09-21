@@ -455,6 +455,9 @@ export async function createGatewayCollaboration(options: {
       // evidence and end grants, so it must stop before the registries detach and the
       // verifier shuts down. Its drain is synchronous, like this fence.
       controlClient?.fence();
+      // Direct sessions drain next, in the same order shutdown() uses: ending them notifies
+      // the event and terminal registries through the end hooks, which the lines below detach.
+      directSessions.fence();
       const drainingSharedAi = sharedAiRuntime;
       sharedAiRuntime = undefined;
       chatExecutionAdapter = undefined;
