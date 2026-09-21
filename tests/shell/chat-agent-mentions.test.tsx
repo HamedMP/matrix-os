@@ -6,6 +6,12 @@ import { ChatApp } from "../../shell/src/components/ChatApp.js";
 import { CanonicalChatRequestIdSchema } from "../../packages/contracts/src/index";
 import { createCanonicalProviderCatalogFixture } from "../contracts/fixtures/canonical-chat";
 import type { ChatAgentClient } from "../../packages/ui/src/chat-agents/client";
+
+vi.mock("@clerk/nextjs", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@clerk/nextjs")>()),
+  useOrganization: () => ({ organization: null }),
+}));
+
 const agent = { kind: "agent" as const, id: "bot_meeting01", label: "Meeting helper" };
 const source = { kind: "chat" as const, id: "chat_notes", label: "Meeting notes" };
 let client: ChatAgentClient;

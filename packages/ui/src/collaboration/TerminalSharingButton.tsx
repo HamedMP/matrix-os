@@ -13,9 +13,11 @@ type Member = z.infer<typeof CollaborationMemberSchema>;
 type Preflight = z.infer<typeof CollaborationScopePreflightResponseSchema>;
 const buttonClass = "rounded-lg border px-3 py-2 text-sm transition-colors hover:enabled:bg-[var(--bg-hover)] disabled:opacity-50";
 
-export function TerminalSharingButton({ api, runtimeId, terminalId }: {
+export function TerminalSharingButton({ api, runtimeId, organizationId, terminalId }: {
   api: CollaborationApi;
   runtimeId: string | null;
+  /** The Clerk organization this share is scoped to; without one there is nothing to share with. */
+  organizationId: string | null;
   terminalId: string;
 }) {
   const [surface, setSurface] = useState<"confirm" | "collaborators" | null>(null);
@@ -42,13 +44,13 @@ export function TerminalSharingButton({ api, runtimeId, terminalId }: {
   };
 
   const begin = async () => {
-    if (!runtimeId) { setError("unavailable"); return; }
+    if (!runtimeId || !organizationId) { setError("unavailable"); return; }
     setPending(true);
     setError(null);
     try {
       const result = CollaborationScopePreflightResponseSchema.parse(await api.post(
         `/api/collaboration/runtimes/${runtimeId}/scopes/preflight`,
-        { kind: "terminal", resourceId: terminalId },
+        { kind: "terminal", resourceId: terminalId, organizationId },
       ));
       if (!result.eligible || !result.confirmationToken) {
         if (alive.current) setError(result.reason === "unsupported" ? "unsupported" : "unavailable");
@@ -72,7 +74,7 @@ export function TerminalSharingButton({ api, runtimeId, terminalId }: {
         `/api/collaboration/runtimes/${runtimeId}/scopes`,
         {
           kind: "terminal",
-          resourceId: terminalId,
+          resourceId: terminalId, organizationId,
           clientRequestId: crypto.randomUUID(),
           expectedRevision: preflight.current.resourceRevision,
           confirmationToken: preflight.current.confirmationToken,
@@ -113,7 +115,7 @@ export function TerminalSharingButton({ api, runtimeId, terminalId }: {
         borderColor: "var(--border-default, var(--matrix-border, #D8D6C7))" }}>
       <h2 className="text-lg font-semibold">Share this whole terminal?</h2>
       <p className="mt-2 text-sm" style={{ color: "var(--text-secondary)" }}>
-        Collaborators will see the complete retained output and future live output from this same running session. Output cannot be selectively excluded.
+        Members of your organization you invite will see the complete retained output and future live output from this same running session. Output cannot be selectively excluded.
       </p>
       <p className="mt-3 text-sm" style={{ color: "var(--text-secondary)" }}>
         This does not share its parent project, files, sibling terminals, credentials, or permission to create another terminal.
@@ -121,7 +123,7 @@ export function TerminalSharingButton({ api, runtimeId, terminalId }: {
       <div className="mt-5 flex justify-end gap-2">
         <button type="button" className={buttonClass} disabled={pending} onClick={close}>Cancel</button>
         <button type="button" className={buttonClass} disabled={pending} onClick={() => void confirm()}>
-          {pending ? "Sharing…" : "Confirm and invite"}
+          {pending ? "Sharing…" : "Confirm and invite members"}
         </button>
       </div>
     </Dialog> : null}

@@ -5,6 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatApp } from "../../shell/src/components/ChatApp.js";
 import { clientFixture, saved } from "../desktop/chat-agents-fixture";
 
+vi.mock("@clerk/nextjs", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@clerk/nextjs")>()),
+  useOrganization: () => ({ organization: null }),
+}));
+
 beforeEach(() => {
   window.localStorage.clear();
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });

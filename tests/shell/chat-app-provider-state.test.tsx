@@ -9,6 +9,11 @@ import { ChatApp } from "../../shell/src/components/ChatApp.js";
 import { OPEN_PROVIDER_SETTINGS_EVENT, PROVIDER_SETTINGS_CHANGED_EVENT } from "../../shell/src/lib/canonical-provider-setup.js";
 import { TERMINAL_AGENT_OPTIONS } from "../../shell/src/components/terminal/terminal-agent-options.js";
 
+vi.mock("@clerk/nextjs", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@clerk/nextjs")>()),
+  useOrganization: () => ({ organization: null }),
+}));
+
 function providerCatalog(available = true, secondModel = false) {
   return CanonicalProviderCatalogSchema.parse({
     revision: "catalog_shell",
