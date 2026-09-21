@@ -494,6 +494,74 @@ describe("S05 direct sessions on the home", () => {
     await client.shutdown();
   });
 
+  it("stops applying queued control frames once a frame fails and refuses frames after termination", async () => {
+    const revoked: Array<{ actorId?: string; generation: number }> = [];
+    const sent: Array<Record<string, unknown>> = [];
+    let closes = 0;
+    let releaseFirst!: () => void;
+    const firstCleanup = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    const capabilities = {
+      endActorGrants: async ({ actorId }: { organizationId: string; actorId: string }) => {
+        if (actorId === collaborationActors.editor) await firstCleanup;
+        return { ended: 0, scopes: 0 };
+      },
+    };
+    const { client } = controlClient({
+      capabilities: capabilities as never,
+      sessions: { revoke: (denial: { actorId?: string; generation: number }) => { revoked.push(denial); } } as never,
+      connect: () => ({ send: (value: string) => { sent.push(JSON.parse(value) as Record<string, unknown>); }, close: () => { closes += 1; } }),
+    });
+    const stream = await client.connectControl((await client.register()).controlTicket);
+    const denial = (actorId: string, generation: number) => JSON.stringify({ protocolVersion: 2, type: "denial", denial: { organizationId, actorId, generation, fencedAt: clock.toISOString(), ackDeadline: new Date(clock.getTime() + 25_000).toISOString(), state: "pending" } });
+    const first = stream.receive(denial(collaborationActors.editor, 2));
+    const invalid = stream.receive("{\"protocolVersion\":1}");
+    const queued = stream.receive(denial(collaborationActors.viewer, 5));
+    releaseFirst();
+    await first;
+    await expect(invalid).rejects.toThrow();
+    // The invalid frame terminated the stream, so the frame queued behind it is never applied.
+    await expect(queued).rejects.toThrow();
+    expect(closes).toBeGreaterThan(0);
+    expect(revoked.map((entry) => entry.actorId)).toEqual([collaborationActors.editor]);
+    expect(sent.map((ack) => ack.authorityGeneration)).toEqual([2]);
+    expect(client.authorityGeneration()).toBe(2);
+    // Frames arriving after termination are refused outright: no revoke, no fence move, no acknowledgement.
+    await expect(stream.receive(denial(collaborationActors.viewer, 6))).rejects.toThrow();
+    expect(revoked).toHaveLength(1);
+    expect(sent).toHaveLength(1);
+    expect(client.authorityGeneration()).toBe(2);
+    await client.shutdown();
+  });
+
+  it("bounds the pending control frame queue and terminates the stream instead of acknowledging a backlog late", async () => {
+    const sent: Array<Record<string, unknown>> = [];
+    let closes = 0;
+    let releaseFirst!: () => void;
+    const firstCleanup = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    const capabilities = { endActorGrants: async () => { await firstCleanup; return { ended: 0, scopes: 0 }; } };
+    const { client } = controlClient({
+      capabilities: capabilities as never,
+      sessions: { revoke: () => undefined } as never,
+      connect: () => ({ send: (value: string) => { sent.push(JSON.parse(value) as Record<string, unknown>); }, close: () => { closes += 1; } }),
+    });
+    const stream = await client.connectControl((await client.register()).controlTicket);
+    const keepalive = JSON.stringify({ protocolVersion: 2, type: "generation", runtimeId: logicalRuntimeId, authorityGeneration: 1 });
+    const blocking = stream.receive(JSON.stringify({ protocolVersion: 2, type: "denial", denial: { organizationId, actorId: collaborationActors.editor, generation: 2, fencedAt: clock.toISOString(), ackDeadline: new Date(clock.getTime() + 25_000).toISOString(), state: "pending" } }));
+    // Let the first frame reach its pending cleanup so the queue behind it is genuinely backed up.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const queued: Array<Promise<void>> = [];
+    for (let index = 0; index < CollaborationControlClient.MAX_PENDING_CONTROL_FRAMES - 1; index += 1) queued.push(stream.receive(keepalive));
+    await expect(stream.receive(keepalive)).rejects.toThrow(/backlog/i);
+    expect(closes).toBeGreaterThan(0);
+    releaseFirst();
+    await blocking;
+    // Only the frame already in flight is acknowledged; the bounded backlog is dropped with the stream.
+    const settled = await Promise.allSettled(queued);
+    expect(settled.every((entry) => entry.status === "rejected")).toBe(true);
+    expect(sent.map((ack) => ack.authorityGeneration)).toEqual([2]);
+    await client.shutdown();
+  });
+
   it("acknowledges platform generation keepalives with its unchanged fence and stays control-fresh past the snapshot lifetime", async () => {
     const { client, sent } = controlClient();
     const registration = await client.register();
