@@ -401,6 +401,60 @@ describe("S04 capability grants and effective access", () => {
   });
 
   describe("atomicity, replay and races", () => {
+    it("advances the scope authorization epoch for grant decisions, but not their idempotent replays", async () => {
+      const epoch = async () => Number((await fixture.db.selectFrom("collaboration_scopes")
+        .select("auth_epoch").where("id", "=", collaborationIds.scope).executeTakeFirstOrThrow()).auth_epoch);
+      const orgGrant = await grants.createGrant({
+        scopeId: collaborationIds.scope, actorId: collaborationActors.owner, ...request(1),
+        audience: { kind: "organization" }, preset: "viewer", policyVersion: "v1",
+      });
+      const initial = await epoch();
+      await evaluator.acceptGrant({ grantId: orgGrant.grantId, actorId: collaborationActors.editor });
+      expect(await epoch()).toBe(initial + 1);
+      await evaluator.acceptGrant({ grantId: orgGrant.grantId, actorId: collaborationActors.editor });
+      expect(await epoch()).toBe(initial + 1);
+      await evaluator.declineGrant({ grantId: orgGrant.grantId, actorId: collaborationActors.viewer });
+      expect(await epoch()).toBe(initial + 2);
+      await evaluator.declineGrant({ grantId: orgGrant.grantId, actorId: collaborationActors.viewer });
+      expect(await epoch()).toBe(initial + 2);
+      await evaluator.acceptGrant({ grantId: orgGrant.grantId, actorId: collaborationActors.viewer });
+      expect(await epoch()).toBe(initial + 3);
+
+      const memberGrant = await grants.createGrant({
+        scopeId: collaborationIds.scope, actorId: collaborationActors.owner, ...request(2),
+        audience: { kind: "member", actorId: collaborationActors.editor }, preset: "viewer", policyVersion: "v1",
+      });
+      const beforeMemberAccept = await epoch();
+      await evaluator.acceptGrant({ grantId: memberGrant.grantId, actorId: collaborationActors.editor });
+      expect(await epoch()).toBe(beforeMemberAccept + 1);
+      await evaluator.acceptGrant({ grantId: memberGrant.grantId, actorId: collaborationActors.editor });
+      expect(await epoch()).toBe(beforeMemberAccept + 1);
+      const declinedMember = await grants.createGrant({
+        scopeId: collaborationIds.scope, actorId: collaborationActors.owner, ...request(3),
+        audience: { kind: "member", actorId: collaborationActors.viewer }, preset: "viewer", policyVersion: "v1",
+      });
+      const beforeMemberDecline = await epoch();
+      await evaluator.declineGrant({ grantId: declinedMember.grantId, actorId: collaborationActors.viewer });
+      expect(await epoch()).toBe(beforeMemberDecline + 1);
+    });
+
+    it("advances the scope authorization epoch once per changed departure scope", async () => {
+      const grant = await grants.createGrant({
+        scopeId: collaborationIds.scope, actorId: collaborationActors.owner, ...request(1),
+        audience: { kind: "organization" }, preset: "viewer", policyVersion: "v1",
+      });
+      await evaluator.acceptGrant({ grantId: grant.grantId, actorId: collaborationActors.editor });
+      const epoch = async () => Number((await fixture.db.selectFrom("collaboration_scopes")
+        .select("auth_epoch").where("id", "=", collaborationIds.scope).executeTakeFirstOrThrow()).auth_epoch);
+      const initial = await epoch();
+      expect(await grants.endActorGrants({ organizationId: ORG, actorId: collaborationActors.editor }))
+        .toEqual({ ended: 1, scopes: 1 });
+      expect(await epoch()).toBe(initial + 1);
+      expect(await grants.endActorGrants({ organizationId: ORG, actorId: collaborationActors.editor }))
+        .toEqual({ ended: 0, scopes: 0 });
+      expect(await epoch()).toBe(initial + 1);
+    });
+
     it("replays an identical create and rejects a payload change under the same key", async () => {
       const input = {
         scopeId: collaborationIds.scope, actorId: collaborationActors.owner, ...request(1),
@@ -466,6 +520,8 @@ describe("S04 capability grants and effective access", () => {
         scopeId: collaborationIds.scope, actorId: collaborationActors.owner, ...request(2),
         audience: { kind: "member", actorId: collaborationActors.viewer }, preset: "contributor", policyVersion: "v1",
       });
+      const beforeEpoch = Number((await fixture.db.selectFrom("collaboration_scopes")
+        .select("auth_epoch").where("id", "=", collaborationIds.scope).executeTakeFirstOrThrow()).auth_epoch);
       for (let round = 0; round < 4; round += 1) {
         const outcomes = await Promise.allSettled([
           evaluator.acceptGrant({ grantId: orgGrant.grantId, actorId: collaborationActors.editor }),
@@ -482,6 +538,9 @@ describe("S04 capability grants and effective access", () => {
       const values = sequences.map((row) => Number(row.scope_seq));
       expect(new Set(values).size).toBe(values.length);
       expect(await grants.listParticipants(collaborationIds.scope)).toEqual(expect.arrayContaining([collaborationActors.editor, collaborationActors.viewer]));
+      const afterEpoch = Number((await fixture.db.selectFrom("collaboration_scopes")
+        .select("auth_epoch").where("id", "=", collaborationIds.scope).executeTakeFirstOrThrow()).auth_epoch);
+      expect(afterEpoch).toBe(beforeEpoch + 2);
     });
 
     it("caps grants per scope and requires the owner", async () => {
