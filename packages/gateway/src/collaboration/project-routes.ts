@@ -14,10 +14,9 @@ import { z } from "zod/v4";
 import { CollaborationAuthorizationError } from "./authority-error.js";
 import {
   authorize,
-  verifyHttp,
+  authorizeOwnerScope,
   requireProjectSharing,
   readJson,
-  requireOwnerLifecycleProof,
   requireScopeOrganizationMembership,
   digest,
   handle,
@@ -35,12 +34,11 @@ export function registerProjectRoutes(routes: Hono, options: CollaborationRouteO
 
   routes.get("/api/collaboration/scopes/:scopeId/project/inventory", async (c) => handle(c, async () => {
     const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
-    const proof = await verifyHttp(options.verifier, c, new Uint8Array());
-    requireOwnerLifecycleProof(proof, scopeId);
-    await requireScopeOrganizationMembership(options, scopeId, proof.actorId);
+    const context = await authorizeOwnerScope(options, c, new Uint8Array(), scopeId);
+    await requireScopeOrganizationMembership(options, scopeId, context.actorId);
     const inventory = await requireProjectSharing(options.projectSharing).preview({
       scopeId,
-      actorId: proof.actorId,
+      actorId: context.actorId,
     });
     const membershipEffects = await Promise.all(inventory.membershipEffects.map(async (effect) => ({
       actor: await options.resolveParticipant(effect.actorId),
@@ -86,13 +84,12 @@ export function registerProjectRoutes(routes: Hono, options: CollaborationRouteO
   routes.post("/api/collaboration/scopes/:scopeId/project/confirm", async (c) => handle(c, async () => {
     const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
     const { value, bytes } = await readJson(c);
-    const proof = await verifyHttp(options.verifier, c, bytes);
-    requireOwnerLifecycleProof(proof, scopeId);
-    await requireScopeOrganizationMembership(options, scopeId, proof.actorId);
+    const context = await authorizeOwnerScope(options, c, bytes, scopeId);
+    await requireScopeOrganizationMembership(options, scopeId, context.actorId);
     const input = CollaborationProjectConfirmRequestSchema.parse(value);
     const transition = await requireProjectSharing(options.projectSharing).confirm({
       scopeId,
-      actorId: proof.actorId,
+      actorId: context.actorId,
       clientRequestId: input.clientRequestId,
       payloadHash: digest(bytes),
       expectedScopeRevision: Number(input.expectedScopeRevision),
