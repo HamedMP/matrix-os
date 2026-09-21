@@ -3,6 +3,7 @@ import {
   type CanonicalProviderDriverKind,
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
+import type { ScopeRuntimeSandboxManifest } from "@matrix-os/scope-runtime";
 import {
   CanonicalProviderRunEventSchema,
   parseCanonicalProviderRunInput,
@@ -21,6 +22,8 @@ export interface ScopeRuntimeChatClient {
     workload: "chat_ai";
     adapterId: string;
     harnessVersion: string;
+    /** S07: present for every run that acts for a collaborator; the client refuses a launch without it. */
+    sandbox?: ScopeRuntimeSandboxManifest;
   }): Promise<{ runtimeHandle: string; executionGeneration: string; state: "running" }>;
   runChat(input: State & { model: string; prompt: string }): Promise<State & { text: string }>;
   stopRuntime(input: { runtimeHandle: string }): Promise<unknown>;
@@ -31,9 +34,12 @@ export function createScopeRuntimeChatProviderAdapter(options: {
   executionGeneration: string;
   adapterId: "claude-code" | "codex";
   harnessVersion: string;
+  /** S07: authoritative sandbox manifest for this scope; without it the adapter fails closed before launch. */
+  sandbox?: ScopeRuntimeSandboxManifest;
 }): CanonicalChatProviderAdapter<State> {
   const scopeHandle = `scope_${options.scopeId.replaceAll("-", "")}`;
   if (!/^scope_[a-f0-9]{32}$/.test(scopeHandle)) throw new Error("Invalid collaboration scope handle");
+  const sandbox = options.sandbox?.scopeHandle === scopeHandle ? options.sandbox : undefined;
   let stoppedRuntimeHandle: string | undefined;
   let stopInFlight: Promise<void> | undefined;
   const stop = async (state: State | undefined): Promise<void> => {
@@ -67,6 +73,10 @@ export function createScopeRuntimeChatProviderAdapter(options: {
         yield failure("Shared AI supports only the visible standalone Chat transcript.");
         return;
       }
+      if (!sandbox) {
+        yield failure("Shared AI is temporarily unavailable.");
+        return;
+      }
       const capability = options.client.capability();
       if (!capability.available || capability.executionGeneration !== options.executionGeneration) {
         yield failure("Shared AI is temporarily unavailable.");
@@ -87,6 +97,7 @@ export function createScopeRuntimeChatProviderAdapter(options: {
           workload: "chat_ai",
           adapterId: options.adapterId,
           harnessVersion: options.harnessVersion,
+          sandbox,
         });
         if (created.executionGeneration !== options.executionGeneration) {
           await stop(StateSchema.parse({
