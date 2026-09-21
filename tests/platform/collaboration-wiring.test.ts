@@ -25,9 +25,8 @@ describe("platform collaboration wiring", () => {
   });
 
   it("fails closed on incomplete environment configuration", () => {
-    expect(loadPlatformCollaborationConfig({ MATRIX_COLLABORATION_ENABLED: "true" })).toBeNull();
+    expect(loadPlatformCollaborationConfig({})).toBeNull();
     expect(loadPlatformCollaborationConfig({
-      MATRIX_COLLABORATION_ENABLED: "true",
       MATRIX_COLLABORATION_ACTIVE_KEY_ID: "key-1",
       MATRIX_COLLABORATION_PROOF_KEYS: JSON.stringify({ "key-1": "a".repeat(32) }),
       MATRIX_COLLABORATION_ALLOWED_ORIGINS: "https://app.matrix-os.com",

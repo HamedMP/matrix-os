@@ -129,7 +129,7 @@ import {
   collectTenantPublicTelemetryEnv,
 } from './platform-startup-env.js';
 import type { PlatformApp } from './platform-app-types.js';
-import type { PlatformCollaborationRuntime } from './collaboration/wiring.js';
+import type { PlatformCollaborationComposition } from './collaboration/wiring.js';
 export { escapeInlineScriptJson } from './auth-pages.js';
 export { buildPostAuthRedirectPath } from './request-routing.js';
 export type { PlatformApp } from './platform-app-types.js';
@@ -255,7 +255,7 @@ export function createApp(deps: {
   internalFundedAiRelayRoutes?: Hono<any>;
   internalFundedAiOperatorRoutes?: Hono<any>;
   fundedAiRepository?: import('./ai-funded-policy-repository.js').AiFundedPolicyRepository;
-  collaboration?: PlatformCollaborationRuntime;
+  collaboration?: PlatformCollaborationComposition;
   customerVpsService?: CustomerVpsService;
   goldenSnapshotService?: GoldenSnapshotService;
   goldenSnapshotConfig?: GoldenSnapshotRuntimeConfig;

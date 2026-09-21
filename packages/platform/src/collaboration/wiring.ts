@@ -6,6 +6,9 @@ import { CollaborationProxy, type CollaborationRuntimeRoute } from "./proxy.js";
 import { PlatformCollaborationRepository } from "./repository.js";
 import { createPlatformCollaborationRoutes } from "./routes.js";
 import { CollaborationWebSocketAuthorizer } from "./websocket.js";
+import type { FailClosedPlatformCollaboration, PlatformCollaborationConfigurationFailure } from "./fail-closed.js";
+
+export type { FailClosedPlatformCollaboration, PlatformCollaborationConfigurationFailure } from "./fail-closed.js";
 
 const MAX_PROOF_KEYS = 8;
 const MAX_ALLOWED_ORIGINS = 16;
@@ -17,16 +20,31 @@ export interface PlatformCollaborationConfig {
   enabledPurposes: readonly ["events"];
 }
 
+export type PlatformCollaborationConfigurationHealth =
+  | { configured: true; config: PlatformCollaborationConfig }
+  | { configured: false; reason: PlatformCollaborationConfigurationFailure };
+
+/** No release flag: incomplete configuration yields `null` and the composition root fails closed. */
 export function loadPlatformCollaborationConfig(env: NodeJS.ProcessEnv): PlatformCollaborationConfig | null {
-  if (env.MATRIX_COLLABORATION_ENABLED !== "true") return null;
+  const health = describePlatformCollaborationConfiguration(env);
+  return health.configured ? health.config : null;
+}
+
+export function describePlatformCollaborationConfiguration(
+  env: NodeJS.ProcessEnv,
+): PlatformCollaborationConfigurationHealth {
   const activeKeyId = env.MATRIX_COLLABORATION_ACTIVE_KEY_ID?.trim();
   const allowedOrigins = [...new Set((env.MATRIX_COLLABORATION_ALLOWED_ORIGINS ?? "")
     .split(",").map((value) => value.trim()).filter(Boolean))];
-  if (!activeKeyId || allowedOrigins.length < 1 || allowedOrigins.length > MAX_ALLOWED_ORIGINS) return null;
+  if (allowedOrigins.length < 1 || allowedOrigins.length > MAX_ALLOWED_ORIGINS) {
+    return { configured: false, reason: "origin_configuration_missing" };
+  }
   let proofKeys: Record<string, string>;
   try {
     const parsed = JSON.parse(env.MATRIX_COLLABORATION_PROOF_KEYS ?? "null") as unknown;
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return { configured: false, reason: "signing_configuration_missing" };
+    }
     proofKeys = Object.fromEntries(Object.entries(parsed).filter(
       (entry): entry is [string, string] => typeof entry[1] === "string",
     ));
@@ -34,18 +52,23 @@ export function loadPlatformCollaborationConfig(env: NodeJS.ProcessEnv): Platfor
     if (!(error instanceof SyntaxError)) {
       console.warn("[platform-collaboration] proof key configuration parse failed", error instanceof Error ? error.name : "UnknownError");
     }
-    return null;
+    return { configured: false, reason: "signing_configuration_missing" };
   }
   const keys = Object.entries(proofKeys);
-  if (keys.length < 1 || keys.length > MAX_PROOF_KEYS
+  if (!activeKeyId || keys.length < 1 || keys.length > MAX_PROOF_KEYS
     || keys.some(([keyId, key]) => !/^[A-Za-z0-9_.-]{1,80}$/.test(keyId) || Buffer.byteLength(key) < 32)
-    || !proofKeys[activeKeyId]) return null;
+    || !proofKeys[activeKeyId]) {
+    return { configured: false, reason: "signing_configuration_missing" };
+  }
   try {
     const origins = allowedOrigins.map((value) => requireOrigin(value));
-    return { activeKeyId, proofKeys, allowedOrigins: origins, enabledPurposes: ["events"] };
+    return {
+      configured: true,
+      config: { activeKeyId, proofKeys, allowedOrigins: origins, enabledPurposes: ["events"] },
+    };
   } catch (error: unknown) {
     console.warn("[platform-collaboration] origin configuration rejected", error instanceof Error ? error.name : "UnknownError");
-    return null;
+    return { configured: false, reason: "origin_configuration_missing" };
   }
 }
 
@@ -163,6 +186,8 @@ async function proxyJson(
 }
 
 export type PlatformCollaborationRuntime = Awaited<ReturnType<typeof createPlatformCollaboration>>;
+/** What the composition root always produces: the real runtime or the fail-closed registrar. */
+export type PlatformCollaborationComposition = PlatformCollaborationRuntime | FailClosedPlatformCollaboration;
 
 function requireOrigin(value: string): string {
   const parsed = new URL(value);
