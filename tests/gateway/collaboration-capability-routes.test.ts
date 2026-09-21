@@ -73,17 +73,23 @@ describe("collaboration capability HTTP routes", () => {
     await fixture.destroy();
   });
 
-  async function signed(input: { actorId: string; method: "GET" | "POST"; path: string; body?: unknown }): Promise<Response> {
+  async function signed(input: { actorId: string; method: "GET" | "POST" | "PATCH" | "DELETE"; path: string; body?: unknown; deleteConditions?: { clientRequestId: string; expectedRevision: string; expectedMemberRevision: string } }): Promise<Response> {
     const bytes = input.body === undefined ? new Uint8Array() : new TextEncoder().encode(JSON.stringify(input.body));
     const proof = signer.signHttp({
       actorId: input.actorId, ownerId, runtimeId: collaborationIds.runtime, scopeId,
       method: input.method, path: input.path, query: "", body: bytes,
+      ...(input.deleteConditions ? { conditionalHeaders: input.deleteConditions } : {}),
     });
     return app.request(input.path, {
       method: input.method,
       headers: {
         "content-type": "application/json",
         "x-matrix-collaboration-proof": Buffer.from(JSON.stringify(proof)).toString("base64url"),
+        ...(input.deleteConditions ? {
+          "x-matrix-client-request-id": input.deleteConditions.clientRequestId,
+          "x-matrix-expected-revision": input.deleteConditions.expectedRevision,
+          "x-matrix-expected-member-revision": input.deleteConditions.expectedMemberRevision,
+        } : {}),
       },
       ...(input.body === undefined ? {} : { body: new TextDecoder().decode(bytes) }),
     });
@@ -103,4 +109,29 @@ describe("collaboration capability HTTP routes", () => {
     expect(await listed.json()).toEqual([created]);
     expect((await signed({ actorId: outsiderId, method: "GET", path })).status).toBe(404);
   });
+
+  it("patches and revokes an owner grant with expected scope and grant revisions", async () => {
+    const path = `/api/collaboration/scopes/${scopeId}/grants`;
+    const createdResponse = await signed({ actorId: ownerId, method: "POST", path, body: {
+      clientRequestId: randomUUID(), expectedRevision: "1",
+      audience: { kind: "member", actorId: memberId }, preset: "viewer",
+    } });
+    expect(createdResponse.status).toBe(201);
+    const created = CollaborationGrantSchema.parse(await createdResponse.json());
+    const grantPath = `${path}/${created.id}`;
+    const patchedResponse = await signed({ actorId: ownerId, method: "PATCH", path: grantPath, body: {
+      clientRequestId: randomUUID(), expectedRevision: "2", expectedGrantRevision: "1", preset: "contributor",
+    } });
+    expect(patchedResponse.status).toBe(200);
+    const patched = CollaborationGrantSchema.parse(await patchedResponse.json());
+    expect(patched).toMatchObject({ id: created.id, preset: "contributor", revision: "2" });
+    const revokedResponse = await signed({ actorId: ownerId, method: "DELETE", path: grantPath,
+      deleteConditions: { clientRequestId: randomUUID(), expectedRevision: "3", expectedMemberRevision: "2" },
+    });
+    expect(revokedResponse.status).toBe(200);
+    const revoked = CollaborationGrantSchema.parse(await revokedResponse.json());
+    expect(revoked).toMatchObject({ id: created.id, state: "revoked", revision: "3" });
+    expect((await signed({ actorId: ownerId, method: "GET", path })).status).toBe(200);
+  });
+
 });
