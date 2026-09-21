@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { createAppDb, type AppDb } from "../../packages/gateway/src/app-db.js";
 import { createAppRegistry, type AppRegistry } from "../../packages/gateway/src/app-db-registry.js";
+import { appRegistryIncarnation } from "../../packages/gateway/src/collaboration/app-incarnation.js";
 import { KyselyPGlite } from "kysely-pglite";
 
 describe("AppRegistry", () => {
@@ -39,8 +40,21 @@ describe("AppRegistry", () => {
     const app = await registry.get("todo");
     expect(app).toBeDefined();
     expect(app!.name).toBe("Todo");
+    expect(typeof app!.created_at).toBe("string");
     expect(app!.tables).toHaveProperty("tasks");
     expect(app!.tables.tasks.uniqueIndexes).toEqual(["title"]);
+  });
+
+  it("gives a new registration identity after unregister and same-slug reinstall", async () => {
+    await registry.register({ slug: "todo", name: "Todo", tables: {} });
+    const original = await registry.get("todo");
+    expect(original).not.toBeNull();
+    const first = appRegistryIncarnation(original!);
+    await registry.register({ slug: "todo", name: "Todo v2", tables: {} });
+    expect(appRegistryIncarnation((await registry.get("todo"))!)).toBe(first);
+    await registry.unregister("todo");
+    await registry.register({ slug: "todo", name: "Reinstalled", tables: {} });
+    expect(appRegistryIncarnation((await registry.get("todo"))!)).not.toBe(first);
   });
 
   it("provisions unique indexes declared in app schemas", async () => {

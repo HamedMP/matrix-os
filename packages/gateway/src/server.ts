@@ -208,6 +208,7 @@ import { createGatewayProjectInventorySource } from "./collaboration/project-inv
 import { createProjectChatRootInventory } from "./collaboration/project-chat-root-inventory.js";
 import { createProjectGitDriver } from "./collaboration/project-git-operations.js";
 import { createOwnerResourceDriver } from "./collaboration/owner-resource-driver.js";
+import { appRegistryIncarnation } from "./collaboration/app-incarnation.js";
 import { createAppInstanceAdapter } from "./collaboration/app-instance-adapter.js";
 import { createScopedAppBridge } from "./collaboration/scoped-app-bridge.js";
 import { resolveAppBySlug } from "./app-runtime/app-index.js";
@@ -1042,6 +1043,7 @@ export async function createGateway(config: GatewayConfig) {
                         return record ? {
                           projectId, appId, bridgeAppId: normalizeAppStorageSlug(record.slug),
                           collaborationMode: "scoped" as const,
+                          incarnation: appRegistryIncarnation(record),
                         } : null;
                       },
                     },
@@ -1101,7 +1103,7 @@ export async function createGateway(config: GatewayConfig) {
               apps: {
                 get: async (appId) => {
                   const app = await appRegistry!.get(appId);
-                  return app ? { id: app.slug, collaborationMode: "scoped" as const } : null;
+                  return app ? { id: app.slug, collaborationMode: "scoped" as const, incarnation: appRegistryIncarnation(app) } : null;
                 },
               },
               sessions: {

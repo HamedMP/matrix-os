@@ -36,6 +36,7 @@ const CanvasRecordSchema = z.object({
 const AppRecordSchema = z.object({
   id: ResourceIdSchema,
   collaborationMode: z.enum(["scoped", "unavailable"]),
+  incarnation: z.string().regex(/^[a-f0-9]{64}$/),
 }).strict();
 const SessionRecordSchema = z.object({
   name: ResourceIdSchema,
@@ -221,6 +222,9 @@ export function createGatewayProjectInventorySource(
             compatibility: app.success && app.data.id === id && app.data.collaborationMode === "scoped"
               ? "ready"
               : "blocked",
+            ...(app.success && app.data.id === id && app.data.collaborationMode === "scoped"
+              ? { incarnation: app.data.incarnation }
+              : {}),
             ...(!(app.success && app.data.id === id && app.data.collaborationMode === "scoped")
               ? { blocker: "role_enforcement_unavailable" }
               : {}),
