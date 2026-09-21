@@ -45,8 +45,8 @@ export function createScopeRuntimeChatProviderAdapter(options: {
   sandbox?: ScopeRuntimeSandboxManifest;
   /** S07: registry that stops the runtime when the actor's lease is lost. */
   runtimes?: SharedRuntimeBindingRegistry;
-  /** S09: called once with the loss reason when the home loses the run before its terminal result. */
-  onLoss?(reason: CollaborationRunInterruptionReason): void;
+  /** S09: called once with the loss reason when the home loses the run before its terminal result; awaited before the failed event. */
+  onLoss?(reason: CollaborationRunInterruptionReason): void | Promise<void>;
 }): CanonicalChatProviderAdapter<State> {
   const scopeHandle = `scope_${options.scopeId.replaceAll("-", "")}`;
   if (!/^scope_[a-f0-9]{32}$/.test(scopeHandle)) throw new Error("Invalid collaboration scope handle");
@@ -163,7 +163,7 @@ export function createScopeRuntimeChatProviderAdapter(options: {
         const reason = classifySharedRunLoss(error, stage);
         if (reason && options.onLoss) {
           try {
-            options.onLoss(reason);
+            await options.onLoss(reason);
           } catch (lossError: unknown) {
             console.warn("[collaboration] shared run loss report failed",
               lossError instanceof Error ? lossError.name : "UnknownError");

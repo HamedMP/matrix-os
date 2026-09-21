@@ -307,6 +307,7 @@ describe("gateway collaboration wiring", () => {
       resolveParticipant: async (actorId) => ({ actorId, displayName: actorId }),
       outboxFetch: async () => new Response(null, { status: 204 }),
       startTimers: false,
+      providerSnapshotReader: { async getSnapshot() { throw new Error("snapshot never read at construction"); } },
     });
     try {
       await expect(runtime.enableSharedAi({
@@ -398,6 +399,7 @@ describe("gateway collaboration wiring", () => {
       resolveParticipant: async (actorId) => ({ actorId, displayName: actorId }),
       outboxFetch: async () => new Response(null, { status: 204 }),
       startTimers: false,
+      providerSnapshotReader: { async getSnapshot() { throw new Error("snapshot never read at construction"); } },
     });
     try {
       await expect(runtime.enableSharedAi({
@@ -447,6 +449,7 @@ describe("gateway collaboration wiring", () => {
       resolveParticipant: async (actorId) => ({ actorId, displayName: actorId }),
       outboxFetch: async () => new Response(null, { status: 204 }),
       startTimers: false,
+      providerSnapshotReader: { async getSnapshot() { throw new Error("snapshot never read at construction"); } },
     });
     try {
       await expect(runtime.enableSharedAi({
@@ -554,6 +557,7 @@ describe("gateway collaboration wiring", () => {
       const orchestrator = { cancelSharedRun: vi.fn(), reconcileActiveRuns: vi.fn(async () => 0) } as unknown as CanonicalChatOrchestrator;
       await expect(runtime.enableSharedAi({
         orchestrator, homePath: temp, supervisorSocket: join(temp, "supervisor.sock"), brokerSocket: join(temp, "broker.sock"),
+        sandboxManifests,
       })).resolves.toEqual({ available: true });
       const loss = new CollaborationRunLossRepository(fixture.db);
       expect(await loss.getInterruption(claimed!.run.id))
@@ -588,6 +592,7 @@ describe("gateway collaboration wiring", () => {
       resolveParticipant: async (actorId) => ({ actorId, displayName: actorId }),
       outboxFetch: async () => new Response(null, { status: 204 }),
       startTimers: false,
+      providerSnapshotReader: { async getSnapshot() { throw new Error("snapshot never read at construction"); } },
     });
     try {
       await expect(runtime.enableSharedAi({
@@ -659,6 +664,7 @@ describe("gateway collaboration wiring", () => {
       const orchestrator = { cancelSharedRun, reconcileActiveRuns: vi.fn(async () => 0) } as unknown as CanonicalChatOrchestrator;
       await expect(runtime.enableSharedAi({
         orchestrator, homePath: temp, supervisorSocket: join(temp, "supervisor.sock"), brokerSocket: join(temp, "broker.sock"),
+        sandboxManifests,
       })).resolves.toEqual({ available: true });
       // The run starts after this process came up, so it is not a restart loss.
       chatRepository.setSharedAuthorizer(async (scopeId, actorId, action) => ({

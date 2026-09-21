@@ -4364,9 +4364,8 @@ export async function createGateway(config: GatewayConfig) {
     });
     canonicalChatOrchestrator = canonicalChatRuntime.orchestrator;
     backgroundChatProjection.setReconciler(ownerId => canonicalChatOrchestrator?.reconcileActiveRuns({ type: "personal", ownerId }) ?? Promise.resolve());
-    for (const ownerId of new Set(codingAgentOwnerIds)) {
-      await canonicalChatOrchestrator.reconcileActiveRuns({ type: "personal", ownerId });
-    }
+    // Shared AI marks runs the previous process lost (gateway_restart) before the
+    // owner reconcile loop below finishes them; the reverse order loses attribution.
     if (gatewayCollaboration) {
       // S07: this layer has no execution-root resolver, so no `sandboxManifests` source is passed
       // and shared AI reports no eligibility instead of offering runs that would fail at launch.
@@ -4382,6 +4381,9 @@ export async function createGateway(config: GatewayConfig) {
         ...(fundedCredentialProvider ? { fundedCredentialProvider } : {}),
       });
       console.log(`[collaboration] shared AI ${sharedAi.available ? "ready" : "disabled"}`);
+    }
+    for (const ownerId of new Set(codingAgentOwnerIds)) {
+      await canonicalChatOrchestrator.reconcileActiveRuns({ type: "personal", ownerId });
     }
     if (codingAgentThreadStore && codingAgentWorkspaceRuntime && codexEventBridge) {
       const repository = chatRepository;

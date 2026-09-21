@@ -231,14 +231,22 @@ export function classifySharedRunLoss(error: unknown, stage: SharedRunLossStage)
 }
 
 const LOST_RUN_BATCH = 64;
+const MAX_LOST_RUN_BATCHES = 64;
 const ACTIVE_RUN_STATUSES = ["accepted", "running", "waiting_for_approval", "waiting_for_input"] as const;
 
-async function listActiveSharedRuns(db: Kysely<OwnerCollaborationDatabase>): Promise<Array<{
+async function listActiveSharedRuns(
+  db: Kysely<OwnerCollaborationDatabase>,
+  limit = LOST_RUN_BATCH,
+  options: { unmarkedOnly?: boolean } = {},
+): Promise<Array<{
   runId: string; scopeId: string; chatId: string; requestId: string; requestingActorId: string; ownerId: string;
 }>> {
   const rows = await db.selectFrom("chat_queued_turns as queued")
     .innerJoin("chat_runs as run", "run.id", "queued.claimed_run_id")
     .innerJoin("collaboration_scopes as scope", "scope.id", "queued.collaboration_scope_id")
+    .$if(options.unmarkedOnly === true, (query) => query
+      .leftJoin("collaboration_run_interruptions as interruption", "interruption.run_id", "run.id")
+      .where("interruption.run_id", "is", null))
     .select([
       "run.id as run_id", "queued.id as request_id", "queued.chat_id as chat_id",
       "queued.requesting_actor_id as requesting_actor_id", "scope.id as scope_id", "scope.owner_id as owner_id",
@@ -247,7 +255,7 @@ async function listActiveSharedRuns(db: Kysely<OwnerCollaborationDatabase>): Pro
     .where("run.status", "in", [...ACTIVE_RUN_STATUSES])
     .where("scope.kind", "=", "chat")
     .orderBy("queued.created_at")
-    .limit(LOST_RUN_BATCH)
+    .limit(limit)
     .execute();
   return rows.flatMap((row) => row.requesting_actor_id ? [{
     runId: row.run_id, scopeId: row.scope_id, chatId: row.chat_id, requestId: row.request_id,
@@ -259,16 +267,25 @@ async function listActiveSharedRuns(db: Kysely<OwnerCollaborationDatabase>): Pro
  * At gateway start every shared run that is still active in the database was
  * lost with the previous process. Record `gateway_restart` before the
  * orchestrator's recovery finishes the run; a second start finds nothing new.
+ * Runs are read in bounded batches until none is left unmarked, so a home
+ * with more lost runs than one batch still attributes every one of them.
  */
 export async function markLostSharedRunsOnStartup(options: {
   db: Kysely<OwnerCollaborationDatabase>;
   loss: Pick<CollaborationRunLossRepository, "recordInterruption" | "getInterruption">;
+  batchSize?: number;
 }): Promise<string[]> {
+  const batchSize = Math.min(Math.max(options.batchSize ?? LOST_RUN_BATCH, 1), LOST_RUN_BATCH);
   const marked: string[] = [];
-  for (const run of await listActiveSharedRuns(options.db)) {
-    if (await options.loss.getInterruption(run.runId)) continue;
-    await options.loss.recordInterruption({ ...omitOwner(run), reason: "gateway_restart" });
-    marked.push(run.runId);
+  for (let batch = 0; batch < MAX_LOST_RUN_BATCHES; batch += 1) {
+    // Each batch reads only runs without a recorded loss, so marking pages forward on its own.
+    const unmarked = await listActiveSharedRuns(options.db, batchSize, { unmarkedOnly: true });
+    if (unmarked.length === 0) break;
+    for (const run of unmarked) {
+      await options.loss.recordInterruption({ ...omitOwner(run), reason: "gateway_restart" });
+      marked.push(run.runId);
+    }
+    if (unmarked.length < batchSize) break;
   }
   return marked;
 }
@@ -283,7 +300,12 @@ export async function interruptActiveSharedRuns(options: {
   db: Kysely<OwnerCollaborationDatabase>;
   loss: Pick<CollaborationRunLossRepository, "recordInterruption">;
   reason: CollaborationRunInterruptionReason;
-  orchestrator: { cancelSharedRun(owner: ChatOwner, scopeId: string, chatId: string, runId: string): Promise<void> };
+  orchestrator: {
+    cancelSharedRun(
+      owner: ChatOwner, scopeId: string, chatId: string, runId: string,
+      options?: { sharedRequestState?: "cancelled" | "interrupted" },
+    ): Promise<void>;
+  };
   scopeId?: string;
 }): Promise<string[]> {
   const interrupted: string[] = [];
@@ -291,7 +313,10 @@ export async function interruptActiveSharedRuns(options: {
     if (options.scopeId && run.scopeId !== options.scopeId) continue;
     await options.loss.recordInterruption({ ...omitOwner(run), reason: options.reason });
     try {
-      await options.orchestrator.cancelSharedRun({ type: "personal", ownerId: run.ownerId }, run.scopeId, run.chatId, run.runId);
+      // The queued request settles as `interrupted`, never as a member cancel, so the requester may retry it.
+      await options.orchestrator.cancelSharedRun(
+        { type: "personal", ownerId: run.ownerId }, run.scopeId, run.chatId, run.runId, { sharedRequestState: "interrupted" },
+      );
     } catch (error: unknown) {
       console.warn("[collaboration] lost shared run stop deferred to recovery",
         error instanceof Error ? error.name : "UnknownError");
@@ -309,26 +334,33 @@ function omitOwner(run: { runId: string; scopeId: string; chatId: string; reques
  * Drives control-partition interruption from the S05 control snapshot: when
  * freshness lapses past the lease the callback fires once per outage episode,
  * and a restored control stream re-arms it. Never extends authority.
+ * `check()` runs one tick on demand and settles its interruption, for callers
+ * that own their own timers (and tests); `stop()` ends the periodic tick.
  */
 export function startControlLossWatchdog(options: {
   controlFresh(): boolean;
   onLost(): Promise<unknown>;
   intervalMs?: number;
-}): { stop(): void } {
+  startTimer?: boolean;
+}): { stop(): void; check(): Promise<void> } {
   const intervalMs = Math.min(Math.max(options.intervalMs ?? 5_000, 250), 60_000);
   let lost = false;
   let inFlight: Promise<unknown> | undefined;
-  const tick = (): void => {
+  const tick = (): Promise<unknown> | undefined => {
     const fresh = options.controlFresh();
-    if (fresh) { lost = false; return; }
-    if (lost || inFlight) return;
+    if (fresh) { lost = false; return undefined; }
+    if (lost || inFlight) return inFlight;
     lost = true;
     inFlight = options.onLost().catch((error: unknown) => {
       console.warn("[collaboration] control loss interruption failed",
         error instanceof Error ? error.name : "UnknownError");
     }).finally(() => { inFlight = undefined; });
+    return inFlight;
   };
-  const timer = setInterval(tick, intervalMs);
-  timer.unref?.();
-  return { stop: () => clearInterval(timer) };
+  const timer = options.startTimer === false ? undefined : setInterval(() => { void tick(); }, intervalMs);
+  timer?.unref?.();
+  return {
+    stop: () => { if (timer) clearInterval(timer); },
+    check: async () => { await tick(); },
+  };
 }

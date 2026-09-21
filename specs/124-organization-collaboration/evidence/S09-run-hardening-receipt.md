@@ -1,0 +1,47 @@
+# S09 run-hardening receipt — shared-run review fixes
+
+**Packet:** S09 follow-up layer. **Date:** 2026-09-21. **Branch:** `124/s09-run-hardening`. **Base:** `a2e0d2315`. **Status:** all eight review findings closed; every listed P3 item closed as well. No live provider probe is claimed.
+
+## Layer and ownership
+
+One layer, 22 files and +903/−136 including this receipt, under the 3,000-addition / 50-file limit. Commits: `ad911f9b3` failing-first cases for every finding, then one GREEN fix commit. The scope is `packages/gateway/src/chat/{orchestrator,repository,run-lifecycle-repository,shared-execution-coordinator}.ts`, `packages/gateway/src/collaboration/{chat-execution-adapter,chat-lifecycle-repository,run-account-binding,scope-runtime-chat-adapter,shared-ai-runtime,shared-codex-adapter,shared-run-loss,shared-run-owner-source,terminal-websocket-route,wiring}.ts`, the shared-AI startup order in `packages/gateway/src/server.ts`, and the focused gateway suites. No schema, migration or contract changed; this layer adds no table.
+
+## RED → GREEN
+
+| Finding | RED observed | GREEN observed |
+| --- | --- | --- |
+| P1-1 control-loss watchdog never wired | `startControlLossWatchdog` and `interruptForLoss` had no production caller; a control partition left active shared runs running with no interruption record. | `wiring.ts` starts the watchdog after `enableSharedAi` with the control client's freshness and `interruptForLoss("control_partition")`, and stops it on both close paths. `collaboration-wiring.test.ts` proves a lapsed lease records `control_partition` for the requester, settles the queued row as `interrupted`, and interrupts once per outage episode. |
+| P1-2 cancelled/interrupted requests were not retryable | `cancel` finished with `outcome:"aborted"` and no `sharedRequestState`, so `chat_queued_turns` stayed `claimed` and `retry` returned `conflict`. | Cancel passes `cancelled`, home-loss paths pass `interrupted`, and the queued row is rewritten in the same transaction that finishes the run. Real-Postgres cases prove the requester may retry after a running cancel and after a control partition, and that the owner is refused with `forbidden` in both. |
+| P1-3 policy-less scopes bypassed owner-source gating | `prepare` returned null without a policy, `ownerSource` was optional, and dispatch ran on `resolveAccessSource()` — the owner's global kernel credential — with no submit-mode check. Capability still read `available`. | `prepare` throws `unavailable` without a policy, `ownerSource`/`executionPolicies`/`runLoss` are required by `createSharedAiRuntime`, `enableSharedAi` fails closed when the V3 reader is absent, and the default-credential fallback is deleted. Capability and submit report `unavailable`, and the queue stays empty. |
+| P2-4 exhausted source drained the queue | An unavailable owner source finished the request `unavailable` and kept claiming the next one. | Dispatch consults `ownerSource.admission` and returns without claiming while the source is `paused`; the coordinator stops the claim loop on an `unavailable` preparation failure. A second request stays `queued`. |
+| P2-5 startup order lost `gateway_restart` attribution | `reconcileActiveRuns` ran before `enableSharedAi`, so `markLostSharedRunsOnStartup` found nothing to attribute. | `server.ts` enables shared AI first; `createSharedAiRuntime` marks lost runs before it returns. Two wiring cases pin both the source order and the recorded `gateway_restart` reason. |
+| P2-6 network call inside the scope `FOR UPDATE` transaction | The organization AI-submission lookup and the owner snapshot read ran while the scope row was locked. | Both resolve before the transaction; the transaction re-reads the scope under the lock, selects the policy with `WHERE revision = :expected`, and refuses admission when the scope revision or any policy field moved. |
+| P2-7 terminal WebSocket frame queue unbounded after session open | `MAX_PENDING_FRAMES` only bounded pre-session frames; every later frame chained onto `processing` without limit. | In-flight frames are counted and the socket is closed `1008` above a bounded cap. The flood case sends 64 frames behind a stalled dispatcher and observes the close with at most one frame dispatched. |
+| P2-8 submit mode not enforced at submit time | A member request on an owner-only scope was accepted whenever capability read `available`; owner-only was enforced only at dispatch. | `resolveCapability` consults `effectiveSubmitMode`, so an owner-only scope reports `unavailable` to a member before submission while the owner still sees `available`. |
+
+P3 items, all closed in this layer: `recordInterruption` is awaited before the adapter yields its failed terminal event; lost-run marking pages in bounded batches until nothing is left unmarked; a policy whose access source the kernel credential resolver does not know throws `unavailable` instead of falling back; Chat archive and delete cancel queued shared requests in the lifecycle transaction.
+
+## Test counts
+
+| Suite | Result |
+| --- | --- |
+| `shared-coding-execution.test.ts` | 32 passed (25 before this layer) |
+| `collaboration-wiring.test.ts` | 15 passed |
+| `collaboration-owner-source.test.ts` | 42 passed |
+| `shared-ai-runtime.test.ts` | 21 passed |
+| `collaboration-terminal-websocket.test.ts` | 3 passed |
+| `collaboration-chat-controls.test.ts` | 14 passed |
+| `collaboration-lifecycle.test.ts` | 7 passed |
+| `collaboration-database.test.ts` | 2 passed, 1 pre-existing failure |
+
+All runs used the dedicated real-Postgres test database. `bun run typecheck` exited 0. `bun run check:patterns` reported 0 violations and 5 warnings that predate this diff and lie outside it. No React file changed, so `react-doctor` does not apply.
+
+The one `collaboration-database.test.ts` failure is not this layer's. Its expected `collaboration_%` table list is stale by eleven tables created by migrations in layers below this base (`collaboration_execution_policies`, `collaboration_git_operations`, `collaboration_grants`, `collaboration_grant_activations`, `collaboration_resource_catalog`, `collaboration_run_bindings`, `collaboration_run_decisions`, `collaboration_run_interruptions`, `collaboration_runtime_identity`, `collaboration_upload_parts`, `collaboration_upload_stages`). This layer touches no migration and adds no table, so the list was left to the layer that owns each table.
+
+## Invariants
+
+- **Source of truth:** owner-controlled Postgres holds the canonical queued request, run, execution policy, run binding, interruption and decision rows. `chat_queued_turns.status` is canonical for retryability; the projection derives from it, never the reverse. The owner's execution policy is the only source of an execution credential; the owner's default kernel credential is never substituted.
+- **Lock/transaction scope:** run admission resolves organization AI submission and owner source eligibility before opening its transaction, then re-reads the scope under `FOR UPDATE` and selects the policy by exact revision, so no network call is held inside the lock and a concurrent policy or scope change refuses admission. Cancel, interruption and home loss rewrite the run and its queued request in one transaction. Chat archive and delete cancel queued shared requests in the lifecycle transaction that already holds the scope.
+- **Acceptable orphan states:** an interruption record may exist for a run whose stop call later fails; the next queue wake finds the run and settles it, and the first recorded reason wins. A paused owner source leaves requests `queued` indefinitely rather than draining them. A frame refused by the in-flight cap is never queued, so the client must resend after reconnecting.
+- **Auth source of truth:** the home `CollaborationAuthority` remains authoritative. The watchdog reads control freshness only to decide that runs were lost; it never extends or grants authority. Retry stays requester-only and cancel stays requester-or-owner, now over a persisted request state rather than a live run handle.
+- **Deferred scope:** T049 live Codex and Claude probes remain unrun; no live provider result is claimed here. Reattaching to a surviving run unit stays deferred by the spec. The stale `collaboration_database` table list belongs to the layers that added those tables.

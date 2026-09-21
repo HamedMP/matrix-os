@@ -249,6 +249,8 @@ describe("shared terminal WebSocket", () => {
     await vi.waitFor(() => expect(ws.close).toHaveBeenCalledWith(1008, "Invalid frame"));
   });
   it("closes a controller that floods frames faster than the dispatcher settles them", async () => {
+    let releaseInput = (): void => undefined;
+    const stalledInput = new Promise<void>((resolve) => { releaseInput = () => { resolve(); }; });
     const repository = new CollaborationRepository(fixture.db, { now: () => now });
     const authority = new CollaborationAuthority(repository, { now: () => now, organizationPrecondition: allowAllOrganizationPrecondition });
     const terminal = {
@@ -260,9 +262,10 @@ describe("shared terminal WebSocket", () => {
         creatorActorId: collaborationActors.owner,
         createdAt: now.toISOString(),
         status: "active" as const,
+        contributorControl: true,
       })),
-      // Input never settles: every later frame stays in flight behind it.
-      input: vi.fn(() => new Promise<void>(() => undefined)),
+      // The first input stalls until the test releases it, so every later frame stays in flight behind it.
+      input: vi.fn(() => stalledInput),
       paste: vi.fn(async () => undefined),
       resize: vi.fn(async () => undefined),
       stop: vi.fn(async () => undefined),
@@ -337,7 +340,12 @@ describe("shared terminal WebSocket", () => {
       }) } as never, ws as never);
     }
     await vi.waitFor(() => expect(ws.close).toHaveBeenCalledWith(1008, "Too many frames"));
+    // Only the first frame reached the dispatcher; the rest are queued behind it, and
+    // everything past the cap was refused without being queued at all.
     expect(terminal.input.mock.calls.length).toBeLessThanOrEqual(1);
+    releaseInput();
+    // Drain the accepted frames so nothing is left pending when the fixture is destroyed.
+    await vi.waitFor(() => expect(terminal.input.mock.calls.length).toBe(16));
   });
 });
 

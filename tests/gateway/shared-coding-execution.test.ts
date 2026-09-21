@@ -291,14 +291,25 @@ describe("shared coding execution (S09)", () => {
     it("interrupts active shared runs as control_partition and stops them through the orchestrator", async () => {
       await repository.enqueueSharedQueuedTurn(owner, aiRequest(23, collaborationActors.editor));
       const claimed = await claim("loss_partition");
-      const cancelSharedRun = vi.fn(async () => {
-        await repository.finishRun(owner, { chatId: collaborationIds.chat, runId: claimed.run.id, outcome: "aborted", completedAt: now });
+      const cancelSharedRun = vi.fn(async (
+        _owner: typeof owner, _scopeId: string, _chatId: string, _runId: string,
+        options?: { sharedRequestState?: "cancelled" | "interrupted" },
+      ) => {
+        await repository.finishRun(owner, {
+          chatId: collaborationIds.chat, runId: claimed.run.id, outcome: "aborted", completedAt: now,
+          ...(options?.sharedRequestState ? { sharedRequestState: options.sharedRequestState } : {}),
+        });
       });
       const interrupted = await interruptActiveSharedRuns({
         db: fixture.db, loss, reason: "control_partition", orchestrator: { cancelSharedRun },
       });
       expect(interrupted).toEqual([claimed.run.id]);
-      expect(cancelSharedRun).toHaveBeenCalledWith(owner, collaborationIds.scope, collaborationIds.chat, claimed.run.id);
+      // The home lost the run: the queued request settles as interrupted, never as a member cancel.
+      expect(cancelSharedRun).toHaveBeenCalledWith(
+        owner, collaborationIds.scope, collaborationIds.chat, claimed.run.id, { sharedRequestState: "interrupted" },
+      );
+      expect(await fixture.db.selectFrom("chat_queued_turns").select("status")
+        .where("claimed_run_id", "=", claimed.run.id).executeTakeFirstOrThrow()).toEqual({ status: "interrupted" });
       const listed = await createExecutionAdapter().list(readContext(collaborationActors.owner));
       expect(listed).toMatchObject([{ runId: claimed.run.id, state: "interrupted", interruptedReason: "control_partition" }]);
     });

@@ -197,33 +197,59 @@ export class CollaborationRunBindingRepository {
   async admit(rawInput: CollaborationRunAdmission): Promise<CollaborationRunBinding> {
     const input = AdmissionSchema.parse(rawInput);
     const nowIso = this.now().toISOString();
+    // Preflight outside any lock: the organization AI-submission lookup and the
+    // owner's snapshot read can take seconds and must never hold the scope row.
+    // The transaction below re-reads the scope and policy under the lock and
+    // refuses admission when either moved since this preflight.
+    const preflight = await resolveExecutionScope(this.db, input.scopeId);
+    if (!preflight) throw new CollaborationRunBindingError("not_found", "Execution scope not found");
+    const preflightPolicy = await this.db.selectFrom("collaboration_execution_policies").selectAll()
+      .where("scope_id", "=", preflight.ref.scopeId).executeTakeFirst();
+    if (!preflightPolicy) throw new CollaborationRunBindingError("no_policy", "The owner has not selected an AI source");
+    if (String(preflightPolicy.revision) !== input.expectedPolicyRevision) {
+      throw new CollaborationRunBindingError("stale_policy", "The owner changed the execution policy");
+    }
+    const ownerId = preflightPolicy.owner_id;
+    if (input.requestingActorId !== ownerId) {
+      const effective = await this.effectiveSubmitMode({
+        organizationId: preflight.scope.organization_id,
+        ownerId,
+        submitMode: preflightPolicy.submit_mode,
+        providerTermsAcknowledged: preflightPolicy.provider_terms_acknowledged_at !== null,
+      });
+      if (effective !== "members") {
+        throw new CollaborationRunBindingError("owner_only", "Only the owner may submit AI work on this scope");
+      }
+    }
+    const resolved = await this.eligibility.resolveSelection(ownerId, {
+      accessSourceId: preflightPolicy.access_source_id,
+      providerInstanceId: preflightPolicy.provider_instance_id,
+    });
+    if (!resolved.ok || !resolved.available || resolved.source.harness !== preflightPolicy.harness) {
+      throw new CollaborationRunBindingError("source_unavailable", "The owner's selected source is unavailable");
+    }
     return this.db.transaction().execute(async (trx) => {
       const resolution = await resolveExecutionScope(trx, input.scopeId, { lock: true });
       if (!resolution) throw new CollaborationRunBindingError("not_found", "Execution scope not found");
+      if (resolution.ref.scopeId !== preflight.ref.scopeId
+        || Number(resolution.scope.revision) !== Number(preflight.scope.revision)
+        || resolution.scope.organization_id !== preflight.scope.organization_id) {
+        throw new CollaborationRunBindingError("stale_policy", "The execution scope changed during admission");
+      }
       const policyRow = await trx.selectFrom("collaboration_execution_policies").selectAll()
-        .where("scope_id", "=", resolution.ref.scopeId).forShare().executeTakeFirst();
-      if (!policyRow) throw new CollaborationRunBindingError("no_policy", "The owner has not selected an AI source");
-      if (String(policyRow.revision) !== input.expectedPolicyRevision) {
+        .where("scope_id", "=", resolution.ref.scopeId)
+        .where("revision", "=", Number(input.expectedPolicyRevision))
+        .forShare().executeTakeFirst();
+      if (!policyRow) {
         throw new CollaborationRunBindingError("stale_policy", "The owner changed the execution policy");
       }
-      const ownerId = policyRow.owner_id;
-      if (input.requestingActorId !== ownerId) {
-        const effective = await this.effectiveSubmitMode({
-          organizationId: resolution.scope.organization_id,
-          ownerId,
-          submitMode: policyRow.submit_mode,
-          providerTermsAcknowledged: policyRow.provider_terms_acknowledged_at !== null,
-        });
-        if (effective !== "members") {
-          throw new CollaborationRunBindingError("owner_only", "Only the owner may submit AI work on this scope");
-        }
-      }
-      const resolved = await this.eligibility.resolveSelection(ownerId, {
-        accessSourceId: policyRow.access_source_id,
-        providerInstanceId: policyRow.provider_instance_id,
-      });
-      if (!resolved.ok || !resolved.available || resolved.source.harness !== policyRow.harness) {
-        throw new CollaborationRunBindingError("source_unavailable", "The owner's selected source is unavailable");
+      if (policyRow.owner_id !== ownerId
+        || policyRow.submit_mode !== preflightPolicy.submit_mode
+        || (policyRow.provider_terms_acknowledged_at === null) !== (preflightPolicy.provider_terms_acknowledged_at === null)
+        || policyRow.access_source_id !== preflightPolicy.access_source_id
+        || policyRow.provider_instance_id !== preflightPolicy.provider_instance_id
+        || policyRow.harness !== preflightPolicy.harness) {
+        throw new CollaborationRunBindingError("stale_policy", "The owner changed the execution policy");
       }
       if (input.harness !== undefined && input.harness !== policyRow.harness) {
         throw new CollaborationRunBindingError("model_not_allowed", "The requested harness is not the owner's selection");
