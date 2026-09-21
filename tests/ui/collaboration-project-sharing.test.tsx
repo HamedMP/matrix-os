@@ -58,12 +58,12 @@ describe("whole-project sharing confirmation", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Share project" }));
     expect(await screen.findByRole("heading", { name: "Share the whole Launch project?" })).toBeVisible();
-    expect(api.post).toHaveBeenNthCalledWith(1, "/api/collaboration/runtimes/vps:runtime/scopes/preflight", {
+    expect(api.post).toHaveBeenNthCalledWith(1, "/api/collaboration/runtimes/vps%3Aruntime/scopes/preflight", {
       kind: "project",
       resourceId: "proj_launch",
       organizationId: "org_matrix_team",
     });
-    expect(api.post).toHaveBeenNthCalledWith(2, "/api/collaboration/runtimes/vps:runtime/scopes", expect.objectContaining({
+    expect(api.post).toHaveBeenNthCalledWith(2, "/api/collaboration/runtimes/vps%3Aruntime/scopes", expect.objectContaining({
       kind: "project",
       resourceId: "proj_launch",
       expectedRevision: "7",

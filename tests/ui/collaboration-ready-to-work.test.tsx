@@ -202,15 +202,19 @@ describe("organization ready-to-work presentation", () => {
         : path.endsWith("/scopes/preflight") ? { eligible: true, resourceRevision: "1", confirmationToken: "a".repeat(64) }
         : path.endsWith("/scopes") ? { ...scope, kind: "file", resourceId: "30000000-0000-4000-8000-000000000401" }
         : undefined), delete: vi.fn() };
-    render(<ResourceSharingButton api={api} runtimeId="vps:owner" organizationId="org_matrix_team" kind="file" path="notes/plan.md" />);
+    render(<ResourceSharingButton api={api} runtimeId="vps:owner" organizationId="org_matrix_team" kind="file" path="notes/plan.md" projectId="proj_launch" />);
     fireEvent.click(screen.getByRole("button", { name: "Share file" }));
     expect(await screen.findByRole("dialog", { name: "Invite collaborators" })).toBeVisible();
     expect(api.post).toHaveBeenCalledWith("/api/collaboration/runtimes/vps%3Aowner/catalog/resolve", {
-      kind: "file", path: "notes/plan.md",
+      kind: "file", path: "notes/plan.md", organizationId: "org_matrix_team",
     });
     expect(api.post).toHaveBeenCalledWith("/api/collaboration/runtimes/vps%3Aowner/scopes/preflight", {
       kind: "file", resourceId: "30000000-0000-4000-8000-000000000401", organizationId: "org_matrix_team",
     });
+    expect(api.post).toHaveBeenCalledWith("/api/collaboration/runtimes/vps%3Aowner/scopes", expect.objectContaining({
+      kind: "file", resourceId: "30000000-0000-4000-8000-000000000401", organizationId: "org_matrix_team",
+      expectedRevision: "1", confirmationToken: "a".repeat(64),
+    }));
   });
 
   it("fails closed when catalog resolves a different folder path", async () => {
