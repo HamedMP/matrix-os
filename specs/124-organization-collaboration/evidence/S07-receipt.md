@@ -21,7 +21,7 @@ Base: `124/s06` @ 8c3e761f4 (S06 in progress; S07 is restacked by the coordinato
 
 - T037 filtered workspaces, task profiles beyond `sandbox_shell`/`host_shell`, and the publication broker are deferred from V1 (tasks.md).
 - Isolated PID namespaces (`PrivatePIDs=`) need systemd ≥ 257 evidence on the customer image; the policy relies on `ProtectProc=invisible` + `ProcSubset=pid` + `PrivateUsers` from the fixed profile until then.
-- The scope-runtime worker does not yet run a PTY, so `terminal` workloads are advertised by the policy but not by the launcher's adapters: readiness reports sandbox terminals as unsupported (honest) until the worker gains the adapter.
+- The scope-runtime worker does not yet run a PTY. The S07 core review repair advertises `chat_ai` only; `terminal` is deliberately absent from the sandbox workloads and remains unsupported until a real PTY adapter exists. The supervisor refuses terminal launch, and readiness reports the limitation.
 - Hardlink check is bounded to the worktree's top-level files; deeper hardlinks are a residual risk recorded here, mitigated by `ProtectSystem=strict` and `ProtectHome`.
 - Coordinator patches: `packages/scope-runtime/package.json` gains the `./sandbox` export; `wiring.ts` constructs `CollaborationRevocationEnforcer` and passes `onEnded` to `DirectSessionService`; the launcher's `sandboxRoots` and S08/S09's `SandboxRuntimeRegistry.bind` calls are wired by the packet that creates sandboxed runs (S09 T047/T048).
 
@@ -35,4 +35,4 @@ Base: `124/s07-terminal` @ `eb6a4b4c7`. Test commit: `7386bb2fe`. Fix commit: `6
 - Real Postgres exposed an existing terminal directory-outbox JSONB serialization defect; the terminal adapter now writes its JSONB fields with explicit casts.
 - RED: five focused review regressions failed before the fix. Real Postgres terminal-scope activation/reopen failed 2/8 on invalid JSONB input before the serialization fix.
 - GREEN: four focused suites passed 103/103 on PGlite/filesystem; terminal-scope suite passed 8/8 on real Postgres (`MATRIX_TEST_POSTGRES_URL` from the local test environment). `bun run typecheck` passed; `bun run check:patterns` found 0 violations and 5 existing warnings; `git diff --check` passed.
-- Host systemd sandbox probes remain unrun and are not claimed. The `124/s07` core layer is updating advertised workloads and launcher roots separately; reconcile the capability wording above after the lower layer is restacked.
+- Host systemd sandbox probes remain unrun and are not claimed. The `124/s07` core layer separately configures production sandbox roots under `${MATRIX_HOME}/projects` and `${MATRIX_HOME}/worktrees`; the S09 shared Chat layer must supply a resolved actor/scope/root manifest before `chat_ai` execution.
