@@ -333,6 +333,7 @@ to run `matrixos sync`.
 - Postgres adapters: `packages/gateway/src/sync/db-impl.ts`
 - Daemon entry: `packages/sync-client/src/daemon/main.ts`
 - Daemon implementation: `packages/sync-client/src/daemon/index.ts`
+- Daemon PID ownership: `packages/sync-client/src/daemon/pid-file.ts`
 - IPC server: `packages/sync-client/src/daemon/ipc-server.ts`
 - macOS app: `packages/sync-client/macos/MatrixSync/`
 - Spec: `specs/066-file-sync/spec.md`
