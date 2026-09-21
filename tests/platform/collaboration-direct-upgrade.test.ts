@@ -69,13 +69,16 @@ function directRelay(now: () => number) {
 }
 
 /** Drives the real upgrade listener up to the upstream connect; the handshake may still be pending. */
-async function startDirectPair(relay: CollaborationRelay): Promise<Transport> {
+async function startDirectPair(relay: CollaborationRelay, hooks: { onEntitlementCheck?: () => void } = {}): Promise<Transport> {
   const server = new EventEmitter();
   const permitted = { runtimeProxyAllowed: true } as never;
   registerPlatformWebSocketUpgradeHandler({
     server: server as Server, app: { capturePlatformEvent: vi.fn() }, db,
     env: {}, platformSecret: "platform-secret-direct-upgrade", platformJwtSecret: JWT_SECRET, legacyContainerRoutingEnabled: false,
-    codeServerPort: 8080, getRuntimeEntitlementDecision: () => permitted, getRuntimeEntitlementDecisionForUser: async () => permitted,
+    codeServerPort: 8080, getRuntimeEntitlementDecision: () => permitted,
+    // The last await before the listener registers its teardown handlers: a test can make the
+    // client half go away exactly here, in the window the reviewer describes.
+    getRuntimeEntitlementDecisionForUser: async () => { hooks.onEntitlementCheck?.(); return permitted; },
     collaborationDirect: { handleUpgrade: async () => false, relay },
   });
   const { token } = await issueSyncJwt({ secret: JWT_SECRET, clerkUserId: "user_member", handle: "member-handle", gatewayUrl: "https://app.matrix-os.com" });
@@ -203,6 +206,28 @@ describe("platform direct-socket upgrade failure handling", () => {
     // The drain released the counts once; the late upstream must not release them again.
     expect(relay.connectionCounts()).toEqual({ homes: 0, actors: 0 });
     socket.destroy();
+    expect(relay.connectionCounts()).toEqual({ homes: 0, actors: 0 });
+  });
+
+  it("destroys an upstream dialled after an eviction that preceded the teardown handlers", async () => {
+    await seedRunningHome();
+    let clock = 6_000_000;
+    const relay = directRelay(() => clock);
+    tls.defer = true;
+    // Evict while the listener is still awaiting the entitlement decision, before it has
+    // attached its own error/close handlers to the client socket. Nothing sets the disposed
+    // flag in this window; only the socket's own destroyed state records the teardown.
+    const socket = await startDirectPair(relay, {
+      onEntitlementCheck: () => {
+        clock += 11 * 60_000;
+        expect(relay.sweepStaleSockets()).toBe(1);
+      },
+    });
+    expect(socket.destroyed).toBe(true);
+    const upstream = tls.upstreams.at(-1)!;
+    tls.pending.splice(0).forEach((onConnect) => { onConnect(); });
+    expect(upstream.destroyed).toBe(true);
+    expect(upstream.writes).toEqual([]);
     expect(relay.connectionCounts()).toEqual({ homes: 0, actors: 0 });
   });
 
