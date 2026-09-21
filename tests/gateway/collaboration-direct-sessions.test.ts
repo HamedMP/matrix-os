@@ -244,6 +244,28 @@ describe("S05 direct sessions on the home", () => {
     expect(service.describe(owner.id)).toBeNull();
   });
 
+  it("fences synchronously: live sessions end once, their end hooks fire and new work is refused", async () => {
+    const ended: Array<[string, string]> = [];
+    const unsubscribe = service.subscribeEnded((session, reason) => { ended.push([session.id, reason]); });
+    const editor = await service.create(sessionRequest(collaborationActors.editor).body);
+    const owner = await service.create(sessionRequest(collaborationActors.owner).body);
+
+    service.fence();
+
+    // Ending every live session is what drives notifyRevoked and invalidateActor into the
+    // event and terminal registries, so it must happen before the fence detaches them.
+    expect(ended.map(([, reason]) => reason)).toEqual(["shutdown", "shutdown"]);
+    expect(new Set(ended.map(([id]) => id))).toEqual(new Set([editor.id, owner.id]));
+    expect(service.describe(editor.id)).toBeNull();
+    expect(service.describe(owner.id)).toBeNull();
+    await expect(service.create(sessionRequest(collaborationActors.editor).body)).rejects.toMatchObject({ code: "unavailable" });
+
+    // A second fence ends nothing twice.
+    service.fence();
+    expect(ended).toHaveLength(2);
+    unsubscribe();
+  });
+
   it("bounds connections per actor, scope and home and refuses admission when replay retention cannot be kept", async () => {
     const session = await service.create(sessionRequest(collaborationActors.editor).body);
     const first = service.connections.open({ sessionId: session.id });
