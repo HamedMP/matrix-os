@@ -1,11 +1,12 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { bootstrapChatDatabase } from "../../packages/gateway/src/chat/database.js";
+import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
 import { createChatExecutionRootResolver } from "../../packages/gateway/src/chat/execution-root.js";
 import { createProjectChatRootInventory } from "../../packages/gateway/src/collaboration/project-chat-root-inventory.js";
 import { createGatewayProjectInventorySource } from "../../packages/gateway/src/collaboration/project-inventory-source.js";
@@ -146,6 +147,10 @@ describe("share-time project Chat root inventory", () => {
         { id: "chat_feature", revision: 1 },
       ]; } },
       chatRoots: inventory(),
+      gitSetup: { async get() { return {
+        identity: { status: "ready" as const, label: "Project Owner <owner@example.test>" },
+        forgeCredential: { status: "ready" as const },
+      }; } },
       canvases: { async getProjectCanvas() { return null; } },
       apps: { async get() { return null; } },
       sessions: { async list() { return []; } },
@@ -162,11 +167,28 @@ describe("share-time project Chat root inventory", () => {
       expect.objectContaining({ id: "chat_main", executionRoot: { kind: "project", projectId: PROJECT }, branch: "main", dirty: false }),
     ]);
     expect(preview.blockers).toEqual([]);
+    expect(preview.gitSetup).toEqual({
+      identity: { status: "ready", label: "Project Owner <owner@example.test>" },
+      forgeCredential: { status: "ready" },
+    });
 
     await rm(worktreeRoot, { recursive: true, force: true });
     const blocked = await service.preview({ ownerId: OWNER, projectId: PROJECT, membershipEffects: [] });
     expect(blocked.blockers).toContainEqual({ kind: "chat", id: "chat_feature", code: "chat_root_unavailable" });
     expect(blocked.inventoryHash).not.toBe(preview.inventoryHash);
+  });
+
+  it("retains a dirty registered worktree after hard deleting its Chat", async () => {
+    const draft = join(worktreeRoot, "draft.txt");
+    await writeFile(draft, "keep this uncommitted change\n");
+    const repository = new ChatRepository(fixture.db);
+    await repository.hardDelete({ type: "personal", ownerId: OWNER }, {
+      chatId: "chat_feature", clientRequestId: "req_delete_chat_feature",
+    });
+    expect(await readFile(draft, "utf8")).toBe("keep this uncommitted change\n");
+    expect(await git(worktreeRoot, "status", "--porcelain=v1")).toContain("draft.txt");
+    expect(await git(projectRoot, "worktree", "list", "--porcelain")).toContain(worktreeRoot);
+    expect((await inventory().list({ ownerId: OWNER, projectId: PROJECT })).map((root) => root.chatId)).toEqual(["chat_main"]);
   });
 
   it("blocks sharing when a Chat root no longer resolves", async () => {
