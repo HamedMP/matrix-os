@@ -1,4 +1,4 @@
-/** Scope-free direct identity for the owner's three initial Share setup routes. */
+/** Scope-free direct identity for initial Share and exact private-project setup routes. */
 import { randomUUID } from "node:crypto";
 import {
   COLLABORATION_DIRECT_LIMITS, COLLABORATION_DIRECT_PROTOCOL_VERSION,
@@ -16,6 +16,7 @@ const REQUEST_WINDOW_MS = COLLABORATION_DIRECT_LIMITS.ticketTtlSeconds * 1_000;
 const SKEW_MS = COLLABORATION_DIRECT_LIMITS.clockSkewSeconds * 1_000;
 const MAX_SESSIONS = 256;
 const RUNTIME_PATH = /^\/api\/collaboration\/runtimes\/((?:[A-Za-z0-9:_-]|%3[Aa]){1,128})\/(catalog\/resolve|scopes\/preflight|scopes)$/;
+const OWNER_PROJECT_PATH = /^\/api\/collaboration\/scopes\/([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})(?:\/(members|project\/inventory|project\/confirm))?$/;
 
 interface SessionRecord {
   session: CollaborationOwnerRuntimeSession;
@@ -27,7 +28,7 @@ export interface OwnerRuntimeRequest {
   sessionId: string;
   signature: unknown;
   proof: string;
-  method: "POST";
+  method: "GET" | "POST";
   path: string;
   query: string;
   body: Uint8Array;
@@ -81,8 +82,11 @@ export class OwnerRuntimeSessionService {
       if (record) this.sessions.delete(input.sessionId);
       throw new DirectAuthError("expired", "Session is not active");
     }
-    const route = RUNTIME_PATH.exec(input.path);
-    if (!route || route[1]!.replace(/%3[aA]/g, ":") !== this.options.runtimeId || input.method !== "POST" || input.query) throw denied();
+    const runtimeRoute = RUNTIME_PATH.exec(input.path);
+    const projectRoute = OWNER_PROJECT_PATH.exec(input.path);
+    const runtimeAllowed = runtimeRoute && runtimeRoute[1]!.replace(/%3[aA]/g, ":") === this.options.runtimeId && input.method === "POST";
+    const projectAllowed = projectRoute && (projectRoute[2] === "project/confirm" ? input.method === "POST" : input.method === "GET");
+    if ((!runtimeAllowed && !projectAllowed) || input.query) throw denied();
     const parsed = CollaborationDirectRequestSignatureSchema.safeParse(input.signature);
     if (!parsed.success || parsed.data.sessionId !== input.sessionId) throw invalidSignature();
     const signature = parsed.data;

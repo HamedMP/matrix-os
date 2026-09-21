@@ -702,7 +702,7 @@ describe("S08 owner-selected AI source", () => {
       expect(await get.json()).toEqual(policy);
       const memberPut = await signed(collaborationActors.editor, collaborationActors.owner, "PUT", putRequest(CLAUDE, { expectedRevision: policy.revision }));
       expect(memberPut.status).toBe(403);
-      expect(await memberPut.json()).toEqual({ error: "Collaboration state changed", code: "forbidden" });
+      expect(await memberPut.json()).toEqual({ error: "Collaboration unavailable", code: "forbidden" });
     });
 
     it("an outsider with a valid proof is denied by the organization precondition and a bad body is rejected", async () => {
