@@ -69,7 +69,8 @@ describe("published CLI package runners", () => {
     );
 
     expect(script).toContain('run("bun", [');
-    expect(script).toContain('MATRIX_CLI_STANDALONE: "1"');
+    expect(script).toContain('"--define",');
+    expect(script).toContain('"process.env.MATRIX_CLI_STANDALONE=\\\"1\\\"",');
   });
 
   it("creates isolated package-manager homes before validating package runners", async () => {

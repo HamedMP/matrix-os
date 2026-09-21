@@ -4,12 +4,13 @@ The installable Matrix CLI is the `@finnaai/matrix` package in `packages/sync-cl
 
 ## Current Prepared Release
 
-`0.3.16` is the prepared CLI patch release after `0.3.15`. It:
+`0.3.17` is the prepared CLI patch release after `0.3.16`. It:
 
-- adds a stdio MCP server backed by the authenticated Matrix CLI;
-- exposes bounded remote computer, terminal, file-transfer, and read-only chat tools;
-- adds stable terminal-tab addressing and owner-scoped runtime access; and
-- exports the shared hosted MCP tool definitions for the platform transport.
+- fixes standalone binaries so their launchd/systemd service can enter the
+  hidden `__daemon` sync mode after the build-only marker is removed from the
+  runtime environment; and
+- explicitly bakes the standalone marker and version into every compiled
+  binary instead of relying on wildcard environment embedding.
 
 ## Versioning
 
@@ -58,7 +59,7 @@ the repository's npm ban: installs still use pnpm and scripts still use bun,
 while the npm CLI is invoked only because npm trusted publishing performs the
 OIDC exchange during `npm publish`.
 
-Use the manual GitHub Actions workflow named `CLI Release` with `version=0.3.16` and `update_homebrew=true` after this release-preparation PR merges. The workflow:
+Use the manual GitHub Actions workflow named `CLI Release` with `version=0.3.17` and `update_homebrew=true` after this release-preparation PR merges. The workflow:
 
 1. Validates the requested semver, local package version, npm availability, and `cli-v<version>` tag availability.
 2. Installs the workspace and runs the sync-client build, tests, and publish-shape check.
@@ -80,7 +81,7 @@ npm view @finnaai/matrix dist.tarball
 npx --yes @finnaai/matrix --version
 pnpm dlx @finnaai/matrix --version
 brew update && brew info finnaai/tap/matrix
-MATRIX_VERSION=0.3.16 sh scripts/install.sh
+MATRIX_VERSION=0.3.17 sh scripts/install.sh
 matrix --version
 matrix login --help
 matrix instance info --json
@@ -99,12 +100,12 @@ matrix forward 5173
 
 For standalone binaries, also verify the GitHub release contains:
 
-- `matrix-0.3.16-linux-x64`
-- `matrix-0.3.16-linux-arm64`
-- `matrix-0.3.16-darwin-x64`
-- `matrix-0.3.16-darwin-arm64`
+- `matrix-0.3.17-linux-x64`
+- `matrix-0.3.17-linux-arm64`
+- `matrix-0.3.17-darwin-x64`
+- `matrix-0.3.17-darwin-arm64`
 
-For macOS app packaging, also verify the GitHub release contains `MatrixSync-0.3.16.pkg` when the macOS job was enabled.
+For macOS app packaging, also verify the GitHub release contains `MatrixSync-0.3.17.pkg` when the macOS job was enabled.
 
 ## Rollback
 

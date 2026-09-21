@@ -16,7 +16,7 @@ export function isStandaloneRuntime(
 
 export function shouldRunStandaloneDaemon(
   rawArgs: string[],
-  env: NodeJS.ProcessEnv = process.env,
+  env?: NodeJS.ProcessEnv,
   versions: RuntimeVersions = process.versions as RuntimeVersions,
 ): boolean {
   return rawArgs[0] === "__daemon" && isStandaloneRuntime(env, versions);
