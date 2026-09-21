@@ -55,6 +55,12 @@ export function createOrganizationPrecondition(options: {
       lastLogged.set(reason, current);
       console.warn("[collaboration-org-precondition] denied", reason);
     }
+    // A missing or failing membership source is a missing server dependency: it surfaces as a
+    // generic unavailable (503-style) denial, never as not-found and never as an allow. Every
+    // other reason is an ordinary generic denial.
+    if (reason === "no_membership_source" || reason === "source_failure") {
+      throw new CollaborationAuthorizationError("unavailable", "Collaboration unavailable");
+    }
     throw new CollaborationAuthorizationError("not_found", "Current membership is required");
   };
 

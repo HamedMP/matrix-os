@@ -207,6 +207,7 @@ describe("shared Chat queue behavior (S01 foundation)", () => {
       owner_type: "personal",
       owner_id: collaborationActors.owner,
       kind: "chat",
+      organization_id: "org_matrix_team",
       resource_id: collaborationIds.chat,
       parent_scope_id: null,
       membership_mode: "direct",

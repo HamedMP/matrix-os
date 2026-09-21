@@ -253,6 +253,7 @@ async function seed(fixture: CollaborationTestDatabase): Promise<void> {
     owner_type: "personal",
     owner_id: collaborationActors.owner,
     kind: "terminal",
+    organization_id: "org_matrix_team",
     resource_id: terminalId,
     parent_scope_id: null,
     membership_mode: "direct",

@@ -141,6 +141,7 @@ describe("CollaborationAuthority", () => {
   it("allows terminal control only on an eligible terminal scope for a writable role", async () => {
     await fixture.db.updateTable("collaboration_scopes").set({
       kind: "terminal",
+      organization_id: "org_matrix_team",
       resource_id: "terminal_shared",
       execution_generation: 2,
       execution_eligibility: JSON.stringify({ profileId: "scope-runtime-terminal-v1" }),
@@ -199,6 +200,7 @@ describe("CollaborationAuthority", () => {
       owner_type: "personal",
       owner_id: collaborationActors.owner,
       kind: "chat",
+      organization_id: "org_matrix_team",
       resource_id: "chat_inherited",
       parent_scope_id: projectId,
       membership_mode: "inherited",

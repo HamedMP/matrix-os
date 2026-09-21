@@ -142,6 +142,7 @@ describe("project collaboration inheritance", () => {
       owner_type: "personal",
       owner_id: OWNER_ID,
       kind: "chat",
+      organization_id: "org_matrix_team",
       resource_id: "chat_direct",
       parent_scope_id: null,
       membership_mode: "direct",
