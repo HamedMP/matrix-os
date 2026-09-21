@@ -25,7 +25,7 @@ import {
 import { createSharedCodexAdapter } from "../../packages/gateway/src/collaboration/shared-codex-adapter.js";
 import { createSharedClaudeAdapter } from "../../packages/gateway/src/collaboration/shared-claude-adapter.js";
 import { ScopeRuntimeClientError } from "../../packages/gateway/src/collaboration/scope-runtime-client.js";
-import type { AuthorizedCollaborationContext } from "../../packages/gateway/src/collaboration/authority.js";
+import { CollaborationAuthorizationError, type AuthorizedCollaborationContext } from "../../packages/gateway/src/collaboration/authority.js";
 import {
   collaborationActors,
   collaborationExecutionEligibility,
@@ -69,6 +69,80 @@ describe("shared coding execution (S09)", () => {
   });
 
   describe("run control actors", () => {
+    it("rejects member submission before queueing when the effective policy is owner-only", async () => {
+      const adapter = new CollaborationChatExecutionAdapter({
+        repository, commands: createCommands(),
+        resolveParticipant: async (actorId) => ({ actorId, displayName: actorId }),
+        resolveEligibility: async () => collaborationExecutionEligibility(),
+        resolveResourceRevision: async () => 1,
+        resolveEffectiveSubmitMode: async () => "owner_only",
+        requestDispatch: async () => undefined,
+      });
+      await expect(adapter.submit({ ...readContext(collaborationActors.editor), capability: "request_ai", role: "editor" }, {
+        clientRequestId: uuid(69), expectedRevision: "1", text: "Do work",
+      })).rejects.toMatchObject({ code: "forbidden" });
+      expect(await repository.listSharedQueuedTurns(owner, collaborationIds.chat)).toEqual([]);
+    });
+
+    it("uses the parent project authority for an inherited Chat's queue and controls", async () => {
+      const parentId = "79000000-0000-4000-8000-000000000999";
+      await fixture.db.insertInto("collaboration_scopes").values({
+        id: parentId, owner_type: "personal", owner_id: collaborationActors.owner,
+        kind: "project", resource_id: "project_s09", parent_scope_id: null, membership_mode: "direct",
+        lifecycle: "shared", revision: 1, auth_epoch: 1, authority_runtime_id: collaborationIds.runtime,
+        authority_generation: 1, execution_generation: null, organization_id: "org_collaboration_primary",
+        execution_eligibility: null, deleted_at: null, created_at: now, updated_at: now,
+      }).execute();
+      await fixture.db.updateTable("collaboration_members").set({ scope_id: parentId })
+        .where("scope_id", "=", collaborationIds.scope).execute();
+      await fixture.db.updateTable("collaboration_scopes")
+        .set({ parent_scope_id: parentId, membership_mode: "inherited" })
+        .where("id", "=", collaborationIds.scope).execute();
+      const authorize = async (scopeId: string, actorId: string, action: "request_ai" | "control_execution") => ({
+        ...readContext(actorId), scopeId, actorId, membershipScopeId: parentId, capability: action,
+        resourceAuthEpoch: 1, membershipAuthEpoch: 1,
+        role: actorId === collaborationActors.owner ? "owner" as const : "editor" as const,
+      });
+      repository.setSharedAuthorizer(authorize);
+      const queued = await repository.enqueueSharedQueuedTurn(owner, aiRequest(70, collaborationActors.editor));
+      const commands = createCommands(undefined, authorize);
+      const cancelled = await commands.cancel(control(collaborationActors.editor, queued.id, 71, 71, await revision()));
+      expect(cancelled.request?.state).toBe("cancelled");
+      expect(await loss.listDecisions(queued.id)).toMatchObject([
+        { kind: "cancel", actorId: collaborationActors.editor, relation: "requester" },
+      ]);
+    });
+
+    it("admits a standalone Chat Contributor with an S04 grant and no legacy member row", async () => {
+      await fixture.db.deleteFrom("collaboration_members")
+        .where("scope_id", "=", collaborationIds.scope).where("actor_id", "=", collaborationActors.editor).execute();
+      await fixture.db.insertInto("collaboration_grants").values({
+        id: "79000000-0000-4000-8000-000000000998", scope_id: collaborationIds.scope,
+        organization_id: "org_collaboration_primary", audience_kind: "member",
+        audience_actor_id: collaborationActors.editor, preset: "contributor", state: "active",
+        policy_version: "v1", source_id: null, legacy_ceiling: null, expires_at: null,
+        created_by: collaborationActors.owner, created_at: now, updated_at: now, revoked_at: null,
+      }).execute();
+      const authorize = async (scopeId: string, actorId: string, action: "request_ai" | "control_execution") => ({
+        ...readContext(actorId), scopeId, actorId, membershipScopeId: scopeId, capability: action,
+        resourceAuthEpoch: 1, membershipAuthEpoch: 1,
+        role: "editor" as const,
+      });
+      repository.setSharedAuthorizer(authorize);
+      const queued = await repository.enqueueSharedQueuedTurn(owner, aiRequest(72, collaborationActors.editor));
+      const commands = createCommands(undefined, authorize);
+      const cancelled = await commands.cancel(control(collaborationActors.editor, queued.id, 73, 73, await revision()));
+      expect(cancelled.request?.state).toBe("cancelled");
+      await repository.enqueueSharedQueuedTurn(owner, aiRequest(75, collaborationActors.editor, await revision()));
+      expect((await claim("grant_only"))?.sharedExecution?.requestingActorId).toBe(collaborationActors.editor);
+      // The S04 departure path currently changes the grant under the scope lock
+      // without advancing auth_epoch. The transaction must still reject it.
+      await fixture.db.updateTable("collaboration_grants").set({ state: "revoked", revoked_at: now })
+        .where("audience_actor_id", "=", collaborationActors.editor).execute();
+      await expect(repository.enqueueSharedQueuedTurn(owner, aiRequest(76, collaborationActors.editor, await revision())))
+        .rejects.toMatchObject({ code: "forbidden" });
+    });
+
     it("lets the requesting member and the scope owner cancel, and records who decided", async () => {
       const mine = await repository.enqueueSharedQueuedTurn(owner, aiRequest(1, collaborationActors.editor));
       const theirs = await repository.enqueueSharedQueuedTurn(owner, aiRequest(2, collaborationActors.editor, 2));
@@ -148,6 +222,25 @@ describe("shared coding execution (S09)", () => {
   });
 
   describe("home loses a run", () => {
+    it("preserves the queue while membership evidence is unavailable and rejects a revoked requester", async () => {
+      let state: "fresh" | "unavailable" | "revoked" = "fresh";
+      repository.setSharedAuthorizer(async (scopeId, actorId, action) => {
+        if (state === "unavailable") throw new CollaborationAuthorizationError("unavailable", "Membership projection unavailable");
+        if (state === "revoked") throw new CollaborationAuthorizationError("not_found", "Membership ended");
+        return {
+          ...readContext(actorId), scopeId, actorId, capability: action,
+          role: "editor", resourceAuthEpoch: 1, membershipAuthEpoch: 1,
+        };
+      });
+      await repository.enqueueSharedQueuedTurn(owner, aiRequest(74, collaborationActors.editor));
+      state = "unavailable";
+      await expect(claim("unavailable_evidence", true)).resolves.toBeNull();
+      expect(await repository.listSharedQueuedTurns(owner, collaborationIds.chat)).toMatchObject([{ state: "queued" }]);
+      state = "revoked";
+      await expect(claim("revoked_evidence", true)).resolves.toBeNull();
+      expect(await repository.listSharedQueuedTurns(owner, collaborationIds.chat)).toMatchObject([{ state: "unauthorized" }]);
+    });
+
     it.each(["gateway_restart", "scope_runtime_crash", "run_unit_exit", "control_partition"] as const)(
       "marks the run interrupted with the requester attributed for %s",
       async (reason) => {
@@ -314,7 +407,10 @@ describe("shared coding execution (S09)", () => {
     expect([first, second].filter((claimed) => claimed !== null)).toHaveLength(1);
   });
 
-  function createCommands(submitApproval = vi.fn(async () => undefined)) {
+  function createCommands(
+    submitApproval = vi.fn(async () => undefined),
+    authorize?: (scopeId: string, actorId: string, action: "request_ai" | "control_execution") => Promise<AuthorizedCollaborationContext>,
+  ) {
     return new CollaborationChatCommands({
       db: fixture.db,
       now: () => new Date(now),
@@ -322,6 +418,7 @@ describe("shared coding execution (S09)", () => {
       reconcileApproval: vi.fn(async () => "failed" as const),
       submitCancellation: vi.fn(async () => undefined),
       runControls: loss,
+      ...(authorize ? { authorize } : {}),
     });
   }
 
@@ -383,8 +480,10 @@ function control(actorId: string, requestId: string, index: number, hashSeed: nu
 function readContext(actorId: string): AuthorizedCollaborationContext {
   return {
     scopeId: collaborationIds.scope, actorId, ownerId: collaborationActors.owner,
+    organizationId: "org_collaboration_primary", membershipScopeId: collaborationIds.scope,
     resourceKind: "chat", resourceId: collaborationIds.chat, capability: "read",
-    role: actorId === collaborationActors.owner ? "owner" : "viewer", authEpoch: 1, authorityGeneration: 1,
+    role: actorId === collaborationActors.owner ? "owner" : "viewer", authEpoch: 1,
+    authorityRuntimeId: collaborationIds.runtime, authorityGeneration: 1,
   } as AuthorizedCollaborationContext;
 }
 
