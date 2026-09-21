@@ -14,6 +14,7 @@ import type { Hono } from "hono";
 import {
   CollaborationAuthorizationError,
 } from "./authority.js";
+import type { StandaloneResourceScopeService } from "./standalone-resource-scope.js";
 import {
   createInvitationCreationHandler,
 } from "./invitation-creation-route.js";
@@ -61,11 +62,12 @@ export function registerScopeRoutes(routes: Hono, options: CollaborationRouteOpt
             organizationId: input.organizationId,
             terminalId: input.resourceId,
           })
-        : await requireProjectScope(options.projectScope).preflight({
+        : input.kind === "project" ? await requireProjectScope(options.projectScope).preflight({
             ownerId: proof.ownerId,
             organizationId: input.organizationId,
             projectId: input.resourceId,
-          });
+          }) : await requireStandaloneScope(options).preflight({ ownerId: proof.ownerId,
+            organizationId: input.organizationId, kind: input.kind, resourceId: input.resourceId });
     return c.json(CollaborationScopePreflightResponseSchema.parse({
       eligible: result.eligible,
       ...("reason" in result && result.reason ? { reason: result.reason } : {}),
@@ -73,7 +75,7 @@ export function registerScopeRoutes(routes: Hono, options: CollaborationRouteOpt
         ? result.chatRevision
         : "projectRevision" in result ? result.projectRevision : result.resourceRevision),
       ...(result.confirmationToken ? { confirmationToken: result.confirmationToken } : {}),
-      ...(input.kind === "project" && "existingScopeId" in result && result.existingScopeId
+      ...("existingScopeId" in result && result.existingScopeId
         ? { existingScopeId: result.existingScopeId, existingLifecycle: result.existingLifecycle }
         : {}),
     }));
@@ -106,7 +108,7 @@ export function registerScopeRoutes(routes: Hono, options: CollaborationRouteOpt
             expectedResourceRevision: Number(input.expectedRevision),
             confirmationToken: input.confirmationToken,
           })
-        : await requireProjectScope(options.projectScope).prepare({
+        : input.kind === "project" ? await requireProjectScope(options.projectScope).prepare({
             ownerId: proof.ownerId,
             organizationId: input.organizationId,
             projectId: input.resourceId,
@@ -114,7 +116,10 @@ export function registerScopeRoutes(routes: Hono, options: CollaborationRouteOpt
             payloadHash: digest(bytes),
             expectedProjectRevision: Number(input.expectedRevision),
             confirmationToken: input.confirmationToken,
-          });
+          }) : await requireStandaloneScope(options).create({ ownerId: proof.ownerId,
+            organizationId: input.organizationId, kind: input.kind, resourceId: input.resourceId,
+            clientRequestId: input.clientRequestId, payloadHash: digest(bytes),
+            expectedRevision: Number(input.expectedRevision), confirmationToken: input.confirmationToken });
     if (scope.kind === "project") {
       await notifyScope(options, scope.id);
       return c.json(projectPreparationProjection(scope), 201);
@@ -284,4 +289,9 @@ export function registerScopeRoutes(routes: Hono, options: CollaborationRouteOpt
     await notifyScope(options, scopeId);
     return c.json(result);
   }));
+}
+
+function requireStandaloneScope(options: CollaborationRouteOptions): StandaloneResourceScopeService {
+  if (!options.standaloneScope) throw new CollaborationAuthorizationError("unavailable", "Shared resources are unavailable");
+  return options.standaloneScope;
 }

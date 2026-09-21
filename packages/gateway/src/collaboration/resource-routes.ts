@@ -34,6 +34,7 @@ export type { CollaborationResourceDriver } from "./resource-actions.js";
 export interface CollaborationResourceServices {
   catalog: CollaborationResourceCatalog;
   driver: CollaborationResourceDriver;
+  resolveAppIncarnation?: (input: { ownerId: string; projectId: string | null; appId: string }) => Promise<string | null>;
   apps?: AppInstanceAdapter;
   uploads?: CollaborationUploadStager;
   createEventId?: () => string;
