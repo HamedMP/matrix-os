@@ -448,6 +448,52 @@ describe("S05 direct sessions on the home", () => {
     return { client, sent };
   }
 
+  it("refuses a plaintext platform origin unless it is loopback, like the other collaboration clients", async () => {
+    const base = { runtimeId, ownerId: collaborationActors.owner, relayHandle: "owner-handle", serviceToken: "s".repeat(40), identity: { keyId: "home-key-1", publicKey: clientKey().raw }, sessions: service, startTimers: false };
+    expect(() => new CollaborationControlClient({ ...base, platformBaseUrl: "http://platform.internal" })).toThrow(/unavailable/i);
+    expect(() => new CollaborationControlClient({ ...base, platformBaseUrl: "http://10.0.0.5:8080" })).toThrow(/unavailable/i);
+    expect(() => new CollaborationControlClient({ ...base, platformBaseUrl: "https://user:pw@platform.internal" })).toThrow(/unavailable/i);
+    expect(() => new CollaborationControlClient({ ...base, platformBaseUrl: "http://127.0.0.1:3100" })).not.toThrow();
+    expect(() => new CollaborationControlClient({ ...base, platformBaseUrl: "https://platform.internal" })).not.toThrow();
+  });
+
+  it("bounds the session-ended listener registry and frees a slot on unsubscribe", () => {
+    const unsubscribes: Array<() => void> = [];
+    for (let index = 0; index < DirectSessionService.MAX_ENDED_LISTENERS; index += 1) unsubscribes.push(service.subscribeEnded(() => undefined));
+    expect(() => service.subscribeEnded(() => undefined)).toThrow(expect.objectContaining({ code: "limit" }));
+    unsubscribes[0]!();
+    expect(() => service.subscribeEnded(() => undefined)).not.toThrow();
+    for (const unsubscribe of unsubscribes) unsubscribe();
+  });
+
+  it("applies control frames in order: a later denial or keepalive never acknowledges before an earlier denial's cleanup finishes", async () => {
+    let releaseFirst!: () => void;
+    const firstCleanup = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    const cleanups: string[] = [];
+    const capabilities = {
+      endActorGrants: async ({ actorId }: { organizationId: string; actorId: string }) => {
+        cleanups.push(actorId);
+        if (actorId === collaborationActors.editor) await firstCleanup;
+        return { ended: 0, scopes: 0 };
+      },
+    };
+    const { client, sent } = controlClient({ capabilities: capabilities as never });
+    const stream = await client.connectControl((await client.register()).controlTicket);
+    const denial = (actorId: string, generation: number) => JSON.stringify({ protocolVersion: 2, type: "denial", denial: { organizationId, actorId, generation, fencedAt: clock.toISOString(), ackDeadline: new Date(clock.getTime() + 25_000).toISOString(), state: "pending" } });
+    const first = stream.receive(denial(collaborationActors.editor, 2));
+    const second = stream.receive(denial(collaborationActors.viewer, 3));
+    const keepalive = stream.receive(JSON.stringify({ protocolVersion: 2, type: "generation", runtimeId: logicalRuntimeId, authorityGeneration: 3 }));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    // Nothing may be acknowledged while the first denial's grant cleanup is still pending.
+    expect(sent).toEqual([]);
+    expect(cleanups).toEqual([collaborationActors.editor]);
+    releaseFirst();
+    await Promise.all([first, second, keepalive]);
+    expect(cleanups).toEqual([collaborationActors.editor, collaborationActors.viewer]);
+    expect(sent.map((ack) => ack.authorityGeneration)).toEqual([2, 3, 3]);
+    await client.shutdown();
+  });
+
   it("acknowledges platform generation keepalives with its unchanged fence and stays control-fresh past the snapshot lifetime", async () => {
     const { client, sent } = controlClient();
     const registration = await client.register();
