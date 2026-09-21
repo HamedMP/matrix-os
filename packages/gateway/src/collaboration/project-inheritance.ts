@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { Kysely, Selectable, Transaction } from "kysely";
+import { sql, type Kysely, type Selectable, type Transaction } from "kysely";
 import { z } from "zod/v4";
 import type {
   CollaborationResourceBindingsTable,
@@ -108,6 +108,15 @@ async function inheritedResourceScope(
     createScopeId: () => string;
   },
 ): Promise<string> {
+  // A parent project without an organization context (a pre-organization
+  // record) must never stage inherited resources; its children would inherit
+  // no organization and could never be authorized (S20 / T101).
+  const parent = await trx.selectFrom("collaboration_scopes").select("organization_id")
+    .where("id", "=", input.projectScopeId)
+    .where("kind", "=", "project")
+    .where("deleted_at", "is", null)
+    .executeTakeFirst();
+  if (!parent?.organization_id) throw new ProjectInheritanceError("conflict");
   const existing = await trx.selectFrom("collaboration_scopes").selectAll()
     .where("owner_type", "=", input.ownerType)
     .where("owner_id", "=", input.ownerId)
@@ -139,6 +148,10 @@ async function inheritedResourceScope(
     id: proposedId,
     owner_type: input.ownerType,
     owner_id: input.ownerId,
+    // The deriving organization is always the parent project's (S20 / T101).
+    organization_id: sql<string | null>`(
+      SELECT organization_id FROM collaboration_scopes WHERE id = ${input.projectScopeId}
+    )`,
     kind: input.kind,
     resource_id: input.resourceId,
     parent_scope_id: input.projectScopeId,

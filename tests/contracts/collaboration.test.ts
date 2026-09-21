@@ -4,7 +4,6 @@ import {
   CollaborationAiRequestsResponseSchema,
   CollaborationApprovalDecisionRequestSchema,
   CollaborationCreateAiRequestSchema,
-  CollaborationCapabilityModeSchema,
   CollaborationConnectionTicketRequestSchema,
   CollaborationDiscoveryResponseSchema,
   CollaborationCreateDiscussionRequestSchema,
@@ -22,6 +21,7 @@ import {
   CollaborationScopeExportSchema,
   CollaborationSharedChatMessageSchema,
   CollaborationMemberPatchRequestSchema,
+  CollaborationCapabilityModeSchema,
   CollaborationPolicySchema,
   CollaborationRoleSchema,
   CollaborationScopeSchema,
@@ -150,14 +150,54 @@ describe("collaboration contracts", () => {
     }).success).toBe(false);
   });
 
+  it("bounds rollout policy without exposing authority secrets", () => {
+    expect(CollaborationPolicySchema.parse({
+      milestone: "m1",
+      revision: "2",
+      mode: "internal",
+      cohort: ["user_owner", "user_editor"],
+      issuedAt: now,
+      expiresAt: "2026-09-14T12:00:00.000Z",
+    })).toMatchObject({ mode: "internal" });
+    expect(CollaborationPolicySchema.safeParse({
+      milestone: "m1",
+      revision: "2",
+      mode: "enabled",
+      cohort: Array.from({ length: 1_001 }, (_, index) => `user_${index}`),
+      issuedAt: now,
+      expiresAt: "2026-09-14T12:00:00.000Z",
+      signingSecret: "must-not-cross-the-boundary",
+    }).success).toBe(false);
+    expect(CollaborationScopePreflightRequestSchema.safeParse({
+      kind: "chat",
+      resourceId: "chat_release",
+      organizationId: "not-an-organization",
+    }).success).toBe(false);
+    expect(CollaborationCreateScopeRequestSchema.safeParse({
+      kind: "chat",
+      resourceId: "chat_release",
+      organizationId: "org_matrix_team",
+      clientRequestId: "40000000-0000-4000-8000-000000000001",
+      expectedRevision: "0",
+      confirmationToken: "a".repeat(64),
+      signingSecret: "must-not-cross-the-boundary",
+    }).success).toBe(false);
+  });
+
   it("keeps owner scope conversion bound to one selected resource and preflight", () => {
     expect(CollaborationScopePreflightRequestSchema.parse({
       kind: "chat",
       resourceId: "chat_release",
-    })).toEqual({ kind: "chat", resourceId: "chat_release" });
+      organizationId: "org_matrix_team",
+    })).toEqual({ kind: "chat", resourceId: "chat_release", organizationId: "org_matrix_team" });
+    expect(CollaborationScopePreflightRequestSchema.safeParse({
+      kind: "chat",
+      resourceId: "chat_release",
+    }).success).toBe(false);
     expect(CollaborationCreateScopeRequestSchema.parse({
       kind: "chat",
       resourceId: "chat_release",
+      organizationId: "org_matrix_team",
       clientRequestId: requestId,
       expectedRevision: "4",
       confirmationToken: "a".repeat(64),
@@ -311,26 +351,6 @@ describe("collaboration contracts", () => {
       resourceKind: "chat",
       revision: "6",
       text: "secret transcript",
-    }).success).toBe(false);
-  });
-
-  it("bounds rollout policy without exposing authority secrets", () => {
-    expect(CollaborationPolicySchema.parse({
-      milestone: "m1",
-      revision: "2",
-      mode: "internal",
-      cohort: ["user_owner", "user_editor"],
-      issuedAt: now,
-      expiresAt: "2026-09-14T12:00:00.000Z",
-    })).toMatchObject({ mode: "internal" });
-    expect(CollaborationPolicySchema.safeParse({
-      milestone: "m1",
-      revision: "2",
-      mode: "enabled",
-      cohort: Array.from({ length: 1_001 }, (_, index) => `user_${index}`),
-      issuedAt: now,
-      expiresAt: "2026-09-14T12:00:00.000Z",
-      signingSecret: "must-not-cross-the-boundary",
     }).success).toBe(false);
   });
 

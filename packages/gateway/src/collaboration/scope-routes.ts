@@ -49,14 +49,20 @@ export function registerScopeRoutes(routes: Hono, options: CollaborationRouteOpt
     const input = CollaborationScopePreflightRequestSchema.parse(value);
     if (input.kind === "project") requireM4Policy(options.verifier, c, proof.actorId, proof.ownerId, true);
     const result = input.kind === "chat"
-      ? await options.chatScope.preflight({ ownerId: proof.ownerId, chatId: input.resourceId })
+      ? await options.chatScope.preflight({
+          ownerId: proof.ownerId,
+          organizationId: input.organizationId,
+          chatId: input.resourceId,
+        })
       : input.kind === "terminal"
         ? await requireTerminalAdapter(options.terminalAdapter).preflight({
             ownerId: proof.ownerId,
+            organizationId: input.organizationId,
             terminalId: input.resourceId,
           })
         : await requireProjectScope(options.projectScope).preflight({
             ownerId: proof.ownerId,
+            organizationId: input.organizationId,
             projectId: input.resourceId,
           });
     return c.json(CollaborationScopePreflightResponseSchema.parse({
@@ -81,6 +87,7 @@ export function registerScopeRoutes(routes: Hono, options: CollaborationRouteOpt
     const scope = input.kind === "chat"
       ? await options.chatScope.shareChat({
           ownerId: proof.ownerId,
+          organizationId: input.organizationId,
           chatId: input.resourceId,
           clientRequestId: input.clientRequestId,
           payloadHash: digest(bytes),
@@ -90,6 +97,7 @@ export function registerScopeRoutes(routes: Hono, options: CollaborationRouteOpt
       : input.kind === "terminal"
         ? await requireTerminalAdapter(options.terminalAdapter).shareTerminal({
             ownerId: proof.ownerId,
+            organizationId: input.organizationId,
             terminalId: input.resourceId,
             clientRequestId: input.clientRequestId,
             payloadHash: digest(bytes),
@@ -98,6 +106,7 @@ export function registerScopeRoutes(routes: Hono, options: CollaborationRouteOpt
           })
         : await requireProjectScope(options.projectScope).prepare({
             ownerId: proof.ownerId,
+            organizationId: input.organizationId,
             projectId: input.resourceId,
             clientRequestId: input.clientRequestId,
             payloadHash: digest(bytes),

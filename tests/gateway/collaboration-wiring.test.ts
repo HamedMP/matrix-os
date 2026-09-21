@@ -92,6 +92,7 @@ describe("gateway collaboration wiring", () => {
         { version: 4 },
         { version: 5 },
         { version: 6 },
+        { version: 7 },
       ]);
     await expect(app.request(`/api/collaboration/scopes/${collaborationIds.scope}/discussion/messages`))
       .resolves.toMatchObject({ status: 401 });
@@ -257,9 +258,10 @@ describe("gateway collaboration wiring", () => {
         created_at: "2026-09-10T00:00:00.000Z",
         updated_at: "2026-09-10T00:00:00.000Z",
       }).execute();
-      const preflight = await runtime.chatScope.preflight({ ownerId: "user_owner", chatId: postStartupChatId });
+      const preflight = await runtime.chatScope.preflight({ ownerId: "user_owner", organizationId: "org_matrix_team", chatId: postStartupChatId });
       const created = await runtime.chatScope.shareChat({
         ownerId: "user_owner",
+        organizationId: "org_matrix_team",
         chatId: postStartupChatId,
         clientRequestId: "50000000-0000-4000-8000-000000000099",
         payloadHash: "e".repeat(64),

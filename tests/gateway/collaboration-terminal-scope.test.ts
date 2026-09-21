@@ -62,6 +62,7 @@ describe("CollaborationTerminalAdapter scope binding", () => {
 
     await expect(adapter.preflight({
       ownerId: collaborationActors.owner,
+      organizationId: "org_matrix_team",
       terminalId,
     })).resolves.toEqual({ eligible: false, reason: "unsupported", resourceRevision: 0 });
     expect(registry.bindCollaboration).not.toHaveBeenCalled();
@@ -70,11 +71,12 @@ describe("CollaborationTerminalAdapter scope binding", () => {
   });
 
   it("activates one standalone scope for the exact running incarnation", async () => {
-    const preflight = await adapter.preflight({ ownerId: collaborationActors.owner, terminalId });
+    const preflight = await adapter.preflight({ ownerId: collaborationActors.owner, organizationId: "org_matrix_team", terminalId });
     expect(preflight).toMatchObject({ eligible: true, resourceRevision: 4 });
 
     const scope = await adapter.shareTerminal({
       ownerId: collaborationActors.owner,
+      organizationId: "org_matrix_team",
       terminalId,
       clientRequestId: "50000000-0000-4000-8000-000000000020",
       payloadHash: "a".repeat(64),
@@ -104,19 +106,21 @@ describe("CollaborationTerminalAdapter scope binding", () => {
   });
 
   it("reopens the same shared terminal scope with a new actor-scoped request", async () => {
-    const firstPreflight = await adapter.preflight({ ownerId: collaborationActors.owner, terminalId });
+    const firstPreflight = await adapter.preflight({ ownerId: collaborationActors.owner, organizationId: "org_matrix_team", terminalId });
     const first = await adapter.shareTerminal({
       ownerId: collaborationActors.owner,
+      organizationId: "org_matrix_team",
       terminalId,
       clientRequestId: "50000000-0000-4000-8000-000000000020",
       payloadHash: "a".repeat(64),
       expectedResourceRevision: 4,
       confirmationToken: firstPreflight.confirmationToken!,
     });
-    const nextPreflight = await adapter.preflight({ ownerId: collaborationActors.owner, terminalId });
+    const nextPreflight = await adapter.preflight({ ownerId: collaborationActors.owner, organizationId: "org_matrix_team", terminalId });
     expect(nextPreflight).toMatchObject({ eligible: true, resourceRevision: 4 });
     const reopened = await adapter.shareTerminal({
       ownerId: collaborationActors.owner,
+      organizationId: "org_matrix_team",
       terminalId,
       clientRequestId: "50000000-0000-4000-8000-000000000021",
       payloadHash: "b".repeat(64),
@@ -130,11 +134,12 @@ describe("CollaborationTerminalAdapter scope binding", () => {
   });
 
   it("rejects an incarnation change after confirmation without replacing the process", async () => {
-    const preflight = await adapter.preflight({ ownerId: collaborationActors.owner, terminalId });
+    const preflight = await adapter.preflight({ ownerId: collaborationActors.owner, organizationId: "org_matrix_team", terminalId });
     session = { ...session, sessionIncarnation: `terminal-${"b".repeat(32)}` };
 
     await expect(adapter.shareTerminal({
       ownerId: collaborationActors.owner,
+      organizationId: "org_matrix_team",
       terminalId,
       clientRequestId: "50000000-0000-4000-8000-000000000020",
       payloadHash: "a".repeat(64),
@@ -147,11 +152,12 @@ describe("CollaborationTerminalAdapter scope binding", () => {
   });
 
   it("does not expose a private database orphan when registry binding fails", async () => {
-    const preflight = await adapter.preflight({ ownerId: collaborationActors.owner, terminalId });
+    const preflight = await adapter.preflight({ ownerId: collaborationActors.owner, organizationId: "org_matrix_team", terminalId });
     registry.bindCollaboration.mockRejectedValueOnce(new Error("registry unavailable"));
 
     await expect(adapter.shareTerminal({
       ownerId: collaborationActors.owner,
+      organizationId: "org_matrix_team",
       terminalId,
       clientRequestId: "50000000-0000-4000-8000-000000000020",
       payloadHash: "a".repeat(64),
@@ -171,6 +177,7 @@ describe("CollaborationTerminalAdapter scope binding", () => {
     };
     await expect(adapter.preflight({
       ownerId: collaborationActors.owner,
+      organizationId: "org_matrix_team",
       terminalId,
     })).resolves.toEqual({ eligible: false, reason: "unsupported", resourceRevision: 4 });
   });
@@ -209,7 +216,7 @@ describe("CollaborationTerminalAdapter scope binding", () => {
   });
 
   it("repairs a private database scope whose failed rollback left the registry bound", async () => {
-    const preflight = await adapter.preflight({ ownerId: collaborationActors.owner, terminalId });
+    const preflight = await adapter.preflight({ ownerId: collaborationActors.owner, organizationId: "org_matrix_team", terminalId });
     registry.bindCollaboration.mockImplementationOnce(async (_name: string, input: { scopeId: string }) => {
       sessionBinding(session, input.scopeId);
       vi.spyOn(fixture.db, "transaction").mockReturnValueOnce({
@@ -223,6 +230,7 @@ describe("CollaborationTerminalAdapter scope binding", () => {
 
     await expect(adapter.shareTerminal({
       ownerId: collaborationActors.owner,
+      organizationId: "org_matrix_team",
       terminalId,
       clientRequestId: "50000000-0000-4000-8000-000000000020",
       payloadHash: "a".repeat(64),
@@ -231,7 +239,7 @@ describe("CollaborationTerminalAdapter scope binding", () => {
     })).rejects.toThrow("activation failed");
     expect(session.sharedControlMode).toBe("shared");
 
-    await expect(adapter.preflight({ ownerId: collaborationActors.owner, terminalId }))
+    await expect(adapter.preflight({ ownerId: collaborationActors.owner, organizationId: "org_matrix_team", terminalId }))
       .resolves.toMatchObject({ eligible: true, resourceRevision: 4 });
     expect(registry.unbindCollaboration).toHaveBeenCalledTimes(2);
     expect(session.sharedControlMode).toBe("eligible");

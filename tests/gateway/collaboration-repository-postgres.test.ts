@@ -31,6 +31,7 @@ realDescribe("CollaborationRepository real PostgreSQL serialization", () => {
   async function createScope() {
     return repository.createDirectScope({
       scopeId: collaborationIds.scope,
+      organizationId: "org_matrix_team",
       ownerId: collaborationActors.owner,
       kind: "chat",
       resourceId: collaborationIds.chat,
@@ -43,6 +44,7 @@ realDescribe("CollaborationRepository real PostgreSQL serialization", () => {
       createScope(),
       repository.createDirectScope({
         scopeId: "10000000-0000-4000-8000-000000000002",
+        organizationId: "org_matrix_team",
         ownerId: collaborationActors.owner,
         kind: "chat",
         resourceId: collaborationIds.chat,

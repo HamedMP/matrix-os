@@ -10,6 +10,8 @@ export interface CollaborationScopesTable {
   id: string;
   owner_type: "personal" | "organization";
   owner_id: string;
+  /** Owning organization (Clerk org ID). Null only on pre-S20 rows, which the precondition denies. */
+  organization_id: string | null;
   kind: "chat" | "terminal" | "project";
   resource_id: string;
   parent_scope_id: string | null;
@@ -31,6 +33,8 @@ export interface CollaborationMembersTable {
   actor_id: string;
   role: "owner" | "editor" | "viewer";
   status: "pending" | "accepted" | "revoked" | "expired";
+  /** Organization the grant derives from; always the scope's organization. */
+  organization_id: string | null;
   invitation_id: string | null;
   invited_by: string;
   accepted_at: NullableTimestamp;
