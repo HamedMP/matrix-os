@@ -7,7 +7,10 @@
  * point and verifies them identically whichever ingress delivered them.
  */
 import { generateKeyPairSync } from "node:crypto";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { once } from "node:events";
+import { createServer } from "node:http";
+import { WebSocket } from "ws";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   COLLABORATION_DIRECT_PROTOCOL_VERSION,
   CollaborationSignedConnectionTicketSchema,
@@ -31,6 +34,7 @@ import {
   verifyEd25519,
 } from "../../packages/platform/src/collaboration/ticket-crypto.js";
 import { CollaborationControlStream, ControlStreamNotConnectedError } from "../../packages/platform/src/collaboration/control-stream.js";
+import { createCollaborationControlUpgradeHandler } from "../../packages/platform/src/collaboration/control-upgrade.js";
 import {
   createPlatformCollaborationTestDatabase,
   createRealPlatformCollaborationTestDatabase,
@@ -337,6 +341,42 @@ describe("S05 platform tickets, endpoints and control", () => {
   });
 
   describe("control stream (T026)", () => {
+    it("keeps a pong-responsive idle home ticket-ready beyond the liveness window", async () => {
+      await endpoints.register({ authenticated: { runtimeId, ownerId: platformCollaborationActors.owner, relayHandle: "owner-handle" }, registration: registration() });
+      const stream = new CollaborationControlStream({
+        controlAuthority: { registerTransport: () => undefined, acknowledge: async () => ({ completedDenialIds: [] }) },
+        tickets: endpoints, onAttach: (id) => endpoints.heartbeat(id), now: () => clock,
+      });
+      const handler = createCollaborationControlUpgradeHandler({
+        stream,
+        authenticateRuntime: async () => ({ runtimeId, ownerId: platformCollaborationActors.owner, relayHandle: "owner-handle" }),
+        heartbeatIntervalMs: 20,
+      });
+      const server = createServer();
+      server.on("upgrade", (request, socket, head) => { void handler.handleUpgrade(request, socket, head); });
+      await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("Test server has no port");
+      const ticket = await stream.issueUpgradeTicket(logicalRuntimeId);
+      const socket = new WebSocket(`ws://127.0.0.1:${address.port}/internal/collaboration/control?ticket=${ticket}`, {
+        headers: { "x-matrix-runtime-id": runtimeId, authorization: `Bearer ${"a".repeat(32)}` },
+      });
+      try {
+        await once(socket, "open");
+        await vi.waitFor(async () => expect((await endpoints.resolve(logicalRuntimeId))?.lastControlAt).toBe(clock.toISOString()));
+        clock = new Date(clock.getTime() + 61_000);
+        await vi.waitFor(async () => expect((await endpoints.resolve(logicalRuntimeId))?.lastControlAt).toBe(clock.toISOString()), { timeout: 1_500 });
+        await expect(issuer.issue({ actorId: platformCollaborationActors.owner, request: {
+          clientRequestId: "40000000-0000-4000-8000-000000000025", scopeId, purpose: "direct_session", proofPublicKey: clientProofKey().raw,
+        } })).resolves.toBeTruthy();
+      } finally {
+        socket.terminate();
+        await stream.shutdown();
+        handler.close();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
+    });
+
     it("admits a runtime once per upgrade ticket, pushes denials and routes acknowledgements", async () => {
       const acks: unknown[] = [];
       await endpoints.register({ authenticated: { runtimeId, ownerId: platformCollaborationActors.owner, relayHandle: "owner-handle" }, registration: registration() });
