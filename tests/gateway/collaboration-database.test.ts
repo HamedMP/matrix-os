@@ -35,6 +35,7 @@ describe("collaboration owner database", () => {
       "collaboration_events",
       "collaboration_execution_policies",
       "collaboration_exports",
+      "collaboration_git_operations",
       "collaboration_grant_activations",
       "collaboration_grants",
       "collaboration_layout_node_revisions",
