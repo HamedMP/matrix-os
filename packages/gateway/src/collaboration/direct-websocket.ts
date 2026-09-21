@@ -90,12 +90,9 @@ export function registerCollaborationDirectWebSocketRoutes(options: {
         if (!ticket) throw new Error("ticket missing");
         const opened = await options.sessions.openStream({ ticket, handshake: frame });
         release = opened.release;
-        const authorized = await options.authority.authorize({ scopeId, actorId: opened.session.actorId, action: "read" });
-        if (authorized.authorityGeneration !== opened.session.authorityGeneration) throw new Error("generation mismatch");
-        if (purpose === "terminal" && authorized.resourceKind !== "terminal") throw new Error("not a terminal scope");
         sessionId = opened.session.id;
         actorId = opened.session.actorId;
-        generation = authorized.authorityGeneration;
+        generation = opened.context.authorityGeneration;
         const nextConnectionId = createConnectionId();
         const socket = { send: (value: string) => { ws.send(value); }, close: (code?: number, reason?: string) => { ws.close(code, reason); }, get bufferedAmount() { return rawBufferedAmount(ws.raw); } };
         if (purpose === "events") {
@@ -109,6 +106,7 @@ export function registerCollaborationDirectWebSocketRoutes(options: {
           shutdownStream(ws, 1001, "Closed");
           return;
         }
+        opened.commitAdmission();
         if (handshakeTimer) clearTimeout(handshakeTimer);
         handshakeTimer = null;
         // A denial, expiry or exhaustion closes this socket at once; the watchdog is the backstop.
@@ -142,14 +140,14 @@ export function registerCollaborationDirectWebSocketRoutes(options: {
             const frame = CollaborationClientFrameSchema.parse(parsed);
             if (frame.type !== "heartbeat") {
               if (frame.scopeId !== scopeId) throw new Error("scope mismatch");
-              options.sessions.spendStreamInput(sessionId!);
-              await stream.resume?.(Number(frame.sequence), Number(frame.authorityGeneration));
+              const resume = stream.resume?.bind(stream);
+              if (!resume) throw new Error("resume unavailable");
+              await options.sessions.runStreamInput(sessionId!, () => resume(Number(frame.sequence), Number(frame.authorityGeneration)));
             }
             return;
           }
           const action = CollaborationTerminalActionSchema.parse(parsed);
-          options.sessions.spendStreamInput(sessionId!);
-          await options.terminal!.dispatcher.dispatch({ scopeId, actorId: actorId!, connectionId: connectionId!, action });
+          await options.sessions.runStreamInput(sessionId!, () => options.terminal!.dispatcher.dispatch({ scopeId, actorId: actorId!, connectionId: connectionId!, action }));
           await options.terminal!.registry.publishState(scopeId);
           stream.touch();
         }).catch((error: unknown) => {

@@ -103,6 +103,7 @@ export function createDirectSessionRoutes(options: { sessions: DirectSessionServ
         body,
         conditionalHeadersDigest: sha256Hex(new Uint8Array()),
       });
+      options.sessions.spendAuthenticatedAction(sessionId.data);
       options.sessions.close(sessionId.data);
       c.header("Cache-Control", "no-store");
       return c.body(null, 204);
