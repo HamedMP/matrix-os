@@ -49,6 +49,8 @@ export class OrganizationMembershipClient implements OrganizationMembershipSourc
   private readonly maxEntries: number;
   private readonly cache = new Map<string, { member: boolean; expiresAt: string; aiSubmission: OrganizationAiSubmission; membershipEpoch: string }>();
   private readonly inflight = new Map<string, Promise<OrganizationMembershipAssertion>>();
+  /** Keys evicted while their lookup was in flight; the result is delivered but never cached. Bounded by the in-flight cap. */
+  private readonly evictedInflight = new Set<string>();
   /** Lookups admitted in the current tick, sent together on the next microtask. */
   private pending: PendingLookup[] = [];
   private flushScheduled = false;
@@ -108,6 +110,24 @@ export class OrganizationMembershipClient implements OrganizationMembershipSourc
     return { cacheEntries: this.cache.size, inflight: this.inflight.size };
   }
 
+  /**
+   * Drops cached evidence for one actor, or for every actor of an organization,
+   * so the next request asks the platform again. A pushed denial calls this;
+   * evidence still in flight for an evicted key is settled but not cached.
+   */
+  evict(input: { organizationId: string; actorId?: string }): void {
+    const organizationId = CollaborationOrganizationIdSchema.parse(input.organizationId);
+    if (input.actorId !== undefined) {
+      const key = `${organizationId}\u0000${CollaborationActorIdSchema.parse(input.actorId)}`;
+      this.cache.delete(key);
+      if (this.inflight.has(key)) this.evictedInflight.add(key);
+      return;
+    }
+    const prefix = `${organizationId}\u0000`;
+    for (const key of [...this.cache.keys()]) if (key.startsWith(prefix)) this.cache.delete(key);
+    for (const key of this.inflight.keys()) if (key.startsWith(prefix)) this.evictedInflight.add(key);
+  }
+
   /** Sends every pending lookup in batches of at most MAX_ACTORS_PER_REQUEST; each lookup settles individually. */
   private async flush(): Promise<void> {
     while (this.pending.length > 0) {
@@ -117,19 +137,25 @@ export class OrganizationMembershipClient implements OrganizationMembershipSourc
         parsed = await this.resolveBatch(batch);
       } catch (error: unknown) {
         const failure = error instanceof OrganizationMembershipClientError ? error : new OrganizationMembershipClientError();
-        for (const lookup of batch) lookup.reject(failure);
+        for (const lookup of batch) {
+          this.evictedInflight.delete(lookup.key);
+          lookup.reject(failure);
+        }
         continue;
       }
       for (const lookup of batch) {
         const assertion = parsed.find((frame) => frame.type === "membership_assertion"
           && frame.organizationId === lookup.organizationId && frame.actorId === lookup.actorId);
         if (!assertion || assertion.type !== "membership_assertion") {
+          this.evictedInflight.delete(lookup.key);
           lookup.reject(new OrganizationMembershipClientError());
           continue;
         }
         // Additive contract field: a platform that predates it means owner-only (fail closed).
         const aiSubmission: OrganizationAiSubmission = assertion.aiSubmission === "members" ? "members" : "owner_only";
-        this.cache.set(lookup.key, { member: assertion.member, expiresAt: assertion.expiresAt, aiSubmission, membershipEpoch: assertion.membershipEpoch });
+        if (!this.evictedInflight.delete(lookup.key)) {
+          this.cache.set(lookup.key, { member: assertion.member, expiresAt: assertion.expiresAt, aiSubmission, membershipEpoch: assertion.membershipEpoch });
+        }
         lookup.resolve(assertion.member
           ? { member: true, expiresAt: assertion.expiresAt, aiSubmission, membershipEpoch: assertion.membershipEpoch }
           : { member: false });

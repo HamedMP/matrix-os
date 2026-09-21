@@ -121,4 +121,40 @@ describe("gateway organization membership client (S03 seam for the S20 precondit
     const client = new OrganizationMembershipClient({ platformBaseUrl: "https://platform.example", runtimeId, serviceToken: "t".repeat(40), fetchImpl: fetchImpl as unknown as typeof fetch, now: () => clock });
     await expect(client.assertMembership({ organizationId: org, actorId: member })).rejects.toThrow();
   });
+
+  it("evicts cached and in-flight evidence for an actor or a whole organization so a pushed denial is served at once", async () => {
+    let clock = new Date("2026-09-20T12:00:00.000Z");
+    const other = "user_other000000000000000000";
+    const fetchImpl = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { actors: Array<{ actorId: string }> };
+      return new Response(JSON.stringify(body.actors.map(({ actorId }) => assertionFrame({ member: true, requestStartedAt: clock, actorId }))), { status: 200, headers: { "content-type": "application/json" } });
+    });
+    const client = new OrganizationMembershipClient({ platformBaseUrl: "https://platform.example", runtimeId, serviceToken: "t".repeat(40), fetchImpl: fetchImpl as unknown as typeof fetch, now: () => clock });
+    await Promise.all([client.assertMembership({ organizationId: org, actorId: member }), client.assertMembership({ organizationId: org, actorId: other })]);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    // A pushed denial for the member: their cached evidence is dropped, the other actor's is kept.
+    client.evict({ organizationId: org, actorId: member });
+    expect(client.describe().cacheEntries).toBe(1);
+    fetchImpl.mockImplementationOnce(async () => assertionResponse({ member: false, requestStartedAt: clock }));
+    await expect(client.assertMembership({ organizationId: org, actorId: member })).resolves.toEqual({ member: false });
+    await expect(client.assertMembership({ organizationId: org, actorId: other })).resolves.toMatchObject({ member: true });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    // Evidence that was in flight when the denial arrived is settled but never cached.
+    client.evict({ organizationId: org, actorId: member });
+    let release!: () => void;
+    fetchImpl.mockImplementationOnce(() => new Promise((resolve) => { release = () => resolve(assertionResponse({ member: true, requestStartedAt: clock, actorId: member })); }));
+    const pending = client.assertMembership({ organizationId: org, actorId: member });
+    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(3));
+    client.evict({ organizationId: org, actorId: member });
+    release();
+    await expect(pending).resolves.toMatchObject({ member: true });
+    fetchImpl.mockImplementationOnce(async () => assertionResponse({ member: false, requestStartedAt: clock }));
+    await expect(client.assertMembership({ organizationId: org, actorId: member })).resolves.toEqual({ member: false });
+    // An organization-wide denial drops every cached actor of that organization.
+    clock = new Date(clock.getTime() + 1_000);
+    await client.assertMembership({ organizationId: org, actorId: other });
+    expect(client.describe().cacheEntries).toBeGreaterThan(0);
+    client.evict({ organizationId: org });
+    expect(client.describe().cacheEntries).toBe(0);
+  });
 });

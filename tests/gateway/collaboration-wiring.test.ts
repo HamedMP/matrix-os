@@ -95,11 +95,80 @@ describe("gateway collaboration wiring", () => {
         { version: 5 },
         { version: 6 },
         { version: 7 },
+        { version: 8 },
       ]);
     await expect(app.request(`/api/collaboration/scopes/${collaborationIds.scope}/discussion/messages`))
       .resolves.toMatchObject({ status: 401 });
     await runtime.shutdown();
     await expect(runtime.outbox.runOnce()).resolves.toBe(0);
+  });
+
+  it("authorizes an accepted preset grant through the wired authority on chat, project and terminal scopes", async () => {
+    const organizationId = "org_wiring_primary";
+    const members = new Set(["user_wiring_owner", "user_wiring_member"]);
+    const runtime = await createGatewayCollaboration({
+      organizationMembershipSource: {
+        async assertMembership({ actorId, organizationId: requested }) {
+          return requested === organizationId && members.has(actorId)
+            ? { member: true, expiresAt: new Date(Date.now() + 20_000).toISOString(), aiSubmission: "owner_only" as const, membershipEpoch: "1" }
+            : { member: false };
+        },
+      },
+      db: fixture.db,
+      chatRepository: new ChatRepository(fixture.db),
+      config: {
+        runtimeId: collaborationIds.runtime,
+        activeKeyId: "key-1",
+        proofKeys: { "key-1": "a".repeat(32) },
+        preflightSecret: "b".repeat(32),
+        platformBaseUrl: "https://platform.internal",
+        serviceToken: "c".repeat(32),
+      },
+      resolveParticipant: async (actorId) => ({ actorId, displayName: actorId }),
+      outboxFetch: async () => new Response(null, { status: 204 }),
+      startTimers: false,
+    });
+    const now = new Date().toISOString();
+    const scopes = [
+      { id: "10000000-0000-4000-8000-00000000a001", kind: "chat" as const, resourceId: "chat_wiring" },
+      { id: "10000000-0000-4000-8000-00000000a002", kind: "project" as const, resourceId: "project_wiring" },
+      { id: "10000000-0000-4000-8000-00000000a003", kind: "terminal" as const, resourceId: "terminal_wiring" },
+    ];
+    for (const scope of scopes) {
+      await fixture.db.insertInto("collaboration_scopes").values({
+        id: scope.id, owner_type: "personal", owner_id: "user_wiring_owner", organization_id: organizationId,
+        kind: scope.kind, resource_id: scope.resourceId, parent_scope_id: null, membership_mode: "direct", lifecycle: "shared",
+        revision: 1, auth_epoch: 1, authority_runtime_id: collaborationIds.runtime, authority_generation: 1,
+        execution_generation: null, execution_eligibility: null, deleted_at: null, created_at: now, updated_at: now,
+      }).execute();
+      await fixture.db.insertInto("collaboration_members").values({
+        scope_id: scope.id, actor_id: "user_wiring_owner", role: "owner", status: "accepted", organization_id: organizationId,
+        invitation_id: null, invited_by: "user_wiring_owner", accepted_at: now, expires_at: null, revision: 1, joined_at: now, updated_at: now,
+        dispositioned_at: null,
+      }).execute();
+      await expect(runtime.authority.authorize({ scopeId: scope.id, actorId: "user_wiring_member", action: "read" }))
+        .rejects.toMatchObject({ code: "not_found" });
+      const grant = await runtime.capabilities.createGrant({
+        scopeId: scope.id, actorId: "user_wiring_owner", clientRequestId: crypto.randomUUID(), expectedRevision: 1, payloadHash: "a".repeat(64),
+        audience: { kind: "member", actorId: "user_wiring_member" }, preset: "contributor", policyVersion: "v1",
+      });
+      await runtime.capabilities.acceptGrant({ grantId: grant.grantId, actorId: "user_wiring_member", membershipEvidenceEpoch: "1" });
+      await expect(runtime.authority.authorize({ scopeId: scope.id, actorId: "user_wiring_member", action: "read" }))
+        .resolves.toMatchObject({ role: "editor", organizationId, resourceKind: scope.kind });
+      await expect(runtime.authority.authorize({ scopeId: scope.id, actorId: "user_wiring_member", action: "discuss" }))
+        .resolves.toMatchObject({ role: "editor" });
+    }
+    // The event WebSocket path authorizes through the same wired authority.
+    const socket = { sent: [] as string[], closed: false, send(value: string) { this.sent.push(value); }, close() { this.closed = true; } };
+    const connection = await runtime.eventRegistry.open({
+      connectionId: "conn_wiring_member", scopeId: scopes[0]!.id, actorId: "user_wiring_member", authorityGeneration: 1, socket,
+    });
+    expect(socket.closed).toBe(false);
+    connection.close();
+    members.delete("user_wiring_member");
+    await expect(runtime.authority.authorize({ scopeId: scopes[0]!.id, actorId: "user_wiring_member", action: "read" }))
+      .rejects.toMatchObject({ code: "not_found" });
+    await runtime.shutdown();
   });
 
   it("registers M3 routes only after terminal dependencies are resolved and drains them on shutdown", async () => {

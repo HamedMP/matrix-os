@@ -42,6 +42,8 @@ export interface CollaborationMembersTable {
   revision: ColumnType<number, number | undefined, number>;
   joined_at: NullableTimestamp;
   updated_at: Timestamp;
+  /** S04: set when a legacy role row was retired in favour of a preset grant; such rows never authorize. */
+  dispositioned_at: ColumnType<Date | string | null, Date | string | null | undefined, Date | string | null>;
 }
 
 export interface CollaborationOperationsTable {
@@ -202,7 +204,37 @@ export interface CollaborationDiscussionUserStateTable {
   updated_at: Timestamp;
 }
 
+export interface CollaborationGrantsTable {
+  id: string;
+  scope_id: string;
+  organization_id: string;
+  audience_kind: "organization" | "member";
+  audience_actor_id: string | null;
+  preset: "viewer" | "contributor";
+  state: "pending" | "active" | "revoked" | "expired";
+  policy_version: string;
+  source_id: string | null;
+  legacy_ceiling: "editor" | "viewer" | null;
+  expires_at: NullableTimestamp;
+  revision: ColumnType<number, number | undefined, number>;
+  created_by: string;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+  revoked_at: NullableTimestamp;
+}
+
+export interface CollaborationGrantActivationsTable {
+  grant_id: string;
+  actor_id: string;
+  state: "active" | "declined";
+  decided_at: Timestamp;
+  /** BIGINT epoch, handled as a decimal string end to end and compared with BigInt. */
+  membership_evidence_epoch: ColumnType<string, string, string>;
+}
+
 export interface CollaborationDatabase {
+  collaboration_grants: CollaborationGrantsTable;
+  collaboration_grant_activations: CollaborationGrantActivationsTable;
   collaboration_scopes: CollaborationScopesTable;
   collaboration_members: CollaborationMembersTable;
   collaboration_operations: CollaborationOperationsTable;
