@@ -527,7 +527,7 @@ describe('golden snapshot repository', () => {
   });
 
   it('keeps the idempotent provenance guard meaningful after conflict lookup', async () => {
-    const source = await readFile('packages/platform/src/golden-snapshot-repository.ts', 'utf8');
+    const source = await readFile('packages/platform/src/golden-snapshots/builds.ts', 'utf8');
     expect(source).not.toContain('snapshot.compatibilityKey !== key');
   });
 
@@ -1124,7 +1124,7 @@ describe('golden snapshot repository', () => {
   });
 
   it('pre-filters reusable candidates by exact immutable provenance only', async () => {
-    const source = await readFile('packages/platform/src/golden-snapshot-repository.ts', 'utf8');
+    const source = await readFile('packages/platform/src/golden-snapshots/leases.ts', 'utf8');
     const start = source.indexOf('export async function selectAndLeaseGoldenSnapshot');
     const end = source.indexOf('export async function releaseGoldenSnapshotLease', start);
     const selection = source.slice(start, end);
@@ -1217,7 +1217,7 @@ describe('golden snapshot repository', () => {
   });
 
   it('revalidates expired lease workflow state under lock before releasing it', async () => {
-    const source = await readFile('packages/platform/src/golden-snapshot-repository.ts', 'utf8');
+    const source = await readFile('packages/platform/src/golden-snapshots/leases.ts', 'utf8');
     const start = source.indexOf('async function releaseExpiredGoldenSnapshotLease');
     const end = source.indexOf('export async function reconcileExpiredGoldenSnapshotLeases', start);
     const release = source.slice(start, end);
@@ -1288,7 +1288,7 @@ describe('golden snapshot repository', () => {
   });
 
   it('normalizes Postgres BIGINT image IDs before accepting an idempotent ready observation', async () => {
-    const source = await readFile('packages/platform/src/golden-snapshot-repository.ts', 'utf8');
+    const source = await readFile('packages/platform/src/golden-snapshots/snapshots.ts', 'utf8');
     expect(source).toContain('Number(current.provider_image_id) === input.providerImageId');
   });
 
@@ -1863,11 +1863,12 @@ describe('golden snapshot repository', () => {
   });
 
   it('locks builds before snapshots in readiness and revocation transactions', async () => {
-    const source = await readFile('packages/platform/src/golden-snapshot-repository.ts', 'utf8');
-    for (const [startName, endName, buildLock] of [
-      ['export async function markGoldenSnapshotReady', 'const SelectInputSchema', 'const build = await'],
-      ['export async function revokeGoldenSnapshot(', 'export async function revokeGoldenSnapshotBaseGeneration', 'const build = buildIdentity'],
-    ]) {
+    const snapshotsSource = await readFile('packages/platform/src/golden-snapshots/snapshots.ts', 'utf8');
+    const lifecycleSource = await readFile('packages/platform/src/golden-snapshots/lifecycle.ts', 'utf8');
+    for (const [source, startName, endName, buildLock] of [
+      [snapshotsSource, 'export async function markGoldenSnapshotReady', 'export async function getGoldenSnapshotRecoveryRegistrationTarget', 'const build = await'],
+      [lifecycleSource, 'export async function revokeGoldenSnapshot(', 'export async function revokeGoldenSnapshotBaseGeneration', 'const build = buildIdentity'],
+    ] as const) {
       const start = source.indexOf(startName);
       const section = source.slice(start, source.indexOf(endName, start));
       expect(section.indexOf(buildLock)).toBeLessThan(section.indexOf('const snapshot = await'));
@@ -1875,9 +1876,9 @@ describe('golden snapshot repository', () => {
   });
 
   it('locks a retirement compatibility class in deterministic order before choosing a fallback', async () => {
-    const source = await readFile('packages/platform/src/golden-snapshot-repository.ts', 'utf8');
+    const source = await readFile('packages/platform/src/golden-snapshots/lifecycle.ts', 'utf8');
     const start = source.indexOf('export async function retireGoldenSnapshot');
-    const end = source.indexOf('export async function listPendingGoldenSnapshotCleanup', start);
+    const end = source.indexOf('async function finalizeRetiringGoldenSnapshotWithoutImage', start);
     const retirement = source.slice(start, end);
 
     expect(retirement).toContain(
@@ -1893,9 +1894,9 @@ describe('golden snapshot repository', () => {
   });
 
   it('serializes channel promotion and retirement through the immutable release row', async () => {
-    const repositorySource = await readFile('packages/platform/src/golden-snapshot-repository.ts', 'utf8');
+    const repositorySource = await readFile('packages/platform/src/golden-snapshots/lifecycle.ts', 'utf8');
     const retirementStart = repositorySource.indexOf('export async function retireGoldenSnapshot');
-    const retirementEnd = repositorySource.indexOf('export async function listPendingGoldenSnapshotCleanup', retirementStart);
+    const retirementEnd = repositorySource.indexOf('async function finalizeRetiringGoldenSnapshotWithoutImage', retirementStart);
     const retirement = repositorySource.slice(retirementStart, retirementEnd);
     const dbSource = await readFile('packages/platform/src/database/host-bundles.ts', 'utf8');
     const promotionStart = dbSource.indexOf('export async function promoteHostBundleChannel');

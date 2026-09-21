@@ -8,7 +8,7 @@ import {
   type ProviderGenericHarnessKind,
   type ProviderModelProvider,
 } from "@matrix-os/contracts";
-import { buildAgentRuntimeEnvironment } from "../agent-launcher.js";
+import { buildAgentRuntimeEnvironment } from "../domains/sessions/agent-launcher.js";
 import {
   buildPiChildEnvironment,
   resolvePiCommand,

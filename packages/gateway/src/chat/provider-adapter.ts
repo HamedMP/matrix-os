@@ -16,7 +16,7 @@ import {
   type CanonicalProviderDriverKind,
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
-import { AiTokenUsageSchema } from "../ai-analytics.js";
+import { AiTokenUsageSchema } from "../domains/observability/ai-analytics.js";
 
 const SafeProviderRefSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/);
 

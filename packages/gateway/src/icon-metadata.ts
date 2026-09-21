@@ -1,6 +1,6 @@
 import { stat } from "node:fs/promises";
 import { basename } from "node:path";
-import { resolveSystemIconPath } from "./default-icons.js";
+import { resolveSystemIconPath } from "./domains/apps/default-icons.js";
 
 const SAFE_ICON_STEM = /^[a-zA-Z0-9_-]{1,64}$/;
 

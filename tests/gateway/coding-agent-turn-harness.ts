@@ -10,7 +10,7 @@ import {
   type CodingAgentProviderAdapter,
   type CodingAgentThreadProjectionPublisher,
 } from "../../packages/gateway/src/coding-agents/thread-store.js";
-import type { RequestPrincipal } from "../../packages/gateway/src/request-principal.js";
+import type { RequestPrincipal } from "../../packages/gateway/src/domains/identity/request-principal.js";
 
 export const ownerPrincipal: RequestPrincipal = { userId: "owner_user", source: "jwt" };
 export const otherPrincipal: RequestPrincipal = { userId: "other_user", source: "jwt" };

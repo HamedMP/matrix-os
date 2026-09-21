@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { createAppDb, type AppDb } from "../../packages/gateway/src/app-db.js";
-import { createAppRegistry } from "../../packages/gateway/src/app-db-registry.js";
-import { createQueryEngine, type QueryEngine } from "../../packages/gateway/src/app-db-query.js";
+import { createAppDb, type AppDb } from "../../packages/gateway/src/domains/apps/db/app-db.js";
+import { createAppRegistry } from "../../packages/gateway/src/domains/apps/db/app-db-registry.js";
+import { createQueryEngine, type QueryEngine } from "../../packages/gateway/src/domains/apps/db/app-db-query.js";
 import { KyselyPGlite } from "kysely-pglite";
 
 describe("QueryEngine", () => {

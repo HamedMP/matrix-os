@@ -7,8 +7,8 @@ import {
   type CodingAgentNotificationPreferences,
   type CodingAgentNotificationPreferencesUpdate,
 } from "@matrix-os/contracts";
-import type { RequestPrincipal } from "../request-principal.js";
-import { atomicWriteJson, readJsonFile } from "../state-ops.js";
+import type { RequestPrincipal } from "../domains/identity/request-principal.js";
+import { atomicWriteJson, readJsonFile } from "../domains/files/state-ops.js";
 
 const NOTIFICATION_PREFERENCES_RELATIVE_PATH = ["system", "coding-agents", "notification-preferences"] as const;
 const SAFE_OWNER_FILE_NAME = /^[A-Za-z0-9_-]{1,128}$/;

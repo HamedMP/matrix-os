@@ -9,7 +9,7 @@ import {
 } from "../../packages/contracts/src/index.js";
 import { configuredWorkspaceProviderAgents } from "../../packages/gateway/src/coding-agents/workspace-provider-config.js";
 import { createWorkspaceCodingAgentProviderSet } from "../../packages/gateway/src/coding-agents/workspace-provider.js";
-import type { RequestPrincipal } from "../../packages/gateway/src/request-principal.js";
+import type { RequestPrincipal } from "../../packages/gateway/src/domains/identity/request-principal.js";
 
 const ownerPrincipal: RequestPrincipal = { userId: "owner_user", source: "jwt" };
 const baseNow = new Date("2026-07-23T12:00:00.000Z");

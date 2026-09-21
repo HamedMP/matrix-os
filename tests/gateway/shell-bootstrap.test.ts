@@ -2,7 +2,6 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-
 const iconMetadataSpy = vi.hoisted(() => ({ calls: [] as string[] }));
 vi.mock("../../packages/gateway/src/icon-metadata.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../packages/gateway/src/icon-metadata.js")>();
@@ -15,7 +14,7 @@ vi.mock("../../packages/gateway/src/icon-metadata.js", async (importOriginal) =>
   };
 });
 
-import { buildShellBootstrap } from "../../packages/gateway/src/shell-bootstrap.js";
+import { buildShellBootstrap } from "../../packages/gateway/src/domains/apps/shell-bootstrap.js";
 
 describe("shell bootstrap", () => {
   let homePath: string;

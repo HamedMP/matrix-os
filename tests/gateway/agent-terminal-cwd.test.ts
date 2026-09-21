@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { agentTerminalCwd } from "../../packages/gateway/src/agent-terminal-cwd.js";
+import { agentTerminalCwd } from "../../packages/gateway/src/domains/sessions/agent-terminal-cwd.js";
 
 describe("agentTerminalCwd", () => {
   let root: string;
