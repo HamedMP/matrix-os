@@ -481,3 +481,17 @@ Gates: `collaboration-relay` **16/16**, plus `collaboration-direct-upgrade`,
 `collaboration-websocket`, `collaboration-wiring`, `collaboration-routes`,
 `preview-terminal-flow` and `app-session-runtime-routing` -- **52/52** together.
 `bun run typecheck` exit 0; `bun run check:patterns` 0 violations, 5 inherited warnings.
+
+## Verdict round (2026-09-21, PR #1803)
+
+No unresolved inline thread; the summary verdict blocked the merge: "the explicit repository shutdown requirement must be satisfied by draining the control client from the synchronous fence before merging."
+
+The earlier round already gave the control stream a `terminated` flag, a bounded 128-frame queue and a `close()` that drops everything queued behind it. What was missing is that `wiring.ts` `fence()` never called into the control client: a fenced runtime kept its control stream, its reconnect timer and its 5-minute re-registration interval, so a later frame ran `sessions.revoke`, membership eviction and `endActorGrants` against dependencies the caller was destroying, and acknowledged a fence for a runtime that had stopped serving. A frame already inside its grant cleanup when the client drained also resumed and acknowledged.
+
+`CollaborationControlClient.fence()` is a synchronous drain: refuse frames and reconnects, clear both timers, terminate the stream. `shutdown()` delegates to it, so both paths drain identically and a second fence closes nothing twice. In-flight work is abandoned at its resumption points rather than cancelled: `applyFrame` refuses once drained, a denial whose cleanup lands after the drain returns without moving the fence, and `sendAck` refuses, leaving that denial to complete at its lease deadline. `fence()` in `wiring.ts` drains the client first, before the registries detach and the verifier shuts down.
+
+RED `test(collaboration): expose the control client the gateway fence leaves running`; GREEN `fix(collaboration): drain the control client from the synchronous fence`.
+
+`DirectSessionService` gained the same synchronous `fence()`, with `shutdown()` delegating to it: its body never awaited either, so refusing new exchanges, stopping the sweep and ending every live session is deterministic rather than best-effort. `fence()` in `wiring.ts` drains it straight after the control client, in the order `shutdown()` uses, because ending a session is what notifies the event and terminal registries the next lines detach. `end()` removes a session before notifying and isolates each hook, so a second fence ends nothing twice and one failing hook cannot strand the sessions behind it. RED `test(collaboration): expose the direct sessions the gateway fence leaves live`; GREEN `fix(collaboration): drain direct sessions from the synchronous fence`. The shared-AI and outbox drains stay best-effort in that function because theirs are genuinely async.
+
+Gates: `collaboration-fence` + `collaboration-direct-sessions` **31/31** (29/31 RED), with wiring, database and foundation **49/49**, plus org-precondition, routes, chat-events and terminal-websocket **47/47**. `bun run typecheck` exit 0; `bun run check:patterns` 0 violations, 5 inherited warnings.
