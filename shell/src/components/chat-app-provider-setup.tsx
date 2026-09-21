@@ -112,7 +112,7 @@ export function useChatProviderState(
     let pending = false;
     let forcePending = false;
     const refresh = async (force = false) => {
-      forcePending ||= force;
+      forcePending = forcePending || force;
       if (refreshing) {
         pending = true;
         return;
@@ -135,9 +135,8 @@ export function useChatProviderState(
         } catch (error: unknown) {
           console.warn("[chat] Canonical Provider catalog unavailable:", error instanceof Error ? error.name : "UnknownError");
           if (!cancelled) setUnavailable(true);
-        } finally {
-          if (!cancelled) setLoading(false);
         }
+        if (!cancelled) setLoading(false);
       } while (!cancelled && pending);
       refreshing = false;
     };

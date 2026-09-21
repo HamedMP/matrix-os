@@ -14,6 +14,8 @@ import {
   type CanonicalComposerSelection,
 } from "../../desktop/src/renderer/src/features/chat/canonical-composer-state";
 import { insertSharedComposerTextAtSelection } from "./shared-chat-composer-test-utils";
+import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
+import { useUi } from "../../desktop/src/renderer/src/stores/ui";
 
 function catalogFixture(): CanonicalProviderCatalog {
   const support = {
@@ -268,6 +270,16 @@ describe("SharedChatComposer", () => {
     expect(glyph?.style.width).toBe("13px");
     expect(glyph?.querySelector("img")?.getAttribute("src")).toBe("/agent-logos/codex.png");
     expect(glyph?.parentElement?.getAttribute("data-slot")).toBe("model-provider-glyph");
+  });
+
+  it("opens Agents & providers directly from the settings gear, not the model menu", () => {
+    useTabs.setState(useTabs.getInitialState(), true);
+    useUi.setState({ requestedSettingsSection: null });
+    render(<Harness />);
+    fireEvent.click(screen.getByRole("button", { name: "Open Agents & providers settings" }));
+    expect(useUi.getState().requestedSettingsSection).toBe("agents-providers");
+    expect(useTabs.getState().tabs.some((tab) => tab.kind === "settings")).toBe(true);
+    expect(screen.queryByRole("listbox", { name: "Models and connections" })).toBeNull();
   });
 
   it.each([

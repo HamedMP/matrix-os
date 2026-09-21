@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import React from "react";
+import { readFileSync } from "node:fs";
 import { fireEvent, render, screen } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { describe, expect, it, vi } from "vitest";
@@ -15,6 +16,17 @@ const matrix: CanonicalProviderChoice = {
 const pi = { ...matrix, instanceId: "pi_work", driverKind: "pi" as const, harnessLabel: "Pi · Work" };
 
 describe("compact shared Chat choices", () => {
+  it("ships scoped picker colors for both Electron and Web themes", () => {
+    render(<CompactChatProviderChoices choices={[matrix]} selected={matrix} onSelect={vi.fn()} />);
+    expect(screen.getByRole("searchbox")).toHaveClass("matrix-chat-model-search");
+    expect(screen.getByRole("option")).toHaveClass("matrix-chat-model-option");
+    const css = readFileSync("packages/ui/src/compact-chat-provider-choices.css", "utf8");
+    expect(css).toContain("var(--border-default, var(--border))");
+    expect(css).toContain("var(--text-tertiary, var(--muted-foreground))");
+    expect(css).toContain("var(--bg-hover, var(--muted))");
+    expect(css).toContain(".matrix-chat-model-option:hover:not(:disabled)");
+    expect(css).toContain(".matrix-chat-model-option:focus-visible");
+  });
   it("shows and searches Pi's server-projected Matrix connection without changing the agent", () => {
     const select = vi.fn();
     const fundedPi = { ...pi, connectionLabel: "Matrix AI" };

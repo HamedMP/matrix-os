@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppError } from "@desktop/shared/app-error";
 import { createApiClient, type ApiClient } from "@desktop/renderer/src/lib/api";
-import { isValidShellSessionName, useShellSessions } from "@desktop/renderer/src/stores/shell-sessions";
+import { isExistingShellSessionName, isValidShellSessionName, useShellSessions } from "@desktop/renderer/src/stores/shell-sessions";
 import { advanceRuntimeGeneration } from "@desktop/renderer/src/stores/runtime-generation";
 
 const WORKSPACE_ID = `tws_${"a".repeat(32)}`;
@@ -62,6 +62,11 @@ describe("useShellSessions workspace/tab contract", () => {
     expect(isValidShellSessionName(REF_ONE)).toBe(true);
     expect(isValidShellSessionName("main")).toBe(false);
     expect(isValidShellSessionName(`${WORKSPACE_ID}:legacy`)).toBe(false);
+  });
+
+  it("exposes the stable-ref contract used by provider terminal handoff", () => {
+    expect(isExistingShellSessionName(REF_ONE)).toBe(true);
+    expect(isExistingShellSessionName("provider-login")).toBe(false);
   });
 
   it("loads tabs from project workspaces with stable refs and unread state", async () => {
