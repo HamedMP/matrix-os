@@ -540,6 +540,18 @@ describe("collaboration contracts", () => {
     })).toMatchObject({ actor: { displayName: "Ada" }, purpose: "discussion" });
   });
 
+  it("requires an exact grant pointer for an unopened organization share", () => {
+    const pending = {
+      scopeId, runtimeId: "runtime_owner", ownerId: "user_owner", kind: "chat",
+      authorityGeneration: 1, status: "organization_pending", organizationId: "org_team",
+      grantId: "70000000-0000-4000-8000-000000000001",
+    };
+    expect(CollaborationDiscoveryResponseSchema.parse({ items: [pending] })).toMatchObject({ items: [pending] });
+    expect(() => CollaborationDiscoveryResponseSchema.parse({ items: [{
+      ...pending, grantId: undefined,
+    }] })).toThrow();
+  });
+
   it("keeps shared AI admission and control actor-free and scope bounded", () => {
     expect(CollaborationCreateAiRequestSchema.parse({
       clientRequestId: requestId,
