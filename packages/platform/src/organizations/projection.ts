@@ -18,6 +18,8 @@ export interface ClerkOrganizationUpstream {
 
 export interface MembershipAssertion {
   member: boolean;
+  /** Projected organization policy; owner-only unless the metadata literally says "members". */
+  aiSubmission: "members" | "owner_only";
   membershipEpoch: number;
   requestStartedAt: Date;
   expiresAt: Date;
@@ -38,6 +40,7 @@ export const ORGANIZATION_REFRESH_INTERVAL_MS = 10_000;
 const CLOCK_SKEW_MS = 5_000;
 const ACTIVE_WINDOW_MS = 5 * 60_000;
 const MAX_REFRESH_CONCURRENCY = 4;
+const MAX_INFLIGHT_RECONCILIATIONS = 64;
 
 export function createOrganizationMembershipProjection(options: {
   repository: PlatformOrganizationRepository;
@@ -99,6 +102,11 @@ export function createOrganizationMembershipProjection(options: {
     if (closed) return { verified: false, endedMemberships: [] };
     const existing = inflight.get(organizationId);
     if (existing) return existing;
+    if (inflight.size >= MAX_INFLIGHT_RECONCILIATIONS) {
+      // Bounded: the organization simply stays unverified (fail closed) until a later attempt.
+      console.warn("[organizations] reconciliation deferred: too many in flight");
+      return { verified: false, endedMemberships: [] };
+    }
     const promise = reconcileNow(organizationId).finally(() => { inflight.delete(organizationId); });
     inflight.set(organizationId, promise);
     return promise;
@@ -123,16 +131,17 @@ export function createOrganizationMembershipProjection(options: {
     timer.unref?.();
   }
 
-  const evaluate = async (organizationId: string, actorId: string): Promise<{ member: boolean; membershipEpoch: number }> => {
+  const evaluate = async (organizationId: string, actorId: string): Promise<{ member: boolean; membershipEpoch: number; aiSubmission: "members" | "owner_only" }> => {
     touch(organizationId);
     const [organization, membership] = await Promise.all([
       options.repository.getOrganization(organizationId),
       options.repository.getMembership({ organizationId, actorId }),
     ]);
     const epoch = membership?.membershipEpoch ?? organization?.membershipEpoch ?? 0;
-    if (!organization || organization.lifecycle !== "active" || !organization.verifiedAt) return { member: false, membershipEpoch: epoch };
-    if (now().getTime() - organization.verifiedAt.getTime() > maxAgeMs) return { member: false, membershipEpoch: epoch };
-    return { member: membership?.state === "active", membershipEpoch: epoch };
+    const aiSubmission = organization?.aiSubmission ?? "owner_only";
+    if (!organization || organization.lifecycle !== "active" || !organization.verifiedAt) return { member: false, membershipEpoch: epoch, aiSubmission };
+    if (now().getTime() - organization.verifiedAt.getTime() > maxAgeMs) return { member: false, membershipEpoch: epoch, aiSubmission };
+    return { member: membership?.state === "active", membershipEpoch: epoch, aiSubmission };
   };
 
   return {
@@ -140,8 +149,10 @@ export function createOrganizationMembershipProjection(options: {
       const current = now().getTime();
       const startedAt = Math.min(input.requestStartedAt.getTime(), current + CLOCK_SKEW_MS);
       const requestStartedAt = new Date(startedAt);
-      const { member, membershipEpoch } = closed ? { member: false, membershipEpoch: 0 } : await evaluate(input.organizationId, input.actorId);
-      return { member, membershipEpoch, requestStartedAt, expiresAt: new Date(startedAt + evidenceTtlMs) };
+      const { member, membershipEpoch, aiSubmission } = closed
+        ? { member: false, membershipEpoch: 0, aiSubmission: "owner_only" as const }
+        : await evaluate(input.organizationId, input.actorId);
+      return { member, aiSubmission, membershipEpoch, requestStartedAt, expiresAt: new Date(startedAt + evidenceTtlMs) };
     },
     async isCurrentMember(input) {
       if (closed) return false;

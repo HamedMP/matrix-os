@@ -39,7 +39,7 @@ describe("organization membership projection (T016/T019)", () => {
     await projection.reconcile(org);
     const started = new Date(clock.getTime() - 4_000);
     const assertion = await projection.assert({ organizationId: org, actorId: member, requestStartedAt: started });
-    expect(assertion).toMatchObject({ member: true, requestStartedAt: started });
+    expect(assertion).toMatchObject({ member: true, aiSubmission: "members", requestStartedAt: started });
     expect(assertion.expiresAt.getTime()).toBe(started.getTime() + 20_000);
     expect((await projection.assert({ organizationId: org, actorId: outsider, requestStartedAt: started })).member).toBe(false);
     expect((await projection.assert({ organizationId: other, actorId: member, requestStartedAt: started })).member).toBe(false);
@@ -102,7 +102,7 @@ describe("organization membership projection (T016/T019)", () => {
     await repository.applyOrganization({ organizationId: org, name: "Org", slug: "org", aiSubmission: "owner_only", sourceUpdatedAt: new Date(1) });
     await repository.applyMembership({ organizationId: org, membershipId: "orgmem_x", actorId: member, role: "org:member", sourceUpdatedAt: new Date(1), state: "active" });
     await expect(projection.reconcile(org)).resolves.toMatchObject({ verified: false });
-    expect((await projection.assert({ organizationId: org, actorId: member, requestStartedAt: clock })).member).toBe(false);
+    expect(await projection.assert({ organizationId: org, actorId: member, requestStartedAt: clock })).toMatchObject({ member: false, aiSubmission: "owner_only" });
     await projection.shutdown();
   });
 });
