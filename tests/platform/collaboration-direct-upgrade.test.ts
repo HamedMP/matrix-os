@@ -16,8 +16,12 @@ import { registerPlatformWebSocketUpgradeHandler } from "../../packages/platform
 import { issueSyncJwt } from "../../packages/platform/src/sync-jwt.js";
 import { JWT_SECRET, setupProxyRoutingTest, cleanupProxyRoutingTest } from "./proxy-routing-test-utils.js";
 
-/** Upstream TLS sockets the listener opened; the fake behaves like a socket, closing on destroy. */
-const tls = vi.hoisted(() => ({ upstreams: [] as Array<{ writes: string[]; destroyed: boolean }> }));
+/**
+ * Upstream TLS sockets the listener opened; the fake behaves like a socket, closing on destroy.
+ * `defer` holds the connect callbacks so a test can complete a handshake that was already in
+ * flight when the reservation went away.
+ */
+const tls = vi.hoisted(() => ({ upstreams: [] as Array<{ writes: string[]; destroyed: boolean }>, pending: [] as Array<() => void>, defer: false }));
 vi.mock("node:tls", async () => {
   const { EventEmitter: Emitter } = await import("node:events");
   class Upstream extends Emitter {
@@ -31,7 +35,8 @@ vi.mock("node:tls", async () => {
     connect: (_options: unknown, onConnect: () => void) => {
       const upstream = new Upstream();
       tls.upstreams.push(upstream as unknown as { writes: string[]; destroyed: boolean });
-      queueMicrotask(onConnect);
+      if (tls.defer) tls.pending.push(onConnect);
+      else queueMicrotask(onConnect);
       return upstream;
     },
   };
@@ -50,7 +55,7 @@ const scopeId = "10000000-0000-4000-8000-000000000001";
 const machineId = "11111111-1111-4111-8111-111111111111";
 const home = { runtimeId: `vps-${machineId}`, origin: "https://203.0.113.10:443" };
 let db: PlatformDB;
-beforeEach(async () => { db = await setupProxyRoutingTest(); tls.upstreams.length = 0; });
+beforeEach(async () => { db = await setupProxyRoutingTest(); tls.upstreams.length = 0; tls.pending.length = 0; tls.defer = false; });
 afterEach(async () => { await cleanupProxyRoutingTest(db); });
 
 function directRelay(now: () => number) {
@@ -63,8 +68,8 @@ function directRelay(now: () => number) {
   });
 }
 
-/** Drives the real upgrade listener until the relayed pair is connected. */
-async function openDirectPair(relay: CollaborationRelay): Promise<Transport> {
+/** Drives the real upgrade listener up to the upstream connect; the handshake may still be pending. */
+async function startDirectPair(relay: CollaborationRelay): Promise<Transport> {
   const server = new EventEmitter();
   const permitted = { runtimeProxyAllowed: true } as never;
   registerPlatformWebSocketUpgradeHandler({
@@ -81,6 +86,13 @@ async function openDirectPair(relay: CollaborationRelay): Promise<Transport> {
   };
   const listener = server.listeners("upgrade")[0] as (req: IncomingMessage, socket: Transport, head: Buffer) => Promise<void>;
   await listener(req as unknown as IncomingMessage, socket, Buffer.alloc(0));
+  await vi.waitFor(() => { expect(tls.upstreams.length).toBeGreaterThan(0); });
+  return socket;
+}
+
+/** Drives the real upgrade listener until the relayed pair is connected. */
+async function openDirectPair(relay: CollaborationRelay): Promise<Transport> {
+  const socket = await startDirectPair(relay);
   await vi.waitFor(() => { expect(tls.upstreams.at(-1)?.writes.length).toBeGreaterThan(0); });
   expect(socket.destroyed).toBe(false);
   return socket;
@@ -153,6 +165,44 @@ describe("platform direct-socket upgrade failure handling", () => {
     relay.close();
     expect(socket.destroyed).toBe(true);
     expect(upstream.destroyed).toBe(true);
+    expect(relay.connectionCounts()).toEqual({ homes: 0, actors: 0 });
+  });
+
+  it("destroys an upstream that finishes connecting after the sweep evicted its reservation", async () => {
+    await seedRunningHome();
+    let clock = 4_000_000;
+    const relay = directRelay(() => clock);
+    // The handshake is still in flight: nothing has adopted this upstream yet.
+    tls.defer = true;
+    const socket = await startDirectPair(relay);
+    const upstream = tls.upstreams.at(-1)!;
+    expect(relay.connectionCounts()).toEqual({ homes: 1, actors: 1 });
+    clock += 11 * 60_000;
+    expect(relay.sweepStaleSockets()).toBe(1);
+    expect(socket.destroyed).toBe(true);
+    expect(upstream.destroyed).toBe(false);
+    // The connection to the customer's home completes now, with the reservation already gone.
+    tls.pending.splice(0).forEach((onConnect) => { onConnect(); });
+    // A dead reservation must not adopt it: it is destroyed at once and never spoken to.
+    expect(upstream.destroyed).toBe(true);
+    expect(upstream.writes).toEqual([]);
+    expect(relay.connectionCounts()).toEqual({ homes: 0, actors: 0 });
+  });
+
+  it("destroys an upstream that finishes connecting after the relay shut down", async () => {
+    await seedRunningHome();
+    const relay = directRelay(() => 5_000_000);
+    tls.defer = true;
+    const socket = await startDirectPair(relay);
+    const upstream = tls.upstreams.at(-1)!;
+    relay.close();
+    expect(socket.destroyed).toBe(true);
+    tls.pending.splice(0).forEach((onConnect) => { onConnect(); });
+    expect(upstream.destroyed).toBe(true);
+    expect(upstream.writes).toEqual([]);
+    // The drain released the counts once; the late upstream must not release them again.
+    expect(relay.connectionCounts()).toEqual({ homes: 0, actors: 0 });
+    socket.destroy();
     expect(relay.connectionCounts()).toEqual({ homes: 0, actors: 0 });
   });
 
