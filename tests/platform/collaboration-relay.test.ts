@@ -155,6 +155,59 @@ describe("CollaborationRelay", () => {
     expect(state.received).toBe(48 * 1024);
   });
 
+  it("answers 413 when the home responds before the overflowing upload has finished", async () => {
+    // Streamed uploads let the home answer early. The relay keeps reading the body after that
+    // response arrives, so the overflow can be discovered once a status is already in hand;
+    // the client must still be told the size is what ended the request.
+    let drained = 0;
+    const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {
+      const body = (init as { body?: unknown }).body;
+      if (body instanceof ReadableStream) {
+        // The upload keeps going in the background, as it does on a real connection.
+        void (async () => {
+          const reader = body.getReader();
+          try {
+            for (;;) {
+              const chunk = await reader.read();
+              if (chunk.done) break;
+              drained += chunk.value.byteLength;
+            }
+          } catch {
+            // The bounded stream errors on overflow; that is the case under test.
+          }
+        })();
+      }
+      return new Response("early", { status: 400 });
+    });
+    const { instance, metadata } = relay({ limits: { requestBytes: 32 * 1024 } }, fetchImpl as never);
+    const response = await instance.forward({
+      actorId: "user_a", method: "POST", path: `/api/collaboration/scopes/${scopeId}/discussion/messages`,
+      query: "", headers: new Headers(), body: chunkedBody(256 * 1024),
+    });
+    expect(response.status).toBe(413);
+    expect(metadata.at(-1)?.outcome).toBe("limit");
+    expect(await response.text()).not.toContain("early");
+    expect(drained).toBeLessThanOrEqual(32 * 1024);
+  });
+
+  it("relays an early upstream answer when the home stops reading before any overflow", async () => {
+    // The mirror case: the home answers and abandons the upload. Nothing over the limit was
+    // ever read, so there is no overflow to report and the home's answer is the truth. The
+    // wait for the body to settle is bounded, so an abandoned upload cannot stall the reply.
+    const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {
+      const body = (init as { body?: unknown }).body;
+      if (body instanceof ReadableStream) await body.getReader().read();
+      return new Response("early", { status: 400 });
+    });
+    const { instance } = relay({ limits: { requestBytes: 32 * 1024, requestTimeoutMs: 100 } }, fetchImpl as never);
+    const response = await instance.forward({
+      actorId: "user_a", method: "POST", path: `/api/collaboration/scopes/${scopeId}/discussion/messages`,
+      query: "", headers: new Headers(), body: chunkedBody(256 * 1024),
+    });
+    expect(response.status).toBe(400);
+    expect(await response.text()).toBe("early");
+  });
+
   it("refuses a chunked over-limit upload through the mutating relay route before the home can read it all", async () => {
     // End to end through the route that omits Content-Length: the branch must not hand the
     // home an unbounded stream.
