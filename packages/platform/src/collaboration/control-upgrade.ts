@@ -11,11 +11,14 @@ import type { IncomingMessage } from "node:http";
 import type { Socket } from "node:net";
 import { WebSocketServer, type WebSocket } from "ws";
 import { COLLABORATION_DIRECT_LIMITS } from "@matrix-os/contracts";
+import { z } from "zod/v4";
 import type { CollaborationControlStream } from "./control-stream.js";
 import { logicalRuntimeIdFor } from "./runtime-identity.js";
 import type { AuthenticatedRuntime } from "./direct-routes.js";
 
 export const COLLABORATION_CONTROL_PATH = "/internal/collaboration/control";
+/** The one-use upgrade ticket, validated at the route boundary before the stream sees it. */
+const ControlUpgradeTicketSchema = z.string().min(1).max(256).regex(/^[A-Za-z0-9_-]+$/);
 const MAX_RAW_PATH_LENGTH = 1_024;
 const HEARTBEAT_INTERVAL_MS = 15_000;
 
@@ -109,8 +112,8 @@ async function admit(
   const bearer = authorization?.startsWith("Bearer ") ? authorization.slice("Bearer ".length) : undefined;
   if (!runtimeHeader || !bearer || bearer.length < 32 || bearer.length > 4_096 || !/^[A-Za-z0-9._~-]+$/.test(bearer)
     || !/^[A-Za-z0-9:_-]{1,128}$/.test(runtimeHeader)) return null;
-  const ticket = new URL(rawPath, "https://platform.invalid").searchParams.get("ticket");
-  if (!ticket || ticket.length > 256 || !/^[A-Za-z0-9_-]+$/.test(ticket)) return null;
+  const ticket = ControlUpgradeTicketSchema.safeParse(new URL(rawPath, "https://platform.invalid").searchParams.get("ticket"));
+  if (!ticket.success) return null;
   let runtime: AuthenticatedRuntime | null;
   try {
     runtime = await options.authenticateRuntime({ runtimeId: runtimeHeader, bearerToken: bearer });
@@ -121,7 +124,7 @@ async function admit(
   const logical = runtime ? logicalRuntimeIdFor(runtime.runtimeId) : null;
   if (!logical) return null;
   try {
-    if (!(await options.stream.consumeUpgradeTicket(ticket, logical))) return null;
+    if (!(await options.stream.consumeUpgradeTicket(ticket.data, logical))) return null;
   } catch (error: unknown) {
     console.warn("[collaboration-control] ticket consumption failed", error instanceof Error ? error.name : "UnknownError");
     return null;

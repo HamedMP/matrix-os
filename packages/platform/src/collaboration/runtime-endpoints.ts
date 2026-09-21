@@ -154,6 +154,13 @@ export class CollaborationRuntimeEndpointRegistry {
   async register(input: {
     authenticated: { runtimeId: string; ownerId: string; relayHandle: string };
     registration: unknown;
+    /**
+     * The control upgrade ticket handed back with this registration. It is written in the
+     * same transaction as the registration itself, because the two are one answer to the
+     * home: a ticket that cannot be recorded must not leave a committed generation bump and
+     * merged keys behind a response that says nothing was recorded.
+     */
+    controlTicket?: { token: string; expiresAt: Date };
   }): Promise<RuntimeEndpointRecord> {
     const parsed = parseRegistration(input.registration);
     const logical = logicalRuntimeIdFor(input.authenticated.runtimeId);
@@ -205,6 +212,9 @@ export class CollaborationRuntimeEndpointRegistry {
         last_seen_at: current,
         updated_at: current,
       }).where("runtime_id", "=", logical).execute();
+      if (input.controlTicket) {
+        await this.writeControlTicket(trx, logical, input.controlTicket.token, input.controlTicket.expiresAt);
+      }
     });
     const stored = await this.resolve(logical);
     if (!stored) throw new CollaborationRuntimeEndpointError("stale_generation", "Registration was not recorded");
@@ -247,13 +257,23 @@ export class CollaborationRuntimeEndpointRegistry {
   /** One-use control upgrade tickets, valid across every platform instance. */
   async issueControlTicket(logicalRuntimeId: string, token: string, expiresAt: Date): Promise<void> {
     // Issue and prune commit together: a failed prune never leaves a half-issued ticket behind.
-    const pruneBefore = new Date(this.now().getTime() - 60_000);
     await this.db.transaction().execute(async (trx) => {
-      await trx.insertInto("collaboration_control_upgrade_tickets")
-        .values({ token_hash: hashToken(token), runtime_id: logicalRuntimeId, expires_at: expiresAt, consumed_at: null })
-        .execute();
-      await trx.deleteFrom("collaboration_control_upgrade_tickets").where("expires_at", "<", pruneBefore).execute();
+      await this.writeControlTicket(trx, logicalRuntimeId, token, expiresAt);
     });
+  }
+
+  /** Issue plus prune, inside whichever transaction the caller is already holding. */
+  private async writeControlTicket(
+    trx: Kysely<RuntimeEndpointPlatformDatabase>,
+    logicalRuntimeId: string,
+    token: string,
+    expiresAt: Date,
+  ): Promise<void> {
+    const pruneBefore = new Date(this.now().getTime() - 60_000);
+    await trx.insertInto("collaboration_control_upgrade_tickets")
+      .values({ token_hash: hashToken(token), runtime_id: logicalRuntimeId, expires_at: expiresAt, consumed_at: null })
+      .execute();
+    await trx.deleteFrom("collaboration_control_upgrade_tickets").where("expires_at", "<", pruneBefore).execute();
   }
 
   async consumeControlTicket(token: string, logicalRuntimeId: string): Promise<boolean> {

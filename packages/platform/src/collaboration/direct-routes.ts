@@ -47,13 +47,17 @@ export function createPlatformCollaborationDirectRoutes(options: {
     try {
       const relayHandle = await options.resolveRelayHandle(runtime);
       if (!relayHandle) return safeJson(c, "Forbidden", 403);
-      const record = await options.endpoints.register({ authenticated: { ...runtime, relayHandle }, registration: body });
+      // The registration and the upgrade ticket it answers with are written together; a
+      // ticket that cannot be recorded rolls the registration back rather than leaving a
+      // committed generation behind a 503.
+      const controlTicket = options.controlStream.prepareUpgradeTicket();
+      const record = await options.endpoints.register({ authenticated: { ...runtime, relayHandle }, registration: body, controlTicket });
       c.header("Cache-Control", "no-store");
       return c.json({
         protocolVersion: COLLABORATION_DIRECT_PROTOCOL_VERSION,
         runtime: { runtimeId: record.runtimeId, authorityGeneration: record.authorityGeneration, registeredAt: record.registeredAt },
         platformSigningKeys: options.issuer?.publicKeys() ?? [],
-        controlTicket: await options.controlStream.issueUpgradeTicket(record.runtimeId),
+        controlTicket: controlTicket.token,
         relay: { origin: options.relayOrigin },
       });
     } catch (error: unknown) {

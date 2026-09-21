@@ -138,10 +138,18 @@ export class CollaborationControlStream {
 
   /** One-use ticket a freshly registered runtime presents on the control upgrade; stored, never kept in memory. */
   async issueUpgradeTicket(runtimeId: string): Promise<string> {
+    const prepared = this.prepareUpgradeTicket();
+    await this.tickets.issueControlTicket(runtimeId, prepared.token, prepared.expiresAt);
+    return prepared.token;
+  }
+
+  /**
+   * Mints an upgrade ticket without storing it, so a caller that is already writing the
+   * registration this ticket belongs to can persist both in one transaction.
+   */
+  prepareUpgradeTicket(): { token: string; expiresAt: Date } {
     if (this.closed) throw new Error("Control stream is shutting down");
-    const token = this.createToken();
-    await this.tickets.issueControlTicket(runtimeId, token, new Date(this.now().getTime() + this.ticketTtlMs));
-    return token;
+    return { token: this.createToken(), expiresAt: new Date(this.now().getTime() + this.ticketTtlMs) };
   }
 
   /** Atomic single consumption in the shared store: a replay on any instance fails. */

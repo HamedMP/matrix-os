@@ -83,10 +83,14 @@ export interface IssuedConnectionTicket {
 
 /**
  * Reads the signing keyring from configuration, or answers null so the ticket route fails
- * closed. Every rule the issuer enforces about retirement is applied here first, because a
+ * closed. Every rule the issuer enforces at construction is applied here first, because a
  * keyring the issuer would refuse must never reach it: the issuer's refusal is a thrown
  * configuration error, and the platform's composition root has no way to serve a ticket
- * route from one. A keyring that loads is a keyring the issuer accepts.
+ * route from one. A keyring that loads is a keyring the issuer accepts, which holds only
+ * while this function rules out each of the constructor's refusals: a missing active key,
+ * an invalid key id or seed (`parseKeyMap`), a retired key with no recorded retirement or a
+ * stray retirement entry, a retirement that is unparseable or dated past the clock skew, and
+ * more distinct keys than the issuer publishes.
  */
 export function loadTicketSigningKeyring(
   env: NodeJS.ProcessEnv,
@@ -99,7 +103,8 @@ export function loadTicketSigningKeyring(
   const retiredIds = Object.keys(retired);
   if (env.MATRIX_COLLABORATION_TICKET_RETIRED_AT === undefined) {
     // Fail closed rather than publish a retired key whose retirement nothing records.
-    return retiredIds.length === 0 ? { activeKeyId, keys, retired } : null;
+    if (retiredIds.length > 0 || !withinPublishedKeyCap(keys, retired)) return null;
+    return { activeKeyId, keys, retired };
   }
   const retiredAt = parseRetiredAtMap(env.MATRIX_COLLABORATION_TICKET_RETIRED_AT);
   if (!retiredAt) return null;
@@ -116,7 +121,20 @@ export function loadTicketSigningKeyring(
     console.warn("[collaboration-tickets] retired signing key retirement is dated too far ahead: ticket issuance stays unavailable");
     return null;
   }
+  if (!withinPublishedKeyCap(keys, retired)) return null;
   return { activeKeyId, keys, retired, retiredAt };
+}
+
+/**
+ * The issuer publishes one entry per distinct key id, active and retired together, and
+ * refuses more than `MAX_KEYS` of them. `parseKeyMap` caps each map on its own, so two maps
+ * that each fit can still exceed what the issuer will publish.
+ */
+function withinPublishedKeyCap(keys: Record<string, string>, retired: Record<string, string>): boolean {
+  const distinct = new Set([...Object.keys(keys), ...Object.keys(retired)]);
+  if (distinct.size <= MAX_KEYS) return true;
+  console.warn("[collaboration-tickets] more signing keys are configured than the issuer publishes: ticket issuance stays unavailable");
+  return false;
 }
 
 function parseKeyMap(raw: string | undefined): Record<string, string> | null {
