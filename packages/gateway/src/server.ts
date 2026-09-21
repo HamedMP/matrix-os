@@ -206,6 +206,7 @@ import {
 import { createLegacyProjectPathAdmission } from "./collaboration/project-path-admission.js";
 import { createGatewayProjectInventorySource } from "./collaboration/project-inventory-source.js";
 import { createProjectChatRootInventory } from "./collaboration/project-chat-root-inventory.js";
+import { createProjectGitDriver } from "./collaboration/project-git-operations.js";
 import { createCodingAgentFileStore } from "./coding-agents/file-read.js";
 import { createCodingAgentSourceControlStore } from "./coding-agents/source-control.js";
 import { registerCodingAgentAttentionNotifications } from "./coding-agents/attention-notifications.js";
@@ -967,6 +968,14 @@ export async function createGateway(config: GatewayConfig) {
       await bootstrapChatSharing(chatRepository.kysely);
       if (collaborationConfig) {
         const ownerChatRepository = chatRepository;
+        const projectGitDriver = createProjectGitDriver({
+          resolveProjectRoot: async ({ ownerId, projectId }) => {
+            const root = await ownerChatExecutionRoots.resolve(
+              { type: "personal", ownerId }, { kind: "project", projectId },
+            );
+            return root.primaryWorkspaceRoot;
+          },
+        });
         const construction = await constructGatewayCollaborationOrFailClosed(
           () => createGatewayCollaboration({
           db: ownerChatRepository.kysely as Kysely<any>,
@@ -989,10 +998,10 @@ export async function createGateway(config: GatewayConfig) {
           },
         }),
           {
-          onPartialRuntime: (runtime) => runtime.enableSharedProject({
-            homePath,
-            inventorySource: createGatewayProjectInventorySource({
+          onPartialRuntime: (runtime) => {
+            const inventorySource = createGatewayProjectInventorySource({
               homePath,
+              gitSetup: { get: projectGitDriver.getGitSetup },
               chatRoots: createProjectChatRootInventory({
                 db: ownerChatRepository.kysely,
                 executionRoots: ownerChatExecutionRoots,
@@ -1045,8 +1054,10 @@ export async function createGateway(config: GatewayConfig) {
               sessions: {
                 list: () => terminalWorkspaceRuntime.listWorkspaces(),
               },
-            }),
-          }) },
+            });
+            runtime.enableProjectGit({ driver: projectGitDriver, source: inventorySource });
+            return runtime.enableSharedProject({ homePath, inventorySource });
+          } },
         );
         if (construction.ok) gatewayCollaboration = construction.runtime;
         else collaborationFailClosedReason = construction.reason;
