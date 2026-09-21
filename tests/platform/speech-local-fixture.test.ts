@@ -14,10 +14,60 @@ import {
   createLocalSpeechFixturePlan,
   LocalFixtureSignalController,
   parseLocalPostgresAdminUrl,
+  reportExpectedFixtureFailure,
   waitForBoundedChildProcess,
 } from "../../scripts/lib/platform-speech-local-fixture.js";
 
 describe("local speech fixture planning", () => {
+  it("logs only a safe error class for expected fixture failures", () => {
+    const report = vi.fn();
+    const sensitive = new Error("postgresql://admin:secret@127.0.0.1/private");
+    Object.assign(sensitive, { code: "ECONNRESET" });
+
+    reportExpectedFixtureFailure("PostgreSQL cancellation", sensitive, report);
+    reportExpectedFixtureFailure("readiness probe", "raw provider failure", report);
+
+    expect(report).toHaveBeenNthCalledWith(
+      1,
+      "Local speech fixture expected PostgreSQL cancellation failure: Error (ECONNRESET)",
+    );
+    expect(report).toHaveBeenNthCalledWith(
+      2,
+      "Local speech fixture expected readiness probe failure: UnknownError",
+    );
+    expect(report.mock.calls.flat().join(" ")).not.toContain("secret");
+    expect(report.mock.calls.flat().join(" ")).not.toContain("provider failure");
+  });
+
+  it("does not silently suppress fixture process, cancellation, or probe failures", async () => {
+    const source = await readFile(new URL("../../scripts/dev-speech-fixture.ts", import.meta.url), "utf8");
+    const librarySource = await readFile(
+      new URL("../../scripts/lib/platform-speech-local-fixture.ts", import.meta.url),
+      "utf8",
+    );
+
+    expect(source).not.toMatch(/\.catch\(\(\)\s*=>\s*(?:undefined|false)\)/);
+    expect(source).not.toMatch(/\.then\(\s*\(\)\s*=>\s*["']resolved["']\s+as const,\s*\(\)\s*=>/s);
+    expect(source).not.toMatch(/\.on\(["']error["'],\s*\(\)\s*=>\s*undefined\)/);
+    expect(librarySource).not.toMatch(/\.catch\(\(\)\s*=>\s*undefined\)/);
+  });
+
+  it("logs a safe error class when PostgreSQL administration cancellation rejects", async () => {
+    const report = vi.fn();
+    const sensitive = new Error("connection secret must remain private");
+    Object.assign(sensitive, { code: "ECONNRESET" });
+    const client = {
+      end: vi.fn().mockRejectedValue(sensitive),
+    } as unknown as Parameters<typeof cancelBoundedLocalPostgresAdminClient>[0];
+
+    await cancelBoundedLocalPostgresAdminClient(client, report);
+
+    expect(report).toHaveBeenCalledWith(
+      "Local speech fixture expected PostgreSQL administration cancellation failure: Error (ECONNRESET)",
+    );
+    expect(report.mock.calls.flat().join(" ")).not.toContain("secret");
+  });
+
   it("creates an isolated disposable database, runtime, home and credential set", () => {
     const randomValues = [
       "a".repeat(24),
@@ -97,7 +147,7 @@ describe("local speech fixture planning", () => {
 
     expect(result).toBe(1);
     expect(completed).toEqual(["runtime", "role"]);
-    expect(report).toHaveBeenCalledWith("Local speech fixture cleanup failed safely: platform database");
+    expect(report).toHaveBeenCalledWith("Local speech fixture cleanup failed safely: platform database: Error");
   });
 
   it("terminates an owned pre-stack subprocess group and preserves the signal exit code", async () => {
@@ -170,7 +220,12 @@ setInterval(() => {}, 1000);
     try {
       const readyDeadline = Date.now() + 5_000;
       while (Date.now() < readyDeadline) {
-        const state = await readFile(signalPath, "utf8").catch(() => "");
+        let state = "";
+        try {
+          state = await readFile(signalPath, "utf8");
+        } catch (error: unknown) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        }
         if (state === "ready") break;
         await new Promise((resolveWait) => setTimeout(resolveWait, 10));
       }

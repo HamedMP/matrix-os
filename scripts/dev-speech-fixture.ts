@@ -20,6 +20,8 @@ import {
   createLocalSpeechFixturePlan,
   LocalFixtureSignalController,
   LOCAL_SPEECH_FIXTURE_PORTS,
+  reportExpectedFixtureFailure,
+  safeFixtureErrorClass,
   waitForBoundedChildProcess,
   type LocalSpeechFixturePlan,
 } from "./lib/platform-speech-local-fixture.js";
@@ -80,7 +82,9 @@ async function runDockerPsql(options: {
     "psql", "--no-psqlrc", "--quiet", "--set", "ON_ERROR_STOP=1",
     "--username", options.adminUser, "--dbname", "postgres",
   ], { detached: true, stdio: ["pipe", "ignore", "ignore"] });
-  child.stdin?.on("error", () => undefined);
+  child.stdin?.on("error", (error: unknown) => {
+    reportExpectedFixtureFailure("Docker PostgreSQL input", error);
+  });
   child.stdin?.end(options.sql);
   const result = await waitForBoundedChildProcess(child, {
     timeoutMs: 10_000,
@@ -160,7 +164,10 @@ async function verifyAuthenticatedPostgresCancellation(plan: LocalSpeechFixtureP
     await pool.query("SELECT 1");
     const query = pool.query("SELECT pg_sleep(30)").then(
       () => "resolved" as const,
-      () => "rejected" as const,
+      (error: unknown) => {
+        reportExpectedFixtureFailure("PostgreSQL cancellation", error);
+        return "rejected" as const;
+      },
     );
     await new Promise<void>((resolveTurn) => setImmediate(resolveTurn));
     signals.attachCancellation(cancel);
@@ -178,10 +185,18 @@ async function verifyAuthenticatedPostgresCancellation(plan: LocalSpeechFixtureP
 
 async function waitForHttp(url: string, stackCompletion: Promise<unknown>): Promise<void> {
   const deadline = Date.now() + 180_000;
+  let reportedFailure = false;
   while (Date.now() < deadline) {
     const probe = fetch(url, { redirect: "error", signal: AbortSignal.timeout(2_000) })
       .then((response) => response.ok)
-      .catch(() => false);
+      .catch((error: unknown) => {
+        const diagnostic = safeFixtureErrorClass(error);
+        if (!reportedFailure) {
+          reportedFailure = true;
+          console.error(`Local speech fixture expected readiness probe failure: ${diagnostic}`);
+        }
+        return false;
+      });
     const outcome = await Promise.race([
       probe.then((ready) => ({ kind: "probe" as const, ready })),
       stackCompletion.then(() => ({ kind: "stack" as const, ready: false })),
@@ -364,7 +379,9 @@ async function run(): Promise<number> {
     }
     if (stack && stack.exitCode === null && stack.signalCode === null) {
       stack.kill("SIGTERM");
-      await childCompletion(stack).catch(() => undefined);
+      await childCompletion(stack).catch((completionError: unknown) => {
+        reportExpectedFixtureFailure("stack process completion", completionError);
+      });
     }
     resultCode = signalExitCode ?? 1;
   } finally {

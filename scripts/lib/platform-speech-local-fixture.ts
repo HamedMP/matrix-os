@@ -195,9 +195,9 @@ export async function completeLocalSpeechFixtureCleanup(
   for (const step of steps) {
     try {
       await step.run();
-    } catch (_error: unknown) {
+    } catch (error: unknown) {
       cleanupFailed = true;
-      report(`Local speech fixture cleanup failed safely: ${step.label}`);
+      report(`Local speech fixture cleanup failed safely: ${step.label}: ${safeFixtureErrorClass(error)}`);
     }
   }
   return cleanupFailed ? 1 : exitCode;
@@ -262,8 +262,8 @@ export function createBoundedLocalPostgresPool(
     statement_timeout: 10_000,
     lock_timeout: 5_000,
   });
-  pool.on("error", () => {
-    console.error("Local speech fixture PostgreSQL pool reported an idle-client error");
+  pool.on("error", (error: unknown) => {
+    reportExpectedFixtureFailure("PostgreSQL idle client", error);
   });
   return pool;
 }
@@ -286,11 +286,33 @@ export function cancelBoundedLocalPostgresPool(pool: pg.Pool): Promise<void> {
   });
 }
 
-export function cancelBoundedLocalPostgresAdminClient(client: pg.Client): Promise<void> {
+export function safeFixtureErrorClass(error: unknown): string {
+  if (!(error instanceof Error)) return "UnknownError";
+  const safeName = /^[A-Za-z][A-Za-z0-9]*$/.test(error.name) ? error.name : "Error";
+  const code = "code" in error && typeof error.code === "string" && /^[A-Z0-9_]+$/.test(error.code)
+    ? ` (${error.code})`
+    : "";
+  return `${safeName}${code}`;
+}
+
+export function reportExpectedFixtureFailure(
+  context: string,
+  error: unknown,
+  report: (message: string) => void = (message) => console.error(message),
+): void {
+  report(`Local speech fixture expected ${context} failure: ${safeFixtureErrorClass(error)}`);
+}
+
+export function cancelBoundedLocalPostgresAdminClient(
+  client: pg.Client,
+  report: (message: string) => void = (message) => console.error(message),
+): Promise<void> {
   // node-postgres end() waits for its connect timeout during an incomplete startup
   // handshake, so close this task-owned loopback socket before ending the client.
   destroyLocalPostgresClientStream(client);
-  return client.end().catch(() => undefined);
+  return client.end().catch((error: unknown) => {
+    reportExpectedFixtureFailure("PostgreSQL administration cancellation", error, report);
+  });
 }
 
 function runtimeToken(identity: {
