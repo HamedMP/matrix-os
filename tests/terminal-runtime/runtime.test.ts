@@ -194,6 +194,32 @@ class FakeZellij implements ZellijRuntimeAdapter {
 }
 
 describe("project-scoped terminal runtime", () => {
+  it("rejects stale collaboration input, stop and attach after a tab ID is reused", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-runtime-"));
+    homes.push(homePath);
+    let now = new Date("2026-09-21T12:00:00.000Z");
+    const zellij = new FakeZellij();
+    const runtime = new TerminalRuntime({
+      store: new TerminalWorkspaceStore({ homePath, now: () => now }), zellij,
+    });
+    const workspace = await runtime.ensureWorkspace();
+    const tabId = `tt_${"a".repeat(32)}`;
+    const original = await runtime.createTab(workspace.id, { tabId, name: "original", cwd: "" });
+    const ref = { workspaceId: workspace.id, tabId };
+    await runtime.deleteTab(ref);
+    now = new Date("2026-09-21T12:01:00.000Z");
+    const replacement = await runtime.createTab(workspace.id, { tabId, name: "replacement", cwd: "" });
+    expect(replacement.createdAt).not.toBe(original.createdAt);
+
+    await expect(runtime.writeInput(ref, "stale", original.createdAt)).rejects.toThrow();
+    await expect(runtime.terminateTab(ref, original.createdAt)).rejects.toThrow();
+    await expect(runtime.attach(ref, { viewerId: "shared-observer", send: () => undefined,
+      expectedCreatedAt: original.createdAt })).rejects.toThrow();
+    expect(zellij.writes).toEqual([]);
+    expect((await runtime.listWorkspaces())[0]?.tabs.find((tab) => tab.id === tabId)?.status).toBe("running");
+    await runtime.shutdown();
+  });
+
   it("persists the trusted access scope supplied for a chat terminal", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-runtime-"));
     homes.push(homePath);

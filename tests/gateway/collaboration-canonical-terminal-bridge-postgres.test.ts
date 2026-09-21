@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { bootstrapChatDatabase } from "../../packages/gateway/src/chat/database.js";
 import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
 import { CollaborationRepository } from "../../packages/gateway/src/collaboration/repository.js";
+import { CollaborationTerminalAdapter } from "../../packages/gateway/src/collaboration/terminal-adapter.js";
 import { createCanonicalTerminalCollaborationBridge } from "../../packages/gateway/src/collaboration/canonical-terminal-bridge.js";
 import { createCollaborationTestDatabase, type CollaborationTestDatabase } from "./collaboration-test-support.js";
 
@@ -76,10 +77,41 @@ describe("canonical terminal collaboration bridge", () => {
       connectionId: "connection", leaseEpoch: 1, revalidate };
     await bridge.runtime.input({ ...action, data: "echo safe" });
     expect(revalidate).toHaveBeenCalledOnce();
-    expect(runtime.writeInput).toHaveBeenCalledWith({ workspaceId, tabId }, "echo safe");
+    expect(runtime.writeInput).toHaveBeenCalledWith({ workspaceId, tabId }, "echo safe", createdAt);
     await expect(bridge.runtime.resize({ ...action, cols: 90, rows: 30 })).rejects.toThrow();
     await bridge.registry.unbindCollaboration(terminalId, { scopeId, sessionIncarnation: eligible.sessionIncarnation });
     await expect(bridge.runtime.input({ ...action, data: "after revoke" })).rejects.toThrow();
     expect(runtime.writeInput).toHaveBeenCalledOnce();
+  });
+
+  it("preflights and shares the exact live tab, then refuses its stale binding", async () => {
+    const repository = new CollaborationRepository(fixture.db);
+    const bridge = createCanonicalTerminalCollaborationBridge({ db: fixture.db, ownerId, runtime: runtime as never });
+    const adapter = new CollaborationTerminalAdapter({
+      repository, registry: bridge.registry, runtime: bridge.runtime,
+      runtimeId,
+      executionEligibility: {
+        profileId: "scope-runtime-terminal-v1", profileVersion: 1,
+        profileDigest: "a".repeat(64), adapterId: "terminal", harnessVersion: "1.0.0",
+      },
+      preflightSecret: "0123456789abcdef0123456789abcdef",
+      createScopeId: () => scopeId,
+    });
+    const preflight = await adapter.preflight({ ownerId, organizationId, terminalId });
+    expect(preflight).toMatchObject({ eligible: true });
+    const shared = await adapter.shareTerminal({
+      ownerId, organizationId, terminalId, clientRequestId: "50000000-0000-4000-8000-000000000099",
+      payloadHash: "b".repeat(64), expectedResourceRevision: preflight.resourceRevision,
+      confirmationToken: preflight.confirmationToken!,
+    });
+    expect(shared).toMatchObject({ id: scopeId, resourceId: terminalId, lifecycle: "shared" });
+    expect(await adapter.get(scopeId, terminalId)).toMatchObject({
+      scopeId, terminalId, incarnation: expect.stringMatching(/^terminal-[a-f0-9]{32}$/),
+      creatorActorId: ownerId,
+    });
+    tab = { ...tab, createdAt: "2026-09-21T12:01:00.000Z" };
+    expect(await adapter.get(scopeId, terminalId)).toBeNull();
+    const stale = await adapter.preflight({ ownerId, organizationId, terminalId });
+    expect(stale.eligible).toBe(false);
   });
 });
