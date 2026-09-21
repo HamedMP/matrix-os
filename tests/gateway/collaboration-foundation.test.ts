@@ -65,6 +65,10 @@ const ROUTE_BASELINE: ReadonlyArray<readonly [string, string]> = [
   ["PATCH", "/api/collaboration/scopes/:scopeId/terminal"],
   ["GET", "/api/collaboration/scopes/:scopeId/project"],
   ["GET", "/api/collaboration/scopes/:scopeId/project/inventory"],
+  // S10 project readiness and Git brokerage register inside the project block.
+  ["GET", "/api/collaboration/scopes/:scopeId/project/readiness"],
+  ["GET", "/api/collaboration/scopes/:scopeId/project/git"],
+  ["POST", "/api/collaboration/scopes/:scopeId/project/git/actions"],
   ["POST", "/api/collaboration/scopes/:scopeId/project/confirm"],
   ["POST", "/api/collaboration/scopes/:scopeId/lifecycle"],
   ["GET", "/api/collaboration/scopes/:scopeId/operations/:operationId"],
@@ -164,13 +168,14 @@ describe("gateway collaboration schema bootstrap (S01 foundation)", () => {
   });
 
   it("registers the versioned migrations in order and records every version idempotently", async () => {
-    expect(COLLABORATION_VERSIONED_MIGRATIONS.map((step) => step.version)).toEqual([3, 4, 5, 6, 7, 8, 9, 10, 11]);
+    // S10 adds migration 13 (project Git operations); 12 belongs to a later layer.
+    expect(COLLABORATION_VERSIONED_MIGRATIONS.map((step) => step.version)).toEqual([3, 4, 5, 6, 7, 8, 9, 10, 11, 13]);
     expect(typeof applyCollaborationBaseSchema).toBe("function");
     await bootstrapCollaborationDatabase(fixture.db);
     await bootstrapCollaborationDatabase(fixture.db);
     const versions = await fixture.db.selectFrom("collaboration_schema_migrations")
       .select("version").orderBy("version").execute();
-    expect(versions.map((row) => Number(row.version))).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+    expect(versions.map((row) => Number(row.version))).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13]);
   });
 });
 
