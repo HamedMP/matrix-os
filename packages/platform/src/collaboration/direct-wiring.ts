@@ -75,7 +75,12 @@ export async function createPlatformCollaborationDirect(options: {
   } else {
     console.warn("[platform-collaboration] ticket signing keys are not configured: connection tickets fail closed");
   }
-  const controlStream = new CollaborationControlStream({ controlAuthority: options.controlAuthority, now: options.now });
+  const controlStream = new CollaborationControlStream({
+    controlAuthority: options.controlAuthority,
+    tickets: endpoints,
+    onAttach: (runtimeId) => endpoints.heartbeat(runtimeId),
+    now: options.now,
+  });
   const upgrade = createCollaborationControlUpgradeHandler({ stream: controlStream, authenticateRuntime: options.authenticateRuntime });
   const routes = createPlatformCollaborationDirectRoutes({
     endpoints,
