@@ -97,4 +97,87 @@ describe("S19 synthetic relay traffic profile", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     console.info("[S19 synthetic control profile]", JSON.stringify({ membershipChecks: 100, platformRequests: fetchImpl.mock.calls.length }));
   });
+
+  it("records one directory lookup and one metadata event per streamed PTY exchange, never per chunk", async () => {
+    const metadata: RelayMetadata[] = [];
+    let directoryLookups = 0;
+    const chunkCount = 64;
+    const chunkBytes = 1_024;
+    const streamed = () => new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (let index = 0; index < chunkCount; index += 1) controller.enqueue(new Uint8Array(chunkBytes));
+        controller.close();
+      },
+    });
+    const relay = new CollaborationRelay({
+      resolveScopeHome: async (id) => {
+        directoryLookups += 1;
+        return id === scopeId ? { runtimeId, origin } : null;
+      },
+      resolveInvitationHome: async () => null,
+      resolveRuntimeHome: async () => null,
+      resolveSessionHome: async () => null,
+      fetchImpl: (async (_url: string, init: RequestInit) => {
+        if (init.body) await new Response(init.body).arrayBuffer();
+        return new Response(streamed(), { status: 200 });
+      }) as never,
+      onMetadata: (entry) => { metadata.push(entry); },
+    });
+    const response = await relay.forward({
+      actorId: "user_member", method: "POST", path: `/api/collaboration/scopes/${scopeId}/terminal/input`, query: "",
+      headers: new Headers(), body: streamed(),
+    });
+    expect(response.status).toBe(200);
+    const reader = response.body!.getReader();
+    let receivedChunks = 0;
+    let receivedBytes = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      receivedChunks += 1;
+      receivedBytes += value.byteLength;
+    }
+    expect(receivedBytes).toBe(chunkCount * chunkBytes);
+    expect(receivedChunks).toBeGreaterThan(1);
+    expect(directoryLookups).toBe(1);
+    expect(metadata).toHaveLength(1);
+    expect(metadata[0]).toMatchObject({
+      outcome: "forwarded", runtimeId, requestBytes: chunkCount * chunkBytes, responseBytes: chunkCount * chunkBytes,
+    });
+    console.info("[S19 synthetic chunk profile]", JSON.stringify({
+      chunks: receivedChunks, bytes: receivedBytes, directoryLookups, metadataEvents: metadata.length,
+    }));
+  });
+
+  it("bounds relayed socket connections per home and releases capacity exactly once", async () => {
+    const relay = new CollaborationRelay({
+      resolveScopeHome: async (id) => (id === scopeId ? { runtimeId, origin } : null),
+      resolveInvitationHome: async () => null,
+      resolveRuntimeHome: async () => null,
+      resolveSessionHome: async () => null,
+      fetchImpl: (async () => new Response(null, { status: 204 })) as never,
+      limits: { connectionsPerHome: 2, connectionsPerActor: 5 },
+    });
+    const prepare = (actorId: string) => relay.prepareSocket({
+      actorId, rawPath: `/ws/collaboration/direct/scopes/${scopeId}/terminal?ticket=abc`,
+      incomingHeaders: { upgrade: "websocket" }, externalHost: "app.matrix-os.com",
+    });
+    const first = await prepare("user_a");
+    const second = await prepare("user_b");
+    expect(first).not.toBeNull();
+    expect(second).not.toBeNull();
+    expect(await prepare("user_c")).toBeNull();
+    expect(relay.connectionCounts()).toEqual({ homes: 2, actors: 2 });
+
+    first!.release();
+    first!.release();
+    expect(relay.connectionCounts()).toEqual({ homes: 1, actors: 1 });
+    const third = await prepare("user_c");
+    expect(third).not.toBeNull();
+    expect(relay.connectionCounts()).toEqual({ homes: 2, actors: 2 });
+
+    second!.release();
+    third!.release();
+    expect(relay.connectionCounts()).toEqual({ homes: 0, actors: 0 });
+  });
 });
