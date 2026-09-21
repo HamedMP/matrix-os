@@ -17,6 +17,7 @@
  * same transaction so the new grant is the only authority for that actor.
  */
 import { sql, type Kysely, type Transaction } from "kysely";
+import { MAX_GRANTS_PER_SCOPE } from "./capability-repository.js";
 import type { OwnerCollaborationDatabase } from "./database.js";
 import {
   appendMutationRecords,
@@ -104,13 +105,20 @@ export interface LegacyDispositionInput {
 export interface LegacyDispositionResult {
   converted: number;
   skipped: number;
+  /** Legacy rows still awaiting disposition after this bounded batch; callers repeat until zero. */
+  remaining: number;
 }
+
+/** Legacy rows processed per call; bounded so no unbounded in-memory collection is built. */
+export const LEGACY_DISPOSITION_BATCH_SIZE = MAX_GRANTS_PER_SCOPE;
 
 /**
  * Converts accepted, non-owner legacy member rows of one scope into member
  * grants that carry the exact old role as their ceiling. Idempotent: a row
- * that already has a pending or active grant is skipped. Runs in one
- * transaction with the scope row locked and an audit record per conversion.
+ * that already has a pending or active grant is skipped. Processes at most
+ * LEGACY_DISPOSITION_BATCH_SIZE rows per call and reports `remaining` so the
+ * caller repeats until zero. Runs in one transaction with the scope row
+ * locked and an audit record per conversion.
  * Never called automatically; S18 executes it as part of the recorded
  * disposition and the owner can invoke it explicitly.
  */
@@ -133,19 +141,21 @@ export async function dispositionLegacyMembers(
       .where("role", "in", ["editor", "viewer"])
       .where("dispositioned_at", "is", null)
       .orderBy("actor_id")
+      .limit(LEGACY_DISPOSITION_BATCH_SIZE)
       .forUpdate()
       .execute();
-    const existing = await trx.selectFrom("collaboration_grants")
-      .select("audience_actor_id")
-      .where("scope_id", "=", input.scopeId)
-      .where("audience_kind", "=", "member")
-      .where("state", "in", ["pending", "active"])
-      .execute();
-    const covered = new Set(existing.map((row) => row.audience_actor_id));
     let converted = 0;
     let skipped = 0;
     for (const row of legacy) {
-      if (covered.has(row.actor_id)) {
+      // Database-side existence check per row: no in-memory set of the scope's grants is built.
+      const covered = await trx.selectFrom("collaboration_grants")
+        .select("id")
+        .where("scope_id", "=", input.scopeId)
+        .where("audience_kind", "=", "member")
+        .where("audience_actor_id", "=", row.actor_id)
+        .where("state", "in", ["pending", "active"])
+        .executeTakeFirst();
+      if (covered) {
         skipped += 1;
         continue;
       }
@@ -193,6 +203,13 @@ export async function dispositionLegacyMembers(
       });
       converted += 1;
     }
-    return { converted, skipped };
+    const pending = await trx.selectFrom("collaboration_members")
+      .select(({ fn }) => fn.countAll<number>().as("count"))
+      .where("scope_id", "=", input.scopeId)
+      .where("status", "=", "accepted")
+      .where("role", "in", ["editor", "viewer"])
+      .where("dispositioned_at", "is", null)
+      .executeTakeFirstOrThrow();
+    return { converted, skipped, remaining: Number(pending.count) };
   });
 }

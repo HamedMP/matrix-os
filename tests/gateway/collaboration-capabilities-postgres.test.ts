@@ -505,8 +505,8 @@ describe("S04 capability grants and effective access", () => {
       const before = await evaluator.evaluateEffectiveAccess({ scopeId: collaborationIds.scope, actorId: collaborationActors.editor });
       expect(before.preset).toBeNull();
       const result = await dispositionLegacyMembers(fixture.db, { scopeId: collaborationIds.scope, actorId: collaborationActors.owner, now, createId: () => crypto.randomUUID() });
-      expect(result).toMatchObject({ converted: 2 });
-      expect(await dispositionLegacyMembers(fixture.db, { scopeId: collaborationIds.scope, actorId: collaborationActors.owner, now, createId: () => crypto.randomUUID() })).toMatchObject({ converted: 0 });
+      expect(result).toEqual({ converted: 2, skipped: 0, remaining: 0 });
+      expect(await dispositionLegacyMembers(fixture.db, { scopeId: collaborationIds.scope, actorId: collaborationActors.owner, now, createId: () => crypto.randomUUID() })).toEqual({ converted: 0, skipped: 0, remaining: 0 });
       const editor = await evaluator.decide({ scopeId: collaborationIds.scope, actorId: collaborationActors.editor });
       expect([...editor.actions]).toEqual(expect.arrayContaining(["files.write", "discussion.post", "ai.submit"]));
       expect(editor.actions.has("git.push")).toBe(false);
