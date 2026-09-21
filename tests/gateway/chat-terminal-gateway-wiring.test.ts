@@ -107,11 +107,13 @@ describe("createGateway Chat terminal production wiring", () => {
   it("keeps createGateway on the workspace/tab runtime without constructing a legacy Zellij registry", () => {
     const source = readFileSync(join(process.cwd(), "packages/gateway/src/server.ts"), "utf8");
     const routeSource = readFileSync(join(process.cwd(), "packages/gateway/src/server/terminal-ws-routes.ts"), "utf8");
+    const shellRouteSource = readFileSync(join(process.cwd(), "packages/gateway/src/server/shell-terminal-routes.ts"), "utf8");
     expect(source).toContain("new TerminalRuntimeSocketClient({");
     expect(source).toContain("registerTerminalWebSocketRoutes({");
     expect(routeSource).toContain('"/ws/terminal/tab"');
-    expect(source).toContain("chatBoundShellRouteDeps");
-    expect(source).toContain("chatBoundWorkspaceRouteDeps");
+    expect(source).toContain("registerShellTerminalRoutes({");
+    expect(shellRouteSource).toContain("chatBoundShellRouteDeps");
+    expect(shellRouteSource).toContain("chatBoundWorkspaceRouteDeps");
     expect(source).not.toContain("createUserSystemdZellijAdapter({");
     expect(source).not.toContain("createUserSystemdTerminalRuntime({");
     expect(source).not.toContain("sweepOrphanedSessions()");
