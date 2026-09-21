@@ -14,6 +14,7 @@ import { bootstrapChatDatabase } from "../../packages/gateway/src/chat/database.
 import { CollaborationActorProofVerifier } from "../../packages/gateway/src/collaboration/actor-proof.js";
 import { CollaborationAuthority } from "../../packages/gateway/src/collaboration/authority.js";
 import { createAppInstanceAdapter } from "../../packages/gateway/src/collaboration/app-instance-adapter.js";
+import { appRegistryIncarnation } from "../../packages/gateway/src/collaboration/app-incarnation.js";
 import { CollaborationCapabilityRepository } from "../../packages/gateway/src/collaboration/capability-repository.js";
 import { CollaborationCapabilityEvaluator } from "../../packages/gateway/src/collaboration/capability-evaluator.js";
 import { CollaborationChatAdapter } from "../../packages/gateway/src/collaboration/chat-adapter.js";
@@ -82,12 +83,15 @@ async function reached(condition: () => boolean, label: string): Promise<void> {
 
 class MemoryDriver implements CollaborationResourceDriver {
   readonly files = new Map<string, Uint8Array>();
+  readonly incarnations = new Map<string, string>();
   readonly folders = new Set<string>();
   readonly assets = new Map<string, Uint8Array>();
+  onAssetRead?: () => void;
   private key(input: { ownerId: string; projectId: string | null; path: string }): string {
     return `${input.ownerId}:${input.projectId ?? "-"}:${input.path}`;
   }
-  async read(input: { ownerId: string; projectId: string | null; path: string }) {
+  async read(input: { ownerId: string; projectId: string | null; path: string; expectedIncarnation: string }) {
+    if (this.incarnations.get(this.key(input)) !== input.expectedIncarnation) throw new ResourceCatalogError("not_found");
     const bytes = this.files.get(this.key(input));
     if (!bytes) throw new ResourceCatalogError("not_found");
     return { size: bytes.byteLength, contentType: "application/octet-stream", stream: new Blob([bytes]).stream() };
@@ -103,6 +107,7 @@ class MemoryDriver implements CollaborationResourceDriver {
   async write(input: { ownerId: string; projectId: string | null; path: string; content: Uint8Array }) {
     this.writeChunkSizes.set(this.key(input), [input.content.byteLength]);
     this.files.set(this.key(input), input.content);
+    this.incarnations.set(this.key(input), randomUUID());
     if (this.onWrite) await this.onWrite(input.path);
   }
   async writeChunks(input: {
@@ -131,11 +136,15 @@ class MemoryDriver implements CollaborationResourceDriver {
     this.removed.push({ path: input.path, kind: input.kind });
     const key = this.key(input);
     this.files.delete(key);
+    this.incarnations.delete(key);
     this.folders.delete(key);
     // The owner driver removes a folder with rm -r; a memory driver that only drops the
     // folder key would hide the bytes a rolled-back folder delete destroys.
     if (input.kind !== "folder") return;
-    for (const existing of [...this.files.keys()]) if (existing.startsWith(`${key}/`)) this.files.delete(existing);
+    for (const existing of [...this.files.keys()]) if (existing.startsWith(`${key}/`)) {
+      this.files.delete(existing);
+      this.incarnations.delete(existing);
+    }
     for (const existing of [...this.folders]) if (existing.startsWith(`${key}/`)) this.folders.delete(existing);
   }
   async rename(input: { ownerId: string; projectId: string | null; from: string; to: string }) {
@@ -143,15 +152,20 @@ class MemoryDriver implements CollaborationResourceDriver {
     const to = this.key({ ...input, path: input.to });
     const bytes = this.files.get(from);
     if (bytes) { this.files.delete(from); this.files.set(to, bytes); }
+    const incarnation = this.incarnations.get(from);
+    if (incarnation) { this.incarnations.delete(from); this.incarnations.set(to, incarnation); }
     if (this.folders.has(from)) { this.folders.delete(from); this.folders.add(to); }
   }
   async mkdir(input: { ownerId: string; projectId: string | null; path: string }) {
     this.folders.add(this.key(input));
   }
   async fingerprint(input: { ownerId: string; projectId: string | null; path: string }) {
-    return `fp-${this.key(input)}`;
+    const incarnation = this.incarnations.get(this.key(input));
+    if (!incarnation) throw new ResourceCatalogError("not_found");
+    return incarnation;
   }
   async readAppAsset(input: { ownerId: string; projectId: string | null; appId: string; assetPath: string }) {
+    this.onAssetRead?.();
     const bytes = this.assets.get(`${input.appId}/${input.assetPath}`);
     if (!bytes) throw new ResourceCatalogError("not_found");
     return { size: bytes.byteLength, contentType: "text/javascript", stream: new Blob([bytes]).stream() };
@@ -171,6 +185,7 @@ describe("S12 direct resource policy", () => {
   let bridgeCalls: Array<{ namespace: string; action: string; actorId: string }>;
   let terminalActions: Array<{ actorId: string; action: unknown }>;
   let ids: { readme: string; notes: string; docs: string; docsGuide: string; app: string };
+  let appRegistryCreation: string;
 
   async function seedScope(input: {
     id: string;
@@ -290,6 +305,7 @@ describe("S12 direct resource policy", () => {
     // A small descendant bound keeps the over-bound folder delete cheap to prove.
     catalog = new CollaborationResourceCatalog(fixture.db, { now: () => NOW, maxFolderDescendants: 2 });
     driver = new MemoryDriver();
+    appRegistryCreation = "2026-09-21T09:00:00.000Z";
     bridgeCalls = [];
     terminalActions = [];
     const bridge: ProjectAppBridge = {
@@ -304,11 +320,15 @@ describe("S12 direct resource policy", () => {
     const docs = await catalog.register({ ownerId: owner, projectId: PROJECT_ID, kind: "folder", path: "docs", incarnation: "inc-docs-1" });
     const docsGuide = await catalog.register({ ownerId: owner, projectId: PROJECT_ID, kind: "file", path: "docs/guide.md", incarnation: "inc-guide-1" });
     const notes = await catalog.register({ ownerId: owner, projectId: null, kind: "file", path: "notes/today.md", incarnation: "inc-notes-1" });
-    const appEntry = await catalog.register({ ownerId: owner, projectId: PROJECT_ID, kind: "app", path: APP_ID, incarnation: "inc-app-1" });
+    const initialAppIncarnation = appRegistryIncarnation({ slug: APP_ID, created_at: appRegistryCreation });
+    const appEntry = await catalog.register({ ownerId: owner, projectId: PROJECT_ID, kind: "app", path: APP_ID, incarnation: initialAppIncarnation });
     ids = { readme: readme.id, notes: notes.id, docs: docs.id, docsGuide: docsGuide.id, app: appEntry.id };
     driver.files.set(`${owner}:${PROJECT_ID}:README.md`, new TextEncoder().encode("# Alpha"));
     driver.files.set(`${owner}:${PROJECT_ID}:docs/guide.md`, new TextEncoder().encode("guide"));
     driver.files.set(`${owner}:-:notes/today.md`, new TextEncoder().encode("today"));
+    driver.incarnations.set(`${owner}:${PROJECT_ID}:README.md`, "inc-readme-1");
+    driver.incarnations.set(`${owner}:${PROJECT_ID}:docs/guide.md`, "inc-guide-1");
+    driver.incarnations.set(`${owner}:-:notes/today.md`, "inc-notes-1");
     driver.folders.add(`${owner}:${PROJECT_ID}:docs`);
     driver.assets.set(`${APP_ID}/main.js`, new TextEncoder().encode("console.log(1)"));
 
@@ -329,7 +349,7 @@ describe("S12 direct resource policy", () => {
       revision: 0,
       readiness: "ready",
       blocker: null,
-      incarnation: null,
+      incarnation: initialAppIncarnation,
       created_at: NOW,
       updated_at: NOW,
     }).execute();
@@ -353,7 +373,7 @@ describe("S12 direct resource policy", () => {
       bridge,
       catalog,
       apps: { resolve: async (projectId, appId) => projectId === PROJECT_ID && appId === APP_ID
-        ? { projectId: PROJECT_ID, appId: APP_ID, bridgeAppId: "board", collaborationMode: "scoped" }
+        ? { projectId: PROJECT_ID, appId: APP_ID, bridgeAppId: "board", collaborationMode: "scoped", incarnation: appRegistryIncarnation({ slug: APP_ID, created_at: appRegistryCreation }) }
         : null },
       now: () => NOW,
     });
@@ -465,6 +485,16 @@ describe("S12 direct resource policy", () => {
       expect(gone.status).toBe(404);
     });
 
+    it("does not serve a new filesystem incarnation through an old catalog id", async () => {
+      const key = `${collaborationActors.owner}:${PROJECT_ID}:README.md`;
+      // Model an owner-side delete/recreate that bypasses collaboration catalog mutations.
+      driver.files.set(key, new TextEncoder().encode("replacement private bytes"));
+      driver.incarnations.set(key, "inc-readme-2");
+      const response = await signed({ actorId: collaborationActors.viewer, scopeId: PROJECT_SCOPE, method: "GET", path: `/api/collaboration/scopes/${PROJECT_SCOPE}/files/${ids.readme}/content` });
+      expect(response.status).toBe(404);
+      expect(await response.text()).not.toContain("replacement private bytes");
+    });
+
     it("never resolves a catalog id that belongs to another namespace", async () => {
       const foreign = await signed({ actorId: collaborationActors.owner, scopeId: PROJECT_SCOPE, method: "GET", path: `/api/collaboration/scopes/${PROJECT_SCOPE}/files/${ids.notes}/content` });
       expect(foreign.status).toBe(404);
@@ -525,6 +555,23 @@ describe("S12 direct resource policy", () => {
   });
 
   describe("standalone app instance share", () => {
+    it("does not serve a recreated same-slug app through old standalone or project bindings", async () => {
+      const standalonePath = `/api/collaboration/scopes/${APP_SCOPE}/apps/${APP_ID}/assets/main.js`;
+      const projectPath = `/api/collaboration/scopes/${PROJECT_SCOPE}/apps/${APP_ID}/assets/main.js`;
+      expect((await signed({ actorId: collaborationActors.viewer, scopeId: APP_SCOPE, method: "GET", path: standalonePath })).status).toBe(200);
+      expect((await signed({ actorId: collaborationActors.viewer, scopeId: PROJECT_SCOPE, method: "GET", path: projectPath })).status).toBe(200);
+      // Unregister/re-register the same slug: registry creation identity changes.
+      appRegistryCreation = "2026-09-21T09:01:00.000Z";
+      expect((await signed({ actorId: collaborationActors.viewer, scopeId: APP_SCOPE, method: "GET", path: standalonePath })).status).toBe(503);
+      expect((await signed({ actorId: collaborationActors.viewer, scopeId: PROJECT_SCOPE, method: "GET", path: projectPath })).status).toBe(503);
+    });
+
+    it("rechecks the app incarnation after opening an asset and closes the stale stream", async () => {
+      const path = `/api/collaboration/scopes/${APP_SCOPE}/apps/${APP_ID}/assets/main.js`;
+      driver.onAssetRead = () => { appRegistryCreation = "2026-09-21T09:02:00.000Z"; };
+      const response = await signed({ actorId: collaborationActors.viewer, scopeId: APP_SCOPE, method: "GET", path });
+      expect(response.status).toBe(503);
+    });
     it("serves reads and assets to a viewer and refuses mutations through the bridge", async () => {
       const instance = await signed({ actorId: collaborationActors.viewer, scopeId: APP_SCOPE, method: "GET", path: `/api/collaboration/scopes/${APP_SCOPE}/apps/${APP_ID}` });
       expect(instance.status).toBe(200);

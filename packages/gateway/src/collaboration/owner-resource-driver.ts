@@ -1,6 +1,6 @@
 /** Filesystem driver for owner-home collaboration resources. Catalog IDs, never paths, reach this boundary. */
 import { createHash, randomUUID } from "node:crypto";
-import { constants, createReadStream } from "node:fs";
+import { constants, createReadStream, type BigIntStats } from "node:fs";
 import { lstat, mkdir, open, readdir, realpath, rename, rm, stat } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { Readable } from "node:stream";
@@ -26,6 +26,10 @@ function forbiddenHomePath(path: string): boolean {
 function missing(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
 }
+function physicalIncarnation(info: BigIntStats): string {
+  return createHash("sha256").update(`${info.dev}:${info.ino}:${info.birthtimeNs}:${info.ctimeNs}`).digest("hex");
+}
+
 function contentType(path: string): string {
   const extension = path.split(".").at(-1)?.toLowerCase();
   switch (extension) {
@@ -123,14 +127,15 @@ export function createOwnerResourceDriver(options: {
     return candidate;
   }
 
-  async function readFile(input: Namespace & { path: string }) {
+  async function readFile(input: Namespace & { path: string; expectedIncarnation: string }) {
     const path = await target(input, false);
     let handle;
     try {
       handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
-      const info = await handle.stat();
-      if (!info.isFile() || info.size > MAX_STREAM_BYTES) throw new ResourceCatalogError("unavailable");
-      const size = info.size;
+      const info = await handle.stat({ bigint: true });
+      if (!info.isFile() || info.size > BigInt(MAX_STREAM_BYTES)) throw new ResourceCatalogError("unavailable");
+      if (physicalIncarnation(info) !== input.expectedIncarnation) throw new ResourceCatalogError("not_found");
+      const size = Number(info.size);
       const stream = Readable.toWeb(handle.createReadStream({ autoClose: true })) as ReadableStream<Uint8Array>;
       return { stream, size, contentType: contentType(path) };
     } catch (error: unknown) {
@@ -263,8 +268,18 @@ export function createOwnerResourceDriver(options: {
       }
     },
     async fingerprint(input) {
-      await target(input, false);
-      return randomUUID();
+      const path = await target(input, false);
+      let handle;
+      try {
+        handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+        return physicalIncarnation(await handle.stat({ bigint: true }));
+      } catch (error: unknown) {
+        if (error instanceof ResourceCatalogError) throw error;
+        if (missing(error)) throw new ResourceCatalogError("not_found");
+        throw new ResourceCatalogError("unavailable");
+      } finally {
+        await handle?.close();
+      }
     },
     async readAppAsset(input) {
       const assetRoot = await options.resolveAppAssetRoot(input.ownerId, input.projectId, input.appId);
