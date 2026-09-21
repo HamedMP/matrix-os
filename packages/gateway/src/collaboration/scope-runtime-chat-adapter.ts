@@ -80,8 +80,12 @@ export function createScopeRuntimeChatProviderAdapter(options: {
     serializeState: (value) => StateSchema.parse(value),
     async *start(value) {
       const input = parseCanonicalProviderRunInput(value);
-      if ((input.executionRoot && !options.sandbox) || input.resumeState !== undefined
-        || input.parts.some((part) => part.type !== "text")) {
+      // S07: only the visible transcript runs, and never without a scope-matching manifest.
+      // S09: a rooted run must mount exactly its own authoritative execution root.
+      if (input.resumeState !== undefined
+        || input.parts.some((part) => part.type !== "text")
+        || (input.executionRoot !== undefined && input.executionRoot !== null
+          && (!sandbox || input.executionRoot !== sandbox.worktree.hostPath))) {
         yield failure("Shared AI supports only the visible Chat transcript on the owner's sandboxed root.");
         return;
       }
