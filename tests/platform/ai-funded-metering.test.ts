@@ -1,5 +1,5 @@
 import { sql } from "kysely";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AiFundedPolicyError,
   createAiFundedPolicyRepository,
@@ -43,6 +43,7 @@ describe("funded AI metering", () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     await destroyTestPlatformDb(db);
   });
 
@@ -307,6 +308,47 @@ describe("funded AI metering", () => {
     await expect(repo.authorize({
       credential: credential.token, requestId: "after-expiry", modelId, maxCostMicrousd: 100,
     })).resolves.toMatchObject({ authorized: true });
+  });
+
+  it("isolates an inconsistent reservation so later cleanup candidates still commit", async () => {
+    const credential = await enableAndFund({ budget: 200, credit: 200 });
+    await insertLegacyReservation({
+      tokenId: credential.tokenId,
+      reservationId: "cleanup_broken_balance",
+      requestId: "cleanup_broken_balance_request",
+      reservedMicrousd: 100,
+      status: "reserved",
+      expiresAt: "2026-08-30T20:04:00.000Z",
+    });
+    await insertLegacyReservation({
+      tokenId: credential.tokenId,
+      reservationId: "cleanup_valid_sibling",
+      requestId: "cleanup_valid_sibling_request",
+      reservedMicrousd: 10,
+      status: "reserved",
+      expiresAt: "2026-08-30T20:05:00.000Z",
+    });
+    await db.executor.updateTable("ai_funded_runtime_balances").set({
+      reserved_microusd: 10,
+      month_reserved_microusd: 10,
+    }).where("machine_id", "=", identity.machineId).executeTakeFirstOrThrow();
+    clock = new Date("2026-08-30T20:06:00.000Z");
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    await expect(repo.cleanupExpiredReservations({ limit: 10 })).resolves.toBe(1);
+
+    expect(await db.executor.selectFrom("ai_funded_usage_reservations")
+      .select(["reservation_id", "status"])
+      .where("reservation_id", "in", ["cleanup_broken_balance", "cleanup_valid_sibling"])
+      .orderBy("reservation_id").execute()).toEqual([
+      { reservation_id: "cleanup_broken_balance", status: "reserved" },
+      { reservation_id: "cleanup_valid_sibling", status: "expired" },
+    ]);
+    expect(warning).toHaveBeenCalledWith(
+      "[funded-ai] reservation cleanup candidate failed",
+      "cleanup_broken_balance",
+      "Error",
+    );
   });
 
   it("conservatively charges the full reservation when in-flight usage expires", async () => {

@@ -12,26 +12,35 @@ export interface AiFundedReservationCleanupOptions {
 }
 
 export async function cleanupExpiredReservations(options: AiFundedReservationCleanupOptions, input: z.input<typeof CleanupSchema>): Promise<number> {
-    const { limit } = CleanupSchema.parse(input);
-    const checked = options.now();
-    const checkedAt = checked.toISOString();
-    const currentPeriod = utcMonthStart(checked);
-    await options.db.ready;
-    return options.db.transaction(async (trx) => {
-      const expired = await trx.executor.selectFrom("ai_funded_usage_reservations")
-        .select([
-          "reservation_id", "request_id", "token_id", "owner_id", "machine_id", "runtime_slot",
-          "period_start", "reserved_microusd", "promotional_reserved_microusd",
-          "addon_reserved_microusd", "status",
-        ])
-        .where("status", "in", ["reserved", "in_flight"]).where("expires_at", "<=", checkedAt)
-        // Exact provider usage is the only safe release signal after a usage-mode
-        // request starts. Never-started reservations have no provider liability,
-        // so their bounded authorization hold can expire normally.
-        .where(sql<boolean>`(status <> 'in_flight' OR authorization_response::jsonb #>> '{reservation,billingMode}' IS DISTINCT FROM 'usage')`)
-        .orderBy("expires_at").orderBy("reservation_id").limit(limit).forUpdate().skipLocked().execute();
-      let cleaned = 0;
-      for (const reservation of expired) {
+  const { limit } = CleanupSchema.parse(input);
+  const checked = options.now();
+  const checkedAt = checked.toISOString();
+  const currentPeriod = utcMonthStart(checked);
+  await options.db.ready;
+  const candidates = await options.db.executor.selectFrom("ai_funded_usage_reservations")
+    .select("reservation_id")
+    .where("status", "in", ["reserved", "in_flight"]).where("expires_at", "<=", checkedAt)
+    // Exact provider usage is the only safe release signal after a usage-mode
+    // request starts. Never-started reservations have no provider liability,
+    // so their bounded authorization hold can expire normally.
+    .where(sql<boolean>`(status <> 'in_flight' OR authorization_response::jsonb #>> '{reservation,billingMode}' IS DISTINCT FROM 'usage')`)
+    .orderBy("expires_at").orderBy("reservation_id").limit(limit).execute();
+
+  let cleaned = 0;
+  for (const candidate of candidates) {
+    try {
+      const didClean = await options.db.transaction(async (trx) => {
+        const reservation = await trx.executor.selectFrom("ai_funded_usage_reservations")
+          .select([
+            "reservation_id", "request_id", "token_id", "owner_id", "machine_id", "runtime_slot",
+            "period_start", "reserved_microusd", "promotional_reserved_microusd",
+            "addon_reserved_microusd", "status",
+          ])
+          .where("reservation_id", "=", candidate.reservation_id)
+          .where("status", "in", ["reserved", "in_flight"]).where("expires_at", "<=", checkedAt)
+          .where(sql<boolean>`(status <> 'in_flight' OR authorization_response::jsonb #>> '{reservation,billingMode}' IS DISTINCT FROM 'usage')`)
+          .forUpdate().skipLocked().executeTakeFirst();
+        if (!reservation) return false;
         const reservationIdentity = {
           ownerId: reservation.owner_id,
           machineId: reservation.machine_id,
@@ -51,8 +60,7 @@ export async function cleanupExpiredReservations(options: AiFundedReservationCle
         const claimed = await trx.executor.updateTable("ai_funded_usage_reservations")
           .set({ status: claimedStatus }).where("reservation_id", "=", reservation.reservation_id)
           .where("status", "=", reservation.status).returning("reservation_id").executeTakeFirst();
-        if (!claimed) continue;
-        cleaned += 1;
+        if (!claimed) return false;
         const reserved = exactInteger(reservation.reserved_microusd);
         const currentBalance = await trx.executor.updateTable("ai_funded_runtime_balances").set({
           month_period_start: currentPeriod,
@@ -125,7 +133,7 @@ export async function cleanupExpiredReservations(options: AiFundedReservationCle
           }).where("reservation_id", "=", reservation.reservation_id).where("status", "=", "settling")
             .returning("reservation_id").executeTakeFirst();
           if (!settled) throw new Error("Funded AI reservation invariant violated");
-          continue;
+          return true;
         }
         const balance = await trx.executor.updateTable("ai_funded_runtime_balances").set({
           reserved_microusd: sql<number>`reserved_microusd - ${reserved}`,
@@ -140,7 +148,16 @@ export async function cleanupExpiredReservations(options: AiFundedReservationCle
           machineId: reservation.machine_id,
           runtimeSlot: reservation.runtime_slot,
         }, checkedAt);
-      }
-      return cleaned;
-    });
+        return true;
+      });
+      if (didClean) cleaned += 1;
+    } catch (error: unknown) {
+      console.warn(
+        "[funded-ai] reservation cleanup candidate failed",
+        candidate.reservation_id,
+        error instanceof Error ? error.name : "UnknownError",
+      );
+    }
   }
+  return cleaned;
+}

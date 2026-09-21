@@ -968,14 +968,16 @@ async function startPlatformServerWithCleanup(
     }
   }
 
-  const fundedReservationCleanupWorker = createAiFundedReservationCleanupWorker({
-    cleanupExpiredReservations: (input) => cleanupExpiredReservations({
-      db,
-      now: () => new Date(),
-    }, input),
-  });
+  const fundedReservationCleanupWorker = backgroundWorkersEnabled
+    ? createAiFundedReservationCleanupWorker({
+        cleanupExpiredReservations: (input) => cleanupExpiredReservations({
+          db,
+          now: () => new Date(),
+        }, input),
+      })
+    : undefined;
   registerCustomMcpStartupCleanup(async () => {
-    await fundedReservationCleanupWorker.shutdown();
+    await fundedReservationCleanupWorker?.shutdown();
     await customMcpShutdown?.();
   });
 
@@ -1052,7 +1054,7 @@ async function startPlatformServerWithCleanup(
         if (goldenSnapshotPromise) await goldenSnapshotPromise;
         await Promise.allSettled([
           collaboration?.shutdown(),
-          fundedReservationCleanupWorker.shutdown(),
+          fundedReservationCleanupWorker?.shutdown(),
           Promise.resolve(speechService.shutdown()),
           containerProxyDispatcher.close(),
           customerVpsProxyDispatcher.close(),
