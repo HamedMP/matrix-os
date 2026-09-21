@@ -195,8 +195,9 @@ export async function createGatewayCollaboration(options: {
       terminalEventRegistry?.notifyRevoked(session.scopeId, session.actorId);
     },
     startTimers: options.startTimers !== false,
-    onEnded: (session, reason) => revocationEnforcer?.onSessionEnded(session, reason),
   });
+  // S07 / T039: lease loss also releases terminal control, stops bound sandbox runtimes and refuses input.
+  directSessions.subscribeEnded((session, reason) => revocationEnforcer?.onSessionEnded(session, reason));
   if (options.config.ownerId && options.config.relayHandle) {
     controlClient = new CollaborationControlClient({
       platformBaseUrl: options.config.platformBaseUrl,

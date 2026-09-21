@@ -8,14 +8,16 @@
  * fresh session is admitted or the block ages out. A normal close is not a
  * revocation. Both registries are bounded.
  */
+import type { DirectSessionEndReason } from "./direct-sessions.js";
 import type { TerminalControlCoordinator } from "./terminal-control.js";
 
 const DEFAULT_TTL_MS = 20 * 60 * 1_000;
 const DEFAULT_MAX_ENTRIES = 4_096;
 const RUNTIME_HANDLE = /^runtime_[a-f0-9]{32}$/;
 
-export type DirectSessionEndReason = "expired" | "denied" | "revoked" | "closed" | "shutdown";
-const REVOKING_REASONS: ReadonlySet<DirectSessionEndReason> = new Set(["expired", "denied", "revoked"]);
+export type { DirectSessionEndReason };
+/** `exhausted` (connection quota) is a lease loss too: the actor must re-admit before acting again. */
+const REVOKING_REASONS: ReadonlySet<DirectSessionEndReason> = new Set(["expired", "denied", "revoked", "exhausted"]);
 
 interface RuntimeBinding {
   scopeId: string;
