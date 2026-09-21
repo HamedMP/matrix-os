@@ -53,7 +53,7 @@ export function createPlatformCollaborationDirectRoutes(options: {
         protocolVersion: COLLABORATION_DIRECT_PROTOCOL_VERSION,
         runtime: { runtimeId: record.runtimeId, authorityGeneration: record.authorityGeneration, registeredAt: record.registeredAt },
         platformSigningKeys: options.issuer?.publicKeys() ?? [],
-        controlTicket: options.controlStream.issueUpgradeTicket(record.runtimeId),
+        controlTicket: await options.controlStream.issueUpgradeTicket(record.runtimeId),
         relay: { origin: options.relayOrigin },
       });
     } catch (error: unknown) {
@@ -82,6 +82,7 @@ export function createPlatformCollaborationDirectRoutes(options: {
       if (error instanceof CollaborationTicketIssuerError) {
         if (error.code === "invalid_request") return safeJson(c, "Invalid request", 422);
         if (error.code === "not_found") return safeJson(c, "Collaboration resource not found", 404);
+        if (error.code === "host_offline") return safeJson(c, "host_offline", 503);
         return safeJson(c, "Collaboration unavailable", 503);
       }
       console.warn("[platform-collaboration] ticket issue failed", error instanceof Error ? error.name : "UnknownError");

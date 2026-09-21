@@ -116,7 +116,13 @@ async function admit(
     return null;
   }
   const logical = runtime ? logicalRuntimeIdFor(runtime.runtimeId) : null;
-  if (!logical || !options.stream.consumeUpgradeTicket(ticket, logical)) return null;
+  if (!logical) return null;
+  try {
+    if (!(await options.stream.consumeUpgradeTicket(ticket, logical))) return null;
+  } catch (error: unknown) {
+    console.warn("[collaboration-control] ticket consumption failed", error instanceof Error ? error.name : "UnknownError");
+    return null;
+  }
   return logical;
 }
 
