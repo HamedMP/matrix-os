@@ -194,7 +194,7 @@ import {
 } from "./chat/service.js";
 import type { createDiscussionOnlyChatExecutionGuard } from "./collaboration/chat-scope.js";
 import { initializeOwnerDatabaseServices } from "./startup/owner-database.js";
-import { createIntegrationUserResolver } from "./startup/platform-integrations.js";
+import { initializePlatformIntegrations } from "./startup/platform-integrations.js";
 import {
   describeGatewayCollaborationConfiguration,
   loadGatewayCollaborationConfig,
@@ -259,12 +259,9 @@ import type { QueryEngine } from "./app-db-query.js";
 import { isSafeName, normalizeAppStorageSlug } from "./app-db-types.js";
 import type { KvStore } from "./app-db-kv.js";
 import { renameApp, deleteApp } from "./app-ops.js";
-import { createPlatformDb, type PlatformDb } from "./platform-db.js";
-import { createPipedreamClient, type PipedreamConnectClient } from "./integrations/pipedream.js";
+import type { PlatformDb } from "./platform-db.js";
 import { registerCustomMcpGatewayRoutes } from "./integrations/custom-mcp/gateway-routes.js";
-import { createIntegrationRoutes } from "./integrations/routes.js";
 import { createIntegrationBridgeRoutes } from "./integrations/bridge-routes.js";
-import { discoverComponentKeys } from "./integrations/registry.js";
 import { createIntegrationProxyResponse } from "./integrations/proxy-response.js";
 import { z } from "zod/v4";
 import {
@@ -1155,62 +1152,15 @@ export async function createGateway(config: GatewayConfig) {
     return createIntegrationProxyResponse(upstream);
   }
 
-  // Platform DB + Integrations (Pipedream Connect)
-  let pipedreamClient: PipedreamConnectClient | null = null;
-  let integrationRoutes: Hono | null = null;
-  let resolveIntegrationUserId: ((c: Context) => Promise<string | null>) | null = null;
-  const platformDbUrl = process.env.PLATFORM_DATABASE_URL;
-  if (platformDbUrl && process.env.PIPEDREAM_CLIENT_ID && process.env.PIPEDREAM_CLIENT_SECRET && process.env.PIPEDREAM_PROJECT_ID) {
-    try {
-      platformDb = createPlatformDb(platformDbUrl);
-      await platformDb.migrate();
-      console.log("[platform-db] Initialized");
-
-      pipedreamClient = await createPipedreamClient({
-        clientId: process.env.PIPEDREAM_CLIENT_ID,
-        clientSecret: process.env.PIPEDREAM_CLIENT_SECRET,
-        projectId: process.env.PIPEDREAM_PROJECT_ID,
-        environment: process.env.PIPEDREAM_ENVIRONMENT ?? "production",
-      });
-
-      // Single source of truth for user resolution -- used by /api/integrations/*
-      // and the /api/bridge/service handlers. Prefers platform-verified Clerk
-      // identity from the proxy header; falls back to env vars only in dev.
-      //
-      // Returns null on any failure so callers can return 401 instead of
-      // leaking a 500. Each failure mode logs a distinct stable string so
-      // prod incidents are debuggable: a 401 spike that's actually a Postgres
-      // outage shows up as `[integrations][auth] db_error` in logs, while a
-      // legitimate "user not in platform DB" shows as `[integrations][auth]
-      // no_user_for_clerk_id`. Grep on those tags to triage.
-      resolveIntegrationUserId = createIntegrationUserResolver(platformDb, process.env);
-
-      integrationRoutes = createIntegrationRoutes({
-        db: platformDb,
-        pipedream: pipedreamClient,
-        webhookSecret: (() => {
-          const s = process.env.PIPEDREAM_WEBHOOK_SECRET;
-          if (!s) console.warn("[integrations] PIPEDREAM_WEBHOOK_SECRET not set -- webhooks will be rejected");
-          return s ?? "";
-        })(),
-        resolveUserId: resolveIntegrationUserId,
-        broadcast,
-      });
-      // Routes mounted after auth middleware below (see "deferred route mounts")
-      console.log("[platform-db] Integration routes ready");
-
-      discoverComponentKeys(pipedreamClient)
-        .then((stats) => {
-          console.log(`[integrations] Component keys discovered: ${stats.matched}/${stats.total} matched, ${stats.errors} errors`);
-        })
-        .catch((err) => {
-          console.error("[integrations] Component key discovery failed:", err instanceof Error ? err.message : err);
-        });
-    } catch (err) {
-      console.error("[platform-db] Failed to initialize:", (err as Error).message);
-      platformDb = null;
-    }
-  }
+  // Platform integration services are constructed before auth and mounted below it.
+  const platformIntegrations = await initializePlatformIntegrations({
+    env: process.env,
+    broadcast,
+  });
+  platformDb = platformIntegrations.db;
+  const pipedreamClient = platformIntegrations.client;
+  const integrationRoutes = platformIntegrations.routes;
+  const resolveIntegrationUserId = platformIntegrations.resolveUserId;
 
   function logHealing(message: string) {
     const timestamp = new Date().toISOString();
@@ -4291,6 +4241,7 @@ export async function createGateway(config: GatewayConfig) {
       await canvasRepository?.destroy();
       await socialRoutes?.shutdownPostHog();
       await appDb?.destroy();
+      await platformDb?.destroy();
       await posthogErrorTracker.shutdown();
       server.close();
     },
