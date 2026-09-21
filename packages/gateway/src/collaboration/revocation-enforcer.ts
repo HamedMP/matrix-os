@@ -13,6 +13,9 @@ import type { TerminalControlCoordinator } from "./terminal-control.js";
 
 const DEFAULT_TTL_MS = 20 * 60 * 1_000;
 const DEFAULT_MAX_ENTRIES = 4_096;
+/** No sandboxed shared run may outlive this; an older binding is stale and its runtime is stopped. */
+const DEFAULT_RUNTIME_MAX_AGE_MS = 6 * 60 * 60 * 1_000;
+const DEFAULT_RUNTIME_SWEEP_INTERVAL_MS = 60 * 1_000;
 const RUNTIME_HANDLE = /^runtime_[a-f0-9]{32}$/;
 
 export type { DirectSessionEndReason };
@@ -25,16 +28,39 @@ interface RuntimeBinding {
   runtimeHandle: string;
 }
 
-/** Bounded registry of sandbox runtimes bound to (scope, actor); stops them on revocation. */
+/**
+ * Bounded registry of sandbox runtimes bound to (scope, actor); stops them on
+ * revocation. A binding the registry can no longer track is never dropped
+ * silently: at capacity the oldest binding is evicted and its runtime stopped,
+ * and a binding older than the maximum run age is swept the same way, so a
+ * runtime never outlives its revocation tracking (fail closed).
+ */
 export class SandboxRuntimeRegistry {
-  private readonly bindings = new Map<string, RuntimeBinding>();
+  private readonly bindings = new Map<string, RuntimeBinding & { boundAt: number }>();
   private readonly maxEntries: number;
+  private readonly maxAgeMs: number;
+  private readonly now: () => Date;
+  private readonly sweepTimer: ReturnType<typeof setInterval> | undefined;
+  private inFlight: Promise<void> = Promise.resolve();
 
   constructor(private readonly options: {
     client: { stopRuntime(input: { runtimeHandle: string }): Promise<unknown> };
     maxEntries?: number;
+    /** Oldest a binding may be before its runtime is stopped and the entry evicted. */
+    maxAgeMs?: number;
+    sweepIntervalMs?: number;
+    now?: () => Date;
+    /** Periodic stale sweep; disable only in tests that call `sweep()` directly. */
+    startTimer?: boolean;
   }) {
     this.maxEntries = boundedInteger(options.maxEntries ?? 256, 1, 256, "registry capacity");
+    this.maxAgeMs = boundedInteger(options.maxAgeMs ?? DEFAULT_RUNTIME_MAX_AGE_MS, 1_000, 7 * 24 * 60 * 60 * 1_000, "runtime max age");
+    this.now = options.now ?? (() => new Date());
+    const sweepIntervalMs = boundedInteger(options.sweepIntervalMs ?? DEFAULT_RUNTIME_SWEEP_INTERVAL_MS, 1_000, 60 * 60 * 1_000, "runtime sweep interval");
+    if (options.startTimer !== false) {
+      this.sweepTimer = setInterval(() => { this.sweep(); }, sweepIntervalMs);
+      this.sweepTimer.unref?.();
+    }
   }
 
   get size(): number {
@@ -44,12 +70,31 @@ export class SandboxRuntimeRegistry {
   bind(binding: RuntimeBinding): void {
     if (!RUNTIME_HANDLE.test(binding.runtimeHandle)) throw new Error("Invalid sandbox runtime handle");
     if (this.bindings.has(binding.runtimeHandle)) return;
-    if (this.bindings.size >= this.maxEntries) throw new Error("Sandbox runtime registry is at capacity");
-    this.bindings.set(binding.runtimeHandle, { ...binding });
+    this.sweep();
+    while (this.bindings.size >= this.maxEntries) {
+      const oldest = this.bindings.keys().next().value;
+      if (oldest === undefined) break;
+      console.warn("[collaboration-revocation] sandbox runtime registry at capacity; stopping oldest runtime");
+      this.evict(oldest);
+    }
+    this.bindings.set(binding.runtimeHandle, { ...binding, boundAt: this.now().getTime() });
   }
 
   release(runtimeHandle: string): void {
     this.bindings.delete(runtimeHandle);
+  }
+
+  /** Stops and evicts every binding older than the maximum run age; returns how many were evicted. */
+  sweep(): number {
+    const cutoff = this.now().getTime() - this.maxAgeMs;
+    let evicted = 0;
+    for (const [runtimeHandle, binding] of [...this.bindings]) {
+      if (binding.boundAt > cutoff) continue;
+      console.warn("[collaboration-revocation] sandbox runtime outlived the maximum run age; stopping it");
+      this.evict(runtimeHandle);
+      evicted += 1;
+    }
+    return evicted;
   }
 
   async stopForActor(scopeId: string, actorId: string): Promise<number> {
@@ -66,6 +111,24 @@ export class SandboxRuntimeRegistry {
       }
     }
     return stopped;
+  }
+
+  /** Waits for eviction stops started so far (tests and shutdown). */
+  async settle(): Promise<void> {
+    await this.inFlight;
+  }
+
+  close(): void {
+    if (this.sweepTimer) clearInterval(this.sweepTimer);
+  }
+
+  private evict(runtimeHandle: string): void {
+    this.bindings.delete(runtimeHandle);
+    const stop = this.options.client.stopRuntime({ runtimeHandle }).then(() => undefined, (error: unknown) => {
+      console.warn("[collaboration-revocation] evicted sandbox runtime stop failed",
+        error instanceof Error ? error.name : "UnknownError");
+    });
+    this.inFlight = this.inFlight.then(() => stop);
   }
 }
 
