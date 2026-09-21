@@ -19,10 +19,9 @@ import {
 import { PlatformCollaborationIdentifierResolver } from "./identifier-resolver.js";
 import type { OrganizationPlatformDatabase } from "../organizations/database.js";
 import { createPlatformOrganizations } from "../organizations/wiring.js";
-import { createPlatformCollaborationDirect, loadCollaborationRelayOrigin } from "./direct-wiring.js";
+import { createPlatformCollaborationDirect } from "./direct-wiring.js";
 import { PlatformCollaborationRepository } from "./repository.js";
 import type { RuntimeEndpointPlatformDatabase } from "./runtime-endpoints.js";
-import { loadTicketSigningKeyring } from "./ticket-issuer.js";
 import { PlatformCollaborationCutover } from "./cutover.js";
 import { createPlatformCutoverHomeResolver } from "./cutover-home-transport.js";
 import { createCompatibleDirectBuildVerifier } from "./compatible-build.js";
@@ -123,7 +122,7 @@ export async function bootstrapPlatformCollaboration(
     repository: new PlatformCollaborationRepository(collaborationDb),
     controlAuthority: organizations.controlAuthority,
     projection: organizations.projection,
-    keyring: loadTicketSigningKeyring(options.env),
+    keyring: config.ticketKeyring,
     relayOrigin,
     resolveActor,
     authenticateRuntime,
@@ -148,7 +147,6 @@ export async function bootstrapPlatformCollaboration(
 
   const collaboration = await createPlatformCollaboration({
     db: collaborationDb,
-    config,
     organizations,
     direct,
     resolveActor,
@@ -160,22 +158,6 @@ export async function bootstrapPlatformCollaboration(
     // Only current members of the scope's organization resolve (S20/S03); there is no
     // person-to-person path.
     resolveInvitationIdentifier: (identifier, organizationId) => identifierResolver.resolve(identifier, organizationId),
-    resolveRuntime: async (runtimeId) => {
-      const machineId = parseVpsRuntimeId(runtimeId);
-      if (!machineId) return null;
-      const machine = await getUserMachine(options.db, machineId);
-      if (!machine || machine.status !== "running" || !machine.publicIPv4) return null;
-      return {
-        runtimeId,
-        ownerId: machine.clerkUserId,
-        baseUrl: `https://${machine.publicIPv4}:443`,
-      };
-    },
-    fetchImpl: (input, init) => fetch(input, {
-      ...init,
-      signal: init?.signal ?? AbortSignal.timeout(10_000),
-      dispatcher: options.customerVpsProxyDispatcher,
-    } as RequestInit & { dispatcher: import("undici").Dispatcher }),
   });
   // S18 operator path: the journal targets the exact enrolled machine named by
   // the directory and signs every phase with the platform's direct keyring.
@@ -198,7 +180,7 @@ export async function bootstrapPlatformCollaboration(
       } as RequestInit & { dispatcher: import("undici").Dispatcher }),
     }),
     resolveHome: createPlatformCutoverHomeResolver({
-      keyring: loadTicketSigningKeyring(options.env),
+      keyring: config.ticketKeyring,
       resolveRuntime: async ({ runtimeId, ownerId }) => {
         const machineId = parseVpsRuntimeId(runtimeId);
         const machine = machineId ? await getUserMachine(options.db, machineId) : undefined;
