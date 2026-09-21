@@ -1141,12 +1141,16 @@ export async function resolveDaemonAuth(
 
 export async function startDaemon(): Promise<void> {
   await mkdir(join(configDir, "logs"), { recursive: true, mode: 0o700 });
-  const logger = pino({
-    transport: {
-      target: "pino/file",
-      options: { destination: join(configDir, "logs", "sync.log") },
-    },
-  });
+  // Bun-compiled binaries cannot reliably drain pino's worker-thread file
+  // transport during process.exit; use a direct synchronous destination so
+  // startup errors are durable without thread-stream flush failures.
+  const logger = pino(
+    pino.destination({
+      dest: join(configDir, "logs", "sync.log"),
+      mkdir: true,
+      sync: true,
+    }),
+  );
 
   const configResolution = await loadProfileSyncConfig({ configDir });
   if (!configResolution) {

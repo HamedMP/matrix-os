@@ -4,13 +4,12 @@ The installable Matrix CLI is the `@finnaai/matrix` package in `packages/sync-cl
 
 ## Current Prepared Release
 
-`0.3.17` is the prepared CLI patch release after `0.3.16`. It:
+`0.3.18` is the prepared CLI patch release after `0.3.17`. It:
 
-- fixes standalone binaries so their launchd/systemd service can enter the
-  hidden `__daemon` sync mode after the build-only marker is removed from the
-  runtime environment; and
-- explicitly bakes the standalone marker and version into every compiled
-  binary instead of relying on wildcard environment embedding.
+- accepts filesystem-precision modification times already present in remote
+  manifests and local sync state; and
+- writes daemon logs through a direct destination so Bun-compiled binaries do
+  not fail while draining a worker-thread transport during error-path exit.
 
 ## Versioning
 
@@ -59,7 +58,7 @@ the repository's npm ban: installs still use pnpm and scripts still use bun,
 while the npm CLI is invoked only because npm trusted publishing performs the
 OIDC exchange during `npm publish`.
 
-Use the manual GitHub Actions workflow named `CLI Release` with `version=0.3.17` and `update_homebrew=true` after this release-preparation PR merges. The workflow:
+Use the manual GitHub Actions workflow named `CLI Release` with `version=0.3.18` and `update_homebrew=true` after this release-preparation PR merges. The workflow:
 
 1. Validates the requested semver, local package version, npm availability, and `cli-v<version>` tag availability.
 2. Installs the workspace and runs the sync-client build, tests, and publish-shape check.
@@ -81,7 +80,7 @@ npm view @finnaai/matrix dist.tarball
 npx --yes @finnaai/matrix --version
 pnpm dlx @finnaai/matrix --version
 brew update && brew info finnaai/tap/matrix
-MATRIX_VERSION=0.3.17 sh scripts/install.sh
+MATRIX_VERSION=0.3.18 sh scripts/install.sh
 matrix --version
 matrix login --help
 matrix instance info --json
@@ -100,17 +99,17 @@ matrix forward 5173
 
 For standalone binaries, also verify the GitHub release contains:
 
-- `matrix-0.3.17-linux-x64`
-- `matrix-0.3.17-linux-arm64`
-- `matrix-0.3.17-darwin-x64`
-- `matrix-0.3.17-darwin-arm64`
+- `matrix-0.3.18-linux-x64`
+- `matrix-0.3.18-linux-arm64`
+- `matrix-0.3.18-darwin-x64`
+- `matrix-0.3.18-darwin-arm64`
 
-For macOS app packaging, also verify the GitHub release contains `MatrixSync-0.3.17.pkg` when the macOS job was enabled.
+For macOS app packaging, also verify the GitHub release contains `MatrixSync-0.3.18.pkg` when the macOS job was enabled.
 
 ## Rollback
 
-npm package versions are immutable. If a bad CLI release is published, ship a patch release such as `0.3.17` and update Homebrew through the release workflow. Only deprecate the bad npm version when the replacement is available:
+npm package versions are immutable. If a bad CLI release is published, ship a patch release such as `0.3.19` and update Homebrew through the release workflow. Only deprecate the bad npm version when the replacement is available:
 
 ```bash
-npm deprecate @finnaai/matrix@0.3.16 "Use @finnaai/matrix@0.3.17"
+npm deprecate @finnaai/matrix@0.3.18 "Use @finnaai/matrix@0.3.19"
 ```

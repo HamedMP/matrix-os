@@ -63,6 +63,17 @@ describe("ManifestEntrySchema", () => {
     };
     expect(ManifestEntrySchema.parse(entry)).toEqual(entry);
   });
+
+  it("accepts filesystem-precision modification times", () => {
+    const entry = {
+      hash: "sha256:" + "c".repeat(64),
+      size: 45,
+      mtime: 1790004368082.777,
+      peerId: "matrix-home-mirror",
+      version: 1,
+    };
+    expect(ManifestEntrySchema.parse(entry)).toEqual(entry);
+  });
 });
 
 describe("ManifestSchema", () => {
@@ -217,7 +228,7 @@ describe("SyncStateSchema", () => {
       files: {
         "test.txt": {
           hash: "sha256:" + "f".repeat(64),
-          mtime: Date.now(),
+          mtime: Date.now() + 0.777,
           size: 100,
           lastSyncedHash: "sha256:" + "0".repeat(64),
         },
