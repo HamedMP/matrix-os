@@ -16,8 +16,8 @@ const DEFAULT_MAX_ENTRIES = 4_096;
 const RUNTIME_HANDLE = /^runtime_[a-f0-9]{32}$/;
 
 export type { DirectSessionEndReason };
-/** `exhausted` (connection quota) is a lease loss too: the actor must re-admit before acting again. */
-const REVOKING_REASONS: ReadonlySet<DirectSessionEndReason> = new Set(["expired", "denied", "revoked", "exhausted"]);
+/** An exhausted action budget belongs to one session, not every session held by the actor. */
+const REVOKING_REASONS: ReadonlySet<DirectSessionEndReason> = new Set(["expired", "denied", "revoked"]);
 
 interface RuntimeBinding {
   scopeId: string;
@@ -71,10 +71,14 @@ export class SandboxRuntimeRegistry {
 
 export class CollaborationRevocationEnforcer {
   private readonly blocked = new Map<string, number>();
-  private readonly pending = new Set<Promise<void>>();
+  private readonly pending = new Map<Promise<void>, true>();
   private readonly now: () => Date;
   private readonly ttlMs: number;
   private readonly maxEntries: number;
+  private readonly maxPending: number;
+  private inFlight = 0;
+  private idle: Promise<void> = Promise.resolve();
+  private resolveIdle: (() => void) | undefined;
 
   constructor(private readonly options: {
     control: Pick<TerminalControlCoordinator, "invalidateActor">;
@@ -82,25 +86,46 @@ export class CollaborationRevocationEnforcer {
     now?: () => Date;
     ttlMs?: number;
     maxEntries?: number;
+    maxPending?: number;
   }) {
     this.now = options.now ?? (() => new Date());
     this.ttlMs = boundedInteger(options.ttlMs ?? DEFAULT_TTL_MS, 1_000, 24 * 60 * 60 * 1_000, "revocation ttl");
     this.maxEntries = boundedInteger(options.maxEntries ?? DEFAULT_MAX_ENTRIES, 1, 65_536, "revocation capacity");
+    this.maxPending = boundedInteger(options.maxPending ?? 256, 1, 4_096, "pending revocation capacity");
   }
 
   get size(): number {
     return this.blocked.size;
   }
 
+  get pendingSize(): number {
+    return this.pending.size;
+  }
+
   /** Plug into `DirectSessionService.onEnded`. */
   onSessionEnded(session: { scopeId: string; actorId: string; organizationId?: string }, reason: DirectSessionEndReason): void {
     if (!REVOKING_REASONS.has(reason)) return;
+    if (this.inFlight++ === 0) this.idle = new Promise((resolve) => { this.resolveIdle = resolve; });
     const operation = this.revoke(session.scopeId, session.actorId).catch((error: unknown) => {
       console.warn("[collaboration-revocation] enforcement failed",
         error instanceof Error ? error.name : "UnknownError");
     });
-    this.pending.add(operation);
-    void operation.finally(() => this.pending.delete(operation));
+    // Stop calls continue even if their bookkeeping entry is evicted. The
+    // runtime client has its own request cap and timeout; the counter keeps
+    // settle() aware of evicted work without retaining every promise.
+    if (this.pending.size >= this.maxPending) {
+      const oldest = this.pending.keys().next().value;
+      if (oldest) this.pending.delete(oldest);
+    }
+    this.pending.set(operation, true);
+    void operation.finally(() => {
+      this.pending.delete(operation);
+      this.inFlight -= 1;
+      if (this.inFlight === 0) {
+        this.resolveIdle?.();
+        this.resolveIdle = undefined;
+      }
+    });
   }
 
   async revoke(scopeId: string, actorId: string): Promise<void> {
@@ -127,7 +152,7 @@ export class CollaborationRevocationEnforcer {
 
   /** Waits for in-flight enforcement (tests and shutdown). */
   async settle(): Promise<void> {
-    await Promise.allSettled([...this.pending]);
+    await this.idle;
   }
 
   private block(scopeId: string, actorId: string): void {

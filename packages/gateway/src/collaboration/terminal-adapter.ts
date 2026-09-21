@@ -1,4 +1,5 @@
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { sql } from "kysely";
 import { z } from "zod/v4";
 import type { CollaborationScopeRecord, CollaborationRepository } from "./repository.js";
 import type {
@@ -71,6 +72,7 @@ export class CollaborationTerminalAdapter implements CollaborationTerminalRuntim
         scopeId: string;
         sessionIncarnation: string;
         executionGeneration: number;
+        contributorControl: boolean;
       }): Promise<unknown>;
       unbindCollaboration(name: string, input: {
         scopeId: string;
@@ -167,6 +169,7 @@ export class CollaborationTerminalAdapter implements CollaborationTerminalRuntim
         scopeId: scope.id,
         sessionIncarnation: confirmation.incarnation,
         executionGeneration: confirmation.executionGeneration,
+        contributorControl: session.contributorControl !== false,
       });
     } catch (error: unknown) {
       console.warn(
@@ -345,7 +348,7 @@ export class CollaborationTerminalAdapter implements CollaborationTerminalRuntim
         revision: 1,
         auth_epoch: 1,
         execution_generation: confirmation.executionGeneration,
-        execution_eligibility: this.options.executionEligibility,
+        execution_eligibility: jsonb(this.options.executionEligibility),
         updated_at: now,
       }).where("id", "=", scope.id).where("lifecycle", "=", "private").where("revision", "=", 0)
         .returningAll().executeTakeFirst();
@@ -360,7 +363,7 @@ export class CollaborationTerminalAdapter implements CollaborationTerminalRuntim
         revision: 1,
         authority_generation: Number(activated.authority_generation),
         event_type: "scope.shared",
-        payload: {},
+        payload: jsonb({}),
         created_at: now,
       }).execute();
       await trx.insertInto("collaboration_audit").values({
@@ -375,7 +378,7 @@ export class CollaborationTerminalAdapter implements CollaborationTerminalRuntim
       await trx.insertInto("collaboration_directory_outbox").values({
         event_id: eventId,
         scope_id: scope.id,
-        recipient_actor_ids: [{ actorId: input.ownerId }],
+        recipient_actor_ids: jsonb([{ actorId: input.ownerId }]),
         authority_runtime_id: this.options.runtimeId,
         authority_generation: Number(activated.authority_generation),
         resource_kind: "terminal",
@@ -391,7 +394,7 @@ export class CollaborationTerminalAdapter implements CollaborationTerminalRuntim
         operation_kind: "scope.create",
         payload_hash: input.payloadHash,
         status: "completed",
-        result_ref: { scopeId: scope.id },
+        result_ref: jsonb({ scopeId: scope.id }),
         expected_revision: confirmation.executionGeneration,
         accepted_auth_epoch: 1,
         created_at: now,
@@ -497,4 +500,8 @@ function rowToScope(row: {
     ...(row.organization_id === null || row.organization_id === undefined ? {} : { organizationId: row.organization_id }),
     executionEligibility: row.execution_eligibility,
   };
+}
+
+function jsonb(value: unknown) {
+  return sql`${JSON.stringify(value)}::jsonb`;
 }
