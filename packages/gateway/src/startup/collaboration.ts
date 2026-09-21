@@ -112,8 +112,7 @@ export async function constructOwnerCollaboration(options: OwnerCollaborationSta
     // out of this startup module. The canonical terminal bridge is this layer's own addition
     // and is wired here, before the delegation, because it must exist on the runtime first.
     onPartialRuntime: (runtime) => {
-      // The owner Chat database is the owner collaboration database — the same Kysely instance,
-      // reached through a narrower type here.
+      // The owner Chat database is the owner collaboration database (same Kysely instance as `db` above).
       const terminalBridge = createCanonicalTerminalCollaborationBridge({
         db: ownerChatRepository.kysely as unknown as Kysely<OwnerCollaborationDatabase>,
         ownerId: collaborationConfig.ownerId ?? "",

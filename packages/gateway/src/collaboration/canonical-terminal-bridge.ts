@@ -94,7 +94,10 @@ export function createCanonicalTerminalCollaborationBridge(options: {
         closed = true;
         stream?.close();
       };
-      const failed = () => {
+      const failed = (error?: unknown) => {
+        if (error !== undefined) {
+          console.warn("[canonical-terminal-bridge] output delivery failed", error instanceof Error ? error.name : "UnknownError");
+        }
         if (closed) return;
         close();
         handlers.error();
@@ -108,7 +111,7 @@ export function createCanonicalTerminalCollaborationBridge(options: {
         pendingBytes += bytes;
         delivery = delivery.then(async () => {
           if (!closed) await handlers.output(data);
-        }).catch(() => failed()).finally(() => { pendingBytes -= bytes; });
+        }).catch((error: unknown) => failed(error)).finally(() => { pendingBytes -= bytes; });
       };
       try {
         await new Promise<void>((resolve, reject) => {
@@ -136,7 +139,7 @@ export function createCanonicalTerminalCollaborationBridge(options: {
                 if (!attached) { rejectAttach(); return; }
                 queueOutput(frame.type === "snapshot" ? frame.ansi : frame.data);
               } else if (frame.type === "exit") {
-                delivery = delivery.then(() => handlers.exit()).catch(() => failed()).finally(close);
+                delivery = delivery.then(() => handlers.exit()).catch((error: unknown) => failed(error)).finally(close);
               }
             },
             onClose: rejectAttach,
