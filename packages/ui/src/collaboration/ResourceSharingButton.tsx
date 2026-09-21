@@ -20,7 +20,7 @@ const CatalogResolutionSchema = z.object({
 const MembersSchema = z.object({ members: z.array(CollaborationMemberSchema).max(8) }).strict();
 
 /** Standalone file, folder and app sharing uses an exact owner catalog identity. */
-export function ResourceSharingButton({ api, runtimeId, organizationId, kind, path, projectId }: {
+export function ResourceSharingButton({ api, runtimeId, organizationId, kind, path }: {
   api: CollaborationApi;
   runtimeId: string | null;
   organizationId: string | null;
@@ -51,7 +51,7 @@ export function ResourceSharingButton({ api, runtimeId, organizationId, kind, pa
     try {
       const runtime = `/api/collaboration/runtimes/${encodeURIComponent(runtimeId)}`;
       const resolved = CatalogResolutionSchema.parse(await api.post(`${runtime}/catalog/resolve`, {
-        kind, path, ...(projectId ? { projectId } : {}),
+        kind, path, organizationId,
       }));
       if (resolved.kind !== kind || resolved.path !== path) throw new Error("Catalog mismatch");
       const preflight = CollaborationScopePreflightResponseSchema.parse(await api.post(`${runtime}/scopes/preflight`, {

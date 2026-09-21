@@ -66,11 +66,18 @@ describe("Chat collaboration sharing", () => {
       delete: vi.fn(), patch: vi.fn(),
     };
     const snapshotApi = { baseUrl: "https://gateway.test", get: vi.fn(), post: vi.fn(), delete: vi.fn() };
-    render(<ChatSharingButton api={snapshotApi} collaborationEnabled collaborationApi={collaborationApi} runtimeId="runtime_owner" organizationId="org_matrix_team"
+    render(<ChatSharingButton api={snapshotApi} collaborationEnabled collaborationApi={collaborationApi} runtimeId="vps:runtime_owner" organizationId="org_matrix_team"
       chatId={chatId} handle="owner" runtimeSlot="primary" platformHost="https://app.matrix-os.com" copyText={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: "Share" }));
     fireEvent.click(screen.getByRole("button", { name: "Invite collaborators" }));
     await screen.findByRole("dialog", { name: "Invite collaborators" });
+    expect(collaborationApi.post).toHaveBeenNthCalledWith(1,
+      "/api/collaboration/runtimes/vps%3Aruntime_owner/scopes/preflight",
+      { kind: "chat", resourceId: chatId, organizationId: "org_matrix_team" });
+    expect(collaborationApi.post).toHaveBeenNthCalledWith(2,
+      "/api/collaboration/runtimes/vps%3Aruntime_owner/scopes", expect.objectContaining({
+        kind: "chat", resourceId: chatId, organizationId: "org_matrix_team",
+      }));
     expect(await screen.findByText(/Current organization members only/)).toBeVisible();
     fireEvent.change(screen.getByLabelText("Share with"), { target: { value: "user_ada" } });
     fireEvent.change(screen.getByLabelText("Access preset"), { target: { value: "contributor" } });
