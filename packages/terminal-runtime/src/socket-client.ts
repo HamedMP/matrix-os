@@ -71,8 +71,8 @@ export class TerminalRuntimeSocketClient {
     return TerminalWorkspaceSchema.parse(await this.call("ReorderTabs", { workspaceId, ...input }));
   }
 
-  async terminateTab(ref: { workspaceId: string; tabId: string }, expectedCreatedAt?: string): Promise<void> {
-    await this.call("TerminateTab", { ...ref, ...(expectedCreatedAt ? { expectedCreatedAt } : {}) });
+  async terminateTab(ref: { workspaceId: string; tabId: string }, expectedIncarnation?: string): Promise<void> {
+    await this.call("TerminateTab", { ...ref, ...(expectedIncarnation ? { expectedIncarnation } : {}) });
   }
 
   async deleteTab(ref: { workspaceId: string; tabId: string }): Promise<void> {
@@ -83,8 +83,8 @@ export class TerminalRuntimeSocketClient {
     await this.call("PaneAction", { ...ref, action });
   }
 
-  async writeInput(ref: { workspaceId: string; tabId: string }, data: string, expectedCreatedAt?: string): Promise<void> {
-    await this.call("WriteInput", { ...ref, data, ...(expectedCreatedAt ? { expectedCreatedAt } : {}) });
+  async writeInput(ref: { workspaceId: string; tabId: string }, data: string, expectedIncarnation?: string): Promise<void> {
+    await this.call("WriteInput", { ...ref, data, ...(expectedIncarnation ? { expectedIncarnation } : {}) });
   }
 
   async updateTabUiState(ref: { workspaceId: string; tabId: string }, input: {
@@ -115,7 +115,7 @@ export class TerminalRuntimeSocketClient {
 
   attach(input: {
     ref: { workspaceId: string; tabId: string };
-    expectedCreatedAt?: string;
+    expectedIncarnation?: string;
     viewerId: string;
     fromSeq?: number;
     mode: "hard" | "soft";
@@ -139,7 +139,7 @@ export class TerminalRuntimeSocketClient {
       requestId,
       operation: "Attach",
       input: { ...input.ref, viewerId: input.viewerId, fromSeq: input.fromSeq ?? 0, mode: input.mode, size: input.size,
-        ...(input.expectedCreatedAt ? { expectedCreatedAt: input.expectedCreatedAt } : {}) },
+        ...(input.expectedIncarnation ? { expectedIncarnation: input.expectedIncarnation } : {}) },
     }));
     socket.on("data", (chunk) => {
       try {

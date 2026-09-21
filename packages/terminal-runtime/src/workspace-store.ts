@@ -16,6 +16,7 @@ import {
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import { TerminalRuntimeError } from "./errors.js";
+import { terminalTabIncarnation } from "./incarnation.js";
 import {
   MAX_TERMINAL_SNAPSHOT_ANSI_BYTES,
   MAX_TERMINAL_SNAPSHOT_BYTES,
@@ -608,7 +609,7 @@ export class TerminalWorkspaceStore {
       startupCommand: _startupCommand,
       ...publicTab
     } = tab;
-    return TerminalTabSchema.parse(publicTab);
+    return TerminalTabSchema.parse({ ...publicTab, incarnation: terminalTabIncarnation(tab) });
   }
 }
 
