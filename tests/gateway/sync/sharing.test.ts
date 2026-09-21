@@ -60,6 +60,10 @@ describe("SharingService", () => {
     service = createSharingService({ db, peerRegistry });
   });
 
+  it("exposes only personal sync grant management, not a secondary file authorization reader", () => {
+    expect(Object.keys(service).sort()).toEqual(["acceptShare", "createShare", "listShares", "revokeShare"]);
+  });
+
   // -----------------------------------------------------------------------
   // createShare
   // -----------------------------------------------------------------------
