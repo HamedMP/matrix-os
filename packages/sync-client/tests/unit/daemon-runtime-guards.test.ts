@@ -1405,6 +1405,22 @@ describe("daemon runtime guards", () => {
     });
   });
 
+  it("accepts filesystem-precision mtimes in cached sync state", () => {
+    const state = {
+      manifestVersion: 1,
+      lastSyncAt: Date.now(),
+      files: {
+        "note.txt": {
+          hash: `sha256:${"a".repeat(64)}`,
+          mtime: 1790004368082.777,
+          size: 45,
+        },
+      },
+    };
+
+    expect(SyncStateSchema.parse(state)).toEqual(state);
+  });
+
   it("rejects malformed remote manifest envelopes", () => {
     expect(() =>
       parseRemoteManifestEnvelope({
@@ -1412,6 +1428,21 @@ describe("daemon runtime guards", () => {
         manifest: { files: {} },
       }),
     ).toThrow("Invalid remote manifest response");
+  });
+
+  it("accepts remote manifests with filesystem-precision mtimes", () => {
+    const entry = {
+      hash: `sha256:${"a".repeat(64)}`,
+      size: 45,
+      mtime: 1790004368082.777,
+      peerId: "matrix-home-mirror",
+      version: 1,
+    };
+
+    expect(parseRemoteManifestEnvelope({
+      manifestVersion: 1,
+      manifest: { version: 2, files: { "note.txt": entry } },
+    }).manifest.files["note.txt"]).toEqual(entry);
   });
 
   it("exits cleanly on auth rejection errors", () => {

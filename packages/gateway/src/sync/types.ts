@@ -1,5 +1,7 @@
 import { z } from "zod/v4";
 
+const FileMtimeSchema = z.number().nonnegative().max(Number.MAX_SAFE_INTEGER);
+
 // ---------------------------------------------------------------------------
 // Manifest (R2 JSON)
 // ---------------------------------------------------------------------------
@@ -7,7 +9,7 @@ import { z } from "zod/v4";
 export const ManifestEntrySchema = z.object({
   hash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
   size: z.int().nonnegative(),
-  mtime: z.int().nonnegative(),
+  mtime: FileMtimeSchema,
   peerId: z.string().min(1).max(128),
   version: z.int().nonnegative(),
   objectKey: z.string().min(1).max(768).optional(),
@@ -72,7 +74,7 @@ export type SyncConfig = z.infer<typeof SyncConfigSchema>;
 
 export const LocalFileStateSchema = z.object({
   hash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
-  mtime: z.int().nonnegative(),
+  mtime: FileMtimeSchema,
   size: z.int().nonnegative(),
   lastSyncedHash: z.string().regex(/^sha256:[a-f0-9]{64}$/).optional(),
 });
