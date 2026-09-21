@@ -69,7 +69,10 @@ export function createCollaborationControlUpgradeHandler(options: {
           ws.ping();
         }, options.heartbeatIntervalMs ?? HEARTBEAT_INTERVAL_MS);
         heartbeat.unref?.();
-        ws.on("pong", () => { alive = true; });
+        ws.on("pong", () => {
+          alive = true;
+          connection.heartbeat();
+        });
         ws.on("message", (data, isBinary) => {
           if (isBinary) {
             ws.close(1003, "Binary frames are not accepted");

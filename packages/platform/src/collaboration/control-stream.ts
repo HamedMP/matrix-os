@@ -43,11 +43,13 @@ export interface ControlConnection {
   runtimeId: string;
   /** Feeds one inbound frame; rejects invalid frames so the caller can close the socket. */
   receive(raw: string): Promise<void>;
+  /** Records an authenticated heartbeat only while this socket is the current runtime connection. */
+  heartbeat(): void;
   close(): void;
 }
 
 export interface ControlAuthorityPort {
-  registerTransport(transport: (runtimeId: string, assertion: CollaborationControlAssertion) => Promise<void>): void;
+  registerTransport(transport: (runtimeId: string, assertion: CollaborationControlAssertion) => Promise<void>, connectedRuntimes?: () => readonly string[]): void;
   acknowledge(authenticatedRuntimeId: string, ack: CollaborationControlAck): Promise<{ completedDenialIds: string[] }>;
 }
 
@@ -80,7 +82,7 @@ export class CollaborationControlStream {
     this.controlAuthority = options.controlAuthority;
     this.tickets = options.tickets;
     this.onAttach = options.onAttach;
-    options.controlAuthority.registerTransport((runtimeId, assertion) => this.deliver(runtimeId, assertion));
+    options.controlAuthority.registerTransport((runtimeId, assertion) => this.deliver(runtimeId, assertion), () => this.connectedRuntimes());
   }
 
   /** One-use ticket a freshly registered runtime presents on the control upgrade; stored, never kept in memory. */
@@ -123,6 +125,9 @@ export class CollaborationControlStream {
         if (ack.runtimeId !== runtimeId) throw new Error("Control acknowledgement runtime mismatch");
         await this.controlAuthority.acknowledge(runtimeId, ack);
         this.touch(runtimeId);
+      },
+      heartbeat: () => {
+        if (!this.closed && this.connections.get(runtimeId) === entry) this.touch(runtimeId);
       },
       close: () => entry.close(),
     };

@@ -456,11 +456,13 @@ export class PlatformOrganizationRepository {
     return rows.length;
   }
 
-  async listDueDeliveries(now: Date, limit = 100): Promise<Array<{ denial: DenialRecord; runtimeId: string; attempts: number }>> {
+  async listDueDeliveries(now: Date, limit = 100, runtimeIds?: readonly string[]): Promise<Array<{ denial: DenialRecord; runtimeId: string; attempts: number }>> {
+    if (runtimeIds?.length === 0) return [];
     const rows = await this.db.selectFrom("collaboration_denial_runtimes as r")
       .innerJoin("collaboration_denials as d", "d.denial_id", "r.denial_id")
       .select(["r.runtime_id", "r.attempts"]).selectAll("d")
       .where("r.acknowledged_at", "is", null).where("r.dead_letter", "=", false).where("r.next_attempt_at", "<=", now)
+      .$if(runtimeIds !== undefined, (qb) => qb.where("r.runtime_id", "in", runtimeIds!))
       .where("d.state", "=", "pending").orderBy("r.next_attempt_at").limit(Math.min(Math.max(limit, 1), 1_000)).execute();
     return rows.map((row) => ({ denial: toDenial(row), runtimeId: row.runtime_id, attempts: row.attempts }));
   }

@@ -41,7 +41,7 @@ export interface CollaborationControlAuthority {
   /** Turns durable revocation intents (written with the membership transition) into denial fences; retried with backoff, dead-lettered after repeated failure. */
   drainRevocations(): Promise<{ fenced: number; failed: number }>;
   sweep(): Promise<{ completed: number; delivered: number; fenced: number }>;
-  registerTransport(transport: CollaborationControlTransport): void;
+  registerTransport(transport: CollaborationControlTransport, connectedRuntimes?: () => readonly string[]): void;
   shutdown(): Promise<void>;
 }
 
@@ -69,6 +69,7 @@ export function createCollaborationControlAuthority(options: {
   const drainerId = options.drainerId ?? randomUUID();
   const claimBatchSize = Math.min(Math.max(options.claimBatchSize ?? 100, 1), 1_000);
   let transport = options.deliver;
+  let connectedRuntimes: (() => readonly string[]) | undefined;
   let closed = false;
   const timers: ReturnType<typeof setInterval>[] = [];
   let sweeping: Promise<unknown> | undefined;
@@ -89,7 +90,7 @@ export function createCollaborationControlAuthority(options: {
   const deliverDue = async (): Promise<number> => {
     if (closed || !transport) return 0;
     const current = now();
-    const due = await options.repository.listDueDeliveries(current);
+    const due = await options.repository.listDueDeliveries(current, 100, connectedRuntimes?.());
     let delivered = 0;
     for (const item of due) {
       if (closed) break;
@@ -249,9 +250,10 @@ export function createCollaborationControlAuthority(options: {
       const delivered = await deliverDue();
       return { completed, delivered, fenced };
     },
-    registerTransport(next) {
+    registerTransport(next, listConnectedRuntimes) {
       if (transport) throw new Error("A control transport is already registered");
       transport = next;
+      connectedRuntimes = listConnectedRuntimes;
     },
     async shutdown() {
       closed = true;
