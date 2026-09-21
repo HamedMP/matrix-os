@@ -4,8 +4,10 @@
  * anything about them. The home rejects forged and expired tickets itself,
  * and platform policy storage is not on the path of an in-flight request.
  */
+import { Hono } from "hono";
 import { describe, expect, it, vi } from "vitest";
 import { CollaborationRelay, parseRelayRoute, parseRelaySocketPath, RELAY_RUNTIME_HEADER, type RelayMetadata } from "../../packages/platform/src/collaboration/relay.js";
+import { createPlatformCollaborationRoutes } from "../../packages/platform/src/collaboration/routes.js";
 import { COLLABORATION_CLIENT_REQUEST_ID_HEADER, COLLABORATION_EXPECTED_MEMBER_REVISION_HEADER, COLLABORATION_EXPECTED_REVISION_HEADER } from "@matrix-os/contracts";
 
 const scopeId = "10000000-0000-4000-8000-000000000001";
@@ -23,6 +25,39 @@ function relay(overrides: Partial<ConstructorParameters<typeof CollaborationRela
     ...overrides,
   });
   return { instance, metadata };
+}
+
+/** A request body delivered in chunks with no declared length, as a chunked upload arrives. */
+function chunkedBody(totalBytes: number): ReadableStream<Uint8Array> {
+  let sent = 0;
+  return new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (sent >= totalBytes) { controller.close(); return; }
+      const chunk = new Uint8Array(Math.min(16 * 1024, totalBytes - sent)).fill(120);
+      sent += chunk.byteLength;
+      controller.enqueue(chunk);
+    },
+  });
+}
+
+/** Counts what actually reaches the home and reports whether the upload completed. */
+function countingHome() {
+  const state = { received: 0, calls: 0, completed: false };
+  const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {
+    state.calls += 1;
+    const body = (init as { body?: unknown }).body;
+    if (body instanceof ReadableStream) {
+      const reader = body.getReader();
+      for (;;) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        state.received += chunk.value.byteLength;
+      }
+      state.completed = true;
+    }
+    return new Response("ok", { status: 200 });
+  });
+  return { state, fetchImpl };
 }
 
 describe("CollaborationRelay", () => {
@@ -88,6 +123,62 @@ describe("CollaborationRelay", () => {
     const { instance: roomy } = relay({}, fetchImpl as never);
     const passthrough = await roomy.forward({ actorId: "user_a", method: "GET", path: `/api/collaboration/scopes/${scopeId}`, query: "", headers: new Headers(), body: null });
     expect(passthrough.status).toBe(409);
+  });
+
+  it("bounds a chunked request body by its own request limit, not only the declared length", async () => {
+    // The declared length is the only thing the 96 KiB check reads, and a chunked upload
+    // declares nothing. The relay must hold its own limit against the bytes themselves, so
+    // the bound does not depend on a caller mounting a route-level body limit with a matching
+    // constant.
+    const { state, fetchImpl } = countingHome();
+    const { instance, metadata } = relay({ limits: { requestBytes: 32 * 1024 } }, fetchImpl as never);
+    const refused = await instance.forward({
+      actorId: "user_a", method: "POST", path: `/api/collaboration/scopes/${scopeId}/discussion/messages`,
+      query: "", headers: new Headers(), body: chunkedBody(128 * 1024),
+    });
+    expect(refused.status).toBe(413);
+    expect(metadata.at(-1)?.outcome).toBe("limit");
+    // The home never receives the whole upload, and never more than the limit.
+    expect(state.completed).toBe(false);
+    expect(state.received).toBeLessThanOrEqual(32 * 1024);
+  });
+
+  it("forwards a chunked request body that stays inside the request limit", async () => {
+    const { state, fetchImpl } = countingHome();
+    const { instance } = relay({ limits: { requestBytes: 64 * 1024 } }, fetchImpl as never);
+    const forwarded = await instance.forward({
+      actorId: "user_a", method: "POST", path: `/api/collaboration/scopes/${scopeId}/discussion/messages`,
+      query: "", headers: new Headers(), body: chunkedBody(48 * 1024),
+    });
+    expect(forwarded.status).toBe(200);
+    expect(state.completed).toBe(true);
+    expect(state.received).toBe(48 * 1024);
+  });
+
+  it("refuses a chunked over-limit upload through the mutating relay route before the home can read it all", async () => {
+    // End to end through the route that omits Content-Length: the branch must not hand the
+    // home an unbounded stream.
+    const { state, fetchImpl } = countingHome();
+    const { instance } = relay({}, fetchImpl as never);
+    const app = new Hono();
+    app.route("/", createPlatformCollaborationRoutes({
+      repository: {} as never, signer: {} as never, sockets: {} as never, relay: instance,
+      resolveActor: async (c) => c.req.header("x-test-actor") ?? null,
+      authenticateRuntime: async () => null,
+      resolveParticipant: async () => null,
+      resolveInvitationIdentifier: async () => null,
+      hydrate: async () => ({}),
+    }));
+    const request = new Request("http://local/api/collaboration/direct-sessions", {
+      method: "POST",
+      headers: { "x-test-actor": "user_member", "content-type": "application/json", [RELAY_RUNTIME_HEADER]: home.runtimeId },
+      body: chunkedBody(4 * 1024 * 1024),
+      duplex: "half",
+    } as RequestInit & { duplex: "half" });
+    const response = await app.request(request);
+    expect(response.ok).toBe(false);
+    expect(state.completed).toBe(false);
+    expect(state.received).toBeLessThanOrEqual(96 * 1024);
   });
 
   it("routes session lifecycle routes by the runtime header and never by a query parameter", async () => {
