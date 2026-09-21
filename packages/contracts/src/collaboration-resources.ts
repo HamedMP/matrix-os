@@ -4,7 +4,7 @@
  * id; a path is a display property that may change under a stable id.
  */
 import { z } from "zod/v4";
-import { CollaborationRevisionSchema } from "#collaboration";
+import { CollaborationOrganizationIdSchema, CollaborationRevisionSchema } from "#collaboration";
 
 const RequestIdSchema = z.uuid();
 const Sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
@@ -33,6 +33,8 @@ export const CollaborationAppAssetPathSchema = z.string().min(1).max(1_024)
 export const CollaborationOwnerCatalogResolveRequestSchema = z.object({
   kind: CollaborationCatalogKindSchema,
   path: CollaborationResourcePathSchema,
+  /** Required by the direct client to choose its owner-runtime ticket; legacy callers may omit it. */
+  organizationId: CollaborationOrganizationIdSchema.optional(),
 }).strict().superRefine((input, ctx) => {
   if (input.kind === "app" && !CollaborationAppInstanceIdSchema.safeParse(input.path).success) {
     ctx.addIssue({ code: "custom", path: ["path"], message: "App identifier must be a single segment" });

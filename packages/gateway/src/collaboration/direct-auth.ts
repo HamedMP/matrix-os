@@ -15,6 +15,8 @@ import {
   CollaborationClientOriginSchema,
   CollaborationSignedConnectionTicketSchema,
   type CollaborationConnectionTicket,
+  CollaborationSignedOwnerRuntimeTicketSchema,
+  type CollaborationOwnerRuntimeTicket,
 } from "@matrix-os/contracts";
 import { possessionPayload, proofKeyThumbprint, ticketSigningPayload, verifyEd25519 } from "./direct-crypto.js";
 
@@ -120,8 +122,28 @@ export class DirectTicketVerifier {
     return ticket;
   }
 
+  /** Same signature, runtime and expiry checks for the distinct scope-free owner setup ticket. */
+  verifyOwnerRuntimeTicket(signedTicket: unknown): CollaborationOwnerRuntimeTicket {
+    const version = (signedTicket as { ticket?: { protocolVersion?: unknown } } | null)?.ticket?.protocolVersion;
+    if (typeof version === "number" && version !== COLLABORATION_DIRECT_PROTOCOL_VERSION) {
+      throw new DirectAuthError("upgrade_required", "Collaboration protocol version is not supported");
+    }
+    const parsed = CollaborationSignedOwnerRuntimeTicketSchema.safeParse(signedTicket);
+    if (!parsed.success) throw invalidTicket();
+    if (!this.options.controlFresh()) throw new DirectAuthError("unavailable", "Control snapshot is stale");
+    const { ticket, keyId, signature } = parsed.data;
+    const key = this.options.platformKeys().find((entry) => entry.keyId === keyId && entry.algorithm === "ed25519");
+    if (!key || !verifyEd25519(key.publicKey, ticketSigningPayload(ticket), signature)) throw invalidTicket();
+    if (ticket.runtime.runtimeId !== this.logicalRuntimeId) throw invalidTicket();
+    const current = this.now().getTime();
+    const issuedAt = Date.parse(ticket.issuedAt);
+    const expiresAt = Date.parse(ticket.expiresAt);
+    if (issuedAt > current + SKEW_MS || expiresAt <= current || expiresAt - issuedAt > TICKET_TTL_MS) throw invalidTicket();
+    return ticket;
+  }
+
   /** Consumes the ticket nonce exactly once. */
-  consume(ticket: CollaborationConnectionTicket): void {
+  consume(ticket: Pick<CollaborationConnectionTicket, "nonce" | "expiresAt">): void {
     const outcome = this.options.replay.admit(`ticket:${ticket.nonce}`, Date.parse(ticket.expiresAt) + SKEW_MS);
     if (outcome === "replayed") throw new DirectAuthError("replayed", "Ticket was already used");
     if (outcome === "unretainable") throw new DirectAuthError("unavailable", "Replay protection is at capacity");
@@ -133,7 +155,7 @@ export class DirectTicketVerifier {
     if (outcome === "unretainable") throw new DirectAuthError("unavailable", "Replay protection is at capacity");
   }
 
-  verifyPossession(input: { ticket: CollaborationConnectionTicket; proofPublicKey: string; possession: string; sessionId?: string }): void {
+  verifyPossession(input: { ticket: { nonce: string; purpose: string; expiresAt: string; proofKeyThumbprint: string }; proofPublicKey: string; possession: string; sessionId?: string }): void {
     // Possession is proven at consumption time, which may be later than verification: the ticket must still be live.
     if (Date.parse(input.ticket.expiresAt) <= this.now().getTime()) throw invalidTicket();
     if (proofKeyThumbprint(input.proofPublicKey) !== input.ticket.proofKeyThumbprint) throw invalidTicket();
