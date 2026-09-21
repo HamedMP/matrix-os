@@ -147,6 +147,47 @@ describe("CollaborationRelay", () => {
     }
   });
 
+  it("caps the number of tracked homes and actors and evicts stale socket reservations by idle time", async () => {
+    let clock = 1_000_000;
+    const homes = new Map<string, { runtimeId: string; origin: string }>();
+    const { instance } = relay({
+      resolveScopeHome: async (id) => homes.get(id) ?? null,
+      limits: { maxTrackedHomes: 2, maxTrackedActors: 3, socketIdleMs: 60_000 },
+      now: () => clock,
+    });
+    const scopeFor = (index: number) => `10000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
+    for (let index = 1; index <= 3; index += 1) homes.set(scopeFor(index), { runtimeId: `vps-${String(index).padStart(8, "0")}-1111-4111-8111-111111111111`, origin: "https://203.0.113.10:443" });
+    const prepare = (index: number, actorId: string) => instance.prepareSocket({ actorId, rawPath: `/ws/collaboration/direct/scopes/${scopeFor(index)}/events?ticket=abc`, incomingHeaders: {}, externalHost: "app.matrix-os.com" });
+    const evicted: string[] = [];
+    const first = await prepare(1, "user_a");
+    const second = await prepare(2, "user_b");
+    expect(first && second).toBeTruthy();
+    first!.onEvict(() => { evicted.push("first"); });
+    second!.onEvict(() => { evicted.push("second"); });
+    // A third distinct home exceeds the tracked-home cap; the same homes still admit.
+    expect(await prepare(3, "user_c")).toBeNull();
+    const third = await prepare(1, "user_c");
+    expect(third).not.toBeNull();
+    third!.onEvict(() => { evicted.push("third"); });
+    // A fourth distinct actor exceeds the tracked-actor cap.
+    expect(await prepare(1, "user_d")).toBeNull();
+    // Only the first reservation stays quiet; the others are touched by traffic and survive the sweep.
+    clock += 45_000;
+    second!.touch();
+    third!.touch();
+    clock += 20_000;
+    expect(instance.sweepStaleSockets()).toBe(1);
+    expect(evicted).toEqual(["first"]);
+    expect(instance.connectionCounts()).toEqual({ homes: 2, actors: 2 });
+    // Evicting released the slot; releasing an evicted reservation again is a no-op.
+    first!.release();
+    expect(instance.connectionCounts()).toEqual({ homes: 2, actors: 2 });
+    expect(await prepare(1, "user_a")).not.toBeNull();
+    second!.release();
+    third!.release();
+    expect(instance.sweepStaleSockets()).toBe(0);
+  });
+
   it("prepares socket upgrades with no proof header and bounded connections", async () => {
     const { instance } = relay({ limits: { connectionsPerActor: 1 } });
     const prepared = await instance.prepareSocket({ actorId: "user_a", rawPath: `/ws/collaboration/direct/scopes/${scopeId}/terminal?ticket=abc`, incomingHeaders: { upgrade: "websocket", connection: "Upgrade", cookie: "x", "sec-websocket-key": "k" }, externalHost: "app.matrix-os.com" });
