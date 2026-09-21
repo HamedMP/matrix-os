@@ -235,12 +235,17 @@ describe("revocation enforcer", () => {
     expect(enforcer.isRevoked(scopeId, actorId)).toBe(false);
   });
 
-  it("bounds the registry and the revocation set", async () => {
-    const runtimes = new SandboxRuntimeRegistry({ client: { stopRuntime: async () => ({ runtimeHandle: "runtime_1", executionGeneration: "9", state: "stopped" as const }) }, maxEntries: 2 });
+  it("bounds the registry by stopping and evicting the oldest binding, and bounds the revocation set", async () => {
+    const stopRuntime = vi.fn(async (input: { runtimeHandle: string }) => ({ runtimeHandle: input.runtimeHandle, executionGeneration: "9", state: "stopped" as const }));
+    const runtimes = new SandboxRuntimeRegistry({ client: { stopRuntime }, maxEntries: 2, startTimer: false });
     runtimes.bind({ scopeId, actorId: "a", runtimeHandle: "runtime_11111111111111111111111111111111" });
     runtimes.bind({ scopeId, actorId: "a", runtimeHandle: "runtime_22222222222222222222222222222222" });
-    expect(() => runtimes.bind({ scopeId, actorId: "b", runtimeHandle: "runtime_33333333333333333333333333333333" })).toThrow(/capacity/i);
-    runtimes.release("runtime_11111111111111111111111111111111");
+    runtimes.bind({ scopeId, actorId: "b", runtimeHandle: "runtime_33333333333333333333333333333333" });
+    await runtimes.settle();
+    expect(runtimes.size).toBe(2);
+    expect(stopRuntime).toHaveBeenCalledTimes(1);
+    expect(stopRuntime).toHaveBeenCalledWith({ runtimeHandle: "runtime_11111111111111111111111111111111" });
+    runtimes.release("runtime_22222222222222222222222222222222");
     expect(runtimes.size).toBe(1);
     const control = new TerminalControlCoordinator({ startTimer: false });
     const enforcer = new CollaborationRevocationEnforcer({ control, runtimes, ttlMs: 60_000, maxEntries: 2 });
@@ -249,5 +254,26 @@ describe("revocation enforcer", () => {
     expect(enforcer.size).toBe(2);
     expect(enforcer.isRevoked(scopeId, "c")).toBe(true);
     expect(enforcer.isRevoked(scopeId, "a")).toBe(false);
+  });
+
+  it("stops and evicts runtime bindings that outlive the maximum run age", async () => {
+    let clock = Date.parse("2026-09-21T10:00:00.000Z");
+    const stopRuntime = vi.fn(async (input: { runtimeHandle: string }) => ({ runtimeHandle: input.runtimeHandle, executionGeneration: "9", state: "stopped" as const }));
+    const runtimes = new SandboxRuntimeRegistry({ client: { stopRuntime }, now: () => new Date(clock), maxAgeMs: 60_000, startTimer: false });
+    runtimes.bind({ scopeId, actorId: "a", runtimeHandle: "runtime_11111111111111111111111111111111" });
+    clock += 30_000;
+    runtimes.bind({ scopeId, actorId: "a", runtimeHandle: "runtime_22222222222222222222222222222222" });
+    clock += 30_001;
+    expect(runtimes.sweep()).toBe(1);
+    await runtimes.settle();
+    expect(stopRuntime).toHaveBeenCalledTimes(1);
+    expect(stopRuntime).toHaveBeenCalledWith({ runtimeHandle: "runtime_11111111111111111111111111111111" });
+    expect(runtimes.size).toBe(1);
+    clock += 30_000;
+    runtimes.bind({ scopeId, actorId: "b", runtimeHandle: "runtime_33333333333333333333333333333333" });
+    await runtimes.settle();
+    expect(stopRuntime).toHaveBeenCalledTimes(2);
+    expect(runtimes.size).toBe(1);
+    runtimes.close();
   });
 });
