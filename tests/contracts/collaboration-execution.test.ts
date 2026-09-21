@@ -6,6 +6,7 @@ import {
   CollaborationExecutionScopeRefSchema,
   CollaborationGitActionRequestSchema,
   CollaborationGitBranchSchema,
+  CollaborationGitEffectRequestSchema,
   CollaborationGitOperationSchema,
   CollaborationRunBindingSchema,
   CollaborationRunCancelRequestSchema,
@@ -209,6 +210,24 @@ describe("collaboration execution contracts (S02 T012/T013)", () => {
       { ...commit, coAuthors: ["x"] },
       { ...pr, baseBranch: "main; rm -rf /" },
       { ...pr, expectedHeadSha: "abc" },
+    ]) {
+      expect(CollaborationGitActionRequestSchema.safeParse(forged).success).toBe(false);
+    }
+  });
+
+  it("carries owner expiry as an action on one operation, not as a queued effect", () => {
+    const expire = { type: "expire", operationId: "20000000-0000-4000-8000-000000000009" };
+    expect(CollaborationGitActionRequestSchema.parse(expire)).toEqual(expire);
+    // The queued-effect union the Git driver executes never carries an expiry.
+    expect(CollaborationGitEffectRequestSchema.safeParse(expire).success).toBe(false);
+    expect(CollaborationGitEffectRequestSchema.parse({ clientRequestId: requestId, expectedRevision: "9", payloadHash: digest, type: "status" }))
+      .toMatchObject({ type: "status" });
+    for (const forged of [
+      { type: "expire" },
+      { type: "expire", operationId: "not-an-id" },
+      { type: "expire", operationId: expire.operationId, state: "completed" },
+      { type: "expire", operationId: expire.operationId, force: true },
+      { ...expire, clientRequestId: requestId, expectedRevision: "9", payloadHash: digest },
     ]) {
       expect(CollaborationGitActionRequestSchema.safeParse(forged).success).toBe(false);
     }

@@ -51,6 +51,12 @@ function fixture(input: { submit?: () => Promise<unknown>; expireUnresolved?: ()
   return { app, submit, list, expireUnresolved, getReadiness, verifyAndAuthorize, headers };
 }
 
+async function expireRequest(app: Hono, headers: Record<string, string>, operationId: string): Promise<Response> {
+  return app.request(`/api/collaboration/scopes/${scopeId}/project/git/actions`, {
+    method: "POST", headers, body: JSON.stringify({ type: "expire", operationId }),
+  });
+}
+
 describe("project Git routes", () => {
   it("validates a bounded action union and sends the authenticated actor to the broker", async () => {
     const { app, submit, verifyAndAuthorize, headers } = fixture();
@@ -85,21 +91,30 @@ describe("project Git routes", () => {
     expect(verifyAndAuthorize).toHaveBeenCalledWith(expect.objectContaining({ action: "read" }));
   });
 
-  it("lets the authenticated owner expire an unresolved operation by validated ID only", async () => {
-    const { app, expireUnresolved, verifyAndAuthorize, headers } = fixture();
-    const response = await app.request(`/api/collaboration/scopes/${scopeId}/project/git/${operation.id}/expire`, { method: "POST", headers });
+  it("lets the authenticated owner expire an unresolved operation through the action union by validated ID only", async () => {
+    const { app, submit, expireUnresolved, verifyAndAuthorize, headers } = fixture();
+    const response = await expireRequest(app, headers, operation.id);
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ id: operation.id, state: "failed" });
     expect(verifyAndAuthorize).toHaveBeenCalledWith(expect.objectContaining({ action: "mutate_project" }));
     expect(expireUnresolved).toHaveBeenCalledWith({ scopeId, actorId, operationId: operation.id });
-    const invalid = await app.request(`/api/collaboration/scopes/${scopeId}/project/git/not-a-uuid/expire`, { method: "POST", headers });
+    // Expiry resolves an existing operation; it must never queue a new Git effect.
+    expect(submit).not.toHaveBeenCalled();
+    const invalid = await expireRequest(app, headers, "not-a-uuid");
     expect(invalid.status).toBe(400);
     expect(expireUnresolved).toHaveBeenCalledTimes(1);
   });
 
-  it("maps a member expiry attempt to a generic forbidden response", async () => {
-    const { app, headers } = fixture({ expireUnresolved: async () => { throw new ProjectGitBrokerError("forbidden"); } });
+  it("keeps the frozen route table: there is no per-operation expire endpoint", async () => {
+    const { app, expireUnresolved, headers } = fixture();
     const response = await app.request(`/api/collaboration/scopes/${scopeId}/project/git/${operation.id}/expire`, { method: "POST", headers });
+    expect(response.status).toBe(404);
+    expect(expireUnresolved).not.toHaveBeenCalled();
+  });
+
+  it("maps a contributor expiry attempt to a generic forbidden response", async () => {
+    const { app, headers } = fixture({ expireUnresolved: async () => { throw new ProjectGitBrokerError("forbidden"); } });
+    const response = await expireRequest(app, headers, operation.id);
     expect(response.status).toBe(403);
     expect(JSON.stringify(await response.json())).not.toContain("Project Git operation");
   });

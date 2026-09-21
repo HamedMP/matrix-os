@@ -151,7 +151,9 @@ describe("gateway collaboration wiring", () => {
     runtime.register({ app, upgradeWebSocket: () => (async () => new Response(null, { status: 426 })) as never });
     expect(app.routes.some((route) => route.path === "/api/collaboration/scopes/:scopeId/project/git" && route.method === "GET")).toBe(true);
     expect(app.routes.some((route) => route.path === "/api/collaboration/scopes/:scopeId/project/readiness" && route.method === "GET")).toBe(true);
-    expect(app.routes.some((route) => route.path === "/api/collaboration/scopes/:scopeId/project/git/:operationId/expire" && route.method === "POST")).toBe(true);
+    // Owner expiry is an action on the frozen endpoint, not a route of its own.
+    expect(app.routes.some((route) => route.path === "/api/collaboration/scopes/:scopeId/project/git/actions" && route.method === "POST")).toBe(true);
+    expect(app.routes.some((route) => route.path.includes("/project/git/:operationId"))).toBe(false);
     expect(closeDriver).not.toHaveBeenCalled();
     await runtime.shutdown();
     expect(closeDriver).toHaveBeenCalledTimes(1);

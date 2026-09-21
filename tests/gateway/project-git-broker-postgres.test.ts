@@ -1,6 +1,9 @@
+import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { bootstrapChatDatabase } from "../../packages/gateway/src/chat/database.js";
 import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
+import { registerProjectRoutes } from "../../packages/gateway/src/collaboration/project-routes.js";
+import type { CollaborationRouteOptions } from "../../packages/gateway/src/collaboration/route-support.js";
 import {
   AmbiguousProjectGitEffect,
   ProjectGitBrokerError,
@@ -234,6 +237,61 @@ describe("project Git broker PostgreSQL boundary", () => {
     const resumed = await broker.submit({ scopeId: collaborationIds.scope, actorId: collaborationActors.editor, request: later });
     expect(resumed.state).toBe("completed");
     expect(run).toHaveBeenCalledTimes(2);
+  });
+
+  it("expires an unresolved effect through the frozen actions endpoint, owner only", async () => {
+    const run = vi.fn()
+      .mockImplementationOnce(async () => { throw new AmbiguousProjectGitEffect(); })
+      .mockImplementationOnce(async () => ({ commitSha: "a".repeat(40) }));
+    const broker = createProjectGitBroker({
+      db: fixture.db,
+      authorize: async () => ({ ownerId: collaborationActors.owner, projectId: PROJECT }),
+      resolveOwnerIdentity: async () => ({ name: "Owner", email: "owner@example.test", label: "Owner <owner@example.test>" }),
+      driver: { run, reconcile: async () => null },
+      now: () => new Date(NOW),
+    });
+    const unresolved = await broker.submit({
+      scopeId: collaborationIds.scope, actorId: collaborationActors.editor,
+      request: action("push", { branch: "feature/member", expectedHeadSha: "a".repeat(40) }),
+    });
+    expect(unresolved.state).toBe("unknown");
+
+    let actorId: string = collaborationActors.editor;
+    const app = new Hono();
+    registerProjectRoutes(app, {
+      verifier: {
+        verifyAndAuthorize: async () => ({
+          actorId, ownerId: collaborationActors.owner, organizationId: ORG,
+          scopeId: collaborationIds.scope, membershipScopeId: collaborationIds.scope,
+          resourceKind: "project", resourceId: PROJECT, role: actorId === collaborationActors.owner ? "owner" : "editor",
+          authEpoch: 1, authorityRuntimeId: collaborationIds.runtime, authorityGeneration: 1,
+          capability: "mutate_project",
+        }),
+      },
+      projectGit: broker,
+    } as unknown as CollaborationRouteOptions);
+    const headers = { "content-type": "application/json", "x-matrix-collaboration-proof": "e30" };
+    const expire = async (): Promise<Response> => app.request(
+      `/api/collaboration/scopes/${collaborationIds.scope}/project/git/actions`,
+      { method: "POST", headers, body: JSON.stringify({ type: "expire", operationId: unresolved.id }) },
+    );
+
+    // A contributor reaches this endpoint for its other action types, so owner-only is enforced beyond it.
+    const denied = await expire();
+    expect(denied.status).toBe(403);
+    expect(await fixture.db.selectFrom("collaboration_git_operations").select("state")
+      .where("id", "=", unresolved.id).executeTakeFirstOrThrow()).toMatchObject({ state: "unknown" });
+
+    actorId = collaborationActors.owner;
+    const expired = await expire();
+    expect(expired.status).toBe(200);
+    expect(await expired.json()).toMatchObject({ id: unresolved.id, state: "failed" });
+    expect(await fixture.db.selectFrom("collaboration_audit").select(["actor_id", "reason_code"])
+      .where("reason_code", "=", "effect_expired_by_owner").execute())
+      .toEqual([{ actor_id: collaborationActors.owner, reason_code: "effect_expired_by_owner" }]);
+    // The state guard is the concurrency check: a repeat is a conflict, not a second tombstone.
+    const repeated = await expire();
+    expect(repeated.status).toBe(409);
   });
 
   it("reconciles an ambiguous PR by operation ID without opening a duplicate", async () => {
