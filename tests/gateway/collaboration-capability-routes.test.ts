@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono, type Context } from "hono";
 import type { UpgradeWebSocket, WSEvents } from "hono/ws";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CollaborationGrantSchema, CollaborationReadinessSchema } from "@matrix-os/contracts";
 import { bootstrapChatDatabase } from "../../packages/gateway/src/chat/database.js";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
@@ -179,6 +179,40 @@ describe("collaboration capability HTTP routes", () => {
     await fixture.db.updateTable("collaboration_grants").set({ state: "revoked" })
       .where("id", "=", grant.id).execute();
     expect((await signed({ actorId: memberId, method: "POST", path, body: {} })).status).toBe(404);
+  });
+
+  it("accepts the exact organization grant using a pending direct session without legacy actor proof", async () => {
+    const created = await signed({ actorId: ownerId, method: "POST",
+      path: `/api/collaboration/scopes/${scopeId}/grants`, body: {
+        clientRequestId: randomUUID(), expectedRevision: "1",
+        audience: { kind: "organization" }, preset: "viewer",
+      },
+    });
+    const grant = CollaborationGrantSchema.parse(await created.json());
+    const path = `/api/collaboration/scopes/${scopeId}/grants/${grant.id}/accept`;
+    const sessionId = randomUUID();
+    const directSession = {
+      protocolVersion: 2, id: sessionId, actorId: memberId, organizationId,
+      scopeId, pendingGrantId: grant.id, runtimeId: collaborationIds.runtime,
+      authorityGeneration: 1, purpose: "direct_session", proofKeyThumbprint: "a".repeat(43),
+      issuedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 300_000).toISOString(),
+      evidenceExpiresAt: new Date(Date.now() + 20_000).toISOString(), renewAfter: new Date(Date.now() + 240_000).toISOString(),
+    } as const;
+    const authenticate = vi.spyOn(runtime.directSessions, "authenticate").mockResolvedValue(directSession);
+    const headers = {
+      "content-type": "application/json",
+      "x-matrix-collaboration-session": sessionId,
+      "x-matrix-collaboration-request": Buffer.from(JSON.stringify({ signature: {}, proof: "a".repeat(86) })).toString("base64url"),
+    };
+    const wrong = await app.request(`/api/collaboration/scopes/${scopeId}/grants/${randomUUID()}/accept`, { method: "POST", headers, body: "{}" });
+    expect(wrong.status).toBe(404);
+    authenticate.mockResolvedValueOnce({ ...directSession, pendingGrantId: randomUUID() });
+    const mismatched = await app.request(path, { method: "POST", headers, body: "{}" });
+    expect(mismatched.status).toBe(404);
+    const accepted = await app.request(path, { method: "POST", headers, body: "{}" });
+    expect(accepted.status).toBe(200);
+    expect(await accepted.json()).toEqual({ state: "active" });
+    expect(authenticate).toHaveBeenCalledWith(expect.objectContaining({ method: "POST", path, body: new TextEncoder().encode("{}") }));
   });
 
 
