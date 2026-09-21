@@ -308,6 +308,32 @@ describe("S05 platform tickets, endpoints and control", () => {
       })).rejects.toMatchObject({ code: "not_found" });
     });
 
+    it("issues an accept-only ticket for a current organization member with the exact pending directory grant", async () => {
+      const grantId = "50000000-0000-4000-8000-000000000001";
+      const pendingScope = "10000000-0000-4000-8000-000000000099";
+      await repository.applyDirectoryEvent({
+        eventId: "20000000-0000-4000-8000-000000000099", scopeId: pendingScope,
+        runtimeId, ownerId: platformCollaborationActors.owner, kind: "chat",
+        organizationId, audience: "organization", organizationGrantId: grantId,
+        authorityGeneration: 1, metadataRevision: 1,
+        recipients: [{ actorId: platformCollaborationActors.owner, status: "accepted" }],
+      });
+      const pending = new CollaborationTicketIssuer({
+        keyring: { activeKeyId: "ticket-key-1", keys: { "ticket-key-1": seedA } },
+        repository, endpoints, resolveOrganization: async () => organizationId,
+        projection: { isCurrentMember: async ({ actorId }) => members.has(actorId) },
+        relayOrigin: "https://app.matrix-os.com", now: () => clock,
+      });
+      const request = (purpose: "direct_session" | "events") => pending.issue({
+        actorId: invitedActor,
+        request: { clientRequestId: "40000000-0000-4000-8000-000000000099", scopeId: pendingScope, purpose, proofPublicKey: clientProofKey().raw },
+      });
+      expect((await request("direct_session")).signedTicket.ticket.resource).toEqual({ scopeId: pendingScope, kind: "chat", pendingGrantId: grantId });
+      await expect(request("events")).rejects.toMatchObject({ code: "not_found" });
+      members.delete(invitedActor);
+      await expect(request("direct_session")).rejects.toMatchObject({ code: "not_found" });
+    });
+
     it("refuses when the scope's home is not registered for its owner", async () => {
       const other = "10000000-0000-4000-8000-000000000077";
       await repository.applyDirectoryEvent({ eventId: "20000000-0000-4000-8000-000000000077", scopeId: other, runtimeId: "vps:44444444-4444-4444-8444-444444444444", ownerId: platformCollaborationActors.owner, kind: "chat", authorityGeneration: 1, metadataRevision: 1, recipients: [{ actorId: platformCollaborationActors.owner, status: "accepted" }] });
