@@ -210,7 +210,7 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
     ctx.completeAnalyticsFlush();
     return { ok: true };
   });
-  handle("auth:start-device-flow", () => ctx.auth.startDeviceFlow());
+  handle("auth:start-device-flow", ({ intent }) => ctx.auth.startDeviceFlow(intent));
   handle("auth:poll", () => ctx.auth.poll());
   handle("auth:status", () => ctx.auth.getStatus());
   handle("auth:sign-out", async () => {

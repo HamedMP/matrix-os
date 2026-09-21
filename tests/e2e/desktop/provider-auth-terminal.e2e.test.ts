@@ -31,7 +31,7 @@ beforeAll(async () => {
   // Prevent the stub auth flow from opening any external browser.
   await app.evaluate(({ shell }) => { shell.openExternal = async () => {}; });
   page = await app.firstWindow();
-  await page.getByRole("button", { name: /continue in browser/i }).waitFor();
+  await page.getByRole("button", { name: /create account/i }).waitFor();
   await page.evaluate(() => window.operator.invoke("auth:start-device-flow", {}));
   await page.getByRole("button", { name: "Terminal", exact: true }).first().waitFor({ timeout: 15_000 });
 }, 60_000);

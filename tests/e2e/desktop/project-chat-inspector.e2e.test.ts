@@ -56,7 +56,7 @@ suite("project chat contextual inspector", () => {
   });
 
   it("keeps chat primary while contextual tools are opened and maximized", async () => {
-    await page.getByRole("button", { name: /continue in browser/i }).click();
+    await page.getByRole("button", { name: /create account/i }).click();
     await page.locator("aside button", { hasText: "Terminal" }).first().waitFor({ timeout: 15_000 });
     await page.locator("aside button", { hasText: "Projects" }).first().click();
     await page.getByRole("heading", { name: "Projects" }).waitFor({ timeout: 10_000 });

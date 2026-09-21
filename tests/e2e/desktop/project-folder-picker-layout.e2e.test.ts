@@ -70,7 +70,7 @@ suite("Desktop Add Project compact folder picker", () => {
     });
     page = await app.firstWindow();
     await page.setViewportSize({ width: 1224, height: 768 });
-    await page.getByRole("button", { name: /continue in browser/i }).click();
+    await page.getByRole("button", { name: /create account/i }).click();
     await page.getByRole("button", { name: "Chat", exact: true }).waitFor({ timeout: 15_000 });
   }, 60_000);
 
