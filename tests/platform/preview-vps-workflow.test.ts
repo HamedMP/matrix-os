@@ -100,20 +100,19 @@ afterEach(async () => {
 });
 
 describe('Preview VPS provisioning workflow', () => {
-  it('registers plaintext runtime-access cleanup before creating the handoff file', () => {
+  it('publishes no privileged runtime credential in the exact-head handoff artifact', () => {
     const workflow = YAML.parse(readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8'));
     const deployStep = workflow.jobs.deploy.steps.find(
       (step: { name?: string }) => step.name === 'Deploy preview bundle to preview VPS',
     ).run as string;
-    const plaintextAssignment = deployStep.indexOf('plaintext=/tmp/preview-runtime-access.json');
-    const cleanupTrap = deployStep.indexOf('trap cleanup_runtime_access EXIT');
-    const plaintextCreation = deployStep.indexOf('> "$plaintext"');
+    const artifact = workflow.jobs.deploy.steps.find(
+      (step: { name?: string }) => step.name === 'Publish exact-head preview runtime route',
+    );
 
-    expect(plaintextAssignment).toBeGreaterThan(-1);
-    expect(cleanupTrap).toBeGreaterThan(plaintextAssignment);
-    expect(plaintextCreation).toBeGreaterThan(cleanupTrap);
-    expect(deployStep).toContain('cleanup_runtime_access()');
-    expect(deployStep).toContain('rm -f "$plaintext" "$public_key"');
+    expect(deployStep).toContain("'{handle:$handle,address:$address}' > preview-runtime-route.json");
+    expect(deployStep).not.toContain('plaintext=/tmp/preview-runtime-access.json');
+    expect(deployStep).not.toContain('--arg token "$runtime_token"');
+    expect(artifact.with.path.trim()).toBe('preview-runtime-route.json');
   });
 
   it('collects bounded updater diagnostics before an install timeout', () => {

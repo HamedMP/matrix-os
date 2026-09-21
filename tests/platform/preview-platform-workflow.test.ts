@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
+import YAML from "yaml";
 
 const root = process.cwd();
 
@@ -62,31 +63,29 @@ describe("preview platform workflow", () => {
     expect(workflow).toContain("systemctl\",\"restart\",\"matrix-gateway.service");
     expect(workflow).toContain("PLATFORM_SPEECH_PREVIEW_MAX_OPERATIONS_PER_RUNTIME=25");
     expect(workflow).toContain("PLATFORM_SPEECH_PREVIEW_NOT_AFTER");
-    expect(workflow).toContain("preview-runtime-access");
-    expect(workflow).toContain("PREVIEW_RUNTIME_HANDOFF_PRIVATE_KEY_B64");
-    expect(workflow).toContain("openssl pkeyutl -decrypt");
-    expect(workflow).toContain("preview-share-runtime-access.json");
-    expect(workflow).toContain("preview-share-runtime-cert.pem");
-    expect(workflow).toContain('.handle == $public[0].handle');
-    expect(workflow).toContain('.address == $public[0].address');
+    expect(workflow).toContain("preview-runtime-route.json");
+    expect(workflow).not.toContain("PREVIEW_RUNTIME_HANDOFF_PRIVATE_KEY_B64");
+    expect(workflow).not.toContain("openssl pkeyutl -decrypt");
+    expect(workflow).not.toContain("preview-share-runtime-access.json");
     expect(connectJobHeader).not.toContain("PREVIEW_RUNTIME_HANDOFF_PRIVATE_KEY_B64");
-    expect(connectJob.indexOf("pnpm install --frozen-lockfile --filter . --ignore-scripts"))
-      .toBeLessThan(connectJob.indexOf("Decrypt and validate handle-scoped preview runtime access"));
     expect(connectJob.indexOf("Register only the PR preview route in staging"))
-      .toBeLessThan(connectJob.indexOf("Decrypt and validate handle-scoped preview runtime access"));
-    expect(connectJob.indexOf("Decrypt and validate handle-scoped preview runtime access"))
       .toBeLessThan(connectJob.indexOf("Enable the existing tagged host without moving traffic"));
-    expect(workflow).toContain('if [ "$status" -ne 0 ]; then rm -f preview-share-runtime-access.json; fi');
-    expect(workflow).toContain("trap 'rm -f preview-share-runtime-access.json' EXIT");
+    expect(workflow).toContain("trap cleanup_preview_connection EXIT");
     expect(workflow).toContain("metadata.st_gid");
     expect(workflow).not.toContain("os.fchown(fd, 0, 0)");
     expect(workflow).not.toContain("PRODUCTION_PLATFORM_SECRET");
     expect(workflow).not.toContain("PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}");
     expect(workflow).toContain("systemctl\",\"is-active\",\"--quiet\",\"matrix-gateway.service");
     expect(workflow).toContain("--retry 5 --retry-all-errors --retry-delay 2 --retry-max-time 30");
-    expect(connectJob).toContain("--cacert preview-share-runtime-cert.pem");
-    expect(connectJob).toContain('--resolve "customer-vps.matrix-os.local:443:${address}"');
-    expect(connectJob).toContain("https://customer-vps.matrix-os.local/api/terminal/run");
+    expect(connectJob).toContain('PLATFORM_PUBLIC_URL: https://app.matrix-os.com');
+    expect(connectJob).toContain('terminal_url="${PLATFORM_PUBLIC_URL}/vm/${handle}/api/terminal/run"');
+    expect(connectJob).toContain('-H "authorization: Bearer ${preview_session_token}"');
+    expect(connectJob).toContain('CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}');
+    expect(connectJob).toContain('echo "::add-mask::$preview_session_token"');
+    expect(connectJob).not.toContain("terminal_token");
+    expect(connectJob).not.toContain("customer-vps.matrix-os.local");
+    expect(connectJob).not.toContain("--cacert");
+    expect(connectJob).not.toContain("--resolve");
     expect(connectJob).not.toContain("--insecure");
     expect(workflow).toContain("/speech/capabilities?runtimeSlot=");
     expect(workflow).toContain("/api/speech/capabilities");
@@ -107,17 +106,42 @@ describe("preview platform workflow", () => {
       workflow.indexOf("  cleanup-expired:"),
     );
 
-    expect(workflow).toContain("preview-runtime-access.enc");
     expect(workflow).toContain("preview-runtime-route.json");
-    expect(workflow).toContain("preview-runtime-cert.pem");
-    expect(workflow).toContain("PREVIEW_RUNTIME_HANDOFF_PUBLIC_KEY_B64");
-    expect(workflow).toContain("openssl pkeyutl -encrypt");
+    expect(workflow).not.toContain("preview-runtime-access.enc");
+    expect(workflow).not.toContain("PREVIEW_RUNTIME_HANDOFF_PUBLIC_KEY_B64");
+    expect(workflow).not.toContain("openssl pkeyutl -encrypt");
+    expect(workflow).not.toContain('--arg token "$runtime_token"');
     expect(workflow).not.toContain("terminalToken");
     expect(workflow).toContain("'{handle:$handle,address:$address}' > preview-runtime-route.json");
     expect(workflow).toContain("name: preview-runtime-access-");
     expect(workflow).toContain("retention-days: 1");
-    expect(workflow).toContain('subject=CN=customer-vps.matrix-os.local');
-    expect(workflow).toContain('timeout 15 openssl s_client -connect "${address}:443"');
+    expect(workflow).not.toContain("preview-runtime-cert.pem");
+    expect(workflow).not.toContain("openssl s_client");
     expect(deployJob).not.toContain("environment: Preview");
+  });
+
+  it("cleans every preview speech response file on success and failure", () => {
+    const workflow = YAML.parse(readFileSync(
+      join(root, ".github/workflows/preview-platform.yml"),
+      "utf8",
+    ));
+    const enableStep = workflow.jobs["connect-share-preview"].steps.find(
+      (step: { name?: string }) => step.name === "Enable the existing tagged host without moving traffic",
+    ).run as string;
+    const cleanupTrap = enableStep.indexOf("trap cleanup_preview_connection EXIT");
+    const firstResponseWrite = enableStep.indexOf('send_runtime_command "$body" "$speech_config_response"');
+
+    expect(cleanupTrap).toBeGreaterThan(-1);
+    expect(firstResponseWrite).toBeGreaterThan(cleanupTrap);
+    for (const response of [
+      "speech_config_response",
+      "gateway_restart_response",
+      "gateway_active_response",
+      "speech_capabilities_response",
+      "gateway_capabilities_response",
+    ]) {
+      expect(enableStep).toContain(`${response}=/tmp/preview-`);
+      expect(enableStep).toContain(`\"$${response}\"`);
+    }
   });
 });
