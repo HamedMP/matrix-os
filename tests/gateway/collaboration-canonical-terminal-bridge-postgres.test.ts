@@ -24,6 +24,7 @@ describe("canonical terminal collaboration bridge", () => {
     listWorkspaces: ReturnType<typeof vi.fn>;
     writeInput: ReturnType<typeof vi.fn>;
     terminateTab: ReturnType<typeof vi.fn>;
+    attach: ReturnType<typeof vi.fn>;
   };
 
   beforeEach(async () => {
@@ -32,9 +33,10 @@ describe("canonical terminal collaboration bridge", () => {
     await bootstrapCollaborationDatabase(fixture.db);
     tab = { id: tabId, workspaceId, createdAt, incarnation: `ti_${"a".repeat(32)}`, status: "running", revision: 4 };
     runtime = {
-      listWorkspaces: vi.fn(async () => [{ id: workspaceId, scope: "main", tabs: [tab] }]),
+      listWorkspaces: vi.fn(async () => [{ id: workspaceId, scope: "main", canonicalSize: { cols: 80, rows: 24 }, tabs: [tab] }]),
       writeInput: vi.fn(async () => undefined),
       terminateTab: vi.fn(async () => undefined),
+      attach: vi.fn(() => ({ close: vi.fn(), send: vi.fn() })),
     };
   });
 
@@ -110,6 +112,44 @@ describe("canonical terminal collaboration bridge", () => {
     await bridge.registry.unbindCollaboration(terminalId, { scopeId, sessionIncarnation: eligible.sessionIncarnation });
     await expect(bridge.runtime.input({ ...action, data: "after revoke" })).rejects.toThrow();
     expect(runtime.writeInput).toHaveBeenCalledOnce();
+  });
+
+  it("attaches canonical PTY output only to the exact persisted tab incarnation", async () => {
+    const repository = new CollaborationRepository(fixture.db);
+    await repository.createDirectScope({ scopeId, ownerId, organizationId, kind: "terminal", resourceId: terminalId, authorityRuntimeId: runtimeId });
+    const bridge = createCanonicalTerminalCollaborationBridge({ db: fixture.db, ownerId, runtime: runtime as never });
+    const eligible = await bridge.registry.get(terminalId) as { sessionIncarnation: string; executionGeneration: number };
+    await bridge.registry.bindCollaboration(terminalId, {
+      scopeId, sessionIncarnation: eligible.sessionIncarnation, executionGeneration: eligible.executionGeneration,
+    });
+    const output = vi.fn(async () => undefined);
+    const exit = vi.fn(async () => undefined);
+    const connecting = bridge.connectOutput({
+      scopeId, terminalId, incarnation: eligible.sessionIncarnation,
+      executionGeneration: eligible.executionGeneration, creatorActorId: ownerId,
+      createdAt, status: "active",
+    }, { output, exit, error: vi.fn() });
+    await vi.waitFor(() => expect(runtime.attach).toHaveBeenCalledOnce());
+    expect(runtime.attach).toHaveBeenCalledWith(expect.objectContaining({
+      ref: { workspaceId, tabId }, expectedIncarnation: tab.incarnation,
+      mode: "soft", size: { cols: 80, rows: 24 },
+    }));
+    const callbacks = runtime.attach.mock.calls[0]![0];
+    callbacks.onFrame({ type: "attached", terminalRef: { workspaceId, tabId }, canonicalSize: { cols: 80, rows: 24 }, revision: 4, nextSeq: 0 });
+    const source = await connecting;
+    callbacks.onFrame({ type: "output", terminalRef: { workspaceId, tabId }, revision: 4, seq: 1, data: "owner output" });
+    await vi.waitFor(() => expect(output).toHaveBeenCalledWith("owner output"));
+    source.close();
+    const stream = runtime.attach.mock.results[0]!.value;
+    expect(stream.close).toHaveBeenCalledOnce();
+
+    tab = { ...tab, incarnation: `ti_${"b".repeat(32)}` };
+    await expect(bridge.connectOutput({
+      scopeId, terminalId, incarnation: eligible.sessionIncarnation,
+      executionGeneration: eligible.executionGeneration, creatorActorId: ownerId,
+      createdAt, status: "active",
+    }, { output, exit, error: vi.fn() })).rejects.toThrow();
+    expect(runtime.attach).toHaveBeenCalledOnce();
   });
 
   it("preflights and shares the exact live tab, then refuses its stale binding", async () => {

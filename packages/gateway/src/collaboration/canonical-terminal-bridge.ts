@@ -1,11 +1,14 @@
 import { createHash } from "node:crypto";
-import { TerminalRefSchema, type TerminalRef, type TerminalWorkspace } from "@matrix-os/contracts";
+import { TerminalGridSizeSchema, TerminalRefSchema, type TerminalRef, type TerminalWorkspace } from "@matrix-os/contracts";
 import type { TerminalRuntimeSocketClient } from "@matrix-os/terminal-runtime";
 import type { Kysely } from "kysely";
 import type { OwnerCollaborationDatabase } from "./database.js";
+import type { CollaborationTerminalMetadata } from "./terminal-dispatcher.js";
 
 type TerminalRuntime = Pick<TerminalRuntimeSocketClient,
-  "listWorkspaces" | "writeInput" | "terminateTab">;
+  "listWorkspaces" | "writeInput" | "terminateTab" | "attach">;
+const MAX_PENDING_OUTPUT_BYTES = 2 * 1024 * 1024;
+const ATTACH_TIMEOUT_MS = 5_000;
 
 export class CanonicalTerminalBridgeError extends Error {
   constructor() {
@@ -69,6 +72,84 @@ export function createCanonicalTerminalCollaborationBridge(options: {
   };
 
   return {
+    connectOutput: async (metadata: CollaborationTerminalMetadata, handlers: {
+      output(data: string): Promise<void>;
+      exit(): Promise<void>;
+      error(): void;
+    }): Promise<{ close(): void }> => {
+      if (metadata.status !== "active") throw new CanonicalTerminalBridgeError();
+      const current = await boundTab(metadata.scopeId, metadata.terminalId, metadata.incarnation);
+      if (current.generation !== metadata.executionGeneration) throw new CanonicalTerminalBridgeError();
+      const workspaces = await runtime.listWorkspaces();
+      const workspace = workspaces.find((item) => item.id === current.ref.workspaceId);
+      const size = TerminalGridSizeSchema.safeParse(workspace?.canonicalSize);
+      if (!size.success) throw new CanonicalTerminalBridgeError();
+      let stream: ReturnType<TerminalRuntime["attach"]> | undefined;
+      let closed = false;
+      let attached = false;
+      let pendingBytes = 0;
+      let delivery = Promise.resolve();
+      const close = () => {
+        if (closed) return;
+        closed = true;
+        stream?.close();
+      };
+      const failed = () => {
+        if (closed) return;
+        close();
+        handlers.error();
+      };
+      const queueOutput = (data: string) => {
+        const bytes = Buffer.byteLength(data);
+        if (bytes > MAX_PENDING_OUTPUT_BYTES || pendingBytes + bytes > MAX_PENDING_OUTPUT_BYTES) {
+          failed();
+          return;
+        }
+        pendingBytes += bytes;
+        delivery = delivery.then(async () => {
+          if (!closed) await handlers.output(data);
+        }).catch(() => failed()).finally(() => { pendingBytes -= bytes; });
+      };
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(() => reject(new CanonicalTerminalBridgeError()), ATTACH_TIMEOUT_MS);
+          timer.unref?.();
+          const rejectAttach = () => {
+            clearTimeout(timer);
+            if (!attached) reject(new CanonicalTerminalBridgeError());
+            else failed();
+          };
+          stream = runtime.attach({
+            ref: current.ref,
+            expectedIncarnation: current.tabIncarnation,
+            viewerId: `collab:${metadata.scopeId}`,
+            fromSeq: Number.MAX_SAFE_INTEGER,
+            mode: "soft",
+            size: size.data,
+            onFrame(frame) {
+              if (closed) return;
+              if (frame.type === "attached") {
+                attached = true;
+                clearTimeout(timer);
+                resolve();
+              } else if (frame.type === "snapshot" || frame.type === "output") {
+                if (!attached) { rejectAttach(); return; }
+                queueOutput(frame.type === "snapshot" ? frame.ansi : frame.data);
+              } else if (frame.type === "exit") {
+                delivery = delivery.then(() => handlers.exit()).catch(() => failed()).finally(close);
+              }
+            },
+            onClose: rejectAttach,
+            onError: rejectAttach,
+          });
+        });
+      } catch (error: unknown) {
+        close();
+        throw error;
+      }
+      if (closed) throw new CanonicalTerminalBridgeError();
+      return { close };
+    },
     registry: {
       get: async (terminalId: string): Promise<unknown> => {
         const current = await currentTab(terminalId);
