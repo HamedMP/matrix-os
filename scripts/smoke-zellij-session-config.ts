@@ -1,4 +1,4 @@
-#!/usr/bin/env -S node --import tsx
+#!/usr/bin/env -S node --conditions=development --import tsx
 // Exercise real Matrix attachments against servers retaining older configuration.
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -45,7 +45,11 @@ async function supervise() {
   process.once("SIGINT", abort);
   let failure: unknown;
   try {
-    const result = await run(process.execPath, ["--import", "tsx", fileURLToPath(import.meta.url), binary, root], {
+    const fixtureWorker = process.env.NODE_ENV === "test" ? process.env.MATRIX_ZELLIJ_SMOKE_FIXTURE_WORKER : undefined;
+    const workerArgs = fixtureWorker
+      ? [resolve(fixtureWorker), binary, root]
+      : ["--conditions=development", "--import", "tsx", fileURLToPath(import.meta.url), binary, root];
+    const result = await run(process.execPath, workerArgs, {
       timeout: 35_000, killSignal: "SIGKILL", signal: controller.signal, maxBuffer: 512 * 1024,
     });
     process.stdout.write(result.stdout);

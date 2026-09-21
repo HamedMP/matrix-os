@@ -188,6 +188,7 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
       outputSubscription = terminal.onWriteParsed?.(schedule);
       scrollSubscription = terminal.onScroll?.(schedule);
       host.addEventListener("mousedown", onBlankMouseDown);
+      host.addEventListener("scroll", schedule);
       host.addEventListener("wheel", onWheel, { capture: true, passive: false });
       element = root;
       restoreStyle = {
@@ -274,6 +275,7 @@ export function createTerminalGridPresentation(options: GridPresentationOptions)
     outputSubscription?.dispose();
     outputSubscription = undefined;
     host.removeEventListener("mousedown", onBlankMouseDown);
+    host.removeEventListener("scroll", schedule);
     host.removeEventListener("wheel", onWheel, true);
     if (element && restoreStyle) Object.assign(element.style, restoreStyle);
     if (stage && element?.parentElement === stage) stage.replaceWith(element);

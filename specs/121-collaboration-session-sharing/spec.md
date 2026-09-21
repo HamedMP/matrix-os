@@ -309,7 +309,7 @@ This sequence is delivery order, not a reduction of the final P1/P2 scope. Discu
 - Automatic exposure or live migration of unrestricted personal processes and terminals, personal homes, credentials, or system state.
 - Anonymous live-collaboration links, custom organization-wide policies, outside identity federation, or automatic public project publishing. Existing read-only snapshot links are preserved.
 - Runtime implementation or deployment as part of this specification and planning PR.
-- Cloud Run/WebSocket 503s or five-minute connection termination; Cloud Run capacity/no-available-instance 429s; collaboration policy caching/backoff; expired owner Claude OAuth credentials; and broader shared-Chat UI/UX redesign. These are separately observed production issues and are not part of immutable Provider authority or metadata recovery.
+- Cloud Run/WebSocket 503s or five-minute connection termination; Cloud Run capacity/no-available-instance 429s; collaboration policy caching/backoff; automatic Claude OAuth reauthentication or credential mutation; and broader shared-Chat UI/UX redesign. Credential readiness may be reported safely, but reauthentication remains an explicit owner operation.
 
 ### Immutable Provider hotfix deployment verification
 
@@ -321,6 +321,8 @@ After deployment, verify the known affected Chat without issuing a production mu
 2. Join `bound_at_turn_id` to `chat_runs.turn_id` and confirm the proving Run has `driver_kind = codex`, `instance_id = codex_default`, and a selection whose `instanceId` is `codex_default`.
 3. Read the owner's canonical Chat detail endpoint and confirm HTTP 200 with the same Provider binding and selection.
 4. Read collaboration scope `6aed8d12-f6c8-4c10-90b2-1e51fcc738e3` and its AI capability. A Claude-only isolated runtime must report AI unavailable while Chat history and discussion reads remain available; it must not advertise or persist `claude_shared` for this Chat.
+
+For Claude compatibility, read Chat `chat_0f715b0b6de4475084d28f6d0e7d141b` and collaboration scope `e3c4589b-1635-43f5-a830-4a63945b30c2` without mutating production. The immutable binding must remain `claude_code` / `claude_code_default`, the canonical selection must remain model `opus`, and execution eligibility must remain the signed `claude-code` adapter profile at generation `13`. Expired Claude OAuth reports an owner-only reconnect state and a generic unavailable state to collaborators; deployment does not authenticate or alter credentials.
 
 ## Success Criteria *(mandatory)*
 

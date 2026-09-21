@@ -4,6 +4,7 @@ import { loadAppMeta, type AppMeta } from "@matrix-os/kernel";
 import { listUniqueAppManifests } from "./app-runtime/app-index.js";
 import { computeRuntimeState, type RuntimeState } from "./app-runtime/runtime-state.js";
 import { DesignIdEnum, type AppManifest, type DesignId } from "./app-runtime/manifest-schema.js";
+import { resolveSystemIconMetadata, type SystemIconMetadata } from "./icon-metadata.js";
 
 export interface AppEntry extends AppMeta {
   slug?: string;
@@ -12,16 +13,31 @@ export interface AppEntry extends AppMeta {
   launchUrl?: string;
   file: string;
   path: string;
+  iconUrl?: string;
 }
 
 export interface ListAppsOptions {
   includeInactiveDesigns?: boolean;
 }
 
+export interface AppCatalog {
+  apps: AppEntry[];
+  /** Icon metadata keyed by the icon stem each app resolved, so callers such as
+   * the shell bootstrap can reuse it instead of re-statting every icon. */
+  icons: Record<string, SystemIconMetadata>;
+}
+
 export async function listApps(
   homePath: string,
   options: ListAppsOptions = {},
 ): Promise<AppEntry[]> {
+  return (await listAppCatalog(homePath, options)).apps;
+}
+
+export async function listAppCatalog(
+  homePath: string,
+  options: ListAppsOptions = {},
+): Promise<AppCatalog> {
   const appsDir = join(homePath, "apps");
 
   const result: AppEntry[] = [];
@@ -36,7 +52,50 @@ export async function listApps(
     options.includeInactiveDesigns ?? false,
   );
 
-  return result.sort((a, b) => a.name.localeCompare(b.name));
+  return attachLocalIconUrls(homePath, result.sort((a, b) => a.name.localeCompare(b.name)));
+}
+
+const ICON_METADATA_BATCH_SIZE = 16;
+const SAFE_ICON_STEM = /^[a-zA-Z0-9_-]{1,64}$/;
+
+export function appIconStem(app: Pick<AppEntry, "icon" | "slug">): string | null {
+  if (typeof app.icon === "string" && SAFE_ICON_STEM.test(app.icon)) return app.icon;
+  if (typeof app.slug === "string" && SAFE_ICON_STEM.test(app.slug)) return app.slug;
+  return null;
+}
+
+async function attachLocalIconUrls(homePath: string, apps: AppEntry[]): Promise<AppCatalog> {
+  const hydrated: AppEntry[] = [];
+  const icons: Record<string, SystemIconMetadata> = {};
+  for (let offset = 0; offset < apps.length; offset += ICON_METADATA_BATCH_SIZE) {
+    const batch = apps.slice(offset, offset + ICON_METADATA_BATCH_SIZE);
+    // In-flight lookups are deduplicated per batch, so this map never holds
+    // more than ICON_METADATA_BATCH_SIZE entries; stems resolved by earlier
+    // batches are reused from the returned `icons` metadata instead.
+    const pending = new Map<string, Promise<SystemIconMetadata | null>>();
+    const resolveOnce = (iconStem: string): Promise<SystemIconMetadata | null> => {
+      const resolved = icons[iconStem];
+      if (resolved) return Promise.resolve(resolved);
+      let lookup = pending.get(iconStem);
+      if (!lookup) {
+        lookup = resolveSystemIconMetadata(homePath, iconStem);
+        pending.set(iconStem, lookup);
+      }
+      return lookup;
+    };
+    // Bounded batches prevent a large custom-app catalog from flooding the filesystem.
+    // eslint-disable-next-line no-await-in-loop -- each bounded batch must settle before the next starts
+    const entries = await Promise.all(batch.map(async (app) => {
+      const iconStem = appIconStem(app);
+      if (!iconStem) return app;
+      const icon = await resolveOnce(iconStem);
+      if (!icon) return app;
+      icons[iconStem] = icon;
+      return { ...app, iconUrl: icon.versionedUrl };
+    }));
+    hydrated.push(...entries);
+  }
+  return { apps: hydrated, icons };
 }
 
 const DEFAULT_DESIGN_ID: DesignId = "flat";

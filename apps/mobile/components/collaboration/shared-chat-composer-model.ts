@@ -11,7 +11,10 @@ export function deriveSharedChatComposerPresentation(state: SharedChatComposerSt
   const status = viewer
     ? "Viewers can read this Chat but cannot send messages."
     : state.aiAvailability === "checking" ? "Connecting to Matrix…"
-      : aiAvailable ? "" : "Messages are unavailable while the owner's runtime is offline.";
+      : aiAvailable ? ""
+        : state.aiAvailability === "owner_reconnect_required"
+          ? "Reconnect your Claude account or API key in Settings → Agents & providers to resume AI requests."
+          : "Messages are unavailable while the owner's runtime is offline.";
   return {
     aiAvailable,
     canRequestAi,

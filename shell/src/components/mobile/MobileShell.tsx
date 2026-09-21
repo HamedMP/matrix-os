@@ -52,7 +52,8 @@ import { AppViewer } from "@/components/AppViewer";
 import { Settings } from "@/components/Settings";
 import { PreviewWindow } from "@/components/preview-window/PreviewWindow";
 import { enqueueTerminalLaunch, type TerminalLaunchAction } from "@/lib/terminal-launch";
-import { enqueueExistingTerminalSession } from "@/lib/provider-terminal-session";
+import { enqueueExistingProviderTerminal } from "@/lib/provider-terminal-session";
+import { OPEN_PROVIDER_SETTINGS_EVENT } from "@/lib/canonical-provider-setup";
 import {
   createTerminalLayoutId,
   type TerminalPersistence,
@@ -173,6 +174,7 @@ export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenComman
   const [openStack, setOpenStack] = useState<OpenApp[]>([]);
   const [view, setView] = useState<"launcher" | "app" | "switcher">("launcher");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsDefaultSection, setSettingsDefaultSection] = useState<"appearance" | "agents-providers">("appearance");
   const [time, setTime] = useState("--:--");
   const [terminalInputActiveId, setTerminalInputActiveId] = useState<string | null>(null);
   const stackRef = useRef(openStack);
@@ -192,6 +194,15 @@ export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenComman
     tick();
     const id = window.setInterval(tick, 30_000);
     return () => window.clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    const openProviderSettings = () => {
+      setSettingsDefaultSection("agents-providers");
+      setSettingsOpen(true);
+    };
+    window.addEventListener(OPEN_PROVIDER_SETTINGS_EVENT, openProviderSettings);
+    return () => window.removeEventListener(OPEN_PROVIDER_SETTINGS_EVENT, openProviderSettings);
   }, []);
 
   useEffect(() => {
@@ -334,7 +345,7 @@ export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenComman
       : [...previous, { id, app: terminal, openedAt: Date.now() }]);
     setSettingsOpen(false);
     setView("app");
-    enqueueExistingTerminalSession(sessionId, id);
+    enqueueExistingProviderTerminal(sessionId, id);
   }, []);
 
   const terminalInstanceCount = openStack.reduce((count, entry) => (
@@ -495,7 +506,10 @@ export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenComman
               <MobileLauncher
                 apps={apps}
                 onOpen={openApp}
-                onOpenSettings={() => setSettingsOpen(true)}
+                onOpenSettings={() => {
+                  setSettingsDefaultSection("appearance");
+                  setSettingsOpen(true);
+                }}
                 openStackCount={openStack.length}
                 onShowSwitcher={showSwitcher}
                 onCloseAll={closeAll}
@@ -561,6 +575,7 @@ export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenComman
       <Settings
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
+        defaultSection={settingsDefaultSection}
         onOpenAgentTerminal={openAgentSetupTerminal}
         onOpenProviderTerminalSession={openExistingProviderTerminal}
       />
