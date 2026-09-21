@@ -99,6 +99,7 @@ describe("gateway collaboration wiring", () => {
         { version: 8 },
         { version: 9 },
         { version: 10 },
+        { version: 11 },
       ]);
     await expect(app.request(`/api/collaboration/scopes/${collaborationIds.scope}/discussion/messages`))
       .resolves.toMatchObject({ status: 401 });
