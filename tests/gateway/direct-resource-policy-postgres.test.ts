@@ -6,7 +6,7 @@
  * identities: every file, folder and app instance is addressed by its catalog
  * id, and a standalone share grants exactly that resource.
  */
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { COLLABORATION_DIRECT_ROUTES } from "@matrix-os/contracts";
@@ -31,6 +31,7 @@ import {
   type CollaborationResourceDriver,
 } from "../../packages/gateway/src/collaboration/resource-routes.js";
 import { registerTerminalRoutes } from "../../packages/gateway/src/collaboration/terminal-routes.js";
+import { createCollaborationUploadStager } from "../../packages/gateway/src/collaboration/upload-stages.js";
 import type { CollaborationRouteOptions } from "../../packages/gateway/src/collaboration/route-support.js";
 import type { ProjectAppBridge } from "../../packages/gateway/src/collaboration/project-app-adapter.js";
 import { CollaborationProofSigner } from "../../packages/platform/src/collaboration/proof.js";
@@ -314,7 +315,7 @@ describe("S12 direct resource policy", () => {
       } as never,
       resolveParticipant,
       resolveInvitationIdentifier: async () => { throw new Error("unused"); },
-      resources: { catalog, driver, apps },
+      resources: { catalog, driver, apps, uploads: createCollaborationUploadStager({ db: fixture.db, catalog, driver, now: () => NOW }) },
       now: () => NOW,
     };
     app = new Hono();
@@ -514,6 +515,70 @@ describe("S12 direct resource policy", () => {
         .where("scope_id", "=", PROJECT_SCOPE).where("actor_id", "=", collaborationActors.editor).execute();
       const write = await signed({ actorId: collaborationActors.editor, scopeId: PROJECT_SCOPE, method: "POST", path: `/api/collaboration/scopes/${PROJECT_SCOPE}/files/actions`, body: { type: "write", fileId: ids.readme, content: "late", expectedRevision: "0", clientRequestId: requestId() } });
       expect([403, 404]).toContain(write.status);
+      expect(new TextDecoder().decode(driver.files.get(`${collaborationActors.owner}:${PROJECT_ID}:README.md`))).toBe("# Alpha");
+    });
+  });
+
+  describe("staged uploads", () => {
+    const hash = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
+    const path = `/api/collaboration/scopes/${PROJECT_SCOPE}/files/actions`;
+
+    it("resumes immutable parts and commits only after the whole checksum matches", async () => {
+      const bytes = new TextEncoder().encode("replacement through two parts");
+      const first = bytes.slice(0, 12);
+      const second = bytes.slice(12);
+      const uploadId = requestId();
+      const stage = await signed({ actorId: collaborationActors.editor, scopeId: PROJECT_SCOPE, method: "POST", path,
+        body: { type: "upload_stage", fileId: ids.readme, size: bytes.length, sha256: hash(bytes), clientRequestId: uploadId } });
+      expect(stage.status).toBe(200);
+      expect(await stage.json()).toMatchObject({ upload: { uploadId, state: "staging", receivedBytes: 0 }, replayed: false });
+      const part = (index: number, chunk: Uint8Array) => signed({ actorId: collaborationActors.editor, scopeId: PROJECT_SCOPE,
+        method: "POST", path, body: { type: "upload_part", uploadId, index, sha256: hash(chunk), chunk: Buffer.from(chunk).toString("base64") } });
+      expect((await part(0, first)).status).toBe(200);
+      const replay = await part(0, first);
+      expect(replay.status).toBe(200);
+      expect(await replay.json()).toMatchObject({ replayed: true });
+      expect((await part(1, second)).status).toBe(200);
+      const commitBody = { type: "upload_commit", uploadId, expectedRevision: "0", clientRequestId: requestId() };
+      const commit = await signed({ actorId: collaborationActors.editor, scopeId: PROJECT_SCOPE, method: "POST", path, body: commitBody });
+      expect(commit.status).toBe(201);
+      expect(await commit.json()).toMatchObject({ entry: { id: ids.readme, revision: "1" }, replayed: false });
+      expect(new TextDecoder().decode(driver.files.get(`${collaborationActors.owner}:${PROJECT_ID}:README.md`))).toBe(new TextDecoder().decode(bytes));
+      const again = await signed({ actorId: collaborationActors.editor, scopeId: PROJECT_SCOPE, method: "POST", path, body: commitBody });
+      expect(again.status).toBe(200);
+      expect(await again.json()).toMatchObject({ replayed: true });
+    });
+
+    it("rejects a changed part and an incomplete commit", async () => {
+      const bytes = new TextEncoder().encode("expected content");
+      const uploadId = requestId();
+      const stage = await signed({ actorId: collaborationActors.editor, scopeId: PROJECT_SCOPE, method: "POST", path,
+        body: { type: "upload_stage", fileId: ids.readme, size: bytes.length, sha256: hash(bytes), clientRequestId: uploadId } });
+      expect(stage.status).toBe(200);
+      const chunk = bytes.slice(0, 4);
+      const partBody = { type: "upload_part", uploadId, index: 0, sha256: hash(chunk), chunk: Buffer.from(chunk).toString("base64") };
+      expect((await signed({ actorId: collaborationActors.editor, scopeId: PROJECT_SCOPE, method: "POST", path, body: partBody })).status).toBe(200);
+      const changed = await signed({ actorId: collaborationActors.editor, scopeId: PROJECT_SCOPE, method: "POST", path,
+        body: { ...partBody, chunk: Buffer.from("oops").toString("base64") } });
+      expect(changed.status).toBe(409);
+      const incomplete = await signed({ actorId: collaborationActors.editor, scopeId: PROJECT_SCOPE, method: "POST", path,
+        body: { type: "upload_commit", uploadId, expectedRevision: "0", clientRequestId: requestId() } });
+      expect(incomplete.status).toBe(409);
+      expect(new TextDecoder().decode(driver.files.get(`${collaborationActors.owner}:${PROJECT_ID}:README.md`))).toBe("# Alpha");
+    });
+
+    it("denies commit after revocation even when all bytes were staged", async () => {
+      const bytes = new TextEncoder().encode("blocked");
+      const uploadId = requestId();
+      expect((await signed({ actorId: collaborationActors.editor, scopeId: PROJECT_SCOPE, method: "POST", path,
+        body: { type: "upload_stage", fileId: ids.readme, size: bytes.length, sha256: hash(bytes), clientRequestId: uploadId } })).status).toBe(200);
+      expect((await signed({ actorId: collaborationActors.editor, scopeId: PROJECT_SCOPE, method: "POST", path,
+        body: { type: "upload_part", uploadId, index: 0, sha256: hash(bytes), chunk: Buffer.from(bytes).toString("base64") } })).status).toBe(200);
+      await fixture.db.updateTable("collaboration_members").set({ status: "revoked", updated_at: NOW })
+        .where("scope_id", "=", PROJECT_SCOPE).where("actor_id", "=", collaborationActors.editor).execute();
+      const commit = await signed({ actorId: collaborationActors.editor, scopeId: PROJECT_SCOPE, method: "POST", path,
+        body: { type: "upload_commit", uploadId, expectedRevision: "0", clientRequestId: requestId() } });
+      expect([403, 404]).toContain(commit.status);
       expect(new TextDecoder().decode(driver.files.get(`${collaborationActors.owner}:${PROJECT_ID}:README.md`))).toBe("# Alpha");
     });
   });
