@@ -134,10 +134,12 @@ export class PlatformCollaborationRepository {
     kind: CollaborationDirectoryKind;
     /** S05: owning organization, null only for pre-organization rows (tickets fail closed). */
     organizationId: string | null;
+    audience: "members" | "organization" | null;
+    organizationGrantId: string | null;
     authorityGeneration: number;
   } | null> {
     const row = await this.db.selectFrom("collaboration_directory")
-      .select(["scope_id", "runtime_id", "owner_id", "kind", "organization_id", "authority_generation"])
+      .select(["scope_id", "runtime_id", "owner_id", "kind", "organization_id", "audience", "organization_grant_id", "authority_generation"])
       .where("scope_id", "=", scopeId)
       .executeTakeFirst();
     return row ? {
@@ -146,6 +148,8 @@ export class PlatformCollaborationRepository {
       ownerId: row.owner_id,
       kind: row.kind,
       organizationId: row.organization_id ?? null,
+      audience: row.audience,
+      organizationGrantId: row.organization_grant_id,
       authorityGeneration: Number(row.authority_generation),
     } : null;
   }
