@@ -524,6 +524,80 @@ describe("S05 platform tickets, endpoints and control", () => {
       expect(acknowledged).toBe(CollaborationControlStream.MAX_PENDING_FRAMES);
     });
 
+    it("refuses acknowledgement work once the connection or the stream is closed", async () => {
+      await endpoints.register({ authenticated: { runtimeId, ownerId: platformCollaborationActors.owner, relayHandle: "owner-handle" }, registration: registration() });
+      let releaseAck!: () => void;
+      const blocked = new Promise<void>((resolve) => { releaseAck = resolve; });
+      let started = 0;
+      let acknowledged = 0;
+      const stream = new CollaborationControlStream({
+        controlAuthority: {
+          registerTransport: () => undefined,
+          acknowledge: async () => { started += 1; await blocked; acknowledged += 1; return { completedDenialIds: [] }; },
+        },
+        tickets: endpoints, now: () => clock,
+      });
+      const connection = stream.attach(logicalRuntimeId, { send: () => undefined, close: () => undefined });
+      const ack = JSON.stringify({ protocolVersion: 2, runtimeId: logicalRuntimeId, authorityGeneration: 1, fenceAt: clock.toISOString() });
+      const admitted = connection.receive(ack);
+      connection.close();
+      // A frame delivered after the socket closed must start no new authority work:
+      // shutdown can only drain the chain it captured when the connection closed.
+      await expect(connection.receive(ack)).rejects.toThrow(/closed/i);
+      let drained = false;
+      const shutdown = stream.shutdown().then(() => { drained = true; });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(drained).toBe(false);
+      expect(started).toBe(1);
+      releaseAck();
+      await admitted;
+      await shutdown;
+      expect(acknowledged).toBe(1);
+      // After shutdown the stream admits neither frames nor attachments.
+      await expect(connection.receive(ack)).rejects.toThrow(/closed|shutting down/i);
+      expect(() => stream.attach("vps-late", { send: () => undefined, close: () => undefined })).toThrow(/shutting down/i);
+      expect(started).toBe(1);
+    });
+
+    it("evicts a silent control connection before refusing a new one at the connection cap", async () => {
+      const closed: string[] = [];
+      const stream = new CollaborationControlStream({
+        controlAuthority: { registerTransport: () => undefined, acknowledge: async () => ({ completedDenialIds: [] }) },
+        tickets: endpoints, now: () => clock, maxConnections: 1, connectionIdleTtlMs: 60_000,
+      });
+      stream.attach("vps-silent", { send: () => undefined, close: () => { closed.push("vps-silent"); } });
+      expect(stream.connectedRuntimes()).toEqual(["vps-silent"]);
+      // A half-open socket raises no close event and acknowledges nothing; the registry
+      // must sweep it before the cap refuses a live home.
+      clock = new Date(clock.getTime() + 61_000);
+      stream.attach("vps-live", { send: () => undefined, close: () => undefined });
+      expect(closed).toEqual(["vps-silent"]);
+      expect(stream.connectedRuntimes()).toEqual(["vps-live"]);
+      await expect(stream.deliver("vps-silent", { protocolVersion: COLLABORATION_DIRECT_PROTOCOL_VERSION, type: "generation", runtimeId: "vps-silent", authorityGeneration: 1 }))
+        .rejects.toBeInstanceOf(ControlStreamNotConnectedError);
+      await stream.shutdown();
+    });
+
+    it("sweeps a silent control connection on its own timer and stops the timer on shutdown", async () => {
+      let closedCount = 0;
+      const stream = new CollaborationControlStream({
+        controlAuthority: { registerTransport: () => undefined, acknowledge: async () => ({ completedDenialIds: [] }) },
+        tickets: endpoints, now: () => clock, connectionIdleTtlMs: 60_000, sweepIntervalMs: 5,
+      });
+      const connection = stream.attach("vps-partitioned", { send: () => undefined, close: () => { closedCount += 1; } });
+      // Liveness keeps the reservation while the home talks.
+      clock = new Date(clock.getTime() + 30_000);
+      connection.heartbeat();
+      clock = new Date(clock.getTime() + 40_000);
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      expect(stream.connectedRuntimes()).toEqual(["vps-partitioned"]);
+      clock = new Date(clock.getTime() + 61_000);
+      await vi.waitFor(() => { expect(stream.connectedRuntimes()).toEqual([]); }, { timeout: 1_000, interval: 5 });
+      expect(closedCount).toBe(1);
+      await stream.shutdown();
+      expect(stream.sweepRunning()).toBe(false);
+    });
+
     it("expires stored upgrade tickets and bounds connections per instance", async () => {
       const stream = new CollaborationControlStream({
         controlAuthority: { registerTransport: () => undefined, acknowledge: async () => ({ completedDenialIds: [] }) },
