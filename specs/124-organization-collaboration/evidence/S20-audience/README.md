@@ -122,14 +122,14 @@ workstation with a display, drop the `xvfb-run` prefix):
 
 ```bash
 NODE_OPTIONS=--max-old-space-size=4096 bun run build:desktop
-cp specs/124-organization-collaboration/evidence/S20-audience/{electron-capture.e2e.test.ts,renderer-asset.ts} tests/e2e/desktop/
+cp specs/124-organization-collaboration/evidence/S20-audience/{electron-capture.e2e.test.ts,renderer-asset.ts,capture-safety.ts} tests/e2e/desktop/
 S20_SHOT_MODE=no-org S20_SHOT_OUT=/tmp/s20-electron xvfb-run --auto-servernum \
   --server-args="-screen 0 1440x900x24" pnpm exec vitest run --config vitest.e2e.config.ts \
   tests/e2e/desktop/electron-capture.e2e.test.ts
 S20_SHOT_MODE=org S20_SHOT_OUT=/tmp/s20-electron xvfb-run --auto-servernum \
   --server-args="-screen 0 1440x900x24" pnpm exec vitest run --config vitest.e2e.config.ts \
   tests/e2e/desktop/electron-capture.e2e.test.ts
-rm tests/e2e/desktop/electron-capture.e2e.test.ts tests/e2e/desktop/renderer-asset.ts
+rm tests/e2e/desktop/electron-capture.e2e.test.ts tests/e2e/desktop/renderer-asset.ts tests/e2e/desktop/capture-safety.ts
 ```
 
 The `org` run patches the built renderer chunk for the duration of the run and restores it in

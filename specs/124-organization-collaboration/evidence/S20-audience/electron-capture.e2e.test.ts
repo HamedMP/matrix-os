@@ -1,8 +1,8 @@
 // S20 T101 evidence capture for Electron Desktop (spec 124). Not a regression test:
 // it drives the BUILT desktop app (desktop/out) against the desktop e2e stub gateway
 // and saves PNGs. Run it from tests/e2e/desktop/ (copy it there) under Xvfb:
-//   pnpm --filter desktop build
-//   cp specs/124-organization-collaboration/evidence/S20-audience/{electron-capture.e2e.test.ts,renderer-asset.ts} tests/e2e/desktop/
+//   bun run build:desktop
+//   cp specs/124-organization-collaboration/evidence/S20-audience/{electron-capture.e2e.test.ts,renderer-asset.ts,capture-safety.ts} tests/e2e/desktop/
 //   S20_SHOT_MODE=no-org S20_SHOT_OUT=/tmp/s20 xvfb-run --auto-servernum --server-args="-screen 0 1440x900x24" \
 //     pnpm exec vitest run --config vitest.e2e.config.ts tests/e2e/desktop/electron-capture.e2e.test.ts
 //   S20_SHOT_MODE=org ... (same command; patches and restores the built renderer chunk)
@@ -18,6 +18,7 @@ import { _electron, type ElectronApplication, type Page } from "playwright";
 import { startStubGateway, type StubGateway } from "./fixtures/stub-gateway";
 import { closeElectronApp } from "./fixtures/close-electron";
 import { patchRendererAsset, restoreRendererAsset, type RendererAssetPatch } from "./renderer-asset.js";
+import { captureStep, cleanupWithRestore, recordBoundedDiagnostic } from "./capture-safety.js";
 
 const root = resolve(__dirname, "../../..");
 const main = join(root, "desktop/out/main/index.js");
@@ -151,7 +152,7 @@ suite(`S20 Electron Desktop evidence (${MODE})`, () => {
         if (path.endsWith("/members")) return json(res, members);
         if (path === `/api/collaboration/scopes/${PROJECT_SCOPE}/project/inventory`) return json(res, inventory);
         if (path === "/api/collaboration/inbox" || path === "/api/collaboration/shared") return json(res, { items: [] });
-        unhandled.add(`${req.method} ${path}`);
+        recordBoundedDiagnostic(unhandled, `${req.method} ${path}`);
         return json(res, { error: "not_found" }, 404);
       }
       const upstream = httpRequest(new URL(req.url!, base.url), { method: req.method, headers: req.headers }, (response) => {
@@ -195,13 +196,16 @@ suite(`S20 Electron Desktop evidence (${MODE})`, () => {
   }, 120_000);
 
   afterAll(async () => {
-    if (app) await closeElectronApp(app).catch((error: unknown) => console.log("close failed", error instanceof Error ? error.message : String(error)));
-    front?.closeAllConnections();
-    if (front) await new Promise<void>((done) => front.close(() => done()));
-    await base?.close();
-    if (profile) rmSync(profile, { recursive: true, force: true });
-    if (patched) { restoreRendererAsset(patched); console.log("[s20] restored renderer chunk"); }
-    console.log("[s20] unhandled collaboration calls:", [...unhandled].join(", ") || "none");
+    await cleanupWithRestore(async () => {
+      if (app) await closeElectronApp(app).catch((error: unknown) => console.log("close failed", error instanceof Error ? error.message : String(error)));
+      front?.closeAllConnections();
+      if (front) await new Promise<void>((done) => front.close(() => done()));
+      await base?.close();
+      if (profile) rmSync(profile, { recursive: true, force: true });
+      console.log("[s20] unhandled collaboration calls:", [...unhandled].join(", ") || "none");
+    }, () => {
+      if (patched) { restoreRendererAsset(patched); console.log("[s20] restored renderer chunk"); }
+    });
   });
 
   async function shot(name: string): Promise<void> {
@@ -218,11 +222,11 @@ suite(`S20 Electron Desktop evidence (${MODE})`, () => {
   }
   async function step(name: string, run: () => Promise<void>): Promise<void> {
     if (process.env.S20_ONLY && process.env.S20_ONLY !== name) return;
-    try { await run(); } catch (error: unknown) {
+    await captureStep(name, run, async (_name, error) => {
       console.log(`[s20] FAILED ${name}:`, error instanceof Error ? error.message.split("\n")[0] : String(error));
       await page.screenshot({ path: join(OUT, `failure-${MODE}-${name}.png`) }).catch((error: unknown) => console.warn("[s20] best-effort step failed", error instanceof Error ? error.name : String(error)));
       await page.keyboard.press("Escape").catch((error: unknown) => console.warn("[s20] best-effort step failed", error instanceof Error ? error.name : String(error)));
-    }
+    }, name === "project");
   }
 
   it("captures terminal, project, and Chat share controls", async () => {
