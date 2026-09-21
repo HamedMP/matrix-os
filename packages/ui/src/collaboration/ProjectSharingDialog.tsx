@@ -106,9 +106,28 @@ export function ProjectSharingDialog({
           className="rounded-xl border px-3 py-2 text-sm">
           <span className="font-medium">{item.id}</span>
           <span className="ml-2 capitalize" style={{ color: "var(--text-secondary)" }}>{item.kind}</span>
+          {item.kind === "chat" && item.executionRoot ? <div className="mt-1 text-xs" style={{ color: "var(--text-secondary)" }}>
+            <span>{item.executionRoot.kind === "worktree" ? `Chat worktree ${item.executionRoot.worktreeId}` : "Project root"}</span>
+            {item.branch ? <span className="ml-2">Branch: {item.branch}</span> : null}
+            {item.dirty ? <span className="ml-2">Uncommitted changes</span> : null}
+          </div> : null}
         </li>)}
       </ul>
     </section>
+
+    {currentInventory.gitSetup ? <section aria-labelledby="project-git-heading" className="rounded-xl border p-4 text-sm">
+      <h3 id="project-git-heading" className="font-medium">Owner Git setup</h3>
+      <p className="mt-1">{currentInventory.gitSetup.identity.status === "ready"
+        ? `Commits use ${currentInventory.gitSetup.identity.label}.`
+        : currentInventory.gitSetup.identity.status === "missing"
+          ? "Owner Git identity is missing. Set a Git name and email before committing."
+          : "Owner Git identity is unavailable."}</p>
+      <p className="mt-1">{currentInventory.gitSetup.forgeCredential.status === "ready"
+        ? "GitHub access is ready for push and pull requests."
+        : currentInventory.gitSetup.forgeCredential.status === "missing"
+          ? "GitHub access is missing. Connect the owner's GitHub account before push or pull requests."
+          : "GitHub access is unavailable."}</p>
+    </section> : null}
 
     {currentInventory.externalReferences.length > 0 ? <section aria-labelledby="external-references-heading"
       className="rounded-xl border p-4">
