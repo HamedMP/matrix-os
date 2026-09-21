@@ -78,7 +78,6 @@ describe("CollaborationDirectoryOutbox", () => {
       organizationId: "org_matrix_team",
       ownerId: collaborationActors.owner,
       kind: "chat",
-      organizationId: "org_matrix_team",
       authorityGeneration: 1,
       metadataRevision: 1,
       recipients: [{

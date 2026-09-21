@@ -190,7 +190,7 @@ function CollaborationHome({ api, openInvitation, openChat, openTerminal, openPr
             <p className="font-medium">Shared with your organization</p>
             <p className="text-sm" style={{ color: "var(--text-secondary)" }}>Shared {kindLabel(item.kind)} · opens when you join</p>
           </div>
-          <button type="button" className={buttonClass} onClick={() => item.kind === "terminal" ? openTerminal(item.scopeId) : item.kind === "project" ? openProject(item.scopeId) : openChat(item.scopeId)}>Open</button>
+          <p className="text-sm" style={{ color: "var(--text-secondary)" }}>Access will be available when this share is enabled.</p>
         </article>
         : !item.resource
         ? <article key={discoveryKey(item)} className="flex flex-wrap items-center gap-4 rounded-2xl border p-4">
