@@ -22,6 +22,14 @@ export interface SharedActiveRunHandle {
   sharedScopeId?: string;
 }
 
+/** S09: the claimed canonical run handed to the shared adapter factory. */
+export interface SharedDispatchRun {
+  id: string;
+  turnId: string;
+  executionRoot: CanonicalChatRun["executionRoot"] | null;
+  executionRootFingerprint: string | null;
+}
+
 export interface StartSharedDispatchInput {
   owner: ChatOwner;
   message: CanonicalChatMessage;
@@ -61,6 +69,7 @@ export class SharedChatExecutionCoordinator {
     scopeId: string,
     createAdapter: (
       context: NonNullable<ClaimedQueuedTurn["sharedExecution"]>,
+      run: SharedDispatchRun,
     ) => Promise<CanonicalChatProviderAdapter> | CanonicalChatProviderAdapter,
   ): Promise<void> {
     if (this.options.isClosing() || this.options.atCapacity(owner)
@@ -85,8 +94,9 @@ export class SharedChatExecutionCoordinator {
           await this.notify(scopeId);
           return;
         }
-        if (!claimed.sharedExecution || claimed.sharedExecution.scopeId !== scopeId
-          || claimed.run.executionRoot) {
+        // S09: a rooted run is dispatched on the owner's sandboxed root; the adapter
+        // factory refuses it when no sandbox capability or root resolver exists.
+        if (!claimed.sharedExecution || claimed.sharedExecution.scopeId !== scopeId) {
           await this.finishPreparationFailure(
             owner,
             chatId,
@@ -101,7 +111,12 @@ export class SharedChatExecutionCoordinator {
 
         let adapter: CanonicalChatProviderAdapter;
         try {
-          adapter = await createAdapter(claimed.sharedExecution);
+          adapter = await createAdapter(claimed.sharedExecution, {
+            id: claimed.run.id,
+            turnId: claimed.run.turnId,
+            executionRoot: claimed.run.executionRoot ?? null,
+            executionRootFingerprint: claimed.run.executionRootFingerprint ?? null,
+          });
           if (adapter.driverKind !== claimed.run.driverKind) {
             throw new Error("Shared adapter driver mismatch");
           }
