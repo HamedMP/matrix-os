@@ -20,6 +20,7 @@ import {
 } from "../../packages/gateway/src/collaboration/wiring.js";
 import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
 import {
+  allowAllOrganizationPrecondition,
   collaborationIds,
   createCollaborationTestDatabase,
   type CollaborationTestDatabase,
@@ -62,6 +63,7 @@ describe("gateway collaboration wiring", () => {
 
   it("resolves dependencies before route registration and drains before database disposal", async () => {
     const runtime = await createGatewayCollaboration({
+      organizationPrecondition: allowAllOrganizationPrecondition,
       db: fixture.db,
       chatRepository: new ChatRepository(fixture.db),
       config: {
@@ -102,6 +104,7 @@ describe("gateway collaboration wiring", () => {
 
   it("registers M3 routes only after terminal dependencies are resolved and drains them on shutdown", async () => {
     const runtime = await createGatewayCollaboration({
+      organizationPrecondition: allowAllOrganizationPrecondition,
       db: fixture.db,
       chatRepository: new ChatRepository(fixture.db),
       config: {
@@ -157,6 +160,7 @@ describe("gateway collaboration wiring", () => {
       owner_type: "personal",
       owner_id: "user_owner",
       kind: "chat",
+      organization_id: "org_matrix_team",
       resource_id: collaborationIds.chat,
       parent_scope_id: null,
       membership_mode: "direct",
@@ -178,6 +182,7 @@ describe("gateway collaboration wiring", () => {
     }).execute();
 
     const runtime = await createGatewayCollaboration({
+      organizationPrecondition: allowAllOrganizationPrecondition,
       db: fixture.db,
       chatRepository: new ChatRepository(fixture.db),
       config: {
@@ -204,6 +209,7 @@ describe("gateway collaboration wiring", () => {
     await bootstrapCollaborationDatabase(fixture.db);
     await seedSharedChat(fixture);
     const runtime = await createGatewayCollaboration({
+      organizationPrecondition: allowAllOrganizationPrecondition,
       db: fixture.db,
       chatRepository: new ChatRepository(fixture.db),
       config: {
@@ -294,6 +300,7 @@ describe("gateway collaboration wiring", () => {
     await bootstrapCollaborationDatabase(fixture.db);
     await seedSharedChat(fixture);
     const runtime = await createGatewayCollaboration({
+      organizationPrecondition: allowAllOrganizationPrecondition,
       db: fixture.db,
       chatRepository: new ChatRepository(fixture.db),
       config: {
@@ -400,6 +407,7 @@ async function seedSharedChat(fixture: CollaborationTestDatabase): Promise<void>
     owner_type: "personal",
     owner_id: "user_owner",
     kind: "chat",
+    organization_id: "org_matrix_team",
     resource_id: collaborationIds.chat,
     parent_scope_id: null,
     membership_mode: "direct",

@@ -305,7 +305,7 @@ describe("CollaborationProxy", () => {
     const verifier = new CollaborationActorProofVerifier({
       runtimeId: "runtime_owner", keys: { "collaboration-key-1": key }, now: () => now,
     });
-    expect(verifier.verifyPolicy(JSON.parse(Buffer.from(policyHeader!, "base64url").toString("utf8"))))
+    expect((JSON.parse(Buffer.from(policyHeader!, "base64url").toString("utf8")) as { policy: Record<string, unknown> }).policy)
       .toMatchObject({ milestone: "m4", mode: "internal" });
   });
 
@@ -350,7 +350,7 @@ describe("CollaborationProxy", () => {
     const verifier = new CollaborationActorProofVerifier({
       runtimeId: "runtime_owner", keys: { "collaboration-key-1": key }, now: () => now,
     });
-    expect(verifier.verifyPolicy(JSON.parse(Buffer.from(policyHeader!, "base64url").toString("utf8"))))
+    expect((JSON.parse(Buffer.from(policyHeader!, "base64url").toString("utf8")) as { policy: Record<string, unknown> }).policy)
       .toMatchObject({ milestone: "m2", mode: "internal" });
   });
 
@@ -370,7 +370,7 @@ describe("CollaborationProxy", () => {
     const verifier = new CollaborationActorProofVerifier({
       runtimeId: "runtime_owner", keys: { "collaboration-key-1": key }, now: () => now,
     });
-    expect(verifier.verifyPolicy(JSON.parse(Buffer.from(disabledHeader!, "base64url").toString("utf8"))))
+    expect((JSON.parse(Buffer.from(disabledHeader!, "base64url").toString("utf8")) as { policy: Record<string, unknown> }).policy)
       .toMatchObject({ milestone: "m2", mode: "off" });
 
     await repository.setPolicy({
@@ -392,7 +392,7 @@ describe("CollaborationProxy", () => {
     expect(readOnly.status).toBe(200);
     const [, readOnlyInit] = fetchImpl.mock.calls[0] as [string, RequestInit];
     const readOnlyHeader = new Headers(readOnlyInit.headers).get("x-matrix-collaboration-policy");
-    expect(verifier.verifyPolicy(JSON.parse(Buffer.from(readOnlyHeader!, "base64url").toString("utf8"))))
+    expect((JSON.parse(Buffer.from(readOnlyHeader!, "base64url").toString("utf8")) as { policy: Record<string, unknown> }).policy)
       .toMatchObject({ milestone: "m2", mode: "read_only" });
 
     fetchImpl.mockClear();
@@ -416,7 +416,7 @@ describe("CollaborationProxy", () => {
     expect(created.status).toBe(200);
     const [, createdInit] = fetchImpl.mock.calls[0] as [string, RequestInit];
     const createdHeader = new Headers(createdInit.headers).get("x-matrix-collaboration-policy");
-    expect(verifier.verifyPolicy(JSON.parse(Buffer.from(createdHeader!, "base64url").toString("utf8"))))
+    expect((JSON.parse(Buffer.from(createdHeader!, "base64url").toString("utf8")) as { policy: Record<string, unknown> }).policy)
       .toMatchObject({ milestone: "m2", mode: "read_only" });
   });
 

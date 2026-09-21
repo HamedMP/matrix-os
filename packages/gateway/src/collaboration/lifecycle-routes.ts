@@ -16,6 +16,7 @@ import {
   verifyHttp,
   readJson,
   requireOwnerLifecycleProof,
+  requireScopeOrganizationMembership,
   requireProjectLifecycle,
   notifyScope,
   digest,
@@ -29,6 +30,7 @@ export function registerLifecycleRoutes(routes: Hono, options: CollaborationRout
     const { value, bytes } = await readJson(c);
     const proof = await verifyHttp(options.verifier, c, bytes);
     requireOwnerLifecycleProof(proof, scopeId);
+    await requireScopeOrganizationMembership(options, scopeId, proof.actorId);
     const input = CollaborationLifecycleRequestSchema.parse(value);
     const scope = await options.repository.getScope(scopeId);
     if (!scope) throw new CollaborationRepositoryError("not_found", "Collaboration scope not found");
@@ -90,6 +92,7 @@ export function registerLifecycleRoutes(routes: Hono, options: CollaborationRout
     const operationId = CollaborationIdSchema.parse(c.req.param("operationId"));
     const proof = await verifyHttp(options.verifier, c, new Uint8Array());
     requireOwnerLifecycleProof(proof, scopeId);
+    await requireScopeOrganizationMembership(options, scopeId, proof.actorId);
     const projectOperation = options.projectLifecycle
       ? await options.projectLifecycle.getOperation(scopeId, proof.actorId, operationId)
       : null;
@@ -104,6 +107,7 @@ export function registerLifecycleRoutes(routes: Hono, options: CollaborationRout
     const exportId = CollaborationIdSchema.parse(c.req.param("exportId"));
     const proof = await verifyHttp(options.verifier, c, new Uint8Array());
     requireOwnerLifecycleProof(proof, scopeId);
+    await requireScopeOrganizationMembership(options, scopeId, proof.actorId);
     const exported = await options.repository.getScopeExport(scopeId, proof.actorId, exportId);
     if (!exported) throw new CollaborationRepositoryError("not_found", "Scope export not found");
     return c.json(CollaborationScopeExportSchema.parse(exported));

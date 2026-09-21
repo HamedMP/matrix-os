@@ -1,8 +1,11 @@
 import type { CollaborationRole } from "@matrix-os/contracts";
 import type { Selectable } from "kysely";
-import type { CollaborationPolicy } from "@matrix-os/contracts";
+import { CollaborationAuthorizationError, type CollaborationAuthorizationErrorCode } from "./authority-error.js";
 import type { CollaborationScopesTable } from "./database.js";
+import type { OrganizationPrecondition } from "./organization-precondition.js";
 import type { CollaborationRepository } from "./repository.js";
+
+export { CollaborationAuthorizationError, type CollaborationAuthorizationErrorCode };
 
 export type CollaborationAction =
   | "read"
@@ -15,21 +18,10 @@ export type CollaborationAction =
   | "control_execution"
   | "recover";
 
-export type CollaborationAuthorizationErrorCode = "not_found" | "forbidden" | "unavailable";
-
-export class CollaborationAuthorizationError extends Error {
-  constructor(
-    public readonly code: CollaborationAuthorizationErrorCode,
-    message: string,
-  ) {
-    super(message);
-    this.name = "CollaborationAuthorizationError";
-  }
-}
-
 export interface AuthorizedCollaborationContext {
   actorId: string;
   ownerId: string;
+  organizationId: string;
   scopeId: string;
   membershipScopeId: string;
   resourceKind: "chat" | "terminal" | "project";
@@ -42,6 +34,8 @@ export interface AuthorizedCollaborationContext {
 }
 
 export interface CollaborationAuthorityOptions {
+  /** The organization precondition; every authorization consults it before any allow (S20). */
+  organizationPrecondition: OrganizationPrecondition;
   now?: () => Date;
 }
 
@@ -50,23 +44,36 @@ type ExecutionScope = Pick<
   "kind" | "lifecycle" | "owner_id" | "execution_generation" | "execution_eligibility"
 >;
 
+/**
+ * Deny-wins evaluator for one home computer. Order of checks: the scope
+ * exists, the membership scope resolves, the actor holds fresh membership in
+ * the scope's organization (the S20 precondition; no flag or cohort), the
+ * actor holds current scope membership, the lifecycle admits the action, and
+ * finally the role allows it.
+ */
 export class CollaborationAuthority {
   private readonly now: () => Date;
+  /** The organization precondition every protected operation must pass, including proof-only owner operations. */
+  readonly organizationPrecondition: OrganizationPrecondition;
   constructor(
     private readonly repository: CollaborationRepository,
-    options: CollaborationAuthorityOptions = {},
+    options: CollaborationAuthorityOptions,
   ) {
     this.now = options.now ?? (() => new Date());
+    this.organizationPrecondition = options.organizationPrecondition;
   }
 
   async authorize(input: {
     scopeId: string;
     actorId: string;
     action: CollaborationAction;
-    executionPolicy?: CollaborationPolicy;
   }): Promise<AuthorizedCollaborationContext> {
     const scope = await this.loadScope(input.scopeId);
     const membershipScope = await this.resolveMembershipScope(scope);
+    await this.organizationPrecondition.require({
+      organizationId: membershipScope.organization_id,
+      actorId: input.actorId,
+    });
     const member = await this.repository.getMember(membershipScope.id, input.actorId);
     if (!member || member.status !== "accepted") {
       throw new CollaborationAuthorizationError("not_found", "Current membership is required");
@@ -74,22 +81,13 @@ export class CollaborationAuthority {
     if (member.expiresAt && new Date(member.expiresAt).getTime() <= this.now().getTime()) {
       throw new CollaborationAuthorizationError("not_found", "Current membership is required");
     }
-    const participantActorIds = input.action === "request_ai" || input.action === "control_execution"
-      ? await this.listCurrentParticipantActorIds(membershipScope.id)
-      : undefined;
-    this.requireLifecycle(
-      scope,
-      member.role,
-      input.actorId,
-      input.action,
-      input.executionPolicy,
-      participantActorIds,
-    );
+    this.requireLifecycle(scope, member.role, input.action);
     requireRoleCapability(member.role, input.action);
 
     return {
       actorId: input.actorId,
       ownerId: scope.owner_id,
+      organizationId: membershipScope.organization_id!,
       scopeId: scope.id,
       membershipScopeId: membershipScope.id,
       resourceKind: scope.kind,
@@ -129,7 +127,8 @@ export class CollaborationAuthority {
     if (parent.kind !== "project" || parent.membership_mode !== "direct"
       || (parent.lifecycle !== "shared" && parent.lifecycle !== "archived")
       || parent.lifecycle !== scope.lifecycle || parent.owner_id !== scope.owner_id
-      || parent.authority_runtime_id !== scope.authority_runtime_id) {
+      || parent.authority_runtime_id !== scope.authority_runtime_id
+      || parent.organization_id !== scope.organization_id) {
       throw new CollaborationAuthorizationError("unavailable", "Inherited authority is unavailable");
     }
     return parent;
@@ -138,13 +137,10 @@ export class CollaborationAuthority {
   private requireLifecycle(
     scope: Selectable<CollaborationScopesTable>,
     role: CollaborationRole,
-    actorId: string,
     action: CollaborationAction,
-    executionPolicy?: CollaborationPolicy,
-    participantActorIds?: string[],
   ): void {
     if (action === "request_ai" || action === "control_execution") {
-      if (!this.executionAllowed(scope, actorId, action, executionPolicy, participantActorIds)) {
+      if (!executionAllowed(scope, action)) {
         throw new CollaborationAuthorizationError("unavailable", "Shared execution is unavailable");
       }
     }
@@ -155,43 +151,16 @@ export class CollaborationAuthority {
     throw new CollaborationAuthorizationError("unavailable", "Scope is not available for this action");
   }
 
-  async canRequestAi(
-    scope: ExecutionScope,
-    actorId: string,
-    role: CollaborationRole,
-    membershipScopeId: string,
-    executionPolicy?: CollaborationPolicy,
-  ): Promise<boolean> {
-    const participantActorIds = await this.listCurrentParticipantActorIds(membershipScopeId);
-    return role !== "viewer" && scope.lifecycle === "shared"
-      && this.executionAllowed(scope, actorId, "request_ai", executionPolicy, participantActorIds);
+  canRequestAi(scope: ExecutionScope, role: CollaborationRole): boolean {
+    return role !== "viewer" && scope.lifecycle === "shared" && executionAllowed(scope, "request_ai");
   }
+}
 
-  private executionAllowed(
-    scope: ExecutionScope,
-    actorId: string,
-    action: "request_ai" | "control_execution",
-    policy?: CollaborationPolicy,
-    participantActorIds: string[] = [],
-  ): boolean {
-    if (action === "request_ai" && scope.kind !== "chat") return false;
-    if (action === "control_execution" && scope.kind !== "chat" && scope.kind !== "terminal") return false;
-    const requiredMilestone = scope.kind === "terminal" ? "m3" : "m2";
-    if (!policy || policy.milestone !== requiredMilestone || policy.mode === "off" || policy.mode === "read_only"
-      || scope.execution_generation === null || scope.execution_eligibility === null) return false;
-    if (policy.mode === "enabled") return true;
-    if (policy.cohort.length > 1_000) return false;
-    return policy.cohort.includes(actorId) && policy.cohort.includes(scope.owner_id)
-      && participantActorIds.every((participantActorId) => policy.cohort.includes(participantActorId));
-  }
-
-  private async listCurrentParticipantActorIds(scopeId: string): Promise<string[]> {
-    const now = this.now().getTime();
-    const members = await this.repository.listMembers(scopeId, { includePending: true });
-    return members.filter((member) => (member.status === "accepted" || member.status === "pending")
-      && (!member.expiresAt || new Date(member.expiresAt).getTime() > now))
-      .map((member) => member.actorId);
-  }
+/** Execution needs a resolved runtime capability on the scope; no milestone or cohort participates. */
+function executionAllowed(scope: ExecutionScope, action: "request_ai" | "control_execution"): boolean {
+  if (action === "request_ai" && scope.kind !== "chat") return false;
+  if (action === "control_execution" && scope.kind !== "chat" && scope.kind !== "terminal") return false;
+  return scope.execution_generation !== null && scope.execution_eligibility !== null;
 }
 
 function requireRoleCapability(role: CollaborationRole, action: CollaborationAction): void {

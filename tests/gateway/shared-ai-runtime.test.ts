@@ -302,15 +302,6 @@ describe("shared AI dispatch fence", () => {
 });
 describe("shared AI runtime cancellation", () => {
   it("reauthorizes the actor immediately before stopping the external run", async () => {
-    const policy = { getM2: vi.fn(async () => ({
-      milestone: "m2" as const,
-      mode: "enabled" as const,
-      cohort: [],
-      issuedAt: "2026-09-10T00:00:00.000Z",
-      expiresAt: "2026-09-10T01:00:00.000Z",
-      keyId: "key-1",
-      signature: "signature",
-    })) };
     const authorize = vi.fn()
       .mockResolvedValueOnce({
         scopeId: "10000000-0000-4000-8000-000000000001",
@@ -322,7 +313,6 @@ describe("shared AI runtime cancellation", () => {
       .mockRejectedValueOnce(new CollaborationAuthorizationError("not_found", "revoked"));
     const cancelSharedRun = vi.fn(async () => undefined);
     const dispatch = createSharedAiCancellationDispatcher({
-      policy,
       authority: { authorize },
       orchestrator: { cancelSharedRun },
     });
@@ -371,26 +361,22 @@ describe("shared AI runtime cancellation", () => {
 });
 
 describe("shared AI queue recovery", () => {
-  it("does not fetch rollout policy when there is no queued work", async () => {
-    const getPolicy = vi.fn();
+  it("wakes nothing when there is no queued work", async () => {
     const dispatch = vi.fn();
     const reconcilePendingApprovals = vi.fn(async () => undefined);
 
     await recoverSharedAiQueue({
       reconcilePendingApprovals,
       listQueued: vi.fn(async () => []),
-      getPolicy,
       dispatch,
     });
 
     expect(reconcilePendingApprovals).toHaveBeenCalledOnce();
-    expect(getPolicy).not.toHaveBeenCalled();
     expect(dispatch).not.toHaveBeenCalled();
   });
 
-  it("checks policy once and wakes each queued scope once", async () => {
+  it("wakes each queued scope once without consulting any rollout policy", async () => {
     const dispatch = vi.fn(async () => undefined);
-    const getPolicy = vi.fn(async () => ({ mode: "enabled" as const }));
 
     await recoverSharedAiQueue({
       reconcilePendingApprovals: vi.fn(async () => undefined),
@@ -399,11 +385,9 @@ describe("shared AI queue recovery", () => {
         { scopeId: "scope-1", chatId: "chat-1" },
         { scopeId: "scope-2", chatId: "chat-2" },
       ]),
-      getPolicy,
       dispatch,
     });
 
-    expect(getPolicy).toHaveBeenCalledOnce();
     expect(dispatch).toHaveBeenCalledTimes(2);
     expect(dispatch).toHaveBeenCalledWith("scope-1", "chat-1");
     expect(dispatch).toHaveBeenCalledWith("scope-2", "chat-2");

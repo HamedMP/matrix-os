@@ -101,7 +101,6 @@ export class CollaborationActorProofVerifier {
     body: Uint8Array;
     conditionalHeaders?: CollaborationDeleteCondition;
     action: CollaborationAction;
-    executionPolicy?: CollaborationPolicy;
   }): Promise<AuthorizedCollaborationContext> {
     const proof = await this.verifyHttp(input);
     if (!proof.scopeId || !this.options.authority) {
@@ -111,7 +110,6 @@ export class CollaborationActorProofVerifier {
       scopeId: proof.scopeId,
       actorId: proof.actorId,
       action: input.action,
-      ...(input.executionPolicy ? { executionPolicy: input.executionPolicy } : {}),
     });
     if (context.ownerId !== proof.ownerId || context.authorityRuntimeId !== proof.runtimeId) {
       throw invalidProof();
@@ -153,21 +151,20 @@ export class CollaborationActorProofVerifier {
     return proof;
   }
 
-  verifyPolicy(input: unknown): CollaborationPolicy {
-    const parsed = CollaborationSignedPolicySchema.safeParse(input);
+  verifyPolicy(signedPolicy: unknown): CollaborationPolicy {
+    const parsed = CollaborationSignedPolicySchema.safeParse(signedPolicy);
     if (!parsed.success) throw invalidProof();
-    const key = this.options.keys[parsed.data.keyId];
+    const { policy, keyId, signature } = parsed.data;
+    const key = this.options.keys[keyId];
     if (!key || Buffer.byteLength(key) < 32
-      || !constantTimeSignatureMatches("policy", parsed.data.policy, key, parsed.data.signature)) {
-      throw invalidProof();
-    }
+      || !constantTimeSignatureMatches("policy", policy, key, signature)) throw invalidProof();
     const now = this.now().getTime();
-    if (Date.parse(parsed.data.policy.issuedAt) > now + MAX_CLOCK_SKEW_MS
-      || Date.parse(parsed.data.policy.expiresAt) <= now
-      || Date.parse(parsed.data.policy.expiresAt) - Date.parse(parsed.data.policy.issuedAt) > MAX_PROOF_LIFETIME_MS) {
-      throw invalidProof();
-    }
-    return parsed.data.policy;
+    const issuedAt = Date.parse(policy.issuedAt);
+    const expiresAt = Date.parse(policy.expiresAt);
+    if (issuedAt > now + MAX_CLOCK_SKEW_MS
+      || expiresAt <= now
+      || expiresAt - issuedAt > MAX_PROOF_LIFETIME_MS) throw invalidProof();
+    return policy;
   }
 
   shutdown(): void {

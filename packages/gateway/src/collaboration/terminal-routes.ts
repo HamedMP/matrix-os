@@ -6,7 +6,6 @@ import {
 import type { Hono } from "hono";
 import {
   authorize,
-  decodePolicy,
   requireTerminalDispatcher,
   readJson,
   handle,
@@ -16,7 +15,7 @@ import {
 export function registerTerminalRoutes(routes: Hono, options: CollaborationRouteOptions): void {
   routes.get("/api/collaboration/scopes/:scopeId/terminal", async (c) => handle(c, async () => {
     const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
-    const context = await authorize(options, c, new Uint8Array(), "read", scopeId, "m3");
+    const context = await authorize(options, c, new Uint8Array(), "read", scopeId);
     return c.json(await requireTerminalDispatcher(options.terminalDispatcher).read(context));
   }));
 
@@ -24,14 +23,12 @@ export function registerTerminalRoutes(routes: Hono, options: CollaborationRoute
     const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
     const { value, bytes } = await readJson(c);
     const action = CollaborationTerminalActionSchema.parse(value);
-    const context = await authorize(options, c, bytes, "control_execution", scopeId, "m3");
-    const policy = options.verifier.verifyPolicy(decodePolicy(c));
+    const context = await authorize(options, c, bytes, "control_execution", scopeId);
     const connectionId = "connectionId" in action ? action.connectionId : `http_${context.actorId}`;
     return c.json(await requireTerminalDispatcher(options.terminalDispatcher).dispatch({
       scopeId,
       actorId: context.actorId,
       connectionId,
-      policy,
       action,
     }));
   }));

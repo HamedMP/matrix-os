@@ -7,6 +7,10 @@ import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
 import { authMiddleware } from "../../packages/gateway/src/auth.js";
 import { CollaborationActorProofVerifier } from "../../packages/gateway/src/collaboration/actor-proof.js";
 import { CollaborationAuthority } from "../../packages/gateway/src/collaboration/authority.js";
+import {
+  createOrganizationPrecondition,
+  type OrganizationPrecondition,
+} from "../../packages/gateway/src/collaboration/organization-precondition.js";
 import { CollaborationChatAdapter } from "../../packages/gateway/src/collaboration/chat-adapter.js";
 import { CollaborationChatExecutionAdapter } from "../../packages/gateway/src/collaboration/chat-execution-adapter.js";
 import { CollaborationChatScopeService } from "../../packages/gateway/src/collaboration/chat-scope.js";
@@ -29,6 +33,7 @@ import {
   collaborationIds,
   createCollaborationTestDatabase,
   type CollaborationTestDatabase,
+  allowAllOrganizationPrecondition,
 } from "./collaboration-test-support.js";
 
 const now = new Date("2026-09-07T12:00:00.000Z");
@@ -43,6 +48,14 @@ const projectScopeId = "10000000-0000-4000-8000-000000000401";
 function request(index: number): string {
   return `50000000-0000-4000-8000-${index.toString().padStart(12, "0")}`;
 }
+
+// Tests switch this to a real precondition to prove proof-only owner operations are gated.
+let activePrecondition: OrganizationPrecondition = allowAllOrganizationPrecondition;
+const switchablePrecondition: OrganizationPrecondition = {
+  require: (input) => activePrecondition.require(input),
+  registerSource: (source) => activePrecondition.registerSource(source),
+  describe: () => activePrecondition.describe(),
+};
 
 describe("collaboration gateway routes", () => {
   let fixture: CollaborationTestDatabase;
@@ -61,7 +74,7 @@ describe("collaboration gateway routes", () => {
       now: () => now,
       createId: () => collaborationIds.invitation,
     });
-    const authority = new CollaborationAuthority(repository, { now: () => now });
+    const authority = new CollaborationAuthority(repository, { now: () => now, organizationPrecondition: switchablePrecondition });
     chatScope = new CollaborationChatScopeService(fixture.db, {
       runtimeId: collaborationIds.runtime,
       preflightSecret: "0123456789abcdef0123456789abcdef",
@@ -262,7 +275,112 @@ describe("collaboration gateway routes", () => {
   });
 
   afterEach(async () => {
+    activePrecondition = allowAllOrganizationPrecondition;
     await fixture.destroy();
+  });
+
+  it("denies every proof-only owner operation once the owner's organization membership is revoked", async () => {
+    await shareChat();
+    const scopeRows = await fixture.db.selectFrom("collaboration_scopes").select("organization_id").execute();
+    expect(scopeRows).toEqual([{ organization_id: "org_matrix_team" }]);
+    const exported = await signedJson({
+      actorId: collaborationActors.owner, scopeId: collaborationIds.scope, method: "POST",
+      path: `/api/collaboration/scopes/${collaborationIds.scope}/lifecycle`,
+      body: { type: "export", clientRequestId: request(70), expectedRevision: "1" },
+    });
+    expect(exported.status).toBe(200);
+    const operationId = ((await exported.json()) as { id: string }).id;
+    const current = await signedJson({
+      actorId: collaborationActors.owner, scopeId: collaborationIds.scope, method: "GET",
+      path: `/api/collaboration/scopes/${collaborationIds.scope}`,
+    });
+    const revision = ((await current.json()) as { revision: string }).revision;
+    const invited = await signedJson({
+      actorId: collaborationActors.owner, scopeId: collaborationIds.scope, method: "POST",
+      path: `/api/collaboration/scopes/${collaborationIds.scope}/invitations`,
+      body: { identifier: "nimanaderi", role: "editor", clientRequestId: request(71), expectedRevision: revision },
+    });
+    expect(invited.status).toBe(201);
+
+    const revoked = new Set([collaborationActors.owner, collaborationActors.editor]);
+    const precondition = createOrganizationPrecondition({ now: () => now });
+    precondition.registerSource({
+      assertMembership: async ({ actorId }) => revoked.has(actorId)
+        ? { member: false }
+        : { member: true, expiresAt: new Date(now.getTime() + 20_000).toISOString() },
+    });
+    activePrecondition = precondition;
+
+    const denied = [
+      signedJson({ actorId: collaborationActors.owner, scopeId: collaborationIds.scope, method: "POST",
+        path: `/api/collaboration/scopes/${collaborationIds.scope}/lifecycle`,
+        body: { type: "export", clientRequestId: request(72), expectedRevision: "3" } }),
+      signedJson({ actorId: collaborationActors.owner, scopeId: collaborationIds.scope, method: "GET",
+        path: `/api/collaboration/scopes/${collaborationIds.scope}/operations/${operationId}` }),
+      signedJson({ actorId: collaborationActors.owner, scopeId: collaborationIds.scope, method: "GET",
+        path: `/api/collaboration/scopes/${collaborationIds.scope}/exports/${operationId}` }),
+      signedJson({ actorId: collaborationActors.owner, scopeId: collaborationIds.scope, method: "GET",
+        path: `/api/collaboration/scopes/${collaborationIds.scope}/project/inventory` }),
+      signedJson({ actorId: collaborationActors.owner, scopeId: collaborationIds.scope, method: "POST",
+        path: `/api/collaboration/scopes/${collaborationIds.scope}/project/confirm`,
+        body: { clientRequestId: request(73), expectedScopeRevision: "3", expectedProjectRevision: "1",
+          inventoryHash: "a".repeat(64), membershipHash: "b".repeat(64), inventoryToken: "c".repeat(64) } }),
+      signedJson({ actorId: collaborationActors.owner, method: "POST",
+        path: `/api/collaboration/runtimes/${collaborationIds.runtime}/scopes/preflight`,
+        body: { kind: "chat", resourceId: collaborationIds.chat, organizationId: "org_matrix_team" } }),
+      signedJson({ actorId: collaborationActors.owner, method: "POST",
+        path: `/api/collaboration/runtimes/${collaborationIds.runtime}/scopes`,
+        body: { kind: "chat", resourceId: collaborationIds.chat, organizationId: "org_matrix_team",
+          clientRequestId: request(74), expectedRevision: "0", confirmationToken: "d".repeat(64) } }),
+      signedJson({ actorId: collaborationActors.editor, scopeId: collaborationIds.scope, method: "GET",
+        path: `/api/collaboration/invitations/${collaborationIds.invitation}` }),
+      signedJson({ actorId: collaborationActors.editor, scopeId: collaborationIds.scope, method: "POST",
+        path: `/api/collaboration/invitations/${collaborationIds.invitation}/accept`,
+        body: { clientRequestId: request(75), expectedRevision: "1" } }),
+      signedJson({ actorId: collaborationActors.editor, scopeId: collaborationIds.scope, method: "POST",
+        path: `/api/collaboration/invitations/${collaborationIds.invitation}/decline`,
+        body: { clientRequestId: request(76), expectedRevision: "1" } }),
+    ];
+    for (const response of await Promise.all(denied)) {
+      expect(response.status).toBe(404);
+      expect(await response.json()).toEqual({ error: "Collaboration unavailable", code: "not_found" });
+    }
+    const member = await fixture.db.selectFrom("collaboration_members").select("status")
+      .where("actor_id", "=", collaborationActors.editor).executeTakeFirstOrThrow();
+    expect(member.status).toBe("pending");
+  });
+
+  it("rejects a foreign organizationId before any scope is written and binds the organization into the confirmation", async () => {
+    const precondition = createOrganizationPrecondition({ now: () => now });
+    precondition.registerSource({
+      assertMembership: async ({ organizationId }) => organizationId === "org_matrix_team"
+        ? { member: true, expiresAt: new Date(now.getTime() + 20_000).toISOString() }
+        : { member: false },
+    });
+    activePrecondition = precondition;
+    const preflightPath = `/api/collaboration/runtimes/${collaborationIds.runtime}/scopes/preflight`;
+    const foreign = await signedJson({
+      actorId: collaborationActors.owner, method: "POST", path: preflightPath,
+      body: { kind: "chat", resourceId: collaborationIds.chat, organizationId: "org_other_company" },
+    });
+    expect(foreign.status).toBe(404);
+    const preflight = await signedJson({
+      actorId: collaborationActors.owner, method: "POST", path: preflightPath,
+      body: { kind: "chat", resourceId: collaborationIds.chat, organizationId: "org_matrix_team" },
+    });
+    expect(preflight.status).toBe(200);
+    const eligibility = await preflight.json() as { confirmationToken: string; resourceRevision: string };
+    // A confirmation issued for org_matrix_team cannot create the scope under another organization.
+    activePrecondition = allowAllOrganizationPrecondition;
+    const swapped = await signedJson({
+      actorId: collaborationActors.owner, method: "POST",
+      path: `/api/collaboration/runtimes/${collaborationIds.runtime}/scopes`,
+      body: { kind: "chat", resourceId: collaborationIds.chat, organizationId: "org_other_company",
+        clientRequestId: request(77), expectedRevision: eligibility.resourceRevision,
+        confirmationToken: eligibility.confirmationToken },
+    });
+    expect(swapped.status).toBe(409);
+    expect(await fixture.db.selectFrom("collaboration_scopes").selectAll().execute()).toEqual([]);
   });
 
   it("preflights and converts an owner Chat without accepting participant identity", async () => {
@@ -298,7 +416,7 @@ describe("collaboration gateway routes", () => {
     });
   });
 
-  it("projects requestAi for the current actor, role, M2 cohort, and runtime capability", async () => {
+  it("projects requestAi for the current actor, role and runtime capability", async () => {
     const executionEligibility = collaborationExecutionEligibility();
     await chatScope.reconcileExecutionEligibility({ executionGeneration: 9, eligibility: executionEligibility });
     await shareChat();
@@ -331,79 +449,42 @@ describe("collaboration gateway routes", () => {
       },
     ]).execute();
     const path = `/api/collaboration/scopes/${collaborationIds.scope}`;
-    const capability = async (
-      actorId: string,
-      policy: true | { mode: "off" | "internal" | "enabled" | "read_only"; cohort: string[] },
-    ): Promise<boolean> => {
+    const capability = async (actorId: string): Promise<boolean> => {
       const response = await signedJson({
         actorId,
         scopeId: collaborationIds.scope,
         method: "GET",
         path,
-        m2Policy: policy,
       });
       expect(response.status).toBe(200);
       return ((await response.json()) as { capabilities: { requestAi: boolean } }).capabilities.requestAi;
     };
 
-    await expect(capability(collaborationActors.owner, true)).resolves.toBe(true);
-    await expect(capability(collaborationActors.editor, true)).resolves.toBe(true);
-    await expect(capability(collaborationActors.viewer, true)).resolves.toBe(false);
-    await expect(capability(collaborationActors.editor, {
-      mode: "internal",
-      cohort: [collaborationActors.owner, collaborationActors.editor, collaborationActors.viewer],
-    })).resolves.toBe(true);
-    await expect(capability(collaborationActors.editor, {
-      mode: "internal",
-      cohort: [collaborationActors.owner, collaborationActors.editor],
-    })).resolves.toBe(false);
-    await expect(capability(collaborationActors.editor, {
-      mode: "internal",
-      cohort: [collaborationActors.editor],
-    })).resolves.toBe(false);
-    await expect(capability(collaborationActors.owner, { mode: "off", cohort: [] })).resolves.toBe(false);
-    await expect(capability(collaborationActors.owner, { mode: "read_only", cohort: [] })).resolves.toBe(false);
+    await expect(capability(collaborationActors.owner)).resolves.toBe(true);
+    await expect(capability(collaborationActors.editor)).resolves.toBe(true);
+    await expect(capability(collaborationActors.viewer)).resolves.toBe(false);
 
     await fixture.db.updateTable("collaboration_scopes")
       .set({ execution_generation: 10 })
       .where("id", "=", collaborationIds.scope).execute();
-    await expect(capability(collaborationActors.owner, true)).resolves.toBe(false);
+    await expect(capability(collaborationActors.owner)).resolves.toBe(false);
   });
 
-  it("prepares a private project scope only with a signed M4 policy", async () => {
+  it("prepares a private project scope for the owner runtime", async () => {
     const preflightPath = `/api/collaboration/runtimes/${collaborationIds.runtime}/scopes/preflight`;
     const body = { kind: "project", resourceId: "proj_alpha", organizationId: "org_matrix_team" };
-    expect((await signedJson({
-      actorId: collaborationActors.owner,
-      method: "POST",
-      path: preflightPath,
-      body,
-    })).status).toBe(401);
     const preflight = await signedJson({
       actorId: collaborationActors.owner,
       method: "POST",
       path: preflightPath,
       body,
-      m4Policy: true,
     });
     expect(preflight.status).toBe(200);
     const eligibility = await preflight.json() as { confirmationToken: string; resourceRevision: string };
-    expect((await signedJson({
-      actorId: collaborationActors.owner,
-      method: "POST",
-      path: `/api/collaboration/runtimes/${collaborationIds.runtime}/scopes`,
-      body: {
-        ...body,
-        clientRequestId: request(92),
-        expectedRevision: eligibility.resourceRevision,
-        confirmationToken: eligibility.confirmationToken,
-      },
-    })).status).toBe(401);
     const created = await signedJson({
       actorId: collaborationActors.owner,
       method: "POST",
       path: `/api/collaboration/runtimes/${collaborationIds.runtime}/scopes`,
-      m4Policy: true,
       body: {
         ...body,
         clientRequestId: request(92),
@@ -424,7 +505,6 @@ describe("collaboration gateway routes", () => {
       method: "POST",
       path: preflightPath,
       body,
-      m4Policy: true,
     });
     await expect(reopened.json()).resolves.toMatchObject({
       existingScopeId: collaborationIds.scope,
@@ -432,13 +512,12 @@ describe("collaboration gateway routes", () => {
     });
   });
 
-  it("returns one owner-derived inventory and accepts only its exact M4 confirmation", async () => {
+  it("returns one owner-derived inventory and accepts only its exact confirmation", async () => {
     const preflightPath = `/api/collaboration/runtimes/${collaborationIds.runtime}/scopes/preflight`;
     const preflight = await signedJson({
       actorId: collaborationActors.owner,
       method: "POST",
       path: preflightPath,
-      m4Policy: true,
       body: { kind: "project", resourceId: "proj_alpha", organizationId: "org_matrix_team" },
     });
     const eligibility = await preflight.json() as { confirmationToken: string; resourceRevision: string };
@@ -446,30 +525,22 @@ describe("collaboration gateway routes", () => {
       actorId: collaborationActors.owner,
       method: "POST",
       path: `/api/collaboration/runtimes/${collaborationIds.runtime}/scopes`,
-      m4Policy: true,
       body: {
         kind: "project",
         resourceId: "proj_alpha",
-
         organizationId: "org_matrix_team",
+
         clientRequestId: request(93),
         expectedRevision: eligibility.resourceRevision,
         confirmationToken: eligibility.confirmationToken,
       },
     });
     const inventoryPath = `/api/collaboration/scopes/${collaborationIds.scope}/project/inventory`;
-    expect((await signedJson({
-      actorId: collaborationActors.owner,
-      scopeId: collaborationIds.scope,
-      method: "GET",
-      path: inventoryPath,
-    })).status).toBe(401);
     const inventoryResponse = await signedJson({
       actorId: collaborationActors.owner,
       scopeId: collaborationIds.scope,
       method: "GET",
       path: inventoryPath,
-      m4Policy: true,
     });
     expect(inventoryResponse.status).toBe(200);
     const inventory = await inventoryResponse.json() as Record<string, unknown>;
@@ -485,7 +556,6 @@ describe("collaboration gateway routes", () => {
       scopeId: collaborationIds.scope,
       method: "POST",
       path: `/api/collaboration/scopes/${collaborationIds.scope}/project/confirm`,
-      m4Policy: true,
       body: {
         clientRequestId: request(94),
         expectedScopeRevision: inventory.scopeRevision,
@@ -524,7 +594,6 @@ describe("collaboration gateway routes", () => {
       scopeId: collaborationIds.scope,
       method: "GET",
       path: `/api/collaboration/scopes/${collaborationIds.scope}/project`,
-      m4Policy: true,
     });
     expect(project.status).toBe(200);
     await expect(project.json()).resolves.toMatchObject({
@@ -535,7 +604,7 @@ describe("collaboration gateway routes", () => {
     });
   });
 
-  it("preflights, shares, reads, and controls a terminal only with signed M3 policy", async () => {
+  it("preflights, shares, reads, and controls a terminal through the authority", async () => {
     const preflightPath = `/api/collaboration/runtimes/${collaborationIds.runtime}/scopes/preflight`;
     const preflight = await signedJson({
       actorId: collaborationActors.owner,
@@ -568,18 +637,11 @@ describe("collaboration gateway routes", () => {
     });
 
     const terminalPath = `/api/collaboration/scopes/${collaborationIds.scope}/terminal`;
-    expect((await signedJson({
-      actorId: collaborationActors.owner,
-      scopeId: collaborationIds.scope,
-      method: "GET",
-      path: terminalPath,
-    })).status).toBe(401);
     const terminal = await signedJson({
       actorId: collaborationActors.owner,
       scopeId: collaborationIds.scope,
       method: "GET",
       path: terminalPath,
-      m3Policy: true,
     });
     expect(terminal.status).toBe(200);
     expect(await terminal.json()).toMatchObject({ id: terminalId, incarnation: terminalIncarnation });
@@ -589,7 +651,6 @@ describe("collaboration gateway routes", () => {
       scopeId: collaborationIds.scope,
       method: "POST",
       path: `${terminalPath}/actions`,
-      m3Policy: true,
       body: {
         type: "acquire",
         clientRequestId: request(91),
@@ -1056,7 +1117,7 @@ describe("collaboration gateway routes", () => {
       .toEqual([{ actor_id: collaborationActors.owner }]);
   });
 
-  it("admits and lists M2 AI requests only with a signed current M2 policy", async () => {
+  it("admits and lists AI requests through the authority evaluator", async () => {
     await shareChat();
     await fixture.db.updateTable("collaboration_scopes").set({
       execution_generation: 1,
@@ -1068,13 +1129,6 @@ describe("collaboration gateway routes", () => {
       expectedRevision: "2",
       text: "Summarize our discussion",
     };
-    expect((await signedJson({
-      actorId: collaborationActors.owner,
-      scopeId: collaborationIds.scope,
-      method: "POST",
-      path,
-      body,
-    })).status).toBe(401);
     const tampered = await signedJson({
       actorId: collaborationActors.owner,
       scopeId: collaborationIds.scope,
@@ -1085,7 +1139,6 @@ describe("collaboration gateway routes", () => {
         clientRequestId: request(81),
         selection: { instanceId: "claude_shared", model: "claude-opus-4-6" },
       },
-      m2Policy: true,
     });
     expect(tampered.status).toBe(400);
     const admitted = await signedJson({
@@ -1094,7 +1147,6 @@ describe("collaboration gateway routes", () => {
       method: "POST",
       path,
       body,
-      m2Policy: true,
     });
     expect(admitted.status).toBe(201);
     expect(await admitted.json()).toMatchObject({
@@ -1111,7 +1163,6 @@ describe("collaboration gateway routes", () => {
       scopeId: collaborationIds.scope,
       method: "GET",
       path,
-      m2Policy: true,
     });
     const listedBody = await listed.json();
     expect(listed.status, JSON.stringify(listedBody)).toBe(200);
@@ -1153,7 +1204,6 @@ describe("collaboration gateway routes", () => {
       scopeId: collaborationIds.scope,
       method: "GET",
       path: requestPath,
-      m2Policy: true,
     });
     expect(capabilityResponse.status).toBe(200);
     const capabilityBody = await capabilityResponse.json() as { resourceRevision: string };
@@ -1194,7 +1244,6 @@ describe("collaboration gateway routes", () => {
         expectedRevision: String(Number(capabilityBody.resourceRevision) + 1),
         text: "Do not switch this Chat",
       },
-      m2Policy: true,
     })).status).toBe(503);
     await expect(fixture.db.selectFrom("chats")
       .select(["current_selection", "bound_driver_kind", "bound_instance_id"])
@@ -1245,7 +1294,6 @@ describe("collaboration gateway routes", () => {
         expectedRevision: "2",
         text: "Use the owner's exact Codex binding",
       },
-      m2Policy: true,
     });
 
     expect(response.status).toBe(201);
@@ -1607,12 +1655,6 @@ describe("collaboration gateway routes", () => {
     query?: string;
     body?: unknown;
     deleteConditions?: { clientRequestId: string; expectedRevision: string; expectedMemberRevision: string };
-    m2Policy?: true | {
-      mode: "off" | "internal" | "enabled" | "read_only";
-      cohort: string[];
-    };
-    m3Policy?: boolean;
-    m4Policy?: boolean;
   }): Promise<Response> {
     const body = input.body === undefined ? new Uint8Array() : new TextEncoder().encode(JSON.stringify(input.body));
     const proof = signer.signHttp({
@@ -1626,22 +1668,11 @@ describe("collaboration gateway routes", () => {
       body,
       ...(input.deleteConditions ? { conditionalHeaders: input.deleteConditions } : {}),
     });
-    const policy = input.m2Policy || input.m3Policy || input.m4Policy ? signer.signPolicy({
-      milestone: input.m4Policy ? "m4" : input.m3Policy ? "m3" : "m2",
-      revision: "1",
-      mode: typeof input.m2Policy === "object" ? input.m2Policy.mode : "enabled",
-      cohort: typeof input.m2Policy === "object" ? input.m2Policy.cohort : [],
-      issuedAt: now.toISOString(),
-      expiresAt: new Date(now.getTime() + 30_000).toISOString(),
-    }) : undefined;
     return app.request(`${input.path}${input.query ? `?${input.query}` : ""}`, {
       method: input.method,
       headers: {
         "content-type": "application/json",
         "x-matrix-collaboration-proof": Buffer.from(JSON.stringify(proof)).toString("base64url"),
-        ...(policy ? {
-          "x-matrix-collaboration-policy": Buffer.from(JSON.stringify(policy)).toString("base64url"),
-        } : {}),
         ...(input.deleteConditions ? {
           "x-matrix-client-request-id": input.deleteConditions.clientRequestId,
           "x-matrix-expected-revision": input.deleteConditions.expectedRevision,

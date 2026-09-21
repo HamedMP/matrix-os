@@ -11,6 +11,7 @@ import {
 } from "@matrix-os/scope-runtime/profile";
 import type { ChatDatabase } from "../../packages/gateway/src/chat/database.js";
 import type { CollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
+import type { OrganizationPrecondition } from "../../packages/gateway/src/collaboration/organization-precondition.js";
 
 export const collaborationActors = {
   owner: "user_collaboration_owner",
@@ -25,6 +26,18 @@ export const collaborationIds = {
   chat: "chat_collaboration_primary",
   runtime: "runtime_collaboration_owner",
 } as const;
+
+/**
+ * Test double that bypasses the S20 organization precondition so suites that
+ * exercise scope membership, roles and lifecycle can keep fixtures without an
+ * organization. The precondition itself is covered by
+ * collaboration-org-precondition.test.ts.
+ */
+export const allowAllOrganizationPrecondition: OrganizationPrecondition = {
+  async require() {},
+  registerSource() {},
+  describe: () => ({ source: "registered" }),
+};
 
 export type CollaborationTestAdapterId = "claude-code" | "codex";
 

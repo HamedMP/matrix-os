@@ -24,11 +24,11 @@ import {
   digestDeleteConditions,
   requireTerminalAdapter,
   requireProjectScope,
-  requireM4Policy,
   readJson,
   requireOwnerCreationProof,
+  requireOrganizationMembership,
+  requireScopeOrganizationMembership,
   scopeProjection,
-  projectionM2Policy,
   projectPreparationProjection,
   memberProjection,
   invitationProjection,
@@ -47,7 +47,8 @@ export function registerScopeRoutes(routes: Hono, options: CollaborationRouteOpt
     const proof = await verifyHttp(options.verifier, c, bytes);
     requireOwnerCreationProof(proof, CollaborationRuntimeIdSchema.parse(c.req.param("runtimeId")), options.runtimeId);
     const input = CollaborationScopePreflightRequestSchema.parse(value);
-    if (input.kind === "project") requireM4Policy(options.verifier, c, proof.actorId, proof.ownerId, true);
+    // The owner must be a current member of the organization the share is scoped to (S20 / T101).
+    await requireOrganizationMembership(options, proof.actorId, input.organizationId);
     const result = input.kind === "chat"
       ? await options.chatScope.preflight({
           ownerId: proof.ownerId,
@@ -83,7 +84,8 @@ export function registerScopeRoutes(routes: Hono, options: CollaborationRouteOpt
     const proof = await verifyHttp(options.verifier, c, bytes);
     requireOwnerCreationProof(proof, CollaborationRuntimeIdSchema.parse(c.req.param("runtimeId")), options.runtimeId);
     const input = CollaborationCreateScopeRequestSchema.parse(value);
-    if (input.kind === "project") requireM4Policy(options.verifier, c, proof.actorId, proof.ownerId, true);
+    // Membership is proven before any write; the confirmation token also binds this organization.
+    await requireOrganizationMembership(options, proof.actorId, input.organizationId);
     const scope = input.kind === "chat"
       ? await options.chatScope.shareChat({
           ownerId: proof.ownerId,
@@ -128,7 +130,6 @@ export function registerScopeRoutes(routes: Hono, options: CollaborationRouteOpt
       context,
       options.authority,
       options.chatScope,
-      projectionM2Policy(options.verifier, c),
     ), 201);
   }));
 
@@ -141,7 +142,6 @@ export function registerScopeRoutes(routes: Hono, options: CollaborationRouteOpt
       context,
       options.authority,
       options.chatScope,
-      projectionM2Policy(options.verifier, c),
     ));
   }));
 
@@ -174,6 +174,7 @@ export function registerScopeRoutes(routes: Hono, options: CollaborationRouteOpt
       || ![member.actorId, member.invitedBy].includes(proof.actorId)) {
       throw new CollaborationAuthorizationError("forbidden", "Invitation access is required");
     }
+    await requireOrganizationMembership(options, proof.actorId, scope.organizationId ?? null);
     return c.json(await invitationProjection(options, member));
   }));
 
@@ -186,6 +187,7 @@ export function registerScopeRoutes(routes: Hono, options: CollaborationRouteOpt
     if (proof.scopeId !== member.scopeId || proof.actorId !== member.actorId) {
       throw new CollaborationAuthorizationError("forbidden", "Invitation access is required");
     }
+    await requireScopeOrganizationMembership(options, member.scopeId, proof.actorId);
     const result = await options.repository.acceptInvitation({
       invitationId,
       actorId: proof.actorId,
@@ -206,6 +208,7 @@ export function registerScopeRoutes(routes: Hono, options: CollaborationRouteOpt
     if (proof.scopeId !== member.scopeId || proof.actorId !== member.actorId) {
       throw new CollaborationAuthorizationError("forbidden", "Invitation access is required");
     }
+    await requireScopeOrganizationMembership(options, member.scopeId, proof.actorId);
     const result = await options.repository.declineInvitation({
       invitationId,
       actorId: proof.actorId,

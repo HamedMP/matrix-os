@@ -1,6 +1,6 @@
 /**
  * Extracted verbatim from packages/gateway/src/collaboration/routes.ts (S01 / T008):
- * the route option contract, proof/policy decoding, authorization helpers,
+ * the route option contract, proof decoding, authorization helpers,
  * projections and the shared error-to-status handler used by every
  * collaboration route module.
  */
@@ -11,13 +11,11 @@ import {
   COLLABORATION_CLIENT_REQUEST_ID_HEADER,
   COLLABORATION_EXPECTED_MEMBER_REVISION_HEADER,
   COLLABORATION_EXPECTED_REVISION_HEADER,
-  COLLABORATION_POLICY_HEADER,
   CollaborationInvitationSchema,
   CollaborationMemberSchema,
   CollaborationRevisionSchema,
   CollaborationRevokeRequestSchema,
   CollaborationScopeSchema,
-  type CollaborationPolicy,
 } from "@matrix-os/contracts";
 import type {
   Context,
@@ -130,9 +128,7 @@ export async function authorize(
   body: Uint8Array,
   action: CollaborationAction,
   scopeId: string,
-  requiredMilestone?: "m2" | "m3",
 ): Promise<AuthorizedCollaborationContext> {
-  const executionPolicy = requiredMilestone ? options.verifier.verifyPolicy(decodePolicy(c)) : undefined;
   const context = await options.verifier.verifyAndAuthorize({
     signedProof: decodeProof(c),
     method: method(c),
@@ -141,15 +137,8 @@ export async function authorize(
     body,
     conditionalHeaders: optionalDeleteConditions(c),
     action,
-    ...(executionPolicy ? { executionPolicy } : {}),
   });
   if (context.scopeId !== scopeId) throw new CollaborationAuthorizationError("forbidden", "Scope access is required");
-  if (executionPolicy && (executionPolicy.milestone !== requiredMilestone || executionPolicy.mode === "off"
-    || (executionPolicy.mode === "internal"
-      && (!executionPolicy.cohort.includes(context.actorId)
-        || !executionPolicy.cohort.includes(context.ownerId))))) {
-    throw new CollaborationAuthorizationError("unavailable", "Shared execution is unavailable");
-  }
   return context;
 }
 
@@ -196,21 +185,6 @@ export function decodeProof(c: Context): unknown {
   }
 }
 
-export function decodePolicy(c: Context): unknown {
-  const encoded = c.req.header(COLLABORATION_POLICY_HEADER);
-  if (!encoded || encoded.length > 8_192 || !/^[A-Za-z0-9_-]+$/.test(encoded)) {
-    throw new CollaborationActorProofError("invalid_proof", "Collaboration policy is invalid");
-  }
-  try {
-    return JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"));
-  } catch (error: unknown) {
-    if (!(error instanceof SyntaxError)) {
-      console.warn("[collaboration-routes] policy decode failed", error instanceof Error ? error.name : "UnknownError");
-    }
-    throw new CollaborationActorProofError("invalid_proof", "Collaboration policy is invalid");
-  }
-}
-
 export function requireExecutionAdapter(
   adapter: CollaborationChatExecutionAdapter | undefined,
 ): CollaborationChatExecutionAdapter {
@@ -240,23 +214,34 @@ export function requireProjectSharing(service: ProjectSharingService | undefined
   return service;
 }
 
-export function requireM4Policy(
-  verifier: CollaborationActorProofVerifier,
-  c: Context,
-  actorId: string,
-  ownerId: string,
-  mutation: boolean,
-): void {
-  const policy = verifier.verifyPolicy(decodePolicy(c));
-  if (policy.milestone !== "m4" || policy.mode === "off" || (mutation && policy.mode === "read_only")
-    || (policy.mode === "internal" && (!policy.cohort.includes(actorId) || !policy.cohort.includes(ownerId)))) {
-    throw new CollaborationAuthorizationError("unavailable", "Whole-project collaboration is unavailable");
-  }
-}
-
 export async function readJson(c: Context): Promise<{ value: unknown; bytes: Uint8Array }> {
   const bytes = new Uint8Array(await c.req.arrayBuffer());
   return { value: JSON.parse(new TextDecoder().decode(bytes)) as unknown, bytes };
+}
+
+/**
+ * Proof-only owner operations (scope creation, project inventory/confirm,
+ * lifecycle, operations, exports, invitation reads/decisions) never reach
+ * CollaborationAuthority.authorize, so they call the organization precondition
+ * here: current membership of the actor in the organization is required
+ * before any read or write, and it fails closed with no source registered.
+ */
+export async function requireOrganizationMembership(
+  options: { authority: Pick<CollaborationAuthority, "organizationPrecondition"> },
+  actorId: string,
+  organizationId: string | null | undefined,
+): Promise<void> {
+  await options.authority.organizationPrecondition.require({ organizationId, actorId });
+}
+
+export async function requireScopeOrganizationMembership(
+  options: { authority: Pick<CollaborationAuthority, "organizationPrecondition">; repository: CollaborationRepository },
+  scopeId: string,
+  actorId: string,
+): Promise<void> {
+  const scope = await options.repository.getScope(scopeId);
+  if (!scope) throw new CollaborationAuthorizationError("not_found", "Scope not found");
+  await requireOrganizationMembership(options, actorId, scope.organizationId ?? null);
 }
 
 export function requireOwnerCreationProof(
@@ -291,22 +276,22 @@ export async function scopeProjection(
   context: AuthorizedCollaborationContext,
   authority: CollaborationAuthority,
   chatScope: CollaborationChatScopeService,
-  executionPolicy?: CollaborationPolicy,
 ): Promise<ReturnType<typeof CollaborationScopeSchema.parse>> {
   const mutable = scope.lifecycle === "shared";
   const terminal = scope.kind === "terminal";
   const requestAi = scope.kind === "chat"
     && chatScope.matchesCurrentExecutionCapability(scope)
-    && await authority.canRequestAi({
+    && authority.canRequestAi({
       kind: scope.kind,
       lifecycle: scope.lifecycle,
       owner_id: scope.ownerId,
       execution_generation: scope.executionGeneration,
       execution_eligibility: scope.executionEligibility,
-    }, context.actorId, context.role, context.membershipScopeId, executionPolicy);
+    }, context.role);
   return CollaborationScopeSchema.parse({
     id: scope.id,
     ownerId: scope.ownerId,
+    ...(scope.organizationId ? { organizationId: scope.organizationId } : {}),
     kind: scope.kind,
     resourceId: scope.resourceId,
     ...(scope.parentScopeId ? { parentScopeId: scope.parentScopeId } : {}),
@@ -326,15 +311,6 @@ export async function scopeProjection(
       stopTerminal: terminal && context.role === "owner" && mutable,
     },
   });
-}
-
-export function projectionM2Policy(
-  verifier: CollaborationActorProofVerifier,
-  c: Context,
-): CollaborationPolicy | undefined {
-  if (!c.req.header(COLLABORATION_POLICY_HEADER)) return undefined;
-  const policy = verifier.verifyPolicy(decodePolicy(c));
-  return policy.milestone === "m2" ? policy : undefined;
 }
 
 export function projectPreparationProjection(scope: CollaborationScopeRecord) {

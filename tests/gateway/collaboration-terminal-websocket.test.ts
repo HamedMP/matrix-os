@@ -16,6 +16,7 @@ import {
   collaborationIds,
   createCollaborationTestDatabase,
   type CollaborationTestDatabase,
+  allowAllOrganizationPrecondition,
 } from "./collaboration-test-support.js";
 
 const now = new Date("2026-09-11T12:00:00.000Z");
@@ -44,7 +45,7 @@ describe("shared terminal WebSocket", () => {
 
   it("opens after M3 authorization and dispatches actions with the issued connection identity", async () => {
     const repository = new CollaborationRepository(fixture.db, { now: () => now });
-    const authority = new CollaborationAuthority(repository, { now: () => now });
+    const authority = new CollaborationAuthority(repository, { now: () => now, organizationPrecondition: allowAllOrganizationPrecondition });
     const metadata = {
       scopeId: collaborationIds.scope,
       terminalId,
@@ -114,17 +115,8 @@ describe("shared terminal WebSocket", () => {
       purpose: "terminal",
       path,
     });
-    const policy = signer.signPolicy({
-      milestone: "m3",
-      revision: "1",
-      mode: "enabled",
-      cohort: [],
-      issuedAt: now.toISOString(),
-      expiresAt: new Date(now.getTime() + 30_000).toISOString(),
-    });
     await app.request(path, { headers: {
       "x-matrix-collaboration-proof": encoded(proof),
-      "x-matrix-collaboration-policy": encoded(policy),
     } });
     const ws = { send: vi.fn(), close: vi.fn(), bufferedAmount: 0 };
     socketEvents!.onOpen?.({} as never, ws as never);
@@ -161,9 +153,9 @@ describe("shared terminal WebSocket", () => {
     expect(terminal.input).not.toHaveBeenCalled();
   });
 
-  it("allows read-only replay with a route-bound cursor but rejects control frames", async () => {
+  it("allows a viewer read-only replay with a route-bound cursor but rejects its control frames", async () => {
     const repository = new CollaborationRepository(fixture.db, { now: () => now });
-    const authority = new CollaborationAuthority(repository, { now: () => now });
+    const authority = new CollaborationAuthority(repository, { now: () => now, organizationPrecondition: allowAllOrganizationPrecondition });
     const terminal = {
       get: vi.fn(async () => ({
         scopeId: collaborationIds.scope,
@@ -226,7 +218,7 @@ describe("shared terminal WebSocket", () => {
       createNonce: () => "b".repeat(32),
     });
     const proof = signer.signSocket({
-      actorId: collaborationActors.editor,
+      actorId: collaborationActors.viewer,
       ownerId: collaborationActors.owner,
       runtimeId: collaborationIds.runtime,
       scopeId: collaborationIds.scope,
@@ -234,17 +226,8 @@ describe("shared terminal WebSocket", () => {
       path,
       query: "after=2",
     });
-    const policy = signer.signPolicy({
-      milestone: "m3",
-      revision: "1",
-      mode: "read_only",
-      cohort: [],
-      issuedAt: now.toISOString(),
-      expiresAt: new Date(now.getTime() + 30_000).toISOString(),
-    });
     await app.request(`${path}?after=2`, { headers: {
       "x-matrix-collaboration-proof": encoded(proof),
-      "x-matrix-collaboration-policy": encoded(policy),
     } });
     const ws = { send: vi.fn(), close: vi.fn(), bufferedAmount: 0 };
     socketEvents!.onOpen?.({} as never, ws as never);
@@ -270,6 +253,7 @@ async function seed(fixture: CollaborationTestDatabase): Promise<void> {
     owner_type: "personal",
     owner_id: collaborationActors.owner,
     kind: "terminal",
+    organization_id: "org_matrix_team",
     resource_id: terminalId,
     parent_scope_id: null,
     membership_mode: "direct",
@@ -284,19 +268,20 @@ async function seed(fixture: CollaborationTestDatabase): Promise<void> {
     created_at: now.toISOString(),
     updated_at: now.toISOString(),
   }).execute();
-  await fixture.db.insertInto("collaboration_members").values({
-    scope_id: collaborationIds.scope,
-    actor_id: collaborationActors.editor,
-    role: "editor",
-    status: "accepted",
-    invitation_id: null,
-    invited_by: collaborationActors.owner,
-    accepted_at: now.toISOString(),
-    expires_at: null,
-    revision: 1,
-    joined_at: now.toISOString(),
-    updated_at: now.toISOString(),
-  }).execute();
+  await fixture.db.insertInto("collaboration_members").values([collaborationActors.editor, collaborationActors.viewer]
+    .map((actorId) => ({
+      scope_id: collaborationIds.scope,
+      actor_id: actorId,
+      role: actorId === collaborationActors.viewer ? "viewer" as const : "editor" as const,
+      status: "accepted" as const,
+      invitation_id: null,
+      invited_by: collaborationActors.owner,
+      accepted_at: now.toISOString(),
+      expires_at: null,
+      revision: 1,
+      joined_at: now.toISOString(),
+      updated_at: now.toISOString(),
+    }))).execute();
 }
 
 function encoded(value: unknown): string {
