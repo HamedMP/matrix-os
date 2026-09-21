@@ -1,6 +1,7 @@
 import { sql } from "kysely";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createAiFundedPolicyRepository } from "../../packages/platform/src/ai-funded-policy-repository.js";
+import { cleanupExpiredReservations } from "../../packages/platform/src/ai-funded-reservation-cleanup.js";
 import { insertUserMachine, type PlatformDB } from "../../packages/platform/src/db.js";
 import {
   SpeechFundingError,
@@ -150,6 +151,88 @@ describe("funded AI speech wallet adapter", () => {
     expect(await db.executor.selectFrom("ai_funded_usage_reservations")
       .select("status").where("reservation_id", "=", reservation.reservationId)
       .executeTakeFirstOrThrow()).toEqual({ status: "released" });
+  });
+
+  it.each(["revoked", "expired"] as const)("rejects dispatch under a %s runtime credential", async (state) => {
+    await funded.grantCredit({
+      entryId: `addon_${state}`,
+      identity,
+      kind: "addon_grant",
+      amountMicrousd: 300,
+      sourceReference: `invoice_${state}`,
+    });
+    let clock = new Date(now);
+    const funding = createAiFundedSpeechFundingPort({
+      allowedSources: ["addon"],
+      credentialHashSecret: "s".repeat(32),
+      reservationIdFactory: () => `speech_funding_${state}`,
+      now: () => clock,
+      reservationTtlMs: 10 * 60_000,
+      credentialTtlMs: 5 * 60_000,
+    });
+    const reservation = await db.transaction((trx) => funding.reserve(trx.executor, {
+      identity,
+      requestId: `sp_${now.getTime()}_credential${state}`,
+      policyRevision: "speech-1",
+      modelId: "gpt-4o-transcribe",
+      maximumCostMicrousd: 80,
+    }));
+    if (state === "revoked") {
+      await db.executor.updateTable("ai_runtime_credentials")
+        .set({ revoked_at: clock.toISOString() })
+        .where("machine_id", "=", identity.machineId)
+        .where("audience", "=", "matrix-platform-speech")
+        .executeTakeFirstOrThrow();
+    } else {
+      clock = new Date(clock.getTime() + 5 * 60_000);
+    }
+
+    await expect(db.transaction((trx) => funding.start(trx.executor, reservation.reservationId)))
+      .rejects.toBeInstanceOf(SpeechFundingError);
+    expect(await db.executor.selectFrom("ai_funded_usage_reservations")
+      .select("status").where("reservation_id", "=", reservation.reservationId)
+      .executeTakeFirstOrThrow()).toEqual({ status: "reserved" });
+  });
+
+  it("conservatively reconciles an expired in-flight speech reservation", async () => {
+    await funded.grantCredit({
+      entryId: "addon_crashed_dispatch",
+      identity,
+      kind: "addon_grant",
+      amountMicrousd: 300,
+      sourceReference: "invoice_crashed_dispatch",
+    });
+    let clock = new Date(now);
+    const funding = createAiFundedSpeechFundingPort({
+      allowedSources: ["addon"],
+      credentialHashSecret: "s".repeat(32),
+      reservationIdFactory: () => "speech_funding_crashed",
+      now: () => clock,
+      inFlightTtlMs: 60_000,
+    });
+    const reservation = await db.transaction((trx) => funding.reserve(trx.executor, {
+      identity,
+      requestId: `sp_${now.getTime()}_crasheddispatchx`,
+      policyRevision: "speech-1",
+      modelId: "gpt-4o-transcribe",
+      maximumCostMicrousd: 80,
+    }));
+    await db.transaction((trx) => funding.start(trx.executor, reservation.reservationId));
+    clock = new Date(clock.getTime() + 61_000);
+
+    await expect(cleanupExpiredReservations({ db, now: () => clock }, { limit: 7 })).resolves.toBe(1);
+    expect(await db.executor.selectFrom("ai_funded_usage_reservations")
+      .select(["status", "actual_microusd", "finalization_mode"])
+      .where("reservation_id", "=", reservation.reservationId)
+      .executeTakeFirstOrThrow()).toEqual({
+        status: "settled",
+        actual_microusd: 80,
+        finalization_mode: "conservative",
+      });
+    expect(await db.executor.selectFrom("ai_funded_runtime_balances")
+      .select(["credit_balance_microusd", "reserved_microusd"])
+      .where("machine_id", "=", identity.machineId)
+      .executeTakeFirstOrThrow()).toMatchObject({ credit_balance_microusd: 220, reserved_microusd: 0 });
   });
 
   it("rolls back the wallet reservation when its enclosing speech admission fails", async () => {

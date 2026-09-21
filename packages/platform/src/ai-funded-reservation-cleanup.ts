@@ -1,12 +1,17 @@
 import { FundedAiSettlementResponseSchema } from "@matrix-os/contracts";
 import { sql } from "kysely";
 import { z } from "zod/v4";
-import type { AiFundedMeteringRepositoryOptions } from "./ai-funded-metering-repository.js";
+import type { PlatformDB } from "./db.js";
 import { exactInteger, utcMonthStart, fundingSummary, recordUsageFunding } from "./ai-funded-metering-helpers.js";
 import { reconcileExpiredPromotionalCredit, reservationDebitSplit, debitAttributedPromotionalGrants, debitPromotionalGrants } from "./ai-funded-reservation-sources.js";
 export const CleanupSchema = z.object({ limit: z.number().int().min(1).max(1_000) }).strict();
 
-export async function cleanupExpiredReservations(options: AiFundedMeteringRepositoryOptions, input: z.input<typeof CleanupSchema>): Promise<number> {
+export interface AiFundedReservationCleanupOptions {
+  db: PlatformDB;
+  now: () => Date;
+}
+
+export async function cleanupExpiredReservations(options: AiFundedReservationCleanupOptions, input: z.input<typeof CleanupSchema>): Promise<number> {
     const { limit } = CleanupSchema.parse(input);
     const checked = options.now();
     const checkedAt = checked.toISOString();

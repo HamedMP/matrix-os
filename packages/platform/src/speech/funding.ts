@@ -263,25 +263,30 @@ export function createAiFundedSpeechFundingPort(options: {
   async function speechReservation(
     trx: Transaction<PlatformDatabase>,
     reservationId: string,
+    activeAt?: string,
   ) {
-    return trx.selectFrom("ai_funded_usage_reservations as reservation")
+    let query = trx.selectFrom("ai_funded_usage_reservations as reservation")
       .innerJoin("ai_runtime_credentials as credential", "credential.token_id", "reservation.token_id")
       .selectAll("reservation")
       .where("reservation.reservation_id", "=", ReservationIdSchema.parse(reservationId))
       .where("credential.audience", "=", ACTIVE_SPEECH_AUDIENCE)
-      .where("credential.scope", "=", ACTIVE_SPEECH_SCOPE)
-      .forUpdate().executeTakeFirst();
+      .where("credential.scope", "=", ACTIVE_SPEECH_SCOPE);
+    if (activeAt !== undefined) {
+      query = query.where("credential.revoked_at", "is", null)
+        .where("credential.expires_at", ">", activeAt);
+    }
+    return query.forUpdate().executeTakeFirst();
   }
 
   async function start(trx: Transaction<PlatformDatabase>, reservationId: string): Promise<void> {
     const checked = now();
-    const row = await speechReservation(trx, reservationId);
+    const checkedAt = checked.toISOString();
+    const row = await speechReservation(trx, reservationId, checkedAt);
     if (!row) throw new SpeechFundingError("unavailable");
     if (row.status === "in_flight") return;
     if (row.status !== "reserved" || Date.parse(row.expires_at) <= checked.getTime()) {
       throw new SpeechFundingError("unavailable");
     }
-    const checkedAt = checked.toISOString();
     const updated = await trx.updateTable("ai_funded_usage_reservations").set({
       status: "in_flight",
       started_at: checkedAt,

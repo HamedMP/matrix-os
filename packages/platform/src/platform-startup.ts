@@ -48,6 +48,8 @@ import { CustomerVpsError } from './customer-vps-errors.js';
 import { dispatchBillingRuntimeActions } from './billing-runtime-actions.js';
 import { registerPlatformWebSocketUpgradeHandler } from './platform-websocket-upgrade.js';
 import { createAiFundedPolicyRepository, type AiFundedPolicyRepository } from './ai-funded-policy-repository.js';
+import { cleanupExpiredReservations } from './ai-funded-reservation-cleanup.js';
+import { createAiFundedReservationCleanupWorker } from './ai-funded-reservation-cleanup-worker.js';
 import {
   createAiFundedOperatorRoutes,
   createAiFundedRelayRoutes,
@@ -966,6 +968,17 @@ async function startPlatformServerWithCleanup(
     }
   }
 
+  const fundedReservationCleanupWorker = createAiFundedReservationCleanupWorker({
+    cleanupExpiredReservations: (input) => cleanupExpiredReservations({
+      db,
+      now: () => new Date(),
+    }, input),
+  });
+  registerCustomMcpStartupCleanup(async () => {
+    await fundedReservationCleanupWorker.shutdown();
+    await customMcpShutdown?.();
+  });
+
   const appEnv = process.env;
   const legacyContainerRoutingEnabled =
     appEnv.MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED === 'true' && !customerVpsService;
@@ -1039,6 +1052,7 @@ async function startPlatformServerWithCleanup(
         if (goldenSnapshotPromise) await goldenSnapshotPromise;
         await Promise.allSettled([
           collaboration?.shutdown(),
+          fundedReservationCleanupWorker.shutdown(),
           Promise.resolve(speechService.shutdown()),
           containerProxyDispatcher.close(),
           customerVpsProxyDispatcher.close(),
