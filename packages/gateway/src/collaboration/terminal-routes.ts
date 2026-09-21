@@ -11,6 +11,7 @@ import {
   handle,
   type CollaborationRouteOptions,
 } from "./route-support.js";
+import { CollaborationTerminalControlSettingSchema } from "./terminal-dispatcher.js";
 
 export function registerTerminalRoutes(routes: Hono, options: CollaborationRouteOptions): void {
   routes.get("/api/collaboration/scopes/:scopeId/terminal", async (c) => handle(c, async () => {
@@ -31,5 +32,14 @@ export function registerTerminalRoutes(routes: Hono, options: CollaborationRoute
       connectionId,
       action,
     }));
+  }));
+
+  // S07 review: the owner's explicit opt-in (or withdrawal) for Contributor control of a shared host shell.
+  routes.patch("/api/collaboration/scopes/:scopeId/terminal", async (c) => handle(c, async () => {
+    const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
+    const { value, bytes } = await readJson(c);
+    const setting = CollaborationTerminalControlSettingSchema.parse(value);
+    const context = await authorize(options, c, bytes, "manage_members", scopeId);
+    return c.json(await requireTerminalDispatcher(options.terminalDispatcher).setContributorControl(context, setting));
   }));
 }

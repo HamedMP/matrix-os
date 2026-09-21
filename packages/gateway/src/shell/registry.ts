@@ -333,7 +333,7 @@ export class ShellRegistry {
         creatorActorId: z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/)
           .parse(input.collaboration.creatorActorId),
         executionGeneration: z.number().int().positive().parse(input.collaboration.executionGeneration),
-        contributorControl: z.boolean().parse(input.collaboration.contributorControl ?? true),
+        contributorControl: z.boolean().parse(input.collaboration.contributorControl ?? false),
       } : undefined;
       await this.options.adapter.createSession({
         name,
@@ -435,7 +435,7 @@ export class ShellRegistry {
         ...session,
         collaborationScopeId: scopeId,
         sharedControlMode: "shared" as const,
-        contributorControl: z.boolean().parse(input.contributorControl ?? session.contributorControl ?? true),
+        contributorControl: z.boolean().parse(input.contributorControl ?? session.contributorControl ?? false),
         updatedAt: new Date().toISOString(),
       };
       file.sessions[targetName] = next;
@@ -444,7 +444,7 @@ export class ShellRegistry {
     });
   }
 
-  /** The owner may withdraw host-shell control for Contributors without unsharing the terminal. */
+  /** The owner opts Contributors into host-shell control, or withdraws it, without unsharing the terminal. */
   async setContributorControl(name: string, input: {
     scopeId: string;
     sessionIncarnation: string;

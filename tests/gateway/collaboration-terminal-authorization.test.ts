@@ -27,6 +27,8 @@ function setup(role: CollaborationRole, actorId = `user_${role}`, creatorActorId
       creatorActorId,
       createdAt: "2026-09-11T00:00:00.000Z",
       status: "active" as const,
+      // The owner has opted Contributors into controlling this host shell.
+      contributorControl: true,
     })),
     ...runtime,
   };
