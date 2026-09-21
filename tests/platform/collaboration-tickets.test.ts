@@ -10,6 +10,7 @@ import { sql } from "kysely";
 import { generateKeyPairSync } from "node:crypto";
 import { once } from "node:events";
 import { createServer } from "node:http";
+import { Hono } from "hono";
 import { WebSocket } from "ws";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -36,6 +37,7 @@ import {
   verifyEd25519,
 } from "../../packages/platform/src/collaboration/ticket-crypto.js";
 import { CollaborationControlStream, ControlStreamNotConnectedError } from "../../packages/platform/src/collaboration/control-stream.js";
+import { createPlatformCollaborationDirect } from "../../packages/platform/src/collaboration/direct-wiring.js";
 import { createCollaborationControlUpgradeHandler } from "../../packages/platform/src/collaboration/control-upgrade.js";
 import {
   createPlatformCollaborationTestDatabase,
@@ -406,6 +408,57 @@ describe("S05 platform tickets, endpoints and control", () => {
       })).toThrow(CollaborationTicketIssuerError);
       // The overlap window itself is unchanged.
       expect(RETIRED_KEY_OVERLAP_MS).toBe(15 * 60_000);
+    });
+
+    it("contains an unusable retirement time in the ticket route instead of failing platform startup", async () => {
+      // A retirement dated past the clock skew is refused by the issuer. Refusing it must make
+      // the ticket route unavailable, not abort the composition root that builds every other
+      // collaboration surface: a mistyped year in the operator's configuration cannot be a
+      // platform-wide outage.
+      const unusableRetirement = new Date(clock.getTime() + 3 * 60 * 60_000).toISOString();
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      const direct = await createPlatformCollaborationDirect({
+        db: fixture.collaborationDb as never,
+        repository,
+        controlAuthority: { registerTransport: () => undefined, acknowledge: async () => ({ completedDenialIds: [] }) },
+        projection: { isCurrentMember: async () => true },
+        keyring: { activeKeyId: "ticket-key-2", keys: { "ticket-key-2": seedB }, retired: { "ticket-key-1": seedA }, retiredAt: { "ticket-key-1": unusableRetirement } },
+        relayOrigin: "https://app.matrix-os.com",
+        resolveActor: async () => platformCollaborationActors.owner,
+        authenticateRuntime: async () => ({ runtimeId, ownerId: platformCollaborationActors.owner }),
+        resolveRelayHandle: async () => "owner-handle",
+        resolveOrganization: async () => organizationId,
+        now: () => clock,
+      });
+      try {
+        // The issuer is absent, exactly as it is when no signing keys are configured at all.
+        expect(direct.issuer).toBeNull();
+        const app = new Hono();
+        direct.register(app);
+        const ticket = await app.request("/api/collaboration/connections", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ clientRequestId: "30000000-0000-4000-8000-000000000001", scopeId, purpose: "stream", proofPublicKey: clientProofKey().raw }),
+        });
+        expect(ticket.status).toBe(503);
+        // Registration still answers, and it publishes no key at all: the retired key whose
+        // retirement could not be honoured is never handed to a home.
+        const registered = await app.request("/internal/collaboration/runtime-endpoints", {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-matrix-runtime-id": runtimeId, authorization: `Bearer ${"b".repeat(48)}` },
+          body: JSON.stringify(registration()),
+        });
+        expect(registered.status).toBe(200);
+        expect((await registered.json() as { platformSigningKeys: Array<{ keyId: string }> }).platformSigningKeys).toEqual([]);
+        // The misconfigured value itself never reaches the log.
+        const logged = warn.mock.calls.map((call) => call.map((part) => String(part)).join(" ")).join("\n");
+        expect(logged).toContain("ticket signing configuration");
+        expect(logged).not.toContain(unusableRetirement);
+        expect(logged).not.toContain(seedA);
+      } finally {
+        await direct.shutdown();
+        warn.mockRestore();
+      }
     });
   });
 
