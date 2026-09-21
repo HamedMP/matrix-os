@@ -9,7 +9,7 @@
  */
 import { createHash } from "node:crypto";
 import { Hono } from "hono";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CollaborationExecutionPolicySchema,
   CollaborationReadinessSchema,
@@ -214,6 +214,43 @@ describe("S08 owner-selected AI source", () => {
         scopeId: PROJECT_SCOPE, actorId: collaborationActors.owner, payloadHash: sha("stale"),
         request: putRequest(CLAUDE, { expectedRevision: first.revision }),
       })).rejects.toMatchObject({ code: "conflict" });
+    });
+
+    it.skipIf(!hasRealPostgres)("resolves the owner's source and the organization policy outside the scope lock", async () => {
+      // A second pool connection probes the scope row: NOWAIT fails with 55P03 while put() holds FOR UPDATE.
+      const observed: string[] = [];
+      const probe = async (label: string) => {
+        try {
+          await fixture.db.selectFrom("collaboration_scopes").select("id").where("id", "=", PROJECT_SCOPE).forUpdate().noWait().execute();
+          observed.push(`${label}:free`);
+        } catch (error: unknown) {
+          observed.push(`${label}:${(error as { code?: string }).code === "55P03" ? "locked" : "error"}`);
+        }
+      };
+      const resolveSelection = eligibility.resolveSelection.bind(eligibility);
+      vi.spyOn(eligibility, "resolveSelection").mockImplementation(async (...args) => { await probe("eligibility"); return resolveSelection(...args); });
+      const resolveOrganization = organizationAiSubmission.resolve;
+      vi.spyOn(organizationAiSubmission, "resolve").mockImplementation(async (...args) => { await probe("organization"); return resolveOrganization(...args); });
+      try {
+        await expect(ownerPolicy()).resolves.toMatchObject({ revision: "1" });
+        expect(observed).toEqual(["eligibility:free", "organization:free"]);
+      } finally {
+        vi.restoreAllMocks();
+      }
+    });
+
+    it("rejects the write when the scope changed while the source was being resolved", async () => {
+      const resolveSelection = eligibility.resolveSelection.bind(eligibility);
+      vi.spyOn(eligibility, "resolveSelection").mockImplementation(async (...args) => {
+        await fixture.db.updateTable("collaboration_scopes").set({ revision: 7 }).where("id", "=", PROJECT_SCOPE).execute();
+        return resolveSelection(...args);
+      });
+      try {
+        await expect(ownerPolicy()).rejects.toMatchObject({ code: "conflict" });
+        expect(await policies.resolve(PROJECT_SCOPE)).toBeNull();
+      } finally {
+        vi.restoreAllMocks();
+      }
     });
 
     it("replays an identical client request and rejects a different payload under the same id", async () => {
