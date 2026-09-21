@@ -334,6 +334,25 @@ describe("S05 platform tickets, endpoints and control", () => {
       await expect(request("direct_session")).rejects.toMatchObject({ code: "not_found" });
     });
 
+    it("issues owner runtime setup tickets only for the enrolled owner with fresh organization membership", async () => {
+      const request = (runtime = runtimeId, org = organizationId) => ({
+        clientRequestId: "40000000-0000-4000-8000-0000000000a1",
+        runtimeId: runtime, organizationId: org, proofPublicKey: clientProofKey().raw,
+      });
+      const issued = await issuer.issueOwnerRuntime({ actorId: platformCollaborationActors.owner, request: request() });
+      expect(issued.signedTicket.ticket).toMatchObject({
+        actorId: platformCollaborationActors.owner, organizationId,
+        resource: { kind: "owner_runtime" }, purpose: "owner_runtime",
+        runtime: { runtimeId: logicalRuntimeId, authorityGeneration: 1 },
+      });
+      expect(issued.signedTicket.ticket).not.toHaveProperty("scopeId");
+      await expect(issuer.issueOwnerRuntime({ actorId: invitedActor, request: request() })).rejects.toMatchObject({ code: "not_found" });
+      await expect(issuer.issueOwnerRuntime({ actorId: platformCollaborationActors.owner,
+        request: request("vps:99999999-9999-4999-8999-999999999999") })).rejects.toMatchObject({ code: "not_found" });
+      members.delete(platformCollaborationActors.owner);
+      await expect(issuer.issueOwnerRuntime({ actorId: platformCollaborationActors.owner, request: request() })).rejects.toMatchObject({ code: "not_found" });
+    });
+
     it("refuses when the scope's home is not registered for its owner", async () => {
       const other = "10000000-0000-4000-8000-000000000077";
       await repository.applyDirectoryEvent({ eventId: "20000000-0000-4000-8000-000000000077", scopeId: other, runtimeId: "vps:44444444-4444-4444-8444-444444444444", ownerId: platformCollaborationActors.owner, kind: "chat", authorityGeneration: 1, metadataRevision: 1, recipients: [{ actorId: platformCollaborationActors.owner, status: "accepted" }] });

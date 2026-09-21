@@ -18,6 +18,7 @@ const MAX_REMEMBERED_INVITATIONS = 500;
 const SCOPE_PATH = /^\/api\/collaboration\/scopes\/([0-9a-f-]{36})(?:[/?]|$)/;
 const INVITATION_PATH = /^\/api\/collaboration\/invitations\/([0-9a-f-]{36})(?:[/?]|$)/;
 const DISCOVERY_PATH = /^\/api\/collaboration\/(inbox|shared)(?:\?|$)/;
+const OWNER_RUNTIME_SETUP_PATH = /^\/api\/collaboration\/runtimes\/([^/?]+)\/(?:catalog\/resolve|scopes(?:\/preflight)?)$/;
 
 export interface CollaborationDirectApi extends CollaborationApi {
   direct: CollaborationDirectClient;
@@ -82,6 +83,22 @@ export function createCollaborationDirectApi(options: CollaborationDirectClientO
 
   const send = async (method: "GET" | "POST" | "PATCH" | "DELETE", path: string, body?: unknown): Promise<unknown> => {
     if (DISCOVERY_PATH.test(path) && method === "GET") return discovery(path);
+    const ownerRuntime = method === "POST" ? OWNER_RUNTIME_SETUP_PATH.exec(path) : null;
+    if (ownerRuntime) {
+      let runtimeId: string;
+      try { runtimeId = decodeURIComponent(ownerRuntime[1]!); }
+      catch (error: unknown) {
+        if (!(error instanceof URIError)) console.warn("[collaboration-direct] runtime identifier rejected", error instanceof Error ? error.name : "UnknownError");
+        throw new Error("CollaborationUnavailable");
+      }
+      const organizationId = body && typeof body === "object" ? (body as { organizationId?: unknown }).organizationId : null;
+      if (typeof organizationId !== "string") throw new Error("CollaborationUnavailable");
+      try { return await direct.requestOwnerRuntime(runtimeId, organizationId, path, body); }
+      catch (error: unknown) {
+        if (error instanceof CollaborationDirectError) throw new Error("CollaborationUnavailable", { cause: error });
+        throw error;
+      }
+    }
     const scopeId = scopeFor(path);
     if (!scopeId) {
       if (INVITATION_PATH.test(path)) throw new Error("CollaborationUnavailable");

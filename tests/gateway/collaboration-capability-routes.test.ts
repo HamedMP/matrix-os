@@ -11,13 +11,14 @@ import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
 import { createGatewayCollaboration } from "../../packages/gateway/src/collaboration/wiring.js";
 import { createOwnerResourceDriver } from "../../packages/gateway/src/collaboration/owner-resource-driver.js";
 import { CollaborationProofSigner } from "../../packages/platform/src/collaboration/proof.js";
-import { collaborationIds, createCollaborationTestDatabase, type CollaborationTestDatabase } from "./collaboration-test-support.js";
+import { createCollaborationTestDatabase, type CollaborationTestDatabase } from "./collaboration-test-support.js";
 
 const ownerId = "user_capability_owner";
 const memberId = "user_capability_member";
 const outsiderId = "user_capability_outsider";
 const organizationId = "org_capability_routes";
 const scopeId = "10000000-0000-4000-8000-00000000a915";
+const runtimeId = "vps:11111111-1111-4111-8111-111111111111";
 const key = "a".repeat(32);
 const boardAppIncarnation = "d".repeat(64);
 
@@ -47,7 +48,8 @@ describe("collaboration capability HTTP routes", () => {
       db: fixture.db,
       chatRepository: new ChatRepository(fixture.db),
       config: {
-        runtimeId: collaborationIds.runtime,
+        runtimeId,
+        ownerId,
         activeKeyId: "key-1",
         proofKeys: { "key-1": key },
         preflightSecret: "b".repeat(32),
@@ -62,7 +64,7 @@ describe("collaboration capability HTTP routes", () => {
     await fixture.db.insertInto("collaboration_scopes").values({
       id: scopeId, owner_type: "personal", owner_id: ownerId, organization_id: organizationId,
       kind: "project", resource_id: "project_capability", parent_scope_id: null, membership_mode: "direct", lifecycle: "shared",
-      revision: 1, auth_epoch: 1, authority_runtime_id: collaborationIds.runtime, authority_generation: 1,
+      revision: 1, auth_epoch: 1, authority_runtime_id: runtimeId, authority_generation: 1,
       execution_generation: null, execution_eligibility: null, deleted_at: null, created_at: now, updated_at: now,
     }).execute();
     await fixture.db.insertInto("collaboration_members").values({
@@ -99,7 +101,7 @@ describe("collaboration capability HTTP routes", () => {
   async function signed(input: { actorId: string; method: "GET" | "POST" | "PATCH" | "DELETE"; path: string; body?: unknown; scopeId?: string | null; deleteConditions?: { clientRequestId: string; expectedRevision: string; expectedMemberRevision: string } }): Promise<Response> {
     const bytes = input.body === undefined ? new Uint8Array() : new TextEncoder().encode(JSON.stringify(input.body));
     const proof = signer.signHttp({
-      actorId: input.actorId, ownerId, runtimeId: collaborationIds.runtime,
+      actorId: input.actorId, ownerId, runtimeId,
       ...(input.scopeId === null ? {} : { scopeId: input.scopeId ?? scopeId }),
       method: input.method, path: input.path, query: "", body: bytes,
       ...(input.deleteConditions ? { conditionalHeaders: input.deleteConditions } : {}),
@@ -193,7 +195,7 @@ describe("collaboration capability HTTP routes", () => {
     const sessionId = randomUUID();
     const directSession = {
       protocolVersion: 2, id: sessionId, actorId: memberId, organizationId,
-      scopeId, pendingGrantId: grant.id, runtimeId: collaborationIds.runtime,
+      scopeId, pendingGrantId: grant.id, runtimeId,
       authorityGeneration: 1, purpose: "direct_session", proofKeyThumbprint: "a".repeat(43),
       issuedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 300_000).toISOString(),
       evidenceExpiresAt: new Date(Date.now() + 20_000).toISOString(), renewAfter: new Date(Date.now() + 240_000).toISOString(),
@@ -229,7 +231,7 @@ describe("collaboration capability HTTP routes", () => {
 
 
   it("resolves the exact owner file to one catalog id and rotates identity when its incarnation changes", async () => {
-    const path = `/api/collaboration/runtimes/${collaborationIds.runtime}/catalog/resolve`;
+    const path = `/api/collaboration/runtimes/${runtimeId}/catalog/resolve`;
     const resolve = () => signed({ actorId: ownerId, method: "POST", path, scopeId: null,
       body: { kind: "file", path: "notes.txt" },
     });
@@ -251,9 +253,40 @@ describe("collaboration capability HTTP routes", () => {
     expect(outsider.status).toBe(403);
   });
 
+  it("routes encoded vps owner catalog requests through only the bounded owner runtime session", async () => {
+    const sessions = runtime.ownerRuntimeSessions;
+    expect(sessions).toBeDefined();
+    const sessionId = randomUUID();
+    const authenticate = vi.spyOn(sessions!, "authenticate").mockResolvedValue({
+      protocolVersion: 2, id: sessionId, actorId: ownerId, organizationId,
+      runtimeId: runtimeId.replace(":", "-"), authorityGeneration: 1, purpose: "owner_runtime",
+      proofKeyThumbprint: "a".repeat(43), issuedAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 300_000).toISOString(), evidenceExpiresAt: new Date(Date.now() + 20_000).toISOString(),
+      renewAfter: new Date(Date.now() + 240_000).toISOString(),
+    });
+    const path = `/api/collaboration/runtimes/${encodeURIComponent(runtimeId)}/catalog/resolve`;
+    const headers = {
+      "content-type": "application/json", "x-matrix-collaboration-session": sessionId,
+      "x-matrix-collaboration-request": Buffer.from(JSON.stringify({ signature: {}, proof: "a".repeat(86) })).toString("base64url"),
+    };
+    const body = JSON.stringify({ kind: "file", path: "notes.txt", organizationId });
+    const response = await app.request(path, { method: "POST", headers, body });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ kind: "file", path: "notes.txt" });
+    expect(authenticate).toHaveBeenCalledWith(expect.objectContaining({ method: "POST", path, body: new TextEncoder().encode(body) }));
+    authenticate.mockResolvedValueOnce({
+      protocolVersion: 2, id: sessionId, actorId: ownerId, organizationId: "org_wrong",
+      runtimeId: runtimeId.replace(":", "-"), authorityGeneration: 1, purpose: "owner_runtime",
+      proofKeyThumbprint: "a".repeat(43), issuedAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 300_000).toISOString(), evidenceExpiresAt: new Date(Date.now() + 20_000).toISOString(),
+      renewAfter: new Date(Date.now() + 240_000).toISOString(),
+    });
+    expect((await app.request(path, { method: "POST", headers, body })).status).toBe(403);
+  });
+
   it("derives the project namespace for a selected owner file and rejects an enclosing folder", async () => {
     await writeFile(join(projectRoot, "source.ts"), "export const value = 1;");
-    const route = `/api/collaboration/runtimes/${collaborationIds.runtime}/catalog/resolve`;
+    const route = `/api/collaboration/runtimes/${runtimeId}/catalog/resolve`;
     const resolved = await signed({ actorId: ownerId, method: "POST", path: route, scopeId: null,
       body: { kind: "file", path: "projects/demo/source.ts" },
     });
@@ -274,7 +307,7 @@ describe("collaboration capability HTTP routes", () => {
   });
 
   it("resolves exact standalone folder and registered app identities", async () => {
-    const path = `/api/collaboration/runtimes/${collaborationIds.runtime}/catalog/resolve`;
+    const path = `/api/collaboration/runtimes/${runtimeId}/catalog/resolve`;
     for (const [kind, resourcePath] of [["folder", "apps"], ["app", "board"]] as const) {
       const response = await signed({ actorId: ownerId, method: "POST", path, scopeId: null,
         body: { kind, path: resourcePath },
