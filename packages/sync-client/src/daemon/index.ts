@@ -268,7 +268,16 @@ export function writePidFileExclusive(filePath: string, pid: number): Promise<vo
   const acquisition = pidFileAcquisitionTail.then(() =>
     writePidFileExclusiveNow(filePath, pid),
   );
-  pidFileAcquisitionTail = acquisition.catch(() => undefined);
+  pidFileAcquisitionTail = acquisition.then(
+    () => undefined,
+    (err: unknown) => {
+      // The caller receives the original rejection. The tail only absorbs it
+      // so a failed contender cannot poison later acquisition attempts.
+      if (!(err instanceof Error)) {
+        console.warn("[sync/daemon] PID acquisition rejected with a non-Error value");
+      }
+    },
+  );
   return acquisition;
 }
 
