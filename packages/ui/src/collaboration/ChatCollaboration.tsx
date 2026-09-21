@@ -144,7 +144,7 @@ function CollaborationHome({ api, openInvitation, openChat, openTerminal, openPr
     }
   };
   const actOnInvitation = async (item: Extract<DiscoveryItem, { status: "invited" }>, action: "accept" | "decline") => {
-    if (invitationPending) return;
+    if (invitationPending || !item.resource) return;
     setInvitationPending(item.invitationId);
     setInvitationError(false);
     try {
@@ -184,7 +184,22 @@ function CollaborationHome({ api, openInvitation, openChat, openTerminal, openPr
       <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>Invitations and accepted shared items will appear here.</p>
     </div> : null}
     <div className="grid gap-3">
-      {items.map((item) => item.status === "invited"
+      {items.map((item) => item.status === "organization_pending"
+        ? <article key={`org:${item.scopeId}`} className="flex flex-wrap items-center gap-4 rounded-2xl border p-4">
+          <div className="min-w-0 flex-1">
+            <p className="font-medium">Shared with your organization</p>
+            <p className="text-sm" style={{ color: "var(--text-secondary)" }}>Shared {kindLabel(item.kind)} · opens when you join</p>
+          </div>
+          <button type="button" className={buttonClass} onClick={() => item.kind === "terminal" ? openTerminal(item.scopeId) : item.kind === "project" ? openProject(item.scopeId) : openChat(item.scopeId)}>Open</button>
+        </article>
+        : !item.resource
+        ? <article key={discoveryKey(item)} className="flex flex-wrap items-center gap-4 rounded-2xl border p-4">
+          <div className="min-w-0 flex-1">
+            <p className="font-medium">{item.status === "invited" ? "Invitation" : `Shared ${kindLabel(item.kind)}`}</p>
+            <p className="text-sm" style={{ color: "var(--text-secondary)" }}>{item.home === "denied" ? "Access is no longer available." : "The owner's computer is offline. Try again later."}</p>
+          </div>
+        </article>
+        : item.status === "invited"
         ? <article key={`invite:${item.invitationId}`} className="flex flex-wrap items-center gap-4 rounded-2xl border p-4">
           <div className="min-w-0 flex-1">
             <p className="font-medium">{item.resource.owner.displayName} invited you</p>
@@ -315,14 +330,15 @@ function SharedProjectView({ api, scopeId }: { api: CollaborationApi; scopeId: s
 }
 
 function discoveryKey(item: DiscoveryItem): string {
-  return item.status === "invited" ? `invite:${item.invitationId}` : `scope:${item.scopeId}`;
+  if (item.status === "invited") return `invite:${item.invitationId}`;
+  return item.status === "organization_pending" ? `org:${item.scopeId}` : `scope:${item.scopeId}`;
 }
 
 function openAcceptedChat(
   item: DiscoveryItem,
   openChat: (scopeId: string, chatId?: string, title?: string) => void,
 ): void {
-  if (item.status !== "accepted" || !("chat" in item.resource)) return;
+  if (item.status !== "accepted" || !item.resource || !("chat" in item.resource)) return;
   openChat(item.scopeId, item.resource.chat.id, item.resource.chat.title);
 }
 
@@ -737,7 +753,7 @@ async function resolveCanonicalChatScope(api: CollaborationApi, chatId: string):
       await api.get(`/api/collaboration/shared?limit=100${suffix}`),
     );
     const match = page.items.find((item) => item.status === "accepted"
-      && "chat" in item.resource && item.resource.chat.id === chatId);
+      && item.resource !== undefined && "chat" in item.resource && item.resource.chat.id === chatId);
     if (match?.status === "accepted") return match.scopeId;
     if (!page.nextCursor) return null;
     if (seenCursors[page.nextCursor]) throw new Error("CollaborationDiscoveryCursorLoop");
