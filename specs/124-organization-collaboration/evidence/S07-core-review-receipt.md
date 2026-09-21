@@ -103,3 +103,28 @@ The gate is deliberate and holds at four points; none of them may be weakened to
 S09 supplies the execution-root resolver through that same `sandboxManifests` seam when it restacks onto this
 layer, at which point production shared AI becomes eligible with every run sandboxed. Until then "disabled" is
 the correct reported state.
+
+### Base regression: shared orchestration dispatched without an execution root
+
+`tests/gateway/collaboration-chat-orchestrator.test.ts` failed 2 of 4 on this layer and on every layer above
+it ("claims only the selected scope and dispatches through its isolated adapter without personal resume" and
+"preserves an interrupted request when isolated dispatch ends without a known completion"). Reproduced on
+`124/s07` before any change, so the cause is this layer's adapter tightening, not S07-terminal or S09.
+
+**Which side was wrong: the fixture.** The adapter refuses a launch without a scope-matching manifest
+(`scope-runtime-chat-adapter.ts:42,76`) and the client refuses it again
+(`scope-runtime-client.ts:229`). Every dispatch through `dispatchNextSharedQueued` acts for a collaborator,
+and the only production construction of this adapter resolves the authoritative root first and throws
+`SharedChatRunPreparationError` when there is none (`shared-ai-runtime.ts:271-281`); the personal path never
+reaches it (`grep` finds exactly one production call site). There is therefore no legitimate unrooted shared
+dispatch, and the locked rule that shared runs execute only inside the sandbox stands. The fixture was
+under-specified: it built the adapter the pre-sandbox way, so both cases died on the fail-closed gate before
+reaching the orchestration behaviour they assert. Fixed test-only in
+`test(collaboration): dispatch shared orchestration with its execution root`, which supplies the same
+manifest shape the production resolver returns. The gate itself is unchanged.
+
+**Sibling sweep.** The whole `collaboration-chat-*` group plus the adapter suite was run on this layer:
+`collaboration-chat-controls`, `-discussion`, `-discussion-postgres`, `-events`, `-execution-adapter`,
+`-orchestrator`, `-queue`, `-scope`, `-scope-postgres` and `scope-runtime-chat-adapter` → **78/78 across 10
+files** on real Postgres. No other suite was left red by the adapter tightening. `bun run typecheck` exit 0;
+`bun run check:patterns` 0 violations, 5 pre-existing warnings.
