@@ -33,6 +33,8 @@ const RENEW_AFTER_MS = SESSION_TTL_MS - 60_000;
 const REQUEST_WINDOW_MS = COLLABORATION_DIRECT_LIMITS.ticketTtlSeconds * 1_000;
 const SKEW_MS = COLLABORATION_DIRECT_LIMITS.clockSkewSeconds * 1_000;
 const MAX_SESSIONS = 4_096;
+/** Ended-listener registry cap: one per admitted direct socket plus headroom for the registries that subscribe once. */
+const MAX_ENDED_LISTENERS = COLLABORATION_DIRECT_LIMITS.connectionsPerHome + 16;
 const SWEEP_INTERVAL_MS = COLLABORATION_DIRECT_LIMITS.streamWatchdogSeconds * 1_000;
 
 interface SessionRecord {
@@ -67,6 +69,7 @@ export interface DirectAuthorizeInput {
 }
 
 export class DirectSessionService {
+  static readonly MAX_ENDED_LISTENERS = MAX_ENDED_LISTENERS;
   private readonly now: () => Date;
   private readonly sessions = new Map<string, SessionRecord>();
   private readonly scopeConnections = new Map<string, number>();
@@ -133,8 +136,13 @@ export class DirectSessionService {
     return session;
   }
 
-  /** Streams and registries subscribe so a denial closes their sockets immediately. */
+  /**
+   * Streams and registries subscribe so a denial closes their sockets immediately.
+   * Bounded: every admitted socket holds one subscription and releases it on close, so the
+   * cap is only reached by leaked subscriptions, which are refused rather than retained.
+   */
   subscribeEnded(listener: DirectSessionEndedListener): () => void {
+    if (this.endedListeners.size >= MAX_ENDED_LISTENERS) throw new DirectAuthError("limit", "Too many session listeners");
     this.endedListeners.add(listener);
     return () => { this.endedListeners.delete(listener); };
   }
