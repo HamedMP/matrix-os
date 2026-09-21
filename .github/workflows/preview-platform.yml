@@ -466,38 +466,24 @@ jobs:
           repository: ${{ github.repository }}
           run-id: ${{ steps.runtime.outputs.run_id }}
           github-token: ${{ github.token }}
-      - name: Preserve encrypted handle-scoped preview runtime access
+      - name: Preserve exact-head preview runtime route
         run: |
           set -euo pipefail
-          route=preview-runtime-access/preview-runtime-access.enc
           public_route=preview-runtime-access/preview-runtime-route.json
-          runtime_cert=preview-runtime-access/preview-runtime-cert.pem
-          test -s "$route"
-          test "$(wc -c < "$route")" -le 1024
-          test -s "$runtime_cert"
-          test "$(wc -c < "$runtime_cert")" -le 8192
-          test "$(openssl x509 -in "$runtime_cert" -subject -nameopt RFC2253 -noout)" \
-            = "subject=CN=customer-vps.matrix-os.local"
-          openssl x509 -in "$runtime_cert" -checkend 0 -noout
-          openssl verify -CAfile "$runtime_cert" \
-            -verify_hostname customer-vps.matrix-os.local "$runtime_cert"
+          test -s "$public_route"
+          test "$(wc -c < "$public_route")" -le 1024
           jq -e --arg handle "pr-$PR_NUMBER" '
             type == "object"
             and keys == ["address", "handle"]
             and .handle == $handle
             and (.address | type == "string" and test("^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$"))
           ' "$public_route" >/dev/null
-          cp "$route" preview-share-route.enc
           cp "$public_route" preview-share-route.json
-          cp "$runtime_cert" preview-share-runtime-cert.pem
-          chmod 600 preview-share-route.enc preview-share-route.json preview-share-runtime-cert.pem
+          chmod 600 preview-share-route.json
       - uses: actions/upload-artifact@v4
         with:
           name: preview-share-route
-          path: |
-            preview-share-route.enc
-            preview-share-route.json
-            preview-share-runtime-cert.pem
+          path: preview-share-route.json
           retention-days: 1
 
   connect-share-preview:
@@ -513,6 +499,8 @@ jobs:
       ARTIFACT_REPOSITORY: ${{ vars.ARTIFACT_REPOSITORY }}
       PR_NUMBER: ${{ inputs.pr }}
       PREVIEW_CLERK_USER_ID: ${{ secrets.PREVIEW_CLERK_USER_ID }}
+      CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
+      PLATFORM_PUBLIC_URL: https://app.matrix-os.com
       EXPECTED_HEAD_SHA: ${{ github.sha }}
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -544,38 +532,19 @@ jobs:
           preview_db="$(gcloud secrets versions access latest --secret platform-database-url-staging --project "$GCP_PROJECT_ID" --quiet)"
           echo "::add-mask::$preview_db"
           PREVIEW_DATABASE_URL="$preview_db" node scripts/chat-share-preview-fixture.mjs
-      - name: Decrypt and validate handle-scoped preview runtime access
-        env:
-          PREVIEW_RUNTIME_HANDOFF_PRIVATE_KEY_B64: ${{ secrets.PREVIEW_RUNTIME_HANDOFF_PRIVATE_KEY_B64 }}
-        run: |
-          set -euo pipefail
-          if [ -z "${PREVIEW_RUNTIME_HANDOFF_PRIVATE_KEY_B64:-}" ]; then
-            echo "Preview runtime handoff decryption is not configured." >&2
-            exit 1
-          fi
-          private_key=/tmp/preview-runtime-handoff-private.pem
-          trap 'status=$?; rm -f "$private_key"; if [ "$status" -ne 0 ]; then rm -f preview-share-runtime-access.json; fi; exit "$status"' EXIT
-          printf '%s' "$PREVIEW_RUNTIME_HANDOFF_PRIVATE_KEY_B64" | base64 --decode > "$private_key"
-          chmod 600 "$private_key"
-          openssl pkey -in "$private_key" -noout
-          openssl pkeyutl -decrypt -inkey "$private_key" \
-            -pkeyopt rsa_padding_mode:oaep -pkeyopt rsa_oaep_md:sha256 \
-            -in preview-share-route.enc -out preview-share-runtime-access.json
-          rm -f preview-share-route.enc
-          chmod 600 preview-share-runtime-access.json
-          jq -e --arg handle "pr-$PR_NUMBER" --slurpfile public preview-share-route.json '
-            type == "object"
-            and keys == ["address", "handle", "token"]
-            and .handle == $handle
-            and (.address | type == "string" and test("^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$"))
-            and (.token | type == "string" and test("^[a-f0-9]{64}$"))
-            and .handle == $public[0].handle
-            and .address == $public[0].address
-          ' preview-share-runtime-access.json >/dev/null
       - name: Enable the existing tagged host without moving traffic
         run: |
           set -euo pipefail
-          trap 'rm -f preview-share-runtime-access.json' EXIT
+          speech_config_response=/tmp/preview-speech-config.json
+          gateway_restart_response=/tmp/preview-gateway-restart.json
+          gateway_active_response=/tmp/preview-gateway-active.json
+          speech_capabilities_response=/tmp/preview-speech-capabilities.json
+          gateway_capabilities_response=/tmp/preview-gateway-capabilities.json
+          cleanup_preview_connection() {
+            rm -f "$speech_config_response" "$gateway_restart_response" "$gateway_active_response" \
+              "$speech_capabilities_response" "$gateway_capabilities_response"
+          }
+          trap cleanup_preview_connection EXIT
           gcloud help run services describe >/dev/null
           gcloud help run revisions describe >/dev/null
           gcloud help run deploy >/dev/null
@@ -600,11 +569,30 @@ jobs:
             echo "PREVIEW_CLERK_USER_ID is required for preview speech authorization." >&2
             exit 1
           fi
-          route="$(cat preview-share-runtime-access.json)"
-          address="$(jq -er '.address | select(test("^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$"))' <<< "$route")"
           handle="pr-$PR_NUMBER"
           machine_id="chat-share-preview-$handle"
-          terminal_token="$(jq -er '.token | select(test("^[a-f0-9]{64}$"))' <<< "$route")"
+          if [ -z "${CLERK_SECRET_KEY:-}" ]; then
+            echo "Preview Clerk authentication is not configured." >&2
+            exit 1
+          fi
+          sessions="$(curl --fail --silent --show-error --max-time 30 \
+            "https://api.clerk.com/v1/sessions?user_id=${PREVIEW_CLERK_USER_ID}&status=active&limit=10" \
+            -H "authorization: Bearer ${CLERK_SECRET_KEY}" \
+            -H "Clerk-API-Version: 2025-11-10")"
+          session_id="$(jq -er \
+            'sort_by(.last_active_at // 0) | reverse | .[0].id | select(type == "string" and test("^sess_[A-Za-z0-9]+$"))' \
+            <<< "$sessions")"
+          session_token_payload="$(curl --fail --silent --show-error --max-time 30 \
+            -X POST "https://api.clerk.com/v1/sessions/${session_id}/tokens" \
+            -H "authorization: Bearer ${CLERK_SECRET_KEY}" \
+            -H "Clerk-API-Version: 2025-11-10" \
+            -H "content-type: application/json" \
+            --data-binary '{"expires_in_seconds":300}')"
+          preview_session_token="$(jq -er '.jwt | select(type == "string" and length <= 8192)' \
+            <<< "$session_token_payload")"
+          echo "::add-mask::$preview_session_token"
+          unset sessions session_token_payload
+          terminal_url="${PLATFORM_PUBLIC_URL}/vm/${handle}/api/terminal/run"
           preview_platform_secret="$(gcloud secrets versions access latest \
             --secret platform-preview-secret --project "$GCP_PROJECT_ID" --quiet)"
           echo "::add-mask::$preview_platform_secret"
@@ -615,7 +603,6 @@ jobs:
             ])).digest("hex"));
           ' "$handle" "$machine_id" "$handle")"
           echo "::add-mask::$speech_token"
-          echo "::add-mask::$terminal_token"
           runtime_config="$(jq -cn \
             --arg origin "$url" \
             --arg token "$speech_token" \
@@ -680,27 +667,25 @@ jobs:
             local body="$1" response="$2"
             curl --fail --silent --show-error --max-time 45 \
               --retry 5 --retry-all-errors --retry-delay 2 --retry-max-time 30 \
-              --cacert preview-share-runtime-cert.pem \
-              --resolve "customer-vps.matrix-os.local:443:${address}" \
-              -o "$response" -X POST 'https://customer-vps.matrix-os.local/api/terminal/run' \
-              -H "authorization: Bearer ${terminal_token}" \
+              -o "$response" -X POST "$terminal_url" \
+              -H "authorization: Bearer ${preview_session_token}" \
               -H 'content-type: application/json' --data-binary "$body"
             jq -e 'select(.exitCode==0 and .timedOut==false and .truncated==false and .signal==null)' \
               "$response" >/dev/null
           }
           body="$(jq -cn --arg script "$patch_script" --arg config "$runtime_config" \
             '{command:["/usr/bin/sudo","/usr/bin/python3","-c",$script,$config],timeoutMs:10000}')"
-          send_runtime_command "$body" /tmp/preview-speech-config.json
+          send_runtime_command "$body" "$speech_config_response"
           body='{"command":["/usr/bin/sudo","/usr/bin/systemctl","restart","matrix-gateway.service"],"timeoutMs":30000}'
-          send_runtime_command "$body" /tmp/preview-gateway-restart.json
+          send_runtime_command "$body" "$gateway_restart_response"
           body='{"command":["/usr/bin/systemctl","is-active","--quiet","matrix-gateway.service"],"timeoutMs":10000}'
-          send_runtime_command "$body" /tmp/preview-gateway-active.json
+          send_runtime_command "$body" "$gateway_active_response"
           capability_url="${url}/internal/containers/${handle}/speech/capabilities?runtimeSlot=${handle}"
           curl --fail --silent --show-error --max-time 15 \
             -H "authorization: Bearer ${speech_token}" "$capability_url" \
-            -o /tmp/preview-speech-capabilities.json
+            -o "$speech_capabilities_response"
           jq -e '.fileTranscription.status == "ready" and .fileTranscription.dictation.enabled == true' \
-            /tmp/preview-speech-capabilities.json >/dev/null
+            "$speech_capabilities_response" >/dev/null
           read -r -d '' gateway_probe_script <<'PYTHON' || true
           import json
           import os
@@ -747,11 +732,11 @@ jobs:
           PYTHON
           body="$(jq -cn --arg script "$gateway_probe_script" \
             '{command:["/usr/bin/python3","-c",$script],timeoutMs:30000}')"
-          send_runtime_command "$body" /tmp/preview-gateway-capabilities.json
+          send_runtime_command "$body" "$gateway_capabilities_response"
           jq -e '
             (.stdout | fromjson) as $result
             | $result.speech.fileTranscription.status == "ready"
             and $result.speech.fileTranscription.dictation.enabled == true
             and ($result.providers | type == "object")
-          ' /tmp/preview-gateway-capabilities.json >/dev/null
+          ' "$gateway_capabilities_response" >/dev/null
           echo "Share preview origin: $url" >> "$GITHUB_STEP_SUMMARY"
