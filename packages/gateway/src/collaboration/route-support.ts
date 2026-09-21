@@ -84,6 +84,8 @@ import {
   type CollaborationTerminalDispatcher,
 } from "./terminal-dispatcher.js";
 import type { CollaborationExecutionPolicyRepository } from "./execution-policy.js";
+import { ProjectGitBrokerError, type ProjectGitBroker } from "./project-git-broker.js";
+import type { ProjectAccessReadiness } from "./project-access-readiness.js";
 import {
   CollaborationRepositoryError,
   type CollaborationMemberRecord,
@@ -118,6 +120,8 @@ export interface CollaborationRouteOptions {
   >;
   projectScope?: CollaborationProjectScopeService;
   projectSharing?: ProjectSharingService;
+  projectGit?: ProjectGitBroker;
+  projectReadiness?: ProjectAccessReadiness;
   /** S08: owner-selected execution policy repository; routes report unavailable when absent. */
   executionPolicies?: CollaborationExecutionPolicyRepository;
   resolveParticipant(actorId: string): Promise<Participant>;
@@ -472,6 +476,13 @@ export async function handle(c: Context, operation: () => Promise<Response>): Pr
     }
     if (error instanceof CollaborationDiscussionError) {
       return c.json({ error: "Invalid collaboration request", code: error.code }, 400);
+    }
+    if (error instanceof ProjectGitBrokerError) {
+      const status = error.code === "not_found" ? 404
+        : error.code === "forbidden" ? 403
+          : error.code === "busy" ? 429
+            : error.code === "conflict" ? 409 : 503;
+      return c.json({ error: "Collaboration unavailable", code: error.code }, status);
     }
     if (error instanceof CollaborationAuthorizationError) {
       const status = error.code === "not_found" ? 404 : error.code === "forbidden" ? 403 : 503;
