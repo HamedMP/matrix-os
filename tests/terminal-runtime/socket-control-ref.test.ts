@@ -61,10 +61,10 @@ describe("terminal control references", () => {
   it("passes collaboration tab creation proof through the socket for input and termination", async () => {
     const f = await fixture();
     try {
-      await f.client.writeInput(f.ref, "echo exact\r", f.tab.createdAt);
-      expect(f.writeInput).toHaveBeenCalledWith(f.ref, "echo exact\r", f.tab.createdAt);
-      await f.client.terminateTab(f.ref, f.tab.createdAt);
-      expect(f.terminateTab).toHaveBeenCalledWith(f.ref, f.tab.createdAt);
+      await f.client.writeInput(f.ref, "echo exact\r", f.tab.incarnation);
+      expect(f.writeInput).toHaveBeenCalledWith(f.ref, "echo exact\r", f.tab.incarnation);
+      await f.client.terminateTab(f.ref, f.tab.incarnation);
+      expect(f.terminateTab).toHaveBeenCalledWith(f.ref, f.tab.incarnation);
     } finally { await f.close(); }
   });
 

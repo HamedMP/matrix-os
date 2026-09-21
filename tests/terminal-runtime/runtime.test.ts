@@ -194,6 +194,32 @@ class FakeZellij implements ZellijRuntimeAdapter {
 }
 
 describe("project-scoped terminal runtime", () => {
+  it("keeps a unique persisted incarnation when a tab ID is reused in the same millisecond", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-runtime-"));
+    homes.push(homePath);
+    const now = new Date("2026-09-21T12:00:00.000Z");
+    const zellij = new FakeZellij();
+    const runtime = new TerminalRuntime({
+      store: new TerminalWorkspaceStore({ homePath, now: () => now }), zellij,
+    });
+    const workspace = await runtime.ensureWorkspace();
+    const tabId = `tt_${"b".repeat(32)}`;
+    const original = await runtime.createTab(workspace.id, { tabId, name: "original", cwd: "" });
+    const ref = { workspaceId: workspace.id, tabId };
+    expect((await new TerminalWorkspaceStore({ homePath }).getTab(ref))?.incarnation).toBe(original.incarnation);
+    await runtime.deleteTab(ref);
+    const replacement = await runtime.createTab(workspace.id, { tabId, name: "replacement", cwd: "" });
+    expect(replacement.createdAt).toBe(original.createdAt);
+    expect(original.incarnation).toMatch(/^ti_[a-f0-9]{32}$/);
+    expect(replacement.incarnation).not.toBe(original.incarnation);
+    await expect(runtime.writeInput(ref, "stale", original.incarnation)).rejects.toThrow();
+    await expect(runtime.terminateTab(ref, original.incarnation)).rejects.toThrow();
+    await expect(runtime.attach(ref, { viewerId: "shared-observer", send: () => undefined,
+      expectedIncarnation: original.incarnation })).rejects.toThrow();
+    expect(zellij.writes).toEqual([]);
+    await runtime.shutdown();
+  });
+
   it("rejects stale collaboration input, stop and attach after a tab ID is reused", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-runtime-"));
     homes.push(homePath);
@@ -211,10 +237,10 @@ describe("project-scoped terminal runtime", () => {
     const replacement = await runtime.createTab(workspace.id, { tabId, name: "replacement", cwd: "" });
     expect(replacement.createdAt).not.toBe(original.createdAt);
 
-    await expect(runtime.writeInput(ref, "stale", original.createdAt)).rejects.toThrow();
-    await expect(runtime.terminateTab(ref, original.createdAt)).rejects.toThrow();
+    await expect(runtime.writeInput(ref, "stale", original.incarnation)).rejects.toThrow();
+    await expect(runtime.terminateTab(ref, original.incarnation)).rejects.toThrow();
     await expect(runtime.attach(ref, { viewerId: "shared-observer", send: () => undefined,
-      expectedCreatedAt: original.createdAt })).rejects.toThrow();
+      expectedIncarnation: original.incarnation })).rejects.toThrow();
     expect(zellij.writes).toEqual([]);
     expect((await runtime.listWorkspaces())[0]?.tabs.find((tab) => tab.id === tabId)?.status).toBe("running");
     await runtime.shutdown();

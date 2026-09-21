@@ -22,12 +22,14 @@ function parseTerminalId(value: string): TerminalRef {
   return parsed.data;
 }
 
-function identity(ref: TerminalRef, createdAt: string): { incarnation: string; generation: number } {
+function identity(ref: TerminalRef, tabIncarnation: string, createdAt: string): { incarnation: string; generation: number } {
+  if (!/^ti_[a-f0-9]{32}$/.test(tabIncarnation)) throw new CanonicalTerminalBridgeError();
   const generation = Date.parse(createdAt);
   if (!Number.isSafeInteger(generation) || generation <= 0) throw new CanonicalTerminalBridgeError();
   return {
     incarnation: `terminal-${createHash("sha256")
-      .update(`${ref.workspaceId}:${ref.tabId}:${createdAt}`).digest("hex").slice(0, 32)}`,
+      .update("matrix-collaboration-terminal-v1\0")
+      .update(`${ref.workspaceId}:${ref.tabId}:${tabIncarnation}`).digest("hex").slice(0, 32)}`,
     generation,
   };
 }
@@ -46,8 +48,10 @@ export function createCanonicalTerminalCollaborationBridge(options: {
     const workspace = workspaces.find((item: TerminalWorkspace) => item.id === ref.workspaceId);
     const tab = workspace?.tabs.find((item) => item.id === ref.tabId);
     if (!tab || tab.workspaceId !== ref.workspaceId) return null;
-    const { incarnation, generation } = identity(ref, tab.createdAt);
-    return { ref, tab, incarnation, generation };
+    const tabIncarnation = tab.incarnation;
+    if (!tabIncarnation || !/^ti_[a-f0-9]{32}$/.test(tabIncarnation)) throw new CanonicalTerminalBridgeError();
+    const { incarnation, generation } = identity(ref, tabIncarnation, tab.createdAt);
+    return { ref, tab, tabIncarnation, incarnation, generation };
   };
 
   const boundTab = async (scopeId: string, terminalId: string, incarnation: string) => {
@@ -57,6 +61,7 @@ export function createCanonicalTerminalCollaborationBridge(options: {
     const current = await currentTab(terminalId);
     if (!binding || !current || current.incarnation !== binding.incarnation
       || current.generation !== Number(binding.execution_generation)
+      || current.tabIncarnation !== binding.tab_incarnation
       || current.tab.createdAt !== new Date(binding.tab_created_at).toISOString()) {
       throw new CanonicalTerminalBridgeError();
     }
@@ -72,6 +77,7 @@ export function createCanonicalTerminalCollaborationBridge(options: {
           .selectAll().where("terminal_id", "=", terminalId).executeTakeFirst();
         if (binding && (binding.incarnation !== current.incarnation
           || Number(binding.execution_generation) !== current.generation
+          || binding.tab_incarnation !== current.tabIncarnation
           || new Date(binding.tab_created_at).toISOString() !== current.tab.createdAt)) return null;
         const status = current.tab.status === "running" || current.tab.status === "idle" ? "active" : "exited";
         return {
@@ -107,6 +113,7 @@ export function createCanonicalTerminalCollaborationBridge(options: {
             workspace_id: current.ref.workspaceId,
             tab_id: current.ref.tabId,
             tab_created_at: current.tab.createdAt,
+            tab_incarnation: current.tabIncarnation,
             incarnation: current.incarnation,
             execution_generation: current.generation,
             created_at: new Date().toISOString(),
@@ -114,6 +121,7 @@ export function createCanonicalTerminalCollaborationBridge(options: {
           const binding = await trx.selectFrom("collaboration_terminal_bindings")
             .selectAll().where("scope_id", "=", input.scopeId).executeTakeFirst();
           if (!binding || binding.terminal_id !== terminalId || binding.incarnation !== current.incarnation
+            || binding.tab_incarnation !== current.tabIncarnation
             || Number(binding.execution_generation) !== current.generation) throw new CanonicalTerminalBridgeError();
           return binding;
         });
@@ -132,19 +140,19 @@ export function createCanonicalTerminalCollaborationBridge(options: {
       }): Promise<void> => {
         const current = await boundTab(input.scopeId, input.terminalId, input.incarnation);
         await input.revalidate();
-        await runtime.writeInput(current.ref, input.data, current.tab.createdAt);
+        await runtime.writeInput(current.ref, input.data, current.tabIncarnation);
       },
       paste: async (input: {
         terminalId: string; scopeId: string; incarnation: string; data: string; revalidate(): Promise<void>;
       }): Promise<void> => {
         const current = await boundTab(input.scopeId, input.terminalId, input.incarnation);
         await input.revalidate();
-        await runtime.writeInput(current.ref, input.data, current.tab.createdAt);
+        await runtime.writeInput(current.ref, input.data, current.tabIncarnation);
       },
       resize: async (): Promise<void> => { throw new CanonicalTerminalBridgeError(); },
       stop: async (input: { terminalId: string; scopeId: string; incarnation: string }): Promise<void> => {
         const current = await boundTab(input.scopeId, input.terminalId, input.incarnation);
-        await runtime.terminateTab(current.ref, current.tab.createdAt);
+        await runtime.terminateTab(current.ref, current.tabIncarnation);
       },
     },
   };
