@@ -59,3 +59,22 @@ The shared page has current captures under `evidence/S06-direct-client/` for Web
 - **Final checks before recapture:** four focused suites, **46/46** passed; `bun run typecheck` exit 0; `bun run check:patterns` 0 violations and 5 pre-existing warnings. The added cache test and final copy test passed separately after this sweep. `npx react-doctor@latest --verbose --scope changed` exited 0, score 88/100; its 17 warnings were outside the changed React card. `pnpm --filter desktop build` exited 0 after the final copy change.
 
 The review fixes are local commits until the coordinator restacks and submits #1806. The live S06 visual captures use a mocked platform/home and do not claim a real cross-host probe.
+
+## Review round (2026-09-21)
+
+Unresolved Greptile threads on #1806 at head `322a667d5`, worked bottom-up:
+
+| Thread | Outcome |
+| --- | --- |
+| P1 `direct-streams.ts` unavailable streams reconnect (outdated) | Fixed by `359d3f13f`: `unavailable`/`terminal.unavailable` call `terminate()` (openStream `stop`, `closed = true`) so `onclose` never re-dials; terminal handlers check `stopped`. Locked by "stops revoked event and terminal streams without obtaining another ticket". |
+| P1 `direct-client.ts` closed sessions can return | Fixed by `359d3f13f`: `closeScope` bumps `generation` and deletes the record; `ensure`/`request` fence on `active()` and `disposed`; an exchange that lands after close is deleted on the home and rejected. Locked by "fences an exchange completed after sign-out". Greptile kept the thread because the closed-over line still exists in the diff. |
+| P1 `routes.ts` pending shares disappear (outdated) | Fixed by `4d22f5252`: indexed→pending phase cursors (`DiscoveryPageCursor`, version 2) with keyset pagination over pending shares. |
+| P1 `ChatCollaboration.tsx` Open action always fails (outdated) | Fixed by `6ba4373c7` + `5f9be0075`: pending cards render an access message and no Open control. |
+| P1 `collaboration-directory-outbox.test.ts` duplicate property (outdated) | Fixed by `6ba4373c7`: one `organizationId` key remains (line 78). |
+| P2 `direct-client.ts` scope map grows forever | Fixed by `359d3f13f`: `MAX_SCOPE_RECORDS = 128`, oldest record closed at the cap, `scopes.delete` on close. Locked by "evicts old scope records when many resources are visited". |
+| P2 `S06-receipt.md` visual evidence missing (outdated) | Fixed by `0aac7d7bb` + `322a667d5`: 16 captures under `evidence/S06-direct-client/` across Web Canvas, Web Desktop, Web Mobile, Electron Desktop. |
+| P2 `capture-web.mjs` failures exit successfully | Fixed by `468e9f288`: `capture()` returns `false` on failure, the runner counts failures and sets `process.exitCode = 1`. |
+| P2 `direct-streams.ts` closed scopes remain registered | The registered stop was already the self-removing `remove` (deleted its scope when empty), so the cap could not target a stopped entry. `328c024da` makes it explicit (`subscriptions.delete` in `closeScope`) and the eviction order is now least-recently-active. Locked by "forgets closed stream scopes…". |
+| P2 `direct-streams.ts` stale streams consume limits | RED `d8fc378f0`: partitioned event socket never reconnected, stalled terminal socket kept, cap evicted by insertion order (3 failures + 1 lock). GREEN `328c024da`: per-stream `lastTouched` (open/inbound frame), a 15s sweep drops event sockets silent >45s (home heartbeats every 10s) and any socket whose `bufferedAmount` stops draining for >45s, re-dialling with a fresh ticket; the scope cap sweeps first and evicts the least-recently-active scope. |
+
+Checks: `tests/ui/collaboration-direct-client.test.ts` 16/16, plus hygiene/shell/desktop wiring suites → **24/24**; `packages/ui` `tsc --noEmit` exit 0; `bun run check:patterns` 0 violations, 5 pre-existing warnings. No React file changed in this round.
