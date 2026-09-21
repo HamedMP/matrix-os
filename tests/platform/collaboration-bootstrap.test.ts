@@ -59,9 +59,11 @@ describe("platform collaboration bootstrap", () => {
   });
 
   it("leaves no organization timers running when the relay origin is invalid", async () => {
-    vi.useFakeTimers();
     const fixture = await createPlatformCollaborationTestDatabase();
+    vi.useFakeTimers();
     try {
+      // Baseline: timers the database fixture itself owns; bootstrap must add none.
+      const baseline = vi.getTimerCount();
       const composition = await bootstrapPlatformCollaboration({
         env: { ...validEnvironment, MATRIX_COLLABORATION_RELAY_ORIGIN: "http://insecure.example" },
         db: { kysely: fixture.collaborationDb } as unknown as PlatformDB,
@@ -70,7 +72,7 @@ describe("platform collaboration bootstrap", () => {
         customerVpsProxyDispatcher: {} as Agent,
       });
       expect("failClosed" in composition).toBe(true);
-      expect(vi.getTimerCount()).toBe(0);
+      expect(vi.getTimerCount()).toBe(baseline);
       await composition.shutdown();
     } finally {
       vi.useRealTimers();
