@@ -999,6 +999,7 @@ export async function createGateway(config: GatewayConfig) {
           {
           onPartialRuntime: (runtime) => enableOwnerCollaborationSurfaces(runtime, {
             homePath,
+            ownerId: collaborationConfig.ownerId,
             appRegistry,
             canvasRepository,
             chatRepository: ownerChatRepository,
