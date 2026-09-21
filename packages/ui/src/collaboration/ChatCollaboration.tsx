@@ -884,8 +884,8 @@ function roleLabel(role: "owner" | "editor" | "viewer"): string {
   return role[0]!.toUpperCase() + role.slice(1);
 }
 
-function kindLabel(kind: "chat" | "terminal" | "project"): string {
-  return kind === "chat" ? "Chat" : kind === "terminal" ? "terminal" : "project";
+function kindLabel(kind: "chat" | "terminal" | "project" | "file" | "folder" | "app"): string {
+  return { chat: "Chat", terminal: "terminal", project: "project", file: "file", folder: "folder", app: "app" }[kind];
 }
 
 const buttonClass = "rounded-xl border px-4 py-2 text-sm font-medium transition-colors hover:enabled:bg-[var(--bg-hover)] disabled:opacity-50";
