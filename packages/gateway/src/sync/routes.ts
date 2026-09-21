@@ -51,8 +51,8 @@ import {
   ShareInvalidPathError,
 } from "./sharing.js";
 import { createSyncRateLimiter } from "./rate-limiter.js";
-import { MissingSyncUserIdentityError } from "../auth.js";
-import { RequestPrincipalMisconfiguredError, isRequestPrincipalError } from "../request-principal.js";
+import { MissingSyncUserIdentityError } from "../domains/identity/auth.js";
+import { RequestPrincipalMisconfiguredError, isRequestPrincipalError } from "../domains/identity/request-principal.js";
 import { StagedObjectValidationError } from "./blob-publication.js";
 
 const SYNC_BODY_LIMIT = 65536;

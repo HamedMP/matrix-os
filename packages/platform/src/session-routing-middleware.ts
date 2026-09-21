@@ -107,27 +107,19 @@ import {
   resolveContainerEndpoint,
 } from './container-endpoint.js';
 import { scopeExplicitVmAppSessionCookie } from './session-routing-cookie-rewrite.js';
+import { createAuthShellProxy } from './session-auth-shell-proxy.js';
+import { createWsTokenIssuer } from './session-ws-token.js';
+import {
+  applyAuthPageHeaders,
+  isPlatformRuntimeShellPath,
+  logCodeDomainUpstreamFailure,
+  platformRuntimeShellUnavailableResponse,
+  shouldServePlatformRuntimeShell,
+} from './session-routing-helpers.js';
+// Re-exported so existing importers (tests, routes) keep working.
+export { shouldServePlatformRuntimeShell };
 
-export function isPlatformRuntimeShellPath(path: string): boolean {
-  return path === '/runtime' || path === '/onboarding/computer';
-}
-
-export function shouldServePlatformRuntimeShell(input: {
-  isAppDomain: boolean;
-  path: string;
-  userId: string;
-  identitySource?: AppDomainIdentity['source'];
-}): boolean {
-  return Boolean(
-    input.isAppDomain &&
-    input.userId &&
-    isPlatformRuntimeShellPath(input.path) &&
-    input.identitySource !== 'mobile-session' &&
-    input.identitySource !== 'static-route'
-  );
-}
-
-interface CreateSessionRoutingMiddlewareOpts {
+export interface CreateSessionRoutingMiddlewareOpts {
   db: PlatformDB;
   docker?: Dockerode;
   orchestrator: Orchestrator;
@@ -156,69 +148,6 @@ interface CreateSessionRoutingMiddlewareOpts {
 }
 
 
-function logCodeDomainUpstreamFailure(opts: {
-  handle: string;
-  runtimeSlot?: string | null;
-  publicIPv4?: string | null;
-  path: string;
-  status: number;
-}): void {
-  console.warn(
-    `[platform] code-domain vps upstream 5xx handle=${opts.handle} runtimeSlot=${opts.runtimeSlot ?? 'unknown'} publicIPv4=${opts.publicIPv4 ?? 'unknown'} path=${JSON.stringify(opts.path)} status=${opts.status}`,
-  );
-}
-
-function applyAuthPageHeaders(
-  c: Context,
-  scriptNonce: string,
-  applyNoStoreHeaders: (c: Context) => void,
-): void {
-  applyNoStoreHeaders(c);
-  c.header('X-Frame-Options', 'DENY');
-  c.header(
-    'Content-Security-Policy',
-    `frame-ancestors 'none'; script-src 'self' 'nonce-${scriptNonce}' ${CLERK_SCRIPT_ORIGIN} https://challenges.cloudflare.com; worker-src 'self' blob:; frame-src https://challenges.cloudflare.com; object-src 'none'; base-uri 'none'`,
-  );
-}
-
-function platformRuntimeShellUnavailableResponse(
-  c: Context,
-  applyNoStoreHeaders: (c: Context) => void,
-): Response {
-  const retryPath = isPlatformRuntimeShellPath(c.req.path) ? c.req.path : '/runtime';
-  applyNoStoreHeaders(c);
-  c.header('Retry-After', '5');
-  c.header('X-Frame-Options', 'DENY');
-  c.header(
-    'Content-Security-Policy',
-    "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; object-src 'none'; base-uri 'none'",
-  );
-  return c.html(`<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Matrix OS temporarily unavailable</title>
-  <style>
-    :root { --font-instrument: 'Instrument Sans'; color-scheme: dark; font-family: ${fonts.sans}; }
-    body { display: grid; min-height: 100vh; margin: 0; place-items: center; background: ${palette.deep}; color: ${lightFg}; }
-    main { width: min(32rem, calc(100% - 3rem)); text-align: center; }
-    h1 { margin: 0 0 0.75rem; font-size: clamp(1.5rem, 5vw, 2.25rem); }
-    p { margin: 0 0 1.5rem; color: ${palette.cream}; line-height: 1.6; }
-    a { display: inline-block; border: 1px solid ${palette.subtle}; border-radius: ${radii.pill}; padding: 0.7rem 1.1rem; color: inherit; text-decoration: none; }
-    a:focus-visible { outline: 3px solid ${palette.ember}; outline-offset: 3px; }
-  </style>
-</head>
-<body>
-  <main>
-    <h1>Matrix OS shell unavailable</h1>
-    <p>The computer setup shell could not be loaded. Please try again in a moment.</p>
-    <a href="${retryPath}">Try again</a>
-  </main>
-</body>
-</html>`, 503);
-}
-
 export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlewareOpts): MiddlewareHandler {
   const {
     db,
@@ -242,112 +171,18 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     logRouteError,
   } = opts;
 
-  async function proxyAuthShell(
-    c: Context,
-    host: string,
-    proxyOpts: {
-      assetRequest?: boolean;
-      preserveUpstreamCacheHeaders?: boolean;
-      redirectToBillingOnFailure?: boolean;
-      upstreamPath?: string;
-    } = {},
-  ): Promise<Response> {
-    const upstream = new URL(c.req.url);
-    const targetUrl = `${getAuthShellOrigin(appEnv)}${proxyOpts.upstreamPath ?? upstream.pathname}${upstream.search}`;
-    const headers = new Headers();
-    for (const [key, value] of Object.entries(c.req.header())) {
-      const lowerKey = key.toLowerCase();
-      if (lowerKey !== 'host' && value) {
-        headers.set(key, value);
-      }
-    }
-    headers.set('host', new URL(getAuthShellOrigin(appEnv)).host);
-    headers.set('x-forwarded-host', host);
-    // The auth shell is a local plain-HTTP Next server. Forwarding "https" here
-    // makes Next 16 attempt internal self-proxy requests to https://localhost:3200.
-    headers.set('x-forwarded-proto', 'http');
-    headers.set('accept-encoding', 'identity');
-    headers.set('connection', 'close');
-
-    try {
-      const response = await fetch(targetUrl, {
-        method: c.req.method,
-        headers,
-        redirect: 'manual',
-        signal: AbortSignal.timeout(authShellProxyTimeoutMs),
-      });
-      const responseHeaders = sanitizeProxyResponseHeaders(response.headers);
-      if (!proxyOpts.preserveUpstreamCacheHeaders) {
-        applyNoStoreResponseHeaders(responseHeaders);
-      }
-      return new Response(response.body, {
-        status: response.status,
-        headers: responseHeaders,
-      });
-    } catch (err: unknown) {
-      logRouteError('app-domain auth-shell proxy', err);
-      if (isPlatformRuntimeShellPath(c.req.path)) {
-        return platformRuntimeShellUnavailableResponse(c, applyNoStoreHeaders);
-      }
-      if (proxyOpts.assetRequest) {
-        applyNoStoreHeaders(c);
-        c.header('Retry-After', '5');
-        return c.text('Matrix OS shell asset unavailable', 503);
-      }
-      if (isSignupBillingHandoff(c.req.url)) {
-        const publishableKey = appEnv.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
-        if (!publishableKey) {
-          applyNoStoreHeaders(c);
-          return c.text('Matrix OS shell unavailable', 503);
-        }
-        const scriptNonce = randomBytes(16).toString('base64');
-        applyAuthPageHeaders(c, scriptNonce, applyNoStoreHeaders);
-        const requestUrl = new URL(c.req.url);
-        return c.html(getSignupBillingHandoffPage({
-          publishableKey,
-          scriptNonce,
-          redirectTarget: `${requestUrl.pathname}${requestUrl.search}`,
-        }));
-      }
-      if (proxyOpts.redirectToBillingOnFailure !== false && !isBillingSetupPath(c.req.url)) {
-        return c.redirect(buildBillingSetupPath(c.req.url), 302);
-      }
-      const publishableKey = appEnv.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
-      if (!publishableKey) {
-        return c.text('Matrix OS shell unavailable', 503);
-      }
-      applyNoStoreHeaders(c);
-      const scriptNonce = randomBytes(16).toString('base64');
-      applyAuthPageHeaders(c, scriptNonce, applyNoStoreHeaders);
-      const authMode = c.req.path.startsWith('/sign-up') ? 'sign-up' : 'sign-in';
-      return c.html(
-        getAuthPage(publishableKey, authMode, scriptNonce, buildPostAuthRedirectPath(c.req.url), appOrigin(appEnv)),
-        200,
-      );
-    }
-  }
-
-  async function issueWebSocketTokenResponse(
-    c: Context,
-    target: { clerkUserId: string; handle: string; runtimeSlot?: string },
-  ): Promise<Response> {
-    applyNoStoreHeaders(c);
-    if (!platformJwtSecret) {
-      return c.json({ error: 'WebSocket auth unavailable' }, 503);
-    }
-    const issued = await issueSyncJwt({
-      secret: platformJwtSecret,
-      clerkUserId: target.clerkUserId,
-      handle: target.handle,
-      gatewayUrl: getGatewayUrlForHandle(target.handle),
-      runtimeSlot: target.runtimeSlot,
-      expiresInSec: wsTokenExpiresInSec,
-    });
-    return c.json({
-      token: issued.token,
-      expiresAt: issued.expiresAt,
-    });
-  }
+  const { proxyAuthShell } = createAuthShellProxy({
+    appEnv,
+    authShellProxyTimeoutMs,
+    logRouteError,
+    applyNoStoreHeaders,
+  });
+  const { issueWebSocketTokenResponse } = createWsTokenIssuer({
+    applyNoStoreHeaders,
+    platformJwtSecret,
+    getGatewayUrlForHandle,
+    wsTokenExpiresInSec,
+  });
 
   return async (c, next) => {
     const host = getTrustedSessionRouteHost(

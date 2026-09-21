@@ -3,7 +3,7 @@ import {
   generateVoiceResponse,
   type VoiceResponseParams,
 } from "../../../packages/gateway/src/voice/response-generator.js";
-import type { Dispatcher } from "../../../packages/gateway/src/dispatcher.js";
+import type { Dispatcher } from "../../../packages/gateway/src/domains/sessions/dispatcher.js";
 import type { TranscriptEntry } from "../../../packages/gateway/src/voice/types.js";
 
 function createMockDispatcher(response: string, delay = 0): Dispatcher {

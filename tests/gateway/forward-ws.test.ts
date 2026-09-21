@@ -5,7 +5,7 @@ import {
   createForwardTunnelHub,
   normalizeForwardTarget,
   type ForwardDialer,
-} from "../../packages/gateway/src/forward-ws.js";
+} from "../../packages/gateway/src/_shared/forward-ws.js";
 
 class FakeGatewayWebSocket {
   sent: unknown[] = [];

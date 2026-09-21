@@ -11,7 +11,7 @@ import { ChatAgentStore } from "../../packages/gateway/src/chat/agent-store.js";
 import { ChatAgentContext } from "../../packages/gateway/src/chat/agent-context.js";
 import { createChatAgentRoutes } from "../../packages/gateway/src/chat/agent-routes.js";
 import { createChatAgentRecipeResolver } from "../../packages/gateway/src/chat/agent-recipe.js";
-import { MissingRequestPrincipalError } from "../../packages/gateway/src/request-principal.js";
+import { MissingRequestPrincipalError } from "../../packages/gateway/src/domains/identity/request-principal.js";
 import { createCanonicalProviderCatalogFixture } from "../contracts/fixtures/canonical-chat";
 
 const owner = { type: "personal" as const, ownerId: "owner_agent_routes" };

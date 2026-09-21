@@ -3,7 +3,7 @@ import { realpath, stat } from "node:fs/promises";
 import { isIP } from "node:net";
 import { isAbsolute, relative, sep } from "node:path";
 import { TerminalRefSchema, type TerminalRef, type TerminalTab, type TerminalWorkspace } from "@matrix-os/contracts";
-import { resolveWithinHome } from "../path-security.js";
+import { resolveWithinHome } from "../_shared/path-security.js";
 import {
   CANVAS_MAX_NODES,
   CanvasNodeSchema,

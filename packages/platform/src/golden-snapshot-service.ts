@@ -20,8 +20,23 @@ import {
   GoldenSnapshotValidationSummarySchema,
   type GoldenSnapshotRuntimeConfig,
 } from './golden-snapshot-schema.js';
+import { createGoldenSnapshotBuildOperations } from './golden-snapshot-build-operations.js';
+import { createGoldenSnapshotCallbackHandler, GoldenSnapshotCallbackError } from './golden-snapshot-callback.js';
+import {
+  addMilliseconds,
+  callbackPayloadDigest,
+  callbackReplayStatus,
+  exactLabels,
+  hashToken,
+  UuidSchema,
+  isExactBuildServer,
+  providerFailure,
+  recordCallbackReceipt,
+  replaceTemplate,
+  tokenMatches,
+  validationEvidenceFailureCode,
+} from './golden-snapshot-service-helpers.js';
 
-const UuidSchema = z.string().uuid();
 const Sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
 const CleanupProviderResourceIdSchema = z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 const SystemdStateSchema = z.string().min(1).max(64).regex(/^[A-Za-z0-9_.:@-]+$/);
@@ -151,7 +166,6 @@ export const GoldenSnapshotCallbackSchema = z.discriminatedUnion('phase', [
   }).strict(),
 ]);
 
-const ORPHAN_RECONCILIATION_DEADLINE_MS = 24 * 60 * 60 * 1000;
 const GRACEFUL_SHUTDOWN_DEADLINE_MS = 2 * 60 * 1000;
 
 // Extraction plan: keep createGoldenSnapshotService as the orchestration facade, then move
@@ -160,6 +174,7 @@ const GRACEFUL_SHUTDOWN_DEADLINE_MS = 2 * 60 * 1000;
 // mixing a large mechanical split into the snapshot state-machine review.
 
 export type GoldenSnapshotCallback = z.input<typeof GoldenSnapshotCallbackSchema>;
+export { GoldenSnapshotCallbackError };
 
 export interface GoldenSnapshotServiceDeps {
   db: PlatformDB;
@@ -179,242 +194,7 @@ export interface GoldenSnapshotService {
   consumeCallback(buildId: string, token: string, payload: GoldenSnapshotCallback): Promise<void>;
 }
 
-export class GoldenSnapshotCallbackError extends Error {
-  constructor(readonly code: 'unauthorized' | 'rejected') {
-    super('Golden snapshot callback rejected');
-    this.name = 'GoldenSnapshotCallbackError';
-  }
-}
 
-function validationEvidenceFailureCode(
-  evidence: Extract<z.infer<typeof GoldenSnapshotCallbackSchema>, { phase: 'validated' }>['evidence'],
-): string {
-  const checks = [
-    ['exactBundle', 'validation_check_exact_bundle_failed'],
-    ['healthy', 'validation_check_health_failed'],
-    ['freshActivation', 'validation_check_fresh_activation_failed'],
-    ['uniqueMachineId', 'validation_check_machine_id_failed'],
-    ['uniqueSshHostKey', 'validation_check_ssh_host_key_failed'],
-    ['forbiddenStateAbsent', 'validation_check_forbidden_state_failed'],
-  ] as const;
-  return checks.find(([name]) => evidence[name] !== true)?.[1] ?? 'validation_failed';
-}
-
-function hashToken(token: string): string {
-  return createHash('sha256').update(token).digest('hex');
-}
-
-function callbackPayloadDigest(payload: GoldenSnapshotCallback): string {
-  return createHash('sha256').update(JSON.stringify(payload)).digest('hex');
-}
-
-function isExactBuildServer(
-  server: HetznerServer,
-  buildId: string,
-  snapshotId: string,
-  role: 'builder' | 'validation',
-  validationOrdinal?: number,
-): boolean {
-  const labels = server.labels ?? {};
-  return labels['matrix.snapshot-build'] === buildId
-    && labels['matrix.snapshot-id'] === snapshotId
-    && labels['matrix.role'] === role
-    && (role !== 'validation'
-      || labels['matrix.validation-ordinal'] === String(validationOrdinal));
-}
-
-async function callbackReplayStatus(
-  db: PlatformDB,
-  buildId: string,
-  eventId: string,
-  token: string,
-  payloadDigest: string,
-): Promise<'new' | 'accepted' | 'conflict' | 'unauthorized'> {
-  const receipt = await db.executor.selectFrom('golden_snapshot_callback_receipts')
-    .select(['token_sha256', 'payload_sha256', 'outcome']).where('build_id', '=', buildId)
-    .where('event_id', '=', eventId).executeTakeFirst();
-  if (!receipt) return 'new';
-  if (!receipt.token_sha256 || !tokenMatches(token, receipt.token_sha256)) return 'unauthorized';
-  if (receipt.payload_sha256 !== payloadDigest) return 'conflict';
-  return typeof receipt.outcome === 'object'
-    && receipt.outcome !== null
-    && 'accepted' in receipt.outcome
-    && receipt.outcome.accepted === true
-    ? 'accepted'
-    : 'conflict';
-}
-
-async function recordCallbackReceipt(
-  db: PlatformDB,
-  input: {
-    buildId: string;
-    eventId: string;
-    phase: string;
-    tokenDigest: string;
-    payloadDigest: string;
-    at: string;
-    expiresAt: string;
-  },
-): Promise<void> {
-  await db.executor.insertInto('golden_snapshot_callback_receipts').values({
-    build_id: input.buildId, event_id: input.eventId, callback_phase: input.phase,
-    token_sha256: input.tokenDigest, payload_sha256: input.payloadDigest, outcome: { accepted: true },
-    created_at: input.at, expires_at: input.expiresAt,
-  }).onConflict((oc) => oc.columns(['build_id', 'event_id']).doNothing()).execute();
-}
-
-function tokenMatches(token: string, expectedHash: string): boolean {
-  const actual = Buffer.from(hashToken(token), 'hex');
-  const expected = Buffer.from(expectedHash, 'hex');
-  return actual.length === expected.length && timingSafeEqual(actual, expected);
-}
-
-function addMilliseconds(iso: string, milliseconds: number): string {
-  return new Date(new Date(iso).getTime() + milliseconds).toISOString();
-}
-
-function replaceTemplate(template: string, values: Record<string, string>): string {
-  let rendered = template;
-  for (const [name, value] of Object.entries(values)) {
-    if (value.includes("'")) throw new Error(`Unsafe golden snapshot template value: ${name}`);
-    rendered = rendered.replaceAll(`{{${name}}}`, value);
-  }
-  if (/{{[a-zA-Z][a-zA-Z0-9]*}}/.test(rendered)) throw new Error('Golden snapshot template is incomplete');
-  return rendered;
-}
-
-function validationUserData(input: {
-  callbackUrl: string;
-  callbackToken: string;
-  callbackEventId: string;
-  bundleVersion: string;
-  bundleSha256: string;
-  builderMachineIdSha256: string;
-  builderSshHostKeySha256: string;
-}): string {
-  const bundleVersion = GoldenSnapshotBundleVersionSchema.parse(input.bundleVersion);
-  for (const [name, value] of Object.entries(input)) {
-    if (value.includes("'") || /[\r\n]/.test(value)) {
-      throw new Error(`Unsafe golden snapshot validation template value: ${name}`);
-    }
-  }
-  return `#cloud-config
-write_files:
-  - path: /run/matrix-golden-snapshot-callback-token
-    owner: root:root
-    permissions: '0600'
-    content: '${input.callbackToken}'
-runcmd:
-  - |
-    set -eu
-    failureStage='identity_regeneration'
-    failureArmed=1
-    reportFailure() {
-      failureStatus="$?"
-      [ "$failureArmed" = 1 ] || return 0
-      failureArmed=0
-      trap - EXIT
-      set +e
-      reportedStage="$failureStage"
-      if [ "$failureStage" = activation ] && [ -f /run/matrix-golden-activation-stage ] \
-        && [ ! -L /run/matrix-golden-activation-stage ]; then
-        activationStage="$(cat /run/matrix-golden-activation-stage)"
-        case "$activationStage" in
-          activation_preflight_evidence|activation_preflight_forbidden_state|activation_preflight_host_prerequisites|activation_preflight_user_state|activation_preflight_runtime_state|activation_preflight_owner_state|activation_preflight_root_ssh_state|activation_preflight_root_local_state|activation_preflight_log_state|activation_preflight_cloud_init|activation_preflight_container_state|activation_runtime_setup|activation_terminal_runtime|activation_docker_start|activation_postgres_pull|activation_postgres_start|activation_postgres_ready|activation_services_start|activation_services_ready|activation_terminal_runtime_ready|activation_gateway_ready|activation_shell_ready|activation_sync_agent_ready|activation_gateway_health) reportedStage="$activationStage" ;;
-        esac
-      fi
-      callbackToken="$(cat /run/matrix-golden-snapshot-callback-token 2>/dev/null)"
-      python3 - "$reportedStage" /run/matrix-golden-service-diagnostics.json >/run/matrix-golden-failure.json <<'PY'
-    import json
-    import os
-    import sys
-
-    reported_stage, diagnostics_path = sys.argv[1:]
-    payload = {
-        'eventId': '${input.callbackEventId}',
-        'phase': 'failed',
-        'role': 'validation',
-        'stage': reported_stage,
-        'bundleVersion': '${bundleVersion}',
-        'bundleSha256': '${input.bundleSha256}',
-    }
-    if os.path.isfile(diagnostics_path) and not os.path.islink(diagnostics_path):
-        try:
-            with open(diagnostics_path, 'rb') as handle:
-                raw = handle.read(131073)
-            if len(raw) <= 131072:
-                diagnostics = json.loads(raw)
-                if isinstance(diagnostics, dict):
-                    payload['serviceDiagnostics'] = diagnostics
-        except (OSError, ValueError, UnicodeError):
-            print('Golden service diagnostics unavailable; reporting failure stage only', file=sys.stderr)
-    json.dump(payload, sys.stdout, separators=(',', ':'))
-    PY
-      printf 'header = "authorization: Bearer %s"\\n' "$callbackToken" |
-        curl --config - --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 --retry-max-time 60 --connect-timeout 10 --max-time 10 -H 'content-type: application/json' --data-binary @/run/matrix-golden-failure.json '${input.callbackUrl}'
-      rm -f /run/matrix-golden-snapshot-callback-token /run/matrix-golden-failure.json /run/matrix-golden-validation.json /run/matrix-golden-activation-stage /run/matrix-golden-service-diagnostics.json
-      exit "$failureStatus"
-    }
-    trap reportFailure EXIT
-    systemd-machine-id-setup
-    ssh-keygen -A
-    failureStage='activation'
-    timeout --kill-after=30 1200 /opt/matrix/bin/matrix-golden-snapshot-activate validation
-    failureStage='checks'
-    set +e
-    MATRIX_CALLBACK_EVENT_ID='${input.callbackEventId}' MATRIX_EXPECTED_BUNDLE_VERSION='${bundleVersion}' MATRIX_EXPECTED_BUNDLE_SHA256='${input.bundleSha256}' MATRIX_BUILDER_MACHINE_ID_SHA256='${input.builderMachineIdSha256}' MATRIX_BUILDER_SSH_HOST_KEY_SHA256='${input.builderSshHostKeySha256}' /opt/matrix/bin/matrix-golden-snapshot-validate >/run/matrix-golden-validation.json
-    validationStatus=$?
-    set -e
-    test -s /run/matrix-golden-validation.json
-    if [ "$validationStatus" -ne 0 ]; then
-      failureStage="$(python3 - /run/matrix-golden-validation.json <<'PY'
-    import json
-    import sys
-
-    stages = (
-        ("exactBundle", "validation_check_exact_bundle"),
-        ("healthy", "validation_check_health"),
-        ("freshActivation", "validation_check_fresh_activation"),
-        ("uniqueMachineId", "validation_check_machine_id"),
-        ("uniqueSshHostKey", "validation_check_ssh_host_key"),
-        ("forbiddenStateAbsent", "validation_check_forbidden_state"),
-    )
-    try:
-        evidence = json.load(open(sys.argv[1], encoding="utf-8"))["evidence"]
-        print(next((stage for check, stage in stages if evidence.get(check) is not True), "checks"))
-    except (OSError, KeyError, TypeError, ValueError):
-        print("checks")
-    PY
-      )"
-      exit "$validationStatus"
-    fi
-    failureStage='callback_delivery'
-    callbackToken="$(cat /run/matrix-golden-snapshot-callback-token)"
-    printf 'header = "authorization: Bearer %s"\\n' "$callbackToken" |
-      curl --config - --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 --retry-max-time 60 --connect-timeout 10 --max-time 10 -H 'content-type: application/json' --data-binary @/run/matrix-golden-validation.json '${input.callbackUrl}'
-    failureArmed=0
-    trap - EXIT
-    rm -f /run/matrix-golden-snapshot-callback-token /run/matrix-golden-validation.json /run/matrix-golden-activation-stage /run/matrix-golden-service-diagnostics.json
-    exit "$validationStatus"
-`;
-}
-
-function exactLabels(buildId: string, snapshotId: string, role: 'builder' | 'validation', validationOrdinal?: number) {
-  return {
-    'matrix.snapshot-build': buildId,
-    'matrix.snapshot-id': snapshotId,
-    'matrix.role': role,
-    ...(role === 'validation' ? { 'matrix.validation-ordinal': String(validationOrdinal) } : {}),
-  };
-}
-
-function providerFailure(context: string, err: unknown): Error {
-  const kind = err instanceof Error ? err.name : typeof err;
-  console.error(`[golden-snapshot] ${context} failed: ${kind}`);
-  return err instanceof CustomerVpsError
-    ? err
-    : new Error('Golden snapshot provider operation failed');
-}
 
 export function createGoldenSnapshotService(rawDeps: GoldenSnapshotServiceDeps): GoldenSnapshotService {
   const config = GoldenSnapshotRuntimeConfigSchema.parse(rawDeps.config);
@@ -423,283 +203,30 @@ export function createGoldenSnapshotService(rawDeps: GoldenSnapshotServiceDeps):
   const buildServerType = config.serverType
     ?? (config.compatibility.architecture === 'arm' ? 'cax11' : 'cx23');
 
-  async function load(buildId: string) {
-    const build = await getGoldenSnapshotBuild(deps.db, buildId);
-    if (!build) throw new Error('Golden snapshot build not found');
-    const snapshot = await getGoldenSnapshot(deps.db, build.snapshotId);
-    if (!snapshot) throw new Error('Golden snapshot not found');
-    const release = await deps.db.executor.selectFrom('host_bundle_releases').selectAll()
-      .where('version', '=', snapshot.bundleVersion).executeTakeFirstOrThrow();
-    if (release.sha256.toLowerCase() !== snapshot.bundleSha256) {
-      throw new Error('Golden snapshot release provenance mismatch');
-    }
-    return { build, snapshot, release };
-  }
+  const ops = createGoldenSnapshotBuildOperations({
+    db: deps.db,
+    hetzner: deps.hetzner,
+    config,
+    tokenFactory: deps.tokenFactory,
+    callbackBaseUrl: deps.callbackBaseUrl,
+    buildServerType,
+  });
 
-  async function persistCreatedBuilder(buildId: string, server: HetznerServer, at: string): Promise<boolean> {
-    const row = await deps.db.executor.updateTable('golden_snapshot_builds').set({
-      phase: 'builder_boot',
-      provider_builder_id: server.id,
-      provider_builder_action_id: server.createActionId ?? null,
-      pending_operation: null,
-      callback_expires_at: addMilliseconds(at, deps.config.callbackDeadlineMs),
-      updated_at: at,
-    }).where('build_id', '=', buildId).where('phase', '=', 'builder_create')
-      .where('provider_builder_id', 'is', null).returning('build_id').executeTakeFirst();
-    return row !== undefined;
-  }
+  const callbackHandler = createGoldenSnapshotCallbackHandler({
+    db: deps.db,
+    hetzner: deps.hetzner,
+    config,
+    now,
+    ops,
+  });
 
-  async function requeueDefinitiveServerCreate(
-    buildId: string,
-    snapshotId: string,
-    role: 'builder' | 'validation',
-    at: string,
-  ): Promise<boolean> {
-    const expectedPhase = role === 'builder' ? 'builder_create' : 'validation_create';
-    return deps.db.transaction(async (trx) => {
-      const build = await trx.executor.selectFrom('golden_snapshot_builds').selectAll()
-        .where('build_id', '=', buildId).where('snapshot_id', '=', snapshotId)
-        .forUpdate().executeTakeFirst();
-      if (!build || build.status !== 'running' || build.phase !== expectedPhase) return false;
-      if (build.pending_operation === null) return false;
-      if (role === 'builder') {
-        const snapshot = await trx.executor.selectFrom('golden_snapshots').selectAll()
-          .where('snapshot_id', '=', snapshotId).forUpdate().executeTakeFirst();
-        if (!snapshot || snapshot.state !== 'building' || snapshot.provider_image_id !== null) return false;
-        const reset = await trx.executor.updateTable('golden_snapshots').set({
-          state: 'candidate', updated_at: at, revision: sql<number>`revision + 1`,
-        }).where('snapshot_id', '=', snapshotId).where('revision', '=', snapshot.revision)
-          .where('state', '=', 'building').returning('snapshot_id').executeTakeFirst();
-        if (!reset) return false;
-        await appendGoldenSnapshotAuditEvent(trx, {
-          snapshotId, buildId, eventType: 'builder_create_requeued', actorType: 'worker',
-          fromState: 'building', toState: 'candidate', reason: 'provider_capacity', now: at,
-        });
-      } else {
-        const snapshot = await trx.executor.selectFrom('golden_snapshots')
-          .select(['snapshot_id', 'state', 'provider_image_id'])
-          .where('snapshot_id', '=', snapshotId).forUpdate().executeTakeFirst();
-        if (!snapshot || snapshot.state !== 'validating' || snapshot.provider_image_id === null) return false;
-        await appendGoldenSnapshotAuditEvent(trx, {
-          snapshotId, buildId, eventType: 'validation_create_requeued', actorType: 'worker',
-          fromState: 'validating', toState: 'validating', reason: 'provider_capacity', now: at,
-        });
-      }
-      const requeued = await trx.executor.updateTable('golden_snapshot_builds').set({
-        phase: role === 'builder' ? 'requested' : 'validation_create',
-        status: 'queued', available_at: at, claimed_at: null, lease_expires_at: null,
-        callback_phase: null, callback_token_hash: null, callback_expires_at: null,
-        pending_operation: null, updated_at: at,
-      }).where('build_id', '=', buildId).where('status', '=', 'running')
-        .where('phase', '=', expectedPhase).returning('build_id').executeTakeFirst();
-      if (!requeued) throw new Error('Golden snapshot create requeue lost its build');
-      return true;
-    });
-  }
-
-  async function handleDefinitiveServerCreateFailure(
-    buildId: string,
-    snapshotId: string,
-    role: 'builder' | 'validation',
-    attempts: number,
-    at: string,
-    err: unknown,
-  ): Promise<never> {
-    if (!(err instanceof DefinitiveProviderRejectionError)) {
-      throw providerFailure(`${role} create`, err);
-    }
-    const phase = role === 'builder' ? 'builder_create' : 'validation_create';
-    if (err.code !== 'quota_exceeded') {
-      await quarantine(buildId, snapshotId, `${role}_create_rejected`, at, phase);
-    } else if (attempts >= deps.config.maxBuildAttempts) {
-      await quarantine(buildId, snapshotId, 'provider_capacity_exhausted', at, phase);
-    } else {
-      await requeueDefinitiveServerCreate(buildId, snapshotId, role, at);
-    }
-    throw providerFailure(`${role} create`, err);
-  }
-
-  async function adoptServer(
-    buildId: string,
-    snapshotId: string,
-    role: 'builder' | 'validation',
-    at: string,
-    validationOrdinal?: number,
-  ) {
-    if (!deps.hetzner.listServersByLabel) return undefined;
-    const selector = `matrix.snapshot-build=${buildId},matrix.role=${role}`;
-    const matches = await deps.hetzner.listServersByLabel(selector);
-    const exact = matches.filter((server) => isExactBuildServer(
-      server, buildId, snapshotId, role, validationOrdinal,
-    ));
-    if (exact.length !== 1) return undefined;
-    if (role === 'builder') await persistCreatedBuilder(buildId, exact[0]!, at);
-    else {
-      await deps.db.executor.updateTable('golden_snapshot_builds').set({
-        phase: 'validation_boot', provider_validation_id: exact[0]!.id,
-        provider_validation_action_id: exact[0]!.createActionId ?? null,
-        pending_operation: null, callback_expires_at: addMilliseconds(at, deps.config.callbackDeadlineMs),
-        updated_at: at,
-      }).where('build_id', '=', buildId).where('phase', '=', 'validation_create')
-        .where('validation_clone_ordinal', '=', validationOrdinal ?? 0)
-        .where('provider_validation_id', 'is', null).execute();
-    }
-    return exact[0];
-  }
-
-  async function createValidationClone(input: {
-    buildId: string;
-    snapshotId: string;
-    imageId: number;
-    bundleVersion: string;
-    bundleSha256: string;
-    builderMachineIdSha256: string;
-    builderSshHostKeySha256: string;
-    validationOrdinal: number;
-    attempts: number;
-    at: string;
-  }): Promise<string> {
-    const callbackToken = deps.tokenFactory();
-    const callbackEventId = randomUUID();
-    const armed = await reserveGoldenSnapshotValidationCreate(deps.db, {
-      buildId: input.buildId,
-      validationOrdinal: input.validationOrdinal,
-      callbackTokenHash: hashToken(callbackToken),
-      callbackExpiresAt: addMilliseconds(input.at, deps.config.callbackDeadlineMs),
-      now: input.at,
-      maxResources: deps.config.maxConcurrentBuilds,
-    });
-    if (!armed) return 'validation_create';
-    try {
-      const server = await deps.hetzner.createServer({
-        name: `matrix-validate-${input.buildId.slice(0, 8)}-${input.validationOrdinal}`,
-        userData: validationUserData({
-          callbackUrl: `${deps.callbackBaseUrl.replace(/\/$/, '')}/system-bundles/snapshot-builds/${input.buildId}/callback`,
-          callbackToken,
-          callbackEventId,
-          bundleVersion: input.bundleVersion,
-          bundleSha256: input.bundleSha256,
-          builderMachineIdSha256: input.builderMachineIdSha256,
-          builderSshHostKeySha256: input.builderSshHostKeySha256,
-        }),
-        labels: exactLabels(input.buildId, input.snapshotId, 'validation', input.validationOrdinal),
-        image: input.imageId,
-        serverType: buildServerType,
-        sshKeys: [],
-      });
-      await deps.db.executor.updateTable('golden_snapshot_builds').set({
-        phase: 'validation_boot', provider_validation_id: server.id,
-        provider_validation_action_id: server.createActionId ?? null,
-        pending_operation: null, callback_expires_at: addMilliseconds(input.at, deps.config.callbackDeadlineMs),
-        updated_at: input.at,
-      }).where('build_id', '=', input.buildId).where('phase', '=', 'validation_create')
-        .where('validation_clone_ordinal', '=', input.validationOrdinal).executeTakeFirstOrThrow();
-      return 'validation_boot';
-    } catch (err: unknown) {
-      return handleDefinitiveServerCreateFailure(
-        input.buildId,
-        input.snapshotId,
-        'validation',
-        input.attempts,
-        input.at,
-        err,
-      );
-    }
-  }
-
-  async function quarantine(
-    buildId: string,
-    snapshotId: string,
-    code: string,
-    at: string,
-    expectedPhase: string,
-    callbackReceipt?: {
-      eventId: string;
-      phase: string;
-      tokenDigest: string;
-      payloadDigest: string;
-      serviceDiagnostics?: z.infer<typeof GoldenSnapshotServiceDiagnosticsSchema>;
-    },
-  ): Promise<boolean> {
-    return deps.db.transaction(async (trx) => {
-      const build = await trx.executor.selectFrom('golden_snapshot_builds').selectAll()
-        .where('build_id', '=', buildId).where('snapshot_id', '=', snapshotId).forUpdate().executeTakeFirstOrThrow();
-      if (build.status !== 'running' || build.phase !== expectedPhase) return false;
-      const reconcileUnknownCreate = (code === 'builder_create_unresolved'
-        || code === 'validation_create_unresolved'
-        || code === 'snapshot_create_unresolved')
-        && build.pending_operation !== null;
-      const priorSnapshot = await trx.executor.selectFrom('golden_snapshots').selectAll()
-        .where('snapshot_id', '=', snapshotId).forUpdate().executeTakeFirst();
-      const snapshotRow = await trx.executor.updateTable('golden_snapshots').set({
-        state: 'quarantined', failure_code: code, quarantined_at: at, updated_at: at,
-        revision: sql<number>`revision + 1`,
-      }).where('snapshot_id', '=', snapshotId).where('state', 'not in', ['retiring', 'deleted'])
-        .returning('provider_image_id').executeTakeFirst();
-      if (snapshotRow && priorSnapshot) {
-        await appendGoldenSnapshotAuditEvent(trx, {
-          snapshotId, buildId, eventType: 'snapshot_quarantined', actorType: 'worker',
-          fromState: priorSnapshot.state, toState: 'quarantined', reason: code, now: at,
-        });
-      }
-      const callbackEvidence = callbackReceipt ? {
-        callback_event_id: callbackReceipt.eventId,
-        callback_payload_sha256: callbackReceipt.payloadDigest,
-        callback_outcome: {
-          accepted: true,
-          ...(callbackReceipt.serviceDiagnostics
-            ? { serviceDiagnostics: callbackReceipt.serviceDiagnostics }
-            : {}),
-        },
-      } : {};
-      await trx.executor.updateTable('golden_snapshot_builds').set({
-        phase: 'failed', status: 'failed', last_error_code: code, updated_at: at,
-        completed_at: at, lease_expires_at: null, callback_phase: null, callback_token_hash: null,
-        callback_expires_at: reconcileUnknownCreate
-          ? addMilliseconds(at, ORPHAN_RECONCILIATION_DEADLINE_MS)
-          : null,
-        pending_operation: reconcileUnknownCreate ? build.pending_operation : null,
-        ...callbackEvidence,
-      }).where('build_id', '=', buildId).where('phase', '=', expectedPhase)
-        .where('status', '=', 'running').execute();
-      const resources = [
-        build.provider_builder_id === null ? undefined : { type: 'builder_server', id: build.provider_builder_id },
-        build.provider_validation_id === null ? undefined : { type: 'validation_server', id: build.provider_validation_id },
-        snapshotRow?.provider_image_id == null ? undefined : { type: 'snapshot_image', id: snapshotRow.provider_image_id },
-      ].filter((value): value is {
-        type: 'builder_server' | 'validation_server' | 'snapshot_image'; id: number;
-      } => value !== undefined);
-      for (const resource of resources) {
-        await trx.executor.insertInto('golden_snapshot_cleanup').values({
-          cleanup_id: randomUUID(), snapshot_id: snapshotId,
-          build_id: resource.type === 'snapshot_image' ? null : buildId,
-          resource_type: resource.type, provider_resource_id: resource.id,
-          provenance_key: resource.type === 'snapshot_image'
-            ? `snapshot:${snapshotId}`
-            : `build:${buildId}:${resource.type}`,
-          reason: code, status: 'queued', attempts: 0,
-          next_attempt_at: at, lease_expires_at: null, last_error_code: null, created_at: at, completed_at: null,
-        }).onConflict((oc) => oc.columns(['resource_type', 'provider_resource_id'])
-          .where('completed_at', 'is', null).doNothing()).execute();
-      }
-      if (callbackReceipt) {
-        await recordCallbackReceipt(trx, {
-          buildId,
-          ...callbackReceipt,
-          at,
-          expiresAt: addMilliseconds(at, deps.config.auditRetentionMs),
-        });
-      }
-      return true;
-    });
-  }
 
   async function runOrphanReconciliationStep(
     rawBuildId: string,
   ): Promise<'queued' | 'pending' | 'absent'> {
     const buildId = UuidSchema.parse(rawBuildId);
     const at = now();
-    const { build, snapshot } = await load(buildId);
+    const { build, snapshot } = await ops.load(buildId);
     if (build.status !== 'failed' || snapshot.state !== 'quarantined' || build.pendingOperation === null) {
       throw new Error('Golden snapshot orphan reconciliation is not pending');
     }
@@ -816,7 +343,7 @@ export function createGoldenSnapshotService(rawDeps: GoldenSnapshotServiceDeps):
     const buildId = UuidSchema.parse(rawBuildId);
     if (!config.buildsEnabled) throw new Error('Golden snapshot builds are disabled');
     const at = now();
-    const { build, snapshot, release } = await load(buildId);
+    const { build, snapshot, release } = await ops.load(buildId);
     if (build.status !== 'running') throw new Error('Golden snapshot build is not claimed');
 
     if (build.phase === 'requested') {
@@ -858,10 +385,10 @@ export function createGoldenSnapshotService(rawDeps: GoldenSnapshotServiceDeps):
           serverType: buildServerType,
           sshKeys: [],
         });
-        await persistCreatedBuilder(buildId, server, at);
+        await ops.persistCreatedBuilder(buildId, server, at);
         return 'builder_boot';
       } catch (err: unknown) {
-        return handleDefinitiveServerCreateFailure(
+        return ops.handleDefinitiveServerCreateFailure(
           buildId, snapshot.snapshotId, 'builder', build.attempts, at, err,
         );
       }
@@ -869,10 +396,10 @@ export function createGoldenSnapshotService(rawDeps: GoldenSnapshotServiceDeps):
 
     if (build.phase === 'builder_create') {
       try {
-        const adopted = await adoptServer(buildId, snapshot.snapshotId, 'builder', at);
+        const adopted = await ops.adoptServer(buildId, snapshot.snapshotId, 'builder', at);
         if (adopted) return 'builder_boot';
         if (build.callbackExpiresAt && build.callbackExpiresAt <= at) {
-          await quarantine(buildId, snapshot.snapshotId, 'builder_create_unresolved', at, build.phase);
+          await ops.quarantine(buildId, snapshot.snapshotId, 'builder_create_unresolved', at, build.phase);
           throw new Error('Golden snapshot builder recovery window expired');
         }
         return 'builder_create';
@@ -884,7 +411,7 @@ export function createGoldenSnapshotService(rawDeps: GoldenSnapshotServiceDeps):
 
     if (build.phase === 'builder_boot' || build.phase === 'validation_boot') {
       if (!build.callbackExpiresAt || build.callbackExpiresAt <= at) {
-        await quarantine(buildId, snapshot.snapshotId, 'callback_timeout', at, build.phase);
+        await ops.quarantine(buildId, snapshot.snapshotId, 'callback_timeout', at, build.phase);
         throw new Error('Golden snapshot callback timed out');
       }
       return build.phase;
@@ -894,7 +421,7 @@ export function createGoldenSnapshotService(rawDeps: GoldenSnapshotServiceDeps):
       if (build.providerBuilderId === null) throw new Error('Golden snapshot builder identity missing');
       const server = await deps.hetzner.getServer(build.providerBuilderId);
       if (!server) {
-        await quarantine(buildId, snapshot.snapshotId, 'builder_missing', at, build.phase);
+        await ops.quarantine(buildId, snapshot.snapshotId, 'builder_missing', at, build.phase);
         throw new Error('Golden snapshot builder is missing');
       }
       if (server.status !== 'off') {
@@ -906,7 +433,7 @@ export function createGoldenSnapshotService(rawDeps: GoldenSnapshotServiceDeps):
           : undefined;
         if (powerOffStartedAt) {
           if (new Date(at).getTime() - new Date(powerOffStartedAt).getTime() >= GRACEFUL_SHUTDOWN_DEADLINE_MS) {
-            await quarantine(buildId, snapshot.snapshotId, 'builder_shutdown_timeout', at, build.phase);
+            await ops.quarantine(buildId, snapshot.snapshotId, 'builder_shutdown_timeout', at, build.phase);
             throw new Error('Golden snapshot builder shutdown timed out');
           }
         } else if (gracefulStartedAt
@@ -953,7 +480,7 @@ export function createGoldenSnapshotService(rawDeps: GoldenSnapshotServiceDeps):
         throw providerFailure('snapshot create', err);
       }
       if (created.image.status === 'deleting') {
-        await quarantine(buildId, snapshot.snapshotId, 'image_unavailable', at, 'snapshot_wait');
+        await ops.quarantine(buildId, snapshot.snapshotId, 'image_unavailable', at, 'snapshot_wait');
         throw new Error('Golden snapshot image validation failed');
       }
       if (!build.leaseExpiresAt || !await recordGoldenSnapshotProviderImage(
@@ -994,7 +521,7 @@ export function createGoldenSnapshotService(rawDeps: GoldenSnapshotServiceDeps):
         } catch (err: unknown) {
           const deadline = observeDeadline();
           if (deadline.expired) {
-            await quarantine(
+            await ops.quarantine(
               buildId,
               snapshot.snapshotId,
               expiredFailure.code,
@@ -1033,13 +560,13 @@ export function createGoldenSnapshotService(rawDeps: GoldenSnapshotServiceDeps):
           && candidate.labels['matrix.snapshot-id'] === snapshot.snapshotId
           && candidate.labels['matrix.role'] === 'builder');
         if (candidates.length > 1) {
-          await quarantine(buildId, snapshot.snapshotId, 'snapshot_create_ambiguous', at, build.phase);
+          await ops.quarantine(buildId, snapshot.snapshotId, 'snapshot_create_ambiguous', at, build.phase);
           throw new Error('Golden snapshot image reconciliation was ambiguous');
         }
         image = candidates[0] ?? null;
         if (image) {
           if (image.status === 'deleting') {
-            await quarantine(buildId, snapshot.snapshotId, 'image_unavailable', at, build.phase);
+            await ops.quarantine(buildId, snapshot.snapshotId, 'image_unavailable', at, build.phase);
             throw new Error('Golden snapshot image validation failed');
           }
           if (!build.leaseExpiresAt || !await recordGoldenSnapshotProviderImage(
@@ -1058,7 +585,7 @@ export function createGoldenSnapshotService(rawDeps: GoldenSnapshotServiceDeps):
         } else {
           const deadline = observeDeadline();
           if (deadline.expired) {
-            await quarantine(
+            await ops.quarantine(
               buildId,
               snapshot.snapshotId,
               'snapshot_create_unresolved',
@@ -1071,17 +598,17 @@ export function createGoldenSnapshotService(rawDeps: GoldenSnapshotServiceDeps):
         }
       }
       if (image?.status === 'deleting') {
-        await quarantine(buildId, snapshot.snapshotId, 'image_unavailable', at, build.phase);
+        await ops.quarantine(buildId, snapshot.snapshotId, 'image_unavailable', at, build.phase);
         throw new Error('Golden snapshot image validation failed');
       }
       if (!image || action?.status === 'error') {
-        await quarantine(buildId, snapshot.snapshotId, 'image_unavailable', at, build.phase);
+        await ops.quarantine(buildId, snapshot.snapshotId, 'image_unavailable', at, build.phase);
         throw new Error('Golden snapshot image validation failed');
       }
       if (action === null && (build.providerSnapshotActionId !== null || image.status !== 'available')) {
         const deadline = observeDeadline();
         if (deadline.expired) {
-          await quarantine(
+          await ops.quarantine(
             buildId,
             snapshot.snapshotId,
             'snapshot_action_unconfirmed',
@@ -1095,7 +622,7 @@ export function createGoldenSnapshotService(rawDeps: GoldenSnapshotServiceDeps):
       if (image.status !== 'available' || (action !== null && action.status !== 'success')) {
         const deadline = observeDeadline();
         if (deadline.expired) {
-          await quarantine(
+          await ops.quarantine(
             buildId,
             snapshot.snapshotId,
             'snapshot_creation_timeout',
@@ -1107,11 +634,11 @@ export function createGoldenSnapshotService(rawDeps: GoldenSnapshotServiceDeps):
         return 'snapshot_wait';
       }
       if (image.architecture !== snapshot.compatibility.architecture || image.deleteProtected) {
-        await quarantine(buildId, snapshot.snapshotId, 'image_incompatible', at, build.phase);
+        await ops.quarantine(buildId, snapshot.snapshotId, 'image_incompatible', at, build.phase);
         throw new Error('Golden snapshot image compatibility validation failed');
       }
       if (!build.builderMachineIdSha256 || !build.builderSshHostKeySha256) {
-        await quarantine(buildId, snapshot.snapshotId, 'builder_identity_missing', at, build.phase);
+        await ops.quarantine(buildId, snapshot.snapshotId, 'builder_identity_missing', at, build.phase);
         throw new Error('Golden snapshot builder identity evidence missing');
       }
       const builderCleanupId = await deps.db.transaction(async (trx) => {
@@ -1150,11 +677,11 @@ export function createGoldenSnapshotService(rawDeps: GoldenSnapshotServiceDeps):
         const cleanupResult = await runCleanupStep(builderCleanupId);
         if (cleanupResult === 'pending') return 'validation_create';
         if (cleanupResult === 'quarantined') {
-          await quarantine(buildId, snapshot.snapshotId, 'builder_cleanup_unsafe', at, 'validation_create');
+          await ops.quarantine(buildId, snapshot.snapshotId, 'builder_cleanup_unsafe', at, 'validation_create');
           throw new Error('Golden snapshot builder cleanup was unsafe');
         }
       }
-      return createValidationClone({
+      return ops.createValidationClone({
         buildId, snapshotId: snapshot.snapshotId, imageId: image.id,
         bundleVersion: snapshot.bundleVersion, bundleSha256: snapshot.bundleSha256,
         builderMachineIdSha256: build.builderMachineIdSha256,
@@ -1177,17 +704,17 @@ export function createGoldenSnapshotService(rawDeps: GoldenSnapshotServiceDeps):
           ? !['queued', 'running'].includes(cleanup.status)
           : !refreshedBuild || refreshedBuild.providerBuilderId !== null;
         if (cleanupUnsafe) {
-          await quarantine(buildId, snapshot.snapshotId, 'builder_cleanup_unsafe', at, build.phase);
+          await ops.quarantine(buildId, snapshot.snapshotId, 'builder_cleanup_unsafe', at, build.phase);
           throw new Error('Golden snapshot builder cleanup was unsafe');
         }
         return 'validation_create';
       }
       if (build.callbackTokenHash === null) {
         if (snapshot.providerImageId === null || !build.builderMachineIdSha256 || !build.builderSshHostKeySha256) {
-          await quarantine(buildId, snapshot.snapshotId, 'validation_provenance_missing', at, build.phase);
+          await ops.quarantine(buildId, snapshot.snapshotId, 'validation_provenance_missing', at, build.phase);
           throw new Error('Golden snapshot validation provenance missing');
         }
-        return createValidationClone({
+        return ops.createValidationClone({
           buildId, snapshotId: snapshot.snapshotId, imageId: snapshot.providerImageId,
           bundleVersion: snapshot.bundleVersion, bundleSha256: snapshot.bundleSha256,
           builderMachineIdSha256: build.builderMachineIdSha256,
@@ -1196,12 +723,12 @@ export function createGoldenSnapshotService(rawDeps: GoldenSnapshotServiceDeps):
         });
       }
       try {
-        const adopted = await adoptServer(
+        const adopted = await ops.adoptServer(
           buildId, snapshot.snapshotId, 'validation', at, build.validationCloneOrdinal,
         );
         if (adopted) return 'validation_boot';
         if (build.callbackExpiresAt && build.callbackExpiresAt <= at) {
-          await quarantine(buildId, snapshot.snapshotId, 'validation_create_unresolved', at, build.phase);
+          await ops.quarantine(buildId, snapshot.snapshotId, 'validation_create_unresolved', at, build.phase);
           throw new Error('Golden snapshot validation recovery window expired');
         }
         return 'validation_create';
@@ -1212,365 +739,6 @@ export function createGoldenSnapshotService(rawDeps: GoldenSnapshotServiceDeps):
     }
 
     return build.phase;
-  }
-
-  async function consumeCallback(rawBuildId: string, rawToken: string, rawPayload: GoldenSnapshotCallback): Promise<void> {
-    const buildId = UuidSchema.parse(rawBuildId);
-    const token = z.string().min(16).max(512).parse(rawToken);
-    const payload = GoldenSnapshotCallbackSchema.parse(rawPayload);
-    const tokenDigest = hashToken(token);
-    const payloadDigest = callbackPayloadDigest(payload);
-    const at = now();
-    let { build, snapshot } = await load(buildId);
-    const replay = await callbackReplayStatus(deps.db, buildId, payload.eventId, token, payloadDigest);
-    if (replay === 'accepted') return;
-    if (replay === 'unauthorized') throw new GoldenSnapshotCallbackError('unauthorized');
-    if (replay === 'conflict') throw new GoldenSnapshotCallbackError('rejected');
-    const expectedCallbackPhase = payload.phase === 'failed'
-      ? payload.role === 'builder' ? 'sanitized' : 'validated'
-      : payload.phase === 'builder_booted' ? 'sanitized' : payload.phase;
-    if (!build.callbackTokenHash || build.callbackPhase !== expectedCallbackPhase
-      || !tokenMatches(token, build.callbackTokenHash)) {
-      throw new GoldenSnapshotCallbackError('unauthorized');
-    }
-    if (!build.callbackExpiresAt || build.callbackExpiresAt <= at) {
-      await quarantine(buildId, snapshot.snapshotId, 'callback_timeout', at, build.phase);
-      throw new GoldenSnapshotCallbackError('rejected');
-    }
-    if (payload.bundleVersion !== snapshot.bundleVersion || payload.bundleSha256 !== snapshot.bundleSha256) {
-      await quarantine(buildId, snapshot.snapshotId, 'provenance_mismatch', at, build.phase);
-      throw new GoldenSnapshotCallbackError('rejected');
-    }
-
-    const reportedRole = payload.phase === 'failed'
-      ? payload.role
-      : payload.phase === 'sanitized' || payload.phase === 'builder_booted' ? 'builder' : 'validation';
-    const earlyRole = reportedRole === 'builder' && build.phase === 'builder_create'
-      ? 'builder'
-      : reportedRole === 'validation' && build.phase === 'validation_create'
-        ? 'validation'
-        : undefined;
-    if (earlyRole) {
-      let adopted: HetznerServer | undefined;
-      try {
-        adopted = await adoptServer(
-          buildId,
-          snapshot.snapshotId,
-          earlyRole,
-          at,
-          earlyRole === 'validation' ? build.validationCloneOrdinal : undefined,
-        );
-      } catch (err: unknown) {
-        throw providerFailure(`${earlyRole} callback reconciliation`, err);
-      }
-      if (!adopted) throw new GoldenSnapshotCallbackError('rejected');
-      ({ build, snapshot } = await load(buildId));
-    }
-
-    if (payload.phase !== 'failed') {
-      const actionId = reportedRole === 'builder'
-        ? build.providerBuilderActionId
-        : build.providerValidationActionId;
-      let action;
-      try {
-        action = actionId === null ? null : await deps.hetzner.getAction(actionId);
-      } catch (err: unknown) {
-        throw providerFailure(`${reportedRole} create action confirmation`, err);
-      }
-      if (action?.status === 'error') {
-        await quarantine(
-          buildId, snapshot.snapshotId, `${reportedRole}_create_action_failed`, at, build.phase,
-        );
-        throw new GoldenSnapshotCallbackError('rejected');
-      }
-      if (actionId === null) {
-        const serverId = reportedRole === 'builder'
-          ? build.providerBuilderId
-          : build.providerValidationId;
-        let server: HetznerServer | null;
-        try {
-          server = serverId === null ? null : await deps.hetzner.getServer(serverId);
-        } catch (err: unknown) {
-          throw providerFailure(`${reportedRole} server confirmation`, err);
-        }
-        if (!server || server.status !== 'running' || !isExactBuildServer(
-          server,
-          buildId,
-          snapshot.snapshotId,
-          reportedRole,
-          reportedRole === 'validation' ? build.validationCloneOrdinal : undefined,
-        )) {
-          throw new GoldenSnapshotCallbackError('rejected');
-        }
-      } else if (!action || action.status !== 'success') {
-        throw new GoldenSnapshotCallbackError('rejected');
-      }
-    }
-
-    if (payload.phase === 'failed') {
-      const expectedPhase = payload.role === 'builder' ? 'builder_boot' : 'validation_boot';
-      if (build.phase !== expectedPhase || build.status !== 'running') {
-        throw new GoldenSnapshotCallbackError('rejected');
-      }
-      const failureCode = `${payload.role}_${payload.stage}_failed`;
-      if (!await quarantine(buildId, snapshot.snapshotId, failureCode, at, expectedPhase, {
-        eventId: payload.eventId,
-        phase: payload.phase,
-        tokenDigest,
-        payloadDigest,
-        serviceDiagnostics: payload.serviceDiagnostics,
-      })) {
-        throw new GoldenSnapshotCallbackError('rejected');
-      }
-      return;
-    }
-
-    if (payload.phase === 'builder_booted') {
-      if (!payload.healthy) {
-        await quarantine(buildId, snapshot.snapshotId, 'builder_health_failed', at, build.phase);
-        throw new GoldenSnapshotCallbackError('rejected');
-      }
-      await deps.db.transaction(async (trx) => {
-        const currentBuild = await trx.executor.selectFrom('golden_snapshot_builds').selectAll()
-          .where('build_id', '=', buildId).forUpdate().executeTakeFirstOrThrow();
-        const currentReplay = await callbackReplayStatus(trx, buildId, payload.eventId, token, payloadDigest);
-        if (currentReplay === 'accepted') return;
-        if (currentReplay === 'unauthorized') throw new GoldenSnapshotCallbackError('unauthorized');
-        if (currentReplay === 'conflict'
-          || currentBuild.phase !== 'builder_boot'
-          || currentBuild.status !== 'running'
-          || currentBuild.callback_phase !== 'sanitized'
-          || currentBuild.callback_token_hash !== hashToken(token)
-          || !currentBuild.callback_expires_at
-          || currentBuild.callback_expires_at <= at) throw new GoldenSnapshotCallbackError('rejected');
-        const currentSnapshot = await trx.executor.selectFrom('golden_snapshots').selectAll()
-          .where('snapshot_id', '=', snapshot.snapshotId).forUpdate().executeTakeFirstOrThrow();
-        if (currentSnapshot.state !== 'building') throw new GoldenSnapshotCallbackError('rejected');
-        await trx.executor.updateTable('golden_snapshots').set({
-          state: 'sanitizing', updated_at: at, revision: sql<number>`revision + 1`,
-        }).where('snapshot_id', '=', snapshot.snapshotId).where('revision', '=', currentSnapshot.revision)
-          .where('state', '=', 'building').executeTakeFirstOrThrow();
-        await trx.executor.updateTable('golden_snapshot_builds').set({
-          builder_machine_id_sha256: payload.builderMachineIdSha256,
-          builder_ssh_host_key_sha256: payload.builderSshHostKeySha256,
-          updated_at: at,
-        }).where('build_id', '=', buildId).where('phase', '=', 'builder_boot')
-          .executeTakeFirstOrThrow();
-        await appendGoldenSnapshotAuditEvent(trx, {
-          snapshotId: snapshot.snapshotId, buildId, eventType: 'builder_booted', actorType: 'worker',
-          fromState: 'building', toState: 'sanitizing', now: at,
-        });
-        await recordCallbackReceipt(trx, {
-          buildId, eventId: payload.eventId, phase: payload.phase, tokenDigest, payloadDigest, at,
-          expiresAt: addMilliseconds(at, deps.config.auditRetentionMs),
-        });
-      });
-      return;
-    }
-
-    if (payload.phase === 'sanitized') {
-      const bootIdentityRecorded = build.builderMachineIdSha256 !== null
-        || build.builderSshHostKeySha256 !== null;
-      if (bootIdentityRecorded && (build.builderMachineIdSha256 !== payload.builderMachineIdSha256
-        || build.builderSshHostKeySha256 !== payload.builderSshHostKeySha256)) {
-        await quarantine(buildId, snapshot.snapshotId, 'builder_identity_changed', at, build.phase);
-        throw new GoldenSnapshotCallbackError('rejected');
-      }
-      await deps.db.transaction(async (trx) => {
-        const currentBuild = await trx.executor.selectFrom('golden_snapshot_builds').selectAll()
-          .where('build_id', '=', buildId).forUpdate().executeTakeFirstOrThrow();
-        const currentReplay = await callbackReplayStatus(trx, buildId, payload.eventId, token, payloadDigest);
-        if (currentReplay === 'accepted') return;
-        if (currentReplay === 'unauthorized') throw new GoldenSnapshotCallbackError('unauthorized');
-        if (currentReplay === 'conflict'
-          || currentBuild.phase !== 'builder_boot'
-          || currentBuild.status !== 'running'
-          || currentBuild.callback_phase !== 'sanitized'
-          || currentBuild.callback_token_hash !== hashToken(token)
-          || !currentBuild.callback_expires_at
-          || currentBuild.callback_expires_at <= at) throw new GoldenSnapshotCallbackError('rejected');
-        const currentSnapshot = await trx.executor.selectFrom('golden_snapshots').selectAll()
-          .where('snapshot_id', '=', snapshot.snapshotId).forUpdate().executeTakeFirstOrThrow();
-        if (!['building', 'sanitizing'].includes(currentSnapshot.state)) {
-          throw new GoldenSnapshotCallbackError('rejected');
-        }
-        await trx.executor.updateTable('golden_snapshots').set({
-          state: 'sanitizing', updated_at: at, revision: sql<number>`revision + 1`,
-        }).where('snapshot_id', '=', snapshot.snapshotId).where('revision', '=', currentSnapshot.revision)
-          .where('state', 'in', ['building', 'sanitizing'])
-          .returning('snapshot_id').executeTakeFirstOrThrow();
-        await appendGoldenSnapshotAuditEvent(trx, {
-          snapshotId: snapshot.snapshotId, buildId, eventType: 'snapshot_sanitized', actorType: 'worker',
-          fromState: currentSnapshot.state, toState: 'sanitizing', now: at,
-        });
-        await trx.executor.updateTable('golden_snapshot_builds').set({
-          phase: 'snapshot_create', callback_phase: null, callback_token_hash: null,
-          callback_expires_at: null,
-          callback_event_id: payload.eventId,
-          callback_payload_sha256: payloadDigest,
-          callback_outcome: { accepted: true },
-          builder_machine_id_sha256: currentBuild.builder_machine_id_sha256
-            ?? payload.builderMachineIdSha256,
-          builder_ssh_host_key_sha256: currentBuild.builder_ssh_host_key_sha256
-            ?? payload.builderSshHostKeySha256,
-          updated_at: at,
-        }).where('build_id', '=', buildId).where('phase', '=', 'builder_boot')
-          .returning('build_id').executeTakeFirstOrThrow();
-        await recordCallbackReceipt(trx, {
-          buildId, eventId: payload.eventId, phase: payload.phase, tokenDigest, payloadDigest, at,
-          expiresAt: addMilliseconds(at, deps.config.auditRetentionMs),
-        });
-      });
-      return;
-    }
-
-    const evidence = GoldenSnapshotValidationSummarySchema.safeParse(payload.evidence);
-    if (!evidence.success) {
-      await quarantine(
-        buildId,
-        snapshot.snapshotId,
-        validationEvidenceFailureCode(payload.evidence),
-        at,
-        build.phase,
-      );
-      throw new GoldenSnapshotCallbackError('rejected');
-    }
-    if (!build.builderMachineIdSha256 || !build.builderSshHostKeySha256
-      || payload.validationMachineIdSha256 === build.builderMachineIdSha256
-      || payload.validationSshHostKeySha256 === build.builderSshHostKeySha256) {
-      await quarantine(buildId, snapshot.snapshotId, 'validation_identity_reused', at, build.phase);
-      throw new GoldenSnapshotCallbackError('rejected');
-    }
-    if (build.validationCloneOrdinal === 2
-      && (!build.firstValidationMachineIdSha256 || !build.firstValidationSshHostKeySha256
-        || payload.validationMachineIdSha256 === build.firstValidationMachineIdSha256
-        || payload.validationSshHostKeySha256 === build.firstValidationSshHostKeySha256)) {
-      await quarantine(buildId, snapshot.snapshotId, 'validation_identity_reused', at, build.phase);
-      throw new GoldenSnapshotCallbackError('rejected');
-    }
-    if (build.validationCloneOrdinal === 1) {
-      await deps.db.transaction(async (trx) => {
-        const currentBuild = await trx.executor.selectFrom('golden_snapshot_builds').selectAll()
-          .where('build_id', '=', buildId).forUpdate().executeTakeFirstOrThrow();
-        const currentReplay = await callbackReplayStatus(trx, buildId, payload.eventId, token, payloadDigest);
-        if (currentReplay === 'accepted') return;
-        if (currentReplay === 'unauthorized') throw new GoldenSnapshotCallbackError('unauthorized');
-        if (currentReplay === 'conflict'
-          || currentBuild.phase !== 'validation_boot'
-          || currentBuild.status !== 'running'
-          || currentBuild.validation_clone_ordinal !== 1
-          || currentBuild.callback_phase !== 'validated'
-          || currentBuild.callback_token_hash !== hashToken(token)
-          || !currentBuild.callback_expires_at
-          || currentBuild.callback_expires_at <= at) throw new GoldenSnapshotCallbackError('rejected');
-        await trx.executor.updateTable('golden_snapshot_builds').set({
-          phase: 'validation_create', validation_clone_ordinal: 2,
-          first_validation_machine_id_sha256: payload.validationMachineIdSha256,
-          first_validation_ssh_host_key_sha256: payload.validationSshHostKeySha256,
-          provider_validation_id: null, provider_validation_action_id: null,
-          pending_operation: null, callback_phase: null, callback_token_hash: null,
-          callback_expires_at: null,
-          callback_event_id: payload.eventId,
-          callback_payload_sha256: payloadDigest,
-          callback_outcome: { accepted: true },
-          updated_at: at,
-        }).where('build_id', '=', buildId).where('phase', '=', 'validation_boot')
-          .where('validation_clone_ordinal', '=', 1).executeTakeFirstOrThrow();
-        await recordCallbackReceipt(trx, {
-          buildId, eventId: payload.eventId, phase: payload.phase, tokenDigest, payloadDigest, at,
-          expiresAt: addMilliseconds(at, deps.config.auditRetentionMs),
-        });
-        if (currentBuild.provider_validation_id !== null) {
-          await trx.executor.insertInto('golden_snapshot_cleanup').values({
-            cleanup_id: randomUUID(), snapshot_id: snapshot.snapshotId, build_id: buildId,
-            resource_type: 'validation_server', provider_resource_id: currentBuild.provider_validation_id,
-            provenance_key: `build:${buildId}:validation_server:1`, reason: 'validation_clone_completed',
-            status: 'queued', attempts: 0, next_attempt_at: at, lease_expires_at: null,
-            last_error_code: null, created_at: at, completed_at: null,
-          }).onConflict((oc) => oc.columns(['resource_type', 'provider_resource_id'])
-            .where('completed_at', 'is', null).doNothing()).execute();
-        }
-      });
-      return;
-    }
-    let verifiedImage;
-    try {
-      verifiedImage = snapshot.providerImageId === null
-        ? null
-        : await deps.hetzner.getImage(snapshot.providerImageId);
-    } catch (err: unknown) {
-      throw providerFailure('final snapshot image confirmation', err);
-    }
-    if (!verifiedImage || verifiedImage.status !== 'available') {
-      await quarantine(buildId, snapshot.snapshotId, 'image_unavailable', at, build.phase);
-      throw new GoldenSnapshotCallbackError('rejected');
-    }
-    if (verifiedImage.id !== snapshot.providerImageId
-      || verifiedImage.architecture !== snapshot.compatibility.architecture
-      || verifiedImage.deleteProtected
-      || (snapshot.imageDiskGb !== null && verifiedImage.diskGb !== snapshot.imageDiskGb)) {
-      await quarantine(buildId, snapshot.snapshotId, 'image_incompatible', at, build.phase);
-      throw new GoldenSnapshotCallbackError('rejected');
-    }
-    await deps.db.transaction(async (trx) => {
-      await sql`SELECT pg_advisory_xact_lock(hashtext(${snapshot.compatibility.baseGeneration}))`
-        .execute(trx.executor);
-      const revokedGeneration = await trx.executor
-        .selectFrom('golden_snapshot_revoked_base_generations')
-        .select('base_generation')
-        .where('base_generation', '=', snapshot.compatibility.baseGeneration)
-        .executeTakeFirst();
-      if (revokedGeneration) throw new GoldenSnapshotCallbackError('rejected');
-      const currentBuild = await trx.executor.selectFrom('golden_snapshot_builds').selectAll()
-        .where('build_id', '=', buildId).forUpdate().executeTakeFirstOrThrow();
-      const currentReplay = await callbackReplayStatus(trx, buildId, payload.eventId, token, payloadDigest);
-      if (currentReplay === 'accepted') return;
-      if (currentReplay === 'unauthorized') throw new GoldenSnapshotCallbackError('unauthorized');
-      if (currentReplay === 'conflict'
-        || currentBuild.phase !== 'validation_boot'
-        || currentBuild.status !== 'running'
-        || currentBuild.validation_clone_ordinal !== 2
-        || currentBuild.callback_phase !== 'validated'
-        || currentBuild.callback_token_hash !== hashToken(token)
-        || !currentBuild.callback_expires_at
-        || currentBuild.callback_expires_at <= at) throw new GoldenSnapshotCallbackError('rejected');
-      await trx.executor.updateTable('golden_snapshots').set({
-       state: 'ready', validation_summary: evidence.data, provider_image_status: verifiedImage.status,
-       ready_at: at, updated_at: at, failure_code: null, revision: sql<number>`revision + 1`,
-      }).where('snapshot_id', '=', snapshot.snapshotId).where('state', '=', 'validating')
-        .where('provider_image_id', 'is not', null)
-        .where('image_architecture', '=', snapshot.compatibility.architecture)
-        .returning('snapshot_id').executeTakeFirstOrThrow();
-      await appendGoldenSnapshotAuditEvent(trx, {
-        snapshotId: snapshot.snapshotId, buildId, eventType: 'snapshot_ready', actorType: 'worker',
-        fromState: 'validating', toState: 'ready', now: at,
-      });
-      await trx.executor.updateTable('golden_snapshot_builds').set({
-        phase: 'completed', status: 'completed', completed_at: at, updated_at: at,
-        lease_expires_at: null, callback_phase: null, callback_token_hash: null, callback_expires_at: null,
-        callback_event_id: payload.eventId,
-        callback_payload_sha256: payloadDigest,
-        callback_outcome: { accepted: true },
-      }).where('build_id', '=', buildId).where('phase', '=', 'validation_boot')
-        .returning('build_id').executeTakeFirstOrThrow();
-      await recordCallbackReceipt(trx, {
-        buildId, eventId: payload.eventId, phase: payload.phase, tokenDigest, payloadDigest, at,
-        expiresAt: addMilliseconds(at, deps.config.auditRetentionMs),
-      });
-      const resources = [
-        currentBuild.provider_builder_id === null ? undefined : { type: 'builder_server', id: currentBuild.provider_builder_id },
-        currentBuild.provider_validation_id === null ? undefined : { type: 'validation_server', id: currentBuild.provider_validation_id },
-      ].filter((value): value is { type: 'builder_server' | 'validation_server'; id: number } => value !== undefined);
-      for (const resource of resources) {
-        await trx.executor.insertInto('golden_snapshot_cleanup').values({
-          cleanup_id: randomUUID(), snapshot_id: snapshot.snapshotId, build_id: buildId,
-          resource_type: resource.type, provider_resource_id: resource.id,
-          provenance_key: `build:${buildId}:${resource.type}`, reason: 'build_completed', status: 'queued', attempts: 0,
-          next_attempt_at: at, lease_expires_at: null, last_error_code: null, created_at: at, completed_at: null,
-        }).onConflict((oc) => oc.columns(['resource_type', 'provider_resource_id'])
-          .where('completed_at', 'is', null).doNothing()).execute();
-      }
-    });
   }
 
   async function runCleanupStep(rawCleanupId: string): Promise<'deleted' | 'pending' | 'quarantined'> {
@@ -1672,5 +840,5 @@ export function createGoldenSnapshotService(rawDeps: GoldenSnapshotServiceDeps):
     }
   }
 
-  return { runBuildStep, runOrphanReconciliationStep, runCleanupStep, consumeCallback };
+  return { runBuildStep, runOrphanReconciliationStep, runCleanupStep, consumeCallback: callbackHandler.consumeCallback };
 }

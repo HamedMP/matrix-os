@@ -5,8 +5,8 @@ import {
   createCodingAgentThreadStore,
 } from "../../packages/gateway/src/coding-agents/thread-store.js";
 import { CodingAgentThreadRelationError } from "../../packages/gateway/src/coding-agents/thread-relations.js";
-import type { RequestPrincipal } from "../../packages/gateway/src/request-principal.js";
-import { MissingRequestPrincipalError } from "../../packages/gateway/src/request-principal.js";
+import type { RequestPrincipal } from "../../packages/gateway/src/domains/identity/request-principal.js";
+import { MissingRequestPrincipalError } from "../../packages/gateway/src/domains/identity/request-principal.js";
 import {
   createTurnHarness as createHarness,
   otherPrincipal,

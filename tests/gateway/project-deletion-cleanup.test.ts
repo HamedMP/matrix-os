@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import { TerminalRuntimeError } from "@matrix-os/terminal-runtime";
 import { createProjectDeletionCleanup } from "../../packages/gateway/src/project-deletion-cleanup.js";
 import { createProjectChatCleanup } from "../../packages/gateway/src/chat/project-deletion.js";
-import type { ProjectConfig } from "../../packages/gateway/src/project-manager.js";
-import type { WorkspaceSession } from "../../packages/gateway/src/agent-session-manager.js";
+import type { ProjectConfig } from "../../packages/gateway/src/domains/workspace/project-manager.js";
+import type { WorkspaceSession } from "../../packages/gateway/src/domains/sessions/agent-session-manager.js";
 import type { ChatListPage } from "../../packages/gateway/src/chat/repository.js";
 
 const principal = { userId: "user_a", source: "jwt" as const };

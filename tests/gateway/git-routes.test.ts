@@ -3,7 +3,7 @@ import { mkdtemp } from "node:fs/promises";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createWorkspaceRoutes } from "../../packages/gateway/src/workspace-routes.js";
+import { createWorkspaceRoutes } from "../../packages/gateway/src/domains/workspace/workspace-routes.js";
 
 const SHA = "a".repeat(40);
 

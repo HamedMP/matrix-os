@@ -3,11 +3,11 @@ import { join } from "node:path";
 import { z } from "zod/v4";
 import { generateAppText } from "@matrix-os/kernel";
 import { AppAiRequestSchema } from "@matrix-os/contracts";
-import { buildKernelCredentialLaunch, resolveKernelCredentialSources } from "../kernel-credentials.js";
-import type { MatrixFundedCredentialProvider } from "../funded-ai-credential-manager.js";
-import { requireRequestPrincipal } from "../request-principal.js";
+import { buildKernelCredentialLaunch, resolveKernelCredentialSources } from "../domains/integrations/kernel-credentials.js";
+import type { MatrixFundedCredentialProvider } from "../domains/integrations/funded-ai-credential-manager.js";
+import { requireRequestPrincipal } from "../domains/identity/request-principal.js";
 import { MATRIX_INCLUDED_MODEL_IDS } from "../ai-providers/model-catalog.js";
-import { KernelModelSchema } from "../kernel-settings.js";
+import { KernelModelSchema } from "../domains/integrations/kernel-settings.js";
 import { createAppAiRoutes } from "./routes.js";
 
 const PolicySchema = z.strictObject({

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   createWatcherIgnored,
   createWatcherPaths,
-} from "../../packages/gateway/src/watcher.js";
+} from "../../packages/gateway/src/domains/files/watcher.js";
 
 describe("gateway home watcher", () => {
   it("ignores large development and cache directories by default", () => {

@@ -11,8 +11,8 @@ import {
   SafeClientErrorSchema,
   type AgentThreadEvent,
 } from "@matrix-os/contracts";
-import type { RequestPrincipal } from "../request-principal.js";
-import type { AiTokenUsage } from "../ai-analytics.js";
+import type { RequestPrincipal } from "../domains/identity/request-principal.js";
+import type { AiTokenUsage } from "../domains/observability/ai-analytics.js";
 import { parseCodexExecJsonLine } from "./codex-events.js";
 import { codexExecContractStatus } from "./codex-version.js";
 import { codexAppServerContractStatus } from "./codex-app-server-version.js";
