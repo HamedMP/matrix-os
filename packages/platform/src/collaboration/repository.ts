@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { sql, type Kysely } from "kysely";
-import type { CollaborationPlatformDatabase } from "./database.js";
+import type { CollaborationDirectoryKind, CollaborationPlatformDatabase } from "./database.js";
 
 const MAX_OUTSTANDING_TICKETS = 20;
 const MAX_TICKET_LIFETIME_MS = 30_000;
@@ -26,7 +26,7 @@ export interface DirectoryEventInput {
   scopeId: string;
   runtimeId: string;
   ownerId: string;
-  kind: "chat" | "terminal" | "project";
+  kind: CollaborationDirectoryKind;
   organizationId?: string;
   audience?: "members" | "organization";
   authorityGeneration: number;
@@ -42,7 +42,7 @@ export interface CollaborationDirectoryEntry {
   scopeId: string;
   runtimeId: string;
   ownerId: string;
-  kind: "chat" | "terminal" | "project";
+  kind: CollaborationDirectoryKind;
   authorityGeneration: number;
   status: "invited" | "accepted" | "revoked";
   invitationId?: string;
@@ -54,7 +54,7 @@ export interface CollaborationOrganizationShareEntry {
   scopeId: string;
   runtimeId: string;
   ownerId: string;
-  kind: "chat" | "terminal" | "project";
+  kind: CollaborationDirectoryKind;
   authorityGeneration: number;
   organizationId: string;
 }
@@ -127,7 +127,7 @@ export class PlatformCollaborationRepository {
     scopeId: string;
     runtimeId: string;
     ownerId: string;
-    kind: "chat" | "terminal" | "project";
+    kind: CollaborationDirectoryKind;
     /** S05: owning organization, null only for pre-organization rows (tickets fail closed). */
     organizationId: string | null;
     authorityGeneration: number;
@@ -150,7 +150,7 @@ export class PlatformCollaborationRepository {
     scopeId: string;
     runtimeId: string;
     ownerId: string;
-    kind: "chat" | "terminal" | "project";
+    kind: CollaborationDirectoryKind;
     authorityGeneration: number;
   } | null> {
     const row = await this.db.selectFrom("collaboration_user_index as user_index")
