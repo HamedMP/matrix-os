@@ -42,9 +42,20 @@ Gap recorded: opening an `organization_pending` item still fails at the home unt
 
 ## Evidence status
 
-The shared page gained two card states (home offline / access unavailable, organization pending). Screenshots were NOT captured in this environment (no shell stack run; the earlier S20 capture needed a 4 GB heap and a quiet host). The PR body states this explicitly; capture per `evidence/S20-audience/README.md` before review-readiness.
+The shared page has current captures under `evidence/S06-direct-client/` for Web Canvas, Web Desktop, Web Mobile and Electron Desktop: pending, offline, denied and combined cards. The capture README records the mocked home/platform conditions, exact scripts and each screenshot. After review, pending cards show a truthful access message with no Open action while activation remains unavailable; pending and combined screenshots were refreshed from `e48126fbc` and visually inspected on Web Canvas and Electron Desktop. Web capture completed 12/12 scenarios; Electron capture completed 4/4 scenario tests from the built app. Native Mobile remains outside this packet's V1 scope.
 
 ## Ownership for later packets
 
 - S12/S15: mount activation for `organization_pending` (home route + platform ticket admission), wire file/app routes through `createCollaborationDirectApi` (path-based, no client change needed).
 - S18: delete the platform proxy path that owner-side create/preflight still uses; the direct client then covers every route.
+
+## Review remediation (2026-09-21)
+
+- **P1 stream revocation:** RED `tests/ui/collaboration-direct-client.test.ts -t "stops revoked|fences an exchange"` failed 2/2: unavailable events reopened a second socket, and an exchange completed after sign-out returned old content. GREEN 2/2 after terminating unavailable streams, draining subscriptions, fencing pending exchanges/requests by generation, and making full-client close permanent.
+- **P1 pending pagination:** RED `tests/platform/collaboration-routes.test.ts -t "paginates organization-pending"` saw only 2 of 4 expected entries. GREEN 1/1 on PGlite and real Postgres with actor/status-bound indexed→pending phase cursors and stable keyset pagination.
+- **P1 Open action:** RED `tests/ui/chat-collaboration-sharing.test.tsx -t "organization-pending cards"` found an enabled Open button; GREEN 1/1 with a pending access message. Screenshot inspection caught stale “opens when you join” copy; a second RED assertion and GREEN rerun are recorded in the test history.
+- **P1 duplicate key:** Removed a duplicate `organizationId` assertion key in `tests/gateway/collaboration-directory-outbox.test.ts`.
+- **P2 bounded cache/capture exit:** RED direct-client test retained the first of 129 scope keys; GREEN after limiting the scope cache to 128 and draining the oldest session. `capture-web.mjs` now exits nonzero on any missing scenario; `node --check` passed.
+- **Final checks before recapture:** four focused suites, **46/46** passed; `bun run typecheck` exit 0; `bun run check:patterns` 0 violations and 5 pre-existing warnings. The added cache test and final copy test passed separately after this sweep. `npx react-doctor@latest --verbose --scope changed` exited 0, score 88/100; its 17 warnings were outside the changed React card. `pnpm --filter desktop build` exited 0 after the final copy change.
+
+The review fixes are local commits until the coordinator restacks and submits #1806. The live S06 visual captures use a mocked platform/home and do not claim a real cross-host probe.
