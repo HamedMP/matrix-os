@@ -33,6 +33,16 @@ Deviation: tasks.md names the T029 file `collaboration-direct-transport.spec.ts`
 - Control: `GET /internal/collaboration/control?ticket=…` with runtime headers; pushed denials end matching sessions and are acknowledged with a fence at the denial generation; generation frames move the home's generation; snapshots have a fixed 20 s lifetime and reconnect never extends them.
 - Relay: `CollaborationRelay.forward` / `prepareSocket` forward only direct-protocol paths (session routes, scope/invitation/runtime paths, direct sockets) to the directory-resolved home; no proof is signed, no policy is read, no body or frame is parsed, only connection metadata is observable; upstream status codes pass through; limits 96 KiB request, 2 MiB response, 512 MiB export, 256 connections/home, 32/actor. Legacy proof-signing proxy paths remain until S18 removes them (T090).
 
+## Review round 1 (Greptile on #1802 / #1803 / #1804)
+
+- Tickets bind the resource's own authority generation (a project at N and a standalone Chat at 1 on one home get distinct bindings); the home compares it with the scope's `authority_generation` at exchange (`stale_generation`). Endpoint generation only gates registration.
+- Home liveness: `collaboration_runtime_endpoints.last_control_at` is set on control attach and acknowledgement; the issuer answers `host_offline` (503 `host_offline`) for homes that never attached or went silent for 60 s.
+- Control upgrade tickets are Postgres rows (`collaboration_control_upgrade_tickets`, hashed, one-use via conditional UPDATE) so any platform instance admits them; denial delivery to a runtime whose socket lives on another instance raises `ControlStreamNotConnectedError`, which the S03 control authority skips without spending an attempt (delimited edit in `control-authority.ts`).
+- Runtime registration serializes per row (`INSERT … ON CONFLICT DO NOTHING` then `SELECT … FOR UPDATE`, merge, `UPDATE`); real-Postgres test `serializes concurrent registrations…` (skips without `MATRIX_TEST_POSTGRES_URL`).
+- The gateway outbox reads `organization_id` inside the claim transaction; a lookup failure leaves the event unclaimed.
+- Direct sessions: exchange denies while the control snapshot is stale (`controlFresh`), the signed `maxActions` is a per-session budget spent on every authorized request and stream input (`limit` on exhaustion, session ends), a pushed denial closes direct sockets through `subscribeEnded` and legacy sockets through the registries' `notifyRevoked`, stream tickets are re-checked for expiry when possession is proven, and the `ws` connector loads with `await import("ws")` (`loadDefaultConnector`, tested under ESM).
+- Relay: session lifecycle routes (`/direct-sessions`, `/:id/renew`, `DELETE /:id`) resolve the home from `x-matrix-collaboration-runtime` (the ticket's logical runtime id, mapped through the endpoint registry), never a query parameter; the forwarded header allowlist uses the protocol names `x-matrix-client-request-id`, `x-matrix-expected-revision`, `x-matrix-expected-member-revision` (conditional DELETE test).
+
 ## Coordinator patches to know about
 
 - `packages/gateway/src/auth.ts`: `COLLABORATION_WEBSOCKET_PATH` now also matches `/ws/collaboration/direct/scopes/<uuid>/{events,terminal}` (bypasses owner bearer auth the same way the relay-proof sockets do; the home verifies the ticket).
