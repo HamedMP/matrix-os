@@ -9,8 +9,11 @@ import type { ChatProviderCatalogService } from "../chat/provider-catalog.js";
 import type { CodingAgentProviderRegistry } from "../coding-agents/provider-registry.js";
 import type { MatrixFundedCredentialProvider } from "../funded-ai-credential-manager.js";
 import { CollaborationActorProofVerifier } from "./actor-proof.js";
-import { CollaborationAuthority } from "./authority.js";
+import { CollaborationAuthority, CollaborationAuthorizationError } from "./authority.js";
 import { CollaborationCapabilityRepository } from "./capability-repository.js";
+import { CollaborationCapabilityEvaluator } from "./capability-evaluator.js";
+import { createProjectGitBroker, type ProjectGitDriver, type ProjectGitOwnerIdentity } from "./project-git-broker.js";
+import { createProjectAccessReadiness } from "./project-access-readiness.js";
 import { CollaborationChatAdapter } from "./chat-adapter.js";
 import { CollaborationChatScopeService } from "./chat-scope.js";
 import { bootstrapCollaborationDatabase, type OwnerCollaborationDatabase } from "./database.js";
@@ -268,6 +271,8 @@ export async function createGatewayCollaboration(options: {
   let terminalEventRegistry: CollaborationTerminalEventRegistry | undefined;
   let projectSharing: ProjectSharingService | undefined;
   let projectTransitionCoordinator: ReturnType<typeof createProjectTransitionCoordinator> | undefined;
+  let projectGit: ReturnType<typeof createProjectGitBroker> | undefined;
+  let projectReadiness: ReturnType<typeof createProjectAccessReadiness> | undefined;
 
   return {
     repository,
@@ -275,6 +280,8 @@ export async function createGatewayCollaboration(options: {
     executionPolicies,
     runBindings,
     ownerSource,
+    get projectGit() { return projectGit; },
+    get projectReadiness() { return projectReadiness; },
     authority,
     organizationPrecondition,
     verifier,
@@ -302,6 +309,33 @@ export async function createGatewayCollaboration(options: {
           authorityRuntimeId: options.config.runtimeId,
         }, () => operation());
       },
+    },
+    enableProjectGit(input: {
+      driver: ProjectGitDriver & {
+        resolveOwnerIdentity(input: { ownerId: string; projectId: string }): Promise<ProjectGitOwnerIdentity>;
+      };
+      source: Pick<ProjectInventoryResourceSource, "listChats" | "getGitSetup">;
+    }): void {
+      if (registered || closing || projectGit || projectReadiness) {
+        throw new Error("Project Git must be initialized exactly once before route registration");
+      }
+      const evaluator = new CollaborationCapabilityEvaluator({
+        db: options.db, grants: capabilities, organizationPrecondition,
+      });
+      projectGit = createProjectGitBroker({
+        db: options.db,
+        driver: input.driver,
+        resolveOwnerIdentity: input.driver.resolveOwnerIdentity,
+        authorize: async ({ scopeId, actorId, action }) => {
+          const context = await authority.authorize({ scopeId, actorId, action: "read" });
+          if (context.resourceKind !== "project" || context.scopeId !== context.membershipScopeId) {
+            throw new CollaborationAuthorizationError("not_found", "Project scope is unavailable");
+          }
+          if (action !== "read") await evaluator.requireAction({ scopeId, actorId, action });
+          return { ownerId: context.ownerId, projectId: context.resourceId };
+        },
+      });
+      projectReadiness = createProjectAccessReadiness({ repository, source: input.source });
     },
     async enableSharedAi(input: {
       orchestrator: CanonicalChatOrchestrator;
@@ -440,6 +474,8 @@ export async function createGatewayCollaboration(options: {
         ...(projectLifecycle ? { projectLifecycle } : {}),
         ...(projectScope ? { projectScope } : {}),
         ...(projectSharing ? { projectSharing } : {}),
+        ...(projectGit ? { projectGit } : {}),
+        ...(projectReadiness ? { projectReadiness } : {}),
         resolveParticipant,
         resolveInvitationIdentifier,
         ...(executionPolicies ? { executionPolicies } : {}),
