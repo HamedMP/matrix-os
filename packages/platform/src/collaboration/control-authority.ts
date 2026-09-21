@@ -10,6 +10,7 @@
  * `/internal/organizations/access/resolve`. Evidence is never renewed from
  * receipt time and the selected organization is never authority.
  */
+import { randomUUID } from "node:crypto";
 import {
   COLLABORATION_DIRECT_PROTOCOL_VERSION,
   type CollaborationControlAck,
@@ -25,6 +26,7 @@ const DEFAULT_SWEEP_INTERVAL_MS = 5_000;
 const DEFAULT_DELIVERY_INTERVAL_MS = 1_000;
 const DEFAULT_MAX_DELIVERY_ATTEMPTS = 8;
 const MAX_BACKOFF_MS = 60_000;
+const DEFAULT_CLAIM_LEASE_MS = 30_000;
 
 export type CollaborationControlTransport = (runtimeId: string, assertion: CollaborationControlAssertion) => Promise<void>;
 
@@ -52,11 +54,19 @@ export function createCollaborationControlAuthority(options: {
   sweepIntervalMs?: number;
   deliveryIntervalMs?: number;
   maxDeliveryAttempts?: number;
+  /** How long a claimed revocation intent stays owned by one drainer before another may retry it. */
+  claimLeaseMs?: number;
+  /** Intents one drain pass claims at once (bounded 1–1000). */
+  claimBatchSize?: number;
+  drainerId?: string;
   startTimers?: boolean;
 }): CollaborationControlAuthority {
   const now = options.now ?? (() => new Date());
   const leaseMs = options.leaseMs ?? COLLABORATION_CONTROL_LEASE_MS;
   const maxAttempts = options.maxDeliveryAttempts ?? DEFAULT_MAX_DELIVERY_ATTEMPTS;
+  const claimLeaseMs = options.claimLeaseMs ?? DEFAULT_CLAIM_LEASE_MS;
+  const drainerId = options.drainerId ?? randomUUID();
+  const claimBatchSize = Math.min(Math.max(options.claimBatchSize ?? 100, 1), 1_000);
   let transport = options.deliver;
   let closed = false;
   const timers: ReturnType<typeof setInterval>[] = [];
@@ -129,24 +139,25 @@ export function createCollaborationControlAuthority(options: {
   const drainRevocations = async (): Promise<{ fenced: number; failed: number }> => {
     if (closed) return { fenced: 0, failed: 0 };
     const current = now();
-    const due = await options.repository.listDueRevocationIntents(current);
+    // The claim statement is the only writer that increments attempts, so a drainer that
+    // crashes after claiming still consumed one attempt and its lease expires for a retry.
+    const claimed = await options.repository.claimDueRevocationIntents({ now: current, drainerId, leaseMs: claimLeaseMs, maxAttempts, limit: claimBatchSize });
     let fenced = 0;
     let failed = 0;
-    for (const intent of due) {
+    for (const intent of claimed) {
       if (closed) break;
       try {
         const denial = await fence({ organizationId: intent.organizationId, actorId: intent.actorId, generation: Math.max(1, intent.membershipEpoch) });
-        await options.repository.completeRevocationIntent(intent.intentId, denial.denialId);
+        const completed = await options.repository.completeRevocationIntent({ intentId: intent.intentId, denialId: denial.denialId, drainerId });
+        if (!completed) console.warn("[collaboration-control] revocation intent completed by another drainer");
         fenced += 1;
       } catch (error: unknown) {
         console.warn("[collaboration-control] revocation fence failed", error instanceof Error ? error.name : "UnknownError");
-        const attempts = intent.attempts + 1;
-        const backoffMs = Math.min(MAX_BACKOFF_MS, 1_000 * 2 ** Math.min(attempts, 10));
-        await options.repository.recordRevocationIntentFailure({
-          intentId: intent.intentId,
-          nextAttemptAt: new Date(current.getTime() + backoffMs),
-          deadLetter: attempts >= maxAttempts,
-        });
+        try {
+          await options.repository.releaseRevocationIntent({ intentId: intent.intentId, drainerId });
+        } catch (releaseError: unknown) {
+          console.warn("[collaboration-control] revocation intent release failed", releaseError instanceof Error ? releaseError.name : "UnknownError");
+        }
         failed += 1;
       }
     }
@@ -196,6 +207,7 @@ export function createCollaborationControlAuthority(options: {
           actorId: actor.actorId,
           membershipEpoch: String(assertion.membershipEpoch),
           member: assertion.member,
+          aiSubmission: assertion.aiSubmission,
           requestStartedAt: assertion.requestStartedAt.toISOString(),
           expiresAt: assertion.expiresAt.toISOString(),
         } satisfies CollaborationControlAssertion;

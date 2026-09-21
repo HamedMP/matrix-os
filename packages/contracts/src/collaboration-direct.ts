@@ -8,6 +8,7 @@ import {
   CollaborationRevisionSchema,
 } from "#collaboration";
 import { CollaborationPresetSchema, CollaborationResourceKindSchema } from "#collaboration-capabilities";
+import { CollaborationOrganizationAiSubmissionSchema } from "#collaboration-execution";
 import { IsoTimestampSchema } from "#contract-primitives";
 import { referenceId } from "#legacy-contract-primitives";
 
@@ -245,6 +246,12 @@ export const CollaborationControlAssertionSchema = z.discriminatedUnion("type", 
     actorId: CollaborationActorIdSchema,
     membershipEpoch: CollaborationRevisionSchema,
     member: z.boolean(),
+    /**
+     * The organization's projected `collaboration.aiSubmission` policy (S03 → S08).
+     * Additive: absent means the platform predates the field and the home treats it
+     * as `owner_only`; it is informational and never authority.
+     */
+    aiSubmission: CollaborationOrganizationAiSubmissionSchema.optional(),
     requestStartedAt: IsoTimestampSchema,
     expiresAt: IsoTimestampSchema,
   }).strict().superRefine((assertion, ctx) => {

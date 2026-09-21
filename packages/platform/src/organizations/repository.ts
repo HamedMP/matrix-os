@@ -180,6 +180,8 @@ export class PlatformOrganizationRepository {
           created_at: now,
           denial_id: null,
           next_attempt_at: now,
+          claimed_by: null,
+          claimed_until: null,
         }).execute();
       }
       return { outcome: "applied", membershipEpoch: epoch, ended };
@@ -294,31 +296,61 @@ export class PlatformOrganizationRepository {
 
   // --- revocation intents (durable outbox drained by the control authority) --------------------
 
-  async listDueRevocationIntents(now: Date, limit = 100): Promise<Array<{ intentId: string; organizationId: string; actorId: string; membershipEpoch: number; attempts: number }>> {
-    const rows = await this.db.selectFrom("organization_revocation_outbox").selectAll()
-      .where("denial_id", "is", null).where("dead_letter", "=", false).where("next_attempt_at", "<=", now)
-      .orderBy("created_at").limit(Math.min(Math.max(limit, 1), 1_000)).execute();
-    return rows.map((row) => ({
+  /**
+   * Claims due revocation intents for one drainer: `FOR UPDATE SKIP LOCKED`
+   * so concurrent drainers never take the same intent, a claim lease so a
+   * crashed drainer's intents become claimable again, and the attempt
+   * counter, next-attempt backoff and dead-letter flag updated in the same
+   * statement so a crash after the claim still counts as an attempt.
+   */
+  async claimDueRevocationIntents(input: { now: Date; drainerId: string; leaseMs: number; limit?: number; maxAttempts: number }): Promise<Array<{
+    intentId: string; organizationId: string; actorId: string; membershipEpoch: number; attempts: number; deadLetter: boolean;
+  }>> {
+    const limit = Math.min(Math.max(input.limit ?? 100, 1), 1_000);
+    const claimedUntil = new Date(input.now.getTime() + input.leaseMs);
+    const rows = await sql<{
+      intent_id: string; organization_id: string; actor_id: string; membership_epoch: number | string; attempts: number; dead_letter: boolean;
+    }>`
+      UPDATE organization_revocation_outbox AS o
+      SET attempts = o.attempts + 1,
+          dead_letter = (o.attempts + 1 >= ${input.maxAttempts}),
+          next_attempt_at = ${input.now}::timestamptz + make_interval(secs => LEAST(60, power(2, LEAST(o.attempts + 1, 10)))),
+          claimed_by = ${input.drainerId},
+          claimed_until = ${claimedUntil}
+      WHERE o.intent_id IN (
+        SELECT intent_id FROM organization_revocation_outbox
+        WHERE denial_id IS NULL AND dead_letter = false AND next_attempt_at <= ${input.now}
+          AND (claimed_until IS NULL OR claimed_until <= ${input.now})
+        ORDER BY created_at
+        LIMIT ${limit}
+        FOR UPDATE SKIP LOCKED
+      )
+      RETURNING o.intent_id, o.organization_id, o.actor_id, o.membership_epoch, o.attempts, o.dead_letter
+    `.execute(this.db);
+    return rows.rows.map((row) => ({
       intentId: row.intent_id, organizationId: row.organization_id, actorId: row.actor_id,
-      membershipEpoch: asNumber(row.membership_epoch), attempts: row.attempts,
+      membershipEpoch: asNumber(row.membership_epoch), attempts: row.attempts, deadLetter: row.dead_letter,
     }));
   }
 
-  async completeRevocationIntent(intentId: string, denialId: string): Promise<void> {
-    await this.db.updateTable("organization_revocation_outbox").set({ denial_id: denialId })
-      .where("intent_id", "=", intentId).where("denial_id", "is", null).execute();
+  /** Completes a claimed intent with its denial; only the claiming drainer may complete it, and only once. */
+  async completeRevocationIntent(input: { intentId: string; denialId: string; drainerId: string }): Promise<boolean> {
+    const updated = await this.db.updateTable("organization_revocation_outbox").set({ denial_id: input.denialId, claimed_until: null })
+      .where("intent_id", "=", input.intentId).where("denial_id", "is", null).where("claimed_by", "=", input.drainerId)
+      .returning("intent_id").executeTakeFirst();
+    return Boolean(updated);
   }
 
-  async recordRevocationIntentFailure(input: { intentId: string; nextAttemptAt: Date; deadLetter: boolean }): Promise<void> {
-    await this.db.updateTable("organization_revocation_outbox")
-      .set({ attempts: sql`attempts + 1`, next_attempt_at: input.nextAttemptAt, dead_letter: input.deadLetter })
-      .where("intent_id", "=", input.intentId).execute();
+  /** Releases a claim after a failed attempt so the backoff, not the lease, decides the retry. */
+  async releaseRevocationIntent(input: { intentId: string; drainerId: string }): Promise<void> {
+    await this.db.updateTable("organization_revocation_outbox").set({ claimed_until: null })
+      .where("intent_id", "=", input.intentId).where("claimed_by", "=", input.drainerId).where("denial_id", "is", null).execute();
   }
 
-  async describeRevocationIntents(input: { organizationId: string; actorId: string }): Promise<Array<{ intentId: string; denialId: string | null; attempts: number; deadLetter: boolean }>> {
+  async describeRevocationIntents(input: { organizationId: string; actorId: string }): Promise<Array<{ intentId: string; denialId: string | null; attempts: number; deadLetter: boolean; claimedBy: string | null }>> {
     const rows = await this.db.selectFrom("organization_revocation_outbox").selectAll()
       .where("organization_id", "=", input.organizationId).where("actor_id", "=", input.actorId).orderBy("created_at").execute();
-    return rows.map((row) => ({ intentId: row.intent_id, denialId: row.denial_id, attempts: row.attempts, deadLetter: row.dead_letter }));
+    return rows.map((row) => ({ intentId: row.intent_id, denialId: row.denial_id, attempts: row.attempts, deadLetter: row.dead_letter, claimedBy: row.claimed_by }));
   }
 
   // --- control authority: denials, fences, acknowledgements -------------------------------------

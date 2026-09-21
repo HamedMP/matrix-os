@@ -47,6 +47,12 @@
 3. **Exact member cap**: an organization with exactly 2,000 members is accepted (with `total_count`, or by probing one empty page without it); 2,001 is rejected either way (`organization-clerk-resolver.test.ts`).
 4. **Bootstrap under the migration lock**: `bootstrapPlatformOrganizationDatabase` runs its DDL through `runPlatformMigration` (advisory lock, one transaction, 40P01 retry). The S01 characterization fixture is unchanged because the tables are still not part of `PLATFORM_MIGRATION_STEPS`.
 
+## Review round 2 (Greptile 4/5 → fixed in the diff)
+
+- **Duplicate denial fences**: drains now claim intents with `UPDATE … WHERE intent_id IN (SELECT … FOR UPDATE SKIP LOCKED) RETURNING`, a per-drainer claim lease (30 s) so a crashed drainer's intents become claimable again, and the attempt counter, backoff and dead-letter flag are set in that same claim statement. Completion is idempotent and drainer-scoped. Real-Postgres tests: two concurrent drainers (batch 6 each) fence 12 intents exactly once with disjoint claims; a drainer that dies after claiming is re-claimed after its lease with the lost attempt counted.
+- **Bounded inflight maps**: the gateway membership client refuses (fails closed) beyond 256 concurrent lookups; the projection defers reconciliation beyond 64 in flight.
+- **S08 seam (coordinator request)**: the membership assertion carries the organization's projected `aiSubmission` (`members` | `owner_only`) as an additive optional contract field; the platform resolve route emits it, the gateway `OrganizationMembershipAssertion` positive branch carries it (absent/unknown → `owner_only`), and `OrganizationMembershipClient.organizationAiSubmission()` exposes it for `wiring.ts` to derive S08's `OrganizationAiSubmissionSource`.
+
 ## Open gates
 
 - `CLERK_ORGANIZATION_WEBHOOK_SIGNING_SECRET` (Clerk dashboard endpoint secret, `whsec_…`) and `CLERK_SECRET_KEY` must be configured on the platform; without them the webhook returns 503 and no organization is ever verified.

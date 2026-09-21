@@ -84,6 +84,8 @@ export interface OrganizationRevocationOutboxTable {
   attempts: Generated<number>;
   next_attempt_at: Timestamp;
   dead_letter: Generated<boolean>;
+  claimed_by: string | null;
+  claimed_until: NullableTimestamp;
 }
 
 export interface OrganizationPlatformDatabase {
@@ -160,7 +162,9 @@ async function createOrganizationTables(db: Transaction<OrganizationPlatformData
       denial_id UUID,
       attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
       next_attempt_at TIMESTAMPTZ NOT NULL,
-      dead_letter BOOLEAN NOT NULL DEFAULT false
+      dead_letter BOOLEAN NOT NULL DEFAULT false,
+      claimed_by TEXT CHECK (claimed_by IS NULL OR char_length(claimed_by) BETWEEN 1 AND 128),
+      claimed_until TIMESTAMPTZ
     )
   `.execute(db);
   await sql`
