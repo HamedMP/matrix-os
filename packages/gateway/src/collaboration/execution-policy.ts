@@ -255,37 +255,35 @@ export class CollaborationExecutionPolicyRepository {
   }): Promise<CollaborationExecutionPolicy> {
     const request = CollaborationExecutionPolicyPutRequestSchema.parse(input.request);
     const nowIso = this.now().toISOString();
+    // Phase 1, no lock held: read the execution scope, check the owner, and do the work that
+    // may leave the process (provider snapshot, platform organization lookup). Nothing here is
+    // written; the transaction below re-reads the scope under FOR UPDATE and refuses to write
+    // if anything it relied on changed in between.
+    const preview = await this.requireOwnedExecutionScope(this.db, input.scopeId, input.actorId);
+    const resolved = await this.eligibility.resolveSelection(preview.scope.owner_id, request);
+    if (!resolved.ok) throw new CollaborationExecutionPolicyError("invalid_source", "Selected source is not available to the owner");
+    if (request.allowedModelIds.some((modelId) => !resolved.modelIds.includes(modelId))) {
+      throw new CollaborationExecutionPolicyError("invalid_source", "Model is not served by the selected source");
+    }
+    const organizationAiSubmission = await this.readOrganizationAiSubmission(preview.scope.organization_id, preview.scope.owner_id);
+    const effective = resolveCollaborationEffectiveSubmitMode({ organizationAiSubmission, submitMode: request.submitMode });
+    if (effective === "members" && !request.acknowledgeProviderTerms) {
+      throw new CollaborationExecutionPolicyError("provider_terms_required", "Member submission needs the provider-terms acknowledgement");
+    }
+
+    // Phase 2: one transaction, scope locked, no network inside.
     return this.db.transaction().execute(async (trx) => {
-      const resolution = await resolveExecutionScope(trx, input.scopeId, { lock: true });
-      if (!resolution) throw new CollaborationExecutionPolicyError("not_found", "Execution scope not found");
-      if (resolution.ref.scopeId !== input.scopeId) {
-        throw new CollaborationExecutionPolicyError("conflict", "A Chat inside a project uses the project's policy");
-      }
+      const resolution = await this.requireOwnedExecutionScope(trx, input.scopeId, input.actorId, { lock: true });
       const { scope, ref } = resolution;
-      try {
-        await requireAcceptedOwner(trx, scope.id, input.actorId);
-      } catch (error: unknown) {
-        if (error instanceof CollaborationRepositoryError) {
-          throw new CollaborationExecutionPolicyError("forbidden", "Only the scope owner sets the execution policy");
-        }
-        throw error;
+      if (Number(scope.revision) !== Number(preview.scope.revision) || scope.owner_id !== preview.scope.owner_id
+        || scope.organization_id !== preview.scope.organization_id) {
+        throw new CollaborationExecutionPolicyError("conflict", "Scope changed while the source was resolved");
       }
       const replayKey = {
         scopeId: scope.id, actorId: input.actorId, clientRequestId: request.clientRequestId, payloadHash: input.payloadHash,
       };
       const replay = await readOperationReplay<CollaborationExecutionPolicy>(trx, replayKey, OPERATION_KIND);
       if (replay) return CollaborationExecutionPolicySchema.parse(replay);
-
-      const resolved = await this.eligibility.resolveSelection(scope.owner_id, request);
-      if (!resolved.ok) throw new CollaborationExecutionPolicyError("invalid_source", "Selected source is not available to the owner");
-      if (request.allowedModelIds.some((modelId) => !resolved.modelIds.includes(modelId))) {
-        throw new CollaborationExecutionPolicyError("invalid_source", "Model is not served by the selected source");
-      }
-      const organizationAiSubmission = await this.readOrganizationAiSubmission(scope.organization_id, scope.owner_id);
-      const effective = resolveCollaborationEffectiveSubmitMode({ organizationAiSubmission, submitMode: request.submitMode });
-      if (effective === "members" && !request.acknowledgeProviderTerms) {
-        throw new CollaborationExecutionPolicyError("provider_terms_required", "Member submission needs the provider-terms acknowledgement");
-      }
 
       const existing = await trx.selectFrom("collaboration_execution_policies").selectAll()
         .where("scope_id", "=", scope.id).forUpdate().executeTakeFirst();
@@ -340,6 +338,29 @@ export class CollaborationExecutionPolicyRepository {
   /** Live organization metadata; null context or a failed lookup reads as `unknown` (owner-only). */
   async organizationAiSubmissionFor(organizationId: string | null, ownerId: string): Promise<CollaborationOrganizationAiSubmission> {
     return this.readOrganizationAiSubmission(organizationId, ownerId);
+  }
+
+  /** The execution scope for a put, owned by the actor; a Chat inside a project is refused. */
+  private async requireOwnedExecutionScope(
+    db: Executor,
+    scopeId: string,
+    actorId: string,
+    options: { lock?: boolean } = {},
+  ): Promise<ExecutionScopeResolution> {
+    const resolution = await resolveExecutionScope(db, scopeId, options);
+    if (!resolution) throw new CollaborationExecutionPolicyError("not_found", "Execution scope not found");
+    if (resolution.ref.scopeId !== scopeId) {
+      throw new CollaborationExecutionPolicyError("conflict", "A Chat inside a project uses the project's policy");
+    }
+    try {
+      await requireAcceptedOwner(db, resolution.scope.id, actorId);
+    } catch (error: unknown) {
+      if (error instanceof CollaborationRepositoryError) {
+        throw new CollaborationExecutionPolicyError("forbidden", "Only the scope owner sets the execution policy");
+      }
+      throw error;
+    }
+    return resolution;
   }
 
   private async readOrganizationAiSubmission(organizationId: string | null, ownerId: string): Promise<CollaborationOrganizationAiSubmission> {
