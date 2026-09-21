@@ -104,7 +104,7 @@ describe("provider setup presentation", () => {
     expect(within(gateway).queryByRole("textbox", { name: "Monthly budget in USD" })).not.toBeInTheDocument();
     fireEvent.click(within(gateway).getByRole("button", { name: "Use Matrix AI" }));
     expect(onMutate).toHaveBeenCalledWith({ type: "set_route", harnessInstanceId: "pi",
-      route: { kind: "configurable", providerId: "anthropic", modelId: "sonnet" }, accessSourceId: "matrix_included", accountId: null, enableHarness: true });
+      route: { kind: "configurable", providerId: "anthropic", modelId: "sonnet" }, accessSourceId: "matrix_included", accountId: null });
     expect(within(gateway).queryByText("Selected for Pi")).not.toBeInTheDocument();
   });
 
@@ -126,7 +126,6 @@ describe("provider setup presentation", () => {
       type: "set_route",
       accessSourceId: "owner_anthropic_key",
       accountId: "account_ready",
-      enableHarness: true,
     })));
 
     onMutate.mockClear();
@@ -155,6 +154,7 @@ describe("provider setup presentation", () => {
 
   it("enables a disabled agent atomically when choosing Matrix AI", () => {
     const value = fundedSnapshot();
+    value.atomicConnectSupported = true;
     value.harnesses[0]!.enabled = false;
     const { onMutate } = setup(value);
     const gateway = screen.getByRole("region", { name: "Matrix AI" });
