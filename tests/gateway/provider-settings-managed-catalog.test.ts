@@ -116,16 +116,45 @@ describe("Matrix routes during native model catalog failure", () => {
     });
   });
 
-  it("preserves fixed Claude enablement semantics when a separate native catalog and source are unavailable", async () => {
+  it.each(["ineligible_policy", "relay_unavailable"] as const)(
+    "fails a fixed Claude Matrix route closed for %s",
+    async (failure) => {
+      const input = projectionInput("pi");
+      input.config.harnesses[0]!.harness = "claude";
+      input.config.harnesses[0]!.driverId = "claude_code";
+      if (failure === "ineligible_policy") input.fundedPolicy.allowedModelIds = [];
+      if (failure === "relay_unavailable") {
+        const source = input.canonical.accessSources.find((candidate) => candidate.id === "matrix_included")!;
+        source.state = "unavailable";
+        source.action = "retry";
+      }
+
+      const snapshot = await projectProviderSettings(input);
+
+      expect(snapshot.harnesses.find((agent) => agent.harness === "claude")).toMatchObject({
+        enabled: false,
+        accessSourceId: null,
+        routeAvailability: "available",
+      });
+    },
+  );
+
+  it("preserves fixed Claude enablement for its non-Matrix provider account", async () => {
     const input = projectionInput("pi");
     input.config.harnesses[0]!.harness = "claude";
     input.config.harnesses[0]!.driverId = "claude_code";
-    const source = input.canonical.accessSources.find((candidate) => candidate.id === "matrix_included")!;
+    input.config.harnesses[0]!.accessSourceId = "owner_anthropic_profile";
+    input.config.harnesses[0]!.selectedAccountId = "owner_anthropic";
+    const source = input.canonical.accessSources.find((candidate) => candidate.id === "owner_anthropic_profile")!;
     source.state = "unavailable";
     source.action = "retry";
+
     const snapshot = await projectProviderSettings(input);
+
     expect(snapshot.harnesses.find((agent) => agent.harness === "claude")).toMatchObject({
       enabled: true,
+      accessSourceId: "owner_anthropic_profile",
+      selectedAccountId: "owner_anthropic",
       routeAvailability: "available",
     });
   });

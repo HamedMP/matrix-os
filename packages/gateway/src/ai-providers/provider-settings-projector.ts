@@ -325,7 +325,7 @@ function projectHarness(input: {
   const routeSourceEligible = sourceEligible === true && !routeCatalogUnavailable
     && (source.kind !== "matrix_gateway" && !nativeCredentialRoute
       || isFreshReady(source.readiness, input.now));
-  const executionRouteAvailable = nativeCredentialRoute
+  const executionRouteAvailable = source?.kind === "matrix_gateway" || nativeCredentialRoute
     ? routeSourceEligible
     : !routeCatalogUnavailable;
   const selectedAccountId = routeSourceEligible && source?.kind === "provider_account"

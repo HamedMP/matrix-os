@@ -561,7 +561,7 @@ describe("ProviderSettingsStore", () => {
     });
     login.supportedMethods = vi.fn(({ driverId, installState }) =>
       driverId === "claude_code" && installState === "installed" ? ["terminal"] : []);
-    const store = createStore();
+    const store = createStore({ fundingSummary: authoritativeMatrixFunding() });
     await mkdir(dirname(store.configurationPath), { recursive: true });
     await writeFile(store.configurationPath, JSON.stringify({
       schemaVersion: 1,
