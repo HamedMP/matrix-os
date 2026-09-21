@@ -125,3 +125,14 @@ it("accepts role metadata only for an already attributed child", () => {
   expect(parseCodexExecJsonLine(JSON.stringify(event), { threadId: "thread_matrix", now: () => new Date(), nextEventId: () => "evt_role" }).events[0]).toMatchObject({ subagent: { role: "explorer" } });
   expect(tracker.project({ ...metadata, params: { thread: { id: "child", agentRole: "Bearer secret" } } }, "parent", "turn")).toEqual([]);
 });
+
+
+it("withholds natural-language credentials in child results before persistence", () => {
+  const tracker = createCodexSubagentActivity();
+  tracker.project(marker(), "parent", "turn");
+  const events = tracker.project({ method: "turn/completed", params: { threadId: "child", turn: {
+    status: "completed", items: [{ type: "agentMessage", phase: "final_answer", text: "the password is example-sensitive-value" }],
+  } } }, "parent", "turn");
+  expect(events[0].subagent.status).toBe("completed");
+  expect(events[0].subagent.result).toBeUndefined();
+});

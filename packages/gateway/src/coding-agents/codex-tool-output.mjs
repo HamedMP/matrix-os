@@ -8,7 +8,7 @@ const PRIVATE_INPUT = /secret|password|credential|api[_-]?key|token|id_rsa|\.env
 
 /** Bounded optional child display evidence; reuse the tool-output privacy boundary. */
 export function safeCodexSubagentText(value, limit) {
-  if (typeof value !== "string" || !value.trim() || PRIVATE_OUTPUT.test(value)
+  if (typeof value !== "string" || !value.trim() || PRIVATE_OUTPUT.test(value) || PRIVATE_INPUT.test(value)
     || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(value)) return undefined;
   return value.slice(0, limit).replace(/[\uD800-\uDBFF]$/, "");
 }
