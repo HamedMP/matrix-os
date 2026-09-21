@@ -41,4 +41,20 @@ describe("Docker development entrypoint dependency layout", () => {
     expect(brandBuild).toBeGreaterThan(-1);
     expect(shellStart).toBeGreaterThan(brandBuild);
   });
+
+  it("builds the terminal runtime before starting the gateway", () => {
+    const entrypoint = readFileSync(
+      join(root, "distro/docker-dev-entrypoint.sh"),
+      "utf8",
+    );
+    const terminalRuntimeBuild = entrypoint.indexOf(
+      "pnpm --filter @matrix-os/terminal-runtime build",
+    );
+    const gatewayStart = entrypoint.indexOf(
+      "node --import=tsx --watch packages/gateway/src/main.ts",
+    );
+
+    expect(terminalRuntimeBuild).toBeGreaterThan(-1);
+    expect(gatewayStart).toBeGreaterThan(terminalRuntimeBuild);
+  });
 });

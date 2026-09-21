@@ -32,6 +32,11 @@ echo "[matrix-os-dev] Building brand package..."
 # at emitted dist files. A clean Docker volume has no host-built dist output.
 pnpm --filter @matrix-os/brand build
 
+echo "[matrix-os-dev] Building terminal runtime package..."
+# The gateway imports @matrix-os/terminal-runtime through package exports that
+# point at emitted dist files, which are absent from a clean Docker bind mount.
+pnpm --filter @matrix-os/terminal-runtime build
+
 echo "[matrix-os-dev] Building kernel package..."
 # Dev container startup needs emitted kernel JS before the gateway starts.
 # This tolerant path is dev-only: production/CI build scripts still fail on
@@ -173,8 +178,8 @@ cp /app/distro/p10k.zsh "$MATRIX_HOME/.p10k.zsh" 2>/dev/null || true
 chown -R matrixos:matrixos "$MATRIX_HOME"
 chown -R matrixos:matrixos /home/matrixos/.claude 2>/dev/null || true
 chown -R matrixos:matrixos /home/matrixos/.codex 2>/dev/null || true
-mkdir -p /app/packages/brand/dist /app/packages/observability/dist /app/packages/kernel/dist
-chown -R matrixos:matrixos /app/packages/brand/dist /app/packages/observability/dist /app/packages/kernel/dist 2>/dev/null || true
+mkdir -p /app/packages/brand/dist /app/packages/observability/dist /app/packages/terminal-runtime/dist /app/packages/kernel/dist
+chown -R matrixos:matrixos /app/packages/brand/dist /app/packages/observability/dist /app/packages/terminal-runtime/dist /app/packages/kernel/dist 2>/dev/null || true
 chown matrixos:matrixos "$MATRIX_HOME/.zshrc" "$MATRIX_HOME/.p10k.zsh" 2>/dev/null || true
 
 # Set zsh as default shell for matrixos user (for PTY sessions)
