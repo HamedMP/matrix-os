@@ -352,8 +352,12 @@ export function registerPlatformWebSocketUpgradeHandler(
         )
         : getRuntimeEntitlementDecision(env);
     let activeUpstream: Socket | null = null;
-    const onSocketError = () => activeUpstream?.destroy();
-    socket.on('error', onSocketError);
+    // A relayed socket is a pair. `socket.destroy()` emits `close`, not `error`, so relay
+    // eviction and the shutdown drain reached only the client half; both events now tear
+    // down the upstream connection to the home. `destroy()` is idempotent.
+    const destroyUpstream = () => activeUpstream?.destroy();
+    socket.on('error', destroyUpstream);
+    socket.on('close', destroyUpstream);
 
     const buildUpgradeHeaders = (handle: string, includePlatformProof: boolean): string => (
       directUpgrade
@@ -396,6 +400,10 @@ export function registerPlatformWebSocketUpgradeHandler(
       if (head.length > 0) upstream.write(head);
 
       if (directUpgrade) upstream.on('data', directUpgrade.touch);
+      // The reverse direction: an upstream that closes or errors takes the client half
+      // with it, so a teardown starting on either side releases the reservation exactly
+      // once through the client socket's single `close`.
+      upstream.on('close', () => socket.destroy());
       upstream.pipe(socket);
       socket.pipe(upstream);
     };
