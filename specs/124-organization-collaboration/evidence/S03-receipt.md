@@ -1,10 +1,10 @@
 # S03 receipt — Clerk membership projection and control authority (T015–T019)
 
 **Packet:** S03. **Tasks:** T015, T016, T017, T018, T019. **Date:** 2026-09-20.
-**Base:** `124/s02` @ `762c76bb2` (S02 contracts on the S20 → S01 stack). **Branch:** `124/s03`.
+**Current base:** merged S02 on `main` @ `7a8d1d397` (2026-09-21). **Branch:** `124/s03`. Original cut used `124/s02` @ `762c76bb2`.
 **Commits:** `1a0a1916a` (RED tests), `1f1bd7245` (T016 projection), `5a5ef7ad7` (T017 control authority), `265d89b22` (T018 routes, Clerk upstream, gateway client), `2ebc6f1ab` (T019 composition, gateway default source, live probe), plus this receipt.
 
-**Size split (2026-09-21):** #1796 `124/s03` now contains the platform projection and control authority (2,956 additions, 24 files). The gateway client, its organization precondition types and default wiring, and its focused test moved without logic changes to child `124/s03-gateway` (283 additions, 4 files). The combined child tree was verified byte-identical to the pre-split `d858e446f` head. All review-round security fixes below remain in the base.
+**Size split (2026-09-21):** #1796 `124/s03` now contains the platform projection and control authority (2,965 additions, 24 files). The gateway client, its organization precondition types and default wiring, and its focused test moved without logic changes to child `124/s03-gateway` (283 additions, 4 files). The combined child tree was verified byte-identical to the pre-split `d858e446f` head. All review-round security fixes below remain in the base.
 
 ## What landed
 
@@ -23,7 +23,7 @@
 
 | Suite | RED (commit `1a0a1916a`) | GREEN (head) |
 | --- | --- | --- |
-| `tests/platform/organization-authority-postgres.test.ts` (real Postgres, `MATRIX_TEST_POSTGRES_URL` → `matrixos_test_124`) | module resolution failure | 6/6: duplicate + forged replay, reordered event, remove/rejoin epochs, 12 concurrent webhooks with unique monotonic epochs, outage denies then restores, denial completes only on full ack or lease expiry under concurrent acks |
+| `tests/platform/organization-authority-postgres.test.ts` (real Postgres, `MATRIX_TEST_POSTGRES_URL` → `matrixos_test_124`) | module resolution failure | 8/8 on current restacked core: duplicate + forged replay, reordered event, remove/rejoin epochs, 12 concurrent webhooks with unique monotonic epochs, two disjoint drainers and crashed-claim recovery, outage denies then restores, denial completes only on full ack or lease expiry under concurrent acks |
 | `tests/platform/organization-projection.test.ts` | module resolution failure | 6/6 |
 | `tests/platform/collaboration-control-authority.test.ts` | module resolution failure | 5/5 |
 | `tests/platform/organization-routes.test.ts` | module resolution failure | 5/5 |
@@ -32,7 +32,7 @@
 | Regression: `collaboration-bootstrap`, `collaboration-wiring` (platform + gateway), `collaboration-org-precondition` (platform + gateway), `collaboration-identifier-resolver`, `collaboration-internal-routes`, `collaboration-foundation` (platform + gateway) | — | all pass (the bootstrap characterization forced the organizations composition into `wiring.ts`; `bootstrap.ts` still makes no lifecycle calls) |
 | `tests/integration/collaboration-authority-boundaries.integration.ts` | — | 2 pass, 5 explicitly unrun (new: "S03 projection observes a live removal within the 60s bound", gated on `COLLABORATION_PROBE_CLERK_SECRET_KEY/ORG_ID/MEMBER_USER_ID`) |
 
-`tsc --noEmit`: contracts, gateway and platform clean. `bun run check:patterns`: 0 violations (5 pre-existing warnings). `git diff --check` clean. Full `bun run test` was not run on this host by coordinator instruction (load); CI covers it after retarget to `main`.
+Full `bun run typecheck` passed on the core after replay onto merged S02; contracts, gateway, platform, shell and desktop were clean. `bun run check:patterns`: 0 violations (5 pre-existing warnings). `git diff --check` clean. Full `bun run test` was not run on this host by coordinator instruction (load); main-base CI covers it.
 
 ## Invariants
 
@@ -69,7 +69,7 @@
 
 ## Size-split verification (2026-09-21)
 
-- RED size gate: original #1796 diff against its S02 parent was 3,239 additions/28 files (over the 3,000-addition limit). GREEN: S03 base 2,956 additions/24 files; S03 gateway child 283 additions/4 files.
+- RED size gate: original #1796 diff against its S02 parent was 3,239 additions/28 files (over the 3,000-addition limit). GREEN: S03 base 2,965 additions/24 files after the merge-base replay; S03 gateway child 283 additions/4 files.
 - Base: seven focused platform suites, 34/34 GREEN on real Postgres, including outbox upgrade, concurrent webhook epochs and disjoint drainer claims. Child: `organization-membership-client`, `collaboration-org-precondition` and `collaboration-wiring` gateway suites, 28/28 GREEN.
 - Full `bun run typecheck` passed independently on both layers. `bun run check:patterns` returned 0 violations and 5 existing warnings on each. The combined child tree matched the pre-split backup ref exactly before this receipt update.
 - No new behavior test was added for the structural split; the original RED→GREEN and review regression tests above cover the unchanged logic. Live Clerk probes remain unrun.
