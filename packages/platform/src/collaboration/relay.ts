@@ -198,11 +198,16 @@ export class CollaborationRelay {
     let requestBytes = input.body instanceof Uint8Array ? input.body.byteLength : 0;
     const route = parseRelayRoute(input.method, input.path);
     const finish = (status: number, outcome: RelayMetadata["outcome"], runtimeId: string | null, responseBytes = 0) => {
-      this.options.onMetadata?.({
-        actorId: input.actorId, runtimeId, resourceId: route?.identifier ?? null, method: input.method, path: input.path,
-        requestBytes, responseBytes,
-        status, durationMs: this.now() - startedAt, outcome,
-      });
+      try {
+        this.options.onMetadata?.({
+          actorId: input.actorId, runtimeId, resourceId: route?.identifier ?? null, method: input.method, path: input.path,
+          requestBytes, responseBytes,
+          status, durationMs: this.now() - startedAt, outcome,
+        });
+      } catch (error: unknown) {
+        // Observability cannot change a home-authenticated content result.
+        console.warn("[collaboration-relay] metadata unavailable", error instanceof Error ? error.name : "UnknownError");
+      }
     };
     if (!route) {
       finish(404, "rejected", null);
