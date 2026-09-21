@@ -185,6 +185,7 @@ export async function createGatewayCollaboration(options: {
     verifier: directVerifier,
     authority,
     repository,
+    onAdmitted: (session) => revocationEnforcer?.admit(session.scopeId, session.actorId),
     // A pushed denial closes legacy event/terminal sockets for that actor at once; direct sockets subscribe themselves.
     onEnded: (session, reason) => {
       if (reason !== "revoked" && reason !== "denied") return;
