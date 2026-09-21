@@ -14,6 +14,7 @@ import {
   FundedAiPolicyCheckResponseSchema,
   FundedAiRuntimeCredentialIssueResponseSchema,
   FundedAiSafeErrorSchema,
+  FundedAiSettlementResponseSchema,
 } from "@matrix-os/contracts";
 
 const now = "2026-08-30T20:00:00.000Z";
@@ -137,6 +138,46 @@ describe("funded AI control-plane contracts", () => {
     } as const;
     expect(FundedAiAuthorizationResponseSchema.parse(response)).toEqual(response);
     expect(FundedAiAuthorizationResponseSchema.safeParse({ ...response, token: credential }).success).toBe(false);
+
+    expect(FundedAiAuthorizationResponseSchema.safeParse({
+      ...response,
+      reservation: { ...response.reservation, billingMode: "usage" },
+    }).success).toBe(false);
+    expect(FundedAiAuthorizationResponseSchema.safeParse({
+      ...response,
+      reservation: {
+        ...response.reservation,
+        billingMode: "usage",
+        maxCostMicrousd: response.reservation.reservedMicrousd - 1,
+      },
+    }).success).toBe(false);
+  });
+
+  it("requires coherent usage-mode settlement attribution", () => {
+    const response = {
+      contractVersion: 1,
+      reservationId: "reservation_123",
+      requestId: "request_123",
+      tokenId,
+      actualCostMicrousd: 250_000,
+      chargedCostMicrousd: 200_000,
+      matrixAbsorbedMicrousd: 50_000,
+      releasedMicrousd: 0,
+      remainingBalanceMicrousd: funding.remainingBalanceMicrousd,
+      remainingBudgetMicrousd: funding.remainingBudgetMicrousd,
+      funding,
+      settledAt: now,
+      status: "settled",
+    } as const;
+    expect(FundedAiSettlementResponseSchema.parse(response)).toEqual(response);
+    expect(FundedAiSettlementResponseSchema.safeParse({
+      ...response,
+      matrixAbsorbedMicrousd: undefined,
+    }).success).toBe(false);
+    expect(FundedAiSettlementResponseSchema.safeParse({
+      ...response,
+      matrixAbsorbedMicrousd: 49_999,
+    }).success).toBe(false);
   });
 
   it("checks policy without accepting caller identity, request cost, or exposing funding", () => {

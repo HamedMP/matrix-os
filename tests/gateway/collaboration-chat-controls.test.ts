@@ -5,6 +5,7 @@ import { ChatRunLifecycleRepository } from "../../packages/gateway/src/chat/run-
 import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
 import {
   collaborationActors,
+  collaborationExecutionEligibility,
   collaborationIds,
   createCollaborationTestDatabase,
   createRealCollaborationTestDatabase,
@@ -598,10 +599,7 @@ async function seedSharedChat(fixture: CollaborationTestDatabase): Promise<void>
     kind: "chat", resource_id: collaborationIds.chat, parent_scope_id: null, membership_mode: "direct",
     lifecycle: "shared", revision: 1, auth_epoch: 1, authority_runtime_id: collaborationIds.runtime,
     authority_generation: 1, execution_generation: 1,
-    execution_eligibility: JSON.stringify({
-      profileId: "scope-runtime-chat-v1", profileVersion: 1, profileDigest: "a".repeat(64),
-      adapterId: "claude-code", harnessVersion: "2.1.240",
-    }),
+    execution_eligibility: JSON.stringify(collaborationExecutionEligibility()),
     deleted_at: null, created_at: now, updated_at: now,
   }).execute();
   await fixture.db.insertInto("collaboration_members").values([

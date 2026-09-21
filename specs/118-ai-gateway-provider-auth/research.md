@@ -7,7 +7,7 @@
 
 The owner approved Cloudflare AI Gateway Unified Billing as the funded upstream. Matrix owns the entitlement and request boundary: the first funded release routes a narrowly allowlisted Anthropic model set through a Matrix-controlled relay backed by Cloudflare. OpenRouter remains an owner-connected provider with OAuth PKCE and broad model access. Baseten remains a later open-model inference source, optionally reached through Cloudflare, rather than becoming Matrix's account or entitlement authority.
 
-The initial release intentionally has no user-visible token or dollar allowance. It still requires a global kill switch, Cloudflare spend ceiling, Matrix-side rate/concurrency/body limits, verified runtime identity, metadata-only logging, and an explicit funded-model allowlist. Later releases add Postgres/Kysely usage records, atomic spend reservations, allowances, and add-ons.
+The current metered release gives an eligible owner one visible $5 starter grant per configured campaign, with a reviewed $10 override. Matrix records response-reported usage in PostgreSQL/Kysely, uses an atomic affordable hold with one in-flight funded request per owner, and absorbs a final in-flight overrun rather than creating user debt. It also requires a global kill switch, Cloudflare spend ceiling, Matrix-side rate/concurrency/body limits, verified runtime identity, metadata-only logging, and an explicit funded-model allowlist. Add-on purchases remain a later release.
 
 ## Decision Matrix
 

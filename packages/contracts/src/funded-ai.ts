@@ -124,7 +124,9 @@ export const FundedAiAuthorizationRequestSchema = z.object({
   credential: OpaqueCredentialSchema,
   requestId: canonicalReferenceId(160),
   modelId: ProviderModelReferenceSchema,
+  /** Strict hold, or maximum platform liability when billingMode is usage. */
   maxCostMicrousd: MicrousdSchema.min(1),
+  billingMode: z.literal("usage").optional(),
 }).strict();
 
 export const FundedAiPolicyCheckRequestSchema = z.object({
@@ -217,13 +219,38 @@ export const FundedAiAuthorizationResponseSchema = z.object({
     requestId: canonicalReferenceId(160),
     modelId: ProviderModelReferenceSchema,
     reservedMicrousd: MicrousdSchema.min(1),
+    billingMode: z.literal("usage").optional(),
+    maxCostMicrousd: MicrousdSchema.min(1).optional(),
     remainingBalanceMicrousd: MicrousdSchema,
     remainingBudgetMicrousd: MicrousdSchema,
     periodStart: IsoTimestampSchema,
     expiresAt: IsoTimestampSchema,
     status: z.literal("reserved"),
   }).strict(),
-}).strict();
+}).strict().superRefine((value, ctx) => {
+  const reservation = value.reservation;
+  if (reservation.billingMode === "usage") {
+    if (reservation.maxCostMicrousd === undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["reservation", "maxCostMicrousd"],
+        message: "Usage reservations require a liability ceiling",
+      });
+    } else if (reservation.reservedMicrousd > reservation.maxCostMicrousd) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["reservation", "reservedMicrousd"],
+        message: "Usage reservation cannot exceed its liability ceiling",
+      });
+    }
+  } else if (reservation.maxCostMicrousd !== undefined) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["reservation", "maxCostMicrousd"],
+      message: "Strict reservations do not expose a separate liability ceiling",
+    });
+  }
+});
 
 export const FundedAiSettlementRequestSchema = z.object({
   reservationId: canonicalReferenceId(160),
@@ -266,13 +293,37 @@ export const FundedAiSettlementResponseSchema = z.object({
   requestId: canonicalReferenceId(160),
   tokenId: TokenIdSchema,
   actualCostMicrousd: MicrousdSchema,
+  /** Usage mode audits provider cost separately from the user's capped debit. */
+  chargedCostMicrousd: MicrousdSchema.optional(),
+  matrixAbsorbedMicrousd: MicrousdSchema.optional(),
   releasedMicrousd: MicrousdSchema,
   remainingBalanceMicrousd: MicrousdSchema,
   remainingBudgetMicrousd: MicrousdSchema,
   funding: FundedAiFundingSummarySchema,
   settledAt: IsoTimestampSchema,
   status: z.literal("settled"),
-}).strict();
+}).strict().superRefine((value, ctx) => {
+  const hasCharged = value.chargedCostMicrousd !== undefined;
+  const hasAbsorbed = value.matrixAbsorbedMicrousd !== undefined;
+  if (hasCharged !== hasAbsorbed) {
+    ctx.addIssue({
+      code: "custom",
+      path: hasCharged ? ["matrixAbsorbedMicrousd"] : ["chargedCostMicrousd"],
+      message: "Usage settlement attribution must include both amounts",
+    });
+    return;
+  }
+  if (hasCharged && hasAbsorbed) {
+    const attributed = value.chargedCostMicrousd! + value.matrixAbsorbedMicrousd!;
+    if (!Number.isSafeInteger(attributed) || attributed !== value.actualCostMicrousd) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["actualCostMicrousd"],
+        message: "Usage settlement attribution must equal provider cost",
+      });
+    }
+  }
+});
 
 export const FundedAiFinalizationResponseSchema = FundedAiSettlementResponseSchema.extend({
   finalizationMode: z.enum(["exact", "conservative"]),

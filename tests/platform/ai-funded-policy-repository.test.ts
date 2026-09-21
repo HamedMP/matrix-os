@@ -67,6 +67,13 @@ describe("funded AI policy repository", () => {
     return repo;
   }
 
+  it("accepts the exact Cloudflare GLM model in platform policy", async () => {
+    const repo = repository();
+    const allowedModelIds = ["@cf/zai-org/glm-5.3-flash"];
+    expect(await repo.updateGlobalPolicy({ expectedRevision: 0, enabled: true, allowedModelIds }))
+      .toMatchObject({ allowedModelIds });
+  });
+
   it("seeds a fail-closed global policy and enforces optimistic concurrency", async () => {
     const repo = repository();
     expect(await repo.getGlobalPolicy()).toMatchObject({ enabled: false, revision: 0, allowedModelIds: [] });

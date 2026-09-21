@@ -3,6 +3,7 @@ import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
 import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
 import {
   collaborationActors,
+  collaborationExecutionEligibility,
   collaborationIds,
   createCollaborationTestDatabase,
   createRealCollaborationTestDatabase,
@@ -11,6 +12,11 @@ import {
 
 const now = "2026-09-09T10:00:00.000Z";
 const owner = { type: "personal" as const, ownerId: collaborationActors.owner };
+const productionClaudeSelection = { instanceId: "claude_code_default", model: "opus" };
+const productionClaudeAuthority = {
+  driverKind: "claude_code" as const,
+  selection: productionClaudeSelection,
+};
 const capabilitySnapshot = {
   revision: "shared-catalog-1",
   rootChat: true,
@@ -115,24 +121,44 @@ describe("shared Chat canonical queue", () => {
     )).resolves.toMatchObject({ acceptedSequence: 1, resourceRevision: 2 });
   });
 
-  it("derives the bound Provider selection server-side for an editor request", async () => {
+  it("preserves the production-shaped Claude binding server-side for an editor request", async () => {
     const admitted = await repository.enqueueSharedQueuedTurn(
       owner,
       request(15, collaborationActors.editor),
     );
 
-    expect(admitted.selection).toEqual({
-      instanceId: "claude_shared",
-      model: "claude-opus-4-6",
-    });
+    expect(admitted.selection).toEqual(productionClaudeSelection);
     const stored = await fixture.db.selectFrom("chat_queued_turns")
       .select(["driver_kind", "instance_id", "selection"])
       .where("id", "=", admitted.id)
       .executeTakeFirstOrThrow();
     expect(stored).toMatchObject({
       driver_kind: "claude_code",
-      instance_id: "claude_shared",
-      selection: { instanceId: "claude_shared", model: "claude-opus-4-6" },
+      instance_id: "claude_code_default",
+      selection: productionClaudeSelection,
+    });
+  });
+
+  it("projects the immutable bound driver alongside the capability", async () => {
+    await expect(repository.getSharedAiCapability(owner, {
+      chatId: collaborationIds.chat,
+      scopeId: collaborationIds.scope,
+      actorId: collaborationActors.editor,
+    })).resolves.toEqual({
+      status: "available",
+      effectiveSelection: productionClaudeSelection,
+      boundDriverKind: "claude_code",
+    });
+    await fixture.db.updateTable("chats").set({
+      bound_driver_kind: null, bound_instance_id: null, bound_at_turn_id: null,
+    }).where("id", "=", collaborationIds.chat).execute();
+    await expect(repository.getSharedAiCapability(owner, {
+      chatId: collaborationIds.chat,
+      scopeId: collaborationIds.scope,
+      actorId: collaborationActors.owner,
+    })).resolves.toEqual({
+      status: "owner_binding_required",
+      effectiveSelection: productionClaudeSelection,
     });
   });
 
@@ -167,15 +193,9 @@ describe("shared Chat canonical queue", () => {
       bound_at_turn_id: "cturn_original_codex",
     }).where("id", "=", collaborationIds.chat).execute();
     await fixture.db.updateTable("collaboration_scopes").set({
-      execution_eligibility: JSON.stringify({
-        profileId: "scope-runtime-chat-v1",
-        profileVersion: 2,
-        profileDigest: "b".repeat(64),
-        adapters: [
-          { adapterId: "claude-code", harnessVersion: "2.1.240" },
-          { adapterId: "codex", harnessVersion: "0.154.0" },
-        ],
-      }),
+      execution_eligibility: JSON.stringify(
+        collaborationExecutionEligibility({ adapters: ["claude-code", "codex"] }),
+      ),
     }).where("id", "=", collaborationIds.scope).execute();
 
     const admitted = await repository.enqueueSharedQueuedTurn(
@@ -203,12 +223,7 @@ describe("shared Chat canonical queue", () => {
       bound_at_turn_id: "cturn_original_codex",
     }).where("id", "=", collaborationIds.chat).execute();
     await fixture.db.updateTable("collaboration_scopes").set({
-      execution_eligibility: JSON.stringify({
-        profileId: "scope-runtime-chat-v1",
-        profileVersion: 2,
-        profileDigest: "b".repeat(64),
-        adapters: [{ adapterId: "codex", harnessVersion: "0.154.0" }],
-      }),
+      execution_eligibility: JSON.stringify(collaborationExecutionEligibility({ adapters: ["codex"] })),
     }).where("id", "=", collaborationIds.scope).execute();
     const admitted = await repository.enqueueSharedQueuedTurn(
       owner,
@@ -263,9 +278,9 @@ describe("shared Chat canonical queue", () => {
     )).rejects.toMatchObject({ code: "unavailable" });
     const admitted = await repository.enqueueSharedQueuedTurn(
       owner,
-      request(19, collaborationActors.owner),
+      { ...request(19, collaborationActors.owner), canonicalProviderAuthority: productionClaudeAuthority },
     );
-    expect(admitted.selection.instanceId).toBe("claude_shared");
+    expect(admitted.selection).toEqual(productionClaudeSelection);
     await repository.claimNextQueuedTurn(owner, {
       chatId: collaborationIds.chat,
       collaborationScopeId: collaborationIds.scope,
@@ -277,10 +292,125 @@ describe("shared Chat canonical queue", () => {
     await expect(repository.get(owner, collaborationIds.chat)).resolves.toMatchObject({
       providerBinding: {
         driverKind: "claude_code",
-        instanceId: "claude_shared",
+        instanceId: "claude_code_default",
         lockedAtTurnId: "cturn_owner_initial_binding",
       },
     });
+  });
+
+  it("rejects partial or mismatched immutable bindings without changing provider authority", async () => {
+    await fixture.db.updateTable("chats").set({
+      bound_driver_kind: "claude_code",
+      bound_instance_id: null,
+      bound_at_turn_id: "cturn_partial_binding",
+    }).where("id", "=", collaborationIds.chat).execute();
+    await expect(repository.enqueueSharedQueuedTurn(
+      owner,
+      request(20, collaborationActors.editor),
+    )).rejects.toMatchObject({ code: "unavailable" });
+
+    await fixture.db.updateTable("chats").set({
+      bound_driver_kind: "codex",
+      bound_instance_id: "claude_code_default",
+      bound_at_turn_id: "cturn_mismatched_driver",
+    }).where("id", "=", collaborationIds.chat).execute();
+    await expect(repository.enqueueSharedQueuedTurn(
+      owner,
+      request(21, collaborationActors.editor),
+    )).rejects.toMatchObject({ code: "unavailable" });
+    await expect(fixture.db.selectFrom("chats")
+      .select(["current_selection", "bound_driver_kind", "bound_instance_id", "bound_at_turn_id"])
+      .where("id", "=", collaborationIds.chat).executeTakeFirstOrThrow())
+      .resolves.toMatchObject({
+        current_selection: productionClaudeSelection,
+        bound_driver_kind: "codex",
+        bound_instance_id: "claude_code_default",
+        bound_at_turn_id: "cturn_mismatched_driver",
+      });
+  });
+
+  it("requires current signed isolated-adapter eligibility at admission and claim", async () => {
+    await fixture.db.updateTable("collaboration_scopes").set({
+      execution_eligibility: JSON.stringify(collaborationExecutionEligibility({ adapters: ["codex"] })),
+    }).where("id", "=", collaborationIds.scope).execute();
+    await expect(repository.enqueueSharedQueuedTurn(
+      owner,
+      request(22, collaborationActors.editor),
+    )).rejects.toMatchObject({ code: "unavailable" });
+
+    await fixture.db.updateTable("collaboration_scopes").set({
+      execution_generation: 13,
+      execution_eligibility: JSON.stringify(collaborationExecutionEligibility()),
+    }).where("id", "=", collaborationIds.scope).execute();
+    await repository.enqueueSharedQueuedTurn(owner, request(23, collaborationActors.editor));
+    await fixture.db.updateTable("collaboration_scopes").set({
+      execution_generation: 14,
+      execution_eligibility: JSON.stringify({
+        ...collaborationExecutionEligibility(),
+        adapters: [{ adapterId: "claude-code", harnessVersion: "9.9.9" }],
+      }),
+    }).where("id", "=", collaborationIds.scope).execute();
+
+    await expect(repository.enqueueSharedQueuedTurn(
+      owner,
+      request(23, collaborationActors.editor),
+    )).rejects.toMatchObject({ code: "unavailable" });
+
+    await expect(repository.claimNextQueuedTurn(owner, {
+      chatId: collaborationIds.chat,
+      collaborationScopeId: collaborationIds.scope,
+      turnId: "cturn_changed_eligibility",
+      runId: "run_changed_eligibility",
+      messageId: "msg_changed_eligibility",
+      claimedAt: now,
+    })).resolves.toBeNull();
+    await expect(repository.listSharedQueuedTurns(owner, collaborationIds.chat))
+      .resolves.toEqual([expect.objectContaining({ state: "unavailable" })]);
+    expect(await fixture.db.selectFrom("chat_runs").select("id").execute()).toEqual([]);
+  });
+
+  it("terminalizes a queued selection that no longer exactly matches canonical authority", async () => {
+    const admitted = await repository.enqueueSharedQueuedTurn(
+      owner,
+      request(25, collaborationActors.editor),
+    );
+    await fixture.db.updateTable("chat_queued_turns").set({
+      selection: JSON.stringify({ instanceId: "claude_code_default", model: "sonnet" }),
+    }).where("id", "=", admitted.id).execute();
+
+    await expect(repository.claimNextQueuedTurn(owner, {
+      chatId: collaborationIds.chat,
+      collaborationScopeId: collaborationIds.scope,
+      turnId: "cturn_tampered_selection",
+      runId: "run_tampered_selection",
+      messageId: "msg_tampered_selection",
+      claimedAt: now,
+    })).resolves.toBeNull();
+    await expect(repository.listSharedQueuedTurns(owner, collaborationIds.chat))
+      .resolves.toEqual([expect.objectContaining({ state: "unavailable" })]);
+    expect(await fixture.db.selectFrom("chats").select("current_selection")
+      .where("id", "=", collaborationIds.chat).executeTakeFirstOrThrow())
+      .toEqual({ current_selection: productionClaudeSelection });
+  });
+
+  it("revalidates accepted membership at claim", async () => {
+    await repository.enqueueSharedQueuedTurn(owner, request(24, collaborationActors.editor));
+    await fixture.db.updateTable("collaboration_members").set({ status: "revoked", revision: 2 })
+      .where("scope_id", "=", collaborationIds.scope)
+      .where("actor_id", "=", collaborationActors.editor).execute();
+    await fixture.db.updateTable("collaboration_scopes").set({ auth_epoch: 2 })
+      .where("id", "=", collaborationIds.scope).execute();
+
+    await expect(repository.claimNextQueuedTurn(owner, {
+      chatId: collaborationIds.chat,
+      collaborationScopeId: collaborationIds.scope,
+      turnId: "cturn_revoked_editor",
+      runId: "run_revoked_editor",
+      messageId: "msg_revoked_editor",
+      claimedAt: now,
+    })).resolves.toBeNull();
+    await expect(repository.listSharedQueuedTurns(owner, collaborationIds.chat))
+      .resolves.toEqual([expect.objectContaining({ state: "unauthorized" })]);
   });
 
   it("terminalizes an incompatible legacy shared request without corrupting owner reads", async () => {
@@ -384,6 +514,37 @@ realDescribe("shared Chat queue real PostgreSQL ordering", () => {
     await fixture.destroy();
   });
 
+  it("claims claude_code_default without rewriting the immutable binding or selection", async () => {
+    const admitted = await repository.enqueueSharedQueuedTurn(
+      owner,
+      request(49, collaborationActors.editor),
+    );
+    const claimed = await repository.claimNextQueuedTurn(owner, {
+      chatId: collaborationIds.chat,
+      collaborationScopeId: collaborationIds.scope,
+      turnId: "cturn_real_claude_default",
+      runId: "run_real_claude_default",
+      messageId: "msg_real_claude_default",
+      claimedAt: now,
+    });
+
+    expect(admitted.selection).toEqual(productionClaudeSelection);
+    expect(claimed?.run).toMatchObject({
+      driverKind: "claude_code",
+      instanceId: "claude_code_default",
+      selection: productionClaudeSelection,
+    });
+    await expect(fixture.db.selectFrom("chats")
+      .select(["current_selection", "bound_driver_kind", "bound_instance_id", "bound_at_turn_id"])
+      .where("id", "=", collaborationIds.chat).executeTakeFirstOrThrow())
+      .resolves.toMatchObject({
+        current_selection: productionClaudeSelection,
+        bound_driver_kind: "claude_code",
+        bound_instance_id: "claude_code_default",
+        bound_at_turn_id: "cturn_original_claude",
+      });
+  });
+
   it("serializes simultaneous admissions into one immutable accepted order", async () => {
     const admitted = await Promise.all(Array.from({ length: 12 }, (_value, index) =>
       enqueueAfterConflict(
@@ -443,7 +604,10 @@ realDescribe("shared Chat queue real PostgreSQL ordering", () => {
     }).where("id", "=", collaborationIds.chat).execute();
 
     const results = await Promise.allSettled([
-      repository.enqueueSharedQueuedTurn(owner, request(50, collaborationActors.owner)),
+      repository.enqueueSharedQueuedTurn(owner, {
+        ...request(50, collaborationActors.owner),
+        canonicalProviderAuthority: productionClaudeAuthority,
+      }),
       repository.enqueueSharedQueuedTurn(owner, request(51, collaborationActors.editor)),
     ]);
     expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
@@ -463,7 +627,7 @@ realDescribe("shared Chat queue real PostgreSQL ordering", () => {
       .where("id", "=", collaborationIds.chat).executeTakeFirstOrThrow())
       .resolves.toEqual({
         bound_driver_kind: "claude_code",
-        bound_instance_id: "claude_shared",
+        bound_instance_id: "claude_code_default",
         bound_at_turn_id: "cturn_concurrent_initial_binding",
       });
   });
@@ -527,9 +691,9 @@ async function seedSharedChat(fixture: CollaborationTestDatabase): Promise<void>
     shell_state: null,
     fork_provenance: null,
     last_message_preview: null,
-    current_selection: JSON.stringify({ instanceId: "claude_shared", model: "claude-opus-4-6" }),
+    current_selection: JSON.stringify(productionClaudeSelection),
     bound_driver_kind: "claude_code",
-    bound_instance_id: "claude_shared",
+    bound_instance_id: "claude_code_default",
     bound_at_turn_id: "cturn_original_claude",
     created_at: now,
     updated_at: now,
@@ -547,14 +711,8 @@ async function seedSharedChat(fixture: CollaborationTestDatabase): Promise<void>
     auth_epoch: 1,
     authority_runtime_id: collaborationIds.runtime,
     authority_generation: 1,
-    execution_generation: 1,
-    execution_eligibility: JSON.stringify({
-      profileId: "scope-runtime-chat-v1",
-      profileVersion: 1,
-      profileDigest: "a".repeat(64),
-      adapterId: "claude-code",
-      harnessVersion: "2.1.240",
-    }),
+    execution_generation: 13,
+    execution_eligibility: JSON.stringify(collaborationExecutionEligibility()),
     deleted_at: null,
     created_at: now,
     updated_at: now,

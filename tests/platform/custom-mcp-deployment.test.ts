@@ -11,9 +11,12 @@ const baseEnv = Object.fromEntries([
   'CLOUD_RUN_SERVICE_ACCOUNT', 'PLATFORM_PUBLIC_URL', 'MATRIX_API_ORIGIN',
   'MATRIX_COLLABORATION_ACTIVE_KEY_ID', 'MATRIX_COLLABORATION_ALLOWED_ORIGINS',
   'MATRIX_APP_URL', 'MATRIX_APP_DOMAIN_HOSTS', 'MATRIX_CODE_DOMAIN_HOSTS',
+  'MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED', 'MATRIX_FUNDED_AI_RUNTIME_ENABLED',
 ].map((name) => [name, 'fixture']));
 baseEnv.PLATFORM_PUBLIC_URL = 'https://app.example.com';
 baseEnv.MATRIX_API_ORIGIN = 'https://api.example.com';
+baseEnv.MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED = 'false';
+baseEnv.MATRIX_FUNDED_AI_RUNTIME_ENABLED = 'false';
 
 function validate(overrides: Record<string, string>) {
   return spawnSync('bash', ['-c', step('Validate deployment configuration')], {

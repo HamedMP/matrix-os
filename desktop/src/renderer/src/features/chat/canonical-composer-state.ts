@@ -4,6 +4,7 @@ import type {
   CanonicalProviderInstanceDescriptor,
   CanonicalProviderOptionDescriptor,
 } from "@matrix-os/contracts";
+import { orderCanonicalProviderInstancesForDefault } from "@matrix-os/ui";
 
 export interface CanonicalComposerSelection {
   instanceId: string;
@@ -74,7 +75,7 @@ export function createCanonicalComposerSelection(
     : undefined;
   const preferredSelection = preferred ? selectionForInstance(preferred) : null;
   if (preferredSelection) return preferredSelection;
-  for (const instance of catalog.instances) {
+  for (const instance of orderCanonicalProviderInstancesForDefault(catalog.instances)) {
     const selection = selectionForInstance(instance);
     if (selection) return selection;
   }
