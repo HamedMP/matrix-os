@@ -29,6 +29,23 @@ export const CollaborationAppInstanceIdSchema = z.string().min(1).max(256).regex
 export const CollaborationAppAssetPathSchema = z.string().min(1).max(1_024)
   .refine((value) => isSafeCollaborationRelativePath(value) && !value.split("/").some((segment) => segment.startsWith(".")));
 
+/** Owner-only lookup used by the normal file/folder/app Share controls. */
+export const CollaborationOwnerCatalogResolveRequestSchema = z.object({
+  kind: CollaborationCatalogKindSchema,
+  path: CollaborationResourcePathSchema,
+}).strict().superRefine((input, ctx) => {
+  if (input.kind === "app" && !CollaborationAppInstanceIdSchema.safeParse(input.path).success) {
+    ctx.addIssue({ code: "custom", path: ["path"], message: "App identifier must be a single segment" });
+  }
+});
+export const CollaborationOwnerCatalogResolveResponseSchema = z.object({
+  id: CollaborationCatalogIdSchema,
+  kind: CollaborationCatalogKindSchema,
+  path: CollaborationResourcePathSchema,
+  incarnation: z.string().regex(/^[a-f0-9]{64}$/),
+  revision: CollaborationRevisionSchema,
+}).strict();
+
 export const CollaborationCatalogEntrySchema = z.object({
   id: CollaborationCatalogIdSchema,
   kind: CollaborationCatalogKindSchema,

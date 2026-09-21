@@ -29,6 +29,10 @@ export interface CollaborationResourceDriver {
   remove(input: Namespace & { path: string; kind: "file" | "folder" }): Promise<void>;
   rename(input: Namespace & { from: string; to: string }): Promise<void>;
   mkdir(input: Namespace & { path: string }): Promise<void>;
+  /** Read-only owner inspection for a normal Share control. Must validate kind and reject symlinks. */
+  inspect?(input: Namespace & { kind: "file" | "folder" | "app"; path: string }): Promise<{ incarnation: string }>;
+  /** Resolve a normal owner-home selection into its authoritative catalog namespace. */
+  resolveOwnerNamespace?(input: { ownerId: string; kind: "file" | "folder" | "app"; path: string }): Promise<{ projectId: string | null; path: string }>;
   /** Stable identity of the current filesystem object; changes on replacement. */
   fingerprint(input: Namespace & { path: string }): Promise<string>;
   readAppAsset(input: Namespace & { appId: string; assetPath: string }): Promise<{ stream: ReadableStream<Uint8Array>; size: number; contentType?: string }>;

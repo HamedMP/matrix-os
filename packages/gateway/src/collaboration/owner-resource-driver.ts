@@ -46,6 +46,7 @@ function contentType(path: string): string {
 
 export function createOwnerResourceDriver(options: {
   homePath: string;
+  listOwnedProjectIds(ownerId: string): Promise<string[]>;
   resolveProjectWorkingDirectory(ownerId: string, projectId: string): Promise<string | null>;
   resolveAppAssetRoot(ownerId: string, projectId: string | null, appId: string): Promise<string | null>;
 }): CollaborationResourceDriver & { sweepTemp(): Promise<number>; close(): void } {
@@ -227,6 +228,33 @@ export function createOwnerResourceDriver(options: {
   return {
     sweepTemp,
     close: () => clearInterval(timer),
+    async resolveOwnerNamespace(input) {
+      if (input.kind === "app") return { projectId: null, path: input.path };
+      if (!isSafeCollaborationRelativePath(input.path) || forbiddenHomePath(input.path)) {
+        throw new ResourceCatalogError("forbidden");
+      }
+      const ownerRoot = await root({ ownerId: input.ownerId, projectId: null });
+      const selected = resolve(ownerRoot, input.path);
+      const projectIds = await options.listOwnedProjectIds(input.ownerId);
+      if (projectIds.length > 1_000 || new Set(projectIds).size !== projectIds.length) {
+        throw new ResourceCatalogError("unavailable");
+      }
+      let matched: { projectId: string; path: string; rootLength: number } | null = null;
+      for (const projectId of projectIds) {
+        const projectRoot = await root({ ownerId: input.ownerId, projectId });
+        if (!inside(ownerRoot, projectRoot)) continue;
+        // A standalone folder grant must never encompass a registered project.
+        if (inside(selected, projectRoot)) throw new ResourceCatalogError("forbidden");
+        if (!inside(projectRoot, selected)) continue;
+        const path = relative(projectRoot, selected).split(sep).join("/");
+        if (!path || !isSafeCollaborationRelativePath(path)) throw new ResourceCatalogError("forbidden");
+        if (matched && matched.rootLength === projectRoot.length) throw new ResourceCatalogError("unavailable");
+        if (!matched || projectRoot.length > matched.rootLength) {
+          matched = { projectId, path, rootLength: projectRoot.length };
+        }
+      }
+      return matched ? { projectId: matched.projectId, path: matched.path } : { projectId: null, path: input.path };
+    },
     read: readFile,
     write: writeFile,
     writeChunks: writeFileFromChunks,
@@ -263,6 +291,29 @@ export function createOwnerResourceDriver(options: {
       try {
         await mkdir(path, { recursive: false, mode: 0o700 });
       } catch (error: unknown) {
+        if (missing(error)) throw new ResourceCatalogError("not_found");
+        throw new ResourceCatalogError("unavailable");
+      }
+    },
+    async inspect(input) {
+      let inspectedPath: string;
+      if (input.kind === "app") {
+        if (!/^[A-Za-z0-9_-]{1,256}$/.test(input.path)) throw new ResourceCatalogError("invalid");
+        const assetRoot = await options.resolveAppAssetRoot(input.ownerId, input.projectId, input.path);
+        if (!assetRoot || !isAbsolute(assetRoot)) throw new ResourceCatalogError("not_found");
+        inspectedPath = assetRoot;
+      } else {
+        inspectedPath = await target(input, false);
+      }
+      try {
+        const info = await lstat(inspectedPath, { bigint: true });
+        if (info.isSymbolicLink()
+          || (input.kind === "file" && !info.isFile())
+          || (input.kind !== "file" && !info.isDirectory())) throw new ResourceCatalogError("not_found");
+        return { incarnation: createHash("sha256")
+          .update(`${info.dev}:${info.ino}:${info.birthtimeNs}`).digest("hex") };
+      } catch (error: unknown) {
+        if (error instanceof ResourceCatalogError) throw error;
         if (missing(error)) throw new ResourceCatalogError("not_found");
         throw new ResourceCatalogError("unavailable");
       }
