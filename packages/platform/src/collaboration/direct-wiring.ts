@@ -20,7 +20,7 @@ import {
   CollaborationRuntimeEndpointRegistry,
   type RuntimeEndpointPlatformDatabase,
 } from "./runtime-endpoints.js";
-import { CollaborationTicketIssuer, CollaborationTicketIssuerError, loadTicketSigningKeyring, type TicketSigningKeyring } from "./ticket-issuer.js";
+import { CollaborationTicketIssuer, loadTicketSigningKeyring, type TicketSigningKeyring } from "./ticket-issuer.js";
 
 export const DEFAULT_COLLABORATION_RELAY_ORIGIN = "https://app.matrix-os.com";
 
@@ -63,28 +63,17 @@ export async function createPlatformCollaborationDirect(options: {
   const endpoints = new CollaborationRuntimeEndpointRegistry(options.db, { now: options.now });
   let issuer: CollaborationTicketIssuer | null = null;
   if (options.keyring) {
-    try {
-      issuer = new CollaborationTicketIssuer({
-        keyring: options.keyring,
-        repository: options.repository,
-        endpoints,
-        resolveOrganization: options.resolveOrganization,
-        projection: options.projection,
-        relayOrigin: options.relayOrigin,
-        now: options.now,
-      });
-    } catch (error: unknown) {
-      // A refused keyring (a retired key with no recorded retirement, a retirement dated past
-      // the clock skew, an unusable seed) is contained here: the ticket route answers
-      // unavailable and no key is published, while the control stream, the endpoint registry
-      // and every other collaboration surface still start. Only the configuration's shape is
-      // logged, never the configured value.
-      if (!(error instanceof CollaborationTicketIssuerError)) throw error;
-      console.warn("[platform-collaboration] ticket signing configuration was refused: connection tickets fail closed", error.code);
-    }
-  }
-  if (!issuer) {
-    console.warn("[platform-collaboration] ticket signing configuration is unusable: connection tickets fail closed");
+    issuer = new CollaborationTicketIssuer({
+      keyring: options.keyring,
+      repository: options.repository,
+      endpoints,
+      resolveOrganization: options.resolveOrganization,
+      projection: options.projection,
+      relayOrigin: options.relayOrigin,
+      now: options.now,
+    });
+  } else {
+    console.warn("[platform-collaboration] ticket signing keys are not configured: connection tickets fail closed");
   }
   const controlStream = new CollaborationControlStream({
     controlAuthority: options.controlAuthority,

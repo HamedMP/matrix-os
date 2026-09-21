@@ -80,6 +80,43 @@ describe("platform collaboration bootstrap", () => {
     }
   });
 
+  it("starts with connection tickets unavailable when the ticket signing configuration is unusable", async () => {
+    // A mistimed key rotation must cost the ticket route, not the platform. Each of these
+    // three shapes is refused by the keyring loader, so the composition still comes up whole
+    // with no issuer and no published signing key.
+    const unusable = [
+      { name: "future-dated retirement", MATRIX_COLLABORATION_TICKET_RETIRED_AT: JSON.stringify({ "ticket-key-1": new Date(Date.now() + 3 * 60 * 60_000).toISOString() }) },
+      { name: "malformed JSON", MATRIX_COLLABORATION_TICKET_RETIRED_AT: "{not json" },
+      { name: "unparseable date", MATRIX_COLLABORATION_TICKET_RETIRED_AT: JSON.stringify({ "ticket-key-1": "yesterday" }) },
+    ];
+    for (const { name, MATRIX_COLLABORATION_TICKET_RETIRED_AT } of unusable) {
+      const fixture = await createPlatformCollaborationTestDatabase();
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      try {
+        const runtime = await bootstrapPlatformCollaboration({
+          env: {
+            ...validEnvironment,
+            MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID: "ticket-key-2",
+            MATRIX_COLLABORATION_TICKET_KEYS: JSON.stringify({ "ticket-key-2": Buffer.alloc(32, 2).toString("base64url") }),
+            MATRIX_COLLABORATION_TICKET_RETIRED_KEYS: JSON.stringify({ "ticket-key-1": Buffer.alloc(32, 1).toString("base64url") }),
+            MATRIX_COLLABORATION_TICKET_RETIRED_AT,
+          },
+          db: { kysely: fixture.collaborationDb } as unknown as PlatformDB,
+          platformSecret: "platform-secret",
+          platformJwtSecret: "platform-jwt-secret",
+          customerVpsProxyDispatcher: {} as Agent,
+        });
+        // The platform starts: this is a real composition, not the fail-closed registrar.
+        expect(`${name}: ${"failClosed" in runtime}`).toBe(`${name}: false`);
+        expect(`${name}: ${"direct" in runtime && runtime.direct?.issuer === null}`).toBe(`${name}: true`);
+        await runtime.shutdown();
+      } finally {
+        warn.mockRestore();
+        await destroyPlatformCollaborationTestDatabase(fixture);
+      }
+    }
+  });
+
   it("returns an owner-shutdown runtime when collaboration is configured", async () => {
     const fixture = await createPlatformCollaborationTestDatabase();
     try {

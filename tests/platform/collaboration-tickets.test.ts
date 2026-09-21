@@ -410,19 +410,44 @@ describe("S05 platform tickets, endpoints and control", () => {
       expect(RETIRED_KEY_OVERLAP_MS).toBe(15 * 60_000);
     });
 
-    it("contains an unusable retirement time in the ticket route instead of failing platform startup", async () => {
-      // A retirement dated past the clock skew is refused by the issuer. Refusing it must make
-      // the ticket route unavailable, not abort the composition root that builds every other
-      // collaboration surface: a mistyped year in the operator's configuration cannot be a
-      // platform-wide outage.
+    it("refuses an unusable retirement time in the loader so the ticket route, not the platform, goes down", () => {
+      // The issuer refuses a retirement dated past the clock skew by throwing, and the
+      // platform's composition root cannot serve a ticket route from a thrown configuration
+      // error. Configuration that the issuer would refuse must therefore never load.
       const unusableRetirement = new Date(clock.getTime() + 3 * 60 * 60_000).toISOString();
       const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      try {
+        const environment = {
+          MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID: "ticket-key-2",
+          MATRIX_COLLABORATION_TICKET_KEYS: JSON.stringify({ "ticket-key-2": seedB }),
+          MATRIX_COLLABORATION_TICKET_RETIRED_KEYS: JSON.stringify({ "ticket-key-1": seedA }),
+        };
+        expect(loadTicketSigningKeyring({ ...environment, MATRIX_COLLABORATION_TICKET_RETIRED_AT: JSON.stringify({ "ticket-key-1": unusableRetirement }) }, { now: () => clock })).toBeNull();
+        // The same three configuration shapes the operator can get wrong, all through one path.
+        expect(loadTicketSigningKeyring({ ...environment, MATRIX_COLLABORATION_TICKET_RETIRED_AT: "{not json" }, { now: () => clock })).toBeNull();
+        expect(loadTicketSigningKeyring({ ...environment, MATRIX_COLLABORATION_TICKET_RETIRED_AT: JSON.stringify({ "ticket-key-1": "yesterday" }) }, { now: () => clock })).toBeNull();
+        // A retirement inside the clock skew still loads, and the issuer accepts whatever loads.
+        const admitted = loadTicketSigningKeyring({ ...environment, MATRIX_COLLABORATION_TICKET_RETIRED_AT: JSON.stringify({ "ticket-key-1": new Date(clock.getTime() + 1_000).toISOString() }) }, { now: () => clock });
+        expect(admitted).not.toBeNull();
+        expect(new CollaborationTicketIssuer({ keyring: admitted!, repository, endpoints, resolveOrganization: async () => organizationId, projection: { isCurrentMember: async () => true }, relayOrigin: "https://app.matrix-os.com", now: () => clock }).publicKeys().map((key) => key.keyId)).toEqual(["ticket-key-2", "ticket-key-1"]);
+        // The misconfigured value itself never reaches the log.
+        const logged = warn.mock.calls.map((call) => call.map((part) => String(part)).join(" ")).join("\n");
+        expect(logged).not.toContain(unusableRetirement);
+        expect(logged).not.toContain(seedA);
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it("answers the ticket route unavailable and publishes no key when the keyring does not load", async () => {
+      // What a refused keyring looks like from outside: the composition still builds, tickets
+      // are unavailable, and no signing key at all is handed to a home.
       const direct = await createPlatformCollaborationDirect({
         db: fixture.collaborationDb as never,
         repository,
         controlAuthority: { registerTransport: () => undefined, acknowledge: async () => ({ completedDenialIds: [] }) },
         projection: { isCurrentMember: async () => true },
-        keyring: { activeKeyId: "ticket-key-2", keys: { "ticket-key-2": seedB }, retired: { "ticket-key-1": seedA }, retiredAt: { "ticket-key-1": unusableRetirement } },
+        keyring: null,
         relayOrigin: "https://app.matrix-os.com",
         resolveActor: async () => platformCollaborationActors.owner,
         authenticateRuntime: async () => ({ runtimeId, ownerId: platformCollaborationActors.owner }),
@@ -431,7 +456,6 @@ describe("S05 platform tickets, endpoints and control", () => {
         now: () => clock,
       });
       try {
-        // The issuer is absent, exactly as it is when no signing keys are configured at all.
         expect(direct.issuer).toBeNull();
         const app = new Hono();
         direct.register(app);
@@ -441,8 +465,6 @@ describe("S05 platform tickets, endpoints and control", () => {
           body: JSON.stringify({ clientRequestId: "30000000-0000-4000-8000-000000000001", scopeId, purpose: "stream", proofPublicKey: clientProofKey().raw }),
         });
         expect(ticket.status).toBe(503);
-        // Registration still answers, and it publishes no key at all: the retired key whose
-        // retirement could not be honoured is never handed to a home.
         const registered = await app.request("/internal/collaboration/runtime-endpoints", {
           method: "POST",
           headers: { "content-type": "application/json", "x-matrix-runtime-id": runtimeId, authorization: `Bearer ${"b".repeat(48)}` },
@@ -450,14 +472,8 @@ describe("S05 platform tickets, endpoints and control", () => {
         });
         expect(registered.status).toBe(200);
         expect((await registered.json() as { platformSigningKeys: Array<{ keyId: string }> }).platformSigningKeys).toEqual([]);
-        // The misconfigured value itself never reaches the log.
-        const logged = warn.mock.calls.map((call) => call.map((part) => String(part)).join(" ")).join("\n");
-        expect(logged).toContain("ticket signing configuration");
-        expect(logged).not.toContain(unusableRetirement);
-        expect(logged).not.toContain(seedA);
       } finally {
         await direct.shutdown();
-        warn.mockRestore();
       }
     });
   });
