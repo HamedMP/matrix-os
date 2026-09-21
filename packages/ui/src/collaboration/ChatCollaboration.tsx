@@ -97,6 +97,8 @@ function CollaborationHome({ api, openInvitation, openChat, openTerminal, openPr
   const [paginationError, setPaginationError] = useState(false);
   const [invitationPending, setInvitationPending] = useState<string | null>(null);
   const [invitationError, setInvitationError] = useState(false);
+  const [organizationPending, setOrganizationPending] = useState<string | null>(null);
+  const [organizationError, setOrganizationError] = useState<string | null>(null);
   useEffect(() => {
     let active = true;
     void Promise.all([api.get("/api/collaboration/inbox"), api.get("/api/collaboration/shared")])
@@ -166,6 +168,37 @@ function CollaborationHome({ api, openInvitation, openChat, openTerminal, openPr
       setInvitationPending(null);
     }
   };
+  const openOrganizationShare = async (item: Extract<DiscoveryItem, { status: "organization_pending" }>) => {
+    if (organizationPending) return;
+    setOrganizationPending(item.scopeId);
+    setOrganizationError(null);
+    try {
+      z.object({ state: z.literal("active") }).parse(await api.post(
+        `/api/collaboration/scopes/${encodeURIComponent(item.scopeId)}/grants/${encodeURIComponent(item.grantId)}/accept`,
+        {},
+      ));
+      // A pending directory pointer is never authority to open content. Refresh the
+      // authenticated projection after the home has accepted the grant.
+      const [inbox, shared] = await Promise.all([
+        api.get("/api/collaboration/inbox"), api.get("/api/collaboration/shared"),
+      ]);
+      const inboxPage = CollaborationDiscoveryResponseSchema.parse(inbox);
+      const sharedPage = CollaborationDiscoveryResponseSchema.parse(shared);
+      setItems([...inboxPage.items, ...sharedPage.items]);
+      setInboxCursor(inboxPage.nextCursor ?? null);
+      setSharedCursor(sharedPage.nextCursor ?? null);
+      setError(false);
+      notifyCollaborationDiscoveryChanged();
+      if (item.kind === "terminal") openTerminal(item.scopeId);
+      else if (item.kind === "project") openProject(item.scopeId);
+      else openChat(item.scopeId);
+    } catch (failure: unknown) {
+      console.warn("[chat-collaboration] organization share open failed", failure instanceof Error ? failure.name : "UnknownError");
+      setOrganizationError(item.scopeId);
+    } finally {
+      setOrganizationPending(null);
+    }
+  };
 
   return <main className="mx-auto flex min-h-full w-full max-w-4xl flex-col gap-5 p-5 sm:p-8">
     <header>
@@ -189,8 +222,10 @@ function CollaborationHome({ api, openInvitation, openChat, openTerminal, openPr
           <div className="min-w-0 flex-1">
             <p className="font-medium">Shared with your organization</p>
             <p className="text-sm" style={{ color: "var(--text-secondary)" }}>Shared {kindLabel(item.kind)} · opens when you join</p>
+            {organizationError === item.scopeId ? <p role="alert" className="mt-1 text-sm">Share could not be opened. Try again.</p> : null}
           </div>
-          <button type="button" className={buttonClass} onClick={() => item.kind === "terminal" ? openTerminal(item.scopeId) : item.kind === "project" ? openProject(item.scopeId) : openChat(item.scopeId)}>Open</button>
+          <button type="button" className={buttonClass} disabled={organizationPending !== null}
+            onClick={() => void openOrganizationShare(item)}>{organizationPending === item.scopeId ? "Opening…" : "Open"}</button>
         </article>
         : !item.resource
         ? <article key={discoveryKey(item)} className="flex flex-wrap items-center gap-4 rounded-2xl border p-4">
