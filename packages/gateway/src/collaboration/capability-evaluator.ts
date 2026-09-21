@@ -94,6 +94,7 @@ export class CollaborationCapabilityEvaluator {
     const now = this.now();
     // The advertised deadline is never later than the authoritative evidence or the contract's 20-second bound.
     let evidenceExpiresAt = new Date(now.getTime() + ORGANIZATION_EVIDENCE_DEADLINE_MS).toISOString();
+    let currentMembershipEpoch: number | undefined;
     let resolution: ActorGrantResolution | null;
     try {
       resolution = await this.options.grants.resolveActorGrants(input.scopeId, input.actorId);
@@ -120,6 +121,7 @@ export class CollaborationCapabilityEvaluator {
       if (Number.isFinite(authoritative) && authoritative < Date.parse(evidenceExpiresAt)) {
         evidenceExpiresAt = new Date(authoritative).toISOString();
       }
+      currentMembershipEpoch = evidence.membershipEpoch;
     } catch (error: unknown) {
       if (!(error instanceof CollaborationAuthorizationError)) throw error;
       return deny("precondition_denied", scope.owner_id, organizationId);
@@ -160,8 +162,12 @@ export class CollaborationCapabilityEvaluator {
       for (const action of actions) union.add(action);
       if (best === null || grant.preset === "contributor") best = grant.preset;
     };
+    // Belt and braces with departure cleanup: an activation recorded under an earlier membership
+    // (before a departure and rejoin) never revives; the member must open the share again.
+    const activationCurrent = resolution.activation?.state === "active"
+      && (currentMembershipEpoch === undefined || Number(resolution.activation.membership_evidence_epoch) >= currentMembershipEpoch);
     consider(resolution.memberGrant, resolution.memberGrant?.state === "active", "activation_required");
-    consider(resolution.organizationGrant, resolution.activation?.state === "active", "activation_required");
+    consider(resolution.organizationGrant, activationCurrent, "activation_required");
     if (best === null) {
       return deny(reasons[0] ?? "membership_required", scope.owner_id, organizationId);
     }
@@ -225,27 +231,27 @@ export class CollaborationCapabilityEvaluator {
 
   /** Opening the share is the accept; the actor's fresh membership is re-checked inside the same request. */
   async acceptGrant(input: { grantId: string; actorId: string }): Promise<{ state: "active" }> {
-    await this.requireGrantMembership(input);
+    const evidence = await this.requireGrantMembership(input);
     try {
-      return await this.options.grants.acceptGrant({ ...input, membershipEvidenceEpoch: this.evidenceEpoch() });
+      return await this.options.grants.acceptGrant({ ...input, membershipEvidenceEpoch: evidence.membershipEpoch ?? this.evidenceEpoch() });
     } catch (error: unknown) {
       throw mapRepositoryError(error);
     }
   }
 
   async declineGrant(input: { grantId: string; actorId: string }): Promise<{ state: "declined" }> {
-    await this.requireGrantMembership(input);
+    const evidence = await this.requireGrantMembership(input);
     try {
-      return await this.options.grants.declineGrant({ ...input, membershipEvidenceEpoch: this.evidenceEpoch() });
+      return await this.options.grants.declineGrant({ ...input, membershipEvidenceEpoch: evidence.membershipEpoch ?? this.evidenceEpoch() });
     } catch (error: unknown) {
       throw mapRepositoryError(error);
     }
   }
 
-  private async requireGrantMembership(input: { grantId: string; actorId: string }): Promise<void> {
+  private async requireGrantMembership(input: { grantId: string; actorId: string }) {
     const grant = await this.options.grants.getGrant(input.grantId);
     if (!grant) throw new CollaborationAuthorizationError("not_found", "Grant not found");
-    await this.options.organizationPrecondition.require({ organizationId: grant.organizationId, actorId: input.actorId });
+    return this.options.organizationPrecondition.require({ organizationId: grant.organizationId, actorId: input.actorId });
   }
 }
 

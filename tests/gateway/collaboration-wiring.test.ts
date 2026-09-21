@@ -110,7 +110,7 @@ describe("gateway collaboration wiring", () => {
       organizationMembershipSource: {
         async assertMembership({ actorId, organizationId: requested }) {
           return requested === organizationId && members.has(actorId)
-            ? { member: true, expiresAt: new Date(Date.now() + 20_000).toISOString() }
+            ? { member: true, expiresAt: new Date(Date.now() + 20_000).toISOString(), aiSubmission: "owner_only" as const }
             : { member: false };
         },
       },

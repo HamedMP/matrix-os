@@ -49,7 +49,7 @@ function membershipSource(now: () => Date = () => new Date(NOW)): OrganizationMe
   return {
     async assertMembership({ organizationId, actorId }) {
       return members.get(organizationId)?.has(actorId)
-        ? { member: true, expiresAt: new Date(now().getTime() + 20_000).toISOString() }
+        ? { member: true, expiresAt: new Date(now().getTime() + 20_000).toISOString(), aiSubmission: "owner_only" as const }
         : { member: false };
     },
   };
@@ -284,9 +284,9 @@ describe("S04 capability grants and effective access", () => {
         audience: { kind: "member", actorId: collaborationActors.editor }, preset: "viewer", policyVersion: "v1",
       })).rejects.toBeInstanceOf(CollaborationAuthorizationError);
 
-      expect(await grants.endActorGrants({ organizationId: ORG, actorId: collaborationActors.viewer })).toEqual({ ended: 1 });
-      expect(await grants.endActorGrants({ organizationId: ORG, actorId: collaborationActors.editor })).toEqual({ ended: 1 });
-      expect(await grants.endActorGrants({ organizationId: ORG, actorId: collaborationActors.editor })).toEqual({ ended: 0 });
+      expect(await grants.endActorGrants({ organizationId: ORG, actorId: collaborationActors.viewer })).toEqual({ ended: 1, scopes: 1 });
+      expect(await grants.endActorGrants({ organizationId: ORG, actorId: collaborationActors.editor })).toEqual({ ended: 1, scopes: 1 });
+      expect(await grants.endActorGrants({ organizationId: ORG, actorId: collaborationActors.editor })).toEqual({ ended: 0, scopes: 0 });
       expect(await grants.listParticipants(collaborationIds.scope)).toEqual([collaborationActors.owner]);
       expect(await grants.listActivations(orgGrant.grantId)).toEqual([]);
       expect((await grants.getGrant(memberGrant.grantId))?.state).toBe("revoked");
@@ -297,6 +297,50 @@ describe("S04 capability grants and effective access", () => {
         scopeId: collaborationIds.scope, actorId: collaborationActors.owner, ...request(scopeRevision),
         grantId: orgGrant.grantId, expectedGrantRevision: orgLatest.grantRevision,
       })).resolves.toMatchObject({ state: "revoked" });
+    });
+
+    it("ends derived grants across more scopes than one departure batch and never revives a pre-rejoin activation", async () => {
+      const extra = [uuid(7001), uuid(7002), uuid(7003)];
+      for (const scopeId of extra) await seedScope(fixture, scopeId, `project_${scopeId.slice(0, 8)}`);
+      const scopeIds = [collaborationIds.scope, ...extra];
+      const orgGrants: string[] = [];
+      for (const scopeId of scopeIds) {
+        const grant = await grants.createGrant({
+          scopeId, actorId: collaborationActors.owner, ...request(1),
+          audience: { kind: "organization" }, preset: "viewer", policyVersion: "v1",
+        });
+        await evaluator.acceptGrant({ grantId: grant.grantId, actorId: collaborationActors.editor });
+        orgGrants.push(grant.grantId);
+      }
+      members.get(ORG)!.delete(collaborationActors.editor);
+      expect(await grants.endActorGrants({ organizationId: ORG, actorId: collaborationActors.editor, scopeBatchSize: 1 }))
+        .toEqual({ ended: 4, scopes: 4 });
+      for (const grantId of orgGrants) expect(await grants.listActivations(grantId)).toEqual([]);
+      expect(await grants.endActorGrants({ organizationId: ORG, actorId: collaborationActors.editor, scopeBatchSize: 1 }))
+        .toEqual({ ended: 0, scopes: 0 });
+
+      // Belt and braces: an activation left over from before a departure is stale once the source
+      // reports a newer membership epoch, so a rejoin does not revive it until the member opens again.
+      members.get(ORG)!.add(collaborationActors.editor);
+      await fixture.db.insertInto("collaboration_grant_activations").values({
+        grant_id: orgGrants[0]!, actor_id: collaborationActors.editor, state: "active", decided_at: NOW, membership_evidence_epoch: 1,
+      }).execute();
+      const epochSource: OrganizationMembershipSource = {
+        async assertMembership({ organizationId, actorId }) {
+          return members.get(organizationId)?.has(actorId)
+            ? { member: true, expiresAt: new Date(clock + 20_000).toISOString(), aiSubmission: "owner_only" as const, membershipEpoch: 5 }
+            : { member: false };
+        },
+      };
+      const epochAware = new CollaborationCapabilityEvaluator({
+        db: fixture.db, grants, organizationPrecondition: createOrganizationPrecondition({ source: epochSource, now }), now,
+      });
+      expect(await epochAware.evaluateEffectiveAccess({ scopeId: collaborationIds.scope, actorId: collaborationActors.editor }))
+        .toMatchObject({ preset: null, reasons: ["activation_required"] });
+      await expect(epochAware.acceptGrant({ grantId: orgGrants[0]!, actorId: collaborationActors.editor })).resolves.toEqual({ state: "active" });
+      expect((await grants.listActivations(orgGrants[0]!))[0]).toMatchObject({ state: "active", membershipEvidenceEpoch: 5 });
+      expect(await epochAware.evaluateEffectiveAccess({ scopeId: collaborationIds.scope, actorId: collaborationActors.editor }))
+        .toMatchObject({ preset: "viewer", reasons: [] });
     });
 
     it("refuses a member grant for someone outside the organization and an organization grant on a scope without one", async () => {
@@ -375,7 +419,9 @@ describe("S04 capability grants and effective access", () => {
       expect(await grants.listParticipants(collaborationIds.scope)).toEqual([collaborationActors.owner]);
     });
 
-    it("serializes concurrent accepts of different grants on one scope on the scope lock", async () => {
+    // PGlite serves one connection, so genuinely concurrent transactions interleave; the scope-lock
+    // race is proven on the real server only (same gating as the other *-postgres suites).
+    it.skipIf(!hasRealPostgres)("serializes concurrent accepts of different grants on one scope on the scope lock (unrun on PGlite: real Postgres required)", async () => {
       const orgGrant = await grants.createGrant({
         scopeId: collaborationIds.scope, actorId: collaborationActors.owner, ...request(1),
         audience: { kind: "organization" }, preset: "viewer", policyVersion: "v1",
@@ -384,8 +430,7 @@ describe("S04 capability grants and effective access", () => {
         scopeId: collaborationIds.scope, actorId: collaborationActors.owner, ...request(2),
         audience: { kind: "member", actorId: collaborationActors.viewer }, preset: "contributor", policyVersion: "v1",
       });
-      const rounds = hasRealPostgres ? 4 : 1;
-      for (let round = 0; round < rounds; round += 1) {
+      for (let round = 0; round < 4; round += 1) {
         const outcomes = await Promise.allSettled([
           evaluator.acceptGrant({ grantId: orgGrant.grantId, actorId: collaborationActors.editor }),
           evaluator.acceptGrant({ grantId: memberGrant.grantId, actorId: collaborationActors.viewer }),
@@ -459,7 +504,7 @@ describe("S04 capability grants and effective access", () => {
     it("never advertises access past the authoritative membership evidence", async () => {
       const shortLived = createOrganizationPrecondition({
         source: {
-          async assertMembership() { return { member: true, expiresAt: new Date(clock + 3_000).toISOString() }; },
+          async assertMembership() { return { member: true, expiresAt: new Date(clock + 3_000).toISOString(), aiSubmission: "owner_only" as const }; },
         },
         now,
       });
@@ -506,6 +551,22 @@ describe("S04 capability grants and effective access", () => {
       expect(before.preset).toBeNull();
       const result = await dispositionLegacyMembers(fixture.db, { scopeId: collaborationIds.scope, actorId: collaborationActors.owner, now, createId: () => crypto.randomUUID() });
       expect(result).toEqual({ converted: 2, skipped: 0, remaining: 0 });
+      // A legacy row already covered by a live grant is retired without a second grant so progress is made.
+      await fixture.db.insertInto("collaboration_members").values(legacyMember(newcomer, "viewer")).execute();
+      members.get(ORG)!.add(newcomer);
+      const scopeRev = Number((await fixture.db.selectFrom("collaboration_scopes").select("revision").where("id", "=", collaborationIds.scope).executeTakeFirstOrThrow()).revision);
+      const covering = await grants.createGrant({
+        scopeId: collaborationIds.scope, actorId: collaborationActors.owner, ...request(scopeRev),
+        audience: { kind: "member", actorId: newcomer }, preset: "contributor", policyVersion: "v1",
+      });
+      expect(covering.state).toBe("pending");
+      expect(await dispositionLegacyMembers(fixture.db, { scopeId: collaborationIds.scope, actorId: collaborationActors.owner, now, createId: () => crypto.randomUUID() }))
+        .toEqual({ converted: 0, skipped: 1, remaining: 0 });
+      const retiredCovered = await fixture.db.selectFrom("collaboration_members").select(["status", "dispositioned_at"])
+        .where("scope_id", "=", collaborationIds.scope).where("actor_id", "=", newcomer).executeTakeFirstOrThrow();
+      expect(retiredCovered.status).toBe("revoked");
+      expect(retiredCovered.dispositioned_at).not.toBeNull();
+      expect((await grants.listGrants(collaborationIds.scope)).filter((g) => g.audience.kind === "member" && g.audience.actorId === newcomer)).toHaveLength(1);
       expect(await dispositionLegacyMembers(fixture.db, { scopeId: collaborationIds.scope, actorId: collaborationActors.owner, now, createId: () => crypto.randomUUID() })).toEqual({ converted: 0, skipped: 0, remaining: 0 });
       const editor = await evaluator.decide({ scopeId: collaborationIds.scope, actorId: collaborationActors.editor });
       expect([...editor.actions]).toEqual(expect.arrayContaining(["files.write", "discussion.post", "ai.submit"]));
@@ -646,13 +707,17 @@ describe("S04 capability grants and effective access", () => {
 });
 
 async function seedProject(fixture: CollaborationTestDatabase): Promise<void> {
+  await seedScope(fixture, collaborationIds.scope, "project_collaboration_primary");
+}
+
+async function seedScope(fixture: CollaborationTestDatabase, scopeId: string, resourceId: string): Promise<void> {
   await fixture.db.insertInto("collaboration_scopes").values({
-    id: collaborationIds.scope,
+    id: scopeId,
     owner_type: "personal",
     owner_id: collaborationActors.owner,
     organization_id: ORG,
     kind: "project",
-    resource_id: "project_collaboration_primary",
+    resource_id: resourceId,
     parent_scope_id: null,
     membership_mode: "direct",
     lifecycle: "shared",
@@ -667,7 +732,7 @@ async function seedProject(fixture: CollaborationTestDatabase): Promise<void> {
     updated_at: NOW,
   }).execute();
   await fixture.db.insertInto("collaboration_members").values({
-    scope_id: collaborationIds.scope,
+    scope_id: scopeId,
     actor_id: collaborationActors.owner,
     role: "owner",
     status: "accepted",
