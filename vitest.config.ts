@@ -108,15 +108,18 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       include: [
-        "packages/kernel/src/**",
-        "packages/gateway/src/**",
-        "packages/platform/src/**",
-        "desktop/src/renderer/src/**",
+        "packages/kernel/src/**/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}",
+        "packages/gateway/src/**/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}",
+        "packages/platform/src/**/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}",
+        "desktop/src/renderer/src/**/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}",
       ],
       exclude: [
         "**/*.test.ts",
         "**/*.test.tsx",
         "**/*.integration.ts",
+        "**/*.d.ts",
+        "**/*.d.mts",
+        "**/*.d.cts",
         "desktop/src/renderer/src/main.tsx",
       ],
       thresholds: {
