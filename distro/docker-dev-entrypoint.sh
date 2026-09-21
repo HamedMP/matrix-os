@@ -1,8 +1,32 @@
 #!/bin/bash
 set -e
 
-cd /app
-export PATH="/app/node_modules/.bin:$PATH"
+ENTRYPOINT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+APP_ROOT="$(cd "$ENTRYPOINT_DIR/.." && pwd)"
+
+cd "$APP_ROOT"
+export PATH="$APP_ROOT/node_modules/.bin:$PATH"
+
+prepare_gateway() {
+  echo "[matrix-os-dev] Building terminal runtime package..."
+  # The gateway imports @matrix-os/terminal-runtime through package exports that
+  # point at emitted dist files, which are absent from a clean Docker bind mount.
+  pnpm --filter @matrix-os/terminal-runtime build
+}
+
+launch_gateway() {
+  exec node --import=tsx --watch packages/gateway/src/main.ts
+}
+
+case "${1:-}" in
+  --prepare-gateway)
+    prepare_gateway
+    exit 0
+    ;;
+  --launch-gateway)
+    launch_gateway
+    ;;
+esac
 
 # Install deps as root (volume may be root-owned).
 #
@@ -32,10 +56,7 @@ echo "[matrix-os-dev] Building brand package..."
 # at emitted dist files. A clean Docker volume has no host-built dist output.
 pnpm --filter @matrix-os/brand build
 
-echo "[matrix-os-dev] Building terminal runtime package..."
-# The gateway imports @matrix-os/terminal-runtime through package exports that
-# point at emitted dist files, which are absent from a clean Docker bind mount.
-pnpm --filter @matrix-os/terminal-runtime build
+"$ENTRYPOINT_DIR/docker-dev-entrypoint.sh" --prepare-gateway
 
 echo "[matrix-os-dev] Building kernel package..."
 # Dev container startup needs emitted kernel JS before the gateway starts.
@@ -341,7 +362,7 @@ CODE_PROXY_EOF
   pnpm --filter shell exec next dev -p 3000 &
   SHELL_PID=$!
 
-  node --import=tsx --watch packages/gateway/src/main.ts &
+  /app/distro/docker-dev-entrypoint.sh --launch-gateway &
   GATEWAY_PID=$!
 
   trap "

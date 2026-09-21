@@ -1,5 +1,14 @@
-import { readFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
 const root = process.cwd();
@@ -43,18 +52,49 @@ describe("Docker development entrypoint dependency layout", () => {
   });
 
   it("builds the terminal runtime before starting the gateway", () => {
-    const entrypoint = readFileSync(
-      join(root, "distro/docker-dev-entrypoint.sh"),
-      "utf8",
-    );
-    const terminalRuntimeBuild = entrypoint.indexOf(
-      "pnpm --filter @matrix-os/terminal-runtime build",
-    );
-    const gatewayStart = entrypoint.indexOf(
-      "node --import=tsx --watch packages/gateway/src/main.ts",
-    );
+    const fixture = mkdtempSync(join(tmpdir(), "matrix-entrypoint-"));
+    const bin = join(fixture, "bin");
+    const calls = join(fixture, "calls.log");
+    mkdirSync(bin);
 
-    expect(terminalRuntimeBuild).toBeGreaterThan(-1);
-    expect(gatewayStart).toBeGreaterThan(terminalRuntimeBuild);
+    for (const command of ["pnpm", "node"]) {
+      const executable = join(bin, command);
+      writeFileSync(
+        executable,
+        `#!/bin/sh\nprintf '%s %s\\n' '${command}' "$*" >> "$CALL_LOG"\n`,
+      );
+      chmodSync(executable, 0o755);
+    }
+
+    const entrypoint = join(root, "distro/docker-dev-entrypoint.sh");
+    const env = {
+      ...process.env,
+      CALL_LOG: calls,
+      PATH: `${bin}:${process.env.PATH ?? ""}`,
+    };
+
+    try {
+      const prepare = spawnSync("bash", [entrypoint, "--prepare-gateway"], {
+        cwd: root,
+        env,
+        encoding: "utf8",
+      });
+      const launch = spawnSync("bash", [entrypoint, "--launch-gateway"], {
+        cwd: root,
+        env,
+        encoding: "utf8",
+      });
+
+      expect(prepare.stderr).toBe("");
+      expect(prepare.status).toBe(0);
+      expect(launch.stderr).toBe("");
+      expect(launch.status).toBe(0);
+      expect(readFileSync(calls, "utf8").trim().split("\n")).toEqual([
+        "pnpm --filter @matrix-os/terminal-runtime build",
+        "node --import=tsx --watch packages/gateway/src/main.ts",
+      ]);
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
   });
 });
