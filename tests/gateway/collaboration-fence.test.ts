@@ -98,9 +98,14 @@ describe("gateway collaboration fence", () => {
     // control client must be drained by the synchronous fence, before the fence detaches the
     // registries and shuts the verifier down. A fenced client holds no stream and never dials again.
     await expect(runtime.controlClient!.connectControl("t".repeat(43))).rejects.toThrow(/shutting down/i);
+    // Direct sessions are the other registry the fence must drain: ending them is what
+    // notifies the event and terminal registries, which the fence detaches immediately after.
+    await expect(runtime.directSessions.create({})).rejects.toMatchObject({ code: "unavailable" });
+
     // Fencing twice stays a no-op.
     expect(() => runtime.fence()).not.toThrow();
     await expect(runtime.controlClient!.connectControl("t".repeat(43))).rejects.toThrow(/shutting down/i);
+    await expect(runtime.directSessions.create({})).rejects.toMatchObject({ code: "unavailable" });
   });
 
   it("refuses registration and new streams after fencing and lets a later shutdown return immediately", async () => {
