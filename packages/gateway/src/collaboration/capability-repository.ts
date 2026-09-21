@@ -366,6 +366,7 @@ export class CollaborationCapabilityRepository {
       }
       const changed = await apply(trx, grant, now);
       if (!changed) return;
+      await advanceScopeAuthEpoch(trx, scope, now);
       await appendMutationRecords(trx, {
         scope,
         actorId: input.actorId,
@@ -430,6 +431,7 @@ export class CollaborationCapabilityRepository {
           .returning("grant_id").execute();
         const count = revoked.length + deleted.length;
         if (count > 0) {
+          await advanceScopeAuthEpoch(trx, scope, now);
           await appendMutationRecords(trx, {
             scope, actorId: input.actorId, action: "grant.ended_by_departure",
             recipients: [{ actorId: input.actorId }], discoveryState: "revoked", now, reasonCode: "membership_ended",
@@ -551,4 +553,20 @@ export class CollaborationCapabilityRepository {
       .where("grant_id", "=", grantId).where("state", "=", "active").limit(MAX_LISTED_PARTICIPANTS).execute();
     return rows.map((row) => row.actor_id);
   }
+}
+
+/** A changed decision invalidates authorization snapshots while the caller holds the scope lock. */
+async function advanceScopeAuthEpoch(
+  trx: Transaction<OwnerCollaborationDatabase>,
+  scope: ScopeRow,
+  now: string,
+): Promise<void> {
+  const updated = await trx.updateTable("collaboration_scopes").set({
+    auth_epoch: sql<number>`auth_epoch + 1`,
+    updated_at: now,
+  }).where("id", "=", scope.id)
+    .where("auth_epoch", "=", Number(scope.auth_epoch))
+    .returning("auth_epoch")
+    .executeTakeFirst();
+  if (!updated) throw new CollaborationRepositoryError("conflict", "Scope authorization epoch changed");
 }
