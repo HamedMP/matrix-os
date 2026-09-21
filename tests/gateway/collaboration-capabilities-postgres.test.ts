@@ -49,7 +49,7 @@ function membershipSource(now: () => Date = () => new Date(NOW)): OrganizationMe
   return {
     async assertMembership({ organizationId, actorId }) {
       return members.get(organizationId)?.has(actorId)
-        ? { member: true, expiresAt: new Date(now().getTime() + 20_000).toISOString(), aiSubmission: "owner_only" as const }
+        ? { member: true, expiresAt: new Date(now().getTime() + 20_000).toISOString(), aiSubmission: "owner_only" as const, membershipEpoch: "1" }
         : { member: false };
     },
   };
@@ -149,7 +149,7 @@ describe("S04 capability grants and effective access", () => {
       expect(await grants.listPendingForActor({ actorId: collaborationActors.viewer, organizationId: ORG })).toEqual([]);
       expect(await grants.listParticipants(collaborationIds.scope)).toEqual([collaborationActors.owner]);
       const declined = (await grants.listActivations(created.grantId))[0]!;
-      expect(declined).toMatchObject({ state: "declined", membershipEvidenceEpoch: expect.any(Number) });
+      expect(declined).toMatchObject({ state: "declined", membershipEvidenceEpoch: "1" });
 
       clock += 60_000;
       const reactivated = await evaluator.acceptGrant({ grantId: created.grantId, actorId: collaborationActors.viewer });
@@ -158,10 +158,46 @@ describe("S04 capability grants and effective access", () => {
       expect(rows).toHaveLength(1);
       expect(rows[0]).toMatchObject({ state: "active" });
       expect(Date.parse(rows[0]!.decidedAt)).toBe(clock);
-      expect(rows[0]!.membershipEvidenceEpoch).toBeGreaterThan(declined.membershipEvidenceEpoch);
+      // The reactivation carries the accept's own decision time and the membership epoch the source
+      // reported for this accept (the same current membership here), never the decline's metadata.
+      expect(Date.parse(rows[0]!.decidedAt)).toBeGreaterThan(Date.parse(declined.decidedAt));
+      expect(rows[0]!.membershipEvidenceEpoch).toBe("1");
 
       await expect(evaluator.declineGrant({ grantId: created.grantId, actorId: collaborationActors.viewer }))
         .rejects.toMatchObject({ code: "conflict" });
+    });
+
+    it("fails closed when the membership source reports no usable epoch: an activation is never proven current", async () => {
+      const created = await grants.createGrant({
+        scopeId: collaborationIds.scope, actorId: collaborationActors.owner, ...request(1),
+        audience: { kind: "organization" }, preset: "contributor", policyVersion: "v1",
+      });
+      await evaluator.acceptGrant({ grantId: created.grantId, actorId: collaborationActors.editor });
+      const epochless: OrganizationMembershipSource = {
+        async assertMembership({ organizationId, actorId }) {
+          return members.get(organizationId)?.has(actorId)
+            ? { member: true, expiresAt: new Date(clock + 20_000).toISOString(), aiSubmission: "owner_only" as const, membershipEpoch: "not-a-number" }
+            : { member: false };
+        },
+      };
+      const precondition = createOrganizationPrecondition({ source: epochless, now });
+      const blind = new CollaborationCapabilityEvaluator({ db: fixture.db, grants, organizationPrecondition: precondition, now });
+      expect(await blind.evaluateEffectiveAccess({ scopeId: collaborationIds.scope, actorId: collaborationActors.editor }))
+        .toMatchObject({ preset: null, actions: [], reasons: ["activation_required"] });
+      await expect(blind.requireAction({ scopeId: collaborationIds.scope, actorId: collaborationActors.editor, action: "chat.read" }))
+        .rejects.toMatchObject({ code: "not_found" });
+      const authority = new CollaborationAuthority(repository, { now, organizationPrecondition: precondition, capabilities: grants });
+      await expect(authority.authorize({ scopeId: collaborationIds.scope, actorId: collaborationActors.editor, action: "read" }))
+        .rejects.toMatchObject({ code: "not_found" });
+      // The owner's own access does not depend on an activation and stays available.
+      expect((await blind.evaluateEffectiveAccess({ scopeId: collaborationIds.scope, actorId: collaborationActors.owner })).preset).toBe("contributor");
+      // A member grant (no activation row involved) is unaffected by missing epoch evidence.
+      const direct = await grants.createGrant({
+        scopeId: collaborationIds.scope, actorId: collaborationActors.owner, ...request(2),
+        audience: { kind: "member", actorId: collaborationActors.viewer }, preset: "viewer", policyVersion: "v1",
+      });
+      await blind.acceptGrant({ grantId: direct.grantId, actorId: collaborationActors.viewer });
+      expect((await blind.evaluateEffectiveAccess({ scopeId: collaborationIds.scope, actorId: collaborationActors.viewer })).preset).toBe("viewer");
     });
 
     it("never activates on a read", async () => {
@@ -323,12 +359,12 @@ describe("S04 capability grants and effective access", () => {
       // reports a newer membership epoch, so a rejoin does not revive it until the member opens again.
       members.get(ORG)!.add(collaborationActors.editor);
       await fixture.db.insertInto("collaboration_grant_activations").values({
-        grant_id: orgGrants[0]!, actor_id: collaborationActors.editor, state: "active", decided_at: NOW, membership_evidence_epoch: 1,
+        grant_id: orgGrants[0]!, actor_id: collaborationActors.editor, state: "active", decided_at: NOW, membership_evidence_epoch: "1",
       }).execute();
       const epochSource: OrganizationMembershipSource = {
         async assertMembership({ organizationId, actorId }) {
           return members.get(organizationId)?.has(actorId)
-            ? { member: true, expiresAt: new Date(clock + 20_000).toISOString(), aiSubmission: "owner_only" as const, membershipEpoch: 5 }
+            ? { member: true, expiresAt: new Date(clock + 20_000).toISOString(), aiSubmission: "owner_only" as const, membershipEpoch: "5" }
             : { member: false };
         },
       };
@@ -338,7 +374,7 @@ describe("S04 capability grants and effective access", () => {
       expect(await epochAware.evaluateEffectiveAccess({ scopeId: collaborationIds.scope, actorId: collaborationActors.editor }))
         .toMatchObject({ preset: null, reasons: ["activation_required"] });
       await expect(epochAware.acceptGrant({ grantId: orgGrants[0]!, actorId: collaborationActors.editor })).resolves.toEqual({ state: "active" });
-      expect((await grants.listActivations(orgGrants[0]!))[0]).toMatchObject({ state: "active", membershipEvidenceEpoch: 5 });
+      expect((await grants.listActivations(orgGrants[0]!))[0]).toMatchObject({ state: "active", membershipEvidenceEpoch: "5" });
       expect(await epochAware.evaluateEffectiveAccess({ scopeId: collaborationIds.scope, actorId: collaborationActors.editor }))
         .toMatchObject({ preset: "viewer", reasons: [] });
     });
