@@ -15,6 +15,8 @@ export interface CollaborationDirectoryTable {
   organization_id: string | null;
   /** S06: `organization` when the home reports an active organization-wide grant. */
   audience: "members" | "organization" | null;
+  /** Opaque owner-home grant pointer used only for an explicit accept request. */
+  organization_grant_id: string | null;
   authority_generation: number;
   metadata_revision: number;
   last_event_id: string;
@@ -97,6 +99,7 @@ async function applyCollaborationSchema(trx: Transaction<CollaborationPlatformDa
   // S06: organization-wide shares are listed as pending for members from this flag alone.
   await sql`ALTER TABLE collaboration_directory ADD COLUMN IF NOT EXISTS audience TEXT
     CHECK (audience IS NULL OR audience IN ('members', 'organization'))`.execute(trx);
+  await sql`ALTER TABLE collaboration_directory ADD COLUMN IF NOT EXISTS organization_grant_id UUID`.execute(trx);
   await sql`
     CREATE TABLE IF NOT EXISTS collaboration_user_index (
       actor_id TEXT NOT NULL CHECK (char_length(actor_id) BETWEEN 1 AND 128),
