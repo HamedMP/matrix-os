@@ -156,7 +156,7 @@ export default function AppLauncher({
           key: app.path,
           name: app.name,
           app: installed && appearance?.iconSource === "app"
-            ? { ...app, iconUrl: appIconUrl(platformHost, installed.slug, runtimeSlot) ?? app.iconUrl }
+            ? { ...app, iconUrl: appIconUrl(platformHost, installed, runtimeSlot) ?? app.iconUrl }
             : app,
         };
       }),
@@ -182,7 +182,7 @@ export default function AppLauncher({
       slug: app.slug,
       title: app.name,
       ...(app.appIdentity ? { appIdentity: app.appIdentity } : {}),
-      ...(appIconUrl(platformHost, app.slug, runtimeSlot) ? { icon: appIconUrl(platformHost, app.slug, runtimeSlot)! } : {}),
+      ...(appIconUrl(platformHost, app, runtimeSlot) ? { icon: appIconUrl(platformHost, app, runtimeSlot)! } : {}),
     });
     onLaunch?.(tabId);
   };
@@ -347,7 +347,7 @@ export default function AppLauncher({
                         : <entry.app.icon size={32} aria-hidden="true" />}
                     </span>
                   ) : (
-                    <AppIcon url={appIconUrl(platformHost, entry.app.slug, runtimeSlot)} name={entry.name} large={presentation === "launchpad"} />
+                    <AppIcon url={appIconUrl(platformHost, entry.app, runtimeSlot)} name={entry.name} large={presentation === "launchpad"} />
                   )}
                   <span
                     className="w-full truncate text-center text-sm font-medium"

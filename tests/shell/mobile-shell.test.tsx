@@ -14,7 +14,6 @@ const settingsMock = vi.hoisted(() => ({
   onOpenAgentTerminal: undefined as undefined | ((action: "openclaw-install") => void),
   onOpenProviderTerminalSession: undefined as undefined | ((sessionId: string) => void),
 }));
-
 vi.mock("../../shell/src/hooks/useFileWatcher.js", () => ({
   useFileWatcher: (handler: typeof fileChangeHandler) => {
     fileChangeHandler = handler;
@@ -49,14 +48,17 @@ vi.mock("../../shell/src/components/Settings.js", () => ({
   Settings: ({
     onOpenAgentTerminal,
     onOpenProviderTerminalSession,
+    defaultSection,
   }: {
     onOpenAgentTerminal?: (action: "openclaw-install") => void;
     onOpenProviderTerminalSession?: (sessionId: string) => void;
+    defaultSection?: string;
   }) => {
     settingsMock.onOpenAgentTerminal = onOpenAgentTerminal;
     settingsMock.onOpenProviderTerminalSession = onOpenProviderTerminalSession;
     return (
       <>
+        <div data-testid="mobile-provider-settings-section">{defaultSection}</div>
         <button onClick={() => onOpenAgentTerminal?.("openclaw-install")}>Install OpenClaw from Settings</button>
         <button onClick={() => onOpenProviderTerminalSession?.("provider-login")}>Continue provider login</button>
       </>
@@ -142,6 +144,16 @@ describe("mobile shell", () => {
     settingsMock.onOpenAgentTerminal = undefined;
     settingsMock.onOpenProviderTerminalSession = undefined;
     window.sessionStorage.clear();
+  });
+
+  it("opens Agents & providers when Web Mobile Chat requests provider settings", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve({ ok: true, json: async () => [] })));
+    const MobileShell = await loadMobileShell();
+    render(<MobileShell />);
+
+    act(() => window.dispatchEvent(new CustomEvent("matrix:open-provider-settings")));
+
+    expect(screen.getByTestId("mobile-provider-settings-section").textContent).toBe("agents-providers");
   });
 
   afterEach(() => {
@@ -265,6 +277,23 @@ describe("mobile shell", () => {
 
     expect(await screen.findByTestId("terminal-app")).toBeTruthy();
     expect(window.sessionStorage.getItem("matrix:provider-terminal-session-queue")).toContain("provider-login");
+    expect(window.sessionStorage.getItem("matrix:terminal-launch-queue")).toBeNull();
+  });
+
+  it("selects the browser-created provider tab by its canonical reference", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve({
+      ok: true,
+      json: async () => [],
+    })));
+    const MobileShell = await loadMobileShell();
+    const terminalRef = `tws_${"a".repeat(32)}:tt_${"b".repeat(32)}`;
+
+    render(<MobileShell />);
+    act(() => settingsMock.onOpenProviderTerminalSession?.(terminalRef));
+
+    expect(await screen.findByTestId("terminal-app")).toBeTruthy();
+    expect(JSON.parse(window.sessionStorage.getItem("matrix:provider-terminal-session-queue") ?? "[]"))
+      .toEqual([expect.objectContaining({ terminalRef })]);
     expect(window.sessionStorage.getItem("matrix:terminal-launch-queue")).toBeNull();
   });
 

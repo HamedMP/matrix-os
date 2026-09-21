@@ -1,3 +1,4 @@
+import { createInternalIntegrationGuard } from './internal-integration-guard.js';
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import {
@@ -635,10 +636,11 @@ export function createApp(deps: {
         internalContainerClerkUserId: string;
       };
     }>();
+    const integrationGuard = createInternalIntegrationGuard();
     internalIntegrationApp.use('*', async (c, next) => {
       const handle = c.req.param('handle');
-      if (!handle) {
-        return c.json({ error: 'Missing handle' }, 400);
+      if (!handle || !HANDLE_PATTERN.test(handle)) {
+        return c.json({ error: 'Invalid handle' }, 400);
       }
       if (!platformSecret) {
         return c.json({ error: 'Internal integrations not configured' }, 503);
@@ -650,19 +652,23 @@ export function createApp(deps: {
         return c.json({ error: 'Unauthorized' }, 401);
       }
 
-      // Customer and preview VPSes are persisted in user_machines. Keep the
-      // legacy containers lookup only as a compatibility fallback for older
-      // runtimes that have not migrated yet.
-      const record =
-        (await getRunningUserMachineByHandle(db, handle)) ??
-        (await getContainer(db, handle));
-      if (!record?.clerkUserId) {
-        return c.json({ error: 'Unknown handle' }, 404);
-      }
-
       c.set('internalContainerHandle', handle);
-      c.set('internalContainerClerkUserId', record.clerkUserId);
-      return next();
+      return integrationGuard.middleware(c, async () => {
+        // Customer and preview VPSes are persisted in user_machines. Keep the
+        // legacy containers lookup only as a compatibility fallback for older
+        // runtimes that have not migrated yet.
+        const record =
+          (await getRunningUserMachineByHandle(db, handle)) ??
+          (await getContainer(db, handle));
+        if (!record?.clerkUserId) {
+          c.res = c.json({ error: 'Unknown handle' }, 404);
+          return;
+        }
+
+        c.set('internalContainerHandle', handle);
+        c.set('internalContainerClerkUserId', record.clerkUserId);
+        await next();
+      });
     });
     internalIntegrationApp.route('/', deps.internalIntegrationRoutes);
     app.route('/internal/containers/:handle/integrations', internalIntegrationApp);

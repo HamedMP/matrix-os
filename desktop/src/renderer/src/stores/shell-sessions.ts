@@ -68,6 +68,13 @@ export function isValidShellSessionName(name: string): boolean {
   return TERMINAL_REF_KEY_PATTERN.test(name);
 }
 
+// Provider handoff may only target a durable workspace/tab reference that an
+// existing terminal list can resolve. Keep the named contract separate from
+// display-name validation so callers cannot accidentally accept legacy names.
+export function isExistingShellSessionName(name: string): boolean {
+  return isValidShellSessionName(name);
+}
+
 export function isValidShellDisplayName(name: string): boolean {
   const trimmed = name.trim();
   return trimmed.length >= 1 && trimmed.length <= 120 && !/[\u0000-\u001f\u007f]/.test(trimmed);
