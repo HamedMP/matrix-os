@@ -191,11 +191,16 @@ export class CollaborationRelay {
     contentLength?: number;
   }): Promise<Response> {
     const startedAt = this.now();
+    // What a caller declares is not what it sends. This starts at the known size of a buffered
+    // body and is replaced by the real count as a stream is consumed, so metadata never reports a
+    // caller-supplied number: `routes.ts` always passes a ReadableStream, whose declared length is
+    // a client header.
+    let requestBytes = input.body instanceof Uint8Array ? input.body.byteLength : 0;
     const route = parseRelayRoute(input.method, input.path);
     const finish = (status: number, outcome: RelayMetadata["outcome"], runtimeId: string | null, responseBytes = 0) => {
       this.options.onMetadata?.({
         actorId: input.actorId, runtimeId, resourceId: route?.identifier ?? null, method: input.method, path: input.path,
-        requestBytes: input.contentLength ?? (input.body instanceof Uint8Array ? input.body.byteLength : 0), responseBytes,
+        requestBytes, responseBytes,
         status, durationMs: this.now() - startedAt, outcome,
       });
     };
@@ -203,8 +208,11 @@ export class CollaborationRelay {
       finish(404, "rejected", null);
       return plain("Collaboration route not found", 404);
     }
-    const declared = input.contentLength ?? (input.body instanceof Uint8Array ? input.body.byteLength : undefined);
-    if (declared !== undefined && declared > this.limits.requestBytes) {
+    // A caller may under-declare its length. The cap is held against the larger of what was
+    // declared and what is already in hand, so a false short length cannot buy headroom -- and a
+    // buffered body, which no stream bound covers, is capped here rather than forwarded whole.
+    const declared = Math.max(input.contentLength ?? 0, requestBytes);
+    if (declared > this.limits.requestBytes) {
       finish(413, "limit", null);
       return plain("Collaboration request too large", 413);
     }
@@ -226,7 +234,7 @@ export class CollaborationRelay {
       ? new Promise<void>((resolve) => { settleRequestBody = resolve; })
       : Promise.resolve();
     const requestBody = input.body instanceof ReadableStream
-      ? boundedRequestStream(input.body, this.limits.requestBytes, () => { overflowed = true; }, () => { settleRequestBody?.(); })
+      ? boundedRequestStream(input.body, this.limits.requestBytes, (bytes) => { requestBytes = bytes; }, () => { overflowed = true; }, () => { settleRequestBody?.(); })
       : input.body;
     const headers = new Headers();
     input.headers.forEach((value, name) => {
@@ -428,6 +436,7 @@ export class CollaborationRelay {
 function boundedRequestStream(
   source: ReadableStream<Uint8Array>,
   maxBytes: number,
+  onBytes: (bytes: number) => void,
   onOverflow: () => void,
   onSettled: () => void,
 ): ReadableStream<Uint8Array> {
@@ -444,6 +453,7 @@ function boundedRequestStream(
           return;
         }
         size += chunk.value.byteLength;
+        onBytes(size);
         if (size > maxBytes) {
           onOverflow();
           await reader.cancel();
