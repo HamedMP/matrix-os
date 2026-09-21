@@ -76,5 +76,7 @@ describe.skipIf(!connectionString)("T102 personal sync grant operator inventory 
       personalSync: { state: "present", totalGrants: 3, pendingGrants: 1, acceptedGrants: 2, expiredGrants: 1 },
       platform: null,
     });
+    expect(await db.selectFrom("sync_shares").select(({ fn }) => fn.countAll<number>().as("count"))
+      .executeTakeFirstOrThrow()).toMatchObject({ count: "3" });
   });
 });
