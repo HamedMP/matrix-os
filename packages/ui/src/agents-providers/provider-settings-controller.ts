@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useSyncExternalStore } from "react";
 import {
+  CanonicalProviderCatalogSchema,
   ProviderSettingsMutationResponseSchema,
   ProviderSettingsMutationSchema,
   ProviderSettingsSnapshotSchema,
   type ProviderConnectionAttempt,
   type ProviderSettingsMutation,
   type ProviderSettingsSnapshot,
+  type ProviderHarnessKind,
 } from "@matrix-os/contracts";
 import type { ProviderSettingsMutationIntent } from "./types.js";
 
@@ -75,7 +77,9 @@ function isConnectionAttemptActive(
   attempt: ProviderConnectionAttempt,
   snapshot: ProviderSettingsSnapshot,
 ): boolean {
-  if (attempt.state !== "pending" && attempt.state !== "authorized") return false;
+  // Keep a bounded failed attempt visible so the same account can retry. The
+  // original expiry and successful-auth checks still clear it on refresh.
+  if (!["pending", "authorized", "failed", "denied"].includes(attempt.state)) return false;
   if (Date.parse(attempt.expiresAt) <= Date.parse(snapshot.refreshedAt)) return false;
   const harness = snapshot.harnesses.find((candidate) => candidate.id === attempt.harnessInstanceId);
   if (harness === undefined || harness.authState === "authenticated") return false;
@@ -132,8 +136,8 @@ export class ProviderSettingsController {
     if (!this.disposed) await this.runRefresh();
   };
 
-  mutate = (intent: ProviderSettingsMutationIntent): Promise<void> => {
-    if (this.disposed) return Promise.resolve();
+  mutate = (intent: ProviderSettingsMutationIntent): Promise<boolean> => {
+    if (this.disposed) return Promise.resolve(false);
     this.pendingMutations += 1;
     this.syncBusy();
 
@@ -142,7 +146,7 @@ export class ProviderSettingsController {
       this.pendingMutations -= 1;
       this.syncBusy();
     });
-    this.mutationTail = tracked.catch((error: unknown) => {
+    this.mutationTail = tracked.then(() => undefined).catch((error: unknown) => {
       console.warn(
         "[provider-settings] Mutation queue recovered:",
         error instanceof Error ? error.name : typeof error,
@@ -176,14 +180,14 @@ export class ProviderSettingsController {
     }
   }
 
-  private async runMutation(intent: ProviderSettingsMutationIntent): Promise<void> {
-    if (this.disposed) return;
+  private async runMutation(intent: ProviderSettingsMutationIntent): Promise<boolean> {
+    if (this.disposed) return false;
     const current = this.state.snapshot;
     if (current === null
       || current.access.mode !== "writable"
       || !current.supportedActions.includes(intent.type)) {
       this.update({ error: MUTATION_ERROR });
-      return;
+      return false;
     }
 
     let idempotencyKey: string;
@@ -192,7 +196,7 @@ export class ProviderSettingsController {
     } catch (error) {
       console.warn("[provider-settings] Could not create mutation idempotency key:", error instanceof Error ? error.name : typeof error);
       this.update({ error: MUTATION_ERROR });
-      return;
+      return false;
     }
     const parsedMutation = ProviderSettingsMutationSchema.safeParse({
       ...intent,
@@ -201,7 +205,7 @@ export class ProviderSettingsController {
     });
     if (!parsedMutation.success) {
       this.update({ error: MUTATION_ERROR });
-      return;
+      return false;
     }
 
     const operationId = ++this.operationClock;
@@ -210,18 +214,19 @@ export class ProviderSettingsController {
       const raw = await this.options.transport.mutate(parsedMutation.data, request.signal);
       const parsed = ProviderSettingsMutationResponseSchema.safeParse(raw);
       if (!parsed.success) throw new ProviderSettingsTransportError("invalid_response");
-      this.applySnapshot(parsed.data.snapshot, {
+      return this.applySnapshot(parsed.data.snapshot, {
         operationId,
         connectionAttempt: parsed.data.kind === "login_attempt" ? parsed.data.attempt : null,
       });
     } catch (error) {
-      if (this.disposed) return;
+      if (this.disposed) return false;
       if (hasErrorCode(error, "revision_conflict")) {
         const refreshed = await this.runRefresh();
         if (refreshed) this.update({ error: CONFLICT_ERROR });
-        return;
+        return false;
       }
       if (operationId >= this.appliedOperationId) this.update({ error: MUTATION_ERROR });
+      return false;
     } finally {
       this.endRequest(request, "mutation");
     }
@@ -285,7 +290,28 @@ export class ProviderSettingsController {
 export interface UseProviderSettingsControllerResult extends ProviderSettingsControllerState {
   onSelectHarness: (harnessInstanceId: string) => void;
   refresh: () => Promise<void>;
-  mutate: (intent: ProviderSettingsMutationIntent) => Promise<void>;
+  mutate: (intent: ProviderSettingsMutationIntent) => Promise<boolean>;
+}
+
+/** Only server-advertised setup commands run; surfaces provide transport and Terminal chrome. */
+export async function openProviderAgentSetup(input: {
+  harness: ProviderHarnessKind;
+  getCatalog: () => Promise<unknown>;
+  openCommand: (command: string) => Promise<boolean>;
+}): Promise<boolean> {
+  try {
+    const catalog = CanonicalProviderCatalogSchema.parse(await input.getCatalog());
+    const driverKind = input.harness === "claude" ? "claude_code" : input.harness;
+    const prefix = input.harness === "claude" ? "claude" : input.harness;
+    const action = catalog.instances.filter((instance) => instance.driverKind === driverKind)
+      .flatMap((instance) => instance.setupActions)
+      .find((candidate) => candidate.kind === "foreground_terminal" && candidate.id.startsWith(`${prefix}_`));
+    if (!action || action.kind !== "foreground_terminal") return false;
+    return await input.openCommand(action.command);
+  } catch (error) {
+    console.warn("[provider-settings] Agent setup unavailable:", error instanceof Error ? error.name : typeof error);
+    return false;
+  }
 }
 
 export function useProviderSettingsController(

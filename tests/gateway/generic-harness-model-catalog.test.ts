@@ -7,6 +7,10 @@ import {
 } from "../../packages/gateway/src/ai-providers/generic-harness-model-catalog.js";
 
 describe("generic harness model catalog", () => {
+  it("does not turn Pi diagnostic prose into ready providers", () => {
+    expect(parsePiModelCatalog("No models available.\nRun pi to configure a provider.\nWarning: credentials unavailable\n")).toEqual([]);
+  });
+
   it("parses Pi's authenticated provider table into executable provider/model references", () => {
     expect(parsePiModelCatalog(`
 provider      model                context  max-out  thinking  images
@@ -26,6 +30,34 @@ openai-codex  gpt-5.6-terra        272K     128K     yes       yes
         modelDisplayName: "GPT-5.6 Terra",
       },
     ]);
+  });
+
+  it("parses Pi tables by their provider and model headers across valid format variations", () => {
+    expect(parsePiModelCatalog(`
+status  provider      model          context   max-output  tools      images
+ready   openai-codex  gpt-5.6-sol    272,000   unlimited   supported  ✓
+ready   baseten       zai/glm-5.3    n/a       64k         disabled   -
+`)).toEqual([
+      {
+        providerId: "openai-codex",
+        providerDisplayName: "OpenAI Codex",
+        modelId: "openai-codex:gpt-5.6-sol",
+        modelDisplayName: "GPT-5.6 Sol",
+      },
+      {
+        providerId: "baseten",
+        providerDisplayName: "Baseten",
+        modelId: "baseten:zai/glm-5.3",
+        modelDisplayName: "GLM-5.3",
+      },
+    ]);
+  });
+
+  it("requires a Pi table header and rejects diagnostic prose that resembles columns", () => {
+    expect(parsePiModelCatalog(`
+warning credentials unavailable retry later now please
+openai-codex gpt-5.6-sol 272K 128K yes yes
+`)).toEqual([]);
   });
 
   it("parses OpenCode's provider/model lines without losing nested model slugs", () => {
@@ -106,7 +138,7 @@ not a model
   });
 
   it("caps the merged provider catalog when Pi and OpenCode expose disjoint model sets", async () => {
-    const piModels = Array.from({ length: 256 }, (_, index) => `openai model-${index}`).join("\n");
+    const piModels = Array.from({ length: 256 }, (_, index) => `openai model-${index} 128K 16K yes no`).join("\n");
     const openCodeModels = Array.from({ length: 256 }, (_, index) => `openai/model-${index + 256}`).join("\n");
     const reader = createGenericHarnessModelCatalogReader({
       homePath: "/home/matrix/home",
