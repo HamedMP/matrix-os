@@ -5,10 +5,11 @@ const org = "org_2gw000000000000000000001";
 const member = "user_member0000000000000000";
 const runtimeId = "vps:10000000-0000-4000-8000-000000000001";
 
-function assertionResponse(input: { member: boolean; requestStartedAt: Date; ttlMs?: number; actorId?: string }) {
+function assertionResponse(input: { member: boolean; requestStartedAt: Date; ttlMs?: number; actorId?: string; aiSubmission?: string | null }) {
   return new Response(JSON.stringify([{
     protocolVersion: 2, type: "membership_assertion", organizationId: org, actorId: input.actorId ?? member, membershipEpoch: "3",
-    member: input.member, requestStartedAt: input.requestStartedAt.toISOString(), expiresAt: new Date(input.requestStartedAt.getTime() + (input.ttlMs ?? 20_000)).toISOString(),
+    member: input.member, ...(input.aiSubmission === null ? {} : { aiSubmission: input.aiSubmission ?? "members" }),
+    requestStartedAt: input.requestStartedAt.toISOString(), expiresAt: new Date(input.requestStartedAt.getTime() + (input.ttlMs ?? 20_000)).toISOString(),
   }]), { status: 200, headers: { "content-type": "application/json" } });
 }
 
@@ -23,7 +24,7 @@ describe("gateway organization membership client (S03 seam for the S20 precondit
       return assertionResponse({ member: true, requestStartedAt: clock });
     });
     const client = new OrganizationMembershipClient({ platformBaseUrl: "https://platform.example", runtimeId, serviceToken: "t".repeat(40), fetchImpl: fetchImpl as unknown as typeof fetch, now: () => clock });
-    await expect(client.assertMembership({ organizationId: org, actorId: member })).resolves.toEqual({ member: true, expiresAt: new Date(clock.getTime() + 20_000).toISOString() });
+    await expect(client.assertMembership({ organizationId: org, actorId: member })).resolves.toEqual({ member: true, expiresAt: new Date(clock.getTime() + 20_000).toISOString(), aiSubmission: "members" });
     expect(String(fetchImpl.mock.calls[0]![0])).toBe("https://platform.example/internal/organizations/access/resolve");
   });
 
@@ -57,6 +58,22 @@ describe("gateway organization membership client (S03 seam for the S20 precondit
     await expect(client.assertMembership({ organizationId: org, actorId: "user_e00000000000000000000000" })).rejects.toThrow();
     fetchImpl.mockImplementationOnce(async () => { throw new TypeError("fetch failed"); });
     await expect(client.assertMembership({ organizationId: org, actorId: "user_f00000000000000000000000" })).rejects.toThrow();
+  });
+
+  it("carries the organization AI-submission policy and treats an absent or unknown value as owner-only", async () => {
+    const clock = new Date("2026-09-20T12:00:00.000Z");
+    const fetchImpl = vi.fn(async () => assertionResponse({ member: true, requestStartedAt: clock, aiSubmission: null }));
+    const client = new OrganizationMembershipClient({ platformBaseUrl: "https://platform.example", runtimeId, serviceToken: "t".repeat(40), fetchImpl: fetchImpl as unknown as typeof fetch, now: () => clock });
+    await expect(client.assertMembership({ organizationId: org, actorId: member })).resolves.toMatchObject({ member: true, aiSubmission: "owner_only" });
+    await expect(client.organizationAiSubmission({ organizationId: org, actorId: member })).resolves.toBe("owner_only");
+    fetchImpl.mockImplementationOnce(async () => assertionResponse({ member: true, requestStartedAt: clock, actorId: "user_a00000000000000000000000", aiSubmission: "unknown" }));
+    await expect(client.organizationAiSubmission({ organizationId: org, actorId: "user_a00000000000000000000000" })).resolves.toBe("owner_only");
+    fetchImpl.mockImplementationOnce(async () => assertionResponse({ member: true, requestStartedAt: clock, actorId: "user_b00000000000000000000000", aiSubmission: "members" }));
+    await expect(client.organizationAiSubmission({ organizationId: org, actorId: "user_b00000000000000000000000" })).resolves.toBe("members");
+    fetchImpl.mockImplementationOnce(async () => assertionResponse({ member: false, requestStartedAt: clock, actorId: "user_c00000000000000000000000", aiSubmission: "members" }));
+    await expect(client.organizationAiSubmission({ organizationId: org, actorId: "user_c00000000000000000000000" })).resolves.toBe("owner_only");
+    fetchImpl.mockImplementationOnce(async () => new Response("nope", { status: 503 }));
+    await expect(client.organizationAiSubmission({ organizationId: org, actorId: "user_d00000000000000000000000" })).resolves.toBe("owner_only");
   });
 
   it("rejects an assertion the platform issued for a different actor or organization", async () => {

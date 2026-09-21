@@ -14,12 +14,13 @@ import {
   CollaborationRuntimeIdSchema,
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
-import type { OrganizationMembershipAssertion, OrganizationMembershipSource } from "./organization-precondition.js";
+import type { OrganizationAiSubmission, OrganizationMembershipAssertion, OrganizationMembershipSource } from "./organization-precondition.js";
 import { requireSecureCollaborationPlatformBaseUrl } from "./platform-base-url.js";
 
 const CONTROL_LOOKUP_TIMEOUT_MS = 5_000;
 const MAX_RESPONSE_BYTES = 64 * 1024;
 const DEFAULT_MAX_CACHE_ENTRIES = 1_000;
+const MAX_INFLIGHT_LOOKUPS = 256;
 const AssertionsSchema = z.array(CollaborationControlAssertionSchema).max(100);
 
 export class OrganizationMembershipClientError extends Error {
@@ -34,7 +35,7 @@ export class OrganizationMembershipClient implements OrganizationMembershipSourc
   private readonly fetchImpl: typeof fetch;
   private readonly now: () => Date;
   private readonly maxEntries: number;
-  private readonly cache = new Map<string, { member: boolean; expiresAt: string }>();
+  private readonly cache = new Map<string, { member: boolean; expiresAt: string; aiSubmission: OrganizationAiSubmission }>();
   private readonly inflight = new Map<string, Promise<OrganizationMembershipAssertion>>();
 
   constructor(private readonly options: {
@@ -62,11 +63,16 @@ export class OrganizationMembershipClient implements OrganizationMembershipSourc
     if (cached && Date.parse(cached.expiresAt) > this.now().getTime()) {
       this.cache.delete(key);
       this.cache.set(key, cached);
-      return cached.member ? { member: true, expiresAt: cached.expiresAt } : { member: false };
+      return cached.member ? { member: true, expiresAt: cached.expiresAt, aiSubmission: cached.aiSubmission } : { member: false };
     }
     if (cached) this.cache.delete(key);
     const pending = this.inflight.get(key);
     if (pending) return pending;
+    if (this.inflight.size >= MAX_INFLIGHT_LOOKUPS) {
+      // Bounded: beyond the cap we fail closed instead of retaining more outbound requests.
+      console.warn("[collaboration] membership lookup refused: too many concurrent lookups");
+      throw new OrganizationMembershipClientError();
+    }
     const promise = this.lookup(organizationId, actorId, key).finally(() => { this.inflight.delete(key); });
     this.inflight.set(key, promise);
     return promise;
@@ -110,13 +116,30 @@ export class OrganizationMembershipClient implements OrganizationMembershipSourc
     }
     const assertion = parsed.find((frame) => frame.type === "membership_assertion" && frame.organizationId === organizationId && frame.actorId === actorId);
     if (!assertion || assertion.type !== "membership_assertion") throw new OrganizationMembershipClientError();
-    this.cache.set(key, { member: assertion.member, expiresAt: assertion.expiresAt });
+    // Additive contract field: a platform that predates it means owner-only (fail closed).
+    const aiSubmission: OrganizationAiSubmission = assertion.aiSubmission === "members" ? "members" : "owner_only";
+    this.cache.set(key, { member: assertion.member, expiresAt: assertion.expiresAt, aiSubmission });
     while (this.cache.size > this.maxEntries) {
       const oldest = this.cache.keys().next().value;
       if (oldest === undefined) break;
       this.cache.delete(oldest);
     }
-    return assertion.member ? { member: true, expiresAt: assertion.expiresAt } : { member: false };
+    return assertion.member ? { member: true, expiresAt: assertion.expiresAt, aiSubmission } : { member: false };
+  }
+
+  /**
+   * S08 seam: the organization's projected AI-submission policy for an actor
+   * who is a current member, from the same fixed-deadline evidence. A
+   * non-member or unavailable evidence yields `owner_only`.
+   */
+  async organizationAiSubmission(input: { organizationId: string; actorId: string }): Promise<OrganizationAiSubmission> {
+    try {
+      const assertion = await this.assertMembership(input);
+      return assertion.member ? assertion.aiSubmission : "owner_only";
+    } catch (error: unknown) {
+      console.warn("[collaboration] organization AI submission lookup failed", error instanceof Error ? error.name : "UnknownError");
+      return "owner_only";
+    }
   }
 }
 

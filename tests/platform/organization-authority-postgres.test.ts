@@ -155,6 +155,61 @@ describe.skipIf(!connectionString)("organization authority on real PostgreSQL (T
     await projection.shutdown();
   });
 
+  it("lets two concurrent drainers claim disjoint revocation intents and fence each exactly once", async () => {
+    let clock = new Date("2026-09-20T12:00:00.000Z");
+    const repository = new PlatformOrganizationRepository(db, { now: () => clock });
+    const actors = Array.from({ length: 12 }, (_, i) => `user_drain${String(i).padStart(20, "0")}`);
+    for (const [i, actorId] of actors.entries()) {
+      await applyClerkOrganizationEvent(repository, membershipEvent({ eventId: `dj${i}`, type: "organizationMembership.created", actorId, updatedAt: 20_000 + i }));
+      await applyClerkOrganizationEvent(repository, membershipEvent({ eventId: `dr${i}`, type: "organizationMembership.deleted", actorId, updatedAt: 30_000 + i }));
+    }
+    clock = new Date(clock.getTime() + 1_000);
+    const slowDiscovery = async () => { await new Promise((resolve) => setTimeout(resolve, 15)); return ["vps-10000000-0000-4000-8000-000000000001"]; };
+    const a = createCollaborationControlAuthority({ repository, now: () => clock, affectedRuntimes: slowDiscovery, drainerId: "drainer-a", claimBatchSize: 6 });
+    const b = createCollaborationControlAuthority({ repository, now: () => clock, affectedRuntimes: slowDiscovery, drainerId: "drainer-b", claimBatchSize: 6 });
+    try {
+      const [ra, rb] = await Promise.all([a.drainRevocations(), b.drainRevocations()]);
+      expect(ra.fenced + rb.fenced).toBe(12);
+      expect(ra.failed + rb.failed).toBe(0);
+      const denials = await db.selectFrom("collaboration_denials").select(["actor_id"]).execute();
+      expect(denials).toHaveLength(12);
+      expect(new Set(denials.map((d) => d.actor_id)).size).toBe(12);
+      const intents = await db.selectFrom("organization_revocation_outbox").select(["denial_id", "attempts", "claimed_by"]).execute();
+      expect(intents.every((i) => i.denial_id !== null && i.attempts === 1)).toBe(true);
+      expect(new Set(intents.map((i) => i.claimed_by))).toEqual(new Set(["drainer-a", "drainer-b"]));
+      expect(ra.fenced).toBe(6);
+      expect(rb.fenced).toBe(6);
+    } finally {
+      await a.shutdown();
+      await b.shutdown();
+    }
+  });
+
+  it("re-claims an intent whose drainer crashed after claiming, once its lease expires, counting the lost attempt", async () => {
+    let clock = new Date("2026-09-20T12:00:00.000Z");
+    const repository = new PlatformOrganizationRepository(db, { now: () => clock });
+    await applyClerkOrganizationEvent(repository, membershipEvent({ eventId: "lj", type: "organizationMembership.created", actorId: member, updatedAt: 40_000 }));
+    await applyClerkOrganizationEvent(repository, membershipEvent({ eventId: "lr", type: "organizationMembership.deleted", actorId: member, updatedAt: 41_000 }));
+    clock = new Date(clock.getTime() + 1_000);
+    // Simulate a drainer that claimed and then died: the claim exists, no fence, no release.
+    const claimed = await repository.claimDueRevocationIntents({ now: clock, drainerId: "crashed", leaseMs: 30_000, maxAttempts: 8 });
+    expect(claimed).toHaveLength(1);
+    expect(claimed[0]).toMatchObject({ attempts: 1, deadLetter: false });
+    const survivor = createCollaborationControlAuthority({ repository, now: () => clock, affectedRuntimes: async () => ["vps-10000000-0000-4000-8000-000000000001"], drainerId: "survivor" });
+    try {
+      clock = new Date(clock.getTime() + 5_000);
+      expect((await survivor.drainRevocations()).fenced).toBe(0);
+      clock = new Date(clock.getTime() + 31_000);
+      expect((await survivor.drainRevocations()).fenced).toBe(1);
+      const [intent] = await repository.describeRevocationIntents({ organizationId: org, actorId: member });
+      expect(intent).toMatchObject({ attempts: 2, deadLetter: false, claimedBy: "survivor" });
+      expect(intent?.denialId).toBeTruthy();
+      expect(await survivor.listPending()).toHaveLength(1);
+    } finally {
+      await survivor.shutdown();
+    }
+  });
+
   it("completes a denial only when every affected runtime acknowledges or its lease expires, under concurrent acks", async () => {
     const repository = new PlatformOrganizationRepository(db);
     let clock = new Date("2026-09-20T12:00:00.000Z");

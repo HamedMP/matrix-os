@@ -184,8 +184,8 @@ describe("platform organization routes (T018)", () => {
       body: JSON.stringify({ protocolVersion: 2, actors: [{ organizationId: org, actorId: member }, { organizationId: org, actorId: outsider }] }),
     });
     expect(resolve.status).toBe(200);
-    const assertions = await resolve.json() as Array<{ type: string; actorId: string; member: boolean; expiresAt: string; requestStartedAt: string }>;
-    expect(assertions.map((a) => [a.type, a.actorId, a.member])).toEqual([["membership_assertion", member, true], ["membership_assertion", outsider, false]]);
+    const assertions = await resolve.json() as Array<{ type: string; actorId: string; member: boolean; aiSubmission: string; expiresAt: string; requestStartedAt: string }>;
+    expect(assertions.map((a) => [a.type, a.actorId, a.member, a.aiSubmission])).toEqual([["membership_assertion", member, true, "members"], ["membership_assertion", outsider, false, "members"]]);
     expect(Date.parse(assertions[0]!.expiresAt) - Date.parse(assertions[0]!.requestStartedAt)).toBe(20_000);
     expect((await app.request("/internal/organizations/access/resolve", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status).toBe(401);
     expect((await app.request("/internal/organizations/access/resolve", { method: "POST", headers: authHeaders, body: JSON.stringify({ protocolVersion: 1, actors: [] }) })).status).toBe(422);
