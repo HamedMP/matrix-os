@@ -2,6 +2,7 @@ import { relative, resolve, sep } from "node:path";
 import { z } from "zod/v4";
 import { TerminalRefSchema, TerminalWorkspaceSchema } from "@matrix-os/contracts";
 import { resolveWithinHome } from "../path-security.js";
+import type { ProjectChatRootInventoryItem } from "./project-chat-root-inventory.js";
 import type {
   ProjectInventoryResourceRecord,
   ProjectInventoryResourceSource,
@@ -64,6 +65,9 @@ interface Dependencies {
   };
   chats: {
     list(ownerId: string, projectId: string): Promise<unknown[]>;
+  };
+  chatRoots?: {
+    list(input: { ownerId: string; projectId: string }): Promise<ProjectChatRootInventoryItem[]>;
   };
   canvases: {
     getProjectCanvas(ownerId: string, projectId: string): Promise<unknown | null>;
@@ -154,11 +158,24 @@ export function createGatewayProjectInventorySource(
         ResourceIdSchema.parse(projectId);
         const records = z.array(ChatRecordSchema).max(100_000)
           .parse(await options.chats.list(ownerId, projectId));
-        return records.map((record) => ({
-          id: record.id,
-          revision: String(record.revision),
-          compatibility: "ready" as const,
-        }));
+        const roots = options.chatRoots
+          ? await options.chatRoots.list({ ownerId, projectId })
+          : [];
+        const byChat = new Map(roots.map((root) => [root.chatId, root]));
+        if (byChat.size !== roots.length) throw new GatewayProjectInventorySourceError("unavailable");
+        return records.map((record) => {
+          const root = byChat.get(record.id);
+          return {
+            id: record.id,
+            revision: String(record.revision),
+            compatibility: root?.readiness === "blocked" ? "blocked" as const : "ready" as const,
+            ...(root?.blocker ? { blocker: root.blocker } : {}),
+            ...(root?.executionRoot ? { executionRoot: root.executionRoot } : {}),
+            ...(root?.fingerprint ? { rootFingerprint: root.fingerprint } : {}),
+            ...(root?.branch ? { branch: root.branch } : {}),
+            ...(root?.dirty !== undefined ? { dirty: root.dirty } : {}),
+          };
+        });
       } catch (error: unknown) {
         return unavailable(error);
       }

@@ -3,6 +3,7 @@ import { constants, type BigIntStats } from "node:fs";
 import { lstat, open, opendir, realpath } from "node:fs/promises";
 import { relative, resolve, sep } from "node:path";
 import { z } from "zod/v4";
+import { CanonicalChatExecutionRootRefSchema, type CanonicalChatExecutionRootRef } from "@matrix-os/contracts";
 
 const CONFIRMATION_LIFETIME_MS = 10 * 60 * 1_000;
 const MAX_INVENTORY_ENTRIES = 100_000;
@@ -24,6 +25,10 @@ const ResourceRecordSchema = z.object({
   compatibility: z.enum(["ready", "blocked"]).default("ready"),
   blocker: BlockerCodeSchema.optional(),
   incarnation: z.string().min(1).max(256).regex(/^[A-Za-z0-9_-]+$/).optional(),
+  executionRoot: CanonicalChatExecutionRootRefSchema.optional(),
+  rootFingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  branch: z.string().min(1).max(255).optional(),
+  dirty: z.boolean().optional(),
 }).strict().superRefine((value, context) => {
   if (value.compatibility === "blocked" && !value.blocker) {
     context.addIssue({ code: "custom", message: "Blocked resources require a reason", path: ["blocker"] });
@@ -83,6 +88,10 @@ export interface ProjectInventoryItem {
   incarnation?: string;
   contentHash?: string;
   byteCount?: number;
+  executionRoot?: CanonicalChatExecutionRootRef;
+  rootFingerprint?: string;
+  branch?: string;
+  dirty?: boolean;
 }
 
 export interface ProjectInventoryReference {
@@ -365,6 +374,10 @@ function splitResources(
         ? { blocker: "terminal_incarnation_unavailable" }
         : record.blocker ? { blocker: record.blocker } : {}),
       ...(record.incarnation ? { incarnation: record.incarnation } : {}),
+      ...(record.executionRoot ? { executionRoot: record.executionRoot } : {}),
+      ...(record.rootFingerprint ? { rootFingerprint: record.rootFingerprint } : {}),
+      ...(record.branch ? { branch: record.branch } : {}),
+      ...(record.dirty !== undefined ? { dirty: record.dirty } : {}),
     });
   }
 }
