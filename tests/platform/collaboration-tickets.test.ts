@@ -46,6 +46,7 @@ const logicalRuntimeId = `vps-${machineId}`;
 const seedA = Buffer.alloc(32, 1).toString("base64url");
 const seedB = Buffer.alloc(32, 2).toString("base64url");
 const organizationId = "org_test_1";
+const invitedActor = "user_platform_invited";
 
 function clientProofKey() {
   const pair = generateKeyPairSync("ed25519");
@@ -90,11 +91,11 @@ describe("S05 platform tickets, endpoints and control", () => {
       recipients: [
         { actorId: platformCollaborationActors.owner, status: "accepted" },
         { actorId: platformCollaborationActors.recipientWithoutComputer, status: "accepted" },
-        { actorId: platformCollaborationActors.recipientWithComputer, status: "invited" },
+        { actorId: invitedActor, status: "invited" },
       ],
     });
     endpoints = new CollaborationRuntimeEndpointRegistry(fixture.collaborationDb as never, { now: () => clock, keyOverlapMs: 10 * 60_000 });
-    members = new Set([platformCollaborationActors.owner, platformCollaborationActors.recipientWithoutComputer, platformCollaborationActors.recipientWithComputer]);
+    members = new Set([platformCollaborationActors.owner, platformCollaborationActors.recipientWithoutComputer, invitedActor]);
     issuer = new CollaborationTicketIssuer({
       keyring: { activeKeyId: "ticket-key-1", keys: { "ticket-key-1": seedA } },
       repository,
@@ -126,7 +127,7 @@ describe("S05 platform tickets, endpoints and control", () => {
     it("rejects endpoint forgery: mismatched runtime, owner or relay handle never registers", async () => {
       for (const [overrides, code] of [
         [{ runtimeId: "vps-22222222-2222-4222-8222-222222222222" }, "runtime_mismatch"],
-        [{ ownerId: platformCollaborationActors.recipientWithComputer }, "owner_mismatch"],
+        [{ ownerId: invitedActor }, "owner_mismatch"],
         [{ relayHandle: "someone-else" }, "relay_handle_mismatch"],
       ] as const) {
         await expect(endpoints.register({
@@ -231,11 +232,11 @@ describe("S05 platform tickets, endpoints and control", () => {
     it("lets an invited member obtain a direct_session ticket but no events or terminal ticket before accepting", async () => {
       const key = clientProofKey();
       await expect(issuer.issue({
-        actorId: platformCollaborationActors.recipientWithComputer,
+        actorId: invitedActor,
         request: { clientRequestId: "40000000-0000-4000-8000-000000000005", scopeId, purpose: "direct_session", proofPublicKey: key.raw },
       })).resolves.toBeTruthy();
       await expect(issuer.issue({
-        actorId: platformCollaborationActors.recipientWithComputer,
+        actorId: invitedActor,
         request: { clientRequestId: "40000000-0000-4000-8000-000000000006", scopeId, purpose: "events", proofPublicKey: key.raw },
       })).rejects.toMatchObject({ code: "not_found" });
     });
