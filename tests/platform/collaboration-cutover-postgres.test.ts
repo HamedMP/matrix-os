@@ -108,6 +108,7 @@ describe.skipIf(!connectionString)("collaboration cutover on real PostgreSQL (T0
     return new PlatformCollaborationCutover({
       db,
       resolveHome: vi.fn(async () => status === "ready" ? { status, home: ownerHome } : { status }),
+      verifyCompatibleDirectBuild: vi.fn(async () => true),
     });
   }
 
@@ -275,6 +276,18 @@ describe.skipIf(!connectionString)("collaboration cutover on real PostgreSQL (T0
     expect(disabled.phase).toBe("blocked");
     expect(disabled.blockReason).toBe("disabled_for_recovery");
     expect(ownerHome.disable).toHaveBeenCalledOnce();
+  });
+
+  it("rejects a caller assertion of compatibility without a fresh installed-build verifier", async () => {
+    const scopeId = await orgScope();
+    const ownerHome = home(scopeId);
+    const coordinator = new PlatformCollaborationCutover({
+      db, resolveHome: async () => ({ status: "ready", home: ownerHome }),
+    });
+    await coordinator.run(scopeId, { backupRef: "restricted-backup-1" });
+    await expect(coordinator.rollback(scopeId, "compatible_direct", { compatibleDirectBuild: true }))
+      .rejects.toThrow(/compatible direct build/i);
+    expect(ownerHome.rollbackCompatible).not.toHaveBeenCalled();
   });
 
   it("adapts flat home inventory and canonical scoped drain without widening counts", async () => {
