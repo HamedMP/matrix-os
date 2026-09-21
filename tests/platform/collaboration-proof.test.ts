@@ -44,6 +44,11 @@ async function signedRequest() {
 }
 
 describe("collaboration actor proofs", () => {
+  it("has no rollout-policy verifier after policy removal", () => {
+    const { verifier } = createPair();
+    expect(verifier).not.toHaveProperty("verifyPolicy");
+  });
+
   it("preserves the actor and binds exact body, method, path, query, audience, and scope", async () => {
     const { verifier, signedProof } = await signedRequest();
     await expect(verifier.verifyHttp({
