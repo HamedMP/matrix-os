@@ -180,6 +180,34 @@ describe("S05 direct sessions on the home", () => {
     await expect(service.create(sessionRequest(collaborationActors.viewer, clientKey(), { purpose: "events" }).body)).rejects.toMatchObject({ code: "invalid_ticket" });
   });
 
+  it("admits an organization grant pointer only for the exact active grant and refuses ordinary reads", async () => {
+    const grantId = randomUUID();
+    await fixture.db.insertInto("collaboration_grants").values({
+      id: grantId, scope_id: scopeId, organization_id: organizationId,
+      audience_kind: "organization", audience_actor_id: null, preset: "viewer",
+      state: "active", policy_version: "v1", source_id: null, legacy_ceiling: null,
+      expires_at: null, revision: 1, created_by: collaborationActors.owner,
+      created_at: clock, updated_at: clock, revoked_at: null,
+    }).execute();
+    const pendingActor = "user_direct_org_pending";
+    members.add(pendingActor);
+    const request = () => sessionRequest(pendingActor, clientKey(), {
+      overrides: { resource: { scopeId, kind: "chat", pendingGrantId: grantId } },
+    });
+    const first = request();
+    const admitted = await service.create(first.body);
+    expect(admitted).toMatchObject({ actorId: pendingActor, pendingGrantId: grantId });
+    const signature = {
+      protocolVersion: 2, sessionId: admitted.id, method: "GET", path: `/api/collaboration/scopes/${scopeId}`,
+      query: "", bodyDigest: sha256Hex(new Uint8Array()), conditionalHeadersDigest: sha256Hex(new Uint8Array()),
+      nonce: randomUUID().replaceAll("-", ""), issuedAt: clock.toISOString(),
+    };
+    await expect(service.authorize({ sessionId: admitted.id, signature, proof: first.key.sign(requestSigningPayload(signature)), method: "GET", path: signature.path,
+      query: "", body: new Uint8Array(), action: "read" })).rejects.toMatchObject({ code: "invalid_signature" });
+    await fixture.db.updateTable("collaboration_grants").set({ state: "revoked" }).where("id", "=", grantId).execute();
+    await expect(service.create(request().body)).rejects.toMatchObject({ code: "denied" });
+  });
+
   it("authenticates signed requests, refuses digest mismatch and nonce replay, and stops at expiry", async () => {
     const { body, key } = sessionRequest(collaborationActors.editor);
     const session = await service.create(body);

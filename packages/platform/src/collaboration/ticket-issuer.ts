@@ -147,7 +147,10 @@ export class CollaborationTicketIssuer {
       this.options.resolveOrganization(scopeId),
     ]);
     // Existence is never disclosed: every denial is the same not-found.
-    if (!directory || !organizationId || !status || status === "revoked") throw denied();
+    if (!directory || !organizationId || status === "revoked") throw denied();
+    const pendingGrantId = !status && directory.audience === "organization"
+      ? directory.organizationGrantId : null;
+    if (!status && (!pendingGrantId || purpose !== "direct_session")) throw denied();
     if (status === "invited" && purpose !== "direct_session") throw denied();
     if (purpose === "terminal" && directory.kind !== "terminal") throw denied();
     if (!(await this.options.projection.isCurrentMember({ organizationId, actorId: input.actorId }))) throw denied();
@@ -169,7 +172,7 @@ export class CollaborationTicketIssuer {
       nonce: this.createNonce(),
       actorId: input.actorId,
       organizationId,
-      resource: { scopeId, kind: directory.kind },
+      resource: { scopeId, kind: directory.kind, ...(pendingGrantId ? { pendingGrantId } : {}) },
       purpose,
       runtime: { runtimeId: endpoint.runtimeId, authorityGeneration: directory.authorityGeneration },
       proofKeyThumbprint: proofKeyThumbprint(proofPublicKey),
