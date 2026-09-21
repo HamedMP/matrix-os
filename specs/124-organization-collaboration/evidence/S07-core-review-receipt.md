@@ -40,3 +40,48 @@ Consequence recorded for the coordinator: this layer has no execution-root resol
 Follow-up in the same round: the real-Postgres wiring characterization "enables M2 only after the exact scope-runtime profile is available" went RED under the pinned catalog (its fake supervisor advertised no sandbox policy and nothing supplied a manifest). Split as a test commit that updates the fake supervisor to advertise the pinned policy, wires a manifest source and adds two disabled-state cases (no policy; no source), then a fix commit that adds the `sandboxManifests` passthrough on `enableSharedAi`. `server.ts` passes no source on this layer, so production logs `shared AI disabled` until S09 wires its resolver.
 
 Checks: adapter, sandbox, client, shared-ai-runtime and registry suites → **42/42**; wiring suite on real Postgres **12/12** (plus sandbox/adapter rerun 23/23); `bun run typecheck` exit 0 (all packages, rerun after the wiring change); `bun run check:patterns` 0 violations, 5 pre-existing warnings.
+
+## Review round 3 (2026-09-21)
+
+Greptile scored #1807 **2/5** at head `9299e4337` with **no unresolved threads**; the verdict named three
+blockers. Each is answered below.
+
+| Verdict blocker | Outcome |
+| --- | --- |
+| "the production readiness integration remains incomplete" | Valid for this layer. RED `e341772ac`, GREEN `4a228442e`. |
+| "production shared AI still has no manifest resolver" | Expected and locked; explained below, now also recorded at the call site. |
+| "relay eviction leaks upstream sockets" | Lower layer (`124/s05-relay`, #1804); evidence below, no change on this layer. |
+
+**Readiness integration.** `createSharedAiRuntime` returned the sandbox probe as `readiness` and
+`enableSharedAi` dropped it, so the probe's `supported()` had no production reader at all: nothing could
+report a shared project or Chat as `unsupported` when the supervisor stopped advertising the pinned sandbox
+policy. The runtime now answers `sandboxSupported(subject)` — it calls `client.refreshCapability()` first,
+because the startup capability is only a snapshot, then applies the probe — and the gateway wiring exposes
+the same seam, returning false whenever shared AI is not running. That is exactly the input the preflight
+readiness composition consumes (`createGatewayReadinessProbes({ sandboxSupported })` in the capability
+routes layer), so the probe is now reachable from production rather than only from a test. RED test drives
+`evaluateCollaborationReadiness` through the wiring seam against the real fake supervisor: with the policy
+advertised, `project` and `chat` are not `unsupported`; after the host drops the policy mid-test, the next
+evaluation is `unsupported` for both; `file` stays shareable; and both shared-AI-disabled cases answer
+false. `evaluateCollaborationReadiness` still has no HTTP caller in this ancestry — the preflight route
+lands with the capability routes — and that remains deferred scope, not a dead seam.
+
+**No manifest resolver in production.** This is the locked "no sandbox-less shared runs" decision, not a
+regression. This layer owns the manifest contract and the fail-closed gate but has no execution-root
+resolver, so `server.ts` passes no `sandboxManifests` source and shared AI reports **no eligibility**
+(disabled before any launch) instead of offering runs that would die at launch with `runtime_unavailable`.
+S09 plugs its execution-root resolver into `sandboxManifests` when it restacks. The call site in
+`server.ts` now states this in place so the deferral is visible in the diff.
+
+**Relay upstream leak (not this layer).** Confirmed in `packages/platform/src/platform-websocket-upgrade.ts`,
+introduced with the relay reservation sweep on `124/s05-relay` (`d23bb705c`): the direct branch registers
+`directUpgrade.onEvict(() => { socket.destroy(); })`, which tears down the client socket only. The upstream
+TLS socket to the home is destroyed solely by `socket.on('error', onSocketError)`, and `socket.destroy()`
+emits `close`, not `error`; `socket.once('close', directUpgrade.release)` only frees the counts. An
+idle-evicted reservation therefore leaves the upstream connection open until the home or the network closes
+it. Routed to the #1804 owner; the fix belongs in that layer's upgrade listener.
+
+**Gates.** `collaboration-wiring` **14/14** on real Postgres (the two new assertions plus the new readiness
+test); sandbox, scope-runtime client, policy boundary and chat execution adapter suites **36/36** (3 skipped
+host-only); `bun run typecheck` exit 0; `bun run check:patterns` 0 violations, 5 pre-existing warnings. No
+React files changed, so react-doctor does not apply.
