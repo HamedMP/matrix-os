@@ -471,8 +471,16 @@ jobs:
           set -euo pipefail
           route=preview-runtime-access/preview-runtime-access.enc
           public_route=preview-runtime-access/preview-runtime-route.json
+          runtime_cert=preview-runtime-access/preview-runtime-cert.pem
           test -s "$route"
           test "$(wc -c < "$route")" -le 1024
+          test -s "$runtime_cert"
+          test "$(wc -c < "$runtime_cert")" -le 8192
+          test "$(openssl x509 -in "$runtime_cert" -subject -nameopt RFC2253 -noout)" \
+            = "subject=CN=customer-vps.matrix-os.local"
+          openssl x509 -in "$runtime_cert" -checkend 0 -noout
+          openssl verify -CAfile "$runtime_cert" \
+            -verify_hostname customer-vps.matrix-os.local "$runtime_cert"
           jq -e --arg handle "pr-$PR_NUMBER" '
             type == "object"
             and keys == ["address", "handle"]
@@ -481,13 +489,15 @@ jobs:
           ' "$public_route" >/dev/null
           cp "$route" preview-share-route.enc
           cp "$public_route" preview-share-route.json
-          chmod 600 preview-share-route.enc preview-share-route.json
+          cp "$runtime_cert" preview-share-runtime-cert.pem
+          chmod 600 preview-share-route.enc preview-share-route.json preview-share-runtime-cert.pem
       - uses: actions/upload-artifact@v4
         with:
           name: preview-share-route
           path: |
             preview-share-route.enc
             preview-share-route.json
+            preview-share-runtime-cert.pem
           retention-days: 1
 
   connect-share-preview:
@@ -668,10 +678,11 @@ jobs:
           PYTHON
           send_runtime_command() {
             local body="$1" response="$2"
-            curl --fail --silent --show-error --max-time 45 --insecure \
+            curl --fail --silent --show-error --max-time 45 \
               --retry 5 --retry-all-errors --retry-delay 2 --retry-max-time 30 \
-              --resolve "app.matrix-os.com:443:${address}" \
-              -o "$response" -X POST 'https://app.matrix-os.com/api/terminal/run' \
+              --cacert preview-share-runtime-cert.pem \
+              --resolve "customer-vps.matrix-os.local:443:${address}" \
+              -o "$response" -X POST 'https://customer-vps.matrix-os.local/api/terminal/run' \
               -H "authorization: Bearer ${terminal_token}" \
               -H 'content-type: application/json' --data-binary "$body"
             jq -e 'select(.exitCode==0 and .timedOut==false and .truncated==false and .signal==null)' \

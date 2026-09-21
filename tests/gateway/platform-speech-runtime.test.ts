@@ -10,7 +10,7 @@ const runtimeEnv = {
   MATRIX_CLERK_USER_ID: "user_alice",
   MATRIX_MACHINE_ID: "machine_123",
   MATRIX_RUNTIME_SLOT: "primary",
-  MATRIX_FUNDED_AI_RUNTIME_TOKEN: "r".repeat(64),
+  MATRIX_PLATFORM_SPEECH_RUNTIME_TOKEN: "r".repeat(64),
 };
 
 const unavailableCapabilities = {

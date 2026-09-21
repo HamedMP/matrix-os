@@ -376,6 +376,12 @@ jobs:
       - name: Deploy preview bundle to preview VPS
         run: |
           set -euo pipefail
+          plaintext=/tmp/preview-runtime-access.json
+          public_key=/tmp/preview-runtime-handoff-public.pem
+          cleanup_runtime_access() {
+            rm -f "$plaintext" "$public_key"
+          }
+          trap cleanup_runtime_access EXIT
           attempt() {
             curl -sS --max-time 120 -o /tmp/deploy.json -w '%{http_code}' \
               -X POST "${PLATFORM_PUBLIC_URL}/vps/deploy" \
@@ -611,10 +617,20 @@ jobs:
             echo "Preview runtime handoff encryption is not configured." >&2
             exit 1
           fi
-          public_key=/tmp/preview-runtime-handoff-public.pem
+          if ! timeout 15 openssl s_client -connect "${address}:443" \
+            -servername customer-vps.matrix-os.local -showcerts </dev/null 2>/dev/null \
+            | openssl x509 -outform PEM > preview-runtime-cert.pem; then
+            echo "Preview runtime certificate is unavailable." >&2
+            exit 1
+          fi
+          test "$(wc -c < preview-runtime-cert.pem)" -le 8192
+          test "$(openssl x509 -in preview-runtime-cert.pem -subject -nameopt RFC2253 -noout)" \
+            = "subject=CN=customer-vps.matrix-os.local"
+          openssl x509 -in preview-runtime-cert.pem -checkend 0 -noout
+          openssl verify -CAfile preview-runtime-cert.pem \
+            -verify_hostname customer-vps.matrix-os.local preview-runtime-cert.pem
           printf '%s' "$PREVIEW_RUNTIME_HANDOFF_PUBLIC_KEY_B64" | base64 --decode > "$public_key"
           openssl pkey -pubin -in "$public_key" -noout
-          plaintext=/tmp/preview-runtime-access.json
           jq -cn --arg handle "$HANDLE" --arg address "$address" \
             '{handle:$handle,address:$address}' > preview-runtime-route.json
           jq -cn --arg handle "$HANDLE" --arg address "$address" --arg token "$runtime_token" \
@@ -622,8 +638,8 @@ jobs:
           openssl pkeyutl -encrypt -pubin -inkey "$public_key" \
             -pkeyopt rsa_padding_mode:oaep -pkeyopt rsa_oaep_md:sha256 \
             -in "$plaintext" -out preview-runtime-access.enc
-          rm -f "$plaintext" "$public_key"
-          chmod 600 preview-runtime-access.enc preview-runtime-route.json
+          cleanup_runtime_access
+          chmod 600 preview-runtime-access.enc preview-runtime-route.json preview-runtime-cert.pem
 
       - name: Publish handle-scoped preview runtime access
         uses: actions/upload-artifact@v4
@@ -632,6 +648,7 @@ jobs:
           path: |
             preview-runtime-access.enc
             preview-runtime-route.json
+            preview-runtime-cert.pem
           retention-days: 1
           if-no-files-found: error
 

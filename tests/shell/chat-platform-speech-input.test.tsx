@@ -127,8 +127,13 @@ describe("shared chat platform speech input", () => {
 
   it("allows ready dictation to create a draft before an AI harness is connected", async () => {
     const onSubmit = vi.fn();
-    render(<TestComposer connected={false} onSubmit={onSubmit} />);
+    render(<TestComposer
+      connected={false}
+      onSubmit={onSubmit}
+      unavailablePlaceholder="Write or dictate a draft — connect a harness to send"
+    />);
 
+    expect(screen.getByPlaceholderText("Write or dictate a draft — connect a harness to send").hasAttribute("disabled")).toBe(false);
     const microphone = await screen.findByRole("button", { name: "Start voice input" });
     await waitFor(() => expect(microphone.hasAttribute("disabled")).toBe(false));
     fireEvent.click(microphone);

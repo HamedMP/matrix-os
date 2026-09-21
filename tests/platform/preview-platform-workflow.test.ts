@@ -66,6 +66,7 @@ describe("preview platform workflow", () => {
     expect(workflow).toContain("PREVIEW_RUNTIME_HANDOFF_PRIVATE_KEY_B64");
     expect(workflow).toContain("openssl pkeyutl -decrypt");
     expect(workflow).toContain("preview-share-runtime-access.json");
+    expect(workflow).toContain("preview-share-runtime-cert.pem");
     expect(workflow).toContain('.handle == $public[0].handle');
     expect(workflow).toContain('.address == $public[0].address');
     expect(connectJobHeader).not.toContain("PREVIEW_RUNTIME_HANDOFF_PRIVATE_KEY_B64");
@@ -83,6 +84,10 @@ describe("preview platform workflow", () => {
     expect(workflow).not.toContain("PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}");
     expect(workflow).toContain("systemctl\",\"is-active\",\"--quiet\",\"matrix-gateway.service");
     expect(workflow).toContain("--retry 5 --retry-all-errors --retry-delay 2 --retry-max-time 30");
+    expect(connectJob).toContain("--cacert preview-share-runtime-cert.pem");
+    expect(connectJob).toContain('--resolve "customer-vps.matrix-os.local:443:${address}"');
+    expect(connectJob).toContain("https://customer-vps.matrix-os.local/api/terminal/run");
+    expect(connectJob).not.toContain("--insecure");
     expect(workflow).toContain("/speech/capabilities?runtimeSlot=");
     expect(workflow).toContain("/api/speech/capabilities");
     expect(workflow).toContain('os.open(path, os.O_RDONLY | os.O_NOFOLLOW)');
@@ -90,6 +95,9 @@ describe("preview platform workflow", () => {
     expect(workflow).not.toContain('os.environ["MATRIX_AUTH_TOKEN"]');
     expect(workflow).toContain("EXPECTED_HEAD_SHA");
     expect(workflow).toContain("expected_image=");
+    expect(workflow).toContain('--arg token "$speech_token"');
+    expect(workflow).toContain("MATRIX_PLATFORM_SPEECH_RUNTIME_TOKEN:$token");
+    expect(workflow).not.toContain("MATRIX_FUNDED_AI_RUNTIME_TOKEN:$token");
   });
 
   it("publishes only handle-scoped preview runtime access for the connector workflow", () => {
@@ -101,12 +109,15 @@ describe("preview platform workflow", () => {
 
     expect(workflow).toContain("preview-runtime-access.enc");
     expect(workflow).toContain("preview-runtime-route.json");
+    expect(workflow).toContain("preview-runtime-cert.pem");
     expect(workflow).toContain("PREVIEW_RUNTIME_HANDOFF_PUBLIC_KEY_B64");
     expect(workflow).toContain("openssl pkeyutl -encrypt");
     expect(workflow).not.toContain("terminalToken");
     expect(workflow).toContain("'{handle:$handle,address:$address}' > preview-runtime-route.json");
     expect(workflow).toContain("name: preview-runtime-access-");
     expect(workflow).toContain("retention-days: 1");
+    expect(workflow).toContain('subject=CN=customer-vps.matrix-os.local');
+    expect(workflow).toContain('timeout 15 openssl s_client -connect "${address}:443"');
     expect(deployJob).not.toContain("environment: Preview");
   });
 });
