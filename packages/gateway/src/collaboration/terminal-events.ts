@@ -44,6 +44,7 @@ interface TerminalRuntime {
   evictedThrough: number;
   connections: Set<string>;
   lastTouchedAt: number;
+  source?: Promise<{ close(): void }>;
 }
 
 interface TerminalConnection {
@@ -80,6 +81,11 @@ export class CollaborationTerminalEventRegistry {
     maxActorScopeConnections?: number;
     maxReplayBytes?: number;
     maxSessions?: number;
+    connectOutput?: (metadata: CollaborationTerminalMetadata, handlers: {
+      output(data: string): Promise<void>;
+      exit(): Promise<void>;
+      error(): void;
+    }) => Promise<{ close(): void }>;
   }) {
     this.now = options.now ?? (() => new Date());
     this.maxConnections = bounded(options.maxConnections ?? DEFAULT_MAX_CONNECTIONS, 1, 256);
@@ -138,6 +144,17 @@ export class CollaborationTerminalEventRegistry {
     runtime.connections.add(connection.connectionId);
     runtime.lastTouchedAt = this.now().getTime();
     try {
+      if (this.options.connectOutput) {
+        runtime.source ??= this.options.connectOutput(metadata, {
+          output: (data) => this.publishOutput(metadata.scopeId, metadata.incarnation, data),
+          exit: () => this.publishExit(metadata.scopeId, metadata.incarnation),
+          error: () => this.sourceUnavailable(runtime),
+        });
+        await runtime.source;
+        if (this.closing || !this.connections.has(connection.connectionId)) {
+          throw new CollaborationTerminalEventError("unavailable");
+        }
+      }
       await this.deliverReplay(connection, runtime);
       this.send(connection, {
         version: 1,
@@ -211,6 +228,10 @@ export class CollaborationTerminalEventRegistry {
     }
     runtime.metadata = { ...runtime.metadata, status: "exited", exitedAt: this.now().toISOString() };
     await this.publishUnavailable(runtime, "exited");
+    for (const connectionId of [...runtime.connections]) {
+      const connection = this.connections.get(connectionId);
+      if (connection) this.remove(connection, 1000, "Exited");
+    }
   }
 
   notifyRevoked(scopeId: string, actorId: string): void {
@@ -372,10 +393,29 @@ export class CollaborationTerminalEventRegistry {
     const runtime = this.runtimes.get(connection.scopeId);
     runtime?.connections.delete(connection.connectionId);
     if (runtime) runtime.lastTouchedAt = this.now().getTime();
+    if (runtime?.connections.size === 0) this.stopSource(runtime);
     try {
       connection.socket.close(code, reason);
     } catch (error: unknown) {
       console.warn("[collaboration-terminal-events] socket close failed", error instanceof Error ? error.name : "UnknownError");
+    }
+  }
+
+  private stopSource(runtime: TerminalRuntime): void {
+    const source = runtime.source;
+    if (!source) return;
+    runtime.source = undefined;
+    void source.then(({ close }) => close()).catch((error: unknown) => {
+      console.warn("[collaboration-terminal-events] source close failed", error instanceof Error ? error.name : "UnknownError");
+    });
+  }
+
+  private sourceUnavailable(runtime: TerminalRuntime): void {
+    for (const connectionId of [...runtime.connections]) {
+      const connection = this.connections.get(connectionId);
+      if (!connection) continue;
+      this.sendBestEffort(connection, unavailableFrame(connection, runtime, "unavailable"));
+      this.remove(connection, 1011, "Unavailable");
     }
   }
 

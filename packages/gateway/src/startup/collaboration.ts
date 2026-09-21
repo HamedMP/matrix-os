@@ -1,5 +1,6 @@
 /** Build the owner-backed collaboration runtime after Chat and canvas bootstrap. */
 import { join } from "node:path";
+import { createHash } from "node:crypto";
 import type { Hono } from "hono";
 import type { createNodeWebSocket } from "@hono/node-ws";
 import { sql, type Kysely } from "kysely";
@@ -18,6 +19,7 @@ import { createGatewayProjectInventorySource } from "../collaboration/project-in
 import { createProjectChatRootInventory } from "../collaboration/project-chat-root-inventory.js";
 import { createProjectGitDriver } from "../collaboration/project-git-operations.js";
 import { createOwnerResourceDriver } from "../collaboration/owner-resource-driver.js";
+import { createCanonicalTerminalCollaborationBridge } from "../collaboration/canonical-terminal-bridge.js";
 import { createScopedAppBridge } from "../collaboration/scoped-app-bridge.js";
 import { registerFailClosedCollaborationRoutes } from "../collaboration/fail-closed.js";
 import {
@@ -110,6 +112,23 @@ export async function constructOwnerCollaboration(options: OwnerCollaborationSta
   }),
     {
     onPartialRuntime: (runtime) => {
+      const terminalBridge = createCanonicalTerminalCollaborationBridge({
+        db: ownerChatRepository.kysely,
+        ownerId: collaborationConfig.ownerId ?? "",
+        runtime: terminalWorkspaceRuntime,
+      });
+      runtime.enableSharedTerminal({
+        registry: terminalBridge.registry,
+        runtime: terminalBridge.runtime,
+        connectOutput: terminalBridge.connectOutput,
+        executionEligibility: {
+          profileId: "scope-runtime-terminal-v1",
+          profileVersion: 1,
+          profileDigest: createHash("sha256").update("matrix-canonical-host-terminal-v1").digest("hex"),
+          adapterId: "terminal",
+          harnessVersion: "1.0.0",
+        },
+      });
       const ownerAppRegistry = appRegistry;
       const registeredApp = async (appId: string) => {
         const record = await ownerAppRegistry.get(appId);
