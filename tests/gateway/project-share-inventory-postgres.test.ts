@@ -178,6 +178,20 @@ describe("share-time project Chat root inventory", () => {
     expect(blocked.inventoryHash).not.toBe(preview.inventoryHash);
   });
 
+  it("fails closed when the Chat catalog contains a root missing from canonical Postgres", async () => {
+    const source = createGatewayProjectInventorySource({
+      homePath,
+      projects: { async get() { return { id: PROJECT, ownerId: OWNER, rootPath: projectRoot, updatedAt: NOW }; } },
+      chats: { async list() { return [{ id: "chat_orphan", revision: 1 }]; } },
+      chatRoots: inventory(),
+      canvases: { async getProjectCanvas() { return null; } },
+      apps: { async get() { return null; } },
+      sessions: { async list() { return []; } },
+    });
+    const chats = await source.listChats(OWNER, PROJECT);
+    expect(chats).toContainEqual(expect.objectContaining({ id: "chat_orphan", compatibility: "blocked", blocker: "chat_root_unavailable" }));
+  });
+
   it("retains a dirty registered worktree after hard deleting its Chat", async () => {
     const draft = join(worktreeRoot, "draft.txt");
     await writeFile(draft, "keep this uncommitted change\n");
