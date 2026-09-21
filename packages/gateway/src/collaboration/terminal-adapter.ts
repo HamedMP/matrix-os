@@ -59,6 +59,7 @@ export class CollaborationTerminalAdapterError extends Error {
 }
 
 type RegistrySession = z.infer<typeof TerminalSessionSchema>;
+type BoundRuntimeAction = { terminalId: string; scopeId: string; incarnation: string };
 
 export class CollaborationTerminalAdapter implements CollaborationTerminalRuntime {
   private readonly now: () => Date;
@@ -79,11 +80,12 @@ export class CollaborationTerminalAdapter implements CollaborationTerminalRuntim
         sessionIncarnation: string;
       }): Promise<void>;
     };
+    /** Every runtime action carries the exact scope and incarnation so the canonical bridge can re-check its binding. */
     runtime: {
-      input(input: { terminalId: string; data: string }): Promise<void>;
-      paste(input: { terminalId: string; data: string }): Promise<void>;
-      resize(input: { terminalId: string; cols: number; rows: number }): Promise<void>;
-      stop(input: { terminalId: string }): Promise<void>;
+      input(input: BoundRuntimeAction & { data: string; revalidate(): Promise<void> }): Promise<void>;
+      paste(input: BoundRuntimeAction & { data: string; revalidate(): Promise<void> }): Promise<void>;
+      resize(input: BoundRuntimeAction & { cols: number; rows: number; revalidate(): Promise<void> }): Promise<void>;
+      stop(input: BoundRuntimeAction): Promise<void>;
     };
     runtimeId: string;
     executionEligibility: z.infer<typeof TerminalEligibilitySchema>;
@@ -214,24 +216,31 @@ export class CollaborationTerminalAdapter implements CollaborationTerminalRuntim
   async input(input: Parameters<CollaborationTerminalRuntime["input"]>[0]): Promise<void> {
     await this.requireRuntimeBinding(input);
     await input.revalidate();
-    await this.options.runtime.input({ terminalId: input.terminalId, data: input.data });
+    await this.options.runtime.input({
+      terminalId: input.terminalId, scopeId: input.scopeId, incarnation: input.incarnation, data: input.data, revalidate: input.revalidate,
+    });
   }
 
   async paste(input: Parameters<CollaborationTerminalRuntime["paste"]>[0]): Promise<void> {
     await this.requireRuntimeBinding(input);
     await input.revalidate();
-    await this.options.runtime.paste({ terminalId: input.terminalId, data: input.data });
+    await this.options.runtime.paste({
+      terminalId: input.terminalId, scopeId: input.scopeId, incarnation: input.incarnation, data: input.data, revalidate: input.revalidate,
+    });
   }
 
   async resize(input: Parameters<CollaborationTerminalRuntime["resize"]>[0]): Promise<void> {
     await this.requireRuntimeBinding(input);
     await input.revalidate();
-    await this.options.runtime.resize({ terminalId: input.terminalId, cols: input.cols, rows: input.rows });
+    await this.options.runtime.resize({
+      terminalId: input.terminalId, scopeId: input.scopeId, incarnation: input.incarnation,
+      cols: input.cols, rows: input.rows, revalidate: input.revalidate,
+    });
   }
 
   async stop(input: Parameters<CollaborationTerminalRuntime["stop"]>[0]): Promise<void> {
     await this.requireRuntimeBinding(input);
-    await this.options.runtime.stop({ terminalId: input.terminalId });
+    await this.options.runtime.stop({ terminalId: input.terminalId, scopeId: input.scopeId, incarnation: input.incarnation });
   }
 
   private async requireRuntimeBinding(input: {

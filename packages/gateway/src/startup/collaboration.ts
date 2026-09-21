@@ -20,6 +20,7 @@ import { createProjectChatRootInventory } from "../collaboration/project-chat-ro
 import { createProjectGitDriver } from "../collaboration/project-git-operations.js";
 import { createOwnerResourceDriver } from "../collaboration/owner-resource-driver.js";
 import { createCanonicalTerminalCollaborationBridge } from "../collaboration/canonical-terminal-bridge.js";
+import type { OwnerCollaborationDatabase } from "../collaboration/database.js";
 import { createScopedAppBridge } from "../collaboration/scoped-app-bridge.js";
 import { registerFailClosedCollaborationRoutes } from "../collaboration/fail-closed.js";
 import {
@@ -112,8 +113,9 @@ export async function constructOwnerCollaboration(options: OwnerCollaborationSta
   }),
     {
     onPartialRuntime: (runtime) => {
+      // The owner Chat database is the owner collaboration database (same Kysely instance as `db` above).
       const terminalBridge = createCanonicalTerminalCollaborationBridge({
-        db: ownerChatRepository.kysely,
+        db: ownerChatRepository.kysely as unknown as Kysely<OwnerCollaborationDatabase>,
         ownerId: collaborationConfig.ownerId ?? "",
         runtime: terminalWorkspaceRuntime,
       });
