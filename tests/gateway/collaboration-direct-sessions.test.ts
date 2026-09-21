@@ -25,6 +25,9 @@ import { DirectAuthError, DirectReplayCache, DirectTicketVerifier } from "../../
 import { DirectSessionService } from "../../packages/gateway/src/collaboration/direct-sessions.js";
 import { requestSigningPayload, sha256Hex } from "../../packages/gateway/src/collaboration/direct-crypto.js";
 import { CollaborationControlClient, loadDefaultConnector } from "../../packages/gateway/src/collaboration/control-client.js";
+import { CollaborationCapabilityRepository } from "../../packages/gateway/src/collaboration/capability-repository.js";
+import { CollaborationCapabilityEvaluator } from "../../packages/gateway/src/collaboration/capability-evaluator.js";
+import { OrganizationMembershipClient } from "../../packages/gateway/src/collaboration/organization-membership-client.js";
 import {
   collaborationActors,
   collaborationIds,
@@ -423,6 +426,94 @@ describe("S05 direct sessions on the home", () => {
     await stream.receive(JSON.stringify({ protocolVersion: 2, type: "generation", runtimeId: logicalRuntimeId, authorityGeneration: 3 }));
     expect(client.authorityGeneration()).toBe(3);
     await expect(stream.receive("{\"protocolVersion\":1}")).rejects.toThrow();
+    await client.shutdown();
+  });
+
+  function controlClient(extra: Partial<ConstructorParameters<typeof CollaborationControlClient>[0]> = {}) {
+    const sent: Array<Record<string, unknown>> = [];
+    const client = new CollaborationControlClient({
+      platformBaseUrl: "https://platform.internal",
+      runtimeId,
+      ownerId: collaborationActors.owner,
+      relayHandle: "owner-handle",
+      serviceToken: "s".repeat(40),
+      identity: { keyId: "home-key-1", publicKey: clientKey().raw },
+      sessions: service,
+      fetchImpl: (async () => new Response(JSON.stringify({ protocolVersion: 2, runtime: { runtimeId: logicalRuntimeId, authorityGeneration: 1, registeredAt: clock.toISOString() }, platformSigningKeys: [{ keyId: "platform-key-1", algorithm: "ed25519", publicKey: platformPublicKey }], controlTicket: "t".repeat(43), relay: { origin: clientOrigin } }), { status: 200, headers: { "content-type": "application/json" } })) as never,
+      connect: () => ({ send: (value: string) => { sent.push(JSON.parse(value) as Record<string, unknown>); }, close: () => undefined }),
+      now: () => clock,
+      startTimers: false,
+      ...extra,
+    });
+    return { client, sent };
+  }
+
+  it("acknowledges platform generation keepalives with its unchanged fence and stays control-fresh past the snapshot lifetime", async () => {
+    const { client, sent } = controlClient();
+    const registration = await client.register();
+    const stream = await client.connectControl(registration.controlTicket);
+    const verifier = new DirectTicketVerifier({
+      runtimeId, platformKeys: () => client.platformKeys(), controlFresh: () => client.controlFresh(),
+      allowedClientOrigins: [clientOrigin], replay: new DirectReplayCache({ now: () => clock }), now: () => clock,
+    });
+    expect(client.controlFresh()).toBe(true);
+    // Idle for longer than the fixed snapshot lifetime: every exchange is unavailable.
+    clock = new Date(clock.getTime() + 21_000);
+    expect(client.controlFresh()).toBe(false);
+    expect(() => verifier.verifyTicket(ticketFor({ actorId: collaborationActors.editor, key: clientKey(), issuedAt: clock }))).toThrow(expect.objectContaining({ code: "unavailable" }));
+    // A keepalive generation frame refreshes the snapshot and is acknowledged; no denial was applied, so the fence is the epoch.
+    await stream.receive(JSON.stringify({ protocolVersion: 2, type: "generation", runtimeId: logicalRuntimeId, authorityGeneration: 1 }));
+    expect(client.controlFresh()).toBe(true);
+    expect(sent.at(-1)).toEqual({ protocolVersion: 2, runtimeId: logicalRuntimeId, authorityGeneration: 1, fenceAt: "1970-01-01T00:00:00.000Z" });
+    expect(verifier.verifyTicket(ticketFor({ actorId: collaborationActors.editor, key: clientKey(), issuedAt: clock }))).toMatchObject({ actorId: collaborationActors.editor });
+    // After a denial the fence moves to that acknowledgement and later keepalive acks repeat it, never a fresher time.
+    await stream.receive(JSON.stringify({ protocolVersion: 2, type: "denial", denial: { actorId: collaborationActors.viewer, generation: 2, fencedAt: clock.toISOString(), ackDeadline: new Date(clock.getTime() + 25_000).toISOString(), state: "pending" } }));
+    const fenceAt = clock.toISOString();
+    expect(sent.at(-1)).toMatchObject({ authorityGeneration: 2, fenceAt });
+    clock = new Date(clock.getTime() + 5_000);
+    await stream.receive(JSON.stringify({ protocolVersion: 2, type: "generation", runtimeId: logicalRuntimeId, authorityGeneration: 3 }));
+    expect(sent.at(-1)).toEqual({ protocolVersion: 2, runtimeId: logicalRuntimeId, authorityGeneration: 3, fenceAt });
+    // A generation frame for another runtime still refreshes liveness but never moves this home's generation.
+    await stream.receive(JSON.stringify({ protocolVersion: 2, type: "generation", runtimeId: "vps-22222222-2222-4222-8222-222222222222", authorityGeneration: 9 }));
+    expect(client.authorityGeneration()).toBe(3);
+    await client.shutdown();
+  });
+
+  it("ends the actor's grants and activations, evicts cached membership and denies REST authorization at once on a pushed denial", async () => {
+    const grantee = "user_grantee0000000000000000";
+    const grants = new CollaborationCapabilityRepository(fixture.db, { now: () => clock, createId: () => randomUUID() });
+    let platformMember = true;
+    const fetchImpl = async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as { actors: Array<{ organizationId: string; actorId: string }> };
+      return new Response(JSON.stringify(body.actors.map(({ organizationId: org, actorId }) => ({
+        protocolVersion: 2, type: "membership_assertion", organizationId: org, actorId, membershipEpoch: "1",
+        member: actorId === grantee ? platformMember : true, aiSubmission: "owner_only",
+        requestStartedAt: clock.toISOString(), expiresAt: new Date(clock.getTime() + 20_000).toISOString(),
+      }))), { status: 200, headers: { "content-type": "application/json" } });
+    };
+    const membership = new OrganizationMembershipClient({ platformBaseUrl: "https://platform.internal", runtimeId, serviceToken: "s".repeat(40), fetchImpl: fetchImpl as never, now: () => clock });
+    const precondition = createOrganizationPrecondition({ source: membership, now: () => clock });
+    const repository = new CollaborationRepository(fixture.db, { chatRepository: undefined as never });
+    const grantAuthority = new CollaborationAuthority(repository, { organizationPrecondition: precondition, capabilities: grants, now: () => clock });
+    const evaluator = new CollaborationCapabilityEvaluator({ db: fixture.db, grants, organizationPrecondition: precondition, now: () => clock });
+    const hash = "a".repeat(64);
+    const scopeRevision = async () => Number((await fixture.db.selectFrom("collaboration_scopes").select("revision").where("id", "=", scopeId).executeTakeFirstOrThrow()).revision);
+    const orgWide = await grants.createGrant({ scopeId, actorId: collaborationActors.owner, clientRequestId: randomUUID(), expectedRevision: await scopeRevision(), payloadHash: hash, audience: { kind: "organization" }, preset: "viewer", policyVersion: "v1" });
+    await evaluator.acceptGrant({ grantId: orgWide.grantId, actorId: grantee });
+    const direct = await grants.createGrant({ scopeId, actorId: collaborationActors.owner, clientRequestId: randomUUID(), expectedRevision: await scopeRevision(), payloadHash: hash, audience: { kind: "member", actorId: grantee }, preset: "contributor", policyVersion: "v1" });
+    await expect(grantAuthority.authorize({ scopeId, actorId: grantee, action: "read" })).resolves.toMatchObject({ actorId: grantee });
+    expect(membership.describe().cacheEntries).toBeGreaterThan(0);
+
+    const { client } = controlClient({ capabilities: grants, membership });
+    const stream = await client.connectControl((await client.register()).controlTicket);
+    // The platform now reports the departure, but the home's cache would still serve the old evidence for 20 s.
+    platformMember = false;
+    await stream.receive(JSON.stringify({ protocolVersion: 2, type: "denial", denial: { organizationId, actorId: grantee, generation: 2, fencedAt: clock.toISOString(), ackDeadline: new Date(clock.getTime() + 25_000).toISOString(), state: "pending" } }));
+
+    expect((await grants.getGrant(direct.grantId))?.state).toBe("revoked");
+    expect(await grants.listActivations(orgWide.grantId)).toEqual([]);
+    expect((await grants.getGrant(orgWide.grantId))?.state).toBe("active");
+    await expect(grantAuthority.authorize({ scopeId, actorId: grantee, action: "read" })).rejects.toMatchObject({ code: "not_found" });
     await client.shutdown();
   });
 });
