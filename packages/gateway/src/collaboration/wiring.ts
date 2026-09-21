@@ -35,6 +35,7 @@ import { CollaborationRepository } from "./repository.js";
 import { createCollaborationRoutes } from "./routes.js";
 import { createSharedAiRuntime, type SharedChatSandboxManifestSource } from "./shared-ai-runtime.js";
 import type { ReadinessSubject } from "./readiness-evaluator.js";
+import { sandboxRequiredForResourceKind } from "./sandbox-readiness.js";
 import type { CanonicalProviderSnapshotReader } from "../ai-providers/provider-settings-coordinators.js";
 import { OwnerAccountEligibility } from "./account-eligibility.js";
 import {
@@ -343,12 +344,15 @@ export async function createGatewayCollaboration(options: {
       return { available: sharedAiRuntime.available };
     },
     /**
-     * S07: the `supported` readiness input for shareable resources. Projects and
-     * Chats execute, so they are supported only while shared AI is running on a
-     * supervisor that advertises the pinned sandbox policy; with shared AI
-     * disabled the answer is false rather than an offer that would fail at launch.
+     * S07: the `supported` readiness input for shareable resources. Only projects and
+     * Chats execute, so only they need the pinned sandbox policy: they are supported
+     * while shared AI runs on a supervisor that advertises it, and unsupported
+     * otherwise rather than offered as a run that would fail at launch. Files,
+     * folders, app instances and observable terminals execute nothing and stay
+     * supported either way, which is the same rule the readiness probe applies.
      */
     async sandboxSupported(subject: ReadinessSubject): Promise<boolean> {
+      if (!sandboxRequiredForResourceKind(subject.resourceKind)) return true;
       return sharedAiRuntime?.available === true ? sharedAiRuntime.sandboxSupported(subject) : false;
     },
     enableSharedTerminal(input: {
