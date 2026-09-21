@@ -34,6 +34,11 @@ import type {
   ScopeRuntimeReconciledRuntime,
 } from "./supervisor.js";
 import { scopeRuntimeWorkerFailureForExitCode } from "./worker.js";
+import {
+  assertSandboxEnvironment,
+  buildSandboxSystemdProperties,
+  validateSandboxMountSources,
+} from "./sandbox.js";
 
 const execFileAsync = promisify(execFile);
 const COMMAND_TIMEOUT_MS = 10_000;
@@ -59,6 +64,8 @@ interface LauncherPaths {
   brokerSocket: string;
   nodeBinary?: string;
   codexBinary?: string;
+  /** S07: host directories under which sandbox worktrees may be bound. Empty means no sandboxed launch. */
+  sandboxRoots?: readonly string[];
 }
 
 function unitName(runtimeHandle: string): string {
@@ -75,11 +82,17 @@ function assertTrustedAbsolutePath(value: string): string {
 export function buildFixedSystemdRunArgs(
   input: ScopeRuntimeLaunchRequest,
   paths: ScopeRuntimeProfilePaths & { nodeBinary: string },
+  options: { sandboxProperties?: readonly string[] } = {},
 ): string[] {
   const runtimeHandle = RuntimeHandleSchema.parse(input.runtimeHandle);
   const scopeHandle = ScopeHandleSchema.parse(input.scopeHandle);
   if (input.workload !== "chat_ai" || !isFixedChatAdapter(input.adapterId, input.harnessVersion)) {
     throw new Error("Unsupported scope runtime adapter");
+  }
+  assertSandboxEnvironment(FIXED_SYSTEMD_ENVIRONMENT);
+  const sandboxProperties = options.sandboxProperties ?? [];
+  for (const property of sandboxProperties) {
+    if (property.includes("\n") || property.includes("\0")) throw new Error("Invalid sandbox property");
   }
   const properties = materializeFixedSystemdProperties({
     scopeRoot: assertTrustedAbsolutePath(paths.scopeRoot),
@@ -95,6 +108,7 @@ export function buildFixedSystemdRunArgs(
     "--quiet",
     "--no-block",
     ...properties.map((property) => `--property=${property}`),
+    ...sandboxProperties.map((property) => `--property=${property}`),
     ...FIXED_SYSTEMD_ENVIRONMENT.map((entry) => `--setenv=${entry}`),
     "--",
     "/usr/bin/env",
@@ -462,6 +476,7 @@ export function createSystemdScopeRuntimeLauncher(
     brokerSocket: assertTrustedAbsolutePath(input.brokerSocket),
     nodeBinary: assertTrustedAbsolutePath(input.nodeBinary ?? "/opt/matrix/runtime/node/bin/node"),
     codexBinary: assertTrustedAbsolutePath(input.codexBinary ?? "/opt/matrix/runtime/node/bin/codex"),
+    sandboxRoots: (input.sandboxRoots ?? []).map((root) => assertTrustedAbsolutePath(root)),
   };
   const runCommand = input.runCommand ?? defaultRunCommand;
 
@@ -533,6 +548,12 @@ export function createSystemdScopeRuntimeLauncher(
       let submitted = false;
       try {
         const sources = await validateRuntimeSources(paths, request.adapterId, runCommand);
+        const sandboxProperties = request.sandbox
+          ? buildSandboxSystemdProperties(
+              request.sandbox,
+              await validateSandboxMountSources(request.sandbox, { allowedRoots: paths.sandboxRoots }),
+            )
+          : undefined;
         const args = buildFixedSystemdRunArgs(request, {
           scopeRoot: root,
           sdkDirectory: sources.sdkDirectory,
@@ -542,7 +563,7 @@ export function createSystemdScopeRuntimeLauncher(
           readinessFile,
           commandDirectory,
           nodeBinary: paths.nodeBinary,
-        });
+        }, sandboxProperties ? { sandboxProperties } : {});
         submitted = true;
         await runCommand("/usr/bin/systemd-run", args);
         await waitUntilReady(
