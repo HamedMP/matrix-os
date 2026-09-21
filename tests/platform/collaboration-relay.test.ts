@@ -41,6 +41,15 @@ describe("CollaborationRelay", () => {
       .toEqual({ kind: "runtime", identifier: "runtime_owner" });
     expect(parseRelayRoute("GET", "/api/collaboration/runtimes/runtime_owner/catalog/resolve")).toBeNull();
     expect(parseRelayRoute("POST", "/api/collaboration/runtimes/runtime_owner/catalog/resolve/extra")).toBeNull();
+    const encoded = "vps%3A11111111-1111-4111-8111-111111111111";
+    expect(parseRelayRoute("POST", `/api/collaboration/runtimes/${encoded}/catalog/resolve`))
+      .toEqual({ kind: "runtime", identifier: "vps:11111111-1111-4111-8111-111111111111" });
+    expect(parseRelayRoute("POST", `/api/collaboration/runtimes/${encoded}/scopes/preflight`))
+      .toEqual({ kind: "runtime", identifier: "vps:11111111-1111-4111-8111-111111111111" });
+    expect(parseRelayRoute("POST", `/api/collaboration/runtimes/${encoded}/scopes`))
+      .toEqual({ kind: "runtime", identifier: "vps:11111111-1111-4111-8111-111111111111" });
+    expect(parseRelayRoute("POST", "/api/collaboration/runtimes/vps%2Fother/catalog/resolve")).toBeNull();
+    expect(parseRelayRoute("POST", "/api/collaboration/owner-runtime/sessions")).toEqual({ kind: "session" });
   });
 
   it("forwards a forged ticket untouched and returns the home's rejection verbatim, logging metadata only", async () => {

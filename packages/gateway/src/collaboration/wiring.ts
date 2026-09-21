@@ -26,6 +26,7 @@ import { CollaborationControlClient } from "./control-client.js";
 import { DirectReplayCache, DirectTicketVerifier } from "./direct-auth.js";
 import { createDirectSessionRoutes } from "./direct-routes.js";
 import { DirectSessionService } from "./direct-sessions.js";
+import { OwnerRuntimeSessionService } from "./owner-runtime-sessions.js";
 import { registerCollaborationDirectWebSocketRoutes } from "./direct-websocket.js";
 import { ensureRuntimeIdentity } from "./runtime-identity.js";
 import { CollaborationEventRegistry } from "./events.js";
@@ -204,6 +205,12 @@ export async function createGatewayCollaboration(options: {
     },
     startTimers: options.startTimers !== false,
   });
+  const ownerRuntimeSessions = options.config.ownerId
+    ? new OwnerRuntimeSessionService({
+        verifier: directVerifier, ownerId: options.config.ownerId,
+        runtimeId: options.config.runtimeId, organizationPrecondition,
+      })
+    : undefined;
   // S07 / T039: lease loss also releases terminal control, stops bound sandbox runtimes and refuses input.
   directSessions.subscribeEnded((session, reason) => revocationEnforcer?.onSessionEnded(session, reason));
   if (options.config.ownerId && options.config.relayHandle) {
@@ -311,6 +318,7 @@ export async function createGatewayCollaboration(options: {
     projectFence,
     projectScope,
     directSessions,
+    ownerRuntimeSessions,
     directVerifier,
     controlClient,
     projectOperationAdmission: {
@@ -505,6 +513,7 @@ export async function createGatewayCollaboration(options: {
         runtimeId: options.config.runtimeId,
         verifier,
         directSessions,
+        ownerRuntimeSessions,
         authority,
         repository,
         capabilities,
@@ -550,7 +559,7 @@ export async function createGatewayCollaboration(options: {
         authority,
         registry: eventRegistry,
       });
-      input.app.route("/", createDirectSessionRoutes({ sessions: directSessions }));
+      input.app.route("/", createDirectSessionRoutes({ sessions: directSessions, ownerRuntimeSessions }));
       registerCollaborationDirectWebSocketRoutes({
         app: input.app,
         upgradeWebSocket: input.upgradeWebSocket,
@@ -605,6 +614,7 @@ export async function createGatewayCollaboration(options: {
       projectSharing = undefined;
       participantResolver?.shutdown();
       verifier.shutdown();
+      void ownerRuntimeSessions?.shutdown();
       for (const [name, drain] of [
         ["shared AI", () => drainingSharedAi?.shutdown()],
         ["project transitions", () => drainingTransitions?.shutdown()],
@@ -622,6 +632,7 @@ export async function createGatewayCollaboration(options: {
       closeResourceServices();
       await controlClient?.shutdown();
       await directSessions.shutdown();
+      await ownerRuntimeSessions?.shutdown();
       await sharedAiRuntime?.shutdown();
       sharedAiRuntime = undefined;
       chatExecutionAdapter = undefined;

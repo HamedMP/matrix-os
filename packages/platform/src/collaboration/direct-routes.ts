@@ -90,6 +90,28 @@ export function createPlatformCollaborationDirectRoutes(options: {
     }
   });
 
+  app.post("/api/collaboration/owner-runtime/connections", jsonLimit, async (c) => {
+    const actorId = await resolveValidatedActor(c, options.resolveActor);
+    if (!actorId) return safeJson(c, "Unauthorized", 401);
+    if (!options.issuer) return safeJson(c, "Collaboration unavailable", 503);
+    const body = await readJson(c);
+    if (body === undefined) return safeJson(c, "Invalid request", 422);
+    try {
+      const issued = await options.issuer.issueOwnerRuntime({ actorId, request: body });
+      c.header("Cache-Control", "no-store");
+      return c.json(issued, 201);
+    } catch (error: unknown) {
+      if (error instanceof CollaborationTicketIssuerError) {
+        if (error.code === "invalid_request") return safeJson(c, "Invalid request", 422);
+        if (error.code === "not_found") return safeJson(c, "Collaboration resource not found", 404);
+        if (error.code === "host_offline") return safeJson(c, "host_offline", 503);
+        return safeJson(c, "Collaboration unavailable", 503);
+      }
+      console.warn("[platform-collaboration] owner runtime ticket issue failed", error instanceof Error ? error.name : "UnknownError");
+      return safeJson(c, "Collaboration unavailable", 503);
+    }
+  });
+
   return app;
 }
 
