@@ -39,6 +39,10 @@ Final focused matrix on real Postgres (`MATRIX_TEST_POSTGRES_URL`/`CHAT_TEST_DAT
 - **Auth source of truth:** fresh scope authorization plus exact Git capability before claim and before the side effect (unchanged); `expireUnresolved` additionally requires the actor to be the scope owner returned by fresh authorization. The sandbox mount policy and the host preflight are independent layers; either alone blocks the P1-A attack.
 - **Deferred scope:** live GitHub push/PR evidence, a disposable-host probe that the `.git` bind and `ReadOnlyPaths` behave under systemd, a shell control for owner expiry (the route exists; no OS-view UI was added), and automatic expiry of `unknown` operations (rejected: an unobservable effect must not silently unblock replays).
 
+## Addendum: membership transition outbox recipients (real Postgres)
+
+`reconcileProjectMembershipAtPublication` (`project-membership-transition.ts`) wrote `recipient_actor_ids` as a raw JS array; real Postgres rejected the insert with `invalid input syntax for type json` (22P02) while PGlite accepted it. RED: `tests/gateway/collaboration-membership-transition.test.ts` switched to the real-Postgres fixture when `MATRIX_TEST_POSTGRES_URL` is set and failed with that exact error. GREEN: the insert casts through the shared `jsonb` helper like every other outbox write; the test normalizes BIGINT columns so it passes on both engines (real Postgres 2/2, PGlite 2/2). The outbox parser already accepts string entries, so the recipient shape is unchanged.
+
 ## Notes for the coordinator
 
 - The sandbox policy digest changed; scope-runtime and gateway derive it from the same constant, so both packages ship together.
