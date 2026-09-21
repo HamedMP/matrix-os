@@ -510,7 +510,8 @@ export async function createGatewayCollaboration(options: {
         readinessProbes: createGatewayReadinessProbes({
           repository, chats: options.chatRepository,
           projectSource: () => projectInventorySource,
-          sharedAiAvailable: () => sharedAiRuntime?.available === true,
+          sandboxSupported: async (subject) => sharedAiRuntime?.available === true
+            ? sharedAiRuntime.sandboxSupported(subject) : false,
           ownerSource: eligibility && executionPolicies
             ? createOwnerSourceReadinessProbes({ policies: executionPolicies, eligibility }) : undefined,
         }),

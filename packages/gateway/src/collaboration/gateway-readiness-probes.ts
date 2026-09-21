@@ -8,7 +8,7 @@ interface Options {
   repository: Pick<CollaborationRepository, "getScope">;
   chats: Pick<ChatRepository, "kysely">;
   projectSource: () => Pick<ProjectInventoryResourceSource, "listChats" | "getGitSetup"> | undefined;
-  sharedAiAvailable(): boolean;
+  sandboxSupported(subject: ReadinessSubject): Promise<boolean>;
   ownerSource: Pick<ReadinessProbes, "aiSource" | "submitMode"> | undefined;
 }
 
@@ -42,7 +42,7 @@ export function createGatewayReadinessProbes(options: Options): ReadinessProbes 
     async hostOnline() { return true; },
     async supported(subject) {
       return subject.resourceKind !== "project" && subject.resourceKind !== "chat"
-        ? true : options.sharedAiAvailable();
+        ? true : options.sandboxSupported(subject);
     },
     async aiSource(subject) {
       return options.ownerSource?.aiSource(subject) ?? { configured: false };
