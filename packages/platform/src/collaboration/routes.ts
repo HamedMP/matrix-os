@@ -212,6 +212,7 @@ async function listDiscovery(
         items.push({
           scopeId: entry.scopeId, runtimeId: entry.runtimeId, ownerId: entry.ownerId, kind: entry.kind,
           authorityGeneration: entry.authorityGeneration, status: "organization_pending", organizationId: entry.organizationId,
+          grantId: entry.grantId,
         });
       }
     }

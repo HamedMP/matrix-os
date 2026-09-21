@@ -29,6 +29,7 @@ export interface DirectoryEventInput {
   kind: CollaborationDirectoryKind;
   organizationId?: string;
   audience?: "members" | "organization";
+  organizationGrantId?: string;
   authorityGeneration: number;
   metadataRevision: number;
   recipients: Array<{
@@ -57,6 +58,7 @@ export interface CollaborationOrganizationShareEntry {
   kind: CollaborationDirectoryKind;
   authorityGeneration: number;
   organizationId: string;
+  grantId: string;
 }
 
 export class PlatformCollaborationRepository {
@@ -89,6 +91,7 @@ export class PlatformCollaborationRepository {
         kind: input.kind,
         organization_id: input.organizationId ?? null,
         audience: input.audience ?? null,
+        organization_grant_id: input.audience === "organization" ? input.organizationGrantId ?? null : null,
         authority_generation: input.authorityGeneration,
         metadata_revision: input.metadataRevision,
         last_event_id: input.eventId,
@@ -97,6 +100,7 @@ export class PlatformCollaborationRepository {
         kind: input.kind,
         ...(input.organizationId ? { organization_id: input.organizationId } : {}),
         audience: input.audience ?? null,
+        organization_grant_id: input.audience === "organization" ? input.organizationGrantId ?? null : null,
         authority_generation: input.authorityGeneration,
         metadata_revision: input.metadataRevision,
         last_event_id: input.eventId,
@@ -337,8 +341,9 @@ export class PlatformCollaborationRepository {
     if (organizations.length === 0) return [];
     const bounded = Math.max(1, Math.min(100, Math.trunc(limit)));
     const rows = await this.db.selectFrom("collaboration_directory as directory")
-      .select(["directory.scope_id", "directory.runtime_id", "directory.owner_id", "directory.kind", "directory.organization_id", "directory.authority_generation"])
+      .select(["directory.scope_id", "directory.runtime_id", "directory.owner_id", "directory.kind", "directory.organization_id", "directory.organization_grant_id", "directory.authority_generation"])
       .where("directory.audience", "=", "organization")
+      .where("directory.organization_grant_id", "is not", null)
       .where("directory.organization_id", "in", organizations)
       .where("directory.owner_id", "!=", actorId)
       .where(({ not, exists, selectFrom }) => not(exists(
@@ -348,7 +353,7 @@ export class PlatformCollaborationRepository {
       .orderBy("directory.updated_at", "desc").orderBy("directory.scope_id", "asc").limit(bounded).execute();
     return rows.map((row) => ({
       scopeId: row.scope_id, runtimeId: row.runtime_id, ownerId: row.owner_id, kind: row.kind,
-      authorityGeneration: Number(row.authority_generation), organizationId: row.organization_id!,
+      authorityGeneration: Number(row.authority_generation), organizationId: row.organization_id!, grantId: row.organization_grant_id!,
     }));
   }
 
