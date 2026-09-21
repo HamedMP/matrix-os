@@ -400,7 +400,6 @@ function directProject(id: string, resourceId: string) {
     owner_id: OWNER_ID,
     organization_id: ORGANIZATION_ID,
     kind: "project" as const,
-    organization_id: "org_matrix_team",
     resource_id: resourceId,
     parent_scope_id: null,
     membership_mode: "direct" as const,
