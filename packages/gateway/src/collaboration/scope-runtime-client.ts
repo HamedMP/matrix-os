@@ -5,6 +5,7 @@ import {
   ScopeRuntimeResponseSchema,
   type ScopeRuntimeRequest,
   type ScopeRuntimeResponse,
+  type ScopeRuntimeSandboxManifest,
 } from "@matrix-os/scope-runtime";
 
 const MAX_FRAME_BYTES = 128 * 1024;
@@ -12,10 +13,18 @@ const MAX_TIMEOUT_MS = 90_000;
 const MAX_IN_FLIGHT_REQUESTS = 64;
 const DEFAULT_OPERATION_TIMEOUT_MS = 60_000;
 
+export interface ScopeRuntimeSandboxCapability {
+  policyVersion: number;
+  policyDigest: string;
+  workloads: Array<"chat_ai" | "terminal">;
+}
+
 export interface ScopeRuntimeProfileCatalogEntry {
   profileVersion: number;
   profileDigest: string;
   identity: { mode: "dynamic"; uidMin: number; uidMax: number };
+  /** S07: when set, the supervisor must advertise exactly this sandbox policy or the profile is unsupported. */
+  sandbox?: { policyVersion: number; policyDigest: string };
   supportedAdapters: Readonly<Record<string, Readonly<{
     harnessVersions: readonly string[];
     workloads: readonly ("chat_ai" | "terminal")[];
@@ -34,6 +43,8 @@ export type ScopeRuntimeCapability =
       harnessVersion: string;
       workloads: Array<"chat_ai" | "terminal">;
     }>;
+    /** Present only when the supervisor advertises a sandbox policy that matches the catalog. */
+    sandbox?: ScopeRuntimeSandboxCapability;
   }
   | { available: false; reason: "supervisor_unavailable" | "unsupported_profile" };
 
@@ -135,6 +146,10 @@ export function createScopeRuntimeClient(options: {
     return operation;
   }
 
+  function expected(profileId: string): ScopeRuntimeProfileCatalogEntry | undefined {
+    return options.profileCatalog[profileId];
+  }
+
   function supports(response: Extract<ScopeRuntimeResponse, { type: "capability.result"; ok: true }>): boolean {
     const expected = options.profileCatalog[response.profile.profileId];
     if (!expected || response.profile.identity.mode !== "dynamic"
@@ -142,6 +157,9 @@ export function createScopeRuntimeClient(options: {
       || response.profile.identity.uidMax !== expected.identity.uidMax
       || expected.profileVersion !== response.profile.profileVersion
       || expected.profileDigest !== response.profile.profileDigest) return false;
+    if (expected.sandbox && (!response.profile.sandbox
+      || response.profile.sandbox.policyVersion !== expected.sandbox.policyVersion
+      || response.profile.sandbox.policyDigest !== expected.sandbox.policyDigest)) return false;
     return response.profile.adapters.every((adapter) => {
       const supported = expected.supportedAdapters[adapter.adapterId];
       return supported?.harnessVersions.includes(adapter.harnessVersion) === true
@@ -174,6 +192,13 @@ export function createScopeRuntimeClient(options: {
             harnessVersion: entry.harnessVersion,
             workloads: [...entry.workloads],
           })),
+          ...(response.profile.sandbox && expected(response.profile.profileId)?.sandbox
+            ? { sandbox: {
+                policyVersion: response.profile.sandbox.policyVersion,
+                policyDigest: response.profile.sandbox.policyDigest,
+                workloads: [...response.profile.sandbox.workloads],
+              } }
+            : {}),
         };
         return currentCapability;
       } catch (error: unknown) {
@@ -189,10 +214,17 @@ export function createScopeRuntimeClient(options: {
       workload: "chat_ai" | "terminal";
       adapterId: string;
       harnessVersion: string;
+      /** S07: required for any run or terminal that acts for a collaborator. */
+      sandbox?: ScopeRuntimeSandboxManifest;
     }) {
       if (closed) throw new ScopeRuntimeClientError("client_closed");
       const capability = currentCapability;
       if (!capability.available) throw new ScopeRuntimeClientError("runtime_unavailable");
+      if (input.sandbox && (!capability.sandbox || !capability.sandbox.workloads.includes(input.workload)
+        || input.sandbox.scopeHandle !== input.scopeHandle)) {
+        throw new ScopeRuntimeClientError("runtime_unavailable");
+      }
+      if (input.workload === "terminal" && !input.sandbox) throw new ScopeRuntimeClientError("runtime_unavailable");
       const adapter = capability.supportedAdapters.find((entry) => entry.adapterId === input.adapterId);
       if (!adapter || adapter.harnessVersion !== input.harnessVersion
         || !adapter.workloads.includes(input.workload)) {
@@ -207,6 +239,7 @@ export function createScopeRuntimeClient(options: {
         workload: input.workload,
         adapterId: input.adapterId,
         harnessVersion: input.harnessVersion,
+        ...(input.sandbox ? { sandbox: input.sandbox } : {}),
       });
       if (response.type !== "runtime.result" || !response.ok || response.state !== "running") {
         throw new ScopeRuntimeClientError("runtime_unavailable");

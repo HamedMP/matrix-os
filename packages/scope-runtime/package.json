@@ -6,7 +6,8 @@
   "exports": {
     ".": "./src/protocol.ts",
     "./broker-protocol": "./src/broker-protocol.ts",
-    "./profile": "./src/profile.ts"
+    "./profile": "./src/profile.ts",
+    "./sandbox": "./src/sandbox.ts"
   },
   "scripts": {
     "build": "tsc",
