@@ -22,6 +22,13 @@ const capabilities = {
 };
 
 describe("browser platform speech client", () => {
+  it("owns rendered error messages instead of accepting server-provided copy", () => {
+    expect(new BrowserSpeechClientError("rate_limited")).toMatchObject({
+      code: "rate_limited",
+      safeMessage: "Try speech again later",
+    });
+  });
+
   it("loads provider-neutral capabilities through the current gateway scope", async () => {
     const fetcher = vi.fn(async () => new Response(JSON.stringify(capabilities), {
       status: 200,
@@ -70,6 +77,16 @@ describe("browser platform speech client", () => {
       code: "rate_limited",
       safeMessage: "Try speech again later",
     });
+
+    const tampered = createBrowserSpeechClient({
+      baseUrl: "https://app.example",
+      fetcher: vi.fn(async () => new Response(JSON.stringify({
+        error: { code: "rate_limited", message: "postgresql://private-provider-detail" },
+      }), { status: 429 })),
+    });
+    const tamperedError = await tampered.capabilities().catch((caught: unknown) => caught);
+    expect(tamperedError).toMatchObject({ code: "unavailable", safeMessage: "Speech is unavailable" });
+    expect(JSON.stringify(tamperedError)).not.toMatch(/postgresql|private|provider/i);
 
     const unknown = createBrowserSpeechClient({
       baseUrl: "https://app.example",

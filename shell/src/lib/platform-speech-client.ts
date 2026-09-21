@@ -27,13 +27,27 @@ type BrowserSpeechErrorCode =
   | "transcription_failed"
   | "cancelled";
 
+const CLIENT_SPEECH_ERROR_MESSAGES: Record<BrowserSpeechErrorCode, string> = {
+  unauthorized: "Unauthorized",
+  unavailable: "Speech is unavailable",
+  invalid_request: "Invalid speech request",
+  invalid_media: "This recording cannot be transcribed",
+  request_conflict: "This speech request was already used",
+  not_found: "Speech request not found",
+  rate_limited: "Try speech again later",
+  allowance_exhausted: "Speech allowance is unavailable",
+  timeout: "Transcription timed out",
+  transcription_failed: "Transcription failed",
+  cancelled: "Transcription was cancelled",
+};
+
 export class BrowserSpeechClientError extends Error {
-  constructor(
-    readonly code: BrowserSpeechErrorCode,
-    readonly safeMessage: string,
-  ) {
+  readonly safeMessage: string;
+
+  constructor(readonly code: BrowserSpeechErrorCode) {
     super("Speech request failed safely");
     this.name = "BrowserSpeechClientError";
+    this.safeMessage = CLIENT_SPEECH_ERROR_MESSAGES[code];
   }
 }
 
@@ -51,9 +65,9 @@ async function boundedJson(response: Response): Promise<unknown> {
   const declared = Number(response.headers.get("content-length"));
   if (Number.isFinite(declared) && declared > MAX_RESPONSE_BYTES) {
     await response.body?.cancel();
-    throw new BrowserSpeechClientError("unavailable", "Speech is unavailable");
+    throw new BrowserSpeechClientError("unavailable");
   }
-  if (!response.body) throw new BrowserSpeechClientError("unavailable", "Speech is unavailable");
+  if (!response.body) throw new BrowserSpeechClientError("unavailable");
   const reader = response.body.getReader();
   const bytes = new Uint8Array(MAX_RESPONSE_BYTES);
   let size = 0;
@@ -63,7 +77,7 @@ async function boundedJson(response: Response): Promise<unknown> {
       if (next.done) break;
       if (size + next.value.byteLength > MAX_RESPONSE_BYTES) {
         await reader.cancel();
-        throw new BrowserSpeechClientError("unavailable", "Speech is unavailable");
+        throw new BrowserSpeechClientError("unavailable");
       }
       bytes.set(next.value, size);
       size += next.value.byteLength;
@@ -75,7 +89,7 @@ async function boundedJson(response: Response): Promise<unknown> {
     return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, size))) as unknown;
   } catch (error: unknown) {
     if (error instanceof BrowserSpeechClientError) throw error;
-    throw new BrowserSpeechClientError("unavailable", "Speech is unavailable");
+    throw new BrowserSpeechClientError("unavailable");
   }
 }
 
@@ -110,17 +124,17 @@ export function createBrowserSpeechClient(options: {
       });
     } catch (error: unknown) {
       if (error instanceof BrowserSpeechClientError) throw error;
-      throw new BrowserSpeechClientError("unavailable", "Speech is unavailable");
+      throw new BrowserSpeechClientError("unavailable");
     }
     const payload = await boundedJson(response);
     if (response.ok) {
       const parsed = input.schema.safeParse(payload);
       if (parsed.success) return parsed.data;
-      throw new BrowserSpeechClientError("unavailable", "Speech is unavailable");
+      throw new BrowserSpeechClientError("unavailable");
     }
     const parsed = SpeechSafeErrorResponseSchema.safeParse(payload);
-    if (!parsed.success) throw new BrowserSpeechClientError("unavailable", "Speech is unavailable");
-    throw new BrowserSpeechClientError(parsed.data.error.code, parsed.data.error.message);
+    if (!parsed.success) throw new BrowserSpeechClientError("unavailable");
+    throw new BrowserSpeechClientError(parsed.data.error.code);
   }
 
   return {
