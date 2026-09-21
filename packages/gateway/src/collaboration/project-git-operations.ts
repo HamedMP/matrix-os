@@ -60,8 +60,9 @@ export async function migrateProjectGitOperationsV13(trx: Transaction<OwnerColla
   `.execute(trx);
 }
 
-import { execFile } from "node:child_process";
-import { lstat, realpath } from "node:fs/promises";
+import { execFile, spawn } from "node:child_process";
+import { lstat, mkdtemp, realpath, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod/v4";
@@ -191,12 +192,53 @@ export function classifyPushFailure(failure: GitProcessFailure): "failed" | "unk
   return PRE_TRANSFER_PUSH_FAILURE.test(failure.stderr ?? "") ? "failed" : "unknown";
 }
 
-async function ghCommand(cwd: string, args: string[]): Promise<GitCommandResult> {
-  return exec("gh", args, {
-    cwd,
-    env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: process.env.HOME ?? "/nonexistent", GH_PROMPT_DISABLED: "1" },
-    timeout: REMOTE_TIMEOUT_MS,
-    maxBuffer: 64 * 1024,
+const MAX_PROCESS_OUTPUT = 64 * 1024;
+
+/**
+ * Bounded spawn with stdin: execFile cannot feed stdin, and a PR body passed
+ * as one argv entry exceeds the kernel's per-argument limit (E2BIG). Failures
+ * carry the same shape as execFile errors (code, signal, killed, stdout, stderr).
+ */
+function runProcess(command: string, args: string[], options: {
+  cwd: string; env: NodeJS.ProcessEnv; timeout: number; stdin: string;
+}): Promise<GitCommandResult> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { cwd: options.cwd, env: options.env, stdio: ["pipe", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    let overflow = false;
+    let timedOut = false;
+    let settled = false;
+    const timer = setTimeout(() => { timedOut = true; child.kill("SIGKILL"); }, options.timeout);
+    const settle = (error: (Error & GitProcessFailure) | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) reject(Object.assign(error, { stdout, stderr }));
+      else resolve({ stdout, stderr });
+    };
+    const collect = (stream: "stdout" | "stderr") => (chunk: Buffer) => {
+      if (stream === "stdout") stdout += chunk.toString("utf8");
+      else stderr += chunk.toString("utf8");
+      if (stdout.length + stderr.length > MAX_PROCESS_OUTPUT && !overflow) {
+        overflow = true;
+        child.kill("SIGKILL");
+      }
+    };
+    child.stdout.on("data", collect("stdout"));
+    child.stderr.on("data", collect("stderr"));
+    child.stdin.on("error", (error: NodeJS.ErrnoException) => {
+      // The child may exit before consuming stdin; the exit status decides the outcome.
+      if (error.code !== "EPIPE") console.warn("[collaboration-git] process stdin failed", error.code ?? error.name);
+    });
+    child.on("error", (error: NodeJS.ErrnoException) => settle(Object.assign(error, { code: error.code ?? "ESPAWN" })));
+    child.on("close", (code, signal) => {
+      if (overflow) return settle(Object.assign(new Error(`${command} output exceeded limit`), { code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" }));
+      if (timedOut) return settle(Object.assign(new Error(`${command} timed out`), { code: null, signal: signal ?? "SIGKILL", killed: true }));
+      if (code === 0) return settle(null);
+      settle(Object.assign(new Error(`${command} exited with ${code ?? signal}`), { code, signal, killed: child.killed }));
+    });
+    child.stdin.end(options.stdin);
   });
 }
 
@@ -283,6 +325,34 @@ export function createProjectGitDriver(options: {
   ownerHome?: string;
 }) {
   const ownerHome = options.ownerHome ?? process.env.HOME;
+  let forgeCwd: Promise<string> | undefined;
+  let closed = false;
+
+  /** Empty, owner-only directory so gh never reads the member repository or any repository-local Git config. */
+  function privateForgeCwd(): Promise<string> {
+    if (closed) throw new ProjectGitBrokerError("unavailable");
+    forgeCwd ??= mkdtemp(join(tmpdir(), "matrix-git-forge-"));
+    return forgeCwd;
+  }
+
+  /** Runs gh with the owner's credential store but without any repository, global or system Git configuration. */
+  async function ghCommand(args: string[], stdin = ""): Promise<GitCommandResult> {
+    if (!ownerHome) throw new ProjectGitBrokerError("unavailable");
+    return runProcess("gh", args, {
+      cwd: await privateForgeCwd(),
+      env: {
+        PATH: process.env.PATH ?? "/usr/bin:/bin",
+        HOME: ownerHome,
+        GH_PROMPT_DISABLED: "1",
+        GH_NO_UPDATE_NOTIFIER: "1",
+        GIT_CONFIG_NOSYSTEM: "1",
+        GIT_CONFIG_GLOBAL: "/dev/null",
+        GIT_TERMINAL_PROMPT: "0",
+      },
+      timeout: REMOTE_TIMEOUT_MS,
+      stdin,
+    });
+  }
 
   async function root(input: { ownerId: string; projectId: string }) {
     return requireRepositoryRoot(await options.resolveProjectRoot(input));
@@ -325,7 +395,21 @@ export function createProjectGitDriver(options: {
   const driver: ProjectGitDriver & {
     resolveOwnerIdentity(input: { ownerId: string; projectId: string }): Promise<ProjectGitOwnerIdentity>;
     getGitSetup(input: { ownerId: string; projectId: string }): Promise<CollaborationProjectGitSetup>;
+    /** Removes the private forge cwd; the driver refuses forge commands afterwards. */
+    close(): Promise<void>;
   } = {
+    async close() {
+      closed = true;
+      const pending = forgeCwd;
+      forgeCwd = undefined;
+      if (!pending) return;
+      try {
+        await rm(await pending, { recursive: true, force: true });
+      } catch (error: unknown) {
+        console.warn("[collaboration-git] forge cwd cleanup failed", error instanceof Error ? error.name : "UnknownError");
+      }
+    },
+
     async resolveOwnerIdentity(input) {
       await root(input);
       const identity = await ownerIdentity();
@@ -334,9 +418,8 @@ export function createProjectGitDriver(options: {
     },
 
     async getGitSetup(input) {
-      let cwd: string;
       try {
-        cwd = await root(input);
+        await root(input);
       } catch (error: unknown) {
         console.warn("[collaboration-git] setup root unavailable", error instanceof Error ? error.name : "UnknownError");
         return { identity: { status: "unavailable" }, forgeCredential: { status: "unavailable" } };
@@ -352,11 +435,10 @@ export function createProjectGitDriver(options: {
       })();
       let forgeCredential: CollaborationProjectGitSetup["forgeCredential"];
       try {
-        await ghCommand(cwd, ["auth", "status", "--hostname", "github.com"]);
+        await ghCommand(["auth", "status", "--hostname", "github.com"]);
         forgeCredential = { status: "ready" };
       } catch (error: unknown) {
-        forgeCredential = error instanceof Error && "code" in error && String((error as NodeJS.ErrnoException).code) === "1"
-          ? { status: "missing" } : { status: "unavailable" };
+        forgeCredential = isGitExitCode(error, "1") ? { status: "missing" } : { status: "unavailable" };
       }
       return { identity, forgeCredential };
     },
@@ -402,8 +484,8 @@ export function createProjectGitDriver(options: {
       const observed = await driver.reconcile(input);
       if (observed) return observed;
       try {
-        const result = await ghCommand(cwd, ["pr", "create", "--repo", `${remote.owner}/${remote.repo}`, "--base", request.baseBranch,
-          "--head", request.headBranch, "--title", request.title, "--body", request.body ?? ""]);
+        const result = await ghCommand(["pr", "create", "--repo", `${remote.owner}/${remote.repo}`, "--base", request.baseBranch,
+          "--head", request.headBranch, "--title", request.title, "--body-file", "-"], request.body ?? "");
         const url = z.url({ protocol: /^https$/ }).max(512).parse(result.stdout.trim());
         return { commitSha: request.expectedHeadSha, remoteBranch: request.headBranch, prUrl: url };
       } catch (error: unknown) {
@@ -426,7 +508,7 @@ export function createProjectGitDriver(options: {
       }
       if (request.type === "pr") {
         const remote = await ownerRemote(cwd);
-        const result = await ghCommand(cwd, ["pr", "list", "--repo", `${remote.owner}/${remote.repo}`, "--state", "open",
+        const result = await ghCommand(["pr", "list", "--repo", `${remote.owner}/${remote.repo}`, "--state", "open",
           "--head", request.headBranch, "--base", request.baseBranch, "--limit", "2", "--json", "url,headRefOid"]);
         const rows = z.array(z.object({ url: z.url({ protocol: /^https$/ }).max(512), headRefOid: GitShaSchema }).strict())
           .max(2).parse(JSON.parse(result.stdout));

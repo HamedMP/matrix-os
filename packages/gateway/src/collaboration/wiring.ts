@@ -293,6 +293,15 @@ export async function createGatewayCollaboration(options: {
   let projectSharing: ProjectSharingService | undefined;
   let projectTransitionCoordinator: ReturnType<typeof createProjectTransitionCoordinator> | undefined;
   let projectGit: ReturnType<typeof createProjectGitBroker> | undefined;
+  let closeProjectGitDriver: (() => Promise<void>) | undefined;
+  function closeProjectGit(): void {
+    const close = closeProjectGitDriver;
+    closeProjectGitDriver = undefined;
+    if (!close) return;
+    void Promise.resolve().then(close).catch((error: unknown) => {
+      console.warn("[collaboration] project Git driver close failed", error instanceof Error ? error.name : "UnknownError");
+    });
+  }
   let projectReadiness: ReturnType<typeof createProjectAccessReadiness> | undefined;
   let projectInventorySource: Pick<ProjectInventoryResourceSource, "listChats" | "getGitSetup"> | undefined;
   let resourceServices: CollaborationResourceServices | undefined;
@@ -346,6 +355,7 @@ export async function createGatewayCollaboration(options: {
     enableProjectGit(input: {
       driver: ProjectGitDriver & {
         resolveOwnerIdentity(input: { ownerId: string; projectId: string }): Promise<ProjectGitOwnerIdentity>;
+        close?(): Promise<void>;
       };
       source: Pick<ProjectInventoryResourceSource, "listChats" | "getGitSetup">;
     }): void {
@@ -370,6 +380,7 @@ export async function createGatewayCollaboration(options: {
       });
       projectReadiness = createProjectAccessReadiness({ repository, source: input.source });
       projectInventorySource = input.source;
+      closeProjectGitDriver = input.driver.close?.bind(input.driver);
     },
     enableSharedResources(input: {
       driver: CollaborationResourceDriver & { close?(): void };
@@ -631,6 +642,7 @@ export async function createGatewayCollaboration(options: {
       closing = true;
       if (cleanupTimer) clearInterval(cleanupTimer);
       closeResourceServices();
+      closeProjectGit();
       const drainingSharedAi = sharedAiRuntime;
       sharedAiRuntime = undefined;
       chatExecutionAdapter = undefined;
@@ -662,6 +674,7 @@ export async function createGatewayCollaboration(options: {
       closing = true;
       if (cleanupTimer) clearInterval(cleanupTimer);
       closeResourceServices();
+      closeProjectGit();
       await controlClient?.shutdown();
       await directSessions.shutdown();
       await ownerRuntimeSessions?.shutdown();
