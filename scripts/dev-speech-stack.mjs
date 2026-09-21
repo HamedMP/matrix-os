@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
+import { pathToFileURL } from "node:url";
 
 const PRIVATE_SPEECH_ENV = [
   "PLATFORM_SPEECH_OPENAI_API_KEY",
   "PLATFORM_SPEECH_SECRET",
 ];
 const SIGNAL_EXIT_CODES = { SIGINT: 130, SIGTERM: 143 };
+export const MAX_ACTIVE_GROUPS = 3;
 const activeGroups = new Map();
 const stopRequest = Promise.withResolvers();
 let requestedStop;
@@ -45,32 +47,55 @@ function waitForClose(child) {
   });
 }
 
+async function terminateGroups(groups) {
+  for (const [pid] of groups) signalGroup(pid, "SIGTERM");
+  await Promise.race([
+    Promise.allSettled(groups.map(([, child]) => waitForClose(child))),
+    new Promise((resolve) => setTimeout(resolve, terminationGraceMs())),
+  ]);
+  // A package-manager parent can exit before tsx/Next descendants. Address
+  // the process group again so those descendants cannot outlive the stack.
+  for (const [pid] of groups) signalGroup(pid, "SIGKILL");
+  await Promise.allSettled(groups.map(([, child]) => waitForClose(child)));
+  for (const [pid, child] of groups) {
+    if (activeGroups.get(pid) === child) activeGroups.delete(pid);
+  }
+}
+
+export async function registerChildGroup(
+  registry,
+  entry,
+  { max = MAX_ACTIVE_GROUPS, terminate = terminateGroups } = {},
+) {
+  if (registry.size >= max) {
+    await terminate([...registry.entries(), entry]);
+    throw new Error("Speech stack child registry capacity exceeded");
+  }
+  registry.set(...entry);
+}
+
 async function terminateAll() {
   if (terminating) return terminating;
-  terminating = (async () => {
-    const groups = [...activeGroups.entries()];
-    for (const [pid] of groups) signalGroup(pid, "SIGTERM");
-    await Promise.race([
-      Promise.allSettled(groups.map(([, child]) => waitForClose(child))),
-      new Promise((resolve) => setTimeout(resolve, terminationGraceMs())),
-    ]);
-    // A package-manager parent can exit before tsx/Next descendants. Address
-    // the process group again so those descendants cannot outlive the stack.
-    for (const [pid] of groups) signalGroup(pid, "SIGKILL");
-    await Promise.allSettled(groups.map(([, child]) => waitForClose(child)));
-    activeGroups.clear();
-  })();
+  terminating = terminateGroups([...activeGroups.entries()]);
   return terminating;
 }
 
-function spawnTask(args, env) {
+async function spawnTask(args, env) {
   const child = spawn("pnpm", args, {
     detached: true,
     env,
     stdio: "inherit",
   });
   if (child.pid === undefined) throw new Error("Failed to start pnpm");
-  activeGroups.set(child.pid, child);
+  await registerChildGroup(activeGroups, [child.pid, child]);
+  child.once("close", () => {
+    if (activeGroups.get(child.pid) !== child) return;
+    // The package-manager leader can close while detached descendants still
+    // hold the process group. Sweep the group before releasing its slot.
+    signalGroup(child.pid, "SIGTERM");
+    signalGroup(child.pid, "SIGKILL");
+    activeGroups.delete(child.pid);
+  });
   return child;
 }
 
@@ -88,9 +113,6 @@ function requestStop(signal) {
   stopRequest.resolve(requestedStop);
 }
 
-process.once("SIGINT", () => requestStop("SIGINT"));
-process.once("SIGTERM", () => requestStop("SIGTERM"));
-
 async function run() {
   if (process.env.PLATFORM_SPEECH_ENABLED !== "true") {
     console.error("PLATFORM_SPEECH_ENABLED=true is required; see docs/dev/platform-speech-local.md");
@@ -98,7 +120,7 @@ async function run() {
   }
 
   const isolatedEnv = withoutSpeechSecrets(process.env);
-  const build = spawnTask([
+  const build = await spawnTask([
     "--filter", "@matrix-os/observability",
     "--filter", "@matrix-os/brand",
     "--filter", "@matrix-os/kernel",
@@ -126,13 +148,13 @@ async function run() {
 
   const gatewayPort = process.env.MATRIX_SPEECH_GATEWAY_PORT ?? process.env.PORT ?? "4000";
   const shellPort = process.env.MATRIX_SPEECH_SHELL_PORT ?? process.env.SHELL_PORT ?? "3000";
-  const platform = spawnTask(["--filter", "@matrix-os/platform", "dev"], process.env);
-  const gateway = spawnTask(["--filter", "@matrix-os/gateway", "dev"], {
+  const platform = await spawnTask(["--filter", "@matrix-os/platform", "dev"], process.env);
+  const gateway = await spawnTask(["--filter", "@matrix-os/gateway", "dev"], {
     ...isolatedEnv,
     PORT: gatewayPort,
     SHELL_PORT: shellPort,
   });
-  const shell = spawnTask(["--filter", "./shell", "dev"], {
+  const shell = await spawnTask(["--filter", "./shell", "dev"], {
     ...isolatedEnv,
     PORT: shellPort,
   });
@@ -149,10 +171,18 @@ async function run() {
   return exitCode;
 }
 
-try {
-  process.exitCode = await run();
-} catch (error) {
-  console.error("Speech stack launcher failed:", error instanceof Error ? error.message : String(error));
-  await terminateAll();
-  process.exitCode = requestedStop?.code ?? 1;
+async function main() {
+  process.once("SIGINT", () => requestStop("SIGINT"));
+  process.once("SIGTERM", () => requestStop("SIGTERM"));
+  try {
+    process.exitCode = await run();
+  } catch (error) {
+    console.error("Speech stack launcher failed:", error instanceof Error ? error.message : String(error));
+    await terminateAll();
+    process.exitCode = requestedStop?.code ?? 1;
+  }
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  await main();
 }

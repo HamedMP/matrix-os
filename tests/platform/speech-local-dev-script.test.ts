@@ -4,6 +4,7 @@ import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises
 import { tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { MAX_ACTIVE_GROUPS, registerChildGroup } from "../../scripts/dev-speech-stack.mjs";
 
 const launcher = resolve("scripts/dev-speech-stack.sh");
 const temporaryDirectories: string[] = [];
@@ -47,7 +48,10 @@ async function invocations(logPath: string): Promise<Invocation[]> {
   }
 }
 
-async function setupFakePnpm(options: { failRole?: string; failCode?: number } = {}) {
+async function setupFakePnpm(options: {
+  failRole?: string;
+  failCode?: number;
+} = {}) {
   const directory = await mkdtemp(join(tmpdir(), "matrix-speech-launcher-test-"));
   temporaryDirectories.push(directory);
   const binDirectory = join(directory, "bin");
@@ -176,4 +180,24 @@ describe("local speech stack launcher", () => {
     const taskPids = calls.flatMap((call) => [call.pid, call.descendantPid].filter((pid): pid is number => Boolean(pid)));
     await waitFor(async () => taskPids.every((pid) => !isAlive(pid)));
   }, 10_000);
+
+  it("terminates every known group before rejecting a registry overflow", async () => {
+    expect(MAX_ACTIVE_GROUPS).toBe(3);
+    const registry = new Map<number, object>([[101, {}], [202, {}], [303, {}]]);
+    const incoming: [number, object] = [404, {}];
+    let terminatedPids: number[] = [];
+    let terminationFinished = false;
+
+    await expect(registerChildGroup(registry, incoming, {
+      terminate: async (groups: Array<[number, object]>) => {
+        terminatedPids = groups.map(([pid]) => pid);
+        await Promise.resolve();
+        terminationFinished = true;
+      },
+    })).rejects.toThrow("Speech stack child registry capacity exceeded");
+
+    expect(terminationFinished).toBe(true);
+    expect(terminatedPids).toEqual([101, 202, 303, 404]);
+    expect([...registry.keys()]).toEqual([101, 202, 303]);
+  });
 });
