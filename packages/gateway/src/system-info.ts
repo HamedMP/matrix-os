@@ -1,4 +1,4 @@
-import { RUNNING_RUNTIME_COMPATIBILITY, type RuntimeCompatibility } from "@matrix-os/contracts";
+import { COLLABORATION_DIRECT_PROTOCOL_VERSION, RUNNING_RUNTIME_COMPATIBILITY, type RuntimeCompatibility } from "@matrix-os/contracts";
 import { describeGatewayCollaborationConfiguration } from "./collaboration/config.js";
 import {
   closeSync,
@@ -177,6 +177,7 @@ export interface SystemInfo {
   };
   capabilities: {
     collaboration: boolean;
+    collaborationDirectProtocolVersion: number;
   };
   build: {
     sha: string;
@@ -434,6 +435,7 @@ export function getSystemInfo(
       // construct the real collaboration runtime (S20 / T099).
       collaboration: kernelOverrides.collaborationConfigured
         ?? describeGatewayCollaborationConfiguration(process.env).configured,
+      collaborationDirectProtocolVersion: COLLABORATION_DIRECT_PROTOCOL_VERSION,
     },
     build: {
       sha: process.env.MATRIX_BUILD_SHA ?? "unknown",
