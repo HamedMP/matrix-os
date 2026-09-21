@@ -133,6 +133,84 @@ describe("shared Chat AI controls", () => {
     expect(screen.getByLabelText("Message Chat")).toBeDisabled();
   });
 
+  it("shows reconnect guidance only for the owner readiness state", async () => {
+    const ownerScope = { ...baseScope, role: "owner" as const,
+      capabilities: { read: true, discuss: true, manageMembers: true, requestAi: true } };
+    const api = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async () => ({
+        requests: [], approvals: [],
+        capability: { status: "owner_reconnect_required", effectiveSelection: defaultSelection },
+        resourceRevision: "4",
+      })),
+      post: vi.fn(), delete: vi.fn(),
+    };
+    render(<SharedChatControls api={api} scope={ownerScope} actorId="user_owner"
+      resourceRevision="4" draft={{ text: "Human update", mode: "discussion" }} updateDraft={vi.fn()}
+      changeDraftMode={vi.fn()} discussionSending={false} discussionError={false}
+      sendDiscussion={vi.fn(async () => undefined)} refreshVersion={0} />);
+
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Reconnect your Claude account or API key in Settings → Agents & providers to resume AI requests.",
+    );
+    expect(screen.getByLabelText("Message Chat")).toBeDisabled();
+    expect(screen.getByLabelText("Message Chat")).toHaveAttribute("placeholder", "AI is unavailable");
+    expect(screen.queryByRole("button", { name: "Ask AI" })).toBeNull();
+    expect(api.post).not.toHaveBeenCalled();
+  });
+
+  it("keeps the owner reconnect guidance when a later refresh fails", async () => {
+    const ownerScope = { ...baseScope, role: "owner" as const,
+      capabilities: { read: true, discuss: true, manageMembers: true, requestAi: true } };
+    const api = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn()
+        .mockResolvedValueOnce({
+          requests: [], approvals: [],
+          capability: { status: "owner_reconnect_required", effectiveSelection: defaultSelection },
+          resourceRevision: "4",
+        })
+        .mockRejectedValueOnce(new Error("offline")),
+      post: vi.fn(), delete: vi.fn(),
+    };
+    const { rerender } = render(<SharedChatControls api={api} scope={ownerScope} actorId="user_owner"
+      resourceRevision="4" draft={{ text: "", mode: "ai" }} updateDraft={vi.fn()}
+      changeDraftMode={vi.fn()} discussionSending={false} discussionError={false}
+      sendDiscussion={vi.fn(async () => undefined)} refreshVersion={0} />);
+    expect(await screen.findByRole("status")).toHaveTextContent("Agents & providers");
+
+    rerender(<SharedChatControls api={api} scope={ownerScope} actorId="user_owner"
+      resourceRevision="4" draft={{ text: "", mode: "ai" }} updateDraft={vi.fn()}
+      changeDraftMode={vi.fn()} discussionSending={false} discussionError={false}
+      sendDiscussion={vi.fn(async () => undefined)} refreshVersion={1} />);
+    await waitFor(() => expect(api.get).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Reconnect your Claude account or API key in Settings → Agents & providers to resume AI requests.",
+    );
+    expect(screen.getByLabelText("Message Chat")).toBeDisabled();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("keeps the generic unavailable copy for collaborators even when the owner must reconnect", async () => {
+    const api = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async () => ({
+        requests: [], approvals: [],
+        capability: { status: "unavailable", effectiveSelection: defaultSelection },
+        resourceRevision: "4",
+      })),
+      post: vi.fn(), delete: vi.fn(),
+    };
+    render(<SharedChatControls api={api} scope={baseScope} actorId="user_editor"
+      resourceRevision="4" draft={{ text: "", mode: "ai" }} updateDraft={vi.fn()}
+      changeDraftMode={vi.fn()} discussionSending={false} discussionError={false}
+      sendDiscussion={vi.fn(async () => undefined)} refreshVersion={0} />);
+
+    expect(await screen.findByRole("status")).toHaveTextContent("AI requests are unavailable.");
+    expect(screen.queryByText(/Agents & providers/)).toBeNull();
+    expect(screen.getByLabelText("Message Chat")).toBeDisabled();
+  });
+
   it("renders immutable queue order and scopes editor controls to their own requests", async () => {
     const api = {
       baseUrl: "https://app.matrix-os.com",
