@@ -6,7 +6,7 @@
  * cookie or generic gateway login participates.
  */
 import { generateKeyPairSync, randomUUID } from "node:crypto";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { COLLABORATION_DIRECT_PROTOCOL_VERSION } from "@matrix-os/contracts";
 import {
   ed25519PrivateKeyFromSeed,
@@ -90,6 +90,7 @@ describe("S05 direct sessions on the home", () => {
   let service: DirectSessionService;
   let authority: CollaborationAuthority;
   let controlFresh: boolean;
+  let admitted: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
     clock = new Date(now);
@@ -124,7 +125,8 @@ describe("S05 direct sessions on the home", () => {
       replay: new DirectReplayCache({ maxEntries: 4, now: () => clock }),
       now: () => clock,
     });
-    service = new DirectSessionService({ verifier, authority, repository, now: () => clock, limits: { perHome: 6, perScope: 5, perActorScope: 2 } });
+    admitted = vi.fn();
+    service = new DirectSessionService({ verifier, authority, repository, now: () => clock, limits: { perHome: 6, perScope: 5, perActorScope: 2 }, onAdmitted: admitted });
   });
 
   afterEach(async () => {
@@ -139,6 +141,19 @@ describe("S05 direct sessions on the home", () => {
     expect(Date.parse(session.expiresAt) - Date.parse(session.issuedAt)).toBe(300_000);
     expect(Date.parse(session.evidenceExpiresAt) - Date.parse(session.issuedAt)).toBeLessThanOrEqual(20_000);
     await expect(service.create(body)).rejects.toMatchObject({ code: "replayed" });
+  });
+
+  it("notifies revocation enforcement only after a fresh session creation or renewal succeeds", async () => {
+    const { body, key } = sessionRequest(collaborationActors.editor);
+    const session = await service.create(body);
+    expect(admitted).toHaveBeenCalledTimes(1);
+    expect(admitted).toHaveBeenLastCalledWith(session);
+    await expect(service.create(body)).rejects.toMatchObject({ code: "replayed" });
+    expect(admitted).toHaveBeenCalledTimes(1);
+    const fresh = sessionRequest(collaborationActors.editor, key);
+    const renewed = await service.renew(session.id, { clientRequestId: randomUUID(), signedTicket: fresh.body.signedTicket });
+    expect(admitted).toHaveBeenCalledTimes(2);
+    expect(admitted).toHaveBeenLastCalledWith(renewed);
   });
 
   it("rejects tampering: audience, unknown key, wrong runtime, stale generation, bad origin, wrong proof key, old protocol", async () => {
