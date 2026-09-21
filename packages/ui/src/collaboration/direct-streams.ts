@@ -25,6 +25,15 @@ const TERMINAL_HEARTBEAT_INTERVAL_MS = 10_000;
  * The home heartbeats every event stream every 10s, so a socket that has been
  * silent this long lost its peer without a close frame (network partition).
  * The same window bounds how long a socket may leave sends undrained.
+ *
+ * A terminal socket is legitimately silent while the shared terminal is idle:
+ * the home pushes terminal frames only on output or a state change, so silence
+ * on its own is not evidence of a partition. The event stream of the same scope
+ * reaches the same home over the same connection, so its last frame is the
+ * peer's liveness for every stream on that scope; when nothing on the scope has
+ * been heard from inside the window, the terminal socket lost that peer too and
+ * is re-dialed with a fresh ticket. A scope with no event stream keeps the
+ * undrained-send rule as its only silence signal.
  */
 const STALE_STREAM_TTL_MS = 45_000;
 const STALE_SWEEP_INTERVAL_MS = 15_000;
@@ -48,10 +57,15 @@ type Purpose = "events" | "terminal";
 
 interface StreamHandle {
   stop(): void;
+  purpose: Purpose;
   /** Last successful open or inbound frame (ms since epoch); drives cap eviction. */
   lastTouched(): number;
-  /** Drops a socket that lost its peer without a close frame so it reconnects with a fresh ticket. */
-  sweep(now: number): void;
+  /**
+   * Drops a socket that lost its peer without a close frame so it reconnects with a
+   * fresh ticket. `peerTouchedAt` is the scope's newest event-stream frame, or null
+   * when the scope has no event stream to speak for the peer.
+   */
+  sweep(now: number, peerTouchedAt: number | null): void;
 }
 
 export function createDirectStreams(deps: {
@@ -73,9 +87,23 @@ export function createDirectStreams(deps: {
   /** Every registered stream, keyed by scope; entries leave on unsubscribe, scope close, eviction or dispose. */
   const subscriptions = new Map<string, Map<() => void, StreamHandle>>();
   let sweepTimer: ReturnType<typeof setInterval> | undefined;
+  /** Newest inbound frame across a scope's event streams: the peer's liveness for the whole scope. */
+  const peerTouchedAt = (streams: Map<() => void, StreamHandle>) => {
+    let newest: number | null = null;
+    for (const handle of streams.values()) {
+      if (handle.purpose !== "events") continue;
+      const touched = handle.lastTouched();
+      if (newest === null || touched > newest) newest = touched;
+    }
+    return newest;
+  };
   const sweepStale = () => {
     const now = Date.now();
-    for (const streams of subscriptions.values()) for (const handle of streams.values()) handle.sweep(now);
+    for (const streams of subscriptions.values()) {
+      // Read the scope's peer liveness before any handle re-dials and resets its own clock.
+      const peer = peerTouchedAt(streams);
+      for (const handle of streams.values()) handle.sweep(now, peer);
+    }
   };
   const syncSweepTimer = () => {
     if (subscriptions.size === 0) {
@@ -139,13 +167,16 @@ export function createDirectStreams(deps: {
       socket = null;
     };
     /** A partition leaves the socket open with no frames or undrained sends; treat it as closed and dial again. */
-    const sweep = (now: number) => {
+    const sweep = (now: number, peerTouchedAt: number | null) => {
       if (closed || !socket) return;
       const buffered = (socket as { bufferedAmount?: number }).bufferedAmount ?? 0;
       if (buffered > 0 && buffered >= lastBuffered) stalledSince ||= now;
       else stalledSince = 0;
       lastBuffered = buffered;
-      const silent = purpose === "events" && now - touchedAt > STALE_STREAM_TTL_MS;
+      // An event stream speaks for itself; a terminal stream is judged by the scope's
+      // event stream, which is the only frame the home is obliged to keep sending.
+      const heardFrom = purpose === "events" ? touchedAt : peerTouchedAt;
+      const silent = heardFrom !== null && now - heardFrom > STALE_STREAM_TTL_MS;
       const stalled = stalledSince !== 0 && now - stalledSince > STALE_STREAM_TTL_MS;
       if (!silent && !stalled) return;
       console.warn("[collaboration-direct] stale stream dropped", purpose, silent ? "silent" : "stalled");
@@ -216,7 +247,7 @@ export function createDirectStreams(deps: {
       }
     };
     void connect();
-    return { stop, lastTouched: () => touchedAt, sweep };
+    return { stop, purpose, lastTouched: () => touchedAt, sweep };
   };
 
   const subscribeEvents = (scopeId: string, handlers: DirectEventHandlers): (() => void) => {
