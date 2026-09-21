@@ -175,3 +175,27 @@ client is gone and, in the connect callback, destroy the upstream instead of wri
 `collaboration-terminal-websocket`, `collaboration-terminal-control` → **67/67 across 8 files**.
 `bun run typecheck` exit 0; `bun run check:patterns` 0 violations, 5 pre-existing warnings. No
 React file changed, so react-doctor does not apply.
+
+## Review round: restacked head (2026-09-21, #1806 at `afe9d98dd`)
+
+Greptile scored **4/5**. The single unresolved thread is the previous round's
+"Terminal liveness is masked" and GitHub marks it **outdated**: it is already fixed on this head.
+Evidence in `packages/ui/src/collaboration/direct-streams.ts`: the sweep signature is
+`sweep(now: number)` (line 152), silence is measured against the socket's own last frame
+(`now - touchedAt > STALE_STREAM_TTL_MS`, line 160), and the scope-wide peer time is gone from the
+sweep loop (line 87). Fixed by `50468e4a6` / `64e54cd6a`, with the terminal-only regression in
+`afe9d98dd`.
+
+**Verdict: "a validly parsed key rotation configuration can still abort the entire platform during
+startup".** Real, and not this layer: it is `packages/platform/src/collaboration/ticket-issuer.ts`
+on `124/s05`. The deadline fix underneath us (loader lines 104-118) closed the mistimed-retirement
+path, but the key **count** is still checked per map at load and in total at construction:
+`parseKeyMap` caps `keys` at 8 and `retired` at 8 independently (lines 122-133), while the
+constructor throws `Too many ticket signing keys` once `published.length > 8` (line 188), counting
+active plus retired together. Measured on this head with a throwaway probe: a keyring of 5 active
+plus 5 retired keys, every retirement recorded and in the past, is accepted by
+`loadTicketSigningKeyring` and then throws in the constructor. `createPlatformCollaborationDirect`
+constructs the issuer without catching (`direct-wiring.ts:66`) and platform bootstrap awaits it
+(`bootstrap.ts:118-123`), so that configuration aborts startup instead of degrading to an
+unavailable ticket route. Routed to the `124/s05` owner; the loader should apply the combined cap
+it already enforces per map.
