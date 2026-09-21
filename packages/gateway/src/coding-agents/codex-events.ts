@@ -2,6 +2,7 @@ import { codexToolOutput, coarseToolOutputText } from "./codex-tool-output.mjs";
 import { z } from "zod/v4";
 import {
   AgentThreadEventSchema,
+  ChatSubagentSchema,
   AgentToolPreviewSchema,
   AgentToolDetailSchema,
   CanonicalChatToolOutputTextSchema,
@@ -104,6 +105,13 @@ const CodexExecEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("error") }).passthrough(),
 ]);
 const MatrixCodexRecordSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("matrix.codex.subagent.activity"), activityId: CodexItemIdSchema, subagent: ChatSubagentSchema.extend({
+    name: ChatSubagentSchema.shape.name.catch("Subagent"),
+    task: ChatSubagentSchema.shape.task.catch(undefined),
+    result: ChatSubagentSchema.shape.result.catch(undefined),
+    activity: ChatSubagentSchema.shape.activity.catch(undefined),
+    parentName: ChatSubagentSchema.shape.parentName.catch(undefined),
+  }) }).strict(),
   z.object({
     type: z.literal("matrix.codex.approval.resolved"),
     approvalId: ApprovalIdSchema,
@@ -227,6 +235,9 @@ function appServerRecordEvents(
   context: CodexEventContext,
   record: z.infer<typeof MatrixCodexRecordSchema>,
 ): AgentThreadEvent[] {
+  if (record.type === "matrix.codex.subagent.activity") {
+    return [event(context, { type: "subagent.activity", activityId: record.activityId, subagent: record.subagent })];
+  }
   if (record.type === "matrix.codex.approval.resolved") {
     return [event(context, { type: "approval.resolved", approvalId: record.approvalId, decision: record.decision })];
   }

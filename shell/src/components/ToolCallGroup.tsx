@@ -1,5 +1,6 @@
 "use client";
 
+import { ConversationSubagentActivity } from "@matrix-os/ui";
 import type { ChatMessage } from "@/lib/chat";
 import {
   Collapsible,
@@ -50,6 +51,21 @@ function ToolStatus({ tool }: { tool: ChatMessage }) {
 }
 
 export function ToolCallGroup({ tools }: ToolCallGroupProps) {
+  if (!tools.some((tool) => tool.toolDisplay?.subagent)) return <OrdinaryToolCallGroup tools={tools} />;
+  const sections: ChatMessage[][] = [];
+  for (const tool of tools) {
+    const previous = sections.at(-1);
+    if (tool.toolDisplay?.subagent || !previous || previous[0]?.toolDisplay?.subagent) sections.push([tool]);
+    else previous.push(tool);
+  }
+  return <div className="flex min-w-0 flex-col gap-1.5">
+    {sections.map((section) => section[0].toolDisplay?.subagent
+      ? <ConversationSubagentActivity key={section[0].id} agent={section[0].toolDisplay.subagent} />
+      : <OrdinaryToolCallGroup key={section[0].id} tools={section} />)}
+  </div>;
+}
+
+function OrdinaryToolCallGroup({ tools }: ToolCallGroupProps) {
   const statusTool = tools.find((tool) => tool.toolDisplay?.state === "running" || (!tool.toolDisplay && tool.content.startsWith("Using ")))
     ?? tools.find((tool) => tool.toolDisplay?.state === "failed") ?? tools[0];
   if (!statusTool) return null;

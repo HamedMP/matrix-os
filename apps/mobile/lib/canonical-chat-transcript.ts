@@ -101,15 +101,18 @@ export function buildTranscript(detail: CanonicalChatDetailResponse | null): Tra
   // is nothing to render at all during that window, so a fast final response
   // looks like it appeared in one shot.
   for (const run of detail.runs) {
-    if (TERMINAL_RUN_STATUSES.has(run.status) || runIdsWithAssistantMessage.has(run.id)) continue;
+    if (runIdsWithAssistantMessage.has(run.id)) continue;
+    const activities = canonicalChatToolActivities(run, detail.activities);
+    const isRunning = !TERMINAL_RUN_STATUSES.has(run.status);
+    if (!isRunning && !activities.some((activity) => activity.subagent)) continue;
     transcript.unshift({
       id: `run-placeholder-${run.id}`,
       role: "assistant",
       text: "",
       toolCalls: [],
-      activities: canonicalChatToolActivities(run, detail.activities),
+      activities,
       elapsedSeconds: undefined,
-      isRunning: true,
+      isRunning,
       createdAt: Date.parse(run.startedAt ?? run.createdAt),
     });
   }

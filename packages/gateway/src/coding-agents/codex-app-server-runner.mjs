@@ -1,3 +1,4 @@
+import { createCodexSubagentActivity } from "./codex-subagent-activity.mjs";
 import { tryLoadToolOutputKey } from "./protected-tool-output.mjs";
 import { codexToolHasPrivateContext, codexToolOutput } from "./codex-tool-output.mjs";
 import { createHash } from "node:crypto";
@@ -839,6 +840,8 @@ async function handleItemLifecycle(raw) {
   return true;
 }
 
+const subagentActivity = createCodexSubagentActivity();
+
 async function handleProviderMessage(raw) {
   const response = RpcResponseSchema.safeParse(raw);
   if (raw?.method === undefined && response.success && pendingRpc.has(response.data.id)) {
@@ -852,6 +855,15 @@ async function handleProviderMessage(raw) {
   // A deadline settles this execution once. Do not accept late tool results,
   // approvals or a final answer while interruption/shutdown is in flight.
   if (executionExpired || !activeTurn) {
+    rejectCodexServerRequest(raw, sendProvider, -32000);
+    return;
+  }
+  for (const activity of subagentActivity.project(raw, nativeThreadId, activeNativeTurnId)) {
+    await persist(activity);
+    executionWatchdog.progress(activity.activityId);
+  }
+  // Child output is evidence for its own row, never the parent assistant response.
+  if (raw?.params?.threadId && raw.params.threadId !== nativeThreadId) {
     rejectCodexServerRequest(raw, sendProvider, -32000);
     return;
   }
@@ -1221,6 +1233,7 @@ async function runTurn(threadId, turn) {
     activeTurnOutcome = resolve;
   });
   activeTurn = true;
+  subagentActivity.reset();
   executionExpired = false;
   activeTurnTokenUsage = undefined;
   try {

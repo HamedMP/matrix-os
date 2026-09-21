@@ -1,3 +1,4 @@
+import { projectChatSubagent } from "@matrix-os/contracts";
 import { canonicalChatToolDetail } from "@matrix-os/contracts";
 import { chatAgentAttribution } from "@matrix-os/ui";
 import { canonicalChatApprovals, canonicalChatInputs } from "@matrix-os/contracts";
@@ -463,14 +464,15 @@ function runPresentation(
       const detail = canonicalChatToolDetail(activity.detail ?? activity.summary, toolOutput.get(activity.activityId));
       activityGroups.push({
         kind: "activity-group",
-        id: `${run.id}:activities:${activity.id}`,
+        id: `${run.id}:activities:${activity.subagent ? activity.activityId : activity.id}`,
         timestamp: Date.parse(entry.occurredAt),
         ...(entry.sequence !== undefined ? { sequence: entry.sequence } : {}),
         activities: [{
-          id: activity.id,
+          id: activity.subagent ? activity.activityId : activity.id,
           kind: activity.kind,
           state: activityState(activity.status),
           label: activity.label,
+          ...(activity.subagent ? { subagent: projectChatSubagent(activity.subagent, run.status) } : {}),
           ...(activity.preview ? {
             preview: activity.preview,
             previewKind: activity.previewKind,

@@ -2,3 +2,5 @@ export function codexToolOutput(item: Record<string, unknown>, privateContext?: 
 export function codexToolHasPrivateContext(item: Record<string, unknown>): boolean;
 
 export function coarseToolOutputText(text: string): string;
+
+export function safeCodexSubagentText(value: unknown, limit: number): string | undefined;

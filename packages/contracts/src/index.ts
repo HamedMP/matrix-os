@@ -1422,3 +1422,4 @@ export * from "#file-download";
 export * from "#custom-mcp-availability";
 
 export { normalizeTerminalSnapshot } from "#terminal-snapshot";
+export { chatSubagentPresentation, projectChatSubagent, ChatSubagentSchema, type ChatSubagent } from "#chat-subagent";
