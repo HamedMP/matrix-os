@@ -41,3 +41,23 @@ Tests were committed ahead of the implementation in `f458ad74f`, `4c17e63c3`, `a
 - **Transactions and locks:** scope/member checks and catalog/upload mutations run in owner Postgres transactions. Upload stage rows lock with `FOR UPDATE`; final commit verifies every part checksum and the expected catalog revision. The filesystem write occurs during the owner transaction, so a rare later DB failure can leave a file ahead of its catalog revision; S18 reconciliation must retain or repair this orphan state rather than misreport success. App bridge writes share the caller's owner transaction, and the real Postgres test proves rollback.
 - **Resource limits and cleanup:** upload size/part count and concurrent stage/commit limits are bounded by contract and service; expired stages and terminal rows are swept, owner temp files are swept with symlink-safe `lstat`, and timers close on runtime shutdown. The stream reader has an exact byte cap and abort path.
 - **Deferred:** T063 sync-client transfer/CLI mounts, S09 AI request routes, S15 visual parity, S18 cutover, and S19 acceptance matrix remain open. No paid service, deployment or publication was performed.
+
+## 2026-09-21 security follow-up: file and app incarnations
+
+**Layer:** `124/s12-app`, parent `124/s12` at `151affc4b5b8133470348fa753a6125336cbb8c9`. **Code commit:** `a2e8d7e9abe82aa05cfff56738bb9a3175133e3a`. The layer before this receipt is 16 files, +456/−33 against its parent, within the 3,000-addition/50-file limit. No Graphite restack or push was performed for this follow-up.
+
+The file content route now passes the catalog incarnation to the owner file driver. The driver opens the file with `O_NOFOLLOW`, compares the identity from that open descriptor before streaming, and rejects a deleted/recreated file under the old catalog ID. The filesystem fingerprint is stable for the current inode and refreshes after writes and renames. App identity uses the registry row's full-precision `created_at` and slug. Standalone and project app descriptions, reads, mutations, inventory, and asset reads reject an old share after same-slug unregister/re-register. Asset reads recheck identity after the descriptor is opened and cancel a stale stream.
+
+| Validation | Recorded result |
+| --- | --- |
+| RED `pnpm exec vitest run tests/gateway/direct-resource-policy-postgres.test.ts -t 'does not serve a new filesystem incarnation' --maxWorkers=2` on real Postgres | The old file ID returned 200; expected 404. |
+| GREEN same targeted real Postgres test | 1/1 passed. |
+| RED same suite focused on same-slug app recreation | Both old standalone and project shares returned 200; expected 503. |
+| GREEN same app tests and the post-open replacement race on PGlite | 4 focused tests passed. |
+| `pnpm exec vitest run tests/gateway/direct-resource-policy-postgres.test.ts --maxWorkers=2` with protected real Postgres env | **23/23 passed**, 66.63 seconds. This ran after the file and app route/adapter fixes. |
+| `pnpm exec vitest run tests/gateway/app-db-registry.test.ts tests/gateway/collaboration-project-inventory-source.test.ts tests/gateway/collaboration-owner-resource-driver.test.ts --maxWorkers=2` | **18/18 passed** after the full-precision registry identity change. The registry test proves same-slug reinstall changes identity while ordinary upsert retains it. |
+| `bun run typecheck` | Exit 0 twice, latest after the registry timestamp change. |
+| `bun run check:patterns` | Exit 0; 0 violations, 5 existing warnings. |
+| `git diff --check` | Clean before the code commit and receipt commit. |
+
+The full real Postgres route suite preceded the final registry timestamp precision and inventory-wrapper edits; those edits were covered by focused registry/inventory tests and the full typecheck. S15 must register standalone app catalog entries with `appRegistryIncarnation` and prove that production route integration on real Postgres. This is an open release gate owned by the coordinator. Live owner-host probes, cross-host transfer, interactive three-surface parity, and S18 cutover remain unrun; no credentials, paid service, deployment, or external publication were used.
