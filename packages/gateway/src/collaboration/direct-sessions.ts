@@ -478,8 +478,11 @@ export class DirectSessionService {
 
 /** An old client is told to upgrade before any other validation runs. */
 function assertProtocolVersion(request: unknown): void {
-  const version = (request as { signedTicket?: { ticket?: { protocolVersion?: unknown } } } | null)?.signedTicket?.ticket?.protocolVersion;
-  if (typeof version === "number" && version !== COLLABORATION_DIRECT_PROTOCOL_VERSION) {
+  const candidate = request as { protocolVersion?: unknown; signedTicket?: { ticket?: { protocolVersion?: unknown } } } | null;
+  const outerVersion = candidate?.protocolVersion;
+  const ticketVersion = candidate?.signedTicket?.ticket?.protocolVersion;
+  if ((typeof outerVersion === "number" && outerVersion !== COLLABORATION_DIRECT_PROTOCOL_VERSION)
+    || (typeof ticketVersion === "number" && ticketVersion !== COLLABORATION_DIRECT_PROTOCOL_VERSION)) {
     throw new DirectAuthError("upgrade_required", "Collaboration protocol version is not supported");
   }
 }
