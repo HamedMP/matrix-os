@@ -12,6 +12,7 @@
  */
 import { randomUUID } from "node:crypto";
 import {
+  COLLABORATION_DIRECT_LIMITS,
   COLLABORATION_DIRECT_PROTOCOL_VERSION,
   type CollaborationControlAck,
   type CollaborationControlAssertion,
@@ -27,13 +28,22 @@ const DEFAULT_DELIVERY_INTERVAL_MS = 1_000;
 const DEFAULT_MAX_DELIVERY_ATTEMPTS = 8;
 const MAX_BACKOFF_MS = 60_000;
 const DEFAULT_CLAIM_LEASE_MS = 30_000;
+/** Lifetime of a generic non-member assertion for an organization outside the runtime owner's tenancy. */
+const GENERIC_DENIAL_TTL_MS = COLLABORATION_DIRECT_LIMITS.organizationEvidenceTtlSeconds * 1_000;
 
 export type CollaborationControlTransport = (runtimeId: string, assertion: CollaborationControlAssertion) => Promise<void>;
 
 export interface CollaborationControlAuthority {
   fence(input: { organizationId?: string; actorId?: string; scopeId?: string; generation: number }): Promise<CollaborationDenial & { denialId: string }>;
   acknowledge(authenticatedRuntimeId: string, ack: CollaborationControlAck): Promise<{ completedDenialIds: string[] }>;
-  assertActors(runtimeId: string, actors: readonly { organizationId: string; actorId: string }[]): Promise<CollaborationControlAssertion[]>;
+  /**
+   * Batched membership assertions for one authenticated runtime. Resolution is
+   * confined to organizations the runtime's owner currently belongs to: for any
+   * other organization every actor reads as a generic non-member and the
+   * projection is never consulted for those actors, so a home cannot use this
+   * route as a cross-tenant membership oracle.
+   */
+  assertActors(runtime: { runtimeId: string; ownerId: string }, actors: readonly { organizationId: string; actorId: string }[]): Promise<CollaborationControlAssertion[]>;
   describe(denialId: string): Promise<(CollaborationDenial & { denialId: string }) | null>;
   describeOutbox(denialId: string): Promise<DenialRuntimeRecord[]>;
   listPending(limit?: number): Promise<Array<CollaborationDenial & { denialId: string }>>;
@@ -207,14 +217,27 @@ export function createCollaborationControlAuthority(options: {
       });
       return { completedDenialIds };
     },
-    async assertActors(_runtimeId, actors) {
+    async assertActors(runtime, actors) {
       if (actors.length > COLLABORATION_ASSERTION_BATCH_LIMIT) throw new Error("Assertion batch exceeds the limit");
       if (!options.projection) throw new Error("No membership projection is registered");
+      const projection = options.projection;
       const requestStartedAt = now();
       const unique = new Map<string, { organizationId: string; actorId: string }>();
       for (const actor of actors) unique.set(`${actor.organizationId}\u0000${actor.actorId}`, actor);
+      // Tenant boundary first: the runtime owner's own membership decides, per organization,
+      // whether any actor there may be resolved at all.
+      const organizationIds = [...new Set([...unique.values()].map((actor) => actor.organizationId))];
+      const ownerMembership = new Map<string, MembershipAssertion>();
+      await Promise.all(organizationIds.map(async (organizationId) => {
+        ownerMembership.set(organizationId, await projection.assert({ organizationId, actorId: runtime.ownerId, requestStartedAt }));
+      }));
+      const expiresAt = new Date(requestStartedAt.getTime() + GENERIC_DENIAL_TTL_MS);
       const results = await Promise.all([...unique.values()].map(async (actor) => {
-        const assertion = await options.projection!.assert({ ...actor, requestStartedAt });
+        const owner = ownerMembership.get(actor.organizationId);
+        const assertion = owner?.member
+          ? (actor.actorId === runtime.ownerId ? owner : await projection.assert({ ...actor, requestStartedAt }))
+          // Generic denial: no epoch, no policy, no lookup for the actor.
+          : { member: false, membershipEpoch: 0, aiSubmission: "owner_only" as const, requestStartedAt, expiresAt };
         return {
           protocolVersion: COLLABORATION_DIRECT_PROTOCOL_VERSION,
           type: "membership_assertion" as const,

@@ -160,7 +160,7 @@ export function createPlatformOrganizationRoutes(options: {
     if (!request) return safeJson(c, "Invalid request", 422);
     try {
       for (const actor of request.actors) options.projection.touch(actor.organizationId);
-      const assertions = await options.controlAuthority.assertActors(runtime.runtimeId, request.actors);
+      const assertions = await options.controlAuthority.assertActors({ runtimeId: runtime.runtimeId, ownerId: runtime.ownerId }, request.actors);
       c.header("Cache-Control", "no-store");
       return c.json(assertions);
     } catch (error: unknown) {
