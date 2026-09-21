@@ -216,3 +216,16 @@ destroyed and the counts back at zero including after a repeated teardown.
 Gates: `collaboration-direct-upgrade` **4/4** (1/4 RED), plus relay, websocket, wiring,
 preview-terminal-flow and app-session-runtime-routing — **37/37**. `bun run typecheck`
 exit 0; `bun run check:patterns` 0 violations, 5 inherited warnings.
+
+## Greptile round 3 (2026-09-21, PR #1803)
+
+**#1803 (`124/s05-gateway`)** — RED `test(collaboration): expose control frames applied after a terminated stream`; GREEN `fix(collaboration): drop queued control frames once the stream is terminated`.
+
+- **Closed stream processed queued frames**: a failed frame closed the socket but resolved the shared `inbound` chain, so frames already queued behind it still ran `applyFrame` and could revoke sessions, advance the fence and acknowledge after the stream was terminated; the queue was also unbounded. A per-stream `terminated` flag now refuses every queued and later frame before `applyFrame`, set by a rejected frame, by a backlog overflow and by `close()`. Pending frames are capped at `MAX_PENDING_CONTROL_FRAMES` (128, exposed as a static for tests); overflow tears the stream down so the reconnect re-registers, and denials that were never acknowledged are redelivered by the platform. Tests: an invalid frame between two denials leaves only the first denial applied with exactly one acknowledgement, and frames arriving after termination are refused with no revoke, no fence move and no ack; a chain blocked on grant cleanup and filled to the cap refuses the next frame with a backlog error, closes the socket, and acknowledges only the frame already in flight.
+- **Already fixed on the current head (evidence, no change)**: ordered application of control frames remains the round-2 behaviour at `control-client.ts:149-162` and its test "applies control frames in order: a later denial or keepalive never acknowledges before an earlier denial's cleanup finishes" still passes unchanged; the loopback-only plaintext origin check (`control-client.ts:101`) and the bounded ended-listener registry (`direct-sessions.ts:145`) are unchanged and still covered.
+- **Gates**: `collaboration-direct-sessions` 25/25 + `collaboration-wiring` 8/8 + `collaboration-foundation` 7/7 + `collaboration-database` 3/3 on real Postgres; `bun run typecheck` exit 0; `bun run check:patterns` 0 violations, 5 inherited warnings.
+- The verdict's retired-signing-key item was fixed separately on `124/s05`; see the routed round above.
+
+## Operator note — retired ticket signing keys (2026-09-21)
+
+The retired-key fix is **fail-closed by configuration**: if `MATRIX_COLLABORATION_TICKET_RETIRED_AT` does not carry a retirement timestamp for **every** configured retired key (and no stray entries), the keyring does not load and the ticket route answers unavailable rather than publishing a key that outlives its rotation. Operators rotating collaboration ticket signing keys must set that variable alongside the retired key. A retirement dated further ahead than the protocol clock skew is also refused, because it would never reach the end of its overlap.
