@@ -84,7 +84,8 @@ export class DirectTicketVerifier {
     /** Enrolled runtime id (`vps:<uuid>`) or an already logical id. */
     runtimeId: string;
     platformKeys(): readonly DirectSigningKey[];
-    authorityGeneration(): number;
+    /** True while the last control snapshot is inside its fixed lifetime; stale control denies every exchange. */
+    controlFresh(): boolean;
     allowedClientOrigins: readonly string[];
     replay: DirectReplayCache;
     now?: () => Date;
@@ -106,13 +107,12 @@ export class DirectTicketVerifier {
     }
     const parsed = CollaborationSignedConnectionTicketSchema.safeParse(signedTicket);
     if (!parsed.success) throw invalidTicket();
+    if (!this.options.controlFresh()) throw new DirectAuthError("unavailable", "Control snapshot is stale");
     const { ticket, keyId, signature } = parsed.data;
     const key = this.options.platformKeys().find((entry) => entry.keyId === keyId && entry.algorithm === "ed25519");
     if (!key || !verifyEd25519(key.publicKey, ticketSigningPayload(ticket), signature)) throw invalidTicket();
     if (ticket.runtime.runtimeId !== this.logicalRuntimeId) throw invalidTicket();
-    if (ticket.runtime.authorityGeneration !== this.options.authorityGeneration()) {
-      throw new DirectAuthError("stale_generation", "Ticket generation does not match this home");
-    }
+    // The ticket binds the resource's own authority generation; the session service compares it with the scope.
     const current = this.now().getTime();
     const issuedAt = Date.parse(ticket.issuedAt);
     const expiresAt = Date.parse(ticket.expiresAt);
@@ -134,6 +134,8 @@ export class DirectTicketVerifier {
   }
 
   verifyPossession(input: { ticket: CollaborationConnectionTicket; proofPublicKey: string; possession: string; sessionId?: string }): void {
+    // Possession is proven at consumption time, which may be later than verification: the ticket must still be live.
+    if (Date.parse(input.ticket.expiresAt) <= this.now().getTime()) throw invalidTicket();
     if (proofKeyThumbprint(input.proofPublicKey) !== input.ticket.proofKeyThumbprint) throw invalidTicket();
     const payload = possessionPayload({ ticketNonce: input.ticket.nonce, purpose: input.ticket.purpose, ...(input.sessionId ? { sessionId: input.sessionId } : {}) });
     if (!verifyEd25519(input.proofPublicKey, payload, input.possession)) throw invalidTicket();
