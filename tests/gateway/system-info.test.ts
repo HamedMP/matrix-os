@@ -31,8 +31,6 @@ describe("T135: System info", () => {
       expect(getSystemInfo(homePath).capabilities.collaboration).toBe(false);
 
       process.env.MATRIX_RUNTIME_ID = "vps:11111111-1111-4111-8111-111111111111";
-      process.env.MATRIX_COLLABORATION_ACTIVE_KEY_ID = "key-1";
-      process.env.MATRIX_COLLABORATION_PROOF_KEYS = JSON.stringify({ "key-1": "a".repeat(32) });
       process.env.PLATFORM_INTERNAL_URL = "https://platform.internal";
       process.env.UPGRADE_TOKEN = "c".repeat(32);
       expect(getSystemInfo(homePath).capabilities.collaboration).toBe(false);
