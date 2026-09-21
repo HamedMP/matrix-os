@@ -115,6 +115,8 @@ export interface ClaimedQueuedTurn {
   queueDepth: number;
   sharedExecution?: {
     scopeId: string;
+    /** S09: the queued request this run was claimed for (binding, loss and decision records). */
+    queuedTurnId: string;
     requestingActorId: string;
     authEpoch: number;
     authorityGeneration: number;
@@ -1091,6 +1093,7 @@ export class ChatQueueRepository {
           && sharedScope.execution_eligibility ? {
             sharedExecution: {
               scopeId: row.collaboration_scope_id,
+              queuedTurnId: row.id,
               requestingActorId: row.requesting_actor_id,
               authEpoch: Number(sharedScope.auth_epoch),
               authorityGeneration: Number(sharedScope.authority_generation),

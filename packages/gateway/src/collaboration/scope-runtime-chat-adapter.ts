@@ -9,7 +9,6 @@ import {
   parseCanonicalProviderRunInput,
   type CanonicalChatProviderAdapter,
 } from "../chat/provider-adapter.js";
-import type { ScopeRuntimeSandboxManifest } from "@matrix-os/scope-runtime";
 import type { CollaborationRunInterruptionReason } from "@matrix-os/contracts";
 import type { ScopeRuntimeCapability } from "./scope-runtime-client.js";
 import { classifySharedRunLoss } from "./shared-run-loss.js";

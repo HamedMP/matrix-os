@@ -110,7 +110,8 @@ export const CollaborationRunBindingSchema = z.object({
   source: CollaborationRunSourceSchema,
   policyRevision: CollaborationRevisionSchema,
   audienceGeneration: CollaborationRevisionSchema,
-  executionRoot: CanonicalChatExecutionRootRefSchema,
+  /** Null for a standalone Chat without an execution root; the fingerprint then digests the Chat identity. */
+  executionRoot: CanonicalChatExecutionRootRefSchema.nullable(),
   rootFingerprint: z.string().regex(HEX_DIGEST),
   sessionGeneration: CollaborationRevisionSchema,
   admittedAt: IsoTimestampSchema,
