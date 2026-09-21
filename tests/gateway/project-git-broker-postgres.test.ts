@@ -162,6 +162,27 @@ describe("project Git broker PostgreSQL boundary", () => {
     expect(audit).toContainEqual(expect.objectContaining({ actor_id: collaborationActors.editor, action: "git.pr", detail: expect.objectContaining({ ownerId: collaborationActors.owner, runId: "run_member_pr", prUrl: "https://github.com/owner/repo/pull/42" }) }));
   });
 
+  it("recovers a stale running push as unknown and reconciles before any replay", async () => {
+    const run = vi.fn(async () => { throw new AmbiguousProjectGitEffect(); });
+    const reconcile = vi.fn(async () => ({ commitSha: "a".repeat(40), remoteBranch: "feature/member" }));
+    const broker = createProjectGitBroker({
+      db: fixture.db,
+      authorize: async () => ({ ownerId: collaborationActors.owner, projectId: PROJECT }),
+      resolveOwnerIdentity: async () => ({ name: "Owner", email: "owner@example.test", label: "Owner <owner@example.test>" }),
+      driver: { run, reconcile },
+      now: () => new Date(NOW),
+    });
+    const request = action("push", { branch: "feature/member", expectedHeadSha: "a".repeat(40) });
+    const first = await broker.submit({ scopeId: collaborationIds.scope, actorId: collaborationActors.editor, request });
+    await fixture.db.updateTable("collaboration_git_operations")
+      .set({ state: "running", updated_at: new Date("2026-09-21T09:58:00.000Z") })
+      .where("id", "=", first.id).execute();
+    const recovered = await broker.submit({ scopeId: collaborationIds.scope, actorId: collaborationActors.editor, request });
+    expect(recovered).toMatchObject({ id: first.id, state: "completed", remoteBranch: "feature/member" });
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(reconcile).toHaveBeenCalledTimes(1);
+  });
+
   it("reconciles an ambiguous PR by operation ID without opening a duplicate", async () => {
     const run = vi.fn(async () => { throw new AmbiguousProjectGitEffect(); });
     const reconcile = vi.fn(async () => ({ commitSha: "a".repeat(40), remoteBranch: "feature/member", prUrl: "https://github.com/owner/repo/pull/42" }));
