@@ -44,13 +44,6 @@ export const CollaborationRoleSchema = z.enum(["owner", "editor", "viewer"]);
 export const CollaborationInviteRoleSchema = z.enum(["editor", "viewer"]);
 /** S12: file, folder and app instances are shareable standalone with the same two presets. */
 export const CollaborationScopeKindSchema = z.enum(["chat", "terminal", "project", "file", "folder", "app"]);
-/**
- * The kinds the home can create a scope for today. A catalog kind (file,
- * folder, app) is served and enforced as a scope but has no creation path
- * yet, and its catalog id is not a project id, so accepting one here would
- * route it at the project service and share the wrong resource.
- */
-export const CollaborationCreatableScopeKindSchema = z.enum(["chat", "terminal", "project"]);
 export const CollaborationMembershipModeSchema = z.enum(["direct", "inherited"]);
 export const CollaborationLifecycleSchema = z.enum([
   "private",
@@ -113,7 +106,7 @@ export const CollaborationScopeSchema = z.object({
 });
 
 export const CollaborationScopePreflightRequestSchema = z.object({
-  kind: CollaborationCreatableScopeKindSchema,
+  kind: CollaborationScopeKindSchema,
   resourceId: CollaborationResourceIdSchema,
   organizationId: CollaborationOrganizationIdSchema,
 }).strict();
@@ -132,7 +125,7 @@ export const CollaborationScopePreflightResponseSchema = z.object({
 });
 
 export const CollaborationCreateScopeRequestSchema = z.object({
-  kind: CollaborationCreatableScopeKindSchema,
+  kind: CollaborationScopeKindSchema,
   resourceId: CollaborationResourceIdSchema,
   organizationId: CollaborationOrganizationIdSchema,
   clientRequestId: CollaborationIdSchema,

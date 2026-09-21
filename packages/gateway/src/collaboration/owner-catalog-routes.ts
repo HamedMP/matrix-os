@@ -23,14 +23,14 @@ export function registerOwnerCatalogRoutes(routes: Hono, options: CollaborationR
     }
     const resolved = await resources.driver.resolveOwnerNamespace({ ownerId: proof.ownerId, kind: input.kind, path: input.path });
     const namespace = { ownerId: proof.ownerId, projectId: resolved.projectId };
-    const observed = await resources.driver.inspect({ ...namespace, kind: input.kind, path: resolved.path });
+    const { incarnation } = await resources.driver.inspect({ ...namespace, kind: input.kind, path: resolved.path });
     const entry = await resources.catalog.db.transaction().execute(async (trx) => {
       const existing = await resources.catalog.getLiveByPath({ ...namespace, kind: input.kind, path: resolved.path }, trx);
-      if (existing && existing.incarnation !== observed.incarnation) {
+      if (existing && existing.incarnation !== incarnation) {
         await resources.catalog.remove({ id: existing.id, expectedRevision: existing.revision, executor: trx });
       }
       return resources.catalog.register({ ...namespace, kind: input.kind, path: resolved.path,
-        incarnation: observed.incarnation, executor: trx });
+        incarnation, executor: trx });
     });
     return c.json(CollaborationOwnerCatalogResolveResponseSchema.parse({
       id: entry.id, kind: entry.kind, path: input.path,

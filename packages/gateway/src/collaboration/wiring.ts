@@ -39,6 +39,7 @@ import {
 import { OrganizationMembershipClient } from "./organization-membership-client.js";
 import { CollaborationRepository } from "./repository.js";
 import { CollaborationResourceCatalog } from "./resource-catalog.js";
+import { StandaloneResourceScopeService } from "./standalone-resource-scope.js";
 import type { AppInstanceAdapter } from "./app-instance-adapter.js";
 import type { CollaborationResourceDriver, CollaborationResourceServices } from "./resource-routes.js";
 import { createCollaborationUploadStager } from "./upload-stages.js";
@@ -300,11 +301,13 @@ export async function createGatewayCollaboration(options: {
   let projectReadiness: ReturnType<typeof createProjectAccessReadiness> | undefined;
   let projectInventorySource: Pick<ProjectInventoryResourceSource, "listChats" | "getGitSetup"> | undefined;
   let resourceServices: CollaborationResourceServices | undefined;
+  let standaloneScope: StandaloneResourceScopeService | undefined;
   let ownerResourceDriver: (CollaborationResourceDriver & { close?(): void }) | undefined;
   function closeResourceServices(): void {
     resourceServices?.uploads?.close();
     ownerResourceDriver?.close?.();
     resourceServices = undefined;
+    standaloneScope = undefined;
     ownerResourceDriver = undefined;
   }
 
@@ -394,6 +397,8 @@ export async function createGatewayCollaboration(options: {
       try {
         const apps = input.appsFactory?.({ db: options.db, authority, catalog, onCommitted });
         resourceServices = { catalog, driver: input.driver, uploads, ...(apps ? { apps } : {}) };
+        standaloneScope = new StandaloneResourceScopeService({ resources: resourceServices,
+          runtimeId: options.config.runtimeId, preflightSecret: options.config.preflightSecret });
         ownerResourceDriver = input.driver;
       } catch (error: unknown) {
         uploads.close();
@@ -604,6 +609,7 @@ export async function createGatewayCollaboration(options: {
         resolveInvitationIdentifier,
         ...(executionPolicies ? { executionPolicies } : {}),
         ...(resourceServices ? { resources: resourceServices } : {}),
+        ...(standaloneScope ? { standaloneScope } : {}),
         onScopeCommitted: (scopeId) => eventRegistry.broadcastScope(scopeId),
         onRevoked: (scopeId, actorId) => {
           eventRegistry.notifyRevoked(scopeId, actorId);
