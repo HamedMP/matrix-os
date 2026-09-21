@@ -8,6 +8,7 @@ import {
 } from "@matrix-os/contracts";
 import type { Hono } from "hono";
 import { z } from "zod/v4";
+import { readDirectCredentials } from "./direct-routes.js";
 import { CollaborationAuthorizationError } from "./authority-error.js";
 import type { CollaborationCapabilityEvaluator } from "./capability-evaluator.js";
 import { evaluateCollaborationReadiness } from "./readiness-evaluator.js";
@@ -57,18 +58,35 @@ export function registerCapabilityRoutes(routes: Hono, options: CapabilityRouteO
     const grantId = CollaborationIdSchema.parse(c.req.param("grantId"));
     const { value, bytes } = await readJson(c);
     z.object({}).strict().parse(value);
-    // Pending members have no scope authorization yet; the exact signed actor proof and
-    // current organization membership are checked before the transactional activation.
-    const proof = await verifyHttp(options.verifier, c, bytes);
     const scope = await requireScope(options.repository, scopeId);
     const { grants, evaluator } = requireCapabilities(options);
     const grant = await grants.getGrant(grantId);
-    if (proof.scopeId !== scopeId || proof.ownerId !== scope.ownerId
-      || !scope.organizationId || !grant || grant.scopeId !== scopeId
+    if (!scope.organizationId || !grant || grant.scopeId !== scopeId
       || grant.organizationId !== scope.organizationId || grant.audience.kind !== "organization") {
       throw new CollaborationAuthorizationError("not_found", "Grant not found");
     }
-    const result = await evaluator.acceptGrant({ grantId, actorId: proof.actorId });
+    // A pending organization recipient has no ordinary scope access yet. The platform
+    // signs the directory's exact grant pointer into an accept-only direct session;
+    // no other capability route may authorize through that session.
+    const credentials = readDirectCredentials(c);
+    let actorId: string;
+    if (credentials) {
+      if (!options.directSessions) throw new CollaborationAuthorizationError("unavailable", "Direct sessions are unavailable");
+      const session = await options.directSessions.authenticate({
+        ...credentials, method: "POST", path: c.req.path,
+        query: new URL(c.req.url).search.slice(1), body: bytes,
+      });
+      if (session.scopeId !== scopeId || session.organizationId !== scope.organizationId
+        || session.pendingGrantId !== grantId) throw new CollaborationAuthorizationError("not_found", "Grant not found");
+      actorId = session.actorId;
+    } else {
+      const proof = await verifyHttp(options.verifier, c, bytes);
+      if (proof.scopeId !== scopeId || proof.ownerId !== scope.ownerId) {
+        throw new CollaborationAuthorizationError("not_found", "Grant not found");
+      }
+      actorId = proof.actorId;
+    }
+    const result = await evaluator.acceptGrant({ grantId, actorId });
     await notifyScope(options, scopeId);
     return c.json(result);
   }));
