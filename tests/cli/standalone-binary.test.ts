@@ -63,7 +63,7 @@ describe("standalone CLI binary", () => {
     } finally {
       if (daemon && daemon.exitCode === null && daemon.signalCode === null) {
         const closed = new Promise<void>((resolveClose) => daemon?.once("close", () => resolveClose()));
-        daemon.kill();
+        daemon.kill("SIGKILL");
         await closed;
       }
       await rm(tempRoot, { recursive: true, force: true });
