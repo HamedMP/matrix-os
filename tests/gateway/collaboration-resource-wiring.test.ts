@@ -13,6 +13,14 @@ type Project = { slug: string };
 
 function projects(working: Record<string, string | null>) {
   return {
+    async listManagedProjects(input: { visibility: "all"; ownerScope: { type: "user"; id: string } }) {
+      const prefix = `${input.ownerScope.id}:`;
+      return {
+        projects: Object.keys(working)
+          .filter((key) => key.startsWith(prefix))
+          .map((key) => ({ id: key.slice(prefix.length) })),
+      };
+    },
     async getProjectById(ownerScope: { type: "user"; id: string }, projectId: string) {
       const key = `${ownerScope.id}:${projectId}`;
       return key in working
@@ -44,6 +52,7 @@ function fakeDriver(closed: { count: number }): OwnerResourceDriverHandle {
 describe("gateway shared resource wiring", () => {
   it("resolves a project working directory through the gateway project manager", async () => {
     let resolveProjectWorkingDirectory: ((ownerId: string, projectId: string) => Promise<string | null>) | undefined;
+    let listOwnedProjectIds: ((ownerId: string) => Promise<readonly string[]>) | undefined;
     const closed = { count: 0 };
     enableGatewaySharedResources({
       runtime: { enableSharedResources: () => {} },
@@ -52,9 +61,13 @@ describe("gateway shared resource wiring", () => {
       apps: registry(["notes"]),
       createDriver: (options) => {
         resolveProjectWorkingDirectory = options.resolveProjectWorkingDirectory;
+        listOwnedProjectIds = options.listOwnedProjectIds;
         return fakeDriver(closed);
       },
     });
+    // The driver lists exactly the asking owner's projects, never another owner's.
+    expect(await listOwnedProjectIds?.("owner_1")).toEqual(["proj_alpha"]);
+    expect(await listOwnedProjectIds?.("owner_2")).toEqual([]);
     expect(await resolveProjectWorkingDirectory?.("owner_1", "proj_alpha")).toBe("/home/matrix/projects/alpha");
     // An unknown project is a missing directory, never a throw into the driver.
     expect(await resolveProjectWorkingDirectory?.("owner_1", "proj_missing")).toBeNull();

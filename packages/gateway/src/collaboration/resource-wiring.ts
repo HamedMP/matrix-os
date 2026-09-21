@@ -21,6 +21,10 @@ export type OwnerResourceDriverHandle = ReturnType<typeof createOwnerResourceDri
 
 /** The part of the gateway project manager an owner resource lookup needs. */
 export interface OwnerResourceProjectSource<Project> {
+  listManagedProjects(input: {
+    visibility: "all";
+    ownerScope: { type: "user"; id: string };
+  }): Promise<{ projects: readonly { id: string }[] }>;
   getProjectById(
     ownerScope: { type: "user"; id: string },
     projectId: string,
@@ -71,6 +75,12 @@ export function enableGatewaySharedResources<Project>(input: {
   };
   const driver = (input.createDriver ?? createOwnerResourceDriver)({
     homePath: input.homePath,
+    listOwnedProjectIds: async (ownerId) => {
+      const { projects } = await input.projects.listManagedProjects({
+        visibility: "all", ownerScope: { type: "user", id: ownerId },
+      });
+      return projects.map((project) => project.id);
+    },
     resolveProjectWorkingDirectory: async (ownerId, projectId) => {
       const result = await input.projects.getProjectById({ type: "user", id: ownerId }, projectId);
       if (!result.ok) return null;
