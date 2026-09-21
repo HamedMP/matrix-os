@@ -54,3 +54,43 @@ it("keeps a revoked viewer attached when release races the socket handshake", as
     await rm(homePath, { recursive: true, force: true });
   }
 });
+
+it("refuses a stale collaboration observer after the same tab ID is recreated", async () => {
+  const homePath = await mkdtemp("/tmp/matrix-collaboration-attach-identity-");
+  let now = new Date("2026-09-21T12:00:00.000Z");
+  const adapter: ZellijRuntimeAdapter = {
+    ensureSession: async () => {},
+    createTab: async () => ({ tabId: 1, paneId: "terminal_1" }),
+    closeTab: async () => {},
+    subscribeWorkspace: async () => ({ close: async () => {} }),
+    openAttachment: async () => ({ write: async () => {}, resize: async () => {}, close: async () => {} }),
+    resizeSession: async () => {},
+  };
+  const runtime = new TerminalRuntime({ store: new TerminalWorkspaceStore({ homePath, now: () => now }), zellij: adapter });
+  const socketPath = join(homePath, "r.sock");
+  const server = new TerminalRuntimeSocketServer({ socketPath, runtime });
+  let observer: TerminalRuntimeSocketStream | undefined;
+  try {
+    await server.start();
+    const workspace = await runtime.ensureWorkspace();
+    const tabId = `tt_${"a".repeat(32)}`;
+    const original = await runtime.createTab(workspace.id, { tabId, name: "original", cwd: "" });
+    const ref = { workspaceId: workspace.id, tabId };
+    await runtime.deleteTab(ref);
+    now = new Date("2026-09-21T12:01:00.000Z");
+    await runtime.createTab(workspace.id, { tabId, name: "replacement", cwd: "" });
+    const onFrame = vi.fn();
+    const onError = vi.fn();
+    observer = new TerminalRuntimeSocketClient({ socketPath }).attach({
+      ref, expectedCreatedAt: original.createdAt, viewerId: "shared-observer",
+      mode: "soft", size: { cols: 120, rows: 36 }, onFrame, onClose() {}, onError,
+    });
+    await vi.waitFor(() => expect(onError).toHaveBeenCalled());
+    expect(onFrame).not.toHaveBeenCalledWith(expect.objectContaining({ type: "attached" }));
+    expect(onFrame).not.toHaveBeenCalledWith(expect.objectContaining({ type: "output" }));
+  } finally {
+    observer?.close();
+    await server.close(); await runtime.shutdown();
+    await rm(homePath, { recursive: true, force: true });
+  }
+});

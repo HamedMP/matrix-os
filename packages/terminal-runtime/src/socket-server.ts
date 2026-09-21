@@ -43,21 +43,22 @@ export interface TerminalRuntimeControlApi {
   getSnapshot(ref: { workspaceId: string; tabId: string }): Promise<TerminalSnapshot | undefined>;
   renameTab(ref: { workspaceId: string; tabId: string }, input: { name: string; baseRevision: number }): Promise<TerminalTab>;
   reorderTabs(workspaceId: string, input: { tabIds: string[]; baseRevision: number }): Promise<TerminalWorkspace>;
-  terminateTab(ref: { workspaceId: string; tabId: string }): Promise<void>;
+  terminateTab(ref: { workspaceId: string; tabId: string }, expectedCreatedAt?: string): Promise<void>;
   deleteTab(ref: { workspaceId: string; tabId: string }): Promise<void>;
   paneAction(ref: { workspaceId: string; tabId: string }, action: TerminalPaneAction): Promise<void>;
-  writeInput(ref: { workspaceId: string; tabId: string }, data: string): Promise<void>;
+  writeInput(ref: { workspaceId: string; tabId: string }, data: string, expectedCreatedAt?: string): Promise<void>;
   updateTabUiState(ref: { workspaceId: string; tabId: string }, input: {
     placement?: "active" | "background";
     lastSeenSeq?: number | null;
     pinned?: boolean;
     baseRevision: number;
   }): Promise<TerminalTab>;
-  resize(ref: { workspaceId: string; tabId: string }, input: { mode: "hard" | "soft"; size: { cols: number; rows: number } }, viewerId?: string): Promise<TerminalWorkspace>;
+  resize(ref: { workspaceId: string; tabId: string }, input: { mode: "hard" | "soft"; size: { cols: number; rows: number } }, viewerId?: string, expectedCreatedAt?: string): Promise<TerminalWorkspace>;
   deletionImpact(workspaceId: string): Promise<{ runningTabs: number; tabs: TerminalTab[] }>;
   deleteWorkspace(workspaceId: string, input: { confirmTerminate: boolean }): Promise<void>;
   attach(ref: TerminalRef, input: TerminalSizeListener & {
     viewerId: string;
+    expectedCreatedAt?: string;
     send(data: Uint8Array): void | Promise<void>;
     onExit(exitCode: number | null): void | Promise<void>;
   }): Promise<{ write(data: string | Uint8Array): Promise<void>; touch(): void; detach(): Promise<void> }>;
@@ -234,7 +235,10 @@ export class TerminalRuntimeSocketServer {
   ): Promise<(raw: unknown) => Promise<void>> {
     socket.setTimeout(0);
     const ref = { workspaceId: request.input.workspaceId, tabId: request.input.tabId };
-    const resized = await this.options.runtime.resize(ref, { ...request.input, mode: "soft" });
+    const resized = request.input.expectedCreatedAt
+      ? await this.options.runtime.resize(ref, { ...request.input, mode: "soft" }, undefined,
+        request.input.expectedCreatedAt)
+      : await this.options.runtime.resize(ref, { ...request.input, mode: "soft" });
     const tab = resized.tabs.find((candidate) => candidate.id === ref.tabId);
     if (!tab) throw new Error("Terminal tab not found");
     const snapshot = await this.options.runtime.getSnapshot(ref);
@@ -274,6 +278,7 @@ export class TerminalRuntimeSocketServer {
     const decoder = new TextDecoder();
     const viewer = await this.options.runtime.attach(ref, {
       viewerId: request.input.viewerId,
+      ...(request.input.expectedCreatedAt ? { expectedCreatedAt: request.input.expectedCreatedAt } : {}),
       send: (data) => {
         const text = decoder.decode(data, { stream: true });
         if (!text) return;
@@ -356,16 +361,23 @@ export class TerminalRuntimeSocketServer {
         { name: request.input.name, baseRevision: request.input.baseRevision },
       );
       case "ReorderTabs": return this.options.runtime.reorderTabs(request.input.workspaceId, request.input);
-      case "TerminateTab": return this.options.runtime.terminateTab(request.input).then(() => null);
+      case "TerminateTab": {
+        const ref = { workspaceId: request.input.workspaceId, tabId: request.input.tabId };
+        return (request.input.expectedCreatedAt
+          ? this.options.runtime.terminateTab(ref, request.input.expectedCreatedAt)
+          : this.options.runtime.terminateTab(ref)).then(() => null);
+      }
       case "DeleteTab": return this.options.runtime.deleteTab(request.input).then(() => null);
       case "PaneAction": return this.options.runtime.paneAction(
         { workspaceId: request.input.workspaceId, tabId: request.input.tabId },
         request.input.action,
       ).then(() => null);
-      case "WriteInput": return this.options.runtime.writeInput(
-        { workspaceId: request.input.workspaceId, tabId: request.input.tabId },
-        request.input.data,
-      ).then(() => null);
+      case "WriteInput": {
+        const ref = { workspaceId: request.input.workspaceId, tabId: request.input.tabId };
+        return (request.input.expectedCreatedAt
+          ? this.options.runtime.writeInput(ref, request.input.data, request.input.expectedCreatedAt)
+          : this.options.runtime.writeInput(ref, request.input.data)).then(() => null);
+      }
       case "UpdateTabUiState": {
         const { workspaceId, tabId, ...input } = request.input;
         return this.options.runtime.updateTabUiState({ workspaceId, tabId }, input);
