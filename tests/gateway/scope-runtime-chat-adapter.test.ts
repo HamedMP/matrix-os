@@ -9,6 +9,10 @@ const sandbox = {
   worktree: { hostPath: "/home/matrix/home/projects/launch-site", mode: "rw" as const, fingerprint: "a".repeat(64) },
   network: "none" as const,
 };
+/** The adapter now requires both collaborators; these cases assert other behaviour. */
+const noRuntimes = { bind: () => undefined, release: () => undefined };
+const noLoss = (): void => undefined;
+
 describe("scope runtime canonical Chat adapter", () => {
   it("runs visible text in the exact fixed-profile generation and stops it", async () => {
     const client = {
@@ -29,6 +33,8 @@ describe("scope runtime canonical Chat adapter", () => {
       adapterId: "claude-code",
       harnessVersion: "2.1.240",
       sandbox,
+      runtimes: noRuntimes,
+      onLoss: noLoss,
     });
     const events = [];
     for await (const event of adapter.start(runInput())) events.push(event);
@@ -71,6 +77,8 @@ describe("scope runtime canonical Chat adapter", () => {
       adapterId: "codex",
       harnessVersion: "0.154.0",
       sandbox,
+      runtimes: noRuntimes,
+      onLoss: noLoss,
     });
     const events = [];
     for await (const event of adapter.start({
@@ -99,6 +107,8 @@ describe("scope runtime canonical Chat adapter", () => {
       executionGeneration: "7",
       adapterId: "claude-code",
       harnessVersion: "2.1.240",
+      runtimes: noRuntimes,
+      onLoss: noLoss,
     });
     const unavailable = [];
     for await (const event of adapter.start(runInput())) unavailable.push(event);
@@ -135,6 +145,8 @@ describe("scope runtime canonical Chat adapter", () => {
       adapterId: "claude-code",
       harnessVersion: "2.1.240",
       sandbox,
+      runtimes: noRuntimes,
+      onLoss: noLoss,
     });
     const iterator = adapter.start({ ...runInput(), signal: abortController.signal });
     await expect(iterator.next()).resolves.toMatchObject({ value: { type: "state.updated" } });

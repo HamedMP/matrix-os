@@ -24,8 +24,9 @@ export interface SharedCodingAdapterOptions {
   executionGeneration: string;
   harnessVersion: string;
   sandbox?: ScopeRuntimeSandboxManifest;
-  runtimes?: SharedRuntimeBindingRegistry;
-  onLoss?(reason: CollaborationRunInterruptionReason): void | Promise<void>;
+  /** Required collaborators: see `createScopeRuntimeChatProviderAdapter`. */
+  runtimes: SharedRuntimeBindingRegistry;
+  onLoss(reason: CollaborationRunInterruptionReason): void | Promise<void>;
 }
 
 export function createSharedCodexAdapter(options: SharedCodingAdapterOptions): CanonicalChatProviderAdapter {

@@ -43,10 +43,18 @@ export function createScopeRuntimeChatProviderAdapter(options: {
   harnessVersion: string;
   /** S07/S09: authoritative sandbox manifest mounting the run's execution root; without it the adapter fails closed before launch. */
   sandbox?: ScopeRuntimeSandboxManifest;
-  /** S07: registry that stops the runtime when the actor's lease is lost. */
-  runtimes?: SharedRuntimeBindingRegistry;
-  /** S09: called once with the loss reason when the home loses the run before its terminal result; awaited before the failed event. */
-  onLoss?(reason: CollaborationRunInterruptionReason): void | Promise<void>;
+  /**
+   * S07: registry that stops the runtime when the actor's lease is lost.
+   * Required: an absent registry binds nothing and silently disables
+   * lease-driven runtime stops, which is how this shipped inert once already.
+   */
+  runtimes: SharedRuntimeBindingRegistry;
+  /**
+   * S09: called once with the loss reason when the home loses the run before
+   * its terminal result; awaited before the failed event. Required for the
+   * same reason: silence here loses interrupted-run attribution.
+   */
+  onLoss(reason: CollaborationRunInterruptionReason): void | Promise<void>;
 }): CanonicalChatProviderAdapter<State> {
   const scopeHandle = `scope_${options.scopeId.replaceAll("-", "")}`;
   if (!/^scope_[a-f0-9]{32}$/.test(scopeHandle)) throw new Error("Invalid collaboration scope handle");
@@ -64,7 +72,7 @@ export function createScopeRuntimeChatProviderAdapter(options: {
     }
     const operation = options.client.stopRuntime({ runtimeHandle: state.runtimeHandle }).then(() => {
       stoppedRuntimeHandle = state.runtimeHandle;
-      options.runtimes?.release(state.runtimeHandle);
+      options.runtimes.release(state.runtimeHandle);
     });
     stopInFlight = operation;
     try {
@@ -115,9 +123,7 @@ export function createScopeRuntimeChatProviderAdapter(options: {
           harnessVersion: options.harnessVersion,
           sandbox,
         });
-        if (options.runtimes) {
-          options.runtimes.bind({ scopeId: options.scopeId, actorId: sandbox.actorId, runtimeHandle: created.runtimeHandle });
-        }
+        options.runtimes.bind({ scopeId: options.scopeId, actorId: sandbox.actorId, runtimeHandle: created.runtimeHandle });
         if (created.executionGeneration !== options.executionGeneration) {
           await stop(StateSchema.parse({
             runtimeHandle: created.runtimeHandle,
@@ -161,7 +167,7 @@ export function createScopeRuntimeChatProviderAdapter(options: {
           errorType: error instanceof Error ? error.name : "UnknownError",
         });
         const reason = classifySharedRunLoss(error, stage);
-        if (reason && options.onLoss) {
+        if (reason) {
           try {
             await options.onLoss(reason);
           } catch (lossError: unknown) {
