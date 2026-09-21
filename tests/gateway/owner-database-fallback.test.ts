@@ -31,6 +31,44 @@ describe("owner database fallback teardown (S20 / T099)", () => {
     expect(warn.mock.calls.map(([step]) => step)).toEqual(["chatEventStream", "chatRepository"]);
   });
 
+  it("fences a collaboration runtime whose drain hangs, then still destroys dependencies", async () => {
+    const warn = vi.fn();
+    const order: string[] = [];
+    const collaboration = {
+      shutdown: vi.fn(() => new Promise<void>(() => {})),
+      fence: vi.fn(() => { order.push("fence"); }),
+    };
+    const appDb = { destroy: vi.fn(async () => { order.push("pool"); }) };
+    const chatRepository = { release: vi.fn(async () => { order.push("repository"); }) };
+    await expect(teardownOwnerDatabaseServices({ collaboration, chatRepository, appDb }, {
+      warn,
+      collaborationDrainTimeoutMs: 20,
+    })).resolves.toEqual(["collaborationFenced", "chatEventStream", "chatRepository", "canvasRepository", "appDb"]);
+    expect(order).toEqual(["fence", "repository", "pool"]);
+    expect(warn).toHaveBeenCalledWith("collaboration", expect.objectContaining({ message: "CollaborationDrainTimeout" }));
+    expect(collaboration.fence).toHaveBeenCalledOnce();
+  });
+
+  it("fences a collaboration runtime whose drain throws and keeps going when the fence itself fails", async () => {
+    const warn = vi.fn();
+    const collaboration = {
+      shutdown: vi.fn(async () => { throw new Error("drain failed"); }),
+      fence: vi.fn(() => { throw new Error("fence failed"); }),
+    };
+    const appDb = { destroy: vi.fn(async () => undefined) };
+    await expect(teardownOwnerDatabaseServices({ collaboration, appDb }, { warn }))
+      .resolves.toEqual(["collaborationFenced", "chatEventStream", "chatRepository", "canvasRepository", "appDb"]);
+    expect(appDb.destroy).toHaveBeenCalledOnce();
+    expect(warn.mock.calls.map(([step]) => step)).toEqual(["collaboration", "collaborationFenced"]);
+  });
+
+  it("does not fence a runtime that drains within the bound", async () => {
+    const collaboration = { shutdown: vi.fn(async () => undefined), fence: vi.fn() };
+    await expect(teardownOwnerDatabaseServices({ collaboration }, { collaborationDrainTimeoutMs: 50 }))
+      .resolves.toEqual(["collaboration", "chatEventStream", "chatRepository", "canvasRepository", "appDb"]);
+    expect(collaboration.fence).not.toHaveBeenCalled();
+  });
+
   it("tolerates services that were never built", async () => {
     await expect(teardownOwnerDatabaseServices({})).resolves.toEqual([
       "collaboration", "chatEventStream", "chatRepository", "canvasRepository", "appDb",

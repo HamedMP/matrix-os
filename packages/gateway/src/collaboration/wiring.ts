@@ -340,6 +340,41 @@ export async function createGatewayCollaboration(options: {
         });
       }
     },
+    /**
+     * Synchronous fence for a startup fallback that cannot wait for a full
+     * drain: refuse new registrations and work, stop every timer and detach
+     * adapters/registries so nothing dispatches against dependencies the
+     * caller is about to destroy. Async drains are started best-effort.
+     */
+    fence(): void {
+      if (closing) return;
+      closing = true;
+      if (cleanupTimer) clearInterval(cleanupTimer);
+      const drainingSharedAi = sharedAiRuntime;
+      sharedAiRuntime = undefined;
+      chatExecutionAdapter = undefined;
+      eventRegistry.shutdown();
+      terminalEventRegistry?.shutdown();
+      terminalEventRegistry = undefined;
+      terminalControl?.close();
+      terminalControl = undefined;
+      terminalDispatcher = undefined;
+      terminalAdapter = undefined;
+      const drainingTransitions = projectTransitionCoordinator;
+      projectTransitionCoordinator = undefined;
+      projectSharing = undefined;
+      participantResolver?.shutdown();
+      verifier.shutdown();
+      for (const [name, drain] of [
+        ["shared AI", () => drainingSharedAi?.shutdown()],
+        ["project transitions", () => drainingTransitions?.shutdown()],
+        ["directory outbox", () => outbox.shutdown()],
+      ] as const) {
+        void Promise.resolve().then(drain).catch((error: unknown) => {
+          console.warn(`[collaboration] fenced ${name} drain failed`, error instanceof Error ? error.name : "UnknownError");
+        });
+      }
+    },
     async shutdown(): Promise<void> {
       if (closing) return;
       closing = true;
