@@ -328,6 +328,23 @@ describe("collaboration direct client", () => {
     expect(world.platform.tickets.filter((ticket) => ticket.purpose === "events")).toHaveLength(1);
   });
 
+  it("re-dials a terminal-only scope whose socket goes quiet instead of leaving it disconnected", async () => {
+    vi.useFakeTimers();
+    const direct = client();
+    const disconnected = vi.fn();
+    direct.subscribeTerminal(scopeId, { onReady: vi.fn(), onOutput: vi.fn(), onState: vi.fn(), onRefreshRequired: vi.fn(), onUnavailable: vi.fn(), onDisconnected: disconnected });
+    await vi.waitFor(() => expect(world.sockets).toHaveLength(1));
+    const terminal = world.sockets[0]!;
+    terminal.onopen?.();
+    // No event stream exists to speak for this scope, so nothing but the terminal socket's own
+    // frames can prove the home is there. Silence past the window must re-dial, not sit forever.
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(terminal.close).toHaveBeenCalled();
+    expect(disconnected).toHaveBeenCalled();
+    await vi.waitFor(() => expect(world.sockets).toHaveLength(2));
+    expect(world.platform.tickets.filter((ticket) => ticket.purpose === "terminal")).toHaveLength(2);
+  });
+
   it("keeps an idle terminal stream alive on the home's own keepalive state frames", async () => {
     vi.useFakeTimers();
     const direct = client();

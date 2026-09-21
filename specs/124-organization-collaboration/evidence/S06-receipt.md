@@ -141,13 +141,21 @@ connection that just received output gets no keepalive, so a busy terminal carri
 frames. `heartbeat` takes an explicit time and is public so the keepalive is testable without
 timers, matching `sweep(at)`. No contract changed: `terminal.state` is an existing frozen frame.
 
-RED `50468e4a6`, GREEN `64e54cd6a`. Tests: a healthy event stream no longer vouches for the
-terminal socket (event heartbeats every 10 s for a minute, terminal silent → terminal closed and
+RED `50468e4a6`, GREEN `64e54cd6a`, plus the terminal-only regression test below. Tests: a
+healthy event stream no longer vouches for the terminal socket (event heartbeats every 10 s for a minute, terminal silent → terminal closed and
 re-dialled with a second terminal ticket while the event stream keeps its first); an idle terminal
 receiving the home keepalive every 20 s is never dropped and never re-ticketed; the home publishes
 state to a silent connection on one heartbeat and nothing extra to a connection that just received
 output. The pre-existing undrained-send case now feeds keepalives through both phases, so it
 proves the stall rule independently of the silence rule.
+
+The permanent-disconnection path the verdict describes is a scope with **no** event stream: before
+this fix such a terminal had no liveness source at all (`peerTouchedAt` was null, so the silence
+rule was skipped) and a socket that lost its peer without a close frame stayed open forever, with
+only the undrained-send rule to catch it. A separate test covers it directly: a terminal-only scope
+whose socket goes quiet is closed after the window, reports `onDisconnected` and re-dials with a
+second terminal ticket. Verified RED against `8479cc4ab`'s `direct-streams.ts` and green on the
+fix.
 
 **Verdict-only relay item: "relay shutdown can leak an upstream connection opened after
 eviction".** Not this layer, and partly fixed below it. `packages/platform/src/platform-websocket-upgrade.ts`
