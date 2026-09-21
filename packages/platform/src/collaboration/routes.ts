@@ -28,13 +28,18 @@ import {
 
 const RuntimeIdSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9:_-]+$/);
 const BearerTokenSchema = z.string().min(32).max(4_096).regex(/^[A-Za-z0-9._~-]+$/);
-const DiscoveryCursorSchema = z.object({
-  version: z.literal(1),
-  actorId: CollaborationActorIdSchema,
-  status: z.enum(["invited", "accepted"]),
-  updatedAt: z.iso.datetime(),
-  scopeId: z.uuid(),
-}).strict();
+const DiscoveryCursorSchema = z.discriminatedUnion("version", [
+  z.object({
+    version: z.literal(1), actorId: CollaborationActorIdSchema, status: z.enum(["invited", "accepted"]),
+    updatedAt: z.iso.datetime(), scopeId: z.uuid(),
+  }).strict(),
+  z.object({
+    version: z.literal(2), actorId: CollaborationActorIdSchema, status: z.enum(["invited", "accepted"]),
+    phase: z.enum(["indexed", "pending"]),
+    after: z.object({ updatedAt: z.iso.datetime(), scopeId: z.uuid() }).strict().optional(),
+  }).strict(),
+]);
+type DiscoveryPageCursor = { phase: "indexed" | "pending"; after?: { updatedAt: string; scopeId: string } };
 
 type RouteContext = Context;
 
@@ -185,15 +190,18 @@ async function listDiscovery(
   if (!actorId) return safeJson(c, "Unauthorized", 401);
   const pageRequest = CollaborationPageRequestSchema.safeParse(exactDiscoveryQuery(c));
   if (!pageRequest.success) return safeJson(c, "Invalid request", 422);
-  const after = pageRequest.data.cursor
+  const cursor = pageRequest.data.cursor
     ? decodeDiscoveryCursor(pageRequest.data.cursor, actorId, status)
-    : undefined;
-  if (pageRequest.data.cursor && !after) return safeJson(c, "Invalid request", 422);
+    : null;
+  if (pageRequest.data.cursor && !cursor) return safeJson(c, "Invalid request", 422);
   try {
-    const page = await options.repository.listForActorPage(actorId, status, {
-      limit: pageRequest.data.limit,
-      ...(after ? { after } : {}),
-    });
+    const phase = cursor?.phase ?? "indexed";
+    const page = phase === "indexed"
+      ? await options.repository.listForActorPage(actorId, status, {
+        limit: pageRequest.data.limit,
+        ...(cursor?.after ? { after: cursor.after } : {}),
+      })
+      : { items: [] as Awaited<ReturnType<PlatformCollaborationRepository["listForActorPage"]>>["items"], nextCursor: undefined };
     // Metadata only: the client hydrates every item from the resource's home.
     const items: unknown[] = page.items.map((entry) => ({
       scopeId: entry.scopeId,
@@ -205,20 +213,30 @@ async function listDiscovery(
       ...(entry.status === "invited" ? { invitationId: entry.invitationId } : {}),
       ...(entry.organizationId ? { organizationId: entry.organizationId } : {}),
     }));
-    if (status === "invited" && !after && options.listOrganizationIds) {
+    let nextCursor = page.nextCursor ? encodeDiscoveryCursor(actorId, status, "indexed", page.nextCursor) : undefined;
+    if (status === "invited" && !page.nextCursor && options.listOrganizationIds) {
       const organizationIds = await options.listOrganizationIds(actorId);
-      const pending = await options.repository.listOrganizationSharesForActor(actorId, organizationIds, pageRequest.data.limit);
-      for (const entry of pending) {
-        items.push({
-          scopeId: entry.scopeId, runtimeId: entry.runtimeId, ownerId: entry.ownerId, kind: entry.kind,
-          authorityGeneration: entry.authorityGeneration, status: "organization_pending", organizationId: entry.organizationId,
-        });
+      const remaining = pageRequest.data.limit - items.length;
+      const pending = await options.repository.listOrganizationSharesForActorPage(actorId, organizationIds, {
+        limit: Math.max(1, remaining),
+        ...(phase === "pending" && cursor?.after ? { after: cursor.after } : {}),
+      });
+      if (remaining > 0) {
+        for (const entry of pending.items) {
+          items.push({
+            scopeId: entry.scopeId, runtimeId: entry.runtimeId, ownerId: entry.ownerId, kind: entry.kind,
+            authorityGeneration: entry.authorityGeneration, status: "organization_pending", organizationId: entry.organizationId,
+          });
+        }
+      }
+      if (pending.nextCursor || (remaining === 0 && pending.items.length > 0)) {
+        nextCursor = encodeDiscoveryCursor(actorId, status, "pending", remaining === 0 ? undefined : pending.nextCursor);
       }
     }
     c.header("Cache-Control", "private, no-store");
     return c.json(CollaborationDiscoveryResponseSchema.parse({
-      items: items.map((item) => CollaborationDiscoveryItemSchema.parse(item)).slice(0, 100),
-      ...(page.nextCursor ? { nextCursor: encodeDiscoveryCursor(actorId, status, page.nextCursor) } : {}),
+      items: items.map((item) => CollaborationDiscoveryItemSchema.parse(item)),
+      ...(nextCursor ? { nextCursor } : {}),
     }));
   } catch (error: unknown) {
     console.warn("[platform-collaboration] discovery listing failed", error instanceof Error ? error.name : "UnknownError");
@@ -239,21 +257,23 @@ function exactDiscoveryQuery(c: RouteContext): Record<string, string> {
 function encodeDiscoveryCursor(
   actorId: string,
   status: "invited" | "accepted",
-  cursor: { updatedAt: string; scopeId: string },
+  phase: DiscoveryPageCursor["phase"],
+  after?: DiscoveryPageCursor["after"],
 ): string {
-  return Buffer.from(JSON.stringify({ version: 1, actorId, status, ...cursor })).toString("base64url");
+  return Buffer.from(JSON.stringify({ version: 2, actorId, status, phase, ...(after ? { after } : {}) })).toString("base64url");
 }
 
 function decodeDiscoveryCursor(
   value: string,
   actorId: string,
   status: "invited" | "accepted",
-): { updatedAt: string; scopeId: string } | null {
+): DiscoveryPageCursor | null {
   if (!/^[A-Za-z0-9_-]+$/.test(value)) return null;
   try {
     const parsed = DiscoveryCursorSchema.safeParse(JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as unknown);
     if (!parsed.success || parsed.data.actorId !== actorId || parsed.data.status !== status) return null;
-    return { updatedAt: parsed.data.updatedAt, scopeId: parsed.data.scopeId };
+    if (parsed.data.version === 1) return { phase: "indexed", after: { updatedAt: parsed.data.updatedAt, scopeId: parsed.data.scopeId } };
+    return { phase: parsed.data.phase, ...(parsed.data.after ? { after: parsed.data.after } : {}) };
   } catch (error: unknown) {
     if (!(error instanceof SyntaxError)) {
       console.warn("[platform-collaboration] cursor decode failed", error instanceof Error ? error.name : "UnknownError");

@@ -332,24 +332,43 @@ export class PlatformCollaborationRepository {
    * Organization-wide shares in the actor's current organizations that the actor has no index row
    * for (never opened, accepted or declined) and does not own. Metadata only; bounded.
    */
-  async listOrganizationSharesForActor(actorId: string, organizationIds: readonly string[], limit = 100): Promise<CollaborationOrganizationShareEntry[]> {
+  async listOrganizationSharesForActorPage(
+    actorId: string,
+    organizationIds: readonly string[],
+    options: { limit: number; after?: { updatedAt: string; scopeId: string } },
+  ): Promise<{ items: CollaborationOrganizationShareEntry[]; nextCursor?: { updatedAt: string; scopeId: string } }> {
     const organizations = [...new Set(organizationIds)].filter((id) => id.length > 0 && id.length <= 128).slice(0, 100);
-    if (organizations.length === 0) return [];
-    const bounded = Math.max(1, Math.min(100, Math.trunc(limit)));
-    const rows = await this.db.selectFrom("collaboration_directory as directory")
-      .select(["directory.scope_id", "directory.runtime_id", "directory.owner_id", "directory.kind", "directory.organization_id", "directory.authority_generation"])
+    if (organizations.length === 0) return { items: [] };
+    const limit = Math.max(1, Math.min(100, Math.trunc(options.limit)));
+    let query = this.db.selectFrom("collaboration_directory as directory")
+      .select(["directory.scope_id", "directory.runtime_id", "directory.owner_id", "directory.kind", "directory.organization_id", "directory.authority_generation", "directory.updated_at"])
       .where("directory.audience", "=", "organization")
       .where("directory.organization_id", "in", organizations)
       .where("directory.owner_id", "!=", actorId)
       .where(({ not, exists, selectFrom }) => not(exists(
         selectFrom("collaboration_user_index as user_index").select("user_index.scope_id")
           .whereRef("user_index.scope_id", "=", "directory.scope_id").where("user_index.actor_id", "=", actorId),
-      )))
-      .orderBy("directory.updated_at", "desc").orderBy("directory.scope_id", "asc").limit(bounded).execute();
-    return rows.map((row) => ({
-      scopeId: row.scope_id, runtimeId: row.runtime_id, ownerId: row.owner_id, kind: row.kind,
-      authorityGeneration: Number(row.authority_generation), organizationId: row.organization_id!,
-    }));
+      )));
+    if (options.after) {
+      query = query.where(({ and, eb, or }) => or([
+        eb("directory.updated_at", "<", options.after!.updatedAt),
+        and([
+          eb("directory.updated_at", "=", options.after!.updatedAt),
+          eb("directory.scope_id", ">", options.after!.scopeId),
+        ]),
+      ]));
+    }
+    const rows = await query.orderBy("directory.updated_at", "desc").orderBy("directory.scope_id", "asc")
+      .limit(limit + 1).execute();
+    const page = rows.slice(0, limit);
+    const last = rows.length > limit ? page.at(-1) : undefined;
+    return {
+      items: page.map((row) => ({
+        scopeId: row.scope_id, runtimeId: row.runtime_id, ownerId: row.owner_id, kind: row.kind,
+        authorityGeneration: Number(row.authority_generation), organizationId: row.organization_id!,
+      })),
+      ...(last ? { nextCursor: { updatedAt: toIso(last.updated_at), scopeId: last.scope_id } } : {}),
+    };
   }
 
   async createConnectionTicket(input: {
