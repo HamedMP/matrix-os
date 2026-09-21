@@ -272,7 +272,7 @@ describe("collaboration direct client", () => {
     expect(handshake).toMatchObject({ protocolVersion: COLLABORATION_DIRECT_PROTOCOL_VERSION, type: "handshake", ticketNonce: (ticket.ticket as Json).nonce });
     expect(verifyEd25519(record.publicKey, possessionPayload({ ticketNonce: (ticket.ticket as Json).nonce as string, purpose: "events", sessionId }), handshake.possession as string)).toBe(true);
     socket.onmessage?.({ data: JSON.stringify({ version: 1, type: "ready", scopeId, resourceId: "chat-1", authorityGeneration: "3", sequence: "7" }) });
-    socket.onmessage?.({ data: JSON.stringify({ version: 1, type: "changed", scopeId, resourceId: "chat-1", authorityGeneration: "3", sequence: "8" }) });
+    socket.onmessage?.({ data: JSON.stringify({ version: 1, type: "refresh_required", scopeId, resourceId: "chat-1", authorityGeneration: "3", sequence: "8" }) });
     await vi.waitFor(() => expect(onEvent).toHaveBeenCalledTimes(1));
     expect(states).toContain("connected");
     socket.onclose?.();
@@ -313,11 +313,11 @@ describe("collaboration direct client", () => {
       await direct.request(scopeId, "GET", `/api/collaboration/scopes/${scopeId}`);
       expect(storage.setItem).not.toHaveBeenCalled();
       expect(storage.getItem).not.toHaveBeenCalled();
-      const keys = direct.debugKeys(scopeId);
+      const keys = direct.inspectKeys(scopeId);
       expect(keys?.privateKey.extractable).toBe(false);
       direct.close();
       expect(direct.describe(scopeId).state).toBe("idle");
-      expect(world.home.requests.some((request) => request.method === "DELETE" && request.url.includes("/direct-sessions/"))).toBe(true);
+      await vi.waitFor(() => expect(world.home.requests.some((request) => request.method === "DELETE" && request.url.includes("/direct-sessions/"))).toBe(true));
     } finally {
       delete (globalThis as { localStorage?: unknown }).localStorage;
       delete (globalThis as { sessionStorage?: unknown }).sessionStorage;
