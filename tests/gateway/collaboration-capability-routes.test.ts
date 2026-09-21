@@ -31,6 +31,7 @@ describe("collaboration capability HTTP routes", () => {
   let homePath: string;
   let projectRoot: string;
   let appRoot: string;
+  let appRegistration: string;
 
   beforeEach(async () => {
     fixture = await createCollaborationTestDatabase();
@@ -73,9 +74,12 @@ describe("collaboration capability HTTP routes", () => {
     homePath = await mkdtemp(join(tmpdir(), "collaboration-owner-catalog-"));
     projectRoot = join(homePath, "projects", "demo");
     appRoot = join(homePath, "apps", "board");
+    appRegistration = "a".repeat(64);
     await Promise.all([mkdir(projectRoot, { recursive: true }), mkdir(appRoot, { recursive: true })]);
     await writeFile(join(homePath, "notes.txt"), "one");
-    runtime.enableSharedResources({ driver: createOwnerResourceDriver({
+    runtime.enableSharedResources({ resolveAppIncarnation: async ({ ownerId: requestedOwner, projectId, appId }) =>
+      requestedOwner === ownerId && projectId === null && appId === "board" ? appRegistration : null,
+      driver: createOwnerResourceDriver({
       homePath,
       listOwnedProjectIds: async () => ["proj_demo"],
       resolveProjectWorkingDirectory: async (_ownerId, projectId) => projectId === "proj_demo" ? projectRoot : null,
@@ -280,6 +284,39 @@ describe("collaboration capability HTTP routes", () => {
     expect((await app.request(path, { method: "POST", headers, body })).status).toBe(403);
   });
 
+  it("requires an exact catalog UUID on the encoded owner-runtime preflight and create routes", async () => {
+    const catalog = await signed({ actorId: ownerId, method: "POST",
+      path: `/api/collaboration/runtimes/${runtimeId}/catalog/resolve`, scopeId: null,
+      body: { kind: "file", path: "notes.txt", organizationId },
+    });
+    expect(catalog.status).toBe(200);
+    const entry = await catalog.json() as { id: string };
+    const authenticate = vi.spyOn(runtime.ownerRuntimeSessions!, "authenticate").mockResolvedValue({
+      protocolVersion: 2, id: randomUUID(), actorId: ownerId, organizationId,
+      runtimeId: runtimeId.replace(":", "-"), authorityGeneration: 1, purpose: "owner_runtime",
+      proofKeyThumbprint: "a".repeat(43), issuedAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 300_000).toISOString(), evidenceExpiresAt: new Date(Date.now() + 20_000).toISOString(),
+      renewAfter: new Date(Date.now() + 240_000).toISOString(),
+    });
+    const headers = { "content-type": "application/json", "x-matrix-collaboration-session": randomUUID(),
+      "x-matrix-collaboration-request": Buffer.from(JSON.stringify({ signature: {}, proof: "a".repeat(86) })).toString("base64url") };
+    const prefix = `/api/collaboration/runtimes/${encodeURIComponent(runtimeId)}`;
+    const invalid = await app.request(`${prefix}/scopes/preflight`, { method: "POST", headers,
+      body: JSON.stringify({ kind: "file", resourceId: "notes.txt", organizationId }) });
+    expect(invalid.status).toBe(400);
+    const preflight = await app.request(`${prefix}/scopes/preflight`, { method: "POST", headers,
+      body: JSON.stringify({ kind: "file", resourceId: entry.id, organizationId }) });
+    expect(preflight.status).toBe(200);
+    const preview = await preflight.json() as { resourceRevision: string; confirmationToken: string };
+    const created = await app.request(`${prefix}/scopes`, { method: "POST", headers,
+      body: JSON.stringify({ kind: "file", resourceId: entry.id, organizationId,
+        clientRequestId: randomUUID(), expectedRevision: preview.resourceRevision,
+        confirmationToken: preview.confirmationToken }) });
+    expect(created.status).toBe(201);
+    expect(await created.json()).toMatchObject({ resourceId: entry.id, lifecycle: "shared" });
+    expect(authenticate).toHaveBeenCalledTimes(3);
+  });
+
   it("derives the project namespace for a selected owner file and rejects an enclosing folder", async () => {
     await writeFile(join(projectRoot, "source.ts"), "export const value = 1;");
     const route = `/api/collaboration/runtimes/${runtimeId}/catalog/resolve`;
@@ -308,12 +345,96 @@ describe("collaboration capability HTTP routes", () => {
       const response = await signed({ actorId: ownerId, method: "POST", path, scopeId: null,
         body: { kind, path: resourcePath },
       });
-      expect(response.status).toBe(200);
+      expect(response.status, await response.clone().text()).toBe(200);
       expect(await response.json()).toMatchObject({ kind, path: resourcePath });
     }
     expect((await signed({ actorId: ownerId, method: "POST", path, scopeId: null,
       body: { kind: "app", path: "unknown" },
     })).status).toBe(404);
+  });
+
+  it("preflights and shares only the exact catalog-bound standalone file", async () => {
+    const catalogPath = `/api/collaboration/runtimes/${runtimeId}/catalog/resolve`;
+    const catalog = await signed({ actorId: ownerId, method: "POST", path: catalogPath, scopeId: null,
+      body: { kind: "file", path: "notes.txt", organizationId },
+    });
+    expect(catalog.status).toBe(200);
+    const entry = await catalog.json() as { id: string; revision: string };
+    const preflightPath = `/api/collaboration/runtimes/${runtimeId}/scopes/preflight`;
+    const preflight = await signed({ actorId: ownerId, method: "POST", path: preflightPath, scopeId: null,
+      body: { kind: "file", resourceId: entry.id, organizationId },
+    });
+    expect(preflight.status).toBe(200);
+    const preview = await preflight.json() as { eligible: boolean; resourceRevision: string; confirmationToken: string };
+    expect(preview).toMatchObject({ eligible: true, resourceRevision: entry.revision });
+    const createPath = `/api/collaboration/runtimes/${runtimeId}/scopes`;
+    const body = { kind: "file", resourceId: entry.id, organizationId, clientRequestId: randomUUID(),
+      expectedRevision: preview.resourceRevision, confirmationToken: preview.confirmationToken };
+    const created = await signed({ actorId: ownerId, method: "POST", path: createPath, scopeId: null, body });
+    expect(created.status).toBe(201);
+    const scope = await created.json() as { id: string; kind: string; resourceId: string; lifecycle: string };
+    expect(scope).toMatchObject({ kind: "file", resourceId: entry.id, lifecycle: "shared" });
+    const replay = await signed({ actorId: ownerId, method: "POST", path: createPath, scopeId: null, body });
+    expect(replay.status).toBe(201);
+    expect((await replay.json() as { id: string }).id).toBe(scope.id);
+    expect(await fixture.db.selectFrom("collaboration_events").select("event_id")
+      .where("scope_id", "=", scope.id).execute()).toHaveLength(1);
+  });
+
+  it("shares standalone folders and apps by catalog identity, then rejects a replaced app registration", async () => {
+    const catalogPath = `/api/collaboration/runtimes/${runtimeId}/catalog/resolve`;
+    const preflightPath = `/api/collaboration/runtimes/${runtimeId}/scopes/preflight`;
+    const createPath = `/api/collaboration/runtimes/${runtimeId}/scopes`;
+    for (const [kind, resourcePath] of [["folder", "apps"], ["app", "board"]] as const) {
+      const resolved = await signed({ actorId: ownerId, method: "POST", path: catalogPath, scopeId: null,
+        body: { kind, path: resourcePath, organizationId },
+      });
+      expect(resolved.status, await resolved.clone().text()).toBe(200);
+      const entry = await resolved.json() as { id: string; incarnation: string };
+      const preflight = await signed({ actorId: ownerId, method: "POST", path: preflightPath, scopeId: null,
+        body: { kind, resourceId: entry.id, organizationId },
+      });
+      expect(preflight.status).toBe(200);
+      const preview = await preflight.json() as { resourceRevision: string; confirmationToken: string };
+      if (kind === "app") {
+        appRegistration = "b".repeat(64);
+        expect((await signed({ actorId: ownerId, method: "POST", path: createPath, scopeId: null,
+          body: { kind, resourceId: entry.id, organizationId, clientRequestId: randomUUID(),
+            expectedRevision: preview.resourceRevision, confirmationToken: preview.confirmationToken },
+        })).status).toBe(409);
+        const rotated = await signed({ actorId: ownerId, method: "POST", path: catalogPath, scopeId: null,
+          body: { kind, path: resourcePath, organizationId },
+        });
+        expect(rotated.status).toBe(200);
+        const newEntry = await rotated.json() as { id: string; incarnation: string };
+        expect(newEntry.id).not.toBe(entry.id);
+        expect(newEntry.incarnation).toBe(appRegistration);
+        expect((await signed({ actorId: ownerId, method: "POST", path: preflightPath, scopeId: null,
+          body: { kind, resourceId: entry.id, organizationId },
+        })).status).toBe(404);
+        const refreshed = await signed({ actorId: ownerId, method: "POST", path: preflightPath, scopeId: null,
+          body: { kind, resourceId: newEntry.id, organizationId },
+        });
+        expect(refreshed.status).toBe(200);
+        const currentPreview = await refreshed.json() as { resourceRevision: string; confirmationToken: string };
+        const shared = await signed({ actorId: ownerId, method: "POST", path: createPath, scopeId: null,
+          body: { kind, resourceId: newEntry.id, organizationId, clientRequestId: randomUUID(),
+            expectedRevision: currentPreview.resourceRevision, confirmationToken: currentPreview.confirmationToken },
+        });
+        expect(shared.status).toBe(201);
+        expect(await shared.json()).toMatchObject({ kind, resourceId: newEntry.id, lifecycle: "shared" });
+        continue;
+      }
+      const created = await signed({ actorId: ownerId, method: "POST", path: createPath, scopeId: null,
+        body: { kind, resourceId: entry.id, organizationId, clientRequestId: randomUUID(),
+          expectedRevision: preview.resourceRevision, confirmationToken: preview.confirmationToken },
+      });
+      expect(created.status).toBe(201);
+      expect(await created.json()).toMatchObject({ kind, resourceId: entry.id, lifecycle: "shared" });
+    }
+    expect((await signed({ actorId: ownerId, method: "POST", path: preflightPath, scopeId: null,
+      body: { kind: "app", resourceId: "board", organizationId },
+    })).status).toBe(400);
   });
 
 });
