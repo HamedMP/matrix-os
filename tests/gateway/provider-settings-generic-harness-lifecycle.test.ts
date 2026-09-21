@@ -1398,7 +1398,7 @@ describe("generic provider harness lifecycle coordinator", () => {
       accessSourceId: "matrix_included",
       accountId: null,
     });
-    const pi = result.snapshot.harnesses.find((harness) => harness.harness === "pi")!;
+    const pi = result.snapshot.harnesses.find((harness) => harness.id === "harness_generic_1")!;
     expect(pi).toMatchObject({ enabled: false, installState: "installed" });
 
     result = await store.mutate({

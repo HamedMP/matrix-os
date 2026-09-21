@@ -33,12 +33,12 @@ describe("Desktop canonical Provider catalog client", () => {
     expect(api.get).toHaveBeenCalledWith("/api/chat-providers");
   });
 
-  it("accepts the canonical Matrix Agent instance projected from provider truth", async () => {
+  it("accepts the canonical Claude SDK instance projected from provider truth", async () => {
     const catalog = CanonicalProviderCatalogSchema.parse({
       revision: "catalog_kernel",
       drivers: [{
         kind: "kernel",
-        displayName: "Matrix Agent",
+        displayName: "Claude SDK",
         adapterVersion: "1.0.0",
         capabilityClass: "system_agent",
       }],
