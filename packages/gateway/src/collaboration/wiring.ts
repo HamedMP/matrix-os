@@ -35,6 +35,10 @@ import {
 } from "./organization-precondition.js";
 import { OrganizationMembershipClient } from "./organization-membership-client.js";
 import { CollaborationRepository } from "./repository.js";
+import { CollaborationResourceCatalog } from "./resource-catalog.js";
+import type { AppInstanceAdapter } from "./app-instance-adapter.js";
+import type { CollaborationResourceDriver, CollaborationResourceServices } from "./resource-routes.js";
+import { createCollaborationUploadStager } from "./upload-stages.js";
 import { createCollaborationRoutes } from "./routes.js";
 import { createSharedAiRuntime } from "./shared-ai-runtime.js";
 import type { CanonicalProviderSnapshotReader } from "../ai-providers/provider-settings-coordinators.js";
@@ -273,6 +277,14 @@ export async function createGatewayCollaboration(options: {
   let projectTransitionCoordinator: ReturnType<typeof createProjectTransitionCoordinator> | undefined;
   let projectGit: ReturnType<typeof createProjectGitBroker> | undefined;
   let projectReadiness: ReturnType<typeof createProjectAccessReadiness> | undefined;
+  let resourceServices: CollaborationResourceServices | undefined;
+  let ownerResourceDriver: (CollaborationResourceDriver & { close?(): void }) | undefined;
+  function closeResourceServices(): void {
+    resourceServices?.uploads?.close();
+    ownerResourceDriver?.close?.();
+    resourceServices = undefined;
+    ownerResourceDriver = undefined;
+  }
 
   return {
     repository,
@@ -336,6 +348,31 @@ export async function createGatewayCollaboration(options: {
         },
       });
       projectReadiness = createProjectAccessReadiness({ repository, source: input.source });
+    },
+    enableSharedResources(input: {
+      driver: CollaborationResourceDriver & { close?(): void };
+      appsFactory?: (dependencies: {
+        db: Kysely<OwnerCollaborationDatabase>;
+        authority: CollaborationAuthority;
+        catalog: CollaborationResourceCatalog;
+        onCommitted(scopeId: string): Promise<void>;
+      }) => AppInstanceAdapter;
+    }): void {
+      if (registered || closing || resourceServices) {
+        throw new Error("Shared resources must be initialized exactly once before route registration");
+      }
+      const catalog = new CollaborationResourceCatalog(options.db);
+      const onCommitted = async (scopeId: string) => { eventRegistry.broadcastScope(scopeId); };
+      const uploads = createCollaborationUploadStager({ db: options.db, catalog, driver: input.driver, onCommitted });
+      try {
+        const apps = input.appsFactory?.({ db: options.db, authority, catalog, onCommitted });
+        resourceServices = { catalog, driver: input.driver, uploads, ...(apps ? { apps } : {}) };
+        ownerResourceDriver = input.driver;
+      } catch (error: unknown) {
+        uploads.close();
+        input.driver.close?.();
+        throw error;
+      }
     },
     async enableSharedAi(input: {
       orchestrator: CanonicalChatOrchestrator;
@@ -479,6 +516,7 @@ export async function createGatewayCollaboration(options: {
         resolveParticipant,
         resolveInvitationIdentifier,
         ...(executionPolicies ? { executionPolicies } : {}),
+        ...(resourceServices ? { resources: resourceServices } : {}),
         onScopeCommitted: (scopeId) => eventRegistry.broadcastScope(scopeId),
         onRevoked: (scopeId, actorId) => {
           eventRegistry.notifyRevoked(scopeId, actorId);
@@ -536,6 +574,7 @@ export async function createGatewayCollaboration(options: {
     fence(): void {
       closing = true;
       if (cleanupTimer) clearInterval(cleanupTimer);
+      closeResourceServices();
       const drainingSharedAi = sharedAiRuntime;
       sharedAiRuntime = undefined;
       chatExecutionAdapter = undefined;
@@ -565,6 +604,7 @@ export async function createGatewayCollaboration(options: {
       if (closing) return;
       closing = true;
       if (cleanupTimer) clearInterval(cleanupTimer);
+      closeResourceServices();
       await controlClient?.shutdown();
       await directSessions.shutdown();
       await sharedAiRuntime?.shutdown();
