@@ -53,12 +53,42 @@ export function createDirectStreams(deps: {
     return url.href;
   };
 
+  const MAX_STREAM_SCOPES = 128;
+  const MAX_STREAMS_PER_SCOPE = 8;
+  const subscriptions = new Map<string, Set<() => void>>();
+  const closeScope = (scopeId: string) => {
+    for (const stop of [...(subscriptions.get(scopeId) ?? [])]) stop();
+  };
+  const closeAll = () => {
+    for (const scopeId of [...subscriptions.keys()]) closeScope(scopeId);
+  };
+  const register = (scopeId: string, stop: () => void) => {
+    if (!subscriptions.has(scopeId) && subscriptions.size >= MAX_STREAM_SCOPES) closeScope(subscriptions.keys().next().value!);
+    let active = subscriptions.get(scopeId);
+    if (!active) { active = new Set(); subscriptions.set(scopeId, active); }
+    if (active.size >= MAX_STREAMS_PER_SCOPE) active.values().next().value?.();
+    const remove = () => {
+      stop();
+      active!.delete(remove);
+      if (active!.size === 0) subscriptions.delete(scopeId);
+    };
+    active.add(remove);
+    return remove;
+  };
+
   /** Opens one stream: purpose ticket → socket → first-frame possession proof. Reconnects always start over with a new ticket. */
-  const openStream = (scopeId: string, purpose: Purpose, after: () => string, bind: (socket: WebSocket, connected: DirectConnected) => void, onFailure: () => void) => {
+  const openStream = (scopeId: string, purpose: Purpose, after: () => string, bind: (socket: WebSocket, connected: DirectConnected, terminate: () => void) => void, onFailure: () => void) => {
     let closed = false;
     let socket: WebSocket | null = null;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
     let attempt = 0;
+    const stop = () => {
+      closed = true;
+      if (retryTimer) clearTimeout(retryTimer);
+      retryTimer = undefined;
+      socket?.close(1000, "Closed");
+      socket = null;
+    };
     const retry = () => {
       if (closed) return;
       const delay = Math.min(MAX_RECONNECT_DELAY_MS, 500 * (2 ** Math.min(attempt++, 5)));
@@ -68,16 +98,18 @@ export function createDirectStreams(deps: {
       if (closed) return;
       try {
         const connected = await deps.ensure(scopeId);
+        if (closed) return;
         const { signedTicket, origin } = await deps.issueTicket(scopeId, purpose, connected.key);
         if (closed) return;
         const next = (deps.webSocketFactory ?? ((url: string) => new WebSocket(url)))(socketUrl(origin, scopeId, purpose, signedTicket, after()));
         socket = next;
-        bind(next, connected);
+        bind(next, connected, stop);
         const previousOpen = next.onopen;
         next.onopen = (event) => {
           attempt = 0;
           void signPayload(connected.key, possessionPayload({ ticketNonce: signedTicket.ticket.nonce, purpose, sessionId: connected.session.id }), deps.subtle)
             .then((possession) => {
+              if (closed || socket !== next) return;
               next.send(JSON.stringify({ protocolVersion: COLLABORATION_DIRECT_PROTOCOL_VERSION, type: "handshake", sessionId: connected.session.id, ticketNonce: signedTicket.ticket.nonce, possession }));
               (previousOpen as ((event: Event) => void) | null)?.call(next, event);
             })
@@ -107,20 +139,14 @@ export function createDirectStreams(deps: {
       }
     };
     void connect();
-    return () => {
-      closed = true;
-      if (retryTimer) clearTimeout(retryTimer);
-      retryTimer = undefined;
-      socket?.close(1000, "Closed");
-      socket = null;
-    };
+    return stop;
   };
 
   const subscribeEvents = (scopeId: string, handlers: DirectEventHandlers): (() => void) => {
     const parsedScopeId = CollaborationIdSchema.parse(scopeId);
     let sequence = "0";
     let stopped = false;
-    const stop = openStream(parsedScopeId, "events", () => sequence, (socket) => {
+    const stop = openStream(parsedScopeId, "events", () => sequence, (socket, _connected, terminate) => {
       let usable = true;
       let refreshQueue = Promise.resolve();
       const enqueue = (operation: () => void | Promise<void>) => {
@@ -130,7 +156,7 @@ export function createDirectStreams(deps: {
         });
       };
       socket.onmessage = (event) => {
-        if (!usable) return;
+        if (!usable || stopped) return;
         if (typeof event.data !== "string" || event.data.length > MAX_SOCKET_FRAME_CHARS) { socket.close(1008, "Invalid frame"); return; }
         try {
           const frame = CollaborationEventFrameSchema.parse(JSON.parse(event.data) as unknown);
@@ -143,8 +169,8 @@ export function createDirectStreams(deps: {
             enqueue(() => { sequence = frame.sequence; });
           } else if (frame.type === "unavailable") {
             stopped = true;
+            terminate();
             handlers.onUnavailable();
-            socket.close(1008, "Unavailable");
           } else {
             enqueue(async () => { await handlers.onEvent(); if (usable && !stopped) sequence = frame.sequence; });
           }
@@ -155,7 +181,7 @@ export function createDirectStreams(deps: {
       };
       socket.onclose = () => { usable = false; };
     }, () => { if (!stopped) handlers.onConnectionChange?.("reconnecting"); });
-    return () => { stopped = true; stop(); };
+    return register(parsedScopeId, () => { stopped = true; stop(); });
   };
 
   const subscribeTerminal = (scopeId: string, handlers: DirectTerminalHandlers): (() => void) => {
@@ -164,12 +190,13 @@ export function createDirectStreams(deps: {
     let stopped = false;
     let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
     const clearHeartbeat = () => { if (heartbeatTimer) clearInterval(heartbeatTimer); heartbeatTimer = undefined; };
-    const stop = openStream(parsedScopeId, "terminal", () => sequence.toString(), (socket) => {
+    const stop = openStream(parsedScopeId, "terminal", () => sequence.toString(), (socket, _connected, terminate) => {
       socket.onopen = () => {
         clearHeartbeat();
         heartbeatTimer = setInterval(() => { if (!stopped) socket.send(JSON.stringify({ version: 1, type: "heartbeat" })); }, TERMINAL_HEARTBEAT_INTERVAL_MS);
       };
       socket.onmessage = (event) => {
+        if (stopped) return;
         if (typeof event.data !== "string" || event.data.length > MAX_SOCKET_FRAME_CHARS) { socket.close(1008, "Invalid frame"); return; }
         try {
           const frame = CollaborationTerminalFrameSchema.parse(JSON.parse(event.data) as unknown);
@@ -185,7 +212,7 @@ export function createDirectStreams(deps: {
               console.warn("[collaboration-direct] terminal refresh failed", error instanceof Error ? error.name : "UnknownError");
               socket.close(1011, "Refresh failed");
             });
-          } else { stopped = true; clearHeartbeat(); handlers.onUnavailable(); socket.close(1008, "Unavailable"); }
+          } else { stopped = true; clearHeartbeat(); terminate(); handlers.onUnavailable(); }
         } catch (error: unknown) {
           console.warn("[collaboration-direct] terminal frame rejected", error instanceof Error ? error.name : "UnknownError");
           socket.close(1008, "Invalid frame");
@@ -193,10 +220,10 @@ export function createDirectStreams(deps: {
       };
       socket.onclose = () => { clearHeartbeat(); };
     }, () => { if (!stopped) handlers.onDisconnected(); });
-    return () => { stopped = true; clearHeartbeat(); stop(); };
+    return register(parsedScopeId, () => { stopped = true; clearHeartbeat(); stop(); });
   };
 
-  return { subscribeEvents, subscribeTerminal };
+  return { subscribeEvents, subscribeTerminal, closeScope, closeAll };
 }
 
 function maxSequence(current: bigint, next: string): bigint {
