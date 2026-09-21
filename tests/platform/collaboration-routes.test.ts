@@ -123,6 +123,11 @@ describe("platform collaboration routes", () => {
       ...directoryEvent("accepted"), eventId: "20000000-0000-4000-8000-000000000077", scopeId: orgScopeId,
       organizationId: "org_1", audience: "organization", organizationGrantId, recipients: [],
     });
+    await repository.applyDirectoryEvent({
+      ...directoryEvent("accepted"), eventId: "20000000-0000-4000-8000-000000000079",
+      scopeId: "10000000-0000-4000-8000-000000000079",
+      organizationId: "org_1", audience: "organization", recipients: [],
+    });
     organizationIds = ["org_1"];
     const member = await app.request("/api/collaboration/inbox", {
       headers: { "x-test-actor": platformCollaborationActors.recipientWithoutComputer },
