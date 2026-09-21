@@ -1004,7 +1004,9 @@ export async function createGateway(config: GatewayConfig) {
         }),
           {
           onPartialRuntime: (runtime) => {
-            enableGatewaySharedResources({ runtime, homePath, projects: codingAgentProjectManager });
+            enableGatewaySharedResources({
+              runtime, homePath, projects: codingAgentProjectManager, apps: appRegistry,
+            });
             const inventorySource = createGatewayProjectInventorySource({
               homePath,
               gitSetup: { get: projectGitDriver.getGitSetup },
