@@ -111,6 +111,7 @@ describe("S12 direct resource policy", () => {
   let grants: CollaborationCapabilityRepository;
   let catalog: CollaborationResourceCatalog;
   let driver: MemoryDriver;
+  let uploads: ReturnType<typeof createCollaborationUploadStager>;
   let bridgeCalls: Array<{ namespace: string; action: string; actorId: string }>;
   let terminalActions: Array<{ actorId: string; action: unknown }>;
   let ids: { readme: string; notes: string; docs: string; docsGuide: string; app: string };
@@ -299,6 +300,7 @@ describe("S12 direct resource policy", () => {
         : null },
       now: () => NOW,
     });
+    uploads = createCollaborationUploadStager({ db: fixture.db, catalog, driver, now: () => NOW });
     const options: CollaborationRouteOptions = {
       runtimeId: collaborationIds.runtime,
       verifier: new CollaborationActorProofVerifier({
@@ -315,7 +317,7 @@ describe("S12 direct resource policy", () => {
       } as never,
       resolveParticipant,
       resolveInvitationIdentifier: async () => { throw new Error("unused"); },
-      resources: { catalog, driver, apps, uploads: createCollaborationUploadStager({ db: fixture.db, catalog, driver, now: () => NOW }) },
+      resources: { catalog, driver, apps, uploads },
       now: () => NOW,
     };
     app = new Hono();
@@ -325,6 +327,7 @@ describe("S12 direct resource policy", () => {
   });
 
   afterEach(async () => {
+    uploads.close();
     await fixture.destroy();
   });
 
@@ -496,6 +499,14 @@ describe("S12 direct resource policy", () => {
       await grants.acceptGrant({ grantId: created.grantId, actorId: newcomer });
       const write = await signed({ actorId: newcomer, scopeId: PROJECT_SCOPE, method: "POST", path: `/api/collaboration/scopes/${PROJECT_SCOPE}/files/actions`, body: { type: "write", fileId: ids.docsGuide, content: "by grant", expectedRevision: "0", clientRequestId: requestId() } });
       expect(write.status).toBe(200);
+      const view = await signed({ actorId: newcomer, scopeId: PROJECT_SCOPE, method: "POST",
+        path: `/api/collaboration/scopes/${PROJECT_SCOPE}/apps/${APP_ID}/view`,
+        body: { action: { action: "count", app: "board", table: "cards" } } });
+      expect(view.status).toBe(200);
+      const mutate = await signed({ actorId: newcomer, scopeId: PROJECT_SCOPE, method: "POST",
+        path: `/api/collaboration/scopes/${PROJECT_SCOPE}/apps/${APP_ID}/actions`,
+        body: { clientRequestId: requestId(), expectedRevision: "0", action: { action: "insert", app: "board", table: "cards", data: { title: "grant" } } } });
+      expect(mutate.status).toBe(200);
     });
   });
 
@@ -559,12 +570,35 @@ describe("S12 direct resource policy", () => {
       const partBody = { type: "upload_part", uploadId, index: 0, sha256: hash(chunk), chunk: Buffer.from(chunk).toString("base64") };
       expect((await signed({ actorId: collaborationActors.editor, scopeId: PROJECT_SCOPE, method: "POST", path, body: partBody })).status).toBe(200);
       const changed = await signed({ actorId: collaborationActors.editor, scopeId: PROJECT_SCOPE, method: "POST", path,
-        body: { ...partBody, chunk: Buffer.from("oops").toString("base64") } });
+        body: { ...partBody, sha256: hash(new TextEncoder().encode("oops")), chunk: Buffer.from("oops").toString("base64") } });
       expect(changed.status).toBe(409);
       const incomplete = await signed({ actorId: collaborationActors.editor, scopeId: PROJECT_SCOPE, method: "POST", path,
         body: { type: "upload_commit", uploadId, expectedRevision: "0", clientRequestId: requestId() } });
       expect(incomplete.status).toBe(409);
       expect(new TextDecoder().decode(driver.files.get(`${collaborationActors.owner}:${PROJECT_ID}:README.md`))).toBe("# Alpha");
+    });
+
+    it("cancels staged bytes and sweeps expired uploads", async () => {
+      const bytes = new TextEncoder().encode("temporary");
+      const uploadId = requestId();
+      expect((await signed({ actorId: collaborationActors.editor, scopeId: PROJECT_SCOPE, method: "POST", path,
+        body: { type: "upload_stage", fileId: ids.readme, size: bytes.length, sha256: hash(bytes), clientRequestId: uploadId } })).status).toBe(200);
+      const cancelled = await signed({ actorId: collaborationActors.editor, scopeId: PROJECT_SCOPE, method: "POST", path,
+        body: { type: "upload_cancel", uploadId } });
+      expect(cancelled.status).toBe(200);
+      expect(await cancelled.json()).toMatchObject({ upload: { state: "cancelled" } });
+      const cancelledCommit = await signed({ actorId: collaborationActors.editor, scopeId: PROJECT_SCOPE, method: "POST", path,
+        body: { type: "upload_commit", uploadId, expectedRevision: "0", clientRequestId: requestId() } });
+      expect(cancelledCommit.status).toBe(409);
+      const expiringId = requestId();
+      expect((await signed({ actorId: collaborationActors.editor, scopeId: PROJECT_SCOPE, method: "POST", path,
+        body: { type: "upload_stage", fileId: ids.readme, size: bytes.length, sha256: hash(bytes), clientRequestId: expiringId } })).status).toBe(200);
+      await fixture.db.updateTable("collaboration_upload_stages").set({ expires_at: new Date(NOW.getTime() - 1) })
+        .where("id", "=", expiringId).execute();
+      expect(await uploads.sweepExpired()).toBe(1);
+      const expired = await fixture.db.selectFrom("collaboration_upload_stages").select("state")
+        .where("id", "=", expiringId).executeTakeFirst();
+      expect(expired?.state).toBe("expired");
     });
 
     it("denies commit after revocation even when all bytes were staged", async () => {
