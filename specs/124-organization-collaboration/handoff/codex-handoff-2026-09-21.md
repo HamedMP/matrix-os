@@ -843,3 +843,29 @@ Fifteen layers, linear ancestry verified end to end, all pushed:
 **The most valuable finding of the round refutes an argument I had accepted.** The retirement fix rested on "a keyring the loader admits is one the issuer accepts", justified because both compare against now-plus-skew and the loader runs strictly earlier. That holds for the *deadline* but not for *cardinality*: one active key plus eight distinct retired keys passes the loader's **separate** eight-key limits while the issuer throws on the **combined** count, and with the construction-site catch removed that exception escapes bootstrap and stops the platform starting — the exact failure the fix was closing. The instruction given was to validate the combined count in the loader, keep the loader as sole authority, and then re-audit the constructor for any other throw the loader cannot rule out, restoring a narrow catch if a residual class genuinely exists rather than fixing one shape at a time.
 
 Other real findings this round: an authenticated client can omit `Content-Length` and stream an unbounded body through the relay to a customer home (the 96 KiB check only validates the declared length); endpoint registration commits before the control upgrade ticket in a separate transaction, so a failed issuance returns 503 with the generation and key changes already committed; and the control-upgrade route validates its `ticket` query parameter with handwritten checks instead of a bounded Zod schema.
+
+## 43. All review threads closed; chain relinearized — 2026-09-21 23:35 UTC
+
+**Every one of the seven PRs now has zero unresolved review threads.** Final heads, all submitted with CI + Docker + review dispatched:
+
+| PR | Branch | Head |
+| --- | --- | --- |
+| #1802 | `124/s05` | `53b7a698d` |
+| #1803 | `124/s05-gateway` | `d29312c91` |
+| #1804 | `124/s05-relay` | `eaf0547ae` |
+| #1805 | `124/s08` | `8f9dae50f` |
+| #1806 | `124/s06` | `8136abe38` |
+| #1807 | `124/s07` | `f11a09afa` |
+| #1808 | `124/s07-terminal` | `3c5d5d97d` |
+
+Above them, linear and pushed: s09 `652518aa7`, s10 `08dff9891`, s12 `f3d9ca153`, s12-app `2512f2f84`, s15-gateway `b1e2c9417`, s15-directory `871d6ee30`, s15-direct `95e0dcd07`, s15 `0d0df2c91`, plus `124/s10-git-hardening` `5b1df5d54` rebased onto S15.
+
+**The key-count bug was real and is fixed with a systematic audit rather than one patch.** The key map parser caps active and retired at eight *each* while the constructor counts distinct ids across *both* against eight, so five plus five loaded and then threw out of platform startup. Independently reproduced by a second worker at that smaller, likelier rotation shape. The loader now applies the combined cap on both return paths, and **every** constructor refusal was audited against what rules it out at load: missing active key, bad key id, wrong seed length, retired key with no retirement, unparseable retirement, retirement past the clock skew, and the combined cap. No residual class remains, so no catch was restored at the construction site. The loader's comment no longer asserts the bare invariant; it names each refusal it rules out.
+
+**Two findings were disproved rather than accommodated, both with executable evidence.** The relay's "streamed bodies bypass limit" impact did not reproduce, because the framework already wraps a body with no declared length in a counting stream — but underneath it a real structural defect was found and fixed: the relay's only bound came from a constant in the contracts package while its own configured limit was enforced against the declared length alone, so a relay configured with a smaller limit forwarded a 128 KiB chunked body whole to a home. And the terminal PATCH "missing body limit" was wrong, since the composition registers one shared limit for POST, PATCH and DELETE before any handler; it is now locked by a 97 KiB request asserting 413, which also fails if PATCH is ever dropped from that shared registration.
+
+**Also fixed:** endpoint registration and upgrade-ticket issuance now share one transaction (a failed issuance previously returned 503 with the generation bump and merged keys committed; the test requires the refused registration to leave the recorded generation at 1, where it reached 4); and the control-upgrade `ticket` query parameter parses through a bounded Zod schema instead of handwritten checks.
+
+**S09 run-hardening complete** at `83ff5b1d8`: all eight findings plus all four P3 items, `shared-coding-execution` 32 passing (25 before the layer). It also repaired a previous worker's flood test whose mock returned a promise that never settled, hanging the whole file past every timeout — which likely explains earlier failures attributed to host contention.
+
+**Coordinator error worth recording:** after resolving the S15 conflict by dropping a duplicate method in favour of the base's, that layer's separate import of the same type remained, duplicating one the base already had — two compile errors in a hand-merged file. Tests and the pattern scan passed; only the typecheck exit code caught it, and it was briefly reported as green from the test lines alone. Hand-resolved semantic conflicts are exactly where type errors hide. Check the exit code, not the summary lines.
