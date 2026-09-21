@@ -10,6 +10,7 @@ import {
   collaborationActors,
   collaborationIds,
   createCollaborationTestDatabase,
+  createRealCollaborationTestDatabase,
   type CollaborationTestDatabase,
 } from "./collaboration-test-support.js";
 
@@ -26,7 +27,9 @@ describe("CollaborationTerminalAdapter scope binding", () => {
   let adapter: CollaborationTerminalAdapter;
 
   beforeEach(async () => {
-    fixture = await createCollaborationTestDatabase();
+    fixture = process.env.MATRIX_TEST_POSTGRES_URL
+      ? await createRealCollaborationTestDatabase()
+      : await createCollaborationTestDatabase();
     await bootstrapChatDatabase(fixture.db);
     await bootstrapCollaborationDatabase(fixture.db);
     session = eligibleSession();
@@ -71,6 +74,7 @@ describe("CollaborationTerminalAdapter scope binding", () => {
   });
 
   it("activates one standalone scope for the exact running incarnation", async () => {
+    session.contributorControl = false;
     const preflight = await adapter.preflight({ ownerId: collaborationActors.owner, organizationId: "org_matrix_team", terminalId });
     expect(preflight).toMatchObject({ eligible: true, resourceRevision: 4 });
 
@@ -95,11 +99,12 @@ describe("CollaborationTerminalAdapter scope binding", () => {
       scopeId: collaborationIds.scope,
       sessionIncarnation: incarnation,
       executionGeneration: 4,
+      contributorControl: false,
     });
     const persisted = await fixture.db.selectFrom("collaboration_scopes")
       .select(["execution_generation", "execution_eligibility"])
       .where("id", "=", collaborationIds.scope).executeTakeFirstOrThrow();
-    expect(persisted).toMatchObject({
+    expect({ ...persisted, execution_generation: Number(persisted.execution_generation) }).toMatchObject({
       execution_generation: 4,
       execution_eligibility: { profileId: "scope-runtime-terminal-v1" },
     });
