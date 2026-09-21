@@ -170,11 +170,14 @@ describe("CollaborationProxy", () => {
       expect(parseCollaborationProxyRoute(method, `${scope}/grants/${invitationId}`))
         .toEqual({ kind: "scope", identifier: scopeId });
     }
+    expect(parseCollaborationProxyRoute("POST", `${scope}/grants/${invitationId}/accept`))
+      .toEqual({ kind: "scope", identifier: scopeId });
     expect(parseCollaborationProxyRoute("POST", `${scope}/policy/preflight`))
       .toEqual({ kind: "scope", identifier: scopeId });
     expect(parseCollaborationProxyRoute("GET", `${runtime}/catalog/resolve`)).toBeNull();
     expect(parseCollaborationProxyRoute("POST", `${runtime}/catalog/resolve/extra`)).toBeNull();
     expect(parseCollaborationProxyRoute("PUT", `${scope}/grants/${invitationId}`)).toBeNull();
+    expect(parseCollaborationProxyRoute("GET", `${scope}/grants/${invitationId}/accept`)).toBeNull();
   });
 
   it("routes only the exact owner lifecycle, operation, and export paths", () => {
