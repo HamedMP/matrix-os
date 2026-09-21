@@ -433,6 +433,25 @@ explain a failed Chat-create request. A green gateway health indicator is not
 evidence of a successful funded turn. Capture all three desktop surfaces and
 verify a real bounded funded turn before declaring the preview usable.
 
+OpenCode's Anthropic connection uses the AI SDK API-prefix convention: its
+generated `provider.anthropic.options.baseURL` must end in `/v1`, since the SDK
+appends `/messages`. Normalize only that OpenCode config value, preserving
+proxy path prefixes and an existing `/v1`. Do not change the shared portable
+`ANTHROPIC_BASE_URL` used by Anthropic SDK clients. Verify the actual relay
+request path in preview; successful Chat admission alone is not inference
+acceptance. See [AI SDK Anthropic configuration](https://v4.ai-sdk.dev/providers/ai-sdk-providers/anthropic).
+
+Preview upgrades must also preserve Chat database compatibility. A computer
+that previously ran collaboration-enabled Chat can retain a required
+`chat_messages.purpose` column even when an older feature branch is deployed.
+All message writers (admission, queue claim, steering, streaming, and final
+output) must provide the stored purpose explicitly. Bootstrap may atomically
+add/backfill the column for legacy databases, but must preserve existing
+discussion purposes, actor attribution, and constraints. Do not drop owner
+tables or weaken constraints to make an older preview run. Test both fresh
+schemas and upgraded schemas without a column default; generic health checks
+do not exercise this write contract.
+
 Land this work in independently reviewable Graphite layers, each with tests
 first, applicable build/pattern gates, current visual evidence, and Greptile
 5/5:
