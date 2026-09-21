@@ -3,7 +3,7 @@ import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
 import { createGateway } from "../../../packages/gateway/src/server.js";
-import type { SpawnFn } from "../../../packages/gateway/src/dispatcher.js";
+import type { SpawnFn } from "../../../packages/gateway/src/domains/sessions/dispatcher.js";
 
 const TEMPLATE_DIR = resolve(__dirname, "../../../home");
 

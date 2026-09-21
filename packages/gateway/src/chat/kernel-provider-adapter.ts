@@ -1,9 +1,9 @@
 import { isKernelResultFailureText } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import type { KernelEvent } from "@matrix-os/kernel";
-import type { Dispatcher } from "../dispatcher.js";
-import { KernelCredentialAccessSourceIdSchema } from "../kernel-credentials.js";
-import { KernelEffortSchema, KernelModelSchema } from "../kernel-settings.js";
+import type { Dispatcher } from "../domains/sessions/dispatcher.js";
+import { KernelCredentialAccessSourceIdSchema } from "../domains/integrations/kernel-credentials.js";
+import { KernelEffortSchema, KernelModelSchema } from "../domains/integrations/kernel-settings.js";
 import { createCanonicalCliEventQueue } from "./cli-process.js";
 import {
   CanonicalProviderRunEventSchema,

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import {
   forkApp,
   installApp,
-} from '../../packages/gateway/src/app-fork.js';
+} from '../../packages/gateway/src/domains/apps/app-fork.js';
 
 describe('gateway/app-fork', () => {
   let tmpDir: string;

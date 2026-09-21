@@ -4,7 +4,7 @@ import { isIP } from "node:net";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
 import { CanonicalChatIdSchema } from "@matrix-os/contracts";
-import { requireRequestPrincipal, isRequestPrincipalError, mapRequestPrincipalError } from "../request-principal.js";
+import { requireRequestPrincipal, isRequestPrincipalError, mapRequestPrincipalError } from "../domains/identity/request-principal.js";
 import { createRateLimiter } from "../security/rate-limiter.js";
 import { ChatSharingError, ShareTokenSchema, type ChatSharing } from "./sharing.js";
 

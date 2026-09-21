@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { createAppDb, type AppDb } from "../../packages/gateway/src/app-db.js";
-import { createAppRegistry } from "../../packages/gateway/src/app-db-registry.js";
+import { createAppDb, type AppDb } from "../../packages/gateway/src/domains/apps/db/app-db.js";
+import { createAppRegistry } from "../../packages/gateway/src/domains/apps/db/app-db-registry.js";
 import { KyselyPGlite } from "kysely-pglite";
 
 const SOCIAL_TABLES = {

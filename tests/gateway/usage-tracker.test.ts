@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import {
   createDispatcher,
   type SpawnFn,
-} from "../../packages/gateway/src/dispatcher.js";
+} from "../../packages/gateway/src/domains/sessions/dispatcher.js";
 import type { KernelEvent } from "@matrix-os/kernel";
 import { createUsageTracker } from "../../packages/kernel/src/usage.js";
 

@@ -38,8 +38,8 @@ import {
   terminalStopMatchesThread,
   type PendingTerminalStop,
 } from "./thread-terminal-stops.js";
-import { atomicWriteJson } from "../state-ops.js";
-import type { RequestPrincipal } from "../request-principal.js";
+import { atomicWriteJson } from "../domains/files/state-ops.js";
+import type { RequestPrincipal } from "../domains/identity/request-principal.js";
 import { logCodingAgentWarning } from "./diagnostics.js";
 import { CodingAgentSteerRequestSchema, matchesSteeringTurn } from "./thread-steering.js";
 import { applyThreadAbort, type CodingAbortScope } from "./thread-abort.js";
@@ -62,7 +62,7 @@ import {
   type CodingAgentProviderEventBatch,
   type CodingAgentProviderResumeState,
 } from "./provider-adapter.js";
-import type { AiTokenUsage } from "../ai-analytics.js";
+import type { AiTokenUsage } from "../domains/observability/ai-analytics.js";
 import { createCodingAgentTurnDispatcher } from "./turn-dispatcher.js";
 import { withIdleWorkspaceState, type IdleWorkspaceIdentity } from "./idle-workspace-state.js";
 import { safeProviderRunError, safeProviderRunFailureEvents, defaultAbortEvents, terminalStoppedEvents,

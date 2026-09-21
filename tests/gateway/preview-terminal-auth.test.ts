@@ -1,8 +1,8 @@
 import { createHmac } from "node:crypto";
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { authMiddleware, readPreviewTerminalOwner } from "../../packages/gateway/src/auth.js";
-import { requireRequestPrincipal } from "../../packages/gateway/src/request-principal.js";
+import { authMiddleware, readPreviewTerminalOwner } from "../../packages/gateway/src/domains/identity/auth.js";
+import { requireRequestPrincipal } from "../../packages/gateway/src/domains/identity/request-principal.js";
 import { createTerminalWorkspaceRoutes, terminalRuntimeRefAccess } from "../../packages/gateway/src/shell/workspace-routes.js";
 import { buildPlatformVerificationToken } from "../../packages/platform/src/platform-token.js";
 import { buildPlatformUserProof } from "../../packages/platform/src/session-routing-websocket.js";

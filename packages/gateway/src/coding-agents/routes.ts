@@ -46,7 +46,7 @@ import {
   mapRequestPrincipalError,
   requireRequestPrincipal,
   type RequestPrincipal,
-} from "../request-principal.js";
+} from "../domains/identity/request-principal.js";
 import type { CodingAgentRuntimeSummaryService } from "./runtime-summary.js";
 import {
   CodingAgentTurnError,

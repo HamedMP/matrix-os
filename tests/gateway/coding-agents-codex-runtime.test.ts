@@ -1,9 +1,10 @@
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { appendFile, chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, sep } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { buildAgentLaunch } from "../../packages/gateway/src/agent-launcher.js";
+import { buildAgentLaunch } from "../../packages/gateway/src/domains/sessions/agent-launcher.js";
 import { createCanonicalCodingChatProviderAdapter } from "../../packages/gateway/src/chat/coding-provider-adapter.js";
 import { CODEX_VERIFIED_VERSION } from "../../packages/contracts/src/index.js";
 import {
@@ -12,7 +13,7 @@ import {
 } from "../../packages/gateway/src/coding-agents/codex-event-bridge.js";
 import { createCodingAgentThreadStore } from "../../packages/gateway/src/coding-agents/thread-store.js";
 import { createWorkspaceCodingAgentProvider } from "../../packages/gateway/src/coding-agents/workspace-provider.js";
-import type { RequestPrincipal } from "../../packages/gateway/src/request-principal.js";
+import type { RequestPrincipal } from "../../packages/gateway/src/domains/identity/request-principal.js";
 
 const principal: RequestPrincipal = { userId: "owner_user", source: "jwt" };
 
@@ -76,7 +77,11 @@ describe("Codex structured event runtime", () => {
     });
 
     expect(launch.command).toBe(process.execPath);
-    expect(launch.args[0]).toMatch(/coding-agents\/codex-app-server-runner\.mjs$/);
+    const runnerScript = launch.args[0]!.split(sep).join("/");
+    expect(runnerScript).toMatch(/coding-agents\/codex-app-server-runner\.mjs$/);
+    // The regex above also matches a mis-resolved path under the launcher's
+    // own directory — assert the script really ships where the launcher points.
+    expect(existsSync(launch.args[0]!)).toBe(true);
     expect(launch.args.slice(1, 4)).toEqual([
       "/home/matrix/home/system/coding-agents/provider-events/sess_test.jsonl",
       CODEX_VERIFIED_VERSION,

@@ -1,4 +1,4 @@
-import { RingBuffer } from "../ring-buffer.js";
+import { RingBuffer } from "../_shared/ring-buffer.js";
 import { Osc133Parser, type Osc133Mark } from "./osc133.js";
 import type { ScrollbackStore, ScrollbackRecord } from "./scrollback-store.js";
 

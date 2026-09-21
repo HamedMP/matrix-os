@@ -7,7 +7,7 @@ import {
   type CanonicalChatTransportFrame,
   type CanonicalChatStreamEvent,
 } from "@matrix-os/contracts";
-import type { RequestPrincipal } from "../request-principal.js";
+import type { RequestPrincipal } from "../domains/identity/request-principal.js";
 import type { ChatOutboxEvent, ChatOwner } from "./records.js";
 import type { ChatOutboxSink } from "./outbox-delivery.js";
 

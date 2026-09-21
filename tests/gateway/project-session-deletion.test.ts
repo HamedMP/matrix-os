@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { TerminalRuntimeError } from "@matrix-os/terminal-runtime";
-import { createAgentSessionManager } from "../../packages/gateway/src/agent-session-manager.js";
+import { createAgentSessionManager } from "../../packages/gateway/src/domains/sessions/agent-session-manager.js";
 
 it.each(["missing", "unavailable", "running"])("cascades a %s child session without dropping state on failure", async (runtimeState) => {
   const homePath = await mkdtemp(join(tmpdir(), "matrix-cascade-session-"));

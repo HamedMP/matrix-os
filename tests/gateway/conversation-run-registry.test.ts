@@ -3,8 +3,8 @@ import {
   conversationHistoryRefreshRequired,
   ConversationRunRegistry,
   type ConversationRunMessage,
-} from "../../packages/gateway/src/conversation-run-registry.js";
-import { stampApprovalRequestForReplay } from "../../packages/gateway/src/conversation-approval-replay.js";
+} from "../../packages/gateway/src/domains/sessions/conversation-run-registry.js";
+import { stampApprovalRequestForReplay } from "../../packages/gateway/src/domains/sessions/conversation-approval-replay.js";
 
 describe("ConversationRunRegistry", () => {
   afterEach(() => {

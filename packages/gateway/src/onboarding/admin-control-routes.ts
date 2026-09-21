@@ -7,7 +7,7 @@ import type { AdminControlService } from "./admin-control-service.js";
 import {
   requireRequestPrincipal,
   type RequestPrincipal,
-} from "../request-principal.js";
+} from "../domains/identity/request-principal.js";
 
 const ADMIN_CONTROL_BODY_LIMIT = 4096;
 

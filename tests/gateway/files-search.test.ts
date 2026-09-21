@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { fileSearch } from "../../packages/gateway/src/file-search.js";
+import { fileSearch } from "../../packages/gateway/src/domains/files/file-search.js";
 
 describe("fileSearch", () => {
   let testDir: string;

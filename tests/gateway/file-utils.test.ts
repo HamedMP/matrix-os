@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { getMimeType, isTextFile, isBinaryFile } from "../../packages/gateway/src/file-utils.js";
+import { getMimeType, isTextFile, isBinaryFile } from "../../packages/gateway/src/domains/files/file-utils.js";
 
 describe("getMimeType", () => {
   it("returns correct MIME for markdown", () => {

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentProviderSummary } from "@matrix-os/contracts";
-import { buildAgentLaunch } from "../../packages/gateway/src/agent-launcher.js";
+import { buildAgentLaunch } from "../../packages/gateway/src/domains/sessions/agent-launcher.js";
 import { createChatProviderCatalogService, validateChatProviderSelection } from "../../packages/gateway/src/chat/provider-catalog.js";
 import { createClaudeModelCatalogSource } from "../../packages/gateway/src/chat/claude-model-catalog.js";
 import { EventEmitter } from "node:events";

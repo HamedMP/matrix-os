@@ -1,0 +1,399 @@
+import { createHmac, timingSafeEqual } from "node:crypto";
+import type { Context, MiddlewareHandler } from "hono";
+import {
+  PREVIEW_TERMINAL_ACCESS_HEADER,
+  PREVIEW_TERMINAL_OWNER_CONTEXT_KEY,
+  verifyPreviewTerminalAccess,
+} from "../../preview-terminal-access.js";
+import { createRateLimiter } from "../../security/rate-limiter.js";
+import {
+  looksLikeJwt,
+  readJwtKeyConfig,
+  validateSyncJwt,
+} from "./auth-jwt.js";
+import {
+  AUTH_CONTEXT_READY_CONTEXT_KEY,
+  InvalidRequestPrincipalError,
+  JWT_CLAIMS_CONTEXT_KEY,
+  MissingRequestPrincipalError,
+  SAFE_PRINCIPAL_USER_ID,
+  markAuthContextReady,
+  requireRequestPrincipal,
+  setPlatformVerifiedPrincipal,
+} from "./request-principal.js";
+
+export { AUTH_CONTEXT_READY_CONTEXT_KEY, JWT_CLAIMS_CONTEXT_KEY, markAuthContextReady };
+
+export class MissingSyncUserIdentityError extends Error {
+  constructor() {
+    super("Missing authenticated sync user identity");
+    this.name = "MissingSyncUserIdentityError";
+  }
+}
+
+/**
+ * Compatibility resolver for older sync call sites that still need only the
+ * user id string. New protected routes should use request-principal helpers
+ * directly so they preserve source and typed failure information.
+ *
+ * Do not add new route-handler calls to this wrapper; keep it only as a
+ * migration target for remaining legacy compatibility.
+ */
+export function getUserIdFromContext(c: Context): string {
+  const configuredUserId = process.env.MATRIX_USER_ID ?? process.env.MATRIX_HANDLE;
+  try {
+    return requireRequestPrincipal(c, {
+      configuredUserId,
+      isTrustedSingleUserGateway: Boolean(configuredUserId),
+      requireAuthContextReady: false,
+    }).userId;
+  } catch (err: unknown) {
+    if (err instanceof MissingRequestPrincipalError || err instanceof InvalidRequestPrincipalError) {
+      console.error("[auth] Missing or invalid request principal for legacy user id compatibility");
+      throw new MissingSyncUserIdentityError();
+    }
+    throw err;
+  }
+}
+
+async function nextWithReady(c: Context, next: () => Promise<void>): Promise<void> {
+  markAuthContextReady(c);
+  await next();
+}
+
+function unauthorized(c: Context) {
+  markAuthContextReady(c);
+  return c.json({ error: "Unauthorized" }, 401);
+}
+
+function tooManyRequests(c: Context) {
+  markAuthContextReady(c);
+  return c.json({ error: "Too many requests" }, 429);
+}
+
+const PUBLIC_PATHS = ["/health", "/api/integrations/available"];
+const PUBLIC_PREFIXES = [
+  "/icons/",
+  "/files/system/icons/",
+];
+// Paths that are authenticated by app-session cookie (HMAC-signed per-slug
+// cookie) rather than bearer token. authMiddleware exempts these by calling
+// next() without setting a principal. The app-session middleware (mounted
+// separately on this prefix) is the single verifier for these requests.
+// Single prefix -- no /files/apps/ entry because iframe navigation uses
+// /apps/:slug/* after spec 063.
+const APP_IFRAME_PREFIXES = ["/apps/"];
+// Paths that authenticate by HMAC signature rather than bearer token.
+// They bypass bearer auth but MUST still pass through a rate limiter --
+// HMAC verification is not cheap enough to absorb a flood, and invalid
+// signatures should throttle the source IP just like invalid bearer
+// tokens do. Integrations webhook and voice webhooks live here.
+const HMAC_WEBHOOK_PREFIXES = [
+  "/api/integrations/webhook/",
+];
+// These endpoints own bearer validation in their route handlers because they
+// use service-specific tokens instead of the user/session MATRIX_AUTH_TOKEN.
+const ROUTE_SCOPED_BEARER_PATHS = [
+  "/api/internal/upgrade",
+];
+const ROUTE_SCOPED_SIGNATURE_PATHS = [
+  "/api/internal/terminal-acceptance/run",
+];
+const COLLABORATION_HTTP_PREFIX = "/api/collaboration/";
+const COLLABORATION_WEBSOCKET_PATH =
+  /^\/ws\/collaboration\/scopes\/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\/(?:events|terminal)$/;
+const MESSAGE_APPSERVICE_PREFIX = "/api/messages/appservice/";
+const MESSAGE_HERMES_REPLY_PATH = /^\/api\/messages\/conversations\/[^/]+\/reply$/;
+const WS_QUERY_TOKEN_PATHS = [
+  "/ws/chats/events",
+  "/ws",
+  "/ws/voice",
+  "/ws/terminal/tab",
+  "/ws/onboarding",
+  "/ws/vocal",
+];
+const WS_QUERY_TOKEN_PATH_PATTERNS = [
+  /^\/api\/canvases\/[^/]+\/ws$/,
+  /^\/ws\/coding-agents\/thread\/thread_[A-Za-z0-9_-]+$/,
+];
+
+// Constant-time string compare. Previously, the length-mismatch branch ran
+// timingSafeEqual(bufB, bufB) as a dummy call -- but the work done in
+// timingSafeEqual is proportional to bufB.length, not bufA.length. An
+// attacker varying the submitted token length could time-distinguish the
+// "wrong length" branch from the "right length, wrong content" branch,
+// leaking a 1-bit length oracle that gradually reveals the correct token
+// length over many probes. Pad both sides to the same max length so
+// timingSafeEqual always does the same amount of work, then require the
+// original lengths to match so a correct prefix plus trailing garbage fails.
+function timingSafeCompare(a: string, b: string): boolean {
+  const aBuf = Buffer.from(a);
+  const bBuf = Buffer.from(b);
+  const maxLen = Math.max(aBuf.length, bBuf.length);
+  const paddedA = Buffer.alloc(maxLen);
+  const paddedB = Buffer.alloc(maxLen);
+  aBuf.copy(paddedA);
+  bBuf.copy(paddedB);
+  const equal = timingSafeEqual(paddedA, paddedB);
+  return aBuf.length === bBuf.length && equal;
+}
+
+function readPlatformVerifiedUserId(c: Context, token: string): string | undefined {
+  const userId = c.req.header("x-platform-user-id");
+  const proof = c.req.header("x-platform-verified");
+  if (!userId || !proof || !SAFE_PRINCIPAL_USER_ID.test(userId)) return undefined;
+  const expected = createHmac("sha256", token).update(userId).digest("hex");
+  return timingSafeCompare(proof, expected) ? userId : undefined;
+}
+
+function isPreviewTerminalPath(path: string): boolean {
+  return path.startsWith("/api/terminal/") || path === "/ws/terminal/tab";
+}
+
+export function readPreviewTerminalOwner(c: Pick<Context, "get">): string | undefined {
+  return c.get(PREVIEW_TERMINAL_OWNER_CONTEXT_KEY as never) as string | undefined;
+}
+
+const rateLimiter = createRateLimiter({
+  maxAttempts: 10,
+  windowMs: 60_000,
+  lockoutMs: 300_000,
+});
+
+// Dedicated limiter for HMAC-authenticated webhook paths. Legit providers
+// (Pipedream, Twilio, ElevenLabs) retry on failure so the ceiling has to
+// tolerate bursts, but we still need a hard cap -- without one, HMAC
+// verification work becomes a free DoS surface. 120 req/min per source
+// IP covers "provider retrying a stuck delivery" without making the
+// endpoint a flood target. Lockout is short (30s) because a banned
+// legitimate provider just gets delayed, not permanently silenced.
+const webhookRateLimiter = createRateLimiter({
+  maxAttempts: 120,
+  windowMs: 60_000,
+  lockoutMs: 30_000,
+});
+
+// The preview-only acceptance transport uploads two bounded probe assets in
+// signed chunks before running two lifecycle commands. It therefore needs a
+// short valid burst larger than the generic failed-auth ceiling, and must not
+// inherit a lockout caused by unrelated requests sharing a proxy source IP.
+// Keep HMAC verification bounded independently at 64 requests per minute.
+const acceptanceSignatureRateLimiter = createRateLimiter({
+  maxAttempts: 64,
+  windowMs: 60_000,
+  lockoutMs: 30_000,
+});
+
+function getClientIp(c: { req: { header: (name: string) => string | undefined } }): string {
+  const forwardedFor = c.req.header("x-forwarded-for")?.split(",")[0]?.trim();
+  return (
+    c.req.header("cf-connecting-ip")?.trim() ||
+    c.req.header("x-real-ip")?.trim() ||
+    forwardedFor ||
+    "127.0.0.1"
+  );
+}
+
+function getTrustedProxyClientIp(c: { req: { header: (name: string) => string | undefined } }): string {
+  // Customer-VPS nginx always overwrites X-Real-IP with its transport peer.
+  // CF-Connecting-IP is intentionally excluded because direct callers can
+  // supply it and rotate the signature-verification limiter key.
+  return c.req.header("x-real-ip")?.trim() || "trusted-proxy-address-unavailable";
+}
+
+export function authMiddleware(
+  token: string | undefined,
+  options?: { webhookProviders?: Set<string> },
+): MiddlewareHandler {
+  const webhookProviders = options?.webhookProviders ?? new Set<string>();
+
+  return async (c, next) => {
+    const setTerminalAccess = (actorId: string) => {
+      if (!token || !isPreviewTerminalPath(c.req.path)) return;
+      const ownerId = verifyPreviewTerminalAccess({
+        value: c.req.header(PREVIEW_TERMINAL_ACCESS_HEADER),
+        key: token,
+        actorId,
+        configuredOwnerIds: [process.env.MATRIX_USER_ID, process.env.MATRIX_CLERK_USER_ID],
+        runtimeSlot: process.env.MATRIX_RUNTIME_SLOT,
+      });
+      if (ownerId) c.set(PREVIEW_TERMINAL_OWNER_CONTEXT_KEY, ownerId);
+    };
+    // Read JWT config + handle per-call so env-var changes during tests
+    // are picked up without recreating the middleware.
+    const jwtKey = await readJwtKeyConfig();
+    const expectedHandle = process.env.MATRIX_HANDLE;
+    const expectedRuntimeSlot = process.env.MATRIX_RUNTIME_SLOT;
+
+    const normalizedPath = c.req.path;
+    if ((c.req.method === "GET" && /^\/api\/share\/chats\/[a-f0-9]{64}$/.test(normalizedPath)) || PUBLIC_PATHS.some((p) => normalizedPath === p) ||
+        PUBLIC_PREFIXES.some((p) => normalizedPath.startsWith(p))) {
+      return nextWithReady(c, next);
+    }
+
+    // App iframe paths are authenticated by app-session cookie middleware,
+    // not by bearer token. Exempt them here so the session middleware
+    // (mounted separately) is the single verifier.
+    if (APP_IFRAME_PREFIXES.some((p) => normalizedPath.startsWith(p))) {
+      return nextWithReady(c, next);
+    }
+
+    // Matrix bridge/appservice callbacks and Hermes reply delivery use scoped
+    // internal tokens checked by their route handlers. Bypass bearer auth only
+    // for those token-bearing paths, while still rate-limiting failed attempts.
+    const hasHermesReplyToken = Boolean(c.req.header("X-Matrix-OS-Hermes-Capability"));
+    if (normalizedPath.startsWith(MESSAGE_APPSERVICE_PREFIX) || (MESSAGE_HERMES_REPLY_PATH.test(normalizedPath) && hasHermesReplyToken)) {
+      const ip = getClientIp(c);
+      if (!webhookRateLimiter.check(ip)) {
+        return tooManyRequests(c);
+      }
+      return nextWithReady(c, next);
+    }
+
+    // HMAC-authenticated paths (Pipedream integrations webhook): bypass
+    // bearer auth but still run through a dedicated webhook rate limiter,
+    // so HMAC verification can't become a free DoS target. The route
+    // handler validates the signature and returns 401 on mismatch; the
+    // rate limiter here protects the verification work itself.
+    if (HMAC_WEBHOOK_PREFIXES.some((p) => normalizedPath.startsWith(p))) {
+      const ip = getClientIp(c);
+      if (!webhookRateLimiter.check(ip)) {
+        return tooManyRequests(c);
+      }
+      return nextWithReady(c, next);
+    }
+
+    // Platform-proxied collaboration routes carry a scoped, short-lived actor
+    // proof (and, where required, a signed rollout policy). Requiring the
+    // owner's MATRIX_AUTH_TOKEN here would reject every collaborator before
+    // those route-specific verifiers can run. Their bounded proof decoder and
+    // verifier rate-limit each authenticated actor independently; applying a
+    // transport-address quota here would let one collaborator block the rest.
+    if (normalizedPath.startsWith(COLLABORATION_HTTP_PREFIX)
+      || COLLABORATION_WEBSOCKET_PATH.test(normalizedPath)) {
+      return nextWithReady(c, next);
+    }
+
+    if (ROUTE_SCOPED_BEARER_PATHS.some((p) => normalizedPath === p)) {
+      const ip = getClientIp(c);
+      if (!rateLimiter.check(ip)) {
+        return tooManyRequests(c);
+      }
+      return nextWithReady(c, next);
+    }
+
+    if (ROUTE_SCOPED_SIGNATURE_PATHS.some((p) => normalizedPath === p)) {
+      const ip = getTrustedProxyClientIp(c);
+      if (!acceptanceSignatureRateLimiter.check(ip)) {
+        return tooManyRequests(c);
+      }
+      return nextWithReady(c, next);
+    }
+
+    // Voice webhook paths use provider-level HMAC verification, not bearer
+    // token auth. Only bypass auth for providers that are actually
+    // registered and active. Uses the stricter "failed auth" rate limiter
+    // because the provider allowlist is narrow and a hit from an unknown
+    // provider is already suspicious.
+    const webhookMatch = normalizedPath.match(/^\/voice\/webhook\/([a-z0-9-]+)$/);
+    const isWebhook = webhookMatch && webhookProviders.has(webhookMatch[1]);
+    if (isWebhook) {
+      const ip = getClientIp(c);
+      if (!rateLimiter.check(ip)) {
+        return tooManyRequests(c);
+      }
+      return nextWithReady(c, next);
+    }
+
+    if (!token) {
+      if (process.env.MATRIX_AUTH_ALLOW_INSECURE_DEV === "1") {
+        return nextWithReady(c, next);
+      }
+      console.error("[auth] MATRIX_AUTH_TOKEN is not configured; rejecting protected request");
+      return unauthorized(c);
+    }
+
+    const authHeader = c.req.header("Authorization");
+    const isWsUpgrade =
+      WS_QUERY_TOKEN_PATHS.some((p) => normalizedPath === p) ||
+      WS_QUERY_TOKEN_PATH_PATTERNS.some((pattern) => pattern.test(normalizedPath));
+
+    // Only accept query param token for WebSocket upgrades (browsers can't set
+    // Authorization headers on WS connections). REST endpoints must use headers.
+    let queryToken: string | null = null;
+    if (isWsUpgrade) {
+      try {
+        queryToken = new URL(c.req.url).searchParams.get("token");
+      } catch (err: unknown) {
+        if (!(err instanceof TypeError)) {
+          console.error("[auth] Unexpected error parsing WS URL:", err);
+        }
+      }
+    }
+
+    const presentedToken = authHeader?.startsWith("Bearer ")
+      ? authHeader.slice(7)
+      : isWsUpgrade && queryToken
+        ? queryToken
+        : null;
+
+    // JWT path: if the bearer looks like a JWT and we have a JWT key, treat
+    // JWT validation as terminal. Falling back to the legacy shared-secret
+    // path would let an attacker reuse a JWT-shaped token string as the
+    // legacy bearer and bypass the JWT verifier entirely.
+    if (presentedToken && jwtKey && looksLikeJwt(presentedToken)) {
+      try {
+        const claims = await validateSyncJwt(presentedToken, {
+          ...jwtKey,
+          expectedHandle,
+          expectedRuntimeSlot,
+        });
+        // Stash claims on the Hono context so downstream handlers can
+        // resolve the authenticated Clerk userId through the request principal.
+        c.set(JWT_CLAIMS_CONTEXT_KEY, claims);
+        setTerminalAccess(claims.sub);
+        return nextWithReady(c, next);
+      } catch (err) {
+        // Fall through. We don't expose JWT failure reasons to the client,
+        // but a debug log here prevents a misconfigured PLATFORM_JWT_SECRET
+        // from silently locking out every platform-issued token with zero
+        // operator signal.
+        console.warn(
+          "[auth] JWT validation failed:",
+          (err as Error).message,
+        );
+        const ip = getClientIp(c);
+        if (!rateLimiter.check(ip)) {
+          return tooManyRequests(c);
+        }
+        return unauthorized(c);
+      }
+    }
+
+    const legacyHeaderOk =
+      token && authHeader && timingSafeCompare(authHeader, `Bearer ${token}`);
+    const legacyQueryOk =
+      token && isWsUpgrade && queryToken && timingSafeCompare(queryToken, token);
+
+    if (legacyHeaderOk) {
+      const platformUserId = readPlatformVerifiedUserId(c, token);
+      if (platformUserId) {
+        setPlatformVerifiedPrincipal(c, platformUserId);
+        setTerminalAccess(platformUserId);
+      }
+      return nextWithReady(c, next);
+    }
+
+    if (legacyQueryOk) {
+      return nextWithReady(c, next);
+    }
+
+    // Only rate-limit failed auth attempts
+    const ip = getClientIp(c);
+    if (!rateLimiter.check(ip)) {
+      return tooManyRequests(c);
+    }
+
+    return unauthorized(c);
+  };
+}

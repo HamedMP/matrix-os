@@ -4,7 +4,7 @@ import { BackgroundProjectionDetached } from "./background-run-control.js";
 import { createHash } from "node:crypto";
 import { ASYNC_QUESTION_NOTICE } from "../coding-agents/async-input-notice.mjs";
 import type { CanonicalSubmitChatInputRequest } from "@matrix-os/contracts";
-import type { AiTokenUsage } from "../ai-analytics.js";
+import type { AiTokenUsage } from "../domains/observability/ai-analytics.js";
 import { ChatInputAnswerValidationError, validateChatInputAnswer } from "./input-submission.js";
 import type { CanonicalChatProviderAdapter, CanonicalProviderRunEvent, CanonicalProviderRunInput } from "./provider-adapter.js";
 

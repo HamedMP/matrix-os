@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { prepareNativeScrollPlugin, queryNativeScroll, NATIVE_SCROLL_PLUGIN } from "../../packages/terminal-runtime/src/native-scroll-bridge.js";
 import { ZellijCliRuntimeAdapter } from "../../packages/terminal-runtime/src/zellij-adapter.js";
-import { terminalAttachmentAllowsFrame } from "../../packages/gateway/src/session-runtime-bridge.js";
+import { terminalAttachmentAllowsFrame } from "../../packages/gateway/src/domains/sessions/session-runtime-bridge.js";
 
 const logical = `matrix-w-${"a".repeat(32)}`;
 const physical = `matrix-rt_${"a".repeat(32)}`;

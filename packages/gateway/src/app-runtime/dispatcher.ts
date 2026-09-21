@@ -3,7 +3,7 @@ import { bodyLimit } from "hono/body-limit";
 import { join, sep } from "node:path";
 import { lstat, realpath, stat } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
-import { resolveWithinHome } from "../path-security.js";
+import { resolveWithinHome } from "../_shared/path-security.js";
 import { SAFE_SLUG } from "./manifest-schema.js";
 import { resolveAppBySlug } from "./app-index.js";
 import { loadManifest } from "./manifest-loader.js";

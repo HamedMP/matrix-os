@@ -17,7 +17,7 @@ import {
 } from "./preferences.js";
 import type { ShellCommandRunner } from "./command-runner.js";
 import { AgentKindSchema, type AgentKind } from "./agent-session-state.js";
-import type { RequestPrincipal } from "../request-principal.js";
+import type { RequestPrincipal } from "../domains/identity/request-principal.js";
 
 interface SessionRegistryRoutes {
   list(): Promise<unknown[]>;

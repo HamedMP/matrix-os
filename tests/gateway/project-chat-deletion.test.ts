@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 import { KyselyPGlite } from "kysely-pglite";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
 import { createProjectChatCleanup } from "../../packages/gateway/src/chat/project-deletion.js";
-import type { ProjectConfig } from "../../packages/gateway/src/project-manager.js";
+import type { ProjectConfig } from "../../packages/gateway/src/domains/workspace/project-manager.js";
 
 it("hard-deletes project chats including archived history without touching other projects or owners", async () => {
   const db = await KyselyPGlite.create();

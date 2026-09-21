@@ -22,7 +22,7 @@ import { randomBytes } from "node:crypto";
 import { join, basename } from "node:path";
 import { existsSync } from "node:fs";
 import { satisfies } from "semver";
-import { resolveWithinHome } from "../path-security.js";
+import { resolveWithinHome } from "../_shared/path-security.js";
 import { ManifestError, BuildError } from "./errors.js";
 import { parseManifest, type AppManifest } from "./manifest-schema.js";
 import { BuildOrchestrator } from "./build-orchestrator.js";
