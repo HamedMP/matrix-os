@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { sql } from "kysely";
 import { bootstrapPlatformCollaborationDatabase } from "../../packages/platform/src/collaboration/database.js";
 import {
   PlatformCollaborationRepository,
@@ -55,6 +56,47 @@ describe("PlatformCollaborationRepository", () => {
     }]);
     expect(JSON.stringify(await fixture.collaborationDb.selectFrom("collaboration_directory").selectAll().execute()))
       .not.toMatch(/title|message|transcript|content/i);
+  });
+
+  it("projects standalone file, folder and app scopes for member discovery", async () => {
+    for (const [index, kind] of (["file", "folder", "app"] as const).entries()) {
+      const resourceScopeId = `10000000-0000-4000-8000-${(index + 101).toString().padStart(12, "0")}`;
+      await repository.applyDirectoryEvent({
+        eventId: `20000000-0000-4000-8000-${(index + 101).toString().padStart(12, "0")}`,
+        scopeId: resourceScopeId,
+        runtimeId: "runtime_owner",
+        ownerId: platformCollaborationActors.owner,
+        kind,
+        organizationId: "org_matrix_team",
+        authorityGeneration: 1,
+        metadataRevision: 1,
+        recipients: [{ actorId: platformCollaborationActors.recipientWithoutComputer, status: "invited" }],
+      });
+      await expect(repository.getDirectoryRoute(resourceScopeId)).resolves.toMatchObject({ kind });
+    }
+    const shares = await repository.listForActor(platformCollaborationActors.recipientWithoutComputer);
+    expect(shares.map((share) => share.kind)).toEqual(["file", "folder", "app"]);
+  });
+
+  it("upgrades an existing directory kind constraint before accepting standalone resources", async () => {
+    await sql`ALTER TABLE collaboration_directory DROP CONSTRAINT collaboration_directory_kind_check`.execute(fixture.collaborationDb);
+    await sql`ALTER TABLE collaboration_directory ADD CONSTRAINT collaboration_directory_kind_check
+      CHECK (kind IN ('chat', 'terminal', 'project'))`.execute(fixture.collaborationDb);
+
+    await bootstrapPlatformCollaborationDatabase(fixture.collaborationDb);
+    await repository.applyDirectoryEvent({
+      eventId: "20000000-0000-4000-8000-000000000104",
+      scopeId: "10000000-0000-4000-8000-000000000104",
+      runtimeId: "runtime_owner",
+      ownerId: platformCollaborationActors.owner,
+      kind: "file",
+      organizationId: "org_matrix_team",
+      authorityGeneration: 1,
+      metadataRevision: 1,
+      recipients: [{ actorId: platformCollaborationActors.recipientWithoutComputer, status: "invited" }],
+    });
+    await expect(repository.getDirectoryRoute("10000000-0000-4000-8000-000000000104"))
+      .resolves.toMatchObject({ kind: "file" });
   });
 
   it("does not let a different event at the same revision replace newer directory state", async () => {
