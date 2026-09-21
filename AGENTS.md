@@ -23,7 +23,7 @@ Key principles:
 - **Database**: PostgreSQL via Kysely for platform, kernel durable state, social, app, and user data. Do not add alternative embedded databases or ORMs for new persistence.
 - **Validation**: Zod 4 (`zod/v4` import)
 - **Testing**: Vitest, `@vitest/coverage-v8`
-- **Package Manager**: pnpm (install), bun (run scripts) -- NEVER npm
+- **Package Manager**: pnpm (install), bun (run scripts) -- NEVER npm for installs or scripts; release automation may invoke the npm CLI only for npm OIDC trusted publication
 
 ## SDK Decisions (Spike-Verified)
 

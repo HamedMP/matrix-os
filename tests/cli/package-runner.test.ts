@@ -15,11 +15,20 @@ describe("published CLI package runners", () => {
   it("bundles private contracts and uses workspace-aware release packing", async () => {
     const pkg = JSON.parse(await readFile(resolve(repoRoot, "packages/sync-client/package.json"), "utf8"));
     expect(pkg.bundledDependencies).toContain("@matrix-os/contracts");
-    for (const path of [".github/workflows/cli-release.yml", ".github/workflows/release.yml"]) {
-      const workflow = await readFile(resolve(repoRoot, path), "utf8");
-      expect(workflow).toContain("pnpm publish --config.node-linker=hoisted");
-      expect(workflow).not.toContain("run: npm publish");
+    const cliRelease = await readFile(resolve(repoRoot, ".github/workflows/cli-release.yml"), "utf8");
+    expect(cliRelease).toContain("pnpm pack --config.node-linker=hoisted");
+    expect(cliRelease).toContain('resolve(process.env.RUNNER_TEMP, result.filename)');
+    expect(cliRelease).toContain('path: ${{ steps.pack.outputs.tarball }}');
+    expect(cliRelease).toContain('npm publish "${TARBALLS[0]}" --provenance --access public');
+    expect(cliRelease).not.toContain("pnpm publish --config.node-linker=hoisted");
+
+    for (const policyFile of ["AGENTS.md", "CLAUDE.md"]) {
+      const policy = await readFile(resolve(repoRoot, policyFile), "utf8");
+      expect(policy).toContain("npm CLI only for npm OIDC trusted publication");
     }
+
+    const manualRelease = await readFile(resolve(repoRoot, ".github/workflows/release.yml"), "utf8");
+    expect(manualRelease).toContain("pnpm publish --config.node-linker=hoisted");
     const validator = await readFile(resolve(repoRoot, "packages/sync-client/scripts/validate-package-runners.mjs"), "utf8");
     expect(validator).toContain('run("pnpm", [');
     expect(validator).toContain("node_modules/@matrix-os/contracts/package.json");
