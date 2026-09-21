@@ -114,6 +114,31 @@ describe("funded AI policy routes", () => {
     };
   }
 
+  it("normalizes relay control token transport whitespace without changing identity or hash secrets", () => {
+    expect(loadAiFundedControlPlaneConfig({
+      MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED: "true",
+      PLATFORM_SECRET: `${platformSecret}\n`,
+      AI_RELAY_CONTROL_TOKEN: ` ${relayControlToken}\r\n`,
+      AI_FUNDED_CREDENTIAL_HASH_SECRET: `${hashSecret}\n`,
+    })).toMatchObject({
+      enabled: true,
+      relayControlToken,
+      platformSecret: `${platformSecret}\n`,
+      credentialHashSecret: `${hashSecret}\n`,
+    });
+  });
+
+  it("validates relay token length and separation after whitespace normalization", () => {
+    for (const token of [" ".repeat(32), ` short${" ".repeat(32)}`, ` ${platformSecret}\n`]) {
+      expect(() => loadAiFundedControlPlaneConfig({
+        MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED: "true",
+        PLATFORM_SECRET: platformSecret,
+        AI_RELAY_CONTROL_TOKEN: token,
+        AI_FUNDED_CREDENTIAL_HASH_SECRET: hashSecret,
+      })).toThrow(/misconfigured/i);
+    }
+  });
+
   it("fails closed unless dedicated, distinct secrets are configured", () => {
     expect(loadAiFundedControlPlaneConfig({})).toEqual({ enabled: false });
     expect(() => loadAiFundedControlPlaneConfig({

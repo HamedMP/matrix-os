@@ -8,7 +8,9 @@ import {
   ProviderSettingsSnapshotSchema,
   ProviderSettingsSupportedActionSchema,
   ProviderUsageSchema,
+  isNativeGenericHarnessCredentialRoute,
   isPortableGenericHarnessCredentialRoute,
+  isRunnableGenericHarnessCredentialRoute,
   type ProviderSettingsMutation,
   type ProviderSettingsSnapshot,
 } from "@matrix-os/contracts";
@@ -230,6 +232,34 @@ describe("provider settings contracts", () => {
     )).toBe(false);
   });
 
+  it("accepts only the owning Pi/OpenCode runtime as a native harness credential route", () => {
+    const snapshot = makeSnapshot();
+    const harness = {
+      ...snapshot.harnesses[0]!,
+      harness: "opencode" as const,
+      route: { kind: "configurable" as const, providerId: "baseten", modelId: "baseten:zai-org/GLM-5.3" },
+      accessSourceId: "harness_opencode_baseten",
+      selectedAccountId: null,
+    };
+    const source = {
+      ...snapshot.accessSources[0]!,
+      id: "harness_opencode_baseten",
+      kind: "harness_profile" as const,
+      harness: "opencode" as const,
+      fundingKind: "owner_account" as const,
+      providerId: "baseten",
+      accountId: null,
+      eligibleModelIds: ["baseten:zai-org/GLM-5.3"],
+    };
+
+    expect(isNativeGenericHarnessCredentialRoute(harness, source)).toBe(true);
+    expect(isRunnableGenericHarnessCredentialRoute(harness, source)).toBe(true);
+    expect(isNativeGenericHarnessCredentialRoute(
+      { ...harness, harness: "pi" },
+      source,
+    )).toBe(false);
+  });
+
   it("accepts a secret-free UI mutation projection derived from V3", () => {
     expect(ProviderSettingsSnapshotSchema.parse(makeSnapshot())).toEqual(makeSnapshot());
     expect(ProviderSettingsSnapshotSchema.safeParse({
@@ -397,6 +427,33 @@ describe("provider settings contracts", () => {
     expect(ProviderSettingsSnapshotSchema.safeParse({
       ...snapshot,
       gatewayPolicy: { ...snapshot.gatewayPolicy!, allowedModelIds: [] },
+    }).success).toBe(false);
+  });
+
+  it("retains an explicitly unavailable saved route outside the selectable catalog", () => {
+    const snapshot = makeSnapshot();
+    const unavailableHarness = {
+      ...snapshot.harnesses[0]!,
+      connectivity: "offline",
+      authState: "failed",
+      enabled: false,
+      accessSourceId: null,
+      selectedAccountId: null,
+      routeAvailability: "catalog_unavailable",
+      route: { kind: "configurable", providerId: "baseten", modelId: "baseten:zai-org/GLM-5.3" },
+    };
+
+    expect(ProviderSettingsSnapshotSchema.safeParse({
+      ...snapshot,
+      harnesses: [unavailableHarness],
+    }).success).toBe(true);
+    expect(ProviderSettingsSnapshotSchema.safeParse({
+      ...snapshot,
+      harnesses: [{ ...unavailableHarness, routeAvailability: undefined }],
+    }).success).toBe(false);
+    expect(ProviderSettingsSnapshotSchema.safeParse({
+      ...snapshot,
+      harnesses: [{ ...unavailableHarness, accessSourceId: "source_personal" }],
     }).success).toBe(false);
   });
 

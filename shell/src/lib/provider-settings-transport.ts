@@ -104,7 +104,7 @@ export function createProviderSettingsTransport(
   const fetcher = options.fetcher ?? fetch;
   return {
     async getSnapshot(signal) {
-      const value = await fetchJson(fetcher, "/api/ai/provider-settings", {
+      const value = await fetchJson(fetcher, "/api/ai/provider-settings?refresh=true", {
         cache: "no-store",
         headers: { Accept: "application/json" },
         signal: requestSignal(signal),

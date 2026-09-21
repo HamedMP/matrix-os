@@ -48,7 +48,7 @@ async function settings() {
   await page.getByRole("button", { name: "Agents & providers", exact: true }).click();
 }
 
-it("reveals a closed Terminal for Connect and Disconnect and refreshes auth on return", async () => {
+it("reveals a closed Terminal for Connect and refreshes auth after logout", async () => {
   try {
     const identity = await app.evaluate(({ app: electronApp }) => electronApp.getAppPath());
     expect(identity).toBe(join(root, "desktop/out/main"));
@@ -58,7 +58,8 @@ it("reveals a closed Terminal for Connect and Disconnect and refreshes auth on r
     await terminal.getByRole("button", { name: "Close", exact: true }).click();
     await terminal.waitFor({ state: "hidden" });
     await settings();
-    await page.getByRole("button", { name: "Open provider setup Connect Claude", exact: true }).first().click();
+    await page.getByRole("button", { name: "Log in Claude", exact: true }).click();
+    await page.getByRole("button", { name: "Continue in Terminal", exact: true }).click();
     await terminal.waitFor();
     await terminal.getByText("Connect Claude", { exact: true }).first().waitFor();
     expect(gateway.commands).toHaveLength(1);
@@ -68,21 +69,15 @@ it("reveals a closed Terminal for Connect and Disconnect and refreshes auth on r
     gateway.setAuthenticated(true);
     await terminal.getByRole("button", { name: "Close", exact: true }).click();
     await settings();
-    const disconnect = page.getByRole("button", { name: "Open provider setup Disconnect Claude", exact: true }).first();
+    const disconnect = page.getByRole("button", { name: "Log out Claude", exact: true });
     await disconnect.waitFor();
-    expect(await page.getByRole("button", { name: "Open provider setup Connect Claude", exact: true }).count()).toBe(0);
+    expect(await page.getByRole("button", { name: "Log in Claude", exact: true }).count()).toBe(0);
     await page.screenshot({ path: join(output, "authenticated-disconnect.png") });
     await disconnect.click();
-    await terminal.waitFor();
-    await terminal.getByText("Disconnect Claude", { exact: true }).first().waitFor();
-    expect(gateway.commands).toHaveLength(2);
-    expect(gateway.commands[1]).toMatchObject({ name: "Disconnect Claude", command: ["sh", "-lc", expect.stringContaining("claude auth logout")] });
-    await page.screenshot({ path: join(output, "disconnect-visible.png") });
-
-    gateway.setAuthenticated(false);
-    await terminal.getByRole("button", { name: "Close", exact: true }).click();
-    await settings();
-    await page.getByRole("button", { name: "Open provider setup Connect Claude", exact: true }).first().waitFor();
+    await terminal.waitFor({ state: "hidden" });
+    await page.getByRole("button", { name: "Log in Claude", exact: true }).waitFor();
+    expect(gateway.commands).toHaveLength(1);
+    await page.screenshot({ path: join(output, "logged-out.png") });
   } catch (error) {
     await page.screenshot({ path: join(output, "failure.png") });
     throw error;

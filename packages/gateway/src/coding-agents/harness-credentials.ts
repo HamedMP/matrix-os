@@ -1,4 +1,5 @@
 import {
+  isNativeGenericHarnessCredentialRoute,
   isPortableGenericHarnessCredentialRoute,
   type ProviderHarnessKind,
   type ProviderSettingsSnapshot,
@@ -75,6 +76,11 @@ export function createCodingHarnessCredentialResolver(options: {
       throw new Error(SAFE_ERROR);
     }
     const source = snapshot.accessSources.find((candidate) => candidate.id === harness.accessSourceId);
+    if (isNativeGenericHarnessCredentialRoute(harness, source)) {
+      // Pi/OpenCode own this profile under HOME. The child environment remains
+      // allowlisted by the adapter and receives no gateway/provider secrets.
+      return { env: {} };
+    }
     if (!isPortableGenericHarnessCredentialRoute(harness, source)) throw new Error(SAFE_ERROR);
     const parsedSource = KernelCredentialAccessSourceIdSchema.safeParse(harness.accessSourceId);
     if (!parsedSource.success) throw new Error(SAFE_ERROR);

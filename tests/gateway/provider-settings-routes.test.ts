@@ -114,7 +114,17 @@ describe("provider settings routes", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual(snapshot);
     expect(getPrincipal).toHaveBeenCalledOnce();
-    expect(getSnapshot).toHaveBeenCalledOnce();
+    expect(getSnapshot).toHaveBeenCalledWith({ refresh: false });
+  });
+
+  it("forces live provider discovery only for a validated refresh query", async () => {
+    const { app, getSnapshot } = createApp();
+    expect((await app.request("/api/ai/provider-settings?refresh=true")).status).toBe(200);
+    expect(getSnapshot).toHaveBeenCalledWith({ refresh: true });
+
+    getSnapshot.mockClear();
+    expect((await app.request("/api/ai/provider-settings?refresh=maybe")).status).toBe(400);
+    expect(getSnapshot).not.toHaveBeenCalled();
   });
 
   it("validates each revisioned action before mutation", async () => {

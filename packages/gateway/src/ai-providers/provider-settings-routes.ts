@@ -12,6 +12,7 @@ import {
 } from "./provider-settings-store.js";
 
 const PROVIDER_SETTINGS_BODY_LIMIT = 64 * 1024;
+const RefreshQuerySchema = z.enum(["true", "false"]).optional();
 const DeleteAccountBodySchema = z.object({
   expectedRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
   idempotencyKey: z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/),
@@ -135,8 +136,10 @@ export function createProviderSettingsRoutes(options: ProviderSettingsRouteOptio
   app.get("/provider-settings", async (context) => {
     const authError = authorize(context, options);
     if (authError) return authError;
+    const refresh = RefreshQuerySchema.safeParse(context.req.query("refresh"));
+    if (!refresh.success) return invalidRequest(context);
     try {
-      return context.json(await options.store.getSnapshot());
+      return context.json(await options.store.getSnapshot({ refresh: refresh.data === "true" }));
     } catch (error) {
       return handleStoreError(context, error);
     }

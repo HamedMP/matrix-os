@@ -51,6 +51,10 @@ describe("AiProviderService", () => {
         ? fundedProvider()
         : undefined,
       now: () => NOW,
+      fundedReadinessReader: { read: async () => ({
+        readiness: { state: "ready", checkedAt: NOW.toISOString(), staleAfter: new Date(NOW.getTime() + 30_000).toISOString(), action: "none", safeReason: null },
+        allowedModelIds: ["claude-sonnet-5"],
+      }) },
       healthProbe: options.healthProbe,
       healthTimeoutMs: options.healthTimeoutMs,
       driverInventory: options.driverInventory === undefined
@@ -58,6 +62,15 @@ describe("AiProviderService", () => {
         : async () => options.driverInventory!(),
     });
   }
+
+  it("requires an authoritative readiness reader even when funded credentials are configured", async () => {
+    const service = new AiProviderService({ homePath, fundedCredentialProvider: fundedProvider() });
+    const snapshot = await service.getSnapshot();
+    expect(snapshot.accessSources.find((source) => source.id === "matrix_included"))
+      .toMatchObject({ state: "unknown", eligibleModelIds: [] });
+    expect(snapshot.active.providerInstanceId).toBeNull();
+    service.close();
+  });
 
   it("projects Matrix-funded readiness independently from disconnected owner accounts", async () => {
     const service = createService({ platformKey: "platform-secret" });
