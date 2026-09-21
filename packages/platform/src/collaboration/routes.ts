@@ -13,6 +13,9 @@ import { z } from "zod/v4";
 import { registerInvitationIdentifierResolutionRoute } from "./identifier-resolution-route.js";
 import type { CollaborationProofSigner } from "./proof.js";
 import { parseCollaborationProxyRoute, type CollaborationProxy } from "./proxy.js";
+import { parseRelayRoute, type CollaborationRelay } from "./relay.js";
+
+const DIRECT_SESSION_HEADER = "x-matrix-collaboration-session";
 import {
   PlatformCollaborationRepositoryError,
   type CollaborationDirectoryEntry,
@@ -41,6 +44,8 @@ export function createPlatformCollaborationRoutes(options: {
   signer: CollaborationProofSigner;
   sockets: CollaborationWebSocketAuthorizer;
   proxy?: CollaborationProxy;
+  /** S05: transparent relay for direct-protocol requests (session routes or requests carrying a direct session). */
+  relay?: CollaborationRelay;
   resolveActor(c: RouteContext): Promise<string | null>;
   authenticateRuntime(input: {
     runtimeId: string;
@@ -63,6 +68,22 @@ export function createPlatformCollaborationRoutes(options: {
   );
   app.use("/api/collaboration/*", async (c, next) => {
     c.header("Cache-Control", "private, no-store");
+    // S05: direct-protocol traffic is relayed as opaque bytes; the home decides.
+    const relayRoute = options.relay ? parseRelayRoute(c.req.method, c.req.path) : null;
+    if (options.relay && relayRoute && (relayRoute.kind === "session" || c.req.header(DIRECT_SESSION_HEADER))) {
+      const actorId = await resolveValidatedActor(c, options.resolveActor);
+      if (!actorId) return safeJson(c, "Unauthorized", 401);
+      const declared = Number(c.req.header("content-length") ?? 0);
+      return options.relay.forward({
+        actorId,
+        method: c.req.method,
+        path: c.req.path,
+        query: new URL(c.req.url).search.slice(1),
+        headers: c.req.raw.headers,
+        body: c.req.method === "GET" ? null : c.req.raw.body,
+        ...(Number.isFinite(declared) && declared > 0 ? { contentLength: declared } : {}),
+      });
+    }
     if (!options.proxy || !parseCollaborationProxyRoute(c.req.method, c.req.path)) {
       await next();
       return;

@@ -21,10 +21,12 @@ import {
   type RuntimeEndpointPlatformDatabase,
 } from "./runtime-endpoints.js";
 import { CollaborationTicketIssuer, loadTicketSigningKeyring, type TicketSigningKeyring } from "./ticket-issuer.js";
+import { CollaborationRelay, type RelayHome } from "./relay.js";
 
 export const DEFAULT_COLLABORATION_RELAY_ORIGIN = "https://app.matrix-os.com";
 
 export interface PlatformCollaborationDirect {
+  relay: CollaborationRelay;
   endpoints: CollaborationRuntimeEndpointRegistry;
   issuer: CollaborationTicketIssuer | null;
   controlStream: CollaborationControlStream;
@@ -57,6 +59,9 @@ export async function createPlatformCollaborationDirect(options: {
   authenticateRuntime(input: { runtimeId: string; bearerToken: string }): Promise<AuthenticatedRuntime | null>;
   resolveRelayHandle(runtime: AuthenticatedRuntime): Promise<string | null>;
   resolveOrganization(scopeId: string): Promise<string | null>;
+  /** Maps an enrolled runtime (`vps:<uuid>`) to its relay-dialable origin; null when it is not running. */
+  resolveRuntimeOrigin(runtimeId: string, ownerId: string): Promise<string | null>;
+  relayFetch?: typeof fetch;
   now?: () => Date;
 }): Promise<PlatformCollaborationDirect> {
   await bootstrapPlatformRuntimeEndpointDatabase(options.db);
@@ -75,6 +80,28 @@ export async function createPlatformCollaborationDirect(options: {
   } else {
     console.warn("[platform-collaboration] ticket signing keys are not configured: connection tickets fail closed");
   }
+  const homeFor = async (route: { runtimeId: string; ownerId: string } | null): Promise<RelayHome | null> => {
+    if (!route) return null;
+    const origin = await options.resolveRuntimeOrigin(route.runtimeId, route.ownerId);
+    return origin ? { runtimeId: route.runtimeId, origin } : null;
+  };
+  const relay = new CollaborationRelay({
+    resolveScopeHome: async (scopeId) => homeFor(await options.repository.getDirectoryRoute(scopeId)),
+    resolveInvitationHome: async (actorId, invitationId) => homeFor(await options.repository.getInvitationRoute(actorId, invitationId)),
+    resolveRuntimeHome: async (actorId, runtimeId) => {
+      const origin = await options.resolveRuntimeOrigin(runtimeId, actorId);
+      return origin ? { runtimeId, origin } : null;
+    },
+    // Session lifecycle routes name the home by the logical runtime id the ticket carries; the registry maps it back to enrollment.
+    resolveSessionHome: async (logicalRuntimeId) => {
+      const record = await endpoints.resolve(logicalRuntimeId);
+      if (!record) return null;
+      const enrolled = /^vps-([0-9a-f-]{36})$/.exec(logicalRuntimeId);
+      const origin = await options.resolveRuntimeOrigin(enrolled ? `vps:${enrolled[1]}` : logicalRuntimeId, record.ownerId);
+      return origin ? { runtimeId: logicalRuntimeId, origin } : null;
+    },
+    ...(options.relayFetch ? { fetchImpl: options.relayFetch } : {}),
+  });
   const controlStream = new CollaborationControlStream({
     controlAuthority: options.controlAuthority,
     tickets: endpoints,
@@ -95,6 +122,7 @@ export async function createPlatformCollaborationDirect(options: {
   let registered = false;
   let closing = false;
   return {
+    relay,
     endpoints,
     issuer,
     controlStream,

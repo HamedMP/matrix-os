@@ -147,6 +147,7 @@ export async function createPlatformCollaboration(options: {
     signer,
     sockets,
     proxy,
+    ...(options.direct?.relay ? { relay: options.direct.relay } : {}),
     resolveActor: options.resolveActor,
     authenticateRuntime: options.authenticateRuntime,
     resolveParticipant: options.resolveParticipant,
