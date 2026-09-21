@@ -6,6 +6,7 @@
  * identities: every file, folder and app instance is addressed by its catalog
  * id, and a standalone share grants exactly that resource.
  */
+import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { COLLABORATION_DIRECT_ROUTES } from "@matrix-os/contracts";
@@ -200,12 +201,12 @@ describe("S12 direct resource policy", () => {
       owner_type: "personal",
       owner_id: collaborationActors.owner,
       create_request_id: "request_resource_chat",
-      project_id: "project_private",
+      project_id: null,
       title: "Standalone chat",
       lifecycle: "active",
       attention: "none",
       revision: 1,
-      collaboration: null,
+      collaboration: JSON.stringify({ scopeId: CHAT_SCOPE, mode: "discussion_only", executionFenced: true }),
       user_state: null,
       shell_state: null,
       fork_provenance: null,
@@ -218,7 +219,7 @@ describe("S12 direct resource policy", () => {
       updated_at: NOW.toISOString(),
     }).execute();
     repository = new CollaborationRepository(fixture.db, { now: () => NOW, createId: () => collaborationIds.invitation });
-    grants = new CollaborationCapabilityRepository(fixture.db, { now: () => NOW });
+    grants = new CollaborationCapabilityRepository(fixture.db, { now: () => NOW, createId: randomUUID });
     const authority = new CollaborationAuthority(repository, {
       now: () => NOW,
       organizationPrecondition: allowAllOrganizationPrecondition,
@@ -257,7 +258,7 @@ describe("S12 direct resource policy", () => {
     await seedScope({ id: FOLDER_SCOPE, kind: "folder", resourceId: docs.id });
     await seedScope({ id: APP_SCOPE, kind: "app", resourceId: appEntry.id });
     await seedScope({ id: CHAT_SCOPE, kind: "chat", resourceId: collaborationIds.chat });
-    await seedScope({ id: TERMINAL_SCOPE, kind: "terminal", resourceId: "terminal_release" });
+    await seedScope({ id: TERMINAL_SCOPE, kind: "terminal", resourceId: "terminal_release", executionEligibility: { enabled: true } });
     await fixture.db.insertInto("collaboration_resource_bindings").values({
       id: "20000000-0000-4000-8000-000000000501",
       project_scope_id: PROJECT_SCOPE,
@@ -474,10 +475,13 @@ describe("S12 direct resource policy", () => {
     it("lets a terminal viewer observe only while a contributor may request the controller", async () => {
       const read = await signed({ actorId: collaborationActors.viewer, scopeId: TERMINAL_SCOPE, method: "GET", path: `/api/collaboration/scopes/${TERMINAL_SCOPE}/terminal` });
       expect(read.status).toBe(200);
-      const request = { type: "request_control", clientRequestId: requestId(), expectedRevision: "1" };
+      const request = { type: "acquire", clientRequestId: requestId(), incarnation: "terminal_release", connectionId: "connection_one" };
       const viewerControl = await signed({ actorId: collaborationActors.viewer, scopeId: TERMINAL_SCOPE, method: "POST", path: `/api/collaboration/scopes/${TERMINAL_SCOPE}/terminal/actions`, body: request });
       expect(viewerControl.status).toBe(403);
       expect(terminalActions).toHaveLength(0);
+      const contributorControl = await signed({ actorId: collaborationActors.editor, scopeId: TERMINAL_SCOPE, method: "POST", path: `/api/collaboration/scopes/${TERMINAL_SCOPE}/terminal/actions`, body: { ...request, clientRequestId: requestId() } });
+      expect(contributorControl.status).toBe(200);
+      expect(terminalActions).toHaveLength(1);
     });
   });
 
