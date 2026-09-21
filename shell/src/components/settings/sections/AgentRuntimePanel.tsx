@@ -281,9 +281,8 @@ function ChatCard({
     || view.kernel.model
     || view.defaults.model
     || "";
-  const selectedModel = chatModels.some((entry) => entry.id === preferredModel)
-    ? preferredModel
-    : chatModels[0]?.id ?? "";
+  const selectedModel = preferredModel || chatModels[0]?.id || "";
+  const selectedModelAvailable = chatModels.some((entry) => entry.id === selectedModel);
   const effortOptions = provider?.models.find((entry) => entry.id === selectedModel)?.efforts
     ?? view.availableEfforts;
   const preferredEffort = effortOverride
@@ -323,6 +322,11 @@ function ChatCard({
               value={selectedModel}
               onChange={(event) => setModelOverride(event.target.value)}
             >
+              {!selectedModelAvailable && selectedModel && (
+                <option value={selectedModel} disabled>
+                  {provider?.models.find((entry) => entry.id === selectedModel)?.displayName ?? selectedModel} — unavailable
+                </option>
+              )}
               {chatModels.map((entry) => (
                 <option key={entry.id} value={entry.id}>{entry.displayName}</option>
               ))}
@@ -349,7 +353,7 @@ function ChatCard({
           </div>
           <Button
             size="sm"
-            disabled={busy || !selectedModel}
+            disabled={busy || !selectedModelAvailable}
             onClick={() => onSave(selectedModel, selectedEffort || undefined)}
           >
             Save Chat model

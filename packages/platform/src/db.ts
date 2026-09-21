@@ -9,7 +9,6 @@
 import {
   Kysely,
   PostgresDialect,
-  sql,
 } from 'kysely';
 import pg from 'pg';
 import type { PlatformDatabase, PlatformDB } from './repositories/schema-tables.js';
@@ -107,14 +106,98 @@ export async function runBillingWebhookTransaction<T>(
   return db.transaction(fn);
 }
 
-export async function lockUserMachineProvisioning(
-  db: PlatformDB,
-  clerkUserId: string,
-): Promise<void> {
-  await db.ready;
-  await sql`
-    SELECT pg_advisory_xact_lock(
-      ('x' || substr(md5(${`user_machines:${clerkUserId}`}), 1, 16))::bit(64)::bigint
-    )
-  `.execute(db.executor);
-}
+// S01 / T007: focused database modules; db.ts remains the composition and export entrypoint.
+export {
+  UserMachineProvisioningClassSchema,
+  parseNullableProviderActionId,
+} from './database/user-machine-records.js';
+export type { UserMachineProvisioningClass } from './database/user-machine-records.js';
+export {
+  lockUserMachineProvisioning,
+  insertUserMachine,
+  getUserMachine,
+  getActiveUserMachineByClerkId,
+  accessibleUserMachinePredicate,
+  getAccessibleActiveUserMachineByClerkId,
+  getActiveUserMachineByHandle,
+  getRunningUserMachineByHandle,
+  getRunningUserMachineByClerkId,
+  getAccessibleRunningUserMachineByClerkId,
+  getRunningUserMachineByClerkIdForUpdate,
+  listUserMachines,
+  listActiveUserMachinesByClerkId,
+  listAccessibleActiveUserMachinesByClerkId,
+  listNonDeletedUserMachinesByClerkId,
+  updateUserMachine,
+  listRunningUserMachines,
+  listAllUserMachines,
+  listStaleUserMachines,
+} from './database/user-machines.js';
+export {
+  claimRunningUserMachineResize,
+  completeUserMachineResize,
+  claimRunningUserMachineBillingSuspend,
+  completeUserMachineBillingSuspend,
+  claimSuspendedUserMachineBillingResume,
+  completeUserMachineBillingResume,
+  listStaleResizingUserMachines,
+  completeUserMachineRegistration,
+  claimUserMachineRecovery,
+  retireUserMachine,
+  claimUserMachineDelete,
+  softDeleteUserMachine,
+  insertProviderDeletion,
+  listPendingProviderDeletions,
+  markProviderDeletionCompleted,
+  markProviderDeletionFailed,
+} from './database/user-machine-lifecycle.js';
+export {
+  HostBundleReleaseConflictError,
+  upsertHostBundleRelease,
+  getHostBundleRelease,
+  listHostBundleReleases,
+  promoteHostBundleChannel,
+  promoteHostBundleChannelInTransaction,
+  registerHostBundleRelease,
+  getHostBundleChannel,
+  getHostBundleReleaseByChannel,
+} from './database/host-bundles.js';
+export {
+  upsertBillingCustomer,
+  insertBillingCustomerIfAbsent,
+  getBillingCustomerByClerkUserId,
+  getBillingCustomerByStripeCustomerId,
+  hasBillingSubscriptionHistory,
+  upsertBillingSubscription,
+  persistBillingSubscriptionPriceSnapshot,
+  getBillingSubscription,
+  getBillingSubscriptionByStripeId,
+  projectTrialInvoiceEvent,
+  listCurrentBillingSubscriptions,
+} from './database/billing.js';
+export type { TrialInvoiceEventProjectionResult } from './database/billing.js';
+export {
+  upsertBillingEntitlement,
+  getBillingEntitlement,
+  upsertBillingOverride,
+  getBillingOverride,
+  getBillingEntitlementState,
+  revokeBillingOverride,
+  insertBillingWebhookEvent,
+  getBillingWebhookEvent,
+} from './database/billing-entitlements.js';
+export {
+  insertCheckoutAttempt,
+  claimCheckoutAttempt,
+  claimCardTrialCheckoutAttempt,
+  isCardTrialOfferEligible,
+  consumeCardTrial,
+  finalizeCheckoutAttempt,
+  abandonCreatingCheckoutAttempt,
+  getLatestCheckoutAttempt,
+  getActiveCheckoutAttempt,
+  getSettlingCheckoutAttempt,
+  resolveCheckoutAttempt,
+  sweepStaleCheckoutAttempts,
+} from './database/checkout-attempts.js';
+export type { BillingCheckoutClaimInput } from './database/checkout-attempts.js';

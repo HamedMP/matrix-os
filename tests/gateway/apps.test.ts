@@ -41,6 +41,29 @@ describe("T711: GET /api/apps", () => {
     });
   });
 
+  it("includes a content-versioned local icon URL for custom apps", async () => {
+    mkdirSync(join(homePath, "system/icons"), { recursive: true });
+    mkdirSync(join(homePath, "apps/custom-dashboard"), { recursive: true });
+    writeFileSync(join(homePath, "system/icons/custom-brand.png"), "custom-icon-bytes");
+    writeFileSync(join(homePath, "apps/custom-dashboard/index.html"), "<html></html>");
+    writeFileSync(
+      join(homePath, "apps/custom-dashboard/matrix.json"),
+      JSON.stringify({
+        name: "Custom Dashboard",
+        slug: "custom-dashboard",
+        icon: "custom-brand",
+        version: "1.0.0",
+        runtimeVersion: "^1.0.0",
+        runtime: "static",
+      }),
+    );
+
+    const apps = await listApps(homePath);
+
+    expect(apps).toHaveLength(1);
+    expect(apps[0]?.iconUrl).toMatch(/^\/icons\/custom-brand\.png\?v=/);
+  });
+
   it("lists multiple apps sorted by name", async () => {
     writeFileSync(join(homePath, "apps/notes.html"), "<html></html>");
     writeFileSync(join(homePath, "apps/notes.matrix.md"), "---\nname: Notes\ncategory: productivity\n---\n");

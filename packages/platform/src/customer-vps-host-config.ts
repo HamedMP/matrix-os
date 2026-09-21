@@ -14,6 +14,7 @@ export const DEFAULT_CLOUD_INIT_TEMPLATE = [
   '      MATRIX_CLERK_USER_ID={{clerkUserId}}',
   '      MATRIX_HANDLE={{handle}}',
   '      MATRIX_RUNTIME_SLOT={{runtimeSlot}}',
+  '      MATRIX_NODE_PREFIX=/opt/matrix/runtime/node',
   "      MATRIX_DEVELOPER_TOOLS='{{developerTools}}'",
   '      MATRIX_IMAGE_VERSION={{imageVersion}}',
   '      MATRIX_UPDATE_CHANNEL={{updateChannel}}',

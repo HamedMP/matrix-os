@@ -1,3 +1,4 @@
+import { SYMPHONY_LINEAR_ACTIONS } from "./symphony-linear.js";
 import type { ServiceAction, ServiceDefinition } from "./types.js";
 import { EXPANSION_SERVICE_REGISTRY } from "./registry-expansion.js";
 import { X_SERVICE_REGISTRY } from "./registry-x.js";
@@ -219,6 +220,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineService
     icon: "code",
     logoUrl: `${LOGO_BASE}/linear/logo/48`,
     actions: {
+      ...SYMPHONY_LINEAR_ACTIONS,
       viewer: {
         description: "Get the connected Linear user",
         risk: "read",
