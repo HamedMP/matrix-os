@@ -17,7 +17,7 @@ type ApprovalDecision = "approve" | "approve_for_session" | "decline" | "cancel"
 
 export type SharedChatComposerState = {
   scope: Scope | null;
-  aiAvailability: "checking" | "available" | "unavailable";
+  aiAvailability: "checking" | "available" | "unavailable" | "owner_reconnect_required";
   aiRequests: CollaborationAiRequest[];
   approvals: CollaborationApproval[];
   aiDraft: string;

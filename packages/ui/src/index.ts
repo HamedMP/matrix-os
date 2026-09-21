@@ -31,12 +31,14 @@ export type {
 export {
   ProviderSettingsController,
   ProviderSettingsTransportError,
+  openProviderAgentSetup,
   useProviderSettingsController,
 } from "./agents-providers/provider-settings-controller.js";
 
 export {
   canonicalProviderAvailabilityLabel,
   deriveCanonicalProviderChoices,
+  orderCanonicalProviderInstancesForDefault,
 } from "./canonical-provider-choice.js";
 export type { CanonicalProviderChoice } from "./canonical-provider-choice.js";
 export {
@@ -50,6 +52,9 @@ export type {
   CanonicalChatEventSource,
   CanonicalChatInvalidation,
 } from "./canonical-chat-event-source.js";
+export { CompactChatProviderChoices } from "./compact-chat-provider-choices.js";
+export { HarnessIcon } from "./agents-providers/HarnessRail.js";
+export { CODING_AGENT_ARTWORK } from "./coding-agent-artwork.js";
 export type {
   ProviderSettingsControllerState,
   ProviderSettingsControllerOptions,
@@ -131,3 +136,4 @@ export { createTerminalGridPresentation, measureTerminalViewport, measureTermina
 export { McpServerDiagnostics } from "./McpServerDiagnostics.js";
 
 export { createTerminalNativeHistory } from "./terminal/terminal-native-history.js";
+export { canonicalChatSafeFailureReason } from "./canonical-chat-error-copy.js";

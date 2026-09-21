@@ -14,7 +14,8 @@ describe('Custom MCP isolated platform preview', () => {
       encoding: 'utf8', env: { PATH: process.env.PATH, GCP_PROJECT_ID: 'fixture', GCP_REGION: 'region',
         CLOUD_RUN_PREVIEW_SERVICE: 'preview', CLOUD_RUN_SERVICE_ACCOUNT: 'preview-sa', IMAGE: 'image',
         PR_NUMBER: '42', PREVIEW_PUBLIC_URL: 'https://preview.example.com', MATRIX_CARD_TRIALS_ENABLED: 'true',
-        MATRIX_CARD_TRIAL_DAYS: '3', CUSTOM_MCP_ENABLED: String(enabled) },
+        MATRIX_CARD_TRIAL_DAYS: '3', CUSTOM_MCP_ENABLED: String(enabled),
+        MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED: 'false', MATRIX_FUNDED_AI_RUNTIME_ENABLED: 'false' },
     });
     expect(result.status, result.stderr).toBe(0);
     const args = result.stdout.trim().split('\n');

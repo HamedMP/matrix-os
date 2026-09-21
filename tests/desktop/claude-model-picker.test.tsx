@@ -5,6 +5,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { CanonicalProviderCatalog } from "@matrix-os/contracts";
 import { ProviderModelPicker } from "../../desktop/src/renderer/src/features/chat/ProviderModelPicker";
 import { createCanonicalComposerSelection } from "../../desktop/src/renderer/src/features/chat/canonical-composer-state";
+import { DESKTOP_Z_INDEX } from "../../desktop/src/renderer/src/design/layering";
 import { createChatProviderCatalogService } from "../../packages/gateway/src/chat/provider-catalog.js";
 import { createClaudeModelCatalogSource } from "../../packages/gateway/src/chat/claude-model-catalog.js";
 
@@ -34,6 +35,9 @@ it("selects the gateway's exact Fable model and preserves it when the shared pic
   }
   const view = render(<Picker catalog={await service.getCatalog(principal)} />);
   fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
+  const picker = document.querySelector<HTMLElement>('[data-slot="provider-model-picker"]');
+  expect(picker?.style.zIndex).toBe(String(DESKTOP_Z_INDEX.popover));
+  expect(picker?.className).not.toContain("z-50");
   fireEvent.click(screen.getByRole("option", { name: /Claude Fable 5/ }));
   expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ instanceId: "claude_code_default", model: "claude-fable-5" }));
   inventory = [...inventory, { value: "claude-fable-5-1", displayName: "Claude Fable 5.1" }];

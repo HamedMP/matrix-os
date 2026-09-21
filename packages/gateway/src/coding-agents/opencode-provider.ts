@@ -24,9 +24,10 @@ import type {
   CodingHarnessCredentialResolver,
 } from "./harness-credentials.js";
 import {
-  addPortableProviderCredentials,
   buildPiChildEnvironment,
+  resolveOpenCodeCommand,
 } from "./pi-process-environment.js";
+import { prepareOpenCodeRunEnvironment } from "./managed-harness-process-config.js";
 import type {
   CodingAgentProviderAdapter,
   CodingAgentProviderEventBatch,
@@ -36,7 +37,7 @@ import { hasNativeHarnessAuth } from "./native-harness-auth.js";
 
 const DEFAULT_RUN_TIMEOUT_MS = 10 * 60_000;
 const DEFAULT_KILL_GRACE_MS = 2_000;
-const PROBE_TIMEOUT_MS = 1_500;
+const PROBE_TIMEOUT_MS = 5_000;
 const MAX_ACTIVE_PROCESSES = 100;
 const MAX_EVENTS = 480;
 const MAX_SEEN_PARTS = 512;
@@ -149,6 +150,10 @@ function modelSlug(reference: string | undefined): string | undefined {
 }
 
 function readOnlyConfig(baseUrl: string | undefined): string {
+  // Portable credentials use the Anthropic SDK's origin/prefix convention.
+  // OpenCode's AI SDK appends /messages, so its baseURL must include /v1.
+  const prefix = baseUrl?.replace(/\/+$/, "");
+  const apiBaseUrl = prefix && (prefix.endsWith("/v1") ? prefix : `${prefix}/v1`);
   return JSON.stringify({
     // Canonical Chat already limits OpenCode to non-mutating tools. Disabling
     // snapshots avoids indexing the owner's entire Matrix HOME (which may
@@ -162,7 +167,7 @@ function readOnlyConfig(baseUrl: string | undefined): string {
       list: "allow",
       question: "allow",
     },
-    ...(baseUrl ? { provider: { anthropic: { options: { baseURL: baseUrl } } } } : {}),
+    ...(apiBaseUrl ? { provider: { anthropic: { options: { baseURL: apiBaseUrl } } } } : {}),
   });
 }
 
@@ -171,14 +176,11 @@ function childEnvironment(
   credentialEnv: Record<string, string>,
   homePath: string,
 ): Record<string, string> {
-  const ownerEnvironment = buildPiChildEnvironment({ ...base, HOME: homePath });
-  ownerEnvironment.HOME = homePath;
-  const env = addPortableProviderCredentials(ownerEnvironment, credentialEnv);
-  env.OPENCODE_DISABLE_PROJECT_CONFIG = "1";
-  env.OPENCODE_DISABLE_AUTOUPDATE = "1";
-  env.OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER = "1";
-  env.OPENCODE_CONFIG_CONTENT = readOnlyConfig(env.ANTHROPIC_BASE_URL);
-  return env;
+  return prepareOpenCodeRunEnvironment({
+    homePath,
+    baseEnvironment: base,
+    credentials: credentialEnv,
+  });
 }
 
 type CredentialResolution =
@@ -380,7 +382,7 @@ export function createOpenCodeCodingAgentProvider(
   options: OpenCodeCodingAgentProviderOptions,
 ): CodingAgentProviderAdapter {
   const providerId = ProviderIdSchema.parse(options.providerId ?? "opencode");
-  const command = options.command ?? "opencode";
+  const command = resolveOpenCodeCommand(options.command, options.env);
   const spawnFn = options.spawnFn ?? defaultSpawn;
   const runCommand = options.runCommand ?? defaultRunCommand;
   const runTimeoutMs = Math.max(1, Math.min(options.runTimeoutMs ?? DEFAULT_RUN_TIMEOUT_MS, DEFAULT_RUN_TIMEOUT_MS));

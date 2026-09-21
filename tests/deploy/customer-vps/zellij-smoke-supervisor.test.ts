@@ -2,15 +2,142 @@ import { spawn } from "node:child_process";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+const SUPERVISOR_START_TIMEOUT_MS = 10_000;
+const SUPERVISOR_CLEANUP_GRACE_MS = 1_000;
+
+function cancellableDelay(ms: number, signal: AbortSignal) {
+  return new Promise<void>((resolve) => {
+    const finish = () => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", finish);
+      resolve();
+    };
+    const timer = setTimeout(finish, ms);
+    signal.addEventListener("abort", finish, { once: true });
+  });
+}
+
+async function waitForStartedMarker(
+  path: string,
+  closed: Promise<number | null>,
+  readMarker = readFile,
+  readStderr = () => "",
+) {
+  const controller = new AbortController();
+  const marker = (async () => {
+    const deadline = Date.now() + SUPERVISOR_START_TIMEOUT_MS;
+    while (!controller.signal.aborted && Date.now() < deadline) {
+      try {
+        return JSON.parse(await readMarker(path, "utf8")) as { fixture: string };
+      } catch (error) {
+        if (!(error instanceof SyntaxError) && (error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+      await cancellableDelay(50, controller.signal);
+    }
+    if (controller.signal.aborted) throw new Error("Zellij smoke startup poll cancelled");
+    throw new Error("Zellij smoke supervisor did not start");
+  })();
+  try {
+    return await Promise.race([
+      marker,
+      closed.then((code) => {
+        const stderr = readStderr().replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "").slice(-4_096).trim();
+        throw new Error(`Zellij smoke supervisor exited before startup (${code})${stderr ? `\nSupervisor stderr:\n${stderr}` : ""}`);
+      }),
+    ]);
+  } finally {
+    controller.abort();
+  }
+}
+
+async function waitForClose(closed: Promise<number | null>, timeout: number) {
+  return Promise.race([
+    closed.then(() => true),
+    new Promise<false>((resolve) => setTimeout(() => resolve(false), timeout)),
+  ]);
+}
 
 describe("Zellij smoke supervisor", () => {
+  it("resolves workspace packages from source when launched through its shebang", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mzc-source-resolution-"));
+    try {
+      const loader = join(root, "reject-built-terminal-runtime.mjs");
+      await writeFile(loader, `
+export async function resolve(specifier, context, nextResolve) {
+  const result = await nextResolve(specifier, context);
+  if (result.url.endsWith('/packages/terminal-runtime/dist/zellij-config.js')) {
+    throw new Error('blocked built terminal-runtime output');
+  }
+  return result;
+}
+`);
+      const script = join(process.cwd(), "scripts/smoke-zellij-session-config.ts");
+      const [shebang] = (await readFile(script, "utf8")).split("\n", 1);
+      const missingBinary = join(root, "missing-zellij");
+      const child = spawn("/usr/bin/env", [
+        "-S", shebang.replace(/^#!\/usr\/bin\/env -S /, ""), script, missingBinary,
+      ], {
+        cwd: process.cwd(),
+        env: { ...process.env, NODE_OPTIONS: `--experimental-loader=${loader}` },
+        stdio: ["ignore", "ignore", "pipe"],
+      });
+      let stderr = "";
+      child.stderr.on("data", (data) => { stderr += data; });
+      const code = await new Promise<number | null>((resolve) => child.once("close", resolve));
+      expect(code).not.toBe(0);
+      expect(stderr).not.toContain("blocked built terminal-runtime output");
+      expect(stderr).toContain(missingBinary);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps supervisor startup bounded with saturated-CI headroom", () => {
+    expect(SUPERVISOR_START_TIMEOUT_MS).toBeGreaterThanOrEqual(8_000);
+    expect(SUPERVISOR_START_TIMEOUT_MS).toBeLessThanOrEqual(10_000);
+  });
+
+  it("cancels the marker poll when the supervisor exits before startup", async () => {
+    vi.useFakeTimers();
+    try {
+      let close!: (code: number | null) => void;
+      const closed = new Promise<number | null>((resolve) => { close = resolve; });
+      const missing = Object.assign(new Error("missing"), { code: "ENOENT" });
+      const waiting = waitForStartedMarker("/missing", closed, async () => { throw missing; });
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(vi.getTimerCount()).toBe(1);
+      close(1);
+      await expect(waiting).rejects
+        .toThrow("exited before startup");
+      await Promise.resolve();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reports bounded supervisor stderr when startup exits early", async () => {
+    const closed = Promise.resolve(1);
+    const missing = Object.assign(new Error("missing"), { code: "ENOENT" });
+    await expect(waitForStartedMarker(
+      "/missing",
+      closed,
+      async () => { throw missing; },
+      () => "fixture startup failed\u0000with control bytes",
+    )).rejects.toThrow("Supervisor stderr:\nfixture startup failedwith control bytes");
+  });
+
   it.each([false, true])("cleans an interrupted worker and preserves its error (cleanup fails: %s)", async (cleanupFails) => {
     const root = await mkdtemp(join(tmpdir(), "mzc-supervisor-"));
     const marker = join(root, "started.json");
     const cleaned = join(root, "cleaned");
     const binary = join(root, "fake-zellij");
+    const worker = join(root, "fixture-worker.mjs");
     let child: ReturnType<typeof spawn> | undefined;
+    let closed: Promise<number | null> | undefined;
     try {
       await writeFile(binary, `#!${process.execPath}
 const fs = require('node:fs');
@@ -25,18 +152,25 @@ fs.writeFileSync(${JSON.stringify(marker)}, JSON.stringify({pid:process.pid, fix
 setTimeout(() => process.exit(0), 10000);
 `);
       await chmod(binary, 0o700);
-      child = spawn(process.execPath, ["--import", "tsx", "scripts/smoke-zellij-session-config.ts", binary], {
+      await writeFile(worker, `
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+const root = process.argv[3];
+const fixture = join(root, 'case-fixture');
+await mkdir(fixture);
+await writeFile(join(fixture, 'session'), 'matrix-sess_1234abcd');
+await writeFile(${JSON.stringify(marker)}, JSON.stringify({pid:process.pid, fixture}));
+setInterval(() => {}, 60_000);
+`);
+      child = spawn(process.execPath, ["--conditions=development", "--import", "tsx", "scripts/smoke-zellij-session-config.ts", binary], {
         cwd: process.cwd(), stdio: ["ignore", "pipe", "pipe"],
+        env: { ...process.env, MATRIX_ZELLIJ_SMOKE_FIXTURE_WORKER: worker },
       });
       let stderr = "";
       child.stderr!.on("data", (data) => { stderr = (stderr + data).slice(-65_536); });
       child.stdout!.resume();
-      const closed = new Promise<number | null>((done) => child!.once("close", done));
-      await expect.poll(async () => readFile(marker, "utf8").then(() => true, (error) => {
-        if (error.code === "ENOENT") return false;
-        throw error;
-      }), { timeout: 4_000 }).toBe(true);
-      const { fixture } = JSON.parse(await readFile(marker, "utf8"));
+      closed = new Promise<number | null>((done) => child!.once("close", done));
+      const { fixture } = await waitForStartedMarker(marker, closed, readFile, () => stderr);
       child.kill("SIGTERM");
       expect(await closed).not.toBe(0);
       expect(stderr).toContain("AbortError");
@@ -44,7 +178,13 @@ setTimeout(() => process.exit(0), 10000);
       await expect(readFile(cleaned, "utf8")).resolves.toBe("yes");
       await expect(readFile(join(fixture, "session"))).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
-      if (child && child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+      if (child && closed && child.exitCode === null && child.signalCode === null) {
+        child.kill("SIGTERM");
+        if (!await waitForClose(closed, SUPERVISOR_CLEANUP_GRACE_MS)) {
+          child.kill("SIGKILL");
+          await closed;
+        }
+      }
       await rm(root, { recursive: true, force: true });
     }
   }, 15_000);

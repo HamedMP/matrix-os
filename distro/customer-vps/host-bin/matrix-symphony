@@ -32,6 +32,31 @@ else
   export PATH="$MATRIX_HOME/.local/bin:/opt/matrix/app/node_modules/.bin:/opt/matrix/runtime/node/bin:/usr/local/bin:$PATH"
 fi
 
+# First corrected bundle may still be applied by an older sync agent that
+# unconditionally starts Symphony. Honor its saved pre-update service activity.
+activity_file=/opt/matrix/staging/update-transaction/systemd.activity
+if [ -f "$activity_file" ] && grep -Fxq 'matrix-symphony.service:inactive' "$activity_file"; then
+  echo "matrix-symphony: idle; service was stopped before update"
+  exit 0
+fi
+
+# Legacy owners who supplied a credential intentionally configured Symphony.
+# Preserve their former project default; automatic bridge-only installs do not
+# have any of these owner settings. Never print the credential value.
+legacy_linear_credential="${SYMPHONY_LINEAR_CREDENTIAL:-}${SYMPHONY_LINEAR_API_KEY:-}${MATRIX_LINEAR_API_KEY:-}${LINEAR_API_KEY:-}"
+if [ -z "${SYMPHONY_LINEAR_PROJECT_SLUG:-}" ] && [[ "$legacy_linear_credential" =~ [^[:space:]] ]]; then
+  export SYMPHONY_LINEAR_PROJECT_SLUG=matrix-os
+fi
+unset legacy_linear_credential
+
+# The bundled workflow needs an explicit project. A custom owner workflow is
+# preserved and validated by Elixir. Exit successfully so systemd cannot loop.
+if [ "$WORKFLOW_FILE" = "$APP_DIR/packages/symphony-elixir/WORKFLOW.md" ] &&
+  [ -z "${SYMPHONY_LINEAR_PROJECT_SLUG:-}" ]; then
+  echo "matrix-symphony: idle; configure a Linear project before starting"
+  exit 0
+fi
+
 mkdir -p "$SYMPHONY_WORKSPACE_ROOT"
 mkdir -p "$MATRIX_HOME/system/symphony/logs"
 export SYMPHONY_LOGS_ROOT="$MATRIX_HOME/system/symphony/logs"
