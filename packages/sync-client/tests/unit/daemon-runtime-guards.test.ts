@@ -92,6 +92,29 @@ describe("daemon runtime guards", () => {
     expect(await readFile(pidPath, "utf-8")).toBe("4242");
   });
 
+  it("allows only one successor to recover a verified-dead pid file", async () => {
+    const pidPath = join(tempDir, "daemon.pid");
+    await writeFile(pidPath, "1111");
+    vi.spyOn(process, "kill").mockImplementation((pid) => {
+      if (pid === 1111) {
+        const err = new Error("No such process") as NodeJS.ErrnoException;
+        err.code = "ESRCH";
+        throw err;
+      }
+      return true;
+    });
+
+    const candidates = [4242, 4343];
+    const results = await Promise.allSettled(
+      candidates.map((pid) => writePidFileExclusive(pidPath, pid)),
+    );
+    const winnerIndex = results.findIndex((result) => result.status === "fulfilled");
+
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
+    expect(await readFile(pidPath, "utf-8")).toBe(String(candidates[winnerIndex]));
+  });
+
   it("persists pause state changes", async () => {
     const configPath = join(tempDir, "config.json");
     const config: SyncConfig = {

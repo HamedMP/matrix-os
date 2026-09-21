@@ -73,6 +73,18 @@ describe("published CLI package runners", () => {
     expect(script).toContain('"process.env.MATRIX_CLI_STANDALONE=\\\"1\\\"",');
   });
 
+  it("starts source daemons through one explicit entrypoint", async () => {
+    const [launcher, entrypoint, implementation] = await Promise.all([
+      readFile(resolve(repoRoot, "packages/sync-client/src/daemon/launcher.mjs"), "utf8"),
+      readFile(resolve(repoRoot, "packages/sync-client/src/daemon/main.ts"), "utf8"),
+      readFile(resolve(repoRoot, "packages/sync-client/src/daemon/index.ts"), "utf8"),
+    ]);
+
+    expect(launcher).toContain("resolve(here, 'main.ts')");
+    expect(entrypoint.match(/startDaemon\(\)/g)).toHaveLength(1);
+    expect(implementation).not.toContain("const isEntrypoint");
+  });
+
   it("creates isolated package-manager homes before validating package runners", async () => {
     const script = await readFile(
       resolve(repoRoot, "packages/sync-client/scripts/validate-package-runners.mjs"),

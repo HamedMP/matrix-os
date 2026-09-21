@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { copyFile, link, mkdir, readFile, writeFile, unlink, stat } from "node:fs/promises";
 import { dirname, extname, join, resolve, sep } from "node:path";
-import { fileURLToPath } from "node:url";
 import pino from "pino";
 import {
   saveConfig,
@@ -260,7 +259,20 @@ export async function persistPauseState(
   await saveConfig(config, path);
 }
 
-export async function writePidFileExclusive(filePath: string, pid: number): Promise<void> {
+let pidFileAcquisitionTail: Promise<void> = Promise.resolve();
+
+export function writePidFileExclusive(filePath: string, pid: number): Promise<void> {
+  // Multiple startDaemon() calls in one runtime must not race stale-file
+  // recovery and unlink a freshly acquired pid file. The filesystem's `wx`
+  // create remains the authority across separate processes.
+  const acquisition = pidFileAcquisitionTail.then(() =>
+    writePidFileExclusiveNow(filePath, pid),
+  );
+  pidFileAcquisitionTail = acquisition.catch(() => undefined);
+  return acquisition;
+}
+
+async function writePidFileExclusiveNow(filePath: string, pid: number): Promise<void> {
   const writeExclusive = async () => {
     await writeFile(filePath, String(pid), { flag: "wx" });
   };
@@ -1655,29 +1667,4 @@ export async function startDaemon(): Promise<void> {
     { syncPath: config.syncPath, peerId: config.peerId },
     "Daemon started",
   );
-}
-
-// Only auto-start when invoked as an entry point (tsx / compiled bin).
-// Importing this module (e.g. from tests) must not trigger daemon startup.
-const isEntrypoint = (() => {
-  const entry = process.argv[1];
-  if (!entry) return false;
-  try {
-    return fileURLToPath(import.meta.url) === entry;
-  } catch (err: unknown) {
-    if (!(err instanceof TypeError)) {
-      console.warn(
-        "[sync/daemon] Failed to compare entrypoint path:",
-        err instanceof Error ? err.message : String(err),
-      );
-    }
-    return false;
-  }
-})();
-
-if (isEntrypoint) {
-  startDaemon().catch((err) => {
-    console.error("Daemon failed to start:", err);
-    process.exit(1);
-  });
 }

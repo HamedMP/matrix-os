@@ -36,7 +36,7 @@ if (!tsxLoader) {
 
 const child = spawn(
   process.execPath,
-  ['--import', pathToFileURL(tsxLoader).href, resolve(here, 'index.ts'), ...process.argv.slice(2)],
+  ['--import', pathToFileURL(tsxLoader).href, resolve(here, 'main.ts'), ...process.argv.slice(2)],
   { stdio: 'inherit', env: process.env },
 );
 
