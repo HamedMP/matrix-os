@@ -214,7 +214,7 @@ describe.skipIf(!connectionString)("collaboration cutover on real PostgreSQL (T0
     expect((await coordinator.run(scopeId, { backupRef: "restricted-backup-1" })).phase).toBe("active");
     ready = false;
     expect(await coordinator.rollback(scopeId, "compatible_direct", { compatibleDirectBuild: true }))
-      .toMatchObject({ phase: "blocked", blockReason: "offline", resumePhase: "active" });
+      .toMatchObject({ phase: "blocked", blockReason: "offline", resumePhase: "verified" });
     expect(await cutoverTicketAdmission(db, scopeId)).toBe(false);
     ready = true;
     expect(await coordinator.resume(scopeId)).toMatchObject({ phase: "active", rollbackMode: "compatible_direct" });
@@ -225,6 +225,27 @@ describe.skipIf(!connectionString)("collaboration cutover on real PostgreSQL (T0
     const directory = await db.selectFrom("collaboration_directory").select(["authority_generation", "metadata_revision"])
       .where("scope_id", "=", scopeId).executeTakeFirstOrThrow();
     expect([Number(directory.authority_generation), Number(directory.metadata_revision)]).toEqual([2, 2]);
+  });
+
+  it("keeps a lost rollback acknowledgement fenced until fresh build proof and an idempotent home retry", async () => {
+    const scopeId = await orgScope();
+    const ownerHome = home(scopeId);
+    let compatible = true;
+    const coordinator = new PlatformCollaborationCutover({
+      db, resolveHome: async () => ({ status: "ready", home: ownerHome }),
+      verifyCompatibleDirectBuild: async () => compatible,
+    });
+    await coordinator.run(scopeId, { backupRef: "restricted-backup-1" });
+    ownerHome.rollbackCompatible.mockRejectedValueOnce(new Error("lost acknowledgement"));
+    expect(await coordinator.rollback(scopeId, "compatible_direct", { compatibleDirectBuild: true }))
+      .toMatchObject({ phase: "blocked", blockReason: "rollback_unavailable", resumePhase: "verified" });
+    compatible = false;
+    expect((await coordinator.resume(scopeId)).phase).toBe("blocked");
+    expect(ownerHome.rollbackCompatible).toHaveBeenCalledTimes(1);
+    compatible = true;
+    expect(await coordinator.resume(scopeId)).toMatchObject({ phase: "active", rollbackMode: "compatible_direct" });
+    expect(ownerHome.rollbackCompatible).toHaveBeenCalledTimes(2);
+    expect(ownerHome.activate).toHaveBeenCalledOnce();
   });
 
   it("rejects a caller assertion of compatibility without a fresh installed-build verifier", async () => {
