@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -117,6 +117,30 @@ describe("owner Git driver", () => {
     await git(root, "config", "include.path", "member.inc");
     await expect(driver.run(execution)).rejects.toMatchObject({ name: "ProjectGitBrokerError", code: "unavailable" });
     await expect(driver.reconcile(execution)).rejects.toMatchObject({ name: "ProjectGitBrokerError", code: "unavailable" });
+  });
+
+  it("refuses a project root whose .git is a gitdir file or symlink pointing at another repository", async () => {
+    const victim = await repository();
+    const victimHead = await git(victim, "rev-parse", "HEAD");
+    const home = await ownerHome();
+    for (const variant of ["gitdir-file", "symlink"] as const) {
+      const root = await mkdtemp(join(tmpdir(), "matrix-git-broker-alias-"));
+      rootPaths.push(root);
+      if (variant === "gitdir-file") await writeFile(join(root, ".git"), `gitdir: ${join(victim, ".git")}\n`);
+      else await symlink(join(victim, ".git"), join(root, ".git"));
+      const driver = driverFor(root, home);
+      await expect(driver.getGitSetup({ ownerId: OWNER, projectId: PROJECT })).resolves.toMatchObject({ identity: { status: "unavailable" } });
+      await expect(driver.run({
+        operationId: "80000000-0000-4000-8000-000000000001",
+        scopeId: "80000000-0000-4000-8000-000000000002",
+        ownerId: OWNER,
+        projectId: PROJECT,
+        requestingActorId: "user_member",
+        ownerIdentity: { name: "Project Owner", email: "owner@example.test", label: "Project Owner <owner@example.test>" },
+        request: { type: "commit", clientRequestId: "80000000-0000-4000-8000-000000000006", expectedRevision: "1", payloadHash: "d".repeat(64), message: "hijack", expectedHeadSha: victimHead },
+      })).rejects.toMatchObject({ name: "ProjectGitBrokerError", code: "unavailable" });
+    }
+    expect(await git(victim, "rev-parse", "HEAD")).toBe(victimHead);
   });
 
   it("rejects stale refs and a local or changed push remote before any remote effect", async () => {

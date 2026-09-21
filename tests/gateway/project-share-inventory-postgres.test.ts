@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -139,6 +139,25 @@ describe("share-time project Chat root inventory", () => {
       expect.objectContaining({ chatId: "chat_main", executionRoot: { kind: "project", projectId: PROJECT }, branch: "main", dirty: false, fingerprint: expect.stringMatching(/^[a-f0-9]{64}$/), readiness: "ready" }),
     ]);
     expect(JSON.stringify(roots)).not.toContain(homePath);
+  });
+
+  it("blocks a Chat root whose .git aliases another repository through a gitdir file or symlink", async () => {
+    const victim = join(homePath, "victim");
+    await mkdir(victim, { recursive: true });
+    await git(victim, "init", "-b", "victim");
+    await writeFile(join(victim, "secret.md"), "victim\n");
+    await git(victim, "add", "secret.md");
+    await git(victim, "-c", "user.name=Victim", "-c", "user.email=victim@example.test", "commit", "-m", "victim");
+    await writeFile(join(worktreeRoot, ".git"), `gitdir: ${join(victim, ".git")}\n`);
+    const aliasedWorktree = await inventory().list({ ownerId: OWNER, projectId: PROJECT });
+    expect(aliasedWorktree).toContainEqual(expect.objectContaining({ chatId: "chat_feature", readiness: "blocked", blocker: "chat_root_unavailable" }));
+    expect(aliasedWorktree).toContainEqual(expect.objectContaining({ chatId: "chat_main", readiness: "ready", branch: "main" }));
+    expect(JSON.stringify(aliasedWorktree)).not.toContain("victim");
+    await rename(join(projectRoot, ".git"), join(projectRoot, ".git-moved"));
+    await symlink(join(victim, ".git"), join(projectRoot, ".git"));
+    const aliasedProject = await inventory().list({ ownerId: OWNER, projectId: PROJECT });
+    expect(aliasedProject).toContainEqual(expect.objectContaining({ chatId: "chat_main", readiness: "blocked", blocker: "chat_root_unavailable" }));
+    expect(JSON.stringify(aliasedProject)).not.toContain("victim");
   });
 
   it("includes all Chat roots in the signed share preview and blocks an unresolved one", async () => {
