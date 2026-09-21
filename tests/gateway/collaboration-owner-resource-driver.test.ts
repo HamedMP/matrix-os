@@ -23,6 +23,7 @@ describe("owner resource driver boundary", () => {
     await Promise.all([mkdir(home), mkdir(project), mkdir(assets)]);
     driver = createOwnerResourceDriver({
       homePath: home,
+      listOwnedProjectIds: async () => [PROJECT],
       resolveProjectWorkingDirectory: async (ownerId, projectId) => ownerId === OWNER && projectId === PROJECT ? project : null,
       resolveAppAssetRoot: async (ownerId, projectId, appId) => ownerId === OWNER && projectId === PROJECT && appId === "board" ? assets : null,
     });
