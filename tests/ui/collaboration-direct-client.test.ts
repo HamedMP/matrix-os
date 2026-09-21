@@ -223,6 +223,11 @@ describe("collaboration direct client", () => {
   const manyScopes = (count: number) => Array.from({ length: count }, (_, index) => `20000000-0000-4000-8000-${(index + 1).toString(16).padStart(12, "0")}`);
   const eventHandlers = () => ({ onEvent: vi.fn(), onUnavailable: vi.fn() });
   const ready = (id: string, sequence: string) => ({ data: JSON.stringify({ version: 1, type: "ready", scopeId: id, resourceId: "chat-1", authorityGeneration: "3", sequence }) });
+  const terminalProjection = () => ({
+    id: "terminal-1", scopeId, incarnation: `terminal-${"a".repeat(32)}`, executionGeneration: "4",
+    status: "active" as const, createdBy: { actorId: "user_owner", displayName: "Owner" },
+    createdAt: "2026-09-11T11:00:00.000Z",
+  });
   const socketFor = (id: string) => world.sockets.find((socket) => socket.url.includes(`/scopes/${id}/`))!;
 
   it("forgets closed stream scopes so the scope cap never evicts a live stream in their place", async () => {
@@ -286,17 +291,19 @@ describe("collaboration direct client", () => {
     await vi.waitFor(() => expect(world.sockets).toHaveLength(1));
     const socket = world.sockets[0]! as typeof world.sockets[number] & { bufferedAmount?: number };
     socket.onopen?.();
-    await vi.advanceTimersByTimeAsync(120_000);
+    const keepalive = () => socket.onmessage?.({ data: JSON.stringify({ version: 1, type: "terminal.state", scopeId, resourceId: "terminal-1", authorityGeneration: "1", incarnation: `terminal-${"a".repeat(32)}`, sequence: "4", terminal: terminalProjection() }) });
+    for (let tick = 0; tick < 6; tick += 1) { await vi.advanceTimersByTimeAsync(20_000); keepalive(); }
     expect(socket.close).not.toHaveBeenCalled();
+    // Sends stop draining: the socket is dropped even though the home is still heard on it.
     socket.bufferedAmount = 64;
-    await vi.advanceTimersByTimeAsync(120_000);
+    for (let tick = 0; tick < 6; tick += 1) { await vi.advanceTimersByTimeAsync(20_000); keepalive(); }
     expect(socket.close).toHaveBeenCalled();
     expect(disconnected).toHaveBeenCalled();
     await vi.waitFor(() => expect(world.sockets).toHaveLength(2));
     expect(world.platform.tickets.filter((ticket) => ticket.purpose === "terminal")).toHaveLength(2);
   });
 
-  it("drops a terminal stream when its scope's event stream proves the home is gone", async () => {
+  it("judges a terminal stream by its own socket: a healthy event stream does not vouch for it", async () => {
     vi.useFakeTimers();
     const direct = client();
     const disconnected = vi.fn();
@@ -308,21 +315,35 @@ describe("collaboration direct client", () => {
     events.onopen?.();
     terminal.onopen?.();
     events.onmessage?.(ready(scopeId, "4"));
-    // The home heartbeats every event stream every 10 s. While those frames arrive the
-    // peer is alive, so an idle terminal socket on the same scope must be kept.
-    await vi.advanceTimersByTimeAsync(30_000);
-    events.onmessage?.({ data: JSON.stringify({ version: 1, type: "heartbeat", scopeId, resourceId: "chat-1", authorityGeneration: "3", sequence: "4" }) });
-    await vi.advanceTimersByTimeAsync(30_000);
-    expect(terminal.close).not.toHaveBeenCalled();
-    // Nothing from the home on any of the scope's streams: the terminal socket lost the
-    // same peer and must be dropped and re-dialed with a fresh ticket, not left open.
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(events.close).toHaveBeenCalled();
+    // Separate sockets fail separately. The event stream keeps hearing the home while the
+    // terminal socket hears nothing, so the terminal must still be dropped and re-dialed.
+    for (let tick = 0; tick < 6; tick += 1) {
+      await vi.advanceTimersByTimeAsync(10_000);
+      events.onmessage?.({ data: JSON.stringify({ version: 1, type: "heartbeat", scopeId, resourceId: "chat-1", authorityGeneration: "3", sequence: "4" }) });
+    }
+    expect(events.close).not.toHaveBeenCalled();
     expect(terminal.close).toHaveBeenCalled();
     expect(disconnected).toHaveBeenCalled();
-    await vi.waitFor(() => expect(world.sockets).toHaveLength(4));
-    expect(world.platform.tickets.filter((ticket) => ticket.purpose === "terminal")).toHaveLength(2);
-    expect(world.platform.tickets.filter((ticket) => ticket.purpose === "events")).toHaveLength(2);
+    await vi.waitFor(() => expect(world.platform.tickets.filter((ticket) => ticket.purpose === "terminal")).toHaveLength(2));
+    expect(world.platform.tickets.filter((ticket) => ticket.purpose === "events")).toHaveLength(1);
+  });
+
+  it("keeps an idle terminal stream alive on the home's own keepalive state frames", async () => {
+    vi.useFakeTimers();
+    const direct = client();
+    const disconnected = vi.fn();
+    direct.subscribeTerminal(scopeId, { onReady: vi.fn(), onOutput: vi.fn(), onState: vi.fn(), onRefreshRequired: vi.fn(), onUnavailable: vi.fn(), onDisconnected: disconnected });
+    await vi.waitFor(() => expect(world.sockets).toHaveLength(1));
+    const terminal = world.sockets[0]!;
+    terminal.onopen?.();
+    // The home gives a silent terminal connection a state frame; nothing is dropped while they arrive.
+    for (let tick = 0; tick < 6; tick += 1) {
+      await vi.advanceTimersByTimeAsync(20_000);
+      terminal.onmessage?.({ data: JSON.stringify({ version: 1, type: "terminal.state", scopeId, resourceId: "terminal-1", authorityGeneration: "1", incarnation: `terminal-${"a".repeat(32)}`, sequence: "4", terminal: terminalProjection() }) });
+    }
+    expect(terminal.close).not.toHaveBeenCalled();
+    expect(disconnected).not.toHaveBeenCalled();
+    expect(world.platform.tickets.filter((ticket) => ticket.purpose === "terminal")).toHaveLength(1);
   });
 
   it("stores nothing reusable: keys stay in memory and non-extractable, nothing touches browser storage", async () => {
