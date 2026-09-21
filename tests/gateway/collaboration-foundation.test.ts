@@ -21,6 +21,7 @@ import { registerLifecycleRoutes } from "../../packages/gateway/src/collaboratio
 import { handle } from "../../packages/gateway/src/collaboration/route-support.js";
 import {
   collaborationActors,
+  collaborationExecutionEligibility,
   collaborationIds,
   createCollaborationTestDatabase,
   type CollaborationTestDatabase,
@@ -215,10 +216,7 @@ describe("shared Chat queue behavior (S01 foundation)", () => {
       authority_runtime_id: collaborationIds.runtime,
       authority_generation: 1,
       execution_generation: 1,
-      execution_eligibility: JSON.stringify({
-        profileId: "scope-runtime-chat-v1", profileVersion: 1, profileDigest: "a".repeat(64),
-        adapterId: "claude-code", harnessVersion: "2.1.240",
-      }),
+      execution_eligibility: JSON.stringify(collaborationExecutionEligibility()),
       deleted_at: null,
       created_at: now,
       updated_at: now,
