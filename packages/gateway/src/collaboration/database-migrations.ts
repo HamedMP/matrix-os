@@ -1,3 +1,4 @@
+import { migrateExecutionPoliciesV10 } from "./execution-policy.js";
 import { migrateCapabilityGrantsV8 } from "./policy-migrations.js";
 import { migrateRuntimeIdentityV9 } from "./runtime-identity.js";
 import { sql, type Kysely, type Transaction } from "kysely";
@@ -460,4 +461,5 @@ export const COLLABORATION_VERSIONED_MIGRATIONS: readonly CollaborationVersioned
   { version: 7, run: migrateOrganizationContextV7 },
   { version: 8, run: migrateCapabilityGrantsV8 },
   { version: 9, run: migrateRuntimeIdentityV9 },
+  { version: 10, run: migrateExecutionPoliciesV10 },
 ];
