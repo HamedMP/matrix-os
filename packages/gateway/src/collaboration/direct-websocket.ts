@@ -65,12 +65,15 @@ export function registerCollaborationDirectWebSocketRoutes(options: {
       let processing = Promise.resolve();
       let handshakeTimer: ReturnType<typeof setTimeout> | null = null;
       let watchdog: ReturnType<typeof setInterval> | null = null;
+      let unsubscribeEnded: (() => void) | null = null;
 
       const shutdownStream = (ws: SocketLike, code: number, reason: string) => {
         if (handshakeTimer) clearTimeout(handshakeTimer);
         if (watchdog) clearInterval(watchdog);
         handshakeTimer = null;
         watchdog = null;
+        unsubscribeEnded?.();
+        unsubscribeEnded = null;
         stream?.close();
         stream = null;
         release?.();
@@ -108,6 +111,10 @@ export function registerCollaborationDirectWebSocketRoutes(options: {
         }
         if (handshakeTimer) clearTimeout(handshakeTimer);
         handshakeTimer = null;
+        // A denial, expiry or exhaustion closes this socket at once; the watchdog is the backstop.
+        unsubscribeEnded = options.sessions.subscribeEnded((ended) => {
+          if (ended.id === sessionId) shutdownStream(ws, 1008, "Session ended");
+        });
         watchdog = setInterval(() => {
           const live = sessionId ? options.sessions.describe(sessionId) : null;
           if (!live || live.authorityGeneration !== generation || Date.parse(live.evidenceExpiresAt) <= Date.now()) {
@@ -135,11 +142,13 @@ export function registerCollaborationDirectWebSocketRoutes(options: {
             const frame = CollaborationClientFrameSchema.parse(parsed);
             if (frame.type !== "heartbeat") {
               if (frame.scopeId !== scopeId) throw new Error("scope mismatch");
+              options.sessions.spendStreamInput(sessionId!);
               await stream.resume?.(Number(frame.sequence), Number(frame.authorityGeneration));
             }
             return;
           }
           const action = CollaborationTerminalActionSchema.parse(parsed);
+          options.sessions.spendStreamInput(sessionId!);
           await options.terminal!.dispatcher.dispatch({ scopeId, actorId: actorId!, connectionId: connectionId!, action });
           await options.terminal!.registry.publishState(scopeId);
           stream.touch();
@@ -175,6 +184,8 @@ export function registerCollaborationDirectWebSocketRoutes(options: {
           socketClosed = true;
           if (handshakeTimer) clearTimeout(handshakeTimer);
           if (watchdog) clearInterval(watchdog);
+          unsubscribeEnded?.();
+          unsubscribeEnded = null;
           stream?.close();
           stream = null;
           release?.();

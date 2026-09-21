@@ -39,7 +39,12 @@ interface SessionRecord {
   session: CollaborationDirectSession;
   proofPublicKey: string;
   connections: number;
+  /** Signed `maxActions` from the admitting ticket; every authorized request or stream input spends one. */
+  actionsRemaining: number;
 }
+
+export type DirectSessionEndReason = "expired" | "denied" | "revoked" | "closed" | "shutdown" | "exhausted";
+export type DirectSessionEndedListener = (session: CollaborationDirectSession, reason: DirectSessionEndReason) => void;
 
 export interface DirectConnectionLimits {
   perHome: number;
@@ -68,6 +73,7 @@ export class DirectSessionService {
   private closed = false;
   private readonly limits: DirectConnectionLimits;
   private readonly sweepTimer: ReturnType<typeof setInterval> | undefined;
+  private readonly endedListeners = new Set<DirectSessionEndedListener>();
 
   constructor(private readonly options: {
     verifier: DirectTicketVerifier;
@@ -76,7 +82,7 @@ export class DirectSessionService {
     now?: () => Date;
     limits?: Partial<DirectConnectionLimits>;
     /** Called when a session ends for any reason so streams can be closed. */
-    onEnded?(session: CollaborationDirectSession, reason: "expired" | "denied" | "revoked" | "closed" | "shutdown"): void;
+    onEnded?: DirectSessionEndedListener;
     startTimers?: boolean;
   }) {
     this.now = options.now ?? (() => new Date());
@@ -121,8 +127,14 @@ export class DirectSessionService {
       evidenceExpiresAt: new Date(Math.min(evidenceExpiresAt, issuedAt.getTime() + EVIDENCE_TTL_MS)).toISOString(),
       renewAfter: new Date(issuedAt.getTime() + RENEW_AFTER_MS).toISOString(),
     });
-    this.sessions.set(session.id, { session, proofPublicKey: parsed.data.proofPublicKey, connections: 0 });
+    this.sessions.set(session.id, { session, proofPublicKey: parsed.data.proofPublicKey, connections: 0, actionsRemaining: ticket.maxActions });
     return session;
+  }
+
+  /** Streams and registries subscribe so a denial closes their sockets immediately. */
+  subscribeEnded(listener: DirectSessionEndedListener): () => void {
+    this.endedListeners.add(listener);
+    return () => { this.endedListeners.delete(listener); };
   }
 
   /** `POST /api/collaboration/direct-sessions/:id/renew`: a fresh ticket for the same actor, scope and proof key. */
@@ -148,6 +160,7 @@ export class DirectSessionService {
       renewAfter: new Date(issuedAt.getTime() + RENEW_AFTER_MS).toISOString(),
     });
     record.session = session;
+    record.actionsRemaining = ticket.maxActions;
     return session;
   }
 
@@ -181,7 +194,27 @@ export class DirectSessionService {
     }
     this.options.verifier.admitRequestNonce(record.session.id, signature.nonce, issuedAt + REQUEST_WINDOW_MS + SKEW_MS);
     await this.refreshEvidence(record);
+    this.spend(record);
     return { ...record.session };
+  }
+
+  /** Charges one action from the ticket-signed budget; exhaustion ends the session. */
+  spend(record: SessionRecord): void {
+    if (record.actionsRemaining <= 0) {
+      this.end(record, "exhausted");
+      throw new DirectAuthError("limit", "Session action budget is exhausted");
+    }
+    record.actionsRemaining -= 1;
+  }
+
+  /** Stream input (terminal actions, resume requests) spends from the same budget. */
+  spendStreamInput(sessionId: string): void {
+    const record = this.live(sessionId);
+    this.spend(record);
+  }
+
+  actionsRemaining(sessionId: string): number | null {
+    return this.sessions.get(sessionId)?.actionsRemaining ?? null;
   }
 
   async authorize(input: DirectAuthorizeInput): Promise<AuthorizedCollaborationContext> {
@@ -219,9 +252,11 @@ export class DirectSessionService {
       || ticket.proofKeyThumbprint !== record.session.proofKeyThumbprint || ticket.purpose === "direct_session") {
       throw new DirectAuthError("invalid_ticket", "Stream ticket does not match the session");
     }
+    if (Date.parse(ticket.expiresAt) <= this.now().getTime()) throw new DirectAuthError("invalid_ticket", "Stream ticket has expired");
     this.options.verifier.verifyPossession({ ticket, proofPublicKey: record.proofPublicKey, possession: input.handshake.possession, sessionId: record.session.id });
     this.options.verifier.consume(ticket);
     await this.refreshEvidence(record);
+    this.spend(record);
     const connection = this.connections.open({ sessionId: record.session.id });
     return { session: { ...record.session }, release: connection.release };
   }
@@ -299,10 +334,13 @@ export class DirectSessionService {
   /** Admission at exchange: scope exists on this home in the ticket's organization; actor is a member or an invitee; evidence is fresh. */
   private async admit(ticket: CollaborationConnectionTicket): Promise<number> {
     const scope = await this.options.repository.db.selectFrom("collaboration_scopes")
-      .select(["id", "organization_id", "authority_runtime_id", "kind", "membership_mode", "parent_scope_id", "deleted_at"])
+      .select(["id", "organization_id", "authority_runtime_id", "authority_generation", "kind", "membership_mode", "parent_scope_id", "deleted_at"])
       .where("id", "=", ticket.resource.scopeId).executeTakeFirst();
     if (!scope || scope.deleted_at !== null || scope.organization_id !== ticket.organizationId
       || scope.kind !== ticket.resource.kind || toLogical(scope.authority_runtime_id) !== ticket.runtime.runtimeId) throw denied();
+    if (Number(scope.authority_generation) !== ticket.runtime.authorityGeneration) {
+      throw new DirectAuthError("stale_generation", "Ticket generation does not match the resource");
+    }
     const evidence = await this.evidenceFor(ticket.organizationId, ticket.actorId);
     const membershipScopeId = scope.membership_mode === "inherited" && scope.parent_scope_id ? scope.parent_scope_id : scope.id;
     try {
@@ -340,12 +378,15 @@ export class DirectSessionService {
     }
   }
 
-  private end(record: SessionRecord, reason: "expired" | "denied" | "revoked" | "closed" | "shutdown"): void {
+  private end(record: SessionRecord, reason: DirectSessionEndReason): void {
     if (!this.sessions.delete(record.session.id)) return;
-    try {
-      this.options.onEnded?.(record.session, reason);
-    } catch (error: unknown) {
-      console.warn("[collaboration-direct-sessions] end hook failed", error instanceof Error ? error.name : "UnknownError");
+    for (const listener of [this.options.onEnded, ...this.endedListeners]) {
+      if (!listener) continue;
+      try {
+        listener(record.session, reason);
+      } catch (error: unknown) {
+        console.warn("[collaboration-direct-sessions] end hook failed", error instanceof Error ? error.name : "UnknownError");
+      }
     }
   }
 
