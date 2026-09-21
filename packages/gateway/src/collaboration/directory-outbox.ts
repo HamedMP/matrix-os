@@ -22,6 +22,7 @@ interface ClaimedDirectoryEvent {
   organizationId: string | null;
   /** S06: `organization` when an active organization-wide grant exists; read inside the same claim transaction. */
   audience: "organization" | null;
+  organizationGrantId: string | null;
   attempt: number;
 }
 
@@ -94,6 +95,7 @@ export class CollaborationDirectoryOutbox {
         kind: event.kind,
         ...(organizationId ? { organizationId } : {}),
         ...(audience ? { audience } : {}),
+        ...(event.organizationGrantId ? { organizationGrantId: event.organizationGrantId } : {}),
         authorityGeneration: event.authorityGeneration,
         metadataRevision: event.metadataRevision,
         recipients: event.recipientEntries.map((recipient) => ({
@@ -151,12 +153,16 @@ export class CollaborationDirectoryOutbox {
           "scope.owner_id",
           "scope.organization_id",
           "event.revision",
-          (eb) => eb.exists(
-            eb.selectFrom("collaboration_grants as grant").select("grant.id")
+          (eb) => eb.selectFrom("collaboration_grants as grant").select("grant.id")
               .whereRef("grant.scope_id", "=", "outbox.scope_id")
+              .whereRef("grant.organization_id", "=", "scope.organization_id")
               .where("grant.audience_kind", "=", "organization")
-              .where("grant.state", "=", "active"),
-          ).as("organization_audience"),
+              .where("grant.state", "=", "active")
+              .where((eb) => eb.or([
+                eb("grant.expires_at", "is", null),
+                eb("grant.expires_at", ">", now.toISOString()),
+              ]))
+              .limit(1).as("organization_grant_id"),
         ])
         .where("outbox.authority_runtime_id", "=", this.options.runtimeId)
         .where("outbox.delivered_at", "is", null)
@@ -205,7 +211,8 @@ export class CollaborationDirectoryOutbox {
           recipientEntries,
           discoveryState: row.discovery_state,
           organizationId: row.organization_id ?? null,
-          audience: row.organization_audience === true || Number(row.organization_audience) === 1 ? "organization" : null,
+          audience: row.organization_grant_id ? "organization" : null,
+          organizationGrantId: row.organization_grant_id ?? null,
           attempt,
         });
       }

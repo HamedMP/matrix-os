@@ -136,13 +136,13 @@ describe("PlatformCollaborationRepository", () => {
       authorityGeneration: 1, metadataRevision: 3, recipients: [],
     };
     await repository.applyDirectoryEvent(event);
-    expect(await repository.listOrganizationSharesForActor(platformCollaborationActors.recipientWithoutComputer, ["org_matrix_team"]))
+    expect((await repository.listOrganizationSharesForActorPage(platformCollaborationActors.recipientWithoutComputer, ["org_matrix_team"], { limit: 100 })).items)
       .toMatchObject([{ grantId: event.organizationGrantId }]);
     await repository.applyDirectoryEvent({ ...event, eventId: "20000000-0000-4000-8000-000000000202", metadataRevision: 2, organizationGrantId: "70000000-0000-4000-8000-000000000002" });
-    expect(await repository.listOrganizationSharesForActor(platformCollaborationActors.recipientWithoutComputer, ["org_matrix_team"]))
+    expect((await repository.listOrganizationSharesForActorPage(platformCollaborationActors.recipientWithoutComputer, ["org_matrix_team"], { limit: 100 })).items)
       .toMatchObject([{ grantId: event.organizationGrantId }]);
     await repository.applyDirectoryEvent({ ...event, eventId: "20000000-0000-4000-8000-000000000203", metadataRevision: 4, audience: "members", organizationGrantId: undefined });
-    expect(await repository.listOrganizationSharesForActor(platformCollaborationActors.recipientWithoutComputer, ["org_matrix_team"]))
+    expect((await repository.listOrganizationSharesForActorPage(platformCollaborationActors.recipientWithoutComputer, ["org_matrix_team"], { limit: 100 })).items)
       .toEqual([]);
     expect((await fixture.collaborationDb.selectFrom("collaboration_directory").selectAll().where("scope_id", "=", scopeId).executeTakeFirstOrThrow()).organization_grant_id)
       .toBeNull();
@@ -277,11 +277,11 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("PlatformCollaborationRep
       repository.applyDirectoryEvent({ ...event, eventId: "20000000-0000-4000-8000-000000000300", metadataRevision: 1,
         organizationGrantId: "70000000-0000-4000-8000-000000000300" }),
     ]);
-    expect(await repository.listOrganizationSharesForActor(platformCollaborationActors.recipientWithoutComputer, ["org_matrix_team"]))
+    expect((await repository.listOrganizationSharesForActorPage(platformCollaborationActors.recipientWithoutComputer, ["org_matrix_team"], { limit: 100 })).items)
       .toMatchObject([{ grantId: event.organizationGrantId }]);
     await repository.applyDirectoryEvent({ ...event, eventId: "20000000-0000-4000-8000-000000000302", metadataRevision: 3,
       audience: "members", organizationGrantId: undefined });
-    expect(await repository.listOrganizationSharesForActor(platformCollaborationActors.recipientWithoutComputer, ["org_matrix_team"]))
+    expect((await repository.listOrganizationSharesForActorPage(platformCollaborationActors.recipientWithoutComputer, ["org_matrix_team"], { limit: 100 })).items)
       .toEqual([]);
   });
 
