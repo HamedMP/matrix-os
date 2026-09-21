@@ -331,7 +331,8 @@ to run `matrixos sync`.
 - R2/S3 client: `packages/gateway/src/sync/r2-client.ts`
 - Manifest logic: `packages/gateway/src/sync/manifest.ts`
 - Postgres adapters: `packages/gateway/src/sync/db-impl.ts`
-- Daemon entry: `packages/sync-client/src/daemon/index.ts`
+- Daemon entry: `packages/sync-client/src/daemon/main.ts`
+- Daemon implementation: `packages/sync-client/src/daemon/index.ts`
 - IPC server: `packages/sync-client/src/daemon/ipc-server.ts`
 - macOS app: `packages/sync-client/macos/MatrixSync/`
 - Spec: `specs/066-file-sync/spec.md`

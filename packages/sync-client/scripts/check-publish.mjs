@@ -15,6 +15,7 @@ const mustExist = [
   'src/mcp/server.ts',
   'src/mcp/clients.ts',
   'src/daemon/index.ts',
+  'src/daemon/main.ts',
   'src/index.ts',
   'src/lib/find-tsx-loader.mjs',
   'src/lib/node-runtime-guard.mjs',
