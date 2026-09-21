@@ -277,6 +277,28 @@ describe("S08 owner-selected AI source", () => {
     it("is owner-only with no policy at all", async () => {
       expect(await policies.effectiveSubmitMode(PROJECT_SCOPE)).toBe("owner_only");
     });
+
+    it("stays owner-only without the provider-terms acknowledgement even after the organization enables members", async () => {
+      aiSubmission = "owner_only";
+      const policy = await ownerPolicy(PROJECT_SCOPE, collaborationActors.owner, CLAUDE, { acknowledgeProviderTerms: false });
+      expect(policy.submitMode).toBe("follow_organization");
+      expect(policy.providerTermsAcknowledgedAt).toBeNull();
+      aiSubmission = "members";
+      expect(await policies.effectiveSubmitMode(PROJECT_SCOPE)).toBe("owner_only");
+      const resolved = await policies.resolve(PROJECT_SCOPE);
+      expect(resolved?.effectiveSubmitMode).toBe("owner_only");
+      expect(resolved?.organizationAiSubmission).toBe("owner_only");
+      await expect(bindings.admit({
+        runId: "run_unacked", requestId: "req_unacked", scopeId: PROJECT_CHAT_SCOPE, requestingActorId: collaborationActors.editor,
+        expectedPolicyRevision: policy.revision, executionRoot: ROOT, rootFingerprint: sha("root"), audienceGeneration: "1",
+      })).rejects.toMatchObject({ code: "owner_only" });
+      const acknowledged = await policies.put({
+        scopeId: PROJECT_SCOPE, actorId: collaborationActors.owner, payloadHash: sha("ack"),
+        request: putRequest(CLAUDE, { expectedRevision: policy.revision }),
+      });
+      expect(acknowledged.effectiveSubmitMode).toBe("members");
+      expect(acknowledged.organizationAiSubmission).toBe("members");
+    });
   });
 
   describe("scope resolution", () => {
@@ -408,6 +430,25 @@ describe("S08 owner-selected AI source", () => {
       });
       expect(sharedSessionKey(newAudience)).not.toBe(sharedSessionKey(base));
       expect(Number(newAudience.sessionGeneration)).toBeGreaterThan(Number(base.sessionGeneration));
+    });
+
+    it("after a restart a changed key allocates strictly above the persisted generation and the same key continues it", async () => {
+      const policy = await ownerPolicy();
+      const admit = (repo: CollaborationRunBindingRepository, runId: string, audienceGeneration: string) => repo.admit({
+        runId, requestId: `req_${runId}`, scopeId: PROJECT_CHAT_SCOPE, requestingActorId: collaborationActors.editor,
+        expectedPolicyRevision: policy.revision, executionRoot: ROOT, rootFingerprint: sha("root"), audienceGeneration,
+      });
+      const first = await admit(bindings, "run_restart_1", "1");
+      expect(first.sessionGeneration).toBe("1");
+      // A fresh repository has no in-memory session state: the persisted key decides.
+      const restarted = new CollaborationRunBindingRepository(fixture.db, { now, policies, eligibility });
+      const sameKey = await admit(restarted, "run_restart_2", "1");
+      expect(sameKey.sessionGeneration).toBe("1");
+      const restartedAgain = new CollaborationRunBindingRepository(fixture.db, { now, policies, eligibility });
+      const changedKey = await admit(restartedAgain, "run_restart_3", "2");
+      expect(Number(changedKey.sessionGeneration)).toBeGreaterThan(Number(sameKey.sessionGeneration));
+      const backToOld = await admit(new CollaborationRunBindingRepository(fixture.db, { now, policies, eligibility }), "run_restart_4", "1");
+      expect(Number(backToOld.sessionGeneration)).toBeGreaterThan(Number(changedKey.sessionGeneration));
     });
 
     it("starts a fresh continuation when the owner changes the source and never keys on the owner's private session", () => {
@@ -614,9 +655,9 @@ describe("S08 organization AI submission adapter point", () => {
         if (input.organizationId === "org_broken") throw new Error("boom");
         return "members";
       },
-    }, "user_owner");
-    expect(await source.resolve("org_ok")).toBe("members");
-    expect(await source.resolve("org_broken")).toBe("unknown");
+    });
+    expect(await source.resolve("org_ok", "user_owner")).toBe("members");
+    expect(await source.resolve("org_broken", "user_owner")).toBe("unknown");
     expect(calls).toEqual([{ organizationId: "org_ok", actorId: "user_owner" }, { organizationId: "org_broken", actorId: "user_owner" }]);
   });
 });
