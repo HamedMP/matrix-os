@@ -146,6 +146,40 @@ describe("project Git broker PostgreSQL boundary", () => {
     expect(await fixture.db.selectFrom("collaboration_git_operations").select("id").execute()).toEqual([]);
   });
 
+  it("attributes a member PR to the owner while retaining requester and run audit", async () => {
+    const run = vi.fn(async () => ({ commitSha: "a".repeat(40), remoteBranch: "feature/member", prUrl: "https://github.com/owner/repo/pull/42" }));
+    const broker = createProjectGitBroker({
+      db: fixture.db,
+      authorize: async () => ({ ownerId: collaborationActors.owner, projectId: PROJECT }),
+      resolveOwnerIdentity: async () => ({ name: "Owner", email: "owner@example.test", label: "Owner <owner@example.test>" }),
+      driver: { run, reconcile: async () => null },
+    });
+    const request = action("pr", { title: "Shared contribution", baseBranch: "main", headBranch: "feature/member", expectedHeadSha: "a".repeat(40) });
+    const result = await broker.submit({ scopeId: collaborationIds.scope, actorId: collaborationActors.editor, runId: "run_member_pr", request });
+    expect(result).toMatchObject({ state: "completed", requestingActorId: collaborationActors.editor, ownerIdentityLabel: "Owner <owner@example.test>", runId: "run_member_pr", prUrl: "https://github.com/owner/repo/pull/42" });
+    expect(run).toHaveBeenCalledWith(expect.objectContaining({ requestingActorId: collaborationActors.editor, ownerId: collaborationActors.owner }));
+    const audit = await fixture.db.selectFrom("collaboration_audit").select(["actor_id", "action", "detail"]).execute();
+    expect(audit).toContainEqual(expect.objectContaining({ actor_id: collaborationActors.editor, action: "git.pr", detail: expect.objectContaining({ ownerId: collaborationActors.owner, runId: "run_member_pr", prUrl: "https://github.com/owner/repo/pull/42" }) }));
+  });
+
+  it("reconciles an ambiguous PR by operation ID without opening a duplicate", async () => {
+    const run = vi.fn(async () => { throw new AmbiguousProjectGitEffect(); });
+    const reconcile = vi.fn(async () => ({ commitSha: "a".repeat(40), remoteBranch: "feature/member", prUrl: "https://github.com/owner/repo/pull/42" }));
+    const broker = createProjectGitBroker({
+      db: fixture.db,
+      authorize: async () => ({ ownerId: collaborationActors.owner, projectId: PROJECT }),
+      resolveOwnerIdentity: async () => ({ name: "Owner", email: "owner@example.test", label: "Owner <owner@example.test>" }),
+      driver: { run, reconcile },
+    });
+    const request = action("pr", { title: "Shared contribution", baseBranch: "main", headBranch: "feature/member", expectedHeadSha: "a".repeat(40) });
+    const first = await broker.submit({ scopeId: collaborationIds.scope, actorId: collaborationActors.editor, request });
+    expect(first.state).toBe("unknown");
+    const second = await broker.submit({ scopeId: collaborationIds.scope, actorId: collaborationActors.editor, request });
+    expect(second).toMatchObject({ id: first.id, state: "completed", prUrl: "https://github.com/owner/repo/pull/42" });
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(reconcile).toHaveBeenCalledWith(expect.objectContaining({ operationId: first.id }));
+  });
+
   it("reconciles an ambiguous push by operation ID before retrying the side effect", async () => {
     const run = vi.fn(async () => { throw new AmbiguousProjectGitEffect(); });
     const reconcile = vi.fn(async () => ({ remoteBranch: "feature/member" }));
