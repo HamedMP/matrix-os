@@ -471,7 +471,10 @@ describe("ProviderSettingsStore", () => {
     }));
   });
 
-  it("keeps every enabled generic route visible and failed closed when the catalog reader rejects", async () => {
+  it.each([
+    { persistedState: "enabled", enabled: true },
+    { persistedState: "disabled", enabled: false },
+  ])("keeps every $persistedState generic route visible and failed closed when the catalog reader rejects", async ({ enabled }) => {
     const store = createStore({ genericModelCatalog: new Error("private catalog failure") });
     await mkdir(dirname(store.configurationPath), { recursive: true });
     await writeFile(store.configurationPath, JSON.stringify({
@@ -483,7 +486,7 @@ describe("ProviderSettingsStore", () => {
         harness,
         displayName: `${harness} saved`,
         accentColor: null,
-        enabled: true,
+        enabled,
         selectedAccountId: null,
         accessSourceId: "matrix_included",
         route: {
