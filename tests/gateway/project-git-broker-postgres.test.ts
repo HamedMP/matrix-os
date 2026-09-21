@@ -100,7 +100,7 @@ describe("project Git broker PostgreSQL boundary", () => {
     expect(audit).toContainEqual(expect.objectContaining({
       actor_id: collaborationActors.editor,
       action: "git.commit",
-      detail: expect.objectContaining({ runId: "run_member_change", commitSha: "a".repeat(40), ownerId: collaborationActors.owner }),
+      detail: expect.objectContaining({ runId: "run_member_change", commitSha: "a".repeat(40), ownerId: collaborationActors.owner, ownerIdentityLabel: "Owner <owner@example.test>" }),
     }));
   });
 

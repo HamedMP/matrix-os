@@ -25,9 +25,22 @@ async function repository(): Promise<string> {
   await writeFile(join(root, "README.md"), "imported\n");
   await git(root, "add", "README.md");
   await git(root, "-c", "user.name=Imported Author", "-c", "user.email=imported@example.test", "commit", "-m", "imported");
-  await git(root, "config", "user.name", "Project Owner");
-  await git(root, "config", "user.email", "owner@example.test");
+  // The repository config is member-writable inside the sandbox; it must never supply the owner identity.
+  await git(root, "config", "user.name", "Repo Local Impostor");
+  await git(root, "config", "user.email", "impostor@example.test");
   return root;
+}
+
+/** Owner-controlled home with the owner's global Git identity; never mounted into the sandbox. */
+async function ownerHome(): Promise<string> {
+  const home = await mkdtemp(join(tmpdir(), "matrix-git-owner-home-"));
+  rootPaths.push(home);
+  await writeFile(join(home, ".gitconfig"), "[user]\n\tname = Project Owner\n\temail = owner@example.test\n");
+  return home;
+}
+
+function driverFor(root: string, home: string) {
+  return createProjectGitDriver({ resolveProjectRoot: async () => root, ownerHome: home });
 }
 
 afterEach(async () => {
@@ -35,12 +48,12 @@ afterEach(async () => {
 });
 
 describe("owner Git driver", () => {
-  it("creates new commits under the configured owner identity without rewriting imported authorship", async () => {
+  it("creates new commits under the owner's global identity, ignoring the member-writable repository config", async () => {
     const root = await repository();
     const before = await git(root, "rev-parse", "HEAD");
     await writeFile(join(root, "README.md"), "member edit\n");
     await git(root, "add", "README.md");
-    const driver = createProjectGitDriver({ resolveProjectRoot: async () => root });
+    const driver = driverFor(root, await ownerHome());
     const ownerIdentity = await driver.resolveOwnerIdentity({ ownerId: OWNER, projectId: PROJECT });
     expect(ownerIdentity).toEqual({ name: "Project Owner", email: "owner@example.test", label: "Project Owner <owner@example.test>" });
     const result = await driver.run({
@@ -56,16 +69,28 @@ describe("owner Git driver", () => {
     expect(result.commitSha).toMatch(HEAD_SHA);
     expect(await git(root, "log", "-1", "--format=%an <%ae>|%cn <%ce>")).toBe("Project Owner <owner@example.test>|Project Owner <owner@example.test>");
     expect(await git(root, "log", "-2", "--format=%an <%ae>")).toContain("Imported Author <imported@example.test>");
+    expect(await git(root, "log", "--format=%an %cn")).not.toContain("Impostor");
+  });
+
+  it("reports the identity as missing when the owner has no global identity even if the repository config has one", async () => {
+    const root = await repository();
+    const home = await mkdtemp(join(tmpdir(), "matrix-git-owner-home-empty-"));
+    rootPaths.push(home);
+    const driver = driverFor(root, home);
+    await expect(driver.resolveOwnerIdentity({ ownerId: OWNER, projectId: PROJECT })).rejects.toMatchObject({ code: "unavailable" });
+    const setup = await driver.getGitSetup({ ownerId: OWNER, projectId: PROJECT });
+    expect(setup.identity).toEqual({ status: "missing" });
   });
 
   it("reports owner Git identity and forge readiness without exposing credentials", async () => {
     const root = await repository();
-    const driver = createProjectGitDriver({ resolveProjectRoot: async () => root });
+    const home = await ownerHome();
+    const driver = driverFor(root, home);
     const setup = await driver.getGitSetup({ ownerId: OWNER, projectId: PROJECT });
     expect(setup.identity).toEqual({ status: "ready", label: "Project Owner <owner@example.test>" });
     expect(["ready", "missing", "unavailable"]).toContain(setup.forgeCredential.status);
     expect(JSON.stringify(setup)).not.toMatch(/(token|oauth|gho_|ghp_)/i);
-    await git(root, "config", "--unset", "user.email");
+    await writeFile(join(home, ".gitconfig"), "[user]\n\tname = Project Owner\n");
     const missing = await driver.getGitSetup({ ownerId: OWNER, projectId: PROJECT });
     expect(missing.identity).toEqual({ status: "missing" });
   });
@@ -73,7 +98,7 @@ describe("owner Git driver", () => {
   it("fails closed when the member-writable repository config carries transport or include overrides", async () => {
     const root = await repository();
     await git(root, "remote", "add", "origin", "https://github.com/owner/repo.git");
-    const driver = createProjectGitDriver({ resolveProjectRoot: async () => root });
+    const driver = driverFor(root, await ownerHome());
     const ownerIdentity = await driver.resolveOwnerIdentity({ ownerId: OWNER, projectId: PROJECT });
     const execution = {
       operationId: "80000000-0000-4000-8000-000000000001",
@@ -96,7 +121,7 @@ describe("owner Git driver", () => {
 
   it("rejects stale refs and a local or changed push remote before any remote effect", async () => {
     const root = await repository();
-    const driver = createProjectGitDriver({ resolveProjectRoot: async () => root });
+    const driver = driverFor(root, await ownerHome());
     const ownerIdentity = await driver.resolveOwnerIdentity({ ownerId: OWNER, projectId: PROJECT });
     const common = {
       operationId: "80000000-0000-4000-8000-000000000001",
