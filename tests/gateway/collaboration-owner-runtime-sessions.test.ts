@@ -37,7 +37,7 @@ function makeFixture() {
       protocolVersion: COLLABORATION_DIRECT_PROTOCOL_VERSION, ticketId: randomUUID(), nonce: randomUUID().replaceAll("-", ""),
       actorId: ownerId, organizationId, resource: { kind: "owner_runtime" }, purpose: "owner_runtime",
       runtime: { runtimeId: logicalRuntimeId, authorityGeneration: 1 }, proofKeyThumbprint: proofKeyThumbprint(proofPublicKey),
-      maxActions: 3, issuedAt: clock.toISOString(), expiresAt: new Date(clock.getTime() + 30_000).toISOString(),
+      maxActions: 8, issuedAt: clock.toISOString(), expiresAt: new Date(clock.getTime() + 30_000).toISOString(),
       ...overrides,
     };
     return { ticket: value, keyId: "platform", signature: signEd25519(platformKey, ticketSigningPayload(value)) };
@@ -50,19 +50,34 @@ function makeFixture() {
       clientOrigin: "https://app.matrix-os.com",
     };
   };
-  const signedRequest = (sessionId: string, path: string, body: Uint8Array = new Uint8Array()) => {
+  const signedRequest = (sessionId: string, path: string, body: Uint8Array = new Uint8Array(), method: "GET" | "POST" = "POST") => {
     const signature = {
-      protocolVersion: 2, sessionId, method: "POST" as const, path, query: "",
+      protocolVersion: 2, sessionId, method, path, query: "",
       bodyDigest: sha256Hex(body), conditionalHeadersDigest: sha256Hex(new Uint8Array()),
       nonce: randomUUID().replaceAll("-", ""), issuedAt: clock.toISOString(),
     };
     return { sessionId, signature, proof: signEd25519(key.privateKey, requestSigningPayload(signature)),
-      method: "POST" as const, path, query: "", body };
+      method, path, query: "", body };
   };
   return { service, create, signedRequest, setMember: (value: boolean) => { member = value; } };
 }
 
 describe("owner runtime direct sessions", () => {
+  it("admits only exact prepared-project owner routes without granting general scope access", async () => {
+    const fixture = makeFixture();
+    const session = await fixture.service.create(fixture.create());
+    const scopeId = "10000000-0000-4000-8000-000000000001";
+    for (const suffix of ["", "/members", "/project/inventory"] as const) {
+      await expect(fixture.service.authenticate(fixture.signedRequest(session.id,
+        `/api/collaboration/scopes/${scopeId}${suffix}`, new Uint8Array(), "GET"))).resolves.toMatchObject({ actorId: ownerId });
+    }
+    await expect(fixture.service.authenticate(fixture.signedRequest(session.id,
+      `/api/collaboration/scopes/${scopeId}/project/confirm`, new TextEncoder().encode("{}")))).resolves.toMatchObject({ actorId: ownerId });
+    await expect(fixture.service.authenticate(fixture.signedRequest(session.id,
+      `/api/collaboration/scopes/${scopeId}/chat/messages`, new Uint8Array(), "GET"))).rejects.toMatchObject({ code: "denied" });
+    await fixture.service.shutdown();
+  });
+
   it("admits only the configured owner and organization, then signs only exact setup routes", async () => {
     const fixture = makeFixture();
     const body = fixture.create();
