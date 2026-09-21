@@ -71,6 +71,9 @@ describe("platform collaboration bootstrap", () => {
 
       expect("failClosed" in runtime).toBe(false);
       expect(runtime.sockets).toBeDefined();
+      expect("cutover" in runtime && runtime.cutover).toMatchObject({
+        run: expect.any(Function), resume: expect.any(Function), rollback: expect.any(Function),
+      });
       await runtime.shutdown();
     } finally {
       await destroyPlatformCollaborationTestDatabase(fixture);
