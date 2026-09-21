@@ -152,6 +152,29 @@ describe("collaboration capability HTTP routes", () => {
     expect((await signed({ actorId: ownerId, method: "GET", path })).status).toBe(200);
   });
 
+  it("activates only the exact pending organization grant after fresh membership", async () => {
+    const created = await signed({ actorId: ownerId, method: "POST",
+      path: `/api/collaboration/scopes/${scopeId}/grants`, body: {
+        clientRequestId: randomUUID(), expectedRevision: "1",
+        audience: { kind: "organization" }, preset: "viewer",
+      },
+    });
+    expect(created.status).toBe(201);
+    const grant = CollaborationGrantSchema.parse(await created.json());
+    const path = `/api/collaboration/scopes/${scopeId}/grants/${grant.id}/accept`;
+    const accepted = await signed({ actorId: memberId, method: "POST", path, body: {} });
+    expect(accepted.status).toBe(200);
+    expect(await accepted.json()).toEqual({ state: "active" });
+    expect((await signed({ actorId: memberId, method: "POST", path, body: {} })).status).toBe(200);
+    expect((await signed({ actorId: outsiderId, method: "POST", path, body: {} })).status).not.toBe(200);
+    expect((await signed({ actorId: memberId, method: "POST",
+      path: `/api/collaboration/scopes/${randomUUID()}/grants/${grant.id}/accept`, body: {},
+    })).status).toBe(404);
+    await fixture.db.updateTable("collaboration_grants").set({ state: "revoked" })
+      .where("id", "=", grant.id).execute();
+    expect((await signed({ actorId: memberId, method: "POST", path, body: {} })).status).toBe(404);
+  });
+
 
   it("returns a bounded server-derived readiness preflight only after scope authorization", async () => {
     const path = `/api/collaboration/scopes/${scopeId}/policy/preflight`;
