@@ -1,4 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Hono, type Context } from "hono";
 import type { UpgradeWebSocket, WSEvents } from "hono/ws";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -6,6 +9,7 @@ import { CollaborationGrantSchema, CollaborationReadinessSchema } from "@matrix-
 import { bootstrapChatDatabase } from "../../packages/gateway/src/chat/database.js";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
 import { createGatewayCollaboration } from "../../packages/gateway/src/collaboration/wiring.js";
+import { createOwnerResourceDriver } from "../../packages/gateway/src/collaboration/owner-resource-driver.js";
 import { CollaborationProofSigner } from "../../packages/platform/src/collaboration/proof.js";
 import { collaborationIds, createCollaborationTestDatabase, type CollaborationTestDatabase } from "./collaboration-test-support.js";
 
@@ -23,6 +27,7 @@ describe("collaboration capability HTTP routes", () => {
   let runtime: Awaited<ReturnType<typeof createGatewayCollaboration>>;
   let app: Hono;
   let signer: CollaborationProofSigner;
+  let homePath: string;
 
   beforeEach(async () => {
     fixture = await createCollaborationTestDatabase();
@@ -61,6 +66,11 @@ describe("collaboration capability HTTP routes", () => {
       invitation_id: null, invited_by: ownerId, accepted_at: now, expires_at: null, revision: 1,
       joined_at: now, updated_at: now, dispositioned_at: null,
     }).execute();
+    homePath = await mkdtemp(join(tmpdir(), "collaboration-owner-catalog-"));
+    await writeFile(join(homePath, "notes.txt"), "one");
+    runtime.enableSharedResources({ driver: createOwnerResourceDriver({
+      homePath, resolveProjectWorkingDirectory: async () => null, resolveAppAssetRoot: async () => null,
+    }) });
     signer = new CollaborationProofSigner({
       activeKeyId: "key-1", keys: { "key-1": key }, now: () => new Date(), createNonce: () => randomUUID().replaceAll("-", ""),
     });
@@ -71,12 +81,14 @@ describe("collaboration capability HTTP routes", () => {
   afterEach(async () => {
     await runtime.shutdown();
     await fixture.destroy();
+    await rm(homePath, { recursive: true, force: true });
   });
 
-  async function signed(input: { actorId: string; method: "GET" | "POST" | "PATCH" | "DELETE"; path: string; body?: unknown; deleteConditions?: { clientRequestId: string; expectedRevision: string; expectedMemberRevision: string } }): Promise<Response> {
+  async function signed(input: { actorId: string; method: "GET" | "POST" | "PATCH" | "DELETE"; path: string; body?: unknown; scopeId?: string | null; deleteConditions?: { clientRequestId: string; expectedRevision: string; expectedMemberRevision: string } }): Promise<Response> {
     const bytes = input.body === undefined ? new Uint8Array() : new TextEncoder().encode(JSON.stringify(input.body));
     const proof = signer.signHttp({
-      actorId: input.actorId, ownerId, runtimeId: collaborationIds.runtime, scopeId,
+      actorId: input.actorId, ownerId, runtimeId: collaborationIds.runtime,
+      ...(input.scopeId === null ? {} : { scopeId: input.scopeId ?? scopeId }),
       method: input.method, path: input.path, query: "", body: bytes,
       ...(input.deleteConditions ? { conditionalHeaders: input.deleteConditions } : {}),
     });
@@ -144,6 +156,29 @@ describe("collaboration capability HTTP routes", () => {
     expect(readiness.items).toHaveLength(4);
     const outsiderResponse = await signed({ actorId: outsiderId, method: "POST", path, body: {} });
     expect(outsiderResponse.status).toBe(404);
+  });
+
+
+  it("resolves the exact owner file to one catalog id and rotates identity when its incarnation changes", async () => {
+    const path = `/api/collaboration/runtimes/${collaborationIds.runtime}/catalog/resolve`;
+    const resolve = () => signed({ actorId: ownerId, method: "POST", path, scopeId: null,
+      body: { kind: "file", path: "notes.txt" },
+    });
+    const first = await resolve();
+    expect(first.status).toBe(200);
+    const firstEntry = await first.json() as { id: string; kind: string; path: string; incarnation: string; revision: string };
+    expect(firstEntry).toMatchObject({ kind: "file", path: "notes.txt", revision: "0" });
+    const second = await resolve();
+    expect(second.status).toBe(200);
+    expect((await second.json() as { id: string }).id).toBe(firstEntry.id);
+    await writeFile(join(homePath, "notes.txt"), "different bytes");
+    const replaced = await resolve();
+    expect(replaced.status).toBe(200);
+    expect((await replaced.json() as { id: string }).id).not.toBe(firstEntry.id);
+    const outsider = await signed({ actorId: outsiderId, method: "POST", path, scopeId: null,
+      body: { kind: "file", path: "notes.txt" },
+    });
+    expect(outsider.status).toBe(403);
   });
 
 });
