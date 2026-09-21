@@ -533,6 +533,68 @@ describe("S05 direct sessions on the home", () => {
     await client.shutdown();
   });
 
+  it("abandons in-flight acknowledgement work when it drains mid-cleanup", async () => {
+    const sent: Array<Record<string, unknown>> = [];
+    let closes = 0;
+    let releaseCleanup!: () => void;
+    const blocked = new Promise<void>((resolve) => { releaseCleanup = resolve; });
+    const revoked: string[] = [];
+    const { client } = controlClient({
+      capabilities: { endActorGrants: async () => { await blocked; return { ended: 1, scopes: 1 }; } } as never,
+      sessions: { revoke: (denial: { actorId?: string }) => { revoked.push(denial.actorId ?? ""); } } as never,
+      connect: () => ({ send: (value: string) => { sent.push(JSON.parse(value) as Record<string, unknown>); }, close: () => { closes += 1; } }),
+    });
+    const stream = await client.connectControl((await client.register()).controlTicket);
+    const inFlight = stream.receive(JSON.stringify({ protocolVersion: 2, type: "denial", denial: { organizationId, actorId: collaborationActors.editor, generation: 2, fencedAt: clock.toISOString(), ackDeadline: new Date(clock.getTime() + 25_000).toISOString(), state: "pending" } }));
+    // Let the frame reach its pending grant cleanup before the drain starts.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(revoked).toEqual([collaborationActors.editor]);
+
+    await client.shutdown();
+    expect(closes).toBe(1);
+    releaseCleanup();
+    await inFlight.catch(() => undefined);
+
+    // The drain has already torn down the dependencies this frame would touch, so the resumed
+    // frame must not acknowledge a fence for a runtime that has stopped serving.
+    expect(sent).toEqual([]);
+  });
+
+  it("fences synchronously: the stream closes, the reconnect never rearms and a second fence is a no-op", async () => {
+    vi.useFakeTimers();
+    try {
+      let connects = 0;
+      let closes = 0;
+      let onClose!: () => void;
+      const { client } = controlClient({
+        startTimers: true,
+        sessions: { revoke: () => undefined } as never,
+        connect: (_url: string, _headers: Record<string, string>, _onMessage: (raw: string) => void, close: () => void) => {
+          connects += 1;
+          onClose = close;
+          return { send: () => undefined, close: () => { closes += 1; } };
+        },
+      });
+      await client.start();
+      expect(connects).toBe(1);
+
+      // The gateway fence is synchronous, so the control client's drain must be too.
+      client.fence();
+      expect(closes).toBe(1);
+
+      // A socket that drops after the fence must not schedule another dial.
+      onClose();
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(connects).toBe(1);
+
+      client.fence();
+      expect(closes).toBe(1);
+      await expect(client.connectControl("t".repeat(43))).rejects.toThrow(/shutting down/i);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("bounds the pending control frame queue and terminates the stream instead of acknowledging a backlog late", async () => {
     const sent: Array<Record<string, unknown>> = [];
     let closes = 0;
