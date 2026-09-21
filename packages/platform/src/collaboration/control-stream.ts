@@ -8,8 +8,9 @@
  * upgrade ticket handed out by the registration route. Every attached socket
  * receives a periodic `generation` keepalive (at most every 10 s) that the
  * home acknowledges; the acknowledgement is the liveness signal the ticket
- * issuer reads. Connections and pending tickets are bounded; shutdown drains
- * every connection.
+ * issuer reads. Connections and pending tickets are bounded, silent
+ * connections are swept before the cap refuses a live home, and shutdown
+ * drains every admitted frame.
  */
 import { randomBytes } from "node:crypto";
 
@@ -48,6 +49,16 @@ const DEFAULT_KEEPALIVE_INTERVAL_MS = COLLABORATION_DIRECT_LIMITS.evidenceRefres
 const MAX_KEEPALIVE_INTERVAL_MS = 10_000;
 /** Acknowledgements queued per connection while the authority is slow; one more closes the socket. */
 const MAX_PENDING_FRAMES = 32;
+/**
+ * A socket that stops acknowledging is a dead reservation: half-open TCP raises no
+ * close event, so `send()` keeps succeeding into the kernel buffer while the home is
+ * gone. 60 s matches the ticket issuer's `host_offline` liveness window, so a home the
+ * issuer already treats as offline stops holding a connection slot and stops being
+ * offered for delivery.
+ */
+const DEFAULT_CONNECTION_IDLE_TTL_MS = 60_000;
+/** Sweep cadence; the registry only runs it while it holds at least one connection. */
+const DEFAULT_SWEEP_INTERVAL_MS = 15_000;
 
 export interface ControlSocket {
   send(value: string): void;
@@ -73,9 +84,16 @@ export class CollaborationControlStream {
   private readonly now: () => Date;
   private readonly ticketTtlMs: number;
   private readonly maxConnections: number;
-  private readonly connections = new Map<string, { socket: ControlSocket; generation: number; pending: number; inbound: Promise<void>; close(): void }>();
-  /** Frame chains still running after their connection closed; shutdown drains them. */
+  private readonly connections = new Map<string, { socket: ControlSocket; generation: number; pending: number; open: boolean; lastTouched: number; inbound: Promise<void>; close(): void }>();
+  /**
+   * Frame chains still running after their connection closed; shutdown drains them.
+   * Bounded by `maxConnections`: a connection contributes at most one chain and the
+   * chain removes itself when it settles.
+   */
   private readonly draining = new Set<Promise<void>>();
+  private readonly connectionIdleTtlMs: number;
+  private readonly sweepIntervalMs: number;
+  private sweep: ReturnType<typeof setInterval> | undefined;
   private closed = false;
   private readonly createToken: () => string;
   private readonly controlAuthority: ControlAuthorityPort;
@@ -99,11 +117,16 @@ export class CollaborationControlStream {
     now?: () => Date;
     ticketTtlMs?: number;
     maxConnections?: number;
+    /** Silence after which a connection is evicted; defaults to the issuer's offline window. */
+    connectionIdleTtlMs?: number;
+    sweepIntervalMs?: number;
     createToken?: () => string;
   }) {
     this.now = options.now ?? (() => new Date());
     this.ticketTtlMs = options.ticketTtlMs ?? DEFAULT_TICKET_TTL_MS;
     this.maxConnections = options.maxConnections ?? DEFAULT_MAX_CONNECTIONS;
+    this.connectionIdleTtlMs = Math.max(1, options.connectionIdleTtlMs ?? DEFAULT_CONNECTION_IDLE_TTL_MS);
+    this.sweepIntervalMs = Math.max(1, options.sweepIntervalMs ?? DEFAULT_SWEEP_INTERVAL_MS);
     this.createToken = options.createToken ?? (() => randomBytes(32).toString("base64url"));
     this.controlAuthority = options.controlAuthority;
     this.tickets = options.tickets;
@@ -131,17 +154,24 @@ export class CollaborationControlStream {
     if (this.closed) throw new Error("Control stream is shutting down");
     const previous = this.connections.get(runtimeId);
     if (previous) previous.close();
+    // Stale reservations are released before the cap can refuse a live home.
+    this.evictStaleConnections();
     if (this.connections.size >= this.maxConnections) throw new Error("Control stream connection limit reached");
     let keepalive: ReturnType<typeof setInterval> | undefined;
     const entry = {
       socket,
       generation: 1,
       pending: 0,
+      open: true,
+      lastTouched: this.now().getTime(),
       inbound: Promise.resolve(),
       close: () => {
+        if (!entry.open) return;
+        entry.open = false;
         if (keepalive) clearInterval(keepalive);
         keepalive = undefined;
         if (this.connections.get(runtimeId) === entry) this.connections.delete(runtimeId);
+        this.stopSweepWhenIdle();
         if (entry.pending > 0) {
           const chain = entry.inbound;
           this.draining.add(chain);
@@ -155,6 +185,7 @@ export class CollaborationControlStream {
       },
     };
     this.connections.set(runtimeId, entry);
+    this.startSweep();
     this.touch(runtimeId);
     if (this.authorityGeneration) {
       this.authorityGeneration(runtimeId).then((generation) => {
@@ -177,6 +208,10 @@ export class CollaborationControlStream {
     return {
       runtimeId,
       receive: (raw) => {
+        // A frame that arrives after the socket closed, or after shutdown began, starts
+        // no authority work: `shutdown()` captured this connection's chain at close and
+        // can only drain what it captured.
+        if (this.closed || !entry.open) return Promise.reject(new Error("Control connection is closed"));
         if (Buffer.byteLength(raw) > MAX_FRAME_BYTES) return Promise.reject(new Error("Control frame too large"));
         if (entry.pending >= MAX_PENDING_FRAMES) return Promise.reject(new Error("Too many pending control frames"));
         // Frames are applied in order, one at a time per connection, so a slow authority
@@ -194,7 +229,7 @@ export class CollaborationControlStream {
         return run;
       },
       heartbeat: () => {
-        if (!this.closed && this.connections.get(runtimeId) === entry) this.touch(runtimeId);
+        if (!this.closed && entry.open && this.connections.get(runtimeId) === entry) this.touch(runtimeId);
       },
       close: () => entry.close(),
     };
@@ -221,19 +256,61 @@ export class CollaborationControlStream {
     }
   }
 
+  /** Live reservations only: a swept connection stops being offered for delivery. */
   connectedRuntimes(): string[] {
+    this.evictStaleConnections();
     return [...this.connections.keys()];
+  }
+
+  /** Test seam: the sweep timer runs only while connections exist and never survives shutdown. */
+  sweepRunning(): boolean {
+    return this.sweep !== undefined;
   }
 
   async shutdown(): Promise<void> {
     this.closed = true;
+    // Every connection is notified and released before the drain, so nothing new is
+    // admitted while the authority's dependencies are still alive.
     for (const entry of [...this.connections.values()]) entry.close();
     this.connections.clear();
+    this.stopSweep();
     // Admitted acknowledgement work finishes before the stream reports shut down.
     await Promise.allSettled([...this.draining]);
   }
 
+  /** Releases connections silent past the idle TTL; their sockets are closed, not leaked. */
+  private evictStaleConnections(): void {
+    if (this.connections.size === 0) return;
+    const horizon = this.now().getTime() - this.connectionIdleTtlMs;
+    for (const [runtimeId, entry] of [...this.connections]) {
+      if (entry.lastTouched > horizon) continue;
+      console.warn("[collaboration-control-stream] evicting silent control connection", runtimeId);
+      entry.close();
+    }
+  }
+
+  private startSweep(): void {
+    if (this.sweep || this.closed) return;
+    this.sweep = setInterval(() => {
+      this.evictStaleConnections();
+      this.stopSweepWhenIdle();
+    }, this.sweepIntervalMs);
+    this.sweep.unref?.();
+  }
+
+  private stopSweepWhenIdle(): void {
+    if (this.connections.size === 0) this.stopSweep();
+  }
+
+  private stopSweep(): void {
+    if (!this.sweep) return;
+    clearInterval(this.sweep);
+    this.sweep = undefined;
+  }
+
   private touch(runtimeId: string): void {
+    const entry = this.connections.get(runtimeId);
+    if (entry) entry.lastTouched = this.now().getTime();
     this.onAttach?.(runtimeId).catch((error: unknown) => {
       console.warn("[collaboration-control-stream] liveness update failed", error instanceof Error ? error.name : "UnknownError");
     });
