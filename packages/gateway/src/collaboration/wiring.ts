@@ -35,6 +35,10 @@ import {
 } from "./organization-precondition.js";
 import { OrganizationMembershipClient } from "./organization-membership-client.js";
 import { CollaborationRepository } from "./repository.js";
+import { CollaborationResourceCatalog } from "./resource-catalog.js";
+import type { AppInstanceAdapter } from "./app-instance-adapter.js";
+import type { CollaborationResourceDriver, CollaborationResourceServices } from "./resource-routes.js";
+import { createCollaborationUploadStager } from "./upload-stages.js";
 import { createCollaborationRoutes } from "./routes.js";
 import type { ChatExecutionRootResolver } from "../chat/execution-root.js";
 import { createSharedAiRuntime, type SharedChatSandboxManifestSource } from "./shared-ai-runtime.js";
@@ -285,6 +289,14 @@ export async function createGatewayCollaboration(options: {
   let projectTransitionCoordinator: ReturnType<typeof createProjectTransitionCoordinator> | undefined;
   let projectGit: ReturnType<typeof createProjectGitBroker> | undefined;
   let projectReadiness: ReturnType<typeof createProjectAccessReadiness> | undefined;
+  let resourceServices: CollaborationResourceServices | undefined;
+  let ownerResourceDriver: (CollaborationResourceDriver & { close?(): void }) | undefined;
+  function closeResourceServices(): void {
+    resourceServices?.uploads?.close();
+    ownerResourceDriver?.close?.();
+    resourceServices = undefined;
+    ownerResourceDriver = undefined;
+  }
 
   return {
     repository,
@@ -351,6 +363,31 @@ export async function createGatewayCollaboration(options: {
         },
       });
       projectReadiness = createProjectAccessReadiness({ repository, source: input.source });
+    },
+    enableSharedResources(input: {
+      driver: CollaborationResourceDriver & { close?(): void };
+      appsFactory?: (dependencies: {
+        db: Kysely<OwnerCollaborationDatabase>;
+        authority: CollaborationAuthority;
+        catalog: CollaborationResourceCatalog;
+        onCommitted(scopeId: string): Promise<void>;
+      }) => AppInstanceAdapter;
+    }): void {
+      if (registered || closing || resourceServices) {
+        throw new Error("Shared resources must be initialized exactly once before route registration");
+      }
+      const catalog = new CollaborationResourceCatalog(options.db);
+      const onCommitted = async (scopeId: string) => { eventRegistry.broadcastScope(scopeId); };
+      const uploads = createCollaborationUploadStager({ db: options.db, catalog, driver: input.driver, onCommitted });
+      try {
+        const apps = input.appsFactory?.({ db: options.db, authority, catalog, onCommitted });
+        resourceServices = { catalog, driver: input.driver, uploads, ...(apps ? { apps } : {}) };
+        ownerResourceDriver = input.driver;
+      } catch (error: unknown) {
+        uploads.close();
+        input.driver.close?.();
+        throw error;
+      }
     },
     async enableSharedAi(input: {
       orchestrator: CanonicalChatOrchestrator;
@@ -543,6 +580,7 @@ export async function createGatewayCollaboration(options: {
         resolveParticipant,
         resolveInvitationIdentifier,
         ...(executionPolicies ? { executionPolicies } : {}),
+        ...(resourceServices ? { resources: resourceServices } : {}),
         onScopeCommitted: (scopeId) => eventRegistry.broadcastScope(scopeId),
         onRevoked: (scopeId, actorId) => {
           eventRegistry.notifyRevoked(scopeId, actorId);
@@ -613,6 +651,9 @@ export async function createGatewayCollaboration(options: {
       // Direct sessions drain next, in the same order shutdown() uses: ending them notifies
       // the event and terminal registries through the end hooks, which the lines below detach.
       directSessions.fence();
+      // S12 resource services close after the drains: sessions ending above can still reach
+      // the catalog and file driver, so tearing them down first would pull them mid-notify.
+      closeResourceServices();
       const drainingSharedAi = sharedAiRuntime;
       sharedAiRuntime = undefined;
       chatExecutionAdapter = undefined;
@@ -650,6 +691,10 @@ export async function createGatewayCollaboration(options: {
       controlLossWatchdog = undefined;
       await controlClient?.shutdown();
       await directSessions.shutdown();
+      // Resource services close after both drains: sessions ending above still reach the
+      // catalog and the file driver through their end hooks, so tearing these down first
+      // would pull them out from under a notify that is still in flight.
+      closeResourceServices();
       await sharedAiRuntime?.shutdown();
       sharedAiRuntime = undefined;
       chatExecutionAdapter = undefined;
