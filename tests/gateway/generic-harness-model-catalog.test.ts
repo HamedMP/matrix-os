@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   createGenericHarnessModelCatalogReader,
+  MAX_DISCOVERED_PROVIDERS,
   parseOpenCodeModelCatalog,
   parsePiModelCatalog,
 } from "../../packages/gateway/src/ai-providers/generic-harness-model-catalog.js";
@@ -123,10 +124,13 @@ not a model
   });
 
   it("fails a harness closed when the shared provider cap omits its discovered routes", async () => {
-    const piModels = Array.from(
-      { length: 24 },
-      (_, index) => `pi-provider-${index} model-${index}`,
-    ).join("\n");
+    const piModels = [
+      "provider model context max-out thinking images",
+      ...Array.from(
+        { length: MAX_DISCOVERED_PROVIDERS },
+        (_, index) => `pi-provider-${index} model-${index} 128K 16K yes no`,
+      ),
+    ].join("\n");
     const openCodeModels = [
       "opencode-provider-0/model-0",
       "opencode-provider-1/model-1",
@@ -141,11 +145,17 @@ not a model
     });
 
     const catalog = await reader.getCatalog({ refresh: true });
-    const visibleProviderIds = new Set(catalog.providers.map((provider) => provider.id));
+    const visibleModelsByProvider = new Map(catalog.providers.map((provider) => [
+      provider.id,
+      new Set(provider.models.map((model) => model.id)),
+    ]));
 
-    expect(catalog.providers).toHaveLength(24);
-    expect(catalog.accessSources.every((source) => visibleProviderIds.has(source.providerId))).toBe(true);
+    expect(catalog.providers.length).toBeLessThanOrEqual(MAX_DISCOVERED_PROVIDERS);
+    expect(catalog.accessSources.every((source) => source.eligibleModelIds.every((modelId) =>
+      visibleModelsByProvider.get(source.providerId)?.has(modelId) === true))).toBe(true);
+    expect(catalog.accessSources).toContainEqual(expect.objectContaining({ harness: "pi" }));
     expect(catalog.accessSources).not.toContainEqual(expect.objectContaining({ harness: "opencode" }));
-    expect(catalog.failures).toEqual(["opencode"]);
+    expect(catalog.failures).not.toContain("pi");
+    expect(catalog.failures).toContain("opencode");
   });
 });

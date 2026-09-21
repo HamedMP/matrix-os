@@ -18,7 +18,7 @@ const COMMAND_TIMEOUT_MS = 5_000;
 const MAX_OUTPUT_BYTES = 256 * 1024;
 const MAX_MODELS_PER_HARNESS = 256;
 const MAX_MODELS_PER_PROVIDER = 256;
-const MAX_DISCOVERED_PROVIDERS = 24;
+export const MAX_DISCOVERED_PROVIDERS = 24;
 const CACHE_TTL_MS = 60_000;
 
 export interface GenericHarnessModelRoute {
