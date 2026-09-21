@@ -41,6 +41,8 @@ export class CollaborationChatExecutionAdapter {
     commands: Pick<CollaborationChatCommands, "cancel" | "retry" | "decideApproval">;
     resolveParticipant(actorId: string): Promise<{ actorId: string; displayName: string }>;
     resolveEligibility(scopeId: string): Promise<unknown>;
+    /** S08 policy is checked at admission, before a member request enters the canonical queue. */
+    resolveEffectiveSubmitMode?(scopeId: string): Promise<"members" | "owner_only">;
     resolveProviderReadiness?(
       ownerId: string,
       selection: CanonicalChatModelSelection | null,
@@ -111,6 +113,7 @@ export class CollaborationChatExecutionAdapter {
     inputValue: unknown,
   ): Promise<CollaborationAiRequestAcceptedResponse> {
     requireChatContext(context, "request_ai");
+    await this.requireSubmitMode(context);
     const input = CollaborationCreateAiRequestSchema.parse(inputValue);
     const resolvedCapability = await this.resolveCapability(context);
     if (resolvedCapability.capability.status !== "available") {
@@ -183,6 +186,7 @@ export class CollaborationChatExecutionAdapter {
     input: { clientRequestId: string; expectedRevision: string },
   ): Promise<CollaborationChatCommandResult> {
     requireChatContext(context, "control_execution");
+    await this.requireSubmitMode(context);
     const result = await this.options.commands.retry({
       scopeId: context.scopeId,
       actorId: context.actorId,
@@ -319,6 +323,14 @@ export class CollaborationChatExecutionAdapter {
 
   private async notify(scopeId: string): Promise<void> {
     await this.options.onCommitted?.(scopeId);
+  }
+
+  private async requireSubmitMode(context: AuthorizedCollaborationContext): Promise<void> {
+    if (context.actorId === context.ownerId) return;
+    const mode = await this.options.resolveEffectiveSubmitMode?.(context.scopeId) ?? "owner_only";
+    if (mode !== "members") {
+      throw new CollaborationAuthorizationError("forbidden", "Member AI submission is unavailable");
+    }
   }
 
   private kickDispatch(scopeId: string, chatId: string): void {
