@@ -6,7 +6,9 @@ import {
   type ScopeRuntimeCapabilityProfile,
   type ScopeRuntimeRequest,
   type ScopeRuntimeResponse,
+  type ScopeRuntimeSandboxManifest,
 } from "./protocol.js";
+import { SCOPE_RUNTIME_SANDBOX_CAPABILITY } from "./sandbox.js";
 import {
   SCOPE_RUNTIME_HARNESS_VERSION,
   SCOPE_RUNTIME_CODEX_VERSION,
@@ -38,6 +40,11 @@ export const SCOPE_RUNTIME_PROFILE: Omit<ScopeRuntimeCapabilityProfile, "executi
     harnessVersion: SCOPE_RUNTIME_CODEX_VERSION,
     workloads: ["chat_ai"],
   }],
+  sandbox: {
+    policyVersion: SCOPE_RUNTIME_SANDBOX_CAPABILITY.policyVersion,
+    policyDigest: SCOPE_RUNTIME_SANDBOX_CAPABILITY.policyDigest,
+    workloads: [...SCOPE_RUNTIME_SANDBOX_CAPABILITY.workloads],
+  },
 };
 
 export interface ScopeRuntimeLaunchRequest {
@@ -47,6 +54,8 @@ export interface ScopeRuntimeLaunchRequest {
   adapterId: string;
   harnessVersion: string;
   executionGeneration: string;
+  /** S07: present for runs and terminals that act for a collaborator; absent for the owner's own fixed-profile runs. */
+  sandbox?: ScopeRuntimeSandboxManifest;
 }
 
 export interface ScopeRuntimeReconciledRuntime {
@@ -73,7 +82,7 @@ function newRuntimeHandle(): string {
 
 function runtimeFailure(
   requestId: string,
-  error: "profile_unavailable" | "adapter_unavailable" | "capacity_exceeded"
+  error: "invalid_request" | "profile_unavailable" | "adapter_unavailable" | "capacity_exceeded"
     | "runtime_not_found" | "runtime_unavailable",
 ): ScopeRuntimeResponse {
   return ScopeRuntimeResponseSchema.parse({
@@ -139,6 +148,13 @@ export async function createScopeRuntimeController(options: {
       && candidate.harnessVersion === request.harnessVersion
       && candidate.workloads.includes(request.workload));
     if (!adapter) return runtimeFailure(request.requestId, "adapter_unavailable");
+    // A shared terminal only exists inside the sandbox; a bare terminal workload is never launched.
+    if (request.workload === "terminal" && !request.sandbox) {
+      return runtimeFailure(request.requestId, "invalid_request");
+    }
+    if (request.sandbox && request.sandbox.scopeHandle !== request.scopeHandle) {
+      return runtimeFailure(request.requestId, "invalid_request");
+    }
     if (runtimes.size + reservedCreates >= maxRuntimes) {
       return runtimeFailure(request.requestId, "capacity_exceeded");
     }
@@ -161,6 +177,7 @@ export async function createScopeRuntimeController(options: {
       adapterId: request.adapterId,
       harnessVersion: request.harnessVersion,
       executionGeneration: options.executionGeneration,
+      ...(request.sandbox ? { sandbox: request.sandbox } : {}),
     });
     operations.add(operation);
     try {

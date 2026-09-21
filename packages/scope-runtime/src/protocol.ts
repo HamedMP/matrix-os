@@ -13,6 +13,48 @@ const BoundedPromptSchema = z.string().min(1).refine(
   "Prompt exceeds scope runtime limit",
 );
 
+/** Fixed profile ceilings; a sandbox manifest may only narrow them. */
+export const SCOPE_RUNTIME_PROFILE_LIMITS = Object.freeze({
+  memoryMaxBytes: 1_073_741_824,
+  cpuQuotaPercent: 200,
+  tasksMax: 256,
+});
+
+const SandboxActorIdSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/);
+const SandboxHostPathSchema = z.string().min(2).max(4_096).refine((value) =>
+  value.startsWith("/") && !value.includes("\0") && !value.includes("\n") && !value.includes("\r")
+  && !value.includes(":") && !value.split("/").includes("..") && !value.endsWith("/"),
+  "Invalid sandbox host path");
+
+/**
+ * S07 / T036: actor/scope/worktree mount manifest for a sandboxed run.
+ * Strict, prompt-independent, and never wider than the fixed profile.
+ */
+export const ScopeRuntimeSandboxManifestSchema = z.object({
+  version: z.literal(1),
+  scopeHandle: ScopeHandleSchema,
+  actorId: SandboxActorIdSchema,
+  worktree: z.object({
+    hostPath: SandboxHostPathSchema,
+    mode: z.enum(["ro", "rw"]),
+    fingerprint: DigestSchema,
+  }).strict(),
+  network: z.enum(["none", "broker_only"]),
+  limits: z.object({
+    memoryMaxBytes: z.number().int().min(64 * 1024 * 1024).max(SCOPE_RUNTIME_PROFILE_LIMITS.memoryMaxBytes),
+    cpuQuotaPercent: z.number().int().min(1).max(SCOPE_RUNTIME_PROFILE_LIMITS.cpuQuotaPercent),
+    tasksMax: z.number().int().min(8).max(SCOPE_RUNTIME_PROFILE_LIMITS.tasksMax),
+  }).strict().optional(),
+}).strict();
+
+export type ScopeRuntimeSandboxManifest = z.infer<typeof ScopeRuntimeSandboxManifestSchema>;
+
+const SandboxCapabilitySchema = z.object({
+  policyVersion: z.number().int().min(1).max(1_000_000),
+  policyDigest: DigestSchema,
+  workloads: z.array(z.enum(["chat_ai", "terminal"])).min(1).max(2),
+}).strict();
+
 const CapabilityRequestSchema = z.object({
   version: z.literal(1),
   type: z.literal("capability.get"),
@@ -28,6 +70,7 @@ const RuntimeCreateRequestSchema = z.object({
   workload: z.enum(["chat_ai", "terminal"]),
   adapterId: AdapterIdSchema,
   harnessVersion: SemanticVersionSchema,
+  sandbox: ScopeRuntimeSandboxManifestSchema.optional(),
 }).strict();
 
 const RuntimeStopRequestSchema = z.object({
@@ -83,6 +126,7 @@ const CapabilityProfileSchema = z.object({
     harnessVersion: SemanticVersionSchema,
     workloads: z.array(z.enum(["chat_ai", "terminal"])).min(1).max(2),
   }).strict()).min(1).max(16),
+  sandbox: SandboxCapabilitySchema.optional(),
 }).strict();
 
 const CapabilityResultSchema = z.object({
