@@ -207,6 +207,7 @@ import { createLegacyProjectPathAdmission } from "./collaboration/project-path-a
 import { createGatewayProjectInventorySource } from "./collaboration/project-inventory-source.js";
 import { createProjectChatRootInventory } from "./collaboration/project-chat-root-inventory.js";
 import { createProjectGitDriver } from "./collaboration/project-git-operations.js";
+import { appRegistryIncarnation } from "./collaboration/app-incarnation.js";
 import { enableGatewaySharedResources } from "./collaboration/resource-wiring.js";
 import { createCodingAgentFileStore } from "./coding-agents/file-read.js";
 import { createCodingAgentSourceControlStore } from "./coding-agents/source-control.js";
@@ -1052,7 +1053,7 @@ export async function createGateway(config: GatewayConfig) {
               apps: {
                 get: async (appId) => {
                   const app = await appRegistry!.get(appId);
-                  return app ? { id: app.slug, collaborationMode: "scoped" as const } : null;
+                  return app ? { id: app.slug, collaborationMode: "scoped" as const, incarnation: appRegistryIncarnation(app) } : null;
                 },
               },
               sessions: {

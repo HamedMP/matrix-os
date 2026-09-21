@@ -9,6 +9,7 @@ import type { Kysely } from "kysely";
 import type { AppRegistry } from "../app-db-registry.js";
 import { normalizeAppStorageSlug } from "../app-db-types.js";
 import { resolveAppBySlug } from "../app-runtime/app-index.js";
+import { appRegistryIncarnation } from "./app-incarnation.js";
 import { createAppInstanceAdapter, type AppInstanceAdapter } from "./app-instance-adapter.js";
 import type { CollaborationAuthority } from "./authority.js";
 import type { OwnerCollaborationDatabase } from "./database.js";
@@ -99,6 +100,7 @@ export function enableGatewaySharedResources<Project>(input: {
               return record ? {
                 projectId, appId, bridgeAppId: normalizeAppStorageSlug(record.slug),
                 collaborationMode: "scoped" as const,
+                incarnation: appRegistryIncarnation(record),
               } : null;
             },
           },
