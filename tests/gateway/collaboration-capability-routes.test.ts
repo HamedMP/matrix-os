@@ -160,7 +160,7 @@ describe("collaboration capability HTTP routes", () => {
     expect((await signed({ actorId: ownerId, method: "GET", path })).status).toBe(200);
   });
 
-  it("activates only the exact pending organization grant after fresh membership", async () => {
+  it("rejects legacy actor proof alone for pending organization grant acceptance", async () => {
     const created = await signed({ actorId: ownerId, method: "POST",
       path: `/api/collaboration/scopes/${scopeId}/grants`, body: {
         clientRequestId: randomUUID(), expectedRevision: "1",
@@ -170,17 +170,9 @@ describe("collaboration capability HTTP routes", () => {
     expect(created.status).toBe(201);
     const grant = CollaborationGrantSchema.parse(await created.json());
     const path = `/api/collaboration/scopes/${scopeId}/grants/${grant.id}/accept`;
-    const accepted = await signed({ actorId: memberId, method: "POST", path, body: {} });
-    expect(accepted.status).toBe(200);
-    expect(await accepted.json()).toEqual({ state: "active" });
-    expect((await signed({ actorId: memberId, method: "POST", path, body: {} })).status).toBe(200);
-    expect((await signed({ actorId: outsiderId, method: "POST", path, body: {} })).status).not.toBe(200);
-    expect((await signed({ actorId: memberId, method: "POST",
-      path: `/api/collaboration/scopes/${randomUUID()}/grants/${grant.id}/accept`, body: {},
-    })).status).toBe(404);
-    await fixture.db.updateTable("collaboration_grants").set({ state: "revoked" })
-      .where("id", "=", grant.id).execute();
-    expect((await signed({ actorId: memberId, method: "POST", path, body: {} })).status).toBe(404);
+    expect((await signed({ actorId: memberId, method: "POST", path, body: {} })).status).toBe(401);
+    expect(await fixture.db.selectFrom("collaboration_grant_activations").select("grant_id")
+      .where("grant_id", "=", grant.id).execute()).toEqual([]);
   });
 
   it("accepts the exact organization grant using a pending direct session without legacy actor proof", async () => {

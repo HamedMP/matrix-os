@@ -8,6 +8,7 @@ import {
   createHash,
 } from "node:crypto";
 import { directErrorResponse, readDirectCredentials } from "./direct-routes.js";
+import { DirectAuthError, toLogicalRuntimeId } from "./direct-auth.js";
 import type { DirectSessionService } from "./direct-sessions.js";
 import type { OwnerRuntimeSessionService } from "./owner-runtime-sessions.js";
 import {
@@ -187,6 +188,119 @@ export async function authorize(
   });
   if (context.scopeId !== scopeId) throw new CollaborationAuthorizationError("forbidden", "Scope access is required");
   return context;
+}
+
+/** During direct cutover, a configured home must never accept a relay actor proof alone. */
+export async function authorizeCurrentScope(
+  options: { verifier: CollaborationActorProofVerifier; directSessions?: DirectSessionService; authority: CollaborationAuthority;
+    ownerRuntimeSessions?: OwnerRuntimeSessionService; repository?: CollaborationRepository; runtimeId?: string },
+  c: Context,
+  body: Uint8Array,
+  action: CollaborationAction,
+  scopeId: string,
+): Promise<AuthorizedCollaborationContext> {
+  if (c.req.header("x-matrix-collaboration-owner-runtime") === "1") {
+    if (action !== "read") throw new DirectAuthError("denied", "Owner project setup is read-only on this route");
+    const scope = await authenticateOwnerProject(options, c, body, scopeId);
+    return {
+      actorId: scope.ownerId, ownerId: scope.ownerId, organizationId: scope.organizationId!, scopeId: scope.id,
+      membershipScopeId: scope.id, resourceKind: "project", resourceId: scope.resourceId, role: "owner",
+      authEpoch: scope.authEpoch, authorityRuntimeId: scope.authorityRuntimeId,
+      authorityGeneration: scope.authorityGeneration, capability: "read",
+    };
+  }
+  if (options.directSessions && !readDirectCredentials(c)) {
+    throw new DirectAuthError("invalid_signature", "Direct session credentials are required");
+  }
+  return authorize(options, c, body, action, scopeId);
+}
+
+export async function authorizeOwnerScope(
+  options: { verifier: CollaborationActorProofVerifier; directSessions?: DirectSessionService; authority: CollaborationAuthority;
+    ownerRuntimeSessions?: OwnerRuntimeSessionService; repository?: CollaborationRepository; runtimeId?: string },
+  c: Context,
+  body: Uint8Array,
+  scopeId: string,
+): Promise<{ actorId: string; ownerId: string; scopeId: string }> {
+  if (c.req.header("x-matrix-collaboration-owner-runtime") === "1") {
+    const scope = await authenticateOwnerProject(options, c, body, scopeId);
+    return { actorId: scope.ownerId, ownerId: scope.ownerId, scopeId: scope.id };
+  }
+  if (!options.directSessions) {
+    const proof = await verifyHttp(options.verifier, c, body);
+    requireOwnerLifecycleProof(proof, scopeId);
+    return { actorId: proof.actorId, ownerId: proof.ownerId, scopeId };
+  }
+  const context = await authorizeCurrentScope(options, c, body, "read", scopeId);
+  if (context.actorId !== context.ownerId || context.role !== "owner"
+    || (options.runtimeId && context.authorityRuntimeId !== options.runtimeId)) {
+    throw new CollaborationAuthorizationError("forbidden", "Owner scope access is required");
+  }
+  return context;
+}
+
+async function authenticateOwnerProject(
+  options: { ownerRuntimeSessions?: OwnerRuntimeSessionService; repository?: CollaborationRepository; runtimeId?: string },
+  c: Context,
+  body: Uint8Array,
+  scopeId: string,
+): Promise<CollaborationScopeRecord> {
+  const credentials = readDirectCredentials(c);
+  const verb = method(c);
+  if (!credentials || !options.ownerRuntimeSessions || !options.repository || !options.runtimeId
+    || (verb !== "GET" && verb !== "POST")) {
+    throw new DirectAuthError("invalid_signature", "Owner project session is required");
+  }
+  const session = await options.ownerRuntimeSessions.authenticate({
+    ...credentials, method: verb, path: c.req.path, query: rawQuery(c), body,
+  });
+  const scope = await requireScope(options.repository, scopeId);
+  if (scope.kind !== "project" || scope.membershipMode !== "direct"
+    || (scope.lifecycle !== "private" && scope.lifecycle !== "preparing")
+    || scope.ownerId !== session.actorId || scope.organizationId !== session.organizationId
+    || scope.authorityRuntimeId !== options.runtimeId
+    || scope.authorityGeneration !== session.authorityGeneration
+    || session.runtimeId !== toLogicalRuntimeId(options.runtimeId)) {
+    throw new DirectAuthError("denied", "Owner project setup is unavailable");
+  }
+  const member = await options.repository.getMember(scopeId, session.actorId);
+  if (!member || member.role !== "owner" || member.status !== "accepted") {
+    throw new DirectAuthError("denied", "Owner project setup is unavailable");
+  }
+  return scope;
+}
+
+/** Invitees may authenticate before acceptance, so ordinary scope authorization is unavailable. */
+export async function authenticateInvitationRequest(
+  options: { verifier: CollaborationActorProofVerifier; directSessions?: DirectSessionService; runtimeId: string; repository: CollaborationRepository },
+  c: Context,
+  body: Uint8Array,
+  invitationId: string,
+): Promise<{ proof: { actorId: string; ownerId: string; scopeId: string }; member: CollaborationMemberRecord; scope: CollaborationScopeRecord }> {
+  // Authenticate before the invitation lookup, so unknown identifiers reveal nothing to unsigned callers.
+  const directSessions = options.directSessions;
+  const session = directSessions
+    ? await (async () => {
+        const credentials = readDirectCredentials(c);
+        if (!credentials) throw new DirectAuthError("invalid_signature", "Direct session credentials are required");
+        return directSessions.authenticate({
+          ...credentials, method: method(c), path: c.req.path, query: rawQuery(c), body,
+        });
+      })()
+    : null;
+  const proof = session ? null : await verifyHttp(options.verifier, c, body);
+  const member = await requireInvitation(options.repository, invitationId);
+  const scope = await requireScope(options.repository, member.scopeId);
+  if (session) {
+    if (session.pendingGrantId || session.scopeId !== scope.id || session.organizationId !== scope.organizationId
+      || session.runtimeId !== toLogicalRuntimeId(options.runtimeId)
+      || session.authorityGeneration !== scope.authorityGeneration) {
+      throw new DirectAuthError("denied", "Invitation session is unavailable");
+    }
+  } else if (!proof || proof.scopeId !== scope.id || proof.ownerId !== scope.ownerId) {
+    throw new CollaborationAuthorizationError("forbidden", "Invitation access is required");
+  }
+  return { proof: { actorId: session?.actorId ?? proof!.actorId, ownerId: scope.ownerId, scopeId: scope.id }, member, scope };
 }
 
 export function optionalDeleteConditions(c: Context) {
