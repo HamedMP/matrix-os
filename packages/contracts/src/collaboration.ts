@@ -42,7 +42,8 @@ export const CollaborationRevisionSchema = z.string()
   .regex(/^(?:0|[1-9][0-9]{0,18})$/, "Invalid decimal revision");
 export const CollaborationRoleSchema = z.enum(["owner", "editor", "viewer"]);
 export const CollaborationInviteRoleSchema = z.enum(["editor", "viewer"]);
-export const CollaborationScopeKindSchema = z.enum(["chat", "terminal", "project"]);
+/** S12: file, folder and app instances are shareable standalone with the same two presets. */
+export const CollaborationScopeKindSchema = z.enum(["chat", "terminal", "project", "file", "folder", "app"]);
 export const CollaborationMembershipModeSchema = z.enum(["direct", "inherited"]);
 export const CollaborationLifecycleSchema = z.enum([
   "private",

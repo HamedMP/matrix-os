@@ -18,7 +18,9 @@ export type CollaborationAction =
   | "export_project"
   | "request_ai"
   | "control_execution"
-  | "recover";
+  | "recover"
+  /** S12: write to a shared file, folder or app instance (Contributor); the project variant stays `mutate_project`. */
+  | "mutate_resource";
 
 export interface AuthorizedCollaborationContext {
   actorId: string;
@@ -26,7 +28,7 @@ export interface AuthorizedCollaborationContext {
   organizationId: string;
   scopeId: string;
   membershipScopeId: string;
-  resourceKind: "chat" | "terminal" | "project";
+  resourceKind: "chat" | "terminal" | "project" | "file" | "folder" | "app";
   resourceId: string;
   role: CollaborationRole;
   authEpoch: number;
@@ -206,9 +208,9 @@ function requireRoleCapability(role: CollaborationRole, action: CollaborationAct
     return;
   }
   const allowed = role === "owner"
-    ? ["read", "discuss", "manage_members", "publish_snapshot", "mutate_project", "export_project", "recover"]
+    ? ["read", "discuss", "manage_members", "publish_snapshot", "mutate_project", "mutate_resource", "export_project", "recover"]
     : role === "editor"
-      ? ["read", "discuss", "mutate_project"]
+      ? ["read", "discuss", "mutate_project", "mutate_resource"]
       : ["read"];
   if (!allowed.includes(action)) {
     throw new CollaborationAuthorizationError("forbidden", "Role does not allow this action");
