@@ -344,10 +344,12 @@ export async function createGatewayCollaboration(options: {
      * Synchronous fence for a startup fallback that cannot wait for a full
      * drain: refuse new registrations and work, stop every timer and detach
      * adapters/registries so nothing dispatches against dependencies the
-     * caller is about to destroy. Async drains are started best-effort.
+     * caller is about to destroy. Effective and idempotent even when
+     * shutdown() has already started and is still awaiting a drain: every
+     * detach below is safe to repeat, so a timed-out shutdown cannot leave a
+     * registry or adapter attached. Async drains are started best-effort.
      */
     fence(): void {
-      if (closing) return;
       closing = true;
       if (cleanupTimer) clearInterval(cleanupTimer);
       const drainingSharedAi = sharedAiRuntime;

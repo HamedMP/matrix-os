@@ -27,6 +27,49 @@ describe("gateway collaboration fence", () => {
     await fixture.destroy();
   });
 
+  it("detaches registries and adapters when fenced after a shutdown that timed out mid-drain", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const runtime = await createGatewayCollaboration({
+      db: fixture.db,
+      chatRepository: new ChatRepository(fixture.db),
+      config: {
+        runtimeId: collaborationIds.runtime,
+        activeKeyId: "key-1",
+        proofKeys: { "key-1": "a".repeat(32) },
+        preflightSecret: "b".repeat(32),
+        platformBaseUrl: "https://platform.internal",
+        serviceToken: "c".repeat(32),
+      },
+      resolveParticipant: async (actorId) => ({ actorId, displayName: actorId }),
+      resolveInvitationIdentifier: async (identifier) => ({ actorId: identifier, displayName: identifier }),
+      outboxFetch: async () => new Response(null, { status: 204 }),
+      startTimers: false,
+    });
+    // The directory outbox drain never completes, so shutdown() hangs after setting closing and
+    // before it reaches the handles drained after the outbox (participant resolver, verifier).
+    const outboxShutdown = vi.spyOn(runtime.outbox, "shutdown").mockImplementation(() => new Promise<void>(() => {}));
+    const verifierShutdown = vi.spyOn(runtime.verifier, "shutdown");
+    const hung = runtime.shutdown();
+    await Promise.race([hung, new Promise((resolve) => setTimeout(resolve, 20))]);
+    expect(outboxShutdown).toHaveBeenCalledOnce();
+    expect(verifierShutdown).not.toHaveBeenCalled();
+
+    // The fallback's bounded drain times out and fences: the remaining handles must detach
+    // although closing was already set by the in-flight shutdown.
+    runtime.fence();
+    expect(verifierShutdown).toHaveBeenCalledOnce();
+    await expect(runtime.eventRegistry.open({
+      connectionId: "connection_after_timeout",
+      scopeId: collaborationIds.scope,
+      actorId: "user_x",
+      authorityGeneration: 1,
+      afterSequence: 0,
+      socket: { send: () => {}, close: () => {}, bufferedAmount: 0 },
+    } as never)).rejects.toBeInstanceOf(Error);
+    expect(() => runtime.register({ app: new Hono(), upgradeWebSocket: (() => () => new Response()) as unknown as UpgradeWebSocket }))
+      .toThrow(/shutting down/);
+  });
+
   it("refuses registration and new streams after fencing and lets a later shutdown return immediately", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
     const runtime = await createGatewayCollaboration({
