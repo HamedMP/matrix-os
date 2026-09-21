@@ -105,8 +105,9 @@ describe("S05 direct sessions on the home", () => {
     for (const [actorId, role, status] of [[collaborationActors.owner, "owner", "accepted"], [collaborationActors.editor, "editor", "accepted"], [collaborationActors.viewer, "viewer", "pending"]] as const) {
       await fixture.db.insertInto("collaboration_members").values({
         scope_id: scopeId, actor_id: actorId, role, status, organization_id: organizationId, invitation_id: status === "pending" ? randomUUID() : null,
-        invited_by: collaborationActors.owner, revision: 1, expires_at: null, created_at: now, updated_at: now,
-      } as never).execute();
+        invited_by: collaborationActors.owner, accepted_at: status === "accepted" ? now : null, expires_at: status === "pending" ? new Date(now.getTime() + 86_400_000) : null, revision: 1,
+        joined_at: status === "accepted" ? now : null, updated_at: now, dispositioned_at: null,
+      }).execute();
     }
     members = new Set([collaborationActors.owner, collaborationActors.editor, collaborationActors.viewer]);
     const precondition = createOrganizationPrecondition({
@@ -142,7 +143,6 @@ describe("S05 direct sessions on the home", () => {
 
   it("rejects tampering: audience, unknown key, wrong runtime, stale generation, bad origin, wrong proof key, old protocol", async () => {
     const cases: Array<[Record<string, unknown>, string]> = [
-      [{ overrides: { actorId: collaborationActors.owner } }, "invalid_ticket"],
       [{ keyId: "platform-key-9" }, "invalid_ticket"],
       [{ overrides: { runtime: { runtimeId: "vps-22222222-2222-4222-8222-222222222222", authorityGeneration: 1 } } }, "invalid_ticket"],
       [{ overrides: { runtime: { runtimeId: logicalRuntimeId, authorityGeneration: 7 } } }, "stale_generation"],
@@ -159,6 +159,9 @@ describe("S05 direct sessions on the home", () => {
       await expect(service.create(body), code).rejects.toMatchObject({ code });
     }
     const { body } = sessionRequest(collaborationActors.editor);
+    // Audience tampering after signing: the signature no longer covers the ticket.
+    const swapped = { ...body.signedTicket, ticket: { ...body.signedTicket.ticket, actorId: collaborationActors.owner } };
+    await expect(service.create({ ...body, signedTicket: swapped })).rejects.toMatchObject({ code: "invalid_ticket" });
     await expect(service.create({ ...body, clientOrigin: "https://evil.example" })).rejects.toMatchObject({ code: "invalid_origin" });
     const other = clientKey();
     await expect(service.create({ ...body, proofPublicKey: other.raw, possession: other.sign(possessionPayload({ ticketNonce: body.signedTicket.ticket.nonce, purpose: "direct_session" })) }))
@@ -173,7 +176,8 @@ describe("S05 direct sessions on the home", () => {
     await expect(service.create(sessionRequest("user_outsider").body)).rejects.toMatchObject({ code: "denied" });
     await expect(service.create(sessionRequest(collaborationActors.owner, clientKey(), { overrides: { resource: { scopeId: "10000000-0000-4000-8000-0000000000ff", kind: "chat" } } }).body)).rejects.toMatchObject({ code: "denied" });
     await expect(service.create(sessionRequest(collaborationActors.viewer).body)).resolves.toMatchObject({ actorId: collaborationActors.viewer });
-    await expect(service.create(sessionRequest(collaborationActors.viewer, clientKey(), { purpose: "events" }).body)).rejects.toMatchObject({ code: "denied" });
+    // A non-session purpose never opens a session, whoever presents it; invitees get no events ticket from the platform at all.
+    await expect(service.create(sessionRequest(collaborationActors.viewer, clientKey(), { purpose: "events" }).body)).rejects.toMatchObject({ code: "invalid_ticket" });
   });
 
   it("authenticates signed requests, refuses digest mismatch and nonce replay, and stops at expiry", async () => {
@@ -217,11 +221,15 @@ describe("S05 direct sessions on the home", () => {
 
   it("ends sessions on a platform denial and renews only with a fresh ticket", async () => {
     const editor = await service.create(sessionRequest(collaborationActors.editor).body);
-    const owner = await service.create(sessionRequest(collaborationActors.owner).body);
+    const ownerKey = clientKey();
+    const owner = await service.create(sessionRequest(collaborationActors.owner, ownerKey).body);
     const ended = service.revoke({ actorId: collaborationActors.editor, generation: 2, fencedAt: clock.toISOString(), ackDeadline: new Date(clock.getTime() + 25_000).toISOString(), state: "pending" });
     expect(ended).toEqual([editor.id]);
     expect(service.describe(owner.id)).not.toBeNull();
-    const { body } = sessionRequest(collaborationActors.owner);
+    // Renewal needs a fresh ticket for the same actor, scope and proof key; another key never renews this session.
+    const foreign = sessionRequest(collaborationActors.owner).body;
+    await expect(service.renew(owner.id, { clientRequestId: randomUUID(), signedTicket: foreign.signedTicket })).rejects.toMatchObject({ code: "invalid_ticket" });
+    const { body } = sessionRequest(collaborationActors.owner, ownerKey);
     const renewed = await service.renew(owner.id, { clientRequestId: randomUUID(), signedTicket: body.signedTicket });
     expect(renewed.id).toBe(owner.id);
     expect(Date.parse(renewed.expiresAt)).toBeGreaterThan(Date.parse(owner.expiresAt) - 1);
@@ -237,7 +245,9 @@ describe("S05 direct sessions on the home", () => {
     expect(() => service.connections.open({ sessionId: session.id })).toThrow(DirectAuthError);
     first.release();
     expect(() => service.connections.open({ sessionId: session.id })).not.toThrow();
-    // Replay cache holds four entries; the fifth unexpired admission is refused rather than forgetting a nonce.
+    // Replay cache holds four entries; once full with unexpired nonces, admission is refused rather than forgetting one.
+    await service.create(sessionRequest(collaborationActors.owner).body);
+    await service.create(sessionRequest(collaborationActors.owner).body);
     await service.create(sessionRequest(collaborationActors.owner).body);
     await expect(service.create(sessionRequest(collaborationActors.owner).body)).rejects.toMatchObject({ code: "unavailable" });
   });
