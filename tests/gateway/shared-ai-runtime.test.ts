@@ -1,6 +1,7 @@
 import { CanonicalProviderCatalogSchema } from "@matrix-os/contracts";
 import { describe, expect, it, vi } from "vitest";
 import { CollaborationAuthorizationError } from "../../packages/gateway/src/collaboration/authority.js";
+import { SharedChatRunPreparationError } from "../../packages/gateway/src/chat/shared-execution-coordinator.js";
 import { collaborationExecutionEligibility } from "./collaboration-test-support.js";
 import {
   createSharedAiApprovalReconciler,
@@ -10,7 +11,18 @@ import {
   resolveClaudeProviderReadiness,
   resolveSharedProviderReadiness,
   sharedDispatchFenceMatches,
+  sharedProviderIdentityFor,
 } from "../../packages/gateway/src/collaboration/shared-ai-runtime.js";
+
+describe("shared provider identity", () => {
+  it("binds Claude to the owner's kernel access source and refuses a non-kernel source instead of falling back", () => {
+    expect(sharedProviderIdentityFor("claude_code", { accessSourceId: "owner_anthropic_profile" }))
+      .toEqual({ driverKind: "claude_code", instanceId: "claude_shared", accessSourceId: "owner_anthropic_profile" });
+    expect(sharedProviderIdentityFor("codex", { accessSourceId: null }))
+      .toEqual({ driverKind: "codex", instanceId: "codex_default" });
+    expect(() => sharedProviderIdentityFor("claude_code", { accessSourceId: null })).toThrow(SharedChatRunPreparationError);
+  });
+});
 
 describe("shared Chat sandbox admission", () => {
   const scopeId = "10000000-0000-4000-8000-000000000001";

@@ -1,6 +1,6 @@
 import { Hono, type Context } from "hono";
 import type { UpgradeWebSocket, WSEvents } from "hono/ws";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:net";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -26,8 +26,11 @@ import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/colla
 import { evaluateCollaborationReadiness, type ReadinessProbes } from "../../packages/gateway/src/collaboration/readiness-evaluator.js";
 import { OrganizationMembershipClient } from "../../packages/gateway/src/collaboration/organization-membership-client.js";
 import { createLazyProviderSnapshotReader } from "../../packages/gateway/src/collaboration/lazy-provider-snapshot-reader.js";
+import { CollaborationRunLossRepository } from "../../packages/gateway/src/collaboration/shared-run-loss.js";
 import {
   allowAllOrganizationPrecondition,
+  collaborationActors,
+  collaborationExecutionEligibility,
   collaborationIds,
   createCollaborationTestDatabase,
   type CollaborationTestDatabase,
@@ -516,6 +519,52 @@ describe("gateway collaboration wiring", () => {
     }
   });
 
+  it("enables shared AI before the owner run reconcile loop so lost runs keep gateway_restart attribution", async () => {
+    const server = await readFile(new URL("../../packages/gateway/src/server.ts", import.meta.url), "utf8");
+    const enable = server.indexOf("await gatewayCollaboration.enableSharedAi({");
+    const reconcile = server.indexOf('await canonicalChatOrchestrator.reconcileActiveRuns({ type: "personal", ownerId });');
+    expect(enable).toBeGreaterThan(-1);
+    expect(reconcile).toBeGreaterThan(-1);
+    expect(enable).toBeLessThan(reconcile);
+  });
+
+  it("marks runs the previous process lost as gateway_restart before shared AI reports ready", async () => {
+    const temp = await mkdtemp(join(tmpdir(), "matrix-shared-ai-restart-"));
+    const supervisor = await startSupervisor(join(temp, "supervisor.sock"));
+    await bootstrapCollaborationDatabase(fixture.db);
+    await seedSharedAiChat(fixture);
+    const chatRepository = new ChatRepository(fixture.db);
+    const owner = { type: "personal" as const, ownerId: collaborationActors.owner };
+    await chatRepository.enqueueSharedQueuedTurn(owner, sharedAiRequest(1));
+    const claimed = await chatRepository.claimNextQueuedTurn(owner, {
+      chatId: collaborationIds.chat, turnId: "cturn_lost", runId: "run_lost", messageId: "msg_lost", claimedAt: NOW,
+    });
+    expect(claimed).not.toBeNull();
+    const runtime = await createGatewayCollaboration({
+      organizationPrecondition: allowAllOrganizationPrecondition,
+      db: fixture.db,
+      chatRepository,
+      config: sharedAiConfig(),
+      resolveParticipant: async (actorId) => ({ actorId, displayName: actorId }),
+      outboxFetch: async () => new Response(null, { status: 204 }),
+      startTimers: false,
+      providerSnapshotReader: { async getSnapshot() { throw new Error("snapshot never read at construction"); } },
+    });
+    try {
+      const orchestrator = { cancelSharedRun: vi.fn(), reconcileActiveRuns: vi.fn(async () => 0) } as unknown as CanonicalChatOrchestrator;
+      await expect(runtime.enableSharedAi({
+        orchestrator, homePath: temp, supervisorSocket: join(temp, "supervisor.sock"), brokerSocket: join(temp, "broker.sock"),
+      })).resolves.toEqual({ available: true });
+      const loss = new CollaborationRunLossRepository(fixture.db);
+      expect(await loss.getInterruption(claimed!.run.id))
+        .toMatchObject({ reason: "gateway_restart", requestingActorId: collaborationActors.editor });
+    } finally {
+      await runtime.shutdown();
+      await new Promise<void>((resolve) => supervisor.close(() => resolve()));
+      await rm(temp, { recursive: true, force: true });
+    }
+  });
+
   it("answers the readiness composition from the live supervisor: executing kinds are unsupported once the sandbox policy is gone", async () => {
     const temp = await mkdtemp(join(tmpdir(), "matrix-shared-ai-wiring-"));
     const supervisorSocket = join(temp, "supervisor.sock");
@@ -578,6 +627,69 @@ describe("gateway collaboration wiring", () => {
       await rm(temp, { recursive: true, force: true });
     }
   });
+
+  it("interrupts active shared runs as control_partition when the control lease lapses", async () => {
+    const temp = await mkdtemp(join(tmpdir(), "matrix-shared-ai-partition-"));
+    const supervisor = await startSupervisor(join(temp, "supervisor.sock"));
+    await bootstrapCollaborationDatabase(fixture.db);
+    await seedSharedAiChat(fixture);
+    const chatRepository = new ChatRepository(fixture.db);
+    const owner = { type: "personal" as const, ownerId: collaborationActors.owner };
+    const cancelSharedRun = vi.fn(async (
+      runOwner: typeof owner, _scopeId: string, chatId: string, runId: string,
+      options?: { sharedRequestState?: "cancelled" | "interrupted" },
+    ) => {
+      await chatRepository.finishRun(runOwner, {
+        chatId, runId, outcome: "aborted", completedAt: NOW,
+        ...(options?.sharedRequestState ? { sharedRequestState: options.sharedRequestState } : {}),
+      });
+    });
+    const runtime = await createGatewayCollaboration({
+      organizationPrecondition: allowAllOrganizationPrecondition,
+      db: fixture.db,
+      chatRepository,
+      // Owner identity and relay handle construct the control client; a 204 registration never refreshes its snapshot.
+      config: { ...sharedAiConfig(), ownerId: collaborationActors.owner, relayHandle: "owner-handle" },
+      resolveParticipant: async (actorId) => ({ actorId, displayName: actorId }),
+      outboxFetch: async () => new Response(null, { status: 204 }),
+      startTimers: false,
+      providerSnapshotReader: { async getSnapshot() { throw new Error("snapshot never read at construction"); } },
+    });
+    try {
+      const orchestrator = { cancelSharedRun, reconcileActiveRuns: vi.fn(async () => 0) } as unknown as CanonicalChatOrchestrator;
+      await expect(runtime.enableSharedAi({
+        orchestrator, homePath: temp, supervisorSocket: join(temp, "supervisor.sock"), brokerSocket: join(temp, "broker.sock"),
+      })).resolves.toEqual({ available: true });
+      // The run starts after this process came up, so it is not a restart loss.
+      chatRepository.setSharedAuthorizer(async (scopeId, actorId, action) => ({
+        scopeId, actorId, ownerId: collaborationActors.owner, organizationId: "org_matrix_team", membershipScopeId: scopeId,
+        resourceKind: "chat", resourceId: collaborationIds.chat, capability: action, role: "editor", authEpoch: 1,
+        resourceAuthEpoch: 1, membershipAuthEpoch: 1, authorityRuntimeId: collaborationIds.runtime, authorityGeneration: 1,
+      }) as never);
+      await chatRepository.enqueueSharedQueuedTurn(owner, sharedAiRequest(2));
+      const claimed = await chatRepository.claimNextQueuedTurn(owner, {
+        chatId: collaborationIds.chat, turnId: "cturn_partition", runId: "run_partition", messageId: "msg_partition", claimedAt: NOW,
+      });
+      expect(claimed).not.toBeNull();
+      expect(runtime.controlClient?.controlFresh()).toBe(false);
+      await runtime.checkSharedAiControlLease();
+      expect(cancelSharedRun).toHaveBeenCalledWith(
+        owner, collaborationIds.scope, collaborationIds.chat, claimed!.run.id, { sharedRequestState: "interrupted" },
+      );
+      const loss = new CollaborationRunLossRepository(fixture.db);
+      expect(await loss.getInterruption(claimed!.run.id))
+        .toMatchObject({ reason: "control_partition", requestingActorId: collaborationActors.editor });
+      expect(await fixture.db.selectFrom("chat_queued_turns").select("status")
+        .where("claimed_run_id", "=", claimed!.run.id).executeTakeFirstOrThrow()).toEqual({ status: "interrupted" });
+      // One outage episode interrupts once; a second check while still stale does nothing new.
+      await runtime.checkSharedAiControlLease();
+      expect(cancelSharedRun).toHaveBeenCalledTimes(1);
+    } finally {
+      await runtime.shutdown();
+      await new Promise<void>((resolve) => supervisor.close(() => resolve()));
+      await rm(temp, { recursive: true, force: true });
+    }
+  });
 });
 
 // S09: the production execution-root resolver the gateway hands shared AI.
@@ -598,6 +710,62 @@ const sandboxManifests = {
     network: "none" as const,
   }),
 };
+
+const NOW = "2026-09-21T09:00:00.000Z";
+
+function sharedAiConfig() {
+  return {
+    runtimeId: collaborationIds.runtime,
+    activeKeyId: "key-1",
+    proofKeys: { "key-1": "a".repeat(32) },
+    preflightSecret: "b".repeat(32),
+    platformBaseUrl: "https://platform.internal",
+    serviceToken: "c".repeat(32),
+  };
+}
+
+function sharedAiRequest(index: number) {
+  return {
+    chatId: collaborationIds.chat, scopeId: collaborationIds.scope,
+    queuedTurnId: `qturn_wiring_${index}`, clientRequestId: `79000000-0000-4000-8000-${index.toString().padStart(12, "0")}`,
+    requestingActorId: collaborationActors.editor, acceptedAuthEpoch: 1,
+    payloadHash: index.toString(16).padStart(64, "0"), expectedRevision: 1,
+    parts: [{ type: "text" as const, text: `Request ${index}` }],
+    interactionMode: "default", permissionMode: "supervised", acceptedAt: NOW,
+    capabilitySnapshot: {
+      revision: "shared-catalog-1", rootChat: true, attachments: [], resources: [], tools: [],
+      approvals: true, userInput: false, resume: true, cancellation: true, steering: "none" as const,
+      worktrees: "none" as const, interactionModes: ["default"], permissionModes: ["supervised"],
+    },
+  };
+}
+
+/** A bound shared-AI Chat whose scope already carries this build's execution generation and eligibility. */
+async function seedSharedAiChat(fixture: CollaborationTestDatabase): Promise<void> {
+  await fixture.db.insertInto("chats").values({
+    id: collaborationIds.chat, owner_type: "personal", owner_id: collaborationActors.owner,
+    create_request_id: "req_wiring_shared_ai", project_id: null, title: "Shared coding",
+    lifecycle: "active", attention: "none", revision: 1, message_count: 0,
+    collaboration: JSON.stringify({ scopeId: collaborationIds.scope, mode: "shared_ai", executionFenced: true }),
+    user_state: null, shell_state: null, fork_provenance: null, last_message_preview: null,
+    current_selection: JSON.stringify({ instanceId: "claude_shared", model: "claude-opus-4-6" }),
+    bound_driver_kind: "claude_code", bound_instance_id: "claude_shared", bound_at_turn_id: "cturn_wiring_origin",
+    created_at: NOW, updated_at: NOW,
+  }).execute();
+  await fixture.db.insertInto("collaboration_scopes").values({
+    id: collaborationIds.scope, owner_type: "personal", owner_id: collaborationActors.owner,
+    kind: "chat", resource_id: collaborationIds.chat, parent_scope_id: null, membership_mode: "direct",
+    lifecycle: "shared", revision: 1, auth_epoch: 1, authority_runtime_id: collaborationIds.runtime,
+    authority_generation: 1, execution_generation: 7, organization_id: "org_matrix_team",
+    execution_eligibility: JSON.stringify(collaborationExecutionEligibility()),
+    deleted_at: null, created_at: NOW, updated_at: NOW,
+  }).execute();
+  await fixture.db.insertInto("collaboration_members").values([collaborationActors.owner, collaborationActors.editor].map((actorId) => ({
+    scope_id: collaborationIds.scope, actor_id: actorId, role: actorId === collaborationActors.owner ? "owner" as const : "editor" as const,
+    status: "accepted" as const, invitation_id: null, invited_by: collaborationActors.owner, accepted_at: NOW, expires_at: null,
+    revision: 1, joined_at: NOW, updated_at: NOW,
+  }))).execute();
+}
 
 async function startSupervisor(path: string, options: { sandbox?: boolean | (() => boolean) } = {}): Promise<Server> {
   const server = createServer((socket) => {
