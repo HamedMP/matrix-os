@@ -116,6 +116,7 @@ async function openChatFromPalette(page: import("@playwright/test").Page) {
   await page.waitForTimeout(300);
   await page.keyboard.type("Chat");
   await page.keyboard.press("Enter");
+  await expect(page.getByText("Checking connection", { exact: true })).toBeHidden();
 }
 
 test.describe("Visual regression", () => {
