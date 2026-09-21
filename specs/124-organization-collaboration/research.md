@@ -112,3 +112,19 @@ Recorded 2026-09-20 against origin/main `3b4662d28` (`feat(collaboration): add i
 | Codex owner identity (`packages/gateway/src/collaboration/codex-owner-identity.ts`) | `<home>/.codex/auth.json`, refreshed against `auth.openai.com` | Host broker only | N/A | Never bind into the workload (asserted by the T004 static probe) |
 
 Open gates (not passes): no live evidence yet for (a) delegated requests on a native Claude or Codex subscription, (b) Clerk removal propagation inside 60 s, (c) relay pass-through with home-side ticket rejection, (d) sandbox escape denial on a real customer VPS. Each has an env-gated probe in `tests/integration/collaboration-*.integration.ts`; see `evidence/providers.md`, `evidence/direct.md` and `evidence/S00-receipt.md`.
+
+## S20 — person-to-person inventory (T102)
+
+Recorded 2026-09-20 on branch `124/s20-audience`.
+
+**Procedure.** `scripts/collaboration/inventory-person-to-person.ts` counts, read-only, the collaboration records that carry no organization context. On a home computer (gateway owner Postgres) it counts `collaboration_scopes` rows with `organization_id IS NULL` (live, not deleted), `collaboration_members` grants with `organization_id IS NULL` that are pending or accepted (non-owner), the pending subset of those, and separately the non-owner grants already `revoked` or `expired` (they still receive the S18 tombstone and notice). On the platform it counts every `collaboration_directory` row and every `collaboration_user_index` row by status, including `revoked` rows, because the directory was only ever written by homes that had collaboration enabled and none of those rows carries an organization. Every counter feeds `total`, so nothing is under-reported. Run it with `GATEWAY_DATABASE_URL` and/or `PLATFORM_DATABASE_URL` set:
+
+```sh
+bun run scripts/collaboration/inventory-person-to-person.ts
+```
+
+The same counters are exercised by `tests/gateway/collaboration-org-precondition.test.ts` ("counts it in the person-to-person inventory") and `tests/platform/collaboration-org-precondition.test.ts` ("platform person-to-person inventory").
+
+**Local result.** Against the dedicated test database (`matrixos_test_124` on the local `matrixos-staging-postgres` container, gateway schema bootstrapped through `bootstrapCollaborationDatabase`, platform schema through `bootstrapPlatformCollaborationDatabase`): gateway `{ scopesWithoutOrganization: 0, grantsWithoutOrganization: 0, pendingInvitationsWithoutOrganization: 0, endedGrantsWithoutOrganization: 0, total: 0 }`, platform `{ directoryScopes: 0, invitedIndexRows: 0, acceptedIndexRows: 0, revokedIndexRows: 0, total: 0 }`. Customer VPSes shipped with `MATRIX_COLLABORATION_ENABLED=false` hardcoded in cloud-init, so the expected production count is also zero; running the script against production databases needs operator access and is a S18 pre-cutover step, not something this branch executed.
+
+**Disposition executed by S18 (T088).** For every record the inventory finds: the home marks the scope `archived`, notifies every current participant through the ordinary scope event and directory outbox with a "share ended: organization required" reason, and the platform directory/user-index rows are removed with the same event. The owner may instead re-home the resource by sharing it again inside an organization, which creates a fresh scope with `organization_id` set; the old grants are never copied. Nothing is auto-converted and no record is deleted silently. After disposition S18 tightens `organization_id` to `NOT NULL` on both gateway tables (migration ≥ 8).

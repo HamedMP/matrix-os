@@ -114,7 +114,7 @@ export interface CollaborationRouteOptions {
   projectScope?: CollaborationProjectScopeService;
   projectSharing?: ProjectSharingService;
   resolveParticipant(actorId: string): Promise<Participant>;
-  resolveInvitationIdentifier(identifier: string): Promise<Participant>;
+  resolveInvitationIdentifier(identifier: string, organizationId: string): Promise<Participant>;
   invitationResolutionRateLimiter?: RateLimiter;
   onScopeCommitted?(scopeId: string): Promise<void>;
   onRevoked?(scopeId: string, actorId: string): void;

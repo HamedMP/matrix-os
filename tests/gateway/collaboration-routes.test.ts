@@ -633,6 +633,7 @@ describe("collaboration gateway routes", () => {
       kind: "terminal",
       resourceId: terminalId,
 
+      organizationId: "org_matrix_team",
       capabilities: { observeTerminal: true, controlTerminal: true, stopTerminal: true },
     });
 
@@ -961,7 +962,7 @@ describe("collaboration gateway routes", () => {
       target: { actorId: collaborationActors.editor, displayName: "Ada Editor" },
       status: "pending",
     });
-    expect(resolveInvitationIdentifier).toHaveBeenCalledWith("nimanaderi");
+    expect(resolveInvitationIdentifier).toHaveBeenCalledWith("nimanaderi", "org_matrix_team");
     const preview = await signedJson({
       actorId: collaborationActors.editor,
       scopeId: collaborationIds.scope,
