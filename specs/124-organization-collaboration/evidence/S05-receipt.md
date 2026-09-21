@@ -312,3 +312,61 @@ Gates: `collaboration-direct-upgrade` **6/6** (4/6 RED), plus `collaboration-rel
 `collaboration-websocket`, `collaboration-wiring`, `preview-terminal-flow` and
 `app-session-runtime-routing` — **33/33**. `bun run typecheck` exit 0;
 `bun run check:patterns` 0 violations, 5 inherited warnings.
+
+## Review round (2026-09-21, PR #1804 threads on streamed bodies and early disconnect)
+
+**Streamed request bodies were bounded, but not by the relay (`124/s05-relay`,
+`packages/platform/src/collaboration/relay.ts`).** The thread on `routes.ts:84` reads the
+declared-length check as the only bound and concludes an authenticated client can stream an
+arbitrarily large body to a home. Measured end to end, that last step does not hold: the
+mutating branch sits behind `bodyLimit` registered at `routes.ts:63-67`, and Hono's
+implementation wraps a body with no `Content-Length` in a counting stream and replaces
+`c.req.raw`, so the branch forwards an already-bounded stream. A 4 MiB chunked upload through
+the real route is refused with the home reading at most the 96 KiB cap; a 48 KiB chunked body
+is forwarded whole.
+
+The structural half of the finding is real. The bound came entirely from outside the relay,
+from `COLLABORATION_HTTP_BODY_LIMIT` in `@matrix-os/contracts`, while the relay's own
+`requestBytes` was enforced only against a declared length. The two constants are equal today
+by coincidence rather than construction, so a relay configured with a smaller `requestBytes`,
+or reached from any path without that middleware, forwarded the whole stream. A 128 KiB
+chunked body through a relay limited to 32 KiB reached the home complete.
+
+`forward()` now passes a `ReadableStream` body through a counting stream capped at
+`this.limits.requestBytes`. The overflowing chunk is never enqueued, the source is cancelled
+and the stream errors, which aborts the upstream request mid-body, and the relay answers 413
+with a `limit` outcome instead of reporting it as an upstream failure. The relay still parses
+no body and logs no payload.
+
+RED `test(platform): hold the relay's request limit against a chunked body` (`cbaf4b556`,
+13/14 — the route-level case passes there and records that the route bound is real). GREEN
+`fix(platform): bound a forwarded request body by the relay's own limit` (`ec0b846a4`).
+
+**Upstream survives early disconnect: already closed, verified not changed (`124/s05-relay`,
+`packages/platform/src/platform-websocket-upgrade.ts`).** The thread describes the window the
+"Routed round" above closed, and proposes tracking the socket at attempt time instead. The
+guarantee is already there by a different mechanism, so the code was not rewritten. Every
+upstream is created at exactly two sites, `platform-websocket-upgrade.ts:454` (TLS) and `:499`
+(legacy container), and both adopt through `adoptUpstream` at `:460` and `:501`; there is no
+third connect path. `adoptUpstream` at `:373-380` refuses on either of two conditions: the
+`upstreamDisposed` flag, set by the client socket's `error` and `close` handlers at `:363-365`,
+or the client socket's own `destroyed` state. The second condition is what covers the narrowest
+window, an eviction landing before those handlers are attached, since `destroy()` sets
+`destroyed` synchronously. A refused upstream is destroyed unspoken-to.
+
+A verification case now pins that narrowest window: it evicts the reservation while the
+listener is still awaiting the entitlement decision, then completes the handshake, and requires
+the upstream destroyed with no bytes written and the counts at zero. Removing `socket.destroyed`
+from the guard fails that case and nothing else, so the check is load-bearing and now has a
+test. `test(platform): pin the earliest teardown window for a dialled upstream` (`ac85346a6`).
+
+One residual, out of scope for this thread and pre-existing for every platform WebSocket
+proxy path: an upstream whose handshake never completes and never errors is bounded only by
+the operating system's connect timeout, because `adoptUpstream` runs on success and the
+`error` handler on failure. No reachable teardown path leaves a *connected* upstream
+unowned.
+
+Gates: `collaboration-relay` **14/14** (13/14 RED) and `collaboration-direct-upgrade` **7/7**,
+plus `collaboration-websocket`, `collaboration-wiring`, `collaboration-routes`,
+`preview-terminal-flow` and `app-session-runtime-routing` — **50/50** together.
+`bun run typecheck` exit 0; `bun run check:patterns` 0 violations, 5 inherited warnings.
