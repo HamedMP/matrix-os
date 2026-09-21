@@ -26,6 +26,7 @@ const SESSION_ROUTES: ReadonlyArray<readonly [string, RegExp]> = [
   ["DELETE", new RegExp(`^/api/collaboration/direct-sessions/(${UUID})$`)],
 ];
 const RUNTIME_ROUTES: ReadonlyArray<readonly [string, RegExp]> = [
+  ["POST", new RegExp(`^/api/collaboration/runtimes/(${RUNTIME})/catalog/resolve$`)],
   ["POST", new RegExp(`^/api/collaboration/runtimes/(${RUNTIME})/scopes/preflight$`)],
   ["POST", new RegExp(`^/api/collaboration/runtimes/(${RUNTIME})/scopes$`)],
 ];
