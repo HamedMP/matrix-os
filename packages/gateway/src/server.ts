@@ -208,6 +208,7 @@ import { createProjectChatRootInventory } from "./collaboration/project-chat-roo
 import { createProjectGitDriver } from "./collaboration/project-git-operations.js";
 import { createOwnerResourceDriver } from "./collaboration/owner-resource-driver.js";
 import { appRegistryIncarnation } from "./collaboration/app-incarnation.js";
+import { createOwnerAppIncarnationResolver } from "./collaboration/owner-app-incarnation.js";
 import { createAppInstanceAdapter } from "./collaboration/app-instance-adapter.js";
 import { createScopedAppBridge } from "./collaboration/scoped-app-bridge.js";
 import { resolveAppBySlug } from "./app-runtime/app-index.js";
@@ -1029,6 +1030,7 @@ export async function createGateway(config: GatewayConfig) {
             try {
               runtime.enableSharedResources({
                 driver: resourceDriver,
+                resolveAppIncarnation: createOwnerAppIncarnationResolver(collaborationConfig.ownerId, registeredApp),
                 appsFactory: ({ db, authority, catalog, onCommitted }) => {
                   const bridge = createScopedAppBridge({
                     resolveApp: async (appId) => {
