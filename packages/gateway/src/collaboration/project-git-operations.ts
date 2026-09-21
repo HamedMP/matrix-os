@@ -61,7 +61,8 @@ export async function migrateProjectGitOperationsV13(trx: Transaction<OwnerColla
 }
 
 import { execFile } from "node:child_process";
-import { realpath } from "node:fs/promises";
+import { lstat, realpath } from "node:fs/promises";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod/v4";
 import { validateGitHubUrl } from "../project-manager.js";
@@ -167,16 +168,27 @@ async function ghCommand(cwd: string, args: string[]): Promise<GitCommandResult>
   });
 }
 
+/**
+ * The project root must own its repository: `.git` is a real directory (not a
+ * gitdir file or symlink that could point the owner-credentialed host Git at
+ * another repository) and Git resolves both the toplevel and the gitdir to it.
+ */
 async function requireRepositoryRoot(path: string): Promise<string> {
   const resolved = await realpath(path);
+  const gitDir = join(resolved, ".git");
   let top: string;
+  let absoluteGitDir: string;
   try {
+    const meta = await lstat(gitDir);
+    if (meta.isSymbolicLink() || !meta.isDirectory()) throw new ProjectGitBrokerError("unavailable");
     top = (await gitCommand(resolved, ["rev-parse", "--show-toplevel"])).stdout.trim();
+    absoluteGitDir = (await gitCommand(resolved, ["rev-parse", "--absolute-git-dir"])).stdout.trim();
   } catch (error: unknown) {
+    if (error instanceof ProjectGitBrokerError) throw error;
     console.warn("[collaboration-git] repository unavailable", error instanceof Error ? error.name : "UnknownError");
     throw new ProjectGitBrokerError("unavailable");
   }
-  if (await realpath(top) !== resolved) throw new ProjectGitBrokerError("unavailable");
+  if (await realpath(top) !== resolved || absoluteGitDir !== gitDir) throw new ProjectGitBrokerError("unavailable");
   return resolved;
 }
 

@@ -1,4 +1,6 @@
 import { execFile } from "node:child_process";
+import { lstat, realpath } from "node:fs/promises";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import { CanonicalChatExecutionRootRefSchema, type CanonicalChatExecutionRootRef } from "@matrix-os/contracts";
 import type { Kysely } from "kysely";
@@ -29,29 +31,62 @@ export class ProjectChatRootInventoryError extends Error {
   }
 }
 
-async function inspectGitRoot(path: string): Promise<{ branch?: string; dirty?: boolean }> {
-  const env = {
-    PATH: process.env.PATH ?? "/usr/bin:/bin",
-    HOME: "/nonexistent",
-    GIT_CONFIG_NOSYSTEM: "1",
-    GIT_CONFIG_GLOBAL: "/dev/null",
-    GIT_TERMINAL_PROMPT: "0",
-  };
-  const common = ["--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null"];
+const GIT_ENV = {
+  PATH: process.env.PATH ?? "/usr/bin:/bin",
+  HOME: "/nonexistent",
+  GIT_CONFIG_NOSYSTEM: "1",
+  GIT_CONFIG_GLOBAL: "/dev/null",
+  GIT_TERMINAL_PROMPT: "0",
+};
+const GIT_COMMON = ["--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null"];
+
+function git(cwd: string, args: string[]) {
+  return exec("git", [...GIT_COMMON, ...args], { cwd, env: GIT_ENV, timeout: 10_000, maxBuffer: 64 * 1024 });
+}
+
+/**
+ * A root must own its repository. A project root's `.git` is a real directory
+ * that Git resolves to itself; a registered worktree's `.git` is a regular
+ * gitdir file or directory whose common directory is its own project's `.git`.
+ * A symlink, or a gitdir that aliases another repository, blocks the Chat root
+ * instead of leaking that repository's branch or status.
+ */
+async function requireOwnRepository(path: string, expected: { kind: "project" } | { kind: "worktree"; projectRoot: string }): Promise<boolean> {
+  let meta;
   try {
+    meta = await lstat(join(path, ".git"));
+  } catch (error: unknown) {
+    if (error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw new ProjectChatRootInventoryError();
+  }
+  if (meta.isSymbolicLink()) throw new ProjectChatRootInventoryError();
+  if (expected.kind === "project") {
+    if (!meta.isDirectory()) throw new ProjectChatRootInventoryError();
+    const absoluteGitDir = (await git(path, ["rev-parse", "--absolute-git-dir"])).stdout.trim();
+    if (absoluteGitDir !== join(await realpath(path), ".git")) throw new ProjectChatRootInventoryError();
+    return true;
+  }
+  if (!meta.isFile() && !meta.isDirectory()) throw new ProjectChatRootInventoryError();
+  const commonDir = (await git(path, ["rev-parse", "--path-format=absolute", "--git-common-dir"])).stdout.trim();
+  if (await realpath(commonDir) !== join(await realpath(expected.projectRoot), ".git")) throw new ProjectChatRootInventoryError();
+  return true;
+}
+
+async function inspectGitRoot(
+  path: string,
+  expected: { kind: "project" } | { kind: "worktree"; projectRoot: string },
+): Promise<{ branch?: string; dirty?: boolean }> {
+  try {
+    // Non-Git projects can still be shared. The Git setup state is separately unavailable.
+    if (!(await requireOwnRepository(path, expected))) return {};
     const [branch, status] = await Promise.all([
-      exec("git", [...common, "symbolic-ref", "--quiet", "--short", "HEAD"], {
-        cwd: path, env, timeout: 10_000, maxBuffer: 64 * 1024,
-      }),
-      exec("git", [...common, "status", "--porcelain=v1", "--untracked-files=normal"], {
-        cwd: path, env, timeout: 10_000, maxBuffer: 64 * 1024,
-      }),
+      git(path, ["symbolic-ref", "--quiet", "--short", "HEAD"]),
+      git(path, ["status", "--porcelain=v1", "--untracked-files=normal"]),
     ]);
     return { branch: branch.stdout.trim(), dirty: status.stdout.length > 0 };
   } catch (error: unknown) {
-    // Non-Git projects can still be shared. The Git setup state is separately unavailable.
-    if (error instanceof Error && "code" in error && String((error as NodeJS.ErrnoException).code) === "128") {
-      return {};
+    if (!(error instanceof ProjectChatRootInventoryError)) {
+      console.warn("[collaboration-chat-roots] Git inspection failed", error instanceof Error ? error.name : "UnknownError");
     }
     throw new ProjectChatRootInventoryError();
   }
@@ -119,7 +154,9 @@ export function createProjectChatRootInventory(options: {
         }
         try {
           const resolved = await options.executionRoots.resolve({ type: "personal", ownerId }, parsed.data);
-          const git = await inspectGitRoot(resolved.primaryWorkspaceRoot);
+          const git = await inspectGitRoot(resolved.primaryWorkspaceRoot, parsed.data.kind === "project"
+            ? { kind: "project" }
+            : { kind: "worktree", projectRoot: (await options.executionRoots.resolve({ type: "personal", ownerId }, { kind: "project", projectId })).primaryWorkspaceRoot });
           return {
             chatId: chat.id,
             revision: Number(chat.revision),
