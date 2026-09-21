@@ -2030,6 +2030,28 @@ describe("shell registry", () => {
     expect(adapter.deleteSession).toHaveBeenCalledWith("main", { force: true });
   });
 
+  it("withholds Contributor control by default at creation and bind until the owner opts in", async () => {
+    const root = await tempRoot();
+    const live = new Set<string>();
+    const adapter = {
+      listSessions: vi.fn(async () => Array.from(live)),
+      getSessionCreatedAt: vi.fn(async () => "2026-09-11T12:00:00.000Z"),
+      createSession: vi.fn(async ({ name }: { name: string }) => { live.add(name); }),
+      deleteSession: vi.fn(async () => undefined),
+    };
+    const registry = new ShellRegistry({ homePath: root, adapter });
+    const created = await registry.create({ name: "quiet-shell", collaboration: { creatorActorId: "user_owner", executionGeneration: 4 } });
+    expect(created.contributorControl).toBe(false);
+    const bound = await registry.bindCollaboration("quiet-shell", {
+      scopeId: "10000000-0000-4000-8000-000000000001", sessionIncarnation: created.sessionIncarnation!, executionGeneration: 4,
+    });
+    expect(bound.contributorControl).toBe(false);
+    await registry.setContributorControl("quiet-shell", {
+      scopeId: "10000000-0000-4000-8000-000000000001", sessionIncarnation: created.sessionIncarnation!, ownerId: "user_owner", contributorControl: true,
+    });
+    await expect(new ShellRegistry({ homePath: root, adapter }).get("quiet-shell")).resolves.toMatchObject({ contributorControl: true });
+  });
+
   it("persists collaboration-ready terminal identity and binds only the exact incarnation", async () => {
     const root = await tempRoot();
     const live = new Set<string>();

@@ -29,7 +29,7 @@ const terminalId = "terminal_release";
 const incarnation = "terminal-incarnation-7";
 const requestId = "20000000-0000-4000-8000-000000000001";
 
-function setup(role: CollaborationRole, policy: { taskProfile: "host_shell" | "sandbox_shell"; contributorControl: boolean }, extra: {
+function setup(role: CollaborationRole, policy: { taskProfile: "host_shell" | "sandbox_shell"; contributorControl?: boolean }, extra: {
   revocations?: CollaborationRevocationEnforcer;
 } = {}) {
   const actorId = `user_${role}`;
@@ -38,6 +38,7 @@ function setup(role: CollaborationRole, policy: { taskProfile: "host_shell" | "s
     paste: vi.fn(async () => undefined),
     resize: vi.fn(async () => undefined),
     stop: vi.fn(async () => undefined),
+    setContributorControl: vi.fn(async (input: { contributorControl: boolean }) => { policy.contributorControl = input.contributorControl; }),
   };
   const terminal = {
     get: vi.fn(async () => ({
@@ -69,12 +70,14 @@ describe("terminal task profile", () => {
   });
 
   it("derives the profile from the session's sandbox binding and never from a prompt or a flag alone", () => {
-    // An owner-shared host shell is the owner's explicit grant; the owner may withdraw Contributor control per terminal.
-    expect(resolveTerminalTaskPolicy({})).toEqual({ taskProfile: "host_shell", contributorControl: true });
+    // Sharing a host shell is not an opt-in to Contributor control: the owner grants it explicitly per terminal.
+    expect(resolveTerminalTaskPolicy({})).toEqual({ taskProfile: "host_shell", contributorControl: false });
+    expect(resolveTerminalTaskPolicy({ contributorControl: true })).toEqual({ taskProfile: "host_shell", contributorControl: true });
     expect(resolveTerminalTaskPolicy({ contributorControl: false })).toEqual({ taskProfile: "host_shell", contributorControl: false });
+    expect(resolveTerminalTaskPolicy({ contributorControl: "yes" })).toEqual({ taskProfile: "host_shell", contributorControl: false });
     expect(resolveTerminalTaskPolicy({
       sandbox: { profileId: "scope-runtime-terminal-v1", policyDigest: SCOPE_RUNTIME_SANDBOX_POLICY_DIGEST },
-    })).toEqual({ taskProfile: "sandbox_shell", contributorControl: true });
+    })).toEqual({ taskProfile: "sandbox_shell", contributorControl: false });
     // A sandbox binding with a foreign policy digest is not a sandbox; it stays a host shell and keeps the owner's setting.
     expect(resolveTerminalTaskPolicy({
       sandbox: { profileId: "scope-runtime-terminal-v1", policyDigest: "b".repeat(64) }, contributorControl: false,
@@ -83,7 +86,11 @@ describe("terminal task profile", () => {
 });
 
 describe("dispatcher task policy", () => {
-  it("keeps a Contributor observe-only on a host shell and lets them hold the controller on a sandbox shell", async () => {
+  it("keeps a Contributor observe-only on a host shell until the owner opts in, and lets them hold the controller on a sandbox shell", async () => {
+    // No recorded decision reads as withheld, exactly like an explicit false.
+    const withheld = setup("editor", { taskProfile: "host_shell" });
+    await expect(withheld.dispatcher.dispatch({ scopeId, actorId: withheld.actorId, connectionId: "c1", action: acquire }))
+      .rejects.toMatchObject({ code: "forbidden" });
     const host = setup("editor", { taskProfile: "host_shell", contributorControl: false });
     await expect(host.dispatcher.dispatch({ scopeId, actorId: host.actorId, connectionId: "c1", action: acquire }))
       .rejects.toMatchObject({ code: "forbidden" });
@@ -102,6 +109,40 @@ describe("dispatcher task policy", () => {
     const viewer = setup("viewer", { taskProfile: "sandbox_shell", contributorControl: true });
     await expect(viewer.dispatcher.dispatch({ scopeId, actorId: viewer.actorId, connectionId: "c1", action: acquire }))
       .rejects.toMatchObject({ code: "forbidden" });
+  });
+});
+
+describe("owner opt-in for Contributor control", () => {
+  const ownerContext = (actorId: string, role: CollaborationRole, capability = "manage_members") => ({
+    actorId, ownerId: "user_owner", scopeId, membershipScopeId: scopeId, resourceKind: "terminal" as const,
+    resourceId: terminalId, role, authEpoch: 3, authorityRuntimeId: "runtime_owner", authorityGeneration: 1, capability,
+  });
+
+  it("lets only the owner grant or withdraw Contributor control, records it on the session and drops a Contributor's lease on withdrawal", async () => {
+    const host = setup("editor", { taskProfile: "host_shell" });
+    const editorContext = ownerContext(host.actorId, "editor");
+    await expect(host.dispatcher.setContributorControl(editorContext as never, { contributorControl: true }))
+      .rejects.toMatchObject({ code: "forbidden" });
+    expect(host.runtime.setContributorControl).not.toHaveBeenCalled();
+    const granted = await host.dispatcher.setContributorControl(ownerContext("user_owner", "owner") as never, { contributorControl: true });
+    expect(granted).toMatchObject({ contributorControl: true, terminal: { id: terminalId, scopeId } });
+    expect(host.runtime.setContributorControl).toHaveBeenCalledWith({
+      scopeId, terminalId, incarnation, ownerId: "user_owner", contributorControl: true,
+    });
+    await expect(host.dispatcher.dispatch({ scopeId, actorId: host.actorId, connectionId: "c1", action: acquire }))
+      .resolves.toMatchObject({ action: "acquired" });
+    expect(host.control.current(scopeId, terminalId, incarnation)).toMatchObject({ actorId: host.actorId });
+    const withdrawn = await host.dispatcher.setContributorControl(ownerContext("user_owner", "owner") as never, { contributorControl: false });
+    expect(withdrawn).toMatchObject({ contributorControl: false });
+    expect(host.control.current(scopeId, terminalId, incarnation)).toBeNull();
+    await expect(host.dispatcher.dispatch({ scopeId, actorId: host.actorId, connectionId: "c1", action: acquire }))
+      .rejects.toMatchObject({ code: "forbidden" });
+    // The route capability must be the owner-only one; a read context cannot flip the setting.
+    await expect(host.dispatcher.setContributorControl(ownerContext("user_owner", "owner", "read") as never, { contributorControl: true }))
+      .rejects.toMatchObject({ code: "forbidden" });
+    // Invalid payloads never reach the runtime.
+    await expect(host.dispatcher.setContributorControl(ownerContext("user_owner", "owner") as never, { contributorControl: "yes" } as never))
+      .rejects.toMatchObject({ code: "invalid_request" });
   });
 });
 
