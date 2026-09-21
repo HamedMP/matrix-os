@@ -150,25 +150,25 @@ export class CollaborationControlClient {
     // at or before it, so a later frame must never be acknowledged while an earlier denial's
     // grant cleanup is still pending.
     let inbound: Promise<void> = Promise.resolve();
+    // `run` rejects to the caller (tests observe it); `settled` logs, closes the stream and keeps the chain going.
+    const enqueue = (raw: string): { run: Promise<void>; settled: Promise<void> } => {
+      const run = inbound.then(() => this.applyFrame(raw, () => socket));
+      const settled = run.catch((error: unknown) => {
+        console.warn("[collaboration-control-client] frame rejected", error instanceof Error ? error.name : "UnknownError");
+        handle.close();
+      });
+      inbound = settled;
+      return { run, settled };
+    };
     const handle: ControlStreamHandle = {
-      receive: (raw) => {
-        const run = inbound.then(() => this.applyFrame(raw, () => socket));
-        // The caller rejects with the same error and closes the stream; the chain itself must keep going.
-        inbound = run.catch((error: unknown) => {
-          console.warn("[collaboration-control-client] frame rejected", error instanceof Error ? error.name : "UnknownError");
-        });
-        return run;
-      },
+      receive: (raw) => enqueue(raw).run,
       close: () => {
         socket?.close(1001, "Control client closed");
         if (this.stream === handle) this.stream = undefined;
       },
     };
     socket = await connect(url, this.runtimeHeaders(), (raw) => {
-      handle.receive(raw).catch((error: unknown) => {
-        // Already logged by the inbound chain (by error name); a rejected frame ends this control stream.
-        if (error !== undefined) handle.close();
-      });
+      void enqueue(raw).settled;
     }, () => {
       if (this.stream === handle) this.stream = undefined;
       this.scheduleReconnect();
