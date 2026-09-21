@@ -14,7 +14,8 @@ const setupLabels = {
 
 /** Renders only the authority's bounded readiness projection; never infers a provider or payer. */
 export function ReadinessSummary({ readiness }: { readiness: CollaborationReadiness }) {
-  const execution = readiness.resourceKind === "project" || readiness.resourceKind === "chat";
+  const execution = (readiness.resourceKind === "project" || readiness.resourceKind === "chat")
+    && readiness.state !== "host_offline" && readiness.state !== "unsupported";
   const gitIdentity = readiness.items.find((item) => item.item === "git_identity");
   const roots = readiness.items.find((item) => item.item === "chat_root_inventory");
   const rooted = readiness.resourceKind === "project" || (roots?.item === "chat_root_inventory" && (roots.chatRootCount ?? 0) > 0);
@@ -27,12 +28,13 @@ export function ReadinessSummary({ readiness }: { readiness: CollaborationReadin
     </ul> : null}
     {execution ? <div className="mt-2 space-y-1">
       <p>AI source: {readiness.sourceKind ? sourceLabels[readiness.sourceKind] : "Unavailable"}</p>
-      <p>{readiness.effectiveSubmitMode === "members" ? "Contributors may submit AI requests" : "Owner approves AI requests"}</p>
+      <p>{readiness.effectiveSubmitMode === "members" ? "Contributors may submit AI requests"
+        : readiness.effectiveSubmitMode === "owner_only" ? "Owner approves AI requests" : "AI submit mode unavailable"}</p>
       {rooted && gitIdentity?.item === "git_identity" && gitIdentity.status === "ready"
         ? <p>Git identity: {gitIdentity.identityLabel ?? "Owner Git identity ready"}</p> : null}
       {rooted && roots?.item === "chat_root_inventory" ? <p>{roots.chatRootCount === undefined
         ? "Chat roots unavailable"
         : `${roots.chatRootCount} Chat roots${roots.dirtyRootCount ? ` · ${roots.dirtyRootCount} with uncommitted changes` : ""}`}</p> : null}
-    </div> : <p className="mt-2">{readiness.state === "ready" ? "Ready to share." : "Readiness unavailable."}</p>}
+    </div> : readiness.state === "ready" ? <p className="mt-2">Ready to share.</p> : null}
   </section>;
 }
