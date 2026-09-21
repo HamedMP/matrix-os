@@ -81,7 +81,17 @@ export interface IssuedConnectionTicket {
   endpoint: { origin: string; protocolVersion: typeof COLLABORATION_DIRECT_PROTOCOL_VERSION };
 }
 
-export function loadTicketSigningKeyring(env: NodeJS.ProcessEnv): TicketSigningKeyring | null {
+/**
+ * Reads the signing keyring from configuration, or answers null so the ticket route fails
+ * closed. Every rule the issuer enforces about retirement is applied here first, because a
+ * keyring the issuer would refuse must never reach it: the issuer's refusal is a thrown
+ * configuration error, and the platform's composition root has no way to serve a ticket
+ * route from one. A keyring that loads is a keyring the issuer accepts.
+ */
+export function loadTicketSigningKeyring(
+  env: NodeJS.ProcessEnv,
+  options: { now?: () => Date } = {},
+): TicketSigningKeyring | null {
   const activeKeyId = env.MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID?.trim();
   const keys = parseKeyMap(env.MATRIX_COLLABORATION_TICKET_KEYS);
   const retired = parseKeyMap(env.MATRIX_COLLABORATION_TICKET_RETIRED_KEYS ?? "{}");
@@ -96,6 +106,16 @@ export function loadTicketSigningKeyring(env: NodeJS.ProcessEnv): TicketSigningK
   // Exact correspondence: a missing entry never expires, a stray entry is a typo.
   const retiredAtIds = Object.keys(retiredAt);
   if (retiredAtIds.length !== retiredIds.length || retiredIds.some((keyId) => retiredAt[keyId] === undefined)) return null;
+  // A retirement dated further ahead than the protocol's clock skew would never reach the end
+  // of its overlap, so the key would be published forever. It is the same deadline the issuer
+  // enforces; refusing it here degrades a mistimed rotation to an unavailable ticket route
+  // instead of a platform that will not start. Time only moves forward, so a retirement this
+  // check admits is still admitted when the issuer re-checks it.
+  const deadline = (options.now?.() ?? new Date()).getTime() + COLLABORATION_DIRECT_LIMITS.clockSkewSeconds * 1_000;
+  if (retiredAtIds.some((keyId) => Date.parse(retiredAt[keyId]!) > deadline)) {
+    console.warn("[collaboration-tickets] retired signing key retirement is dated too far ahead: ticket issuance stays unavailable");
+    return null;
+  }
   return { activeKeyId, keys, retired, retiredAt };
 }
 
@@ -155,7 +175,9 @@ export class CollaborationTicketIssuer {
       if (this.signingKeys.has(keyId)) continue;
       const explicit = keyring.retiredAt?.[keyId];
       // No load-time fallback: an unrecorded retirement would start over on every restart,
-      // and a future retirement would never reach the end of its overlap.
+      // and a future retirement would never reach the end of its overlap. Configuration is
+      // refused by `loadTicketSigningKeyring` before it reaches this point, so these throws
+      // guard programmatic callers rather than the platform's own startup.
       if (explicit === undefined) throw new CollaborationTicketIssuerError("configuration", "Retired ticket signing key has no retirement time");
       const retiredAtMs = Date.parse(explicit);
       if (!Number.isFinite(retiredAtMs) || retiredAtMs > this.now().getTime() + skewMs) {
