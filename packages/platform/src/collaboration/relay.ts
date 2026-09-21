@@ -151,11 +151,12 @@ export class CollaborationRelay {
     contentLength?: number;
   }): Promise<Response> {
     const startedAt = this.now();
+    let requestBytes = input.body instanceof Uint8Array ? input.body.byteLength : 0;
     const route = parseRelayRoute(input.method, input.path);
     const finish = (status: number, outcome: RelayMetadata["outcome"], runtimeId: string | null, responseBytes = 0) => {
       this.options.onMetadata?.({
         actorId: input.actorId, runtimeId, resourceId: route?.identifier ?? null, method: input.method, path: input.path,
-        requestBytes: input.contentLength ?? (input.body instanceof Uint8Array ? input.body.byteLength : 0), responseBytes,
+        requestBytes, responseBytes,
         status, durationMs: this.now() - startedAt, outcome,
       });
     };
@@ -163,8 +164,8 @@ export class CollaborationRelay {
       finish(404, "rejected", null);
       return plain("Collaboration route not found", 404);
     }
-    const declared = input.contentLength ?? (input.body instanceof Uint8Array ? input.body.byteLength : undefined);
-    if (declared !== undefined && declared > this.limits.requestBytes) {
+    const declared = Math.max(input.contentLength ?? 0, requestBytes);
+    if (declared > this.limits.requestBytes) {
       finish(413, "limit", null);
       return plain("Collaboration request too large", 413);
     }
@@ -185,15 +186,26 @@ export class CollaborationRelay {
         headers,
         body: input.body instanceof Uint8Array
           ? (input.body.byteLength === 0 ? undefined : Uint8Array.from(input.body).buffer)
-          : input.body ?? undefined,
+          : input.body instanceof ReadableStream
+            ? boundedRequestStream(input.body, this.limits.requestBytes, (bytes) => { requestBytes = bytes; })
+            : undefined,
         ...(input.body instanceof ReadableStream ? { duplex: "half" } : {}),
         redirect: "error",
         signal: AbortSignal.timeout(isExport ? this.limits.exportTimeoutMs : this.limits.requestTimeoutMs),
       } as RequestInit);
     } catch (error: unknown) {
+      if (requestBytes > this.limits.requestBytes) {
+        finish(413, "limit", home.runtimeId);
+        return plain("Collaboration request too large", 413);
+      }
       console.warn("[collaboration-relay] upstream unavailable", error instanceof Error ? error.name : "UnknownError");
       finish(503, "upstream_error", home.runtimeId);
       return plain("Collaboration unavailable", 503);
+    }
+    if (requestBytes > this.limits.requestBytes) {
+      await response.body?.cancel();
+      finish(413, "limit", home.runtimeId);
+      return plain("Collaboration request too large", 413);
     }
     const maxBytes = isExport ? this.limits.exportBytes : this.limits.responseBytes;
     const contentLength = Number(response.headers.get("content-length") ?? -1);
@@ -264,6 +276,37 @@ export class CollaborationRelay {
       return null;
     }
   }
+}
+
+/** Counts request bytes as the upstream consumes them and stops before a stream exceeds its cap. */
+function boundedRequestStream(source: ReadableStream<Uint8Array>, maxBytes: number, onBytes: (bytes: number) => void): ReadableStream<Uint8Array> {
+  const reader = source.getReader();
+  let size = 0;
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const chunk = await reader.read();
+        if (chunk.done) {
+          reader.releaseLock();
+          controller.close();
+          return;
+        }
+        size += chunk.value.byteLength;
+        onBytes(size);
+        if (size > maxBytes) {
+          await reader.cancel();
+          reader.releaseLock();
+          controller.error(new Error("Collaboration request exceeds safe limits"));
+          return;
+        }
+        controller.enqueue(chunk.value);
+      } catch (error: unknown) {
+        console.warn("[collaboration-relay] request stream failed", error instanceof Error ? error.name : "UnknownError");
+        controller.error(new Error("Collaboration unavailable"));
+      }
+    },
+    async cancel(reason) { await reader.cancel(reason); },
+  });
 }
 
 function boundedStream(source: ReadableStream<Uint8Array>, maxBytes: number, onBytes: (bytes: number) => void, onDone: () => void): ReadableStream<Uint8Array> {
