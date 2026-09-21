@@ -119,3 +119,51 @@ with `chat-collaboration-sharing`, shell/desktop direct wiring, platform routes 
 owner-source: **92/92**. `bun run typecheck` exit 0. `bun run check:patterns` 0 violations,
 5 pre-existing warnings. No React (`.tsx`/`.jsx`) file changed in this round, so no
 react-doctor run is required.
+
+## Review round: terminal liveness on its own socket (2026-09-21, #1806 at `8479cc4ab`)
+
+Greptile scored **3/5** and named two blockers: one thread on the stale sweep, and a
+verdict-only relay item.
+
+**P1 "Terminal liveness is masked" (`packages/ui/src/collaboration/direct-streams.ts`).** Valid.
+The previous round made a terminal stream inherit the scope's event-stream liveness, but the two
+are separate WebSocket connections that fail separately. With the event socket healthy,
+`peerTouchedAt` stayed fresh and, on a partition that leaves sends buffering in the kernel,
+`bufferedAmount` stayed zero, so neither the silence nor the stall rule fired and a dead terminal
+socket could stay open indefinitely.
+
+The inference is removed: every stream is swept on the frames that arrive on its own socket.
+That is only correct if an idle shared terminal still hears from the home, so the home now keeps
+it evidenced. `CollaborationTerminalEventRegistry.heartbeat` (already on a 10 s timer for
+re-authorization) publishes the scope's state to any connection that has received nothing for
+`KEEPALIVE_SILENCE_MS` (20 s), tracked per connection as `lastSentAt` and set in `send`. A
+connection that just received output gets no keepalive, so a busy terminal carries no extra
+frames. `heartbeat` takes an explicit time and is public so the keepalive is testable without
+timers, matching `sweep(at)`. No contract changed: `terminal.state` is an existing frozen frame.
+
+RED `50468e4a6`, GREEN `64e54cd6a`. Tests: a healthy event stream no longer vouches for the
+terminal socket (event heartbeats every 10 s for a minute, terminal silent → terminal closed and
+re-dialled with a second terminal ticket while the event stream keeps its first); an idle terminal
+receiving the home keepalive every 20 s is never dropped and never re-ticketed; the home publishes
+state to a silent connection on one heartbeat and nothing extra to a connection that just received
+output. The pre-existing undrained-send case now feeds keepalives through both phases, so it
+proves the stall rule independently of the silence rule.
+
+**Verdict-only relay item: "relay shutdown can leak an upstream connection opened after
+eviction".** Not this layer, and partly fixed below it. `packages/platform/src/platform-websocket-upgrade.ts`
+(owned by `124/s05-relay`) now destroys the upstream on both `error` and `close` of the client
+socket (`3378857c7`, lines 354-360), which covers eviction and the shutdown drain. One race
+remains: `activeUpstream` is assigned only inside the TLS connect callback (line 440), so a client
+socket destroyed while the handshake is still in flight runs `destroyUpstream` against `null`, and
+the callback then writes the upgrade request and pipes into a destroyed socket. On an idle stream
+no byte ever flows, so nothing raises the error that would tear the upstream down, and the
+connection to the home leaks until TCP timeout. The fix belongs in that file: record that the
+client is gone and, in the connect callback, destroy the upstream instead of writing when
+`socket.destroyed` is already true (both the TLS and the legacy container connect). Routed to the
+`124/s05-relay` owner.
+
+**Gates.** `collaboration-direct-client`, `collaboration-direct-hygiene`, `collaboration-client`,
+`shared-terminal-controls`, `chat-collaboration-sharing`, `collaboration-terminal-events`,
+`collaboration-terminal-websocket`, `collaboration-terminal-control` → **67/67 across 8 files**.
+`bun run typecheck` exit 0; `bun run check:patterns` 0 violations, 5 pre-existing warnings. No
+React file changed, so react-doctor does not apply.
