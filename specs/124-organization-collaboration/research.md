@@ -120,7 +120,7 @@ Recorded 2026-09-20 on branch `124/s20-audience`.
 **Procedure.** `scripts/collaboration/inventory-person-to-person.ts` counts, read-only, the collaboration records that carry no organization context. On a home computer (gateway owner Postgres) it counts `collaboration_scopes` rows with `organization_id IS NULL` (live, not deleted), `collaboration_members` grants with `organization_id IS NULL` that are pending or accepted (non-owner), the pending subset of those, and separately the non-owner grants already `revoked` or `expired` (they still receive the S18 tombstone and notice). On the platform it counts every `collaboration_directory` row and every `collaboration_user_index` row by status, including `revoked` rows, because the directory was only ever written by homes that had collaboration enabled and none of those rows carries an organization. Every counter feeds `total`, so nothing is under-reported. Run it with `GATEWAY_DATABASE_URL` and/or `PLATFORM_DATABASE_URL` set:
 
 ```sh
-pnpm exec tsx scripts/collaboration/inventory-person-to-person.ts
+bun run scripts/collaboration/inventory-person-to-person.ts
 ```
 
 The same counters are exercised by `tests/gateway/collaboration-org-precondition.test.ts` ("counts it in the person-to-person inventory") and `tests/platform/collaboration-org-precondition.test.ts` ("platform person-to-person inventory").

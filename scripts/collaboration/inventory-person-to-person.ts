@@ -3,7 +3,7 @@
  *
  * Usage (read-only; prints JSON):
  *   GATEWAY_DATABASE_URL=postgres://... PLATFORM_DATABASE_URL=postgres://... \
- *     pnpm exec tsx scripts/collaboration/inventory-person-to-person.ts
+ *     bun run scripts/collaboration/inventory-person-to-person.ts
  * Either variable may be omitted to inventory one side only.
  */
 import { Kysely, PostgresDialect } from "kysely";
