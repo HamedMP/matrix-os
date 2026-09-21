@@ -1,3 +1,5 @@
+import { closeShellCollaborationSessions } from "@/lib/collaboration";
+
 const SIGN_OUT_TIMEOUT_MS = 10_000;
 
 export function getSignInRedirectUrl(): string {
@@ -6,6 +8,8 @@ export function getSignInRedirectUrl(): string {
 }
 
 export async function clearMatrixAppSession(): Promise<void> {
+  // S06 / T034: direct collaboration sessions end with the actor's app session.
+  closeShellCollaborationSessions();
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), SIGN_OUT_TIMEOUT_MS);
   try {
