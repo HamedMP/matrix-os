@@ -169,6 +169,7 @@ describe("platform collaboration routes", () => {
         ...directoryEvent("accepted"), scopeId: `10000000-0000-4000-8000-000000000${suffix}`,
         eventId: `20000000-0000-4000-8000-000000000${suffix}`,
         organizationId: "org_1", audience: "organization", recipients: [],
+        organizationGrantId: `70000000-0000-4000-8000-000000000${suffix}`,
       });
     }
     organizationIds = ["org_1"];
