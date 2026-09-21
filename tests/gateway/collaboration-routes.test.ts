@@ -29,6 +29,7 @@ import { CollaborationTerminalDispatcher } from "../../packages/gateway/src/coll
 import { CollaborationProofSigner } from "../../packages/platform/src/collaboration/proof.js";
 import {
   collaborationActors,
+  collaborationExecutionEligibility,
   collaborationIds,
   createCollaborationTestDatabase,
   type CollaborationTestDatabase,
@@ -133,6 +134,10 @@ describe("collaboration gateway routes", () => {
           ? JSON.parse(row.execution_eligibility) as unknown
           : row?.execution_eligibility;
       },
+      resolveCanonicalProviderAuthority: async (_ownerId, selection) =>
+        selection.instanceId === "claude_code_default" && selection.model === "opus"
+          ? { driverKind: "claude_code", selection }
+          : null,
       requestDispatch: async () => undefined,
       now: () => now,
       createQueuedTurnId: () => "qturn_shared_route_1",
@@ -412,13 +417,7 @@ describe("collaboration gateway routes", () => {
   });
 
   it("projects requestAi for the current actor, role and runtime capability", async () => {
-    const executionEligibility = {
-      profileId: "scope-runtime-chat-v1",
-      profileVersion: 1,
-      profileDigest: "a".repeat(64),
-      adapterId: "claude-code" as const,
-      harnessVersion: "2.1.240",
-    };
+    const executionEligibility = collaborationExecutionEligibility();
     await chatScope.reconcileExecutionEligibility({ executionGeneration: 9, eligibility: executionEligibility });
     await shareChat();
     await fixture.db.insertInto("collaboration_members").values([
@@ -1122,13 +1121,7 @@ describe("collaboration gateway routes", () => {
     await shareChat();
     await fixture.db.updateTable("collaboration_scopes").set({
       execution_generation: 1,
-      execution_eligibility: JSON.stringify({
-        profileId: "scope-runtime-chat-v1",
-        profileVersion: 1,
-        profileDigest: "a".repeat(64),
-        adapterId: "claude-code",
-        harnessVersion: "2.1.240",
-      }),
+      execution_eligibility: JSON.stringify(collaborationExecutionEligibility()),
     }).where("id", "=", collaborationIds.scope).execute();
     const path = `/api/collaboration/scopes/${collaborationIds.scope}/chat/requests`;
     const body = {
@@ -1196,13 +1189,7 @@ describe("collaboration gateway routes", () => {
     }).execute();
     await fixture.db.updateTable("collaboration_scopes").set({
       execution_generation: 1,
-      execution_eligibility: JSON.stringify({
-        profileId: "scope-runtime-chat-v1",
-        profileVersion: 1,
-        profileDigest: "a".repeat(64),
-        adapterId: "claude-code",
-        harnessVersion: "2.1.240",
-      }),
+      execution_eligibility: JSON.stringify(collaborationExecutionEligibility()),
     }).where("id", "=", collaborationIds.scope).execute();
     await fixture.db.updateTable("chats").set({
       current_selection: JSON.stringify({ instanceId: "codex_default", model: "gpt-5.6-sol" }),
@@ -1285,15 +1272,9 @@ describe("collaboration gateway routes", () => {
     }).execute();
     await fixture.db.updateTable("collaboration_scopes").set({
       execution_generation: 7,
-      execution_eligibility: JSON.stringify({
-        profileId: "scope-runtime-chat-v1",
-        profileVersion: 2,
-        profileDigest: "a".repeat(64),
-        adapters: [
-          { adapterId: "claude-code", harnessVersion: "2.1.240" },
-          { adapterId: "codex", harnessVersion: "0.154.0" },
-        ],
-      }),
+      execution_eligibility: JSON.stringify(
+        collaborationExecutionEligibility({ adapters: ["claude-code", "codex"] }),
+      ),
     }).where("id", "=", collaborationIds.scope).execute();
     await fixture.db.updateTable("chats").set({
       current_selection: JSON.stringify({ instanceId: "codex_default", model: "gpt-5.6-sol" }),
@@ -1719,7 +1700,7 @@ async function seedChat(fixture: CollaborationTestDatabase): Promise<void> {
     shell_state: null,
     fork_provenance: null,
     last_message_preview: null,
-    current_selection: JSON.stringify({ instanceId: "claude_shared", model: "claude-opus-4-6" }),
+    current_selection: JSON.stringify({ instanceId: "claude_code_default", model: "opus" }),
     bound_driver_kind: null,
     bound_instance_id: null,
     bound_at_turn_id: null,
