@@ -4,7 +4,7 @@ import { createProjectChatCleanup } from "./chat/project-deletion.js";
 import { createRuntimeAppAiRoutes } from "./app-ai/runtime.js";
 import { restoreBackgroundChatThread, createBackgroundChatProjection } from "./coding-agents/background-chat-recovery.js";
 import { createBackgroundAgentRuntime } from "./background-agent-runtime.js";
-import { bootstrapChatSharing, ChatSharing } from "./chat/sharing.js";
+import { ChatSharing } from "./chat/sharing.js";
 import { withAsyncChatInput } from "./chat/async-input-adapter.js";
 import { createChatSharingRoutes } from "./chat/sharing-routes.js";
 import { readFileSync, existsSync, statSync, readdirSync } from "node:fs";
@@ -170,10 +170,10 @@ import {
   closeCanonicalChatEventLifecycle,
   createCanonicalChatRoutes,
 } from "./chat/routes.js";
-import { createGatewayChatEventStream } from "./chat/gateway-event-stream.js";
+import type { createGatewayChatEventStream } from "./chat/gateway-event-stream.js";
 import { registerCanonicalChatEventHttpRoute } from "./chat/event-http-route.js";
 import { registerCanonicalChatEventWebSocketRoute } from "./chat/event-websocket-route.js";
-import { createChatExecutionRootResolver, type ChatExecutionRootResolver } from "./chat/execution-root.js";
+import type { ChatExecutionRootResolver } from "./chat/execution-root.js";
 import { createChatTerminalSessionService } from "./chat/terminal-session-service.js";
 import { createHermesChatProviderAdapter } from "./chat/hermes-provider-adapter.js";
 import { createOpenClawChatProviderAdapter } from "./chat/openclaw-provider-adapter.js";
@@ -191,9 +191,8 @@ import {
   createCanonicalChatService,
   createUnavailableCanonicalChatService,
 } from "./chat/service.js";
-import { createDiscussionOnlyChatExecutionGuard } from "./collaboration/chat-scope.js";
-import { teardownOwnerDatabaseServices } from "./startup/owner-database-fallback.js";
-import { constructOwnerCollaboration } from "./startup/collaboration.js";
+import type { createDiscussionOnlyChatExecutionGuard } from "./collaboration/chat-scope.js";
+import { initializeOwnerDatabaseServices } from "./startup/owner-database.js";
 import {
   describeGatewayCollaborationConfiguration,
   loadGatewayCollaborationConfig,
@@ -251,13 +250,13 @@ import { createInteractionLogger, type InteractionLogger } from "./logger.js";
 import { createApprovalBridge, type ApprovalBridge } from "./approval.js";
 import { DEFAULT_APPROVAL_POLICY, type ApprovalPolicy } from "@matrix-os/kernel";
 import { listApps } from "./apps.js";
-import { createAppDb, type AppDb } from "./app-db.js";
-import { createAppRegistry, type AppRegistry } from "./app-db-registry.js";
-import { registerNativeAppStorage } from "./native-app-storage.js";
-import { createQueryEngine, type QueryEngine } from "./app-db-query.js";
+import type { AppDb } from "./app-db.js";
+import type { AppRegistry } from "./app-db-registry.js";
+
+import type { QueryEngine } from "./app-db-query.js";
 import { BridgeQueryBodySchema } from "./app-db-contracts.js";
 import { isSafeName, normalizeAppStorageSlug } from "./app-db-types.js";
-import { createKvStore, type KvStore } from "./app-db-kv.js";
+import type { KvStore } from "./app-db-kv.js";
 import { renameApp, deleteApp } from "./app-ops.js";
 import { createPlatformDb, type PlatformDb } from "./platform-db.js";
 import { createPipedreamClient, type PipedreamConnectClient } from "./integrations/pipedream.js";
@@ -314,20 +313,20 @@ import {
 import { sql, type Kysely } from "kysely";
 import { createSocialRoutes, insertPost, bootstrapSocialSchema, type SocialRoutes } from "./social.js";
 import { createActivityService } from "./social-activity.js";
-import { CanvasRepository } from "./canvas/repository.js";
-import { CanvasConfigurationError, CanvasService } from "./canvas/service.js";
+import type { CanvasRepository } from "./canvas/repository.js";
+import type { CanvasService } from "./canvas/service.js";
 import { createCanvasRoutes } from "./canvas/routes.js";
 import { CanvasSubscriptionHub } from "./canvas/subscriptions.js";
 import { CanvasIdSchema } from "./canvas/contracts.js";
-import { cleanupCanvasTempFiles } from "./canvas/recovery.js";
+
 import {
   createChatAttachmentCleanupLifecycle,
 } from "./chat/attachment-cleanup.js";
-import { OsViewStateRepository } from "./os-view-state/repository.js";
+import type { OsViewStateRepository } from "./os-view-state/repository.js";
 import { createOsViewStateRoutes } from "./os-view-state/routes.js";
 import { createOsViewAgentTools } from "./os-view-state/agent-tools.js";
-import { ChatRepository } from "./chat/repository.js";
-import { MessagingKyselyRepository } from "./messages/repository.js";
+import type { ChatRepository } from "./chat/repository.js";
+import type { MessagingKyselyRepository } from "./messages/repository.js";
 import { createMessagingRoutes } from "./messages/routes.js";
 import type { WSContext } from "hono/ws";
 import {
@@ -937,203 +936,41 @@ export async function createGateway(config: GatewayConfig) {
   let collaborationFailClosedReason: GatewayCollaborationConfigurationFailure | null = collaborationHealth.configured
     ? null
     : collaborationHealth.reason;
-  if (databaseUrl) {
-    try {
-      const { db, kysely } = createAppDb(databaseUrl);
-      appDb = db;
-      kyselyInstance = kysely;
-      await appDb.bootstrap();
-      queryEngine = createQueryEngine(appDb);
-      kvStore = createKvStore(kysely);
-      appRegistry = createAppRegistry(appDb, kysely);
-      for (const slug of await registerNativeAppStorage(appRegistry)) {
-        rememberProvisionedAppSlug(slug);
-      }
-      canvasRepository = new CanvasRepository(kysely as Kysely<any>);
-      await canvasRepository.bootstrap();
-      osViewStateRepository = new OsViewStateRepository(kysely as Kysely<any>);
-      await osViewStateRepository.bootstrap();
-      chatRepository = new ChatRepository(kysely as Kysely<any>);
-      await chatRepository.bootstrap();
-      const ownerChatExecutionRoots = createChatExecutionRootResolver({
-        homePath,
-        projects: codingAgentProjectManager,
-        worktrees: codingAgentWorktreeManager,
-      });
-      canonicalChatExecutionRoots = ownerChatExecutionRoots;
-      canonicalChatCollaborationGuard = createDiscussionOnlyChatExecutionGuard(chatRepository.kysely as Kysely<any>);
-      await bootstrapChatSharing(chatRepository.kysely);
-      if (collaborationConfig) {
-        const construction = await constructOwnerCollaboration({
-          homePath, chatRepository, appRegistry, canvasRepository,
-          collaborationConfig,
-          providerSnapshotReader: lazyCollaborationProviderSnapshotReader,
-          codingAgentProjectManager, ownerChatExecutionRoots, terminalWorkspaceRuntime,
-        });        if (construction.ok) gatewayCollaboration = construction.runtime;
-        else collaborationFailClosedReason = construction.reason;
-      }
-      canonicalChatEventStream = createGatewayChatEventStream({
-        projectOwnerToolOutput,
-        repository: chatRepository,
-        reconcileOwner: (owner) => canonicalChatOrchestrator?.reconcileActiveRuns(owner) ?? Promise.resolve(),
-        capture: (event, options) => posthogErrorTracker.captureEvent(event, options),
-        runtimeVersion: runningVersion,
-        buildSha: process.env.MATRIX_BUILD_SHA,
-      });
-      canvasService = new CanvasService(canvasRepository, {
-        terminalRuntime: terminalWorkspaceRuntime,
-        terminalOwnerIds: terminalRuntimeOwnerIds,
-        homePath,
-        resolveProjectWorkingDirectory: async (ownerId, projectId) => {
-          const result = await codingAgentProjectManager.getProjectById(
-            { type: "user", id: ownerId },
-            projectId,
-          );
-          if (!result.ok) {
-            if (result.status === 404 || result.status === 400) return null;
-            throw new CanvasConfigurationError("project lookup is unavailable");
-          }
-          return codingAgentProjectManager.resolveProjectWorkingDirectory(result.project);
-        },
-      });
-      messagingRepository = new MessagingKyselyRepository(kysely as Kysely<any>);
-      await messagingRepository.bootstrap();
-      canvasSubscriptionHub = new CanvasSubscriptionHub({
-        authorize: async (subscriber) => {
-          const record = await canvasRepository?.get(
-            { ownerScope: "personal", ownerId: subscriber.userId },
-            subscriber.canvasId,
-          );
-          return Boolean(record);
-        },
-      });
-      const canvasExportDir = join(homePath, "system", "canvas-exports");
-      const canvasCleanupPolicy = {
-        ttlMs: 7 * 24 * 60 * 60 * 1000,
-        maxFiles: 100,
-      };
-      await cleanupCanvasTempFiles(canvasExportDir, canvasCleanupPolicy);
-      let canvasCleanupFailures = 0;
-      canvasCleanupTimer = setInterval(() => {
-        void cleanupCanvasTempFiles(canvasExportDir, canvasCleanupPolicy)
-          .then(() => {
-            canvasCleanupFailures = 0;
-          })
-          .catch((cleanupErr: unknown) => {
-            canvasCleanupFailures += 1;
-            logBestEffortFailure("Canvas export cleanup failed", cleanupErr);
-            if (canvasCleanupFailures >= 3 && canvasCleanupTimer) {
-              clearInterval(canvasCleanupTimer);
-              canvasCleanupTimer = null;
-              console.warn("[canvas] Export cleanup disabled after repeated failures");
-            }
-          });
-      }, 6 * 60 * 60 * 1000);
-      console.log("[app-db] Postgres connected, data layer ready");
-
-      // Auto-migrate JSON files to _kv on first boot (per-user sentinel)
-      const handle = process.env.MATRIX_HANDLE ?? "default";
-      const migrated = await kvStore.read("_system", `migration_v1_${handle}`);
-      if (!migrated) {
-        try {
-          const { migrateJsonToKv } = await import("./app-db-migration.js");
-          const jsonResult = await migrateJsonToKv(homePath, kvStore);
-          if (jsonResult.keys > 0) {
-            console.log(`[app-db] JSON migration: ${jsonResult.apps} apps, ${jsonResult.keys} keys`);
-          }
-          if (jsonResult.errors.length > 0) {
-            console.error("[app-db] Migration had errors, will retry next boot:", jsonResult.errors);
-          } else {
-            await kvStore.write("_system", `migration_v1_${handle}`, new Date().toISOString());
-          }
-        } catch (migErr) {
-          console.error("[app-db] Migration error:", (migErr as Error).message);
-        }
-      }
-
-      // Register apps with storage declarations
-      try {
-        const { loadAppManifest } = await import("./app-manifest.js");
-        const apps = await listApps(homePath, { includeInactiveDesigns: true });
-        let registered = 0;
-        for (const app of apps) {
-          if (!app.file.includes("/")) continue;
-          const relDir = app.file.replace(/\/index\.html$/, "").replace(/\.html$/, "");
-          const manifest = loadAppManifest(join(homePath, "apps", relDir));
-          if (!manifest?.storage?.tables || Object.keys(manifest.storage.tables).length === 0) {
-            continue;
-          }
-          // The storage slug MUST match what /api/bridge/query derives from the
-          // app identity: all non-[A-Za-z0-9_-] characters stripped. So nested
-          // games like "games/2048" register under schema "games2048" — the same
-          // value the bridge queries. Schema names must start with a letter
-          // (SAFE_SLUG), so numeric-only slugs ("2048") are folded into their path.
-          const storageSlug = normalizeAppStorageSlug(relDir);
-          if (!isSafeName(storageSlug)) {
-            console.warn(`[app-db] Skipping registration for ${relDir}: unusable storage slug "${storageSlug}"`);
-            continue;
-          }
-          // Register each app independently — one failure must not abort the rest.
-          try {
-            await appRegistry.register({
-              slug: storageSlug,
-              name: manifest.name,
-              description: manifest.description,
-              version: manifest.version,
-              author: manifest.author,
-              category: manifest.category,
-              tables: manifest.storage.tables as Record<
-                string,
-                { columns: Record<string, string>; indexes?: string[]; uniqueIndexes?: string[] }
-              >,
-            });
-            registered++;
-            rememberProvisionedAppSlug(storageSlug);
-          } catch (appRegErr) {
-            console.error(`[app-db] Registration failed for ${relDir} (slug ${storageSlug}):`, (appRegErr as Error).message);
-          }
-        }
-        if (registered > 0) {
-          console.log(`[app-db] Registered ${registered} app(s) with storage schemas`);
-        }
-      } catch (regErr) {
-        console.error("[app-db] App registration error:", (regErr as Error).message);
-      }
-    } catch (err) {
-      console.error("[app-db] Failed to connect to Postgres:", (err as Error).message);
-      // Collaboration fails closed without the owner database; the rest of the gateway keeps serving.
-      if (collaborationConfig) collaborationFailClosedReason = "owner_database_missing";
-      console.log("[app-db] Falling back to file-based storage");
-      // Tear down every partially built database-backed service (event stream before its
-      // repository, pool last) so the gateway runs wholly in the file-storage fallback instead
-      // of a mixture of retained Postgres handles and files.
-      await teardownOwnerDatabaseServices({
-        collaboration: gatewayCollaboration,
-        chatEventStream: canonicalChatEventStream,
-        chatRepository,
-        canvasRepository,
-        canvasSubscriptionHub,
-        canvasCleanupTimer,
-        appDb,
-      });
-      canvasCleanupTimer = null;
-      gatewayCollaboration = null;
-      canonicalChatEventStream = null;
-      chatRepository = null;
-      canonicalChatExecutionRoots = null;
-      canonicalChatCollaborationGuard = null;
-      kyselyInstance = null;
-      appDb = null;
-      queryEngine = null;
-      kvStore = null;
-      appRegistry = null;
-      canvasRepository = null;
-      osViewStateRepository = null;
-      canvasService = null;
-      canvasSubscriptionHub = null;
-      messagingRepository = null;
-    }
-  }
+  const ownerDatabaseStartup = await initializeOwnerDatabaseServices({
+    databaseUrl,
+    homePath,
+    collaborationConfig,
+    initialFailureReason: collaborationFailClosedReason,
+    providerSnapshotReader: lazyCollaborationProviderSnapshotReader,
+    codingAgentProjectManager,
+    codingAgentWorktreeManager,
+    terminalWorkspaceRuntime,
+    terminalRuntimeOwnerIds,
+    projectOwnerToolOutput,
+    capture: (event, options) => posthogErrorTracker.captureEvent(event, options),
+    runningVersion,
+    getCanonicalChatOrchestrator: () => canonicalChatOrchestrator,
+    rememberProvisionedAppSlug,
+    logBestEffortFailure,
+  });
+  const ownerDatabaseServices = ownerDatabaseStartup.services;
+  collaborationFailClosedReason = ownerDatabaseStartup.failClosedReason;
+  appDb = ownerDatabaseServices?.appDb ?? null;
+  queryEngine = ownerDatabaseServices?.queryEngine ?? null;
+  kvStore = ownerDatabaseServices?.kvStore ?? null;
+  appRegistry = ownerDatabaseServices?.appRegistry ?? null;
+  kyselyInstance = ownerDatabaseServices?.kyselyInstance ?? null;
+  canvasRepository = ownerDatabaseServices?.canvasRepository ?? null;
+  osViewStateRepository = ownerDatabaseServices?.osViewStateRepository ?? null;
+  canvasService = ownerDatabaseServices?.canvasService ?? null;
+  canvasSubscriptionHub = ownerDatabaseServices?.canvasSubscriptionHub ?? null;
+  canvasCleanupTimer = ownerDatabaseServices?.canvasCleanupTimer ?? null;
+  chatRepository = ownerDatabaseServices?.chatRepository ?? null;
+  canonicalChatEventStream = ownerDatabaseServices?.chatEventStream ?? null;
+  canonicalChatExecutionRoots = ownerDatabaseServices?.chatExecutionRoots ?? null;
+  canonicalChatCollaborationGuard = ownerDatabaseServices?.chatCollaborationGuard ?? null;
+  gatewayCollaboration = ownerDatabaseServices?.collaboration ?? null;
+  messagingRepository = ownerDatabaseServices?.messagingRepository ?? null;
 
   const trustedOsViewOwnerId = process.env.MATRIX_USER_ID?.trim();
   const osViewTools = osViewStateRepository
