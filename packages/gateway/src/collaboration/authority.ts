@@ -2,6 +2,7 @@ import type { CollaborationRole } from "@matrix-os/contracts";
 import type { Selectable } from "kysely";
 import { CollaborationAuthorizationError, type CollaborationAuthorizationErrorCode } from "./authority-error.js";
 import type { CollaborationScopesTable } from "./database.js";
+import { isActivationCurrent } from "./capability-evaluator.js";
 import type { CollaborationCapabilityRepository } from "./capability-repository.js";
 import type { OrganizationPrecondition } from "./organization-precondition.js";
 import type { CollaborationRepository } from "./repository.js";
@@ -75,7 +76,7 @@ export class CollaborationAuthority {
   }): Promise<AuthorizedCollaborationContext> {
     const scope = await this.loadScope(input.scopeId);
     const membershipScope = await this.resolveMembershipScope(scope);
-    await this.organizationPrecondition.require({
+    const evidence = await this.organizationPrecondition.require({
       organizationId: membershipScope.organization_id,
       actorId: input.actorId,
     });
@@ -85,7 +86,7 @@ export class CollaborationAuthority {
       ? member.role
       : null;
     // S04: a whole-project preset grant is the V1 membership; legacy member rows keep their exact old role.
-    const role = legacyRole ?? await this.resolveGrantRole(membershipScope.id, input.actorId);
+    const role = legacyRole ?? await this.resolveGrantRole(membershipScope.id, input.actorId, evidence.membershipEpoch);
     if (!role) {
       throw new CollaborationAuthorizationError("not_found", "Current membership is required");
     }
@@ -109,7 +110,11 @@ export class CollaborationAuthority {
   }
 
   /** S04: preset grants on the membership scope; contributor maps to editor, viewer to viewer. */
-  private async resolveGrantRole(membershipScopeId: string, actorId: string): Promise<CollaborationRole | null> {
+  private async resolveGrantRole(
+    membershipScopeId: string,
+    actorId: string,
+    currentMembershipEpoch: string | undefined,
+  ): Promise<CollaborationRole | null> {
     if (!this.capabilities) return null;
     let resolution;
     try {
@@ -124,7 +129,10 @@ export class CollaborationAuthority {
       grant !== null && grant.state === "active" && (grant.expires_at === null || new Date(grant.expires_at).getTime() > nowMs);
     const presets: Array<"viewer" | "contributor"> = [];
     if (live(resolution.memberGrant)) presets.push(resolution.memberGrant!.preset);
-    if (live(resolution.organizationGrant) && resolution.activation?.state === "active") presets.push(resolution.organizationGrant!.preset);
+    // Same fail-closed rule as the evaluator: an activation counts only under proven current epoch evidence.
+    if (live(resolution.organizationGrant) && isActivationCurrent(resolution.activation, currentMembershipEpoch)) {
+      presets.push(resolution.organizationGrant!.preset);
+    }
     if (presets.length === 0) return null;
     return presets.includes("contributor") ? "editor" : "viewer";
   }
