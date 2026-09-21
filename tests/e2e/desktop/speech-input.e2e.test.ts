@@ -101,6 +101,9 @@ suite("Electron Desktop speech input", () => {
     const stop = page.getByRole("button", { name: "Stop recording" });
     await stop.waitFor({ state: "visible", timeout: 10_000 });
     await page.waitForTimeout(300);
+    await page.screenshot({
+      path: join(EVIDENCE_DIR, "electron-desktop-recording-waveform.png"),
+    });
     await stop.click();
     await page.getByRole("button", { name: "Cancel transcription" })
       .waitFor({ state: "visible", timeout: 10_000 });
