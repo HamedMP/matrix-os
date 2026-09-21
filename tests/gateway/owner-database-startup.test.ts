@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
+import { Hono } from "hono";
+import type { UpgradeWebSocket } from "hono/ws";
+import { registerFailClosedCollaborationRoutes } from "../../packages/gateway/src/collaboration/fail-closed.js";
 import { bootOwnerDatabaseWithFallback } from "../../packages/gateway/src/startup/owner-database.js";
 
 describe("owner database startup", () => {
@@ -20,6 +23,18 @@ describe("owner database startup", () => {
     expect(result).toEqual({ services: null, failureReason: "owner_database_missing" });
     expect(order).toEqual(["stream", "chat", "canvas", "pool"]);
     expect(warn).toHaveBeenCalledWith("OwnerDatabaseStartupFailure", expect.any(Error));
+
+    const app = new Hono();
+    const upgradeWebSocket = (() => async () => new Response(null, { status: 500 })) as unknown as UpgradeWebSocket;
+    registerFailClosedCollaborationRoutes({ app, upgradeWebSocket, reason: result.failureReason! });
+    for (const route of [
+      "/api/collaboration/scopes/10000000-0000-4000-8000-000000000001",
+      "/ws/collaboration/scopes/10000000-0000-4000-8000-000000000001/events",
+    ]) {
+      const response = await app.request(route);
+      expect(response.status).toBe(503);
+      expect(await response.json()).toEqual({ error: "Collaboration unavailable" });
+    }
   });
 
   it("returns a complete service bag and does not drain it on success", async () => {
