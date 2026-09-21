@@ -226,7 +226,7 @@ exit 99
     expect(rendered).toContain('MATRIX_RUNTIME_SLOT=staging');
     expect(rendered).toContain('MATRIX_NODE_PREFIX=/opt/matrix/runtime/node');
     expect(rendered).toContain('MATRIX_UPDATE_CHANNEL=stable');
-    expect(rendered).toContain('MATRIX_COLLABORATION_ENABLED=false');
+    expect(rendered).not.toContain('MATRIX_COLLABORATION_ENABLED');
     expect(rendered).toContain('MATRIX_IMAGE_VERSION=stable');
     expect(rendered).not.toContain('MATRIX_HOST_BUNDLE_URL=\n');
   });
@@ -409,7 +409,7 @@ exit 99
     expect(cloudInit).toContain('MATRIX_HOST_BUNDLE_URL={{hostBundleUrl}}');
     expect(cloudInit).toContain('MATRIX_IMAGE_VERSION={{imageVersion}}');
     expect(cloudInit).toContain('MATRIX_UPDATE_CHANNEL={{updateChannel}}');
-    expect(cloudInit).toContain('MATRIX_COLLABORATION_ENABLED=false');
+    expect(cloudInit).not.toContain('MATRIX_COLLABORATION_ENABLED');
     expect(cloudInit).toContain('UPGRADE_TOKEN={{platformVerificationToken}}');
     expect(cloudInit).toContain('MATRIX_AUTH_TOKEN={{platformVerificationToken}}');
     expect(cloudInit).toContain('MATRIX_CODE_PROXY_TOKEN={{platformVerificationToken}}');
