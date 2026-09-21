@@ -123,6 +123,18 @@
 .matrix-ap-harness-mark[data-accent="cyan"] { --matrix-ap-mark: var(--ap-cyan, var(--matrix-ap-accent)); }
 .matrix-ap-harness-mark[data-accent="teal"] { --matrix-ap-mark: var(--ap-teal, var(--matrix-ap-accent)); }
 .matrix-ap-harness-mark { border-bottom-color: var(--matrix-ap-mark, var(--matrix-ap-accent)); border-bottom-width: 2px; }
+.matrix-ap-harness-mark:has(.matrix-ap-agent-logo) { border: 0; background: transparent; }
+.matrix-ap-agent-logo { align-items: center; border-radius: 7px; display: inline-flex; height: 31px; justify-content: center; overflow: hidden; width: 31px; }
+.matrix-ap-agent-logo img { display: block; height: 20px; object-fit: contain; width: 20px; }
+.matrix-ap-connection { margin-bottom: 16px; }
+.matrix-ap-connection-options { display: grid; gap: 10px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.matrix-ap-connection-choice { background: var(--matrix-ap-surface); border: 1px solid var(--matrix-ap-border); border-radius: 9px; color: var(--matrix-ap-text); cursor: pointer; display: flex; flex-direction: column; gap: 5px; min-width: 0; padding: 12px; text-align: left; }
+.matrix-ap-connection-choice strong { font-size: 13px; }
+.matrix-ap-connection-choice span { color: var(--matrix-ap-muted); font-size: 11px; }
+.matrix-ap-connection-choice[aria-pressed="true"] { background: var(--matrix-ap-accent-muted); border-color: var(--matrix-ap-accent); }
+.matrix-ap-connection-choice:disabled { cursor: not-allowed; opacity: 0.6; }
+.matrix-ap-account-details { color: var(--matrix-ap-muted); font-size: 11px; margin-top: 10px; }
+.matrix-ap-account-details summary { cursor: pointer; }
 .matrix-ap-rail-copy { display: flex; flex: 1; flex-direction: column; gap: 3px; min-width: 0; }
 .matrix-ap-rail-name { align-items: baseline; display: flex; font-size: 15px; font-weight: 620; gap: 8px; overflow: hidden; white-space: nowrap; }
 .matrix-ap-rail-name span { color: var(--matrix-ap-faint); font-size: 10px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; }
@@ -313,6 +325,7 @@
 }
 
 @media (max-width: 520px) {
+  .matrix-ap-connection-options { grid-template-columns: 1fr; }
   .matrix-ap-form-grid,
   .matrix-ap-form-grid-name,
   .matrix-ap-policy-grid { grid-template-columns: 1fr; }

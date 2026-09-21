@@ -1,6 +1,8 @@
 import {
   AiProviderSnapshotV3Schema,
   type AiProviderSnapshotV3,
+  type FundedAiEffectivePolicy,
+  type FundedAiFundingSummary,
 } from "@matrix-os/contracts";
 
 export const PROVIDER_SETTINGS_NOW = new Date("2026-08-30T10:00:00.000Z");
@@ -12,6 +14,37 @@ export const providerReady = {
   action: "none" as const,
   safeReason: null,
 };
+
+export function providerSettingsFundingSummaryFixture(): {
+  funding: FundedAiFundingSummary;
+  policy: FundedAiEffectivePolicy;
+} {
+  const monthlyBudgetMicrousd = 1_000_000;
+  return {
+    funding: {
+      asOf: PROVIDER_SETTINGS_NOW.toISOString(),
+      periodStart: "2026-08-01T00:00:00.000Z",
+      monthlyBudgetMicrousd,
+      settledThisMonthMicrousd: 0,
+      reservedMicrousd: 0,
+      reservedThisMonthMicrousd: 0,
+      promotionalBalanceMicrousd: monthlyBudgetMicrousd,
+      addonBalanceMicrousd: 0,
+      creditBalanceMicrousd: monthlyBudgetMicrousd,
+      remainingBalanceMicrousd: monthlyBudgetMicrousd,
+      remainingBudgetMicrousd: monthlyBudgetMicrousd,
+    },
+    policy: {
+      enabled: true,
+      globalRevision: 1,
+      runtimeRevision: 1,
+      allowedModelIds: ["anthropic/claude-sonnet-5"],
+      monthlyBudgetMicrousd,
+      checkedAt: PROVIDER_SETTINGS_NOW.toISOString(),
+      staleAfter: LATER,
+    },
+  };
+}
 
 export function providerSettingsCanonicalFixture(): AiProviderSnapshotV3 {
   return AiProviderSnapshotV3Schema.parse({

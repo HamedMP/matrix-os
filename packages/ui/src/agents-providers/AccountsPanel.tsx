@@ -75,6 +75,8 @@ export function AccountsPanel({
   const [actionError, setActionError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const supportsLogin = canLogin && harness.loginMethods.length > 0;
+  const recommendedMethod = harness.recommendedLoginMethod && harness.loginMethods.includes(harness.recommendedLoginMethod)
+    ? harness.recommendedLoginMethod : harness.loginMethods[0];
   const needsGenericLogin = accounts.length === 0 || accounts.some((account) =>
     account.authState !== "authenticated" && !harness.loginMethods.includes(account.authMethod));
   const attemptMethodSupported = attempt !== null && harness.loginMethods.includes(attempt.method);
@@ -97,20 +99,20 @@ export function AccountsPanel({
     <section className="matrix-ap-panel" aria-labelledby="matrix-ap-accounts-title">
       <div className="matrix-ap-panel-head">
         <div>
-          <span className="matrix-ap-eyebrow">Authentication</span>
-          <h3 id="matrix-ap-accounts-title">Connection</h3>
+          <h3 id="matrix-ap-accounts-title">{harness.harness === "claude" || harness.harness === "codex" ? "Your subscription or account" : "Your account"}</h3>
         </div>
         {supportsLogin && needsGenericLogin ? <button
           type="button"
           className="matrix-ap-button"
           disabled={disabled || pending}
-          onClick={() => setShowLoginMethods((open) => !open)}
+          onClick={() => { if (recommendedMethod) void run(() => onMutate({ type: "start_login", harnessInstanceId: harness.id, accountId: null, method: recommendedMethod })); }}
         >
           Sign in
         </button> : null}
       </div>
       {actionError ? <p className="matrix-ap-notice" role="alert">{actionError}</p> : null}
 
+      {supportsLogin && harness.loginMethods.length > 1 ? <button type="button" className="matrix-ap-link-button" onClick={() => setShowLoginMethods((open) => !open)} disabled={disabled || pending}>Other sign-in methods</button> : null}
       {showLoginMethods ? (
         <div className="matrix-ap-login-methods" aria-label="Login methods">
           {harness.loginMethods.map((method) => (
@@ -127,7 +129,7 @@ export function AccountsPanel({
                 });
               }}
             >
-              {method === harness.recommendedLoginMethod ? "Recommended · " : ""}{titleCase(method)}
+              {titleCase(method)}
             </button>
           ))}
         </div>
@@ -135,7 +137,7 @@ export function AccountsPanel({
 
       {attempt ? (
         <div className="matrix-ap-attempt" role="status">
-          <span>Authentication {titleCase(attempt.state).toLowerCase()}</span>
+          <span>{attempt.state === "pending" ? "Finish signing in" : `Sign-in ${titleCase(attempt.state).toLowerCase()}`}</span>
           <AttemptAction attempt={attempt} onOpenTerminal={onOpenTerminal} onOpenBrowser={onOpenBrowser} />
           {supportsLogin && retryMethod && (attempt.action.kind === "retry" || ["failed", "expired", "denied"].includes(attempt.state)) ? <button type="button" className="matrix-ap-button" disabled={disabled || pending}
             onClick={() => void run(() => onMutate({ type: "start_login", harnessInstanceId: harness.id, accountId: attemptMethodSupported ? attempt.accountId : null, method: retryMethod }))}>Retry sign in</button> : null}
@@ -146,11 +148,11 @@ export function AccountsPanel({
       <div className="matrix-ap-account-list">
         {accounts.length === 0 ? (
           <p className="matrix-ap-empty">{matrixSupported
-            ? "This agent uses Matrix AI. No provider account is required."
-            : matrixSelected ? "Saved Matrix AI access is unavailable for this agent. Choose a supported connection."
+            ? "Connected through Matrix AI."
+            : matrixSelected ? "Choose a supported connection."
               : harness.harness === "hermes" || harness.harness === "openclaw"
-                ? "Sign in to this agent with your own provider account using Terminal. Matrix AI funding is not supported for this agent yet."
-                : "No connected account. Sign in to this agent or choose an available Matrix AI connection."}</p>
+                ? "Use your own provider account in Terminal."
+                : "No account connected."}</p>
         ) : accounts.map((account) => {
           const source = sources.find((candidate) => candidate.id === account.accessSourceId);
           const usage = source ? usageLines(source.usage) : null;
@@ -205,8 +207,8 @@ export function AccountsPanel({
       </div>
 
       {!supportsLogin && onSetupHarness ? <button type="button" className="matrix-ap-button" disabled={disabled || pending}
-        onClick={() => void run(() => onSetupHarness(harness.harness))}>Open {harness.displayName} setup in Terminal</button> : null}
-      <p className="matrix-ap-help">Additional isolated accounts are not supported in this runtime yet. Terminal sign-in changes the agent’s current login.</p>
+        onClick={() => void run(() => onSetupHarness(harness.harness))}>Connect {harness.displayName}</button> : null}
+      <details className="matrix-ap-account-details"><summary>Account details</summary><p className="matrix-ap-help">Terminal sign-in changes this agent’s current login. Additional isolated accounts are not supported yet.</p></details>
 
       {removeAccount ? (
         <RemovalDialog

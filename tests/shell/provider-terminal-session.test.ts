@@ -60,6 +60,19 @@ describe("provider terminal session handoff", () => {
     expect(fetcher.mock.calls.every(([, init]) => init?.method !== "POST")).toBe(true);
   });
 
+  it("hands off canonical workspace/tab refs after validation against the live workspace list", async () => {
+    const fetcher = vi.fn(async () => Response.json(workspaceResponse([
+      tab(PROVIDER_TAB_ID, "provider-login", "running"),
+    ])));
+    expect(enqueueExistingTerminalRef(providerRef, "window-login")).toBe(true);
+    expect(enqueueExistingTerminalRef(`${providerRef}a`, "window-login")).toBe(false);
+    expect(enqueueExistingTerminalRef("550e8400-e29b-41d4-a716-446655440000", "window-login"))
+      .toBe(false);
+    await expect(drainExistingTerminalSessionQueue("window-login", { fetcher }))
+      .resolves.toEqual([providerRef]);
+    expect(hasQueuedExistingTerminalSession("window-login")).toBe(false);
+  });
+
   it("fails closed on malformed lists and keeps other terminal targets queued", async () => {
     const fetcher = vi.fn(async () => Response.json(workspaceResponse([
       tab(PROVIDER_TAB_ID, "provider-login", 42),

@@ -98,7 +98,7 @@ describe("provider settings shell transport", () => {
 
     await expect(transport.getSnapshot()).resolves.toEqual(snapshot);
     expect(fetcher).toHaveBeenCalledWith(
-      `${window.location.origin}/api/ai/provider-settings?refresh=true`,
+      `${window.location.origin}/api/ai/provider-settings`,
       expect.objectContaining({ cache: "no-store", signal: expect.any(AbortSignal) }),
     );
   });
@@ -118,6 +118,14 @@ describe("provider settings shell transport", () => {
     expect(changed).toHaveBeenCalledOnce();
 
     window.removeEventListener(PROVIDER_SETTINGS_CHANGED_EVENT, changed);
+  });
+
+  it("forces new health checks only for an explicit refresh", async () => {
+    const fetcher = vi.fn(async () => Response.json(snapshot));
+    await createProviderSettingsTransport({ fetcher }).getSnapshot(undefined, { refresh: true });
+    expect(fetcher).toHaveBeenCalledWith(
+      `${window.location.origin}/api/ai/provider-settings?refresh=true`, expect.any(Object),
+    );
   });
 
   it("validates mutation inputs and responses without exposing upstream details", async () => {
