@@ -23,6 +23,10 @@ import {
   markLostSharedRunsOnStartup,
 } from "../../packages/gateway/src/collaboration/shared-run-loss.js";
 import { createSharedCodexAdapter } from "../../packages/gateway/src/collaboration/shared-codex-adapter.js";
+import {
+  SharedChatExecutionCoordinator,
+  SharedChatRunPreparationError,
+} from "../../packages/gateway/src/chat/shared-execution-coordinator.js";
 import { createSharedClaudeAdapter } from "../../packages/gateway/src/collaboration/shared-claude-adapter.js";
 import { ScopeRuntimeClientError } from "../../packages/gateway/src/collaboration/scope-runtime-client.js";
 import { CollaborationAuthorizationError, type AuthorizedCollaborationContext } from "../../packages/gateway/src/collaboration/authority.js";
@@ -313,12 +317,156 @@ describe("shared coding execution (S09)", () => {
       ]);
     });
 
+    it("marks every lost run across startup batches, not only the first batch", async () => {
+      const secondChat = "chat_collaboration_secondary";
+      const secondScope = "10000000-0000-4000-8000-000000000077";
+      await fixture.db.insertInto("chats").values({
+        id: secondChat, owner_type: "personal", owner_id: collaborationActors.owner,
+        create_request_id: "req_s09_chat_2", project_id: null, title: "Shared coding 2",
+        lifecycle: "active", attention: "none", revision: 1, message_count: 0,
+        collaboration: JSON.stringify({ scopeId: secondScope, mode: "shared_ai", executionFenced: true }),
+        user_state: null, shell_state: null, fork_provenance: null, last_message_preview: null,
+        current_selection: JSON.stringify({ instanceId: "claude_shared", model: "claude-opus-4-6" }),
+        bound_driver_kind: "claude_code", bound_instance_id: "claude_shared", bound_at_turn_id: "cturn_s09_origin_2",
+        created_at: now, updated_at: now,
+      }).execute();
+      await fixture.db.insertInto("collaboration_scopes").values({
+        id: secondScope, owner_type: "personal", owner_id: collaborationActors.owner,
+        kind: "chat", resource_id: secondChat, parent_scope_id: null, membership_mode: "direct",
+        lifecycle: "shared", revision: 1, auth_epoch: 1, authority_runtime_id: collaborationIds.runtime,
+        authority_generation: 1, execution_generation: 1, organization_id: "org_collaboration_primary",
+        execution_eligibility: JSON.stringify(collaborationExecutionEligibility()),
+        deleted_at: null, created_at: now, updated_at: now,
+      }).execute();
+      await fixture.db.insertInto("collaboration_members").values([
+        { ...member(collaborationActors.owner, "owner"), scope_id: secondScope },
+        { ...member(collaborationActors.editor, "editor"), scope_id: secondScope },
+      ]).execute();
+      await repository.enqueueSharedQueuedTurn(owner, aiRequest(26, collaborationActors.editor));
+      await repository.enqueueSharedQueuedTurn(owner, { ...aiRequest(27, collaborationActors.editor), chatId: secondChat, scopeId: secondScope });
+      const first = await claim("batch_1");
+      const second = await repository.claimNextQueuedTurn(owner, {
+        chatId: secondChat, turnId: "cturn_batch_2", runId: "run_batch_2", messageId: "msg_batch_2", claimedAt: now,
+      });
+      expect(second).not.toBeNull();
+      const marked = await markLostSharedRunsOnStartup({ db: fixture.db, loss, batchSize: 1 });
+      expect(new Set(marked)).toEqual(new Set([first.run.id, second!.run.id]));
+      expect(await markLostSharedRunsOnStartup({ db: fixture.db, loss, batchSize: 1 })).toEqual([]);
+    });
+
     it("classifies isolated runtime failures into the frozen loss reasons", () => {
       expect(classifySharedRunLoss(new ScopeRuntimeClientError("runtime_unavailable"), "create")).toBe("scope_runtime_crash");
       expect(classifySharedRunLoss(new ScopeRuntimeClientError("runtime_unavailable"), "inference")).toBe("scope_runtime_crash");
       expect(classifySharedRunLoss(Object.assign(new Error("exited"), { code: "runtime_exited" }), "inference")).toBe("run_unit_exit");
       expect(classifySharedRunLoss(new Error("boom"), "inference")).toBe("run_unit_exit");
       expect(classifySharedRunLoss(new Error("boom"), "projection")).toBeNull();
+    });
+  });
+
+  describe("run hardening (S09 review)", () => {
+    it("lets the requester retry a request cancelled while running, never the owner", async () => {
+      const queued = await repository.enqueueSharedQueuedTurn(owner, aiRequest(80, collaborationActors.editor));
+      const claimed = await claim("cancel_running");
+      const active = {
+        controller: new AbortController(),
+        adapter: { driverKind: "claude_code", parseState: (state: unknown) => state, cancel: vi.fn(async () => undefined) },
+        owner, chatId: collaborationIds.chat, runId: claimed.run.id, instanceId: "claude_shared", sharedScopeId: collaborationIds.scope,
+      };
+      const coordinator = new SharedChatExecutionCoordinator({
+        repository, isClosing: () => false, atCapacity: () => false, hasActiveRun: () => true,
+        getActiveRun: (runId) => (runId === claimed.run.id ? active as never : undefined),
+        startDispatch: () => { throw new Error("unexpected dispatch"); }, now: () => new Date(now),
+      });
+      await coordinator.cancel(owner, collaborationIds.scope, collaborationIds.chat, claimed.run.id);
+      expect(active.controller.signal.aborted).toBe(true);
+      expect(await fixture.db.selectFrom("chat_queued_turns").select("status").where("id", "=", queued.id).executeTakeFirstOrThrow())
+        .toEqual({ status: "cancelled" });
+      const commands = createCommands();
+      await expect(commands.retry({
+        ...control(collaborationActors.owner, queued.id, 81, 81, await revision()), newRequestId: "qturn_retry_cancel_owner",
+      })).rejects.toMatchObject({ code: "forbidden" });
+      const retried = await commands.retry({
+        ...control(collaborationActors.editor, queued.id, 82, 82, await revision()), newRequestId: "qturn_retry_cancel_requester",
+      });
+      expect(retried.request).toMatchObject({ id: "qturn_retry_cancel_requester", retryOfRequestId: queued.id, state: "queued" });
+    });
+
+    it("lets the requester retry after a control partition interrupts the run, never the owner", async () => {
+      const queued = await repository.enqueueSharedQueuedTurn(owner, aiRequest(83, collaborationActors.editor));
+      const claimed = await claim("partition_retry");
+      const cancelSharedRun = vi.fn(async (
+        runOwner: typeof owner, _scopeId: string, chatId: string, runId: string,
+        options?: { sharedRequestState?: "cancelled" | "interrupted" },
+      ) => {
+        await repository.finishRun(runOwner, {
+          chatId, runId, outcome: "aborted", completedAt: now,
+          ...(options?.sharedRequestState ? { sharedRequestState: options.sharedRequestState } : {}),
+        });
+      });
+      await interruptActiveSharedRuns({ db: fixture.db, loss, reason: "control_partition", orchestrator: { cancelSharedRun } });
+      expect(cancelSharedRun).toHaveBeenCalledWith(
+        owner, collaborationIds.scope, collaborationIds.chat, claimed.run.id, { sharedRequestState: "interrupted" },
+      );
+      expect(await fixture.db.selectFrom("chat_queued_turns").select("status").where("id", "=", queued.id).executeTakeFirstOrThrow())
+        .toEqual({ status: "interrupted" });
+      const commands = createCommands();
+      await expect(commands.retry({
+        ...control(collaborationActors.owner, queued.id, 84, 84, await revision()), newRequestId: "qturn_retry_partition_owner",
+      })).rejects.toMatchObject({ code: "forbidden" });
+      const retried = await commands.retry({
+        ...control(collaborationActors.editor, queued.id, 85, 85, await revision()), newRequestId: "qturn_retry_partition_requester",
+      });
+      expect(retried.request).toMatchObject({ state: "queued", retryOfRequestId: queued.id });
+      const listed = await createExecutionAdapter().list(readContext(collaborationActors.owner));
+      expect(listed.find((request) => request.id === queued.id))
+        .toMatchObject({ state: "interrupted", interruptedReason: "control_partition" });
+    });
+
+    it("stops claiming after an unavailable owner source so later requests stay queued", async () => {
+      const first = await repository.enqueueSharedQueuedTurn(owner, aiRequest(86, collaborationActors.editor));
+      const second = await repository.enqueueSharedQueuedTurn(owner, aiRequest(87, otherEditor, 2));
+      const coordinator = new SharedChatExecutionCoordinator({
+        repository, isClosing: () => false, atCapacity: () => false, hasActiveRun: () => false,
+        getActiveRun: () => undefined, startDispatch: () => { throw new Error("unexpected dispatch"); }, now: () => new Date(now),
+      });
+      const createAdapter = vi.fn(async () => { throw new SharedChatRunPreparationError("unavailable"); });
+      await coordinator.dispatchNextQueued(owner, collaborationIds.chat, collaborationIds.scope, createAdapter);
+      expect(createAdapter).toHaveBeenCalledTimes(1);
+      await expect(repository.listSharedQueuedTurns(owner, collaborationIds.chat)).resolves.toMatchObject([
+        { id: first.id, state: "unavailable" },
+        { id: second.id, state: "queued" },
+      ]);
+    });
+
+    it("reports Shared AI unavailable to a member on an owner-only scope before submission", async () => {
+      const adapter = new CollaborationChatExecutionAdapter({
+        repository, commands: createCommands(),
+        resolveParticipant: async (actorId) => ({ actorId, displayName: actorId }),
+        resolveEligibility: async () => collaborationExecutionEligibility(),
+        resolveResourceRevision: async () => 1,
+        resolveEffectiveSubmitMode: async () => "owner_only",
+        requestDispatch: async () => undefined,
+      });
+      expect((await adapter.capability(readContext(collaborationActors.editor), [])).capability.status).toBe("unavailable");
+      expect((await adapter.capability(readContext(collaborationActors.owner), [])).capability.status).toBe("available");
+    });
+
+    it("reports Shared AI unavailable to everyone while the owner has selected no source", async () => {
+      const adapter = new CollaborationChatExecutionAdapter({
+        repository, commands: createCommands(),
+        resolveParticipant: async (actorId) => ({ actorId, displayName: actorId }),
+        resolveEligibility: async () => collaborationExecutionEligibility(),
+        resolveResourceRevision: async () => 1,
+        resolveEffectiveSubmitMode: async () => "members",
+        resolveOwnerSourceAdmission: async () => "missing",
+        requestDispatch: async () => undefined,
+      });
+      expect((await adapter.capability(readContext(collaborationActors.owner), [])).capability.status).toBe("unavailable");
+      expect((await adapter.capability(readContext(collaborationActors.editor), [])).capability.status).toBe("unavailable");
+      await expect(adapter.submit({ ...readContext(collaborationActors.owner), capability: "request_ai", role: "owner" }, {
+        clientRequestId: uuid(88), expectedRevision: "1", text: "Do work",
+      })).rejects.toMatchObject({ code: "unavailable" });
+      expect(await repository.listSharedQueuedTurns(owner, collaborationIds.chat)).toEqual([]);
     });
   });
 
@@ -412,6 +560,21 @@ describe("shared coding execution (S09)", () => {
       });
       for await (const event of adapter2.start({ ...runInput("codex_default", "gpt-5.6-sol"), executionRoot: sandbox.worktree.hostPath })) events.push(event);
       expect(losses).toEqual(["scope_runtime_crash", "run_unit_exit"]);
+    });
+
+    it("records the loss before the failed terminal event is yielded", async () => {
+      const crashed = client({ createRuntime: vi.fn(async () => { throw new ScopeRuntimeClientError("runtime_unavailable"); }) });
+      let recorded = false;
+      const adapter = createSharedCodexAdapter({
+        client: crashed, scopeId, executionGeneration: "7", harnessVersion: "1.0.0", sandbox,
+        onLoss: async () => { await new Promise((resolve) => setTimeout(resolve, 5)); recorded = true; },
+      });
+      const events = [];
+      for await (const event of adapter.start({ ...runInput("codex_default", "gpt-5.6-sol"), executionRoot: sandbox.worktree.hostPath })) {
+        if (event.type === "run.completed") expect(recorded).toBe(true);
+        events.push(event);
+      }
+      expect(events.at(-1)).toMatchObject({ type: "run.completed", outcome: "failed" });
     });
   });
 

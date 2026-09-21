@@ -69,6 +69,32 @@ describe("Chat collaboration lifecycle", () => {
       .toMatchObject({ lifecycle: "active", revision: 3 });
   });
 
+  it("cancels queued shared AI requests in the archive transaction", async () => {
+    await fixture.db.insertInto("chat_queued_turns").values({
+      id: "qturn_archive_pending", chat_id: collaborationIds.chat, client_request_id: "req_archive_pending",
+      actor_request_id: "50000000-0000-4000-8000-000000000042", requesting_actor_id: collaborationActors.editor,
+      collaboration_scope_id: collaborationIds.scope, accepted_seq: 1, payload_hash: "d".repeat(64),
+      accepted_auth_epoch: 1, accepted_execution_generation: 1, accepted_execution_eligibility: null,
+      retry_of_queued_turn_id: null, position: 1, status: "queued",
+      parts: JSON.stringify([{ type: "text", text: "Pending" }]), driver_kind: "claude_code", instance_id: "claude_shared",
+      selection: JSON.stringify({ instanceId: "claude_shared", model: "claude-opus-4-6" }),
+      interaction_mode: "default", permission_mode: "supervised", execution_root: null, execution_root_fingerprint: null,
+      capability_snapshot: JSON.stringify({}), claimed_turn_id: null, claimed_run_id: null, cancelled_at: null,
+      created_at: now.toISOString(), updated_at: now.toISOString(),
+    }).execute();
+    await repository.applyChatLifecycle({
+      scopeId: collaborationIds.scope,
+      actorId: collaborationActors.owner,
+      type: "archive",
+      clientRequestId: request(9),
+      expectedRevision: 1,
+      payloadHash: "e".repeat(64),
+    });
+    expect(await fixture.db.selectFrom("chat_queued_turns").select(["status", "cancelled_at"])
+      .where("id", "=", "qturn_archive_pending").executeTakeFirstOrThrow())
+      .toMatchObject({ status: "cancelled", cancelled_at: expect.anything() });
+  });
+
   it("exports only scope-owned content and necessary content-free metadata", async () => {
     const operation = await repository.applyChatLifecycle({
       scopeId: collaborationIds.scope,

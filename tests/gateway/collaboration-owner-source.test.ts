@@ -9,6 +9,7 @@
  */
 import { createHash } from "node:crypto";
 import { Hono } from "hono";
+import { sql } from "kysely";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   CollaborationExecutionPolicySchema,
@@ -87,8 +88,13 @@ function membershipSource(now: () => Date): OrganizationMembershipSource {
   };
 }
 
+/** Runs inside the organization AI submission lookup so tests can observe when, relative to locks, it happens. */
+let aiSubmissionProbe: (() => Promise<void>) | undefined;
 const organizationAiSubmission: OrganizationAiSubmissionSource = {
-  async resolve() { return aiSubmission; },
+  async resolve() {
+    await aiSubmissionProbe?.();
+    return aiSubmission;
+  },
 };
 
 function readiness(state: AiProviderSnapshotV3["accessSources"][number]["state"] = "ready") {
@@ -150,6 +156,7 @@ describe("S08 owner-selected AI source", () => {
   beforeEach(async () => {
     clock = Date.parse(NOW);
     aiSubmission = "members";
+    aiSubmissionProbe = undefined;
     snapshot = ownerSnapshot();
     members.set(ORG, new Set([collaborationActors.owner, collaborationActors.editor, collaborationActors.viewer, STANDALONE_OWNER]));
     fixture = hasRealPostgres ? await createRealCollaborationTestDatabase() : await createCollaborationTestDatabase();
@@ -380,6 +387,33 @@ describe("S08 owner-selected AI source", () => {
       expect((await policies.resolve(PROJECT_SCOPE))?.source).toEqual({ ...CLAUDE, harness: "claude_code" });
     });
 
+    it.skipIf(!hasRealPostgres)("resolves organization AI submission before taking the scope row lock (real Postgres)", async () => {
+      const policy = await ownerPolicy();
+      const observed: string[] = [];
+      aiSubmissionProbe = async () => {
+        // A NOWAIT lock from another pooled connection fails only while admit() holds the scope row.
+        try {
+          await sql`SELECT id FROM collaboration_scopes WHERE id = ${PROJECT_SCOPE} FOR UPDATE NOWAIT`.execute(fixture.db);
+          observed.push("unlocked");
+        } catch (error: unknown) {
+          observed.push((error as { code?: string }).code === "55P03" ? "locked" : `error:${error instanceof Error ? error.name : "unknown"}`);
+        }
+      };
+      await bindings.admit(admission(collaborationActors.editor, policy.revision));
+      expect(observed).toEqual(["unlocked"]);
+    });
+
+    it.skipIf(!hasRealPostgres)("re-validates the policy revision under the lock after the membership preflight (real Postgres)", async () => {
+      const policy = await ownerPolicy();
+      let changed = false;
+      aiSubmissionProbe = async () => {
+        if (changed) return;
+        changed = true;
+        await ownerPolicy(PROJECT_SCOPE, collaborationActors.owner, CLAUDE, { expectedRevision: policy.revision });
+      };
+      await expect(bindings.admit(admission(collaborationActors.editor, policy.revision))).rejects.toMatchObject({ code: "stale_policy" });
+    });
+
     it("rejects a participant account override and an unlisted model", async () => {
       const policy = await ownerPolicy();
       expect(CollaborationRunSubmitRequestSchema.safeParse({
@@ -503,8 +537,19 @@ describe("S08 owner-selected AI source", () => {
       scopeId: PROJECT_CHAT_SCOPE, chatId: collaborationIds.chat, ownerId: collaborationActors.owner, requestingActorId, driverKind,
     });
 
-    it("returns null without a policy so the runtime keeps its pre-S08 path", async () => {
-      expect(await source().prepare(run(collaborationActors.owner))).toBeNull();
+    it("refuses a scope without a policy as unavailable instead of falling back to the owner's default source", async () => {
+      await expect(source().prepare(run(collaborationActors.owner))).rejects.toMatchObject({ requestState: "unavailable" });
+      await expect(source().prepare(run(collaborationActors.editor))).rejects.toMatchObject({ requestState: "unavailable" });
+    });
+
+    it("reports admission missing without a policy, paused while the source is unavailable and ready otherwise", async () => {
+      const scope = { scopeId: PROJECT_CHAT_SCOPE, ownerId: collaborationActors.owner };
+      expect(await source().admission(scope)).toBe("missing");
+      await ownerPolicy();
+      expect(await source().admission(scope)).toBe("ready");
+      snapshot = withSourceState("src_claude_sub", "unavailable");
+      expect(await source().admission(scope)).toBe("paused");
+      expect(await source().admission({ ...scope, ownerId: collaborationActors.editor })).toBe("missing");
     });
 
     it("maps the owner's Claude source to the kernel access source and pins the policy revision", async () => {
