@@ -472,7 +472,7 @@ function rowToScope(row: {
   id: string;
   owner_id: string;
   organization_id?: string | null;
-  kind: "chat" | "terminal" | "project";
+  kind: "chat" | "terminal" | "project" | "file" | "folder" | "app";
   resource_id: string;
   parent_scope_id: string | null;
   membership_mode: "direct" | "inherited";

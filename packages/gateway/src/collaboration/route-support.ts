@@ -86,6 +86,10 @@ import {
 import type { CollaborationExecutionPolicyRepository } from "./execution-policy.js";
 import { ProjectGitBrokerError, type ProjectGitBroker } from "./project-git-broker.js";
 import type { ProjectAccessReadiness } from "./project-access-readiness.js";
+import { ProjectAppAdapterError } from "./project-app-adapter.js";
+import { ProjectResourceAdapterError } from "./project-adapters.js";
+import { ResourceCatalogError } from "./resource-catalog.js";
+import type { CollaborationResourceServices } from "./resource-routes.js";
 import {
   CollaborationRepositoryError,
   type CollaborationMemberRecord,
@@ -124,6 +128,8 @@ export interface CollaborationRouteOptions {
   projectReadiness?: ProjectAccessReadiness;
   /** S08: owner-selected execution policy repository; routes report unavailable when absent. */
   executionPolicies?: CollaborationExecutionPolicyRepository;
+  /** S12: catalog, file driver and app instances; file/app routes report unavailable when absent. */
+  resources?: CollaborationResourceServices;
   resolveParticipant(actorId: string): Promise<Participant>;
   resolveInvitationIdentifier(identifier: string, organizationId: string): Promise<Participant>;
   invitationResolutionRateLimiter?: RateLimiter;
@@ -518,6 +524,16 @@ export async function handle(c: Context, operation: () => Promise<Response>): Pr
             : error.code === "conflict" || error.code === "invalid_confirmation"
               || error.code === "held" || error.code === "stale_lease" ? 409 : 503;
       return c.json({ error: "Collaboration state changed", code: error.code }, status);
+    }
+    if (error instanceof ResourceCatalogError || error instanceof ProjectResourceAdapterError) {
+      const status = error.code === "invalid" ? 400 : error.code === "not_found" ? 404
+        : error.code === "forbidden" ? 403 : error.code === "conflict" ? 409 : 503;
+      return c.json({ error: status === 400 ? "Invalid collaboration request" : "Collaboration state changed", code: error.code }, status);
+    }
+    if (error instanceof ProjectAppAdapterError) {
+      const status = error.code === "invalid_action" ? 400 : error.code === "not_found" ? 404
+        : error.code === "forbidden" ? 403 : error.code === "conflict" ? 409 : 503;
+      return c.json({ error: status === 400 ? "Invalid collaboration request" : "Collaboration state changed", code: error.code }, status);
     }
     if (error instanceof CollaborationRepositoryError) {
       const status = error.code === "not_found" ? 404

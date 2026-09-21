@@ -1,5 +1,6 @@
 import { migrateExecutionPoliciesV10 } from "./execution-policy.js";
 import { migrateSharedRunLossV11 } from "./shared-run-loss.js";
+import { migrateResourceCatalogV12 } from "./resource-catalog.js";
 import { migrateProjectGitOperationsV13 } from "./project-git-operations.js";
 import { migrateCapabilityGrantsV8 } from "./policy-migrations.js";
 import { migrateRuntimeIdentityV9 } from "./runtime-identity.js";
@@ -465,6 +466,6 @@ export const COLLABORATION_VERSIONED_MIGRATIONS: readonly CollaborationVersioned
   { version: 9, run: migrateRuntimeIdentityV9 },
   { version: 10, run: migrateExecutionPoliciesV10 },
   { version: 11, run: migrateSharedRunLossV11 },
-  // S12 registers version 12 when its resource-adapter layer is restacked above S10.
+  { version: 12, run: migrateResourceCatalogV12 },
   { version: 13, run: migrateProjectGitOperationsV13 },
 ];

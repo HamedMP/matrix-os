@@ -152,10 +152,10 @@ describe("S12 direct resource policy", () => {
         organization_id: ORG,
         invitation_id: null,
         invited_by: collaborationActors.owner,
+        accepted_at: NOW,
         revision: 1,
         expires_at: null,
         joined_at: NOW,
-        created_at: NOW,
         updated_at: NOW,
       }).execute();
     }
@@ -433,17 +433,17 @@ describe("S12 direct resource policy", () => {
       const asset = await signed({ actorId: collaborationActors.viewer, scopeId: APP_SCOPE, method: "GET", path: `/api/collaboration/scopes/${APP_SCOPE}/apps/${APP_ID}/assets/main.js` });
       expect(asset.status).toBe(200);
       expect(asset.headers.get("content-type")).toContain("text/javascript");
-      const view = await signed({ actorId: collaborationActors.viewer, scopeId: APP_SCOPE, method: "POST", path: `/api/collaboration/scopes/${APP_SCOPE}/apps/${APP_ID}/view`, body: { action: { action: "find", app: "board", collection: "cards" } } });
+      const view = await signed({ actorId: collaborationActors.viewer, scopeId: APP_SCOPE, method: "POST", path: `/api/collaboration/scopes/${APP_SCOPE}/apps/${APP_ID}/view`, body: { action: { action: "find", app: "board", table: "cards" } } });
       expect(view.status).toBe(200);
       expect(bridgeCalls).toHaveLength(1);
       expect(bridgeCalls[0]!.namespace).not.toContain(APP_ID);
-      const viewerMutation = await signed({ actorId: collaborationActors.viewer, scopeId: APP_SCOPE, method: "POST", path: `/api/collaboration/scopes/${APP_SCOPE}/apps/${APP_ID}/actions`, body: { clientRequestId: requestId(), expectedRevision: "0", action: { action: "insert", app: "board", collection: "cards", data: { title: "x" } } } });
+      const viewerMutation = await signed({ actorId: collaborationActors.viewer, scopeId: APP_SCOPE, method: "POST", path: `/api/collaboration/scopes/${APP_SCOPE}/apps/${APP_ID}/actions`, body: { clientRequestId: requestId(), expectedRevision: "0", action: { action: "insert", app: "board", table: "cards", data: { title: "x" } } } });
       expect(viewerMutation.status).toBe(403);
       expect(bridgeCalls).toHaveLength(1);
-      const viaView = await signed({ actorId: collaborationActors.viewer, scopeId: APP_SCOPE, method: "POST", path: `/api/collaboration/scopes/${APP_SCOPE}/apps/${APP_ID}/view`, body: { action: { action: "insert", app: "board", collection: "cards", data: { title: "x" } } } });
+      const viaView = await signed({ actorId: collaborationActors.viewer, scopeId: APP_SCOPE, method: "POST", path: `/api/collaboration/scopes/${APP_SCOPE}/apps/${APP_ID}/view`, body: { action: { action: "insert", app: "board", table: "cards", data: { title: "x" } } } });
       expect(viaView.status).toBe(400);
       expect(bridgeCalls).toHaveLength(1);
-      const editorMutation = await signed({ actorId: collaborationActors.editor, scopeId: APP_SCOPE, method: "POST", path: `/api/collaboration/scopes/${APP_SCOPE}/apps/${APP_ID}/actions`, body: { clientRequestId: requestId(), expectedRevision: "0", action: { action: "insert", app: "board", collection: "cards", data: { title: "x" } } } });
+      const editorMutation = await signed({ actorId: collaborationActors.editor, scopeId: APP_SCOPE, method: "POST", path: `/api/collaboration/scopes/${APP_SCOPE}/apps/${APP_ID}/actions`, body: { clientRequestId: requestId(), expectedRevision: "0", action: { action: "insert", app: "board", table: "cards", data: { title: "x" } } } });
       expect(editorMutation.status).toBe(200);
       expect(await editorMutation.json()).toMatchObject({ revision: 1, replayed: false });
       expect(bridgeCalls).toHaveLength(2);
@@ -452,9 +452,9 @@ describe("S12 direct resource policy", () => {
     });
 
     it("serves the project-bound app through the project scope with the same preset rules", async () => {
-      const view = await signed({ actorId: collaborationActors.viewer, scopeId: PROJECT_SCOPE, method: "POST", path: `/api/collaboration/scopes/${PROJECT_SCOPE}/apps/${APP_ID}/view`, body: { action: { action: "count", app: "board", collection: "cards" } } });
+      const view = await signed({ actorId: collaborationActors.viewer, scopeId: PROJECT_SCOPE, method: "POST", path: `/api/collaboration/scopes/${PROJECT_SCOPE}/apps/${APP_ID}/view`, body: { action: { action: "count", app: "board", table: "cards" } } });
       expect(view.status).toBe(200);
-      const mutation = await signed({ actorId: collaborationActors.viewer, scopeId: PROJECT_SCOPE, method: "POST", path: `/api/collaboration/scopes/${PROJECT_SCOPE}/apps/${APP_ID}/actions`, body: { clientRequestId: requestId(), expectedRevision: "0", action: { action: "delete", app: "board", collection: "cards", where: {} } } });
+      const mutation = await signed({ actorId: collaborationActors.viewer, scopeId: PROJECT_SCOPE, method: "POST", path: `/api/collaboration/scopes/${PROJECT_SCOPE}/apps/${APP_ID}/actions`, body: { clientRequestId: requestId(), expectedRevision: "0", action: { action: "delete", app: "board", table: "cards", id: "card_1" } } });
       expect(mutation.status).toBe(403);
     });
   });
