@@ -13,6 +13,7 @@ export const COLLABORATION_INLINE_CONTENT_BYTES = 64 * 1024;
 /** Base64 upload parts stay under the HTTP body limit with headroom for the envelope. */
 export const COLLABORATION_UPLOAD_PART_BYTES = 48 * 1024;
 export const COLLABORATION_UPLOAD_MAX_BYTES = 256 * 1024 * 1024;
+export const COLLABORATION_UPLOAD_MAX_PARTS = 8_192;
 
 export function isSafeCollaborationRelativePath(value: string): boolean {
   if (value.length === 0 || value.length > 4_096 || value.startsWith("/") || value.includes("\\") || value.includes("\0")) {
@@ -92,9 +93,9 @@ export const CollaborationFileActionRequestSchema = z.discriminatedUnion("type",
   z.object({
     type: z.literal("upload_part"),
     uploadId: RequestIdSchema,
-    index: z.number().int().min(0).max(1_000_000),
+    index: z.number().int().min(0).max(COLLABORATION_UPLOAD_MAX_PARTS - 1),
     sha256: Sha256Schema,
-    chunk: z.string().regex(/^[A-Za-z0-9+/]*={0,2}$/).max(Math.ceil(COLLABORATION_UPLOAD_PART_BYTES / 3) * 4),
+    chunk: z.string().min(1).regex(/^[A-Za-z0-9+/]*={0,2}$/).max(Math.ceil(COLLABORATION_UPLOAD_PART_BYTES / 3) * 4),
   }).strict(),
   z.object({
     type: z.literal("upload_commit"),
