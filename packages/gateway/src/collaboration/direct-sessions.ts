@@ -203,6 +203,29 @@ export class DirectSessionService {
     return context;
   }
 
+  /**
+   * Stream admission (events/terminal): a purpose ticket verified by the
+   * caller, a first-frame handshake proving possession of the session's key,
+   * one-use consumption of the ticket, fresh evidence and a counted connection.
+   */
+  async openStream(input: {
+    ticket: CollaborationConnectionTicket;
+    handshake: { sessionId: string; ticketNonce: string; possession: string };
+  }): Promise<{ session: CollaborationDirectSession; release(): void }> {
+    const record = this.live(input.handshake.sessionId);
+    const { ticket } = input;
+    if (ticket.nonce !== input.handshake.ticketNonce || ticket.actorId !== record.session.actorId
+      || ticket.resource.scopeId !== record.session.scopeId || ticket.organizationId !== record.session.organizationId
+      || ticket.proofKeyThumbprint !== record.session.proofKeyThumbprint || ticket.purpose === "direct_session") {
+      throw new DirectAuthError("invalid_ticket", "Stream ticket does not match the session");
+    }
+    this.options.verifier.verifyPossession({ ticket, proofPublicKey: record.proofPublicKey, possession: input.handshake.possession, sessionId: record.session.id });
+    this.options.verifier.consume(ticket);
+    await this.refreshEvidence(record);
+    const connection = this.connections.open({ sessionId: record.session.id });
+    return { session: { ...record.session }, release: connection.release };
+  }
+
   /** Ends every session the denial covers and reports their ids. */
   revoke(denial: Pick<CollaborationDenial, "organizationId" | "actorId" | "scopeId">): string[] {
     const ended: string[] = [];
