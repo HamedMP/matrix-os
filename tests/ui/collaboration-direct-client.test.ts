@@ -9,9 +9,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { COLLABORATION_DIRECT_PROTOCOL_VERSION } from "@matrix-os/contracts";
 import { possessionPayload, verifyEd25519 } from "../../packages/gateway/src/collaboration/direct-crypto.js";
+import { CollaborationRelay } from "../../packages/platform/src/collaboration/relay.js";
 import { CollaborationDirectError, createCollaborationDirectClient } from "../../packages/ui/src/collaboration/direct-client.js";
 import { createCollaborationDirectApi } from "../../packages/ui/src/collaboration/direct-api.js";
-import { CLIENT_ORIGIN, PLATFORM, RELAY, fakeDirectWorld, otherScopeId, scopeId, type Json } from "../helpers/collaboration-direct-world.js";
+import { CLIENT_ORIGIN, PLATFORM, RELAY, actorId, fakeDirectWorld, otherScopeId, runtimeId, scopeId, type Json } from "../helpers/collaboration-direct-world.js";
 
 describe("collaboration direct client", () => {
   let world: ReturnType<typeof fakeDirectWorld>;
@@ -21,6 +22,40 @@ describe("collaboration direct client", () => {
   const client = (extra: Record<string, unknown> = {}) => createCollaborationDirectClient({
     platformBaseUrl: PLATFORM, fetchImpl: world.fetchImpl, webSocketFactory: world.webSocketFactory, clientOrigin: CLIENT_ORIGIN, now: world.now,
     getHeaders: async () => ({ Authorization: "Bearer actor-token" }), ...extra,
+  });
+
+  it("routes session exchange, renewal and close through the real relay's runtime directory", async () => {
+    const home = { runtimeId, origin: "https://owner-home.example" };
+    const relay = new CollaborationRelay({
+      resolveScopeHome: async (id) => id === scopeId ? home : null,
+      resolveInvitationHome: async () => null,
+      resolveRuntimeHome: async () => null,
+      resolveSessionHome: async (id) => id === runtimeId ? home : null,
+      fetchImpl: (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
+        const body = init?.body instanceof ArrayBuffer ? new TextDecoder().decode(init.body) : init?.body;
+        return world.fetchImpl(new URL(url.pathname + url.search, RELAY).href, { ...init, body });
+      }) as typeof fetch,
+    });
+    const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
+      if (url.origin === PLATFORM) return world.fetchImpl(input, init);
+      if (url.origin !== RELAY) return new Response(null, { status: 404 });
+      return relay.forward({
+        actorId, method: init?.method ?? "GET", path: url.pathname, query: url.search.slice(1),
+        headers: new Headers(init?.headers), body: typeof init?.body === "string" ? new TextEncoder().encode(init.body) : null,
+      });
+    }) as typeof fetch;
+    const direct = client({ fetchImpl });
+    await expect(direct.request(scopeId, "GET", `/api/collaboration/scopes/${scopeId}/chat`))
+      .resolves.toMatchObject({ id: "chat-1" });
+    world.advance(245_000);
+    await expect(direct.request(scopeId, "GET", `/api/collaboration/scopes/${scopeId}/chat`))
+      .resolves.toMatchObject({ id: "chat-1" });
+    const lifecycle = world.home.requests.filter((request) => request.url.includes("/direct-sessions"));
+    expect(lifecycle.map((request) => request.method)).toEqual(["POST", "POST"]);
+    direct.close(scopeId);
+    await vi.waitFor(() => expect(world.home.requests.some((request) => request.method === "DELETE" && request.url.includes("/direct-sessions/"))).toBe(true));
   });
 
   it("dials the directory-resolved origin with a one-use ticket and proof of possession, then signs requests", async () => {
