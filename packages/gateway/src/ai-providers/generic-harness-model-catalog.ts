@@ -163,6 +163,28 @@ function mergeProviders(routes: readonly GenericHarnessModelRoute[]): ProviderMo
     .sort((left, right) => left.displayName.localeCompare(right.displayName));
 }
 
+function providerRoutes(providers: readonly ProviderModelProvider[]): GenericHarnessModelRoute[] {
+  return providers.flatMap((provider) => provider.models.map((model) => ({
+    providerId: provider.id,
+    providerDisplayName: provider.displayName,
+    modelId: model.id,
+    modelDisplayName: model.displayName,
+  })));
+}
+
+function includesEveryRoute(
+  providers: readonly ProviderModelProvider[],
+  routes: readonly GenericHarnessModelRoute[],
+): boolean {
+  const modelsByProvider = new Map(
+    providers.map((provider) => [
+      provider.id,
+      new Set(provider.models.map((model) => model.id)),
+    ]),
+  );
+  return routes.every((item) => modelsByProvider.get(item.providerId)?.has(item.modelId) === true);
+}
+
 function projectSource(
   harness: CodingHarness,
   provider: ProviderModelProvider,
@@ -241,28 +263,44 @@ export function createGenericHarnessModelCatalogReader(options: {
             : parseOpenCodeModelCatalog(result.stdout),
         };
       }));
-      const failures: CodingHarness[] = [];
+      const failures = new Set<CodingHarness>();
       const perHarness = new Map<CodingHarness, ProviderModelProvider[]>();
       for (let index = 0; index < results.length; index += 1) {
         const result = results[index]!;
         const harness = enabled[index]!;
         if (result.status === "rejected" || result.value.routes.length === 0) {
           console.warn(`[provider-settings] ${harness} model catalog unavailable`);
-          failures.push(harness);
+          failures.add(harness);
           continue;
         }
-        perHarness.set(harness, mergeProviders(result.value.routes));
+        const harnessProviders = mergeProviders(result.value.routes);
+        if (!includesEveryRoute(harnessProviders, result.value.routes)) {
+          console.warn(`[provider-settings] ${harness} model catalog exceeded provider limits`);
+          failures.add(harness);
+          continue;
+        }
+        perHarness.set(harness, harnessProviders);
       }
-      const providers = mergeProviders([...perHarness.values()].flat().flatMap((provider) =>
-        provider.models.map((model) => ({
-          providerId: provider.id,
-          providerDisplayName: provider.displayName,
-          modelId: model.id,
-          modelDisplayName: model.displayName,
-        }))));
+      let providers: ProviderModelProvider[] = [];
+      const acceptedHarnesses = new Set<CodingHarness>();
+      for (const [harness, harnessProviders] of perHarness) {
+        const candidate = mergeProviders([
+          ...providerRoutes(providers),
+          ...providerRoutes(harnessProviders),
+        ]);
+        if (!includesEveryRoute(candidate, providerRoutes(harnessProviders))) {
+          console.warn(`[provider-settings] ${harness} model catalog exceeded shared limits`);
+          failures.add(harness);
+          continue;
+        }
+        providers = candidate;
+        acceptedHarnesses.add(harness);
+      }
       const accessSources = [...perHarness].flatMap(([harness, harnessProviders]) =>
-        harnessProviders.map((provider) => projectSource(harness, provider, currentTime)));
-      const value = { providers, accessSources, failures };
+        acceptedHarnesses.has(harness)
+          ? harnessProviders.map((provider) => projectSource(harness, provider, currentTime))
+          : []);
+      const value = { providers, accessSources, failures: [...failures] };
       cached = { expiresAt: currentTime.getTime() + CACHE_TTL_MS, value };
       return value;
     },

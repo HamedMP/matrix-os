@@ -121,4 +121,31 @@ not a model
     expect(catalog.providers).toHaveLength(1);
     expect(catalog.providers[0]!.models).toHaveLength(256);
   });
+
+  it("fails a harness closed when the shared provider cap omits its discovered routes", async () => {
+    const piModels = Array.from(
+      { length: 24 },
+      (_, index) => `pi-provider-${index} model-${index}`,
+    ).join("\n");
+    const openCodeModels = [
+      "opencode-provider-0/model-0",
+      "opencode-provider-1/model-1",
+    ].join("\n");
+    const reader = createGenericHarnessModelCatalogReader({
+      homePath: "/home/matrix/home",
+      enabledHarnesses: ["pi", "opencode"],
+      run: vi.fn(async (command: string) => ({
+        stdout: command === "opencode" ? openCodeModels : piModels,
+        stderr: "",
+      })),
+    });
+
+    const catalog = await reader.getCatalog({ refresh: true });
+    const visibleProviderIds = new Set(catalog.providers.map((provider) => provider.id));
+
+    expect(catalog.providers).toHaveLength(24);
+    expect(catalog.accessSources.every((source) => visibleProviderIds.has(source.providerId))).toBe(true);
+    expect(catalog.accessSources).not.toContainEqual(expect.objectContaining({ harness: "opencode" }));
+    expect(catalog.failures).toEqual(["opencode"]);
+  });
 });
