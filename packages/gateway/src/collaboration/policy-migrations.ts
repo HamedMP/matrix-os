@@ -156,6 +156,23 @@ export async function dispositionLegacyMembers(
         .where("state", "in", ["pending", "active"])
         .executeTakeFirst();
       if (covered) {
+        // Already governed by a live grant: retire the legacy row without a second grant so the
+        // batch always makes progress and `remaining` reaches zero.
+        const retiredCovered = await trx.updateTable("collaboration_members").set({
+          status: "revoked",
+          dispositioned_at: now,
+          revision: Number(row.revision) + 1,
+          updated_at: now,
+        }).where("scope_id", "=", input.scopeId)
+          .where("actor_id", "=", row.actor_id)
+          .where("revision", "=", Number(row.revision))
+          .returning("actor_id")
+          .executeTakeFirst();
+        if (!retiredCovered) throw new CollaborationRepositoryError("conflict", "Membership revision changed");
+        await appendMutationRecords(trx, {
+          scope, actorId: input.actorId, action: "grant.legacy_retired", recipients: [{ actorId: row.actor_id }],
+          discoveryState: "accepted", publishDirectory: false, now, reasonCode: "covered_by_grant",
+        });
         skipped += 1;
         continue;
       }

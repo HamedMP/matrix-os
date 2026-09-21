@@ -37,6 +37,8 @@ import {
 export const MAX_GRANTS_PER_SCOPE = 100;
 /** Bound on any in-memory participant/activation enumeration; larger audiences page through listActivations. */
 export const MAX_LISTED_PARTICIPANTS = 1_000;
+/** Scopes handled per departure batch; endActorGrants keeps paging until no qualifying scope remains. */
+export const DEPARTURE_SCOPE_BATCH_SIZE = 100;
 
 interface MutationKey {
   scopeId: string;
@@ -265,8 +267,9 @@ export class CollaborationCapabilityRepository {
   /**
    * Accept: for a member grant, the conditional pending→active update; for an
    * organization grant, the atomic per-member activation upsert that inserts
-   * a new row or reactivates a declined one with fresh decision metadata, and
-   * is a no-op when already active. The grant row is locked so a concurrent
+   * a new row, reactivates a declined one, or refreshes a row recorded under
+   * an older membership epoch, always with fresh decision metadata; it is a
+   * no-op when already active under the current epoch. The grant row is locked so a concurrent
    * revocation serializes before or after the whole decision.
    */
   async acceptGrant(input: ActivationDecisionInput): Promise<{ state: "active" }> {
@@ -290,6 +293,7 @@ export class CollaborationCapabilityRepository {
         ON CONFLICT (grant_id, actor_id) DO UPDATE
           SET state = 'active', decided_at = EXCLUDED.decided_at, membership_evidence_epoch = EXCLUDED.membership_evidence_epoch
           WHERE collaboration_grant_activations.state = 'declined'
+             OR collaboration_grant_activations.membership_evidence_epoch < EXCLUDED.membership_evidence_epoch
         RETURNING (xmax = 0) AS inserted
       `.execute(trx);
       return upserted.rows.length > 0;
@@ -373,18 +377,41 @@ export class CollaborationCapabilityRepository {
    * scope row locked, with an audit record per ended grant. S03 calls this from
    * the membership projection when it observes removal; it is idempotent.
    */
-  async endActorGrants(input: { organizationId: string; actorId: string }): Promise<{ ended: number }> {
+  async endActorGrants(input: { organizationId: string; actorId: string; scopeBatchSize?: number }): Promise<{ ended: number; scopes: number }> {
     const now = this.options.now().toISOString();
-    const scopes = await this.db.selectFrom("collaboration_grants").select("scope_id").distinct()
-      .where("organization_id", "=", input.organizationId)
-      .where((eb) => eb.or([
-        eb.and([eb("audience_kind", "=", "member"), eb("audience_actor_id", "=", input.actorId), eb("state", "in", ["pending", "active"])]),
-        eb("audience_kind", "=", "organization"),
-      ]))
-      .limit(1_000).execute();
+    const batchSize = Math.max(1, Math.min(input.scopeBatchSize ?? DEPARTURE_SCOPE_BATCH_SIZE, DEPARTURE_SCOPE_BATCH_SIZE));
     let ended = 0;
-    for (const { scope_id: scopeId } of scopes) {
-      ended += await this.db.transaction().execute(async (trx) => {
+    let scopesTouched = 0;
+    let after: string | null = null;
+    // Keyset-page through every scope that still holds a live member grant or an activation for this actor;
+    // each batch is re-queried after processing so completion is reported only when nothing qualifies.
+    for (;;) {
+      const batch: Array<{ scope_id: string }> = await this.db.selectFrom("collaboration_grants as g")
+        .select("g.scope_id").distinct()
+        .where("g.organization_id", "=", input.organizationId)
+        .where((eb) => eb.or([
+          eb.and([eb("g.audience_kind", "=", "member"), eb("g.audience_actor_id", "=", input.actorId), eb("g.state", "in", ["pending", "active"])]),
+          eb.and([
+            eb("g.audience_kind", "=", "organization"),
+            eb.exists(eb.selectFrom("collaboration_grant_activations as a").select("a.grant_id")
+              .whereRef("a.grant_id", "=", "g.id").where("a.actor_id", "=", input.actorId)),
+          ]),
+        ]))
+        .$if(after !== null, (qb) => qb.where("g.scope_id", ">", after!))
+        .orderBy("g.scope_id").limit(batchSize).execute();
+      if (batch.length === 0) break;
+      for (const { scope_id: scopeId } of batch) {
+        scopesTouched += 1;
+        ended += await this.endActorGrantsInScope(scopeId, input, now);
+      }
+      after = batch[batch.length - 1]!.scope_id;
+    }
+    return { ended, scopes: scopesTouched };
+  }
+
+  private async endActorGrantsInScope(scopeId: string, input: { actorId: string }, now: string): Promise<number> {
+    {
+      return this.db.transaction().execute(async (trx) => {
         const scope = await trx.selectFrom("collaboration_scopes").selectAll().where("id", "=", scopeId).forUpdate().executeTakeFirst();
         if (!scope) return 0;
         const revoked = await trx.updateTable("collaboration_grants").set({ state: "revoked", revoked_at: now, updated_at: now, revision: sql<number>`revision + 1` })
@@ -404,7 +431,6 @@ export class CollaborationCapabilityRepository {
         return count;
       });
     }
-    return { ended };
   }
 
   /** Lazily marks expired grants; effective access treats expiry by timestamp regardless. */
