@@ -24,7 +24,7 @@ import { createOrganizationPrecondition } from "../../packages/gateway/src/colla
 import { DirectAuthError, DirectReplayCache, DirectTicketVerifier } from "../../packages/gateway/src/collaboration/direct-auth.js";
 import { DirectSessionService } from "../../packages/gateway/src/collaboration/direct-sessions.js";
 import { requestSigningPayload, sha256Hex } from "../../packages/gateway/src/collaboration/direct-crypto.js";
-import { CollaborationControlClient } from "../../packages/gateway/src/collaboration/control-client.js";
+import { CollaborationControlClient, loadDefaultConnector } from "../../packages/gateway/src/collaboration/control-client.js";
 import {
   collaborationActors,
   collaborationIds,
@@ -89,11 +89,11 @@ describe("S05 direct sessions on the home", () => {
   let members: Set<string>;
   let service: DirectSessionService;
   let authority: CollaborationAuthority;
-  let generation: number;
+  let controlFresh: boolean;
 
   beforeEach(async () => {
     clock = new Date(now);
-    generation = 1;
+    controlFresh = true;
     fixture = await createCollaborationTestDatabase();
     await bootstrapChatDatabase(fixture.db as never);
     await bootstrapCollaborationDatabase(fixture.db);
@@ -119,7 +119,7 @@ describe("S05 direct sessions on the home", () => {
     const verifier = new DirectTicketVerifier({
       runtimeId,
       platformKeys: () => [{ keyId: "platform-key-1", algorithm: "ed25519", publicKey: platformPublicKey }],
-      authorityGeneration: () => generation,
+      controlFresh: () => controlFresh,
       allowedClientOrigins: [clientOrigin],
       replay: new DirectReplayCache({ maxEntries: 4, now: () => clock }),
       now: () => clock,
@@ -250,6 +250,56 @@ describe("S05 direct sessions on the home", () => {
     await service.create(sessionRequest(collaborationActors.owner).body);
     await service.create(sessionRequest(collaborationActors.owner).body);
     await expect(service.create(sessionRequest(collaborationActors.owner).body)).rejects.toMatchObject({ code: "unavailable" });
+  });
+
+  it("denies every exchange while the control snapshot is stale, and resource generations are checked against the scope", async () => {
+    controlFresh = false;
+    await expect(service.create(sessionRequest(collaborationActors.editor).body)).rejects.toMatchObject({ code: "unavailable" });
+    controlFresh = true;
+    await fixture.db.updateTable("collaboration_scopes").set({ authority_generation: 4 }).where("id", "=", scopeId).execute();
+    await expect(service.create(sessionRequest(collaborationActors.editor).body)).rejects.toMatchObject({ code: "stale_generation" });
+    await expect(service.create(sessionRequest(collaborationActors.editor, clientKey(), { overrides: { runtime: { runtimeId: logicalRuntimeId, authorityGeneration: 4 } } }).body)).resolves.toMatchObject({ authorityGeneration: 4 });
+  });
+
+  it("spends the ticket's signed maxActions per authorized request and stream input, then denies and ends the session", async () => {
+    const { body, key } = sessionRequest(collaborationActors.editor, clientKey(), { overrides: { maxActions: 2 } });
+    const session = await service.create(body);
+    const sign = () => {
+      const signature = { protocolVersion: 2, sessionId: session.id, method: "GET", path: `/api/collaboration/scopes/${scopeId}`, query: "", bodyDigest: sha256Hex(new Uint8Array()), conditionalHeadersDigest: sha256Hex(new Uint8Array()), nonce: randomUUID().replaceAll("-", ""), issuedAt: clock.toISOString() };
+      return { sessionId: session.id, signature, proof: key.sign(requestSigningPayload(signature)), method: "GET" as const, path: signature.path, query: "", body: new Uint8Array(), action: "read" as const };
+    };
+    expect(service.actionsRemaining(session.id)).toBe(2);
+    await expect(service.authorize(sign())).resolves.toBeTruthy();
+    expect(() => service.spendStreamInput(session.id)).not.toThrow();
+    expect(service.actionsRemaining(session.id)).toBe(0);
+    const ended: string[] = [];
+    service.subscribeEnded((s, reason) => { ended.push(`${s.id}:${reason}`); });
+    await expect(service.authorize(sign())).rejects.toMatchObject({ code: "limit" });
+    expect(ended).toEqual([`${session.id}:exhausted`]);
+    expect(service.describe(session.id)).toBeNull();
+  });
+
+  it("re-checks the stream ticket's expiry when the possession frame is consumed and notifies subscribers on denial", async () => {
+    const { body, key } = sessionRequest(collaborationActors.editor);
+    const session = await service.create(body);
+    const streamTicket = ticketFor({ actorId: collaborationActors.editor, key, purpose: "events" });
+    const verified = service["options"].verifier.verifyTicket(streamTicket);
+    clock = new Date(clock.getTime() + 31_000);
+    await expect(service.openStream({ ticket: verified, handshake: { sessionId: session.id, ticketNonce: verified.nonce, possession: key.sign(possessionPayload({ ticketNonce: verified.nonce, purpose: "events", sessionId: session.id })) } }))
+      .rejects.toMatchObject({ code: "invalid_ticket" });
+    const fresh = service["options"].verifier.verifyTicket(ticketFor({ actorId: collaborationActors.editor, key, purpose: "events", issuedAt: clock }));
+    const opened = await service.openStream({ ticket: fresh, handshake: { sessionId: session.id, ticketNonce: fresh.nonce, possession: key.sign(possessionPayload({ ticketNonce: fresh.nonce, purpose: "events", sessionId: session.id })) } });
+    const ended: string[] = [];
+    const unsubscribe = service.subscribeEnded((s, reason) => { ended.push(`${s.id}:${reason}`); });
+    service.revoke({ actorId: collaborationActors.editor });
+    expect(ended).toEqual([`${session.id}:revoked`]);
+    unsubscribe();
+    opened.release();
+  });
+
+  it("resolves the ws-backed control connector under ESM", async () => {
+    const connector = await loadDefaultConnector();
+    expect(typeof connector).toBe("function");
   });
 
   it("drains every session and connection on shutdown", async () => {
