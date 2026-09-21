@@ -21,6 +21,6 @@ export function deriveChatPermissions(scope: CollaborationScope): ChatPermission
     composerExplanation: canDiscuss
       ? "Messages are shared with everyone in this Chat."
       : "Viewers can read this Chat but cannot post messages.",
-    aiExplanation: "AI requests are unavailable in this shared Chat until the owner's computer is ready for shared execution.",
+    aiExplanation: "AI requests are unavailable in shared Chats during this milestone.",
   };
 }
