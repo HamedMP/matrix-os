@@ -517,6 +517,47 @@ describe("platform speech service", () => {
     });
   });
 
+  it("lets a committed cancellation beat exact completion after the final abort check", async () => {
+    const caller = new AbortController();
+    const repository = createSpeechOperationsRepository({ db, now: () => now });
+    const cancellationCommitted = Promise.withResolvers<void>();
+    const operations: SpeechOperationsRepository = {
+      ...repository,
+      cancel: vi.fn(async (...args) => {
+        const cancelled = await repository.cancel(...args);
+        cancellationCommitted.resolve();
+        return cancelled;
+      }),
+      complete: vi.fn(async (...args) => {
+        caller.abort();
+        await cancellationCommitted.promise;
+        return repository.complete(...args);
+      }),
+    };
+    const { speech, funding } = service({ operations });
+
+    await expect(speech.transcribe({
+      identity,
+      requestId,
+      sourceKind: "dictation",
+      audio: oneSecondWav(),
+      mediaType: "audio/wav",
+      signal: caller.signal,
+    })).rejects.toMatchObject({ code: "cancelled" });
+    expect(operations.cancel).toHaveBeenCalledTimes(1);
+    expect(operations.complete).toHaveBeenCalledTimes(2);
+    expect(funding.release).not.toHaveBeenCalled();
+    expect(funding.settle).toHaveBeenCalledTimes(1);
+    expect(funding.settle).toHaveBeenCalledWith(expect.anything(), "funding_1", {
+      mode: "conservative",
+    });
+    expect(await speech.status(identity, requestId)).toMatchObject({
+      executionState: "uncertain",
+      cancellationRequested: true,
+      outcomeCode: "cancelled",
+    });
+  });
+
   it("preserves adapter deadline semantics through conservative settlement", async () => {
     const adapter: FileTranscriptionAdapter = {
       id: "openai-file",

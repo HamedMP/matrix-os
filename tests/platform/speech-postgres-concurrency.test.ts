@@ -2,7 +2,10 @@ import { randomUUID } from "node:crypto";
 import pg from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { insertUserMachine, createPlatformDb, type PlatformDB } from "../../packages/platform/src/db.js";
-import { createSpeechOperationsRepository } from "../../packages/platform/src/speech/operations.js";
+import {
+  SpeechOperationStateError,
+  createSpeechOperationsRepository,
+} from "../../packages/platform/src/speech/operations.js";
 import {
   createPlatformSpeechService,
   type PlatformSpeechPolicy,
@@ -180,6 +183,51 @@ describePostgres("speech operation PostgreSQL concurrency", () => {
       executionStarted: true,
     });
     expect(releases).toBe(0);
+  });
+
+  it("lets committed cancellation beat an exact completion waiting on its row lock", async () => {
+    const requestId = `sp_${now.getTime()}_cancelbeatscomplete`;
+    const repoA = createSpeechOperationsRepository({ db: dbA, now: () => now });
+    const repoB = createSpeechOperationsRepository({ db: dbB, now: () => now });
+    await repoA.admit(admission(requestId), async () => ({ reservationId: "funding_3", reservedMicrousd: 20 }));
+    await repoA.claimDispatch(identity, requestId);
+    const cancellationUpdated = deferred<void>();
+    const allowCancellationCommit = deferred<void>();
+    const cancelling = dbA.transaction(async (trx) => {
+      const transactionalRepo = createSpeechOperationsRepository({ db: trx, now: () => now });
+      const cancelled = await transactionalRepo.cancel(identity, requestId, async () => undefined);
+      cancellationUpdated.resolve();
+      await allowCancellationCommit.promise;
+      return cancelled;
+    });
+    await cancellationUpdated.promise;
+    let exactSettlements = 0;
+    const completing = repoB.complete(identity, requestId, {
+      executionState: "succeeded",
+      outcomeCode: "transcript",
+      actualCostMicrousd: 15,
+    }, async () => { exactSettlements += 1; });
+    const completionExpectation = expect(completing).rejects.toBeInstanceOf(SpeechOperationStateError);
+    await waitForLock("speech-review-b");
+    allowCancellationCommit.resolve();
+
+    await expect(cancelling).resolves.toMatchObject({
+      executionState: "dispatching",
+      cancellationRequested: true,
+    });
+    await completionExpectation;
+    expect(exactSettlements).toBe(0);
+    let conservativeSettlements = 0;
+    await expect(repoB.complete(identity, requestId, {
+      executionState: "uncertain",
+      outcomeCode: "cancelled",
+      actualCostMicrousd: 20,
+    }, async () => { conservativeSettlements += 1; })).resolves.toMatchObject({
+      executionState: "uncertain",
+      cancellationRequested: true,
+      outcomeCode: "cancelled",
+    });
+    expect(conservativeSettlements).toBe(1);
   });
 
   it("rejects a raced adapter/model binding and only invokes the persisted adapter", async () => {

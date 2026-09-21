@@ -320,6 +320,11 @@ export function createSpeechOperationsRepository(options: {
       if (row.execution_state !== "dispatching" || !row.funding_reservation_id) {
         throw new SpeechOperationStateError();
       }
+      const completesCancellation = completion.executionState === "uncertain"
+        && completion.outcomeCode === "cancelled";
+      if (row.cancellation_requested && !completesCancellation) {
+        throw new SpeechOperationStateError();
+      }
       await settleFunding(
         trx.executor as Transaction<PlatformDatabase>,
         row.funding_reservation_id,
