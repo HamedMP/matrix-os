@@ -5,8 +5,11 @@
  * control authority pushes signed assertions (denials, generations) and
  * receives fence acknowledgements. The stream carries no customer payload.
  * Admission needs the enrolled runtime identity plus a one-use, short-lived
- * upgrade ticket handed out by the registration route. Connections and
- * pending tickets are bounded; shutdown drains every connection.
+ * upgrade ticket handed out by the registration route. Every attached socket
+ * receives a periodic `generation` keepalive (at most every 10 s) that the
+ * home acknowledges; the acknowledgement is the liveness signal the ticket
+ * issuer reads. Connections and pending tickets are bounded; shutdown drains
+ * every connection.
  */
 import { randomBytes } from "node:crypto";
 
@@ -25,7 +28,9 @@ export interface ControlUpgradeTicketStore {
 }
 import {
   COLLABORATION_DIRECT_LIMITS,
+  COLLABORATION_DIRECT_PROTOCOL_VERSION,
   CollaborationControlAckSchema,
+  CollaborationControlAssertionSchema,
   type CollaborationControlAck,
   type CollaborationControlAssertion,
 } from "@matrix-os/contracts";
@@ -33,6 +38,14 @@ import {
 const DEFAULT_TICKET_TTL_MS = COLLABORATION_DIRECT_LIMITS.ticketTtlSeconds * 1_000;
 const DEFAULT_MAX_CONNECTIONS = 4_096;
 const MAX_FRAME_BYTES = COLLABORATION_DIRECT_LIMITS.wsFrameBytes;
+/**
+ * Keepalive period: half the home's evidence refresh target so the home's
+ * fixed control snapshot (organizationEvidenceTtlSeconds) is refreshed by an
+ * inbound frame well before it lapses, and the home's acknowledgement keeps
+ * `last_control_at` inside the issuer's liveness window.
+ */
+const DEFAULT_KEEPALIVE_INTERVAL_MS = COLLABORATION_DIRECT_LIMITS.evidenceRefreshTargetSeconds * 1_000;
+const MAX_KEEPALIVE_INTERVAL_MS = 10_000;
 
 export interface ControlSocket {
   send(value: string): void;
@@ -57,12 +70,14 @@ export class CollaborationControlStream {
   private readonly now: () => Date;
   private readonly ticketTtlMs: number;
   private readonly maxConnections: number;
-  private readonly connections = new Map<string, { socket: ControlSocket; close(): void }>();
+  private readonly connections = new Map<string, { socket: ControlSocket; generation: number; close(): void }>();
   private closed = false;
   private readonly createToken: () => string;
   private readonly controlAuthority: ControlAuthorityPort;
   private readonly tickets: ControlUpgradeTicketStore;
   private readonly onAttach: ((runtimeId: string) => Promise<void>) | undefined;
+  private readonly keepaliveIntervalMs: number;
+  private readonly authorityGeneration: ((runtimeId: string) => Promise<number | null>) | undefined;
 
   constructor(options: {
     controlAuthority: ControlAuthorityPort;
@@ -70,6 +85,12 @@ export class CollaborationControlStream {
     tickets: ControlUpgradeTicketStore;
     /** Liveness hook (attach and acknowledgement); the ticket issuer reads it as home health. */
     onAttach?(runtimeId: string): Promise<void>;
+    /**
+     * Periodic `generation` keepalive per attached socket (at most every 10 s). The home
+     * acknowledges it, which refreshes its control snapshot and this side's liveness.
+     * `authorityGeneration` reads the runtime's recorded generation once at attach.
+     */
+    keepalive?: { intervalMs?: number; authorityGeneration(runtimeId: string): Promise<number | null> };
     now?: () => Date;
     ticketTtlMs?: number;
     maxConnections?: number;
@@ -82,6 +103,8 @@ export class CollaborationControlStream {
     this.controlAuthority = options.controlAuthority;
     this.tickets = options.tickets;
     this.onAttach = options.onAttach;
+    this.keepaliveIntervalMs = Math.min(MAX_KEEPALIVE_INTERVAL_MS, Math.max(1, options.keepalive?.intervalMs ?? DEFAULT_KEEPALIVE_INTERVAL_MS));
+    this.authorityGeneration = options.keepalive?.authorityGeneration;
     options.controlAuthority.registerTransport((runtimeId, assertion) => this.deliver(runtimeId, assertion), () => this.connectedRuntimes());
   }
 
@@ -104,9 +127,13 @@ export class CollaborationControlStream {
     const previous = this.connections.get(runtimeId);
     if (previous) previous.close();
     if (this.connections.size >= this.maxConnections) throw new Error("Control stream connection limit reached");
+    let keepalive: ReturnType<typeof setInterval> | undefined;
     const entry = {
       socket,
+      generation: 1,
       close: () => {
+        if (keepalive) clearInterval(keepalive);
+        keepalive = undefined;
         if (this.connections.get(runtimeId) === entry) this.connections.delete(runtimeId);
         try {
           socket.close(1001, "Control stream closed");
@@ -117,6 +144,24 @@ export class CollaborationControlStream {
     };
     this.connections.set(runtimeId, entry);
     this.touch(runtimeId);
+    if (this.authorityGeneration) {
+      this.authorityGeneration(runtimeId).then((generation) => {
+        if (generation !== null && generation > entry.generation) entry.generation = generation;
+      }).catch((error: unknown) => {
+        console.warn("[collaboration-control-stream] generation lookup failed", error instanceof Error ? error.name : "UnknownError");
+      });
+      keepalive = setInterval(() => {
+        if (this.closed || this.connections.get(runtimeId) !== entry) {
+          entry.close();
+          return;
+        }
+        this.deliver(runtimeId, { protocolVersion: COLLABORATION_DIRECT_PROTOCOL_VERSION, type: "generation", runtimeId, authorityGeneration: entry.generation })
+          .catch((error: unknown) => {
+            console.warn("[collaboration-control-stream] keepalive failed", error instanceof Error ? error.name : "UnknownError");
+          });
+      }, this.keepaliveIntervalMs);
+      keepalive.unref?.();
+    }
     return {
       runtimeId,
       receive: async (raw) => {
@@ -141,8 +186,13 @@ export class CollaborationControlStream {
   async deliver(runtimeId: string, assertion: CollaborationControlAssertion): Promise<void> {
     const entry = this.connections.get(runtimeId);
     if (!entry) throw new ControlStreamNotConnectedError(runtimeId);
+    const frame = JSON.stringify(CollaborationControlAssertionSchema.parse(assertion));
+    if (Buffer.byteLength(frame) > MAX_FRAME_BYTES) throw new Error("Control frame too large");
+    if (assertion.type === "generation" && assertion.runtimeId === runtimeId && assertion.authorityGeneration > entry.generation) {
+      entry.generation = assertion.authorityGeneration;
+    }
     try {
-      entry.socket.send(JSON.stringify(assertion));
+      entry.socket.send(frame);
     } catch (error: unknown) {
       entry.close();
       throw error;

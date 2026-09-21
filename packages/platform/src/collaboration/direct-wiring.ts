@@ -79,6 +79,7 @@ export async function createPlatformCollaborationDirect(options: {
     controlAuthority: options.controlAuthority,
     tickets: endpoints,
     onAttach: (runtimeId) => endpoints.heartbeat(runtimeId),
+    keepalive: { authorityGeneration: async (runtimeId) => (await endpoints.resolve(runtimeId))?.authorityGeneration ?? null },
     now: options.now,
   });
   const upgrade = createCollaborationControlUpgradeHandler({ stream: controlStream, authenticateRuntime: options.authenticateRuntime });
