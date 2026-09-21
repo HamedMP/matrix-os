@@ -199,7 +199,10 @@ describe("Cloudflare funded relay control-plane ordering", () => {
           });
           const authorized = authorizationResponse("request_123");
           authorized.reservation.reservedMicrousd = reservedMicrousd;
-          if (reservationMode === "usage") Object.assign(authorized.reservation, { billingMode: "usage" });
+          if (reservationMode === "usage") Object.assign(authorized.reservation, {
+            billingMode: "usage",
+            maxCostMicrousd: reservedMicrousd,
+          });
           return json(authorized);
         }
         if (action === "start") {
