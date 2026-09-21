@@ -57,7 +57,7 @@ function setup(role: CollaborationRole, policy: { taskProfile: "host_shell" | "s
   return { actorId, control, dispatcher, runtime };
 }
 
-const acquire = { type: "acquire" as const, clientRequestId: requestId, incarnation };
+const acquire = { type: "acquire" as const, clientRequestId: requestId, incarnation, connectionId: "c1" };
 
 describe("terminal task profile", () => {
   it("lets a Contributor control a sandboxed terminal but not a host shell without the owner's explicit grant", () => {
@@ -69,13 +69,15 @@ describe("terminal task profile", () => {
   });
 
   it("derives the profile from the session's sandbox binding and never from a prompt or a flag alone", () => {
-    expect(resolveTerminalTaskPolicy({})).toEqual({ taskProfile: "host_shell", contributorControl: false });
-    expect(resolveTerminalTaskPolicy({ contributorControl: true })).toEqual({ taskProfile: "host_shell", contributorControl: true });
+    // An owner-shared host shell is the owner's explicit grant; the owner may withdraw Contributor control per terminal.
+    expect(resolveTerminalTaskPolicy({})).toEqual({ taskProfile: "host_shell", contributorControl: true });
+    expect(resolveTerminalTaskPolicy({ contributorControl: false })).toEqual({ taskProfile: "host_shell", contributorControl: false });
     expect(resolveTerminalTaskPolicy({
       sandbox: { profileId: "scope-runtime-terminal-v1", policyDigest: SCOPE_RUNTIME_SANDBOX_POLICY_DIGEST },
-    })).toEqual({ taskProfile: "sandbox_shell", contributorControl: false });
+    })).toEqual({ taskProfile: "sandbox_shell", contributorControl: true });
+    // A sandbox binding with a foreign policy digest is not a sandbox; it stays a host shell and keeps the owner's setting.
     expect(resolveTerminalTaskPolicy({
-      sandbox: { profileId: "scope-runtime-terminal-v1", policyDigest: "b".repeat(64) },
+      sandbox: { profileId: "scope-runtime-terminal-v1", policyDigest: "b".repeat(64) }, contributorControl: false,
     })).toEqual({ taskProfile: "host_shell", contributorControl: false });
   });
 });
@@ -140,7 +142,7 @@ describe("revocation enforcer", () => {
     await expect(held.dispatch({ scopeId, actorId, connectionId: "c1", action: {
       type: "input", clientRequestId: requestId, incarnation, connectionId: "c1", leaseEpoch, data: "rm -rf /\n",
     } })).rejects.toBeInstanceOf(CollaborationTerminalDispatcherError);
-    await expect(held.dispatch({ scopeId, actorId, connectionId: "c2", action: acquire })).rejects.toMatchObject({ code: "forbidden" });
+    await expect(held.dispatch({ scopeId, actorId, connectionId: "c2", action: { ...acquire, connectionId: "c2" } })).rejects.toMatchObject({ code: "forbidden" });
     expect(runtime.input).not.toHaveBeenCalled();
 
     // A closed session (normal end) is not a revocation.

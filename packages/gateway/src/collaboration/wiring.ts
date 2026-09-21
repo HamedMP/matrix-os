@@ -48,6 +48,7 @@ import { SharedRunOwnerSource } from "./shared-run-owner-source.js";
 import type { CollaborationChatExecutionAdapter } from "./chat-execution-adapter.js";
 import { CollaborationTerminalAdapter } from "./terminal-adapter.js";
 import { TerminalControlCoordinator } from "./terminal-control.js";
+import { CollaborationRevocationEnforcer } from "./revocation-enforcer.js";
 import { CollaborationTerminalDispatcher } from "./terminal-dispatcher.js";
 import { CollaborationTerminalEventRegistry } from "./terminal-events.js";
 import { registerCollaborationTerminalWebSocketRoute } from "./terminal-websocket-route.js";
@@ -180,6 +181,8 @@ export async function createGatewayCollaboration(options: {
     allowedClientOrigins: options.config.clientOrigins,
     replay: new DirectReplayCache(),
   });
+  // S07 / T039: lease loss releases terminal control, stops bound sandbox runtimes and refuses input.
+  let revocationEnforcer: CollaborationRevocationEnforcer | undefined;
   const directSessions = new DirectSessionService({
     verifier: directVerifier,
     authority,
@@ -192,6 +195,7 @@ export async function createGatewayCollaboration(options: {
       terminalEventRegistry?.notifyRevoked(session.scopeId, session.actorId);
     },
     startTimers: options.startTimers !== false,
+    onEnded: (session, reason) => revocationEnforcer?.onSessionEnded(session, reason),
   });
   if (options.config.ownerId && options.config.relayHandle) {
     controlClient = new CollaborationControlClient({
@@ -375,11 +379,13 @@ export async function createGatewayCollaboration(options: {
         startTimer: options.startTimers,
         onChanged: ({ scopeId }) => terminalEventRegistry?.publishState(scopeId),
       });
+      revocationEnforcer = new CollaborationRevocationEnforcer({ control: terminalControl });
       terminalDispatcher = new CollaborationTerminalDispatcher({
         authority,
         terminal: terminalAdapter,
         control: terminalControl,
         resolveParticipant,
+        revocations: revocationEnforcer,
       });
       terminalEventRegistry = new CollaborationTerminalEventRegistry({
         authorize: (scopeId, actorId) => authority.authorize({ scopeId, actorId, action: "read" }),
