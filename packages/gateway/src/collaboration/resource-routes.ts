@@ -22,6 +22,7 @@ import {
 } from "@matrix-os/contracts";
 import type { Context, Hono } from "hono";
 import { CollaborationAuthorizationError, type AuthorizedCollaborationContext } from "./authority.js";
+import { readDirectCredentials } from "./direct-routes.js";
 import type { AppInstanceAdapter } from "./app-instance-adapter.js";
 import { authorize, exactQuery, handle, readJson, type CollaborationRouteOptions } from "./route-support.js";
 import { createFileActionExecutor, type CollaborationResourceDriver } from "./resource-actions.js";
@@ -67,14 +68,80 @@ function mutationAction(context: Pick<AuthorizedCollaborationContext, "resourceK
   return context.resourceKind === "project" ? "mutate_project" : "mutate_resource";
 }
 
-function streamResponse(c: Context, input: { stream: ReadableStream<Uint8Array>; size: number; contentType?: string }, fileName: string): Response {
-  if (input.size > MAX_STREAM_BYTES) throw new ResourceCatalogError("unavailable");
+/** Closes a stream on overrun, short read, or lease loss; each transfer has a five-second watchdog. */
+export function watchResourceStream(
+  source: ReadableStream<Uint8Array>,
+  declaredSize: number,
+  leaseActive: () => boolean,
+): ReadableStream<Uint8Array> {
+  const reader = source.getReader();
+  let received = 0;
+  let closed = false;
+  let watchdog: ReturnType<typeof setInterval> | undefined;
+  const error = new Error("Shared resource stream unavailable");
+  const stop = (controller: ReadableStreamDefaultController<Uint8Array>) => {
+    if (closed) return;
+    closed = true;
+    if (watchdog) clearInterval(watchdog);
+    controller.error(error);
+    void reader.cancel().catch((cancelError: unknown) => {
+      console.warn("[collaboration-resources] stream cancel failed", cancelError instanceof Error ? cancelError.name : "UnknownError");
+    });
+  };
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      watchdog = setInterval(() => {
+        if (!leaseActive()) stop(controller);
+      }, 5_000);
+      watchdog.unref();
+    },
+    async pull(controller) {
+      if (!leaseActive()) { stop(controller); return; }
+      try {
+        const next = await reader.read();
+        if (closed) return;
+        if (next.done) {
+          if (received !== declaredSize) { stop(controller); return; }
+          closed = true;
+          if (watchdog) clearInterval(watchdog);
+          controller.close();
+          return;
+        }
+        received += next.value.byteLength;
+        if (received > declaredSize || received > MAX_STREAM_BYTES) { stop(controller); return; }
+        controller.enqueue(next.value);
+      } catch (readError: unknown) {
+        console.warn("[collaboration-resources] stream read failed", readError instanceof Error ? readError.name : "UnknownError");
+        stop(controller);
+      }
+    },
+    async cancel(reason) {
+      closed = true;
+      if (watchdog) clearInterval(watchdog);
+      await reader.cancel(reason);
+    },
+  });
+}
+
+function streamResponse(
+  c: Context,
+  input: { stream: ReadableStream<Uint8Array>; size: number; contentType?: string },
+  fileName: string,
+  options: CollaborationRouteOptions,
+): Response {
+  if (!Number.isSafeInteger(input.size) || input.size < 0 || input.size > MAX_STREAM_BYTES) throw new ResourceCatalogError("unavailable");
+  const credentials = readDirectCredentials(c);
+  const leaseActive = () => {
+    if (!credentials) return true;
+    const session = options.directSessions?.describe(credentials.sessionId);
+    return Boolean(session && new Date(session.evidenceExpiresAt).getTime() > Date.now());
+  };
   c.header("Content-Type", input.contentType && /^[a-z0-9.+-]+\/[a-z0-9.+-]+$/i.test(input.contentType) ? input.contentType : "application/octet-stream");
   c.header("Content-Length", String(input.size));
   c.header("Content-Disposition", `attachment; filename="${encodeURIComponent(fileName)}"`);
   c.header("X-Content-Type-Options", "nosniff");
   c.header("Cache-Control", "private, no-store");
-  return c.body(input.stream);
+  return c.body(watchResourceStream(input.stream, input.size, leaseActive));
 }
 
 export function registerResourceRoutes(routes: Hono, options: CollaborationRouteOptions): void {
@@ -99,7 +166,7 @@ export function registerResourceRoutes(routes: Hono, options: CollaborationRoute
     if (entry.kind !== "file") throw new ResourceCatalogError("not_found");
     const namespace = await resources.catalog.namespaceForScope(context);
     const content = await resources.driver.read({ ownerId: namespace.ownerId, projectId: namespace.projectId, path: entry.path });
-    return streamResponse(c, content, entry.path.split("/").at(-1) ?? "file");
+    return streamResponse(c, content, entry.path.split("/").at(-1) ?? "file", options);
   }));
 
   routes.post("/api/collaboration/scopes/:scopeId/files/actions", async (c) => handle(c, async () => {
@@ -167,7 +234,7 @@ export function registerResourceRoutes(routes: Hono, options: CollaborationRoute
     const instance = await apps.describe(context, appId);
     if (instance.readiness !== "ready" || instance.collaborationMode !== "scoped") throw new ResourceCatalogError("unavailable");
     const asset = await resources.driver.readAppAsset({ ...instance.assetNamespace, appId, assetPath });
-    return streamResponse(c, asset, assetPath.split("/").at(-1) ?? "asset");
+    return streamResponse(c, asset, assetPath.split("/").at(-1) ?? "asset", options);
   }));
 
   routes.post("/api/collaboration/scopes/:scopeId/apps/:appId/actions", async (c) => handle(c, async () => {
