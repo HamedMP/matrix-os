@@ -235,39 +235,52 @@ The retired-key fix is **fail-closed by configuration**: if `MATRIX_COLLABORATIO
 Two blocking findings on higher PRs were caused by S05 code. Both are follow-ups to the
 "Routed round" above. Fixes stay on the layer that owns the file; both write-ups stay here.
 
-**Ticket signing misconfiguration aborted platform startup (`124/s05`,
-`packages/platform/src/collaboration/direct-wiring.ts`, from the #1805 verdict).** The
-routed-round fix made a retired signing key fail closed: a key with no recorded retirement,
-or a retirement dated further ahead than the protocol clock skew, is refused by the
-`CollaborationTicketIssuer` constructor. The refusal was never contained.
-`createPlatformCollaborationDirect` built the issuer outside any catch, so the error rejected
-the composition root, `bootstrapPlatformCollaboration` (which exists to return a fail-closed
-composition) never got to answer, and the unguarded `await` in `platform-startup.ts` took the
-whole platform process down. Confirmed against the three configuration shapes: malformed JSON
-and an unparseable date are already rejected inside `loadTicketSigningKeyring`, which returns
-null and leaves the ticket route fail-closed; a *parseable but far-future* retirement passes
-the loader and reached the throwing constructor.
+**A mistimed key rotation stopped platform startup (`124/s05`,
+`packages/platform/src/collaboration/ticket-issuer.ts`, from the #1802 thread on lines
+160-162 and the #1805 verdict).** The routed-round fix made a retired signing key fail
+closed, but split the rule across two places: `loadTicketSigningKeyring` checked only that a
+retirement timestamp *parses*, while the `CollaborationTicketIssuer` constructor enforced the
+clock-skew *deadline* by throwing. A future-dated `MATRIX_COLLABORATION_TICKET_RETIRED_AT`
+therefore loaded and then threw, and nothing between the two caught it:
+`createPlatformCollaborationDirect` built the issuer outside any catch, so
+`bootstrapPlatformCollaboration` (which exists to return a fail-closed composition) never got
+to answer and the unguarded `await` in `platform-startup.ts` took the whole platform process
+down. Malformed JSON and an unparseable date were already refused inside the loader and
+degraded correctly; only the parseable-but-future date reached the throwing constructor.
 
-The refusal is now caught where the issuer is built. The issuer stays null, exactly as it is
-when no signing keys are configured: `POST /api/collaboration/connections` answers 503 and
-runtime registration publishes `platformSigningKeys: []`, so the key whose retirement could
-not be honoured is never handed to a home, while the control stream, the endpoint registry and
-every other collaboration surface start normally. Only the error's `code` is logged, never the
-configured timestamp or any seed. Non-`CollaborationTicketIssuerError` failures still
-propagate. The security property is unchanged: a retired key without a recorded retirement is
-never published, the loader still requires exact correspondence between retired keys and
-retirement times, there is still no load-time fallback, and `RETIRED_KEY_OVERLAP_MS` is still
-15 minutes.
+The loader now applies the issuer's own deadline and answers null, so a keyring that loads is
+a keyring the issuer accepts and there is one definition of a valid retirement. A refused
+keyring degrades through the path that already existed for absent signing keys: no issuer,
+503 from `POST /api/collaboration/connections`, and `platformSigningKeys: []` at runtime
+registration, so the key whose retirement could not be honoured is never handed to a home
+while the control stream, the endpoint registry and every other collaboration surface start
+normally. Time only moves forward, so a retirement the loader admits is still admitted when
+the issuer re-checks it; the two cannot disagree. The constructor's throws stay as guards for
+programmatic callers. The refusal logs the rule, never the configured timestamp or any seed.
+The security properties are unchanged: a retired key is never published without a recorded
+retirement, the retired-key set and the retirement map must still correspond exactly, there
+is still no load-time fallback, and `RETIRED_KEY_OVERLAP_MS` is still 15 minutes. The failure
+mode moved from "process will not start" to "ticket route unavailable", never to "key
+silently published".
 
-RED `test(platform): expose ticket signing misconfiguration aborting platform startup`
-(`9f79784f9`, 23/24 — the new case threw out of `createPlatformCollaborationDirect`). GREEN
-`fix(platform): contain refused ticket signing configuration in the ticket route`
-(`70791739c`).
+A first attempt caught the error at the construction site instead (`9f79784f9` /
+`70791739c`); it is reverted inside `2e7f650f4` because it left the loader and the issuer
+deciding validity separately. The branch's net diff carries only the loader change and its
+tests.
 
-Gates: `collaboration-tickets` **24/24** on real Postgres, plus `collaboration-bootstrap`,
-`collaboration-wiring`, `collaboration-routes`, `collaboration-direct-transport-postgres` and
-`collaboration-control-delivery-postgres` **16/16**. `bun run typecheck` exit 0;
-`bun run check:patterns` 0 violations, 5 inherited warnings.
+RED `test(platform): require the keyring loader to refuse an unusable retirement time`
+(`2e7f650f4`, 29/31). GREEN `fix(platform): refuse a future-dated retirement in the ticket
+keyring loader` (`e0b36f5ba`). The bootstrap regression the review asked for drives the real
+`bootstrapPlatformCollaboration` path with all three shapes -- future-dated retirement,
+malformed JSON, unparseable date -- and requires a real composition with `direct.issuer` null
+rather than a platform that will not start; the ticket suite covers the loader's own verdict
+on each shape and the route/registration behaviour of a keyring that did not load.
+
+Gates: `collaboration-tickets` **25/25** and `collaboration-bootstrap` **6/6** on real
+Postgres, plus `collaboration-wiring`, `collaboration-routes`,
+`collaboration-direct-transport-postgres` and `collaboration-control-delivery-postgres` --
+**42/42** together. `bun run typecheck` exit 0; `bun run check:patterns` 0 violations, 5
+inherited warnings.
 
 **Relay shutdown leaked an upstream opened after eviction (`124/s05-relay`,
 `packages/platform/src/platform-websocket-upgrade.ts`, from the #1806 verdict).** The routed
