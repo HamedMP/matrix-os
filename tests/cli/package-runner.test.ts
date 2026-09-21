@@ -22,6 +22,11 @@ describe("published CLI package runners", () => {
     expect(cliRelease).toContain('npm publish "${TARBALLS[0]}" --provenance --access public');
     expect(cliRelease).not.toContain("pnpm publish --config.node-linker=hoisted");
 
+    for (const policyFile of ["AGENTS.md", "CLAUDE.md"]) {
+      const policy = await readFile(resolve(repoRoot, policyFile), "utf8");
+      expect(policy).toContain("npm CLI only for npm OIDC trusted publication");
+    }
+
     const manualRelease = await readFile(resolve(repoRoot, ".github/workflows/release.yml"), "utf8");
     expect(manualRelease).toContain("pnpm publish --config.node-linker=hoisted");
     const validator = await readFile(resolve(repoRoot, "packages/sync-client/scripts/validate-package-runners.mjs"), "utf8");

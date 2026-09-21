@@ -52,7 +52,11 @@ The npm package must trust the GitHub Actions publisher
 The packaging job has read-only repository access and uploads the exact
 workspace-aware tarball. A separate publish-only job uses setup-node v7,
 Node 24, npm 11.5.1 or newer, and job-scoped `id-token: write`; it disables
-package-manager caching and must not receive a long-lived `NPM_TOKEN`.
+package-manager caching, does not configure a token-oriented `registry-url`,
+and must not receive a long-lived `NPM_TOKEN`. This is the sole exception to
+the repository's npm ban: installs still use pnpm and scripts still use bun,
+while the npm CLI is invoked only because npm trusted publishing performs the
+OIDC exchange during `npm publish`.
 
 Use the manual GitHub Actions workflow named `CLI Release` with `version=0.3.16` and `update_homebrew=true` after this release-preparation PR merges. The workflow:
 

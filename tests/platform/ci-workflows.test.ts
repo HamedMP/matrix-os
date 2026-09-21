@@ -596,6 +596,7 @@ describe('CI workflows', () => {
     expect(publishJob).toContain('uses: actions/setup-node@v7');
     expect(publishJob).toContain('node-version: 24');
     expect(publishJob).toContain('package-manager-cache: false');
+    expect(publishJob).not.toContain('registry-url:');
     expect(publishJob).toContain('npm CLI 11.5.1 or newer is required for trusted publishing');
     expect(packageJob).toContain('manual CLI releases must run from refs/heads/main');
     expect(publishJob).toContain('EXPECTED_NAME: "@finnaai/matrix"');
