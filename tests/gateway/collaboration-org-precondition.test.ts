@@ -21,6 +21,7 @@ import { CollaborationAuthority } from "../../packages/gateway/src/collaboration
 import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
 import {
   createOrganizationPrecondition,
+  type OrganizationMembershipAssertion,
   type OrganizationMembershipSource,
 } from "../../packages/gateway/src/collaboration/organization-precondition.js";
 import { CollaborationRepository } from "../../packages/gateway/src/collaboration/repository.js";
@@ -202,7 +203,7 @@ describe("S20 organization precondition: membership evidence is the only gate", 
   });
 
   function source(reply: (input: { organizationId: string; actorId: string }) => Promise<
-    { member: true; expiresAt: string } | { member: false }
+    OrganizationMembershipAssertion
   >): OrganizationMembershipSource & { calls: { organizationId: string; actorId: string }[] } {
     const calls: { organizationId: string; actorId: string }[] = [];
     return {
@@ -227,7 +228,7 @@ describe("S20 organization precondition: membership evidence is the only gate", 
 
   it("allows only fresh positive evidence from the registered source, keyed by the scope's organization", async () => {
     const membership = source(async ({ actorId }) => actorId === collaborationActors.editor
-      ? { member: true, expiresAt: new Date(now.getTime() + 20_000).toISOString() }
+      ? { member: true, expiresAt: new Date(now.getTime() + 20_000).toISOString(), aiSubmission: "members", membershipEpoch: "1" }
       : { member: false });
     const precondition = createOrganizationPrecondition({ now: () => now });
     precondition.registerSource(membership);
@@ -253,8 +254,8 @@ describe("S20 organization precondition: membership evidence is the only gate", 
   });
 
   it("treats expired evidence, source failures and a scope without an organization as denials", async () => {
-    let reply: { member: true; expiresAt: string } | { member: false } | Error = {
-      member: true, expiresAt: new Date(now.getTime() - 1).toISOString(),
+    let reply: OrganizationMembershipAssertion | Error = {
+      member: true, expiresAt: new Date(now.getTime() - 1).toISOString(), aiSubmission: "members", membershipEpoch: "1",
     };
     const precondition = createOrganizationPrecondition({ now: () => now });
     precondition.registerSource(source(async () => {
@@ -273,7 +274,7 @@ describe("S20 organization precondition: membership evidence is the only gate", 
     await expect(authorize()).rejects.toMatchObject({ code: "unavailable" });
     expect(console.warn).toHaveBeenCalledWith("[collaboration-org-precondition] denied", "source_failure");
 
-    reply = { member: true, expiresAt: new Date(now.getTime() + 20_000).toISOString() };
+    reply = { member: true, expiresAt: new Date(now.getTime() + 20_000).toISOString(), aiSubmission: "members", membershipEpoch: "1" };
     await fixture.db.updateTable("collaboration_scopes").set({ organization_id: null })
       .where("id", "=", collaborationIds.scope).execute();
     await expect(authorize()).rejects.toMatchObject({ code: "not_found" });

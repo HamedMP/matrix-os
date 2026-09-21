@@ -22,6 +22,7 @@ import {
   type OrganizationMembershipSource,
   type OrganizationPrecondition,
 } from "./organization-precondition.js";
+import { OrganizationMembershipClient } from "./organization-membership-client.js";
 import { CollaborationRepository } from "./repository.js";
 import { createCollaborationRoutes } from "./routes.js";
 import { createSharedAiRuntime } from "./shared-ai-runtime.js";
@@ -104,10 +105,10 @@ export async function createGatewayCollaboration(options: {
     ?? ((actorId: string) => participantResolver!.resolve(actorId));
   const resolveInvitationIdentifier = options.resolveInvitationIdentifier
     ?? ((identifier: string, organizationId: string) => participantResolver!.resolveInvitationIdentifier(identifier, organizationId));
+  const organizationMembershipSource = options.organizationMembershipSource
+    ?? (options.organizationPrecondition ? undefined : createDefaultMembershipSource(options.config));
   const organizationPrecondition = options.organizationPrecondition
-    ?? createOrganizationPrecondition(options.organizationMembershipSource
-      ? { source: options.organizationMembershipSource }
-      : {});
+    ?? createOrganizationPrecondition(organizationMembershipSource ? { source: organizationMembershipSource } : {});
   const authority = new CollaborationAuthority(repository, { organizationPrecondition });
   const verifier = new CollaborationActorProofVerifier({
     runtimeId: options.config.runtimeId,
@@ -444,6 +445,24 @@ async function cleanupExpiredArtifacts(
       LIMIT ${ARTIFACT_CLEANUP_BATCH_SIZE}
     )
   `.execute(db);
+}
+
+/**
+ * S03: the platform's Clerk membership projection is the only membership
+ * source. Any configuration problem leaves no source registered, which the
+ * S20 precondition treats as "deny everything".
+ */
+function createDefaultMembershipSource(config: GatewayCollaborationConfig): OrganizationMembershipSource | undefined {
+  try {
+    return new OrganizationMembershipClient({
+      platformBaseUrl: config.platformBaseUrl,
+      runtimeId: config.runtimeId,
+      serviceToken: config.serviceToken,
+    });
+  } catch (error: unknown) {
+    console.warn("[collaboration] organization membership source unavailable", error instanceof Error ? error.name : "UnknownError");
+    return undefined;
+  }
 }
 
 export type GatewayCollaborationRuntime = Awaited<ReturnType<typeof createGatewayCollaboration>>;
