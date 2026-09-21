@@ -134,6 +134,30 @@ async function gitCommand(cwd: string, args: string[], identity?: ProjectGitOwne
   });
 }
 
+/**
+ * The owner identity comes only from the owner's global Git configuration
+ * under the owner home, which is never mounted into a sandbox. The
+ * member-writable repository config is deliberately not consulted.
+ */
+async function ownerGlobalConfig(ownerHome: string, key: "user.name" | "user.email"): Promise<string> {
+  const result = await exec("git", ["config", "--global", "--get", key], {
+    cwd: ownerHome,
+    env: {
+      PATH: process.env.PATH ?? "/usr/bin:/bin",
+      HOME: ownerHome,
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_TERMINAL_PROMPT: "0",
+    },
+    timeout: GIT_TIMEOUT_MS,
+    maxBuffer: 64 * 1024,
+  });
+  return result.stdout.trim();
+}
+
+function isGitExitCode(error: unknown, code: string): boolean {
+  return error instanceof Error && "code" in error && String((error as NodeJS.ErrnoException).code) === code;
+}
+
 async function ghCommand(cwd: string, args: string[]): Promise<GitCommandResult> {
   return exec("gh", args, {
     cwd,
@@ -211,9 +235,30 @@ async function requireBranch(root: string, expected: string): Promise<void> {
 /** Host-side Git/forge driver. Credentials remain in the owner host and never enter the scope runtime. */
 export function createProjectGitDriver(options: {
   resolveProjectRoot(input: { ownerId: string; projectId: string }): Promise<string>;
+  /** Owner home holding the owner's global Git configuration. Defaults to the gateway process home. */
+  ownerHome?: string;
 }) {
+  const ownerHome = options.ownerHome ?? process.env.HOME;
+
   async function root(input: { ownerId: string; projectId: string }) {
     return requireRepositoryRoot(await options.resolveProjectRoot(input));
+  }
+
+  async function ownerIdentity(): Promise<ProjectGitOwnerIdentity | "missing"> {
+    if (!ownerHome) throw new ProjectGitBrokerError("unavailable");
+    try {
+      const [name, email] = await Promise.all([
+        ownerGlobalConfig(ownerHome, "user.name"),
+        ownerGlobalConfig(ownerHome, "user.email"),
+      ]);
+      const parsedName = GitIdentityNameSchema.parse(name);
+      const parsedEmail = GitIdentityEmailSchema.parse(email);
+      return { name: parsedName, email: parsedEmail, label: `${parsedName} <${parsedEmail}>` };
+    } catch (error: unknown) {
+      if (isGitExitCode(error, "1")) return "missing";
+      console.warn("[collaboration-git] owner identity unavailable", error instanceof Error ? error.name : "UnknownError");
+      throw new ProjectGitBrokerError("unavailable");
+    }
   }
 
   const driver: ProjectGitDriver & {
@@ -221,19 +266,10 @@ export function createProjectGitDriver(options: {
     getGitSetup(input: { ownerId: string; projectId: string }): Promise<CollaborationProjectGitSetup>;
   } = {
     async resolveOwnerIdentity(input) {
-      const cwd = await root(input);
-      try {
-        const [name, email] = await Promise.all([
-          gitCommand(cwd, ["config", "--get", "user.name"]),
-          gitCommand(cwd, ["config", "--get", "user.email"]),
-        ]);
-        const parsedName = GitIdentityNameSchema.parse(name.stdout.trim());
-        const parsedEmail = GitIdentityEmailSchema.parse(email.stdout.trim());
-        return { name: parsedName, email: parsedEmail, label: `${parsedName} <${parsedEmail}>` };
-      } catch (error: unknown) {
-        console.warn("[collaboration-git] owner identity unavailable", error instanceof Error ? error.name : "UnknownError");
-        throw new ProjectGitBrokerError("unavailable");
-      }
+      await root(input);
+      const identity = await ownerIdentity();
+      if (identity === "missing") throw new ProjectGitBrokerError("unavailable");
+      return identity;
     },
 
     async getGitSetup(input) {
@@ -246,15 +282,9 @@ export function createProjectGitDriver(options: {
       }
       const identity = await (async (): Promise<CollaborationProjectGitSetup["identity"]> => {
         try {
-          const [name, email] = await Promise.all([
-            gitCommand(cwd, ["config", "--get", "user.name"]),
-            gitCommand(cwd, ["config", "--get", "user.email"]),
-          ]);
-          return { status: "ready", label: `${GitIdentityNameSchema.parse(name.stdout.trim())} <${GitIdentityEmailSchema.parse(email.stdout.trim())}>` };
+          const resolved = await ownerIdentity();
+          return resolved === "missing" ? { status: "missing" } : { status: "ready", label: resolved.label };
         } catch (error: unknown) {
-          if (error instanceof Error && "code" in error && String((error as NodeJS.ErrnoException).code) === "1") {
-            return { status: "missing" };
-          }
           console.warn("[collaboration-git] identity setup unavailable", error instanceof Error ? error.name : "UnknownError");
           return { status: "unavailable" };
         }

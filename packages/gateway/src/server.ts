@@ -970,6 +970,7 @@ export async function createGateway(config: GatewayConfig) {
       if (collaborationConfig) {
         const ownerChatRepository = chatRepository;
         const projectGitDriver = createProjectGitDriver({
+          ownerHome: process.env.HOME,
           resolveProjectRoot: async ({ ownerId, projectId }) => {
             const root = await ownerChatExecutionRoots.resolve(
               { type: "personal", ownerId }, { kind: "project", projectId },

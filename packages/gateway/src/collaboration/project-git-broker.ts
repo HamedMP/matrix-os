@@ -163,6 +163,7 @@ export function createProjectGitBroker(options: {
         detail: {
           operationId: row.id,
           ownerId: row.owner_id,
+          ownerIdentityLabel: row.owner_identity_label,
           ...(row.run_id ? { runId: row.run_id } : {}),
           ...(result.commitSha ? { commitSha: result.commitSha } : {}),
           ...(result.remoteBranch ? { remoteBranch: result.remoteBranch } : {}),
