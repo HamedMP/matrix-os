@@ -1,7 +1,6 @@
 import {
   COLLABORATION_HTTP_BODY_LIMIT,
   CollaborationActorIdSchema,
-  CollaborationConnectionTicketRequestSchema,
   CollaborationDiscoveryItemSchema,
   CollaborationDiscoveryResponseSchema,
   CollaborationDirectoryEventSchema,
@@ -11,20 +10,15 @@ import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
 import { registerInvitationIdentifierResolutionRoute } from "./identifier-resolution-route.js";
-import type { CollaborationProofSigner } from "./proof.js";
-import { parseCollaborationProxyRoute, type CollaborationProxy } from "./proxy.js";
 import { parseRelayRoute, type CollaborationRelay } from "./relay.js";
 
 const DIRECT_SESSION_HEADER = "x-matrix-collaboration-session";
+const RETIRED_CONNECTION_TICKET_PATH = /^\/api\/collaboration\/scopes\/[^/]+\/connection-tickets$/;
 import {
   PlatformCollaborationRepositoryError,
   type CollaborationDirectoryEntry,
   type PlatformCollaborationRepository,
 } from "./repository.js";
-import {
-  CollaborationWebSocketError,
-  type CollaborationWebSocketAuthorizer,
-} from "./websocket.js";
 
 const RuntimeIdSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9:_-]+$/);
 const BearerTokenSchema = z.string().min(32).max(4_096).regex(/^[A-Za-z0-9._~-]+$/);
@@ -40,9 +34,6 @@ type RouteContext = Context;
 
 export function createPlatformCollaborationRoutes(options: {
   repository: PlatformCollaborationRepository;
-  signer: CollaborationProofSigner;
-  sockets: CollaborationWebSocketAuthorizer;
-  proxy?: CollaborationProxy;
   /** S05: transparent relay for direct-protocol requests (session routes or requests carrying a direct session). */
   relay?: CollaborationRelay;
   resolveActor(c: RouteContext): Promise<string | null>;
@@ -68,6 +59,9 @@ export function createPlatformCollaborationRoutes(options: {
   );
   app.use("/api/collaboration/*", async (c, next) => {
     c.header("Cache-Control", "private, no-store");
+    if (c.req.method === "POST" && RETIRED_CONNECTION_TICKET_PATH.test(c.req.path)) {
+      return safeJson(c, "Collaboration route not found", 404);
+    }
     // S05: direct-protocol traffic is relayed as opaque bytes; the home decides.
     const relayRoute = options.relay ? parseRelayRoute(c.req.method, c.req.path) : null;
     if (options.relay && relayRoute && (relayRoute.kind === "session" || c.req.header(DIRECT_SESSION_HEADER))) {
@@ -84,21 +78,7 @@ export function createPlatformCollaborationRoutes(options: {
         ...(Number.isFinite(declared) && declared > 0 ? { contentLength: declared } : {}),
       });
     }
-    if (!options.proxy || !parseCollaborationProxyRoute(c.req.method, c.req.path)) {
-      await next();
-      return;
-    }
-    const actorId = await resolveValidatedActor(c, options.resolveActor);
-    if (!actorId) return safeJson(c, "Unauthorized", 401);
-    const body = new Uint8Array(await c.req.arrayBuffer());
-    return options.proxy.forward({
-      actorId,
-      method: c.req.method,
-      path: c.req.path,
-      query: new URL(c.req.url).search.slice(1),
-      body,
-      headers: c.req.raw.headers,
-    });
+    await next();
   });
 
   app.put(
@@ -141,30 +121,6 @@ export function createPlatformCollaborationRoutes(options: {
       return safeJson(c, "Collaboration unavailable", 503);
     }
   });
-
-  app.post(
-    "/api/collaboration/scopes/:scopeId/connection-tickets",
-    bodyLimit({ maxSize: COLLABORATION_HTTP_BODY_LIMIT, onError: (c) => safeJson(c, "Request too large", 413) }),
-    async (c) => {
-      const actorId = await resolveValidatedActor(c, options.resolveActor);
-      if (!actorId) return safeJson(c, "Unauthorized", 401);
-      const scope = z.uuid().safeParse(c.req.param("scopeId"));
-      const request = await parseJson(c, CollaborationConnectionTicketRequestSchema);
-      if (!scope.success || !request) return safeJson(c, "Invalid request", 422);
-      try {
-        const ticket = await options.sockets.issueTicket({
-          actorId,
-          scopeId: scope.data,
-          purpose: request.purpose,
-          clientRequestId: request.clientRequestId,
-        });
-        c.header("Cache-Control", "no-store");
-        return c.json(ticket, 201);
-      } catch (error: unknown) {
-        return socketFailure(c, "ticket issue", error);
-      }
-    },
-  );
 
   app.get("/internal/collaboration/participants/:actorId", async (c) => {
     const runtime = await requireRuntime(c, options.authenticateRuntime);
@@ -327,21 +283,6 @@ async function parseJson<T>(c: RouteContext, schema: z.ZodType<T>): Promise<T | 
 function repositoryFailure(c: RouteContext, operation: string, error: unknown) {
   if (error instanceof PlatformCollaborationRepositoryError && error.code === "conflict") {
     return safeJson(c, "Collaboration state changed", 409);
-  }
-  console.warn(`[platform-collaboration] ${operation} failed`, error instanceof Error ? error.name : "UnknownError");
-  return safeJson(c, "Collaboration unavailable", 503);
-}
-
-function socketFailure(c: RouteContext, operation: string, error: unknown) {
-  if (error instanceof CollaborationWebSocketError) {
-    if (error.code === "unavailable") return safeJson(c, "Collaboration unavailable", 404);
-    if (error.code === "disabled") return safeJson(c, "Collaboration unavailable", 403);
-    if (error.code === "invalid_ticket" || error.code === "invalid_route") {
-      return safeJson(c, "Invalid request", 422);
-    }
-  }
-  if (error instanceof PlatformCollaborationRepositoryError && error.code === "capacity") {
-    return safeJson(c, "Too many pending connections", 429);
   }
   console.warn(`[platform-collaboration] ${operation} failed`, error instanceof Error ? error.name : "UnknownError");
   return safeJson(c, "Collaboration unavailable", 503);
