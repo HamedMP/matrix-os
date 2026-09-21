@@ -1,5 +1,5 @@
 import { z } from "zod/v4";
-import { CanonicalChatExecutionRootRefSchema } from "./canonical-chat-primitives.js";
+import { CanonicalChatExecutionRootRefSchema } from "#canonical-chat-primitives";
 
 import {
   CanonicalChatApprovalDecisionSchema,
