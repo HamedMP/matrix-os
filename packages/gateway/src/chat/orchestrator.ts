@@ -566,11 +566,7 @@ export class CanonicalChatOrchestrator {
     owner: ChatOwner,
     chatId: string,
     scopeId: string,
-    createAdapter: (
-      context: Parameters<SharedChatExecutionCoordinator["dispatchNextQueued"]>[3] extends (
-        context: infer Context,
-      ) => unknown ? Context : never,
-    ) => Promise<CanonicalChatProviderAdapter> | CanonicalChatProviderAdapter,
+    createAdapter: Parameters<SharedChatExecutionCoordinator["dispatchNextQueued"]>[3],
   ): Promise<void> {
     this.assertOpen();
     await this.sharedExecution.dispatchNextQueued(owner, chatId, scopeId, createAdapter);

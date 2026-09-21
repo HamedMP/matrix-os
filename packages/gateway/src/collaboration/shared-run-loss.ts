@@ -304,3 +304,31 @@ export async function interruptActiveSharedRuns(options: {
 function omitOwner(run: { runId: string; scopeId: string; chatId: string; requestId: string; requestingActorId: string }) {
   return { runId: run.runId, scopeId: run.scopeId, chatId: run.chatId, requestId: run.requestId, requestingActorId: run.requestingActorId };
 }
+
+/**
+ * Drives control-partition interruption from the S05 control snapshot: when
+ * freshness lapses past the lease the callback fires once per outage episode,
+ * and a restored control stream re-arms it. Never extends authority.
+ */
+export function startControlLossWatchdog(options: {
+  controlFresh(): boolean;
+  onLost(): Promise<unknown>;
+  intervalMs?: number;
+}): { stop(): void } {
+  const intervalMs = Math.min(Math.max(options.intervalMs ?? 5_000, 250), 60_000);
+  let lost = false;
+  let inFlight: Promise<unknown> | undefined;
+  const tick = (): void => {
+    const fresh = options.controlFresh();
+    if (fresh) { lost = false; return; }
+    if (lost || inFlight) return;
+    lost = true;
+    inFlight = options.onLost().catch((error: unknown) => {
+      console.warn("[collaboration] control loss interruption failed",
+        error instanceof Error ? error.name : "UnknownError");
+    }).finally(() => { inFlight = undefined; });
+  };
+  const timer = setInterval(tick, intervalMs);
+  timer.unref?.();
+  return { stop: () => clearInterval(timer) };
+}
