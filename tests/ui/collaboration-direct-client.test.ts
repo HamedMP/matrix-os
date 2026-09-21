@@ -212,6 +212,14 @@ describe("collaboration direct client", () => {
     expect(world.home.requests.at(-1)!.url).toBe(`${RELAY}/api/collaboration/invitations/20000000-0000-4000-8000-000000000001`);
   });
 
+  it("evicts old scope records when many resources are visited", async () => {
+    const direct = client();
+    const ids = Array.from({ length: 129 }, (_, index) => `10000000-0000-4000-8000-${(index + 1).toString(16).padStart(12, "0")}`);
+    for (const id of ids) await direct.request(id, "GET", `/api/collaboration/scopes/${id}`);
+    expect(direct.inspectKeys(ids[0]!)).toBeNull();
+    expect(direct.inspectKeys(ids.at(-1)!)).not.toBeNull();
+  });
+
   it("stores nothing reusable: keys stay in memory and non-extractable, nothing touches browser storage", async () => {
     const storage = { setItem: vi.fn(), getItem: vi.fn(), removeItem: vi.fn() };
     (globalThis as { localStorage?: unknown }).localStorage = storage;
