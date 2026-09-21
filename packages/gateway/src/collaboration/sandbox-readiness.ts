@@ -7,6 +7,9 @@
  * launching a wider profile. Files, folders and app instances do not execute
  * anything, and a terminal can always be observed; controller access on a
  * terminal is decided by the task profile (terminal-task-profile.ts), not here.
+ * `sandboxTerminalSupported` is false until the supervisor advertises a
+ * `terminal` sandbox workload, which it does only once the launcher can start
+ * one (the supervisor test pins advertised == launchable).
  */
 import type { CollaborationResourceKind } from "@matrix-os/contracts";
 import type { ScopeRuntimeCapability } from "./scope-runtime-client.js";

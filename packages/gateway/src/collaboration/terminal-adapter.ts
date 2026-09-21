@@ -25,7 +25,7 @@ const TerminalSessionSchema = z.object({
     profileId: z.literal("scope-runtime-terminal-v1"),
     policyDigest: z.string().regex(/^[a-f0-9]{64}$/),
   }).strict().optional(),
-  /** S07: owner's explicit grant that Contributors may control this host shell. */
+  /** S07: owner's explicit opt-in that Contributors may control this host shell; absent means withheld. */
   contributorControl: z.boolean().optional(),
 }).passthrough();
 const PreflightPayloadSchema = z.object({
@@ -78,6 +78,12 @@ export class CollaborationTerminalAdapter implements CollaborationTerminalRuntim
         scopeId: string;
         sessionIncarnation: string;
       }): Promise<void>;
+      setContributorControl(name: string, input: {
+        scopeId: string;
+        sessionIncarnation: string;
+        ownerId: string;
+        contributorControl: boolean;
+      }): Promise<unknown>;
     };
     runtime: {
       input(input: { terminalId: string; data: string }): Promise<void>;
@@ -169,7 +175,8 @@ export class CollaborationTerminalAdapter implements CollaborationTerminalRuntim
         scopeId: scope.id,
         sessionIncarnation: confirmation.incarnation,
         executionGeneration: confirmation.executionGeneration,
-        contributorControl: session.contributorControl !== false,
+        // Sharing never opts Contributors in: only a previously recorded true survives the bind.
+        contributorControl: session.contributorControl === true,
       });
     } catch (error: unknown) {
       console.warn(
@@ -209,6 +216,26 @@ export class CollaborationTerminalAdapter implements CollaborationTerminalRuntim
       status: session.status,
       ...resolveTerminalTaskPolicy(session),
     };
+  }
+
+  async setContributorControl(input: Parameters<CollaborationTerminalRuntime["setContributorControl"]>[0]): Promise<void> {
+    const current = await this.get(input.scopeId, input.terminalId);
+    // The dispatcher has already required the scope owner; the registry re-checks the creator on write.
+    if (!current || current.incarnation !== input.incarnation) throw new CollaborationTerminalAdapterError("conflict");
+    try {
+      await this.options.registry.setContributorControl(input.terminalId, {
+        scopeId: input.scopeId,
+        sessionIncarnation: input.incarnation,
+        ownerId: input.ownerId,
+        contributorControl: input.contributorControl,
+      });
+    } catch (error: unknown) {
+      console.warn(
+        "[collaboration-terminal] contributor control update failed",
+        error instanceof Error ? error.name : "UnknownError",
+      );
+      throw new CollaborationTerminalAdapterError("unavailable");
+    }
   }
 
   async input(input: Parameters<CollaborationTerminalRuntime["input"]>[0]): Promise<void> {
