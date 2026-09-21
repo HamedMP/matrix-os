@@ -14,8 +14,10 @@ Companion artifacts in this directory (section 10 has the paste-ready prompt tha
 
 1. **The Claude agents are already stopped.** The coordinating Claude background job
    `98b4e810` ("org collaboration implementation") and its four workers were terminated at
-   10:12 UTC on 2026-09-21 after their last write at 09:21 UTC; both worktrees were verified
-   byte-identical to the patch snapshots afterwards. Before you edit, confirm nothing respawned:
+   10:05 UTC on 2026-09-21 after their last write at 09:21 UTC; both worktrees were verified
+   byte-identical to the patch snapshots afterwards. The Claude background daemon auto-resumed
+   that job once at 10:06 UTC, so it was then told to stop itself and exit (a clean exit marks
+   the job done and is not respawned). Before you edit, confirm nothing respawned:
    `ps -eo pid,cmd | grep -E "claude (bg-spare|agents)" ` should show no session whose bash
    children sit in a `matrix-os-124-*` worktree, and `lsof +D <worktree>/packages` should be
    empty. If the owner reopens `claude agents` and that job shows as resumable, it must be
