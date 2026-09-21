@@ -35,8 +35,6 @@ import {
 
 const completeEnvironment = {
   MATRIX_RUNTIME_ID: "vps:11111111-1111-4111-8111-111111111111",
-  MATRIX_COLLABORATION_ACTIVE_KEY_ID: "key-1",
-  MATRIX_COLLABORATION_PROOF_KEYS: JSON.stringify({ "key-1": "a".repeat(32) }),
   PLATFORM_INTERNAL_URL: "https://platform.internal",
   UPGRADE_TOKEN: "c".repeat(32),
   DATABASE_URL: "postgres://owner@localhost/owner",
@@ -79,9 +77,10 @@ describe("S20 organization precondition: no release flag", () => {
 
   it("reports the exact missing configuration instead of a flag", () => {
     expect(describeGatewayCollaborationConfiguration(completeEnvironment)).toEqual({ configured: true });
-    const { MATRIX_COLLABORATION_PROOF_KEYS: _keys, ...withoutSigning } = completeEnvironment;
-    expect(describeGatewayCollaborationConfiguration(withoutSigning))
-      .toEqual({ configured: false, reason: "signing_configuration_missing" });
+    expect(loadGatewayCollaborationConfig({ ...completeEnvironment,
+      MATRIX_COLLABORATION_ACTIVE_KEY_ID: "legacy-key",
+      MATRIX_COLLABORATION_PROOF_KEYS: JSON.stringify({ "legacy-key": "a".repeat(32) }),
+    })).not.toHaveProperty("proofKeys");
     const { UPGRADE_TOKEN: _token, ...withoutPlatform } = completeEnvironment;
     expect(describeGatewayCollaborationConfiguration(withoutPlatform))
       .toEqual({ configured: false, reason: "platform_configuration_missing" });
