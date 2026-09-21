@@ -113,3 +113,15 @@ it("does not retain a previous result while a legacy child is working again", ()
   const running = tracker.project(legacy("running"), "parent", "turn");
   expect(running[0].subagent.result).toBeUndefined();
 });
+
+
+it("accepts role metadata only for an already attributed child", () => {
+  const tracker = createCodexSubagentActivity();
+  const metadata = { method: "thread/started", params: { thread: { id: "child", agentRole: "explorer" } } };
+  expect(tracker.project(metadata, "parent", "turn")).toEqual([]);
+  tracker.project(marker(), "parent", "turn");
+  const event = tracker.project(metadata, "parent", "turn")[0];
+  expect(event.subagent.role).toBe("explorer");
+  expect(parseCodexExecJsonLine(JSON.stringify(event), { threadId: "thread_matrix", now: () => new Date(), nextEventId: () => "evt_role" }).events[0]).toMatchObject({ subagent: { role: "explorer" } });
+  expect(tracker.project({ ...metadata, params: { thread: { id: "child", agentRole: "Bearer secret" } } }, "parent", "turn")).toEqual([]);
+});

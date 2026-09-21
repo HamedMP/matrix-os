@@ -111,6 +111,7 @@ const MatrixCodexRecordSchema = z.discriminatedUnion("type", [
     result: ChatSubagentSchema.shape.result.catch(undefined),
     activity: ChatSubagentSchema.shape.activity.catch(undefined),
     parentName: ChatSubagentSchema.shape.parentName.catch(undefined),
+    role: ChatSubagentSchema.shape.role.catch(undefined),
   }) }).strict(),
   z.object({
     type: z.literal("matrix.codex.approval.resolved"),

@@ -6,6 +6,7 @@ export const ChatSubagentSchema = z.object({
   agentId: canonicalReferenceId(128),
   parentAgentId: canonicalReferenceId(128),
   name: canonicalSafeErrorText(120, 480),
+  role: canonicalSafeErrorText(80, 320).optional(),
   status: z.enum(["running", "waiting", "completed", "failed", "cancelled", "unknown"]),
   activity: canonicalSafeErrorText(120, 480).optional(),
   parentName: canonicalSafeErrorText(120, 480).optional(),
@@ -26,13 +27,21 @@ const STATUS: Record<ChatSubagent["status"], string> = {
   cancelled: "Stopped", unknown: "Status unavailable",
 };
 
+const ROLE_ICONS = new Map<string, "search" | "code" | "review">([
+  ["explorer", "search"], ["research", "search"], ["researcher", "search"],
+  ["worker", "code"], ["implementer", "code"], ["reviewer", "review"],
+]); // Fixed six-entry vocabulary; custom roles use the generic icon.
+
 export function chatSubagentPresentation(agent: ChatSubagent) {
   return {
+    icon: ROLE_ICONS.get(agent.role?.toLowerCase() ?? "") ?? "agent",
+    role: agent.role ?? "Subagent",
     status: STATUS[agent.status],
     label: `${agent.name} · ${STATUS[agent.status]}`,
     parent: `Parent agent${agent.parentName ? ` · ${agent.parentName}` : ""} · Delegated task`,
     empty: "No task details available.",
     sections: [
+      ...(agent.role ? [{ title: "Type", text: agent.role }] : []),
       ...(agent.activity ? [{ title: "Activity", text: agent.activity }] : []),
       ...(agent.task ? [{ title: "Task", text: agent.task }] : []),
       ...(agent.result ? [{ title: "Result", text: agent.result }] : []),

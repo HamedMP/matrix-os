@@ -47,6 +47,10 @@ suite("subagent activity in built Electron Desktop", () => {
       const arithmetic = page.getByRole("button", { name: "Arithmetic · Completed", exact: true });
       await arithmetic.waitFor();
       expect(await arithmetic.count()).toBe(1);
+      expect(await arithmetic.locator("svg").getAttribute("data-subagent-icon")).toBe("agent");
+      for (const [name, icon] of [["Tests · Failed", "code"], ["Review · Status unavailable", "review"], ["Explore · Completed", "search"]]) {
+        expect(await page.getByRole("button", { name, exact: true }).locator("svg").getAttribute("data-subagent-icon")).toBe(icon);
+      }
       await arithmetic.click();
       await page.getByText("437", { exact: true }).waitFor();
       expect(await page.getByRole("button", { name: "Tests · Failed", exact: true }).count()).toBe(1);

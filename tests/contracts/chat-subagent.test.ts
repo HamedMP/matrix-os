@@ -36,3 +36,13 @@ it("keeps the same child row and group identity as new activity events stream", 
   expect(after?.id).toBe(before?.id);
   if (before?.kind === "activity-group" && after?.kind === "activity-group") expect(after.activities[0]?.id).toBe(before.activities[0]?.id);
 });
+
+
+it("uses observed roles for icons and keeps unknown roles generic", async () => {
+  const { chatSubagentPresentation, ChatSubagentSchema } = await import("@matrix-os/contracts");
+  const base = { agentId: "agent_a", parentAgentId: "agent_p", name: "Research", status: "running" as const };
+  for (const [role, icon] of [["explorer", "search"], ["worker", "code"], ["reviewer", "review"], ["custom", "agent"], [undefined, "agent"]]) {
+    const child = ChatSubagentSchema.parse({ ...base, role });
+    expect(chatSubagentPresentation(child).icon).toBe(icon);
+  }
+});

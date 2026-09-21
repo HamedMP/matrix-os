@@ -18,10 +18,13 @@ const detail = { record, turns: fixture.turns, runs: fixture.runs, queuedTurns: 
   })),
   { id: "activity_failed", sequence: 3, chatId: fixture.chat.id, runId: run.id, occurredAt: run.createdAt,
     type: "agent.activity", activityId: "child_tests", kind: "delegation", label: "Tests", status: "failed",
-    subagent: { agentId: "agent_tests", parentAgentId: "agent_parent", name: "Tests", status: "failed", task: "Review the tests" } },
+    subagent: { agentId: "agent_tests", parentAgentId: "agent_parent", name: "Tests", role: "worker", status: "failed", task: "Review the tests" } },
   { id: "activity_waiting", sequence: 4, chatId: fixture.chat.id, runId: run.id, occurredAt: run.createdAt,
     type: "agent.activity", activityId: "child_review", kind: "delegation", label: "Review", status: "running",
-    subagent: { agentId: "agent_review", parentAgentId: "agent_parent", name: "Review", status: "waiting" } },
+    subagent: { agentId: "agent_review", parentAgentId: "agent_parent", name: "Review", role: "reviewer", status: "waiting" } },
+  { id: "activity_explorer", sequence: 5, chatId: fixture.chat.id, runId: run.id, occurredAt: run.createdAt,
+    type: "agent.activity", activityId: "child_explorer", kind: "delegation", label: "Explore", status: "completed",
+    subagent: { agentId: "agent_explorer", parentAgentId: "agent_parent", name: "Explore", role: "explorer", status: "completed", result: "Located the relevant implementation." } },
 ] };
 
 export async function startSubagentGateway() {

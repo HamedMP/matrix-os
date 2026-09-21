@@ -78,6 +78,13 @@ export function createCodexSubagentActivity({ maxAgents = 128 } = {}) {
           });
         }
       }
+      // Metadata is display-only and must belong to an already attributed child.
+      if (raw.method === "thread/started") {
+        const id = params.thread?.id;
+        if (!agents.has(id)) return [];
+        const role = safeCodexSubagentText(params.thread?.agentRole, 80);
+        return role ? update(id, parent, turn, { role }) : [];
+      }
       const id = params.threadId;
       const prior = agents.get(id)?.subagent;
       if (!prior) return [];

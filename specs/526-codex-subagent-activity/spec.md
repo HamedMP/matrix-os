@@ -29,3 +29,18 @@ The per-run child registry is bounded to 128 entries with oldest-entry eviction 
 ## Human Review environment
 
 Build the checked-out PR head with `flox activate -- pnpm --filter desktop run build`, then run `flox activate -- pnpm exec tsx scripts/dev/review-codex-subagents.ts`. This launches the real built Electron renderer against synthetic, owner-isolated fixture data, not a production computer. Open Chat → Subagent activity review → Worked for; expand Arithmetic and verify its result, Failed on Tests, and Status unavailable on the unresolved Review child. Reload and confirm each row appears once. Ctrl-C closes this fixture and removes its temporary profile. Actual provider event behavior is separately verified by the live Codex spike and runner integration regression.
+
+
+### Type icons and component Preview
+
+Use a search icon for observed explorer/research roles, code for worker/implementer,
+and shield/check for reviewer. Missing or custom roles use a generic branch icon;
+never infer roles from names. Optional `thread/started` role metadata is accepted
+only for already attributed child threads. Runtimes that do not emit this metadata
+continue to show the generic icon. No additional provider read or execution authority.
+
+Run `flox activate -- pnpm exec tsx scripts/dev/preview-codex-subagents.ts` to open
+`http://127.0.0.1:5187/`. This renders the production shared component with synthetic
+role/status examples; it is not a full Web Desktop integration test. The Electron
+review launcher exercises the full Chat interface with the same schema. Both bind
+only to localhost and clean up servers on Ctrl-C.
