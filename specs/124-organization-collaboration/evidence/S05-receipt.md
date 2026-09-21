@@ -441,3 +441,43 @@ Postgres, plus `collaboration-direct-transport-postgres`,
 `collaboration-control-delivery-postgres`, `collaboration-wiring`, `collaboration-routes` and
 `collaboration-control-authority` -- **52/52** together. `bun run typecheck` exit 0;
 `bun run check:patterns` 0 violations, 5 inherited warnings.
+
+## Verdict follow-up (2026-09-21, #1808 verdict routed to `124/s05-relay`)
+
+*"Streamed request overflow is guaranteed to produce a client-visible 413 even when the
+upstream responds before upload completion."* Measured first; the reviewer is right for the
+case where the upload continues.
+
+`forward()` checked `overflowed` once, immediately after the fetch resolved. A streamed body
+lets the home answer early, so that check could run while bytes were still being read, and
+the overflow was discovered afterwards with the home's status already returned. Measured
+through a relay limited to 32 KiB with a 256 KiB body and a home that answers 400 while the
+upload continues: the client received **400**. The cap was still enforced -- the home read no
+more than 32 KiB and the source was cancelled -- but the client was not told that the size
+ended the request, which is the difference between a bounded relay and a debuggable one.
+
+The bounded request stream now reports when it settles, on completion, on overflow, or on
+cancellation, and `forward()` waits for that signal before committing an upstream response.
+Overflow then always outranks an early answer. Three properties keep that from becoming a
+stall or a behaviour change:
+
+- The wait is bounded by the same timeout the request already uses, and the timer is cleared.
+- Abandonment counts as settled, so an upload nobody is reading cannot hold the reply. The
+  mirror case is covered: a home that answers and stops reading before anything exceeds the
+  limit still has its answer relayed, because nothing over the limit was ever read. That test
+  runs with a 100 ms request timeout, so a regression to an unbounded wait shows up as a hang
+  rather than a pass.
+- A body that is not a stream skips the wait entirely.
+
+Unchanged: the home reads at most the cap, the source is cancelled on overflow, the relay
+makes no authorization decision and parses no payload.
+
+RED `test(platform): require overflow to outrank an early upstream answer` (`ffce95b74`,
+15/16). GREEN `fix(platform): decide a streamed upload's fate before relaying the home's
+answer` (`c61312295`). Removing the settle wait fails that one case and nothing else, so the
+guarantee has a test rather than a comment.
+
+Gates: `collaboration-relay` **16/16**, plus `collaboration-direct-upgrade`,
+`collaboration-websocket`, `collaboration-wiring`, `collaboration-routes`,
+`preview-terminal-flow` and `app-session-runtime-routing` -- **52/52** together.
+`bun run typecheck` exit 0; `bun run check:patterns` 0 violations, 5 inherited warnings.
