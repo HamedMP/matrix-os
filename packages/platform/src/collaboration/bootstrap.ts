@@ -19,6 +19,10 @@ import {
 import { PlatformCollaborationIdentifierResolver } from "./identifier-resolver.js";
 import type { OrganizationPlatformDatabase } from "../organizations/database.js";
 import { createPlatformOrganizations } from "../organizations/wiring.js";
+import { createPlatformCollaborationDirect, loadCollaborationRelayOrigin } from "./direct-wiring.js";
+import { PlatformCollaborationRepository } from "./repository.js";
+import type { RuntimeEndpointPlatformDatabase } from "./runtime-endpoints.js";
+import { loadTicketSigningKeyring } from "./ticket-issuer.js";
 
 export interface BootstrapPlatformCollaborationOptions {
   env: NodeJS.ProcessEnv;
@@ -103,10 +107,34 @@ export async function bootstrapPlatformCollaboration(
       .map((user) => ({ actorId: user.clerkId, displayName: user.displayName })),
   });
 
+  // S05: direct transport. The platform issues signed tickets and holds the
+  // control stream; it never authorizes a resource request. Missing ticket
+  // signing keys leave ticket issuance fail-closed without skipping construction.
+  const relayOrigin = loadCollaborationRelayOrigin(options.env);
+  if (!relayOrigin) return createFailClosedPlatformCollaboration({ reason: "origin_configuration_missing" });
+  const collaborationDb = options.db.kysely as unknown as Kysely<CollaborationPlatformDatabase>;
+  const direct = await createPlatformCollaborationDirect({
+    db: options.db.kysely as unknown as Kysely<RuntimeEndpointPlatformDatabase>,
+    repository: new PlatformCollaborationRepository(collaborationDb),
+    controlAuthority: organizations.controlAuthority,
+    projection: organizations.projection,
+    keyring: loadTicketSigningKeyring(options.env),
+    relayOrigin,
+    resolveActor,
+    authenticateRuntime,
+    resolveRelayHandle: async (runtime) => {
+      const machineId = parseVpsRuntimeId(runtime.runtimeId);
+      const machine = machineId ? await getUserMachine(options.db, machineId) : undefined;
+      return machine && machine.status === "running" && machine.clerkUserId === runtime.ownerId ? machine.handle : null;
+    },
+    resolveOrganization: async (scopeId) => (await new PlatformCollaborationRepository(collaborationDb).getDirectoryRoute(scopeId))?.organizationId ?? null,
+  });
+
   const collaboration = await createPlatformCollaboration({
-    db: options.db.kysely as unknown as Kysely<CollaborationPlatformDatabase>,
+    db: collaborationDb,
     config,
     organizations,
+    direct,
     resolveActor,
     authenticateRuntime,
     resolveParticipant: async (actorId) => {

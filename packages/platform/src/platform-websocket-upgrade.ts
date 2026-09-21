@@ -85,6 +85,8 @@ export interface RegisterPlatformWebSocketUpgradeHandlerOpts {
     provisioningClass?: string,
   ): Promise<EntitlementAccessDecision>;
   collaborationSockets?: CollaborationWebSocketAuthorizer;
+  /** S05: runtime control-stream upgrade (`/internal/collaboration/control`); handled before session routing. */
+  collaborationDirect?: { handleUpgrade(req: IncomingMessage, socket: Socket, head: Buffer): Promise<boolean> };
 }
 
 export function registerPlatformWebSocketUpgradeHandler(
@@ -104,9 +106,20 @@ export function registerPlatformWebSocketUpgradeHandler(
     getRuntimeEntitlementDecision,
     getRuntimeEntitlementDecisionForUser,
     collaborationSockets,
+    collaborationDirect,
   } = opts;
 
   server.on('upgrade', async (req: IncomingMessage, socket, head) => {
+    // S05: control-stream upgrades authenticate the enrolled runtime themselves.
+    if (collaborationDirect) {
+      try {
+        if (await collaborationDirect.handleUpgrade(req, socket as Socket, head)) return;
+      } catch (err: unknown) {
+        console.warn('[platform] collaboration control upgrade failed:', describeError(err));
+        socket.destroy();
+        return;
+      }
+    }
     try {
       const handledInternalGeminiLive = await handleInternalGeminiLiveProxyUpgrade({
         req,

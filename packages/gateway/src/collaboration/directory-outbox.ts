@@ -79,12 +79,15 @@ export class CollaborationDirectoryOutbox {
     const claimed = await this.claimBatch();
     let delivered = 0;
     for (const event of claimed) {
+      // S05: the platform binds connection tickets to the scope's organization.
+      const organizationId = await this.lookupOrganization(event.scopeId);
       const payload = CollaborationDirectoryEventSchema.parse({
         eventId: event.eventId,
         scopeId: event.scopeId,
         runtimeId: this.options.runtimeId,
         ownerId: event.ownerId,
         kind: event.kind,
+        ...(organizationId ? { organizationId } : {}),
         authorityGeneration: event.authorityGeneration,
         metadataRevision: event.metadataRevision,
         recipients: event.recipientEntries.map((recipient) => ({
@@ -193,6 +196,17 @@ export class CollaborationDirectoryOutbox {
       }
       return claimed;
     });
+  }
+
+  private async lookupOrganization(scopeId: string): Promise<string | null> {
+    try {
+      const row = await this.options.db.selectFrom("collaboration_scopes")
+        .select("organization_id").where("id", "=", scopeId).executeTakeFirst();
+      return row?.organization_id ?? null;
+    } catch (error: unknown) {
+      console.warn("[collaboration-directory] organization lookup failed", error instanceof Error ? error.name : "UnknownError");
+      return null;
+    }
   }
 }
 
