@@ -102,6 +102,7 @@ export async function createPlatformCollaborationDirect(options: {
     },
     ...(options.relayFetch ? { fetchImpl: options.relayFetch } : {}),
   });
+  relay.startSweep();
   const controlStream = new CollaborationControlStream({
     controlAuthority: options.controlAuthority,
     tickets: endpoints,
@@ -137,6 +138,7 @@ export async function createPlatformCollaborationDirect(options: {
       if (closing) return;
       closing = true;
       upgrade.close();
+      relay.close();
       await controlStream.shutdown();
     },
   };

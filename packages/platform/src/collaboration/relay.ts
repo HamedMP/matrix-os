@@ -54,7 +54,31 @@ const DEFAULT_LIMITS = Object.freeze({
   exportTimeoutMs: 30_000,
   connectionsPerHome: 256,
   connectionsPerActor: 32,
+  /** Distinct homes / actors the socket registry tracks at once; beyond that new sockets are refused. */
+  maxTrackedHomes: 4_096,
+  maxTrackedActors: 16_384,
+  /** A relayed socket with no bytes in either direction for this long is evicted and destroyed. */
+  socketIdleMs: 10 * 60_000,
+  sweepIntervalMs: 60_000,
 });
+
+interface RelaySocketReservation {
+  lastTouched: number;
+  release(): void;
+  onEvict?: () => void;
+}
+
+export interface RelayPreparedSocket {
+  home: RelayHome;
+  upstreamPath: string;
+  headers: string;
+  /** Frees the home/actor counts; idempotent, also called by eviction. */
+  release(): void;
+  /** Records traffic in either direction so the idle sweep keeps the reservation. */
+  touch(): void;
+  /** Runs when the idle sweep evicts the reservation; the listener destroys the socket. */
+  onEvict(hook: () => void): void;
+}
 
 export interface RelayHome {
   runtimeId: string;
@@ -118,6 +142,10 @@ export class CollaborationRelay {
   private readonly now: () => number;
   private readonly homeConnections = new Map<string, number>();
   private readonly actorConnections = new Map<string, number>();
+  /** Live socket reservations by id; bounded by the tracked-home/actor caps and swept by idle time. */
+  private readonly reservations = new Map<number, RelaySocketReservation>();
+  private nextReservationId = 1;
+  private sweepTimer: ReturnType<typeof setInterval> | undefined;
 
   constructor(private readonly options: {
     resolveScopeHome(scopeId: string): Promise<RelayHome | null>;
@@ -207,8 +235,41 @@ export class CollaborationRelay {
     return new Response(body, { status: response.status, headers: responseHeaders });
   }
 
+  /** Starts the recurring stale-socket sweep; idempotent. `close()` stops it. */
+  startSweep(): void {
+    if (this.sweepTimer) return;
+    this.sweepTimer = setInterval(() => { this.sweepStaleSockets(); }, this.limits.sweepIntervalMs);
+    this.sweepTimer.unref?.();
+  }
+
+  close(): void {
+    if (this.sweepTimer) clearInterval(this.sweepTimer);
+    this.sweepTimer = undefined;
+  }
+
+  /**
+   * Evicts every reservation idle for longer than `socketIdleMs`: its counts are
+   * released and its eviction hook (the upgrade listener destroys the socket) runs.
+   * Returns the number evicted.
+   */
+  sweepStaleSockets(): number {
+    const cutoff = this.now() - this.limits.socketIdleMs;
+    let evicted = 0;
+    for (const reservation of [...this.reservations.values()]) {
+      if (reservation.lastTouched > cutoff) continue;
+      reservation.release();
+      evicted += 1;
+      try {
+        reservation.onEvict?.();
+      } catch (error: unknown) {
+        console.warn("[collaboration-relay] socket eviction hook failed", error instanceof Error ? error.name : "UnknownError");
+      }
+    }
+    return evicted;
+  }
+
   /** Resolves the home for a WebSocket upgrade and builds the upstream headers; no ticket is read or verified here. */
-  async prepareSocket(input: { actorId: string; rawPath: string; incomingHeaders: IncomingMessage["headers"]; externalHost: string }): Promise<{ home: RelayHome; upstreamPath: string; headers: string; release(): void } | null> {
+  async prepareSocket(input: { actorId: string; rawPath: string; incomingHeaders: IncomingMessage["headers"]; externalHost: string }): Promise<RelayPreparedSocket | null> {
     const socket = parseRelaySocketPath(input.rawPath);
     if (!socket) return null;
     let home: RelayHome | null;
@@ -222,6 +283,9 @@ export class CollaborationRelay {
     const homeCount = this.homeConnections.get(home.runtimeId) ?? 0;
     const actorCount = this.actorConnections.get(input.actorId) ?? 0;
     if (homeCount >= this.limits.connectionsPerHome || actorCount >= this.limits.connectionsPerActor) return null;
+    // Overall bound on distinct keys: a new home or actor is refused once the registry is full.
+    if ((homeCount === 0 && this.homeConnections.size >= this.limits.maxTrackedHomes)
+      || (actorCount === 0 && this.actorConnections.size >= this.limits.maxTrackedActors)) return null;
     this.homeConnections.set(home.runtimeId, homeCount + 1);
     this.actorConnections.set(input.actorId, actorCount + 1);
     const lines = Object.entries(input.incomingHeaders).flatMap(([name, raw]) => {
@@ -231,17 +295,23 @@ export class CollaborationRelay {
       return `${name}: ${value}`;
     });
     lines.push(`x-forwarded-host: ${input.externalHost}`, "x-forwarded-proto: https");
-    let released = false;
+    const id = this.nextReservationId++;
+    const reservation: RelaySocketReservation = {
+      lastTouched: this.now(),
+      release: () => {
+        if (!this.reservations.delete(id)) return;
+        decrement(this.homeConnections, home.runtimeId);
+        decrement(this.actorConnections, input.actorId);
+      },
+    };
+    this.reservations.set(id, reservation);
     return {
       home,
       upstreamPath: `${socket.path}${socket.query ? `?${socket.query}` : ""}`,
       headers: lines.join("\r\n"),
-      release: () => {
-        if (released) return;
-        released = true;
-        decrement(this.homeConnections, home.runtimeId);
-        decrement(this.actorConnections, input.actorId);
-      },
+      release: reservation.release,
+      touch: () => { reservation.lastTouched = this.now(); },
+      onEvict: (hook) => { reservation.onEvict = hook; },
     };
   }
 
