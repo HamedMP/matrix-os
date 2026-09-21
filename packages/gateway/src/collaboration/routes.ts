@@ -29,7 +29,19 @@ export function createCollaborationRoutes(options: CollaborationRouteOptions): H
     c.header("Cache-Control", "private, no-store");
     await next();
   });
-  routes.on(["POST", "PATCH", "DELETE"], "/api/collaboration/*", mutationLimit);
+  routes.on(["POST", "PUT", "PATCH", "DELETE"], "/api/collaboration/*", mutationLimit);
+  routes.on(["POST", "PUT", "PATCH", "DELETE"], "/api/collaboration/*", async (c, next) => {
+    if (options.cutoverGuard) {
+      try {
+        await options.cutoverGuard.assertRuntimeWritable(options.runtimeId);
+      } catch (error: unknown) {
+        // Do not expose inventory, database, or host failures at this pre-auth boundary.
+        console.warn("[collaboration] cutover admission unavailable", error instanceof Error ? error.name : "UnknownError");
+        return c.json({ error: "Collaboration is unavailable", code: "unavailable" }, 503);
+      }
+    }
+    await next();
+  });
 
   registerScopeRoutes(routes, options);
   registerCapabilityRoutes(routes, options);
