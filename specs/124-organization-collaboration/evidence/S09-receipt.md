@@ -46,3 +46,33 @@ Base for this local follow-up: `124/s09` @ `f90627de4`. RED test commit: `5209f7
 - A shared Chat with no canonical execution root, stale provenance, unsupported sandbox capability, or a root outside the managed project/worktree trees is marked unavailable before external execution. There is no fallback to the owner's home directory. A standalone Chat needing AI execution therefore requires an approved managed project/worktree root; this remains a release acceptance consideration.
 - RED: three focused cases failed before the fix: the manifest builder was absent and an unrooted shared Chat reached runtime creation. GREEN: `shared-coding-execution.test.ts` and `shared-ai-runtime.test.ts` passed 44 tests locally with one real-Postgres-only skip; `shared-coding-execution.test.ts` passed 25/25 on real Postgres including the concurrent claim race. `bun run typecheck` passed and `bun run check:patterns` found 0 violations (5 existing warnings).
 - This follow-up changes no database schema or migration. T049 live Codex/Claude probes and host sandbox probes remain unrun; no live provider or systemd result is claimed.
+
+## S07 seam integration (2026-09-21)
+
+S09 was rebased from `124/s07-terminal` at `eb6a4b4c7` onto `6e28ff3c7`, which carries the S07 terminal review fixes. Those fixes introduced a sandbox-manifest seam that S09 had to absorb: `createSharedAiRuntime`/`enableSharedAi` take a `SharedChatSandboxManifestSource`, `SHARED_AI_PROFILE_CATALOG` pins the sandbox policy, and shared AI eligibility is derived from `createSandboxReadinessProbe(...).sandboxRunsSupported()` together with the presence of a manifest source, so a home with no source reports no eligibility instead of launching an unmounted run.
+
+### What survived from each side
+
+| Seam | Kept from S07 | Kept from S09 |
+| --- | --- | --- |
+| `shared-ai-runtime.ts` dispatch | The injected `sandboxManifests.resolve({scopeId, chatId, ownerId, requestingActorId, scopeHandle, run})` call and the fail-closed `if (!sandbox) throw SharedChatRunPreparationError("unavailable")`. | `createSharedChatSandboxManifest` (root presence, fingerprint match, `projects`/`worktrees` host-path allowlist) now backs the default manifest source through `executionRootSandboxManifests`, which the runtime builds from `options.executionRoots` and `options.homePath` when no explicit source is injected. |
+| `scope-runtime-chat-adapter.ts` | The scope-matched manifest local and the always-required manifest check, so an unrooted standalone Chat run still refuses to launch without a scope-matching manifest. | The rooted-run rule: a run that declares an execution root must mount exactly that root (`executionRoot === sandbox.worktree.hostPath`) under the run's own scope handle, alongside the existing resume-state and non-text-part refusals. |
+
+No commit was dropped or skipped; all ten S09 commits replayed. Two conflicted files were resolved by hand (`scope-runtime-chat-adapter.ts`, `shared-ai-runtime.ts`); the remaining eight commits replayed without conflict.
+
+### RED → GREEN
+
+| Behavior | RED observed | GREEN observed |
+| --- | --- | --- |
+| Production shared AI eligibility | New wiring case `uses the S09 execution-root resolver as the sandbox manifest source` resolved `{ available: false }`: `enableSharedAi` accepted no resolver, so the manifest source stayed undefined and every VPS reported shared AI disabled. | `enableSharedAi` accepts `executionRoots` and forwards it; the gateway passes `canonicalChatExecutionRoots` at startup. `collaboration-wiring.test.ts` 14/14 on real Postgres, including the two cases that still keep shared AI disabled without a sandbox policy or a manifest source. |
+| Orchestrator shared dispatch | Two cases in `collaboration-chat-orchestrator.test.ts` asserted runtime creation that never happened, because the S07 fix made `chat_ai` fail closed without a manifest and the suite passed none. Both also failed against the unmodified S07 adapter, so this was a base regression, not a rebase artifact. | Both dispatched runs mount the scope-matching manifest; 4/4 pass. |
+| Execution-adapter admission | Three cases in `collaboration-chat-execution-adapter.test.ts` failed with `forbidden` from S09's effective-submit-mode gate, which the suite predated. | The fixture declares a members-submission scope and a new case proves an owner-only scope refuses a member before the queue; 10/10 pass. |
+| Collaboration schema list | `collaboration-database.test.ts` failed on the frozen `collaboration_%` list, which did not name the migration-11 tables. | `collaboration_run_decisions` and `collaboration_run_interruptions` added; 3/3 pass on real Postgres. |
+
+### Gates after the rebase
+
+`tests/gateway/shared-coding-execution.test.ts` 25/25 on real Postgres, including the concurrent-claim race. The full focused set (`shared-coding-execution`, `collaboration-wiring`, `collaboration-owner-source`, `collaboration-database`, `scope-runtime-chat-adapter`, `scope-runtime-client`, `collaboration-scope-runtime-sandbox`, `collaboration-chat-orchestrator`, `shared-ai-runtime`, `shared-ai-eligibility`, `shared-chat-execution-coordinator`, `collaboration-chat-execution-adapter`, `collaboration-chat-controls`, `collaboration-chat-queue`) passed 182/182 with no skips. `bun run typecheck` exited 0 and `bun run check:patterns` reported 0 violations with 5 pre-existing warnings outside this diff. T049 live provider probes remain unrun.
+
+### Still open
+
+`createSharedAiRuntime` also accepts `runLoss` and `sandboxRuntimes`, and neither is supplied by `wiring.ts` or `server.ts` on this layer, so S09's run-interruption records and lease-driven runtime stops are inert in production. The `124/s09-run-hardening` layer constructs `CollaborationRunLossRepository` in `wiring.ts` and passes `runLoss`; that layer owns closing this gap.
