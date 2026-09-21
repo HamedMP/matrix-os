@@ -46,7 +46,7 @@ async function supervisor(options: { sandbox: boolean; capture: unknown[] }): Pr
     ...(options.sandbox ? { sandbox: {
       policyVersion: SCOPE_RUNTIME_SANDBOX_POLICY_VERSION,
       policyDigest: SCOPE_RUNTIME_SANDBOX_POLICY_DIGEST,
-      workloads: ["chat_ai", "terminal"],
+      workloads: ["chat_ai"],
     } } : {}),
   };
   const server = createServer((socket) => {
@@ -90,10 +90,13 @@ describe("scope runtime client sandbox", () => {
     const capture: unknown[] = [];
     const client = createScopeRuntimeClient({ socketPath: await supervisor({ sandbox: true, capture }), profileCatalog: catalog(true) });
     const capability = await client.refreshCapability();
-    expect(capability).toMatchObject({ available: true, sandbox: { policyDigest: SCOPE_RUNTIME_SANDBOX_POLICY_DIGEST, workloads: ["chat_ai", "terminal"] } });
+    expect(capability).toMatchObject({ available: true, sandbox: { policyDigest: SCOPE_RUNTIME_SANDBOX_POLICY_DIGEST, workloads: ["chat_ai"] } });
     await expect(client.createRuntime({ scopeHandle: SCOPE_HANDLE, workload: "chat_ai", adapterId: "claude-code", harnessVersion: SCOPE_RUNTIME_HARNESS_VERSION, sandbox: manifest }))
       .resolves.toMatchObject({ runtimeHandle: RUNTIME_HANDLE });
     expect(capture.at(-1)).toMatchObject({ type: "runtime.create", sandbox: { actorId: "user_member", network: "none" } });
+    await expect(client.createRuntime({ scopeHandle: SCOPE_HANDLE, workload: "chat_ai", adapterId: "claude-code", harnessVersion: SCOPE_RUNTIME_HARNESS_VERSION }))
+      .rejects.toMatchObject({ code: "runtime_unavailable" });
+    expect(capture.filter((entry) => (entry as { type: string }).type === "runtime.create")).toHaveLength(1);
     await client.close();
   });
 
@@ -134,7 +137,7 @@ describe("sandbox readiness probe", () => {
     await available.refreshCapability();
     const ready = createSandboxReadinessProbe({ client: available });
     await expect(ready.supported({ ...subject, resourceKind: "project" })).resolves.toBe(true);
-    await expect(ready.sandboxTerminalSupported()).resolves.toBe(true);
+    await expect(ready.sandboxTerminalSupported()).resolves.toBe(false);
     await available.close();
   });
 });

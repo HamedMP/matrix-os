@@ -224,7 +224,9 @@ export function createScopeRuntimeClient(options: {
         || input.sandbox.scopeHandle !== input.scopeHandle)) {
         throw new ScopeRuntimeClientError("runtime_unavailable");
       }
-      if (input.workload === "terminal" && !input.sandbox) throw new ScopeRuntimeClientError("runtime_unavailable");
+      // Every call through this collaboration client is a shared run. The
+      // caller cannot opt into the owner's wider fixed profile by omitting a manifest.
+      if (!input.sandbox) throw new ScopeRuntimeClientError("runtime_unavailable");
       const adapter = capability.supportedAdapters.find((entry) => entry.adapterId === input.adapterId);
       if (!adapter || adapter.harnessVersion !== input.harnessVersion
         || !adapter.workloads.includes(input.workload)) {
