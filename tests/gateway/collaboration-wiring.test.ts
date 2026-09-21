@@ -369,6 +369,7 @@ describe("gateway collaboration wiring", () => {
       resolveParticipant: async (actorId) => ({ actorId, displayName: actorId }),
       outboxFetch: async () => new Response(null, { status: 204 }),
       startTimers: false,
+      providerSnapshotReader: { async getSnapshot() { throw new Error("snapshot never read at construction"); } },
     });
     try {
       await expect(runtime.enableSharedAi({
@@ -460,6 +461,7 @@ describe("gateway collaboration wiring", () => {
       resolveParticipant: async (actorId) => ({ actorId, displayName: actorId }),
       outboxFetch: async () => new Response(null, { status: 204 }),
       startTimers: false,
+      providerSnapshotReader: { async getSnapshot() { throw new Error("snapshot never read at construction"); } },
     });
     try {
       await expect(runtime.enableSharedAi({

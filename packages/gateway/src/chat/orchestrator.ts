@@ -947,8 +947,9 @@ export class CanonicalChatOrchestrator {
     scopeId: string,
     chatId: string,
     runId: string,
+    options: { sharedRequestState?: "cancelled" | "interrupted" } = {},
   ): Promise<void> {
-    await this.sharedExecution.cancel(owner, scopeId, chatId, runId);
+    await this.sharedExecution.cancel(owner, scopeId, chatId, runId, options);
   }
 
   async steerRun(
@@ -1332,11 +1333,13 @@ export class CanonicalChatOrchestrator {
             }
           }
           if (entry.sharedScopeId) {
+            // The home is going away: the request is lost, not cancelled by anyone.
             await this.cancelSharedRun(
               entry.owner,
               entry.sharedScopeId,
               entry.chatId,
               entry.runId,
+              { sharedRequestState: "interrupted" },
             );
             return;
           }

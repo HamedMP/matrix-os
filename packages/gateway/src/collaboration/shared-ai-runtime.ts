@@ -66,7 +66,7 @@ import { SharedAiRuntimeRegistry } from "./shared-ai-runtime-registry.js";
 import { createSandboxReadinessProbe } from "./sandbox-readiness.js";
 import type { ReadinessSubject } from "./readiness-evaluator.js";
 import type { CollaborationActorProofVerifier } from "./actor-proof.js";
-import type { SharedRunOwnerSource } from "./shared-run-owner-source.js";
+import type { SharedRunOwnerSource, SharedRunOwnerSourceDecision } from "./shared-run-owner-source.js";
 import type { CollaborationExecutionPolicyRepository } from "./execution-policy.js";
 const SUPERVISOR_SOCKET = "/run/matrix-scope-runtime/supervisor.sock";
 const BROKER_SOCKET = "/run/matrix-scope-runtime/broker.sock";
@@ -115,14 +115,17 @@ export async function createSharedAiRuntime(options: {
   supervisorSocket?: string;
   brokerSocket?: string;
   fetchImpl?: typeof fetch;
-  resolveAccessSource?: () => Promise<KernelCredentialAccessSourceId>;
   providerCatalog?: ChatProviderCatalogService;
   codingProviders?: Pick<CodingAgentProviderRegistry, "listProviders">;
-  /** S08: owner-selected source decision consulted before every shared adapter is prepared. */
-  ownerSource?: SharedRunOwnerSource;
-  executionPolicies?: Pick<CollaborationExecutionPolicyRepository, "effectiveSubmitMode">;
-  /** S09: immutable loss and control records; required for interrupted-run attribution. */
-  runLoss?: CollaborationRunLossRepository;
+  /**
+   * S08: owner-selected source decision consulted before every shared adapter
+   * is prepared. Mandatory: without an execution policy no shared run may
+   * execute, and the owner's default kernel credential is never a fallback.
+   */
+  ownerSource: SharedRunOwnerSource;
+  executionPolicies: Pick<CollaborationExecutionPolicyRepository, "effectiveSubmitMode">;
+  /** S09: immutable loss and control records; required for interrupted-run attribution and control audit. */
+  runLoss: CollaborationRunLossRepository;
   /** S07: registry that stops sandboxed runtimes when the requesting actor loses its lease. */
   sandboxRuntimes?: Pick<SandboxRuntimeRegistry, "bind" | "release">;
   /** S09: resolves a rooted Chat's project/worktree to the host path the sandbox mounts. */
@@ -164,16 +167,10 @@ export async function createSharedAiRuntime(options: {
   const authorizeSharedChat = (scopeId: string, actorId: string, action: "request_ai" | "control_execution") =>
     options.authority.authorize({ scopeId, actorId, action });
   options.repository.setSharedAuthorizer(authorizeSharedChat);
-  const resolveAccessSource = options.resolveAccessSource
-    ?? (async () => (await resolveKernelCredentialSources(
-      options.homePath,
-      process.env,
-      options.fundedCredentialProvider,
-    )).selectedAccessSourceId);
   const commands = new CollaborationChatCommands({
     db: options.db,
     authorize: authorizeSharedChat,
-    ...(options.runLoss ? { runControls: options.runLoss } : {}),
+    runControls: options.runLoss,
     submitApproval: async () => {
       throw new Error("The fixed shared Chat adapter does not expose approval callbacks");
     },
@@ -192,8 +189,16 @@ export async function createSharedAiRuntime(options: {
     }),
   });
   const dispatch = async (scopeId: string, chatId: string): Promise<void> => {
+    const ownerId = await ownerIdFor(options.db, scopeId, chatId);
+    // S08 locked rule: an exhausted or otherwise unready owner source pauses the
+    // queue. Nothing is claimed, so every request stays `queued` until the next
+    // wake finds the source ready again; a missing policy is decided per claim.
+    if (await options.ownerSource.admission({ scopeId, ownerId }) === "paused") {
+      console.warn("[collaboration] shared AI queue paused: owner source is not ready");
+      return;
+    }
     await options.orchestrator.dispatchNextSharedQueued(
-      { type: "personal", ownerId: await ownerIdFor(options.db, scopeId, chatId) },
+      { type: "personal", ownerId },
       chatId,
       scopeId,
       async (execution, run) => {
@@ -231,24 +236,17 @@ export async function createSharedAiRuntime(options: {
           })) throw new SharedChatRunPreparationError("unavailable");
           const adapter = sharedAdapterFor(execution.driverKind, execution.selection.instanceId, eligibility);
           if (!adapter) throw new SharedChatRunPreparationError("unavailable");
-          // S08: the owner's execution policy decides the source; a member on an owner-only
-          // scope or an unavailable source refuses preparation and keeps the queued request.
-          const ownerDecision = options.ownerSource
-            ? await options.ownerSource.prepare({
-                scopeId,
-                chatId,
-                ownerId: context.ownerId,
-                requestingActorId: execution.requestingActorId,
-                driverKind: execution.driverKind,
-              })
-            : null;
-          const providerIdentity = execution.driverKind === "codex"
-            ? { driverKind: "codex" as const, instanceId: "codex_default" as const }
-            : {
-                driverKind: "claude_code" as const,
-                instanceId: "claude_shared" as const,
-                accessSourceId: ownerDecision?.accessSourceId ?? await resolveAccessSource(),
-              };
+          // S08: the owner's execution policy decides the source; a missing policy, a
+          // member on an owner-only scope or an unavailable source refuses preparation
+          // and keeps the queued request. No default credential is ever substituted.
+          const ownerDecision = await options.ownerSource.prepare({
+            scopeId,
+            chatId,
+            ownerId: context.ownerId,
+            requestingActorId: execution.requestingActorId,
+            driverKind: execution.driverKind,
+          });
+          const providerIdentity = sharedProviderIdentityFor(execution.driverKind, ownerDecision);
           // S09: a rooted run mounts the owner's project or worktree through the S07
           // sandbox; without the sandbox capability or a root resolver it is unavailable.
           const sandbox = await createSharedChatSandboxManifest({
@@ -262,21 +260,19 @@ export async function createSharedAiRuntime(options: {
           });
           // S08/S09: pin actor, owner, source, policy revision, audience and root per run
           // before any provider work; a refusal keeps the queued request in place.
-          if (ownerDecision && options.ownerSource?.bindings) {
-            await admitRun({
-              bindings: options.ownerSource.bindings,
-              run,
-              scopeId,
-              chatId,
-              requestId: execution.queuedTurnId,
-              requestingActorId: execution.requestingActorId,
-              policyRevision: ownerDecision.policyRevision,
-              audienceGeneration: String(execution.authorityGeneration),
-              harness: ownerDecision.harness,
-              modelId: execution.selection.model,
-              rootFingerprint: sandbox.worktree.fingerprint,
-            });
-          }
+          await admitRun({
+            bindings: options.ownerSource.bindings,
+            run,
+            scopeId,
+            chatId,
+            requestId: execution.queuedTurnId,
+            requestingActorId: execution.requestingActorId,
+            policyRevision: ownerDecision.policyRevision,
+            audienceGeneration: String(execution.authorityGeneration),
+            harness: ownerDecision.harness,
+            modelId: execution.selection.model,
+            rootFingerprint: sandbox.worktree.fingerprint,
+          });
           const factory = adapter.adapterId === "codex" ? createSharedCodexAdapter : createSharedClaudeAdapter;
           return factory({
             client: scopedClient({
@@ -293,12 +289,12 @@ export async function createSharedAiRuntime(options: {
             harnessVersion: adapter.harnessVersion,
             sandbox,
             ...(options.sandboxRuntimes ? { runtimes: options.sandboxRuntimes } : {}),
-            onLoss: (reason) => {
-              void recordLoss(options.runLoss, {
-                runId: run.id, scopeId, chatId, requestId: execution.queuedTurnId,
-                requestingActorId: execution.requestingActorId, reason,
-              });
-            },
+            // Awaited by the adapter before it yields the failed terminal event, so the
+            // recorded reason is visible by the time the request reads as interrupted.
+            onLoss: (reason) => recordLoss(options.runLoss, {
+              runId: run.id, scopeId, chatId, requestId: execution.queuedTurnId,
+              requestingActorId: execution.requestingActorId, reason,
+            }),
           });
         } catch (error: unknown) {
           if (error instanceof SharedChatRunPreparationError) throw error;
@@ -321,8 +317,8 @@ export async function createSharedAiRuntime(options: {
   const chatExecutionAdapter = new CollaborationChatExecutionAdapter({
     repository: options.repository,
     commands,
-    resolveEffectiveSubmitMode: (scopeId) => options.executionPolicies?.effectiveSubmitMode(scopeId)
-      ?? Promise.resolve("owner_only"),
+    resolveEffectiveSubmitMode: (scopeId) => options.executionPolicies.effectiveSubmitMode(scopeId),
+    resolveOwnerSourceAdmission: (scopeId, ownerId) => options.ownerSource.admission({ scopeId, ownerId }),
     resolveParticipant: options.resolveParticipant,
     resolveResourceRevision: async (scopeId, chatId) => {
       const row = await options.db.selectFrom("chats")
@@ -378,7 +374,7 @@ export async function createSharedAiRuntime(options: {
     } : {}),
     requestDispatch: dispatch,
     onCommitted: (scopeId) => options.eventRegistry.broadcastScope(scopeId),
-    ...(options.runLoss ? { runLoss: options.runLoss } : {}),
+    runLoss: options.runLoss,
   });
 
   const broker = createScopeRuntimeBroker({
@@ -422,13 +418,15 @@ export async function createSharedAiRuntime(options: {
   let stopped = false;
   let wakeInFlight: Promise<void> | undefined;
   let lostRunsMarked = false;
+  const markLostRuns = async (): Promise<void> => {
+    if (lostRunsMarked) return;
+    // Every shared run still active in the database was lost with the previous process.
+    await markLostSharedRunsOnStartup({ db: options.db, loss: options.runLoss });
+    lostRunsMarked = true;
+  };
   const runQueueWake = async (): Promise<void> => {
     try {
-      if (!lostRunsMarked && options.runLoss) {
-        // Every shared run still active in the database was lost with the previous process.
-        await markLostSharedRunsOnStartup({ db: options.db, loss: options.runLoss });
-        lostRunsMarked = true;
-      }
+      await markLostRuns();
       await recoverSharedAiQueue({
         reconcilePendingApprovals: async () => {
           await commands.reconcilePendingApprovals();
@@ -457,6 +455,14 @@ export async function createSharedAiRuntime(options: {
     if (stopped || wakeInFlight) return;
     wakeInFlight = runQueueWake().finally(() => { wakeInFlight = undefined; });
   };
+  // Attribute `gateway_restart` before this call returns so the caller can run
+  // the orchestrator's owner reconcile loop afterwards without losing the reason.
+  try {
+    await markLostRuns();
+  } catch (error: unknown) {
+    console.warn("[collaboration] lost shared run marking deferred to queue wake",
+      error instanceof Error ? error.name : "UnknownError");
+  }
   const wakeTimer = setInterval(wakeQueued, QUEUE_WAKE_INTERVAL_MS);
   wakeTimer.unref?.();
   void wakeQueued();
@@ -475,7 +481,6 @@ export async function createSharedAiRuntime(options: {
      * preserved and re-admit on fresh membership once control returns.
      */
     async interruptForLoss(reason: CollaborationRunInterruptionReason): Promise<string[]> {
-      if (!options.runLoss) return [];
       return interruptActiveSharedRuns({
         db: options.db,
         loss: options.runLoss,
@@ -674,7 +679,10 @@ export function createSharedAiApprovalReconciler(options: {
       ownerId: await options.resolveOwnerId(input.scopeId, input.chatId),
     };
     try {
-      await options.orchestrator.cancelSharedRun(owner, input.scopeId, input.chatId, input.runId);
+      // The home stops a run whose approval outcome it cannot know: the request is interrupted, not cancelled.
+      await options.orchestrator.cancelSharedRun(
+        owner, input.scopeId, input.chatId, input.runId, { sharedRequestState: "interrupted" },
+      );
     } catch (error: unknown) {
       console.warn(
         "[collaboration] unknown approval run stop deferred to recovery",
@@ -812,11 +820,29 @@ function scopedClient(input: {
   };
 }
 
+/**
+ * The provider identity a scoped runtime is bound to. Claude runs only on the
+ * owner's selected kernel access source; a policy whose source the kernel
+ * credential resolver does not know is refused rather than silently replaced
+ * by the owner's default credential. Codex carries no kernel source.
+ */
+export function sharedProviderIdentityFor(
+  driverKind: CanonicalProviderDriverKind,
+  decision: Pick<SharedRunOwnerSourceDecision, "accessSourceId">,
+):
+  | { driverKind: "claude_code"; instanceId: "claude_shared"; accessSourceId: KernelCredentialAccessSourceId }
+  | { driverKind: "codex"; instanceId: "codex_default" } {
+  if (driverKind === "codex") return { driverKind: "codex", instanceId: "codex_default" };
+  if (driverKind !== "claude_code" || decision.accessSourceId === null) {
+    throw new SharedChatRunPreparationError("unavailable");
+  }
+  return { driverKind: "claude_code", instanceId: "claude_shared", accessSourceId: decision.accessSourceId };
+}
+
 async function recordLoss(
-  loss: CollaborationRunLossRepository | undefined,
+  loss: CollaborationRunLossRepository,
   input: Parameters<CollaborationRunLossRepository["recordInterruption"]>[0],
 ): Promise<void> {
-  if (!loss) return;
   try {
     await loss.recordInterruption(input);
   } catch (error: unknown) {

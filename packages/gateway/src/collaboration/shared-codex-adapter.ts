@@ -25,7 +25,7 @@ export interface SharedCodingAdapterOptions {
   harnessVersion: string;
   sandbox?: ScopeRuntimeSandboxManifest;
   runtimes?: SharedRuntimeBindingRegistry;
-  onLoss?(reason: CollaborationRunInterruptionReason): void;
+  onLoss?(reason: CollaborationRunInterruptionReason): void | Promise<void>;
 }
 
 export function createSharedCodexAdapter(options: SharedCodingAdapterOptions): CanonicalChatProviderAdapter {

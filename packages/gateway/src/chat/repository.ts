@@ -1512,7 +1512,7 @@ export class ChatRepository {
     chatId: string;
     runId: string;
     outcome: "completed" | "failed" | "aborted";
-    sharedRequestState?: "interrupted" | "unauthorized" | "unavailable";
+    sharedRequestState?: "interrupted" | "unauthorized" | "unavailable" | "cancelled";
     completedAt: string;
     diagnostic?: ChatRunFailureDiagnostic;
     output?: CanonicalChatMessage;

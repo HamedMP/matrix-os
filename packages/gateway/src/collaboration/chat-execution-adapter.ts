@@ -43,6 +43,12 @@ export class CollaborationChatExecutionAdapter {
     resolveEligibility(scopeId: string): Promise<unknown>;
     /** S08 policy is checked at admission, before a member request enters the canonical queue. */
     resolveEffectiveSubmitMode?(scopeId: string): Promise<"members" | "owner_only">;
+    /**
+     * S08/S09: whether the owner has selected a source for this scope. `missing`
+     * makes Shared AI unavailable for everyone; `paused` keeps admission open
+     * because queued work waits for the source instead of failing.
+     */
+    resolveOwnerSourceAdmission?(scopeId: string, ownerId: string): Promise<"ready" | "paused" | "missing">;
     resolveProviderReadiness?(
       ownerId: string,
       selection: CanonicalChatModelSelection | null,
@@ -270,6 +276,18 @@ export class CollaborationChatExecutionAdapter {
     );
     if (capability.status !== "available" && capability.status !== "owner_binding_required") {
       return { capability };
+    }
+    // The effective submit mode and the owner's source selection gate the
+    // capability itself, not only dispatch: a member on an owner-only scope
+    // and any actor on a scope without an owner-selected source see it as
+    // unavailable, so no request is accepted that could never run.
+    if (context.actorId !== context.ownerId) {
+      const mode = await this.options.resolveEffectiveSubmitMode?.(context.scopeId) ?? "owner_only";
+      if (mode !== "members") return { capability: { ...capability, status: "unavailable" } };
+    }
+    if (this.options.resolveOwnerSourceAdmission) {
+      const admission = await this.options.resolveOwnerSourceAdmission(context.scopeId, context.ownerId);
+      if (admission === "missing") return { capability: { ...capability, status: "unavailable" } };
     }
 
     let readiness: "ready" | "reconnect_required" | "unavailable" = "ready";

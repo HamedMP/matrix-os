@@ -4443,9 +4443,8 @@ export async function createGateway(config: GatewayConfig) {
     });
     canonicalChatOrchestrator = canonicalChatRuntime.orchestrator;
     backgroundChatProjection.setReconciler(ownerId => canonicalChatOrchestrator?.reconcileActiveRuns({ type: "personal", ownerId }) ?? Promise.resolve());
-    for (const ownerId of new Set(codingAgentOwnerIds)) {
-      await canonicalChatOrchestrator.reconcileActiveRuns({ type: "personal", ownerId });
-    }
+    // Shared AI marks runs the previous process lost (gateway_restart) before the
+    // owner reconcile loop below finishes them; the reverse order loses attribution.
     if (gatewayCollaboration) {
       const sharedAi = await gatewayCollaboration.enableSharedAi({
         orchestrator: canonicalChatOrchestrator,
@@ -4455,6 +4454,9 @@ export async function createGateway(config: GatewayConfig) {
         ...(fundedCredentialProvider ? { fundedCredentialProvider } : {}),
       });
       console.log(`[collaboration] shared AI ${sharedAi.available ? "ready" : "disabled"}`);
+    }
+    for (const ownerId of new Set(codingAgentOwnerIds)) {
+      await canonicalChatOrchestrator.reconcileActiveRuns({ type: "personal", ownerId });
     }
     if (codingAgentThreadStore && codingAgentWorkspaceRuntime && codexEventBridge) {
       const repository = chatRepository;
