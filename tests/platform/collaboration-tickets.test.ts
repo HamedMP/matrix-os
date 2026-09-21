@@ -317,7 +317,7 @@ describe("S05 platform tickets, endpoints and control", () => {
 
     it("rotates platform signing keys with bounded overlap and refuses a keyring without the active key", () => {
       const rotated = new CollaborationTicketIssuer({
-        keyring: { activeKeyId: "ticket-key-2", keys: { "ticket-key-2": seedB }, retired: { "ticket-key-1": seedA } },
+        keyring: { activeKeyId: "ticket-key-2", keys: { "ticket-key-2": seedB }, retired: { "ticket-key-1": seedA }, retiredAt: { "ticket-key-1": clock.toISOString() } },
         repository,
         endpoints,
         resolveOrganization: async () => organizationId,
@@ -360,6 +360,52 @@ describe("S05 platform tickets, endpoints and control", () => {
         MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID: "ticket-key-1",
         MATRIX_COLLABORATION_TICKET_KEYS: JSON.stringify({ "ticket-key-1": seedA }),
       })).toEqual({ activeKeyId: "ticket-key-1", keys: { "ticket-key-1": seedA }, retired: {} });
+    });
+  });
+
+  describe("retired signing keys (T026)", () => {
+    beforeEach(async () => {
+      await repository.applyDirectoryEvent({ eventId: "20000000-0000-4000-8000-000000000081", scopeId, runtimeId, ownerId: platformCollaborationActors.owner, kind: "chat", authorityGeneration: 1, metadataRevision: 1, recipients: [{ actorId: platformCollaborationActors.owner, status: "accepted" }] });
+    });
+
+    it("refuses a retired key without a retirement time so restarts cannot republish it forever", () => {
+      const withoutRetiredAt = { activeKeyId: "ticket-key-2", keys: { "ticket-key-2": seedB }, retired: { "ticket-key-1": seedA } };
+      // Retirement must be configuration, not process uptime: three restarts long past the
+      // overlap must never hand the retired key back to homes.
+      for (let restart = 0; restart < 3; restart += 1) {
+        clock = new Date(clock.getTime() + RETIRED_KEY_OVERLAP_MS + 60_000);
+        expect(() => new CollaborationTicketIssuer({ keyring: withoutRetiredAt, repository, endpoints, resolveOrganization: async () => organizationId, projection: { isCurrentMember: async () => true }, relayOrigin: "https://app.matrix-os.com", now: () => clock })).toThrow(CollaborationTicketIssuerError);
+      }
+      // The environment loader fails closed the same way, so the route answers unavailable
+      // instead of publishing a key whose retirement nothing records.
+      expect(loadTicketSigningKeyring({
+        MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID: "ticket-key-2",
+        MATRIX_COLLABORATION_TICKET_KEYS: JSON.stringify({ "ticket-key-2": seedB }),
+        MATRIX_COLLABORATION_TICKET_RETIRED_KEYS: JSON.stringify({ "ticket-key-1": seedA }),
+      })).toBeNull();
+      // A retirement time that names no retired key is a typo, not a retirement.
+      expect(loadTicketSigningKeyring({
+        MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID: "ticket-key-2",
+        MATRIX_COLLABORATION_TICKET_KEYS: JSON.stringify({ "ticket-key-2": seedB }),
+        MATRIX_COLLABORATION_TICKET_RETIRED_KEYS: JSON.stringify({ "ticket-key-1": seedA }),
+        MATRIX_COLLABORATION_TICKET_RETIRED_AT: JSON.stringify({ "ticket-key-9": clock.toISOString() }),
+      })).toBeNull();
+
+      const retiredAt = { "ticket-key-1": new Date(clock.getTime() - RETIRED_KEY_OVERLAP_MS + 5_000).toISOString() };
+      const keyring = { ...withoutRetiredAt, retiredAt };
+      expect(new CollaborationTicketIssuer({ keyring, repository, endpoints, resolveOrganization: async () => organizationId, projection: { isCurrentMember: async () => true }, relayOrigin: "https://app.matrix-os.com", now: () => clock }).publicKeys().map((key) => key.keyId)).toEqual(["ticket-key-2", "ticket-key-1"]);
+      clock = new Date(clock.getTime() + 5_001);
+      // The recorded retirement survives every restart: the key stays dropped.
+      for (let restart = 0; restart < 3; restart += 1) {
+        clock = new Date(clock.getTime() + 60_000);
+        expect(new CollaborationTicketIssuer({ keyring, repository, endpoints, resolveOrganization: async () => organizationId, projection: { isCurrentMember: async () => true }, relayOrigin: "https://app.matrix-os.com", now: () => clock }).publicKeys().map((key) => key.keyId)).toEqual(["ticket-key-2"]);
+      }
+      // A retirement dated in the future would never expire either.
+      expect(() => new CollaborationTicketIssuer({
+        keyring: { ...withoutRetiredAt, retiredAt: { "ticket-key-1": new Date(clock.getTime() + 60_000).toISOString() } }, repository, endpoints, resolveOrganization: async () => organizationId, projection: { isCurrentMember: async () => true }, relayOrigin: "https://app.matrix-os.com", now: () => clock,
+      })).toThrow(CollaborationTicketIssuerError);
+      // The overlap window itself is unchanged.
+      expect(RETIRED_KEY_OVERLAP_MS).toBe(15 * 60_000);
     });
   });
 
