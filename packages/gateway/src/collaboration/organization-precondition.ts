@@ -12,17 +12,8 @@
  */
 import { CollaborationAuthorizationError } from "./authority-error.js";
 
-/** Organization AI-submission policy as projected by the platform; absent metadata is owner-only. */
-export type OrganizationAiSubmission = "members" | "owner_only";
-
 export type OrganizationMembershipAssertion =
-  | {
-    member: true;
-    expiresAt: string;
-    aiSubmission: OrganizationAiSubmission;
-    /** The platform projection's monotonic membership epoch (decimal string), carried on fresh and cached paths. */
-    membershipEpoch: string;
-  }
+  | { member: true; expiresAt: string }
   | { member: false };
 
 export interface OrganizationMembershipSource {
