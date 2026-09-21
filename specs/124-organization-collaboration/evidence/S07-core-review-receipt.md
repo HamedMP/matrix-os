@@ -128,3 +128,29 @@ manifest shape the production resolver returns. The gate itself is unchanged.
 `-orchestrator`, `-queue`, `-scope`, `-scope-postgres` and `scope-runtime-chat-adapter` → **78/78 across 10
 files** on real Postgres. No other suite was left red by the adapter tightening. `bun run typecheck` exit 0;
 `bun run check:patterns` 0 violations, 5 pre-existing warnings.
+
+## Review round 4 (2026-09-21, #1807 at `8e147fa2f`)
+
+Greptile scored **4/5** with one thread, which was also the whole verdict: the readiness fallback
+this layer added in round 3 rejected safe resources.
+
+**P1 "Fallback rejects safe resources" (`wiring.ts`).** Valid, and it was my regression. The
+`sandboxSupported` seam answered `false` for every resource kind whenever shared AI was not
+running, so the readiness evaluator would report files, folders, app instances and observable
+terminals as `unsupported`, although none of them executes anything. Only projects and Chats need
+the pinned sandbox policy, which `createSandboxReadinessProbe().supported()` already encoded
+privately.
+
+The rule now lives in one exported helper, `sandboxRequiredForResourceKind`, and both the probe
+and the wiring seam derive from it instead of each carrying their own copy. Projects and Chats
+still fail closed: unsupported unless shared AI runs on a supervisor advertising the pinned
+policy. RED `cc03c0015` (both disabled cases fail on the non-executing kinds), GREEN `ec88d3c7d`.
+
+**Gates.** `collaboration-wiring` **14/14** and `collaboration-scope-runtime-sandbox` **6/6** on
+real Postgres; `collaboration-chat-orchestrator`, `scope-runtime-client`,
+`collaboration-policy-boundary` and `collaboration-chat-execution-adapter` **34/34** with 3
+host-only skips; `bun run typecheck` exit 0; `bun run check:patterns` 0 violations, 5 pre-existing
+warnings. No React file changed.
+
+The verdict's second sentence, the stale-terminal liveness item, is `124/s06` and is fixed there
+in the same round; it is inherited by this diff, not owned by it.
