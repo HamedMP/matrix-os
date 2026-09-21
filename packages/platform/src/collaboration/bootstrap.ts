@@ -128,6 +128,17 @@ export async function bootstrapPlatformCollaboration(
       return machine && machine.status === "running" && machine.clerkUserId === runtime.ownerId ? machine.handle : null;
     },
     resolveOrganization: async (scopeId) => (await new PlatformCollaborationRepository(collaborationDb).getDirectoryRoute(scopeId))?.organizationId ?? null,
+    resolveRuntimeOrigin: async (runtimeId, ownerId) => {
+      const machineId = parseVpsRuntimeId(runtimeId);
+      const machine = machineId ? await getUserMachine(options.db, machineId) : undefined;
+      if (!machine || machine.status !== "running" || !machine.publicIPv4 || machine.clerkUserId !== ownerId) return null;
+      return `https://${machine.publicIPv4}:443`;
+    },
+    relayFetch: (input, init) => fetch(input, {
+      ...init,
+      signal: init?.signal ?? AbortSignal.timeout(10_000),
+      dispatcher: options.customerVpsProxyDispatcher,
+    } as RequestInit & { dispatcher: import("undici").Dispatcher }),
   });
 
   const collaboration = await createPlatformCollaboration({
