@@ -6,6 +6,7 @@ import { createGatewayCollaboration, loadGatewayCollaborationConfig } from "../.
 import {
   allowAllOrganizationPrecondition,
   createCollaborationTestDatabase,
+  createRealCollaborationTestDatabase,
   type CollaborationTestDatabase,
 } from "./collaboration-test-support.js";
 
@@ -25,7 +26,9 @@ describe("home-local collaboration confirmation key", () => {
   let fixture: CollaborationTestDatabase;
 
   beforeEach(async () => {
-    fixture = await createCollaborationTestDatabase();
+    fixture = process.env.MATRIX_TEST_POSTGRES_URL
+      ? await createRealCollaborationTestDatabase()
+      : await createCollaborationTestDatabase();
     await bootstrapChatDatabase(fixture.db);
   });
 

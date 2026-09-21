@@ -38,7 +38,6 @@ const completeEnvironment = {
   MATRIX_RUNTIME_ID: "vps:11111111-1111-4111-8111-111111111111",
   MATRIX_COLLABORATION_ACTIVE_KEY_ID: "key-1",
   MATRIX_COLLABORATION_PROOF_KEYS: JSON.stringify({ "key-1": "a".repeat(32) }),
-  MATRIX_COLLABORATION_PREFLIGHT_SECRET: "b".repeat(32),
   PLATFORM_INTERNAL_URL: "https://platform.internal",
   UPGRADE_TOKEN: "c".repeat(32),
   DATABASE_URL: "postgres://owner@localhost/owner",
