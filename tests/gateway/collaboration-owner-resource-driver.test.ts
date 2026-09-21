@@ -32,21 +32,38 @@ describe("owner resource driver boundary", () => {
   it("streams project bytes and atomically replaces a catalog path", async () => {
     await writeFile(join(project, "README.md"), "old");
     const namespace = { ownerId: OWNER, projectId: PROJECT, path: "README.md" };
-    const read = await driver.read(namespace);
+    const before = await driver.fingerprint(namespace);
+    const read = await driver.read({ ...namespace, expectedIncarnation: before });
     expect(read.size).toBe(3);
     expect(await new Response(read.stream).text()).toBe("old");
     await driver.write({ ...namespace, content: new TextEncoder().encode("new content") });
     expect(await readFile(join(project, "README.md"), "utf8")).toBe("new content");
-    expect(await driver.fingerprint(namespace)).toMatch(/^[0-9a-f-]{36}$/);
+    const incarnation = await driver.fingerprint(namespace);
+    expect(incarnation).toMatch(/^[a-f0-9]{64}$/);
+    expect(await driver.fingerprint(namespace)).toBe(incarnation);
+  });
+
+  it("checks the opened file identity before streaming a recreated path", async () => {
+    const namespace = { ownerId: OWNER, projectId: PROJECT, path: "README.md" };
+    await writeFile(join(project, "README.md"), "original");
+    const original = await driver.fingerprint(namespace);
+    await rm(join(project, "README.md"));
+    await writeFile(join(project, "README.md"), "replacement private bytes");
+    const replacement = await driver.fingerprint(namespace);
+    expect(replacement).not.toBe(original);
+    await expect(driver.read({ ...namespace, expectedIncarnation: original }))
+      .rejects.toMatchObject({ code: "not_found" });
+    const current = await driver.read({ ...namespace, expectedIncarnation: replacement });
+    expect(await new Response(current.stream).text()).toBe("replacement private bytes");
   });
 
   it("refuses protected home paths and symlinks in every namespace", async () => {
     await mkdir(join(home, "system"));
     await writeFile(join(home, "system", "secret"), "private");
-    await expect(driver.read({ ownerId: OWNER, projectId: null, path: "system/secret" }))
+    await expect(driver.read({ ownerId: OWNER, projectId: null, path: "system/secret", expectedIncarnation: "none" }))
       .rejects.toMatchObject({ code: "forbidden" });
     await symlink(join(home, "system"), join(project, "linked"));
-    await expect(driver.read({ ownerId: OWNER, projectId: PROJECT, path: "linked/secret" }))
+    await expect(driver.read({ ownerId: OWNER, projectId: PROJECT, path: "linked/secret", expectedIncarnation: "none" }))
       .rejects.toMatchObject({ code: "forbidden" });
     await expect(driver.write({ ownerId: OWNER, projectId: PROJECT, path: "linked/new", content: new Uint8Array([1]) }))
       .rejects.toMatchObject({ code: "forbidden" });
