@@ -373,6 +373,54 @@ describe("gateway collaboration wiring", () => {
     }
   });
 
+  it("uses the S09 execution-root resolver as the sandbox manifest source", async () => {
+    const temp = await mkdtemp(join(tmpdir(), "matrix-shared-ai-roots-"));
+    const supervisorSocket = join(temp, "supervisor.sock");
+    const brokerSocket = join(temp, "broker.sock");
+    const supervisor = await startSupervisor(supervisorSocket);
+    await bootstrapCollaborationDatabase(fixture.db);
+    await seedSharedChat(fixture);
+    const runtime = await createGatewayCollaboration({
+      organizationPrecondition: allowAllOrganizationPrecondition,
+      db: fixture.db,
+      chatRepository: new ChatRepository(fixture.db),
+      config: {
+        runtimeId: collaborationIds.runtime,
+        activeKeyId: "key-1",
+        proofKeys: { "key-1": "a".repeat(32) },
+        preflightSecret: "b".repeat(32),
+        platformBaseUrl: "https://platform.internal",
+        serviceToken: "c".repeat(32),
+      },
+      resolveParticipant: async (actorId) => ({ actorId, displayName: actorId }),
+      outboxFetch: async () => new Response(null, { status: 204 }),
+      startTimers: false,
+    });
+    try {
+      await expect(runtime.enableSharedAi({
+        orchestrator: {} as unknown as CanonicalChatOrchestrator,
+        homePath: temp,
+        supervisorSocket,
+        brokerSocket,
+        executionRoots,
+      })).resolves.toEqual({ available: true });
+      await expect(fixture.db.selectFrom("collaboration_scopes")
+        .select(["execution_generation", "execution_eligibility"])
+        .where("id", "=", collaborationIds.scope).executeTakeFirstOrThrow())
+        .resolves.toMatchObject({
+          execution_generation: 7,
+          execution_eligibility: {
+            profileId: SCOPE_RUNTIME_PROFILE_ID,
+            profileDigest: SCOPE_RUNTIME_PROFILE_DIGEST,
+          },
+        });
+    } finally {
+      await runtime.shutdown();
+      await new Promise<void>((resolve) => supervisor.close(() => resolve()));
+      await rm(temp, { recursive: true, force: true });
+    }
+  });
+
   it("keeps collaboration available with M2 disabled when the broker socket cannot start", async () => {
     const temp = await mkdtemp(join(tmpdir(), "matrix-shared-ai-broker-failure-"));
     const supervisorSocket = join(temp, "supervisor.sock");
@@ -532,6 +580,15 @@ describe("gateway collaboration wiring", () => {
   });
 });
 
+// S09: the production execution-root resolver the gateway hands shared AI.
+const executionRoots = {
+  resolve: async () => ({
+    ref: { kind: "project" as const, projectId: "project_launch_site" },
+    fingerprint: "a".repeat(64),
+    primaryWorkspaceRoot: "/home/matrix/home/projects/launch-site",
+    projectSlug: "launch-site",
+  }),
+};
 const sandboxManifests = {
   resolve: async (input: { scopeHandle: string; requestingActorId: string }) => ({
     version: 1 as const,
