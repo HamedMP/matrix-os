@@ -146,6 +146,7 @@ export class CollaborationRelay {
   private readonly reservations = new Map<number, RelaySocketReservation>();
   private nextReservationId = 1;
   private sweepTimer: ReturnType<typeof setInterval> | undefined;
+  private closed = false;
 
   constructor(private readonly options: {
     resolveScopeHome(scopeId: string): Promise<RelayHome | null>;
@@ -235,16 +236,42 @@ export class CollaborationRelay {
     return new Response(body, { status: response.status, headers: responseHeaders });
   }
 
-  /** Starts the recurring stale-socket sweep; idempotent. `close()` stops it. */
+  /** Starts the recurring stale-socket sweep; idempotent. `close()` stops it for good. */
   startSweep(): void {
-    if (this.sweepTimer) return;
+    if (this.sweepTimer || this.closed) return;
     this.sweepTimer = setInterval(() => { this.sweepStaleSockets(); }, this.limits.sweepIntervalMs);
     this.sweepTimer.unref?.();
   }
 
+  /** Test seam: the sweep timer must not outlive the relay. */
+  sweepRunning(): boolean {
+    return this.sweepTimer !== undefined;
+  }
+
+  /**
+   * Shutdown drain. Every live reservation is released and its eviction hook run
+   * (the upgrade listener destroys the relayed socket) before the directory and
+   * dispatcher this relay depends on are torn down, so no socket is left pointing
+   * at a dead upstream. One failing hook does not strand the reservations behind
+   * it, and `prepareSocket` refuses afterwards rather than reserving a socket
+   * nothing will ever drain. Idempotent.
+   */
   close(): void {
     if (this.sweepTimer) clearInterval(this.sweepTimer);
     this.sweepTimer = undefined;
+    if (this.closed) return;
+    this.closed = true;
+    for (const reservation of [...this.reservations.values()]) {
+      reservation.release();
+      try {
+        reservation.onEvict?.();
+      } catch (error: unknown) {
+        console.warn("[collaboration-relay] socket drain hook failed", error instanceof Error ? error.name : "UnknownError");
+      }
+    }
+    this.reservations.clear();
+    this.homeConnections.clear();
+    this.actorConnections.clear();
   }
 
   /**
@@ -270,6 +297,7 @@ export class CollaborationRelay {
 
   /** Resolves the home for a WebSocket upgrade and builds the upstream headers; no ticket is read or verified here. */
   async prepareSocket(input: { actorId: string; rawPath: string; incomingHeaders: IncomingMessage["headers"]; externalHost: string }): Promise<RelayPreparedSocket | null> {
+    if (this.closed) return null;
     const socket = parseRelaySocketPath(input.rawPath);
     if (!socket) return null;
     let home: RelayHome | null;
