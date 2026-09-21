@@ -4,6 +4,8 @@
 **Base:** `124/s02` @ `762c76bb2` (S02 contracts on the S20 → S01 stack). **Branch:** `124/s03`.
 **Commits:** `1a0a1916a` (RED tests), `1f1bd7245` (T016 projection), `5a5ef7ad7` (T017 control authority), `265d89b22` (T018 routes, Clerk upstream, gateway client), `2ebc6f1ab` (T019 composition, gateway default source, live probe), plus this receipt.
 
+**Size split (2026-09-21):** #1796 `124/s03` now contains the platform projection and control authority (2,956 additions, 24 files). The gateway client, its organization precondition types and default wiring, and its focused test moved without logic changes to child `124/s03-gateway` (283 additions, 4 files). The combined child tree was verified byte-identical to the pre-split `d858e446f` head. All review-round security fixes below remain in the base.
+
 ## What landed
 
 | Area | Files | Behaviour |
@@ -64,3 +66,10 @@
 - `CLERK_ORGANIZATION_WEBHOOK_SIGNING_SECRET` (Clerk dashboard endpoint secret, `whsec_…`) and `CLERK_SECRET_KEY` must be configured on the platform; without them the webhook returns 503 and no organization is ever verified.
 - Live Clerk fixture for the removal bound and webhook ordering probes (owner approval pending).
 - S05 must call `controlAuthority.registerTransport` for pushed denials and adopt `logicalRuntimeIdFor` in runtime registration.
+
+## Size-split verification (2026-09-21)
+
+- RED size gate: original #1796 diff against its S02 parent was 3,239 additions/28 files (over the 3,000-addition limit). GREEN: S03 base 2,956 additions/24 files; S03 gateway child 283 additions/4 files.
+- Base: seven focused platform suites, 34/34 GREEN on real Postgres, including outbox upgrade, concurrent webhook epochs and disjoint drainer claims. Child: `organization-membership-client`, `collaboration-org-precondition` and `collaboration-wiring` gateway suites, 28/28 GREEN.
+- Full `bun run typecheck` passed independently on both layers. `bun run check:patterns` returned 0 violations and 5 existing warnings on each. The combined child tree matched the pre-split backup ref exactly before this receipt update.
+- No new behavior test was added for the structural split; the original RED→GREEN and review regression tests above cover the unchanged logic. Live Clerk probes remain unrun.
