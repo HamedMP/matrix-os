@@ -124,6 +124,23 @@ export function createPlatformCollaborationRoutes(options: {
 
   app.get("/api/collaboration/inbox", async (c) => listDiscovery(c, "invited", options));
   app.get("/api/collaboration/shared", async (c) => listDiscovery(c, "accepted", options));
+  // The CLI receives an invitation ID as an argument. Resolve only its actor-indexed
+  // scope pointer here; invitation content and acceptance stay on the owner's home.
+  app.get("/api/collaboration/invitations/:invitationId/location", async (c) => {
+    const actorId = await resolveValidatedActor(c, options.resolveActor);
+    if (!actorId) return safeJson(c, "Unauthorized", 401);
+    const invitationId = z.uuid().safeParse(c.req.param("invitationId"));
+    if (!invitationId.success) return safeJson(c, "Invalid request", 422);
+    try {
+      const route = await options.repository.getInvitationRoute(actorId, invitationId.data);
+      if (!route) return safeJson(c, "Invitation unavailable", 404);
+      c.header("Cache-Control", "private, no-store");
+      return c.json({ scopeId: route.scopeId });
+    } catch (error: unknown) {
+      console.warn("[platform-collaboration] invitation location failed", error instanceof Error ? error.name : "UnknownError");
+      return safeJson(c, "Collaboration unavailable", 503);
+    }
+  });
 
   app.post(
     "/api/collaboration/scopes/:scopeId/connection-tickets",
