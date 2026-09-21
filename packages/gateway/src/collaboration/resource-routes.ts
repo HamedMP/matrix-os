@@ -165,7 +165,7 @@ export function registerResourceRoutes(routes: Hono, options: CollaborationRoute
     const entry = await resources.catalog.resolveForScope(context, fileId);
     if (entry.kind !== "file") throw new ResourceCatalogError("not_found");
     const namespace = await resources.catalog.namespaceForScope(context);
-    const content = await resources.driver.read({ ownerId: namespace.ownerId, projectId: namespace.projectId, path: entry.path });
+    const content = await resources.driver.read({ ownerId: namespace.ownerId, projectId: namespace.projectId, path: entry.path, expectedIncarnation: entry.incarnation });
     return streamResponse(c, content, entry.path.split("/").at(-1) ?? "file", options);
   }));
 
@@ -234,6 +234,18 @@ export function registerResourceRoutes(routes: Hono, options: CollaborationRoute
     const instance = await apps.describe(context, appId);
     if (instance.readiness !== "ready" || instance.collaborationMode !== "scoped") throw new ResourceCatalogError("unavailable");
     const asset = await resources.driver.readAppAsset({ ...instance.assetNamespace, appId, assetPath });
+    try {
+      // Recheck after the file is opened: a same-slug unregister/re-register
+      // between authorization and open must never stream the new app's bytes.
+      const current = await apps.describe(context, appId);
+      if (current.incarnation !== instance.incarnation || current.readiness !== "ready"
+        || current.collaborationMode !== "scoped") throw new ResourceCatalogError("unavailable");
+    } catch (error: unknown) {
+      await asset.stream.cancel().catch((cancelError: unknown) => {
+        console.warn("[collaboration-resources] stale asset stream cleanup failed", cancelError instanceof Error ? cancelError.name : "UnknownError");
+      });
+      throw error;
+    }
     return streamResponse(c, asset, assetPath.split("/").at(-1) ?? "asset", options);
   }));
 

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createGatewayProjectInventorySource } from "../../packages/gateway/src/collaboration/project-inventory-source.js";
+import { appRegistryIncarnation } from "../../packages/gateway/src/collaboration/app-incarnation.js";
 
 const OWNER = "user_owner";
 const PROJECT = "proj_alpha";
@@ -34,7 +35,7 @@ function dependencies() {
       })),
     },
     apps: {
-      get: vi.fn(async (appId) => appId === "app_board" ? { id: appId, collaborationMode: "scoped" as const } : null),
+      get: vi.fn(async (appId) => appId === "app_board" ? { id: appId, collaborationMode: "scoped" as const, incarnation: appRegistryIncarnation({ slug: appId, created_at: "2026-09-11T11:00:00.000Z" }) } : null),
     },
     sessions: {
       list: vi.fn(async () => [
@@ -92,7 +93,7 @@ describe("gateway project inventory source", () => {
       compatibility: "ready",
     });
     await expect(source.listApps(OWNER, PROJECT)).resolves.toEqual([
-      { id: "app_board", revision: "6", compatibility: "ready" },
+      { id: "app_board", revision: "6", compatibility: "ready", incarnation: expect.stringMatching(/^[a-f0-9]{64}$/) },
       { id: "app_personal", revision: "6", ownership: "external" },
     ]);
     await expect(source.listTerminals(OWNER, PROJECT)).resolves.toEqual([

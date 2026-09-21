@@ -28,6 +28,7 @@ const AppRecordSchema = z.object({
   appId: AppIdSchema,
   bridgeAppId: z.string().min(1).max(256),
   collaborationMode: z.enum(["scoped", "unavailable"]),
+  incarnation: z.string().regex(/^[a-f0-9]{64}$/),
 }).strict();
 const EnvelopeSchema = z.object({
   clientRequestId: z.uuid(),
@@ -43,6 +44,7 @@ export interface AppInstanceDescription {
   revision: number;
   readiness: "ready" | "blocked" | "unavailable";
   collaborationMode: "scoped" | "unavailable";
+  incarnation: string;
   /** Where the app's static assets live for the asset route. */
   assetNamespace: { ownerId: string; projectId: string | null };
 }
@@ -163,22 +165,26 @@ export function createAppInstanceAdapter(options: {
         if (!binding) throw new ProjectAppAdapterError("not_found");
         const { record } = await resolveApp(current.resourceId, appId.data);
         const stale = binding.authority_runtime_id !== current.authorityRuntimeId || Number(binding.authority_generation) !== current.authorityGeneration;
+        if (!binding.incarnation || binding.incarnation !== record.incarnation) throw new ProjectAppAdapterError("app_unavailable");
         return {
           appId: appId.data,
           revision: Number(binding.revision),
           readiness: stale ? "unavailable" : binding.readiness,
           collaborationMode: record.collaborationMode,
+          incarnation: record.incarnation,
           assetNamespace: { ownerId: current.ownerId, projectId: current.resourceId },
         };
       }
       const root = await standaloneRoot(current, appId.data);
       const { record } = await resolveApp(root.projectId, appId.data);
+      if (root.incarnation !== record.incarnation) throw new ProjectAppAdapterError("app_unavailable");
       return {
         appId: appId.data,
         catalogId: root.id,
         revision: root.revision,
         readiness: "ready",
         collaborationMode: record.collaborationMode,
+        incarnation: record.incarnation,
         assetNamespace: { ownerId: root.ownerId, projectId: root.projectId },
       };
     } catch (error: unknown) {
@@ -187,14 +193,18 @@ export function createAppInstanceAdapter(options: {
   }
 
   async function query(context: AuthorizedCollaborationContext, rawAppId: string, action: unknown): Promise<unknown> {
-    if (context.resourceKind === "project") return project.query(context, { appId: rawAppId, action });
+    if (context.resourceKind === "project") {
+      const instance = await describe(context, rawAppId);
+      if (instance.readiness !== "ready" || instance.collaborationMode !== "scoped") throw new ProjectAppAdapterError("app_unavailable");
+      return project.query(context, { appId: rawAppId, action });
+    }
     const appId = AppIdSchema.safeParse(rawAppId);
     if (!appId.success) throw new ProjectAppAdapterError("invalid_action");
     try {
       const current = await options.authority.authorize({ scopeId: context.scopeId, actorId: context.actorId, action: "read" });
       const root = await standaloneRoot(current, appId.data);
       const { record, bridgeAppId } = await resolveApp(root.projectId, appId.data);
-      if (record.collaborationMode !== "scoped") throw new ProjectAppAdapterError("app_unavailable");
+      if (record.collaborationMode !== "scoped" || root.incarnation !== record.incarnation) throw new ProjectAppAdapterError("app_unavailable");
       const parsed = parseAction(action, bridgeAppId, READ_ACTIONS);
       const namespace = standaloneNamespace(current.scopeId, appId.data);
       return await options.db.transaction().execute(async (trx) => {
@@ -211,7 +221,11 @@ export function createAppInstanceAdapter(options: {
   }
 
   async function mutate(context: AuthorizedCollaborationContext, rawAppId: string, raw: unknown) {
-    if (context.resourceKind === "project") return project.mutate(context, { ...(typeof raw === "object" && raw ? raw : {}), appId: rawAppId });
+    if (context.resourceKind === "project") {
+      const instance = await describe(context, rawAppId);
+      if (instance.readiness !== "ready" || instance.collaborationMode !== "scoped") throw new ProjectAppAdapterError("app_unavailable");
+      return project.mutate(context, { ...(typeof raw === "object" && raw ? raw : {}), appId: rawAppId });
+    }
     const appId = AppIdSchema.safeParse(rawAppId);
     const envelope = EnvelopeSchema.safeParse(raw);
     if (!appId.success || !envelope.success) throw new ProjectAppAdapterError("invalid_action");
@@ -219,7 +233,7 @@ export function createAppInstanceAdapter(options: {
       const current = await options.authority.authorize({ scopeId: context.scopeId, actorId: context.actorId, action: "mutate_resource" });
       const root = await standaloneRoot(current, appId.data);
       const { record, bridgeAppId } = await resolveApp(root.projectId, appId.data);
-      if (record.collaborationMode !== "scoped") throw new ProjectAppAdapterError("app_unavailable");
+      if (record.collaborationMode !== "scoped" || root.incarnation !== record.incarnation) throw new ProjectAppAdapterError("app_unavailable");
       const parsed = parseAction(envelope.data.action, bridgeAppId, MUTATION_ACTIONS);
       const namespace = standaloneNamespace(current.scopeId, appId.data);
       const operationKind = `resource.app.${parsed.action}`;
