@@ -85,3 +85,21 @@ it. Routed to the #1804 owner; the fix belongs in that layer's upgrade listener.
 test); sandbox, scope-runtime client, policy boundary and chat execution adapter suites **36/36** (3 skipped
 host-only); `bun run typecheck` exit 0; `bun run check:patterns` 0 violations, 5 pre-existing warnings. No
 React files changed, so react-doctor does not apply.
+
+### Fail-closed evidence for "production shared AI is dead on this layer"
+
+The gate is deliberate and holds at four points; none of them may be weakened to make a launch succeed.
+
+- `packages/gateway/src/collaboration/scope-runtime-client.ts:229` — `createRuntime` rejects with
+  `runtime_unavailable` when a launch carries no sandbox manifest, so no shared run can reach the supervisor
+  under the wider owner profile.
+- `packages/gateway/src/collaboration/shared-ai-runtime.ts:123` — `deriveSharedAiEligibility` returns `null`
+  without a manifest source, so the scope reports no eligibility rather than offering a run that would die at
+  launch; `shared-ai-runtime.ts:271` resolves the per-run manifest from that source inside `prepare`.
+- `packages/gateway/src/collaboration/wiring.ts:315,340` — `enableSharedAi` accepts and forwards an optional
+  `sandboxManifests` source; the seam exists on this layer and is unset, not missing.
+- `packages/gateway/src/server.ts:4363` — production passes no source, with the reason recorded in place.
+
+S09 supplies the execution-root resolver through that same `sandboxManifests` seam when it restacks onto this
+layer, at which point production shared AI becomes eligible with every run sandboxed. Until then "disabled" is
+the correct reported state.
