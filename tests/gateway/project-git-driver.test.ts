@@ -70,6 +70,30 @@ describe("owner Git driver", () => {
     expect(missing.identity).toEqual({ status: "missing" });
   });
 
+  it("fails closed when the member-writable repository config carries transport or include overrides", async () => {
+    const root = await repository();
+    await git(root, "remote", "add", "origin", "https://github.com/owner/repo.git");
+    const driver = createProjectGitDriver({ resolveProjectRoot: async () => root });
+    const ownerIdentity = await driver.resolveOwnerIdentity({ ownerId: OWNER, projectId: PROJECT });
+    const execution = {
+      operationId: "80000000-0000-4000-8000-000000000001",
+      scopeId: "80000000-0000-4000-8000-000000000002",
+      ownerId: OWNER,
+      projectId: PROJECT,
+      requestingActorId: "user_member",
+      ownerIdentity,
+      request: { type: "push" as const, clientRequestId: "80000000-0000-4000-8000-000000000005", expectedRevision: "1", payloadHash: "c".repeat(64), branch: "feature/member", expectedHeadSha: await git(root, "rev-parse", "HEAD") },
+    };
+    await git(root, "config", "http.proxy", "http://127.0.0.1:9");
+    await expect(driver.run(execution)).rejects.toMatchObject({ name: "ProjectGitBrokerError", code: "unavailable" });
+    await expect(driver.reconcile(execution)).rejects.toMatchObject({ name: "ProjectGitBrokerError", code: "unavailable" });
+    await git(root, "config", "--unset", "http.proxy");
+    await writeFile(join(root, ".git", "member.inc"), '[url "http://127.0.0.1:9/"]\n\tpushInsteadOf = https://github.com/\n');
+    await git(root, "config", "include.path", "member.inc");
+    await expect(driver.run(execution)).rejects.toMatchObject({ name: "ProjectGitBrokerError", code: "unavailable" });
+    await expect(driver.reconcile(execution)).rejects.toMatchObject({ name: "ProjectGitBrokerError", code: "unavailable" });
+  });
+
   it("rejects stale refs and a local or changed push remote before any remote effect", async () => {
     const root = await repository();
     const driver = createProjectGitDriver({ resolveProjectRoot: async () => root });

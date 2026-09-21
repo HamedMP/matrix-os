@@ -128,6 +128,30 @@ describe("sandbox systemd policy", () => {
     expect(readOnly).toContain("IPAddressDeny=any");
   });
 
+  it("mounts the repository metadata separately and keeps member-writable Git configuration read-only", () => {
+    const worktree = "/home/matrix/home/projects/launch-site";
+    const properties = buildSandboxSystemdProperties(
+      ScopeRuntimeSandboxManifestSchema.parse(manifest()),
+      { worktreeHostPath: worktree },
+    );
+    const worktreeBind = `BindPaths=${worktree}:${SANDBOX_WORKSPACE_MOUNT}`;
+    const gitBind = `BindPaths=-${worktree}/.git:${SANDBOX_WORKSPACE_MOUNT}/.git`;
+    expect(properties).toContain(gitBind);
+    expect(properties.indexOf(worktreeBind)).toBeLessThan(properties.indexOf(gitBind));
+    for (const path of [".git/config", ".git/hooks", ".git/info", ".git/objects/info"]) {
+      expect(properties).toContain(`ReadOnlyPaths=-${SANDBOX_WORKSPACE_MOUNT}/${path}`);
+    }
+    const readOnly = buildSandboxSystemdProperties(
+      ScopeRuntimeSandboxManifestSchema.parse(manifest({
+        worktree: { hostPath: worktree, mode: "ro", fingerprint: FINGERPRINT },
+        network: "broker_only",
+      })),
+      { worktreeHostPath: worktree },
+    );
+    expect(readOnly).toContain(`BindReadOnlyPaths=-${worktree}/.git:${SANDBOX_WORKSPACE_MOUNT}/.git`);
+    expect(readOnly.some((entry) => entry.startsWith(`BindPaths=${worktree}`))).toBe(false);
+  });
+
   it("pins the policy digest to the property template and forbidden environment", () => {
     expect(SCOPE_RUNTIME_SANDBOX_POLICY_VERSION).toBe(1);
     expect(SCOPE_RUNTIME_SANDBOX_POLICY_DIGEST).toMatch(/^[a-f0-9]{64}$/);
