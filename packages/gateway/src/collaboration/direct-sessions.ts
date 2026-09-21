@@ -1,0 +1,350 @@
+/**
+ * Direct identity sessions on the home (S05 / T027, T028).
+ *
+ * A ticket is exchanged exactly once for a session that lives at most five
+ * minutes and carries organization evidence with its own fixed deadline.
+ * Every request is signed against the session and its proof key; every
+ * authorization re-runs the local authority. Evidence is refreshed through
+ * the organization precondition at its deadline, never from receipt time.
+ * Sessions end on expiry, evidence loss, platform denial, explicit close or
+ * shutdown. Connections are counted per home, scope and actor.
+ */
+import { randomUUID } from "node:crypto";
+import {
+  COLLABORATION_DIRECT_LIMITS,
+  COLLABORATION_DIRECT_PROTOCOL_VERSION,
+  CollaborationDirectRequestSignatureSchema,
+  CollaborationDirectSessionRenewRequestSchema,
+  CollaborationDirectSessionRequestSchema,
+  CollaborationDirectSessionSchema,
+  type CollaborationConnectionTicket,
+  type CollaborationDenial,
+  type CollaborationDirectSession,
+} from "@matrix-os/contracts";
+import { CollaborationAuthorizationError } from "./authority-error.js";
+import type { AuthorizedCollaborationContext, CollaborationAction, CollaborationAuthority } from "./authority.js";
+import { DirectAuthError, type DirectTicketVerifier } from "./direct-auth.js";
+import { requestSigningPayload, sha256Hex, verifyEd25519 } from "./direct-crypto.js";
+import type { CollaborationRepository } from "./repository.js";
+
+const SESSION_TTL_MS = COLLABORATION_DIRECT_LIMITS.identitySessionTtlSeconds * 1_000;
+const EVIDENCE_TTL_MS = COLLABORATION_DIRECT_LIMITS.organizationEvidenceTtlSeconds * 1_000;
+const RENEW_AFTER_MS = SESSION_TTL_MS - 60_000;
+const REQUEST_WINDOW_MS = COLLABORATION_DIRECT_LIMITS.ticketTtlSeconds * 1_000;
+const SKEW_MS = COLLABORATION_DIRECT_LIMITS.clockSkewSeconds * 1_000;
+const MAX_SESSIONS = 4_096;
+const SWEEP_INTERVAL_MS = COLLABORATION_DIRECT_LIMITS.streamWatchdogSeconds * 1_000;
+
+interface SessionRecord {
+  session: CollaborationDirectSession;
+  proofPublicKey: string;
+  connections: number;
+}
+
+export interface DirectConnectionLimits {
+  perHome: number;
+  perScope: number;
+  perActorScope: number;
+}
+
+export interface DirectAuthorizeInput {
+  sessionId: string;
+  signature: unknown;
+  proof: string;
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+  path: string;
+  query: string;
+  body: Uint8Array;
+  conditionalHeadersDigest?: string;
+  action: CollaborationAction;
+}
+
+export class DirectSessionService {
+  private readonly now: () => Date;
+  private readonly sessions = new Map<string, SessionRecord>();
+  private readonly scopeConnections = new Map<string, number>();
+  private readonly actorScopeConnections = new Map<string, number>();
+  private homeConnections = 0;
+  private closed = false;
+  private readonly limits: DirectConnectionLimits;
+  private readonly sweepTimer: ReturnType<typeof setInterval> | undefined;
+
+  constructor(private readonly options: {
+    verifier: DirectTicketVerifier;
+    authority: CollaborationAuthority;
+    repository: CollaborationRepository;
+    now?: () => Date;
+    limits?: Partial<DirectConnectionLimits>;
+    /** Called when a session ends for any reason so streams can be closed. */
+    onEnded?(session: CollaborationDirectSession, reason: "expired" | "denied" | "revoked" | "closed" | "shutdown"): void;
+    startTimers?: boolean;
+  }) {
+    this.now = options.now ?? (() => new Date());
+    this.limits = {
+      perHome: options.limits?.perHome ?? COLLABORATION_DIRECT_LIMITS.connectionsPerHome,
+      perScope: options.limits?.perScope ?? COLLABORATION_DIRECT_LIMITS.connectionsPerScope,
+      perActorScope: options.limits?.perActorScope ?? COLLABORATION_DIRECT_LIMITS.connectionsPerActorScope,
+    };
+    if (options.startTimers) {
+      this.sweepTimer = setInterval(() => this.sweep(), SWEEP_INTERVAL_MS);
+      this.sweepTimer.unref?.();
+    }
+  }
+
+  /** `POST /api/collaboration/direct-sessions`: one-use ticket exchange with proof of possession. */
+  async create(request: unknown): Promise<CollaborationDirectSession> {
+    if (this.closed) throw new DirectAuthError("unavailable", "Direct sessions are shutting down");
+    assertProtocolVersion(request);
+    const parsed = CollaborationDirectSessionRequestSchema.safeParse(request);
+    if (!parsed.success) throw new DirectAuthError("invalid_ticket", "Session request is invalid");
+    const ticket = this.options.verifier.verifyTicket(parsed.data.signedTicket);
+    if (ticket.purpose !== "direct_session") throw new DirectAuthError("invalid_ticket", "Ticket purpose does not admit a session");
+    this.options.verifier.requireClientOrigin(parsed.data.clientOrigin);
+    this.options.verifier.verifyPossession({ ticket, proofPublicKey: parsed.data.proofPublicKey, possession: parsed.data.possession });
+    const evidenceExpiresAt = await this.admit(ticket);
+    this.options.verifier.consume(ticket);
+    if (this.sessions.size >= MAX_SESSIONS) this.sweep();
+    if (this.sessions.size >= MAX_SESSIONS) throw new DirectAuthError("limit", "Too many direct sessions");
+    const issuedAt = this.now();
+    const session = CollaborationDirectSessionSchema.parse({
+      protocolVersion: COLLABORATION_DIRECT_PROTOCOL_VERSION,
+      id: randomUUID(),
+      actorId: ticket.actorId,
+      organizationId: ticket.organizationId,
+      scopeId: ticket.resource.scopeId,
+      runtimeId: ticket.runtime.runtimeId,
+      authorityGeneration: ticket.runtime.authorityGeneration,
+      purpose: ticket.purpose,
+      proofKeyThumbprint: ticket.proofKeyThumbprint,
+      issuedAt: issuedAt.toISOString(),
+      expiresAt: new Date(issuedAt.getTime() + SESSION_TTL_MS).toISOString(),
+      evidenceExpiresAt: new Date(Math.min(evidenceExpiresAt, issuedAt.getTime() + EVIDENCE_TTL_MS)).toISOString(),
+      renewAfter: new Date(issuedAt.getTime() + RENEW_AFTER_MS).toISOString(),
+    });
+    this.sessions.set(session.id, { session, proofPublicKey: parsed.data.proofPublicKey, connections: 0 });
+    return session;
+  }
+
+  /** `POST /api/collaboration/direct-sessions/:id/renew`: a fresh ticket for the same actor, scope and proof key. */
+  async renew(sessionId: string, request: unknown): Promise<CollaborationDirectSession> {
+    const record = this.live(sessionId);
+    assertProtocolVersion(request);
+    const parsed = CollaborationDirectSessionRenewRequestSchema.safeParse(request);
+    if (!parsed.success) throw new DirectAuthError("invalid_ticket", "Renewal request is invalid");
+    const ticket = this.options.verifier.verifyTicket(parsed.data.signedTicket);
+    if (ticket.purpose !== "direct_session" || ticket.actorId !== record.session.actorId || ticket.resource.scopeId !== record.session.scopeId
+      || ticket.organizationId !== record.session.organizationId || ticket.proofKeyThumbprint !== record.session.proofKeyThumbprint) {
+      throw new DirectAuthError("invalid_ticket", "Renewal ticket does not match the session");
+    }
+    const evidenceExpiresAt = await this.admit(ticket);
+    this.options.verifier.consume(ticket);
+    const issuedAt = this.now();
+    const session = CollaborationDirectSessionSchema.parse({
+      ...record.session,
+      authorityGeneration: ticket.runtime.authorityGeneration,
+      issuedAt: issuedAt.toISOString(),
+      expiresAt: new Date(issuedAt.getTime() + SESSION_TTL_MS).toISOString(),
+      evidenceExpiresAt: new Date(Math.min(evidenceExpiresAt, issuedAt.getTime() + EVIDENCE_TTL_MS)).toISOString(),
+      renewAfter: new Date(issuedAt.getTime() + RENEW_AFTER_MS).toISOString(),
+    });
+    record.session = session;
+    return session;
+  }
+
+  close(sessionId: string): void {
+    const record = this.sessions.get(sessionId);
+    if (record) this.end(record, "closed");
+  }
+
+  describe(sessionId: string): CollaborationDirectSession | null {
+    const record = this.sessions.get(sessionId);
+    if (!record) return null;
+    return Date.parse(record.session.expiresAt) > this.now().getTime() ? { ...record.session } : null;
+  }
+
+  /** Verifies a signed request and returns the live session with fresh evidence. */
+  async authenticate(input: Omit<DirectAuthorizeInput, "action">): Promise<CollaborationDirectSession> {
+    const record = this.live(input.sessionId);
+    const parsed = CollaborationDirectRequestSignatureSchema.safeParse(input.signature);
+    if (!parsed.success || parsed.data.sessionId !== input.sessionId) throw new DirectAuthError("invalid_signature", "Request signature is invalid");
+    const signature = parsed.data;
+    const current = this.now().getTime();
+    const issuedAt = Date.parse(signature.issuedAt);
+    if (issuedAt > current + SKEW_MS || current - issuedAt > REQUEST_WINDOW_MS) throw new DirectAuthError("invalid_signature", "Request signature is stale");
+    if (signature.method !== input.method || signature.path !== input.path || signature.query !== input.query
+      || signature.bodyDigest !== sha256Hex(input.body)
+      || signature.conditionalHeadersDigest !== (input.conditionalHeadersDigest ?? sha256Hex(new Uint8Array()))) {
+      throw new DirectAuthError("invalid_signature", "Request signature does not match the request");
+    }
+    if (!verifyEd25519(record.proofPublicKey, requestSigningPayload(signature), input.proof)) {
+      throw new DirectAuthError("invalid_signature", "Request proof is invalid");
+    }
+    this.options.verifier.admitRequestNonce(record.session.id, signature.nonce, issuedAt + REQUEST_WINDOW_MS + SKEW_MS);
+    await this.refreshEvidence(record);
+    return { ...record.session };
+  }
+
+  async authorize(input: DirectAuthorizeInput): Promise<AuthorizedCollaborationContext> {
+    const session = await this.authenticate(input);
+    let context: AuthorizedCollaborationContext;
+    try {
+      context = await this.options.authority.authorize({ scopeId: session.scopeId, actorId: session.actorId, action: input.action });
+    } catch (error: unknown) {
+      if (error instanceof CollaborationAuthorizationError) {
+        throw new DirectAuthError(error.code === "unavailable" ? "unavailable" : "invalid_signature", "Session does not permit this action");
+      }
+      throw error;
+    }
+    if (context.authorityGeneration !== session.authorityGeneration) {
+      const record = this.sessions.get(session.id);
+      if (record) this.end(record, "expired");
+      throw new DirectAuthError("expired", "Authority generation changed");
+    }
+    return context;
+  }
+
+  /** Ends every session the denial covers and reports their ids. */
+  revoke(denial: Pick<CollaborationDenial, "organizationId" | "actorId" | "scopeId">): string[] {
+    const ended: string[] = [];
+    for (const record of [...this.sessions.values()]) {
+      const { session } = record;
+      if ((denial.actorId && session.actorId !== denial.actorId)
+        || (denial.scopeId && session.scopeId !== denial.scopeId)
+        || (denial.organizationId && session.organizationId !== denial.organizationId)) continue;
+      this.end(record, "revoked");
+      ended.push(session.id);
+    }
+    return ended;
+  }
+
+  /** Bounded stream admission (T028): per home, per scope, per actor and scope. */
+  readonly connections = {
+    open: (input: { sessionId: string }): { release(): void } => {
+      const record = this.live(input.sessionId);
+      const scopeKey = record.session.scopeId;
+      const actorKey = `${record.session.scopeId}\u0000${record.session.actorId}`;
+      if (this.homeConnections >= this.limits.perHome || (this.scopeConnections.get(scopeKey) ?? 0) >= this.limits.perScope
+        || (this.actorScopeConnections.get(actorKey) ?? 0) >= this.limits.perActorScope) {
+        throw new DirectAuthError("limit", "Connection limit reached");
+      }
+      this.homeConnections += 1;
+      this.scopeConnections.set(scopeKey, (this.scopeConnections.get(scopeKey) ?? 0) + 1);
+      this.actorScopeConnections.set(actorKey, (this.actorScopeConnections.get(actorKey) ?? 0) + 1);
+      record.connections += 1;
+      let released = false;
+      return {
+        release: () => {
+          if (released) return;
+          released = true;
+          this.homeConnections = Math.max(0, this.homeConnections - 1);
+          this.decrement(this.scopeConnections, scopeKey);
+          this.decrement(this.actorScopeConnections, actorKey);
+          record.connections = Math.max(0, record.connections - 1);
+        },
+      };
+    },
+  };
+
+  sweep(): void {
+    const current = this.now().getTime();
+    for (const record of [...this.sessions.values()]) {
+      if (Date.parse(record.session.expiresAt) <= current) this.end(record, "expired");
+    }
+  }
+
+  async shutdown(): Promise<void> {
+    if (this.closed) return;
+    this.closed = true;
+    if (this.sweepTimer) clearInterval(this.sweepTimer);
+    for (const record of [...this.sessions.values()]) this.end(record, "shutdown");
+    this.scopeConnections.clear();
+    this.actorScopeConnections.clear();
+    this.homeConnections = 0;
+  }
+
+  private live(sessionId: string): SessionRecord {
+    if (this.closed) throw new DirectAuthError("unavailable", "Direct sessions are shutting down");
+    const record = this.sessions.get(sessionId);
+    if (!record) throw new DirectAuthError("expired", "Session is not active");
+    if (Date.parse(record.session.expiresAt) <= this.now().getTime()) {
+      this.end(record, "expired");
+      throw new DirectAuthError("expired", "Session has expired");
+    }
+    return record;
+  }
+
+  /** Admission at exchange: scope exists on this home in the ticket's organization; actor is a member or an invitee; evidence is fresh. */
+  private async admit(ticket: CollaborationConnectionTicket): Promise<number> {
+    const scope = await this.options.repository.db.selectFrom("collaboration_scopes")
+      .select(["id", "organization_id", "authority_runtime_id", "kind", "membership_mode", "parent_scope_id", "deleted_at"])
+      .where("id", "=", ticket.resource.scopeId).executeTakeFirst();
+    if (!scope || scope.deleted_at !== null || scope.organization_id !== ticket.organizationId
+      || scope.kind !== ticket.resource.kind || toLogical(scope.authority_runtime_id) !== ticket.runtime.runtimeId) throw denied();
+    const evidence = await this.evidenceFor(ticket.organizationId, ticket.actorId);
+    const membershipScopeId = scope.membership_mode === "inherited" && scope.parent_scope_id ? scope.parent_scope_id : scope.id;
+    try {
+      await this.options.authority.authorize({ scopeId: ticket.resource.scopeId, actorId: ticket.actorId, action: "read" });
+      return evidence;
+    } catch (error: unknown) {
+      if (!(error instanceof CollaborationAuthorizationError) || error.code === "unavailable") throw denied();
+    }
+    // Not yet a participant: an invitee may open a direct session to accept, nothing more.
+    if (ticket.purpose !== "direct_session") throw denied();
+    const member = await this.options.repository.getMember(membershipScopeId, ticket.actorId);
+    if (!member || member.status !== "pending") throw denied();
+    return evidence;
+  }
+
+  private async evidenceFor(organizationId: string, actorId: string): Promise<number> {
+    try {
+      const evidence = await this.options.authority.organizationPrecondition.require({ organizationId, actorId });
+      const expiresAt = Date.parse((evidence as { expiresAt?: string } | undefined)?.expiresAt ?? "");
+      return Number.isFinite(expiresAt) ? expiresAt : this.now().getTime() + EVIDENCE_TTL_MS;
+    } catch (error: unknown) {
+      if (error instanceof CollaborationAuthorizationError) throw denied();
+      throw error;
+    }
+  }
+
+  private async refreshEvidence(record: SessionRecord): Promise<void> {
+    if (Date.parse(record.session.evidenceExpiresAt) > this.now().getTime()) return;
+    try {
+      const expiresAt = await this.evidenceFor(record.session.organizationId, record.session.actorId);
+      record.session = { ...record.session, evidenceExpiresAt: new Date(Math.min(expiresAt, Date.parse(record.session.expiresAt))).toISOString() };
+    } catch (error: unknown) {
+      this.end(record, "denied");
+      throw error;
+    }
+  }
+
+  private end(record: SessionRecord, reason: "expired" | "denied" | "revoked" | "closed" | "shutdown"): void {
+    if (!this.sessions.delete(record.session.id)) return;
+    try {
+      this.options.onEnded?.(record.session, reason);
+    } catch (error: unknown) {
+      console.warn("[collaboration-direct-sessions] end hook failed", error instanceof Error ? error.name : "UnknownError");
+    }
+  }
+
+  private decrement(map: Map<string, number>, key: string): void {
+    const next = (map.get(key) ?? 1) - 1;
+    if (next <= 0) map.delete(key); else map.set(key, next);
+  }
+}
+
+/** An old client is told to upgrade before any other validation runs. */
+function assertProtocolVersion(request: unknown): void {
+  const version = (request as { signedTicket?: { ticket?: { protocolVersion?: unknown } } } | null)?.signedTicket?.ticket?.protocolVersion;
+  if (typeof version === "number" && version !== COLLABORATION_DIRECT_PROTOCOL_VERSION) {
+    throw new DirectAuthError("upgrade_required", "Collaboration protocol version is not supported");
+  }
+}
+
+function toLogical(runtimeId: string): string {
+  const vps = /^vps:([0-9a-f-]{36})$/i.exec(runtimeId);
+  return vps ? `vps-${vps[1]!.toLowerCase()}` : runtimeId;
+}
+
+function denied(): DirectAuthError {
+  return new DirectAuthError("denied", "Current membership is required");
+}
