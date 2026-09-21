@@ -188,6 +188,42 @@ describe("CollaborationRelay", () => {
     expect(instance.sweepStaleSockets()).toBe(0);
   });
 
+  it("drains active socket reservations on shutdown and admits nothing afterwards", async () => {
+    let clock = 1_000_000;
+    const { instance } = relay({ now: () => clock });
+    instance.startSweep();
+    expect(instance.sweepRunning()).toBe(true);
+    const destroyed: string[] = [];
+    const prepare = (actorId: string) => instance.prepareSocket({ actorId, rawPath: `/ws/collaboration/direct/scopes/${scopeId}/events?ticket=abc`, incomingHeaders: {}, externalHost: "app.matrix-os.com" });
+    const first = await prepare("user_a");
+    const second = await prepare("user_b");
+    expect(first && second).toBeTruthy();
+    first!.onEvict(() => { destroyed.push("first"); });
+    // One failing hook must not strand the reservations behind it.
+    second!.onEvict(() => { destroyed.push("second"); throw new Error("socket already gone"); });
+    const third = await prepare("user_c");
+    third!.onEvict(() => { destroyed.push("third"); });
+    expect(instance.connectionCounts()).toEqual({ homes: 3, actors: 3 });
+
+    instance.close();
+
+    // Shutdown notifies and releases every reservation before the structures the
+    // upgrade path depends on are torn down.
+    expect(destroyed.sort()).toEqual(["first", "second", "third"]);
+    expect(instance.connectionCounts()).toEqual({ homes: 0, actors: 0 });
+    expect(instance.sweepRunning()).toBe(false);
+    expect(instance.sweepStaleSockets()).toBe(0);
+    // A late upgrade is refused rather than reserving a socket nothing will drain.
+    expect(await prepare("user_d")).toBeNull();
+    expect(instance.connectionCounts()).toEqual({ homes: 0, actors: 0 });
+    // Releasing a drained reservation and closing twice stay no-ops.
+    first!.release();
+    instance.close();
+    expect(destroyed).toHaveLength(3);
+    instance.startSweep();
+    expect(instance.sweepRunning()).toBe(false);
+  });
+
   it("prepares socket upgrades with no proof header and bounded connections", async () => {
     const { instance } = relay({ limits: { connectionsPerActor: 1 } });
     const prepared = await instance.prepareSocket({ actorId: "user_a", rawPath: `/ws/collaboration/direct/scopes/${scopeId}/terminal?ticket=abc`, incomingHeaders: { upgrade: "websocket", connection: "Upgrade", cookie: "x", "sec-websocket-key": "k" }, externalHost: "app.matrix-os.com" });
