@@ -90,6 +90,8 @@ import { ProjectAppAdapterError } from "./project-app-adapter.js";
 import { ProjectResourceAdapterError } from "./project-adapters.js";
 import { ResourceCatalogError } from "./resource-catalog.js";
 import type { CollaborationResourceServices } from "./resource-routes.js";
+import type { CollaborationCapabilityRepository } from "./capability-repository.js";
+import type { CollaborationCapabilityEvaluator } from "./capability-evaluator.js";
 import {
   CollaborationRepositoryError,
   type CollaborationMemberRecord,
@@ -126,6 +128,9 @@ export interface CollaborationRouteOptions {
   projectSharing?: ProjectSharingService;
   projectGit?: ProjectGitBroker;
   projectReadiness?: ProjectAccessReadiness;
+  /** S15: exact V1 grant storage and fresh membership evaluator. */
+  capabilities?: CollaborationCapabilityRepository;
+  capabilityEvaluator?: CollaborationCapabilityEvaluator;
   /** S08: owner-selected execution policy repository; routes report unavailable when absent. */
   executionPolicies?: CollaborationExecutionPolicyRepository;
   /** S12: catalog, file driver and app instances; file/app routes report unavailable when absent. */
