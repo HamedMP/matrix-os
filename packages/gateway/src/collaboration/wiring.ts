@@ -134,7 +134,8 @@ export async function createGatewayCollaboration(options: {
   const directVerifier = new DirectTicketVerifier({
     runtimeId: options.config.runtimeId,
     platformKeys: () => controlClient?.platformKeys() ?? [],
-    authorityGeneration: () => controlClient?.authorityGeneration() ?? 1,
+    // Fail closed: no registration or a stale control snapshot denies every ticket exchange.
+    controlFresh: () => controlClient?.controlFresh() ?? false,
     allowedClientOrigins: options.config.clientOrigins,
     replay: new DirectReplayCache(),
   });
@@ -142,6 +143,13 @@ export async function createGatewayCollaboration(options: {
     verifier: directVerifier,
     authority,
     repository,
+    // A pushed denial closes legacy event/terminal sockets for that actor at once; direct sockets subscribe themselves.
+    onEnded: (session, reason) => {
+      if (reason !== "revoked" && reason !== "denied") return;
+      eventRegistry.notifyRevoked(session.scopeId, session.actorId);
+      terminalControl?.invalidateActor(session.scopeId, session.actorId);
+      terminalEventRegistry?.notifyRevoked(session.scopeId, session.actorId);
+    },
     startTimers: options.startTimers !== false,
   });
   if (options.config.ownerId && options.config.relayHandle) {

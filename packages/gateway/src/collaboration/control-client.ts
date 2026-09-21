@@ -65,8 +65,8 @@ export class CollaborationControlClient {
     identity: { keyId: string; publicKey: string };
     sessions: Pick<DirectSessionService, "revoke">;
     fetchImpl?: typeof fetch;
-    /** Opens the control WebSocket; production uses `ws`, tests pass a fake. */
-    connect?(url: string, headers: Record<string, string>, onMessage: (raw: string) => void, onClose: () => void): ControlSocketLike;
+    /** Opens the control WebSocket; production uses `ws` through `loadDefaultConnector`, tests pass a fake. */
+    connect?(url: string, headers: Record<string, string>, onMessage: (raw: string) => void, onClose: () => void): ControlSocketLike | Promise<ControlSocketLike>;
     now?: () => Date;
     startTimers?: boolean;
     initialGeneration?: number;
@@ -120,7 +120,7 @@ export class CollaborationControlClient {
 
   async connectControl(controlTicket: string): Promise<ControlStreamHandle> {
     if (this.closed) throw new Error("Control client is shutting down");
-    const connect = this.options.connect ?? defaultConnect;
+    const connect = this.options.connect ?? await loadDefaultConnector();
     const url = `${new URL(this.options.platformBaseUrl).origin.replace(/^http/, "ws")}/internal/collaboration/control?ticket=${controlTicket}`;
     let socket: ControlSocketLike | undefined;
     const handle: ControlStreamHandle = {
@@ -153,7 +153,7 @@ export class CollaborationControlClient {
         if (this.stream === handle) this.stream = undefined;
       },
     };
-    socket = connect(url, this.runtimeHeaders(), (raw) => {
+    socket = await connect(url, this.runtimeHeaders(), (raw) => {
       handle.receive(raw).catch((error: unknown) => {
         console.warn("[collaboration-control-client] frame rejected", error instanceof Error ? error.name : "UnknownError");
         handle.close();
@@ -213,12 +213,16 @@ export class CollaborationControlClient {
   }
 }
 
-function defaultConnect(url: string, headers: Record<string, string>, onMessage: (raw: string) => void, onClose: () => void): ControlSocketLike {
-  // Loaded lazily so unit tests never open sockets.
-  const { WebSocket } = require("ws") as typeof import("ws");
-  const ws = new WebSocket(url, { headers, maxPayload: COLLABORATION_DIRECT_LIMITS.wsFrameBytes });
-  ws.on("message", (data, isBinary) => { if (!isBinary) onMessage(data.toString("utf8")); });
-  ws.on("close", onClose);
-  ws.on("error", (error: Error) => { console.warn("[collaboration-control-client] socket error", error.name); });
-  return { send: (value) => ws.send(value), close: (code, reason) => ws.close(code, reason) };
+export type ControlConnector = (url: string, headers: Record<string, string>, onMessage: (raw: string) => void, onClose: () => void) => ControlSocketLike;
+
+/** Resolves the `ws`-backed connector with an ESM dynamic import; unit tests never open sockets. */
+export async function loadDefaultConnector(): Promise<ControlConnector> {
+  const { WebSocket } = await import("ws");
+  return (url, headers, onMessage, onClose) => {
+    const ws = new WebSocket(url, { headers, maxPayload: COLLABORATION_DIRECT_LIMITS.wsFrameBytes });
+    ws.on("message", (data, isBinary) => { if (!isBinary) onMessage(data.toString("utf8")); });
+    ws.on("close", onClose);
+    ws.on("error", (error: Error) => { console.warn("[collaboration-control-client] socket error", error.name); });
+    return { send: (value) => ws.send(value), close: (code, reason) => ws.close(code, reason) };
+  };
 }
