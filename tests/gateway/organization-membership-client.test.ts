@@ -5,12 +5,16 @@ const org = "org_2gw000000000000000000001";
 const member = "user_member0000000000000000";
 const runtimeId = "vps:10000000-0000-4000-8000-000000000001";
 
-function assertionResponse(input: { member: boolean; requestStartedAt: Date; ttlMs?: number; actorId?: string; aiSubmission?: string | null }) {
-  return new Response(JSON.stringify([{
+function assertionFrame(input: { member: boolean; requestStartedAt: Date; ttlMs?: number; actorId?: string; aiSubmission?: string | null }) {
+  return {
     protocolVersion: 2, type: "membership_assertion", organizationId: org, actorId: input.actorId ?? member, membershipEpoch: "3",
     member: input.member, ...(input.aiSubmission === null ? {} : { aiSubmission: input.aiSubmission ?? "members" }),
     requestStartedAt: input.requestStartedAt.toISOString(), expiresAt: new Date(input.requestStartedAt.getTime() + (input.ttlMs ?? 20_000)).toISOString(),
-  }]), { status: 200, headers: { "content-type": "application/json" } });
+  };
+}
+
+function assertionResponse(input: { member: boolean; requestStartedAt: Date; ttlMs?: number; actorId?: string; aiSubmission?: string | null }) {
+  return new Response(JSON.stringify([assertionFrame(input)]), { status: 200, headers: { "content-type": "application/json" } });
 }
 
 describe("gateway organization membership client (S03 seam for the S20 precondition)", () => {
@@ -58,6 +62,41 @@ describe("gateway organization membership client (S03 seam for the S20 precondit
     await expect(client.assertMembership({ organizationId: org, actorId: "user_e00000000000000000000000" })).rejects.toThrow();
     fetchImpl.mockImplementationOnce(async () => { throw new TypeError("fetch failed"); });
     await expect(client.assertMembership({ organizationId: org, actorId: "user_f00000000000000000000000" })).rejects.toThrow();
+  });
+
+  it("batches concurrent lookups for distinct actors into one request of at most 100 actors and settles each individually", async () => {
+    const clock = new Date("2026-09-20T12:00:00.000Z");
+    const actors = Array.from({ length: 130 }, (_, index) => `user_batch${String(index).padStart(17, "0")}`);
+    const fetchImpl = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { actors: { organizationId: string; actorId: string }[] };
+      expect(body.actors.length).toBeLessThanOrEqual(100);
+      // The platform answers every requested actor except one it never heard of, and one as a non-member.
+      const frames = body.actors
+        .filter(({ actorId }) => actorId !== actors[7])
+        .map(({ actorId }) => assertionFrame({ member: actorId !== actors[3], requestStartedAt: clock, actorId }));
+      return new Response(JSON.stringify(frames), { status: 200, headers: { "content-type": "application/json" } });
+    });
+    const client = new OrganizationMembershipClient({ platformBaseUrl: "https://platform.example", runtimeId, serviceToken: "t".repeat(40), fetchImpl: fetchImpl as unknown as typeof fetch, now: () => clock });
+    const results = await Promise.allSettled(actors.map((actorId) => client.assertMembership({ organizationId: org, actorId })));
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    const sent = fetchImpl.mock.calls.map(([, init]) => (JSON.parse(String(init?.body)) as { actors: unknown[] }).actors.length);
+    expect(sent).toEqual([100, 30]);
+    expect(results[0]).toMatchObject({ status: "fulfilled", value: { member: true, membershipEpoch: "3" } });
+    expect(results[3]).toMatchObject({ status: "fulfilled", value: { member: false } });
+    expect(results[7]).toMatchObject({ status: "rejected" });
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(129);
+    expect(client.describe().inflight).toBe(0);
+    // Batched results are cached per actor exactly like single lookups.
+    await client.assertMembership({ organizationId: org, actorId: actors[1]! });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    // A failed batch rejects every lookup in it without affecting later batches.
+    fetchImpl.mockImplementationOnce(async () => new Response("nope", { status: 503 }));
+    const failed = await Promise.allSettled([
+      client.assertMembership({ organizationId: org, actorId: "user_fail000000000000000000a" }),
+      client.assertMembership({ organizationId: org, actorId: "user_fail000000000000000000b" }),
+    ]);
+    expect(failed.map((result) => result.status)).toEqual(["rejected", "rejected"]);
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
   });
 
   it("carries the organization AI-submission policy and treats an absent or unknown value as owner-only", async () => {

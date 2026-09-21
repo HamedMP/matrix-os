@@ -3,8 +3,10 @@
  * (S03 seam). It pulls fixed-deadline membership assertions from the
  * platform's `/internal/organizations/access/resolve` route with the
  * runtime's service credentials, caches each assertion only until the expiry
- * the platform issued (never renewed locally), coalesces concurrent lookups,
- * bounds the cache, and fails closed on any transport, status or schema error.
+ * the platform issued (never renewed locally), coalesces concurrent lookups
+ * for the same actor, batches concurrent lookups for distinct actors into one
+ * platform request (up to the route's 100-actor limit), bounds the cache, and
+ * fails closed on any transport, status or schema error.
  */
 import {
   COLLABORATION_DIRECT_PROTOCOL_VERSION,
@@ -21,7 +23,17 @@ const CONTROL_LOOKUP_TIMEOUT_MS = 5_000;
 const MAX_RESPONSE_BYTES = 64 * 1024;
 const DEFAULT_MAX_CACHE_ENTRIES = 1_000;
 const MAX_INFLIGHT_LOOKUPS = 256;
-const AssertionsSchema = z.array(CollaborationControlAssertionSchema).max(100);
+/** The platform resolve route accepts at most this many actors per request. */
+const MAX_ACTORS_PER_REQUEST = 100;
+const AssertionsSchema = z.array(CollaborationControlAssertionSchema).max(MAX_ACTORS_PER_REQUEST);
+
+interface PendingLookup {
+  organizationId: string;
+  actorId: string;
+  key: string;
+  resolve: (assertion: OrganizationMembershipAssertion) => void;
+  reject: (error: Error) => void;
+}
 
 export class OrganizationMembershipClientError extends Error {
   constructor(message = "Organization membership is unavailable") {
@@ -37,6 +49,9 @@ export class OrganizationMembershipClient implements OrganizationMembershipSourc
   private readonly maxEntries: number;
   private readonly cache = new Map<string, { member: boolean; expiresAt: string; aiSubmission: OrganizationAiSubmission; membershipEpoch: string }>();
   private readonly inflight = new Map<string, Promise<OrganizationMembershipAssertion>>();
+  /** Lookups admitted in the current tick, sent together on the next microtask. */
+  private pending: PendingLookup[] = [];
+  private flushScheduled = false;
 
   constructor(private readonly options: {
     platformBaseUrl: string;
@@ -75,8 +90,17 @@ export class OrganizationMembershipClient implements OrganizationMembershipSourc
       console.warn("[collaboration] membership lookup refused: too many concurrent lookups");
       throw new OrganizationMembershipClientError();
     }
-    const promise = this.lookup(organizationId, actorId, key).finally(() => { this.inflight.delete(key); });
+    const promise = new Promise<OrganizationMembershipAssertion>((resolve, reject) => {
+      this.pending.push({ organizationId, actorId, key, resolve, reject });
+    }).finally(() => { this.inflight.delete(key); });
     this.inflight.set(key, promise);
+    if (!this.flushScheduled) {
+      this.flushScheduled = true;
+      queueMicrotask(() => {
+        this.flushScheduled = false;
+        void this.flush();
+      });
+    }
     return promise;
   }
 
@@ -84,7 +108,41 @@ export class OrganizationMembershipClient implements OrganizationMembershipSourc
     return { cacheEntries: this.cache.size, inflight: this.inflight.size };
   }
 
-  private async lookup(organizationId: string, actorId: string, key: string): Promise<OrganizationMembershipAssertion> {
+  /** Sends every pending lookup in batches of at most MAX_ACTORS_PER_REQUEST; each lookup settles individually. */
+  private async flush(): Promise<void> {
+    while (this.pending.length > 0) {
+      const batch = this.pending.splice(0, MAX_ACTORS_PER_REQUEST);
+      let parsed: z.infer<typeof AssertionsSchema>;
+      try {
+        parsed = await this.resolveBatch(batch);
+      } catch (error: unknown) {
+        const failure = error instanceof OrganizationMembershipClientError ? error : new OrganizationMembershipClientError();
+        for (const lookup of batch) lookup.reject(failure);
+        continue;
+      }
+      for (const lookup of batch) {
+        const assertion = parsed.find((frame) => frame.type === "membership_assertion"
+          && frame.organizationId === lookup.organizationId && frame.actorId === lookup.actorId);
+        if (!assertion || assertion.type !== "membership_assertion") {
+          lookup.reject(new OrganizationMembershipClientError());
+          continue;
+        }
+        // Additive contract field: a platform that predates it means owner-only (fail closed).
+        const aiSubmission: OrganizationAiSubmission = assertion.aiSubmission === "members" ? "members" : "owner_only";
+        this.cache.set(lookup.key, { member: assertion.member, expiresAt: assertion.expiresAt, aiSubmission, membershipEpoch: assertion.membershipEpoch });
+        lookup.resolve(assertion.member
+          ? { member: true, expiresAt: assertion.expiresAt, aiSubmission, membershipEpoch: assertion.membershipEpoch }
+          : { member: false });
+      }
+      while (this.cache.size > this.maxEntries) {
+        const oldest = this.cache.keys().next().value;
+        if (oldest === undefined) break;
+        this.cache.delete(oldest);
+      }
+    }
+  }
+
+  private async resolveBatch(batch: PendingLookup[]): Promise<z.infer<typeof AssertionsSchema>> {
     let response: Response;
     try {
       response = await this.fetchImpl(this.endpoint, {
@@ -97,7 +155,10 @@ export class OrganizationMembershipClient implements OrganizationMembershipSourc
           authorization: `Bearer ${this.options.serviceToken}`,
           "x-matrix-runtime-id": this.options.runtimeId,
         },
-        body: JSON.stringify({ protocolVersion: COLLABORATION_DIRECT_PROTOCOL_VERSION, actors: [{ organizationId, actorId }] }),
+        body: JSON.stringify({
+          protocolVersion: COLLABORATION_DIRECT_PROTOCOL_VERSION,
+          actors: batch.map(({ organizationId, actorId }) => ({ organizationId, actorId })),
+        }),
       });
     } catch (error: unknown) {
       console.warn("[collaboration] membership lookup transport failed", error instanceof Error ? error.name : "UnknownError");
@@ -108,27 +169,13 @@ export class OrganizationMembershipClient implements OrganizationMembershipSourc
       console.warn("[collaboration] membership lookup rejected", `Http${response.status}`);
       throw new OrganizationMembershipClientError();
     }
-    let parsed: z.infer<typeof AssertionsSchema>;
     try {
       const text = await readBounded(response, MAX_RESPONSE_BYTES);
-      parsed = AssertionsSchema.parse(JSON.parse(text));
+      return AssertionsSchema.parse(JSON.parse(text));
     } catch (error: unknown) {
       console.warn("[collaboration] membership lookup response invalid", error instanceof Error ? error.name : "UnknownError");
       throw new OrganizationMembershipClientError();
     }
-    const assertion = parsed.find((frame) => frame.type === "membership_assertion" && frame.organizationId === organizationId && frame.actorId === actorId);
-    if (!assertion || assertion.type !== "membership_assertion") throw new OrganizationMembershipClientError();
-    // Additive contract field: a platform that predates it means owner-only (fail closed).
-    const aiSubmission: OrganizationAiSubmission = assertion.aiSubmission === "members" ? "members" : "owner_only";
-    this.cache.set(key, { member: assertion.member, expiresAt: assertion.expiresAt, aiSubmission, membershipEpoch: assertion.membershipEpoch });
-    while (this.cache.size > this.maxEntries) {
-      const oldest = this.cache.keys().next().value;
-      if (oldest === undefined) break;
-      this.cache.delete(oldest);
-    }
-    return assertion.member
-      ? { member: true, expiresAt: assertion.expiresAt, aiSubmission, membershipEpoch: assertion.membershipEpoch }
-      : { member: false };
   }
 
   /**
