@@ -110,7 +110,7 @@ describe("gateway collaboration wiring", () => {
       organizationMembershipSource: {
         async assertMembership({ actorId, organizationId: requested }) {
           return requested === organizationId && members.has(actorId)
-            ? { member: true, expiresAt: new Date(Date.now() + 20_000).toISOString(), aiSubmission: "owner_only" as const }
+            ? { member: true, expiresAt: new Date(Date.now() + 20_000).toISOString(), aiSubmission: "owner_only" as const, membershipEpoch: "1" }
             : { member: false };
         },
       },
@@ -152,7 +152,7 @@ describe("gateway collaboration wiring", () => {
         scopeId: scope.id, actorId: "user_wiring_owner", clientRequestId: crypto.randomUUID(), expectedRevision: 1, payloadHash: "a".repeat(64),
         audience: { kind: "member", actorId: "user_wiring_member" }, preset: "contributor", policyVersion: "v1",
       });
-      await runtime.capabilities.acceptGrant({ grantId: grant.grantId, actorId: "user_wiring_member", membershipEvidenceEpoch: 1 });
+      await runtime.capabilities.acceptGrant({ grantId: grant.grantId, actorId: "user_wiring_member", membershipEvidenceEpoch: "1" });
       await expect(runtime.authority.authorize({ scopeId: scope.id, actorId: "user_wiring_member", action: "read" }))
         .resolves.toMatchObject({ role: "editor", organizationId, resourceKind: scope.kind });
       await expect(runtime.authority.authorize({ scopeId: scope.id, actorId: "user_wiring_member", action: "discuss" }))

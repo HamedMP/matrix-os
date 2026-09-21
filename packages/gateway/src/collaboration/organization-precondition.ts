@@ -40,8 +40,8 @@ export type OrganizationPreconditionDenialReason =
 /** Fresh positive evidence: the authoritative expiry of the membership assertion that satisfied the check. */
 export interface OrganizationMembershipEvidence {
   expiresAt: string;
-  /** Present when the source reports membership epochs; grants recorded under an older epoch are stale. */
-  membershipEpoch?: number;
+  /** The actor's current membership epoch (decimal string); absent when the source's value is missing or malformed, which fails closed downstream. */
+  membershipEpoch?: string;
 }
 
 export interface OrganizationPrecondition {
@@ -98,7 +98,7 @@ export function createOrganizationPrecondition(options: {
       if (!Number.isFinite(expiresAt) || expiresAt <= now().getTime()) return deny("evidence_expired");
       return {
         expiresAt: new Date(expiresAt).toISOString(),
-        ...(typeof assertion.membershipEpoch === "number" && Number.isFinite(assertion.membershipEpoch)
+        ...(typeof assertion.membershipEpoch === "string" && /^\d{1,20}$/.test(assertion.membershipEpoch)
           ? { membershipEpoch: assertion.membershipEpoch }
           : {}),
       };

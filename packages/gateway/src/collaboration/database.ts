@@ -228,7 +228,8 @@ export interface CollaborationGrantActivationsTable {
   actor_id: string;
   state: "active" | "declined";
   decided_at: Timestamp;
-  membership_evidence_epoch: number;
+  /** BIGINT epoch, handled as a decimal string end to end and compared with BigInt. */
+  membership_evidence_epoch: ColumnType<string, string, string>;
 }
 
 export interface CollaborationDatabase {
