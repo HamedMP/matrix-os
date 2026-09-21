@@ -370,3 +370,74 @@ Gates: `collaboration-relay` **14/14** (13/14 RED) and `collaboration-direct-upg
 plus `collaboration-websocket`, `collaboration-wiring`, `collaboration-routes`,
 `preview-terminal-flow` and `app-session-runtime-routing` — **50/50** together.
 `bun run typecheck` exit 0; `bun run check:patterns` 0 violations, 5 inherited warnings.
+
+## Review round (2026-09-21, PR #1802 threads)
+
+All four on `124/s05`; the receipt stays on the top S05 layer.
+
+**1. Combined key cap aborted startup (`ticket-issuer.ts`). Real, and it disproves the
+earlier "cannot disagree" argument.** The deadline fix argued that a keyring the loader
+admits is one the issuer accepts, because both compare against now-plus-skew and the loader
+runs first. That holds for the deadline and not for cardinality. `parseKeyMap` caps the
+active map and the retired map at eight keys **each**, while the constructor counts the list
+it publishes -- active plus retired, one entry per distinct key id -- against the same eight.
+Five active plus five retired, every retirement recorded and in the past, loaded and then
+threw "Too many ticket signing keys" out of `createPlatformCollaborationDirect`, through
+collaboration bootstrap, and out of platform startup: the failure mode the deadline round
+closed, reached by a second path.
+
+The loader now applies the combined distinct-key cap on both of its return paths. The
+contract comment above it no longer asserts a bare invariant; it lists each constructor
+refusal the loader rules out, so the next person adding a constructor check can see what the
+claim depends on.
+
+**Constructor re-audit, as asked.** Every throw reachable from construction, and what rules
+it out at load:
+
+| Constructor refusal | Ruled out by |
+| --- | --- |
+| active key missing from the key map | loader rejects `!keys[activeKeyId]` |
+| key id fails `KEY_ID` | `parseKeyMap`, applied to both maps |
+| seed is not a 32-byte Ed25519 seed | `parseKeyMap` computes the identical byte length; `ed25519PrivateKeyFromSeed` throws only on that length, and a fixed PKCS8 prefix over 32 bytes is always well formed |
+| retired key with no recorded retirement | loader requires exact correspondence, both directions |
+| retirement unparseable | `parseRetiredAtMap` requires `Number.isFinite(Date.parse(...))` |
+| retirement past the clock skew | loader deadline check |
+| more keys than the issuer publishes | combined cap added this round |
+
+No residual class remains that the loader cannot check, so no catch is restored at the
+construction site. `issue()` throws are request-time and unrelated to construction.
+
+**2. Retirement deadline thread: stale, verified, not re-fixed.** The loader applies the
+deadline at `ticket-issuer.ts:119-123`, computing now-plus-`clockSkewSeconds` and returning
+null for any retirement beyond it, which is why the bootstrap regression's future-dated shape
+comes up with the ticket route unavailable rather than failing to start. The constructor's
+matching refusal survives as a guard for programmatic callers and is documented as such in
+the comment above it.
+
+**3. Registration and its upgrade ticket committed separately (`direct-routes.ts`,
+`runtime-endpoints.ts`, `control-stream.ts`). Real.** The route recorded the registration in
+one transaction and issued the control upgrade ticket in another. A failed issuance answered
+503 while the generation bump and the merged public keys stayed committed, so the home was
+told nothing was recorded and re-registered against a generation that had already moved.
+`CollaborationControlStream.prepareUpgradeTicket()` now mints a token and expiry without
+storing it, and `register()` takes that ticket and writes it inside the registration
+transaction. Issue-plus-prune moved into a shared private helper, so the standalone
+`issueControlTicket` path keeps its own transaction and its prune semantics unchanged.
+
+**4. Ticket query parameter validated by hand (`control-upgrade.ts`). Real, narrow.** The
+upgrade route checked the `ticket` parameter with a length comparison and an inline regex. It
+now parses it with a bounded Zod schema through `safeParse`, keeping the same generic
+rejection and changing nothing else; the surrounding header checks were left alone, as the
+thread asks.
+
+RED `test(platform): expose the combined key cap and non-atomic runtime registration`
+(`b994bc775`): the loader returned a keyring for five plus five, the bootstrap regression's
+new shape failed to start, and the refused registration left the recorded generation at 4
+instead of 1. GREEN `fix(platform): cap combined signing keys, commit registration
+atomically, validate the ticket param` (`53b7a698d`).
+
+Gates: `collaboration-tickets` **27/27** and `collaboration-bootstrap` **6/6** on real
+Postgres, plus `collaboration-direct-transport-postgres`,
+`collaboration-control-delivery-postgres`, `collaboration-wiring`, `collaboration-routes` and
+`collaboration-control-authority` -- **52/52** together. `bun run typecheck` exit 0;
+`bun run check:patterns` 0 violations, 5 inherited warnings.
