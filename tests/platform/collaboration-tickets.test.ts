@@ -6,6 +6,7 @@
  * platform issues them as metadata only; the home is the sole authorization
  * point and verifies them identically whichever ingress delivered them.
  */
+import { sql } from "kysely";
 import { generateKeyPairSync } from "node:crypto";
 import { once } from "node:events";
 import { createServer } from "node:http";
@@ -24,6 +25,7 @@ import {
 } from "../../packages/platform/src/collaboration/runtime-endpoints.js";
 import {
   CollaborationTicketIssuer,
+  RETIRED_KEY_OVERLAP_MS,
   CollaborationTicketIssuerError,
   loadTicketSigningKeyring,
 } from "../../packages/platform/src/collaboration/ticket-issuer.js";
@@ -324,6 +326,27 @@ describe("S05 platform tickets, endpoints and control", () => {
         now: () => clock,
       });
       expect(rotated.publicKeys().map((key) => key.keyId)).toEqual(["ticket-key-2", "ticket-key-1"]);
+      // A retired key is published only for the rotation overlap window after its retirement, then dropped.
+      clock = new Date(clock.getTime() + RETIRED_KEY_OVERLAP_MS + 1);
+      expect(rotated.publicKeys().map((key) => key.keyId)).toEqual(["ticket-key-2"]);
+      const explicit = new CollaborationTicketIssuer({
+        keyring: { activeKeyId: "ticket-key-2", keys: { "ticket-key-2": seedB }, retired: { "ticket-key-1": seedA }, retiredAt: { "ticket-key-1": new Date(clock.getTime() - RETIRED_KEY_OVERLAP_MS + 5_000).toISOString() } },
+        repository, endpoints, resolveOrganization: async () => organizationId, projection: { isCurrentMember: async () => true }, relayOrigin: "https://app.matrix-os.com", now: () => clock,
+      });
+      expect(explicit.publicKeys().map((key) => key.keyId)).toEqual(["ticket-key-2", "ticket-key-1"]);
+      clock = new Date(clock.getTime() + 5_001);
+      expect(explicit.publicKeys().map((key) => key.keyId)).toEqual(["ticket-key-2"]);
+      expect(loadTicketSigningKeyring({
+        MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID: "ticket-key-2",
+        MATRIX_COLLABORATION_TICKET_KEYS: JSON.stringify({ "ticket-key-2": seedB }),
+        MATRIX_COLLABORATION_TICKET_RETIRED_KEYS: JSON.stringify({ "ticket-key-1": seedA }),
+        MATRIX_COLLABORATION_TICKET_RETIRED_AT: JSON.stringify({ "ticket-key-1": "2026-09-21T00:00:00.000Z" }),
+      })).toEqual({ activeKeyId: "ticket-key-2", keys: { "ticket-key-2": seedB }, retired: { "ticket-key-1": seedA }, retiredAt: { "ticket-key-1": "2026-09-21T00:00:00.000Z" } });
+      expect(loadTicketSigningKeyring({
+        MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID: "ticket-key-2",
+        MATRIX_COLLABORATION_TICKET_KEYS: JSON.stringify({ "ticket-key-2": seedB }),
+        MATRIX_COLLABORATION_TICKET_RETIRED_AT: JSON.stringify({ "ticket-key-1": "not a time" }),
+      })).toBeNull();
       expect(() => new CollaborationTicketIssuer({
         keyring: { activeKeyId: "missing", keys: { "ticket-key-2": seedB } },
         repository,
@@ -455,6 +478,50 @@ describe("S05 platform tickets, endpoints and control", () => {
       connection.close();
       await expect(stream.deliver(logicalRuntimeId, { protocolVersion: 2, type: "generation", runtimeId: logicalRuntimeId, authorityGeneration: 1 })).rejects.toBeInstanceOf(ControlStreamNotConnectedError);
       await stream.shutdown();
+    });
+
+    it("issues an upgrade ticket and prunes expired ones atomically", async () => {
+      await endpoints.register({ authenticated: { runtimeId, ownerId: platformCollaborationActors.owner, relayHandle: "owner-handle" }, registration: registration() });
+      await sql`CREATE OR REPLACE FUNCTION matrix_test_refuse_delete() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'pruning refused'; END; $$ LANGUAGE plpgsql`.execute(fixture.collaborationDb);
+      await sql`CREATE TRIGGER matrix_test_refuse_prune BEFORE DELETE ON collaboration_control_upgrade_tickets FOR EACH STATEMENT EXECUTE FUNCTION matrix_test_refuse_delete()`.execute(fixture.collaborationDb);
+      try {
+        const expiresAt = new Date(clock.getTime() + 30_000);
+        await expect(endpoints.issueControlTicket(logicalRuntimeId, "t".repeat(43), expiresAt)).rejects.toThrow();
+        // The ticket was never committed: registration reported failure and nothing half-issued remains.
+        const rows = await fixture.collaborationDb.selectFrom("collaboration_control_upgrade_tickets").select("runtime_id").where("runtime_id", "=", logicalRuntimeId).execute();
+        expect(rows).toEqual([]);
+      } finally {
+        await sql`DROP TRIGGER matrix_test_refuse_prune ON collaboration_control_upgrade_tickets`.execute(fixture.collaborationDb);
+        await sql`DROP FUNCTION matrix_test_refuse_delete()`.execute(fixture.collaborationDb);
+      }
+    });
+
+    it("bounds pending acknowledgement work per connection and drains it on shutdown", async () => {
+      await endpoints.register({ authenticated: { runtimeId, ownerId: platformCollaborationActors.owner, relayHandle: "owner-handle" }, registration: registration() });
+      let releaseAck!: () => void;
+      const blocked = new Promise<void>((resolve) => { releaseAck = resolve; });
+      let acknowledged = 0;
+      const stream = new CollaborationControlStream({
+        controlAuthority: {
+          registerTransport: () => undefined,
+          acknowledge: async () => { await blocked; acknowledged += 1; return { completedDenialIds: [] }; },
+        },
+        tickets: endpoints, now: () => clock,
+      });
+      const connection = stream.attach(logicalRuntimeId, { send: () => undefined, close: () => undefined });
+      const ack = JSON.stringify({ protocolVersion: 2, runtimeId: logicalRuntimeId, authorityGeneration: 1, fenceAt: clock.toISOString() });
+      const pending: Promise<void>[] = [];
+      for (let index = 0; index < CollaborationControlStream.MAX_PENDING_FRAMES; index += 1) pending.push(connection.receive(ack));
+      // One frame past the bound is refused instead of queued.
+      await expect(connection.receive(ack)).rejects.toThrow(/pending/i);
+      let drained = false;
+      const shutdown = stream.shutdown().then(() => { drained = true; });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(drained).toBe(false);
+      releaseAck();
+      await Promise.all(pending);
+      await shutdown;
+      expect(acknowledged).toBe(CollaborationControlStream.MAX_PENDING_FRAMES);
     });
 
     it("expires stored upgrade tickets and bounds connections per instance", async () => {

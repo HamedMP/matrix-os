@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { Hono } from "hono";
 import type { Agent } from "undici";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PlatformDB } from "../../packages/platform/src/db.js";
 import { bootstrapPlatformCollaboration } from "../../packages/platform/src/collaboration/bootstrap.js";
 import {
@@ -56,6 +56,26 @@ describe("platform collaboration bootstrap", () => {
       customerVpsProxyDispatcher: undefined as unknown as Agent,
     });
     expect("failClosed" in composition).toBe(true);
+  });
+
+  it("leaves no organization timers running when the relay origin is invalid", async () => {
+    vi.useFakeTimers();
+    const fixture = await createPlatformCollaborationTestDatabase();
+    try {
+      const composition = await bootstrapPlatformCollaboration({
+        env: { ...validEnvironment, MATRIX_COLLABORATION_RELAY_ORIGIN: "http://insecure.example" },
+        db: { kysely: fixture.collaborationDb } as unknown as PlatformDB,
+        platformSecret: "platform-secret",
+        platformJwtSecret: "platform-jwt-secret",
+        customerVpsProxyDispatcher: {} as Agent,
+      });
+      expect("failClosed" in composition).toBe(true);
+      expect(vi.getTimerCount()).toBe(0);
+      await composition.shutdown();
+    } finally {
+      vi.useRealTimers();
+      await destroyPlatformCollaborationTestDatabase(fixture);
+    }
   });
 
   it("returns an owner-shutdown runtime when collaboration is configured", async () => {
