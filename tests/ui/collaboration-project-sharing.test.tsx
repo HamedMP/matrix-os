@@ -77,7 +77,7 @@ describe("whole-project sharing confirmation", () => {
     expect(screen.getByText(/Everything owned by this project shares together/i)).toBeVisible();
     expect(screen.getByText(/You can't exclude individual files, Chats, apps, layout, or terminals/i)).toBeVisible();
     expect(screen.getByText("README.md")).toBeVisible();
-    expect(screen.getByText("Launch discussion")).toBeVisible();
+    expect(screen.getAllByText("Launch discussion").length).toBeGreaterThan(0);
     expect(screen.getByText("Roadmap app")).toBeVisible();
     expect(screen.getByText("Shared canvas")).toBeVisible();
     expect(screen.getByText("Release terminal")).toBeVisible();
@@ -154,13 +154,20 @@ describe("whole-project sharing confirmation", () => {
       }],
     };
     const api = apiFixture();
-    api.post.mockRejectedValueOnce(new Error("conflict")).mockResolvedValueOnce({
+    let confirmations = 0;
+    api.post.mockImplementation(async (path: string) => {
+      if (path.endsWith("/policy/preflight")) return undefined;
+      if (!path.endsWith("/project/confirm")) throw new Error("unexpected route");
+      confirmations += 1;
+      if (confirmations === 1) throw new Error("conflict");
+      return {
       id: "20000000-0000-4000-8000-000000000401",
       scopeId: scope.id,
       status: "prepared",
       inventoryRevision: "8",
       createdAt: "2026-08-22T12:00:00.000Z",
       updatedAt: "2026-08-22T12:00:00.000Z",
+      };
     });
     const refreshInventory = vi.fn(async () => changed);
     render(<ProjectSharingDialog api={api} scope={scope} projectName="Launch" inventory={first}

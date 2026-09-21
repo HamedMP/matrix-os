@@ -40,24 +40,30 @@ describe("Chat collaboration sharing", () => {
     expect(screen.queryByText(/Live collaboration is unavailable/i)).toBeNull();
   });
 
-  it("converts an idle Chat once and invites an editor through the live authority", async () => {
+  it("converts an idle Chat once and grants Contributor to a current organization member", async () => {
     const scope = {
-      id: scopeId, ownerId: "user_owner", kind: "chat", resourceId: chatId,
+      id: scopeId, ownerId: "user_owner", organizationId: "org_matrix_team", kind: "chat", resourceId: chatId,
       membershipMode: "direct", lifecycle: "shared", revision: "1", authEpoch: "1",
       authorityGeneration: "1", role: "owner",
       capabilities: { read: true, discuss: true, manageMembers: true, requestAi: false },
     };
     const collaborationApi = {
       baseUrl: "https://app.matrix-os.com",
-      get: vi.fn(async (path: string) => path.endsWith("/members") ? { members: [] } : scope),
-      post: vi.fn(async (path: string) => {
-        if (path.endsWith("/preflight")) return { eligible: true, resourceRevision: "4", confirmationToken: "a".repeat(64) };
+      get: vi.fn(async (path: string) => path.startsWith("/api/organizations/")
+        ? { members: [{ actorId: "user_ada", role: "member", joinedAt: "2026-09-17T12:00:00.000Z" }] }
+        : path.endsWith("/grants") ? [] : path.endsWith("/members") ? { members: [] } : scope),
+      post: vi.fn(async (path: string, body: { audience?: unknown; preset?: string }) => {
+        if (path.endsWith("/scopes/preflight")) return { eligible: true, resourceRevision: "4", confirmationToken: "a".repeat(64) };
         if (path.endsWith("/scopes")) return scope;
-        if (path.endsWith("/invitations")) return { invitationId: "30000000-0000-4000-8000-000000000001" };
+        if (path.endsWith("/policy/preflight")) return undefined;
+        if (path.endsWith("/grants")) return {
+          id: "30000000-0000-4000-8000-000000000001", scopeId, organizationId: "org_matrix_team",
+          audience: body.audience, preset: body.preset, state: "pending", policyVersion: "v1", revision: "1",
+          createdAt: "2026-09-17T12:00:00.000Z", updatedAt: "2026-09-17T12:00:00.000Z",
+        };
         throw new Error("unexpected route");
       }),
-      delete: vi.fn(),
-      patch: vi.fn(),
+      delete: vi.fn(), patch: vi.fn(),
     };
     const snapshotApi = { baseUrl: "https://gateway.test", get: vi.fn(), post: vi.fn(), delete: vi.fn() };
     render(<ChatSharingButton api={snapshotApi} collaborationEnabled collaborationApi={collaborationApi} runtimeId="runtime_owner" organizationId="org_matrix_team"
@@ -65,17 +71,14 @@ describe("Chat collaboration sharing", () => {
     fireEvent.click(screen.getByRole("button", { name: "Share" }));
     fireEvent.click(screen.getByRole("button", { name: "Invite collaborators" }));
     await screen.findByRole("dialog", { name: "Invite collaborators" });
-    expect(screen.getByText(/Only current members of your organization can be invited/i)).toBeVisible();
-    const identifier = screen.getByLabelText("Member email or username");
-    expect(identifier).toHaveAttribute("placeholder", "name@example.com or @username");
-    fireEvent.change(identifier, { target: { value: "@nimanaderi" } });
-    fireEvent.change(screen.getByLabelText("Role"), { target: { value: "editor" } });
-    fireEvent.click(screen.getByRole("button", { name: "Send invitation" }));
+    expect(await screen.findByText(/Current organization members only/)).toBeVisible();
+    fireEvent.change(screen.getByLabelText("Share with"), { target: { value: "user_ada" } });
+    fireEvent.change(screen.getByLabelText("Access preset"), { target: { value: "contributor" } });
+    fireEvent.click(screen.getByRole("button", { name: "Grant access" }));
     await waitFor(() => expect(collaborationApi.post).toHaveBeenCalledWith(
-      `/api/collaboration/scopes/${scopeId}/invitations`,
-      expect.objectContaining({ identifier: "@nimanaderi", role: "editor", expectedRevision: "1" }),
+      `/api/collaboration/scopes/${scopeId}/grants`,
+      expect.objectContaining({ audience: { kind: "member", actorId: "user_ada" }, preset: "contributor", expectedRevision: "1" }),
     ));
-    expect(screen.getByText(/Invitation sent/i)).toBeVisible();
     expect(snapshotApi.post).not.toHaveBeenCalled();
   });
 
