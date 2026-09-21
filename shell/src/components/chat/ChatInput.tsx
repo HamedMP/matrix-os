@@ -158,7 +158,6 @@ export function ChatInput({
               : speech.phase === "recording"
                 ? "Recording — stop when you're done"
                 : chatInputPlaceholder({ transcribing: false, recording: false, connected, unavailable: unavailablePlaceholder })}
-          disabled={!connected}
           rows={1}
           className="border-0 bg-transparent shadow-none focus-visible:ring-0 text-sm min-h-0 max-h-40 resize-none py-3 px-2 flex-1"
         />
