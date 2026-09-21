@@ -33,6 +33,7 @@ import {
 import { OrganizationMembershipClient } from "./organization-membership-client.js";
 import { CollaborationRepository } from "./repository.js";
 import { createCollaborationRoutes } from "./routes.js";
+import type { ChatExecutionRootResolver } from "../chat/execution-root.js";
 import { createSharedAiRuntime, type SharedChatSandboxManifestSource } from "./shared-ai-runtime.js";
 import type { ReadinessSubject } from "./readiness-evaluator.js";
 import { sandboxRequiredForResourceKind } from "./sandbox-readiness.js";
@@ -320,6 +321,8 @@ export async function createGatewayCollaboration(options: {
       codingProviders?: Pick<CodingAgentProviderRegistry, "listProviders">;
       /** S07: mounts each shared run's authoritative root; without it shared AI stays disabled. */
       sandboxManifests?: SharedChatSandboxManifestSource;
+      /** S09: the canonical execution-root resolver used as the default manifest source. */
+      executionRoots?: Pick<ChatExecutionRootResolver, "resolve">;
     }): Promise<{ available: boolean }> {
       if (registered || closing || sharedAiRuntime) {
         throw new Error("Shared AI must be initialized exactly once before route registration");
@@ -346,6 +349,7 @@ export async function createGatewayCollaboration(options: {
         ...(input.brokerSocket ? { brokerSocket: input.brokerSocket } : {}),
         ...(input.fetchImpl ? { fetchImpl: input.fetchImpl } : {}),
         ...(input.sandboxManifests ? { sandboxManifests: input.sandboxManifests } : {}),
+        ...(input.executionRoots ? { executionRoots: input.executionRoots } : {}),
       });
       if (sharedAiRuntime.available) chatExecutionAdapter = sharedAiRuntime.chatExecutionAdapter;
       return { available: sharedAiRuntime.available };
