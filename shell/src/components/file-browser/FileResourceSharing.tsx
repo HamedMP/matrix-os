@@ -11,6 +11,7 @@ export function FileResourceSharing({ kind, path }: { kind: "file" | "folder" | 
   const platformHost = useBrowserOrigin();
   const api = useMemo(() => platformHost ? createShellCollaborationApi(platformHost) : null, [platformHost]);
   const [runtimeId, setRuntimeId] = useState<string | null>(null);
+  // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- owner runtime identity is local gateway state; the bounded request has an unmount guard and follows the existing project Share adapter.
   useEffect(() => {
     let active = true;
     void fetch(`${getGatewayUrl()}/api/system/info`, {
