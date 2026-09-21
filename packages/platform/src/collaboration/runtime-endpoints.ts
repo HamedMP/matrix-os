@@ -14,6 +14,7 @@ import {
   CollaborationRuntimeEndpointRegistrationSchema,
   type CollaborationRuntimeEndpointRegistration,
 } from "@matrix-os/contracts";
+import { createHash } from "node:crypto";
 import { sql, type ColumnType, type Kysely, type Transaction } from "kysely";
 import { runPlatformMigration } from "../migration-runner.js";
 import { logicalRuntimeIdFor } from "./runtime-identity.js";
@@ -30,11 +31,22 @@ export interface CollaborationRuntimeEndpointsTable {
   future_direct_origin: string | null;
   registered_at: Timestamp;
   last_seen_at: Timestamp;
+  /** Last control-stream attach or acknowledgement; null until the home has ever connected. */
+  last_control_at: ColumnType<Date | string | null, Date | string | null | undefined, Date | string | null>;
   updated_at: Timestamp;
+}
+
+/** One-use control-stream upgrade tickets shared by every platform instance. */
+export interface CollaborationControlUpgradeTicketsTable {
+  token_hash: string;
+  runtime_id: string;
+  expires_at: Timestamp;
+  consumed_at: ColumnType<Date | string | null, Date | string | null | undefined, Date | string | null>;
 }
 
 export interface RuntimeEndpointPlatformDatabase {
   collaboration_runtime_endpoints: CollaborationRuntimeEndpointsTable;
+  collaboration_control_upgrade_tickets: CollaborationControlUpgradeTicketsTable;
 }
 
 export interface RuntimeEndpointPublicKey {
@@ -55,6 +67,7 @@ export interface RuntimeEndpointRecord {
   futureDirectOrigin?: string;
   registeredAt: string;
   lastSeenAt: string;
+  lastControlAt: string | null;
 }
 
 export type CollaborationRuntimeEndpointErrorCode =
@@ -97,12 +110,26 @@ async function applyRuntimeEndpointSchema(db: Transaction<RuntimeEndpointPlatfor
       future_direct_origin TEXT CHECK (future_direct_origin IS NULL OR char_length(future_direct_origin) <= 267),
       registered_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      last_control_at TIMESTAMPTZ,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
   `.execute(db);
+  await sql`ALTER TABLE collaboration_runtime_endpoints ADD COLUMN IF NOT EXISTS last_control_at TIMESTAMPTZ`.execute(db);
   await sql`
     CREATE INDEX IF NOT EXISTS idx_collaboration_runtime_endpoints_owner
       ON collaboration_runtime_endpoints(owner_id)
+  `.execute(db);
+  await sql`
+    CREATE TABLE IF NOT EXISTS collaboration_control_upgrade_tickets (
+      token_hash TEXT PRIMARY KEY CHECK (char_length(token_hash) = 64),
+      runtime_id TEXT NOT NULL CHECK (char_length(runtime_id) BETWEEN 1 AND 128),
+      expires_at TIMESTAMPTZ NOT NULL,
+      consumed_at TIMESTAMPTZ
+    )
+  `.execute(db);
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_collaboration_control_upgrade_tickets_expiry
+      ON collaboration_control_upgrade_tickets(expires_at)
   `.execute(db);
 }
 
@@ -143,32 +170,44 @@ export class CollaborationRuntimeEndpointRegistry {
       throw new CollaborationRuntimeEndpointError("direct_origin_rejected", "Direct origin must be a public https hostname");
     }
     const current = this.now();
-    const existing = await this.db.selectFrom("collaboration_runtime_endpoints")
-      .selectAll().where("runtime_id", "=", logical).executeTakeFirst();
-    if (existing && Number(existing.authority_generation) > parsed.authorityGeneration) {
-      throw new CollaborationRuntimeEndpointError("stale_generation", "Registration generation is older than the recorded generation");
-    }
-    const publicKeys = mergeKeys(existing ? parseStoredKeys(existing.public_keys) : [], parsed.publicKeys, current, this.keyOverlapMs);
-    const row = {
-      runtime_id: logical,
-      owner_id: parsed.ownerId,
-      relay_handle: parsed.relayHandle,
-      authority_generation: parsed.authorityGeneration,
-      protocol_version: parsed.protocolVersion,
-      public_keys: JSON.stringify(publicKeys),
-      future_direct_origin: parsed.futureDirectOrigin ?? null,
-      last_seen_at: current,
-      updated_at: current,
-    };
-    await this.db.insertInto("collaboration_runtime_endpoints")
-      .values({ ...row, registered_at: current })
-      .onConflict((oc) => oc.column("runtime_id").doUpdateSet(row)
-        .where("collaboration_runtime_endpoints.authority_generation", "<=", parsed.authorityGeneration))
-      .execute();
+    // Registrations for one runtime serialize on its row: the first registration
+    // claims the row with ON CONFLICT DO NOTHING, then every registration locks
+    // it FOR UPDATE before merging keys, so concurrent key rotations never lose
+    // a key or regress the generation.
+    const keyOverlapMs = this.keyOverlapMs;
+    await this.db.transaction().execute(async (trx) => {
+      await trx.insertInto("collaboration_runtime_endpoints").values({
+        runtime_id: logical,
+        owner_id: parsed.ownerId,
+        relay_handle: parsed.relayHandle,
+        authority_generation: parsed.authorityGeneration,
+        protocol_version: parsed.protocolVersion,
+        public_keys: JSON.stringify([]),
+        future_direct_origin: null,
+        registered_at: current,
+        last_seen_at: current,
+        last_control_at: null,
+        updated_at: current,
+      }).onConflict((oc) => oc.column("runtime_id").doNothing()).execute();
+      const locked = await trx.selectFrom("collaboration_runtime_endpoints")
+        .selectAll().where("runtime_id", "=", logical).forUpdate().executeTakeFirstOrThrow();
+      if (Number(locked.authority_generation) > parsed.authorityGeneration) {
+        throw new CollaborationRuntimeEndpointError("stale_generation", "Registration generation is older than the recorded generation");
+      }
+      const publicKeys = mergeKeys(parseStoredKeys(locked.public_keys), parsed.publicKeys, current, keyOverlapMs);
+      await trx.updateTable("collaboration_runtime_endpoints").set({
+        owner_id: parsed.ownerId,
+        relay_handle: parsed.relayHandle,
+        authority_generation: parsed.authorityGeneration,
+        protocol_version: parsed.protocolVersion,
+        public_keys: JSON.stringify(publicKeys),
+        future_direct_origin: parsed.futureDirectOrigin ?? null,
+        last_seen_at: current,
+        updated_at: current,
+      }).where("runtime_id", "=", logical).execute();
+    });
     const stored = await this.resolve(logical);
-    if (!stored || stored.authorityGeneration !== parsed.authorityGeneration) {
-      throw new CollaborationRuntimeEndpointError("stale_generation", "Registration generation is older than the recorded generation");
-    }
+    if (!stored) throw new CollaborationRuntimeEndpointError("stale_generation", "Registration was not recorded");
     return stored;
   }
 
@@ -186,6 +225,7 @@ export class CollaborationRuntimeEndpointRegistry {
       ...(row.future_direct_origin ? { futureDirectOrigin: row.future_direct_origin } : {}),
       registeredAt: new Date(row.registered_at).toISOString(),
       lastSeenAt: new Date(row.last_seen_at).toISOString(),
+      lastControlAt: row.last_control_at ? new Date(row.last_control_at).toISOString() : null,
     };
   }
 
@@ -195,11 +235,34 @@ export class CollaborationRuntimeEndpointRegistry {
     return logical ? this.resolve(logical) : null;
   }
 
+  /** Control-stream liveness: attach or acknowledgement from the home. */
   async heartbeat(logicalRuntimeId: string): Promise<void> {
+    const current = this.now();
     await this.db.updateTable("collaboration_runtime_endpoints")
-      .set({ last_seen_at: this.now() })
+      .set({ last_seen_at: current, last_control_at: current })
       .where("runtime_id", "=", logicalRuntimeId)
       .execute();
+  }
+
+  /** One-use control upgrade tickets, valid across every platform instance. */
+  async issueControlTicket(logicalRuntimeId: string, token: string, expiresAt: Date): Promise<void> {
+    await this.db.insertInto("collaboration_control_upgrade_tickets")
+      .values({ token_hash: hashToken(token), runtime_id: logicalRuntimeId, expires_at: expiresAt, consumed_at: null })
+      .execute();
+    await this.db.deleteFrom("collaboration_control_upgrade_tickets")
+      .where("expires_at", "<", new Date(this.now().getTime() - 60_000)).execute();
+  }
+
+  async consumeControlTicket(token: string, logicalRuntimeId: string): Promise<boolean> {
+    const consumed = await this.db.updateTable("collaboration_control_upgrade_tickets")
+      .set({ consumed_at: this.now() })
+      .where("token_hash", "=", hashToken(token))
+      .where("runtime_id", "=", logicalRuntimeId)
+      .where("consumed_at", "is", null)
+      .where("expires_at", ">", this.now())
+      .returning("token_hash")
+      .execute();
+    return consumed.length === 1;
   }
 
   /** Live (non-retired) verification keys for one home. */
@@ -240,6 +303,10 @@ function mergeKeys(
     .map((key) => ({ ...key, retiredAt: key.retiredAt ?? now.toISOString() }))
     .filter((key) => now.getTime() - Date.parse(key.retiredAt!) < overlapMs);
   return [...live, ...retired].slice(0, MAX_STORED_KEYS);
+}
+
+function hashToken(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
 }
 
 /** Public https origin: no IP literals, no reserved or internal-looking names; never resolved here. */

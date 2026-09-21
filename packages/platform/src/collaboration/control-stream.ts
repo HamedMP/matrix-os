@@ -9,6 +9,20 @@
  * pending tickets are bounded; shutdown drains every connection.
  */
 import { randomBytes } from "node:crypto";
+
+/** Thrown when this instance does not hold the runtime's socket; another instance may. */
+export class ControlStreamNotConnectedError extends Error {
+  constructor(runtimeId: string) {
+    super(`Runtime ${runtimeId} is not connected to this control stream instance`);
+    this.name = "ControlStreamNotConnectedError";
+  }
+}
+
+/** Shared one-use upgrade ticket store (Postgres) so any instance can admit a ticket another issued. */
+export interface ControlUpgradeTicketStore {
+  issueControlTicket(runtimeId: string, token: string, expiresAt: Date): Promise<void>;
+  consumeControlTicket(token: string, runtimeId: string): Promise<boolean>;
+}
 import {
   COLLABORATION_DIRECT_LIMITS,
   CollaborationControlAckSchema,
@@ -17,7 +31,6 @@ import {
 } from "@matrix-os/contracts";
 
 const DEFAULT_TICKET_TTL_MS = COLLABORATION_DIRECT_LIMITS.ticketTtlSeconds * 1_000;
-const DEFAULT_MAX_PENDING_TICKETS = 1_024;
 const DEFAULT_MAX_CONNECTIONS = 4_096;
 const MAX_FRAME_BYTES = COLLABORATION_DIRECT_LIMITS.wsFrameBytes;
 
@@ -41,52 +54,46 @@ export interface ControlAuthorityPort {
 export class CollaborationControlStream {
   private readonly now: () => Date;
   private readonly ticketTtlMs: number;
-  private readonly maxPendingTickets: number;
   private readonly maxConnections: number;
-  private readonly pendingTickets = new Map<string, { runtimeId: string; expiresAt: number }>();
   private readonly connections = new Map<string, { socket: ControlSocket; close(): void }>();
   private closed = false;
+  private readonly createToken: () => string;
+  private readonly controlAuthority: ControlAuthorityPort;
+  private readonly tickets: ControlUpgradeTicketStore;
+  private readonly onAttach: ((runtimeId: string) => Promise<void>) | undefined;
 
   constructor(options: {
     controlAuthority: ControlAuthorityPort;
+    /** Postgres-backed so a ticket issued by one platform instance admits on any instance. */
+    tickets: ControlUpgradeTicketStore;
+    /** Liveness hook (attach and acknowledgement); the ticket issuer reads it as home health. */
+    onAttach?(runtimeId: string): Promise<void>;
     now?: () => Date;
     ticketTtlMs?: number;
-    maxPendingTickets?: number;
     maxConnections?: number;
     createToken?: () => string;
   }) {
     this.now = options.now ?? (() => new Date());
     this.ticketTtlMs = options.ticketTtlMs ?? DEFAULT_TICKET_TTL_MS;
-    this.maxPendingTickets = options.maxPendingTickets ?? DEFAULT_MAX_PENDING_TICKETS;
     this.maxConnections = options.maxConnections ?? DEFAULT_MAX_CONNECTIONS;
     this.createToken = options.createToken ?? (() => randomBytes(32).toString("base64url"));
     this.controlAuthority = options.controlAuthority;
+    this.tickets = options.tickets;
+    this.onAttach = options.onAttach;
     options.controlAuthority.registerTransport((runtimeId, assertion) => this.deliver(runtimeId, assertion));
   }
 
-  private readonly createToken: () => string;
-  private readonly controlAuthority: ControlAuthorityPort;
-
-  /** One-use ticket a freshly registered runtime presents on the control upgrade. */
-  issueUpgradeTicket(runtimeId: string): string {
+  /** One-use ticket a freshly registered runtime presents on the control upgrade; stored, never kept in memory. */
+  async issueUpgradeTicket(runtimeId: string): Promise<string> {
     if (this.closed) throw new Error("Control stream is shutting down");
-    this.sweepTickets();
-    while (this.pendingTickets.size >= this.maxPendingTickets) {
-      const oldest = this.pendingTickets.keys().next().value as string | undefined;
-      if (!oldest) break;
-      this.pendingTickets.delete(oldest);
-    }
     const token = this.createToken();
-    this.pendingTickets.set(token, { runtimeId, expiresAt: this.now().getTime() + this.ticketTtlMs });
+    await this.tickets.issueControlTicket(runtimeId, token, new Date(this.now().getTime() + this.ticketTtlMs));
     return token;
   }
 
-  consumeUpgradeTicket(token: string, runtimeId: string): boolean {
-    this.sweepTickets();
-    const pending = this.pendingTickets.get(token);
-    if (!pending) return false;
-    this.pendingTickets.delete(token);
-    return pending.runtimeId === runtimeId && pending.expiresAt > this.now().getTime();
+  /** Atomic single consumption in the shared store: a replay on any instance fails. */
+  consumeUpgradeTicket(token: string, runtimeId: string): Promise<boolean> {
+    return this.tickets.consumeControlTicket(token, runtimeId);
   }
 
   /** Binds an admitted socket; a second connection for the same runtime replaces the first. */
@@ -107,6 +114,7 @@ export class CollaborationControlStream {
       },
     };
     this.connections.set(runtimeId, entry);
+    this.touch(runtimeId);
     return {
       runtimeId,
       receive: async (raw) => {
@@ -114,14 +122,20 @@ export class CollaborationControlStream {
         const ack = CollaborationControlAckSchema.parse(JSON.parse(raw) as unknown);
         if (ack.runtimeId !== runtimeId) throw new Error("Control acknowledgement runtime mismatch");
         await this.controlAuthority.acknowledge(runtimeId, ack);
+        this.touch(runtimeId);
       },
       close: () => entry.close(),
     };
   }
 
+  /**
+   * Delivers to the socket this instance holds. Another instance may hold
+   * it: the control authority treats the not-connected error as "not mine"
+   * and leaves the delivery due for whichever instance has the socket.
+   */
   async deliver(runtimeId: string, assertion: CollaborationControlAssertion): Promise<void> {
     const entry = this.connections.get(runtimeId);
-    if (!entry) throw new Error("Runtime is not connected to the control stream");
+    if (!entry) throw new ControlStreamNotConnectedError(runtimeId);
     try {
       entry.socket.send(JSON.stringify(assertion));
     } catch (error: unknown) {
@@ -136,13 +150,13 @@ export class CollaborationControlStream {
 
   async shutdown(): Promise<void> {
     this.closed = true;
-    this.pendingTickets.clear();
     for (const entry of [...this.connections.values()]) entry.close();
     this.connections.clear();
   }
 
-  private sweepTickets(): void {
-    const current = this.now().getTime();
-    for (const [token, pending] of this.pendingTickets) if (pending.expiresAt <= current) this.pendingTickets.delete(token);
+  private touch(runtimeId: string): void {
+    this.onAttach?.(runtimeId).catch((error: unknown) => {
+      console.warn("[collaboration-control-stream] liveness update failed", error instanceof Error ? error.name : "UnknownError");
+    });
   }
 }

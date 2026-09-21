@@ -30,9 +30,10 @@ import {
   ticketSigningPayload,
   verifyEd25519,
 } from "../../packages/platform/src/collaboration/ticket-crypto.js";
-import { CollaborationControlStream } from "../../packages/platform/src/collaboration/control-stream.js";
+import { CollaborationControlStream, ControlStreamNotConnectedError } from "../../packages/platform/src/collaboration/control-stream.js";
 import {
   createPlatformCollaborationTestDatabase,
+  createRealPlatformCollaborationTestDatabase,
   destroyPlatformCollaborationTestDatabase,
   platformCollaborationActors,
   type PlatformCollaborationTestDatabase,
@@ -180,12 +181,69 @@ describe("S05 platform tickets, endpoints and control", () => {
     });
   });
 
+  // Real PostgreSQL only: PGlite runs one connection, so concurrent transactions cannot contend for the row lock.
+  it.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("serializes concurrent registrations for one runtime so no key is lost and the generation never regresses", async () => {
+    const real = await createRealPlatformCollaborationTestDatabase();
+    try {
+      await bootstrapPlatformRuntimeEndpointDatabase(real.collaborationDb as never);
+      const registry = new CollaborationRuntimeEndpointRegistry(real.collaborationDb as never, { now: () => clock, keyOverlapMs: 10 * 60_000 });
+      const auth = { runtimeId, ownerId: platformCollaborationActors.owner, relayHandle: "owner-handle" };
+      const keys = ["ka", "kb", "kc", "kd"].map((keyId) => ({ keyId, algorithm: "ed25519" as const, publicKey: clientProofKey().raw }));
+      const results = await Promise.allSettled(keys.map((key, index) => registry.register({
+        authenticated: auth,
+        registration: registration({ authorityGeneration: 2 + (index % 2), publicKeys: [key] }),
+      })));
+      // Every registration either lands or is refused as stale (generation 2 after generation 3); none corrupts the row.
+      expect(results.every((result) => result.status === "fulfilled" || (result.reason as { code?: string }).code === "stale_generation")).toBe(true);
+      const stored = await registry.resolve(logicalRuntimeId);
+      expect(stored!.authorityGeneration).toBe(3);
+      const landed = results.flatMap((result, index) => (result.status === "fulfilled" ? [keys[index]!.keyId] : []));
+      expect(stored!.publicKeys.map((key) => key.keyId).sort()).toEqual(landed.sort());
+      expect(stored!.publicKeys.filter((key) => key.retiredAt === undefined)).toHaveLength(1);
+    } finally {
+      await real.destroy();
+    }
+  });
+
   describe("connection tickets (T026)", () => {
     beforeEach(async () => {
       await endpoints.register({
         authenticated: { runtimeId, ownerId: platformCollaborationActors.owner, relayHandle: "owner-handle" },
         registration: registration(),
       });
+      await endpoints.heartbeat(logicalRuntimeId);
+    });
+
+    it("binds each resource's own authority generation, not the home's endpoint generation", async () => {
+      const projectScope = "10000000-0000-4000-8000-000000000009";
+      await repository.applyDirectoryEvent({
+        eventId: "20000000-0000-4000-8000-000000000009", scopeId: projectScope, runtimeId, ownerId: platformCollaborationActors.owner, kind: "project",
+        authorityGeneration: 7, metadataRevision: 1, recipients: [{ actorId: platformCollaborationActors.owner, status: "accepted" }],
+      });
+      const scoped = new CollaborationTicketIssuer({
+        keyring: { activeKeyId: "ticket-key-1", keys: { "ticket-key-1": seedA } }, repository, endpoints,
+        resolveOrganization: async () => organizationId, projection: { isCurrentMember: async () => true }, relayOrigin: "https://app.matrix-os.com", now: () => clock,
+      });
+      const chat = await scoped.issue({ actorId: platformCollaborationActors.owner, request: { clientRequestId: "40000000-0000-4000-8000-000000000011", scopeId, purpose: "direct_session", proofPublicKey: clientProofKey().raw } });
+      const project = await scoped.issue({ actorId: platformCollaborationActors.owner, request: { clientRequestId: "40000000-0000-4000-8000-000000000012", scopeId: projectScope, purpose: "direct_session", proofPublicKey: clientProofKey().raw } });
+      expect(chat.signedTicket.ticket.runtime).toEqual({ runtimeId: logicalRuntimeId, authorityGeneration: 1 });
+      expect(project.signedTicket.ticket.runtime).toEqual({ runtimeId: logicalRuntimeId, authorityGeneration: 7 });
+    });
+
+    it("reports host_offline for a home that never attached its control stream or went stale", async () => {
+      const key = clientProofKey();
+      const request = (id: string) => ({ actorId: platformCollaborationActors.owner, request: { clientRequestId: id, scopeId, purpose: "direct_session" as const, proofPublicKey: key.raw } });
+      await expect(issuer.issue(request("40000000-0000-4000-8000-000000000021"))).resolves.toBeTruthy();
+      clock = new Date(clock.getTime() + 61_000);
+      await expect(issuer.issue(request("40000000-0000-4000-8000-000000000022"))).rejects.toMatchObject({ code: "host_offline" });
+      await endpoints.heartbeat(logicalRuntimeId);
+      await expect(issuer.issue(request("40000000-0000-4000-8000-000000000023"))).resolves.toBeTruthy();
+      const cold = "vps:33333333-3333-4333-8333-333333333333";
+      await endpoints.register({ authenticated: { runtimeId: cold, ownerId: platformCollaborationActors.owner, relayHandle: "owner-handle" }, registration: registration({ runtimeId: "vps-33333333-3333-4333-8333-333333333333" }) });
+      const coldScope = "10000000-0000-4000-8000-000000000033";
+      await repository.applyDirectoryEvent({ eventId: "20000000-0000-4000-8000-000000000033", scopeId: coldScope, runtimeId: cold, ownerId: platformCollaborationActors.owner, kind: "chat", authorityGeneration: 1, metadataRevision: 1, recipients: [{ actorId: platformCollaborationActors.owner, status: "accepted" }] });
+      const coldIssuer = new CollaborationTicketIssuer({ keyring: { activeKeyId: "ticket-key-1", keys: { "ticket-key-1": seedA } }, repository, endpoints, resolveOrganization: async () => organizationId, projection: { isCurrentMember: async () => true }, relayOrigin: "https://app.matrix-os.com", now: () => clock });
+      await expect(coldIssuer.issue({ actorId: platformCollaborationActors.owner, request: { clientRequestId: "40000000-0000-4000-8000-000000000024", scopeId: coldScope, purpose: "direct_session", proofPublicKey: key.raw } })).rejects.toMatchObject({ code: "host_offline" });
     });
 
     it("issues an Ed25519-signed ticket bound to actor, organization, resource, purpose, runtime, generation and proof key", async () => {
@@ -241,12 +299,13 @@ describe("S05 platform tickets, endpoints and control", () => {
       })).rejects.toMatchObject({ code: "not_found" });
     });
 
-    it("refuses when the home is unregistered or its generation is stale", async () => {
-      const auth = { runtimeId, ownerId: platformCollaborationActors.owner, relayHandle: "owner-handle" };
-      await endpoints.register({ authenticated: auth, registration: registration({ authorityGeneration: 5 }) });
-      await expect(issuer.issue({
+    it("refuses when the scope's home is not registered for its owner", async () => {
+      const other = "10000000-0000-4000-8000-000000000077";
+      await repository.applyDirectoryEvent({ eventId: "20000000-0000-4000-8000-000000000077", scopeId: other, runtimeId: "vps:44444444-4444-4444-8444-444444444444", ownerId: platformCollaborationActors.owner, kind: "chat", authorityGeneration: 1, metadataRevision: 1, recipients: [{ actorId: platformCollaborationActors.owner, status: "accepted" }] });
+      const anyOrg = new CollaborationTicketIssuer({ keyring: { activeKeyId: "ticket-key-1", keys: { "ticket-key-1": seedA } }, repository, endpoints, resolveOrganization: async () => organizationId, projection: { isCurrentMember: async () => true }, relayOrigin: "https://app.matrix-os.com", now: () => clock });
+      await expect(anyOrg.issue({
         actorId: platformCollaborationActors.owner,
-        request: { clientRequestId: "40000000-0000-4000-8000-000000000007", scopeId, purpose: "direct_session", proofPublicKey: clientProofKey().raw },
+        request: { clientRequestId: "40000000-0000-4000-8000-000000000007", scopeId: other, purpose: "direct_session", proofPublicKey: clientProofKey().raw },
       })).rejects.toMatchObject({ code: "unavailable" });
     });
 
@@ -280,16 +339,22 @@ describe("S05 platform tickets, endpoints and control", () => {
   describe("control stream (T026)", () => {
     it("admits a runtime once per upgrade ticket, pushes denials and routes acknowledgements", async () => {
       const acks: unknown[] = [];
+      await endpoints.register({ authenticated: { runtimeId, ownerId: platformCollaborationActors.owner, relayHandle: "owner-handle" }, registration: registration() });
       const stream = new CollaborationControlStream({
         controlAuthority: {
           registerTransport: () => undefined,
           acknowledge: async (runtime: string, ack: unknown) => { acks.push([runtime, ack]); return { completedDenialIds: ["d1"] }; },
         },
+        tickets: endpoints,
+        onAttach: (id) => endpoints.heartbeat(id),
         now: () => clock,
       });
-      const ticket = stream.issueUpgradeTicket(logicalRuntimeId);
-      expect(stream.consumeUpgradeTicket(ticket, logicalRuntimeId)).toBe(true);
-      expect(stream.consumeUpgradeTicket(ticket, logicalRuntimeId)).toBe(false);
+      const ticket = await stream.issueUpgradeTicket(logicalRuntimeId);
+      // A second instance sharing the store admits the ticket exactly once.
+      const otherInstance = new CollaborationControlStream({ controlAuthority: { registerTransport: () => undefined, acknowledge: async () => ({ completedDenialIds: [] }) }, tickets: endpoints, now: () => clock });
+      await expect(otherInstance.consumeUpgradeTicket(ticket, "vps-someone-else")).resolves.toBe(false);
+      await expect(otherInstance.consumeUpgradeTicket(ticket, logicalRuntimeId)).resolves.toBe(true);
+      await expect(stream.consumeUpgradeTicket(ticket, logicalRuntimeId)).resolves.toBe(false);
       const sent: string[] = [];
       const socket = { send: (value: string) => { sent.push(value); }, close: () => undefined };
       const connection = stream.attach(logicalRuntimeId, socket);
@@ -301,24 +366,22 @@ describe("S05 platform tickets, endpoints and control", () => {
       await connection.receive(JSON.stringify({ protocolVersion: 2, runtimeId: logicalRuntimeId, authorityGeneration: 2, fenceAt: clock.toISOString() }));
       expect(acks).toEqual([[logicalRuntimeId, expect.objectContaining({ runtimeId: logicalRuntimeId })]]);
       await expect(connection.receive(JSON.stringify({ protocolVersion: 1, runtimeId: logicalRuntimeId }))).rejects.toThrow();
-      await expect(stream.deliver("vps-unknown", { protocolVersion: 2, type: "generation", runtimeId: "vps-unknown", authorityGeneration: 1 })).rejects.toThrow();
+      await expect(stream.deliver("vps-unknown", { protocolVersion: 2, type: "generation", runtimeId: "vps-unknown", authorityGeneration: 1 })).rejects.toBeInstanceOf(ControlStreamNotConnectedError);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect((await endpoints.resolve(logicalRuntimeId))!.lastControlAt).toBe(clock.toISOString());
       connection.close();
-      await expect(stream.deliver(logicalRuntimeId, { protocolVersion: 2, type: "generation", runtimeId: logicalRuntimeId, authorityGeneration: 1 })).rejects.toThrow();
+      await expect(stream.deliver(logicalRuntimeId, { protocolVersion: 2, type: "generation", runtimeId: logicalRuntimeId, authorityGeneration: 1 })).rejects.toBeInstanceOf(ControlStreamNotConnectedError);
       await stream.shutdown();
     });
 
-    it("bounds upgrade tickets and connections and expires tickets", () => {
+    it("expires stored upgrade tickets and bounds connections per instance", async () => {
       const stream = new CollaborationControlStream({
         controlAuthority: { registerTransport: () => undefined, acknowledge: async () => ({ completedDenialIds: [] }) },
-        now: () => clock, maxPendingTickets: 2, maxConnections: 1,
+        tickets: endpoints, now: () => clock, maxConnections: 1,
       });
-      const t1 = stream.issueUpgradeTicket("vps-a");
-      stream.issueUpgradeTicket("vps-b");
-      stream.issueUpgradeTicket("vps-c");
-      expect(stream.consumeUpgradeTicket(t1, "vps-a")).toBe(false);
-      const t4 = stream.issueUpgradeTicket("vps-d");
+      const t4 = await stream.issueUpgradeTicket("vps-d");
       clock = new Date(clock.getTime() + 31_000);
-      expect(stream.consumeUpgradeTicket(t4, "vps-d")).toBe(false);
+      await expect(stream.consumeUpgradeTicket(t4, "vps-d")).resolves.toBe(false);
       stream.attach("vps-a", { send: () => undefined, close: () => undefined });
       expect(() => stream.attach("vps-b", { send: () => undefined, close: () => undefined })).toThrow();
     });

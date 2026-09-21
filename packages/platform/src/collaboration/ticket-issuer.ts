@@ -52,7 +52,10 @@ export interface TicketSigningKeyring {
   retired?: Readonly<Record<string, string>>;
 }
 
-export type CollaborationTicketIssuerErrorCode = "invalid_request" | "not_found" | "unavailable" | "configuration";
+export type CollaborationTicketIssuerErrorCode = "invalid_request" | "not_found" | "unavailable" | "host_offline" | "configuration";
+
+/** A home counts as reachable when its control stream attached or acknowledged within this window. */
+export const HOME_LIVENESS_WINDOW_MS = 60_000;
 
 export class CollaborationTicketIssuerError extends Error {
   constructor(public readonly code: CollaborationTicketIssuerErrorCode, message: string) {
@@ -148,11 +151,18 @@ export class CollaborationTicketIssuer {
     if (status === "invited" && purpose !== "direct_session") throw denied();
     if (purpose === "terminal" && directory.kind !== "terminal") throw denied();
     if (!(await this.options.projection.isCurrentMember({ organizationId, actorId: input.actorId }))) throw denied();
+    // The endpoint proves the home is enrolled for this owner; the ticket binds
+    // the resource's own authority generation, because one home hosts scopes at
+    // different generations (a project at N, a standalone Chat at 1).
     const endpoint = await this.options.endpoints.resolveEnrolled(directory.runtimeId);
-    if (!endpoint || endpoint.ownerId !== directory.ownerId || endpoint.authorityGeneration !== directory.authorityGeneration) {
+    if (!endpoint || endpoint.ownerId !== directory.ownerId) {
       throw new CollaborationTicketIssuerError("unavailable", "Collaboration home is unavailable");
     }
     const issuedAt = this.now();
+    const lastControlAt = endpoint.lastControlAt ? Date.parse(endpoint.lastControlAt) : Number.NaN;
+    if (!Number.isFinite(lastControlAt) || issuedAt.getTime() - lastControlAt > HOME_LIVENESS_WINDOW_MS) {
+      throw new CollaborationTicketIssuerError("host_offline", "Collaboration home is offline");
+    }
     const ticket = {
       protocolVersion: COLLABORATION_DIRECT_PROTOCOL_VERSION,
       ticketId: this.createId(),
@@ -161,7 +171,7 @@ export class CollaborationTicketIssuer {
       organizationId,
       resource: { scopeId, kind: directory.kind },
       purpose,
-      runtime: { runtimeId: endpoint.runtimeId, authorityGeneration: endpoint.authorityGeneration },
+      runtime: { runtimeId: endpoint.runtimeId, authorityGeneration: directory.authorityGeneration },
       proofKeyThumbprint: proofKeyThumbprint(proofPublicKey),
       maxActions: request.data.maxActions ?? COLLABORATION_DIRECT_LIMITS.maxTicketActions,
       issuedAt: issuedAt.toISOString(),

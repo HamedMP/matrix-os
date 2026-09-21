@@ -18,6 +18,7 @@ import {
   type CollaborationDenial,
 } from "@matrix-os/contracts";
 import type { DenialRecord, DenialRuntimeRecord, PlatformOrganizationRepository } from "../organizations/repository.js";
+import { ControlStreamNotConnectedError } from "./control-stream.js";
 import type { MembershipAssertion } from "../organizations/projection.js";
 
 export const COLLABORATION_CONTROL_LEASE_MS = 25_000;
@@ -98,6 +99,9 @@ export function createCollaborationControlAuthority(options: {
         await transport(item.runtimeId, { protocolVersion: COLLABORATION_DIRECT_PROTOCOL_VERSION, type: "denial", denial });
         ok = true;
       } catch (error: unknown) {
+        // S05: multi-instance delivery. The socket may live on another instance;
+        // leave the delivery due without spending an attempt so that instance delivers it.
+        if (error instanceof ControlStreamNotConnectedError) continue;
         console.warn("[collaboration-control] denial delivery failed", error instanceof Error ? error.name : "UnknownError");
       }
       const attempts = item.attempts + 1;

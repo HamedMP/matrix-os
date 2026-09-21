@@ -18,6 +18,8 @@ interface ClaimedDirectoryEvent {
   metadataRevision: number;
   recipientEntries: Array<{ actorId: string; invitationId?: string }>;
   discoveryState: "invited" | "accepted" | "revoked" | "deleted";
+  /** S05: read inside the claim transaction so a lookup failure leaves the event unclaimed and retryable. */
+  organizationId: string | null;
   attempt: number;
 }
 
@@ -79,8 +81,7 @@ export class CollaborationDirectoryOutbox {
     const claimed = await this.claimBatch();
     let delivered = 0;
     for (const event of claimed) {
-      // S05: the platform binds connection tickets to the scope's organization.
-      const organizationId = await this.lookupOrganization(event.scopeId);
+      const organizationId = event.organizationId;
       const payload = CollaborationDirectoryEventSchema.parse({
         eventId: event.eventId,
         scopeId: event.scopeId,
@@ -143,6 +144,7 @@ export class CollaborationDirectoryOutbox {
           "outbox.discovery_state",
           "outbox.attempts",
           "scope.owner_id",
+          "scope.organization_id",
           "event.revision",
         ])
         .where("outbox.authority_runtime_id", "=", this.options.runtimeId)
@@ -191,6 +193,7 @@ export class CollaborationDirectoryOutbox {
           metadataRevision: Number(row.revision),
           recipientEntries,
           discoveryState: row.discovery_state,
+          organizationId: row.organization_id ?? null,
           attempt,
         });
       }
@@ -198,16 +201,6 @@ export class CollaborationDirectoryOutbox {
     });
   }
 
-  private async lookupOrganization(scopeId: string): Promise<string | null> {
-    try {
-      const row = await this.options.db.selectFrom("collaboration_scopes")
-        .select("organization_id").where("id", "=", scopeId).executeTakeFirst();
-      return row?.organization_id ?? null;
-    } catch (error: unknown) {
-      console.warn("[collaboration-directory] organization lookup failed", error instanceof Error ? error.name : "UnknownError");
-      return null;
-    }
-  }
 }
 
 function parseRecipientEntries(value: unknown): Array<{ actorId: string; invitationId?: string }> {
