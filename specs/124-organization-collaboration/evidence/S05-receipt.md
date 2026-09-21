@@ -157,3 +157,62 @@ The second half of the #1804 verdict is the "tests were not test-first" receipt 
 answered in the Greptile round 2 section above: the original S05 relay suites were written
 alongside the implementation, as this receipt has always stated, and every round since has
 been RED → GREEN. That history is recorded, not rewritten; this round is test-first.
+
+## Routed round (2026-09-21, two items found from higher layers)
+
+Both defects were reported by workers on layers above and confirmed as owned here.
+
+**Retired signing keys never expired across restarts (`124/s05`,
+`packages/platform/src/collaboration/ticket-issuer.ts`, blocks #1802 and #1803).**
+`RETIRED_KEY_OVERLAP_MS` was measured from `retiredAt` when
+`MATRIX_COLLABORATION_TICKET_RETIRED_AT` carried an entry for the key and from the keyring
+load time otherwise. The fallback made retirement a function of process uptime: every
+platform restart reset the 15-minute overlap, so a retired key was republished to homes
+indefinitely and its retirement never took effect.
+
+Retirement is now configuration. The loader fails closed when any retired key is
+configured without `MATRIX_COLLABORATION_TICKET_RETIRED_AT`, and requires exact
+correspondence between the retired keys and their retirement times, so a missing entry
+cannot silently never expire and a stray entry is caught as the typo it is. The issuer
+refuses a retired key with no recorded retirement, and refuses a retirement dated further
+ahead than the protocol's clock skew, which would never reach the end of its overlap. The
+15-minute window is unchanged: it still covers two 5-minute re-registration intervals plus
+the ticket TTL. The env var is read nowhere else in the repository and the route already
+fails closed when the keyring does not load, so an operator who has retired keys configured
+without retirement times gets an unavailable ticket route rather than a key that outlives
+its rotation.
+
+RED `test(platform): expose retired signing keys that outlive every restart`: the rotation
+test had asserted the implicit load-time behavior and now supplies an explicit retirement
+time; a new test constructs the issuer three times with the clock advanced past the overlap
+on each restart and requires every one to be refused, then checks that a recorded retirement
+keeps the key dropped across three further restarts. GREEN `fix(platform): require a
+recorded retirement time for every retired signing key`.
+
+Gates: `collaboration-tickets` **23/23** on real Postgres, plus bootstrap, wiring, routes,
+direct-transport-postgres and control-delivery-postgres **16/16**. `bun run typecheck`
+exit 0; `bun run check:patterns` 0 violations, 5 inherited warnings.
+
+**Idle eviction leaked the upstream TLS socket (`124/s05-relay`,
+`packages/platform/src/platform-websocket-upgrade.ts`).** A relayed direct socket is a pair,
+but the relay's evict hook destroyed only the client half, and the upstream connection to the
+home was torn down solely by the client socket's `error` handler. `socket.destroy()` emits
+`close`, not `error`, so every idle eviction released the reservation's home and actor counts
+while leaving a live TLS connection to the customer's VPS with nothing owning it; repeated
+evictions accumulated them. The same hole applied to the shutdown drain added in the verdict
+round above, and a teardown starting on the upstream side left the client half open.
+
+The client socket's `close` now tears down the upstream alongside its `error`, and the
+upstream's `close` destroys the client half, so a teardown beginning at the sweep, the drain,
+the client or the upstream ends the whole pair. Counts still release through the client
+socket's single `close`; `destroy()` and `release()` remain idempotent.
+
+RED `test(platform): expose the upstream socket leaked by relay eviction` (3 failures).
+GREEN `fix(platform): destroy both halves of a relayed direct socket pair`. The tests drive
+the real upgrade listener with a real `CollaborationRelay` and a faked `node:tls` connect,
+and cover eviction, `relay.close()` and an upstream-first teardown, asserting both halves
+destroyed and the counts back at zero including after a repeated teardown.
+
+Gates: `collaboration-direct-upgrade` **4/4** (1/4 RED), plus relay, websocket, wiring,
+preview-terminal-flow and app-session-runtime-routing — **37/37**. `bun run typecheck`
+exit 0; `bun run check:patterns` 0 violations, 5 inherited warnings.
