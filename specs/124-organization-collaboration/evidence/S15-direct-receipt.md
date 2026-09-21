@@ -1,0 +1,25 @@
+# S15 direct transport and standalone resource addendum
+
+**Date:** 2026-09-21. **Packet:** S15 support for T075, T076, T078 and T079. **Base:** `124/s15-directory` at `d7e9a8f9b`. **Code head:** `5b66636d7791bb3247cfd53bbe5476751a8dd9d9`. **Layers:** `bc12b23b4` pending organization grant admission; `6fbb5a1a1` owner runtime direct setup; `5b66636d7` standalone catalog scopes. Combined code diff: 27 files, +1,288/−46 relative to base. This addendum complements `S15-receipt.md` in the UI child.
+
+## RED and GREEN
+
+| Behavior | RED | GREEN |
+| --- | --- | --- |
+| Exact standalone file share | `pnpm exec vitest run tests/gateway/collaboration-capability-routes.test.ts --maxWorkers=2 -t 'preflights and shares only the exact catalog-bound standalone file'`: preflight returned 503, expected 200; 1 failed, 9 skipped | Same focused test: 1 passed, 9 skipped. Final full route suite: 11/11 passed. |
+| File/folder/app catalog identity | Existing app catalog test and new folder/app creation test each returned 400 while the test resolver used a noncontract incarnation string. The fixture was corrected to 64 hex characters, matching `appRegistryIncarnation`. | Both targeted tests passed 2/2. Replaced app registration causes stale create 409, catalog re-resolution rotates the ID, old ID preflight 404 and new app share 201. |
+| Real Postgres race and rollback | First run: 1/2 passed; assertion compared PostgreSQL bigint text to JavaScript number. The query assertion was corrected to numeric comparison. | `source /tmp/matrix-os-124-postgres.env; pnpm exec vitest run tests/gateway/collaboration-standalone-scope-postgres.test.ts --maxWorkers=2`: 2/2 passed. Rival organizations concurrently creating the same file yielded one complete shared scope, member, event, audit, operation and outbox row; changed incarnation caused no scope row. |
+| Encoded owner runtime exact ID | Added focused route behavior test after the implementation. | Encoded `vps%3A...` direct owner session preflight rejects a path string as resource ID with 400 and accepts the catalog UUID; create returns 201. Focused test 1/1 passed. |
+
+Final combined command with the real Postgres environment sourced: `pnpm exec vitest run tests/gateway/collaboration-capability-routes.test.ts tests/gateway/collaboration-standalone-scope-postgres.test.ts --maxWorkers=2` passed 13/13. The subsequent encoded-route addition passed its focused test 1/1. `PATH=/home/nima/.bun/bin:$PATH bun run typecheck` passed all packages. `bun run check:patterns` passed with 0 violations and 5 existing warnings. `git diff --check` passed. The first full typecheck invocation did not run because Bun was absent from `PATH`; the corrected invocation passed.
+
+## Authority and identity
+
+- Pending organization grant direct admission requires the signed grant pointer, exact scope and owner, fresh organization membership, active unexpired grant, and a transactional accept. Pending sessions cannot authorize ordinary scope actions.
+- Owner runtime setup uses a separate ticket/session purpose. Platform proves enrollment, owner and current organization membership; home rechecks membership at admission and each request. The session only permits exact catalog resolve, preflight and scope create routes for its runtime. The platform relay only forwards allowlisted paths and does not decide scope permissions.
+- Standalone file, folder and app scopes bind one catalog UUID, owner, organization, resource kind, revision and incarnation. The confirmation token binds the runtime and expires after 60 seconds. Scope, owner member, event, audit, operation and directory outbox writes share one transaction. The catalog row is locked before checking revision and current incarnation; `ON CONFLICT` enforces one live scope per owner/kind/catalog ID. The owner catalog resolver rejects an enclosing project folder. The scope does not inherit enclosing project access.
+- App catalog registration now requires an injected registry incarnation resolver. Production composition must resolve only the configured owner's app with null project namespace and return `appRegistryIncarnation({slug, created_at})` from the current registered row. Files and folders continue to use filesystem inspection. Without the resolver, app catalog lookup fails closed.
+
+## Surfaces, external modes and integration
+
+The tests exercised owner home gateway routes with signed proof and a stubbed owner runtime direct session, platform ticket/relay parsing, browser direct API, and real owner Postgres. No live owner VPS, external provider, actual Clerk organization, paid service, or Electron/Web surface was exercised by this backend addendum. UI surface captures and readiness behavior are recorded in the S15 UI receipt. No migration was added. Rollback evidence is the real Postgres changed-incarnation test and the rival-org atomicity result. Production app registry composition and final stack restack/CI remain integration gates; this branch was not pushed or submitted from the worker worktree.
