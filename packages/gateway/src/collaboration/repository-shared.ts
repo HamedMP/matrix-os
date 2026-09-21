@@ -39,6 +39,15 @@ export async function lockDirectScope(
   if (scope.membership_mode !== "direct") {
     throw new CollaborationRepositoryError("conflict", "Scope membership is inherited");
   }
+  // This check runs after the scope row lock. A writer that passed an HTTP
+  // maintenance preflight just before freeze still sees the committed fence
+  // before it can change members or grants.
+  const cutover = await sql<{ phase: string }>`SELECT phase FROM collaboration_cutover_journal
+    WHERE scope_id = ${scopeId} AND phase IN ('fenced', 'drained', 'staged', 'verified', 'blocked')`
+    .execute(trx);
+  if (cutover.rows[0]) {
+    throw new CollaborationRepositoryError("conflict", "Collaboration cutover maintenance is active");
+  }
   return scope;
 }
 

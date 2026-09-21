@@ -12,6 +12,8 @@ import { CollaborationActorProofVerifier } from "./actor-proof.js";
 import { CollaborationAuthority, CollaborationAuthorizationError } from "./authority.js";
 import { CollaborationCapabilityRepository } from "./capability-repository.js";
 import { CollaborationCapabilityEvaluator } from "./capability-evaluator.js";
+import { drainActiveSharedRunsForCutover, GatewayCollaborationCutover } from "./cutover.js";
+import { createCollaborationCutoverRoutes } from "./cutover-route.js";
 import { createProjectGitBroker, type ProjectGitDriver, type ProjectGitOwnerIdentity } from "./project-git-broker.js";
 import { createProjectAccessReadiness } from "./project-access-readiness.js";
 import { createGatewayReadinessProbes } from "./gateway-readiness-probes.js";
@@ -131,6 +133,7 @@ export async function createGatewayCollaboration(options: {
   await bootstrapCollaborationDatabase(options.db);
   await cleanupExpiredArtifacts(options.db, new Date());
   const repository = new CollaborationRepository(options.db, { chatRepository: options.chatRepository });
+  const cutoverGuard = new GatewayCollaborationCutover(options.db);
   const participantResolver = options.resolveParticipant && options.resolveInvitationIdentifier
     ? undefined
     : new CollaborationParticipantResolver({
@@ -279,6 +282,7 @@ export async function createGatewayCollaboration(options: {
   let closing = false;
   let chatExecutionAdapter: CollaborationChatExecutionAdapter | undefined;
   let sharedAiRuntime: Awaited<ReturnType<typeof createSharedAiRuntime>> | undefined;
+  let sharedAiOrchestrator: CanonicalChatOrchestrator | undefined;
   let terminalAdapter: CollaborationTerminalAdapter | undefined;
   let terminalControl: TerminalControlCoordinator | undefined;
   let terminalDispatcher: CollaborationTerminalDispatcher | undefined;
@@ -428,6 +432,7 @@ export async function createGatewayCollaboration(options: {
         ...(input.brokerSocket ? { brokerSocket: input.brokerSocket } : {}),
         ...(input.fetchImpl ? { fetchImpl: input.fetchImpl } : {}),
       });
+      sharedAiOrchestrator = input.orchestrator;
       if (sharedAiRuntime.available) chatExecutionAdapter = sharedAiRuntime.chatExecutionAdapter;
       return { available: sharedAiRuntime.available };
     },
@@ -516,6 +521,7 @@ export async function createGatewayCollaboration(options: {
       if (registered || closing) throw new Error("Collaboration routes are already registered or shutting down");
       registered = true;
       input.app.route("/", createCollaborationRoutes({
+        cutoverGuard,
         runtimeId: options.config.runtimeId,
         verifier,
         directSessions,
@@ -558,6 +564,22 @@ export async function createGatewayCollaboration(options: {
           if (role === "viewer") terminalControl?.invalidateActor(scopeId, actorId);
           void terminalEventRegistry?.publishState(scopeId);
         },
+      }));
+      input.app.route("/", createCollaborationCutoverRoutes({
+        ownerId: options.config.ownerId ?? "",
+        runtimeId: options.config.runtimeId,
+        platformKeys: () => controlClient?.platformKeys() ?? [],
+        controlFresh: () => controlClient?.controlFresh() ?? false,
+        cutover: cutoverGuard,
+        drainRuns: (key) => drainActiveSharedRunsForCutover({
+          db: options.db, scopeId: key.scopeId, ownerId: key.ownerId,
+          orchestrator: {
+            cancelSharedRun: async (...args) => {
+              if (!sharedAiOrchestrator) throw new Error("Shared execution orchestrator unavailable");
+              await sharedAiOrchestrator.cancelSharedRun(...args);
+            },
+          },
+        }),
       }));
       registerCollaborationEventWebSocketRoute({
         app: input.app,
