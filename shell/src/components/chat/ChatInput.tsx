@@ -126,8 +126,6 @@ export function ChatInput({
     else void speech.start();
   };
 
-  const speechIsActive = speechBusy;
-
   return (
     <div className="flex flex-col gap-2">
       <ChatMentionPicker listRef={mentionListRef} onDismiss={() => { setDismissedQuery(input); textareaRef.current?.focus(); }} client={agentClient} scope={scope} query={query} resources={resources} onSelect={(resource) => {
@@ -160,7 +158,6 @@ export function ChatInput({
               : speech.phase === "recording"
                 ? "Recording — stop when you're done"
                 : chatInputPlaceholder({ transcribing: false, recording: false, connected, unavailable: unavailablePlaceholder })}
-          disabled={!connected}
           rows={1}
           className="border-0 bg-transparent shadow-none focus-visible:ring-0 text-sm min-h-0 max-h-40 resize-none py-3 px-2 flex-1"
         />
@@ -178,7 +175,6 @@ export function ChatInput({
               size="icon"
               variant="ghost"
               className={`size-8 rounded-full ${speech.phase === "recording" ? "text-destructive" : "text-muted-foreground hover:text-foreground"}`}
-              disabled={!connected && !speechIsActive}
               onClick={handleMicClick}
             >
               {speech.phase === "requesting_permission" ? <Loader2Icon className="size-4 animate-spin" />

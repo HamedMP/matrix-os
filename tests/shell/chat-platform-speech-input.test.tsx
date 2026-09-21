@@ -124,16 +124,7 @@ describe("shared chat platform speech input", () => {
 
   it("allows ready dictation to create a draft before an AI harness is connected", async () => {
     const onSubmit = vi.fn();
-    render(<ChatInput
-      speechScopeKey="chat-1"
-      connected={false}
-      busy={false}
-      onSubmit={onSubmit}
-      unavailablePlaceholder="AI harness unavailable"
-      attachmentsEnabled={false}
-      speechClient={speechClient()}
-      speechCaptureAdapter={captureAdapter}
-    />);
+    render(<TestComposer connected={false} onSubmit={onSubmit} />);
 
     const microphone = await screen.findByRole("button", { name: "Start voice input" });
     await waitFor(() => expect(microphone.hasAttribute("disabled")).toBe(false));
@@ -146,6 +137,9 @@ describe("shared chat platform speech input", () => {
 
     const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
     await waitFor(() => expect(textarea.value).toBe("spoken addition"));
+    expect(textarea.hasAttribute("disabled")).toBe(false);
+    fireEvent.change(textarea, { target: { value: "spoken addition, edited" } });
+    expect(textarea.value).toBe("spoken addition, edited");
     expect(screen.getByRole("button", { name: "Send" }).hasAttribute("disabled")).toBe(true);
     expect(onSubmit).not.toHaveBeenCalled();
   });
