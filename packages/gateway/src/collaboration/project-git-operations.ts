@@ -79,6 +79,27 @@ const GitIdentityEmailSchema = z.email().max(320);
 const GitShaSchema = z.string().regex(/^[a-f0-9]{40}$/);
 const GIT_TIMEOUT_MS = 10_000;
 const REMOTE_TIMEOUT_MS = 30_000;
+/**
+ * Repository-local configuration keys that would let a Contributor redirect,
+ * intercept or rewrite an owner-credentialed remote operation. Git lowercases
+ * section and variable names; subsections keep their case.
+ */
+const FORBIDDEN_REPOSITORY_CONFIG = Object.freeze([
+  /^http\./,
+  /^https\./,
+  /^include\./,
+  /^includeif\./,
+  /^url\./,
+  /^credential\./,
+  /^core\.(sshcommand|gitproxy|askpass|hookspath|fsmonitor|alternaterefscommand|pager)$/,
+  /^remote\..+\.(receivepack|uploadpack|proxy|proxyauthmethod)$/,
+  /^diff\.external$/,
+  /^diff\..+\.command$/,
+  /^filter\./,
+  /^gpg\.(program|.+\.program)$/,
+  /^protocol\./,
+  /^ssh\./,
+] as const);
 
 type GitCommandResult = { stdout: string; stderr: string };
 
@@ -145,23 +166,37 @@ async function currentHead(root: string): Promise<string> {
 }
 
 async function ownerRemote(root: string): Promise<{ owner: string; repo: string; url: string }> {
+  await requireTrustedRepositoryConfig(root);
   let value: string;
   try {
     value = (await gitCommand(root, ["remote", "get-url", "--push", "origin"])).stdout.trim();
-    const rewrites = await gitCommand(root, ["config", "--local", "--get-regexp", "^url\\..*\\.\\(insteadOf\\|pushInsteadOf\\)$"])
-      .catch((error: unknown) => {
-        if (error instanceof Error && "code" in error && String((error as NodeJS.ErrnoException).code) === "1") return { stdout: "", stderr: "" };
-        throw error;
-      });
-    if (rewrites.stdout.trim()) throw new ProjectGitBrokerError("unavailable");
   } catch (error: unknown) {
-    if (error instanceof ProjectGitBrokerError) throw error;
     console.warn("[collaboration-git] remote unavailable", error instanceof Error ? error.name : "UnknownError");
     throw new ProjectGitBrokerError("unavailable");
   }
   const parsed = validateGitHubUrl(value);
   if (!parsed.ok || !value.startsWith("https://github.com/")) throw new ProjectGitBrokerError("unavailable");
   return { owner: parsed.owner, repo: parsed.repo, url: `https://github.com/${parsed.owner}/${parsed.repo}.git` };
+}
+
+/**
+ * The gitdir is member-writable inside the sandbox and `git push`/`ls-remote`
+ * honour includes that `git config --local` alone would hide. Refuse any
+ * transport, credential, include or rewrite override before a remote effect.
+ */
+async function requireTrustedRepositoryConfig(root: string): Promise<void> {
+  let names: string[];
+  try {
+    const result = await gitCommand(root, ["config", "--local", "--includes", "--name-only", "--list", "-z"]);
+    names = result.stdout.split("\0").filter((name) => name.length > 0);
+  } catch (error: unknown) {
+    console.warn("[collaboration-git] repository config unreadable", error instanceof Error ? error.name : "UnknownError");
+    throw new ProjectGitBrokerError("unavailable");
+  }
+  if (names.some((name) => FORBIDDEN_REPOSITORY_CONFIG.some((pattern) => pattern.test(name)))) {
+    console.warn("[collaboration-git] repository config carries a forbidden override");
+    throw new ProjectGitBrokerError("unavailable");
+  }
 }
 
 async function requireExpectedHead(root: string, expectedHeadSha: string): Promise<void> {

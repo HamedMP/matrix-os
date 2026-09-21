@@ -52,8 +52,24 @@ const INACCESSIBLE_PATHS = Object.freeze([
   "-/root",
 ] as const);
 
+/**
+ * Repository metadata a collaborator must not rewrite: the owner host runs Git
+ * with the owner's forge credential inside this gitdir, so a writable config
+ * (http.proxy, http.sslVerify, include.path, url.*.pushInsteadOf, hooks) would
+ * let a Contributor redirect or intercept the owner's credential.
+ */
+export const SANDBOX_READ_ONLY_REPOSITORY_PATHS = Object.freeze([
+  ".git/config",
+  ".git/hooks",
+  ".git/info",
+  ".git/objects/info",
+] as const);
+
 const SANDBOX_PROPERTY_TEMPLATE = Object.freeze([
   `BindPaths=${WORKTREE_TOKEN}:${SANDBOX_WORKSPACE_MOUNT}`,
+  // `.git` is its own mount point so it cannot be renamed or replaced from inside the sandbox.
+  `BindPaths=-${WORKTREE_TOKEN}/.git:${SANDBOX_WORKSPACE_MOUNT}/.git`,
+  ...SANDBOX_READ_ONLY_REPOSITORY_PATHS.map((path) => `ReadOnlyPaths=-${SANDBOX_WORKSPACE_MOUNT}/${path}`),
   "PrivateNetwork=yes",
   "IPAddressDeny=any",
   "RestrictAddressFamilies=AF_UNIX",
@@ -114,6 +130,7 @@ export function buildSandboxSystemdProperties(
   const properties = SANDBOX_PROPERTY_TEMPLATE.map((property) => property.replace(WORKTREE_TOKEN, worktree));
   if (manifest.worktree.mode === "ro") {
     properties[0] = `BindReadOnlyPaths=${worktree}:${SANDBOX_WORKSPACE_MOUNT}`;
+    properties[1] = `BindReadOnlyPaths=-${worktree}/.git:${SANDBOX_WORKSPACE_MOUNT}/.git`;
   }
   if (manifest.limits) {
     properties.push(
