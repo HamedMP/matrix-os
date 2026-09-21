@@ -9,6 +9,8 @@ export interface CollaborationDirectoryTable {
   runtime_id: string;
   owner_id: string;
   kind: "chat" | "terminal" | "project";
+  /** S05: owning organization from the directory event; null only for pre-organization rows. */
+  organization_id: string | null;
   authority_generation: number;
   metadata_revision: number;
   last_event_id: string;
@@ -69,6 +71,9 @@ async function applyCollaborationSchema(trx: Transaction<CollaborationPlatformDa
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
   `.execute(trx);
+  // S05: the directory records each scope's organization so tickets bind to it.
+  await sql`ALTER TABLE collaboration_directory ADD COLUMN IF NOT EXISTS organization_id TEXT
+    CHECK (organization_id IS NULL OR char_length(organization_id) BETWEEN 1 AND 128)`.execute(trx);
   await sql`
     CREATE TABLE IF NOT EXISTS collaboration_user_index (
       actor_id TEXT NOT NULL CHECK (char_length(actor_id) BETWEEN 1 AND 128),

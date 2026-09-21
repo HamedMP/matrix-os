@@ -27,6 +27,7 @@ export interface DirectoryEventInput {
   runtimeId: string;
   ownerId: string;
   kind: "chat" | "terminal" | "project";
+  organizationId?: string;
   authorityGeneration: number;
   metadataRevision: number;
   recipients: Array<{
@@ -74,12 +75,14 @@ export class PlatformCollaborationRepository {
         runtime_id: input.runtimeId,
         owner_id: input.ownerId,
         kind: input.kind,
+        organization_id: input.organizationId ?? null,
         authority_generation: input.authorityGeneration,
         metadata_revision: input.metadataRevision,
         last_event_id: input.eventId,
         updated_at: now,
       }).onConflict((conflict) => conflict.column("scope_id").doUpdateSet({
         kind: input.kind,
+        ...(input.organizationId ? { organization_id: input.organizationId } : {}),
         authority_generation: input.authorityGeneration,
         metadata_revision: input.metadataRevision,
         last_event_id: input.eventId,
@@ -111,10 +114,12 @@ export class PlatformCollaborationRepository {
     runtimeId: string;
     ownerId: string;
     kind: "chat" | "terminal" | "project";
+    /** S05: owning organization, null only for pre-organization rows (tickets fail closed). */
+    organizationId: string | null;
     authorityGeneration: number;
   } | null> {
     const row = await this.db.selectFrom("collaboration_directory")
-      .select(["scope_id", "runtime_id", "owner_id", "kind", "authority_generation"])
+      .select(["scope_id", "runtime_id", "owner_id", "kind", "organization_id", "authority_generation"])
       .where("scope_id", "=", scopeId)
       .executeTakeFirst();
     return row ? {
@@ -122,6 +127,7 @@ export class PlatformCollaborationRepository {
       runtimeId: row.runtime_id,
       ownerId: row.owner_id,
       kind: row.kind,
+      organizationId: row.organization_id ?? null,
       authorityGeneration: Number(row.authority_generation),
     } : null;
   }
