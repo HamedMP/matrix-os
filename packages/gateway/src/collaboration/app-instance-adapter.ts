@@ -137,9 +137,18 @@ export function createAppInstanceAdapter(options: {
     const scope = await query.executeTakeFirst();
     if (!scope || scope.kind !== "app" || scope.lifecycle !== "shared" || scope.resource_id !== context.resourceId
       || scope.owner_id !== context.ownerId || scope.authority_runtime_id !== context.authorityRuntimeId
-      || Number(scope.authority_generation) !== context.authorityGeneration) {
+      || Number(scope.authority_generation) !== context.authorityGeneration
+      || Number(scope.auth_epoch) !== context.authEpoch) {
       throw new ProjectAppAdapterError("not_found");
     }
+    const member = await trx.selectFrom("collaboration_members").select(["status", "role", "expires_at"])
+      .where("scope_id", "=", context.membershipScopeId).where("actor_id", "=", context.actorId)
+      .forShare().executeTakeFirst();
+    if (member && (member.status !== "accepted"
+      || (member.expires_at && new Date(member.expires_at).getTime() <= now().getTime()))) {
+      throw new ProjectAppAdapterError("not_found");
+    }
+    if (forWrite && (context.role === "viewer" || member?.role === "viewer")) throw new ProjectAppAdapterError("forbidden");
   }
 
   async function describe(context: AuthorizedCollaborationContext, rawAppId: string): Promise<AppInstanceDescription> {
@@ -192,7 +201,7 @@ export function createAppInstanceAdapter(options: {
         await requireLiveScope(trx, current, false);
         if (!await options.catalog.get(root.id, trx)) throw new ProjectAppAdapterError("not_found");
         return jsonValue(await options.bridge.execute({
-          namespace, scopeId: current.scopeId, actorId: current.actorId,
+          namespace, appId: appId.data, storageSchema: bridgeAppId, scopeId: current.scopeId, actorId: current.actorId,
           action: { ...parsed, app: namespace } as BridgeQueryBody, transaction: trx,
         }));
       });
@@ -229,7 +238,7 @@ export function createAppInstanceAdapter(options: {
         const locked = await options.catalog.lock(trx, root.id);
         if (locked.revision !== envelope.data.expectedRevision) throw new ProjectAppAdapterError("conflict");
         const result = jsonValue(await options.bridge.execute({
-          namespace, scopeId: current.scopeId, actorId: current.actorId,
+          namespace, appId: appId.data, storageSchema: bridgeAppId, scopeId: current.scopeId, actorId: current.actorId,
           action: { ...parsed, app: namespace } as BridgeQueryBody, transaction: trx,
         }));
         const bumped = await options.catalog.bump(trx, { id: root.id, expectedRevision: locked.revision });
