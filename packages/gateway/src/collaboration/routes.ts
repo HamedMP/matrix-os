@@ -2,6 +2,7 @@ import { COLLABORATION_HTTP_BODY_LIMIT } from "@matrix-os/contracts";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { registerChatRoutes } from "./chat-routes.js";
+import { registerCapabilityRoutes } from "./capability-routes.js";
 import { registerExecutionPolicyRoutes } from "./execution-policy-routes.js";
 import { registerLifecycleRoutes } from "./lifecycle-routes.js";
 import { registerProjectRoutes } from "./project-routes.js";
@@ -30,6 +31,7 @@ export function createCollaborationRoutes(options: CollaborationRouteOptions): H
   routes.on(["POST", "PATCH", "DELETE"], "/api/collaboration/*", mutationLimit);
 
   registerScopeRoutes(routes, options);
+  registerCapabilityRoutes(routes, options);
   registerChatRoutes(routes, options);
   registerTerminalRoutes(routes, options);
   registerProjectRoutes(routes, options);
