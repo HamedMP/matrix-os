@@ -87,17 +87,21 @@ jobs:
     needs: dev-bundle-gate
     if: needs.dev-bundle-gate.outputs.should_build == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 95
     steps:
       - name: Wait for CI on this commit
         env:
           GH_TOKEN: ${{ github.token }}
           TARGET_SHA: ${{ github.sha }}
           CI_WORKFLOW_FILE: ci.yml
+          # Main CI can legitimately exceed 30 minutes when its queued jobs
+          # contend for runners. Keep the release gate bounded while allowing
+          # the same-SHA CI run enough time to finish under queue pressure.
+          CI_GATE_TIMEOUT_SECONDS: "5400"
         run: |
           set -euo pipefail
 
-          deadline=$((SECONDS + 30 * 60))
+          deadline=$((SECONDS + CI_GATE_TIMEOUT_SECONDS))
           while true; do
             if ! runs="$(gh run list \
               --repo "$GITHUB_REPOSITORY" \
