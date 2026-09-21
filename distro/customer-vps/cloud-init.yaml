@@ -89,6 +89,7 @@ write_files:
       Group=matrix
       EnvironmentFile=/opt/matrix/env/host.env
       Environment=SYMPHONY_PORT=4766
+      Environment=MATRIX_NODE_PREFIX=/opt/matrix/runtime/node
       Environment=MATRIX_CODING_AGENTS_WORKSPACE_PROVIDERS=claude,codex,pi,opencode
       WorkingDirectory=/opt/matrix
       ExecStart=/opt/matrix/bin/matrix-gateway
@@ -387,6 +388,7 @@ write_files:
       MATRIX_CLERK_USER_ID={{clerkUserId}}
       MATRIX_HANDLE={{handle}}
       MATRIX_RUNTIME_SLOT={{runtimeSlot}}
+      MATRIX_NODE_PREFIX=/opt/matrix/runtime/node
       MATRIX_DEVELOPER_TOOLS='{{developerTools}}'
       MATRIX_IMAGE_VERSION={{imageVersion}}
       MATRIX_IMAGE_SOURCE={{imageSource}}
@@ -567,10 +569,7 @@ runcmd:
     printf 'matrix ALL=(ALL) NOPASSWD:ALL\n' >/etc/sudoers.d/matrix
     chmod 0440 /etc/sudoers.d/matrix
     visudo -cf /etc/sudoers.d/matrix
-    # A golden builder may have enabled linger while validating the bundled
-    # user-systemd terminal runtime. Quiesce any inherited user manager before
-    # changing the clone-specific home; usermod refuses users with live
-    # processes and would otherwise abort cloud-init before restore starts.
+    # Quiesce inherited user processes before changing the clone home.
     matrix_uid="$(id -u matrix)"
     timeout --kill-after=5 30 loginctl disable-linger matrix >/dev/null 2>&1 || true
     timeout --kill-after=5 30 loginctl terminate-user matrix >/dev/null 2>&1 || true

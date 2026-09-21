@@ -1,5 +1,4 @@
 // @vitest-environment jsdom
-import React from "react";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
@@ -406,16 +405,39 @@ describe("ProviderSettingsController", () => {
 
 describe("useProviderSettingsController", () => {
   it("loads through React strict-mode effect replay", async () => {
-    const gateway = transport();
-    const wrapper = ({ children }: { children: React.ReactNode }) => (
-      <React.StrictMode>{children}</React.StrictMode>
-    );
+    const firstLoad = deferred<unknown>();
+    let loads = 0;
+    const gateway = transport({
+      getSnapshot: async () => {
+        loads += 1;
+        return loads === 1 ? firstLoad.promise : snapshot(1);
+      },
+    });
     const { result } = renderHook(
       () => useProviderSettingsController({ identityKey: "owner-a:primary", transport: gateway }),
-      { wrapper },
+      { reactStrictMode: true },
     );
 
+    await waitFor(() => expect(gateway.getSnapshot).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(result.current.snapshot?.revision).toBe(1));
+  });
+
+  it("disposes its controller after a real unmount", async () => {
+    let signal: AbortSignal | undefined;
+    const gateway = transport({
+      getSnapshot: async (requestSignal) => {
+        signal = requestSignal;
+        return await new Promise<never>(() => undefined);
+      },
+    });
+    const { unmount } = renderHook(
+      () => useProviderSettingsController({ identityKey: "owner-a:primary", transport: gateway }),
+    );
+
+    await waitFor(() => expect(signal).toBeDefined());
+    unmount();
+    await act(async () => Promise.resolve());
+    expect(signal?.aborted).toBe(true);
   });
 
   it("clears prior-owner state immediately and ignores its late response", async () => {

@@ -23,7 +23,10 @@ import type {
   CodingHarnessCredentialLaunch,
   CodingHarnessCredentialResolver,
 } from "./harness-credentials.js";
-import { buildPiChildEnvironment } from "./pi-process-environment.js";
+import {
+  buildPiChildEnvironment,
+  resolveOpenCodeCommand,
+} from "./pi-process-environment.js";
 import { prepareOpenCodeRunEnvironment } from "./managed-harness-process-config.js";
 import type {
   CodingAgentProviderAdapter,
@@ -34,7 +37,7 @@ import { hasNativeHarnessAuth } from "./native-harness-auth.js";
 
 const DEFAULT_RUN_TIMEOUT_MS = 10 * 60_000;
 const DEFAULT_KILL_GRACE_MS = 2_000;
-const PROBE_TIMEOUT_MS = 1_500;
+const PROBE_TIMEOUT_MS = 5_000;
 const MAX_ACTIVE_PROCESSES = 100;
 const MAX_EVENTS = 480;
 const MAX_SEEN_PARTS = 512;
@@ -379,7 +382,7 @@ export function createOpenCodeCodingAgentProvider(
   options: OpenCodeCodingAgentProviderOptions,
 ): CodingAgentProviderAdapter {
   const providerId = ProviderIdSchema.parse(options.providerId ?? "opencode");
-  const command = options.command ?? "opencode";
+  const command = resolveOpenCodeCommand(options.command, options.env);
   const spawnFn = options.spawnFn ?? defaultSpawn;
   const runCommand = options.runCommand ?? defaultRunCommand;
   const runTimeoutMs = Math.max(1, Math.min(options.runTimeoutMs ?? DEFAULT_RUN_TIMEOUT_MS, DEFAULT_RUN_TIMEOUT_MS));

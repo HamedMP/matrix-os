@@ -340,16 +340,27 @@ export async function openProviderAgentSetup(input: {
 export function useProviderSettingsController(
   options: ProviderSettingsControllerOptions,
 ): UseProviderSettingsControllerResult {
-  const controller = useMemo(
-    () => new ProviderSettingsController(options),
+  const lifecycle = useMemo(
+    () => ({
+      controller: new ProviderSettingsController(options),
+      effectGeneration: 0,
+    }),
     [options.identityKey, options.transport],
   );
+  const controller = lifecycle.controller;
   const state = useSyncExternalStore(controller.subscribe, controller.getState, controller.getState);
 
   useEffect(() => {
+    const effectGeneration = ++lifecycle.effectGeneration;
     void controller.refresh({ refresh: false });
-    return controller.dispose;
-  }, [controller]);
+    return () => {
+      // React Strict Mode replays an effect's cleanup and setup while retaining
+      // memoized state. Let the replay reclaim this generation before disposal.
+      queueMicrotask(() => {
+        if (lifecycle.effectGeneration === effectGeneration) controller.dispose();
+      });
+    };
+  }, [controller, lifecycle]);
 
   return {
     ...state,

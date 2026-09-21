@@ -553,15 +553,20 @@ function applyHarnessSettings(input: {
       return unavailableInstance(instance, unavailableReasonFor(instance));
     }
     const configuredHarness = settingsHarness ?? systemHarness;
-    const enabledHarnesses = configuredHarness !== null && input.settingsAvailable && input.settings !== null
-      ? input.settings.harnesses.filter((harness) => harness.harness === configuredHarness && harness.enabled)
+    const configuredHarnesses = configuredHarness !== null && input.settingsAvailable && input.settings !== null
+      ? input.settings.harnesses.filter((harness) => harness.harness === configuredHarness)
       : [];
+    const enabledHarnesses = configuredHarnesses.filter((harness) => harness.enabled);
     const executable = input.executableDriverKinds === undefined
       || input.executableDriverKinds.includes(instance.driverKind);
     const nativeTerminalProfile = (generic === "pi" || generic === "opencode")
       && instance.availability === "available"
       && input.credentialedDriverKinds?.includes(generic);
     if (settingsHarness !== null && input.settingsRequired && enabledHarnesses.length === 0) {
+      if ((generic === "pi" || generic === "opencode")
+        && configuredHarnesses.some((harness) => harness.routeAvailability === "catalog_unavailable")) {
+        return unavailableInstance(instance, "runtime_unavailable");
+      }
       if (nativeTerminalProfile) {
         return executable
           ? { ...instance, unavailabilityReason: undefined }
@@ -847,7 +852,10 @@ export function createChatProviderCatalogService(options: {
         instances: instances.map((instance) => ({ ...instance, catalogRevision: revision })),
       });
       if (!parsed.success) {
-        console.warn("[chat-providers] Canonical Provider projection failed validation");
+        const safeIssuePaths = parsed.error.issues.slice(0, 16).map((issue) => (
+          `${issue.path.join(".") || "catalog"}:${issue.code}`
+        ));
+        console.warn(`[chat-providers] Canonical Provider projection failed validation: ${safeIssuePaths.join(",")}`);
         throw new ProviderCatalogUnavailableError(false);
       }
       return parsed.data;

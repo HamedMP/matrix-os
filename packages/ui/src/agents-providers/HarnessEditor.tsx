@@ -233,7 +233,7 @@ export function HarnessEditor({
                   }
                 }}
               >
-                {gatewaySource ? <option value="">Matrix gateway / no account</option> : <option value="" disabled>Select an account</option>}
+                {gatewaySource ? <option value="">Matrix AI · no separate account</option> : <option value="" disabled>Select an account</option>}
                 {accounts.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.displayName}</option>)}
               </select> : <span className="matrix-ap-readonly-value">{savedSourceUnsupported ? "Choose a supported connection" : accessSource?.kind === "matrix_gateway" ? "Included with Matrix AI — no separate login" : account?.displayName ?? "No account connected"}</span>}
             </label>

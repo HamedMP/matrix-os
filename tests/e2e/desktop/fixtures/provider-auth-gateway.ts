@@ -15,6 +15,7 @@ export function providerAuthSettingsSnapshot(authenticated: boolean): ProviderSe
   const authState = authenticated ? "authenticated" as const : "unauthenticated" as const;
   return ProviderSettingsSnapshotSchema.parse({
     contractVersion: 1,
+    atomicConnectSupported: false,
     projectionOf: { contract: "AiProviderSnapshotV3", contractVersion: 3, revision: authenticated ? 2 : 1 },
     revision: authenticated ? 2 : 1,
     refreshedAt: NOW,
