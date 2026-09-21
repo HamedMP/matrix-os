@@ -13,7 +13,7 @@ import {
   trashList,
   trashRestore,
   trashEmpty,
-} from "../../packages/gateway/src/trash.js";
+} from "../../packages/gateway/src/domains/files/trash.js";
 
 describe("fileDelete", () => {
   let testDir: string;

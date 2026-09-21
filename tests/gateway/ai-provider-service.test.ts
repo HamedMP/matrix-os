@@ -8,7 +8,7 @@ import {
   type AiProviderHealthProbe,
 } from "../../packages/gateway/src/ai-providers/service.js";
 import { initialProviderSettingsConfiguration } from "../../packages/gateway/src/ai-providers/provider-settings-persistence.js";
-import type { MatrixFundedCredentialProvider } from "../../packages/gateway/src/funded-ai-credential-manager.js";
+import type { MatrixFundedCredentialProvider } from "../../packages/gateway/src/domains/integrations/funded-ai-credential-manager.js";
 
 const NOW = new Date("2026-08-29T21:00:00.000Z");
 

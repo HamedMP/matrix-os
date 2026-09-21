@@ -2,12 +2,12 @@ import { mkdtemp, mkdir, writeFile, readFile, rm, stat } from "node:fs/promises"
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
-import { createAgentSessionManager } from "../../packages/gateway/src/agent-session-manager.js";
-import { createProjectManager } from "../../packages/gateway/src/project-manager.js";
-import { createWorktreeManager } from "../../packages/gateway/src/worktree-manager.js";
-import { createReviewStore } from "../../packages/gateway/src/review-store.js";
-import { createReviewLoopRecord } from "../../packages/gateway/src/review-loop.js";
-import { createWorkspaceRoutes } from "../../packages/gateway/src/workspace-routes.js";
+import { createAgentSessionManager } from "../../packages/gateway/src/domains/sessions/agent-session-manager.js";
+import { createProjectManager } from "../../packages/gateway/src/domains/workspace/project-manager.js";
+import { createWorktreeManager } from "../../packages/gateway/src/domains/git/worktree-manager.js";
+import { createReviewStore } from "../../packages/gateway/src/domains/review/review-store.js";
+import { createReviewLoopRecord } from "../../packages/gateway/src/domains/review/review-loop.js";
+import { createWorkspaceRoutes } from "../../packages/gateway/src/domains/workspace/workspace-routes.js";
 
 it.each(["none", "background", "terminal"])("deletes mixed project resources, with retry after %s failure", async (failure) => {
   const homePath = await mkdtemp(join(tmpdir(), "matrix-mixed-cascade-"));

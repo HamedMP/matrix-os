@@ -2,11 +2,11 @@ import { mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { createAgentSandbox } from "../../packages/gateway/src/agent-sandbox.js";
-import { createAgentLauncher } from "../../packages/gateway/src/agent-launcher.js";
-import { createAgentSessionManager } from "../../packages/gateway/src/agent-session-manager.js";
-import { createWorkspaceSessionOrchestrator } from "../../packages/gateway/src/workspace-session-orchestrator.js";
-import { createWorktreeManager } from "../../packages/gateway/src/worktree-manager.js";
+import { createAgentSandbox } from "../../packages/gateway/src/domains/sessions/agent-sandbox.js";
+import { createAgentLauncher } from "../../packages/gateway/src/domains/sessions/agent-launcher.js";
+import { createAgentSessionManager } from "../../packages/gateway/src/domains/sessions/agent-session-manager.js";
+import { createWorkspaceSessionOrchestrator } from "../../packages/gateway/src/domains/workspace/workspace-session-orchestrator.js";
+import { createWorktreeManager } from "../../packages/gateway/src/domains/git/worktree-manager.js";
 
 const WORKSPACE_ID = "tws_00000000000000000000000000000001";
 

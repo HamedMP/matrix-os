@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createConversationMutationLock } from
-  "../../packages/gateway/src/conversation-mutation-lock.js";
+  "../../packages/gateway/src/domains/sessions/conversation-mutation-lock.js";
 
 function deferred() {
   let resolve!: () => void;

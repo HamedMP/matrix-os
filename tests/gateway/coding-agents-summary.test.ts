@@ -22,8 +22,8 @@ import {
 } from "../../packages/gateway/src/coding-agents/review-summary.js";
 import { createCodingAgentPreviewSummaryStore } from "../../packages/gateway/src/coding-agents/preview-summary.js";
 import { createCodingAgentRoutes } from "../../packages/gateway/src/coding-agents/routes.js";
-import type { RequestPrincipal } from "../../packages/gateway/src/request-principal.js";
-import { MissingRequestPrincipalError } from "../../packages/gateway/src/request-principal.js";
+import type { RequestPrincipal } from "../../packages/gateway/src/domains/identity/request-principal.js";
+import { MissingRequestPrincipalError } from "../../packages/gateway/src/domains/identity/request-principal.js";
 import { testPrincipal } from "../helpers/activation-readiness.js";
 
 const now = new Date("2026-07-06T12:00:00.000Z");

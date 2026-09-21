@@ -12,9 +12,9 @@ import {
   JWT_CLAIMS_CONTEXT_KEY,
   ownerScopeFromPrincipal,
   requireRequestPrincipal,
-} from "../../packages/gateway/src/request-principal.js";
+} from "../../packages/gateway/src/domains/identity/request-principal.js";
 import { createShellRoutes } from "../../packages/gateway/src/shell/routes.js";
-import { createWorkspaceRoutes } from "../../packages/gateway/src/workspace-routes.js";
+import { createWorkspaceRoutes } from "../../packages/gateway/src/domains/workspace/workspace-routes.js";
 
 const homes: string[] = [];
 

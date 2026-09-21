@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createGitLog } from "../../packages/gateway/src/git-log.js";
+import { createGitLog } from "../../packages/gateway/src/domains/git/git-log.js";
 
 type RunCommand = (
   command: string,

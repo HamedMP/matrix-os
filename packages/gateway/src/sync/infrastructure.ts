@@ -1,5 +1,5 @@
 import type { Kysely } from "kysely";
-import { requireRequestPrincipal } from "../request-principal.js";
+import { requireRequestPrincipal } from "../domains/identity/request-principal.js";
 import type { SyncRouteDeps } from "./routes.js";
 import { createR2Client, type R2Client, type R2ClientConfig } from "./r2-client.js";
 import { createPlatformR2Client } from "./platform-r2-client.js";

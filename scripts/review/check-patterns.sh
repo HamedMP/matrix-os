@@ -193,7 +193,7 @@ fi
 header "5. Resource Management — writeFileSync/appendFileSync in handlers"
 
 MATCHES=$(rg_scan '(writeFileSync|appendFileSync)' --glob '*.ts' --glob '!**/*.test.ts' --glob '!**/*.spec.ts' --glob '!**/node_modules/**' --glob '!**/dist/**')
-SYNC_IO_ALLOWLIST='packages/kernel/src/(audit|boot|build-pipeline|identity|memory|onboarding|usage)\.ts|packages/gateway/src/(app-fork|app-ops|app-upload|conversation-summary|conversations|cron/store|logger|postgres-manager|security/outbound-queue|session-store|social-connectors/index|storage-tracker|voice/call-store|voice/usage)\.ts'
+SYNC_IO_ALLOWLIST='packages/kernel/src/(audit|boot|build-pipeline|identity|memory|onboarding|usage)\.ts|packages/gateway/src/(domains/apps/app-fork|domains/apps/app-ops|domains/apps/app-upload|domains/sessions/conversation-summary|domains/sessions/conversations|cron/store|_shared/logger|_shared/postgres-manager|security/outbound-queue|domains/sessions/session-store|social-connectors/index|domains/files/storage-tracker|voice/call-store|voice/usage)\.ts'
 if [[ -n "$MATCHES" ]]; then
   MATCHES=$(printf '%s\n' "$MATCHES" | grep -Ev "$SYNC_IO_ALLOWLIST" || true)
 fi
@@ -226,7 +226,7 @@ header "8. Auth Boundaries — legacy request principal resolver"
 
 MATCHES=$(rg_scan 'getUserIdFromContext\s*\(' --glob '*.ts' --glob '!**/*.test.ts' --glob '!**/*.spec.ts' --glob '!**/node_modules/**' --glob '!**/dist/**')
 if [[ -n "$MATCHES" ]]; then
-  MATCHES=$(printf '%s\n' "$MATCHES" | grep -Ev '^packages/gateway/src/auth\.ts:' || true)
+  MATCHES=$(printf '%s\n' "$MATCHES" | grep -Ev '^packages/gateway/src/domains/identity/auth\.ts:' || true)
 fi
 if [[ -n "$MATCHES" ]]; then
   violation "Legacy getUserIdFromContext() used outside auth compatibility wrapper; use request-principal helpers"
