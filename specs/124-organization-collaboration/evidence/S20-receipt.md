@@ -71,7 +71,7 @@ Historical open gates above were superseded by the current review state below. W
 
 ## 2026-09-21 current UI and evidence review state
 
-#1791 merged after current-head Greptile 5/5 and full label-triggered CI success (run `35607650164`). #1795 UI was rebased onto the merged main and split from #1817 evidence. The UI head `79e3cee33` is 48 files and under 3,000 additions; the evidence child is nine files and 70 additions. Their combined tree preserves the prior captures, with the tested Electron harness fixes described here.
+#1791 merged after current-head Greptile 5/5 and full label-triggered CI success (run `35607650164`). #1795 UI was rebased onto the merged main and split from #1817 evidence. The UI head `79e3cee33` is 48 files and under 3,000 additions; the evidence child is nine files and 86 additions. Their combined tree preserves the prior captures, with the tested Electron harness fixes described here.
 
 The first #1795 current-head review and #1817 child review found that the Electron capture runner swallowed Terminal and Chat selector failures, and that teardown could leave a built renderer patched if gateway/profile cleanup failed. The fixed runner propagates failures from required Terminal and Chat flows, records only the known optional Project failure, and restores the renderer in `finally`. The diagnostic Set retains the newest 50 unmatched requests. Reproduction instructions copy all three runner/helper files. The 10 Electron PNGs and representative Web Canvas, Web Desktop and Web Mobile PNGs are directly in #1795; the remaining captures are in #1817. These are existing captures, not new captures from the fixed runner.
 
