@@ -21,9 +21,9 @@ import type { ChatExecutionRootResolver } from "../chat/execution-root.js";
 import type { OwnerToolOutputProjection } from "../chat/owner-tool-output.js";
 import type { ChatRepository } from "../chat/repository.js";
 import { createDiscussionOnlyChatExecutionGuard } from "../collaboration/chat-scope.js";
-import { registerFailClosedCollaborationRoutes } from "../collaboration/fail-closed.js";
 import type { GatewayCollaborationConfigurationFailure, GatewayCollaborationRuntime } from "../collaboration/wiring.js";
 import { requireRequestPrincipal } from "../request-principal.js";
+import { registerOwnerCollaborationRoutes } from "../startup/collaboration.js";
 
 export interface CollaborationChatRouteOptions {
   app: Hono;
@@ -62,15 +62,7 @@ export function registerCollaborationChatRoutes(options: CollaborationChatRouteO
     });
   }
   app.route("/", createChatSharingRoutes(chatRepository ? new ChatSharing(chatRepository.kysely) : null));
-  if (gatewayCollaboration) {
-    gatewayCollaboration.register({ app, upgradeWebSocket });
-  } else {
-    registerFailClosedCollaborationRoutes({
-      app,
-      upgradeWebSocket,
-      reason: collaborationFailClosedReason ?? "owner_database_missing",
-    });
-  }
+  registerOwnerCollaborationRoutes({ app, upgradeWebSocket, gatewayCollaboration, collaborationFailClosedReason });
   app.route("/", createCanonicalChatRoutes({
     service: chatRepository
         ? createCanonicalChatService(chatRepository, {
