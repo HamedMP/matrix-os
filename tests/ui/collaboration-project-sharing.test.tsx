@@ -86,6 +86,24 @@ describe("whole-project sharing confirmation", () => {
     expect(screen.queryByRole("checkbox")).toBeNull();
   });
 
+  it("shows every Chat root and the owner's Git readiness before sharing", () => {
+    const inventory = completeInventory();
+    inventory.ownedItems[1] = {
+      ...inventory.ownedItems[1]!, executionRoot: { kind: "worktree", projectId: "proj_launch", worktreeId: "chat_42" },
+      branch: "feature/launch", dirty: true, rootFingerprint: "e".repeat(64),
+    };
+    inventory.gitSetup = {
+      identity: { status: "ready", label: "Project Owner <owner@example.test>" },
+      forgeCredential: { status: "missing" },
+    };
+    renderDialog({ inventory });
+    expect(screen.getByText(/Chat worktree chat_42/)).toBeVisible();
+    expect(screen.getByText(/feature\/launch/)).toBeVisible();
+    expect(screen.getByText(/Uncommitted changes/)).toBeVisible();
+    expect(screen.getByText(/Project Owner <owner@example.test>/)).toBeVisible();
+    expect(screen.getByText(/GitHub access is missing/)).toBeVisible();
+  });
+
   it("explains item membership effects without silently promoting recipients", () => {
     renderDialog({ inventory: completeInventory() });
     expect(screen.getByText(/Ada joins the whole project as editor/i)).toBeVisible();
