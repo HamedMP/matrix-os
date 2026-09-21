@@ -207,9 +207,6 @@ import { createGatewayProjectInventorySource } from "./collaboration/project-inv
 import { createProjectChatRootInventory } from "./collaboration/project-chat-root-inventory.js";
 import { createProjectGitDriver } from "./collaboration/project-git-operations.js";
 import { createOwnerResourceDriver } from "./collaboration/owner-resource-driver.js";
-import { createAppInstanceAdapter } from "./collaboration/app-instance-adapter.js";
-import { createScopedAppBridge } from "./collaboration/scoped-app-bridge.js";
-import { resolveAppBySlug } from "./app-runtime/app-index.js";
 import { createCodingAgentFileStore } from "./coding-agents/file-read.js";
 import { createCodingAgentSourceControlStore } from "./coding-agents/source-control.js";
 import { registerCodingAgentAttentionNotifications } from "./coding-agents/attention-notifications.js";
@@ -1004,12 +1001,6 @@ export async function createGateway(config: GatewayConfig) {
         }),
           {
           onPartialRuntime: (runtime) => {
-            const ownerAppRegistry = appRegistry;
-            if (!ownerAppRegistry) throw new Error("Owner app registry is unavailable");
-            const registeredApp = async (appId: string) => {
-              const record = await ownerAppRegistry.get(appId);
-              return record?.slug === appId ? record : null;
-            };
             const resourceDriver = createOwnerResourceDriver({
               homePath,
               resolveProjectWorkingDirectory: async (ownerId, projectId) => {
@@ -1019,36 +1010,11 @@ export async function createGateway(config: GatewayConfig) {
                 if (!result.ok) return null;
                 return codingAgentProjectManager.resolveProjectWorkingDirectory(result.project);
               },
-              resolveAppAssetRoot: async (_ownerId, _projectId, appId) => {
-                if (!await registeredApp(appId)) return null;
-                const resolved = await resolveAppBySlug(join(homePath, "apps"), appId);
-                return resolved.ok ? resolved.entry.appDir : null;
-              },
+              // The registered app's asset mapping is resolved by the S12 app bridge.
+              resolveAppAssetRoot: async () => null,
             });
             try {
-              runtime.enableSharedResources({
-                driver: resourceDriver,
-                appsFactory: ({ db, authority, catalog, onCommitted }) => {
-                  const bridge = createScopedAppBridge({
-                    resolveApp: async (appId) => {
-                      const record = await registeredApp(appId);
-                      return record ? { storageSchema: normalizeAppStorageSlug(record.slug), tables: Object.keys(record.tables) } : null;
-                    },
-                  });
-                  return createAppInstanceAdapter({
-                    db, authority, bridge, catalog, onCommitted,
-                    apps: {
-                      resolve: async (projectId, appId) => {
-                        const record = await registeredApp(appId);
-                        return record ? {
-                          projectId, appId, bridgeAppId: normalizeAppStorageSlug(record.slug),
-                          collaborationMode: "scoped" as const,
-                        } : null;
-                      },
-                    },
-                  });
-                },
-              });
+              runtime.enableSharedResources({ driver: resourceDriver });
             } catch (error: unknown) {
               resourceDriver.close();
               throw error;
