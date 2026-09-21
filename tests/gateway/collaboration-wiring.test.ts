@@ -553,6 +553,9 @@ describe("S08 owner source wiring", () => {
     await expect(lazy.reader.getSnapshot({ refresh: true })).resolves.toBe(snapshot);
     expect(getSnapshot).toHaveBeenCalledWith({ refresh: true });
     expect(() => lazy.attach({ getSnapshot })).toThrow(/already attached/i);
+    const fixture = await createCollaborationTestDatabase();
+    await bootstrapChatDatabase(fixture.db);
+    await bootstrapCollaborationDatabase(fixture.db);
     const runtime = await createGatewayCollaboration({
       organizationPrecondition: allowAllOrganizationPrecondition,
       db: fixture.db,
@@ -575,6 +578,7 @@ describe("S08 owner source wiring", () => {
       expect(runtime.ownerSource).toBeDefined();
     } finally {
       await runtime.shutdown();
+      await fixture.destroy();
     }
   });
 
