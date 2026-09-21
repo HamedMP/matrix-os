@@ -377,6 +377,49 @@ describe("S05 platform tickets, endpoints and control", () => {
       }
     });
 
+    it("keeps an idle attached home ticket-ready through generation keepalives the home acknowledges", async () => {
+      await endpoints.register({ authenticated: { runtimeId, ownerId: platformCollaborationActors.owner, relayHandle: "owner-handle" }, registration: registration() });
+      const acks: unknown[] = [];
+      const stream = new CollaborationControlStream({
+        controlAuthority: {
+          registerTransport: () => undefined,
+          acknowledge: async (_runtime: string, ack: unknown) => { acks.push(ack); return { completedDenialIds: [] }; },
+        },
+        tickets: endpoints,
+        onAttach: (id) => endpoints.heartbeat(id),
+        now: () => clock,
+        keepalive: { intervalMs: 20, authorityGeneration: async (id) => (await endpoints.resolve(id))?.authorityGeneration ?? null },
+      });
+      const sent: string[] = [];
+      const socket = { send: (value: string) => { sent.push(value); }, close: () => undefined };
+      const connection = stream.attach(logicalRuntimeId, socket);
+      try {
+        // The platform sends a bounded, schema-valid generation frame on its own without any denial.
+        await vi.waitFor(() => expect(sent.length).toBeGreaterThan(0));
+        const frame = JSON.parse(sent[0]!) as { type: string; runtimeId: string; authorityGeneration: number; protocolVersion: number };
+        expect(frame).toEqual({ protocolVersion: 2, type: "generation", runtimeId: logicalRuntimeId, authorityGeneration: 1 });
+        // A silent home goes stale even while its socket stays attached.
+        clock = new Date(clock.getTime() + 61_000);
+        await expect(issuer.issue({ actorId: platformCollaborationActors.owner, request: {
+          clientRequestId: "40000000-0000-4000-8000-000000000026", scopeId, purpose: "direct_session", proofPublicKey: clientProofKey().raw,
+        } })).rejects.toMatchObject({ code: "host_offline" });
+        // The home's keepalive acknowledgement (its fence is unchanged, so it completes nothing) is the liveness signal.
+        await connection.receive(JSON.stringify({ protocolVersion: 2, runtimeId: logicalRuntimeId, authorityGeneration: 1, fenceAt: "1970-01-01T00:00:00.000Z" }));
+        expect(acks).toHaveLength(1);
+        await vi.waitFor(async () => expect((await endpoints.resolve(logicalRuntimeId))?.lastControlAt).toBe(clock.toISOString()));
+        await expect(issuer.issue({ actorId: platformCollaborationActors.owner, request: {
+          clientRequestId: "40000000-0000-4000-8000-000000000027", scopeId, purpose: "direct_session", proofPublicKey: clientProofKey().raw,
+        } })).resolves.toBeTruthy();
+        // Keepalives stop with the connection.
+        connection.close();
+        const after = sent.length;
+        await new Promise((resolve) => setTimeout(resolve, 60));
+        expect(sent.length).toBe(after);
+      } finally {
+        await stream.shutdown();
+      }
+    });
+
     it("admits a runtime once per upgrade ticket, pushes denials and routes acknowledgements", async () => {
       const acks: unknown[] = [];
       await endpoints.register({ authenticated: { runtimeId, ownerId: platformCollaborationActors.owner, relayHandle: "owner-handle" }, registration: registration() });
