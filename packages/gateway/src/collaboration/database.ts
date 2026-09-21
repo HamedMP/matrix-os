@@ -1,4 +1,5 @@
 import type { ColumnType, Generated, Kysely } from "kysely";
+import type { CollaborationRuntimeIdentityTable } from "./runtime-identity.js";
 import { applyCollaborationBaseSchema, COLLABORATION_VERSIONED_MIGRATIONS } from "./database-migrations.js";
 import type { ChatDatabase } from "../chat/database.js";
 
@@ -250,6 +251,8 @@ export interface CollaborationDatabase {
   collaboration_discussion_messages: CollaborationDiscussionMessagesTable;
   collaboration_discussion_user_state: CollaborationDiscussionUserStateTable;
   chat_collaboration_commands: ChatCollaborationCommandsTable;
+  /** S05: the home's Ed25519 runtime identity (migration 9). */
+  collaboration_runtime_identity: CollaborationRuntimeIdentityTable;
 }
 
 export type OwnerCollaborationDatabase = ChatDatabase & CollaborationDatabase;

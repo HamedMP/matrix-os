@@ -96,6 +96,7 @@ describe("gateway collaboration wiring", () => {
         { version: 6 },
         { version: 7 },
         { version: 8 },
+        { version: 9 },
       ]);
     await expect(app.request(`/api/collaboration/scopes/${collaborationIds.scope}/discussion/messages`))
       .resolves.toMatchObject({ status: 401 });
@@ -215,7 +216,8 @@ describe("gateway collaboration wiring", () => {
       return (context: Context) => context.text("upgrade");
     }) as unknown as UpgradeWebSocket;
     runtime.register({ app, upgradeWebSocket });
-    expect(registeredSockets).toBe(2);
+    // Legacy events + terminal sockets plus the S05 direct events + terminal sockets.
+    expect(registeredSockets).toBe(4);
     await expect(app.request(`/api/collaboration/scopes/${collaborationIds.scope}/terminal`))
       .resolves.toMatchObject({ status: 401 });
     expect(() => runtime.enableSharedTerminal({} as never)).toThrow(/exactly once/);
