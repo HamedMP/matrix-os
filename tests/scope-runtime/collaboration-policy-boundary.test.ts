@@ -258,9 +258,10 @@ describe("supervisor and launcher", () => {
         { worktreeHostPath: "/home/matrix/home/projects/launch-site" },
       ),
     });
-    const separator = fixed.indexOf("--");
-    expect(sandboxed.slice(separator)).toEqual(fixed.slice(separator));
-    expect(sandboxed.slice(0, separator)).toEqual(expect.arrayContaining(fixed.slice(0, separator)));
+    const fixedSeparator = fixed.indexOf("--");
+    const sandboxedSeparator = sandboxed.indexOf("--");
+    expect(sandboxed.slice(sandboxedSeparator)).toEqual(fixed.slice(fixedSeparator));
+    expect(sandboxed.slice(0, sandboxedSeparator)).toEqual(expect.arrayContaining(fixed.slice(0, fixedSeparator)));
     expect(sandboxed).toContain(`--property=BindPaths=/home/matrix/home/projects/launch-site:${SANDBOX_WORKSPACE_MOUNT}`);
     expect(sandboxed).toContain("--property=IPAddressDeny=any");
     expect(sandboxed.filter((entry) => entry.startsWith("--setenv="))).toEqual(fixed.filter((entry) => entry.startsWith("--setenv=")));
