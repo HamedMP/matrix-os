@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createWorkspaceEventPublisher } from "../../packages/gateway/src/workspace-event-publisher.js";
+import { createWorkspaceEventPublisher } from "../../packages/gateway/src/domains/workspace/workspace-event-publisher.js";
 
 const TEST_TERMINAL_REF = {
   workspaceId: "tws_00000000000000000000000000000001",

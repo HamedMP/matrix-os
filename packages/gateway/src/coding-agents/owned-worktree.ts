@@ -1,4 +1,4 @@
-import type { RequestPrincipal } from "../request-principal.js";
+import type { RequestPrincipal } from "../domains/identity/request-principal.js";
 
 export interface OwnerScopedWorktreeSource {
   listWorktrees(

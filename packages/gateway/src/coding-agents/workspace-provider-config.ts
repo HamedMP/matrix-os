@@ -1,5 +1,5 @@
 import { z } from "zod/v4";
-import type { SupportedAgent } from "../agent-launcher.js";
+import type { SupportedAgent } from "../domains/sessions/agent-launcher.js";
 import { codexExecutableFromEnv } from "./codex-executable.js";
 
 const WorkspaceProviderAgentSchema = z.enum(["claude", "codex", "pi", "opencode"]);

@@ -1,5 +1,5 @@
 import { FundedAiRuntimeFundingSummaryResponseSchema, type AiProviderReadiness } from "@matrix-os/contracts";
-import type { FundedAiFundingSummaryReader } from "./funded-ai-funding-summary-client.js";
+import type { FundedAiFundingSummaryReader } from "./domains/integrations/funded-ai-funding-summary-client.js";
 
 // The funding-summary client owns its bounded 5s request. Keep this outer
 // deadline slightly longer so a cold control plane gets the full request

@@ -10,7 +10,7 @@ import {
   type GitAutoCommit,
   type SnapshotManager,
   type FileHistory,
-} from "../../packages/gateway/src/git-versioning.js";
+} from "../../packages/gateway/src/domains/git/git-versioning.js";
 
 const GIT_ID = ["-c", "user.email=ci@matrix-os.test", "-c", "user.name=Test"];
 

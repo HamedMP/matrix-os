@@ -3,7 +3,7 @@ import { chmodSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:f
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { Hono } from "hono";
-import { registerIconRoutes } from "../../packages/gateway/src/icon-routes.js";
+import { registerIconRoutes } from "../../packages/gateway/src/domains/apps/icon-routes.js";
 
 describe("GET /icons/:file", () => {
   let homePath: string;

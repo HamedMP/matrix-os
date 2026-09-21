@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   extractMemoriesLocal,
   buildExtractionPrompt,
-} from "../../packages/gateway/src/memory-extractor.js";
+} from "../../packages/gateway/src/domains/observability/memory-extractor.js";
 
 describe("memory extractor", () => {
   describe("extractMemoriesLocal (enhanced regex)", () => {

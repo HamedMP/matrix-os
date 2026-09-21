@@ -1,7 +1,7 @@
 import { CanonicalChatSafeErrorSchema } from "@matrix-os/contracts";
 import { Hono, type Context } from "hono";
 import { z } from "zod/v4";
-import type { RequestPrincipal } from "../request-principal.js";
+import type { RequestPrincipal } from "../domains/identity/request-principal.js";
 import {
   ProviderCatalogUnavailableError,
   type ChatProviderCatalogService,

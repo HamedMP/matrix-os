@@ -5,10 +5,10 @@ import {
   KernelConversationDeleteResponseSchema,
   KernelConversationHistoryResponseSchema,
 } from "../../packages/contracts/src/index.js";
-import { authMiddleware } from "../../packages/gateway/src/auth.js";
-import type { ConversationStore } from "../../packages/gateway/src/conversations.js";
+import { authMiddleware } from "../../packages/gateway/src/domains/identity/auth.js";
+import type { ConversationStore } from "../../packages/gateway/src/domains/sessions/conversations.js";
 import { ConversationRunRegistry } from
-  "../../packages/gateway/src/conversation-run-registry.js";
+  "../../packages/gateway/src/domains/sessions/conversation-run-registry.js";
 import { registerConversationHistoryRoutes } from "../../packages/gateway/src/server/conversation-history-routes.js";
 
 const TOKEN = "conversation-history-test-token";

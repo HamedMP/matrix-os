@@ -5,9 +5,9 @@ import {
   TaskAgentSummarySchema,
   type AgentThreadSummary,
 } from "@matrix-os/contracts";
-import type { RequestPrincipal } from "../request-principal.js";
-import { createProjectManager } from "../project-manager.js";
-import { createTaskManager } from "../task-manager.js";
+import type { RequestPrincipal } from "../domains/identity/request-principal.js";
+import { createProjectManager } from "../domains/workspace/project-manager.js";
+import { createTaskManager } from "../domains/workspace/task-manager.js";
 
 export interface CodingAgentProjectWorkspaceQuery {
   taskCursor?: string;

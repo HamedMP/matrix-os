@@ -7,7 +7,7 @@ import {
   type OsViewStateResponse,
   type PatchOsViewStateRequest,
 } from "@matrix-os/contracts";
-import { isRequestPrincipalError, mapRequestPrincipalError } from "../request-principal.js";
+import { isRequestPrincipalError, mapRequestPrincipalError } from "../domains/identity/request-principal.js";
 import { OsViewStateConflictError } from "./repository.js";
 
 const OS_VIEW_STATE_BODY_LIMIT = 256 * 1024;

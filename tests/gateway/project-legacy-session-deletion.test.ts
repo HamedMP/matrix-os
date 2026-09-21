@@ -2,11 +2,11 @@ import { mkdtemp, mkdir, writeFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
-import { createAgentSessionManager } from "../../packages/gateway/src/agent-session-manager.js";
+import { createAgentSessionManager } from "../../packages/gateway/src/domains/sessions/agent-session-manager.js";
 import { createCodingAgentThreadStore } from "../../packages/gateway/src/coding-agents/thread-store.js";
 import { createWorkspaceCodingAgentProvider } from "../../packages/gateway/src/coding-agents/workspace-provider.js";
-import { createProjectManager } from "../../packages/gateway/src/project-manager.js";
-import { createWorkspaceRoutes } from "../../packages/gateway/src/workspace-routes.js";
+import { createProjectManager } from "../../packages/gateway/src/domains/workspace/project-manager.js";
+import { createWorkspaceRoutes } from "../../packages/gateway/src/domains/workspace/workspace-routes.js";
 
 const sessionId = "sess_11111111-2222-4333-8444-555555555555";
 const legacyNames = ["matrix-rt_old", `matrix-${sessionId}`, sessionId, undefined];

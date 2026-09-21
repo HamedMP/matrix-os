@@ -1,8 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { getSystemInfo, getVersion } from "../../packages/gateway/src/system-info.js";
+import { getSystemInfo, getVersion } from "../../packages/gateway/src/domains/observability/system-info.js";
 
 function tmpHome(): string {
   const dir = resolve(mkdtempSync(join(tmpdir(), "sysinfo-")));
@@ -607,12 +607,39 @@ describe("T135: System info", () => {
     expect(info.skills).toBe(2);
     rmSync(homePath, { recursive: true, force: true });
   });
+
+  it("resolves template metadata from the repository home tree, not the gateway package", () => {
+    const homePath = tmpHome();
+    try {
+      const expected = readFileSync(join(process.cwd(), "home", ".matrix-version"), "utf-8").trim();
+      expect(getSystemInfo(homePath).templateVersion).toBe(expected);
+    } finally {
+      rmSync(homePath, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("getVersion", () => {
   it("falls back to package.json version in dev", () => {
     const version = getVersion();
     expect(version).toMatch(/^\d+\.\d+\.\d+/);
+  });
+
+  it("falls back to the repository root package version, not the gateway placeholder", () => {
+    const previousBundleVersionPath = process.env.MATRIX_BUNDLE_VERSION_FILE;
+    process.env.MATRIX_BUNDLE_VERSION_FILE = join(tmpdir(), "matrix-test-missing-BUNDLE_VERSION");
+    try {
+      const expected = JSON.parse(
+        readFileSync(join(process.cwd(), "package.json"), "utf-8"),
+      ).version as string;
+      // The gateway package ships a 0.0.1 placeholder; the meaningful
+      // fallback is the repository release version.
+      expect(expected).not.toBe("0.0.1");
+      expect(getVersion()).toBe(expected);
+    } finally {
+      if (previousBundleVersionPath === undefined) delete process.env.MATRIX_BUNDLE_VERSION_FILE;
+      else process.env.MATRIX_BUNDLE_VERSION_FILE = previousBundleVersionPath;
+    }
   });
 
   it("returns a non-empty string", () => {

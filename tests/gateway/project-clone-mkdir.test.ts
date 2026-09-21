@@ -3,9 +3,9 @@ import { mkdir, mkdtemp, readFile, stat, symlink, writeFile } from "node:fs/prom
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createWorkspaceRoutes } from "../../packages/gateway/src/workspace-routes.js";
-import { createProjectManager } from "../../packages/gateway/src/project-manager.js";
-import { createProjectFolders } from "../../packages/gateway/src/project-folders.js";
+import { createWorkspaceRoutes } from "../../packages/gateway/src/domains/workspace/workspace-routes.js";
+import { createProjectManager } from "../../packages/gateway/src/domains/workspace/project-manager.js";
+import { createProjectFolders } from "../../packages/gateway/src/domains/workspace/project-folders.js";
 
 const receiptRemovalRace = vi.hoisted(() => ({
   enabled: false,

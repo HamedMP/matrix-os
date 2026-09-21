@@ -3,8 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { createCodingAgentThreadStore } from "../../packages/gateway/src/coding-agents/thread-store.js";
-import { createProjectManager } from "../../packages/gateway/src/project-manager.js";
-import { createWorkspaceRoutes } from "../../packages/gateway/src/workspace-routes.js";
+import { createProjectManager } from "../../packages/gateway/src/domains/workspace/project-manager.js";
+import { createWorkspaceRoutes } from "../../packages/gateway/src/domains/workspace/workspace-routes.js";
 
 // Diagnostic fixture: historical running thread, no surviving execution or active turn.
 it("deletes historical running threads without requiring startup recovery", async () => {

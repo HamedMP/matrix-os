@@ -3,7 +3,7 @@ import { mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { listProjects } from "../../packages/gateway/src/projects.js";
+import { listProjects } from "../../packages/gateway/src/domains/workspace/projects.js";
 
 describe("listProjects", () => {
   let homePath: string;

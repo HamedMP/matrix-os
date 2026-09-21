@@ -5,7 +5,7 @@ import {
   FundedAiRuntimeConfigError,
   createFundedAiCredentialManager,
   loadFundedAiRuntimeConfig,
-} from "../../packages/gateway/src/funded-ai-credential-manager.js";
+} from "../../packages/gateway/src/domains/integrations/funded-ai-credential-manager.js";
 
 const TOKEN_ID = "credential_123";
 const TOKEN = `sk-matrix-funded-${TOKEN_ID}.${"A".repeat(43)}`;
