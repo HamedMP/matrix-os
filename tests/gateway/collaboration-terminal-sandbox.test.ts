@@ -106,6 +106,39 @@ describe("dispatcher task policy", () => {
 });
 
 describe("revocation enforcer", () => {
+  it("keeps another valid session's controller when one action budget is exhausted", async () => {
+    const control = new TerminalControlCoordinator({ startTimer: false });
+    const enforcer = new CollaborationRevocationEnforcer({ control });
+    const { actorId } = setup("editor", { taskProfile: "sandbox_shell", contributorControl: true });
+    const lease = control.acquire({ scopeId, terminalId, incarnation, actorId, role: "editor", connectionId: "c1" });
+    await lease;
+    enforcer.onSessionEnded({ scopeId, actorId }, "exhausted");
+    await enforcer.settle();
+    expect(enforcer.isRevoked(scopeId, actorId)).toBe(false);
+    expect(control.current(scopeId, terminalId, incarnation)).not.toBeNull();
+  });
+
+  it("caps tracked stop operations while leaving every started stop running", async () => {
+    const resolvers: Array<() => void> = [];
+    const stopForActor = vi.fn(async () => new Promise<number>((resolve) => {
+      resolvers.push(() => resolve(1));
+    }));
+    const enforcer = new CollaborationRevocationEnforcer({
+      control: new TerminalControlCoordinator({ startTimer: false }),
+      runtimes: { stopForActor }, maxPending: 2,
+    });
+    for (const actorId of ["actor_1", "actor_2", "actor_3"]) {
+      enforcer.onSessionEnded({ scopeId, actorId }, "revoked");
+    }
+    expect(stopForActor).toHaveBeenCalledTimes(3);
+    expect(enforcer.pendingSize).toBe(2);
+    resolvers[0]!();
+    resolvers[1]!();
+    resolvers[2]!();
+    await enforcer.settle();
+    expect(enforcer.pendingSize).toBe(0);
+  });
+
   it("releases the controller, stops bound runtimes and refuses further input after a lease loss", async () => {
     let clock = Date.parse("2026-09-21T08:00:00.000Z");
     const stopRuntime = vi.fn(async (_: { runtimeHandle: string }) => ({ runtimeHandle: "runtime_1", executionGeneration: "9", state: "stopped" as const }));
