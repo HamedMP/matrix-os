@@ -44,7 +44,6 @@ const mockSharing = {
   acceptShare: vi.fn(),
   revokeShare: vi.fn(),
   listShares: vi.fn(),
-  checkSharePermission: vi.fn(),
 };
 
 function buildApp(getUserId: (c: any) => string) {
