@@ -28,6 +28,7 @@ const SCOPE_ROUTES = [
   ["POST", new RegExp(`^/api/collaboration/scopes/(${UUID})/grants$`)],
   ["PATCH", new RegExp(`^/api/collaboration/scopes/(${UUID})/grants/${UUID}$`)],
   ["DELETE", new RegExp(`^/api/collaboration/scopes/(${UUID})/grants/${UUID}$`)],
+  ["POST", new RegExp(`^/api/collaboration/scopes/(${UUID})/grants/${UUID}/accept$`)],
   ["POST", new RegExp(`^/api/collaboration/scopes/(${UUID})/policy/preflight$`)],
   ["GET", new RegExp(`^/api/collaboration/scopes/(${UUID})/members$`)],
   ["POST", new RegExp(`^/api/collaboration/scopes/(${UUID})/invitations$`)],
