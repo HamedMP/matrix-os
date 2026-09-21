@@ -1,4 +1,4 @@
-import { CollaborationMemberSchema, CollaborationScopeSchema } from "@matrix-os/contracts";
+import { CollaborationMemberSchema, CollaborationProjectAccessReadinessSchema, CollaborationScopeSchema, type CollaborationProjectAccessReadiness } from "@matrix-os/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { z } from "zod/v4";
 import { ChatCollaboratorsDialog, type CollaborationApi } from "./ChatCollaboratorsDialog.js";
@@ -14,6 +14,7 @@ export function SessionAccessControl({ api, scope, zIndex }: {
   const [manageOpen, setManageOpen] = useState(false);
   const [currentScope, setCurrentScope] = useState(scope);
   const [members, setMembers] = useState<Member[]>([]);
+  const [projectReadiness, setProjectReadiness] = useState<CollaborationProjectAccessReadiness | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
   const effectiveScope = BigInt(currentScope.revision) >= BigInt(scope.revision) ? currentScope : scope;
@@ -24,14 +25,18 @@ export function SessionAccessControl({ api, scope, zIndex }: {
     setLoading(true);
     setError(false);
     try {
-      const [scopeValue, memberValue] = await Promise.all([
+      const [scopeValue, memberValue, readinessValue] = await Promise.all([
         api.get(`/api/collaboration/scopes/${encodeURIComponent(scope.id)}`),
         api.get(`/api/collaboration/scopes/${encodeURIComponent(scope.id)}/members`),
+        scope.kind === "project" && scope.lifecycle === "shared"
+          ? api.get(`/api/collaboration/scopes/${encodeURIComponent(scope.id)}/project/readiness`)
+          : Promise.resolve(null),
       ]);
       const currentScope = CollaborationScopeSchema.parse(scopeValue);
       const currentMembers = z.strictObject({ members: z.array(CollaborationMemberSchema).max(8) }).parse(memberValue).members;
       setCurrentScope(currentScope);
       setMembers(currentMembers);
+      setProjectReadiness(readinessValue ? CollaborationProjectAccessReadinessSchema.parse(readinessValue) : null);
       return { scope: currentScope, members: currentMembers };
     } catch (failure: unknown) {
       console.warn("[collaboration-access] load failed", failure instanceof Error ? failure.name : "UnknownError");
@@ -79,7 +84,7 @@ export function SessionAccessControl({ api, scope, zIndex }: {
       <span className="hidden sm:inline">{effectiveScope.membershipMode === "inherited" ? "Project access" : "Shared"}</span>
     </button>
     {open ? <section role="dialog" aria-label="Collaboration access summary" style={{ zIndex }}
-      className="absolute right-0 top-full mt-2 w-80 max-w-[calc(100vw-2rem)] rounded-2xl border bg-background p-4 shadow-xl">
+      className="absolute right-0 top-full mt-2 max-h-[70vh] w-80 max-w-[calc(100vw-2rem)] overflow-y-auto rounded-2xl border bg-background p-4 shadow-xl">
       <div className="flex items-start justify-between gap-3"><div>
         <h2 className="font-semibold">Access</h2>
         <p className="text-xs text-muted-foreground">You are {effectiveScope.role === "owner" ? "the owner" : `an ${effectiveScope.role}`}.</p>
@@ -91,6 +96,25 @@ export function SessionAccessControl({ api, scope, zIndex }: {
         <span aria-hidden className="grid size-8 place-items-center rounded-full bg-[var(--bg-hover)] text-xs font-semibold">{member.actor.displayName.slice(0, 1).toUpperCase()}</span>
         <span className="min-w-0 flex-1 truncate text-sm">{member.actor.displayName}</span><span className="text-xs capitalize text-muted-foreground">{member.role}</span>
       </li>)}</ul> : null}
+      {projectReadiness ? <section aria-label="Project readiness" className="mt-4 border-t pt-3 text-xs">
+        <h3 className="font-medium">Project Chat roots and Git</h3>
+        {projectReadiness.chatRoots.length ? <ul className="mt-2 space-y-2">
+          {projectReadiness.chatRoots.map((chat) => <li key={chat.chatId} className="rounded-lg border p-2">
+            <span className="font-medium">{chat.chatId}</span>
+            <p>{chat.executionRoot?.kind === "worktree"
+              ? `Chat worktree ${chat.executionRoot.worktreeId}` : "Project root"}</p>
+            {chat.branch ? <p>Branch: {chat.branch}</p> : null}
+            {chat.dirty ? <p>Uncommitted changes</p> : null}
+            {chat.readiness === "blocked" ? <p>Chat root unavailable</p> : null}
+          </li>)}
+        </ul> : <p className="mt-2">No project Chats yet.</p>}
+        <p className="mt-2">{projectReadiness.gitSetup.identity.status === "ready"
+          ? `Commits use ${projectReadiness.gitSetup.identity.label}.`
+          : projectReadiness.gitSetup.identity.status === "missing" ? "Owner Git identity is missing." : "Owner Git identity is unavailable."}</p>
+        <p>{projectReadiness.gitSetup.forgeCredential.status === "ready"
+          ? "GitHub access is ready."
+          : projectReadiness.gitSetup.forgeCredential.status === "missing" ? "GitHub access is missing." : "GitHub access is unavailable."}</p>
+      </section> : null}
       {effectiveScope.capabilities.manageMembers && effectiveScope.membershipMode === "direct" ? <button type="button" className="mt-4 w-full rounded-xl border px-3 py-2 text-sm font-medium"
         onClick={() => { setOpen(false); setManageOpen(true); }}>Manage access</button> : null}
     </section> : null}
