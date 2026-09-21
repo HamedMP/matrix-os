@@ -148,6 +148,52 @@ describe("collaboration direct client", () => {
     expect(world.sockets[1]!.close).toHaveBeenCalled();
   });
 
+  it("stops revoked event and terminal streams without obtaining another ticket", async () => {
+    vi.useFakeTimers();
+    const direct = client();
+    const unavailable = vi.fn();
+    direct.subscribeEvents(scopeId, { onEvent: vi.fn(), onUnavailable: unavailable });
+    await vi.waitFor(() => expect(world.sockets).toHaveLength(1));
+    const events = world.sockets[0]!;
+    events.onmessage?.({ data: JSON.stringify({ version: 1, type: "unavailable", scopeId, resourceId: "chat-1", authorityGeneration: "3", code: "revoked" }) });
+    expect(unavailable).toHaveBeenCalledTimes(1);
+    events.onclose?.();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(world.sockets).toHaveLength(1);
+    expect(world.platform.tickets.filter((ticket) => ticket.purpose === "events")).toHaveLength(1);
+
+    direct.subscribeTerminal(otherScopeId, { onReady: vi.fn(), onOutput: vi.fn(), onState: vi.fn(), onRefreshRequired: vi.fn(), onUnavailable: unavailable, onDisconnected: vi.fn() });
+    await vi.waitFor(() => expect(world.sockets).toHaveLength(2));
+    const terminal = world.sockets[1]!;
+    terminal.onmessage?.({ data: JSON.stringify({ version: 1, type: "terminal.unavailable", scopeId: otherScopeId, resourceId: "terminal-1", authorityGeneration: "3", incarnation: "terminal-1", code: "revoked" }) });
+    terminal.onmessage?.({ data: JSON.stringify({ version: 1, type: "terminal.output", scopeId: otherScopeId, resourceId: "terminal-1", authorityGeneration: "3", incarnation: "terminal-1", sequence: "1", data: "late" }) });
+    terminal.onclose?.();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(unavailable).toHaveBeenCalledTimes(2);
+    expect(world.sockets).toHaveLength(2);
+    expect(world.platform.tickets.filter((ticket) => ticket.purpose === "terminal")).toHaveLength(1);
+  });
+
+  it("fences an exchange completed after sign-out and does not restore its session", async () => {
+    let release!: () => void;
+    let entered!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const reached = new Promise<void>((resolve) => { entered = resolve; });
+    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const response = await world.fetchImpl(input, init);
+      if (String(input).includes("/api/collaboration/direct-sessions?")) { entered(); await gate; }
+      return response;
+    }) as typeof fetch;
+    const direct = client({ fetchImpl });
+    const pending = direct.request(scopeId, "GET", `/api/collaboration/scopes/${scopeId}`);
+    await reached;
+    direct.close();
+    release();
+    await expect(pending).rejects.toMatchObject({ code: "denied" });
+    expect(direct.describe(scopeId).state).toBe("idle");
+    await expect(direct.request(scopeId, "GET", `/api/collaboration/scopes/${scopeId}`)).rejects.toMatchObject({ code: "denied" });
+  });
+
   it("keeps discovery metadata-only on the platform and hydrates content from the home", async () => {
     world.platform.shared = [{ scopeId, runtimeId: "vps:11111111-1111-4111-8111-111111111111", ownerId: "user_owner", kind: "chat", authorityGeneration: 3, status: "accepted" }];
     world.platform.inbox = [{ scopeId: otherScopeId, runtimeId: "vps:11111111-1111-4111-8111-111111111111", ownerId: "user_owner", kind: "chat", authorityGeneration: 3, status: "invited", invitationId: "20000000-0000-4000-8000-000000000001" }];
