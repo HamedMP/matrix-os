@@ -1,5 +1,81 @@
-import type { Context } from "hono";
-import type { PlatformDb } from "../platform-db.js";
+import type { Context, Hono } from "hono";
+import { createPlatformDb, type PlatformDb } from "../platform-db.js";
+import { createPipedreamClient, type PipedreamConnectClient } from "../integrations/pipedream.js";
+import { createIntegrationRoutes } from "../integrations/routes.js";
+import { discoverComponentKeys } from "../integrations/registry.js";
+import type { ServerMessage } from "../server/types.js";
+
+export interface PlatformIntegrationServices {
+  db: PlatformDb | null;
+  client: PipedreamConnectClient | null;
+  routes: Hono | null;
+  resolveUserId: ((c: Context) => Promise<string | null>) | null;
+}
+
+export interface PlatformIntegrationOptions {
+  env: NodeJS.ProcessEnv;
+  broadcast(message: ServerMessage): void;
+  createDb?: typeof createPlatformDb;
+  createClient?: typeof createPipedreamClient;
+}
+
+export async function initializePlatformIntegrations(
+  options: PlatformIntegrationOptions,
+): Promise<PlatformIntegrationServices> {
+  const { env, broadcast } = options;
+  const absent: PlatformIntegrationServices = {
+    db: null, client: null, routes: null, resolveUserId: null,
+  };
+  if (!env.PLATFORM_DATABASE_URL || !env.PIPEDREAM_CLIENT_ID
+    || !env.PIPEDREAM_CLIENT_SECRET || !env.PIPEDREAM_PROJECT_ID) {
+    return absent;
+  }
+
+  let db: PlatformDb | null = null;
+  try {
+    db = (options.createDb ?? createPlatformDb)(env.PLATFORM_DATABASE_URL);
+    await db.migrate();
+    console.log("[platform-db] Initialized");
+    const client = await (options.createClient ?? createPipedreamClient)({
+      clientId: env.PIPEDREAM_CLIENT_ID,
+      clientSecret: env.PIPEDREAM_CLIENT_SECRET,
+      projectId: env.PIPEDREAM_PROJECT_ID,
+      environment: env.PIPEDREAM_ENVIRONMENT ?? "production",
+    });
+    const resolveUserId = createIntegrationUserResolver(db, env);
+    const routes = createIntegrationRoutes({
+      db,
+      pipedream: client,
+      webhookSecret: (() => {
+        const secret = env.PIPEDREAM_WEBHOOK_SECRET;
+        if (!secret) console.warn("[integrations] PIPEDREAM_WEBHOOK_SECRET not set -- webhooks will be rejected");
+        return secret ?? "";
+      })(),
+      resolveUserId,
+      broadcast,
+    });
+    console.log("[platform-db] Integration routes ready");
+    discoverComponentKeys(client)
+      .then((stats) => {
+        console.log(`[integrations] Component keys discovered: ${stats.matched}/${stats.total} matched, ${stats.errors} errors`);
+      })
+      .catch((error: unknown) => {
+        console.error("[integrations] Component key discovery failed:", error instanceof Error ? error.message : error);
+      });
+    return { db, client, routes, resolveUserId };
+  } catch (error: unknown) {
+    console.error("[platform-db] Failed to initialize:", error instanceof Error ? error.message : error);
+    if (db) {
+      try {
+        await db.destroy();
+      } catch (closeError: unknown) {
+        console.error("[platform-db] Failed to close after startup failure:",
+          closeError instanceof Error ? closeError.name : "UnknownError");
+      }
+    }
+    return absent;
+  }
+}
 
 /** Resolve the owner behind integration routes using the platform verified identity. */
 export function createIntegrationUserResolver(
