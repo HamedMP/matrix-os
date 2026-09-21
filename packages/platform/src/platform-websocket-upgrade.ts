@@ -355,9 +355,29 @@ export function registerPlatformWebSocketUpgradeHandler(
     // A relayed socket is a pair. `socket.destroy()` emits `close`, not `error`, so relay
     // eviction and the shutdown drain reached only the client half; both events now tear
     // down the upstream connection to the home. `destroy()` is idempotent.
-    const destroyUpstream = () => activeUpstream?.destroy();
+    let upstreamDisposed = false;
+    const destroyUpstream = () => {
+      upstreamDisposed = true;
+      activeUpstream?.destroy();
+      activeUpstream = null;
+    };
     socket.on('error', destroyUpstream);
     socket.on('close', destroyUpstream);
+    /**
+     * Adopts a freshly connected upstream, or refuses it. A connection dialled before the
+     * client half went away can still complete afterwards -- relay eviction, the shutdown
+     * drain or any other teardown -- and a dead pair must never take ownership of it, or it
+     * outlives the relay with nothing left to close it. Refusing destroys it unspoken-to;
+     * the client socket's single `close` still releases the reservation exactly once.
+     */
+    const adoptUpstream = (upstream: Socket): boolean => {
+      if (upstreamDisposed || socket.destroyed) {
+        upstream.destroy();
+        return false;
+      }
+      activeUpstream = upstream;
+      return true;
+    };
 
     const buildUpgradeHeaders = (handle: string, includePlatformProof: boolean): string => (
       directUpgrade
@@ -437,7 +457,7 @@ export function registerPlatformWebSocketUpgradeHandler(
         servername: upstreamServerName,
         rejectUnauthorized: shouldVerifyCustomerVpsTls(),
       }, () => {
-        activeUpstream = upstream;
+        if (!adoptUpstream(upstream)) return;
         writeUpgradeRequest(upstream, upstreamHostHeader, headers);
       });
       upstream.on('error', (err) => {
@@ -478,7 +498,7 @@ export function registerPlatformWebSocketUpgradeHandler(
       const targetPort = isCodeDomain ? codeServerPort : 4000;
       const upstream = createConnection({ host: endpoint.host, port: targetPort }, () => {
         connected = true;
-        activeUpstream = upstream;
+        if (!adoptUpstream(upstream)) return;
         const upstreamHostHeader = isCodeDomain ? host : `${endpoint.host}:${targetPort}`;
         writeUpgradeRequest(
           upstream,
