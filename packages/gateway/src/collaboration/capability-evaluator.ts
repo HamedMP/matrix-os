@@ -92,7 +92,8 @@ export class CollaborationCapabilityEvaluator {
 
   async decide(input: { scopeId: string; actorId: string }): Promise<EffectiveAccessDecision> {
     const now = this.now();
-    const evidenceExpiresAt = new Date(now.getTime() + ORGANIZATION_EVIDENCE_DEADLINE_MS).toISOString();
+    // The advertised deadline is never later than the authoritative evidence or the contract's 20-second bound.
+    let evidenceExpiresAt = new Date(now.getTime() + ORGANIZATION_EVIDENCE_DEADLINE_MS).toISOString();
     let resolution: ActorGrantResolution | null;
     try {
       resolution = await this.options.grants.resolveActorGrants(input.scopeId, input.actorId);
@@ -114,7 +115,11 @@ export class CollaborationCapabilityEvaluator {
     if (!scope.organization_id) return deny("organization_required", scope.owner_id);
     const organizationId = scope.organization_id;
     try {
-      await this.options.organizationPrecondition.require({ organizationId, actorId: input.actorId });
+      const evidence = await this.options.organizationPrecondition.require({ organizationId, actorId: input.actorId });
+      const authoritative = Date.parse(evidence.expiresAt);
+      if (Number.isFinite(authoritative) && authoritative < Date.parse(evidenceExpiresAt)) {
+        evidenceExpiresAt = new Date(authoritative).toISOString();
+      }
     } catch (error: unknown) {
       if (!(error instanceof CollaborationAuthorizationError)) throw error;
       return deny("precondition_denied", scope.owner_id, organizationId);
