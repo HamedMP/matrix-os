@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { parseProject, useBoard, type Project } from "../../../stores/board";
 import { useConnection } from "../../../stores/connection";
 import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "../../../stores/runtime-generation";
+import { useDesktopSurfaces } from "../../../stores/desktop-surfaces";
 import { useFilesNavigation } from "../../../stores/files-navigation";
 import { FILES_WORKSPACE_TAB_SPEC, useTabs } from "../../../stores/tabs";
 
@@ -55,7 +56,8 @@ export function useProjectActions(project: Project) {
       const path = response.path;
       if (typeof path !== "string" || !path || path.startsWith("/") || path.includes("\\") || /[\u0000-\u001f]/.test(path) || path.split("/").some(part => !part || part === "." || part === "..")) throw new Error("Invalid folder location");
       useFilesNavigation.getState().navigate(path);
-      useTabs.getState().openTab(FILES_WORKSPACE_TAB_SPEC);
+      const tabId = useTabs.getState().openTab(FILES_WORKSPACE_TAB_SPEC);
+      useDesktopSurfaces.getState().activateSurface(tabId);
     } catch (err: unknown) {
       console.warn("[project-actions] Locate failed:", err instanceof Error ? err.name : "UnknownError");
       if (current()) setError("The project folder could not be opened. Try again.");

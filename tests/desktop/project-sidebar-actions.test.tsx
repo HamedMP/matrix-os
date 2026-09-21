@@ -7,7 +7,8 @@ import { buildWorkRailModel } from "@desktop/renderer/src/features/work/work-rai
 import { useBoard, parseProject } from "@desktop/renderer/src/stores/board";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
 
-import { useTabs } from "@desktop/renderer/src/stores/tabs";
+import { useDesktopSurfaces } from "@desktop/renderer/src/stores/desktop-surfaces";
+import { FILES_WORKSPACE_TAB_SPEC, useTabs } from "@desktop/renderer/src/stores/tabs";
 import { useFilesNavigation } from "@desktop/renderer/src/stores/files-navigation";
 import { useProjectActions } from "@desktop/renderer/src/features/work/work-rail/use-project-actions";
 import { advanceRuntimeGeneration } from "@desktop/renderer/src/stores/runtime-generation";
@@ -128,6 +129,18 @@ describe("project sidebar actions", () => {
     await act(async () => { await result.current.showInFiles(); });
     expect(useTabs.getState().tabs.filter(tab => tab.kind === "files")).toHaveLength(1);
     expect(result.current.error).toBeNull();
+  });
+  it.each(["closed", "minimized"] as const)("restores a %s Files window", async mode => {
+    useTabs.setState({ tabs: [], activeTabId: null });
+    useDesktopSurfaces.setState(useDesktopSurfaces.getInitialState(), true);
+    const id = useTabs.getState().openTab(FILES_WORKSPACE_TAB_SPEC);
+    useDesktopSurfaces.getState().reconcileTabs([id], { width: 1280, height: 800 });
+    useDesktopSurfaces.setState(state => ({ surfaces: { ...state.surfaces, [id]: { ...state.surfaces[id], mode } } }));
+    useConnection.setState({ api: { get: vi.fn().mockResolvedValue({ path: "projects/alpha/repo" }) } as never });
+    const { result } = renderHook(() => useProjectActions(alpha));
+    await act(async () => { await result.current.showInFiles(); });
+    expect(useDesktopSurfaces.getState().surfaces[id].mode).toBe("window");
+    expect(useTabs.getState().activeTabId).toBe(id);
   });
   it("parses pinned state and stably orders pinned projects first", () => {
     const pinned = { ...alpha, id: "proj_beta", slug: "beta", name: "Beta", pinned: true };
