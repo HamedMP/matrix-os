@@ -190,12 +190,12 @@ As a user, I can ask the computer to open an app or perform a task during a voic
 
 | Capability | Web Canvas | Web Desktop | Electron Desktop | Web Mobile | Native Mobile |
 |---|---|---|---|---|---|
-| Record/stop/transcribe | First release | First release | First release | Same shared chat feature | Follow-on native capture adapter |
-| Live dictation | Enhancement | Enhancement | Enhancement | Where capture supported | Later native validation |
+| Record/stop/transcribe | First release | First release | First release | Same shared chat feature | Follow-on stack layer using the shared service |
+| Live dictation | Enhancement | Enhancement | Enhancement | Where capture supported | Later, after native streaming validation |
 | Voice interview and actions | Later, required | Later, required | Later, required | Adapt after primary validation | Later |
 | Chat streaming repair | Shared contract regression coverage | Shared contract regression coverage | Reference behavior | Shared contract regression coverage | First companion workstream |
 
-Native Mobile microphone capture is explicitly outside the initial recording scope; the original Native Mobile request concerns reply streaming. Its future capture adapter must reuse the platform service and shared contracts.
+Native Mobile microphone capture does not gate the initial browser release. It ships as a follow-on stack layer with an SDK-native PCM adapter, while reusing the platform service, shared recording lifecycle, WAV encoder, and speech contracts. Physical iOS and Android validation with rebuilt Expo dev clients remains a release gate for that layer.
 
 ### Key Entities
 

@@ -1,4 +1,4 @@
-export { usePlatformSpeechDraft } from "./use-platform-speech-draft.js";
+export { usePlatformSpeechDraft } from "./use-platform-speech-draft";
 export type {
   PlatformSpeechCapture,
   PlatformSpeechCaptureAdapter,
@@ -7,10 +7,10 @@ export type {
   PlatformSpeechUnavailableReason,
   PlatformSpeechRecording,
   UsePlatformSpeechDraftResult,
-} from "./use-platform-speech-draft.js";
+} from "./use-platform-speech-draft";
 export {
   encodePcm16WavBytes,
   normalizeSpeechInputLevel,
   PlatformSpeechRecorderError,
   smoothSpeechInputLevel,
-} from "./pcm.js";
+} from "./pcm";

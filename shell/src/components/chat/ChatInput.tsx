@@ -124,8 +124,25 @@ export function ChatInput({
   const handleMicClick = () => {
     if (speech.phase === "recording") speech.stop();
     else if (speech.phase === "requesting_permission" || speech.phase === "transcribing") speech.cancel();
+    else if (speech.phase === "unavailable") speech.retryCapabilities();
     else void speech.start();
   };
+
+  const speechIsRetryable = speech.phase === "unavailable"
+    && ["capability_check_failed", "temporarily_unavailable"].includes(speech.unavailableReason ?? "");
+  const speechButtonLabel = speech.phase === "loading"
+    ? "Checking voice input"
+    : speechIsRetryable
+      ? "Retry voice input"
+      : speech.phase === "unavailable"
+        ? "Voice input unavailable"
+        : speech.phase === "requesting_permission"
+          ? "Cancel microphone request"
+          : speech.phase === "recording"
+            ? "Stop recording"
+            : speech.phase === "transcribing"
+              ? "Cancel transcription"
+              : "Start voice input";
 
   return (
     <div className="flex flex-col gap-2">
@@ -163,33 +180,28 @@ export function ChatInput({
           className="border-0 bg-transparent shadow-none focus-visible:ring-0 text-sm min-h-0 max-h-40 resize-none py-3 px-2 flex-1"
         />
         <div className="flex items-center gap-0.5 mb-2 mr-2">
-          {speech.isSupported ? (
-            <Button
-              type="button"
-              aria-label={speech.phase === "requesting_permission"
-                ? "Cancel microphone request"
-                : speech.phase === "recording"
-                  ? "Stop recording"
-                  : speech.phase === "transcribing"
-                    ? "Cancel transcription"
-                    : "Start voice input"}
-              size="icon"
-              variant="ghost"
-              className={`size-8 rounded-full ${speech.phase === "recording" ? "text-destructive" : "text-muted-foreground hover:text-foreground"}`}
-              onClick={handleMicClick}
-            >
-              {speech.phase === "requesting_permission" ? <Loader2Icon className="size-4 animate-spin" />
-                : speech.phase === "transcribing" ? <XCircleIcon className="size-4" />
-                  : speech.phase === "recording" ? <CircleStop className="size-4" />
-                    : <MicIcon className="size-4" />}
-            </Button>
-          ) : null}
+          <Button
+            type="button"
+            aria-label={speechButtonLabel}
+            title={speechButtonLabel}
+            size="icon"
+            variant="ghost"
+            className={`size-8 rounded-full ${speech.phase === "recording" ? "text-destructive" : "text-muted-foreground hover:text-foreground"}`}
+            disabled={speech.phase === "loading" || (speech.phase === "unavailable" && !speechIsRetryable)}
+            onClick={handleMicClick}
+          >
+            {speech.phase === "loading" || speech.phase === "requesting_permission"
+              ? <Loader2Icon className="size-4 animate-spin motion-reduce:animate-none" />
+              : speech.phase === "transcribing" ? <XCircleIcon className="size-4" />
+                : speech.phase === "recording" ? <CircleStop className="size-4" />
+                  : <MicIcon className="size-4" />}
+          </Button>
           {speech.phase === "recording" ? (
             <>
               <SpeechInputWaveform
                 level={speech.inputLevel}
                 sampleSequence={speech.inputLevelSequence}
-                className="mx-1 text-destructive"
+                className="mx-1 text-primary"
               />
               <span aria-live="polite" className="px-1 text-xs tabular-nums text-muted-foreground">
                 {Math.floor(speech.elapsedMs / 60_000)}:{String(Math.floor(speech.elapsedMs / 1_000) % 60).padStart(2, "0")}

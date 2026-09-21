@@ -39,12 +39,14 @@ import { AnalyticsMask } from "@/lib/analytics";
 import { CanonicalInputMessage } from "@/components/CanonicalInputMessage";
 import { CanonicalApprovalMessage } from "@/components/CanonicalApprovalMessage";
 import { ChatContextMenu } from "@/components/ChatContextMenu";
+import { NativeSpeechInput } from "@/components/NativeSpeechInput";
+import { mergeNativeSpeechDraft } from "@/lib/speech/draft";
 import { HOSTED_GATEWAY_URL } from "@/lib/storage";
 
 const rabbitArtwork = require("../../assets/app.icon/Assets/rabbit.svg");
 
 export default function ChatScreen() {
-  const { isSignedIn } = useAuth();
+  const { isSignedIn, userId, getToken } = useAuth();
   const { user } = useUser();
   const { theme } = useUnistyles();
   const {
@@ -75,6 +77,37 @@ export default function ChatScreen() {
   ) ?? false);
 
   const [draft, setDraft] = useState("");
+  const draftRef = useRef("");
+  const draftGenerationRef = useRef(0);
+  const [speechActive, setSpeechActive] = useState(false);
+  const replaceDraft = useCallback((text: string) => {
+    draftRef.current = text;
+    setDraft(text);
+  }, []);
+  const handleDraftChange = useCallback((text: string) => {
+    if (!text && draftRef.current) draftGenerationRef.current += 1;
+    replaceDraft(text);
+  }, [replaceDraft]);
+  const clearDraft = useCallback(() => {
+    draftGenerationRef.current += 1;
+    replaceDraft("");
+  }, [replaceDraft]);
+  const appendSpeechDraft = useCallback((text: string, recordingGeneration: number): void | string => {
+    const merged = mergeNativeSpeechDraft({
+      current: draftRef.current,
+      currentGeneration: draftGenerationRef.current,
+      recordingGeneration,
+      transcript: text,
+    });
+    if (!merged.ok) {
+      return merged.reason === "stale"
+        ? "Your draft changed while the recording was transcribed"
+        : "The transcript is too long for this message";
+    }
+    draftRef.current = merged.value;
+    draftGenerationRef.current = merged.generation;
+    setDraft(merged.value);
+  }, []);
   const [inputFocused, setInputFocused] = useState(false);
   // Tapping the model picker itself blurs the TextInput a beat before its
   // native menu opens — delay hiding on blur, and cancel the hide entirely
@@ -110,11 +143,11 @@ export default function ChatScreen() {
 
   const isConnected = Boolean(isSignedIn);
   const hasDraftText = draft.trim().length > 0;
-  const canSend = hasDraftText && isConnected && Boolean(selection) && Boolean(turnModes) && !busy;
+  const canSend = !speechActive && hasDraftText && isConnected && Boolean(selection) && Boolean(turnModes) && !busy;
 
   const send = useCallback(() => {
     const trimmed = draft.trim();
-    if (!trimmed || !selection || !turnModes) return;
+    if (speechActive || !trimmed || !selection || !turnModes) return;
     // Clear the draft only once the send actually succeeds -- a failed token
     // fetch, computer resolution, chat creation, or turn admission leaves the
     // typed text in place so the user can retry instead of losing it. The
@@ -147,10 +180,11 @@ export default function ChatScreen() {
     }, {
       onSuccess: () => {
         if (pendingSendRef.current?.text === trimmed) pendingSendRef.current = null;
-        setDraft((current) => (current === trimmed ? "" : current));
+        if (draftRef.current === trimmed) clearDraft();
       },
     });
   }, [
+    speechActive,
     draft,
     selection,
     turnModes,
@@ -158,9 +192,16 @@ export default function ChatScreen() {
     detail?.record.chat.revision,
     selectedProjectId,
     sendMessage,
+    clearDraft,
   ]);
 
   const insets = useSafeAreaInsets();
+  const speechScopeKey = isSignedIn && computer
+    ? `${userId}:${computer.handle}:${computer.runtimeSlot}:${activeChatId ?? "draft"}`
+    : null;
+  useEffect(() => {
+    draftGenerationRef.current += 1;
+  }, [speechScopeKey]);
 
   // Keep the composer focused and the keyboard open while there's no active
   // chat (a fresh draft) -- `autoFocus` alone doesn't reliably refire across
@@ -244,29 +285,46 @@ export default function ChatScreen() {
           </View>
         ) : null}
         <View style={inputFocused ? styles.composerActive : styles.composer}>
-          {inputFocused ? null : (
-            <IconButton
-              accessibilityLabel="Attach"
-              icon={Add01Icon}
-              iconSize={23}
-              iconColor={theme.v2.appColors.ink}
+          <View style={[styles.composerInputRow, speechActive ? styles.composerInputRowRecording : null]}>
+            {!inputFocused && !speechActive ? (
+              <IconButton accessibilityLabel="Attach" icon={Add01Icon} iconSize={23} iconColor={theme.v2.appColors.ink} />
+            ) : null}
+            <TextInput
+              ref={inputRef}
+              accessibilityLabel="Message Matrix"
+              value={draft}
+              onChangeText={handleDraftChange}
+              onSubmitEditing={send}
+              onFocus={handleInputFocus}
+              onBlur={handleInputBlur}
+              placeholder={isConnected ? "Message Matrix" : "Signing in…"}
+              placeholderTextColor={theme.v2.appColors.muted}
+              editable={isConnected}
+              returnKeyType="send"
+              style={inputFocused || speechActive ? styles.inputActive : styles.input}
             />
-          )}
-          <TextInput
-            ref={inputRef}
-            accessibilityLabel="Message Matrix"
-            value={draft}
-            onChangeText={setDraft}
-            onSubmitEditing={send}
-            onFocus={handleInputFocus}
-            onBlur={handleInputBlur}
-            placeholder={isConnected ? "Message Matrix" : "Signing in…"}
-            placeholderTextColor={theme.v2.appColors.muted}
-            editable={isConnected}
-            returnKeyType="send"
-            style={inputFocused ? styles.inputActive : styles.input}
-          />
-          {inputFocused ? (
+            {speechScopeKey && computer ? <NativeSpeechInput
+              key={speechScopeKey}
+              scopeKey={speechScopeKey}
+              baseUrl={`${HOSTED_GATEWAY_URL}${computer.gatewayPath}`}
+              runtimeSlot={computer.runtimeSlot}
+              getToken={getToken}
+              getDraftGeneration={() => draftGenerationRef.current}
+              onDraft={appendSpeechDraft}
+              onActive={setSpeechActive}
+            /> : null}
+            {!inputFocused && !speechActive ? <IconButton
+              accessibilityLabel={busy ? "Matrix is responding" : "Send message"}
+              icon={ArrowUp01Icon}
+              iconSize={19}
+              iconColor={theme.v2.appColors.surface}
+              backgroundColor={canSend || busy ? theme.v2.appColors.blue : theme.v2.appColors.disabledSurface}
+              loading={busy}
+              disabled={!canSend}
+              onPress={send}
+            /> : null}
+          </View>
+          {inputFocused && !speechActive ? (
             <View style={styles.composerControlsRow}>
               <IconButton
                 accessibilityLabel="Attach"
@@ -294,18 +352,7 @@ export default function ChatScreen() {
                 />
               </View>
             </View>
-          ) : (
-            <IconButton
-              accessibilityLabel={busy ? "Matrix is responding" : "Send message"}
-              icon={ArrowUp01Icon}
-              iconSize={19}
-              iconColor={theme.v2.appColors.surface}
-              backgroundColor={canSend || busy ? theme.v2.appColors.blue : theme.v2.appColors.disabledSurface}
-              loading={busy}
-              disabled={!canSend}
-              onPress={send}
-            />
-          )}
+          ) : null}
         </View>
       </View>
     </KeyboardAvoidingView>
@@ -527,6 +574,18 @@ const styles = StyleSheet.create((theme) => ({
     fontFamily: theme.v2.fonts.body,
     fontSize: 15,
     color: theme.v2.appColors.ink,
+  },
+  composerInputRow: {
+    flex: 1,
+    minHeight: 46,
+    alignSelf: "stretch",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  composerInputRowRecording: {
+    flexDirection: "column",
+    alignItems: "stretch",
   },
   composerActive: {
     flexDirection: "column",
