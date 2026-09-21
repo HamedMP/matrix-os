@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   CollaborationAcceptInvitationRequestSchema,
   CollaborationDeclineInvitationRequestSchema,
@@ -10,7 +10,6 @@ import {
   CollaborationAiRequestControlSchema,
   CollaborationApprovalDecisionRequestSchema,
   CollaborationAiRequestsResponseSchema,
-  CollaborationConnectionTicketResponseSchema,
   CollaborationDiscoveryResponseSchema,
   CollaborationInvitationSchema,
   CollaborationPageRequestSchema,
@@ -25,6 +24,7 @@ import { z } from "zod/v4";
 import { requireCliAuthToken } from "../auth-state.js";
 import { cliError, formatCliError, formatCliSuccess } from "../output.js";
 import { resolveCliProfile } from "../profiles.js";
+import { createCliCollaborationTransport, type CliCollaborationTransport } from "../collaboration-direct-transport.js";
 
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const ScopeIdSchema = z.uuid();
@@ -32,6 +32,11 @@ const RevisionSchema = z.string().regex(/^(?:0|[1-9][0-9]{0,18})$/);
 const COLLABORATION_PATH = /^\/api\/collaboration\/(?:inbox|shared|invitations\/[0-9a-f-]+(?:\/(?:accept|decline))?|scopes\/[0-9a-f-]+(?:\/chat(?:\/messages|\/requests(?:\/[A-Za-z0-9_.:-]+\/(?:cancel|retry))?|\/approvals\/[A-Za-z0-9_.:-]+\/decision)?|\/discussion\/(?:messages|user-state)|\/terminal(?:\/actions)?|\/project|\/connection-tickets|\/user-state)?)?(?:\?[^#]*)?$/i;
 const MAX_TERMINAL_FRAME_BYTES = 80 * 1024;
 const TERMINAL_HEARTBEAT_MS = 10_000;
+const SCOPE_PATH = /^\/api\/collaboration\/scopes\/([0-9a-f-]{36})(?:[/?]|$)/i;
+const INVITATION_PATH = /^\/api\/collaboration\/invitations\/([0-9a-f-]{36})(?:\/(?:accept|decline))?$/i;
+const DISCOVERY_PATH = /^\/api\/collaboration\/(?:inbox|shared)(?:\?|$)/;
+const LocationSchema = z.object({ scopeId: z.uuid() }).strict();
+const transports = new Map<string, CliCollaborationTransport>();
 
 interface CollaborationRequestInput {
   platformUrl: string;
@@ -39,10 +44,21 @@ interface CollaborationRequestInput {
   method: "GET" | "POST" | "PATCH";
   path: string;
   body?: unknown;
+  transport?: CliCollaborationTransport;
+}
+
+function cliTransport(platformUrl: string, token: string): CliCollaborationTransport {
+  const key = `${platformUrl}\u0000${createHash("sha256").update(token).digest("hex")}`;
+  let current = transports.get(key);
+  if (current) transports.delete(key);
+  else current = createCliCollaborationTransport({ platformUrl, token });
+  if (transports.size >= 8) transports.delete(transports.keys().next().value!);
+  transports.set(key, current);
+  return current;
 }
 
 export function isCollaborationPathAllowed(path: string): boolean {
-  return COLLABORATION_PATH.test(path);
+  return !/\/connection-tickets(?:[/?]|$)/.test(path) && COLLABORATION_PATH.test(path);
 }
 
 interface CollaborationTerminalSocket {
@@ -53,18 +69,6 @@ interface CollaborationTerminalSocket {
 
 type CollaborationTerminalSocketConstructor = new (url: string) => CollaborationTerminalSocket;
 
-export function createCollaborationTerminalWebSocketUrl(platformUrl: string, scopeId: string, ticket: string): string {
-  const base = new URL(platformUrl);
-  if (!base.hostname || !["https:", "http:"].includes(base.protocol) || base.username || base.password
-    || base.pathname !== "/" || base.search || base.hash) throw cliError("collaboration_failed");
-  const parsedScopeId = ScopeIdSchema.parse(scopeId);
-  const parsedTicket = CollaborationConnectionTicketResponseSchema.shape.ticket.parse(ticket);
-  const url = new URL(`/ws/collaboration/scopes/${parsedScopeId}/terminal`, base);
-  url.protocol = base.protocol === "https:" ? "wss:" : "ws:";
-  url.searchParams.set("ticket", parsedTicket);
-  return url.href;
-}
-
 export async function watchCollaborationTerminal(options: {
   platformUrl: string;
   token: string;
@@ -72,7 +76,7 @@ export async function watchCollaborationTerminal(options: {
   control?: "acquire" | "takeover";
   input?: string;
   paste?: boolean;
-  request?: typeof collaborationRequest;
+  transport?: CliCollaborationTransport;
   WebSocketImpl?: CollaborationTerminalSocketConstructor;
   writeOutput?: (value: string) => void;
   writeState?: (value: unknown) => void;
@@ -80,18 +84,11 @@ export async function watchCollaborationTerminal(options: {
   const scopeId = ScopeIdSchema.parse(options.scopeId);
   if (options.input !== undefined && (options.input.length < 1
     || new TextEncoder().encode(options.input).byteLength > 32 * 1024)) throw cliError("collaboration_failed");
-  const request = options.request ?? collaborationRequest;
-  const ticket = CollaborationConnectionTicketResponseSchema.parse(await request({
-    platformUrl: options.platformUrl,
-    token: options.token,
-    method: "POST",
-    path: `/api/collaboration/scopes/${scopeId}/connection-tickets`,
-    body: { clientRequestId: randomUUID(), purpose: "terminal" },
-  }));
+  const connection = await (options.transport ?? cliTransport(options.platformUrl, options.token)).terminal(scopeId);
   const WebSocketImpl = options.WebSocketImpl
     ?? await import("ws").then((module) => module.WebSocket as unknown as CollaborationTerminalSocketConstructor);
   if (!WebSocketImpl) throw cliError("collaboration_failed");
-  const socket = new WebSocketImpl(createCollaborationTerminalWebSocketUrl(options.platformUrl, scopeId, ticket.ticket));
+  const socket = new WebSocketImpl(connection.url);
   const writeOutput = options.writeOutput ?? ((value: string) => process.stdout.write(value));
   const writeState = options.writeState ?? ((value: unknown) => console.error(JSON.stringify(value)));
   let connectionId: string | null = null;
@@ -114,6 +111,7 @@ export async function watchCollaborationTerminal(options: {
       socket.send(JSON.stringify({ ...value, clientRequestId: randomUUID(), incarnation, connectionId }));
     };
     socket.on("open", () => {
+      socket.send(connection.handshake);
       heartbeat = setInterval(() => {
         if (phase === "controlling" && leaseEpoch) send({ type: "renew", leaseEpoch });
         else socket.send(JSON.stringify({ version: 1, type: "heartbeat" }));
@@ -148,7 +146,7 @@ export async function watchCollaborationTerminal(options: {
           }
           return;
         }
-        if (phase === "acquiring" && frame.terminal.controller?.actor.actorId === ticket.actorId) {
+        if (phase === "acquiring" && frame.terminal.controller?.actor.actorId === connection.actorId) {
           leaseEpoch = frame.terminal.controller.leaseEpoch;
           if (options.input !== undefined) {
             phase = "sending";
@@ -187,6 +185,25 @@ function terminalFrameText(value: unknown): string {
 
 export async function collaborationRequest(input: CollaborationRequestInput): Promise<unknown> {
   if (!isCollaborationPathAllowed(input.path)) throw cliError("collaboration_failed");
+  if (!DISCOVERY_PATH.test(input.path)) {
+    const scope = SCOPE_PATH.exec(input.path);
+    const invitation = INVITATION_PATH.exec(input.path);
+    if (!scope && !invitation) throw cliError("collaboration_failed");
+    try {
+      const scopeId = scope?.[1] ?? LocationSchema.parse(await platformRequest({ ...input,
+        method: "GET", path: `/api/collaboration/invitations/${invitation![1]}/location`, body: undefined,
+      })).scopeId;
+      return await (input.transport ?? cliTransport(input.platformUrl, input.token))
+        .request(scopeId, input.method, input.path, input.body);
+    } catch (error: unknown) {
+      if (!(error instanceof Error)) console.warn("[cli-collaboration] request failed", "UnknownError");
+      throw cliError("collaboration_failed");
+    }
+  }
+  return platformRequest(input);
+}
+
+async function platformRequest(input: CollaborationRequestInput): Promise<unknown> {
   let base: URL;
   try {
     base = new URL(input.platformUrl);
