@@ -140,10 +140,17 @@ realDescribe("Chat Provider binding reconciliation on PostgreSQL", () => {
     await seedBoundCodexChat(repository, chatId, "New caht");
     await fixture.db.updateTable("chats").set({ current_selection: JSON.stringify(corruptSelection) })
       .where("id", "=", chatId).execute();
-    const corrupt = await repository.get(owner, chatId);
-    expect(() => CanonicalChatRecordSchema.parse(corrupt)).toThrow(
-      "Bound Chat selection must use its immutable Provider Instance",
-    );
+    // The stored row is corrupt, but an ordinary read projects the immutable binding
+    // (#1748) so callers never receive a self-contradictory canonical record.
+    await expect(fixture.db.selectFrom("chats").select("current_selection")
+      .where("id", "=", chatId).executeTakeFirstOrThrow())
+      .resolves.toEqual({ current_selection: corruptSelection });
+    const projected = await repository.get(owner, chatId);
+    expect(() => CanonicalChatRecordSchema.parse(projected)).not.toThrow();
+    expect(projected).toMatchObject({
+      chat: { currentSelection: codexSelection },
+      providerBinding: { driverKind: "codex", instanceId: "codex_default" },
+    });
 
     await expect(repository.reconcileProviderBindings()).resolves.toEqual({ repaired: 1, unresolved: 0 });
     expect(CanonicalChatRecordSchema.parse(await repository.get(owner, chatId)))
