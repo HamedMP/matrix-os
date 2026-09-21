@@ -205,6 +205,7 @@ import {
 } from "./collaboration/wiring.js";
 import { createLegacyProjectPathAdmission } from "./collaboration/project-path-admission.js";
 import { createGatewayProjectInventorySource } from "./collaboration/project-inventory-source.js";
+import { createProjectChatRootInventory } from "./collaboration/project-chat-root-inventory.js";
 import { createCodingAgentFileStore } from "./coding-agents/file-read.js";
 import { createCodingAgentSourceControlStore } from "./coding-agents/source-control.js";
 import { registerCodingAgentAttentionNotifications } from "./coding-agents/attention-notifications.js";
@@ -956,6 +957,12 @@ export async function createGateway(config: GatewayConfig) {
       await osViewStateRepository.bootstrap();
       chatRepository = new ChatRepository(kysely as Kysely<any>);
       await chatRepository.bootstrap();
+      const ownerChatExecutionRoots = createChatExecutionRootResolver({
+        homePath,
+        projects: codingAgentProjectManager,
+        worktrees: codingAgentWorktreeManager,
+      });
+      canonicalChatExecutionRoots = ownerChatExecutionRoots;
       canonicalChatCollaborationGuard = createDiscussionOnlyChatExecutionGuard(chatRepository.kysely as Kysely<any>);
       await bootstrapChatSharing(chatRepository.kysely);
       if (collaborationConfig) {
@@ -986,6 +993,10 @@ export async function createGateway(config: GatewayConfig) {
             homePath,
             inventorySource: createGatewayProjectInventorySource({
               homePath,
+              chatRoots: createProjectChatRootInventory({
+                db: ownerChatRepository.kysely,
+                executionRoots: ownerChatExecutionRoots,
+              }),
               projects: {
                 get: async (ownerId, projectId) => {
                   const result = await codingAgentProjectManager.getProjectById(
@@ -1185,6 +1196,7 @@ export async function createGateway(config: GatewayConfig) {
       gatewayCollaboration = null;
       canonicalChatEventStream = null;
       chatRepository = null;
+      canonicalChatExecutionRoots = null;
       canonicalChatCollaborationGuard = null;
       kyselyInstance = null;
       appDb = null;
@@ -4307,12 +4319,7 @@ export async function createGateway(config: GatewayConfig) {
     executableDriverKinds: canonicalExecutableDriverKinds,
     credentialedDriverKinds: ["pi", "opencode"],
   });
-  if (chatRepository) {
-    canonicalChatExecutionRoots = createChatExecutionRootResolver({
-      homePath,
-      projects: codingAgentProjectManager,
-      worktrees: codingAgentWorktreeManager,
-    });
+  if (chatRepository && canonicalChatExecutionRoots) {
     const canonicalAdapters: CanonicalChatProviderAdapter[] = [
       createKernelChatProviderAdapter({ dispatcher }),
       createHermesChatProviderAdapter({ homePath, toolOutputKey }),
