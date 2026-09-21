@@ -1,250 +1,178 @@
-import { tryLoadToolOutputKey } from "./coding-agents/protected-tool-output.mjs";
-import { createOwnerToolOutputProjection } from "./chat/owner-tool-output.js";
-import { createProjectChatCleanup } from "./chat/project-deletion.js";
-import { createRuntimeAppAiRoutes } from "./app-ai/runtime.js";
-import { restoreBackgroundChatThread, createBackgroundChatProjection } from "./coding-agents/background-chat-recovery.js";
-import { createBackgroundAgentRuntime } from "./background-agent-runtime.js";
-import { ChatSharing } from "./chat/sharing.js";
-import { withAsyncChatInput } from "./chat/async-input-adapter.js";
-import { createChatSharingRoutes } from "./chat/sharing-routes.js";
-import { readFileSync, existsSync, readdirSync } from "node:fs";
+import { serve } from "@hono/node-server";
+import { createNodeWebSocket } from "@hono/node-ws";
+import {
+  backupModule,
+  checkModuleHealth,
+  createHeartbeat,
+  createMemoryStore,
+  createWatchdog,
+  DEFAULT_APPROVAL_POLICY,
+  loadHandle,
+  restoreModule,
+  type ApprovalPolicy,
+  type Heartbeat,
+  type Watchdog,
+} from "@matrix-os/kernel";
+import { installPostHogHonoErrorTracking, resolveOwnerTelemetryDistinctId } from "@matrix-os/observability";
+import { TerminalRuntimeSocketClient } from "@matrix-os/terminal-runtime";
+import { terminalTasksUnderPressure } from "@matrix-os/terminal-runtime/user-systemd-capacity";
+import { Hono, type Context } from "hono";
+import { bodyLimit } from "hono/body-limit";
+import { cors } from "hono/cors";
+import { existsSync, readFileSync } from "node:fs";
 import {
   appendFile as appendFileAsync,
   mkdir as mkdirAsync,
   writeFile as writeFileAsync,
 } from "node:fs/promises";
-import { randomBytes, randomUUID } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
-import { Hono, type Context } from "hono";
-import { cors } from "hono/cors";
-import { bodyLimit } from "hono/body-limit";
-import { serve } from "@hono/node-server";
-import { createNodeWebSocket } from "@hono/node-ws";
-import { installPostHogHonoErrorTracking, resolveOwnerTelemetryDistinctId } from "@matrix-os/observability";
-import { TerminalRuntimeSocketClient } from "@matrix-os/terminal-runtime";
-import { createDispatcher, type Dispatcher, type BatchEntry, type DispatchContext } from "./dispatcher.js";
+import { createAgentLauncher } from "./agent-launcher.js";
+import { createAgentSandbox } from "./agent-sandbox.js";
+import { createAgentSessionManager } from "./agent-session-manager.js";
+import { createAiGenerationRecorder } from "./ai-analytics.js";
+import { createAllowedOriginController } from "./allowed-origins.js";
+import { createRuntimeAppAiRoutes } from "./app-ai/runtime.js";
+import type { AppRegistry } from "./app-db-registry.js";
+import type { AppDb } from "./app-db.js";
+import { listApps } from "./apps.js";
+import { authMiddleware } from "./auth.js";
+import { createBackgroundAgentRuntime } from "./background-agent-runtime.js";
+import { formatForChannel } from "./channels/format.js";
+import { withAsyncChatInput } from "./chat/async-input-adapter.js";
+import { createClaudeChatProviderAdapter } from "./chat/claude-provider-adapter.js";
+import { createCanonicalCodingChatProviderAdapter } from "./chat/coding-provider-adapter.js";
+import type { ChatExecutionRootResolver } from "./chat/execution-root.js";
+import type { createGatewayChatEventStream } from "./chat/gateway-event-stream.js";
+import { createHermesChatProviderAdapter } from "./chat/hermes-provider-adapter.js";
+import { withCanonicalIdleChat } from "./chat/idle-runtime-admission.js";
+import { createKernelChatProviderAdapter } from "./chat/kernel-provider-adapter.js";
+import { createOpenClawChatProviderAdapter } from "./chat/openclaw-provider-adapter.js";
+import { CanonicalChatOrchestrator } from "./chat/orchestrator.js";
+import { createOwnerToolOutputProjection } from "./chat/owner-tool-output.js";
+import { createProjectChatCleanup } from "./chat/project-deletion.js";
+import {
+  CanonicalChatProviderRegistry,
+  type CanonicalChatProviderAdapter,
+} from "./chat/provider-adapter.js";
+import { closeCanonicalChatEventLifecycle } from "./chat/routes.js";
+import { createGatewayChatProviderCatalog } from "./chat/runtime-provider-catalog.js";
+import { createCanonicalChatRuntime } from "./chat/runtime.js";
+import { createBackgroundChatProjection, restoreBackgroundChatThread } from "./coding-agents/background-chat-recovery.js";
+import {
+  createChatIdleReaper,
+  isWorkspaceSessionRuntimeAlive,
+} from "./coding-agents/chat-idle-reaper.js";
+import { createCodexControlClient } from "./coding-agents/codex-control-client.js";
+import { createCodexEventBridge, type CodexEventBridge } from "./coding-agents/codex-event-bridge.js";
+import { createCodingAgentFileStore } from "./coding-agents/file-read.js";
+import { createCodingHarnessCredentialResolver } from "./coding-agents/harness-credentials.js";
+import { createCodingAgentNotificationPreferenceStore } from "./coding-agents/notification-preferences.js";
+import { createCodingAgentPreviewSummaryStore } from "./coding-agents/preview-summary.js";
+import { createCodingAgentProjectMutationService } from "./coding-agents/project-mutations.js";
+import { createOwnerCodingAgentProjectSummaryStore } from "./coding-agents/project-summary.js";
+import { createOwnerCodingAgentProjectWorkspaceStore } from "./coding-agents/project-workspace.js";
+import { tryLoadToolOutputKey } from "./coding-agents/protected-tool-output.mjs";
+import { cleanupStaleIsolatedProviderProcesses } from "./coding-agents/provider-process-isolation.js";
+import { createCodingAgentProviderRegistry } from "./coding-agents/provider-registry.js";
+import { createCodingAgentReviewSummaryStore } from "./coding-agents/review-summary.js";
+import { createCodingAgentRoutes } from "./coding-agents/routes.js";
+import { createCodingAgentRuntimeSummaryService } from "./coding-agents/runtime-summary.js";
+import { createCodingAgentSessionStopReconciler } from "./coding-agents/session-stop-reconciler.js";
+import { createCodingAgentSourceControlStore } from "./coding-agents/source-control.js";
+import { createCodingAgentThreadRelationValidator } from "./coding-agents/thread-relations.js";
+import { createCodingAgentThreadStore, createFakeCodingAgentProvider, type CodingAgentProviderAdapter, type CodingAgentThreadStore, type CodingAgentTurnStore } from "./coding-agents/thread-store.js";
+import { createCodingAgentThreadStream } from "./coding-agents/thread-stream.js";
+import { createCodingAgentTurnLifecycle } from "./coding-agents/turn-lifecycle.js";
+import { resolveWorkspaceProviderRuntime } from "./coding-agents/workspace-provider-config.js";
+import { createWorkspaceCodingAgentProviderSet } from "./coding-agents/workspace-provider.js";
+import type { createDiscussionOnlyChatExecutionGuard } from "./collaboration/chat-scope.js";
+import { createLegacyProjectPathAdmission } from "./collaboration/project-path-admission.js";
+import {
+  describeGatewayCollaborationConfiguration,
+  loadGatewayCollaborationConfig,
+  type GatewayCollaborationConfigurationFailure,
+  type GatewayCollaborationRuntime,
+} from "./collaboration/wiring.js";
+import { createConversationContextResolver } from "./conversation-context.js";
+import { createConversationLifecycle } from "./conversation-lifecycle.js";
+import { createConversationMutationLock } from "./conversation-mutation-lock.js";
+import {
+  drainReconnectableAbortEntries,
+  type ReconnectableAbortEntry,
+} from "./conversation-reconnect-aborts.js";
+import { ConversationRunRegistry } from "./conversation-run-registry.js";
+import { saveSummary, summarizeConversation } from "./conversation-summary.js";
+import { createConversationStore, type ConversationStore } from "./conversations.js";
+import { createCronService, type CronService } from "./cron/service.js";
+import { createCronStore } from "./cron/store.js";
+import { createDispatcher, type Dispatcher } from "./dispatcher.js";
 import {
   createFundedAiCredentialManager,
   loadFundedAiRuntimeConfig,
 } from "./funded-ai-credential-manager.js";
 import { createFundedAiFundingSummaryClient } from "./funded-ai-funding-summary-client.js";
 import { createFundedAiReadinessReader } from "./funded-ai-readiness.js";
-import { createGatewaySpeechRuntime } from "./speech/gateway-runtime.js";
-import { buildKernelCredentialLaunch } from "./kernel-credentials.js";
-import { createAllowedOriginController } from "./allowed-origins.js";
-import { createAiGenerationRecorder } from "./ai-analytics.js";
-import { createWatcher, type Watcher } from "./watcher.js";
-import { createPtyHandler, type PtyMessage } from "./pty.js";
-import { createConversationStore, type ConversationStore } from "./conversations.js";
-import {
-  createConversationLifecycle,
-  providerResumeSessionId,
-} from "./conversation-lifecycle.js";
-import { createConversationContextResolver } from "./conversation-context.js";
-import { createConversationMutationLock } from "./conversation-mutation-lock.js";
-import { stampApprovalRequestForReplay } from "./conversation-approval-replay.js";
-import { buildDispatchFailureReplayMessage } from "./conversation-dispatch-failure.js";
-import {
-  conversationHistoryRefreshRequired,
-  ConversationRunRegistry,
-  type ConversationRunMessage,
-} from "./conversation-run-registry.js";
-import {
-  clearReconnectAbortTimersForSession as clearReconnectAbortTimers,
-  drainReconnectableAbortEntries,
-  replaceReconnectableAbortEntry,
-  scheduleReconnectAbortTimersForDisconnectedClient,
-  type ReconnectableAbortEntry,
-} from "./conversation-reconnect-aborts.js";
-import { summarizeConversation, saveSummary } from "./conversation-summary.js";
-import { extractMemoriesLocal } from "./memory-extractor.js";
-import { createWorkspaceRoutes } from "./workspace-routes.js";
-import { createPreviewManager } from "./preview-manager.js";
-import { createProjectManager } from "./project-manager.js";
-import { createTaskManager } from "./task-manager.js";
-import { createReviewStore } from "./review-store.js";
-import { createElixirSymphonyProxyRoutes } from "./symphony/proxy.js";
-import { createSymphonyRunner } from "./symphony-runner.js";
-import { createAgentLauncher } from "./agent-launcher.js";
-import { resolveAgentCredentialProbe } from "./onboarding/agent-credential-probe.js";
-import { createAgentSessionManager } from "./agent-session-manager.js";
-import { createAgentSandbox } from "./agent-sandbox.js";
-import { createWorktreeManager } from "./worktree-manager.js";
-import {
-  createWorkspaceSessionOrchestrator,
-  type WorkspaceSessionOrchestrator,
-} from "./workspace-session-orchestrator.js";
-import { createWorkspaceEventStore } from "./workspace-events.js";
-import { createWorkspaceEventPublisher } from "./workspace-event-publisher.js";
-import {
-  createProviderLoginTerminalRegistry,
-  createSessionRuntimeBridge,
-} from "./session-runtime-bridge.js";
-import { createTerminalLiveOwnership } from "./terminal-live-ownership.js";
-import { createWorkspaceStartupRecovery } from "./workspace-startup-recovery.js";
-import { createChannelManager, type ChannelManager } from "./channels/manager.js";
-import { createOutboundQueue } from "./security/outbound-queue.js";
-import { createRateLimiter } from "./security/rate-limiter.js";
-import { timingSafeStringEquals } from "./security/timing-safe.js";
-import { createTelegramAdapter, type TelegramAdapter } from "./channels/telegram.js";
-import { createTelegramStream } from "./channels/telegram-stream.js";
-import { createPushAdapter } from "./channels/push.js";
-import { createSessionStore } from "./session-store.js";
-import { formatForChannel } from "./channels/format.js";
-import type { ChannelConfig, ChannelId } from "./channels/types.js";
-import { createCronStore } from "./cron/store.js";
-import { createCronService, type CronService } from "./cron/service.js";
 import { createHeartbeatRunner, type HeartbeatRunner } from "./heartbeat/runner.js";
-import {
-  createHeartbeat,
-  backupModule,
-  restoreModule,
-  checkModuleHealth,
-  createWatchdog,
-  createTask,
-  listTasks,
-  getTask,
-  type Heartbeat,
-  type Watchdog,
-  type KernelEvent,
-  loadHandle,
-  createUsageTracker,
-  createMemoryStore,
-} from "@matrix-os/kernel";
-import { createProvisioner } from "./provisioner.js";
-import {
-  authMiddleware,
-  readPreviewTerminalOwner,
-} from "./auth.js";
-import {
-  isRequestPrincipalError,
-  mapRequestPrincipalError,
-  ownerScopeFromPrincipal,
-  requireRequestPrincipal,
-  type RequestPrincipal,
-} from "./request-principal.js";
-import { createOnboardingHandler } from "./onboarding/ws-handler.js";
-import { InMemoryReadinessRepository } from "./onboarding/readiness-repository.js";
-import { createReadinessService } from "./onboarding/readiness-service.js";
-import { ReadinessStatusCache } from "./onboarding/readiness-cache.js";
+import { createInteractionLogger, type InteractionLogger } from "./logger.js";
+import { extractMemoriesLocal } from "./memory-extractor.js";
 import type { ReadinessResponse } from "./onboarding/activation-contracts.js";
-import { createReadinessRoutes } from "./onboarding/readiness-routes.js";
-import { createHostToolPackInstaller, createToolPackService, InMemoryToolPackRepository } from "./onboarding/tool-packs.js";
-import { createToolPackRoutes } from "./onboarding/tool-pack-routes.js";
-import type { CodingSetupStatus } from "./onboarding/coding-setup.js";
-import { createAgentCredentialStatusService } from "./onboarding/agent-credential-status.js";
-import { createAgentCredentialRoutes } from "./onboarding/agent-credential-routes.js";
-import { createCodingAgentRuntimeSummaryService } from "./coding-agents/runtime-summary.js";
-import { createCodingAgentRoutes } from "./coding-agents/routes.js";
-import { createCodingAgentThreadStore, createFakeCodingAgentProvider, type CodingAgentProviderAdapter, type CodingAgentThreadStore, type CodingAgentTurnStore } from "./coding-agents/thread-store.js";
-import { createCodingAgentThreadStream, threadStreamFrameDataToString } from "./coding-agents/thread-stream.js";
-import { createWorkspaceCodingAgentProviderSet } from "./coding-agents/workspace-provider.js";
-import { createCodingHarnessCredentialResolver } from "./coding-agents/harness-credentials.js";
-import { resolveWorkspaceProviderRuntime } from "./coding-agents/workspace-provider-config.js";
-import { createCodingAgentSessionStopReconciler } from "./coding-agents/session-stop-reconciler.js";
-import { createCodingAgentTurnLifecycle } from "./coding-agents/turn-lifecycle.js";
-import { createCodingAgentReviewSummaryStore } from "./coding-agents/review-summary.js";
-import { createCodingAgentPreviewSummaryStore } from "./coding-agents/preview-summary.js";
-import { createOwnerCodingAgentProjectSummaryStore } from "./coding-agents/project-summary.js";
-import { createOwnerCodingAgentProjectWorkspaceStore } from "./coding-agents/project-workspace.js";
-import { createCodingAgentThreadRelationValidator } from "./coding-agents/thread-relations.js";
-import { createCodingAgentProviderRegistry } from "./coding-agents/provider-registry.js";
-import { cleanupStaleIsolatedProviderProcesses } from "./coding-agents/provider-process-isolation.js";
-import { createGatewayChatProviderCatalog } from "./chat/runtime-provider-catalog.js";
-import { createChatProviderRoutes } from "./chat/provider-routes.js";
-import {
-  closeCanonicalChatEventLifecycle,
-  createCanonicalChatRoutes,
-} from "./chat/routes.js";
-import type { createGatewayChatEventStream } from "./chat/gateway-event-stream.js";
-import { registerCanonicalChatEventHttpRoute } from "./chat/event-http-route.js";
-import { registerCanonicalChatEventWebSocketRoute } from "./chat/event-websocket-route.js";
-import type { ChatExecutionRootResolver } from "./chat/execution-root.js";
-import { createChatTerminalSessionService } from "./chat/terminal-session-service.js";
-import { createHermesChatProviderAdapter } from "./chat/hermes-provider-adapter.js";
-import { createOpenClawChatProviderAdapter } from "./chat/openclaw-provider-adapter.js";
-import { createKernelChatProviderAdapter } from "./chat/kernel-provider-adapter.js";
-import { createClaudeChatProviderAdapter } from "./chat/claude-provider-adapter.js";
-import { createCanonicalCodingChatProviderAdapter } from "./chat/coding-provider-adapter.js";
-import {
-  CanonicalChatProviderRegistry,
-  type CanonicalChatProviderAdapter,
-} from "./chat/provider-adapter.js";
-import { CanonicalChatOrchestrator } from "./chat/orchestrator.js";
-import { createCanonicalChatRuntime } from "./chat/runtime.js";
-import { createChatAgentRoutes } from "./chat/agent-routes.js";
-import {
-  createCanonicalChatService,
-  createUnavailableCanonicalChatService,
-} from "./chat/service.js";
-import type { createDiscussionOnlyChatExecutionGuard } from "./collaboration/chat-scope.js";
-import { initializeOwnerDatabaseServices } from "./startup/owner-database.js";
-import { initializePlatformIntegrations } from "./startup/platform-integrations.js";
-import {
-  describeGatewayCollaborationConfiguration,
-  loadGatewayCollaborationConfig,
-  registerFailClosedCollaborationRoutes,
-  type GatewayCollaborationConfigurationFailure,
-  type GatewayCollaborationRuntime,
-} from "./collaboration/wiring.js";
-import { createLegacyProjectPathAdmission } from "./collaboration/project-path-admission.js";
 import { createCodingAgentFilePreviewWiring } from "./coding-agents/file-preview-wiring.js";
-import { createCodingAgentSourceControlStore } from "./coding-agents/source-control.js";
-import { registerCodingAgentAttentionNotifications } from "./coding-agents/attention-notifications.js";
-import { createCodingAgentNotificationPreferenceStore } from "./coding-agents/notification-preferences.js";
-import { createCodingAgentProjectMutationService } from "./coding-agents/project-mutations.js";
-import { createCodexEventBridge, type CodexEventBridge } from "./coding-agents/codex-event-bridge.js";
-import { createCodexControlClient } from "./coding-agents/codex-control-client.js";
-import {
-  createChatIdleReaper,
-  isWorkspaceSessionRuntimeAlive,
-} from "./coding-agents/chat-idle-reaper.js";
-import { withCanonicalIdleChat } from "./chat/idle-runtime-admission.js";
-import { terminalTasksUnderPressure } from "@matrix-os/terminal-runtime/user-systemd-capacity";
-import { createAgentActionAuditService } from "./onboarding/agent-action-audit.js";
-import { capabilityIdsForConnectedServices, createIntegrationCapabilityService } from "./onboarding/integration-capabilities.js";
-import { createIntegrationCapabilityRoutes } from "./onboarding/integration-capability-routes.js";
-import { createAdminControlService } from "./onboarding/admin-control-service.js";
 import { createAdminControlRoutes } from "./onboarding/admin-control-routes.js";
+import { createAdminControlService } from "./onboarding/admin-control-service.js";
+import { createAgentActionAuditService } from "./onboarding/agent-action-audit.js";
+import { resolveAgentCredentialProbe } from "./onboarding/agent-credential-probe.js";
+import { createAgentCredentialRoutes } from "./onboarding/agent-credential-routes.js";
+import { createAgentCredentialStatusService } from "./onboarding/agent-credential-status.js";
+import type { CodingSetupStatus } from "./onboarding/coding-setup.js";
 import { createCompanyBrainReadinessService } from "./onboarding/company-brain-readiness.js";
 import { createCompanyBrainRoutes } from "./onboarding/company-brain-routes.js";
 import { createDraftActionReadinessService } from "./onboarding/draft-action-readiness.js";
 import { createDraftActionRoutes } from "./onboarding/draft-action-routes.js";
-import { createVocalHandler } from "./vocal/ws-handler.js";
 import type { GeminiLiveConnection } from "./onboarding/gemini-live.js";
+import { capabilityIdsForConnectedServices, createIntegrationCapabilityService } from "./onboarding/integration-capabilities.js";
+import { createIntegrationCapabilityRoutes } from "./onboarding/integration-capability-routes.js";
+import { ReadinessStatusCache } from "./onboarding/readiness-cache.js";
+import { InMemoryReadinessRepository } from "./onboarding/readiness-repository.js";
+import { createReadinessRoutes } from "./onboarding/readiness-routes.js";
+import { createReadinessService } from "./onboarding/readiness-service.js";
+import { createToolPackRoutes } from "./onboarding/tool-pack-routes.js";
+import { createHostToolPackInstaller, createToolPackService, InMemoryToolPackRepository } from "./onboarding/tool-packs.js";
+import { createPreviewManager } from "./preview-manager.js";
+import { createProjectManager } from "./project-manager.js";
+import { createProvisioner } from "./provisioner.js";
+import { requireRequestPrincipal } from "./request-principal.js";
+import { createReviewStore } from "./review-store.js";
 import { securityHeadersMiddleware } from "./security/headers.js";
-import { getSystemInfo, getVersion } from "./system-info.js";
-import { collectSystemActivity } from "./system-activity/collector.js";
-import { CleanupCandidateRegistry, executeCleanupAction } from "./system-activity/cleanup.js";
-import { ActivityHistoryStore, AutoCleanupPolicyStore } from "./system-activity/history.js";
-import { createSystemActivityRoutes } from "./system-activity/routes.js";
 import {
-  checkForSystemUpdate,
-  listSystemReleases,
-  parseInternalUpgradeTarget,
-  readSystemUpdateFailure,
-  resolveInternalUpgradeInstallTarget,
-  resolveInternalUpgradeStartTarget,
-  resolveSystemUpdateChannel,
-  startSystemUpdate,
-  startSystemUpdateRepair,
-  writeInternalUpgradeTrigger,
-} from "./system-update.js";
-import { createInteractionLogger, type InteractionLogger } from "./logger.js";
-import { createApprovalBridge, type ApprovalBridge } from "./approval.js";
-import { DEFAULT_APPROVAL_POLICY, type ApprovalPolicy } from "@matrix-os/kernel";
-import { listApps } from "./apps.js";
-import type { AppDb } from "./app-db.js";
-import type { AppRegistry } from "./app-db-registry.js";
+  createProviderLoginTerminalRegistry,
+  createSessionRuntimeBridge,
+} from "./session-runtime-bridge.js";
+import { createGatewaySpeechRuntime } from "./speech/gateway-runtime.js";
+import { initializeOwnerDatabaseServices } from "./startup/owner-database.js";
+import { initializePlatformIntegrations } from "./startup/platform-integrations.js";
+import { createSymphonyRunner } from "./symphony-runner.js";
+import { createElixirSymphonyProxyRoutes } from "./symphony/proxy.js";
+import { getVersion } from "./system-info.js";
+import { createTaskManager } from "./task-manager.js";
+import { createTerminalLiveOwnership } from "./terminal-live-ownership.js";
+import { createWatcher, type Watcher } from "./watcher.js";
+import { createWorkspaceEventPublisher } from "./workspace-event-publisher.js";
+import { createWorkspaceEventStore } from "./workspace-events.js";
+import { createWorkspaceRoutes } from "./workspace-routes.js";
+import {
+  createWorkspaceSessionOrchestrator,
+  type WorkspaceSessionOrchestrator,
+} from "./workspace-session-orchestrator.js";
+import { createWorkspaceStartupRecovery } from "./workspace-startup-recovery.js";
+import { createWorktreeManager } from "./worktree-manager.js";
 
+import { type Kysely } from "kysely";
 import type { QueryEngine } from "./app-db-query.js";
 import { isSafeName, normalizeAppStorageSlug } from "./app-db-types.js";
 import type { KvStore } from "./app-db-kv.js";
 import type { PlatformDb } from "./platform-db.js";
-import { registerCustomMcpGatewayRoutes } from "./integrations/custom-mcp/gateway-routes.js";
 import { createIntegrationBridgeRoutes } from "./integrations/bridge-routes.js";
 import { createIntegrationProxyResponse } from "./integrations/proxy-response.js";
-import { z } from "zod/v4";
 import {
   createPluginRegistry,
   loadAllPlugins,
@@ -256,9 +184,7 @@ import {
 import { createSettingsRoutes } from "./routes/settings.js";
 import { AiProviderService } from "./ai-providers/service.js";
 import { createLazyProviderSnapshotReader } from "./collaboration/lazy-provider-snapshot-reader.js";
-import { createAiProviderRoutes } from "./ai-providers/routes.js";
 import { ProviderSettingsStore } from "./ai-providers/provider-settings-store.js";
-import { createProviderSettingsRoutes } from "./ai-providers/provider-settings-routes.js";
 import {
   createProviderGenericHarnessCoordinator,
   reconcileProviderRuntimeAtStartup,
@@ -276,96 +202,87 @@ import {
   createAgentRuntimeServices,
   createLazyOpenClawRpc,
 } from "./agent-config/runtime-services.js";
-import { syncApp, createSyncRoutes } from "./sync/routes.js";
-import { initializeSyncInfrastructure } from "./sync/infrastructure.js";
+import { createGenericHarnessModelCatalogReader } from "./ai-providers/generic-harness-model-catalog.js";
+import { createDefaultProviderCliAccountLifecycleCoordinator } from "./ai-providers/provider-cli-account-lifecycle.js";
+import { createProviderDriverInventoryReader } from "./ai-providers/provider-driver-inventory.js";
+import {
+  createProviderGenericHarnessCoordinator,
+  reconcileProviderRuntimeAtStartup,
+} from "./ai-providers/provider-generic-harness-coordinator.js";
+import type { CanonicalProviderSnapshotReader } from "./ai-providers/provider-settings-coordinators.js";
+import { ProviderSettingsStore } from "./ai-providers/provider-settings-store.js";
+import { createProviderTerminalLoginCoordinator } from "./ai-providers/provider-terminal-login-coordinator.js";
+import { AiProviderService } from "./ai-providers/service.js";
+import type { KvStore } from "./app-db-kv.js";
+import type { QueryEngine } from "./app-db-query.js";
+import { isSafeName, normalizeAppStorageSlug } from "./app-db-types.js";
+import type { CanvasRepository } from "./canvas/repository.js";
+import type { CanvasService } from "./canvas/service.js";
+import { CanvasSubscriptionHub } from "./canvas/subscriptions.js";
+import { createIntegrationBridgeRoutes } from "./integrations/bridge-routes.js";
+import { createIntegrationProxyResponse } from "./integrations/proxy-response.js";
+import type { PlatformDb } from "./platform-db.js";
+import {
+  createHookRunner,
+  createPluginRegistry,
+  loadAllPlugins,
+  type HookRunner,
+  type LoadedPlugin,
+  type PluginRegistry,
+} from "./plugins/index.js";
+import { createHermesRoutes } from "./routes/hermes.js";
+import { createSettingsRoutes } from "./routes/settings.js";
+import { bootstrapSocialSchema, createSocialRoutes, type SocialRoutes } from "./social.js";
 import { createManifestDb } from "./sync/db-impl.js";
 import { createHomeMirror, type HomeMirror } from "./sync/home-mirror.js";
+import { initializeSyncInfrastructure } from "./sync/infrastructure.js";
+import { createSyncRoutes, syncApp } from "./sync/routes.js";
 import {
   deriveHomeMirrorSyncIdentity,
   resolveSyncScope,
-  syncScopeRegistryKey,
 } from "./sync/runtime-scope.js";
-import { createSyncPeerLifecycle } from "./sync/ws-peer-lifecycle.js";
 import {
   type SyncDatabase,
 } from "./sync/sharing-db.js";
-import { sql, type Kysely } from "kysely";
-import { createSocialRoutes, insertPost, bootstrapSocialSchema, type SocialRoutes } from "./social.js";
-import { createActivityService } from "./social-activity.js";
-import type { CanvasRepository } from "./canvas/repository.js";
-import type { CanvasService } from "./canvas/service.js";
-import { createCanvasRoutes } from "./canvas/routes.js";
-import { CanvasSubscriptionHub } from "./canvas/subscriptions.js";
-import { CanvasIdSchema } from "./canvas/contracts.js";
 
+import type { WSContext } from "hono/ws";
 import {
   createChatAttachmentCleanupLifecycle,
 } from "./chat/attachment-cleanup.js";
-import type { OsViewStateRepository } from "./os-view-state/repository.js";
-import { createOsViewStateRoutes } from "./os-view-state/routes.js";
-import { createOsViewAgentTools } from "./os-view-state/agent-tools.js";
 import type { ChatRepository } from "./chat/repository.js";
+import { createForwardTunnelHub } from "./forward-ws.js";
 import type { MessagingKyselyRepository } from "./messages/repository.js";
 import { createMessagingRoutes } from "./messages/routes.js";
-import type { WSContext } from "hono/ws";
-import {
-  MainWsClientMessageSchema,
-  type MainWsClientMessage,
-} from "./ws-message-schema.js";
-import type { GatewayConfig, ServerMessage } from "./server/types.js";
-import {
-  kernelEventToServerMessage,
-  kernelResultFallbackText,
-  send,
-  sendClientAck,
-} from "./server/main-ws-messages.js";
+import { wsConnectionsActive } from "./metrics.js";
+import { createOsViewAgentTools } from "./os-view-state/agent-tools.js";
+import type { OsViewStateRepository } from "./os-view-state/repository.js";
+import { createOsViewStateRoutes } from "./os-view-state/routes.js";
+import { registerBridgeDataRoutes } from "./server/bridge-routes.js";
+import { registerCanvasGatewayRoutes } from "./server/canvas-gateway-routes.js";
+import { registerCodingAgentThreadWebSocketRoutes } from "./server/coding-agent-thread-ws-routes.js";
+import { registerCollaborationChatRoutes } from "./server/collaboration-chat-routes.js";
+import { registerConversationHistoryRoutes } from "./server/conversation-history-routes.js";
+import { registerDeferredRuntimeRoutes } from "./server/deferred-runtime-routes.js";
+import { registerFileRoutes } from "./server/file-routes.js";
+import { registerHomeUtilityRoutes } from "./server/home-utility-routes.js";
+import { registerMainWebSocketRoutes } from "./server/main-ws-routes.js";
+import { registerMessageLayoutRoutes } from "./server/message-layout-routes.js";
+import { registerOperationalRoutes } from "./server/operational-routes.js";
+import { registerShellTerminalRoutes } from "./server/shell-terminal-routes.js";
 import {
   resolveInitialSymphonyPort,
   symphonyUpstreamOriginForPort,
 } from "./server/symphony-origin.js";
-import { registerAppRuntimeRoutes } from "./server/app-runtime-routes.js";
-import { registerFileRoutes } from "./server/file-routes.js";
-import { registerBridgeDataRoutes } from "./server/bridge-routes.js";
-import { registerAppManagementRoutes } from "./server/app-management-routes.js";
-import { registerConversationHistoryRoutes } from "./server/conversation-history-routes.js";
-import { startTerminalPasteAssetCleanup } from "./shell/paste-asset-cleanup-runtime.js";
-import {
-  metricsRegistry,
-  httpRequestsTotal,
-  httpRequestDuration,
-  wsConnectionsActive,
-  normalizePath,
-} from "./metrics.js";
+import { registerSystemOperatorRoutes } from "./server/system-operator-routes.js";
+import { registerTerminalWebSocketRoutes } from "./server/terminal-ws-routes.js";
+import type { GatewayConfig, ServerMessage } from "./server/types.js";
+import { registerVoiceWebSocketRoutes } from "./server/voice-ws-routes.js";
 import {
   createShellRoutes,
-  SHELL_SESSION_CREATE_RATE_LIMIT,
   ShellPreferencesStore,
-  createShellCommandRunner,
-  createTerminalAcceptanceRoutes,
-  createTerminalWindowLayoutRoutes,
   TerminalWindowLayoutStore,
-  createTerminalWorkspaceRoutes,
-  createTerminalWorkspaceProjectAdmission,
 } from "./shell/index.js";
-import {
-  CLIENT_ERROR_LOG_BODY_LIMIT,
-  ClientErrorReportSchema,
-  forwardClientErrorToPostHog,
-  writeClientErrorReport,
-} from "./client-error-log.js";
-import { createForwardTunnelHub } from "./forward-ws.js";
-import { registerTerminalWebSocketRoutes } from "./server/terminal-ws-routes.js";
-import { registerMainWebSocketRoutes } from "./server/main-ws-routes.js";
-import { registerVoiceWebSocketRoutes } from "./server/voice-ws-routes.js";
-import { registerCodingAgentThreadWebSocketRoutes } from "./server/coding-agent-thread-ws-routes.js";
-import { registerMessageLayoutRoutes } from "./server/message-layout-routes.js";
-import { registerHomeUtilityRoutes } from "./server/home-utility-routes.js";
-import { registerSystemOperatorRoutes } from "./server/system-operator-routes.js";
-import { registerShellTerminalRoutes } from "./server/shell-terminal-routes.js";
-import { registerOperationalRoutes } from "./server/operational-routes.js";
-import { registerCanvasGatewayRoutes } from "./server/canvas-gateway-routes.js";
-import { registerCollaborationChatRoutes } from "./server/collaboration-chat-routes.js";
-import { registerDeferredRuntimeRoutes } from "./server/deferred-runtime-routes.js";
+import { startTerminalPasteAssetCleanup } from "./shell/paste-asset-cleanup-runtime.js";
 import { initializeGatewayChannels } from "./startup/channels.js";
 
 export {
@@ -373,15 +290,15 @@ export {
   createAllowedOriginController,
 } from "./allowed-origins.js";
 export {
+  readInitialSymphonyPort,
+  resolveInitialSymphonyPort,
+} from "./server/symphony-origin.js";
+export type { GatewayConfig, ServerMessage } from "./server/types.js";
+export {
   registerTerminalSessionRoutes,
   TERMINAL_SESSION_DELETE_BODY_LIMIT_BYTES,
   type TerminalSessionRouteRegistry,
 } from "./terminal-session-routes.js";
-export type { GatewayConfig, ServerMessage } from "./server/types.js";
-export {
-  readInitialSymphonyPort,
-  resolveInitialSymphonyPort,
-} from "./server/symphony-origin.js";
 
 export async function resetVolatilePtySessionList(persistPath: string): Promise<void> {
   await mkdirAsync(dirname(persistPath), { recursive: true });
@@ -962,7 +879,7 @@ export async function createGateway(config: GatewayConfig) {
     ownerAudioTranscriber: speechRuntime.ownerAudioTranscriber,
   });
 
-  const { syncR2, syncPeerRegistry, syncSharing, syncDeps } = await initializeSyncInfrastructure(kyselyInstance);
+  const { syncR2, syncPeerRegistry, syncDeps } = await initializeSyncInfrastructure(kyselyInstance);
 
   const geminiLiveConnection: GeminiLiveConnection =
     internalPlatformUrl && internalPlatformToken && internalHandle

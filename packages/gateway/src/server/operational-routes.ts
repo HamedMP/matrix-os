@@ -28,7 +28,7 @@ export async function registerOperationalRoutes(options: OperationalRouteOptions
     getLoadedPlugins, cronService, channelManager, upgradeBodyLimit,
     logUnexpectedJsonParseFailure } = options;
   // T2036: Activity auto-posting
-  const activityService = createActivityService({
+  void createActivityService({
     homePath,
     createPost: queryEngine ? (post) => insertPost(queryEngine, post) : async () => "",
   });
