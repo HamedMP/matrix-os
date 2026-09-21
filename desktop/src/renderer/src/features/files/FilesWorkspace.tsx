@@ -5,6 +5,7 @@ import RetainedPane from "../../design/RetainedPane";
 import { toUserMessage } from "../../lib/errors";
 import { useConnection } from "../../stores/connection";
 import ComputerFileBrowser, { type BrowserSelection } from "./ComputerFileBrowser";
+import { DesktopResourceSharing } from "./DesktopResourceSharing";
 import { PreviewPane, resolveActivePath, type FileSelection } from "./FilePreviewPane";
 import { openFileInDesktopEditor } from "../editor/desktop-editor-store";
 
@@ -161,6 +162,8 @@ export default function FilesWorkspace() {
             </div>
           );
         })}
+        {activePath && activeSelection?.entry ? <DesktopResourceSharing key={`${activeSelection.entry.type}:${activePath}`}
+          kind={activeSelection.entry.type === "directory" ? "folder" : "file"} path={activePath} /> : null}
         <button type="button" aria-label="Open Matrix home in new tab" onClick={() => openFolderTab("", "Matrix home")} className="mb-1 flex size-7 shrink-0 items-center justify-center rounded-md hover:bg-[var(--bg-hover)]" style={{ color: "var(--text-tertiary)" }}><Plus size={15} /></button>
       </div>
       <div data-testid="files-workspace-panes" data-layout={previewSelection ? "preview" : "browser"} className={`grid min-h-0 flex-1 grid-cols-1 overflow-hidden ${previewSelection ? "grid-rows-[minmax(220px,40%)_minmax(0,1fr)] md:grid-cols-[minmax(320px,3fr)_minmax(300px,2fr)] md:grid-rows-1" : "grid-rows-1"}`} style={{ background: "var(--bg-surface)" }}>
