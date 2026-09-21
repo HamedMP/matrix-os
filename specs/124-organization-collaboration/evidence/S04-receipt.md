@@ -33,3 +33,8 @@
 
 - **F5 departure cleanup (P2), S04 part.** `endActorGrants` (transactional per scope with the scope row locked; revokes member grants and deletes activations of organization-wide grants) was implemented here but called from nowhere; the S05 gateway control client now calls it on a pushed denial (see the S05 receipt). This layer adds the membership-cache half: RED `50ef4e5b1` (`evict is not a function`), GREEN `ab36fb67f`: `OrganizationMembershipClient.evict({ organizationId, actorId? })` drops cached evidence for one actor or for every actor of an organization, and marks in-flight lookups so their result is delivered but never cached (bounded by the in-flight cap). `organization-membership-client.ts` lives on `124/s03-gateway`; the change is committed on `124/s04` for the coordinator to move down if wanted.
 - Gates: `organization-membership-client` + `collaboration-org-precondition` + `collaboration-precondition-unavailable` + `collaboration-membership-races` → 26 passed / 4 skipped; gateway `tsc` clean; full `bun run typecheck` exit 0; patterns 0 violations / 5 inherited warnings.
+
+## Size review (2026-09-21)
+
+`capability-repository.ts` is 572 LOC with five responsibilities (grant mutation, activation decisions, departure/expiration, listing, policy resolution). Behavior-preserving extraction is tracked in issue #1826: `capability-listing.ts` (read-only listing + mappers), `capability-lifecycle.ts` (departure/expiration under the same scope-lock order), `capability-policy.ts` (preset resolution), with `CollaborationCapabilityRepository` kept as the facade so S05/S09/S15 call sites do not change. It lands as its own sub-500-addition PR after this layer merges.
+
