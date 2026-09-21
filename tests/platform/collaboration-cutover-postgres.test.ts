@@ -8,6 +8,7 @@ import {
 } from "../../packages/platform/src/collaboration/database.js";
 import { inventoryPlatformPersonToPersonRecords } from "../../packages/platform/src/collaboration/person-to-person-inventory.js";
 import { PlatformCollaborationCutover, cutoverTicketAdmission } from "../../packages/platform/src/collaboration/cutover.js";
+import { createGatewayCutoverHomeAdapter } from "../../packages/platform/src/collaboration/cutover-home-adapter.js";
 import { PlatformCollaborationRepository } from "../../packages/platform/src/collaboration/repository.js";
 import { CollaborationTicketIssuer } from "../../packages/platform/src/collaboration/ticket-issuer.js";
 
@@ -184,7 +185,8 @@ describe.skipIf(!connectionString)("collaboration cutover on real PostgreSQL (T0
     const coordinator = cutover(ownerHome);
     await coordinator.run(scopeId, { backupRef: "restricted-backup-1" });
     await expect(coordinator.rollback(scopeId, "legacy")).rejects.toThrow();
-    const compatible = await coordinator.rollback(scopeId, "compatible_direct");
+    await expect(coordinator.rollback(scopeId, "compatible_direct")).rejects.toThrow();
+    const compatible = await coordinator.rollback(scopeId, "compatible_direct", { compatibleDirectBuild: true });
     expect(compatible.phase).toBe("active");
     expect(compatible.rollbackMode).toBe("compatible_direct");
     expect(ownerHome.rollbackCompatible).toHaveBeenCalledOnce();
@@ -192,6 +194,70 @@ describe.skipIf(!connectionString)("collaboration cutover on real PostgreSQL (T0
     expect(disabled.phase).toBe("blocked");
     expect(disabled.blockReason).toBe("disabled_for_recovery");
     expect(ownerHome.disable).toHaveBeenCalledOnce();
+  });
+
+  it("adapts flat home inventory and canonical scoped drain without widening counts", async () => {
+    const scopeId = await orgScope();
+    const calls: Array<{ phase: string; source: number; target: number }> = [];
+    const flat = (phase: string) => ({
+      scopeId, organizationId: "org_current", phase,
+      authorityGeneration: ["active", "rolled_back", "blocked"].includes(phase) ? 2 : 1,
+      legacyCount: 1, grantCount: 1, invitationCount: 0, nonOrganizationCount: 0,
+      idsDigest, ceilingDigest, backupInventoryRef: "owner-inventory-1", backupRef: "owner-inventory-1",
+      fenceEpoch: phase === "inventoried" ? null : 3,
+      fenceDigest: phase === "inventoried" ? null : fenceDigest,
+      ...(phase === "drained" ? { interrupted: 1 } : {}),
+    });
+    const operation = (phase: string) => vi.fn(async (key: { expectedSourceGeneration: number; targetGeneration: number }) => {
+      calls.push({ phase, source: key.expectedSourceGeneration, target: key.targetGeneration });
+      return flat(phase);
+    });
+    const client = {
+      inventory: operation("inventoried"), freeze: operation("fenced"),
+      drain: vi.fn(async (key: { expectedSourceGeneration: number; targetGeneration: number }, callback: () => Promise<{ interrupted: number; remaining: number }>) => {
+        calls.push({ phase: "drained", source: key.expectedSourceGeneration, target: key.targetGeneration });
+        expect(await callback()).toEqual({ interrupted: 1, remaining: 0 });
+        return flat("drained");
+      }),
+      stage: operation("staged"), verify: operation("verified"), activate: operation("active"),
+      rollbackCompatible: vi.fn(async (key: { expectedSourceGeneration: number; targetGeneration: number }, proof: { compatibleDirectBuild: boolean }) => {
+        expect(proof).toEqual({ compatibleDirectBuild: true });
+        calls.push({ phase: "rolled_back", source: key.expectedSourceGeneration, target: key.targetGeneration });
+        return flat("rolled_back");
+      }),
+      disable: operation("blocked"),
+    };
+    const drainRuns = vi.fn(async () => ({ interrupted: 1, remaining: 0 }));
+    const adapter = createGatewayCutoverHomeAdapter({ client, drainRuns });
+    const coordinator = cutover(adapter);
+    const result = await coordinator.run(scopeId, { backupRef: "restricted-backup-1" });
+    expect(result).toMatchObject({ phase: "active", counts: { scopes: 1, grants: 2, invitations: 0 } });
+    expect(drainRuns).toHaveBeenCalledWith(expect.objectContaining({ scopeId, ownerId: "owner-a" }));
+    await coordinator.rollback(scopeId, "compatible_direct", { compatibleDirectBuild: true });
+    await coordinator.rollback(scopeId, "disable");
+    expect(calls.map((call) => call.phase)).toEqual([
+      "inventoried", "fenced", "drained", "staged", "verified", "active", "rolled_back", "blocked",
+    ]);
+    expect(calls.every((call) => call.source === 1 && call.target === 2)).toBe(true);
+  });
+
+  it("blocks a flat home response that changes the bound organization", async () => {
+    const scopeId = await orgScope();
+    const client = {
+      inventory: vi.fn(async () => ({
+        scopeId, organizationId: "different-org", phase: "inventoried", authorityGeneration: 1,
+        legacyCount: 0, grantCount: 1, invitationCount: 0, nonOrganizationCount: 0,
+        idsDigest, ceilingDigest, backupInventoryRef: "owner-inventory-1", backupRef: "owner-inventory-1",
+        fenceEpoch: null, fenceDigest: null,
+      })),
+      freeze: vi.fn(), drain: vi.fn(), stage: vi.fn(), verify: vi.fn(), activate: vi.fn(),
+      rollbackCompatible: vi.fn(), disable: vi.fn(),
+    };
+    const result = await cutover(createGatewayCutoverHomeAdapter({
+      client, drainRuns: async () => ({ interrupted: 0, remaining: 0 }),
+    })).run(scopeId, { backupRef: "restricted-backup-1" });
+    expect(result).toMatchObject({ phase: "blocked", blockReason: "home_unavailable" });
+    expect(client.freeze).not.toHaveBeenCalled();
   });
 
   it("rejects a new direct ticket after disabled rollback", async () => {
