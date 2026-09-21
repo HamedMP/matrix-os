@@ -51,6 +51,8 @@ export type PollResult = {
   profile?: { handle: string; userId: string };
 };
 
+export type DeviceAuthIntent = "sign-up" | "sign-in";
+
 type FetchFn = (input: string, init?: RequestInit) => Promise<Response>;
 
 // Re-authenticate slightly before the token's real expiry so an in-flight
@@ -191,7 +193,7 @@ export class AuthService {
     this.authGeneration += 1;
   }
 
-  async startDeviceFlow(): Promise<Pick<DeviceCodeResponse, "userCode" | "verificationUri" | "expiresIn">> {
+  async startDeviceFlow(intent: DeviceAuthIntent = "sign-up"): Promise<Pick<DeviceCodeResponse, "userCode" | "verificationUri" | "expiresIn">> {
     if (this.flowState === "pending" && this.pendingDeviceCode) {
       return this.pendingDeviceCode;
     }
@@ -207,9 +209,11 @@ export class AuthService {
     }
     if (nonce !== this.flowNonce) throw new Error("Sign-in request was canceled.");
     this.flowState = "pending";
+    const verificationUri = new URL(code.verificationUri);
+    verificationUri.searchParams.set("mode", intent);
     const pendingDeviceCode = {
       userCode: code.userCode,
-      verificationUri: code.verificationUri,
+      verificationUri: verificationUri.toString(),
       expiresIn: code.expiresIn,
     };
     this.pendingDeviceCode = pendingDeviceCode;

@@ -5,6 +5,7 @@ import { invoke } from "../../lib/operator";
 import { useConnection } from "../../stores/connection";
 
 type Phase = "idle" | "starting" | "waiting" | "expired" | "error";
+type AuthIntent = "sign-up" | "sign-in";
 
 const POLL_INTERVAL_MS = 2000;
 
@@ -23,10 +24,10 @@ export default function SignIn() {
   }, []);
   useEffect(() => stopPolling, [stopPolling]);
 
-  const start = useCallback(async () => {
+  const start = useCallback(async (intent: AuthIntent) => {
     setPhase("starting");
     try {
-      const code = await invoke("auth:start-device-flow", {});
+      const code = await invoke("auth:start-device-flow", { intent });
       setUserCode(code.userCode);
       setVerificationUri(code.verificationUri);
       setPhase("waiting");
@@ -85,7 +86,7 @@ export default function SignIn() {
               <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
                 {waitingForApproval
                   ? "Approve this desktop in your browser. The page returns you to Matrix Desktop automatically."
-                  : "Sign in or create an account in your browser, choose a Matrix computer, and the approval page returns you to Matrix Desktop automatically."}
+                  : "Create your account or sign in securely in your browser. Billing and computer setup stay on the web, then the approval page returns you to Matrix Desktop automatically."}
               </p>
               {!waitingForApproval ? (
                 <p className="mt-1 text-xs" style={{ color: "var(--text-tertiary)" }}>
@@ -152,18 +153,29 @@ export default function SignIn() {
                   </div>
                 </div>
 
-                <button
-                  type="button"
-                  disabled={phase === "starting"}
-                  onClick={() => void start()}
-                  className="no-drag flex h-11 w-full items-center justify-center gap-2 rounded-lg text-sm font-semibold transition-colors duration-100 disabled:opacity-60"
-                  style={{ background: "var(--accent)", color: "var(--text-on-accent)" }}
-                  onMouseEnter={(e) => (e.currentTarget.style.background = "var(--accent-hover)")}
-                  onMouseLeave={(e) => (e.currentTarget.style.background = "var(--accent)")}
-                >
-                  {phase === "starting" ? null : <ExternalLink size={16} aria-hidden />}
-                  {phase === "starting" ? "Opening browser…" : "Continue in browser"}
-                </button>
+                <div className="flex flex-col gap-2.5">
+                  <button
+                    type="button"
+                    disabled={phase === "starting"}
+                    onClick={() => void start("sign-up")}
+                    className="no-drag flex h-11 w-full items-center justify-center gap-2 rounded-lg text-sm font-semibold transition-colors duration-100 disabled:opacity-60"
+                    style={{ background: "var(--accent)", color: "var(--text-on-accent)" }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = "var(--accent-hover)")}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = "var(--accent)")}
+                  >
+                    {phase === "starting" ? null : <ExternalLink size={16} aria-hidden />}
+                    {phase === "starting" ? "Opening browser…" : "Create account"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={phase === "starting"}
+                    onClick={() => void start("sign-in")}
+                    className="no-drag flex h-11 w-full items-center justify-center rounded-lg border text-sm font-semibold transition-colors duration-100 disabled:opacity-60"
+                    style={{ borderColor: "var(--border-default)", background: "var(--bg-surface)", color: "var(--text-primary)" }}
+                  >
+                    Sign in
+                  </button>
+                </div>
 
                 {phase === "expired" ? (
                   <p className="text-center text-sm" style={{ color: "var(--warning)" }}>

@@ -9,7 +9,7 @@ logged (FR-081). The preload exposes exactly this surface via `contextBridge` as
 
 | Channel | Request | Response | Notes |
 |---|---|---|---|
-| `auth:start-device-flow` | `{}` | `{userCode, verificationUri, expiresIn}` | main opens system browser |
+| `auth:start-device-flow` | `{intent?: "sign-up" | "sign-in"}` | `{userCode, verificationUri, expiresIn}` | main returns the matching Clerk approval URL; renderer opens the system browser |
 | `auth:poll` | `{}` | `{status: "pending"\|"authorized"\|"expired", profile?}` | profile = `{handle, userId}` — no token |
 | `auth:status` | `{}` | `{signedIn, handle?, runtimeSlot, platformHost}` | |
 | `auth:sign-out` | `{}` | `{ok}` | clears credential + embed partitions (FR-006) |

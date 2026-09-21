@@ -1046,22 +1046,21 @@ describe("device routes", () => {
       );
     });
 
-    it("routes non-native missing-runtime responses through billing setup before recovery", async () => {
+    it("routes every missing-runtime response directly through browser billing setup", async () => {
       const res = await app.request("/auth/device?user_code=BCDF-GHJK");
       const html = await res.text();
 
       const branchStart = html.indexOf("if (res.status === 402 || res.status === 404) {");
-      const nativeRuntimeSetup = html.indexOf("if (nativeApp && res.status === 404)", branchStart);
       const billingRedirect = html.indexOf("redirectToBillingSetup();", branchStart);
       const fallbackRecovery = html.indexOf("showSignedInRecoveryState();", branchStart);
 
       expect(branchStart).toBeGreaterThanOrEqual(0);
-      expect(nativeRuntimeSetup).toBeGreaterThan(branchStart);
-      expect(billingRedirect).toBeGreaterThan(nativeRuntimeSetup);
+      expect(billingRedirect).toBeGreaterThan(branchStart);
       expect(fallbackRecovery).toBeGreaterThan(billingRedirect);
       expect(html).toContain(
-        "Billing-required clients enter browser billing; only native no-runtime 404s keep dedicated setup copy.",
+        "New and unprovisioned clients continue through browser billing and return here afterward.",
       );
+      expect(html).not.toContain("showRuntimeSetupState()");
     });
 
     it("renders native macOS approval copy with a signed app redirect", async () => {
@@ -1116,10 +1115,10 @@ describe("device routes", () => {
       expect(html).toContain(desktopPalette.danger);
       expect(html).toContain("appearance: clerkAppearance");
       expect(html).toContain("colorPrimary: '#0E3422'");
-      expect(html).toContain("var nativeApp = true;");
+      expect(html).not.toContain("var nativeApp = true;");
       expect(html).toContain("Checking Matrix OS");
-      expect(html).toContain("showRuntimeSetupState()");
-      expect(html).toContain("Create or activate your Matrix computer first");
+      expect(html).toContain("redirectToBillingSetup()");
+      expect(html).not.toContain("Create or activate your Matrix computer first");
       expect(html).toContain('<svg class="rabbit-mark rabbit-mark-phosphor"');
       expect(html).toContain(".rabbit-mark-phosphor { color: var(--green);");
       expect(html).not.toContain('<span class="brand-mark">M</span>');
