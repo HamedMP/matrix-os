@@ -382,20 +382,33 @@ describe("shared coding execution (S09)", () => {
       expect((c as { createRuntime: ReturnType<typeof vi.fn> }).createRuntime).not.toHaveBeenCalled();
     });
 
+    it("refuses an unrooted shared Chat and a root that differs from the signed sandbox mount", async () => {
+      const c = client();
+      const unrooted = createSharedCodexAdapter({ client: c, scopeId, executionGeneration: "7", harnessVersion: "1.0.0" });
+      const unrootedEvents = [];
+      for await (const event of unrooted.start(runInput("codex_default", "gpt-5.6-sol"))) unrootedEvents.push(event);
+      expect(unrootedEvents).toMatchObject([{ type: "run.completed", outcome: "failed" }]);
+      const mismatched = createSharedCodexAdapter({ client: c, scopeId, executionGeneration: "7", harnessVersion: "1.0.0", sandbox });
+      const mismatchedEvents = [];
+      for await (const event of mismatched.start({ ...runInput("codex_default", "gpt-5.6-sol"), executionRoot: "/home/matrix/home/projects/other" })) mismatchedEvents.push(event);
+      expect(mismatchedEvents).toMatchObject([{ type: "run.completed", outcome: "failed" }]);
+      expect((c as { createRuntime: ReturnType<typeof vi.fn> }).createRuntime).not.toHaveBeenCalled();
+    });
+
     it("reports a runtime crash and a run unit exit as loss reasons before failing the run", async () => {
       const crashed = client({ createRuntime: vi.fn(async () => { throw new ScopeRuntimeClientError("runtime_unavailable"); }) });
       const losses: string[] = [];
       const adapter = createSharedCodexAdapter({
-        client: crashed, scopeId, executionGeneration: "7", harnessVersion: "1.0.0", onLoss: (reason) => { losses.push(reason); },
+        client: crashed, scopeId, executionGeneration: "7", harnessVersion: "1.0.0", sandbox, onLoss: (reason) => { losses.push(reason); },
       });
       const events = [];
-      for await (const event of adapter.start(runInput("codex_default", "gpt-5.6-sol"))) events.push(event);
+      for await (const event of adapter.start({ ...runInput("codex_default", "gpt-5.6-sol"), executionRoot: sandbox.worktree.hostPath })) events.push(event);
       expect(events.at(-1)).toMatchObject({ type: "run.completed", outcome: "failed" });
       const exited = client({ runChat: vi.fn(async () => { throw Object.assign(new Error("runtime exited"), { code: "runtime_exited" }); }) });
       const adapter2 = createSharedCodexAdapter({
-        client: exited, scopeId, executionGeneration: "7", harnessVersion: "1.0.0", onLoss: (reason) => { losses.push(reason); },
+        client: exited, scopeId, executionGeneration: "7", harnessVersion: "1.0.0", sandbox, onLoss: (reason) => { losses.push(reason); },
       });
-      for await (const event of adapter2.start(runInput("codex_default", "gpt-5.6-sol"))) events.push(event);
+      for await (const event of adapter2.start({ ...runInput("codex_default", "gpt-5.6-sol"), executionRoot: sandbox.worktree.hostPath })) events.push(event);
       expect(losses).toEqual(["scope_runtime_crash", "run_unit_exit"]);
     });
   });
