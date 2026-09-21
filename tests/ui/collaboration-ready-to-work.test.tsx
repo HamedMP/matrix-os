@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import type { CollaborationReadiness, CollaborationScope } from "@matrix-os/contracts";
@@ -8,6 +8,7 @@ import { ReadinessSummary } from "../../packages/ui/src/collaboration/ReadinessS
 import { AudienceGrantPicker } from "../../packages/ui/src/collaboration/AudienceGrantPicker";
 import { ResourceSharingButton } from "../../packages/ui/src/collaboration/ResourceSharingButton";
 import { ChatCollaboratorsDialog } from "../../packages/ui/src/collaboration/ChatCollaboratorsDialog";
+import { ChatCollaboration } from "../../packages/ui/src/collaboration/ChatCollaboration";
 
 beforeAll(() => {
   HTMLDialogElement.prototype.showModal = vi.fn(function (this: HTMLDialogElement) { this.open = true; });
@@ -28,8 +29,59 @@ const projectReady: CollaborationReadiness = {
     { item: "chat_root_inventory", status: "ready", chatRootCount: 3, dirtyRootCount: 1 },
   ],
 };
+const pendingGrantId = "20000000-0000-4000-8000-000000000402";
+const pendingOrganizationShare = {
+  scopeId: scope.id, runtimeId: "vps:owner", ownerId: scope.ownerId, kind: "project" as const,
+  authorityGeneration: 1, status: "organization_pending" as const,
+  organizationId: scope.organizationId, grantId: pendingGrantId,
+};
 
 describe("organization ready-to-work presentation", () => {
+  it("activates a pending organization share only on Open and waits for refreshed discovery before navigating", async () => {
+    let resolveAccept!: (value: unknown) => void;
+    let resolveRefresh!: () => void;
+    const accepted = new Promise<unknown>((resolve) => { resolveAccept = resolve; });
+    const refreshed = new Promise<void>((resolve) => { resolveRefresh = resolve; });
+    let reads = 0;
+    const api = { baseUrl: "http://localhost",
+      get: vi.fn((path: string) => {
+        reads += 1;
+        if (reads > 2) return refreshed.then(() => ({ items: [] }));
+        return Promise.resolve(path.endsWith("/inbox") ? { items: [pendingOrganizationShare] } : { items: [] });
+      }),
+      post: vi.fn(async () => accepted), delete: vi.fn(),
+    };
+    const openProject = vi.fn();
+    render(<ChatCollaboration view={{ kind: "home" }} api={api} actorId="user_member" openProject={openProject} />);
+    const open = await screen.findByRole("button", { name: "Open" });
+    expect(api.post).not.toHaveBeenCalled();
+    expect(openProject).not.toHaveBeenCalled();
+
+    fireEvent.click(open);
+    expect(api.post).toHaveBeenCalledWith(`/api/collaboration/scopes/${scope.id}/grants/${pendingGrantId}/accept`, {});
+    expect(openProject).not.toHaveBeenCalled();
+    await act(async () => { resolveAccept({ state: "active" }); });
+    await waitFor(() => expect(api.get).toHaveBeenCalledTimes(4));
+    expect(openProject).not.toHaveBeenCalled();
+    await act(async () => { resolveRefresh(); });
+    await waitFor(() => expect(openProject).toHaveBeenCalledWith(scope.id));
+  });
+
+  it("keeps a pending organization share in place when activation fails", async () => {
+    const api = { baseUrl: "http://localhost",
+      get: vi.fn(async (path: string) => path.endsWith("/inbox")
+        ? { items: [pendingOrganizationShare] } : { items: [] }),
+      post: vi.fn(async () => { throw new Error("private membership detail"); }), delete: vi.fn(),
+    };
+    const openProject = vi.fn();
+    render(<ChatCollaboration view={{ kind: "home" }} api={api} actorId="user_member" openProject={openProject} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Share could not be opened. Try again.");
+    expect(screen.getByText("Shared with your organization")).toBeVisible();
+    expect(screen.queryByText("private membership detail")).toBeNull();
+    expect(openProject).not.toHaveBeenCalled();
+  });
+
   it("shows server-derived owner source, submit mode, Git identity and Chat roots for a project", () => {
     render(<ReadinessSummary readiness={projectReady} />);
     expect(screen.getByText(/Owner account/)).toBeVisible();
