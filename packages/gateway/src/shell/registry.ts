@@ -114,6 +114,7 @@ const ShellSessionSchema = z.object({
   sessionIncarnation: z.string().regex(/^terminal-[a-f0-9]{32}$/).optional(),
   executionGeneration: z.number().int().positive().optional(),
   sharedControlMode: SharedControlModeSchema.optional(),
+  contributorControl: z.boolean().optional(),
 });
 
 const RegistryFileSchema = z.object({
@@ -293,7 +294,7 @@ export class ShellRegistry {
     cmd?: string;
     agent?: AgentKind;
     exclusive?: boolean;
-    collaboration?: { creatorActorId: string; executionGeneration: number };
+    collaboration?: { creatorActorId: string; executionGeneration: number; contributorControl?: boolean };
   }): Promise<ShellSession> {
     return this.withMutationLock(async () => {
       const name = validateSessionName(input.name);
@@ -332,6 +333,7 @@ export class ShellRegistry {
         creatorActorId: z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/)
           .parse(input.collaboration.creatorActorId),
         executionGeneration: z.number().int().positive().parse(input.collaboration.executionGeneration),
+        contributorControl: z.boolean().parse(input.collaboration.contributorControl ?? true),
       } : undefined;
       await this.options.adapter.createSession({
         name,
@@ -370,6 +372,7 @@ export class ShellRegistry {
           sessionIncarnation: terminalIncarnation(name, runtimeCreatedAt),
           executionGeneration: collaboration.executionGeneration,
           sharedControlMode: "eligible" as const,
+          contributorControl: collaboration.contributorControl,
         } : {}),
       };
       file.sessions[name] = session;
@@ -402,6 +405,7 @@ export class ShellRegistry {
     scopeId: string;
     sessionIncarnation: string;
     executionGeneration: number;
+    contributorControl?: boolean;
   }): Promise<ShellSession> {
     return this.withMutationLock(async () => {
       const safeName = validateSessionName(name);
@@ -431,8 +435,43 @@ export class ShellRegistry {
         ...session,
         collaborationScopeId: scopeId,
         sharedControlMode: "shared" as const,
+        contributorControl: z.boolean().parse(input.contributorControl ?? session.contributorControl ?? true),
         updatedAt: new Date().toISOString(),
       };
+      file.sessions[targetName] = next;
+      await this.write(file);
+      return this.decorateSession(next, file);
+    });
+  }
+
+  /** The owner may withdraw host-shell control for Contributors without unsharing the terminal. */
+  async setContributorControl(name: string, input: {
+    scopeId: string;
+    sessionIncarnation: string;
+    ownerId: string;
+    contributorControl: boolean;
+  }): Promise<ShellSession> {
+    return this.withMutationLock(async () => {
+      const safeName = validateSessionName(name);
+      const scopeId = z.uuid().parse(input.scopeId);
+      const incarnation = z.string().regex(/^terminal-[a-f0-9]{32}$/).parse(input.sessionIncarnation);
+      const ownerId = z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/).parse(input.ownerId);
+      const contributorControl = z.boolean().parse(input.contributorControl);
+      const file = await this.read();
+      const targetName = this.resolveSessionName(file, safeName);
+      const existing = file.sessions[targetName];
+      const live = await this.options.adapter.listSessions();
+      if (!existing || existing.status !== "active" || !live.includes(targetName)) {
+        throw shellError("session_not_found", "Session not found", 404);
+      }
+      const runtimeCreatedAt = await this.runtimeCreatedAt(targetName);
+      const session = this.applyRuntimeIdentity(existing, runtimeCreatedAt);
+      if (!runtimeCreatedAt || session.sessionIncarnation !== incarnation
+        || session.collaborationScopeId !== scopeId || session.sharedControlMode !== "shared"
+        || session.creatorActorId !== ownerId) {
+        throw shellError("session_not_eligible", "Session is not collaboration-ready", 409);
+      }
+      const next = { ...session, contributorControl, updatedAt: new Date().toISOString() };
       file.sessions[targetName] = next;
       await this.write(file);
       return this.decorateSession(next, file);
@@ -770,6 +809,7 @@ export class ShellRegistry {
     delete next.sessionIncarnation;
     delete next.executionGeneration;
     delete next.sharedControlMode;
+    delete next.contributorControl;
     return next;
   }
 
