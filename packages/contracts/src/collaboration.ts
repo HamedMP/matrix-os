@@ -1,4 +1,5 @@
 import { z } from "zod/v4";
+import { CanonicalChatExecutionRootRefSchema } from "./canonical-chat-primitives.js";
 
 import {
   CanonicalChatApprovalDecisionSchema,
@@ -227,6 +228,10 @@ export const CollaborationProjectInventoryItemSchema = z.object({
   incarnation: z.string().min(1).max(256).regex(/^[A-Za-z0-9_-]+$/).optional(),
   contentHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   byteCount: z.number().int().nonnegative().max(100 * 1024 * 1024 * 1024).optional(),
+  executionRoot: CanonicalChatExecutionRootRefSchema.optional(),
+  rootFingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  branch: z.string().min(1).max(255).optional(),
+  dirty: z.boolean().optional(),
 }).strict().superRefine((item, context) => {
   if (item.compatibility === "blocked" && !item.blocker) {
     context.addIssue({ code: "custom", path: ["blocker"], message: "Blocked project items require a reason" });

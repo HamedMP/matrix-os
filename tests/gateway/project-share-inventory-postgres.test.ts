@@ -8,6 +8,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { bootstrapChatDatabase } from "../../packages/gateway/src/chat/database.js";
 import { createChatExecutionRootResolver } from "../../packages/gateway/src/chat/execution-root.js";
 import { createProjectChatRootInventory } from "../../packages/gateway/src/collaboration/project-chat-root-inventory.js";
+import { createGatewayProjectInventorySource } from "../../packages/gateway/src/collaboration/project-inventory-source.js";
+import { createProjectInventoryService } from "../../packages/gateway/src/collaboration/project-inventory.js";
 import {
   createCollaborationTestDatabase,
   createRealCollaborationTestDatabase,
@@ -133,6 +135,38 @@ describe("share-time project Chat root inventory", () => {
       expect.objectContaining({ chatId: "chat_main", executionRoot: { kind: "project", projectId: PROJECT }, branch: "main", dirty: false, fingerprint: expect.stringMatching(/^[a-f0-9]{64}$/), readiness: "ready" }),
     ]);
     expect(JSON.stringify(roots)).not.toContain(homePath);
+  });
+
+  it("includes all Chat roots in the signed share preview and blocks an unresolved one", async () => {
+    const source = createGatewayProjectInventorySource({
+      homePath,
+      projects: { async get() { return { id: PROJECT, ownerId: OWNER, rootPath: projectRoot, updatedAt: NOW }; } },
+      chats: { async list() { return [
+        { id: "chat_main", revision: 1 },
+        { id: "chat_feature", revision: 1 },
+      ]; } },
+      chatRoots: inventory(),
+      canvases: { async getProjectCanvas() { return null; } },
+      apps: { async get() { return null; } },
+      sessions: { async list() { return []; } },
+    });
+    const service = createProjectInventoryService({
+      homePath,
+      source,
+      confirmationSecret: "S10-test-confirmation-secret-that-is-long-enough",
+    });
+    await writeFile(join(worktreeRoot, "draft.txt"), "uncommitted\n");
+    const preview = await service.preview({ ownerId: OWNER, projectId: PROJECT, membershipEffects: [] });
+    expect(preview.ownedItems.filter((item) => item.kind === "chat")).toEqual([
+      expect.objectContaining({ id: "chat_feature", executionRoot: { kind: "worktree", projectId: PROJECT, worktreeId: WORKTREE }, branch: "feature/chat", dirty: true }),
+      expect.objectContaining({ id: "chat_main", executionRoot: { kind: "project", projectId: PROJECT }, branch: "main", dirty: false }),
+    ]);
+    expect(preview.blockers).toEqual([]);
+
+    await rm(worktreeRoot, { recursive: true, force: true });
+    const blocked = await service.preview({ ownerId: OWNER, projectId: PROJECT, membershipEffects: [] });
+    expect(blocked.blockers).toContainEqual({ kind: "chat", id: "chat_feature", code: "chat_root_unavailable" });
+    expect(blocked.inventoryHash).not.toBe(preview.inventoryHash);
   });
 
   it("blocks sharing when a Chat root no longer resolves", async () => {
