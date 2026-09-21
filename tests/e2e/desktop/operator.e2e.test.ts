@@ -15,6 +15,10 @@ const DESKTOP_MAIN = resolve(__dirname, "../../../desktop/out/main/index.js");
 const desktopRequire = createRequire(resolve(__dirname, "../../../desktop/package.json"));
 const ELECTRON_EXECUTABLE = desktopRequire("electron") as string;
 const SCREENSHOT_DIR = resolve(__dirname, "../../../desktop/screenshots");
+const DESKTOP_FIRST_EVIDENCE_DIR = resolve(
+  __dirname,
+  "../../../docs/pr-evidence/pr-1809-desktop-first-onboarding",
+);
 const MAT_322_SCREENSHOT_DIR = resolve(__dirname, "../../../output/playwright/mat-322");
 const MAT_348_SCREENSHOT_DIR = resolve(__dirname, "../../../output/playwright/mat-348");
 const MAT_476_SCREENSHOT_DIR = resolve(__dirname, "../../../output/playwright/mat-476");
@@ -53,13 +57,13 @@ async function openMatrixProjectOverview(page: Page): Promise<void> {
 }
 
 async function ensureSignedIn(page: Page): Promise<void> {
-  const continueButton = page.getByRole("button", { name: /continue in browser/i });
+  const createAccountButton = page.getByRole("button", { name: /create account/i });
   const terminalNavigation = page.locator("aside button", { hasText: "Terminal" }).first();
   const bootState = await Promise.race([
-    continueButton.waitFor({ state: "visible", timeout: 15_000 }).then(() => "signed-out" as const),
+    createAccountButton.waitFor({ state: "visible", timeout: 15_000 }).then(() => "signed-out" as const),
     terminalNavigation.waitFor({ state: "visible", timeout: 15_000 }).then(() => "signed-in" as const),
   ]);
-  if (bootState === "signed-out") await continueButton.click();
+  if (bootState === "signed-out") await createAccountButton.click();
   await terminalNavigation.waitFor({ timeout: 15_000 });
 }
 
@@ -84,6 +88,7 @@ suite("operator desktop e2e", () => {
 
   beforeAll(async () => {
     mkdirSync(SCREENSHOT_DIR, { recursive: true });
+    mkdirSync(DESKTOP_FIRST_EVIDENCE_DIR, { recursive: true });
     mkdirSync(MAT_322_SCREENSHOT_DIR, { recursive: true });
     mkdirSync(MAT_348_SCREENSHOT_DIR, { recursive: true });
     mkdirSync(MAT_476_SCREENSHOT_DIR, { recursive: true });
@@ -115,6 +120,16 @@ suite("operator desktop e2e", () => {
         console.warn("[e2e] user-data cleanup failed:", err instanceof Error ? err.message : String(err));
       }
     }
+  });
+
+  it("shows Electron Desktop account choices before browser authentication", async () => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.getByRole("heading", { name: "Connect Electron Desktop" }).waitFor();
+    await page.getByRole("button", { name: "Create account" }).waitFor();
+    await page.getByRole("button", { name: "Sign in" }).waitFor();
+    await page.screenshot({
+      path: join(DESKTOP_FIRST_EVIDENCE_DIR, "electron-desktop-auth.png"),
+    });
   });
 
   it("signs in via the device flow and reaches Home, then opens a project board", async () => {

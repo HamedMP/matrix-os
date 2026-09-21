@@ -51,7 +51,7 @@ suite("MAT-328 retained Terminal route containment", () => {
   });
 
   it("keeps a live Terminal mounted without painting or receiving interaction beneath peer routes", async () => {
-    await page.getByRole("button", { name: /continue in browser/i }).click();
+    await page.getByRole("button", { name: /create account/i }).click();
     await page.locator("aside button", { hasText: "Terminal" }).first().waitFor({ timeout: 15_000 });
     await page.locator("aside button", { hasText: "Terminal" }).first().click();
     await page.getByRole("button", { name: "Open matrix-task-1" }).click();

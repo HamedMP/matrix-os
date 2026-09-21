@@ -105,7 +105,7 @@ suite("Desktop terminal session handoff", () => {
       },
     });
     page = await app.firstWindow();
-    await page.getByRole("button", { name: /continue in browser/i }).waitFor({ timeout: 10_000 });
+    await page.getByRole("button", { name: /create account/i }).waitFor({ timeout: 10_000 });
     await page.evaluate(async () => {
       await window.operator.invoke("auth:start-device-flow", {});
     });

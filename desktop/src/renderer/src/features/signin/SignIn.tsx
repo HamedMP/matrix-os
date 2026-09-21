@@ -81,12 +81,12 @@ export default function SignIn() {
           <div className="fade-in flex w-[360px] flex-col gap-5">
             <div className="flex flex-col items-center gap-1.5 text-center">
               <h2 className="text-xl font-semibold tracking-tight" style={{ color: "var(--text-primary)" }}>
-                {waitingForApproval ? "Finish in your browser" : "Connect Matrix Desktop"}
+                {waitingForApproval ? "Finish in your browser" : "Connect Electron Desktop"}
               </h2>
               <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
                 {waitingForApproval
-                  ? "Approve this desktop in your browser. The page returns you to Matrix Desktop automatically."
-                  : "Create your account or sign in securely in your browser. Billing and computer setup stay on the web, then the approval page returns you to Matrix Desktop automatically."}
+                  ? "Approve Electron Desktop in your browser. The page returns you to Electron Desktop automatically."
+                  : "Create your account or sign in securely in your browser. Billing and computer setup stay on the web, then the approval page returns you to Electron Desktop automatically."}
               </p>
               {!waitingForApproval ? (
                 <p className="mt-1 text-xs" style={{ color: "var(--text-tertiary)" }}>
@@ -136,7 +136,7 @@ export default function SignIn() {
                         Secure browser sign-in
                       </span>
                       <span className="text-xs leading-relaxed" style={{ color: "var(--text-secondary)" }}>
-                        Use your preferred sign-in method. Matrix Desktop never handles your password.
+                        Use your preferred sign-in method. Electron Desktop never handles your password.
                       </span>
                     </div>
                   </div>

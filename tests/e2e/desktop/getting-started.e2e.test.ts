@@ -28,7 +28,7 @@ suite("Electron Getting started overlay coexistence", () => {
     gateway = await startStubGateway();
     app = await _electron.launch({ executablePath, args: [main], env: { ...process.env, OPERATOR_GATEWAY_URL: gateway.url, OPERATOR_USER_DATA_DIR: userDataDir } });
     page = await app.firstWindow();
-    await page.getByRole("button", { name: /continue in browser/i }).waitFor();
+    await page.getByRole("button", { name: /create account/i }).waitFor();
     await page.evaluate(async () => { await window.operator.invoke("auth:start-device-flow", {}); });
     await page.getByRole("button", { name: /Getting started/ }).waitFor({ timeout: 20_000 });
   }, 60_000);

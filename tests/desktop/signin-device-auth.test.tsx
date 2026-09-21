@@ -15,7 +15,7 @@ vi.mock("../../desktop/src/renderer/src/lib/operator", () => ({
   invoke: vi.fn(),
 }));
 
-describe("desktop device authorization sign-in", () => {
+describe("Electron Desktop device authorization sign-in", () => {
   beforeEach(() => {
     useConnection.setState(useConnection.getInitialState(), true);
     useConnection.setState({ refresh: vi.fn(async () => undefined) });
@@ -27,7 +27,7 @@ describe("desktop device authorization sign-in", () => {
     vi.restoreAllMocks();
   });
 
-  it("presents explicit desktop-first account creation and sign-in actions", async () => {
+  it("presents explicit Electron Desktop account creation and sign-in actions", async () => {
     vi.mocked(invoke)
       .mockResolvedValue(undefined as never)
       .mockResolvedValueOnce({
@@ -42,7 +42,9 @@ describe("desktop device authorization sign-in", () => {
     expect(screen.getByText(/3 days by default/i)).toBeTruthy();
     expect(screen.getByText(/Stripe Checkout confirms eligibility/i)).toBeTruthy();
     expect(screen.queryByText(/New hosted accounts include a 3-day free trial/i)).toBeNull();
-    expect(screen.getByText(/returns you to Matrix Desktop automatically/i)).toBeTruthy();
+    expect(screen.getByText("Connect Electron Desktop")).toBeTruthy();
+    expect(screen.getByText(/returns you to Electron Desktop automatically/i)).toBeTruthy();
+    expect(screen.queryByText(/Matrix Desktop/)).toBeNull();
     expect(screen.queryByRole("button", { name: "Continue with Google" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Continue with GitHub" })).toBeNull();
     expect(screen.queryByText(/or continue with email/i)).toBeNull();

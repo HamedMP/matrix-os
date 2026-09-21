@@ -47,7 +47,7 @@ suite("persistent Hermes Desktop conversations", () => {
   });
 
   it("discovers, switches, searches, deletes, and restores canonical conversations", async () => {
-    await page.getByRole("button", { name: /continue in browser/i }).click();
+    await page.getByRole("button", { name: /create account/i }).click();
     await page.locator("aside button", { hasText: "Chat" }).first().waitFor({ timeout: 15_000 });
     await page.locator("aside button", { hasText: "Chat" }).first().click();
 

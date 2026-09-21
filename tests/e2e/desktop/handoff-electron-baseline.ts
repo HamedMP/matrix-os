@@ -16,14 +16,14 @@ export interface DesktopHandoffBaselineEvidence {
 }
 
 async function ensureSignedIn(page: Page): Promise<void> {
-  const continueButton = page.getByRole("button", {
-    name: /continue in browser/i,
+  const createAccountButton = page.getByRole("button", {
+    name: /create account/i,
   });
   const terminalNavigation = page
     .locator("aside button", { hasText: "Terminal" })
     .first();
   const bootState = await Promise.race([
-    continueButton
+    createAccountButton
       .waitFor({ state: "visible", timeout: 15_000 })
       .then(() => "signed-out" as const),
     terminalNavigation
@@ -31,7 +31,7 @@ async function ensureSignedIn(page: Page): Promise<void> {
       .then(() => "signed-in" as const),
   ]);
   if (bootState === "signed-out") {
-    await continueButton.click();
+    await createAccountButton.click();
   }
   await terminalNavigation.waitFor({ timeout: 15_000 });
 }
