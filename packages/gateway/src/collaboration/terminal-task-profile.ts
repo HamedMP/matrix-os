@@ -4,12 +4,14 @@
  * `sandbox_shell` is a scope-runtime terminal launched under the pinned
  * sandbox policy; a Contributor (editor role from the contributor preset)
  * may request and hold its controller. `host_shell` is the owner's own
- * terminal on the host: a stronger permission than the sandbox, granted
- * only by the owner's explicit share of that terminal (`contributorControl`
- * is true for an owner-shared host shell unless the owner sets it false to
- * keep Contributors observe-only). A sandbox capability never implies host
- * shell control, and a Viewer observes either. The profile derives from the
- * session's sandbox binding, never from prompt text.
+ * terminal on the host: a stronger permission than the sandbox. Sharing a
+ * host shell never grants control by itself: Contributors observe until the
+ * owner records an explicit opt-in (`contributorControl: true`, set through
+ * the owner-only terminal PATCH and persisted on the session), and the owner
+ * may withdraw it at any time. Absent or malformed reads as withheld. A
+ * sandbox capability never implies host shell control, and a Viewer observes
+ * either. The profile derives from the session's sandbox binding, never from
+ * prompt text.
  */
 import { z } from "zod/v4";
 import { SCOPE_RUNTIME_SANDBOX_POLICY_DIGEST } from "@matrix-os/scope-runtime/sandbox";
@@ -25,7 +27,7 @@ export const TerminalSandboxBindingSchema = z.object({
 
 export interface TerminalTaskPolicy {
   taskProfile: TerminalTaskProfile;
-  /** Owner's explicit grant that Contributors may control this host shell. */
+  /** Owner's explicit opt-in that Contributors may control this host shell; false unless recorded. */
   contributorControl: boolean;
 }
 
@@ -37,7 +39,7 @@ export function resolveTerminalTaskPolicy(session: {
   const sandboxed = sandbox.success && sandbox.data.policyDigest === SCOPE_RUNTIME_SANDBOX_POLICY_DIGEST;
   return {
     taskProfile: sandboxed ? "sandbox_shell" : "host_shell",
-    contributorControl: session.contributorControl !== false,
+    contributorControl: session.contributorControl === true,
   };
 }
 
