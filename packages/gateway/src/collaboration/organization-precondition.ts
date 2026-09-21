@@ -62,6 +62,7 @@ export function createOrganizationPrecondition(options: {
   const now = options.now ?? (() => new Date());
   let source: OrganizationMembershipSource | undefined = options.source;
   const lastLogged = new Map<OrganizationPreconditionDenialReason, number>();
+  let sourceFailureLoggedAt: number | undefined;
 
   const deny = (reason: OrganizationPreconditionDenialReason): never => {
     const current = now().getTime();
@@ -89,8 +90,12 @@ export function createOrganizationPrecondition(options: {
       try {
         assertion = await source.assertMembership({ organizationId, actorId: input.actorId });
       } catch (error: unknown) {
-        console.warn("[collaboration-org-precondition] membership source failed",
-          error instanceof Error ? error.name : "UnknownError");
+        const current = now().getTime();
+        if (sourceFailureLoggedAt === undefined || current - sourceFailureLoggedAt >= DENIAL_LOG_INTERVAL_MS) {
+          sourceFailureLoggedAt = current;
+          console.warn("[collaboration-org-precondition] membership source failed",
+            error instanceof Error ? error.name : "UnknownError");
+        }
       }
       if (!assertion) return deny("source_failure");
       if (!assertion.member) return deny("not_a_member");
