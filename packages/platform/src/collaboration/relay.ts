@@ -211,7 +211,13 @@ export class CollaborationRelay {
   async prepareSocket(input: { actorId: string; rawPath: string; incomingHeaders: IncomingMessage["headers"]; externalHost: string }): Promise<{ home: RelayHome; upstreamPath: string; headers: string; release(): void } | null> {
     const socket = parseRelaySocketPath(input.rawPath);
     if (!socket) return null;
-    const home = await this.options.resolveScopeHome(socket.scopeId);
+    let home: RelayHome | null;
+    try {
+      home = await this.options.resolveScopeHome(socket.scopeId);
+    } catch (error: unknown) {
+      console.warn("[collaboration-relay] socket directory lookup failed", error instanceof Error ? error.name : "UnknownError");
+      return null;
+    }
     if (!home) return null;
     const homeCount = this.homeConnections.get(home.runtimeId) ?? 0;
     const actorCount = this.actorConnections.get(input.actorId) ?? 0;
