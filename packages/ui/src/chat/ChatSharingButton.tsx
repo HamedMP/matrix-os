@@ -18,7 +18,7 @@ export function ChatSharingButton({ api, collaborationEnabled, collaborationApi,
   api: { baseUrl: string; get(path: string): Promise<unknown>; post(path: string, body: unknown): Promise<unknown>; delete(path: string): Promise<unknown> };
   collaborationEnabled: boolean;
   /** The Clerk organization a share is scoped to; collaboration is offered only inside one. */
-  organizationId?: string | null;
+  organizationId: string | null;
   collaborationApi?: CollaborationApi;
   runtimeId?: string | null;
   handle: string | null;
