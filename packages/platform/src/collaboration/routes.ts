@@ -26,7 +26,6 @@ import {
   type CollaborationWebSocketAuthorizer,
 } from "./websocket.js";
 
-const MAX_HYDRATION_CONCURRENCY = 4;
 const RuntimeIdSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9:_-]+$/);
 const BearerTokenSchema = z.string().min(32).max(4_096).regex(/^[A-Za-z0-9._~-]+$/);
 const DiscoveryCursorSchema = z.object({
@@ -53,10 +52,11 @@ export function createPlatformCollaborationRoutes(options: {
   }): Promise<{ runtimeId: string; ownerId: string } | null>;
   resolveParticipant(actorId: string): Promise<{ actorId: string; displayName: string } | null>;
   resolveInvitationIdentifier(identifier: string, organizationId: string): Promise<{ actorId: string; displayName: string } | null>;
-  hydrate(input: {
-    actorId: string;
-    entry: CollaborationDirectoryEntry;
-  }): Promise<unknown>;
+  /**
+   * S06 / T032: the actor's current organization ids from the membership projection, used only to list
+   * organization-wide shares still pending for them. Absent means no organization inventory.
+   */
+  listOrganizationIds?(actorId: string): Promise<readonly string[]>;
   now?: () => Date;
 }): Hono {
   const app = new Hono();
@@ -194,35 +194,34 @@ async function listDiscovery(
       limit: pageRequest.data.limit,
       ...(after ? { after } : {}),
     });
-    const resources = await mapLimited(page.items, MAX_HYDRATION_CONCURRENCY, async (entry) => {
-      try {
-        const resource = await options.hydrate({ actorId, entry });
-        return CollaborationDiscoveryItemSchema.parse({
-          scopeId: entry.scopeId,
-          runtimeId: entry.runtimeId,
-          ownerId: entry.ownerId,
-          kind: entry.kind,
-          authorityGeneration: entry.authorityGeneration,
-          status: entry.status,
-          ...(entry.status === "invited" ? { invitationId: entry.invitationId } : {}),
-          resource,
+    // Metadata only: the client hydrates every item from the resource's home.
+    const items: unknown[] = page.items.map((entry) => ({
+      scopeId: entry.scopeId,
+      runtimeId: entry.runtimeId,
+      ownerId: entry.ownerId,
+      kind: entry.kind,
+      authorityGeneration: entry.authorityGeneration,
+      status: entry.status,
+      ...(entry.status === "invited" ? { invitationId: entry.invitationId } : {}),
+      ...(entry.organizationId ? { organizationId: entry.organizationId } : {}),
+    }));
+    if (status === "invited" && !after && options.listOrganizationIds) {
+      const organizationIds = await options.listOrganizationIds(actorId);
+      const pending = await options.repository.listOrganizationSharesForActor(actorId, organizationIds, pageRequest.data.limit);
+      for (const entry of pending) {
+        items.push({
+          scopeId: entry.scopeId, runtimeId: entry.runtimeId, ownerId: entry.ownerId, kind: entry.kind,
+          authorityGeneration: entry.authorityGeneration, status: "organization_pending", organizationId: entry.organizationId,
         });
-      } catch (error: unknown) {
-        console.warn(
-          "[platform-collaboration] discovery entry unavailable",
-          error instanceof Error ? error.name : "UnknownError",
-        );
-        return null;
       }
-    });
+    }
     c.header("Cache-Control", "private, no-store");
     return c.json(CollaborationDiscoveryResponseSchema.parse({
-      items: resources
-        .filter((result): result is NonNullable<typeof result> => result !== null),
+      items: items.map((item) => CollaborationDiscoveryItemSchema.parse(item)).slice(0, 100),
       ...(page.nextCursor ? { nextCursor: encodeDiscoveryCursor(actorId, status, page.nextCursor) } : {}),
     }));
   } catch (error: unknown) {
-    console.warn("[platform-collaboration] discovery hydration failed", error instanceof Error ? error.name : "UnknownError");
+    console.warn("[platform-collaboration] discovery listing failed", error instanceof Error ? error.name : "UnknownError");
     return safeJson(c, "Collaboration unavailable", 503);
   }
 }
@@ -306,18 +305,6 @@ async function parseJson<T>(c: RouteContext, schema: z.ZodType<T>): Promise<T | 
   }
 }
 
-async function mapLimited<T, R>(items: readonly T[], concurrency: number, mapper: (item: T) => Promise<R>): Promise<R[]> {
-  const results = new Array<R>(items.length);
-  let cursor = 0;
-  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
-    while (cursor < items.length) {
-      const index = cursor++;
-      results[index] = await mapper(items[index]!);
-    }
-  });
-  await Promise.all(workers);
-  return results;
-}
 
 function repositoryFailure(c: RouteContext, operation: string, error: unknown) {
   if (error instanceof PlatformCollaborationRepositoryError && error.code === "conflict") {
