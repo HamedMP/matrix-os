@@ -4,13 +4,15 @@ import {
   CollaborationGrantSchema,
   CollaborationIdSchema,
   CollaborationPatchGrantRequestSchema,
+  CollaborationReadinessSchema,
 } from "@matrix-os/contracts";
 import type { Hono } from "hono";
 import { CollaborationAuthorizationError } from "./authority-error.js";
 import type { CollaborationCapabilityEvaluator } from "./capability-evaluator.js";
+import { evaluateCollaborationReadiness } from "./readiness-evaluator.js";
 import type { CollaborationCapabilityRepository, GrantRecord } from "./capability-repository.js";
 import {
-  authorize, deleteConditions, digest, digestDeleteConditions, handle, notifyScope, readJson,
+  authorize, deleteConditions, digest, digestDeleteConditions, handle, notifyScope, readJson, requireScope,
   type CollaborationRouteOptions,
 } from "./route-support.js";
 
@@ -19,7 +21,7 @@ const PRESET_POLICY_VERSION = "v1";
 
 type CapabilityRouteOptions = Pick<
   CollaborationRouteOptions,
-  "verifier" | "directSessions" | "onScopeCommitted"
+  "verifier" | "directSessions" | "onScopeCommitted" | "repository" | "readinessProbes"
 > & {
   capabilities?: CollaborationCapabilityRepository;
   capabilityEvaluator?: CollaborationCapabilityEvaluator;
@@ -116,6 +118,29 @@ export function registerCapabilityRoutes(routes: Hono, options: CapabilityRouteO
     if (!grant) throw new CollaborationAuthorizationError("unavailable", "Committed grant is unavailable");
     await notifyScope(options, scopeId);
     return c.json(projectGrant(grant));
+  }));
+
+
+  routes.post("/api/collaboration/scopes/:scopeId/policy/preflight", async (c) => handle(c, async () => {
+    const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
+    const bytes = new Uint8Array(await c.req.arrayBuffer());
+    if (bytes.length > 0) {
+      const value: unknown = JSON.parse(new TextDecoder().decode(bytes));
+      if (typeof value !== "object" || value === null || Array.isArray(value) || Object.keys(value).length > 0) {
+        throw new SyntaxError("Invalid readiness request");
+      }
+    }
+    const context = await authorize(options, c, bytes, "read", scopeId);
+    if (!options.readinessProbes) {
+      throw new CollaborationAuthorizationError("unavailable", "Readiness probes are unavailable");
+    }
+    const scope = await requireScope(options.repository, scopeId);
+    if (!scope.organizationId) throw new CollaborationAuthorizationError("unavailable", "Readiness organization unavailable");
+    const readiness = await evaluateCollaborationReadiness({
+      scopeId, ownerId: scope.ownerId, organizationId: scope.organizationId,
+      resourceKind: context.resourceKind === "app" ? "app_instance" : context.resourceKind,
+    }, options.readinessProbes);
+    return c.json(CollaborationReadinessSchema.parse(readiness));
   }));
 
 }
