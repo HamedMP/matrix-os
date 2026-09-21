@@ -152,6 +152,9 @@ export async function createScopeRuntimeController(options: {
     if (request.workload === "terminal" && !request.sandbox) {
       return runtimeFailure(request.requestId, "invalid_request");
     }
+    if (request.sandbox && !SCOPE_RUNTIME_SANDBOX_CAPABILITY.workloads.includes(request.workload)) {
+      return runtimeFailure(request.requestId, "adapter_unavailable");
+    }
     if (request.sandbox && request.sandbox.scopeHandle !== request.scopeHandle) {
       return runtimeFailure(request.requestId, "invalid_request");
     }

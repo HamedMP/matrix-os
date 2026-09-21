@@ -19,6 +19,7 @@ import {
   SCOPE_RUNTIME_SANDBOX_POLICY_VERSION,
   assertSandboxEnvironment,
   buildSandboxSystemdProperties,
+  sandboxRootsForHome,
   validateSandboxMountSources,
 } from "../../packages/scope-runtime/src/sandbox.js";
 import {
@@ -142,12 +143,21 @@ describe("sandbox systemd policy", () => {
     expect(SCOPE_RUNTIME_PROFILE.sandbox).toEqual({
       policyVersion: SCOPE_RUNTIME_SANDBOX_POLICY_VERSION,
       policyDigest: SCOPE_RUNTIME_SANDBOX_POLICY_DIGEST,
-      workloads: ["chat_ai", "terminal"],
+      workloads: ["chat_ai"],
     });
   });
 });
 
 describe("mount source validation", () => {
+  it("derives production mount roots from the owner home and allows an absent optional worktree root", async () => {
+    const { root, worktree: tree } = await worktree();
+    expect(sandboxRootsForHome(root)).toEqual([join(root, "projects"), join(root, "worktrees")]);
+    await expect(validateSandboxMountSources(
+      ScopeRuntimeSandboxManifestSchema.parse(manifest({ worktree: { hostPath: tree, mode: "rw", fingerprint: FINGERPRINT } })),
+      { allowedRoots: sandboxRootsForHome(root) },
+    )).resolves.toEqual({ worktreeHostPath: tree });
+  });
+
   it("accepts a real directory under an allowed root", async () => {
     const { root, worktree: tree } = await worktree();
     await expect(validateSandboxMountSources(
@@ -227,6 +237,9 @@ describe("supervisor and launcher", () => {
     await expect(controller.handle({
       ...base, requestId: "3d7a6a9b-5d3e-4a68-9c9f-1a2b3c4d5e70", workload: "terminal", adapterId: "terminal", harnessVersion: "1.0.0",
     })).resolves.toMatchObject({ ok: false, error: "invalid_request" });
+    await expect(controller.handle({
+      ...base, requestId: "3d7a6a9b-5d3e-4a68-9c9f-1a2b3c4d5e72", workload: "terminal", adapterId: "terminal", harnessVersion: "1.0.0", sandbox: manifest() as never,
+    })).resolves.toMatchObject({ ok: false, error: "adapter_unavailable" });
     const capability = await controller.handle({ version: 1, type: "capability.get", requestId: "3d7a6a9b-5d3e-4a68-9c9f-1a2b3c4d5e71" });
     expect(capability).toMatchObject({ ok: true, profile: { sandbox: { policyDigest: SCOPE_RUNTIME_SANDBOX_POLICY_DIGEST } } });
     await controller.close();
