@@ -431,7 +431,6 @@ export const COLLABORATION_DIRECT_ROUTES: readonly CollaborationDirectRoute[] = 
   home("POST", `${SCOPE}/project/terminals`),
   home("GET", `${SCOPE}/project/git`, { response: "CollaborationGitOperationSchema[]" }),
   home("POST", `${SCOPE}/project/git/actions`, { request: "CollaborationGitActionRequestSchema", response: "CollaborationGitOperationSchema" }),
-  home("POST", `${SCOPE}/project/git/:operationId/expire`, { response: "CollaborationGitOperationSchema" }),
   home("GET", `${SCOPE}/project/layout`),
   home("PATCH", `${SCOPE}/project/layout`),
   home("GET", `${SCOPE}/files`),

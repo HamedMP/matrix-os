@@ -250,7 +250,8 @@ const GitActionBase = z.object({
   payloadHash: z.string().regex(HEX_DIGEST),
 });
 
-export const CollaborationGitActionRequestSchema = z.discriminatedUnion("type", [
+/** Actions that queue a Git effect for the home to run under the owner identity. */
+const GitEffectActions = [
   GitActionBase.extend({ type: z.literal("status") }).strict(),
   GitActionBase.extend({ type: z.literal("diff"), baseRef: CollaborationGitBranchSchema.optional() }).strict(),
   GitActionBase.extend({
@@ -271,6 +272,21 @@ export const CollaborationGitActionRequestSchema = z.discriminatedUnion("type", 
     headBranch: CollaborationGitBranchSchema,
     expectedHeadSha: CollaborationGitShaSchema,
   }).strict(),
+] as const;
+
+/**
+ * Owner-only: resolves one operation whose effect the remote could not confirm. It queues no
+ * effect, so it carries no client request id, expected revision or payload hash; the home's
+ * `WHERE state = 'unknown'` guard is the concurrency check and the actor proof covers this body.
+ */
+const GitExpireAction = z.object({ type: z.literal("expire"), operationId: CollaborationIdSchema }).strict();
+
+/** What the home queues and the Git driver executes; expiry is never one of these. */
+export const CollaborationGitEffectRequestSchema = z.discriminatedUnion("type", GitEffectActions);
+
+export const CollaborationGitActionRequestSchema = z.discriminatedUnion("type", [
+  ...GitEffectActions,
+  GitExpireAction,
 ]);
 
 const CREDENTIAL_LOOKALIKE = /ghp_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{12,}|xox[baprs]-[A-Za-z0-9-]{10,}|sk-[A-Za-z0-9_-]+/;
@@ -316,6 +332,7 @@ export type CollaborationToolApprovalDecisionRequest = z.infer<typeof Collaborat
 export type CollaborationQueuedRunRequest = z.infer<typeof CollaborationQueuedRunRequestSchema>;
 export type CollaborationRunQueue = z.infer<typeof CollaborationRunQueueSchema>;
 export type CollaborationGitActionRequest = z.infer<typeof CollaborationGitActionRequestSchema>;
+export type CollaborationGitEffectRequest = z.infer<typeof CollaborationGitEffectRequestSchema>;
 export type CollaborationGitOperationType = z.infer<typeof CollaborationGitOperationTypeSchema>;
 export type CollaborationGitOperationState = z.infer<typeof CollaborationGitOperationStateSchema>;
 export type CollaborationGitOperation = z.infer<typeof CollaborationGitOperationSchema>;

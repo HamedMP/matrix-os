@@ -3,6 +3,7 @@ import {
   CollaborationGitActionRequestSchema,
   CollaborationGitOperationSchema,
   type CollaborationGitActionRequest,
+  type CollaborationGitEffectRequest,
   type CollaborationGitOperation,
 } from "@matrix-os/contracts";
 import { type Kysely } from "kysely";
@@ -32,7 +33,7 @@ export type ProjectGitExecution = {
   requestingActorId: string;
   runId?: string;
   ownerIdentity: ProjectGitOwnerIdentity;
-  request: CollaborationGitActionRequest;
+  request: CollaborationGitEffectRequest;
 };
 
 export interface ProjectGitDriver {
@@ -104,7 +105,7 @@ function toOperation(row: {
   });
 }
 
-function capability(type: CollaborationGitActionRequest["type"]): "git.commit" | "git.push" | "git.pr" | "read" {
+function capability(type: CollaborationGitEffectRequest["type"]): "git.commit" | "git.push" | "git.pr" | "read" {
   if (type === "commit") return "git.commit";
   if (type === "push") return "git.push";
   if (type === "pr") return "git.pr";
@@ -190,6 +191,8 @@ export function createProjectGitBroker(options: {
       const actorId = ActorIdSchema.parse(input.actorId);
       const runId = input.runId ? RunIdSchema.parse(input.runId) : undefined;
       const request = CollaborationGitActionRequestSchema.parse(input.request);
+      // Expiry resolves an existing operation through `expireUnresolved`; it never queues an effect.
+      if (request.type === "expire") throw new ProjectGitBrokerError("forbidden");
       if (request.payloadHash !== hashGitAction(request)) throw new ProjectGitBrokerError("conflict");
       const authorization = await options.authorize({ scopeId, actorId, action: capability(request.type) });
       const ownerIdentity = OwnerIdentitySchema.parse(await options.resolveOwnerIdentity(authorization));

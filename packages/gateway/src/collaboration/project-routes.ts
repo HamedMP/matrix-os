@@ -79,17 +79,17 @@ export function registerProjectRoutes(routes: Hono, options: CollaborationRouteO
     const context = await authorize(options, c, bytes, "mutate_project", scopeId);
     const request = CollaborationGitActionRequestSchema.parse(value);
     if (!options.projectGit) throw new CollaborationAuthorizationError("unavailable", "Project Git broker is unavailable");
+    if (request.type === "expire") {
+      // Owner-only: resolves an operation the remote never confirmed instead of queueing an effect.
+      // This endpoint is reachable by contributors for the other action types, so the broker
+      // re-authorizes and refuses every actor that is not the scope owner.
+      const expired = await options.projectGit.expireUnresolved({
+        scopeId, actorId: context.actorId, operationId: request.operationId,
+      });
+      return c.json(CollaborationGitOperationSchema.parse(expired));
+    }
     const operation = await options.projectGit.submit({ scopeId, actorId: context.actorId, request });
     return c.json(CollaborationGitOperationSchema.parse(operation), 202);
-  }));
-
-  routes.post("/api/collaboration/scopes/:scopeId/project/git/:operationId/expire", async (c) => handle(c, async () => {
-    const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
-    const operationId = CollaborationIdSchema.parse(c.req.param("operationId"));
-    const context = await authorize(options, c, new Uint8Array(), "mutate_project", scopeId);
-    if (!options.projectGit) throw new CollaborationAuthorizationError("unavailable", "Project Git broker is unavailable");
-    const operation = await options.projectGit.expireUnresolved({ scopeId, actorId: context.actorId, operationId });
-    return c.json(CollaborationGitOperationSchema.parse(operation));
   }));
 
   routes.post("/api/collaboration/scopes/:scopeId/project/confirm", async (c) => handle(c, async () => {
