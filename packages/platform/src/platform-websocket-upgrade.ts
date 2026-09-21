@@ -88,7 +88,7 @@ export interface RegisterPlatformWebSocketUpgradeHandlerOpts {
   /** S05: runtime control-stream upgrade (`/internal/collaboration/control`); handled before session routing. */
   collaborationDirect?: {
     handleUpgrade(req: IncomingMessage, socket: Socket, head: Buffer): Promise<boolean>;
-    relay: { prepareSocket(input: { actorId: string; rawPath: string; incomingHeaders: IncomingMessage["headers"]; externalHost: string }): Promise<{ home: { runtimeId: string; origin: string }; upstreamPath: string; headers: string; release(): void } | null> };
+    relay: { prepareSocket(input: { actorId: string; rawPath: string; incomingHeaders: IncomingMessage["headers"]; externalHost: string }): Promise<{ home: { runtimeId: string; origin: string }; upstreamPath: string; headers: string; release(): void; touch(): void; onEvict(hook: () => void): void } | null> };
   };
 }
 
@@ -269,6 +269,9 @@ export function registerPlatformWebSocketUpgradeHandler(
         return;
       }
       socket.once('close', directUpgrade.release);
+      // Idle eviction: traffic in either direction keeps the reservation; a swept one destroys the socket.
+      socket.on('data', directUpgrade.touch);
+      directUpgrade.onEvict(() => { socket.destroy(); });
       runningMachine = authorityMachine;
       runtimeSlot = authorityMachine.runtimeSlot;
       webSocketProxyPath = directUpgrade.upstreamPath;
@@ -392,6 +395,7 @@ export function registerPlatformWebSocketUpgradeHandler(
       );
       if (head.length > 0) upstream.write(head);
 
+      if (directUpgrade) upstream.on('data', directUpgrade.touch);
       upstream.pipe(socket);
       socket.pipe(upstream);
     };
