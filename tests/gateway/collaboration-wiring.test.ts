@@ -106,6 +106,7 @@ describe("gateway collaboration wiring", () => {
         { version: 9 },
         { version: 10 },
         { version: 11 },
+        { version: 12 },
         { version: 13 },
       ]);
     await expect(app.request(`/api/collaboration/scopes/${collaborationIds.scope}/discussion/messages`))
@@ -149,6 +150,36 @@ describe("gateway collaboration wiring", () => {
     expect(app.routes.some((route) => route.path === "/api/collaboration/scopes/:scopeId/project/git" && route.method === "GET")).toBe(true);
     expect(app.routes.some((route) => route.path === "/api/collaboration/scopes/:scopeId/project/readiness" && route.method === "GET")).toBe(true);
     await runtime.shutdown();
+
+  });
+
+  it("mounts owner resource services before registration and closes their driver on shutdown", async () => {
+    const runtime = await createGatewayCollaboration({
+      organizationPrecondition: allowAllOrganizationPrecondition,
+      db: fixture.db,
+      chatRepository: new ChatRepository(fixture.db),
+      config: {
+        runtimeId: collaborationIds.runtime,
+        activeKeyId: "key-1",
+        proofKeys: { "key-1": "a".repeat(32) },
+        preflightSecret: "b".repeat(32),
+        platformBaseUrl: "https://platform.internal",
+        serviceToken: "c".repeat(32),
+      },
+      resolveParticipant: async (actorId) => ({ actorId, displayName: actorId }),
+      outboxFetch: async () => new Response(null, { status: 204 }),
+      startTimers: false,
+    });
+    const close = vi.fn();
+    runtime.enableSharedResources({
+      driver: { close } as unknown as Parameters<typeof runtime.enableSharedResources>[0]["driver"],
+    });
+    const app = new Hono();
+    runtime.register({ app, upgradeWebSocket: () => (async () => new Response(null, { status: 426 })) as never });
+    const response = await app.request(`/api/collaboration/scopes/${collaborationIds.scope}/files`);
+    expect(response.status).toBe(401);
+    await runtime.shutdown();
+    expect(close).toHaveBeenCalledOnce();
   });
 
   it("authorizes an accepted preset grant through the wired authority on chat, project and terminal scopes", async () => {
