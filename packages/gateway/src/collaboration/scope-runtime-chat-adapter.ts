@@ -9,7 +9,10 @@ import {
   parseCanonicalProviderRunInput,
   type CanonicalChatProviderAdapter,
 } from "../chat/provider-adapter.js";
+import type { ScopeRuntimeSandboxManifest } from "@matrix-os/scope-runtime";
+import type { CollaborationRunInterruptionReason } from "@matrix-os/contracts";
 import type { ScopeRuntimeCapability } from "./scope-runtime-client.js";
+import { classifySharedRunLoss } from "./shared-run-loss.js";
 const StateSchema = z.object({
   runtimeHandle: z.string().regex(/^runtime_[a-f0-9]{32}$/),
   executionGeneration: z.string().regex(/^(0|[1-9][0-9]{0,19})$/),
@@ -22,20 +25,29 @@ export interface ScopeRuntimeChatClient {
     workload: "chat_ai";
     adapterId: string;
     harnessVersion: string;
-    /** S07: present for every run that acts for a collaborator; the client refuses a launch without it. */
+    /** S07/S09: present for every run that acts for a collaborator on an execution root; the client refuses a launch without it. */
     sandbox?: ScopeRuntimeSandboxManifest;
   }): Promise<{ runtimeHandle: string; executionGeneration: string; state: "running" }>;
   runChat(input: State & { model: string; prompt: string }): Promise<State & { text: string }>;
   stopRuntime(input: { runtimeHandle: string }): Promise<unknown>;
 }
+export interface SharedRuntimeBindingRegistry {
+  bind(binding: { scopeId: string; actorId: string; runtimeHandle: string }): void;
+  release(runtimeHandle: string): void;
+}
+
 export function createScopeRuntimeChatProviderAdapter(options: {
   client: ScopeRuntimeChatClient;
   scopeId: string;
   executionGeneration: string;
   adapterId: "claude-code" | "codex";
   harnessVersion: string;
-  /** S07: authoritative sandbox manifest for this scope; without it the adapter fails closed before launch. */
+  /** S07/S09: authoritative sandbox manifest mounting the run's execution root; without it the adapter fails closed before launch. */
   sandbox?: ScopeRuntimeSandboxManifest;
+  /** S07: registry that stops the runtime when the actor's lease is lost. */
+  runtimes?: SharedRuntimeBindingRegistry;
+  /** S09: called once with the loss reason when the home loses the run before its terminal result. */
+  onLoss?(reason: CollaborationRunInterruptionReason): void;
 }): CanonicalChatProviderAdapter<State> {
   const scopeHandle = `scope_${options.scopeId.replaceAll("-", "")}`;
   if (!/^scope_[a-f0-9]{32}$/.test(scopeHandle)) throw new Error("Invalid collaboration scope handle");
@@ -53,6 +65,7 @@ export function createScopeRuntimeChatProviderAdapter(options: {
     }
     const operation = options.client.stopRuntime({ runtimeHandle: state.runtimeHandle }).then(() => {
       stoppedRuntimeHandle = state.runtimeHandle;
+      options.runtimes?.release(state.runtimeHandle);
     });
     stopInFlight = operation;
     try {
@@ -68,9 +81,9 @@ export function createScopeRuntimeChatProviderAdapter(options: {
     serializeState: (value) => StateSchema.parse(value),
     async *start(value) {
       const input = parseCanonicalProviderRunInput(value);
-      if (input.executionRoot || input.resumeState !== undefined
+      if ((input.executionRoot && !options.sandbox) || input.resumeState !== undefined
         || input.parts.some((part) => part.type !== "text")) {
-        yield failure("Shared AI supports only the visible standalone Chat transcript.");
+        yield failure("Shared AI supports only the visible Chat transcript on the owner's sandboxed root.");
         return;
       }
       if (!sandbox) {
@@ -99,6 +112,9 @@ export function createScopeRuntimeChatProviderAdapter(options: {
           harnessVersion: options.harnessVersion,
           sandbox,
         });
+        if (options.runtimes) {
+          options.runtimes.bind({ scopeId: options.scopeId, actorId: sandbox.actorId, runtimeHandle: created.runtimeHandle });
+        }
         if (created.executionGeneration !== options.executionGeneration) {
           await stop(StateSchema.parse({
             runtimeHandle: created.runtimeHandle,
@@ -141,6 +157,15 @@ export function createScopeRuntimeChatProviderAdapter(options: {
           stage,
           errorType: error instanceof Error ? error.name : "UnknownError",
         });
+        const reason = classifySharedRunLoss(error, stage);
+        if (reason && options.onLoss) {
+          try {
+            options.onLoss(reason);
+          } catch (lossError: unknown) {
+            console.warn("[collaboration] shared run loss report failed",
+              lossError instanceof Error ? lossError.name : "UnknownError");
+          }
+        }
         yield failure("The isolated shared AI run was interrupted.");
       } finally {
         input.signal.removeEventListener("abort", abort);

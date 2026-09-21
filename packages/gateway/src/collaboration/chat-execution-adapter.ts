@@ -28,6 +28,7 @@ import {
   parseCollaborationAiEligibility,
   type CollaborationAiExecutionEligibility,
 } from "./shared-ai-eligibility.js";
+import type { CollaborationRunLossRepository } from "./shared-run-loss.js";
 
 export class CollaborationChatExecutionAdapter {
   private readonly now: () => Date;
@@ -52,6 +53,8 @@ export class CollaborationChatExecutionAdapter {
     resolveResourceRevision(scopeId: string, chatId: string): Promise<number | null>;
     requestDispatch(scopeId: string, chatId: string): Promise<void>;
     onCommitted?(scopeId: string): Promise<void>;
+    /** S09: loss reasons and control decisions projected onto requests. */
+    runLoss?: Pick<CollaborationRunLossRepository, "interruptionsFor" | "decisionsFor">;
     now?: () => Date;
     createQueuedTurnId?: () => string;
   }) {
@@ -92,7 +95,8 @@ export class CollaborationChatExecutionAdapter {
   async list(context: AuthorizedCollaborationContext): Promise<CollaborationAiRequest[]> {
     requireChatContext(context, "read");
     const rows = await this.options.repository.listSharedQueuedTurns(ownerFor(context), context.resourceId);
-    return Promise.all(rows.map((row) => this.project(row)));
+    const annotations = await this.annotationsFor(rows);
+    return Promise.all(rows.map((row) => this.project(row, annotations)));
   }
 
   async resourceRevision(context: AuthorizedCollaborationContext): Promise<string> {
@@ -218,21 +222,38 @@ export class CollaborationChatExecutionAdapter {
     return result;
   }
 
-  private async project(row: SharedQueuedTurn): Promise<CollaborationAiRequest> {
+  private async project(row: SharedQueuedTurn, annotations?: RequestAnnotations): Promise<CollaborationAiRequest> {
     const text = row.parts.flatMap((part) => part.type === "text" ? [part.text] : []).join("\n");
+    const interruption = row.runId ? annotations?.interruptions.get(row.runId) : undefined;
+    const decision = annotations?.decisions.get(row.id);
+    // A recorded loss explains an interrupted or aborted-by-loss run; the reason never revives it.
+    const state = interruption && (row.state === "interrupted" || row.state === "cancelled" || row.state === "failed")
+      ? "interrupted"
+      : row.state;
     return CollaborationAiRequestSchema.parse({
       id: row.id,
       chatId: row.chatId,
       acceptedSequence: String(row.acceptedSequence),
       actor: await this.options.resolveParticipant(row.requestingActorId),
-      state: row.state,
+      state,
       text,
       selection: row.selection,
       ...(row.retryOfRequestId ? { retryOfRequestId: row.retryOfRequestId } : {}),
       ...(row.runId ? { runId: row.runId } : {}),
+      ...(state === "interrupted" && interruption ? { interruptedReason: interruption.reason } : {}),
+      ...(state === "cancelled" && decision ? { decidedBy: { actorId: decision.actorId, relation: decision.relation } } : {}),
       acceptedAt: row.createdAt,
       updatedAt: row.updatedAt,
     });
+  }
+
+  private async annotationsFor(rows: readonly SharedQueuedTurn[]): Promise<RequestAnnotations | undefined> {
+    if (!this.options.runLoss) return undefined;
+    const [interruptions, decisions] = await Promise.all([
+      this.options.runLoss.interruptionsFor(rows.flatMap((row) => row.runId ? [row.runId] : [])),
+      this.options.runLoss.decisionsFor(rows.map((row) => row.id)),
+    ]);
+    return { interruptions, decisions };
   }
 
   private async resolveCapability(context: AuthorizedCollaborationContext): Promise<{
@@ -306,6 +327,11 @@ export class CollaborationChatExecutionAdapter {
         error instanceof Error ? error.name : "UnknownError");
     });
   }
+}
+
+interface RequestAnnotations {
+  interruptions: Awaited<ReturnType<CollaborationRunLossRepository["interruptionsFor"]>>;
+  decisions: Awaited<ReturnType<CollaborationRunLossRepository["decisionsFor"]>>;
 }
 
 function requireChatContext(
