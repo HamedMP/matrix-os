@@ -29,6 +29,7 @@ describe("collaboration capability HTTP routes", () => {
   let signer: CollaborationProofSigner;
   let homePath: string;
   let projectRoot: string;
+  let appRoot: string;
 
   beforeEach(async () => {
     fixture = await createCollaborationTestDatabase();
@@ -69,13 +70,14 @@ describe("collaboration capability HTTP routes", () => {
     }).execute();
     homePath = await mkdtemp(join(tmpdir(), "collaboration-owner-catalog-"));
     projectRoot = join(homePath, "projects", "demo");
-    await mkdir(projectRoot, { recursive: true });
+    appRoot = join(homePath, "apps", "board");
+    await Promise.all([mkdir(projectRoot, { recursive: true }), mkdir(appRoot, { recursive: true })]);
     await writeFile(join(homePath, "notes.txt"), "one");
     runtime.enableSharedResources({ driver: createOwnerResourceDriver({
       homePath,
       listOwnedProjectIds: async () => ["proj_demo"],
       resolveProjectWorkingDirectory: async (_ownerId, projectId) => projectId === "proj_demo" ? projectRoot : null,
-      resolveAppAssetRoot: async () => null,
+      resolveAppAssetRoot: async (_ownerId, projectId, appId) => projectId === null && appId === "board" ? appRoot : null,
     }) });
     signer = new CollaborationProofSigner({
       activeKeyId: "key-1", keys: { "key-1": key }, now: () => new Date(), createNonce: () => randomUUID().replaceAll("-", ""),
@@ -231,6 +233,20 @@ describe("collaboration capability HTTP routes", () => {
     expect((await signed({ actorId: ownerId, method: "POST", path: route, scopeId: null,
       body: { kind: "folder", path: "projects" },
     })).status).toBe(403);
+  });
+
+  it("resolves exact standalone folder and registered app identities", async () => {
+    const path = `/api/collaboration/runtimes/${collaborationIds.runtime}/catalog/resolve`;
+    for (const [kind, resourcePath] of [["folder", "apps"], ["app", "board"]] as const) {
+      const response = await signed({ actorId: ownerId, method: "POST", path, scopeId: null,
+        body: { kind, path: resourcePath },
+      });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ kind, path: resourcePath });
+    }
+    expect((await signed({ actorId: ownerId, method: "POST", path, scopeId: null,
+      body: { kind: "app", path: "unknown" },
+    })).status).toBe(404);
   });
 
 });
