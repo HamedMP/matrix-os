@@ -27,7 +27,7 @@ export interface ActivationRecord {
   actorId: string;
   state: "active" | "declined";
   decidedAt: string;
-  membershipEvidenceEpoch: number;
+  membershipEvidenceEpoch: string;
 }
 
 export function toGrantRecord(row: GrantRow): GrantRecord {
@@ -55,6 +55,6 @@ export function toActivationRecord(row: ActivationRow): ActivationRecord {
     actorId: row.actor_id,
     state: row.state,
     decidedAt: toIso(row.decided_at),
-    membershipEvidenceEpoch: Number(row.membership_evidence_epoch),
+    membershipEvidenceEpoch: String(row.membership_evidence_epoch),
   };
 }

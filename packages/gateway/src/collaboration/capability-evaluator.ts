@@ -57,17 +57,17 @@ export interface CollaborationCapabilityEvaluatorOptions {
   grants: CollaborationCapabilityRepository;
   organizationPrecondition: OrganizationPrecondition;
   now?: () => Date;
-  /** Monotonic membership evidence epoch recorded on activations; defaults to the request time in seconds. */
-  evidenceEpoch?: () => number;
+  /** Fallback decimal-string epoch recorded on activations when the source reports none (such rows never evaluate as current). */
+  evidenceEpoch?: () => string;
 }
 
 export class CollaborationCapabilityEvaluator {
   private readonly now: () => Date;
-  private readonly evidenceEpoch: () => number;
+  private readonly evidenceEpoch: () => string;
 
   constructor(private readonly options: CollaborationCapabilityEvaluatorOptions) {
     this.now = options.now ?? (() => new Date());
-    this.evidenceEpoch = options.evidenceEpoch ?? (() => Math.floor(this.now().getTime() / 1_000));
+    this.evidenceEpoch = options.evidenceEpoch ?? (() => "0");
   }
 
   async evaluateEffectiveAccess(input: { scopeId: string; actorId: string }): Promise<CollaborationEffectiveAccess> {
@@ -94,7 +94,7 @@ export class CollaborationCapabilityEvaluator {
     const now = this.now();
     // The advertised deadline is never later than the authoritative evidence or the contract's 20-second bound.
     let evidenceExpiresAt = new Date(now.getTime() + ORGANIZATION_EVIDENCE_DEADLINE_MS).toISOString();
-    let currentMembershipEpoch: number | undefined;
+    let currentMembershipEpoch: string | undefined;
     let resolution: ActorGrantResolution | null;
     try {
       resolution = await this.options.grants.resolveActorGrants(input.scopeId, input.actorId);
@@ -163,9 +163,9 @@ export class CollaborationCapabilityEvaluator {
       if (best === null || grant.preset === "contributor") best = grant.preset;
     };
     // Belt and braces with departure cleanup: an activation recorded under an earlier membership
-    // (before a departure and rejoin) never revives; the member must open the share again.
-    const activationCurrent = resolution.activation?.state === "active"
-      && (currentMembershipEpoch === undefined || Number(resolution.activation.membership_evidence_epoch) >= currentMembershipEpoch);
+    // (before a departure and rejoin) never revives; the member must open the share again. Without
+    // authoritative epoch evidence the activation cannot be proven current, so it fails closed.
+    const activationCurrent = isActivationCurrent(resolution.activation, currentMembershipEpoch);
     consider(resolution.memberGrant, resolution.memberGrant?.state === "active", "activation_required");
     consider(resolution.organizationGrant, activationCurrent, "activation_required");
     if (best === null) {
@@ -253,6 +253,28 @@ export class CollaborationCapabilityEvaluator {
     if (!grant) throw new CollaborationAuthorizationError("not_found", "Grant not found");
     return this.options.organizationPrecondition.require({ organizationId: grant.organizationId, actorId: input.actorId });
   }
+}
+
+/**
+ * An organization activation counts only when the membership source reports the actor's current
+ * membership epoch and the activation was recorded under it (or later). Missing epoch evidence is
+ * a fail-closed `activation_required`, never an allow.
+ */
+export function isActivationCurrent(
+  activation: { state: string; membership_evidence_epoch: number | string } | null | undefined,
+  currentMembershipEpoch: string | undefined,
+): boolean {
+  if (!activation || activation.state !== "active") return false;
+  const current = parseEpoch(currentMembershipEpoch);
+  const recorded = parseEpoch(String(activation.membership_evidence_epoch));
+  if (current === null || recorded === null) return false;
+  return recorded >= current;
+}
+
+/** Decimal-string epochs compare as BigInt; anything else is treated as absent (fail closed). */
+function parseEpoch(value: string | undefined): bigint | null {
+  if (value === undefined || !/^\d{1,20}$/.test(value)) return null;
+  return BigInt(value);
 }
 
 /** The widest preset whose expansion is fully contained in the enforced set; the wire summary is never wider than enforcement. */

@@ -77,7 +77,8 @@ export interface RevokeGrantInput extends MutationKey {
 export interface ActivationDecisionInput {
   grantId: string;
   actorId: string;
-  membershipEvidenceEpoch: number;
+  /** Decimal-string membership epoch the decision was made under. */
+  membershipEvidenceEpoch: string;
 }
 
 export interface ActorGrantResolution {
@@ -287,9 +288,12 @@ export class CollaborationCapabilityRepository {
         }
         return false;
       }
+      if (!/^\d{1,20}$/.test(input.membershipEvidenceEpoch)) {
+        throw new CollaborationRepositoryError("conflict", "Membership evidence epoch is invalid");
+      }
       const upserted = await sql<{ inserted: boolean }>`
         INSERT INTO collaboration_grant_activations (grant_id, actor_id, state, decided_at, membership_evidence_epoch)
-        VALUES (${grant.id}, ${input.actorId}, 'active', ${now}, ${input.membershipEvidenceEpoch})
+        VALUES (${grant.id}, ${input.actorId}, 'active', ${now}, ${sql.raw(input.membershipEvidenceEpoch)}::bigint)
         ON CONFLICT (grant_id, actor_id) DO UPDATE
           SET state = 'active', decided_at = EXCLUDED.decided_at, membership_evidence_epoch = EXCLUDED.membership_evidence_epoch
           WHERE collaboration_grant_activations.state = 'declined'
@@ -320,9 +324,12 @@ export class CollaborationCapabilityRepository {
         .executeTakeFirst();
       if (existing?.state === "active") throw new CollaborationRepositoryError("conflict", "Share is already active");
       if (existing?.state === "declined") return false;
+      if (!/^\d{1,20}$/.test(input.membershipEvidenceEpoch)) {
+        throw new CollaborationRepositoryError("conflict", "Membership evidence epoch is invalid");
+      }
       await sql`
         INSERT INTO collaboration_grant_activations (grant_id, actor_id, state, decided_at, membership_evidence_epoch)
-        VALUES (${grant.id}, ${input.actorId}, 'declined', ${now}, ${input.membershipEvidenceEpoch})
+        VALUES (${grant.id}, ${input.actorId}, 'declined', ${now}, ${sql.raw(input.membershipEvidenceEpoch)}::bigint)
         ON CONFLICT (grant_id, actor_id) DO NOTHING
       `.execute(trx);
       return true;
