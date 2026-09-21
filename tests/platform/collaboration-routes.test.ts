@@ -117,6 +117,25 @@ describe("platform collaboration routes", () => {
     }]);
   });
 
+  it("resolves an exact pending invitation to scope metadata only for its indexed actor", async () => {
+    await repository.applyDirectoryEvent({ ...directoryEvent("invited"), organizationId: "org_1" });
+    const path = `/api/collaboration/invitations/${inviteId}/location`;
+    const recipient = await app.request(path, { headers: { "x-test-actor": platformCollaborationActors.recipientWithoutComputer } });
+    expect(recipient.status).toBe(200);
+    expect(await recipient.json()).toEqual({ scopeId });
+    expect(recipient.headers.get("cache-control")).toBe("private, no-store");
+    const outsider = await app.request(path, { headers: { "x-test-actor": platformCollaborationActors.owner } });
+    expect(outsider.status).toBe(404);
+    const unknown = await app.request(`/api/collaboration/invitations/30000000-0000-4000-8000-000000000099/location`,
+      { headers: { "x-test-actor": platformCollaborationActors.recipientWithoutComputer } });
+    expect(unknown.status).toBe(404);
+    expect((await outsider.json())).toEqual(await unknown.json());
+    expect((await app.request(path)).status).toBe(401);
+    await repository.applyDirectoryEvent({ ...directoryEvent("accepted"), organizationId: "org_1",
+      eventId: "20000000-0000-4000-8000-000000000002", metadataRevision: 2 });
+    expect((await app.request(path, { headers: { "x-test-actor": platformCollaborationActors.recipientWithoutComputer } })).status).toBe(404);
+  });
+
   it("lists organization-wide shares as pending only for current members who have not opened them", async () => {
     const orgScopeId = "10000000-0000-4000-8000-000000000077";
     await repository.applyDirectoryEvent({
