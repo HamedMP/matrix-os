@@ -1,6 +1,7 @@
 import { bootstrapChatMetadata } from "./metadata-schema.js";
 import { bootstrapChatAttribution } from "./attribution-repair.js";
 import { sql, type ColumnType, type Generated, type Kysely } from "kysely";
+import { bootstrapMessagePurpose, type ChatMessagePurpose } from "./message-purpose.js";
 
 type Timestamp = ColumnType<Date | string, Date | string | undefined, Date | string>;
 type NullableTimestamp = ColumnType<Date | string | null, Date | string | null | undefined, Date | string | null>;
@@ -59,11 +60,11 @@ export interface ChatMessagesTable {
   chat_id: string;
   seq: number;
   role: "user" | "assistant" | "tool" | "system";
+  purpose: ChatMessagePurpose;
   state: "pending" | "committed" | "failed";
   turn_id: string | null;
   run_id: string | null;
   actor_id: string | null;
-  purpose: "discussion" | "ai_request" | "assistant" | "system";
   parts: JsonValue;
   byte_count: number;
   search_text: string;
@@ -348,22 +349,7 @@ export async function bootstrapChatDatabase<Database extends ChatDatabase>(
   // Keep this migration on the canonical Chat bootstrap path so no Chat write
   // can run before the columns exist.
   await sql`ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS actor_id TEXT`.execute(db);
-  await sql`ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS purpose TEXT`.execute(db);
-  await sql`
-    UPDATE chat_messages
-    SET purpose = CASE role
-      WHEN 'user' THEN 'ai_request'
-      WHEN 'assistant' THEN 'assistant'
-      ELSE 'system'
-    END
-    WHERE purpose IS NULL
-  `.execute(db);
-  await sql`ALTER TABLE chat_messages ALTER COLUMN purpose SET NOT NULL`.execute(db);
-  await sql`ALTER TABLE chat_messages DROP CONSTRAINT IF EXISTS chat_messages_purpose_check`.execute(db);
-  await sql`
-    ALTER TABLE chat_messages ADD CONSTRAINT chat_messages_purpose_check
-    CHECK (purpose IN ('discussion', 'ai_request', 'assistant', 'system'))
-  `.execute(db);
+  await bootstrapMessagePurpose(db);
   await sql`
     CREATE TABLE IF NOT EXISTS chat_attachments (
       id TEXT PRIMARY KEY,

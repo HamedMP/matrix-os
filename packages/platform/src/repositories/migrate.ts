@@ -5,6 +5,7 @@
  */
 import { Kysely, sql } from 'kysely';
 import { runPlatformMigration } from '../migration-runner.js';
+import { migratePlatformSchema } from '../database/migrate.js';
 import type { Executor, PlatformDatabase, PlatformDB } from './schema-tables.js';
 
 export function wrapDb(
@@ -1431,4 +1432,9 @@ async function migrateSchema(db: Executor): Promise<void> {
   `.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_follows_follower ON social_follows(follower_id)`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_follows_following ON social_follows(following_id)`.execute(db);
+
+  // Main-line schema evolution (billing, checkout, AI-funded, snapshots, ...)
+  // lives in database/migrations/; run it after the base tables above.
+  // All statements are IF NOT EXISTS / idempotent, matching main's migrateSchema.
+  await migratePlatformSchema(db);
 }

@@ -12,9 +12,11 @@ export interface MatrixApp {
   path?: string;
   category?: string;
   appIdentity?: string;
+  iconUrl?: string;
 }
 
 const SAFE_APP_IDENTITY = /^[a-z0-9][a-z0-9_-]*(?:\/[a-z0-9][a-z0-9_-]*)*$/;
+const SAFE_LOCAL_ICON_URL = /^\/icons\/[A-Za-z0-9_-]+\.(?:png|svg)\?v=[A-Za-z0-9._~-]{1,160}$/;
 const unavailableApi = { get: async () => [] } as unknown as ApiClient;
 
 export const appKeys = {
@@ -48,12 +50,16 @@ export function parseApps(value: unknown): MatrixApp[] {
       typeof app.category === "string" && app.category.trim().length > 0 ? app.category.trim() : undefined;
     const appIdentity = appIdentityFromFile(app.file);
     const path = canonicalOsViewCatalogPath({ path: app.path, file: app.file }) ?? undefined;
+    const iconUrl = typeof app.iconUrl === "string" && SAFE_LOCAL_ICON_URL.test(app.iconUrl)
+      ? app.iconUrl
+      : undefined;
     apps.push({
       slug,
       name,
       ...(path ? { path } : {}),
       ...(category ? { category } : {}),
       ...(appIdentity ? { appIdentity } : {}),
+      ...(iconUrl ? { iconUrl } : {}),
     });
   }
   return apps;

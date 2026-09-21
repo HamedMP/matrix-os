@@ -170,7 +170,7 @@ do_rollback() {
   cleanup_terminal_runtime_generations || log "WARN: terminal generation cleanup remains above cap after rollback"
   sudo systemctl start matrix-terminal-runtime || true
   sudo systemctl start matrix-gateway matrix-shell
-  sudo systemctl start --no-block matrix-symphony || true
+  resume_symphony_after_update
   local healthy=false
   for _ in $(seq 1 18); do
     if curl --fail --silent --max-time 5 "$HEALTH_URL" >/dev/null 2>&1; then

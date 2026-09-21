@@ -32,6 +32,39 @@ describe("desktop app icon warmup", () => {
     expect(appIconUrl("https://platform.test/", "notes")).toBe("https://platform.test/icons/notes.png");
   });
 
+  it("uses the catalog's versioned local icon URL across runtime slots", () => {
+    const app = {
+      slug: "custom-dashboard",
+      name: "Custom Dashboard",
+      iconUrl: "/icons/custom-brand.png?v=mtime-size",
+    };
+
+    expect(appIconUrl("https://platform.test/", app)).toBe(
+      "https://platform.test/icons/custom-brand.png?v=mtime-size",
+    );
+    expect(appIconUrl("https://platform.test/", app, "preview")).toBe(
+      "https://platform.test/icons/custom-brand.png?v=mtime-size&runtime=preview",
+    );
+  });
+
+  it("accepts only local versioned icon URLs from the app catalog", () => {
+    expect(parseApps({ apps: [{
+      slug: "custom-dashboard",
+      name: "Custom Dashboard",
+      iconUrl: "/icons/custom-brand.png?v=mtime-size",
+    }] })).toEqual([{
+      slug: "custom-dashboard",
+      name: "Custom Dashboard",
+      iconUrl: "/icons/custom-brand.png?v=mtime-size",
+    }]);
+
+    expect(parseApps({ apps: [{
+      slug: "custom-dashboard",
+      name: "Custom Dashboard",
+      iconUrl: "https://tracking.invalid/icon.png",
+    }] })[0]).not.toHaveProperty("iconUrl");
+  });
+
   it("retains the canonical nested app identity used by Postgres schemas", () => {
     expect(parseApps({ apps: [{
       slug: "2048",
