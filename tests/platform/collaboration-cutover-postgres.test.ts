@@ -279,6 +279,7 @@ describe.skipIf(!connectionString)("collaboration cutover on real PostgreSQL (T0
       if (c.req.header("authorization") !== `Bearer ${bearerToken}` || envelope.keyId !== "test"
         || command.scopeId !== scopeId || command.ownerId !== "owner-a" || command.runtimeId !== runtimeId
         || command.phase !== c.req.param("phase") || command.path !== c.req.path
+        || typeof command.nonce !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(command.nonce)
         || !verifyEd25519(publicKey, `matrix-collaboration-cutover-v1\n${canonicalJson(command)}`, envelope.signature)) {
         return c.json({ error: "Unavailable", code: "unavailable" }, 503);
       }
