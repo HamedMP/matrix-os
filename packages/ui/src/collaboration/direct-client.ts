@@ -36,6 +36,7 @@ import { createDirectStreams, type DirectEventHandlers, type DirectTerminalHandl
 
 const REQUEST_TIMEOUT_MS = COLLABORATION_DIRECT_LIMITS.externalApiTimeoutMs;
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
+const MAX_SCOPE_RECORDS = 128;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const SESSION_HEADER = "x-matrix-collaboration-session";
 const REQUEST_HEADER = "x-matrix-collaboration-request";
@@ -94,6 +95,7 @@ interface ScopeRecord {
   connected: Connected | null;
   pending: Promise<Connected> | null;
   key: ProofKeyPair | null;
+  generation: number;
 }
 
 export function createCollaborationDirectClient(options: CollaborationDirectClientOptions): CollaborationDirectClient {
@@ -102,11 +104,17 @@ export function createCollaborationDirectClient(options: CollaborationDirectClie
   const now = options.now ?? (() => new Date());
   const clientOrigin = options.clientOrigin ?? globalThis.location?.origin ?? platform.origin;
   const scopes = new Map<string, ScopeRecord>();
+  let disposed = false;
 
   const record = (scopeId: string): ScopeRecord => {
+    if (disposed) throw new CollaborationDirectError("denied", "Collaboration session closed");
     let entry = scopes.get(scopeId);
     if (!entry) {
-      entry = { state: "idle", connected: null, pending: null, key: null };
+      if (scopes.size >= MAX_SCOPE_RECORDS) {
+        const oldest = scopes.keys().next().value;
+        if (oldest) closeScope(oldest);
+      }
+      entry = { state: "idle", connected: null, pending: null, key: null, generation: 0 };
       scopes.set(scopeId, entry);
     }
     return entry;
@@ -186,45 +194,65 @@ export function createCollaborationDirectClient(options: CollaborationDirectClie
     return { ...current, session: session.data };
   };
 
-  const settle = (entry: ScopeRecord, error: unknown): never => {
-    entry.connected = null;
-    entry.state = error instanceof CollaborationDirectError
-      ? error.code === "host_offline" ? "offline" : error.code === "upgrade_required" ? "upgrade_required" : error.code === "denied" ? "denied" : "idle"
-      : "idle";
-    throw error;
-  };
+  const closedError = () => new CollaborationDirectError("denied", "Collaboration session closed");
 
-  /** Connects, renews or reconnects so that a live session exists for the scope. */
+  /** A close increments the record generation, fencing every pending exchange or renewal. */
   const ensure = async (scopeId: string, fresh = false): Promise<Connected> => {
+    if (disposed) throw closedError();
     const entry = record(scopeId);
     if (entry.pending) return entry.pending;
+    const generation = entry.generation;
+    const active = () => !disposed && scopes.get(scopeId) === entry && entry.generation === generation;
     const current = entry.connected;
     const at = now().getTime();
-    if (current && !fresh) {
-      if (Date.parse(current.session.expiresAt) > at + 1_000 && Date.parse(current.session.renewAfter) > at) return current;
-      if (Date.parse(current.session.expiresAt) > at + 1_000) {
-        entry.pending = renew(scopeId, current).then((renewed) => { entry.connected = renewed; entry.state = "connected"; return renewed; })
-          .catch(async (error: unknown) => {
-            if (error instanceof CollaborationDirectError && (error.code === "upgrade_required" || error.code === "host_offline")) settle(entry, error);
-            entry.connected = null;
-            entry.key ??= await generateProofKey(options.subtle);
-            const connected = await exchange(scopeId, entry.key).catch((failure: unknown) => settle(entry, failure));
-            entry.connected = connected;
-            entry.state = "connected";
-            return connected;
-          }).finally(() => { entry.pending = null; });
-        return entry.pending;
-      }
-    }
-    entry.state = "connecting";
-    entry.pending = (async () => {
+    if (current && !fresh && Date.parse(current.session.expiresAt) > at + 1_000
+      && Date.parse(current.session.renewAfter) > at) return current;
+
+    const connectFresh = async (): Promise<Connected> => {
       entry.key ??= await generateProofKey(options.subtle);
-      const connected = await exchange(scopeId, entry.key).catch((failure: unknown) => settle(entry, failure));
+      if (!active()) throw closedError();
+      const connected = await exchange(scopeId, entry.key);
+      if (!active()) {
+        closeConnected(scopeId, connected);
+        throw closedError();
+      }
       entry.connected = connected;
       entry.state = "connected";
       return connected;
-    })().finally(() => { entry.pending = null; });
-    return entry.pending;
+    };
+    const connect = async (): Promise<Connected> => {
+      try {
+        if (current && !fresh && Date.parse(current.session.expiresAt) > at + 1_000) {
+          try {
+            const renewed = await renew(scopeId, current);
+            if (!active()) throw closedError();
+            entry.connected = renewed;
+            entry.state = "connected";
+            return renewed;
+          } catch (error: unknown) {
+            if (!active()) throw closedError();
+            if (error instanceof CollaborationDirectError && (error.code === "upgrade_required" || error.code === "host_offline")) throw error;
+          }
+        }
+        if (!active()) throw closedError();
+        entry.connected = null;
+        return await connectFresh();
+      } catch (error: unknown) {
+        if (active()) {
+          entry.connected = null;
+          entry.state = error instanceof CollaborationDirectError
+            ? error.code === "host_offline" ? "offline" : error.code === "upgrade_required" ? "upgrade_required" : error.code === "denied" ? "denied" : "idle"
+            : "idle";
+        }
+        throw error;
+      }
+    };
+    entry.state = "connecting";
+    const pending = connect();
+    entry.pending = pending;
+    const clearPending = () => { if (entry.pending === pending) entry.pending = null; };
+    void pending.then(clearPending, clearPending);
+    return pending;
   };
 
   const signedFetch = async (scopeId: string, connected: Connected, method: DirectMethod, path: string, query: string, body: string | undefined, conditions?: DirectDeleteConditions) => {
@@ -262,6 +290,12 @@ export function createCollaborationDirectClient(options: CollaborationDirectClie
     });
   };
 
+  const closeConnected = (scopeId: string, connected: Connected) => {
+    void signedFetch(scopeId, connected, "DELETE", `/api/collaboration/direct-sessions/${connected.session.id}`, "", undefined)
+      .then((response) => response.body?.cancel())
+      .catch((error: unknown) => { console.warn("[collaboration-direct] session close failed", error instanceof Error ? error.name : "UnknownError"); });
+  };
+
   const request: CollaborationDirectClient["request"] = async (scopeId, method, rawPath, body, conditions) => {
     if (!UUID.test(scopeId)) throw new CollaborationDirectError("invalid_request", "Invalid collaboration request");
     const { path, query } = splitPath(rawPath, scopeId);
@@ -269,8 +303,12 @@ export function createCollaborationDirectClient(options: CollaborationDirectClie
     if (serialized !== undefined && new TextEncoder().encode(serialized).byteLength > COLLABORATION_DIRECT_LIMITS.httpJsonBytes) {
       throw new CollaborationDirectError("invalid_request", "Invalid collaboration request");
     }
+    const initial = record(scopeId);
+    const generation = initial.generation;
     let connected = await ensure(scopeId);
+    if (disposed || initial.generation !== generation) throw closedError();
     let response = await signedFetch(scopeId, connected, method, path, query, serialized, conditions);
+    if (disposed || initial.generation !== generation) { await response.body?.cancel(); throw closedError(); }
     if (response.status === 401) {
       // The session ended on the home (expiry, denial or a new authority generation): one fresh ticket, one retry.
       await response.body?.cancel();
@@ -278,6 +316,7 @@ export function createCollaborationDirectClient(options: CollaborationDirectClie
       entry.connected = null;
       connected = await ensure(scopeId, true);
       response = await signedFetch(scopeId, connected, method, path, query, serialized, conditions);
+      if (disposed || initial.generation !== generation) { await response.body?.cancel(); throw closedError(); }
     }
     throwForStatus(response.status);
     if (response.status === 204) {
@@ -295,16 +334,17 @@ export function createCollaborationDirectClient(options: CollaborationDirectClie
   });
 
   const closeScope = (scopeId: string) => {
+    streams.closeScope(scopeId);
     const entry = scopes.get(scopeId);
     if (!entry) return;
+    entry.generation += 1;
     const connected = entry.connected;
     entry.connected = null;
     entry.pending = null;
+    entry.key = null;
     entry.state = "idle";
-    if (!connected) return;
-    void signedFetch(scopeId, connected, "DELETE", `/api/collaboration/direct-sessions/${connected.session.id}`, "", undefined)
-      .then((response) => response.body?.cancel())
-      .catch((error: unknown) => { console.warn("[collaboration-direct] session close failed", error instanceof Error ? error.name : "UnknownError"); });
+    scopes.delete(scopeId);
+    if (connected) closeConnected(scopeId, connected);
   };
 
   return {
@@ -317,7 +357,7 @@ export function createCollaborationDirectClient(options: CollaborationDirectClie
     },
     close: (scopeId) => {
       if (scopeId) closeScope(scopeId);
-      else for (const id of [...scopes.keys()]) closeScope(id);
+      else { disposed = true; streams.closeAll(); for (const id of [...scopes.keys()]) closeScope(id); }
     },
     inspectKeys: (scopeId) => scopes.get(scopeId)?.key ?? null,
   };
