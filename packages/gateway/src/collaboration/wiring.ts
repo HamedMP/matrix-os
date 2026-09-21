@@ -17,6 +17,12 @@ import { bootstrapCollaborationDatabase, type OwnerCollaborationDatabase } from 
 import { CollaborationDirectoryOutbox } from "./directory-outbox.js";
 import { CollaborationDiscussionAdapter } from "./discussion-adapter.js";
 import { registerCollaborationEventWebSocketRoute } from "./event-websocket-route.js";
+import { CollaborationControlClient } from "./control-client.js";
+import { DirectReplayCache, DirectTicketVerifier } from "./direct-auth.js";
+import { createDirectSessionRoutes } from "./direct-routes.js";
+import { DirectSessionService } from "./direct-sessions.js";
+import { registerCollaborationDirectWebSocketRoutes } from "./direct-websocket.js";
+import { ensureRuntimeIdentity } from "./runtime-identity.js";
 import { CollaborationEventRegistry } from "./events.js";
 import { CollaborationParticipantResolver } from "./participant-resolver.js";
 import {
@@ -119,6 +125,40 @@ export async function createGatewayCollaboration(options: {
     keys: options.config.proofKeys,
     authority,
   });
+  // S05: direct transport. The platform relay signs nothing on this path; the
+  // home verifies tickets against the platform keys learned at registration,
+  // and holds every session. Without registered keys or client origins the
+  // direct routes fail closed while the rest keeps serving.
+  const runtimeIdentity = await ensureRuntimeIdentity(options.db);
+  let controlClient: CollaborationControlClient | undefined;
+  const directVerifier = new DirectTicketVerifier({
+    runtimeId: options.config.runtimeId,
+    platformKeys: () => controlClient?.platformKeys() ?? [],
+    authorityGeneration: () => controlClient?.authorityGeneration() ?? 1,
+    allowedClientOrigins: options.config.clientOrigins,
+    replay: new DirectReplayCache(),
+  });
+  const directSessions = new DirectSessionService({
+    verifier: directVerifier,
+    authority,
+    repository,
+    startTimers: options.startTimers !== false,
+  });
+  if (options.config.ownerId && options.config.relayHandle) {
+    controlClient = new CollaborationControlClient({
+      platformBaseUrl: options.config.platformBaseUrl,
+      runtimeId: options.config.runtimeId,
+      ownerId: options.config.ownerId,
+      relayHandle: options.config.relayHandle,
+      serviceToken: options.config.serviceToken,
+      identity: { keyId: runtimeIdentity.keyId, publicKey: runtimeIdentity.publicKey },
+      sessions: directSessions,
+      ...(options.outboxFetch ? { fetchImpl: options.outboxFetch } : {}),
+      startTimers: options.startTimers !== false,
+    });
+  } else {
+    console.warn("[collaboration] owner identity or relay handle missing: the home never registers for direct transport");
+  }
   const chatScope = new CollaborationChatScopeService(options.db, {
     runtimeId: options.config.runtimeId,
     preflightSecret: options.config.preflightSecret,
@@ -192,6 +232,9 @@ export async function createGatewayCollaboration(options: {
     projectTransitions,
     projectFence,
     projectScope,
+    directSessions,
+    directVerifier,
+    controlClient,
     projectOperationAdmission: {
       withLegacyAdmission<T>(input: {
         ownerType: "personal" | "organization";
@@ -326,6 +369,7 @@ export async function createGatewayCollaboration(options: {
       input.app.route("/", createCollaborationRoutes({
         runtimeId: options.config.runtimeId,
         verifier,
+        directSessions,
         authority,
         repository,
         chatScope,
@@ -356,6 +400,21 @@ export async function createGatewayCollaboration(options: {
         verifier,
         authority,
         registry: eventRegistry,
+      });
+      input.app.route("/", createDirectSessionRoutes({ sessions: directSessions }));
+      registerCollaborationDirectWebSocketRoutes({
+        app: input.app,
+        upgradeWebSocket: input.upgradeWebSocket,
+        verifier: directVerifier,
+        sessions: directSessions,
+        authority,
+        events: eventRegistry,
+        ...(terminalDispatcher && terminalEventRegistry && terminalControl
+          ? { terminal: { dispatcher: terminalDispatcher, registry: terminalEventRegistry, control: terminalControl } }
+          : {}),
+      });
+      void controlClient?.start().catch((error: unknown) => {
+        console.warn("[collaboration] control client start failed", error instanceof Error ? error.name : "UnknownError");
       });
       if (terminalAdapter && terminalDispatcher && terminalControl && terminalEventRegistry) {
         registerCollaborationTerminalWebSocketRoute({
@@ -410,6 +469,8 @@ export async function createGatewayCollaboration(options: {
       if (closing) return;
       closing = true;
       if (cleanupTimer) clearInterval(cleanupTimer);
+      await controlClient?.shutdown();
+      await directSessions.shutdown();
       await sharedAiRuntime?.shutdown();
       sharedAiRuntime = undefined;
       chatExecutionAdapter = undefined;

@@ -18,6 +18,11 @@ export interface GatewayCollaborationConfig {
   preflightSecret: string;
   platformBaseUrl: string;
   serviceToken: string;
+  /** S05: browser origins allowed to open direct sessions; empty means direct sessions fail closed. */
+  clientOrigins: readonly string[];
+  /** S05: owner and relay handle for runtime registration; absent means the home never registers. */
+  ownerId?: string;
+  relayHandle?: string;
 }
 
 export type GatewayCollaborationConfigurationHealth =
@@ -47,6 +52,9 @@ export function loadGatewayCollaborationConfig(env: NodeJS.ProcessEnv): GatewayC
     preflightSecret: env.MATRIX_COLLABORATION_PREFLIGHT_SECRET!,
     platformBaseUrl: env.PLATFORM_INTERNAL_URL!.trim(),
     serviceToken: env.UPGRADE_TOKEN!,
+    clientOrigins: parseClientOrigins(env.MATRIX_COLLABORATION_CLIENT_ORIGINS),
+    ...(env.MATRIX_USER_ID?.trim() ? { ownerId: env.MATRIX_USER_ID.trim() } : {}),
+    ...(env.MATRIX_HANDLE?.trim() ? { relayHandle: env.MATRIX_HANDLE.trim() } : {}),
   };
 }
 
@@ -105,4 +113,18 @@ function parseProofKeys(raw: string | undefined): Record<string, string> | null 
     return null;
   }
   return proofKeys;
+}
+
+/** S05: exact https origins, deduplicated; anything malformed is dropped so a typo cannot widen the allowlist. */
+function parseClientOrigins(raw: string | undefined): string[] {
+  const origins = new Set<string>();
+  for (const value of (raw ?? "").split(",").map((entry) => entry.trim()).filter(Boolean).slice(0, 16)) {
+    try {
+      const parsed = new URL(value);
+      if (parsed.protocol === "https:" && parsed.origin === value) origins.add(parsed.origin);
+    } catch (error: unknown) {
+      if (!(error instanceof TypeError)) console.warn("[collaboration] client origin parse failed", error instanceof Error ? error.name : "UnknownError");
+    }
+  }
+  return [...origins];
 }
