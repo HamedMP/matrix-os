@@ -85,6 +85,8 @@ export class DirectSessionService {
     limits?: Partial<DirectConnectionLimits>;
     /** Called when a session ends for any reason so streams can be closed. */
     onEnded?: DirectSessionEndedListener;
+    /** Called only after a fresh verified session is stored or renewed. */
+    onAdmitted?: (session: CollaborationDirectSession) => void;
     startTimers?: boolean;
   }) {
     this.now = options.now ?? (() => new Date());
@@ -130,6 +132,7 @@ export class DirectSessionService {
       renewAfter: new Date(issuedAt.getTime() + RENEW_AFTER_MS).toISOString(),
     });
     this.sessions.set(session.id, { session, proofPublicKey: parsed.data.proofPublicKey, connections: 0, actionsRemaining: ticket.maxActions, pendingActions: 0, budgetVersion: 0 });
+    this.notifyAdmitted(session);
     return session;
   }
 
@@ -165,6 +168,7 @@ export class DirectSessionService {
     record.actionsRemaining = ticket.maxActions;
     record.pendingActions = 0;
     record.budgetVersion += 1;
+    this.notifyAdmitted(session);
     return session;
   }
 
@@ -440,6 +444,14 @@ export class DirectSessionService {
       } catch (error: unknown) {
         console.warn("[collaboration-direct-sessions] end hook failed", error instanceof Error ? error.name : "UnknownError");
       }
+    }
+  }
+
+  private notifyAdmitted(session: CollaborationDirectSession): void {
+    try {
+      this.options.onAdmitted?.(session);
+    } catch (error: unknown) {
+      console.warn("[collaboration-direct-sessions] admission hook failed", error instanceof Error ? error.name : "UnknownError");
     }
   }
 
