@@ -205,7 +205,7 @@ export class CollaborationDirectoryOutbox {
           recipientEntries,
           discoveryState: row.discovery_state,
           organizationId: row.organization_id ?? null,
-          audience: row.organization_audience === true || row.organization_audience === 1 || row.organization_audience === "1" ? "organization" : null,
+          audience: row.organization_audience === true || Number(row.organization_audience) === 1 ? "organization" : null,
           attempt,
         });
       }
