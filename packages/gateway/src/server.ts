@@ -1013,6 +1013,12 @@ export async function createGateway(config: GatewayConfig) {
             };
             const resourceDriver = createOwnerResourceDriver({
               homePath,
+              listOwnedProjectIds: async (ownerId) => {
+                const { projects } = await codingAgentProjectManager.listManagedProjects({
+                  visibility: "all", ownerScope: { type: "user", id: ownerId },
+                });
+                return projects.map((project) => project.id);
+              },
               resolveProjectWorkingDirectory: async (ownerId, projectId) => {
                 const result = await codingAgentProjectManager.getProjectById(
                   { type: "user", id: ownerId }, projectId,
