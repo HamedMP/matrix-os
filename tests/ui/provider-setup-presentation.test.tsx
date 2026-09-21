@@ -37,6 +37,7 @@ function setup(value = snapshot(), overrides: Partial<React.ComponentProps<typeo
 
 function fundedSnapshot(): ProviderSettingsSnapshot {
   const value = snapshot();
+  value.atomicConnectSupported = true;
   value.accessSources = [{
     id: "matrix_included", kind: "matrix_gateway", fundingKind: "matrix_included",
     providerId: "anthropic", accountId: null, displayName: "Matrix AI", eligibleModelIds: ["sonnet"],
@@ -104,7 +105,8 @@ describe("provider setup presentation", () => {
     expect(within(gateway).queryByRole("textbox", { name: "Monthly budget in USD" })).not.toBeInTheDocument();
     fireEvent.click(within(gateway).getByRole("button", { name: "Use Matrix AI" }));
     expect(onMutate).toHaveBeenCalledWith({ type: "set_route", harnessInstanceId: "pi",
-      route: { kind: "configurable", providerId: "anthropic", modelId: "sonnet" }, accessSourceId: "matrix_included", accountId: null });
+      route: { kind: "configurable", providerId: "anthropic", modelId: "sonnet" }, accessSourceId: "matrix_included", accountId: null,
+      enableHarness: true });
     expect(within(gateway).queryByText("Selected for Pi")).not.toBeInTheDocument();
   });
 

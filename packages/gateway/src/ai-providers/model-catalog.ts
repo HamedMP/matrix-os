@@ -6,7 +6,8 @@ import {
   resolveKernelModelOption,
 } from "../kernel-settings.js";
 
-export const AI_PROVIDER_CATALOG_VERSION = "bundled_2026_08_30";
+export const AI_PROVIDER_CATALOG_VERSION = "bundled_2026_09_10";
+export const MATRIX_DEFAULT_MODEL_ID = "@cf/zai-org/glm-5.3-flash";
 export const MATRIX_INCLUDED_MODEL_IDS = ["claude-sonnet-5"] as const;
 export const OWNER_ANTHROPIC_MODEL_IDS = [
   "claude-fable-5",
@@ -61,6 +62,13 @@ export function buildBundledModelCatalog(): AiModelDescriptorView[] {
     };
   });
   return [
+    {
+      id: MATRIX_DEFAULT_MODEL_ID, vendor: "cloudflare", displayName: "GLM 5.3 Flash",
+      status: "current", capabilities: ["tools", "reasoning", "long_context"],
+      effortControls: [], eligibleAccessSourceIds: ["matrix_cloudflare"],
+      dataPolicies: [{ accessSourceId: "matrix_cloudflare", route: "matrix_relay", disclosureKey: "matrix-cloudflare-workers-ai" }],
+      aliases: [], catalogVersion: AI_PROVIDER_CATALOG_VERSION,
+    },
     ...anthropicModels,
     {
       id: OWNER_OPENAI_MODEL_IDS[0],

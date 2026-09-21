@@ -300,6 +300,13 @@ export class AiProviderService implements AiProviderSnapshotReader {
 
     const accessSources: AiAccessSourceView[] = [
       sourceFromReadiness({
+        id: "matrix_cloudflare", displayName: "Matrix AI", fundingKind: "matrix_included",
+        vendor: "cloudflare", accountLabel: "Included",
+        eligibleModelIds: eligibleModelsForSource("matrix_cloudflare", catalog)
+          .filter((model) => funded?.allowedModelIds.includes(model.id)).map((model) => model.id),
+        policyVersion: AI_PROVIDER_CATALOG_VERSION,
+      }, matrixReadiness),
+      sourceFromReadiness({
         id: "matrix_included",
         displayName: "Matrix AI",
         fundingKind: "matrix_included",

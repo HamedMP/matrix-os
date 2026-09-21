@@ -23,10 +23,8 @@ import type {
   CodingHarnessCredentialLaunch,
   CodingHarnessCredentialResolver,
 } from "./harness-credentials.js";
-import {
-  addPortableProviderCredentials,
-  buildPiChildEnvironment,
-} from "./pi-process-environment.js";
+import { buildPiChildEnvironment } from "./pi-process-environment.js";
+import { prepareOpenCodeRunEnvironment } from "./managed-harness-process-config.js";
 import type {
   CodingAgentProviderAdapter,
   CodingAgentProviderEventBatch,
@@ -175,14 +173,11 @@ function childEnvironment(
   credentialEnv: Record<string, string>,
   homePath: string,
 ): Record<string, string> {
-  const ownerEnvironment = buildPiChildEnvironment({ ...base, HOME: homePath });
-  ownerEnvironment.HOME = homePath;
-  const env = addPortableProviderCredentials(ownerEnvironment, credentialEnv);
-  env.OPENCODE_DISABLE_PROJECT_CONFIG = "1";
-  env.OPENCODE_DISABLE_AUTOUPDATE = "1";
-  env.OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER = "1";
-  env.OPENCODE_CONFIG_CONTENT = readOnlyConfig(env.ANTHROPIC_BASE_URL);
-  return env;
+  return prepareOpenCodeRunEnvironment({
+    homePath,
+    baseEnvironment: base,
+    credentials: credentialEnv,
+  });
 }
 
 type CredentialResolution =

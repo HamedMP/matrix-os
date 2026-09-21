@@ -2,7 +2,7 @@ import { useState, type ReactNode } from "react";
 import { isRunnableGenericHarnessCredentialRoute, isSupportedGenericHarnessCredentialRoute, type ProviderHarnessInstance, type ProviderSettingsSnapshot } from "@matrix-os/contracts";
 import { AccountsPanel } from "./AccountsPanel.js";
 import { AddHarnessDialog } from "./AddHarnessDialog.js";
-import { GatewayPanel } from "./GatewayPanel.js";
+import { GatewayPanel, isMatrixGatewaySourceReady } from "./GatewayPanel.js";
 import { HarnessEditor } from "./HarnessEditor.js";
 import { HarnessRail } from "./HarnessRail.js";
 import { ConnectionChoices } from "./ConnectionChoices.js";
@@ -51,22 +51,26 @@ export function AgentsProvidersView({
   const genericConfiguration = harness !== null
     && harness !== undefined
     && configurationHarnessKinds.includes(harness.harness);
-  const gatewaySource = snapshot.gatewayPolicy === null
-    ? snapshot.accessSources.find((source) => source.kind === "matrix_gateway") ?? null
-    : snapshot.accessSources.find((source) => source.id === snapshot.gatewayPolicy?.accessSourceId) ?? null;
+  // One Matrix balance, with separate exact serving routes behind it. Preserve
+  // the selected managed route; prefer GLM only when choosing Matrix anew.
+  const gatewaySource = snapshot.accessSources.find((source) => source.kind === "matrix_gateway" && source.id === harness?.accessSourceId)
+    ?? snapshot.accessSources.find((source) => source.id === "matrix_cloudflare" && source.readiness.state === "ready" && source.eligibleModelIds.length > 0)
+    ?? snapshot.accessSources.find((source) => source.id === snapshot.gatewayPolicy?.accessSourceId)
+    ?? snapshot.accessSources.find((source) => source.kind === "matrix_gateway") ?? null;
   const gatewayProvider = gatewaySource === null
     ? null
     : snapshot.modelProviders.find((provider) => provider.id === gatewaySource.providerId) ?? null;
   const eligibleGatewayModels = gatewayProvider?.models.filter((model) => model.enabled
     && gatewaySource?.eligibleModelIds.includes(model.id)
     && snapshot.gatewayPolicy?.allowedModelIds.includes(model.id)) ?? [];
+  const gatewayReady = isMatrixGatewaySourceReady(gatewaySource, snapshot.gatewayPolicy, gatewayProvider);
   const gatewayModelsFor = (item: ProviderHarnessInstance) => eligibleGatewayModels.filter((model) => gatewaySource !== null
     && isRunnableGenericHarnessCredentialRoute({ ...item, route: { kind: "configurable", providerId: gatewaySource.providerId, modelId: model.id }, accessSourceId: gatewaySource.id }, gatewaySource));
   const gatewayModels = harness ? gatewayModelsFor(harness) : [];
   const gatewayModel = gatewayModels.find((model) => model.id === harness?.route.modelId) ?? gatewayModels[0];
   const canUseGateway = genericConfiguration && supports("set_route") && harness?.installState === "installed" && harness.route.kind === "configurable"
-    && gatewaySource?.readiness.state === "ready" && gatewayModel !== undefined;
-  const gatewaySelected = gatewaySource !== null && harness?.accessSourceId === gatewaySource.id
+    && gatewayReady && gatewayModel !== undefined;
+  const gatewaySelected = gatewayReady && gatewaySource !== null && harness?.accessSourceId === gatewaySource.id
     && harness.route.providerId === gatewaySource.providerId
     && isSupportedGenericHarnessCredentialRoute(harness, gatewaySource)
     && eligibleGatewayModels.some((model) => model.id === harness.route.modelId);
