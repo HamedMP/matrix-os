@@ -109,6 +109,9 @@ describe("collaboration control authority (T017/T019)", () => {
     const assert = vi.fn(async (input: { organizationId: string; actorId: string; requestStartedAt: Date }) => ({
       member: input.actorId === member, membershipEpoch: 4, requestStartedAt: input.requestStartedAt, expiresAt: new Date(input.requestStartedAt.getTime() + 20_000),
     }));
+    // The tenancy gate reads the owner's stored membership row, never the projection.
+    await repository.applyOrganization({ organizationId: org, name: "Org", slug: "org", aiSubmission: "owner_only", sourceUpdatedAt: new Date(1) });
+    await repository.applyMembership({ organizationId: org, membershipId: "m1", actorId: member, role: "org:member", sourceUpdatedAt: new Date(1), state: "active" });
     const authority = createCollaborationControlAuthority({ repository, now: () => clock, affectedRuntimes: async () => [], projection: { assert } });
     const runtime = { runtimeId: runtimeA, ownerId: member };
     const assertions = await authority.assertActors(runtime, [
@@ -133,8 +136,9 @@ describe("collaboration control authority (T017/T019)", () => {
       { organizationId: org, actorId: member },
       { organizationId: "org_2other0000000000000000001", actorId: member },
     ]);
-    // Only the owner's own membership was checked, once per organization; the actors were never looked up.
-    expect(assert.mock.calls.map(([input]) => input.actorId)).toEqual([outsiderOwner, outsiderOwner]);
+    // The owner has no stored membership in either organization, so the projection is never consulted:
+    // nothing is tracked for reconciliation and no actor is looked up.
+    expect(assert).not.toHaveBeenCalled();
     expect(assertions).toHaveLength(2);
     for (const assertion of assertions) {
       expect(assertion).toMatchObject({ type: "membership_assertion", member: false, membershipEpoch: "0", aiSubmission: "owner_only", requestStartedAt: clock.toISOString() });

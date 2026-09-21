@@ -224,11 +224,18 @@ export function createCollaborationControlAuthority(options: {
       const requestStartedAt = now();
       const unique = new Map<string, { organizationId: string; actorId: string }>();
       for (const actor of actors) unique.set(`${actor.organizationId}\u0000${actor.actorId}`, actor);
-      // Tenant boundary first: the runtime owner's own membership decides, per organization,
-      // whether any actor there may be resolved at all.
+      // Tenant boundary first: the runtime owner's own stored membership row decides, per
+      // organization, whether any actor there may be resolved at all. This read never touches
+      // the projection, so a foreign organization is neither tracked for reconciliation nor
+      // evaluated upstream on behalf of a runtime whose owner does not belong to it.
       const organizationIds = [...new Set([...unique.values()].map((actor) => actor.organizationId))];
-      const ownerMembership = new Map<string, MembershipAssertion>();
+      const inTenancy = new Map<string, boolean>();
       await Promise.all(organizationIds.map(async (organizationId) => {
+        const membership = await options.repository.getMembership({ organizationId, actorId: runtime.ownerId });
+        inTenancy.set(organizationId, membership?.state === "active");
+      }));
+      const ownerMembership = new Map<string, MembershipAssertion>();
+      await Promise.all(organizationIds.filter((organizationId) => inTenancy.get(organizationId)).map(async (organizationId) => {
         ownerMembership.set(organizationId, await projection.assert({ organizationId, actorId: runtime.ownerId, requestStartedAt }));
       }));
       const expiresAt = new Date(requestStartedAt.getTime() + GENERIC_DENIAL_TTL_MS);
