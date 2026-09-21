@@ -104,6 +104,33 @@ describe("project Git broker PostgreSQL boundary", () => {
     }));
   });
 
+  it("serializes distinct member Git mutations for one shared project", async () => {
+    let active = 0;
+    let peak = 0;
+    const run = vi.fn(async () => {
+      active += 1;
+      peak = Math.max(peak, active);
+      await new Promise((resolve) => setTimeout(resolve, 75));
+      active -= 1;
+      return { commitSha: "a".repeat(40) };
+    });
+    const broker = createProjectGitBroker({
+      db: fixture.db,
+      authorize: async () => ({ ownerId: collaborationActors.owner, projectId: PROJECT }),
+      resolveOwnerIdentity: async () => ({ name: "Owner", email: "owner@example.test", label: "Owner <owner@example.test>" }),
+      driver: { run, reconcile: async () => null },
+    });
+    const requests = [
+      action("commit", { message: "feat: first change", expectedHeadSha: "b".repeat(40) }),
+      action("commit", { message: "feat: second change", expectedHeadSha: "b".repeat(40) }),
+    ];
+    const results = await Promise.all(requests.map((request) => broker.submit({
+      scopeId: collaborationIds.scope, actorId: collaborationActors.editor, request,
+    }).catch((error: unknown) => error)));
+    expect(peak).toBe(1);
+    expect(results.some((result) => result instanceof ProjectGitBrokerError && result.code === "busy")).toBe(true);
+  });
+
   it("denies a Viewer before creating an operation or running a side effect", async () => {
     const run = vi.fn();
     const broker = createProjectGitBroker({
