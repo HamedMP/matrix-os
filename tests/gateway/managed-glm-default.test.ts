@@ -41,7 +41,23 @@ describe("managed GLM defaults", () => {
   it("projects both managed serving providers under one gateway policy", async () => {
     const canonical = fixture();
     const config = initialProviderSettingsConfiguration(canonical);
-    const snapshot = await projectProviderSettings({ canonical, config, supportedActions: [], now: new Date("2026-08-30T10:00:00.000Z") });
+    const now = new Date("2026-08-30T10:00:00.000Z");
+    const snapshot = await projectProviderSettings({
+      canonical,
+      config,
+      supportedActions: [],
+      now,
+      fundedPolicyAuthoritative: true,
+      fundedPolicy: {
+        enabled: true,
+        globalRevision: 1,
+        runtimeRevision: 1,
+        allowedModelIds: [glm, "anthropic/claude-sonnet-5"],
+        monthlyBudgetMicrousd: 1_000_000,
+        checkedAt: now.toISOString(),
+        staleAfter: "2026-08-30T10:01:00.000Z",
+      },
+    });
     expect(snapshot.gatewayPolicy?.allowedModelIds).toEqual(expect.arrayContaining([glm, "claude-sonnet-5"]));
     expect(snapshot.modelProviders.find((provider) => provider.id === "cloudflare")?.displayName).toBe("Cloudflare Workers AI");
   });
