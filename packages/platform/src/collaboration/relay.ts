@@ -198,6 +198,15 @@ export class CollaborationRelay {
       return plain("Collaboration route not found", 404);
     }
     const isExport = input.method === "GET" && /\/exports\/[0-9a-f-]{36}$/.test(input.path);
+    // A chunked upload declares no length, so the check above cannot see it. The relay holds
+    // its own limit against the bytes themselves rather than trusting whatever body limit the
+    // caller mounted in front of it, which is a different constant in a different package.
+    // Overflow errors the stream, which aborts the upstream request mid-body; `overflowed`
+    // tells the rejection apart from a genuine upstream failure.
+    let overflowed = false;
+    const requestBody = input.body instanceof ReadableStream
+      ? boundedRequestStream(input.body, this.limits.requestBytes, () => { overflowed = true; })
+      : input.body;
     const headers = new Headers();
     input.headers.forEach((value, name) => {
       if (FORWARDED_REQUEST_HEADERS.has(name.toLowerCase()) && value.length <= MAX_HEADER_VALUE && !/[\r\n]/.test(value)) headers.set(name, value);
@@ -207,17 +216,26 @@ export class CollaborationRelay {
       response = await this.fetchImpl(`${home.origin}${input.path}${input.query ? `?${input.query}` : ""}`, {
         method: input.method,
         headers,
-        body: input.body instanceof Uint8Array
-          ? (input.body.byteLength === 0 ? undefined : Uint8Array.from(input.body).buffer)
-          : input.body ?? undefined,
-        ...(input.body instanceof ReadableStream ? { duplex: "half" } : {}),
+        body: requestBody instanceof Uint8Array
+          ? (requestBody.byteLength === 0 ? undefined : Uint8Array.from(requestBody).buffer)
+          : requestBody ?? undefined,
+        ...(requestBody instanceof ReadableStream ? { duplex: "half" } : {}),
         redirect: "error",
         signal: AbortSignal.timeout(isExport ? this.limits.exportTimeoutMs : this.limits.requestTimeoutMs),
       } as RequestInit);
     } catch (error: unknown) {
+      if (overflowed) {
+        finish(413, "limit", home.runtimeId);
+        return plain("Collaboration request too large", 413);
+      }
       console.warn("[collaboration-relay] upstream unavailable", error instanceof Error ? error.name : "UnknownError");
       finish(503, "upstream_error", home.runtimeId);
       return plain("Collaboration unavailable", 503);
+    }
+    if (overflowed) {
+      await response.body?.cancel();
+      finish(413, "limit", home.runtimeId);
+      return plain("Collaboration request too large", 413);
     }
     const maxBytes = isExport ? this.limits.exportBytes : this.limits.responseBytes;
     const contentLength = Number(response.headers.get("content-length") ?? -1);
@@ -363,6 +381,42 @@ export class CollaborationRelay {
       return null;
     }
   }
+}
+
+/**
+ * Caps a forwarded request body at `maxBytes`. The home is never handed more than the limit:
+ * the overflowing chunk is not enqueued, the source is cancelled and the stream errors, which
+ * aborts the in-flight upstream request.
+ */
+function boundedRequestStream(source: ReadableStream<Uint8Array>, maxBytes: number, onOverflow: () => void): ReadableStream<Uint8Array> {
+  const reader = source.getReader();
+  let size = 0;
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const chunk = await reader.read();
+        if (chunk.done) {
+          controller.close();
+          reader.releaseLock();
+          return;
+        }
+        size += chunk.value.byteLength;
+        if (size > maxBytes) {
+          onOverflow();
+          await reader.cancel();
+          controller.error(new Error("Collaboration request exceeds safe limits"));
+          return;
+        }
+        controller.enqueue(chunk.value);
+      } catch (error: unknown) {
+        console.warn("[collaboration-relay] request stream failed", error instanceof Error ? error.name : "UnknownError");
+        controller.error(new Error("Collaboration unavailable"));
+      }
+    },
+    async cancel(reason) {
+      await reader.cancel(reason);
+    },
+  });
 }
 
 function boundedStream(source: ReadableStream<Uint8Array>, maxBytes: number, onBytes: (bytes: number) => void, onDone: () => void): ReadableStream<Uint8Array> {
