@@ -33,6 +33,12 @@ import {
 const BASE64URL_KEY = /^[A-Za-z0-9_-]{43}$/;
 const KEY_ID = /^[A-Za-z0-9_.-]{1,80}$/;
 const MAX_KEYS = 8;
+/**
+ * How long a retired signing key stays published after retirement: longer than the
+ * ticket TTL plus skew, and longer than two home re-registration intervals (5 min), so
+ * every home has learned the active key before the retired one disappears.
+ */
+export const RETIRED_KEY_OVERLAP_MS = 15 * 60_000;
 
 /** Request body for `POST /api/collaboration/connections` (route table row; schema owned here until S02 exports it). */
 export const CollaborationConnectionRequestSchema = z.object({
@@ -50,6 +56,8 @@ export interface TicketSigningKeyring {
   keys: Readonly<Record<string, string>>;
   /** Keys still published for verification during rotation overlap; never used to sign. */
   retired?: Readonly<Record<string, string>>;
+  /** ISO retirement time per retired key; absent means retired when this process loaded the keyring. */
+  retiredAt?: Readonly<Record<string, string>>;
 }
 
 export type CollaborationTicketIssuerErrorCode = "invalid_request" | "not_found" | "unavailable" | "host_offline" | "configuration";
@@ -74,7 +82,10 @@ export function loadTicketSigningKeyring(env: NodeJS.ProcessEnv): TicketSigningK
   const keys = parseKeyMap(env.MATRIX_COLLABORATION_TICKET_KEYS);
   const retired = parseKeyMap(env.MATRIX_COLLABORATION_TICKET_RETIRED_KEYS ?? "{}");
   if (!activeKeyId || !keys || !retired || !keys[activeKeyId]) return null;
-  return { activeKeyId, keys, retired };
+  if (env.MATRIX_COLLABORATION_TICKET_RETIRED_AT === undefined) return { activeKeyId, keys, retired };
+  const retiredAt = parseRetiredAtMap(env.MATRIX_COLLABORATION_TICKET_RETIRED_AT);
+  if (!retiredAt) return null;
+  return { activeKeyId, keys, retired, retiredAt };
 }
 
 function parseKeyMap(raw: string | undefined): Record<string, string> | null {
@@ -91,9 +102,23 @@ function parseKeyMap(raw: string | undefined): Record<string, string> | null {
   }
 }
 
+function parseRetiredAtMap(raw: string): Record<string, string> | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw) as unknown;
+  } catch (error: unknown) {
+    if (!(error instanceof SyntaxError)) console.warn("[collaboration-tickets] retirement map parse failed", error instanceof Error ? error.name : "UnknownError");
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  const entries = Object.entries(parsed as Record<string, unknown>);
+  if (entries.length > MAX_KEYS || entries.some(([keyId, value]) => !KEY_ID.test(keyId) || typeof value !== "string" || !Number.isFinite(Date.parse(value)))) return null;
+  return Object.fromEntries(entries) as Record<string, string>;
+}
+
 export class CollaborationTicketIssuer {
   private readonly signingKeys = new Map<string, KeyObject>();
-  private readonly published: Array<z.infer<typeof CollaborationRuntimePublicKeySchema>> = [];
+  private readonly published: Array<z.infer<typeof CollaborationRuntimePublicKeySchema> & { retiredAtMs?: number }> = [];
   private readonly now: () => Date;
   private readonly createId: () => string;
   private readonly createNonce: () => string;
@@ -111,16 +136,23 @@ export class CollaborationTicketIssuer {
     createNonce?: () => string;
   }) {
     const { keyring } = options;
+    this.now = options.now ?? (() => new Date());
     if (!keyring.keys[keyring.activeKeyId]) throw new CollaborationTicketIssuerError("configuration", "Active ticket signing key is missing");
     for (const [keyId, seed] of Object.entries(keyring.keys)) this.loadKey(keyId, seed, true);
-    for (const [keyId, seed] of Object.entries(keyring.retired ?? {})) if (!this.signingKeys.has(keyId)) this.loadKey(keyId, seed, false);
+    const loadedAt = this.now().getTime();
+    for (const [keyId, seed] of Object.entries(keyring.retired ?? {})) {
+      if (this.signingKeys.has(keyId)) continue;
+      const explicit = keyring.retiredAt?.[keyId];
+      const retiredAtMs = explicit === undefined ? loadedAt : Date.parse(explicit);
+      if (!Number.isFinite(retiredAtMs)) throw new CollaborationTicketIssuerError("configuration", "Ticket signing key retirement time is invalid");
+      this.loadKey(keyId, seed, false, retiredAtMs);
+    }
     if (this.published.length > MAX_KEYS) throw new CollaborationTicketIssuerError("configuration", "Too many ticket signing keys");
-    this.now = options.now ?? (() => new Date());
     this.createId = options.createId ?? randomUUID;
     this.createNonce = options.createNonce ?? (() => randomBytes(32).toString("hex"));
   }
 
-  private loadKey(keyId: string, seed: string, signing: boolean): void {
+  private loadKey(keyId: string, seed: string, signing: boolean, retiredAtMs?: number): void {
     if (!KEY_ID.test(keyId)) throw new CollaborationTicketIssuerError("configuration", "Ticket signing key id is invalid");
     let key: KeyObject;
     try {
@@ -129,12 +161,15 @@ export class CollaborationTicketIssuer {
       throw new CollaborationTicketIssuerError("configuration", error instanceof Error ? error.message : "Ticket signing key is invalid");
     }
     if (signing) this.signingKeys.set(keyId, key);
-    this.published.push({ keyId, algorithm: "ed25519", publicKey: ed25519PublicKeyRaw(key) });
+    this.published.push({ keyId, algorithm: "ed25519", publicKey: ed25519PublicKeyRaw(key), ...(retiredAtMs === undefined ? {} : { retiredAtMs }) });
   }
 
-  /** Verification keys homes accept, active first then rotation overlap. */
+  /** Verification keys homes accept: active first, then retired keys still inside their rotation overlap. */
   publicKeys(): Array<z.infer<typeof CollaborationRuntimePublicKeySchema>> {
-    return this.published.map((key) => ({ ...key }));
+    const current = this.now().getTime();
+    return this.published
+      .filter((key) => key.retiredAtMs === undefined || current - key.retiredAtMs <= RETIRED_KEY_OVERLAP_MS)
+      .map(({ keyId, algorithm, publicKey }) => ({ keyId, algorithm, publicKey }));
   }
 
   async issue(input: { actorId: string; request: unknown }): Promise<IssuedConnectionTicket> {

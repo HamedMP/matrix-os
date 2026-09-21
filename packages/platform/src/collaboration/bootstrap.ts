@@ -50,6 +50,10 @@ export async function bootstrapPlatformCollaboration(
     return createFailClosedPlatformCollaboration({ reason: "runtime_authentication_missing" });
   }
   const config = health.config;
+  // S05: the relay origin is validated before any service with timers is constructed, so an
+  // invalid origin fails closed with nothing left running.
+  const relayOrigin = loadCollaborationRelayOrigin(options.env);
+  if (!relayOrigin) return createFailClosedPlatformCollaboration({ reason: "origin_configuration_missing" });
   const resolveActor = createJourneyUserResolver({
     clerkAuth: options.clerkAuth,
     syncJwtSecret: options.platformJwtSecret,
@@ -110,8 +114,6 @@ export async function bootstrapPlatformCollaboration(
   // S05: direct transport. The platform issues signed tickets and holds the
   // control stream; it never authorizes a resource request. Missing ticket
   // signing keys leave ticket issuance fail-closed without skipping construction.
-  const relayOrigin = loadCollaborationRelayOrigin(options.env);
-  if (!relayOrigin) return createFailClosedPlatformCollaboration({ reason: "origin_configuration_missing" });
   const collaborationDb = options.db.kysely as unknown as Kysely<CollaborationPlatformDatabase>;
   const direct = await createPlatformCollaborationDirect({
     db: options.db.kysely as unknown as Kysely<RuntimeEndpointPlatformDatabase>,

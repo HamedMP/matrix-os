@@ -246,11 +246,14 @@ export class CollaborationRuntimeEndpointRegistry {
 
   /** One-use control upgrade tickets, valid across every platform instance. */
   async issueControlTicket(logicalRuntimeId: string, token: string, expiresAt: Date): Promise<void> {
-    await this.db.insertInto("collaboration_control_upgrade_tickets")
-      .values({ token_hash: hashToken(token), runtime_id: logicalRuntimeId, expires_at: expiresAt, consumed_at: null })
-      .execute();
-    await this.db.deleteFrom("collaboration_control_upgrade_tickets")
-      .where("expires_at", "<", new Date(this.now().getTime() - 60_000)).execute();
+    // Issue and prune commit together: a failed prune never leaves a half-issued ticket behind.
+    const pruneBefore = new Date(this.now().getTime() - 60_000);
+    await this.db.transaction().execute(async (trx) => {
+      await trx.insertInto("collaboration_control_upgrade_tickets")
+        .values({ token_hash: hashToken(token), runtime_id: logicalRuntimeId, expires_at: expiresAt, consumed_at: null })
+        .execute();
+      await trx.deleteFrom("collaboration_control_upgrade_tickets").where("expires_at", "<", pruneBefore).execute();
+    });
   }
 
   async consumeControlTicket(token: string, logicalRuntimeId: string): Promise<boolean> {

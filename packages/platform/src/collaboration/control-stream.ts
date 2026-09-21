@@ -46,6 +46,8 @@ const MAX_FRAME_BYTES = COLLABORATION_DIRECT_LIMITS.wsFrameBytes;
  */
 const DEFAULT_KEEPALIVE_INTERVAL_MS = COLLABORATION_DIRECT_LIMITS.evidenceRefreshTargetSeconds * 1_000;
 const MAX_KEEPALIVE_INTERVAL_MS = 10_000;
+/** Acknowledgements queued per connection while the authority is slow; one more closes the socket. */
+const MAX_PENDING_FRAMES = 32;
 
 export interface ControlSocket {
   send(value: string): void;
@@ -67,10 +69,13 @@ export interface ControlAuthorityPort {
 }
 
 export class CollaborationControlStream {
+  static readonly MAX_PENDING_FRAMES = MAX_PENDING_FRAMES;
   private readonly now: () => Date;
   private readonly ticketTtlMs: number;
   private readonly maxConnections: number;
-  private readonly connections = new Map<string, { socket: ControlSocket; generation: number; close(): void }>();
+  private readonly connections = new Map<string, { socket: ControlSocket; generation: number; pending: number; inbound: Promise<void>; close(): void }>();
+  /** Frame chains still running after their connection closed; shutdown drains them. */
+  private readonly draining = new Set<Promise<void>>();
   private closed = false;
   private readonly createToken: () => string;
   private readonly controlAuthority: ControlAuthorityPort;
@@ -131,10 +136,17 @@ export class CollaborationControlStream {
     const entry = {
       socket,
       generation: 1,
+      pending: 0,
+      inbound: Promise.resolve(),
       close: () => {
         if (keepalive) clearInterval(keepalive);
         keepalive = undefined;
         if (this.connections.get(runtimeId) === entry) this.connections.delete(runtimeId);
+        if (entry.pending > 0) {
+          const chain = entry.inbound;
+          this.draining.add(chain);
+          void chain.finally(() => { this.draining.delete(chain); });
+        }
         try {
           socket.close(1001, "Control stream closed");
         } catch (error: unknown) {
@@ -164,12 +176,22 @@ export class CollaborationControlStream {
     }
     return {
       runtimeId,
-      receive: async (raw) => {
-        if (Buffer.byteLength(raw) > MAX_FRAME_BYTES) throw new Error("Control frame too large");
-        const ack = CollaborationControlAckSchema.parse(JSON.parse(raw) as unknown);
-        if (ack.runtimeId !== runtimeId) throw new Error("Control acknowledgement runtime mismatch");
-        await this.controlAuthority.acknowledge(runtimeId, ack);
-        this.touch(runtimeId);
+      receive: (raw) => {
+        if (Buffer.byteLength(raw) > MAX_FRAME_BYTES) return Promise.reject(new Error("Control frame too large"));
+        if (entry.pending >= MAX_PENDING_FRAMES) return Promise.reject(new Error("Too many pending control frames"));
+        // Frames are applied in order, one at a time per connection, so a slow authority
+        // never fans out into unbounded concurrent transactions.
+        entry.pending += 1;
+        const run = entry.inbound.then(async () => {
+          const ack = CollaborationControlAckSchema.parse(JSON.parse(raw) as unknown);
+          if (ack.runtimeId !== runtimeId) throw new Error("Control acknowledgement runtime mismatch");
+          await this.controlAuthority.acknowledge(runtimeId, ack);
+          this.touch(runtimeId);
+        });
+        entry.inbound = run.catch((error: unknown) => {
+          console.warn("[collaboration-control-stream] frame failed", error instanceof Error ? error.name : "UnknownError");
+        }).finally(() => { entry.pending -= 1; });
+        return run;
       },
       heartbeat: () => {
         if (!this.closed && this.connections.get(runtimeId) === entry) this.touch(runtimeId);
@@ -207,6 +229,8 @@ export class CollaborationControlStream {
     this.closed = true;
     for (const entry of [...this.connections.values()]) entry.close();
     this.connections.clear();
+    // Admitted acknowledgement work finishes before the stream reports shut down.
+    await Promise.allSettled([...this.draining]);
   }
 
   private touch(runtimeId: string): void {
