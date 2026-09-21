@@ -13,6 +13,7 @@ import { appRegistryIncarnation } from "./app-incarnation.js";
 import { createAppInstanceAdapter, type AppInstanceAdapter } from "./app-instance-adapter.js";
 import type { CollaborationAuthority } from "./authority.js";
 import type { OwnerCollaborationDatabase } from "./database.js";
+import { createOwnerAppIncarnationResolver } from "./owner-app-incarnation.js";
 import { createOwnerResourceDriver } from "./owner-resource-driver.js";
 import type { CollaborationResourceCatalog } from "./resource-catalog.js";
 import { createScopedAppBridge } from "./scoped-app-bridge.js";
@@ -62,6 +63,8 @@ export function enableGatewaySharedResources<Project>(input: {
    * runtime without app binding.
    */
   apps: OwnerAppRegistrySource | null;
+  /** The runtime's configured owner; a registered app resolves for no other owner. */
+  ownerId: string | undefined;
   /** Construction seam, like the `now` and `createId` seams elsewhere in this package. */
   createDriver?: typeof createOwnerResourceDriver;
 }): OwnerResourceDriverHandle {
@@ -73,6 +76,7 @@ export function enableGatewaySharedResources<Project>(input: {
     const record = await appRegistry.get(appId);
     return record?.slug === appId ? record : null;
   };
+  const resolveAppIncarnation = createOwnerAppIncarnationResolver(input.ownerId, registeredApp);
   const driver = (input.createDriver ?? createOwnerResourceDriver)({
     homePath: input.homePath,
     listOwnedProjectIds: async (ownerId) => {
@@ -91,10 +95,7 @@ export function enableGatewaySharedResources<Project>(input: {
       const resolved = await resolveAppBySlug(join(input.homePath, "apps"), appId);
       return resolved.ok ? resolved.entry.appDir : null;
     },
-    resolveAppIncarnation: async (_ownerId, _projectId, appId) => {
-      const record = await registeredApp(appId);
-      return record ? appRegistryIncarnation(record) : null;
-    },
+    resolveAppIncarnation: (ownerId, projectId, appId) => resolveAppIncarnation({ ownerId, projectId, appId }),
   });
   try {
     input.runtime.enableSharedResources({

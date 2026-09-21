@@ -58,6 +58,7 @@ describe("gateway shared resource wiring", () => {
       runtime: { enableSharedResources: () => {} },
       homePath: "/home/matrix/home",
       projects: projects({ "owner_1:proj_alpha": "/home/matrix/projects/alpha" }),
+      ownerId: "owner_1",
       apps: registry(["notes"]),
       createDriver: (options) => {
         resolveProjectWorkingDirectory = options.resolveProjectWorkingDirectory;
@@ -80,6 +81,7 @@ describe("gateway shared resource wiring", () => {
       runtime: { enableSharedResources: () => { throw new Error("already initialized"); } },
       homePath: "/home/matrix/home",
       projects: projects({}),
+      ownerId: "owner_1",
       apps: registry([]),
       createDriver: () => fakeDriver(closed),
     })).toThrow("already initialized");
@@ -95,6 +97,7 @@ describe("gateway shared resource wiring", () => {
       runtime: { enableSharedResources: (input) => { appsFactory = input.appsFactory; } },
       homePath: "/home/matrix/home",
       projects: projects({}),
+      ownerId: "owner_1",
       apps: registry(["notes"]),
       createDriver: (options) => {
         resolveAppAssetRoot = options.resolveAppAssetRoot;
@@ -111,6 +114,7 @@ describe("gateway shared resource wiring", () => {
       runtime: { enableSharedResources: () => {} },
       homePath: "/home/matrix/home",
       projects: projects({}),
+      ownerId: "owner_1",
       apps: null,
       createDriver: () => fakeDriver(closed),
     })).toThrow("Owner app registry is unavailable");

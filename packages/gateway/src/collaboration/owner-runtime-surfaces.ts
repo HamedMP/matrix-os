@@ -27,6 +27,8 @@ type InventoryOptions = Parameters<typeof createGatewayProjectInventorySource>[0
 
 export interface OwnerCollaborationSurfaceDependencies {
   homePath: string;
+  /** The runtime's configured owner; an app identity is resolved for no one else. */
+  ownerId: string | undefined;
   appRegistry: AppRegistry | null;
   canvasRepository: CanvasRepository | null;
   chatRepository: ChatRepository;
@@ -47,7 +49,8 @@ export async function enableOwnerCollaborationSurfaces(
   if (!canvasRepository) throw new Error("Owner canvas repository is unavailable");
   // The resource driver, its app binding and its close-on-failure path belong to
   // the resource wiring; this composition only names them.
-  enableGatewaySharedResources({ runtime, homePath, projects: projectManager, apps: appRegistry });
+  enableGatewaySharedResources({ runtime, homePath, ownerId: dependencies.ownerId,
+    projects: projectManager, apps: appRegistry });
   const inventorySource = createGatewayProjectInventorySource({
     homePath,
     gitSetup: { get: projectGitDriver.getGitSetup },

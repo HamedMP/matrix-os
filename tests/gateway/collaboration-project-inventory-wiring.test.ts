@@ -49,6 +49,7 @@ describe("owner collaboration surface composition", () => {
   function dependencies(overrides: Partial<OwnerCollaborationSurfaceDependencies> = {}): OwnerCollaborationSurfaceDependencies {
     return {
       homePath,
+      ownerId: OWNER,
       appRegistry: { get: async (appId: string) => appId === BOARD.slug ? BOARD : null } as unknown as OwnerCollaborationSurfaceDependencies["appRegistry"],
       canvasRepository: { kysely: {} } as unknown as OwnerCollaborationSurfaceDependencies["canvasRepository"],
       chatRepository: { kysely: {} } as unknown as OwnerCollaborationSurfaceDependencies["chatRepository"],
@@ -84,6 +85,9 @@ describe("owner collaboration surface composition", () => {
       expect(await driver.inspect!({ ownerId: OWNER, projectId: null, kind: "app", path: BOARD.slug }))
         .toEqual({ incarnation: appRegistryIncarnation(BOARD) });
       await expect(driver.inspect!({ ownerId: OWNER, projectId: null, kind: "app", path: "absent" }))
+        .rejects.toMatchObject({ code: "not_found" });
+      // The registry belongs to one owner; no other owner resolves a registered app.
+      await expect(driver.inspect!({ ownerId: "user_other", projectId: null, kind: "app", path: BOARD.slug }))
         .rejects.toMatchObject({ code: "not_found" });
     } finally {
       driver.close();
