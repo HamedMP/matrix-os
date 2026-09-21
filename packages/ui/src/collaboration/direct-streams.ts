@@ -21,6 +21,13 @@ import { CollaborationDirectError } from "./direct-client.js";
 const MAX_SOCKET_FRAME_CHARS = 512 * 1024;
 const MAX_RECONNECT_DELAY_MS = 10_000;
 const TERMINAL_HEARTBEAT_INTERVAL_MS = 10_000;
+/**
+ * The home heartbeats every event stream every 10s, so a socket that has been
+ * silent this long lost its peer without a close frame (network partition).
+ * The same window bounds how long a socket may leave sends undrained.
+ */
+const STALE_STREAM_TTL_MS = 45_000;
+const STALE_SWEEP_INTERVAL_MS = 15_000;
 
 export interface DirectEventHandlers {
   onEvent(): void | Promise<void>;
@@ -39,6 +46,14 @@ export interface DirectTerminalHandlers {
 
 type Purpose = "events" | "terminal";
 
+interface StreamHandle {
+  stop(): void;
+  /** Last successful open or inbound frame (ms since epoch); drives cap eviction. */
+  lastTouched(): number;
+  /** Drops a socket that lost its peer without a close frame so it reconnects with a fresh ticket. */
+  sweep(now: number): void;
+}
+
 export function createDirectStreams(deps: {
   ensure(scopeId: string): Promise<DirectConnected>;
   issueTicket(scopeId: string, purpose: Purpose, key: ProofKeyPair): Promise<{ signedTicket: CollaborationSignedConnectionTicket; origin: string }>;
@@ -55,39 +70,89 @@ export function createDirectStreams(deps: {
 
   const MAX_STREAM_SCOPES = 128;
   const MAX_STREAMS_PER_SCOPE = 8;
-  const subscriptions = new Map<string, Set<() => void>>();
+  /** Every registered stream, keyed by scope; entries leave on unsubscribe, scope close, eviction or dispose. */
+  const subscriptions = new Map<string, Map<() => void, StreamHandle>>();
+  let sweepTimer: ReturnType<typeof setInterval> | undefined;
+  const sweepStale = () => {
+    const now = Date.now();
+    for (const streams of subscriptions.values()) for (const handle of streams.values()) handle.sweep(now);
+  };
+  const syncSweepTimer = () => {
+    if (subscriptions.size === 0) {
+      if (sweepTimer) clearInterval(sweepTimer);
+      sweepTimer = undefined;
+    } else if (!sweepTimer) {
+      sweepTimer = setInterval(sweepStale, STALE_SWEEP_INTERVAL_MS);
+      (sweepTimer as { unref?: () => void }).unref?.();
+    }
+  };
   const closeScope = (scopeId: string) => {
-    for (const stop of [...(subscriptions.get(scopeId) ?? [])]) stop();
+    for (const remove of [...(subscriptions.get(scopeId)?.keys() ?? [])]) remove();
+    subscriptions.delete(scopeId);
+    syncSweepTimer();
   };
   const closeAll = () => {
     for (const scopeId of [...subscriptions.keys()]) closeScope(scopeId);
   };
-  const register = (scopeId: string, stop: () => void) => {
-    if (!subscriptions.has(scopeId) && subscriptions.size >= MAX_STREAM_SCOPES) closeScope(subscriptions.keys().next().value!);
+  const scopeTouchedAt = (streams: Map<() => void, StreamHandle>) => Math.max(0, ...[...streams.values()].map((handle) => handle.lastTouched()));
+  /** Frees room for a new scope by dropping the scope whose streams have been silent longest (dead peers first). */
+  const evictLeastRecentlyActiveScope = () => {
+    sweepStale();
+    let victim: string | undefined;
+    let victimTouched = Number.POSITIVE_INFINITY;
+    for (const [scopeId, streams] of subscriptions) {
+      const touched = scopeTouchedAt(streams);
+      if (touched < victimTouched) { victim = scopeId; victimTouched = touched; }
+    }
+    if (victim) closeScope(victim);
+  };
+  const register = (scopeId: string, handle: StreamHandle) => {
+    if (!subscriptions.has(scopeId) && subscriptions.size >= MAX_STREAM_SCOPES) evictLeastRecentlyActiveScope();
     let active = subscriptions.get(scopeId);
-    if (!active) { active = new Set(); subscriptions.set(scopeId, active); }
-    if (active.size >= MAX_STREAMS_PER_SCOPE) active.values().next().value?.();
+    if (!active) { active = new Map(); subscriptions.set(scopeId, active); }
+    if (active.size >= MAX_STREAMS_PER_SCOPE) active.keys().next().value?.();
     const remove = () => {
-      stop();
+      handle.stop();
       active!.delete(remove);
-      if (active!.size === 0) subscriptions.delete(scopeId);
+      if (active!.size === 0 && subscriptions.get(scopeId) === active) subscriptions.delete(scopeId);
+      syncSweepTimer();
     };
-    active.add(remove);
+    active.set(remove, handle);
+    syncSweepTimer();
     return remove;
   };
 
   /** Opens one stream: purpose ticket → socket → first-frame possession proof. Reconnects always start over with a new ticket. */
-  const openStream = (scopeId: string, purpose: Purpose, after: () => string, bind: (socket: WebSocket, connected: DirectConnected, terminate: () => void) => void, onFailure: () => void) => {
+  const openStream = (scopeId: string, purpose: Purpose, after: () => string, bind: (socket: WebSocket, connected: DirectConnected, terminate: () => void) => void, onFailure: () => void): StreamHandle => {
     let closed = false;
     let socket: WebSocket | null = null;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
     let attempt = 0;
+    let touchedAt = Date.now();
+    let stalledSince = 0;
+    let lastBuffered = 0;
     const stop = () => {
       closed = true;
       if (retryTimer) clearTimeout(retryTimer);
       retryTimer = undefined;
       socket?.close(1000, "Closed");
       socket = null;
+    };
+    /** A partition leaves the socket open with no frames or undrained sends; treat it as closed and dial again. */
+    const sweep = (now: number) => {
+      if (closed || !socket) return;
+      const buffered = (socket as { bufferedAmount?: number }).bufferedAmount ?? 0;
+      if (buffered > 0 && buffered >= lastBuffered) stalledSince ||= now;
+      else stalledSince = 0;
+      lastBuffered = buffered;
+      const silent = purpose === "events" && now - touchedAt > STALE_STREAM_TTL_MS;
+      const stalled = stalledSince !== 0 && now - stalledSince > STALE_STREAM_TTL_MS;
+      if (!silent && !stalled) return;
+      console.warn("[collaboration-direct] stale stream dropped", purpose, silent ? "silent" : "stalled");
+      const stale = socket;
+      stale.onmessage = null;
+      stale.close(1001, "Stale");
+      stale.onclose?.call(stale, undefined as unknown as CloseEvent);
     };
     const retry = () => {
       if (closed) return;
@@ -103,10 +168,19 @@ export function createDirectStreams(deps: {
         if (closed) return;
         const next = (deps.webSocketFactory ?? ((url: string) => new WebSocket(url)))(socketUrl(origin, scopeId, purpose, signedTicket, after()));
         socket = next;
+        touchedAt = Date.now();
+        stalledSince = 0;
+        lastBuffered = 0;
         bind(next, connected, stop);
+        const boundMessage = next.onmessage;
+        next.onmessage = (event) => {
+          touchedAt = Date.now();
+          (boundMessage as ((event: MessageEvent) => void) | null)?.call(next, event);
+        };
         const previousOpen = next.onopen;
         next.onopen = (event) => {
           attempt = 0;
+          touchedAt = Date.now();
           void signPayload(connected.key, possessionPayload({ ticketNonce: signedTicket.ticket.nonce, purpose, sessionId: connected.session.id }), deps.subtle)
             .then((possession) => {
               if (closed || socket !== next) return;
@@ -119,7 +193,10 @@ export function createDirectStreams(deps: {
             });
         };
         const previousClose = next.onclose;
+        let settled = false;
         next.onclose = (event) => {
+          if (settled) return;
+          settled = true;
           if (socket === next) socket = null;
           (previousClose as ((event: CloseEvent) => void) | null)?.call(next, event);
           if (closed) return;
@@ -139,14 +216,14 @@ export function createDirectStreams(deps: {
       }
     };
     void connect();
-    return stop;
+    return { stop, lastTouched: () => touchedAt, sweep };
   };
 
   const subscribeEvents = (scopeId: string, handlers: DirectEventHandlers): (() => void) => {
     const parsedScopeId = CollaborationIdSchema.parse(scopeId);
     let sequence = "0";
     let stopped = false;
-    const stop = openStream(parsedScopeId, "events", () => sequence, (socket, _connected, terminate) => {
+    const stream = openStream(parsedScopeId, "events", () => sequence, (socket, _connected, terminate) => {
       let usable = true;
       let refreshQueue = Promise.resolve();
       const enqueue = (operation: () => void | Promise<void>) => {
@@ -181,7 +258,7 @@ export function createDirectStreams(deps: {
       };
       socket.onclose = () => { usable = false; };
     }, () => { if (!stopped) handlers.onConnectionChange?.("reconnecting"); });
-    return register(parsedScopeId, () => { stopped = true; stop(); });
+    return register(parsedScopeId, { ...stream, stop: () => { stopped = true; stream.stop(); } });
   };
 
   const subscribeTerminal = (scopeId: string, handlers: DirectTerminalHandlers): (() => void) => {
@@ -190,7 +267,7 @@ export function createDirectStreams(deps: {
     let stopped = false;
     let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
     const clearHeartbeat = () => { if (heartbeatTimer) clearInterval(heartbeatTimer); heartbeatTimer = undefined; };
-    const stop = openStream(parsedScopeId, "terminal", () => sequence.toString(), (socket, _connected, terminate) => {
+    const stream = openStream(parsedScopeId, "terminal", () => sequence.toString(), (socket, _connected, terminate) => {
       socket.onopen = () => {
         clearHeartbeat();
         heartbeatTimer = setInterval(() => { if (!stopped) socket.send(JSON.stringify({ version: 1, type: "heartbeat" })); }, TERMINAL_HEARTBEAT_INTERVAL_MS);
@@ -220,7 +297,7 @@ export function createDirectStreams(deps: {
       };
       socket.onclose = () => { clearHeartbeat(); };
     }, () => { if (!stopped) handlers.onDisconnected(); });
-    return register(parsedScopeId, () => { stopped = true; clearHeartbeat(); stop(); });
+    return register(parsedScopeId, { ...stream, stop: () => { stopped = true; clearHeartbeat(); stream.stop(); } });
   };
 
   return { subscribeEvents, subscribeTerminal, closeScope, closeAll };
