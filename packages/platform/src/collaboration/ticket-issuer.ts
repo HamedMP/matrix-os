@@ -56,7 +56,11 @@ export interface TicketSigningKeyring {
   keys: Readonly<Record<string, string>>;
   /** Keys still published for verification during rotation overlap; never used to sign. */
   retired?: Readonly<Record<string, string>>;
-  /** ISO retirement time per retired key; absent means retired when this process loaded the keyring. */
+  /**
+   * ISO retirement time, required for every retired key. Retirement is configuration,
+   * never process uptime: dating it from the keyring load would restart the overlap on
+   * every platform restart and republish a retired key indefinitely.
+   */
   retiredAt?: Readonly<Record<string, string>>;
 }
 
@@ -82,9 +86,16 @@ export function loadTicketSigningKeyring(env: NodeJS.ProcessEnv): TicketSigningK
   const keys = parseKeyMap(env.MATRIX_COLLABORATION_TICKET_KEYS);
   const retired = parseKeyMap(env.MATRIX_COLLABORATION_TICKET_RETIRED_KEYS ?? "{}");
   if (!activeKeyId || !keys || !retired || !keys[activeKeyId]) return null;
-  if (env.MATRIX_COLLABORATION_TICKET_RETIRED_AT === undefined) return { activeKeyId, keys, retired };
+  const retiredIds = Object.keys(retired);
+  if (env.MATRIX_COLLABORATION_TICKET_RETIRED_AT === undefined) {
+    // Fail closed rather than publish a retired key whose retirement nothing records.
+    return retiredIds.length === 0 ? { activeKeyId, keys, retired } : null;
+  }
   const retiredAt = parseRetiredAtMap(env.MATRIX_COLLABORATION_TICKET_RETIRED_AT);
   if (!retiredAt) return null;
+  // Exact correspondence: a missing entry never expires, a stray entry is a typo.
+  const retiredAtIds = Object.keys(retiredAt);
+  if (retiredAtIds.length !== retiredIds.length || retiredIds.some((keyId) => retiredAt[keyId] === undefined)) return null;
   return { activeKeyId, keys, retired, retiredAt };
 }
 
@@ -139,12 +150,17 @@ export class CollaborationTicketIssuer {
     this.now = options.now ?? (() => new Date());
     if (!keyring.keys[keyring.activeKeyId]) throw new CollaborationTicketIssuerError("configuration", "Active ticket signing key is missing");
     for (const [keyId, seed] of Object.entries(keyring.keys)) this.loadKey(keyId, seed, true);
-    const loadedAt = this.now().getTime();
+    const skewMs = COLLABORATION_DIRECT_LIMITS.clockSkewSeconds * 1_000;
     for (const [keyId, seed] of Object.entries(keyring.retired ?? {})) {
       if (this.signingKeys.has(keyId)) continue;
       const explicit = keyring.retiredAt?.[keyId];
-      const retiredAtMs = explicit === undefined ? loadedAt : Date.parse(explicit);
-      if (!Number.isFinite(retiredAtMs)) throw new CollaborationTicketIssuerError("configuration", "Ticket signing key retirement time is invalid");
+      // No load-time fallback: an unrecorded retirement would start over on every restart,
+      // and a future retirement would never reach the end of its overlap.
+      if (explicit === undefined) throw new CollaborationTicketIssuerError("configuration", "Retired ticket signing key has no retirement time");
+      const retiredAtMs = Date.parse(explicit);
+      if (!Number.isFinite(retiredAtMs) || retiredAtMs > this.now().getTime() + skewMs) {
+        throw new CollaborationTicketIssuerError("configuration", "Ticket signing key retirement time is invalid");
+      }
       this.loadKey(keyId, seed, false, retiredAtMs);
     }
     if (this.published.length > MAX_KEYS) throw new CollaborationTicketIssuerError("configuration", "Too many ticket signing keys");
