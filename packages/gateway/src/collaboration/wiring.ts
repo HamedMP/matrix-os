@@ -17,7 +17,7 @@ import { bootstrapCollaborationDatabase, type OwnerCollaborationDatabase } from 
 import { CollaborationDirectoryOutbox } from "./directory-outbox.js";
 import { CollaborationDiscussionAdapter } from "./discussion-adapter.js";
 import { registerCollaborationEventWebSocketRoute } from "./event-websocket-route.js";
-import { CollaborationControlClient } from "./control-client.js";
+import { CollaborationControlClient, isMembershipEvidenceEvictor } from "./control-client.js";
 import { DirectReplayCache, DirectTicketVerifier } from "./direct-auth.js";
 import { createDirectSessionRoutes } from "./direct-routes.js";
 import { DirectSessionService } from "./direct-sessions.js";
@@ -161,6 +161,9 @@ export async function createGatewayCollaboration(options: {
       serviceToken: options.config.serviceToken,
       identity: { keyId: runtimeIdentity.keyId, publicKey: runtimeIdentity.publicKey },
       sessions: directSessions,
+      // A pushed denial ends the actor's grants/activations and evicts their cached membership evidence.
+      capabilities,
+      ...(organizationMembershipSource && isMembershipEvidenceEvictor(organizationMembershipSource) ? { membership: organizationMembershipSource } : {}),
       ...(options.outboxFetch ? { fetchImpl: options.outboxFetch } : {}),
       startTimers: options.startTimers !== false,
     });
