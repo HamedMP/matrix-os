@@ -73,9 +73,9 @@ describe("shared coding execution (S09)", () => {
       const mine = await repository.enqueueSharedQueuedTurn(owner, aiRequest(1, collaborationActors.editor));
       const theirs = await repository.enqueueSharedQueuedTurn(owner, aiRequest(2, collaborationActors.editor, 2));
       const commands = createCommands();
-      const byRequester = await commands.cancel(control(collaborationActors.editor, mine.id, 3, 10));
+      const byRequester = await commands.cancel(control(collaborationActors.editor, mine.id, 3, 10, await revision()));
       expect(byRequester.request?.state).toBe("cancelled");
-      const byOwner = await commands.cancel(control(collaborationActors.owner, theirs.id, 4, 11));
+      const byOwner = await commands.cancel(control(collaborationActors.owner, theirs.id, 4, 11, await revision()));
       expect(byOwner.request?.state).toBe("cancelled");
       expect(await loss.listDecisions(mine.id)).toMatchObject([
         { kind: "cancel", actorId: collaborationActors.editor, relation: "requester" },
@@ -88,8 +88,8 @@ describe("shared coding execution (S09)", () => {
     it("denies cancellation to other Contributors and to Viewers", async () => {
       const queued = await repository.enqueueSharedQueuedTurn(owner, aiRequest(3, collaborationActors.editor));
       const commands = createCommands();
-      await expect(commands.cancel(control(otherEditor, queued.id, 5, 12))).rejects.toMatchObject({ code: "forbidden" });
-      await expect(commands.cancel(control(collaborationActors.viewer, queued.id, 6, 13))).rejects.toMatchObject({ code: "forbidden" });
+      await expect(commands.cancel(control(otherEditor, queued.id, 5, 12, await revision()))).rejects.toMatchObject({ code: "forbidden" });
+      await expect(commands.cancel(control(collaborationActors.viewer, queued.id, 6, 13, await revision()))).rejects.toMatchObject({ code: "forbidden" });
       expect(await loss.listDecisions(queued.id)).toEqual([]);
       await expect(repository.listSharedQueuedTurns(owner, collaborationIds.chat))
         .resolves.toMatchObject([{ id: queued.id, state: "queued" }]);
@@ -104,10 +104,10 @@ describe("shared coding execution (S09)", () => {
       });
       const commands = createCommands();
       await expect(commands.retry({
-        ...control(collaborationActors.owner, queued.id, 7, 14), newRequestId: "qturn_retry_owner",
+        ...control(collaborationActors.owner, queued.id, 7, 14, await revision()), newRequestId: "qturn_retry_owner",
       })).rejects.toMatchObject({ code: "forbidden" });
       const retried = await commands.retry({
-        ...control(collaborationActors.editor, queued.id, 8, 15), newRequestId: "qturn_retry_requester",
+        ...control(collaborationActors.editor, queued.id, 8, 15, await revision()), newRequestId: "qturn_retry_requester",
       });
       expect(retried.request).toMatchObject({ id: "qturn_retry_requester", retryOfRequestId: queued.id, state: "queued" });
       expect(await loss.listDecisions(queued.id)).toMatchObject([
@@ -120,13 +120,13 @@ describe("shared coding execution (S09)", () => {
       const submitApproval = vi.fn(async () => undefined);
       const commands = createCommands(submitApproval);
       await expect(commands.decideApproval({
-        ...control(otherEditor, run.id, 9, 16), runId: run.id, approvalId: "approval_actor_rule", decision: "approve",
+        ...control(otherEditor, run.id, 9, 16, await revision()), runId: run.id, approvalId: "approval_actor_rule", decision: "approve",
       })).rejects.toMatchObject({ code: "forbidden" });
       await expect(commands.decideApproval({
-        ...control(collaborationActors.viewer, run.id, 10, 17), runId: run.id, approvalId: "approval_actor_rule", decision: "approve",
+        ...control(collaborationActors.viewer, run.id, 10, 17, await revision()), runId: run.id, approvalId: "approval_actor_rule", decision: "approve",
       })).rejects.toMatchObject({ code: "forbidden" });
       const decided = await commands.decideApproval({
-        ...control(collaborationActors.editor, run.id, 11, 18), runId: run.id, approvalId: "approval_actor_rule", decision: "approve",
+        ...control(collaborationActors.editor, run.id, 11, 18, await revision()), runId: run.id, approvalId: "approval_actor_rule", decision: "approve",
       });
       expect(decided).toMatchObject({ kind: "approval", state: "completed" });
       expect(submitApproval).toHaveBeenCalledTimes(1);
@@ -139,7 +139,7 @@ describe("shared coding execution (S09)", () => {
       const run = await activeRunWithApproval("approval_owner_rule", collaborationActors.editor);
       const commands = createCommands();
       await commands.decideApproval({
-        ...control(collaborationActors.owner, run.id, 12, 19), runId: run.id, approvalId: "approval_owner_rule", decision: "decline",
+        ...control(collaborationActors.owner, run.id, 12, 19, await revision()), runId: run.id, approvalId: "approval_owner_rule", decision: "decline",
       });
       expect(await loss.listDecisions(run.id)).toMatchObject([
         { kind: "tool_approval", actorId: collaborationActors.owner, relation: "scope_owner", decision: "decline" },
@@ -209,7 +209,8 @@ describe("shared coding execution (S09)", () => {
       await repository.enqueueSharedQueuedTurn(owner, aiRequest(25, otherEditor, 2));
       await fixture.db.updateTable("collaboration_members").set({ status: "revoked", revision: 2, updated_at: now })
         .where("scope_id", "=", collaborationIds.scope).where("actor_id", "=", collaborationActors.editor).execute();
-      const first = await claim("readmit_1");
+      expect(await claim("readmit_1", true)).toBeNull();
+      const first = await claim("readmit_2");
       expect(first.sharedExecution?.requestingActorId).toBe(otherEditor);
       await expect(repository.listSharedQueuedTurns(owner, collaborationIds.chat)).resolves.toMatchObject([
         { requestingActorId: collaborationActors.editor, state: "unauthorized" },
@@ -274,7 +275,7 @@ describe("shared coding execution (S09)", () => {
       for await (const event of adapter.start({ ...runInput(), resumeState: { runtimeHandle, executionGeneration: "7" } })) resumed.push(event);
       expect(resumed).toMatchObject([{ type: "run.completed", outcome: "failed" }]);
       const parts = [];
-      for await (const event of adapter.start({ ...runInput(), parts: [{ type: "text", text: "x" }, { type: "file", fileId: "f", name: "n", mimeType: "text/plain", sizeBytes: 1 } as never] })) parts.push(event);
+      for await (const event of adapter.start({ ...runInput(), parts: [{ type: "text", text: "x" }, { type: "tool_request", toolCallId: "call_1", name: "shell", label: "Run shell" }] })) parts.push(event);
       expect(parts).toMatchObject([{ type: "run.completed", outcome: "failed" }]);
       expect((c as { createRuntime: ReturnType<typeof vi.fn> }).createRuntime).not.toHaveBeenCalled();
     });
@@ -344,6 +345,11 @@ describe("shared coding execution (S09)", () => {
     return claimed as NonNullable<typeof claimed>;
   }
 
+  async function revision(): Promise<number> {
+    const row = await fixture.db.selectFrom("chats").select("revision").where("id", "=", collaborationIds.chat).executeTakeFirstOrThrow();
+    return Number(row.revision);
+  }
+
   function requestIdOf(runId: string): string {
     return `req_for_${runId}`;
   }
@@ -366,11 +372,11 @@ describe("shared coding execution (S09)", () => {
   }
 });
 
-function control(actorId: string, requestId: string, index: number, hashSeed: number) {
+function control(actorId: string, requestId: string, index: number, hashSeed: number, expectedRevision: number) {
   return {
     scopeId: collaborationIds.scope, actorId, requestId,
     clientRequestId: uuid(index), payloadHash: hashSeed.toString(16).padStart(64, "0"),
-    expectedRevision: 0 as number,
+    expectedRevision,
   };
 }
 
