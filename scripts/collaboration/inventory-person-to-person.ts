@@ -9,6 +9,7 @@
 import { Kysely, PostgresDialect } from "kysely";
 import { Pool } from "pg";
 import { inventoryPersonToPersonRecords } from "../../packages/gateway/src/collaboration/person-to-person-inventory.js";
+import { inventoryPersonalSyncShares } from "../../packages/gateway/src/sync/share-inventory.js";
 import { inventoryPlatformPersonToPersonRecords } from "../../packages/platform/src/collaboration/person-to-person-inventory.js";
 
 async function withDatabase<T>(url: string, run: (db: Kysely<any>) => Promise<T>): Promise<T> {
@@ -27,9 +28,15 @@ if (!gatewayUrl && !platformUrl) {
   console.error("Set GATEWAY_DATABASE_URL and/or PLATFORM_DATABASE_URL");
   process.exit(2);
 }
+const gatewayInventory = gatewayUrl ? await withDatabase(gatewayUrl, async (db) => ({
+  collaboration: await inventoryPersonToPersonRecords(db),
+  personalSync: await inventoryPersonalSyncShares(db),
+})) : null;
 const result = {
   recordedAt: new Date().toISOString(),
-  gateway: gatewayUrl ? await withDatabase(gatewayUrl, inventoryPersonToPersonRecords) : null,
+  gateway: gatewayInventory?.collaboration ?? null,
+  /** Separate personal operation; excluded from gateway/platform collaboration totals. */
+  personalSync: gatewayInventory?.personalSync ?? null,
   platform: platformUrl ? await withDatabase(platformUrl, inventoryPlatformPersonToPersonRecords) : null,
 };
 console.log(JSON.stringify(result, null, 2));
