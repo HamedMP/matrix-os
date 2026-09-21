@@ -356,14 +356,28 @@ export class DirectSessionService {
     }
   }
 
-  async shutdown(): Promise<void> {
+  /**
+   * Synchronous drain, used by the gateway's synchronous fence. Refuses new exchanges,
+   * stops the sweep and ends every live session, which is what notifies the event and
+   * terminal registries through the end hooks before the fence detaches them. `end()`
+   * removes the session before notifying and isolates each hook, so a second fence ends
+   * nothing twice and one failing hook cannot strand the sessions behind it.
+   */
+  fence(): void {
     if (this.closed) return;
     this.closed = true;
+    // The handle is readonly and assigned once in the constructor, so clearing the interval
+    // is the whole stop; a tick already queued finds no sessions left to expire.
     if (this.sweepTimer) clearInterval(this.sweepTimer);
     for (const record of [...this.sessions.values()]) this.end(record, "shutdown");
     this.scopeConnections.clear();
     this.actorScopeConnections.clear();
     this.homeConnections = 0;
+  }
+
+  /** Kept async for the ordinary shutdown path; the drain itself has nothing to await. */
+  async shutdown(): Promise<void> {
+    this.fence();
   }
 
   private live(sessionId: string): SessionRecord {
