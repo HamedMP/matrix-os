@@ -2,7 +2,7 @@
 
 **Packet:** S20. **Tasks:** T098, T099, T100, T101, T102. **Date:** 2026-09-20 (re-cut after review on the same day).
 **Base:** `124/s01-gateway` tip `ec3c25343` (S01 four-layer stack on main).
-**Result:** six implementation layers plus one local evidence child, each under the 3,000-addition / 50-file limit and coherent on its own head. The evidence child awaits Graphite tracking after the lower layers merge. No release flag, rollout cohort or person-to-person audience remains; the organization precondition on the home is the only gate and denies every request until the S03 membership projection registers a source.
+**Result:** six implementation layers plus one evidence child, each under the 3,000-addition / 50-file limit and coherent on its own head. The lower five layers through #1791 have merged; #1795 UI and #1817 evidence are in review. No release flag, rollout cohort or person-to-person audience remains; the organization precondition on the home is the only gate and denies every request until the S03 membership projection registers a source.
 
 ## Layers
 
@@ -12,9 +12,9 @@
 | 2 | `124/s20-organization` `6cf90b4b7` | T101 (persistence) | 25 | Gateway migration 7 (`organization_id` on scopes and grants); `organizationId` required on scope preflight/create; every creation path persists it (inherited scopes copy the parent's, grants derive from the scope); the confirmation token binds it; an existing scope in another organization is a conflict; pre-organization scopes cannot be widened. Cohort logic untouched in this layer |
 | 3 | `124/s20-cohort` `d3422bbc6` | T100 (home) | 32 | `organization-precondition.ts`; the authority evaluator takes one precondition and consults it before any allow; proof-only owner operations (scope creation, project inventory/confirm, lifecycle, operations, exports, invitation reads/decisions) require current membership; gateway policy client, milestone/mode/cohort branches and the policy header removed from every route, socket, queue and terminal path |
 | 4 | `124/s20-cohort-platform` `1edc71d26` | T100 (platform) | 17 | `collaboration_rollout_policy` dropped, `CollaborationPolicy` contract and header removed, `/internal/collaboration/policy` gone, proxy and WebSocket bridge make no policy decision, tickets carry no policy revision |
-| 5 | `124/s20-audience` `e933fb54c` | T101 (resolution), T102 | 21 | Invitation identifiers resolve only to current members of the scope's organization and to nothing without a projection; person-to-person inventories (all grant statuses, revoked index rows) plus `scripts/collaboration/inventory-person-to-person.ts`; research.md procedure and local zero result |
-| 6 | `124/s20-audience-ui` local `ff0d94493` | T101 (surfaces) | 26 | Organization-member copy and `organizationId` on share dialogs/buttons; shell and Electron organization gates; UI/desktop tests and Clerk fixture repairs |
-| 7 | `124/s20-audience-evidence` local child | T101 (evidence) | 29 | Web and Electron captures, reproduction instructions, this receipt, and a regression-tested renderer backup/restore helper |
+| 5 | `124/s20-audience` #1791 merged | T101 (resolution), T102 | 21 | Invitation identifiers resolve only to current members of the scope's organization and to nothing without a projection; person-to-person inventories (all grant statuses, revoked index rows) plus `scripts/collaboration/inventory-person-to-person.ts`; research.md procedure and local zero result |
+| 6 | `124/s20-audience-ui` #1795 `79e3cee33` | T101 (surfaces) | 48 | Organization-member copy and `organizationId` on share dialogs/buttons; shell and Electron organization gates; UI/desktop tests and Clerk fixture repairs; representative five-surface captures and safe Electron capture harness |
+| 7 | `124/s20-audience-evidence` #1817, child of #1795 | T101 (evidence) | 9 | Remaining Web Canvas/Web Mobile captures and this receipt |
 
 ## RED → GREEN and gates
 
@@ -67,4 +67,20 @@ The original top layer was 53 files (+763/−49) against its original audience p
 
 Greptile's #1794 review singled out a changed `deriveChatPermissions().aiExplanation` string for lacking visual evidence. Inspection found this field is unused by rendered shared Chat controls: `ChatCollaboration` reads only `.canDiscuss`, while `SharedChatControls` derives visible capability status independently. #1794 removes that unused change. This UI layer does not claim a screenshot for it or introduce misleading owner-computer wording into unrelated provider-unavailable states. The existing Web Canvas, Web Desktop, Electron Desktop, Web Mobile and Native Mobile evidence/limitations remain in `evidence/S20-audience/README.md` and the five-surface PR body; no new interactive capture was run after the capture-helper fix.
 
-Open gates: the recut UI and evidence heads need coordinator restack and new current-head Greptile/CI after #1791 merges. Web Desktop share-control reachability and Electron project share reachability remain tracked under #1798/S15 T078. No production Clerk, owner VPS, provider, deployment or external publication was exercised here.
+Historical open gates above were superseded by the current review state below. Web Desktop share-control reachability and Electron project share reachability remain tracked under #1798/S15 T078. No production Clerk, owner VPS, provider, deployment or external publication was exercised here.
+
+## 2026-09-21 current UI and evidence review state
+
+#1791 merged after current-head Greptile 5/5 and full label-triggered CI success (run `35607650164`). #1795 UI was rebased onto the merged main and split from #1817 evidence. The UI head `79e3cee33` is 48 files and under 3,000 additions; the evidence child is nine files and 70 additions. Their combined tree preserves the prior captures, with the tested Electron harness fixes described here.
+
+The first #1795 current-head review and #1817 child review found that the Electron capture runner swallowed Terminal and Chat selector failures, and that teardown could leave a built renderer patched if gateway/profile cleanup failed. The fixed runner propagates failures from required Terminal and Chat flows, records only the known optional Project failure, and restores the renderer in `finally`. The diagnostic Set retains the newest 50 unmatched requests. Reproduction instructions copy all three runner/helper files. The 10 Electron PNGs and representative Web Canvas, Web Desktop and Web Mobile PNGs are directly in #1795; the remaining captures are in #1817. These are existing captures, not new captures from the fixed runner.
+
+| Current validation | Result |
+| --- | --- |
+| Diagnostic bound RED | `tests/desktop/s20-capture-safety.test.ts` failed 1/4 before `recordBoundedDiagnostic` existed: missing function at the 51st-entry test. |
+| Focused GREEN | `pnpm exec vitest run tests/desktop/s20-capture-safety.test.ts tests/desktop/s20-renderer-asset.test.ts`: 2 files, 6/6 passed at UI head `79e3cee33`. The required-failure, optional-project, cleanup-finally, and 50-entry tests cover the review findings. |
+| Full typecheck | `bun run typecheck` exit 0 at UI head `79e3cee33`. |
+| Pattern scan | `bun run check:patterns` exit 0: 0 violations, 5 existing warnings. |
+| Visual capture rerun after harness fix | Unrun: the current worktree has no built `desktop/out/main/index.js`; the committed screenshots predate the harness fix. |
+
+The prior direct capture restoration test was already GREEN before the review fix. No RED run was recorded for the new failure-propagation or cleanup tests before their helper implementation; the review established the prior runner behavior from source. #1795 and #1817 need new-head Greptile 5/5 and #1795 main-base full CI before merge. The child will be restacked onto main after #1795 merges.
