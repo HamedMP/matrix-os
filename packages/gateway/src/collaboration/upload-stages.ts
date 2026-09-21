@@ -4,6 +4,7 @@ import type { Kysely, Transaction } from "kysely";
 import { z } from "zod/v4";
 import {
   COLLABORATION_UPLOAD_PART_BYTES,
+  COLLABORATION_UPLOAD_MAX_PARTS,
   type CollaborationFileActionRequest,
   type CollaborationUpload,
 } from "@matrix-os/contracts";
@@ -136,7 +137,8 @@ export function createCollaborationUploadStager(options: {
 
   async function part(context: AuthorizedCollaborationContext, action: Extract<CollaborationUploadAction, { type: "upload_part" }>) {
     const bytes = Buffer.from(action.chunk, "base64");
-    if (bytes.byteLength > COLLABORATION_UPLOAD_PART_BYTES || bytes.toString("base64") !== action.chunk
+    if (bytes.byteLength === 0 || bytes.byteLength > COLLABORATION_UPLOAD_PART_BYTES
+      || action.index >= COLLABORATION_UPLOAD_MAX_PARTS || bytes.toString("base64") !== action.chunk
       || hash(bytes) !== action.sha256) throw new ResourceCatalogError("invalid");
     return options.db.transaction().execute(async (trx) => {
       await lockCurrentScope(trx, context);
@@ -149,7 +151,8 @@ export function createCollaborationUploadStager(options: {
         if (!existing || existing.sha256 !== action.sha256 || !Buffer.from(existing.bytes).equals(bytes)) throw new ResourceCatalogError("conflict");
         return { upload: upload(row), replayed: true };
       }
-      if (action.index !== next || Number(row.received_bytes) + bytes.byteLength > Number(row.size)) throw new ResourceCatalogError("conflict");
+      if (next >= COLLABORATION_UPLOAD_MAX_PARTS || action.index !== next
+        || Number(row.received_bytes) + bytes.byteLength > Number(row.size)) throw new ResourceCatalogError("conflict");
       await trx.insertInto("collaboration_upload_parts").values({
         upload_id: row.id, part_index: action.index, sha256: action.sha256, bytes, byte_count: bytes.byteLength,
       }).execute();
