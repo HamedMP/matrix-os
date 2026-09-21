@@ -5,7 +5,10 @@ import { describe, expect, it } from "vitest";
 import { ProviderSettingsMutationSchema, type ProviderSettingsSnapshot } from "@matrix-os/contracts";
 import { applyProviderConfigurationMutation } from "../../packages/gateway/src/ai-providers/provider-settings-mutations.js";
 import type { ProviderSettingsConfiguration } from "../../packages/gateway/src/ai-providers/provider-settings-persistence.js";
-import { providerSettingsCanonicalFixture } from "./provider-settings-test-support.js";
+import {
+  providerSettingsCanonicalFixture,
+  providerSettingsFundingSummaryFixture,
+} from "./provider-settings-test-support.js";
 import { ProviderSettingsStore } from "../../packages/gateway/src/ai-providers/provider-settings-store.js";
 import { createProviderGenericHarnessCoordinator } from "../../packages/gateway/src/ai-providers/provider-generic-harness-coordinator.js";
 
@@ -22,7 +25,11 @@ describe("connect and enable an installed agent", () => {
       });
       const store = new ProviderSettingsStore({ homePath,
         providerSnapshotReader: { getSnapshot: async () => structuredClone(canonical) },
-        runtimeCoordinator: coordinator, now: () => new Date(canonical.refreshedAt), idGenerator: () => "added",
+        runtimeCoordinator: coordinator,
+        fundingSummaryReader: {
+          getFundingSummary: async () => providerSettingsFundingSummaryFixture(),
+        },
+        now: () => new Date(canonical.refreshedAt), idGenerator: () => "added",
       });
       const before = await store.getSnapshot();
       const agent = before.harnesses.find((harness) => harness.harness === kind)!;
