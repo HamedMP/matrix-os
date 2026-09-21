@@ -53,6 +53,12 @@
 - **Bounded inflight maps**: the gateway membership client refuses (fails closed) beyond 256 concurrent lookups; the projection defers reconciliation beyond 64 in flight.
 - **S08 seam (coordinator request)**: the membership assertion carries the organization's projected `aiSubmission` (`members` | `owner_only`) as an additive optional contract field; the platform resolve route emits it, the gateway `OrganizationMembershipAssertion` positive branch carries it (absent/unknown → `owner_only`), and `OrganizationMembershipClient.organizationAiSubmission()` exposes it for `wiring.ts` to derive S08's `OrganizationAiSubmissionSource`.
 
+## Review round 3
+
+- **Existing outbox misses claim columns**: the locked bootstrap now runs `ALTER TABLE organization_revocation_outbox ADD COLUMN IF NOT EXISTS claimed_by / claimed_until` after the `CREATE TABLE IF NOT EXISTS`, in the same transaction; `tests/platform/organization-database-upgrade.test.ts` bootstraps the previous shape with a live intent, upgrades twice, then claims and completes it.
+- **Atomic, idempotent fencing**: `drainRevocations` claims first (`claimDueRevocationIntents`, SKIP LOCKED + lease), resolves runtimes outside any transaction, then in one `repository.transaction` inserts the denial keyed by the intent id (`denial_id = intent_id`, `ON CONFLICT DO NOTHING`, runtimes likewise) and completes the intent. A crash between fence and completion is covered: the retry finds the same denial (`collaboration-control-authority.test.ts` "fences a revocation intent atomically…", asserting a single denial row after a simulated crash).
+- **`membershipEpoch` to the gateway (S04 #1797)**: the gateway positive assertion carries `membershipEpoch` (decimal string from the platform's monotonic projection epoch) on both fresh and cached paths; S04's evaluator can fail closed when it is absent.
+
 ## Open gates
 
 - `CLERK_ORGANIZATION_WEBHOOK_SIGNING_SECRET` (Clerk dashboard endpoint secret, `whsec_…`) and `CLERK_SECRET_KEY` must be configured on the platform; without them the webhook returns 503 and no organization is ever verified.

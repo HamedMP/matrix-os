@@ -355,12 +355,21 @@ export class PlatformOrganizationRepository {
 
   // --- control authority: denials, fences, acknowledgements -------------------------------------
 
+  /**
+   * Creates a denial. With `denialId` supplied (the revocation intent id) the
+   * insert is idempotent: a retry after a crash between fence and intent
+   * completion finds the existing denial instead of creating a second one.
+   */
   async createDenial(input: {
-    organizationId?: string; actorId?: string; scopeId?: string; generation: number; fencedAt: Date; ackDeadline: Date; runtimeIds: readonly string[];
+    denialId?: string; organizationId?: string; actorId?: string; scopeId?: string; generation: number; fencedAt: Date; ackDeadline: Date; runtimeIds: readonly string[];
   }): Promise<DenialRecord> {
     if (input.runtimeIds.length > MAX_DENIAL_RUNTIMES) throw new Error("Too many affected runtimes for one denial");
     return this.transaction(async (repo) => {
-      const denialId = randomUUID();
+      const denialId = input.denialId ?? randomUUID();
+      if (input.denialId) {
+        const existing = await repo.getDenial(denialId);
+        if (existing) return existing;
+      }
       await repo.db.insertInto("collaboration_denials").values({
         denial_id: denialId,
         organization_id: input.organizationId ?? null,
@@ -372,11 +381,11 @@ export class PlatformOrganizationRepository {
         state: "pending",
         acknowledged_at: null,
         created_at: repo.now(),
-      }).execute();
+      }).onConflict((oc) => oc.column("denial_id").doNothing()).execute();
       for (const runtimeId of new Set(input.runtimeIds)) {
         await repo.db.insertInto("collaboration_denial_runtimes").values({
           denial_id: denialId, runtime_id: runtimeId, acknowledged_at: null, next_attempt_at: input.fencedAt,
-        }).execute();
+        }).onConflict((oc) => oc.columns(["denial_id", "runtime_id"]).doNothing()).execute();
       }
       if (input.runtimeIds.length === 0) {
         await repo.db.updateTable("collaboration_denials").set({ state: "completed", acknowledged_at: input.fencedAt })
