@@ -25,6 +25,7 @@ import type { RuntimeEndpointPlatformDatabase } from "./runtime-endpoints.js";
 import { loadTicketSigningKeyring } from "./ticket-issuer.js";
 import { PlatformCollaborationCutover } from "./cutover.js";
 import { createPlatformCutoverHomeResolver } from "./cutover-home-transport.js";
+import { createCompatibleDirectBuildVerifier } from "./compatible-build.js";
 
 export interface BootstrapPlatformCollaborationOptions {
   env: NodeJS.ProcessEnv;
@@ -179,6 +180,21 @@ export async function bootstrapPlatformCollaboration(
   // The existing VPS dispatcher pins the outbound connection to that machine.
   const cutover = new PlatformCollaborationCutover({
     db: collaborationDb,
+    verifyCompatibleDirectBuild: createCompatibleDirectBuildVerifier({
+      platformSecret: options.platformSecret,
+      resolveMachine: (machineId) => getUserMachine(options.db, machineId),
+      getPublishedRelease: async (version) => {
+        const release = await options.db.kysely.selectFrom("host_bundle_releases")
+          .select(["version", "git_commit", "sha256"])
+          .where("version", "=", version).executeTakeFirst();
+        return release ? { version: release.version, gitCommit: release.git_commit, sha256: release.sha256 } : null;
+      },
+      fetchImpl: (input, init) => fetch(input, {
+        ...init,
+        signal: init?.signal ?? AbortSignal.timeout(10_000),
+        dispatcher: options.customerVpsProxyDispatcher,
+      } as RequestInit & { dispatcher: import("undici").Dispatcher }),
+    }),
     resolveHome: createPlatformCutoverHomeResolver({
       keyring: loadTicketSigningKeyring(options.env),
       resolveRuntime: async ({ runtimeId, ownerId }) => {
