@@ -25,7 +25,7 @@
 | `pnpm exec vitest run tests/contracts` | — | 38 files, 353 tests passed |
 | `pnpm --filter @matrix-os/contracts exec tsc --noEmit` | — | clean |
 | `bun run check:patterns` | — | 0 violations (5 pre-existing warnings) |
-| `bun run typecheck` | — | contracts, observability, integrations-mcp, gateway, platform, proxy, edge-router clean; `desktop` fails on two S20 layer-3 files that predate this packet (`DesktopProjectSharing.tsx`, `DesktopTerminalSharing.tsx` miss the `organizationId` prop introduced by T101); no desktop file is touched here |
+| `bun run typecheck` | — | initially failed in `desktop` on two missing S20 `organizationId` props; the 2026-09-21 rerun on local combined S02 head `79a8b846c` passed across all packages after the S20 fix and correct local workspace links |
 
 ## Schema inventory (frozen vocabulary)
 
@@ -39,7 +39,19 @@
 - Readiness: a `ready` project or Chat must carry `sourceKind` and `effectiveSubmitMode`; file, folder, app instance and terminal never do.
 - Ticket purposes: direct_session, events, terminal, control, peer. Protocol version 2; mismatch → `upgrade_required`.
 
+## 2026-09-21 validation addendum
+
+On local combined tree `79a8b846c` (divergent from the remote Graphite auto-rebase), `pnpm exec vitest run tests/contracts/collaboration-capabilities.test.ts tests/contracts/collaboration-direct.test.ts tests/contracts/collaboration-execution.test.ts --maxWorkers=2` passed **31/31**. `pnpm exec vitest run tests/contracts --maxWorkers=2` passed **38 files, 358/358 tests**. `bun run typecheck` passed, including Electron Desktop. `bun run check:patterns` found **0 violations and 5 existing warnings**. The earlier desktop failure above was historical; the S20 component props are now present on this combined tree. These checks do not establish a current remote-head CI or Greptile result after Graphite restacking.
+
+| Surface | S02 contract effect | Direct S02 surface evidence |
+| --- | --- | --- |
+| Web Canvas | Shared schema only; no S02 UI/runtime behavior | N/A |
+| Web Desktop | Shared schema only; no S02 UI/runtime behavior | N/A |
+| Electron Desktop | Shared schema only; no S02 UI/runtime behavior | N/A; full typecheck passed |
+| Web Mobile | Shared schema only; no S02 UI/runtime behavior | N/A |
+| Native Mobile | Shared schema only; no S02 UI/runtime behavior | N/A |
+
 ## Open gates
 
-- The desktop typecheck failure belongs to S20 layer 3 (`124/s20-audience`) and must be fixed there before the stack's typecheck gate is green.
+- This local validation must be repeated or superseded on the Graphite-restacked remote head; current-head CI and Greptile remain release gates.
 - S03 must register the membership projection before any `membership_assertion` is positive; S04 consumes `CollaborationGrantActivationSchema` and `CollaborationEffectiveAccessSchema`; S05 consumes the ticket, session and control schemas; S08/S09 consume the execution policy, run and Git schemas; S12 consumes `CollaborationResourceKindSchema` for standalone shares.
