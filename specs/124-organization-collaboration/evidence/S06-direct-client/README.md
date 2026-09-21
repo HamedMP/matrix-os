@@ -1,7 +1,7 @@
 # S06 evidence: "Shared with me" with metadata-only discovery (T030–T034)
 
 **PR:** #1806 `feat(collaboration): add the shared direct client and metadata-only discovery`.
-**Date:** 2026-09-21. **Commit captured:** `ab3f577f5` (branch `124/s06`).
+**Date:** 2026-09-21. **Commit captured:** refreshed after review fix `e48126fbc` (branch `124/s06`); the offline and denied states retain the same source behavior.
 **What changed for users:** platform discovery (`GET /api/collaboration/inbox|shared`) now returns
 metadata only. The shared direct client (`packages/ui/src/collaboration/direct-api.ts`) hydrates each
 item from its home and, when the home cannot be reached or refuses the caller, marks the item instead
@@ -9,7 +9,7 @@ of dropping it. `ChatCollaboration.tsx` renders three new cards on the **Shared 
 
 | Card | Trigger | Copy |
 | --- | --- | --- |
-| Organization-pending | platform item `status: "organization_pending"` (organization-wide share the member has not opened yet); no hydration | **Shared with your organization** · "Shared {kind} · opens when you join" · **Open** |
+| Organization-pending | platform item `status: "organization_pending"` (organization-wide share the member has not opened yet); no hydration | **Shared with your organization** · "Shared {kind}" · "Access will be available when this share is enabled."; no Open action before activation |
 | Offline | hydration fails with `host_offline` (platform ticket route answers 404/503) or `unavailable` (network failure); client sets `home: "offline"` | **Shared {kind}** / **Invitation** · "The owner's computer is offline. Try again later." |
 | Access unavailable | hydration fails with any other typed error (`denied` from 401/403, `not_found`, `upgrade_required`, …); client sets `home: "denied"` | **Shared {kind}** / **Invitation** · "Access is no longer available." |
 
@@ -68,7 +68,7 @@ ticket route rather than the discovery payload to produce the offline and access
 
 | File | Surface | State | Shows |
 | --- | --- | --- | --- |
-| `web-desktop-org-pending.png` | Web Desktop | organization-pending | Chat window on **Shared with me** with two "Shared with your organization · opens when you join" cards (project, Chat) and their **Open** buttons |
+| `web-desktop-org-pending.png` | Web Desktop | organization-pending | Chat window on **Shared with me** with two organization-pending cards (project, Chat), the access message, and no Open action |
 | `web-desktop-offline.png` | Web Desktop | offline | "Shared Chat" and "Invitation" cards with "The owner's computer is offline. Try again later." and no action |
 | `web-desktop-denied.png` | Web Desktop | access-unavailable | "Shared terminal" card with "Access is no longer available." and no action |
 | `web-desktop-all.png` | Web Desktop | all three | All five cards on one page (organization-pending first, then offline, then access-unavailable) |
@@ -76,7 +76,7 @@ ticket route rather than the discovery payload to produce the offline and access
 | `web-canvas-offline.png` | Web Canvas | offline | Same offline cards on Web Canvas |
 | `web-canvas-denied.png` | Web Canvas | access-unavailable | Same access-unavailable card on Web Canvas |
 | `web-canvas-all.png` | Web Canvas | all three | All five cards on Web Canvas |
-| `web-mobile-org-pending.png` | Web Mobile | organization-pending | Phone-width Chat surface with the two organization-pending cards; **Open** buttons wrap beside the copy |
+| `web-mobile-org-pending.png` | Web Mobile | organization-pending | Phone-width Chat surface with two organization-pending cards and the access message |
 | `web-mobile-offline.png` | Web Mobile | offline | Offline cards at phone width |
 | `web-mobile-denied.png` | Web Mobile | access-unavailable | Access-unavailable card at phone width |
 | `web-mobile-all.png` | Web Mobile | all three | All five cards at phone width, tab bar below |
@@ -89,7 +89,7 @@ ticket route rather than the discovery payload to produce the offline and access
 
 - **All four surfaces render the same cards from the same component.** Web Canvas, Web Desktop, Web
   Mobile and Electron Desktop all mount `ChatCollaboration` with a `CollaborationDirectApi`; the copy,
-  card order and the absence of actions on offline/access-unavailable cards are identical. Only the
+  card order and the absence of actions on pending/offline/access-unavailable cards are identical. Only the
   window chrome differs (Electron opens **Shared with me** as its own window rather than inside the
   Chat window).
 - **Offline and access-unavailable are client-side outcomes, not platform fields.** The direct client
@@ -101,18 +101,17 @@ ticket route rather than the discovery payload to produce the offline and access
   distinct upgrade message here.
 - **Organization-pending cards carry no owner or title.** The platform item is metadata only and the
   client does not hydrate `organization_pending` items, so the card shows only the kind
-  ("Shared project", "Shared Chat"). Pressing **Open** routes to `/shared/project/<scopeId>` (web) or
-  sets the project view (Electron); actually opening the share needs S12/S15 per the PR's deferred
-  scope, so that path was not captured.
+  ("Shared project", "Shared Chat"). The earlier Open control was removed after review because
+  the home activation and platform ticket admission route do not exist yet; all captures show the
+  access message instead. S15 owns the eventual activation action.
 - **Web Mobile is reachable.** The PR body marks Web Mobile N/A, but the browser shell at phone width
   renders the same Chat surface and the same cards (captured above). Native Mobile remains the recorded
   V1 limitation.
 
 ## Not captured
 
-- **Opening an organization-pending share** (the **Open** button): needs the S12 home activation route
-  and S15 platform ticket admission; with mocks it would only reach the "Shared project unavailable"
-  fallback, which is not the changed behavior.
+- **Opening an organization-pending share:** the control is intentionally absent until the home
+  activation route and platform ticket admission are available; this state cannot be captured yet.
 - **A hydrated (healthy) card next to the marked cards**: requires a full ticket/signature/home-session
   exchange against a mocked home, out of scope for this PR's changed states.
 - **Native Mobile:** recorded V1 limitation in `spec.md`.
