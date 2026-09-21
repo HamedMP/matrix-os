@@ -492,3 +492,50 @@ async function seedSharedChat(fixture: CollaborationTestDatabase): Promise<void>
     deleted_at: null,
   }).execute();
 }
+
+describe("S08 owner source wiring", () => {
+  it("constructs execution policies, run bindings and the owner source only when a V3 snapshot reader is provided", async () => {
+    const fixture = await createCollaborationTestDatabase();
+    await bootstrapChatDatabase(fixture.db);
+    const config = {
+      runtimeId: collaborationIds.runtime,
+      activeKeyId: "key-1",
+      proofKeys: { "key-1": "a".repeat(32) },
+      preflightSecret: "b".repeat(32),
+      platformBaseUrl: "https://platform.internal",
+      serviceToken: "c".repeat(32),
+    };
+    const base = {
+      organizationPrecondition: allowAllOrganizationPrecondition,
+      db: fixture.db,
+      chatRepository: new ChatRepository(fixture.db),
+      config,
+      resolveParticipant: async (actorId: string) => ({ actorId, displayName: actorId }),
+      resolveInvitationIdentifier: async (identifier: string) => ({ actorId: identifier, displayName: identifier }),
+      startTimers: false,
+    };
+    try {
+      const without = await createGatewayCollaboration(base);
+      expect(without.executionPolicies).toBeUndefined();
+      expect(without.runBindings).toBeUndefined();
+      expect(without.ownerSource).toBeUndefined();
+      await without.shutdown();
+
+      const withReader = await createGatewayCollaboration({
+        ...base,
+        providerSnapshotReader: { async getSnapshot() { throw new Error("snapshot never read at construction"); } },
+      });
+      expect(withReader.executionPolicies).toBeDefined();
+      expect(withReader.runBindings).toBeDefined();
+      expect(withReader.ownerSource).toBeDefined();
+      expect(await withReader.executionPolicies!.effectiveSubmitMode(collaborationIds.scope)).toBe("owner_only");
+      const app = new Hono();
+      withReader.register({ app, upgradeWebSocket: () => (async () => new Response(null, { status: 426 })) as never });
+      const policyRoutes = app.routes.filter((route) => route.path === "/api/collaboration/scopes/:scopeId/execution-policy" && route.method !== "ALL");
+      expect(policyRoutes.map((route) => route.method).sort()).toEqual(["GET", "PUT"]);
+      await withReader.shutdown();
+    } finally {
+      await fixture.destroy();
+    }
+  });
+});

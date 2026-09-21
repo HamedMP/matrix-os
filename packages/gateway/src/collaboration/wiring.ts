@@ -34,6 +34,14 @@ import { OrganizationMembershipClient } from "./organization-membership-client.j
 import { CollaborationRepository } from "./repository.js";
 import { createCollaborationRoutes } from "./routes.js";
 import { createSharedAiRuntime } from "./shared-ai-runtime.js";
+import type { CanonicalProviderSnapshotReader } from "../ai-providers/provider-settings-coordinators.js";
+import { OwnerAccountEligibility } from "./account-eligibility.js";
+import {
+  CollaborationExecutionPolicyRepository,
+  type OrganizationAiSubmissionSource,
+} from "./execution-policy.js";
+import { CollaborationRunBindingRepository } from "./run-account-binding.js";
+import { SharedRunOwnerSource } from "./shared-run-owner-source.js";
 import type { CollaborationChatExecutionAdapter } from "./chat-execution-adapter.js";
 import { CollaborationTerminalAdapter } from "./terminal-adapter.js";
 import { TerminalControlCoordinator } from "./terminal-control.js";
@@ -98,6 +106,14 @@ export async function createGatewayCollaboration(options: {
    */
   organizationMembershipSource?: OrganizationMembershipSource;
   organizationPrecondition?: OrganizationPrecondition;
+  /**
+   * S08: the owner's Provider V3 snapshot reader. When present, execution
+   * policies, run bindings and the shared-run owner source are constructed and
+   * the execution-policy routes serve; without it they report unavailable.
+   */
+  providerSnapshotReader?: CanonicalProviderSnapshotReader;
+  /** S08: organization `collaboration.aiSubmission` projection; absent reads as owner-only. */
+  organizationAiSubmission?: OrganizationAiSubmissionSource;
 }) {
   await bootstrapCollaborationDatabase(options.db);
   await cleanupExpiredArtifacts(options.db, new Date());
@@ -120,6 +136,22 @@ export async function createGatewayCollaboration(options: {
   // S04: whole-project preset grants are the V1 membership; the authority resolves them at registration time.
   const capabilities = new CollaborationCapabilityRepository(options.db, { now: () => new Date(), createId: randomUUID });
   const authority = new CollaborationAuthority(repository, { organizationPrecondition, capabilities });
+  // S08: one owner-selected source per execution scope, resolved at construction.
+  const eligibility = options.providerSnapshotReader
+    ? new OwnerAccountEligibility({ snapshots: { getSnapshotV3: () => options.providerSnapshotReader!.getSnapshot() } })
+    : undefined;
+  const executionPolicies = eligibility
+    ? new CollaborationExecutionPolicyRepository(options.db, {
+      eligibility,
+      ...(options.organizationAiSubmission ? { organizationAiSubmission: options.organizationAiSubmission } : {}),
+    })
+    : undefined;
+  const runBindings = eligibility && executionPolicies
+    ? new CollaborationRunBindingRepository(options.db, { policies: executionPolicies, eligibility })
+    : undefined;
+  const ownerSource = eligibility && executionPolicies
+    ? new SharedRunOwnerSource({ policies: executionPolicies, eligibility, ...(runBindings ? { bindings: runBindings } : {}) })
+    : undefined;
   const verifier = new CollaborationActorProofVerifier({
     runtimeId: options.config.runtimeId,
     keys: options.config.proofKeys,
@@ -228,6 +260,9 @@ export async function createGatewayCollaboration(options: {
   return {
     repository,
     capabilities,
+    executionPolicies,
+    runBindings,
+    ownerSource,
     authority,
     organizationPrecondition,
     verifier,
@@ -284,6 +319,7 @@ export async function createGatewayCollaboration(options: {
         resolveParticipant,
         ...(input.providerCatalog ? { providerCatalog: input.providerCatalog } : {}),
         ...(input.codingProviders ? { codingProviders: input.codingProviders } : {}),
+        ...(ownerSource ? { ownerSource } : {}),
         ...(input.fundedCredentialProvider ? { fundedCredentialProvider: input.fundedCredentialProvider } : {}),
         ...(input.supervisorSocket ? { supervisorSocket: input.supervisorSocket } : {}),
         ...(input.brokerSocket ? { brokerSocket: input.brokerSocket } : {}),
@@ -391,6 +427,7 @@ export async function createGatewayCollaboration(options: {
         ...(projectSharing ? { projectSharing } : {}),
         resolveParticipant,
         resolveInvitationIdentifier,
+        ...(executionPolicies ? { executionPolicies } : {}),
         onScopeCommitted: (scopeId) => eventRegistry.broadcastScope(scopeId),
         onRevoked: (scopeId, actorId) => {
           eventRegistry.notifyRevoked(scopeId, actorId);

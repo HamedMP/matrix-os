@@ -50,6 +50,7 @@ import {
 } from "./scope-runtime-client.js";
 import { SharedAiRuntimeRegistry } from "./shared-ai-runtime-registry.js";
 import type { CollaborationActorProofVerifier } from "./actor-proof.js";
+import type { SharedRunOwnerSource } from "./shared-run-owner-source.js";
 const SUPERVISOR_SOCKET = "/run/matrix-scope-runtime/supervisor.sock";
 const BROKER_SOCKET = "/run/matrix-scope-runtime/broker.sock";
 const QUEUE_WAKE_INTERVAL_MS = 10_000;
@@ -100,6 +101,8 @@ export async function createSharedAiRuntime(options: {
   resolveAccessSource?: () => Promise<KernelCredentialAccessSourceId>;
   providerCatalog?: ChatProviderCatalogService;
   codingProviders?: Pick<CodingAgentProviderRegistry, "listProviders">;
+  /** S08: owner-selected source decision consulted before every shared adapter is prepared. */
+  ownerSource?: SharedRunOwnerSource;
 }) {
   const client = createScopeRuntimeClient({
     socketPath: options.supervisorSocket ?? SUPERVISOR_SOCKET,
@@ -198,12 +201,23 @@ export async function createSharedAiRuntime(options: {
           })) throw new SharedChatRunPreparationError("unavailable");
           const adapter = sharedAdapterFor(execution.driverKind, execution.selection.instanceId, eligibility);
           if (!adapter) throw new SharedChatRunPreparationError("unavailable");
+          // S08: the owner's execution policy decides the source; a member on an owner-only
+          // scope or an unavailable source refuses preparation and keeps the queued request.
+          const ownerDecision = options.ownerSource
+            ? await options.ownerSource.prepare({
+                scopeId,
+                chatId,
+                ownerId: context.ownerId,
+                requestingActorId: execution.requestingActorId,
+                driverKind: execution.driverKind,
+              })
+            : null;
           const providerIdentity = execution.driverKind === "codex"
             ? { driverKind: "codex" as const, instanceId: "codex_default" as const }
             : {
                 driverKind: "claude_code" as const,
                 instanceId: "claude_shared" as const,
-                accessSourceId: await resolveAccessSource(),
+                accessSourceId: ownerDecision?.accessSourceId ?? await resolveAccessSource(),
               };
           return createScopeRuntimeChatProviderAdapter({
             client: scopedClient({
