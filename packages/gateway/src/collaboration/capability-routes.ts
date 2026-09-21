@@ -7,12 +7,13 @@ import {
   CollaborationReadinessSchema,
 } from "@matrix-os/contracts";
 import type { Hono } from "hono";
+import { z } from "zod/v4";
 import { CollaborationAuthorizationError } from "./authority-error.js";
 import type { CollaborationCapabilityEvaluator } from "./capability-evaluator.js";
 import { evaluateCollaborationReadiness } from "./readiness-evaluator.js";
 import type { CollaborationCapabilityRepository, GrantRecord } from "./capability-repository.js";
 import {
-  authorize, deleteConditions, digest, digestDeleteConditions, handle, notifyScope, readJson, requireScope,
+  authorize, deleteConditions, digest, digestDeleteConditions, handle, notifyScope, readJson, requireScope, verifyHttp,
   type CollaborationRouteOptions,
 } from "./route-support.js";
 
@@ -51,6 +52,27 @@ function projectGrant(grant: GrantRecord) {
 }
 
 export function registerCapabilityRoutes(routes: Hono, options: CapabilityRouteOptions): void {
+  routes.post(`${GRANTS_PATH}/:grantId/accept`, async (c) => handle(c, async () => {
+    const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
+    const grantId = CollaborationIdSchema.parse(c.req.param("grantId"));
+    const { value, bytes } = await readJson(c);
+    z.object({}).strict().parse(value);
+    // Pending members have no scope authorization yet; the exact signed actor proof and
+    // current organization membership are checked before the transactional activation.
+    const proof = await verifyHttp(options.verifier, c, bytes);
+    const scope = await requireScope(options.repository, scopeId);
+    const { grants, evaluator } = requireCapabilities(options);
+    const grant = await grants.getGrant(grantId);
+    if (proof.scopeId !== scopeId || proof.ownerId !== scope.ownerId
+      || !scope.organizationId || !grant || grant.scopeId !== scopeId
+      || grant.organizationId !== scope.organizationId || grant.audience.kind !== "organization") {
+      throw new CollaborationAuthorizationError("not_found", "Grant not found");
+    }
+    const result = await evaluator.acceptGrant({ grantId, actorId: proof.actorId });
+    await notifyScope(options, scopeId);
+    return c.json(result);
+  }));
+
   routes.get(GRANTS_PATH, async (c) => handle(c, async () => {
     const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
     await authorize(options, c, new Uint8Array(), "read", scopeId);
