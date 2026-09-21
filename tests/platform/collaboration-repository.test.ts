@@ -127,6 +127,27 @@ describe("PlatformCollaborationRepository", () => {
     }]);
   });
 
+  it("projects an opaque organization grant pointer by revision and clears it on revocation", async () => {
+    const event = {
+      eventId: "20000000-0000-4000-8000-000000000201", scopeId,
+      runtimeId: "runtime_owner", ownerId: platformCollaborationActors.owner,
+      kind: "chat" as const, organizationId: "org_matrix_team", audience: "organization" as const,
+      organizationGrantId: "70000000-0000-4000-8000-000000000001",
+      authorityGeneration: 1, metadataRevision: 3, recipients: [],
+    };
+    await repository.applyDirectoryEvent(event);
+    expect(await repository.listOrganizationSharesForActor(platformCollaborationActors.recipientWithoutComputer, ["org_matrix_team"]))
+      .toMatchObject([{ grantId: event.organizationGrantId }]);
+    await repository.applyDirectoryEvent({ ...event, eventId: "20000000-0000-4000-8000-000000000202", metadataRevision: 2, organizationGrantId: "70000000-0000-4000-8000-000000000002" });
+    expect(await repository.listOrganizationSharesForActor(platformCollaborationActors.recipientWithoutComputer, ["org_matrix_team"]))
+      .toMatchObject([{ grantId: event.organizationGrantId }]);
+    await repository.applyDirectoryEvent({ ...event, eventId: "20000000-0000-4000-8000-000000000203", metadataRevision: 4, audience: "members", organizationGrantId: undefined });
+    expect(await repository.listOrganizationSharesForActor(platformCollaborationActors.recipientWithoutComputer, ["org_matrix_team"]))
+      .toEqual([]);
+    expect((await fixture.collaborationDb.selectFrom("collaboration_directory").selectAll().where("scope_id", "=", scopeId).executeTakeFirstOrThrow()).organization_grant_id)
+      .toBeNull();
+  });
+
   it("removes revoked discovery projections through a bounded retention cleanup", async () => {
     await repository.applyDirectoryEvent({
       eventId: "20000000-0000-4000-8000-000000000020",
