@@ -1,0 +1,42 @@
+# S15 receipt — shared permission, readiness and organization UI
+
+**Packet:** S15. **Tasks:** T075, T076, T078; T079 surface journeys remain open. **Date:** 2026-09-21. **Base:** `124/s12-app` at `169419a7d`. **Gateway layer:** `124/s15-gateway` at `ba0a286f7`. **UI layer:** `124/s15` at `78b263ec2` when this receipt was written. Graphite restacks may rewrite these heads; use each PR's current head afterward. T077 is deferred.
+
+## Layers and changed files
+
+| Layer | Diff vs parent | Main files |
+| --- | --- | --- |
+| Gateway | 20 files, +686 / −1 | Contracts for grant identity, owner catalog resolution and direct routes; gateway capability/readiness/catalog routes, owner resource driver and composition; platform proxy/relay allowlists; contract, gateway and platform tests |
+| Shared UI | 19 files, +787 / −198 before this receipt | `packages/ui/src/collaboration/{ReadinessSummary,ProjectSourceSummary,AudienceGrantPicker,ResourceSharingButton,ChatCollaboration,ChatCollaboratorsDialog,ProjectSharingDialog,SessionAccessControl}.tsx`; shared UI exports; Web file/app and Electron file/app Share mounts; four UI test files |
+
+The existing Chat and project Share/Access controls now use a current organization or member picker with Viewer and Contributor grants. Projects and rooted Chats show the server-derived owner source, submit mode, Git identity and Chat root inventory; standalone unrooted Chats omit irrelevant Git details, and file/folder/app sharing omits AI and Git readiness. File/folder/app Share mounts resolve the exact owner catalog identity before preflight and reject a mismatched kind or path. No new share dialog or inbox was added.
+
+Pending organization rows carry an opaque grant ID from discovery. Listing or previewing never activates it. Open sends `POST /api/collaboration/scopes/:scopeId/grants/:grantId/accept` to the owner home; the UI waits for active acceptance and one fresh metadata read before navigating. The directory may still show pending until its asynchronous outbox arrives, so the UI does not require an accepted index row before opening the now-authorized home scope. On failure it stays on the pending row with a fixed safe error and permits retry. The home route binds grant to scope, checks fresh organization membership, and uses the existing transactional activation path; directory metadata is never authorization.
+
+## RED → GREEN
+
+| Command | Recorded result |
+| --- | --- |
+| `pnpm exec vitest run tests/ui/collaboration-ready-to-work.test.tsx` before the shared components were implemented | RED: new `ReadinessSummary` import failed; test commit `ed54ae5b1` preceded the UI feature commit. |
+| Same command after pending Open tests were added, before the discovery contract | RED: 13 tests, **2 failed / 11 passed**. Strict discovery parsing rejected the new `grantId` and Open was absent. |
+| Same command after the contract landed, before pending Open implementation | RED: 13 tests, **2 failed / 11 passed**. Open rendered, but no accept call or safe failure state existed. |
+| Same command after pending Open implementation | GREEN: **13/13 passed**. The test holds the accept and metadata refresh promises separately to prove navigation occurs only afterward; a rejected accept leaves the row and hides the private error. |
+| Five focused UI suites: `collaboration-ready-to-work`, `collaboration-project-sharing`, `session-access-control`, `chat-collaboration-sharing`, `shared-terminal-controls` | **53/53 passed** on integrated gateway parent, 2026-09-21 12:10 UTC. |
+| `pnpm exec vitest run tests/gateway/collaboration-capability-routes.test.ts tests/contracts/collaboration.test.ts tests/platform/collaboration-proxy.test.ts tests/platform/collaboration-relay.test.ts --maxWorkers=2` | **51/51 passed** on integrated S15 head, 2026-09-21 12:11 UTC. Includes grant CRUD and exact activation, owner catalog, readiness, and exact proxy/relay route allowlists. These focused fixtures do not establish a live two-computer journey. |
+| `pnpm --filter @matrix-os/ui exec tsc --noEmit`; `bun run typecheck` | Both exit **0** on the integrated head. The full typecheck used the installed Bun binary on `PATH`; an earlier invocation failed before checking code because nested `bun` was absent from the tool shell's `PATH`. |
+| `bun run check:patterns` | Exit **0**, zero violations and five existing repository warnings. |
+| `npx react-doctor@latest shell --verbose --scope changed` | Exit **0**, 9 files scanned, score **74/100**; one existing FileBrowser complexity warning, no new S15 UI diagnostic. The full shell scan previously exited 1 with 242 repository-wide findings; it is not a S15 pass. |
+
+## Database, host, provider and surface evidence
+
+- **Database and rollback:** These two S15 layers add no owner Postgres schema migration. Grant mutations and activation use the pre-existing owner Postgres capability repository; the focused gateway test uses its test fixture. No S15 real-Postgres race or down-migration was run. The pending-directory grant pointer is being integrated in a separate S15 directory child and must be recorded with its own platform migration/rollback result before the packet closes. UI code is reversible by reverting the UI layer; existing grants remain owner data.
+- **Host and authorization:** Gateway route tests prove exact scope/grant binding, fresh membership denial, idempotent active acceptance, revoked grant rejection, exact owner catalog identity and bounded route allowlists. A live owner VPS, second computer, platform relay, member Clerk session and outsider Clerk session were **not** exercised. No credential, payer or integration was selected by the UI.
+- **Provider and Git:** Readiness is a server-derived projection. The UI did not invoke Codex, Claude, a Git forge, a model provider, or an owner credential. Unsupported and offline readiness states were checked in component tests; live provider and Git setup modes remain unrun.
+- **Web Canvas, Web Desktop and Electron Desktop:** Shared React controls mount in the normal Chat/project Share and access surfaces. Web file/app and Electron file/app entrypoints compile. `bun run build:shell:production` passed after supplying an inert test-format Clerk publishable key; its first invocation failed while prerendering `/onboarding/computer` because that build-time key was absent. `bun run build:desktop` passed Electron main, preload and renderer compilation. These are build checks, **not** authenticated interactive surface journeys. Web Canvas, Web Desktop and Electron Desktop owner/member/outsider journeys and visual parity capture remain **unrun**; T079 is therefore open. Native Mobile and CLI are the recorded V1 limitation, and Web Mobile parity was not exercised.
+
+## Invariants and remaining gates
+
+- **Source of truth:** Owner-home Postgres owns grants, activation, readiness inputs and catalog IDs; the platform directory has only bounded metadata. The UI consumes current contracts and never derives eligibility, owner payer, credential state or resource authority from a directory row.
+- **Authorization:** Pending Open cannot navigate before home acceptance. The home route requires direct proof and current organization membership and rejects a grant for another scope or a revoked grant. Exact catalog resolution is owner-authorized and folder sharing cannot silently widen beyond the selected path.
+- **Transactions and acceptable orphan states:** Grant acceptance is serialized by scope and grant row locks, with an atomic activation upsert and audit mutation. No S15 UI write introduces an orphan state. Directory outbox propagation is asynchronous; a temporarily stale pending row is acceptable and retry is idempotent.
+- **Open gates:** Finish and validate the S15 directory grant-ID child against real platform Postgres, restack the complete S15 layer after lower-stack fixes, run the interactive Web Canvas → Web Desktop → Electron Desktop owner/member/outsider journeys, and obtain current-head review and CI gates. T077 remains deferred. No deployment, paid-service probe or external publication was performed.
