@@ -235,6 +235,10 @@ describe("collaboration direct transport contracts (S02 T011)", () => {
       expiresAt: "2026-09-20T12:00:20.000Z",
     };
     expect(CollaborationControlAssertionSchema.parse(assertion)).toEqual(assertion);
+    // Additive S03 field: the organization's projected AI-submission policy, optional for older platforms.
+    expect(CollaborationControlAssertionSchema.parse({ ...assertion, aiSubmission: "members" })).toMatchObject({ aiSubmission: "members" });
+    expect(CollaborationControlAssertionSchema.parse({ ...assertion, aiSubmission: "owner_only" })).toMatchObject({ aiSubmission: "owner_only" });
+    expect(CollaborationControlAssertionSchema.safeParse({ ...assertion, aiSubmission: "everyone" }).success).toBe(false);
     expect(CollaborationControlAssertionSchema.safeParse({ ...assertion, expiresAt: "2026-09-20T12:00:21.000Z" }).success).toBe(false);
     expect(CollaborationControlAssertionSchema.safeParse({ ...assertion, receivedAt: issuedAt }).success).toBe(false);
     const denial = { protocolVersion: COLLABORATION_DIRECT_PROTOCOL_VERSION, type: "denial", denial: { organizationId, actorId: "user_2abc", generation: 8, fencedAt: issuedAt, ackDeadline: "2026-09-20T12:01:00.000Z", state: "pending" } };
