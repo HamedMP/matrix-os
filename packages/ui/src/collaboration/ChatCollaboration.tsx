@@ -188,7 +188,7 @@ function CollaborationHome({ api, openInvitation, openChat, openTerminal, openPr
         ? <article key={`org:${item.scopeId}`} className="flex flex-wrap items-center gap-4 rounded-2xl border p-4">
           <div className="min-w-0 flex-1">
             <p className="font-medium">Shared with your organization</p>
-            <p className="text-sm" style={{ color: "var(--text-secondary)" }}>Shared {kindLabel(item.kind)} · opens when you join</p>
+            <p className="text-sm" style={{ color: "var(--text-secondary)" }}>Shared {kindLabel(item.kind)}</p>
           </div>
           <p className="text-sm" style={{ color: "var(--text-secondary)" }}>Access will be available when this share is enabled.</p>
         </article>
