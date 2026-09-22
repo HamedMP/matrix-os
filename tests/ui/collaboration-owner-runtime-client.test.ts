@@ -61,4 +61,49 @@ describe("owner runtime direct client", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(3);
     await expect(api.direct.requestOwnerRuntime(runtimeId, organizationId, "/api/private/files", {})).rejects.toMatchObject({ code: "invalid_request" });
   });
+
+  it("answers a refused setup request with one fresh ticket and one retry", async () => {
+    let proofPublicKey = "";
+    let tickets = 0;
+    let sessions = 0;
+    let refused = false;
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/api/collaboration/owner-runtime/connections") {
+        tickets += 1;
+        proofPublicKey = (JSON.parse(String(init?.body)) as { proofPublicKey: string }).proofPublicKey;
+        const ticket = {
+          protocolVersion: 2, ticketId: `1000000${tickets}-0000-4000-8000-000000000001`, nonce: String(tickets).repeat(64),
+          actorId: ownerId, organizationId, resource: { kind: "owner_runtime" }, purpose: "owner_runtime",
+          runtime: { runtimeId: logicalRuntimeId, authorityGeneration: 1 },
+          proofKeyThumbprint: createHash("sha256").update(Buffer.from(proofPublicKey, "base64url")).digest("base64url"),
+          maxActions: 32, issuedAt: now.toISOString(), expiresAt: new Date(now.getTime() + 30_000).toISOString(),
+        };
+        return Response.json({ signedTicket: { ticket, keyId: "platform", signature: "a".repeat(86) }, endpoint: { origin: platform, protocolVersion: 2 } }, { status: 201 });
+      }
+      if (url.pathname === "/api/collaboration/owner-runtime/sessions") {
+        sessions += 1;
+        return Response.json({
+          protocolVersion: 2, id: `2000000${sessions}-0000-4000-8000-000000000001`,
+          actorId: ownerId, organizationId, runtimeId: logicalRuntimeId, authorityGeneration: 1,
+          purpose: "owner_runtime", proofKeyThumbprint: createHash("sha256").update(Buffer.from(proofPublicKey, "base64url")).digest("base64url"),
+          issuedAt: now.toISOString(), expiresAt: new Date(now.getTime() + 300_000).toISOString(),
+          evidenceExpiresAt: new Date(now.getTime() + 20_000).toISOString(), renewAfter: new Date(now.getTime() + 240_000).toISOString(),
+        }, { status: 201 });
+      }
+      // The home ends an exhausted or expired session and refuses with the renewable status.
+      if (!refused) {
+        refused = true;
+        return Response.json({ error: "Collaboration request denied" }, { status: 401 });
+      }
+      expect(new Headers(init?.headers).get("x-matrix-collaboration-session")).toBe("20000002-0000-4000-8000-000000000001");
+      return Response.json({ id: "30000000-0000-4000-8000-000000000001", kind: "file", path: "notes.txt" });
+    });
+    const api = createCollaborationDirectApi({ platformBaseUrl: platform, fetchImpl: fetchImpl as typeof fetch,
+      getHeaders: async () => ({ Authorization: "Bearer owner" }), clientOrigin: platform, now: () => now });
+    const path = `/api/collaboration/runtimes/${encodeURIComponent(runtimeId)}/catalog/resolve`;
+    await expect(api.post(path, { kind: "file", path: "notes.txt", organizationId }))
+      .resolves.toMatchObject({ kind: "file", path: "notes.txt" });
+    expect([tickets, sessions]).toEqual([2, 2]);
+  });
 });

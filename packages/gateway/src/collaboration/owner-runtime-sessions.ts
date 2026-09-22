@@ -101,9 +101,13 @@ export class OwnerRuntimeSessionService {
       this.sessions.delete(record.session.id);
       throw error;
     }
+    // Exhausting the ticket budget ends the session rather than throttling the caller. The record
+    // is already gone, so the refusal has to be the same one a later request meets: the renewable
+    // code the client answers with one fresh ticket, not a capacity refusal it reports as
+    // unavailable in the middle of a setup step.
     if (record.actionsRemaining <= 0) {
       this.sessions.delete(record.session.id);
-      throw new DirectAuthError("limit", "Session action budget is exhausted");
+      throw new DirectAuthError("expired", "Session is not active");
     }
     record.actionsRemaining -= 1;
     return { ...record.session };
