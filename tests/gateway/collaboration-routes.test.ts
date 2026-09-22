@@ -134,6 +134,8 @@ describe("collaboration gateway routes", () => {
           ? JSON.parse(row.execution_eligibility) as unknown
           : row?.execution_eligibility;
       },
+      // This fixture exercises the organization-enabled member submission path.
+      resolveEffectiveSubmitMode: async () => "members",
       resolveCanonicalProviderAuthority: async (_ownerId, selection) =>
         selection.instanceId === "claude_code_default" && selection.model === "opus"
           ? { driverKind: "claude_code", selection }

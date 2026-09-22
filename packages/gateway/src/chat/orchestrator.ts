@@ -566,11 +566,7 @@ export class CanonicalChatOrchestrator {
     owner: ChatOwner,
     chatId: string,
     scopeId: string,
-    createAdapter: (
-      context: Parameters<SharedChatExecutionCoordinator["dispatchNextQueued"]>[3] extends (
-        context: infer Context,
-      ) => unknown ? Context : never,
-    ) => Promise<CanonicalChatProviderAdapter> | CanonicalChatProviderAdapter,
+    createAdapter: Parameters<SharedChatExecutionCoordinator["dispatchNextQueued"]>[3],
   ): Promise<void> {
     this.assertOpen();
     await this.sharedExecution.dispatchNextQueued(owner, chatId, scopeId, createAdapter);
@@ -951,8 +947,9 @@ export class CanonicalChatOrchestrator {
     scopeId: string,
     chatId: string,
     runId: string,
+    options: { sharedRequestState?: "cancelled" | "interrupted" } = {},
   ): Promise<void> {
-    await this.sharedExecution.cancel(owner, scopeId, chatId, runId);
+    await this.sharedExecution.cancel(owner, scopeId, chatId, runId, options);
   }
 
   async steerRun(
@@ -1336,11 +1333,13 @@ export class CanonicalChatOrchestrator {
             }
           }
           if (entry.sharedScopeId) {
+            // The home is going away: the request is lost, not cancelled by anyone.
             await this.cancelSharedRun(
               entry.owner,
               entry.sharedScopeId,
               entry.chatId,
               entry.runId,
+              { sharedRequestState: "interrupted" },
             );
             return;
           }

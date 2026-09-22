@@ -1,15 +1,66 @@
 import { CanonicalProviderCatalogSchema } from "@matrix-os/contracts";
 import { describe, expect, it, vi } from "vitest";
 import { CollaborationAuthorizationError } from "../../packages/gateway/src/collaboration/authority.js";
+import { SharedChatRunPreparationError } from "../../packages/gateway/src/chat/shared-execution-coordinator.js";
 import { collaborationExecutionEligibility } from "./collaboration-test-support.js";
 import {
   createSharedAiApprovalReconciler,
   createSharedAiCancellationDispatcher,
+  createSharedChatSandboxManifest,
   recoverSharedAiQueue,
   resolveClaudeProviderReadiness,
   resolveSharedProviderReadiness,
   sharedDispatchFenceMatches,
+  sharedProviderIdentityFor,
 } from "../../packages/gateway/src/collaboration/shared-ai-runtime.js";
+
+describe("shared provider identity", () => {
+  it("binds Claude to the owner's kernel access source and refuses a non-kernel source instead of falling back", () => {
+    expect(sharedProviderIdentityFor("claude_code", { accessSourceId: "owner_anthropic_profile" }))
+      .toEqual({ driverKind: "claude_code", instanceId: "claude_shared", accessSourceId: "owner_anthropic_profile" });
+    expect(sharedProviderIdentityFor("codex", { accessSourceId: null }))
+      .toEqual({ driverKind: "codex", instanceId: "codex_default" });
+    expect(() => sharedProviderIdentityFor("claude_code", { accessSourceId: null })).toThrow(SharedChatRunPreparationError);
+  });
+});
+
+describe("shared Chat sandbox admission", () => {
+  const scopeId = "10000000-0000-4000-8000-000000000001";
+  const owner = { type: "personal" as const, ownerId: "user_owner" };
+  const rootRef = { kind: "project" as const, projectId: "project_demo" };
+  const fingerprint = "a".repeat(64);
+  const run = { id: "run_demo", turnId: "turn_demo", executionRoot: rootRef, executionRootFingerprint: fingerprint };
+  const capability = { available: true as const, sandbox: { workloads: ["chat_ai" as const] } };
+
+  it("mounts the authoritative resolved root for the requesting actor and scope", async () => {
+    const resolve = vi.fn(async () => ({ ref: rootRef, fingerprint, primaryWorkspaceRoot: "/home/matrix/home/projects/demo", projectSlug: "demo" }));
+    await expect(createSharedChatSandboxManifest({
+      run, scopeId, actorId: "user_editor", capability, executionRoots: { resolve }, owner,
+      homePath: "/home/matrix/home",
+    })).resolves.toEqual({
+      version: 1, scopeHandle: "scope_10000000000040008000000000000001", actorId: "user_editor",
+      worktree: { hostPath: "/home/matrix/home/projects/demo", mode: "rw", fingerprint },
+      network: "broker_only",
+    });
+    expect(resolve).toHaveBeenCalledWith(owner, rootRef);
+  });
+
+  it("fails closed before runtime creation without a canonical root or with stale root provenance", async () => {
+    const resolve = vi.fn(async () => ({ ref: rootRef, fingerprint, primaryWorkspaceRoot: "/home/matrix/home/projects/demo", projectSlug: "demo" }));
+    const input = { run, scopeId, actorId: "user_editor", capability, executionRoots: { resolve }, owner, homePath: "/home/matrix/home" };
+    await expect(createSharedChatSandboxManifest({ ...input, run: { ...run, executionRoot: null } }))
+      .rejects.toMatchObject({ requestState: "unavailable" });
+    expect(resolve).not.toHaveBeenCalled();
+    await expect(createSharedChatSandboxManifest({ ...input, run: { ...run, executionRootFingerprint: "b".repeat(64) } }))
+      .rejects.toMatchObject({ requestState: "unavailable" });
+    await expect(createSharedChatSandboxManifest({ ...input, run: { ...run, executionRootFingerprint: null } }))
+      .rejects.toMatchObject({ requestState: "unavailable" });
+    await expect(createSharedChatSandboxManifest({ ...input, capability: { available: true as const } }))
+      .rejects.toMatchObject({ requestState: "unavailable" });
+    resolve.mockResolvedValueOnce({ ref: rootRef, fingerprint, primaryWorkspaceRoot: "/home/matrix/home", projectSlug: "demo" });
+    await expect(createSharedChatSandboxManifest(input)).rejects.toMatchObject({ requestState: "unavailable" });
+  });
+});
 
 describe("shared AI Provider readiness", () => {
   const selection = { instanceId: "claude_code_default", model: "opus" };

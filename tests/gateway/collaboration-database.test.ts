@@ -43,6 +43,8 @@ describe("collaboration owner database", () => {
       "collaboration_project_view_states",
       "collaboration_resource_bindings",
       "collaboration_run_bindings",
+      "collaboration_run_decisions",
+      "collaboration_run_interruptions",
       "collaboration_runtime_identity",
       "collaboration_schema_migrations",
       "collaboration_scopes",

@@ -228,6 +228,22 @@ describe("CollaborationChatExecutionAdapter", () => {
     })).rejects.toMatchObject({ code: "unavailable" });
   });
 
+  it("refuses a member submission before the queue when the scope is owner-only", async () => {
+    const enqueueSharedQueuedTurn = vi.fn(async () => ({
+      ...queued, pendingCount: 1, alreadyAccepted: false, resourceRevision: 13,
+    }));
+    const adapter = createAdapter({
+      enqueueSharedQueuedTurn,
+      resolveEffectiveSubmitMode: async () => "owner_only" as const,
+    });
+    await expect(adapter.submit(context, {
+      clientRequestId: queued.clientRequestId,
+      expectedRevision: "12",
+      text: "Members cannot submit here",
+    })).rejects.toMatchObject({ code: "forbidden" });
+    expect(enqueueSharedQueuedTurn).not.toHaveBeenCalled();
+  });
+
   it("forwards attributed controls and refuses a mismatched capability", async () => {
     const cancel = vi.fn(async () => ({ id: "command-1", kind: "cancel" as const, state: "completed" as const }));
     const adapter = createAdapter({ cancel });
@@ -278,6 +294,11 @@ function createAdapter(overrides: Record<string, unknown> = {}) {
     resolveParticipant: async (actorId) => ({ actorId, displayName: "Ada Editor" }),
     resolveResourceRevision: async () => 13,
     resolveEligibility: async () => collaborationExecutionEligibility(),
+    // S08/S09: this suite covers admission mechanics on a scope whose owner already
+    // allows member submission; the owner-only refusal has its own case below.
+    resolveEffectiveSubmitMode: (overrides.resolveEffectiveSubmitMode as
+      ((scopeId: string) => Promise<"members" | "owner_only">) | undefined)
+      ?? (async () => "members"),
     requestDispatch: (overrides.requestDispatch as (scopeId: string, chatId: string) => Promise<void>)
       ?? (async () => undefined),
     resolveProviderReadiness: (overrides.resolveProviderReadiness as (

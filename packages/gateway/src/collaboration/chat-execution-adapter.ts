@@ -28,6 +28,7 @@ import {
   parseCollaborationAiEligibility,
   type CollaborationAiExecutionEligibility,
 } from "./shared-ai-eligibility.js";
+import type { CollaborationRunLossRepository } from "./shared-run-loss.js";
 
 export class CollaborationChatExecutionAdapter {
   private readonly now: () => Date;
@@ -40,6 +41,14 @@ export class CollaborationChatExecutionAdapter {
     commands: Pick<CollaborationChatCommands, "cancel" | "retry" | "decideApproval">;
     resolveParticipant(actorId: string): Promise<{ actorId: string; displayName: string }>;
     resolveEligibility(scopeId: string): Promise<unknown>;
+    /** S08 policy is checked at admission, before a member request enters the canonical queue. */
+    resolveEffectiveSubmitMode?(scopeId: string): Promise<"members" | "owner_only">;
+    /**
+     * S08/S09: whether the owner has selected a source for this scope. `missing`
+     * makes Shared AI unavailable for everyone; `paused` keeps admission open
+     * because queued work waits for the source instead of failing.
+     */
+    resolveOwnerSourceAdmission?(scopeId: string, ownerId: string): Promise<"ready" | "paused" | "missing">;
     resolveProviderReadiness?(
       ownerId: string,
       selection: CanonicalChatModelSelection | null,
@@ -52,6 +61,8 @@ export class CollaborationChatExecutionAdapter {
     resolveResourceRevision(scopeId: string, chatId: string): Promise<number | null>;
     requestDispatch(scopeId: string, chatId: string): Promise<void>;
     onCommitted?(scopeId: string): Promise<void>;
+    /** S09: loss reasons and control decisions projected onto requests. */
+    runLoss?: Pick<CollaborationRunLossRepository, "interruptionsFor" | "decisionsFor">;
     now?: () => Date;
     createQueuedTurnId?: () => string;
   }) {
@@ -92,7 +103,8 @@ export class CollaborationChatExecutionAdapter {
   async list(context: AuthorizedCollaborationContext): Promise<CollaborationAiRequest[]> {
     requireChatContext(context, "read");
     const rows = await this.options.repository.listSharedQueuedTurns(ownerFor(context), context.resourceId);
-    return Promise.all(rows.map((row) => this.project(row)));
+    const annotations = await this.annotationsFor(rows);
+    return Promise.all(rows.map((row) => this.project(row, annotations)));
   }
 
   async resourceRevision(context: AuthorizedCollaborationContext): Promise<string> {
@@ -107,6 +119,7 @@ export class CollaborationChatExecutionAdapter {
     inputValue: unknown,
   ): Promise<CollaborationAiRequestAcceptedResponse> {
     requireChatContext(context, "request_ai");
+    await this.requireSubmitMode(context);
     const input = CollaborationCreateAiRequestSchema.parse(inputValue);
     const resolvedCapability = await this.resolveCapability(context);
     if (resolvedCapability.capability.status !== "available") {
@@ -179,6 +192,7 @@ export class CollaborationChatExecutionAdapter {
     input: { clientRequestId: string; expectedRevision: string },
   ): Promise<CollaborationChatCommandResult> {
     requireChatContext(context, "control_execution");
+    await this.requireSubmitMode(context);
     const result = await this.options.commands.retry({
       scopeId: context.scopeId,
       actorId: context.actorId,
@@ -218,21 +232,38 @@ export class CollaborationChatExecutionAdapter {
     return result;
   }
 
-  private async project(row: SharedQueuedTurn): Promise<CollaborationAiRequest> {
+  private async project(row: SharedQueuedTurn, annotations?: RequestAnnotations): Promise<CollaborationAiRequest> {
     const text = row.parts.flatMap((part) => part.type === "text" ? [part.text] : []).join("\n");
+    const interruption = row.runId ? annotations?.interruptions.get(row.runId) : undefined;
+    const decision = annotations?.decisions.get(row.id);
+    // A recorded loss explains an interrupted or aborted-by-loss run; the reason never revives it.
+    const state = interruption && (row.state === "interrupted" || row.state === "cancelled" || row.state === "failed")
+      ? "interrupted"
+      : row.state;
     return CollaborationAiRequestSchema.parse({
       id: row.id,
       chatId: row.chatId,
       acceptedSequence: String(row.acceptedSequence),
       actor: await this.options.resolveParticipant(row.requestingActorId),
-      state: row.state,
+      state,
       text,
       selection: row.selection,
       ...(row.retryOfRequestId ? { retryOfRequestId: row.retryOfRequestId } : {}),
       ...(row.runId ? { runId: row.runId } : {}),
+      ...(state === "interrupted" && interruption ? { interruptedReason: interruption.reason } : {}),
+      ...(state === "cancelled" && decision ? { decidedBy: { actorId: decision.actorId, relation: decision.relation } } : {}),
       acceptedAt: row.createdAt,
       updatedAt: row.updatedAt,
     });
+  }
+
+  private async annotationsFor(rows: readonly SharedQueuedTurn[]): Promise<RequestAnnotations | undefined> {
+    if (!this.options.runLoss) return undefined;
+    const [interruptions, decisions] = await Promise.all([
+      this.options.runLoss.interruptionsFor(rows.flatMap((row) => row.runId ? [row.runId] : [])),
+      this.options.runLoss.decisionsFor(rows.map((row) => row.id)),
+    ]);
+    return { interruptions, decisions };
   }
 
   private async resolveCapability(context: AuthorizedCollaborationContext): Promise<{
@@ -245,6 +276,18 @@ export class CollaborationChatExecutionAdapter {
     );
     if (capability.status !== "available" && capability.status !== "owner_binding_required") {
       return { capability };
+    }
+    // The effective submit mode and the owner's source selection gate the
+    // capability itself, not only dispatch: a member on an owner-only scope
+    // and any actor on a scope without an owner-selected source see it as
+    // unavailable, so no request is accepted that could never run.
+    if (context.actorId !== context.ownerId) {
+      const mode = await this.options.resolveEffectiveSubmitMode?.(context.scopeId) ?? "owner_only";
+      if (mode !== "members") return { capability: { ...capability, status: "unavailable" } };
+    }
+    if (this.options.resolveOwnerSourceAdmission) {
+      const admission = await this.options.resolveOwnerSourceAdmission(context.scopeId, context.ownerId);
+      if (admission === "missing") return { capability: { ...capability, status: "unavailable" } };
     }
 
     let readiness: "ready" | "reconnect_required" | "unavailable" = "ready";
@@ -300,12 +343,25 @@ export class CollaborationChatExecutionAdapter {
     await this.options.onCommitted?.(scopeId);
   }
 
+  private async requireSubmitMode(context: AuthorizedCollaborationContext): Promise<void> {
+    if (context.actorId === context.ownerId) return;
+    const mode = await this.options.resolveEffectiveSubmitMode?.(context.scopeId) ?? "owner_only";
+    if (mode !== "members") {
+      throw new CollaborationAuthorizationError("forbidden", "Member AI submission is unavailable");
+    }
+  }
+
   private kickDispatch(scopeId: string, chatId: string): void {
     void this.options.requestDispatch(scopeId, chatId).catch((error: unknown) => {
       console.warn("[collaboration] shared Chat dispatch wake-up failed",
         error instanceof Error ? error.name : "UnknownError");
     });
   }
+}
+
+interface RequestAnnotations {
+  interruptions: Awaited<ReturnType<CollaborationRunLossRepository["interruptionsFor"]>>;
+  decisions: Awaited<ReturnType<CollaborationRunLossRepository["decisionsFor"]>>;
 }
 
 function requireChatContext(
