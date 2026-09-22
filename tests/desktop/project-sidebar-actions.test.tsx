@@ -142,10 +142,12 @@ describe("project sidebar actions", () => {
     expect(useDesktopSurfaces.getState().surfaces[id].mode).toBe("window");
     expect(useTabs.getState().activeTabId).toBe(id);
   });
-  it("parses pinned state and stably orders pinned projects first", () => {
+  it("parses pinned state and moves pinned projects into the Pinned section", () => {
     const pinned = { ...alpha, id: "proj_beta", slug: "beta", name: "Beta", pinned: true };
     expect(parseProject(pinned)?.pinned).toBe(true);
-    expect(buildWorkRailModel([], [alpha, pinned, { ...alpha, slug: "gamma" }]).projects.map(p => p.slug)).toEqual(["beta", "alpha", "gamma"]);
+    const model = buildWorkRailModel([], [alpha, pinned, { ...alpha, slug: "gamma" }]);
+    expect(model.pinnedProjects.map(project => project.slug)).toEqual(["beta"]);
+    expect(model.projects.map(project => project.slug)).toEqual(["alpha", "gamma"]);
   });
   it("ignores pending results after switching runtime and resets dialogs", async () => {
     let resolve!: (value: unknown) => void;

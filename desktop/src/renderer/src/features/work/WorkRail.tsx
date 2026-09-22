@@ -176,6 +176,10 @@ export function WorkRail({
     };
   }
   const model = useMemo(() => buildWorkRailModel(unreadOnly ? records.filter(isChatUnread) : records, projects), [projects, records, unreadOnly]);
+  const projectGroups = useMemo(
+    () => [...model.pinnedProjects, ...model.projects],
+    [model],
+  );
 
   useEffect(() => {
     if (!active || !client) setSearchOpen(false);
@@ -300,7 +304,7 @@ export function WorkRail({
     if (!client || !deleteChatTarget || deletingChat) return;
     const target = deleteChatTarget;
     const requestRouteGeneration = routeScopeRef.current.generation;
-    const targetProject = model.projects.find((group) => (
+    const targetProject = projectGroups.find((group) => (
       group.id === target.projectId || group.slug === target.projectId
     ))?.project;
     setDeletingChat(true);
@@ -329,7 +333,7 @@ export function WorkRail({
   const renameChat = async (record: CanonicalChatRecord, title: string) => {
     if (!client || renamePending) return;
     const requestRouteGeneration = routeScopeRef.current.generation;
-    const targetProject = model.projects.find((group) => (
+    const targetProject = projectGroups.find((group) => (
       group.id === record.projectId || group.slug === record.projectId
     ))?.project;
     setRenamePending(true);
@@ -366,6 +370,43 @@ export function WorkRail({
     }
   };
 
+  const renderProjectGroup = (group: (typeof projectGroups)[number]) => {
+    const expanded = Boolean(expandedProjects[group.id]);
+    return (
+      <WorkRailProjectGroup
+        key={group.id}
+        group={group}
+        expanded={expanded}
+        activeProjectSlug={activeProjectSlug}
+        activeChatId={activeChatId}
+        pinning={pinning}
+        renamingChatId={renamingChatId}
+        renamePending={renamePending}
+        onToggleRead={(record) => { void toggleRead(record); }}
+        readPending={readPending}
+        onRenameChat={(record) => {
+          if (renamePending) return;
+          setRenameError(null);
+          setRenamingChatId(record.chat.id);
+        }}
+        onRenameCommit={(record, title) => { void renameChat(record, title); }}
+        onRenameCancel={() => setRenamingChatId(null)}
+        onToggle={() => setExpandedProjects((current) => ({
+          ...current,
+          [group.id]: !current[group.id],
+        }))}
+        onNewChat={onNewProjectChat}
+        onDeleteProject={setDeleteProjectTarget}
+        onSelectChat={onSelectChat}
+        onPinChat={updatePinned}
+        onDeleteChat={(record) => {
+          setDeleteChatError(null);
+          setDeleteChatTarget(record);
+        }}
+      />
+    );
+  };
+
   return (
     <nav
       aria-label="Chat navigation"
@@ -390,6 +431,7 @@ export function WorkRail({
           expanded={sections.pinned}
           onToggle={() => toggleSection("pinned")}
         >
+          {model.pinnedProjects.map(renderProjectGroup)}
           {model.pinned.map((record) => (
             <WorkRailChatRow
               key={record.chat.id}
@@ -411,7 +453,7 @@ export function WorkRail({
               onRenameCancel={() => setRenamingChatId(null)}
               onSelect={() => onSelectChat(
                 record,
-                model.projects.find((group) => (
+                projectGroups.find((group) => (
                   group.id === record.projectId || group.slug === record.projectId
                 ))?.project,
               )}
@@ -441,42 +483,7 @@ export function WorkRail({
             </button>
           )}
         >
-          {model.projects.map((group) => {
-            const expanded = Boolean(expandedProjects[group.id]);
-            return (
-              <WorkRailProjectGroup
-                key={group.id}
-                group={group}
-                expanded={expanded}
-                activeProjectSlug={activeProjectSlug}
-                activeChatId={activeChatId}
-                pinning={pinning}
-                renamingChatId={renamingChatId}
-                renamePending={renamePending}
-                onToggleRead={(record) => { void toggleRead(record); }}
-                readPending={readPending}
-                onRenameChat={(record) => {
-                  if (renamePending) return;
-                  setRenameError(null);
-                  setRenamingChatId(record.chat.id);
-                }}
-                onRenameCommit={(record, title) => { void renameChat(record, title); }}
-                onRenameCancel={() => setRenamingChatId(null)}
-                onToggle={() => setExpandedProjects((current) => ({
-                  ...current,
-                  [group.id]: !current[group.id],
-                }))}
-                onNewChat={onNewProjectChat}
-                onDeleteProject={setDeleteProjectTarget}
-                onSelectChat={onSelectChat}
-                onPinChat={updatePinned}
-                onDeleteChat={(record) => {
-                  setDeleteChatError(null);
-                  setDeleteChatTarget(record);
-                }}
-              />
-            );
-          })}
+          {model.projects.map(renderProjectGroup)}
         </WorkRailSection>
 
         <WorkRailSection

@@ -112,6 +112,14 @@ describe("buildWorkRailModel", () => {
     expect(model.recents.map((record) => record.chat.id)).toEqual(["chat_recent"]);
   });
 
+  it("moves pinned projects into the Pinned section instead of sorting them atop Projects", () => {
+    const pinnedProject = { ...projects[0], pinned: true };
+    const model = buildWorkRailModel([], [projects[1], pinnedProject]);
+
+    expect(model.pinnedProjects.map((group) => group.slug)).toEqual(["alpha"]);
+    expect(model.projects.map((group) => group.slug)).toEqual(["beta"]);
+  });
+
   it("maps both stable Project ids and slugs without changing API order", () => {
     const model = buildWorkRailModel([
       chat("chat_id_match", "ID match", {
