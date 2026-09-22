@@ -61,6 +61,16 @@ const UpstreamResponseSchema = z.object({
     output_tokens: z.number().int().nonnegative().max(10_000_000),
   }).strict(),
 }).strict();
+const CloudflareJevResponseSchema = z.object({
+  result: z.object({
+    state: z.literal("Completed"),
+    result: UpstreamResponseSchema,
+    gatewayMetadata: z.record(z.string(), z.unknown()).optional(),
+  }).strict(),
+  success: z.literal(true),
+  errors: z.array(z.unknown()).max(16),
+  messages: z.array(z.unknown()).max(16),
+}).strict();
 
 export interface SerializedFundedJevEvaluationRequest {
   request: z.infer<typeof FundedJevEvaluationRequestSchema>;
@@ -111,7 +121,7 @@ export function normalizeFundedJevEvaluationResponse(input: {
   latencyMs: number;
   pricedAt: Date;
 }): NormalizedFundedJevEvaluation {
-  const upstream = UpstreamResponseSchema.parse(input.value);
+  const upstream = CloudflareJevResponseSchema.parse(input.value).result.result;
   const gatewayUsd = jevInputTokensToGatewayUsd(upstream.usage.input_tokens);
   const result = JevEmailTriageResultSchema.parse({
     requestId: `jev_req_${input.requestId}`,
