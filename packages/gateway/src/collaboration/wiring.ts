@@ -17,6 +17,12 @@ import { bootstrapCollaborationDatabase, type OwnerCollaborationDatabase } from 
 import { CollaborationDirectoryOutbox } from "./directory-outbox.js";
 import { CollaborationDiscussionAdapter } from "./discussion-adapter.js";
 import { registerCollaborationEventWebSocketRoute } from "./event-websocket-route.js";
+import { CollaborationControlClient, isMembershipEvidenceEvictor } from "./control-client.js";
+import { DirectReplayCache, DirectTicketVerifier } from "./direct-auth.js";
+import { createDirectSessionRoutes } from "./direct-routes.js";
+import { DirectSessionService } from "./direct-sessions.js";
+import { registerCollaborationDirectWebSocketRoutes } from "./direct-websocket.js";
+import { ensureRuntimeIdentity } from "./runtime-identity.js";
 import { CollaborationEventRegistry } from "./events.js";
 import { CollaborationParticipantResolver } from "./participant-resolver.js";
 import {
@@ -27,7 +33,18 @@ import {
 import { OrganizationMembershipClient } from "./organization-membership-client.js";
 import { CollaborationRepository } from "./repository.js";
 import { createCollaborationRoutes } from "./routes.js";
-import { createSharedAiRuntime } from "./shared-ai-runtime.js";
+import { createSharedAiRuntime, type SharedChatSandboxManifestSource } from "./shared-ai-runtime.js";
+import type { ReadinessSubject } from "./readiness-evaluator.js";
+import { sandboxRequiredForResourceKind } from "./sandbox-readiness.js";
+import type { CanonicalProviderSnapshotReader } from "../ai-providers/provider-settings-coordinators.js";
+import { OwnerAccountEligibility } from "./account-eligibility.js";
+import {
+  CollaborationExecutionPolicyRepository,
+  organizationAiSubmissionFromMembershipClient,
+  type OrganizationAiSubmissionSource,
+} from "./execution-policy.js";
+import { CollaborationRunBindingRepository } from "./run-account-binding.js";
+import { SharedRunOwnerSource } from "./shared-run-owner-source.js";
 import type { CollaborationChatExecutionAdapter } from "./chat-execution-adapter.js";
 import { CollaborationTerminalAdapter } from "./terminal-adapter.js";
 import { TerminalControlCoordinator } from "./terminal-control.js";
@@ -92,6 +109,14 @@ export async function createGatewayCollaboration(options: {
    */
   organizationMembershipSource?: OrganizationMembershipSource;
   organizationPrecondition?: OrganizationPrecondition;
+  /**
+   * S08: the owner's Provider V3 snapshot reader. When present, execution
+   * policies, run bindings and the shared-run owner source are constructed and
+   * the execution-policy routes serve; without it they report unavailable.
+   */
+  providerSnapshotReader?: CanonicalProviderSnapshotReader;
+  /** S08: organization `collaboration.aiSubmission` projection; absent reads as owner-only. */
+  organizationAiSubmission?: OrganizationAiSubmissionSource;
 }) {
   await bootstrapCollaborationDatabase(options.db);
   await cleanupExpiredArtifacts(options.db, new Date());
@@ -114,11 +139,78 @@ export async function createGatewayCollaboration(options: {
   // S04: whole-project preset grants are the V1 membership; the authority resolves them at registration time.
   const capabilities = new CollaborationCapabilityRepository(options.db, { now: () => new Date(), createId: randomUUID });
   const authority = new CollaborationAuthority(repository, { organizationPrecondition, capabilities });
+  // S08: one owner-selected source per execution scope, resolved at construction.
+  const eligibility = options.providerSnapshotReader
+    ? new OwnerAccountEligibility({ snapshots: { getSnapshotV3: () => options.providerSnapshotReader!.getSnapshot() } })
+    : undefined;
+  // The organization's AI-submission enablement comes from the same fixed-deadline
+  // membership evidence (S03 seam) unless a caller injects its own source.
+  const organizationAiSubmission = options.organizationAiSubmission
+    ?? (organizationMembershipSource instanceof OrganizationMembershipClient
+      ? organizationAiSubmissionFromMembershipClient(organizationMembershipSource)
+      : undefined);
+  const executionPolicies = eligibility
+    ? new CollaborationExecutionPolicyRepository(options.db, {
+      eligibility,
+      ...(organizationAiSubmission ? { organizationAiSubmission } : {}),
+    })
+    : undefined;
+  const runBindings = eligibility && executionPolicies
+    ? new CollaborationRunBindingRepository(options.db, { policies: executionPolicies, eligibility })
+    : undefined;
+  const ownerSource = eligibility && executionPolicies
+    ? new SharedRunOwnerSource({ policies: executionPolicies, eligibility, ...(runBindings ? { bindings: runBindings } : {}) })
+    : undefined;
   const verifier = new CollaborationActorProofVerifier({
     runtimeId: options.config.runtimeId,
     keys: options.config.proofKeys,
     authority,
   });
+  // S05: direct transport. The platform relay signs nothing on this path; the
+  // home verifies tickets against the platform keys learned at registration,
+  // and holds every session. Without registered keys or client origins the
+  // direct routes fail closed while the rest keeps serving.
+  const runtimeIdentity = await ensureRuntimeIdentity(options.db);
+  let controlClient: CollaborationControlClient | undefined;
+  const directVerifier = new DirectTicketVerifier({
+    runtimeId: options.config.runtimeId,
+    platformKeys: () => controlClient?.platformKeys() ?? [],
+    // Fail closed: no registration or a stale control snapshot denies every ticket exchange.
+    controlFresh: () => controlClient?.controlFresh() ?? false,
+    allowedClientOrigins: options.config.clientOrigins,
+    replay: new DirectReplayCache(),
+  });
+  const directSessions = new DirectSessionService({
+    verifier: directVerifier,
+    authority,
+    repository,
+    // A pushed denial closes legacy event/terminal sockets for that actor at once; direct sockets subscribe themselves.
+    onEnded: (session, reason) => {
+      if (reason !== "revoked" && reason !== "denied") return;
+      eventRegistry.notifyRevoked(session.scopeId, session.actorId);
+      terminalControl?.invalidateActor(session.scopeId, session.actorId);
+      terminalEventRegistry?.notifyRevoked(session.scopeId, session.actorId);
+    },
+    startTimers: options.startTimers !== false,
+  });
+  if (options.config.ownerId && options.config.relayHandle) {
+    controlClient = new CollaborationControlClient({
+      platformBaseUrl: options.config.platformBaseUrl,
+      runtimeId: options.config.runtimeId,
+      ownerId: options.config.ownerId,
+      relayHandle: options.config.relayHandle,
+      serviceToken: options.config.serviceToken,
+      identity: { keyId: runtimeIdentity.keyId, publicKey: runtimeIdentity.publicKey },
+      sessions: directSessions,
+      // A pushed denial ends the actor's grants/activations and evicts their cached membership evidence.
+      capabilities,
+      ...(organizationMembershipSource && isMembershipEvidenceEvictor(organizationMembershipSource) ? { membership: organizationMembershipSource } : {}),
+      ...(options.outboxFetch ? { fetchImpl: options.outboxFetch } : {}),
+      startTimers: options.startTimers !== false,
+    });
+  } else {
+    console.warn("[collaboration] owner identity or relay handle missing: the home never registers for direct transport");
+  }
   const chatScope = new CollaborationChatScopeService(options.db, {
     runtimeId: options.config.runtimeId,
     preflightSecret: options.config.preflightSecret,
@@ -180,6 +272,9 @@ export async function createGatewayCollaboration(options: {
   return {
     repository,
     capabilities,
+    executionPolicies,
+    runBindings,
+    ownerSource,
     authority,
     organizationPrecondition,
     verifier,
@@ -192,6 +287,9 @@ export async function createGatewayCollaboration(options: {
     projectTransitions,
     projectFence,
     projectScope,
+    directSessions,
+    directVerifier,
+    controlClient,
     projectOperationAdmission: {
       withLegacyAdmission<T>(input: {
         ownerType: "personal" | "organization";
@@ -214,6 +312,8 @@ export async function createGatewayCollaboration(options: {
       fetchImpl?: typeof fetch;
       providerCatalog?: ChatProviderCatalogService;
       codingProviders?: Pick<CodingAgentProviderRegistry, "listProviders">;
+      /** S07: mounts each shared run's authoritative root; without it shared AI stays disabled. */
+      sandboxManifests?: SharedChatSandboxManifestSource;
     }): Promise<{ available: boolean }> {
       if (registered || closing || sharedAiRuntime) {
         throw new Error("Shared AI must be initialized exactly once before route registration");
@@ -233,13 +333,27 @@ export async function createGatewayCollaboration(options: {
         resolveParticipant,
         ...(input.providerCatalog ? { providerCatalog: input.providerCatalog } : {}),
         ...(input.codingProviders ? { codingProviders: input.codingProviders } : {}),
+        ...(ownerSource ? { ownerSource } : {}),
         ...(input.fundedCredentialProvider ? { fundedCredentialProvider: input.fundedCredentialProvider } : {}),
         ...(input.supervisorSocket ? { supervisorSocket: input.supervisorSocket } : {}),
         ...(input.brokerSocket ? { brokerSocket: input.brokerSocket } : {}),
         ...(input.fetchImpl ? { fetchImpl: input.fetchImpl } : {}),
+        ...(input.sandboxManifests ? { sandboxManifests: input.sandboxManifests } : {}),
       });
       if (sharedAiRuntime.available) chatExecutionAdapter = sharedAiRuntime.chatExecutionAdapter;
       return { available: sharedAiRuntime.available };
+    },
+    /**
+     * S07: the `supported` readiness input for shareable resources. Only projects and
+     * Chats execute, so only they need the pinned sandbox policy: they are supported
+     * while shared AI runs on a supervisor that advertises it, and unsupported
+     * otherwise rather than offered as a run that would fail at launch. Files,
+     * folders, app instances and observable terminals execute nothing and stay
+     * supported either way, which is the same rule the readiness probe applies.
+     */
+    async sandboxSupported(subject: ReadinessSubject): Promise<boolean> {
+      if (!sandboxRequiredForResourceKind(subject.resourceKind)) return true;
+      return sharedAiRuntime?.available === true ? sharedAiRuntime.sandboxSupported(subject) : false;
     },
     enableSharedTerminal(input: {
       registry: ConstructorParameters<typeof CollaborationTerminalAdapter>[0]["registry"];
@@ -326,6 +440,7 @@ export async function createGatewayCollaboration(options: {
       input.app.route("/", createCollaborationRoutes({
         runtimeId: options.config.runtimeId,
         verifier,
+        directSessions,
         authority,
         repository,
         chatScope,
@@ -339,6 +454,7 @@ export async function createGatewayCollaboration(options: {
         ...(projectSharing ? { projectSharing } : {}),
         resolveParticipant,
         resolveInvitationIdentifier,
+        ...(executionPolicies ? { executionPolicies } : {}),
         onScopeCommitted: (scopeId) => eventRegistry.broadcastScope(scopeId),
         onRevoked: (scopeId, actorId) => {
           eventRegistry.notifyRevoked(scopeId, actorId);
@@ -356,6 +472,21 @@ export async function createGatewayCollaboration(options: {
         verifier,
         authority,
         registry: eventRegistry,
+      });
+      input.app.route("/", createDirectSessionRoutes({ sessions: directSessions }));
+      registerCollaborationDirectWebSocketRoutes({
+        app: input.app,
+        upgradeWebSocket: input.upgradeWebSocket,
+        verifier: directVerifier,
+        sessions: directSessions,
+        authority,
+        events: eventRegistry,
+        ...(terminalDispatcher && terminalEventRegistry && terminalControl
+          ? { terminal: { dispatcher: terminalDispatcher, registry: terminalEventRegistry, control: terminalControl } }
+          : {}),
+      });
+      void controlClient?.start().catch((error: unknown) => {
+        console.warn("[collaboration] control client start failed", error instanceof Error ? error.name : "UnknownError");
       });
       if (terminalAdapter && terminalDispatcher && terminalControl && terminalEventRegistry) {
         registerCollaborationTerminalWebSocketRoute({
@@ -381,6 +512,13 @@ export async function createGatewayCollaboration(options: {
     fence(): void {
       closing = true;
       if (cleanupTimer) clearInterval(cleanupTimer);
+      // The control client is drained first: its frames revoke sessions, evict membership
+      // evidence and end grants, so it must stop before the registries detach and the
+      // verifier shuts down. Its drain is synchronous, like this fence.
+      controlClient?.fence();
+      // Direct sessions drain next, in the same order shutdown() uses: ending them notifies
+      // the event and terminal registries through the end hooks, which the lines below detach.
+      directSessions.fence();
       const drainingSharedAi = sharedAiRuntime;
       sharedAiRuntime = undefined;
       chatExecutionAdapter = undefined;
@@ -410,6 +548,8 @@ export async function createGatewayCollaboration(options: {
       if (closing) return;
       closing = true;
       if (cleanupTimer) clearInterval(cleanupTimer);
+      await controlClient?.shutdown();
+      await directSessions.shutdown();
       await sharedAiRuntime?.shutdown();
       sharedAiRuntime = undefined;
       chatExecutionAdapter = undefined;

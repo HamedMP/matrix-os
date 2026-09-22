@@ -1,4 +1,5 @@
 import type { ColumnType, Generated, Kysely } from "kysely";
+import type { CollaborationRuntimeIdentityTable } from "./runtime-identity.js";
 import { applyCollaborationBaseSchema, COLLABORATION_VERSIONED_MIGRATIONS } from "./database-migrations.js";
 import type { ChatDatabase } from "../chat/database.js";
 
@@ -232,9 +233,52 @@ export interface CollaborationGrantActivationsTable {
   membership_evidence_epoch: ColumnType<string, string, string>;
 }
 
+/** S08: one owner-selected execution policy per execution scope (project or standalone Chat). */
+export interface CollaborationExecutionPoliciesTable {
+  scope_id: string;
+  scope_kind: "project" | "standalone_chat";
+  owner_id: string;
+  access_source_id: string;
+  provider_instance_id: string;
+  harness: "codex" | "claude_code";
+  submit_mode: "follow_organization" | "owner_only";
+  provider_terms_acknowledged_at: NullableTimestamp;
+  allowed_model_ids: JsonValue;
+  concurrency: number | null;
+  revision: ColumnType<number, number | undefined, number>;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+}
+
+/** S08: immutable per-run binding; carries no status (status lives on the canonical run). */
+export interface CollaborationRunBindingsTable {
+  run_id: string;
+  request_id: string;
+  scope_id: string;
+  execution_scope_id: string;
+  execution_scope_kind: "project" | "standalone_chat";
+  execution_resource_id: string;
+  requesting_actor_id: string;
+  executing_owner_id: string;
+  payer_actor_id: string;
+  access_source_id: string;
+  provider_instance_id: string;
+  harness: "codex" | "claude_code";
+  model_id: string;
+  policy_revision: number;
+  audience_generation: number;
+  execution_root: JsonValue;
+  root_fingerprint: string;
+  session_key: string;
+  session_generation: number;
+  admitted_at: Timestamp;
+}
+
 export interface CollaborationDatabase {
   collaboration_grants: CollaborationGrantsTable;
   collaboration_grant_activations: CollaborationGrantActivationsTable;
+  collaboration_execution_policies: CollaborationExecutionPoliciesTable;
+  collaboration_run_bindings: CollaborationRunBindingsTable;
   collaboration_scopes: CollaborationScopesTable;
   collaboration_members: CollaborationMembersTable;
   collaboration_operations: CollaborationOperationsTable;
@@ -250,6 +294,8 @@ export interface CollaborationDatabase {
   collaboration_discussion_messages: CollaborationDiscussionMessagesTable;
   collaboration_discussion_user_state: CollaborationDiscussionUserStateTable;
   chat_collaboration_commands: ChatCollaborationCommandsTable;
+  /** S05: the home's Ed25519 runtime identity (migration 9). */
+  collaboration_runtime_identity: CollaborationRuntimeIdentityTable;
 }
 
 export type OwnerCollaborationDatabase = ChatDatabase & CollaborationDatabase;

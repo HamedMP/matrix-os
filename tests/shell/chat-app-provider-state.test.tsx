@@ -156,7 +156,7 @@ describe("Chat canonical provider state", () => {
     fireEvent.click(trigger);
     const panel = screen.getByRole("dialog", { name: "Choose model and connection" });
     expect(panel.className).toContain("absolute");
-    expect(screen.getByRole("button", { name: "Connect OpenCode" })).not.toBeVisible();
+    expect(screen.queryByRole("button", { name: "Connect OpenCode" })).toBeNull();
     expect(screen.getByText("Execution options").parentElement).not.toHaveAttribute("open");
     fireEvent.keyDown(screen.getByRole("searchbox"), { key: "Escape" });
     expect(screen.queryByRole("dialog")).toBeNull();
@@ -308,8 +308,8 @@ describe("Chat canonical provider state", () => {
     expect(await screen.findByRole("option", { name: "Claude Sonnet 5 via Pi" })).toBeVisible();
     expect(screen.getByRole("option", { name: "Claude Sonnet 5 via Pi" }).querySelector("img"))
       .toHaveAttribute("src", TERMINAL_AGENT_OPTIONS.find((agent) => agent.id === "pi")!.logoSrc);
-    fireEvent.click(screen.getByText("Manage agents"));
-    expect(screen.getByText("OpenCode — Not supported in this runtime")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "OpenCode agent, Not supported in this runtime" }));
+    expect(screen.getByText("Not supported in this runtime")).toBeVisible();
     expect(screen.queryByText("Channels")).toBeNull();
     expect(draft).toHaveValue("Keep this draft");
     expect(fetchMock).toHaveBeenCalledWith(expect.stringMatching(/\/api\/chat-providers\?includeConnectionLabels=true$/), expect.any(Object));
@@ -343,8 +343,8 @@ describe("Chat canonical provider state", () => {
 
     expect(await screen.findByText("Connect a harness in Settings to start chatting.")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Choose model and connection" }));
-    fireEvent.click(screen.getByText("Manage agents"));
-    expect(await screen.findByText("Pi — Disabled in Settings")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Pi agent, Disabled in Settings" }));
+    expect(await screen.findByText("Disabled in Settings")).toBeVisible();
     const draft = screen.getByPlaceholderText("Write or dictate a draft — connect a harness to send");
     expect(draft).toBeEnabled();
     fireEvent.change(draft, { target: { value: "Keep this offline draft" } });
@@ -365,8 +365,9 @@ describe("Chat canonical provider state", () => {
     />);
 
     fireEvent.click(screen.getByRole("button", { name: "Choose model and connection" }));
-    fireEvent.click(screen.getByText("Manage agents"));
+    fireEvent.click(await screen.findByRole("button", { name: "Pi agent, Disabled in Settings" }));
     fireEvent.click(await screen.findByRole("button", { name: "Configure Pi" }));
+    fireEvent.click(screen.getByRole("button", { name: "OpenCode agent, Not supported in this runtime" }));
     fireEvent.click(screen.getByRole("button", { name: "Connect OpenCode" }));
 
     expect(onProviderSetupAction).toHaveBeenNthCalledWith(
@@ -444,6 +445,7 @@ describe("Chat canonical provider state", () => {
 
     fireEvent.change(await screen.findByPlaceholderText("Ask anything..."), { target: { value: "Use OpenCode" } });
     fireEvent.click(screen.getByRole("button", { name: "Choose model and connection" }));
+    fireEvent.click(screen.getByRole("button", { name: "OpenCode agent, Available" }));
     const openCode = await screen.findByRole("option", { name: "GPT-5 via OpenCode" });
     expect(openCode).toBeEnabled();
     fireEvent.click(openCode);
@@ -491,7 +493,7 @@ describe("Chat canonical provider state", () => {
     />);
 
     fireEvent.click(screen.getByRole("button", { name: "Choose model and connection" }));
-    fireEvent.click(screen.getByText("Manage agents"));
+    fireEvent.click(await screen.findByRole("button", { name: "OpenCode agent, Not supported in this runtime" }));
     fireEvent.click(await screen.findByRole("button", { name: "Connect OpenCode" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Could not open setup. Open Settings to continue.");

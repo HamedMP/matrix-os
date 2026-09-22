@@ -5,9 +5,11 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./chat-subagent": "./src/chat-subagent.ts",
     "./collaboration": "./src/collaboration.ts"
   },
   "imports": {
+    "#chat-subagent": "./src/chat-subagent.ts",
     "#sync": "./src/sync.ts",
     "#app-ai": "./src/app-ai.ts",
     "#file-download": "./src/file-download.ts",

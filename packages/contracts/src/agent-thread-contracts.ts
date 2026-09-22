@@ -1,4 +1,5 @@
 import { z } from "zod/v4";
+import { ChatSubagentSchema } from "#chat-subagent";
 import { IsoTimestampSchema, SAFE_SLUG } from "#contract-primitives";
 import { SafeClientErrorSchema } from "#safe-client-error";
 import {
@@ -174,6 +175,7 @@ export const AgentTurnLifecycleEventSchema = z.discriminatedUnion("type", [
 ]);
 
 const CoreAgentThreadEventSchema = z.discriminatedUnion("type", [
+  BaseThreadEventSchema.extend({ type: z.literal("subagent.activity"), activityId: referenceId(128), subagent: ChatSubagentSchema }).strict(),
   BaseThreadEventSchema.extend({ type: z.literal("thread.created"), thread: AgentThreadSummarySchema }).strict(),
   BaseThreadEventSchema.extend({ type: z.literal("thread.status"), status: AgentThreadStatusSchema }).strict(),
   BaseThreadEventSchema.extend({

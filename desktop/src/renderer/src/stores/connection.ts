@@ -4,6 +4,7 @@ import { create } from "zustand";
 import { invoke, onEvent } from "../lib/operator";
 import { createApiClient, type ApiClient } from "../lib/api";
 import { clearDraftChats } from "./draft-chat";
+import { closeDesktopCollaborationSessions } from "../lib/collaboration";
 import { advanceRuntimeGeneration } from "./runtime-generation";
 import { reconcileDesktopRuntimeChange } from "./runtime-transition";
 import { clearPreloadedAppIcons } from "../features/apps/app-icons";
@@ -185,6 +186,8 @@ export function wireConnectionEvents(): void {
   if (wired) return;
   wired = true;
   connectionEventCleanups = [
+    // S06 / T034: direct collaboration sessions end with the actor; nothing shared survives a sign-in change.
+    onEvent("auth:changed", closeDesktopCollaborationSessions),
     onEvent("auth:changed", refreshFromConnectionEvent),
     onEvent("runtime:changed", refreshFromRuntimeChangedEvent),
   ];

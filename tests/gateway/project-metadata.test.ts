@@ -87,6 +87,42 @@ describe("project metadata route", () => {
     expect(withLegacyAdmission).toHaveBeenCalledWith({ ownerType: "personal", ownerId: "owner", projectId: original.id, kind: "write" }, expect.any(Function));
     expect(await manager.getProject("alpha", ownerScope)).toMatchObject({ project: { name: "Alpha" } });
   });
+  it("does not mutate a replacement created after admission resolves the project identity", async () => {
+    const { original, manager } = await setup();
+    const replacement = {
+      ...original,
+      id: "proj_replacement",
+      name: "Replacement",
+      updatedAt: new Date().toISOString(),
+    };
+    const registry = createProjectRegistry({ homePath });
+    const withLegacyAdmission = vi.fn(async (_input: unknown, operation: () => Promise<unknown>) => {
+      await registry.writeConfig("alpha", replacement);
+      return operation();
+    });
+    const app = createWorkspaceRoutes({
+      homePath,
+      getOwnerScope: () => ownerScope,
+      projectOperationAdmission: { withLegacyAdmission } as never,
+    });
+
+    const response = await app.request("/api/projects/alpha", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: '{"pinned":true}',
+    });
+
+    expect(response.status).toBe(409);
+    expect(withLegacyAdmission).toHaveBeenCalledWith({
+      ownerType: "personal",
+      ownerId: "owner",
+      projectId: original.id,
+      kind: "write",
+    }, expect.any(Function));
+    const current = await manager.getProject("alpha", ownerScope);
+    expect(current).toMatchObject({ project: { id: replacement.id, name: "Replacement" } });
+    expect(current).not.toHaveProperty("project.pinned");
+  });
   it.each(["archivedAt", "deletingAt"])("rejects %s projects", async field => {
     const { original, patch } = await setup();
     await createProjectRegistry({ homePath }).writeConfig("alpha", { ...original, [field]: new Date().toISOString() });

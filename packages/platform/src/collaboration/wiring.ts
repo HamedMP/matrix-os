@@ -8,6 +8,7 @@ import { createPlatformCollaborationRoutes } from "./routes.js";
 import { CollaborationWebSocketAuthorizer } from "./websocket.js";
 import type { FailClosedPlatformCollaboration, PlatformCollaborationConfigurationFailure } from "./fail-closed.js";
 import type { PlatformOrganizations } from "../organizations/wiring.js";
+import type { PlatformCollaborationDirect } from "./direct-wiring.js";
 
 export type { FailClosedPlatformCollaboration, PlatformCollaborationConfigurationFailure } from "./fail-closed.js";
 
@@ -78,6 +79,8 @@ export async function createPlatformCollaboration(options: {
   config: PlatformCollaborationConfig;
   /** S03 organization projection, control authority and routes; registered and drained with the runtime. */
   organizations?: PlatformOrganizations;
+  /** S05 direct transport: runtime endpoints, tickets and the control stream; registered and drained with the runtime. */
+  direct?: PlatformCollaborationDirect;
   resolveActor(c: Context): Promise<string | null>;
   authenticateRuntime(input: {
     runtimeId: string;
@@ -109,46 +112,22 @@ export async function createPlatformCollaboration(options: {
     resolveRuntime: options.resolveRuntime,
     ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
   });
-  const hydrate = async (input: { actorId: string; entry: import("./repository.js").CollaborationDirectoryEntry }) => {
-    if (input.entry.status === "invited" && input.entry.invitationId) {
-      return proxyJson(proxy, input.actorId, `/api/collaboration/invitations/${input.entry.invitationId}`);
-    }
-    if (input.entry.status === "accepted" && input.entry.kind === "chat") {
-      const scopePath = `/api/collaboration/scopes/${input.entry.scopeId}`;
-      const [scope, chat] = await Promise.all([
-        proxyJson(proxy, input.actorId, scopePath),
-        proxyJson(proxy, input.actorId, `${scopePath}/chat`),
-      ]);
-      return { scope, chat };
-    }
-    if (input.entry.status === "accepted" && input.entry.kind === "terminal") {
-      const scopePath = `/api/collaboration/scopes/${input.entry.scopeId}`;
-      const [scope, terminal] = await Promise.all([
-        proxyJson(proxy, input.actorId, scopePath),
-        proxyJson(proxy, input.actorId, `${scopePath}/terminal`),
-      ]);
-      return { scope, terminal };
-    }
-    if (input.entry.status === "accepted" && input.entry.kind === "project") {
-      const scopePath = `/api/collaboration/scopes/${input.entry.scopeId}`;
-      const [scope, project] = await Promise.all([
-        proxyJson(proxy, input.actorId, scopePath),
-        proxyJson(proxy, input.actorId, `${scopePath}/project`),
-      ]);
-      return { scope, project };
-    }
-    throw new Error("Collaboration projection unavailable");
-  };
+  // S06 / T032: discovery is metadata-only; organization-wide shares are listed for current members.
+  const organizations = options.organizations;
+  const listOrganizationIds = organizations
+    ? async (actorId: string) => (await organizations.repository.listOrganizationsForActor(actorId)).map((row) => row.organization.organizationId)
+    : undefined;
   const routes = createPlatformCollaborationRoutes({
     repository,
     signer,
     sockets,
     proxy,
+    ...(options.direct?.relay ? { relay: options.direct.relay } : {}),
     resolveActor: options.resolveActor,
     authenticateRuntime: options.authenticateRuntime,
     resolveParticipant: options.resolveParticipant,
     resolveInvitationIdentifier: options.resolveInvitationIdentifier,
-    hydrate,
+    ...(listOrganizationIds ? { listOrganizationIds } : {}),
     now: options.now,
   });
   let registered = false;
@@ -160,36 +139,22 @@ export async function createPlatformCollaboration(options: {
     sockets,
     proxy,
     organizations: options.organizations,
+    direct: options.direct,
     register(app: Hono<any>): void {
       if (registered || closing) throw new Error("Platform collaboration routes are already registered or shutting down");
       registered = true;
       app.route("/", routes);
       options.organizations?.register(app);
+      options.direct?.register(app);
     },
     async shutdown(): Promise<void> {
       if (closing) return;
       closing = true;
-      await options.organizations?.shutdown();
+      await Promise.allSettled([options.direct?.shutdown(), options.organizations?.shutdown()]);
     },
   };
 }
 
-async function proxyJson(
-  proxy: CollaborationProxy,
-  actorId: string,
-  path: string,
-): Promise<unknown> {
-  const response = await proxy.forward({
-    actorId,
-    method: "GET",
-    path,
-    query: "",
-    body: new Uint8Array(),
-    headers: new Headers({ accept: "application/json" }),
-  });
-  if (!response.ok) throw new Error("Collaboration projection unavailable");
-  return response.json() as Promise<unknown>;
-}
 
 export type PlatformCollaborationRuntime = Awaited<ReturnType<typeof createPlatformCollaboration>>;
 /** What the composition root always produces: the real runtime or the fail-closed registrar. */

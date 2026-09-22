@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { sql, type Selectable, type Transaction } from "kysely";
+import { sql, type Kysely, type Selectable, type Transaction } from "kysely";
 import type { CollaborationScopesTable, OwnerCollaborationDatabase } from "./database.js";
 
 export const OPERATION_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
@@ -43,7 +43,7 @@ export async function lockDirectScope(
 }
 
 export async function requireAcceptedOwner(
-  trx: Transaction<OwnerCollaborationDatabase>,
+  trx: Kysely<OwnerCollaborationDatabase> | Transaction<OwnerCollaborationDatabase>,
   scopeId: string,
   actorId: string,
 ): Promise<void> {

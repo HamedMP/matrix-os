@@ -21,6 +21,8 @@ export type PlatformCollaborationConfigurationFailure =
 export interface FailClosedPlatformCollaboration {
   readonly failClosed: { reason: PlatformCollaborationConfigurationFailure };
   readonly sockets?: undefined;
+  /** S05: no direct transport either; the upgrade handler destroys control sockets. */
+  readonly direct?: undefined;
   register(app: Hono<any>): void;
   shutdown(): Promise<void>;
 }

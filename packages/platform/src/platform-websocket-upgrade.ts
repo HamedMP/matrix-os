@@ -85,6 +85,11 @@ export interface RegisterPlatformWebSocketUpgradeHandlerOpts {
     provisioningClass?: string,
   ): Promise<EntitlementAccessDecision>;
   collaborationSockets?: CollaborationWebSocketAuthorizer;
+  /** S05: runtime control-stream upgrade (`/internal/collaboration/control`); handled before session routing. */
+  collaborationDirect?: {
+    handleUpgrade(req: IncomingMessage, socket: Socket, head: Buffer): Promise<boolean>;
+    relay: { prepareSocket(input: { actorId: string; rawPath: string; incomingHeaders: IncomingMessage["headers"]; externalHost: string }): Promise<{ home: { runtimeId: string; origin: string }; upstreamPath: string; headers: string; release(): void; touch(): void; onEvict(hook: () => void): void } | null> };
+  };
 }
 
 export function registerPlatformWebSocketUpgradeHandler(
@@ -104,9 +109,20 @@ export function registerPlatformWebSocketUpgradeHandler(
     getRuntimeEntitlementDecision,
     getRuntimeEntitlementDecisionForUser,
     collaborationSockets,
+    collaborationDirect,
   } = opts;
 
   server.on('upgrade', async (req: IncomingMessage, socket, head) => {
+    // S05: control-stream upgrades authenticate the enrolled runtime themselves.
+    if (collaborationDirect) {
+      try {
+        if (await collaborationDirect.handleUpgrade(req, socket as Socket, head)) return;
+      } catch (err: unknown) {
+        console.warn('[platform] collaboration control upgrade failed:', describeError(err));
+        socket.destroy();
+        return;
+      }
+    }
     try {
       const handledInternalGeminiLive = await handleInternalGeminiLiveProxyUpgrade({
         req,
@@ -143,7 +159,9 @@ export function registerPlatformWebSocketUpgradeHandler(
     const isAppDomain = isAppDomainHost(host);
     const isCollaborationCandidate = isAppDomain && isCollaborationWebSocketCandidate(path);
     const isCollaborationSocket = isAppDomain && isCollaborationWebSocketPath(path);
-    if (isCollaborationCandidate && !isCollaborationSocket) {
+    // S05: direct sockets are relayed as bytes; the home verifies the ticket in the first frame.
+    const isDirectSocket = isAppDomain && Boolean(collaborationDirect) && isCollaborationDirectSocketPath(path);
+    if (isCollaborationCandidate && !isCollaborationSocket && !isDirectSocket) {
       socket.destroy();
       return;
     }
@@ -181,7 +199,7 @@ export function registerPlatformWebSocketUpgradeHandler(
         requestedHandle: explicitVmRoute?.handle,
         runtimeSlot: requestRuntimeSlot,
         wsToken,
-        clerkPrincipalOnly: isCollaborationSocket,
+        clerkPrincipalOnly: isCollaborationSocket || isDirectSocket,
       });
       if (
         !identity
@@ -223,10 +241,41 @@ export function registerPlatformWebSocketUpgradeHandler(
     }
 
     let collaborationUpgrade: CollaborationWebSocketUpgrade | undefined;
+    let directUpgrade: Awaited<ReturnType<NonNullable<typeof collaborationDirect>["relay"]["prepareSocket"]>> | undefined;
     let runtimeSlot = identity.runtimeSlot ?? requestRuntimeSlot;
     let requestedActiveMachine: UserMachineRecord | undefined;
     let runningMachine: UserMachineRecord | undefined;
-    if (isCollaborationSocket) {
+    if (isDirectSocket) {
+      if (!identity.userId) {
+        socket.destroy();
+        return;
+      }
+      let authorityMachine: UserMachineRecord | undefined;
+      try {
+        directUpgrade = await collaborationDirect!.relay.prepareSocket({ actorId: identity.userId, rawPath: path, incomingHeaders: req.headers, externalHost: host }) ?? undefined;
+        const machineId = directUpgrade ? parseCollaborationRuntimeId(directUpgrade.home.runtimeId.replace(/^vps-/, "vps:")) : null;
+        authorityMachine = machineId ? await getUserMachine(db, machineId) : undefined;
+      } catch (err: unknown) {
+        // Every failure on this branch settles here: the socket is destroyed, never left open.
+        console.warn(`[platform] collaboration direct socket preparation failed error=${describeError(err)}`);
+        directUpgrade?.release();
+        directUpgrade = undefined;
+        socket.destroy();
+        return;
+      }
+      if (!directUpgrade || !authorityMachine || authorityMachine.status !== 'running' || !authorityMachine.publicIPv4) {
+        directUpgrade?.release();
+        socket.destroy();
+        return;
+      }
+      socket.once('close', directUpgrade.release);
+      // Idle eviction: traffic in either direction keeps the reservation; a swept one destroys the socket.
+      socket.on('data', directUpgrade.touch);
+      directUpgrade.onEvict(() => { socket.destroy(); });
+      runningMachine = authorityMachine;
+      runtimeSlot = authorityMachine.runtimeSlot;
+      webSocketProxyPath = directUpgrade.upstreamPath;
+    } else if (isCollaborationSocket) {
       if (!collaborationSockets || !identity.userId) {
         socket.destroy();
         return;
@@ -303,11 +352,37 @@ export function registerPlatformWebSocketUpgradeHandler(
         )
         : getRuntimeEntitlementDecision(env);
     let activeUpstream: Socket | null = null;
-    const onSocketError = () => activeUpstream?.destroy();
-    socket.on('error', onSocketError);
+    // A relayed socket is a pair. `socket.destroy()` emits `close`, not `error`, so relay
+    // eviction and the shutdown drain reached only the client half; both events now tear
+    // down the upstream connection to the home. `destroy()` is idempotent.
+    let upstreamDisposed = false;
+    const destroyUpstream = () => {
+      upstreamDisposed = true;
+      activeUpstream?.destroy();
+      activeUpstream = null;
+    };
+    socket.on('error', destroyUpstream);
+    socket.on('close', destroyUpstream);
+    /**
+     * Adopts a freshly connected upstream, or refuses it. A connection dialled before the
+     * client half went away can still complete afterwards -- relay eviction, the shutdown
+     * drain or any other teardown -- and a dead pair must never take ownership of it, or it
+     * outlives the relay with nothing left to close it. Refusing destroys it unspoken-to;
+     * the client socket's single `close` still releases the reservation exactly once.
+     */
+    const adoptUpstream = (upstream: Socket): boolean => {
+      if (upstreamDisposed || socket.destroyed) {
+        upstream.destroy();
+        return false;
+      }
+      activeUpstream = upstream;
+      return true;
+    };
 
     const buildUpgradeHeaders = (handle: string, includePlatformProof: boolean): string => (
-      collaborationUpgrade
+      directUpgrade
+        ? directUpgrade.headers
+        : collaborationUpgrade
         ? buildCollaborationWebSocketUpgradeHeaders({
             incomingHeaders: req.headers,
             externalHost: host,
@@ -344,6 +419,11 @@ export function registerPlatformWebSocketUpgradeHandler(
       );
       if (head.length > 0) upstream.write(head);
 
+      if (directUpgrade) upstream.on('data', directUpgrade.touch);
+      // The reverse direction: an upstream that closes or errors takes the client half
+      // with it, so a teardown starting on either side releases the reservation exactly
+      // once through the client socket's single `close`.
+      upstream.on('close', () => socket.destroy());
       upstream.pipe(socket);
       socket.pipe(upstream);
     };
@@ -377,7 +457,7 @@ export function registerPlatformWebSocketUpgradeHandler(
         servername: upstreamServerName,
         rejectUnauthorized: shouldVerifyCustomerVpsTls(),
       }, () => {
-        activeUpstream = upstream;
+        if (!adoptUpstream(upstream)) return;
         writeUpgradeRequest(upstream, upstreamHostHeader, headers);
       });
       upstream.on('error', (err) => {
@@ -418,7 +498,7 @@ export function registerPlatformWebSocketUpgradeHandler(
       const targetPort = isCodeDomain ? codeServerPort : 4000;
       const upstream = createConnection({ host: endpoint.host, port: targetPort }, () => {
         connected = true;
-        activeUpstream = upstream;
+        if (!adoptUpstream(upstream)) return;
         const upstreamHostHeader = isCodeDomain ? host : `${endpoint.host}:${targetPort}`;
         writeUpgradeRequest(
           upstream,
@@ -448,6 +528,16 @@ export function registerPlatformWebSocketUpgradeHandler(
       socket.destroy();
     });
   });
+}
+
+function isCollaborationDirectSocketPath(rawPath: string): boolean {
+  if (rawPath.length > 1_024 || /[\r\n]/.test(rawPath)) return false;
+  try {
+    return /^\/ws\/collaboration\/direct\/scopes\/[0-9a-f-]{36}\/(?:events|terminal)$/.test(new URL(rawPath, 'https://platform.invalid').pathname);
+  } catch (err: unknown) {
+    if (!(err instanceof TypeError)) console.warn('[platform] direct socket path classification failed:', describeError(err));
+    return false;
+  }
 }
 
 function firstHeader(value: string | string[] | undefined): string | undefined {

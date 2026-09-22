@@ -84,7 +84,12 @@ describe("Canonical Chat composer preferences", () => {
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
-    fireEvent.click(screen.getByRole("button", { name: "Start a new chat" }));
+    // The workspace has its own icon-only "New chat" control with the same accessible name,
+    // so select the picker's by its visible label rather than by position.
+    const newChat = screen.getAllByRole("button", { name: "New chat" })
+      .find((button) => button.textContent === "New chat");
+    expect(newChat).toBeDefined();
+    fireEvent.click(newChat!);
 
     await screen.findByRole("textbox", { name: "Start a chat" });
     expect(screen.getByRole("button", { name: "Reasoning" }).textContent).toContain("High");
@@ -143,6 +148,8 @@ describe("Canonical Chat composer preferences", () => {
 
     await screen.findByRole("textbox", { name: "Start a chat" });
     fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
+    // The two-pane picker lists a harness's models only once that harness is selected.
+    fireEvent.click(screen.getByRole("button", { name: "Claude fixture agent, Available" }));
     const sonnetChoice = screen.getByRole("option", { name: "Claude Sonnet 4.6 via Claude fixture" });
     expect(sonnetChoice.getAttribute("aria-selected")).toBe("false");
     fireEvent.click(sonnetChoice);

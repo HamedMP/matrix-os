@@ -10,6 +10,11 @@ import {
   SCOPE_RUNTIME_PROFILE_ID,
   SCOPE_RUNTIME_PROFILE_VERSION,
 } from "@matrix-os/scope-runtime/profile";
+import {
+  SCOPE_RUNTIME_SANDBOX_POLICY_DIGEST,
+  SCOPE_RUNTIME_SANDBOX_POLICY_VERSION,
+} from "@matrix-os/scope-runtime/sandbox";
+import type { ScopeRuntimeSandboxManifest } from "@matrix-os/scope-runtime";
 import type { Kysely } from "kysely";
 import type { CanonicalChatOrchestrator } from "../chat/orchestrator.js";
 import {
@@ -43,22 +48,35 @@ import type { CollaborationChatScopeService } from "./chat-scope.js";
 import type { OwnerCollaborationDatabase } from "./database.js";
 import type { CollaborationEventRegistry } from "./events.js";
 import { createScopeRuntimeBroker, createScopeRuntimeBrokerServer } from "./scope-runtime-broker.js";
+import { createSandboxReadinessProbe, type SandboxReadinessProbe } from "./sandbox-readiness.js";
+import type { ReadinessSubject } from "./readiness-evaluator.js";
 import { createScopeRuntimeChatProviderAdapter } from "./scope-runtime-chat-adapter.js";
 import {
   createScopeRuntimeClient,
+  type ScopeRuntimeCapability,
   type ScopeRuntimeProfileCatalog,
 } from "./scope-runtime-client.js";
 import { SharedAiRuntimeRegistry } from "./shared-ai-runtime-registry.js";
 import type { CollaborationActorProofVerifier } from "./actor-proof.js";
+import type { SharedRunOwnerSource } from "./shared-run-owner-source.js";
 const SUPERVISOR_SOCKET = "/run/matrix-scope-runtime/supervisor.sock";
 const BROKER_SOCKET = "/run/matrix-scope-runtime/broker.sock";
 const QUEUE_WAKE_INTERVAL_MS = 10_000;
 const QUEUE_WAKE_LIMIT = 64;
-const PROFILE_CATALOG: ScopeRuntimeProfileCatalog = {
+/**
+ * S07: the production profile pins the sandbox policy, so a supervisor that
+ * does not advertise exactly this policy is an unsupported profile and no
+ * shared run launches wider than the sandbox.
+ */
+export const SHARED_AI_PROFILE_CATALOG: ScopeRuntimeProfileCatalog = {
   [SCOPE_RUNTIME_PROFILE_ID]: {
     profileVersion: SCOPE_RUNTIME_PROFILE_VERSION,
     profileDigest: SCOPE_RUNTIME_PROFILE_DIGEST,
     identity: { mode: "dynamic", uidMin: 61_184, uidMax: 65_519 },
+    sandbox: {
+      policyVersion: SCOPE_RUNTIME_SANDBOX_POLICY_VERSION,
+      policyDigest: SCOPE_RUNTIME_SANDBOX_POLICY_DIGEST,
+    },
     supportedAdapters: {
       "claude-code": {
         harnessVersions: [SCOPE_RUNTIME_HARNESS_VERSION],
@@ -80,6 +98,40 @@ const ELIGIBILITY: CollaborationAiExecutionEligibility = {
     { adapterId: "codex", harnessVersion: SCOPE_RUNTIME_CODEX_VERSION },
   ],
 };
+/** S07: supplies the authoritative sandbox manifest for one shared Chat run, or null when it cannot be mounted. */
+export interface SharedChatSandboxManifestSource {
+  resolve(input: {
+    scopeId: string;
+    chatId: string;
+    ownerId: string;
+    requestingActorId: string;
+    scopeHandle: string;
+  }): Promise<ScopeRuntimeSandboxManifest | null>;
+}
+
+/**
+ * Shared AI is eligible only when the supervisor advertises the pinned
+ * sandbox policy for `chat_ai` (the S07 readiness probe) and a manifest
+ * source exists to mount an execution root. Without both, the scope reports
+ * no eligibility instead of offering runs that would fail at launch.
+ */
+export async function deriveSharedAiEligibility(input: {
+  client: { capability(): ScopeRuntimeCapability };
+  sandboxManifests?: SharedChatSandboxManifestSource;
+}): Promise<CollaborationAiExecutionEligibility | null> {
+  const capability = input.client.capability();
+  if (!capability.available || !input.sandboxManifests) return null;
+  if (!await createSandboxReadinessProbe({ client: input.client }).sandboxRunsSupported()) return null;
+  const eligibility: CollaborationAiExecutionEligibility = {
+    ...ELIGIBILITY,
+    adapters: ELIGIBILITY.adapters.filter((expected) => capability.supportedAdapters.some((actual) =>
+      actual.adapterId === expected.adapterId
+      && actual.harnessVersion === expected.harnessVersion
+      && actual.workloads.includes("chat_ai"))),
+  };
+  return eligibility.adapters.length === 0 ? null : eligibility;
+}
+
 export async function createSharedAiRuntime(options: {
   db: Kysely<OwnerCollaborationDatabase>;
   repository: ChatRepository;
@@ -100,10 +152,14 @@ export async function createSharedAiRuntime(options: {
   resolveAccessSource?: () => Promise<KernelCredentialAccessSourceId>;
   providerCatalog?: ChatProviderCatalogService;
   codingProviders?: Pick<CodingAgentProviderRegistry, "listProviders">;
+  /** S08: owner-selected source decision consulted before every shared adapter is prepared. */
+  ownerSource?: SharedRunOwnerSource;
+  /** S07: mounts the authoritative execution root for each shared run; absent, shared AI is not eligible. */
+  sandboxManifests?: SharedChatSandboxManifestSource;
 }) {
   const client = createScopeRuntimeClient({
     socketPath: options.supervisorSocket ?? SUPERVISOR_SOCKET,
-    profileCatalog: PROFILE_CATALOG,
+    profileCatalog: SHARED_AI_PROFILE_CATALOG,
   });
   const capability = await client.refreshCapability();
   if (!capability.available) {
@@ -119,14 +175,9 @@ export async function createSharedAiRuntime(options: {
     await client.close();
     return { available: false as const, async shutdown(): Promise<void> {} };
   }
-  const eligibility: CollaborationAiExecutionEligibility = {
-    ...ELIGIBILITY,
-    adapters: ELIGIBILITY.adapters.filter((expected) => capability.supportedAdapters.some((actual) =>
-      actual.adapterId === expected.adapterId
-      && actual.harnessVersion === expected.harnessVersion
-      && actual.workloads.includes("chat_ai"))),
-  };
-  if (eligibility.adapters.length === 0) {
+  const sandboxProbe: SandboxReadinessProbe = createSandboxReadinessProbe({ client });
+  const eligibility = await deriveSharedAiEligibility({ client, sandboxManifests: options.sandboxManifests });
+  if (!eligibility) {
     await options.chatScope.reconcileExecutionEligibility({ executionGeneration: null, eligibility: null });
     await client.close();
     return { available: false as const, async shutdown(): Promise<void> {} };
@@ -198,13 +249,35 @@ export async function createSharedAiRuntime(options: {
           })) throw new SharedChatRunPreparationError("unavailable");
           const adapter = sharedAdapterFor(execution.driverKind, execution.selection.instanceId, eligibility);
           if (!adapter) throw new SharedChatRunPreparationError("unavailable");
+          // S08: the owner's execution policy decides the source; a member on an owner-only
+          // scope or an unavailable source refuses preparation and keeps the queued request.
+          const ownerDecision = options.ownerSource
+            ? await options.ownerSource.prepare({
+                scopeId,
+                chatId,
+                ownerId: context.ownerId,
+                requestingActorId: execution.requestingActorId,
+                driverKind: execution.driverKind,
+              })
+            : null;
           const providerIdentity = execution.driverKind === "codex"
             ? { driverKind: "codex" as const, instanceId: "codex_default" as const }
             : {
                 driverKind: "claude_code" as const,
                 instanceId: "claude_shared" as const,
-                accessSourceId: await resolveAccessSource(),
+                accessSourceId: ownerDecision?.accessSourceId ?? await resolveAccessSource(),
               };
+          // S07: every shared run mounts exactly the authoritative root; no manifest, no launch.
+          const sandbox = options.sandboxManifests
+            ? await options.sandboxManifests.resolve({
+                scopeId,
+                chatId,
+                ownerId: context.ownerId,
+                requestingActorId: execution.requestingActorId,
+                scopeHandle: `scope_${scopeId.replaceAll("-", "")}`,
+              })
+            : null;
+          if (!sandbox) throw new SharedChatRunPreparationError("unavailable");
           return createScopeRuntimeChatProviderAdapter({
             client: scopedClient({
               client,
@@ -219,6 +292,7 @@ export async function createSharedAiRuntime(options: {
             executionGeneration: capability.executionGeneration,
             adapterId: adapter.adapterId,
             harnessVersion: adapter.harnessVersion,
+            sandbox,
           });
         } catch (error: unknown) {
           if (error instanceof SharedChatRunPreparationError) throw error;
@@ -371,6 +445,16 @@ export async function createSharedAiRuntime(options: {
   return {
     available: true as const,
     chatExecutionAdapter,
+    /**
+     * S07: `supported` for the readiness composition. A shared project or Chat
+     * executes, so it is shareable only while the supervisor still advertises
+     * the pinned sandbox policy. The startup capability is only a snapshot, so
+     * the supervisor is rechecked before a share is reported as ready.
+     */
+    async sandboxSupported(subject: ReadinessSubject): Promise<boolean> {
+      await client.refreshCapability();
+      return sandboxProbe.supported(subject);
+    },
     async shutdown(): Promise<void> {
       stopped = true;
       clearInterval(wakeTimer);

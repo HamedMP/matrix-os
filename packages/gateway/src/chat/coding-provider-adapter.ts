@@ -130,6 +130,14 @@ function normalizeEvent(
       delta: event.delta,
     })];
   }
+  if (event.type === "subagent.activity") {
+    const status = event.subagent.status;
+    return [CanonicalProviderRunEventSchema.parse({
+      type: "agent.activity", activityId: event.activityId, kind: "delegation",
+      label: event.subagent.name, subagent: event.subagent,
+      status: status === "waiting" ? "running" : status === "unknown" ? "partial" : status,
+    })];
+  }
   if (event.type === "tool.started") {
     const toolActivity = {
       ...projectCodingActivity(event),

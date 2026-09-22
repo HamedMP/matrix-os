@@ -18,6 +18,7 @@ import { registerChatRoutes } from "../../packages/gateway/src/collaboration/cha
 import { registerTerminalRoutes } from "../../packages/gateway/src/collaboration/terminal-routes.js";
 import { registerProjectRoutes } from "../../packages/gateway/src/collaboration/project-routes.js";
 import { registerLifecycleRoutes } from "../../packages/gateway/src/collaboration/lifecycle-routes.js";
+import { registerExecutionPolicyRoutes } from "../../packages/gateway/src/collaboration/execution-policy-routes.js";
 import { handle } from "../../packages/gateway/src/collaboration/route-support.js";
 import {
   collaborationActors,
@@ -67,6 +68,9 @@ const ROUTE_BASELINE: ReadonlyArray<readonly [string, string]> = [
   ["POST", "/api/collaboration/scopes/:scopeId/lifecycle"],
   ["GET", "/api/collaboration/scopes/:scopeId/operations/:operationId"],
   ["GET", "/api/collaboration/scopes/:scopeId/exports/:exportId"],
+  // S08 execution policy routes register after the S01 baseline.
+  ["GET", "/api/collaboration/scopes/:scopeId/execution-policy"],
+  ["PUT", "/api/collaboration/scopes/:scopeId/execution-policy"],
 ];
 
 const stubOptions = {
@@ -105,6 +109,7 @@ describe("gateway collaboration route registration (S01 foundation)", () => {
     registerTerminalRoutes(app, stubOptions);
     registerProjectRoutes(app, stubOptions);
     registerLifecycleRoutes(app, stubOptions);
+    registerExecutionPolicyRoutes(app, stubOptions);
     expect(handlerRoutes(app)).toEqual(ROUTE_BASELINE);
   });
 
@@ -158,13 +163,13 @@ describe("gateway collaboration schema bootstrap (S01 foundation)", () => {
   });
 
   it("registers the versioned migrations in order and records every version idempotently", async () => {
-    expect(COLLABORATION_VERSIONED_MIGRATIONS.map((step) => step.version)).toEqual([3, 4, 5, 6, 7, 8]);
+    expect(COLLABORATION_VERSIONED_MIGRATIONS.map((step) => step.version)).toEqual([3, 4, 5, 6, 7, 8, 9, 10]);
     expect(typeof applyCollaborationBaseSchema).toBe("function");
     await bootstrapCollaborationDatabase(fixture.db);
     await bootstrapCollaborationDatabase(fixture.db);
     const versions = await fixture.db.selectFrom("collaboration_schema_migrations")
       .select("version").orderBy("version").execute();
-    expect(versions.map((row) => Number(row.version))).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(versions.map((row) => Number(row.version))).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
   });
 });
 

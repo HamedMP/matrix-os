@@ -588,7 +588,7 @@ export function codingAgentSummary(): RuntimeSummary {
 }
 
 export async function startStubGateway(options: StubGatewayOptions = {}): Promise<StubGateway> {
-  const systemInfo = createSystemInfoFixture(readBuildSource(resolve(__dirname, "../../../.."))?.commit ?? "unknown");
+  const systemInfo = createSystemInfoFixture(readBuildSource(resolve(import.meta.dirname, "../../../.."))?.commit ?? "unknown");
   const tasks = TASKS.map((task) => ({ ...task, tags: [...task.tags] }));
   const terminalTabs: Array<Record<string, unknown>> = [
     {

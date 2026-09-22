@@ -1,3 +1,4 @@
+import type { ChatSubagent } from "@matrix-os/contracts";
 import type { ChatRunContext, CanonicalChatInputView, CanonicalSubmitChatInputRequest } from "@matrix-os/contracts";
 export type ConversationMessageRole = "user" | "assistant";
 
@@ -51,6 +52,7 @@ export type ConversationActivityKind =
 export type ConversationActivityState = "running" | "completed" | "partial" | "stopped" | "failed";
 
 export interface ConversationActivityPresentation {
+  subagent?: ChatSubagent;
   id: string;
   kind: ConversationActivityKind;
   state: ConversationActivityState;

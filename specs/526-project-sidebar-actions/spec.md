@@ -2,7 +2,7 @@
 
 **Feature Branch**: `codex/project-sidebar-actions`
 **Created**: 2026-09-20
-**Status**: Implemented; runtime validation in progress
+**Status**: Implemented; Human Review passed
 **Issue**: https://github.com/HamedMP/matrix-os/issues/1770
 **Input**: Codex-inspired project row; move accidental-delete affordance into a menu and add Pin, Edit, and Show in Files (open the existing mapped folder in the full Files app).
 

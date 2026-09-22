@@ -21,7 +21,7 @@ describe("platform collaboration routes", () => {
   let fixture: PlatformCollaborationTestDatabase;
   let repository: PlatformCollaborationRepository;
   let app: Hono;
-  let hydrate: Parameters<typeof createPlatformCollaborationRoutes>[0]["hydrate"];
+  let organizationIds: string[];
   let resolveInvitationIdentifier: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
@@ -42,28 +42,7 @@ describe("platform collaboration routes", () => {
       now: () => now,
       createToken: () => "c".repeat(43),
     });
-    hydrate = async ({ actorId, entry }) => entry.status === "invited" ? ({
-      id: entry.invitationId,
-      scopeId: entry.scopeId,
-      owner: { actorId: entry.ownerId, displayName: "Owner" },
-      target: { actorId, displayName: "Recipient" },
-      scopeKind: "chat",
-      role: "editor",
-      status: "pending",
-      expiresAt: "2026-09-14T12:00:00.000Z",
-      revision: "1",
-    }) : ({
-      scope: {
-        id: entry.scopeId, ownerId: entry.ownerId, kind: "chat", resourceId: "chat_shared",
-        membershipMode: "direct", lifecycle: "shared", revision: "2", authEpoch: "2",
-        authorityGeneration: String(entry.authorityGeneration), role: "editor",
-        capabilities: { read: true, discuss: true, manageMembers: false, requestAi: false },
-      },
-      chat: {
-        id: "chat_shared", scopeId: entry.scopeId, title: "Shared Chat", lifecycle: "active",
-        revision: "2", messageCount: "1",
-      },
-    });
+    organizationIds = [];
     resolveInvitationIdentifier = vi.fn(async (identifier: string) => identifier === "nimanaderi"
       ? { actorId: platformCollaborationActors.recipientWithoutComputer, displayName: "Recipient" }
       : null);
@@ -79,7 +58,7 @@ describe("platform collaboration routes", () => {
           : null,
       resolveParticipant: async (actorId) => ({ actorId, displayName: `Name ${actorId}` }),
       resolveInvitationIdentifier,
-      hydrate: (input) => hydrate(input),
+      listOrganizationIds: async () => organizationIds,
       now: () => now,
     }));
   });
@@ -113,49 +92,94 @@ describe("platform collaboration routes", () => {
       .toMatchObject([{ scopeId, status: "invited", invitationId: inviteId }]);
   });
 
-  it("hydrates an invite inbox and accepted shared list for an actor without a computer", async () => {
-    await repository.applyDirectoryEvent(directoryEvent("invited"));
+  it("returns metadata-only discovery items and never fetches resource content from a home", async () => {
+    await repository.applyDirectoryEvent({ ...directoryEvent("invited"), organizationId: "org_1" });
     const inbox = await app.request("/api/collaboration/inbox", {
       headers: { "x-test-actor": platformCollaborationActors.recipientWithoutComputer },
     });
     expect(inbox.status).toBe(200);
-    expect(await inbox.json()).toMatchObject({ items: [{ status: "invited", resource: { id: inviteId } }] });
-    await repository.applyDirectoryEvent({ ...directoryEvent("accepted"), eventId: "20000000-0000-4000-8000-000000000002", metadataRevision: 2 });
+    const inboxPage = await inbox.json() as { items: Array<Record<string, unknown>> };
+    expect(inboxPage.items).toEqual([{
+      scopeId, runtimeId: "runtime_owner", ownerId: platformCollaborationActors.owner, kind: "chat", authorityGeneration: 1,
+      status: "invited", invitationId: inviteId, organizationId: "org_1",
+    }]);
+    expect(inboxPage.items[0]).not.toHaveProperty("resource");
+    await repository.applyDirectoryEvent({ ...directoryEvent("accepted"), organizationId: "org_1", eventId: "20000000-0000-4000-8000-000000000002", metadataRevision: 2 });
     const shared = await app.request("/api/collaboration/shared", {
       headers: { "x-test-actor": platformCollaborationActors.recipientWithoutComputer },
     });
     expect(shared.status).toBe(200);
-    expect(await shared.json()).toMatchObject({ items: [{ status: "accepted", resource: { chat: { id: "chat_shared" } } }] });
+    const sharedPage = await shared.json() as { items: Array<Record<string, unknown>> };
+    expect(sharedPage.items).toEqual([{
+      scopeId, runtimeId: "runtime_owner", ownerId: platformCollaborationActors.owner, kind: "chat", authorityGeneration: 1,
+      status: "accepted", organizationId: "org_1",
+    }]);
   });
 
-  it("keeps healthy discovery entries when one owner runtime cannot hydrate", async () => {
-    await repository.applyDirectoryEvent(directoryEvent("invited"));
-    const unavailableScopeId = "10000000-0000-4000-8000-000000000002";
+  it("lists organization-wide shares as pending only for current members who have not opened them", async () => {
+    const orgScopeId = "10000000-0000-4000-8000-000000000077";
     await repository.applyDirectoryEvent({
-      ...directoryEvent("invited"),
-      eventId: "20000000-0000-4000-8000-000000000002",
-      scopeId: unavailableScopeId,
-      metadataRevision: 2,
-      recipients: [{
-        actorId: platformCollaborationActors.recipientWithoutComputer,
-        status: "invited",
-        invitationId: "30000000-0000-4000-8000-000000000002",
-      }],
+      ...directoryEvent("accepted"), eventId: "20000000-0000-4000-8000-000000000077", scopeId: orgScopeId,
+      organizationId: "org_1", audience: "organization", recipients: [],
     });
-    const healthyHydrate = hydrate;
-    hydrate = async (input) => {
-      const { entry } = input;
-      if (entry.scopeId === unavailableScopeId) return { malformed: "owner response" };
-      return healthyHydrate(input);
-    };
-
-    const response = await app.request("/api/collaboration/inbox", {
+    organizationIds = ["org_1"];
+    const member = await app.request("/api/collaboration/inbox", {
       headers: { "x-test-actor": platformCollaborationActors.recipientWithoutComputer },
     });
-    expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({
-      items: [{ scopeId, resource: { id: inviteId } }],
+    expect(await member.json()).toEqual({ items: [{
+      scopeId: orgScopeId, runtimeId: "runtime_owner", ownerId: platformCollaborationActors.owner, kind: "chat", authorityGeneration: 1,
+      status: "organization_pending", organizationId: "org_1",
+    }] });
+    // The owner is never pending on their own share.
+    const owner = await app.request("/api/collaboration/inbox", { headers: { "x-test-actor": platformCollaborationActors.owner } });
+    expect(await owner.json()).toEqual({ items: [] });
+    // Outside the organization nothing is listed, whatever the audience flag says.
+    organizationIds = ["org_other"];
+    const outsider = await app.request("/api/collaboration/inbox", {
+      headers: { "x-test-actor": platformCollaborationActors.recipientWithoutComputer },
     });
+    expect(await outsider.json()).toEqual({ items: [] });
+    // Once the member has an index row (opened, accepted or declined) the item stops being pending.
+    organizationIds = ["org_1"];
+    await repository.applyDirectoryEvent({
+      ...directoryEvent("accepted"), eventId: "20000000-0000-4000-8000-000000000078", scopeId: orgScopeId,
+      organizationId: "org_1", audience: "organization", metadataRevision: 2,
+      recipients: [{ actorId: platformCollaborationActors.recipientWithoutComputer, status: "accepted" }],
+    });
+    const opened = await app.request("/api/collaboration/inbox", {
+      headers: { "x-test-actor": platformCollaborationActors.recipientWithoutComputer },
+    });
+    expect(await opened.json()).toEqual({ items: [] });
+    const shared = await app.request("/api/collaboration/shared", {
+      headers: { "x-test-actor": platformCollaborationActors.recipientWithoutComputer },
+    });
+    expect(await shared.json()).toMatchObject({ items: [{ scopeId: orgScopeId, status: "accepted" }] });
+  });
+
+  it("paginates organization-pending shares after ordinary invitations without losing any", async () => {
+    await repository.applyDirectoryEvent(directoryEvent("invited"));
+    for (const suffix of ["071", "072", "073"]) {
+      await repository.applyDirectoryEvent({
+        ...directoryEvent("accepted"), scopeId: `10000000-0000-4000-8000-000000000${suffix}`,
+        eventId: `20000000-0000-4000-8000-000000000${suffix}`,
+        organizationId: "org_1", audience: "organization", recipients: [],
+      });
+    }
+    organizationIds = ["org_1"];
+    const seen: Array<{ scopeId: string; status: string }> = [];
+    let cursor: string | undefined;
+    for (let pageNumber = 0; pageNumber < 5; pageNumber += 1) {
+      const response = await app.request(`/api/collaboration/inbox?limit=1${cursor ? `&cursor=${cursor}` : ""}`,
+        { headers: { "x-test-actor": platformCollaborationActors.recipientWithoutComputer } });
+      expect(response.status).toBe(200);
+      const page = await response.json() as { items: Array<{ scopeId: string; status: string }>; nextCursor?: string };
+      seen.push(...page.items);
+      cursor = page.nextCursor;
+      if (!cursor) break;
+    }
+    expect(seen).toHaveLength(4);
+    expect(new Set(seen.map((item) => item.scopeId)).size).toBe(4);
+    expect(seen.filter((item) => item.status === "organization_pending")).toHaveLength(3);
   });
 
   it("returns opaque actor/status-bound discovery pages and rejects malformed cursors", async () => {

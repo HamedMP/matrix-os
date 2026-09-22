@@ -34,10 +34,9 @@ Two reviewable layers: spec/backend foundation, then shared UI/tests; keep each 
 - Backend/spec: https://github.com/HamedMP/matrix-os/pull/1771
 - Previous Electron UI: https://github.com/HamedMP/matrix-os/pull/1772 — closed; modal behavior rejected. Replacement pending.
 - Public docs: https://github.com/FinnaAI/matrix-os-site/pull/118
-- Retained backend and docs PRs are drafts. Human Review, live runtime acceptance, CI/Greptile and landing remain pending.
-- Implementation resumed on user request. Corrected navigation has targeted regression coverage; Preview VPS and Electron Desktop acceptance are in progress.
+- Human Review passed on the exact feature head in authenticated Preview VPS and Electron Desktop. Exact-head Greptile, CI and landing remain pending.
 
 ## Clarification correction
 - [x] T012 Replace project Files modal with full Files navigation; test canonical directory, repeat navigation, unavailable directory and stale runtime.
 - [x] T013 Close incompatible PR #1772 and correct PR/spec/public documentation and Linear requirements.
-- [ ] T014 Resume implementation when requested, then publish a replacement UI PR and prepare Human Review.
+- [x] T014 Resume implementation when requested, publish the replacement UI PR and complete Human Review.

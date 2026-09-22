@@ -13,6 +13,9 @@ import { z } from "zod/v4";
 import { registerInvitationIdentifierResolutionRoute } from "./identifier-resolution-route.js";
 import type { CollaborationProofSigner } from "./proof.js";
 import { parseCollaborationProxyRoute, type CollaborationProxy } from "./proxy.js";
+import { parseRelayRoute, type CollaborationRelay } from "./relay.js";
+
+const DIRECT_SESSION_HEADER = "x-matrix-collaboration-session";
 import {
   PlatformCollaborationRepositoryError,
   type CollaborationDirectoryEntry,
@@ -23,16 +26,20 @@ import {
   type CollaborationWebSocketAuthorizer,
 } from "./websocket.js";
 
-const MAX_HYDRATION_CONCURRENCY = 4;
 const RuntimeIdSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9:_-]+$/);
 const BearerTokenSchema = z.string().min(32).max(4_096).regex(/^[A-Za-z0-9._~-]+$/);
-const DiscoveryCursorSchema = z.object({
-  version: z.literal(1),
-  actorId: CollaborationActorIdSchema,
-  status: z.enum(["invited", "accepted"]),
-  updatedAt: z.iso.datetime(),
-  scopeId: z.uuid(),
-}).strict();
+const DiscoveryCursorSchema = z.discriminatedUnion("version", [
+  z.object({
+    version: z.literal(1), actorId: CollaborationActorIdSchema, status: z.enum(["invited", "accepted"]),
+    updatedAt: z.iso.datetime(), scopeId: z.uuid(),
+  }).strict(),
+  z.object({
+    version: z.literal(2), actorId: CollaborationActorIdSchema, status: z.enum(["invited", "accepted"]),
+    phase: z.enum(["indexed", "pending"]),
+    after: z.object({ updatedAt: z.iso.datetime(), scopeId: z.uuid() }).strict().optional(),
+  }).strict(),
+]);
+type DiscoveryPageCursor = { phase: "indexed" | "pending"; after?: { updatedAt: string; scopeId: string } };
 
 type RouteContext = Context;
 
@@ -41,6 +48,8 @@ export function createPlatformCollaborationRoutes(options: {
   signer: CollaborationProofSigner;
   sockets: CollaborationWebSocketAuthorizer;
   proxy?: CollaborationProxy;
+  /** S05: transparent relay for direct-protocol requests (session routes or requests carrying a direct session). */
+  relay?: CollaborationRelay;
   resolveActor(c: RouteContext): Promise<string | null>;
   authenticateRuntime(input: {
     runtimeId: string;
@@ -48,10 +57,11 @@ export function createPlatformCollaborationRoutes(options: {
   }): Promise<{ runtimeId: string; ownerId: string } | null>;
   resolveParticipant(actorId: string): Promise<{ actorId: string; displayName: string } | null>;
   resolveInvitationIdentifier(identifier: string, organizationId: string): Promise<{ actorId: string; displayName: string } | null>;
-  hydrate(input: {
-    actorId: string;
-    entry: CollaborationDirectoryEntry;
-  }): Promise<unknown>;
+  /**
+   * S06 / T032: the actor's current organization ids from the membership projection, used only to list
+   * organization-wide shares still pending for them. Absent means no organization inventory.
+   */
+  listOrganizationIds?(actorId: string): Promise<readonly string[]>;
   now?: () => Date;
 }): Hono {
   const app = new Hono();
@@ -63,6 +73,22 @@ export function createPlatformCollaborationRoutes(options: {
   );
   app.use("/api/collaboration/*", async (c, next) => {
     c.header("Cache-Control", "private, no-store");
+    // S05: direct-protocol traffic is relayed as opaque bytes; the home decides.
+    const relayRoute = options.relay ? parseRelayRoute(c.req.method, c.req.path) : null;
+    if (options.relay && relayRoute && (relayRoute.kind === "session" || c.req.header(DIRECT_SESSION_HEADER))) {
+      const actorId = await resolveValidatedActor(c, options.resolveActor);
+      if (!actorId) return safeJson(c, "Unauthorized", 401);
+      const declared = Number(c.req.header("content-length") ?? 0);
+      return options.relay.forward({
+        actorId,
+        method: c.req.method,
+        path: c.req.path,
+        query: new URL(c.req.url).search.slice(1),
+        headers: c.req.raw.headers,
+        body: c.req.method === "GET" ? null : c.req.raw.body,
+        ...(Number.isFinite(declared) && declared > 0 ? { contentLength: declared } : {}),
+      });
+    }
     if (!options.proxy || !parseCollaborationProxyRoute(c.req.method, c.req.path)) {
       await next();
       return;
@@ -164,44 +190,56 @@ async function listDiscovery(
   if (!actorId) return safeJson(c, "Unauthorized", 401);
   const pageRequest = CollaborationPageRequestSchema.safeParse(exactDiscoveryQuery(c));
   if (!pageRequest.success) return safeJson(c, "Invalid request", 422);
-  const after = pageRequest.data.cursor
+  const cursor = pageRequest.data.cursor
     ? decodeDiscoveryCursor(pageRequest.data.cursor, actorId, status)
-    : undefined;
-  if (pageRequest.data.cursor && !after) return safeJson(c, "Invalid request", 422);
+    : null;
+  if (pageRequest.data.cursor && !cursor) return safeJson(c, "Invalid request", 422);
   try {
-    const page = await options.repository.listForActorPage(actorId, status, {
-      limit: pageRequest.data.limit,
-      ...(after ? { after } : {}),
-    });
-    const resources = await mapLimited(page.items, MAX_HYDRATION_CONCURRENCY, async (entry) => {
-      try {
-        const resource = await options.hydrate({ actorId, entry });
-        return CollaborationDiscoveryItemSchema.parse({
-          scopeId: entry.scopeId,
-          runtimeId: entry.runtimeId,
-          ownerId: entry.ownerId,
-          kind: entry.kind,
-          authorityGeneration: entry.authorityGeneration,
-          status: entry.status,
-          ...(entry.status === "invited" ? { invitationId: entry.invitationId } : {}),
-          resource,
-        });
-      } catch (error: unknown) {
-        console.warn(
-          "[platform-collaboration] discovery entry unavailable",
-          error instanceof Error ? error.name : "UnknownError",
-        );
-        return null;
+    const phase = cursor?.phase ?? "indexed";
+    const page = phase === "indexed"
+      ? await options.repository.listForActorPage(actorId, status, {
+        limit: pageRequest.data.limit,
+        ...(cursor?.after ? { after: cursor.after } : {}),
+      })
+      : { items: [] as Awaited<ReturnType<PlatformCollaborationRepository["listForActorPage"]>>["items"], nextCursor: undefined };
+    // Metadata only: the client hydrates every item from the resource's home.
+    const items: unknown[] = page.items.map((entry) => ({
+      scopeId: entry.scopeId,
+      runtimeId: entry.runtimeId,
+      ownerId: entry.ownerId,
+      kind: entry.kind,
+      authorityGeneration: entry.authorityGeneration,
+      status: entry.status,
+      ...(entry.status === "invited" ? { invitationId: entry.invitationId } : {}),
+      ...(entry.organizationId ? { organizationId: entry.organizationId } : {}),
+    }));
+    let nextCursor = page.nextCursor ? encodeDiscoveryCursor(actorId, status, "indexed", page.nextCursor) : undefined;
+    if (status === "invited" && !page.nextCursor && options.listOrganizationIds) {
+      const organizationIds = await options.listOrganizationIds(actorId);
+      const remaining = pageRequest.data.limit - items.length;
+      const pending = await options.repository.listOrganizationSharesForActorPage(actorId, organizationIds, {
+        limit: Math.max(1, remaining),
+        ...(phase === "pending" && cursor?.after ? { after: cursor.after } : {}),
+      });
+      if (remaining > 0) {
+        for (const entry of pending.items) {
+          items.push({
+            scopeId: entry.scopeId, runtimeId: entry.runtimeId, ownerId: entry.ownerId, kind: entry.kind,
+            authorityGeneration: entry.authorityGeneration, status: "organization_pending", organizationId: entry.organizationId,
+          });
+        }
       }
-    });
+      if (pending.nextCursor || (remaining === 0 && pending.items.length > 0)) {
+        nextCursor = encodeDiscoveryCursor(actorId, status, "pending", remaining === 0 ? undefined : pending.nextCursor);
+      }
+    }
     c.header("Cache-Control", "private, no-store");
     return c.json(CollaborationDiscoveryResponseSchema.parse({
-      items: resources
-        .filter((result): result is NonNullable<typeof result> => result !== null),
-      ...(page.nextCursor ? { nextCursor: encodeDiscoveryCursor(actorId, status, page.nextCursor) } : {}),
+      items: items.map((item) => CollaborationDiscoveryItemSchema.parse(item)),
+      ...(nextCursor ? { nextCursor } : {}),
     }));
   } catch (error: unknown) {
-    console.warn("[platform-collaboration] discovery hydration failed", error instanceof Error ? error.name : "UnknownError");
+    console.warn("[platform-collaboration] discovery listing failed", error instanceof Error ? error.name : "UnknownError");
     return safeJson(c, "Collaboration unavailable", 503);
   }
 }
@@ -219,21 +257,23 @@ function exactDiscoveryQuery(c: RouteContext): Record<string, string> {
 function encodeDiscoveryCursor(
   actorId: string,
   status: "invited" | "accepted",
-  cursor: { updatedAt: string; scopeId: string },
+  phase: DiscoveryPageCursor["phase"],
+  after?: DiscoveryPageCursor["after"],
 ): string {
-  return Buffer.from(JSON.stringify({ version: 1, actorId, status, ...cursor })).toString("base64url");
+  return Buffer.from(JSON.stringify({ version: 2, actorId, status, phase, ...(after ? { after } : {}) })).toString("base64url");
 }
 
 function decodeDiscoveryCursor(
   value: string,
   actorId: string,
   status: "invited" | "accepted",
-): { updatedAt: string; scopeId: string } | null {
+): DiscoveryPageCursor | null {
   if (!/^[A-Za-z0-9_-]+$/.test(value)) return null;
   try {
     const parsed = DiscoveryCursorSchema.safeParse(JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as unknown);
     if (!parsed.success || parsed.data.actorId !== actorId || parsed.data.status !== status) return null;
-    return { updatedAt: parsed.data.updatedAt, scopeId: parsed.data.scopeId };
+    if (parsed.data.version === 1) return { phase: "indexed", after: { updatedAt: parsed.data.updatedAt, scopeId: parsed.data.scopeId } };
+    return { phase: parsed.data.phase, ...(parsed.data.after ? { after: parsed.data.after } : {}) };
   } catch (error: unknown) {
     if (!(error instanceof SyntaxError)) {
       console.warn("[platform-collaboration] cursor decode failed", error instanceof Error ? error.name : "UnknownError");
@@ -285,18 +325,6 @@ async function parseJson<T>(c: RouteContext, schema: z.ZodType<T>): Promise<T | 
   }
 }
 
-async function mapLimited<T, R>(items: readonly T[], concurrency: number, mapper: (item: T) => Promise<R>): Promise<R[]> {
-  const results = new Array<R>(items.length);
-  let cursor = 0;
-  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
-    while (cursor < items.length) {
-      const index = cursor++;
-      results[index] = await mapper(items[index]!);
-    }
-  });
-  await Promise.all(workers);
-  return results;
-}
 
 function repositoryFailure(c: RouteContext, operation: string, error: unknown) {
   if (error instanceof PlatformCollaborationRepositoryError && error.code === "conflict") {

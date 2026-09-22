@@ -26,4 +26,5 @@ PR #1772 is closed. Previous component-fixture/test evidence is historical and d
 - Full Files navigation implemented with owner-scoped location resolution and a bounded runtime-scoped navigation intent.
 - Desktop/Gateway TypeScript and Electron production build passed.
 - Targeted regression suites cover canonical/imported paths, invalid/missing folders, same-folder reuse, metadata persistence, stale runtime responses and existing WorkRail behavior.
-- Preview VPS and authenticated Electron Desktop validation in progress.
+- Preview VPS and authenticated Electron Desktop Human Review passed on exact feature head `8e64adfe55a7075bd7da55673893995972872977`.
+- The subsequent merge from `main` only incorporates the separately reviewed project-metadata identity fixes from PR #1771; no accepted sidebar behavior changed.

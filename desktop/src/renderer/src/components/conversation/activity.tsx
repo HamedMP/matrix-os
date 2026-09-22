@@ -11,6 +11,7 @@ import {
   X,
 } from "@renderer/lib/hugeicons";
 import { useState, type ComponentType, type CSSProperties } from "react";
+import { ConversationSubagentActivity } from "@matrix-os/ui";
 import { CopyAction } from "./message";
 import { Marker, MarkerContent, MarkerIcon } from "./marker";
 import type {
@@ -43,6 +44,7 @@ export function ConversationActivity({
   callbacks: ConversationPresentationCallbacks;
 }) {
   const [open, setOpen] = useState(false);
+  if (activity.subagent) return <ConversationSubagentActivity agent={activity.subagent} />;
   const Icon = ACTIVITY_ICON[activity.kind];
   const accessibleLabel = activity.preview ? `${activity.label}: ${activity.preview}` : activity.label;
 
@@ -126,8 +128,9 @@ export function ConversationActivityGroup({
   callbacks: ConversationPresentationCallbacks;
 }) {
   const [showPrevious, setShowPrevious] = useState(false);
-  const previous = activities.slice(0, -1);
-  const visible = showPrevious ? activities : activities.slice(-1);
+  const previous = activities.slice(0, -1).filter((activity) => !activity.subagent);
+  const visible = showPrevious ? activities : activities.filter((activity, index) =>
+    activity.subagent || index === activities.length - 1);
   return (
     <div className="flex w-fit max-w-full min-w-0 flex-col gap-1.5">
       {previous.length > 0 ? (

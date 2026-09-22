@@ -5,6 +5,7 @@ import { CanonicalChatProviderRegistry } from "../../packages/gateway/src/chat/p
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
 import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
 import { createScopeRuntimeChatProviderAdapter } from "../../packages/gateway/src/collaboration/scope-runtime-chat-adapter.js";
+import type { ScopeRuntimeSandboxManifest } from "@matrix-os/scope-runtime/protocol";
 import {
   collaborationActors,
   collaborationExecutionEligibility,
@@ -15,6 +16,20 @@ import {
 const now = "2026-09-10T00:00:00.000Z";
 const owner = { type: "personal" as const, ownerId: collaborationActors.owner };
 const runtimeHandle = "runtime_22222222222222222222222222222222";
+/**
+ * S07: every shared dispatch acts for a collaborator, so the adapter is built with the
+ * authoritative execution root the shared runtime resolves in production
+ * (`shared-ai-runtime.ts`, "no manifest, no launch"). A dispatch without one fails closed.
+ */
+function sharedSandbox(scopeId: string, actorId: string): ScopeRuntimeSandboxManifest {
+  return {
+    version: 1,
+    scopeHandle: `scope_${scopeId.replaceAll("-", "")}`,
+    actorId,
+    worktree: { hostPath: "/home/matrix/home/projects/shared-chat", mode: "rw", fingerprint: "a".repeat(64) },
+    network: "none",
+  };
+}
 describe("canonical shared Chat orchestration", () => {
   let fixture: CollaborationTestDatabase;
   let repository: ChatRepository;
@@ -81,6 +96,7 @@ describe("canonical shared Chat orchestration", () => {
           executionGeneration: String(execution.executionGeneration),
           adapterId: "claude-code",
           harnessVersion: "2.1.240",
+          sandbox: sharedSandbox(execution.scopeId, execution.requestingActorId),
         });
       },
     );
@@ -194,6 +210,7 @@ describe("canonical shared Chat orchestration", () => {
         executionGeneration: String(execution.executionGeneration),
         adapterId: "claude-code",
         harnessVersion: "2.1.240",
+        sandbox: sharedSandbox(execution.scopeId, execution.requestingActorId),
       }),
     );
     await orchestrator.drain();

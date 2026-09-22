@@ -117,6 +117,28 @@ describe("CollaborationTerminalEventRegistry", () => {
     registry.shutdown();
   });
 
+  it("keeps a quiet terminal connection evidenced: the heartbeat publishes state only to silent scopes", async () => {
+    const fixture = setup();
+    const viewer = socket();
+    await fixture.registry.open(connection(scopeA, "user_alice", "alice", viewer));
+    const afterOpen = frames(viewer).length;
+
+    // A shared terminal is legitimately idle, so nothing reaches the client and it cannot tell
+    // an idle home from a lost one. The heartbeat gives a silent connection a state frame.
+    fixture.now = new Date(fixture.now.getTime() + 25_000);
+    await fixture.registry.heartbeat(fixture.now);
+    expect(frames(viewer).slice(afterOpen).map((frame) => frame.type)).toEqual(["terminal.state"]);
+
+    // A connection that just received output needs no keepalive.
+    const afterState = frames(viewer).length;
+    fixture.now = new Date(fixture.now.getTime() + 25_000);
+    await fixture.registry.publishOutput(scopeA, incarnation, "work");
+    fixture.now = new Date(fixture.now.getTime() + 5_000);
+    await fixture.registry.heartbeat(fixture.now);
+    expect(frames(viewer).slice(afterState).map((frame) => frame.type)).toEqual(["terminal.output"]);
+    fixture.registry.shutdown();
+  });
+
   it("reports exit, refuses a changed incarnation, and drains on shutdown", async () => {
     const fixture = setup();
     const client = socket();

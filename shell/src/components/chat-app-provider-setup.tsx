@@ -9,7 +9,6 @@ import {
   type CanonicalProviderSetupAction,
 } from "@matrix-os/contracts";
 import {
-  canonicalProviderAvailabilityLabel,
   CompactChatProviderChoices,
   HarnessIcon,
   deriveCanonicalProviderChoices,
@@ -308,44 +307,21 @@ export function ChatProviderSetupPanel({
       style={{ maxHeight: "min(520px, calc(100% - 72px))" }}>
       <div className="grid min-w-0 gap-3">
         <div>
-          <CompactChatProviderChoices choices={choices} selected={selected} lockedInstanceId={lockedInstanceId}
-            renderIcon={(choice) => choice.driverKind === "kernel" ? <span aria-hidden="true">✦</span> : (
+          <CompactChatProviderChoices catalog={catalog ?? undefined} choices={choices} selected={selected} lockedInstanceId={lockedInstanceId}
+            renderDriverIcon={(kind) => kind === "kernel" ? <span aria-hidden="true">✦</span> : (
               <span className="inline-flex size-5 shrink-0 items-center justify-center [&_.matrix-ap-agent-logo]:!size-5 [&_.matrix-ap-agent-logo]:!rounded [&_img]:!size-3 [&_svg]:size-4">
-                <HarnessIcon harness={choice.driverKind === "claude_code" ? "claude" : choice.driverKind} />
+                <HarnessIcon harness={kind === "claude_code" ? "claude" : kind} />
               </span>
             )}
+            onSetupAction={onSetupAction}
             onSelect={(choice) => {
               onSelect(choice);
               panelRef.current?.parentElement?.querySelector<HTMLButtonElement>('[data-chat-model-trigger]')?.focus();
               onDismiss();
             }} />
-          <details className="mt-2 border-t border-border pt-2">
-            <summary className="cursor-pointer py-2 text-sm font-medium">Manage agents</summary>
-            {catalog?.instances.filter((instance) => instance.availability !== "available").map((instance) => (
-              <div key={instance.id} className="rounded-md border border-border/40 px-2.5 py-2 text-xs text-muted-foreground">
-                <p>{instance.displayName} — {canonicalProviderAvailabilityLabel(instance)}</p>
-                {instance.setupActions.length > 0 ? (
-                  <div className="mt-2 flex flex-wrap gap-1.5">
-                    {instance.setupActions.map((action) => (
-                      <button
-                        key={action.id}
-                        type="button"
-                        className="min-h-9 rounded-md border border-border/50 bg-background px-2 text-xs font-medium text-foreground"
-                        onClick={() => onSetupAction(instance, action)}
-                      >
-                        {action.label}
-                      </button>
-                    ))}
-                  </div>
-                ) : null}
-              </div>
-            ))}
-            {choices.length === 0 && (
-              <p className="rounded-md border border-warning/30 bg-warning/5 p-3 text-xs text-muted-foreground">
-                Connect a harness in Settings to start chatting.
-              </p>
-            )}
-          </details>
+          {!catalog && choices.length === 0 ? <p className="rounded-md border border-warning/30 bg-warning/5 p-3 text-xs text-muted-foreground">
+            Connect a harness in Settings to start chatting.
+          </p> : null}
           {selected ? (
             <details className="mt-2 border-t border-border pt-2">
               <summary className="cursor-pointer py-2 text-sm font-medium">Execution options</summary>

@@ -119,6 +119,8 @@ export {
 export { collaborationDraftKey, collaborationDraftModeKey, createCollaborationDraftStore } from "./collaboration/chat-state.js";
 export { deriveChatPermissions } from "./collaboration/permissions.js";
 export { createCollaborationBrowserApi } from "./collaboration/client.js";
+export { createCollaborationDirectClient, CollaborationDirectError, type CollaborationDirectClient, type CollaborationDirectClientOptions, type CollaborationDirectErrorCode, type DirectScopeState } from "./collaboration/direct-client.js";
+export { createCollaborationDirectApi, type CollaborationDirectApi } from "./collaboration/direct-api.js";
 export {
   COLLABORATION_DISCOVERY_CHANGED_EVENT,
   notifyCollaborationDiscoveryChanged,
@@ -161,3 +163,5 @@ export { McpServerDiagnostics } from "./McpServerDiagnostics.js";
 
 export { createTerminalNativeHistory } from "./terminal/terminal-native-history.js";
 export { canonicalChatSafeFailureReason } from "./canonical-chat-error-copy.js";
+
+export { ConversationSubagentActivity } from "./chat/subagent-activity";

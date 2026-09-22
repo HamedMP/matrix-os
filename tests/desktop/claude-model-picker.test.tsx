@@ -38,6 +38,10 @@ it("selects the gateway's exact Fable model and preserves it when the shared pic
   const picker = document.querySelector<HTMLElement>('[data-slot="provider-model-picker"]');
   expect(picker?.style.zIndex).toBe(String(DESKTOP_Z_INDEX.popover));
   expect(picker?.className).not.toContain("z-50");
+  expect(picker?.classList.contains("overflow-x-hidden")).toBe(true);
+  expect(picker?.classList.contains("overflow-y-auto")).toBe(true);
+  expect(picker?.classList.contains("overflow-hidden")).toBe(false);
+  expect(picker?.style.maxHeight).toBe("min(520px, calc(100vh - 32px))");
   fireEvent.click(screen.getByRole("option", { name: /Claude Fable 5/ }));
   expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ instanceId: "claude_code_default", model: "claude-fable-5" }));
   inventory = [...inventory, { value: "claude-fable-5-1", displayName: "Claude Fable 5.1" }];
