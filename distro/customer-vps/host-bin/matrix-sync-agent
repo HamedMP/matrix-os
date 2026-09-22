@@ -1255,7 +1255,11 @@ apply_update() {
     if [ -f "$extract_dir/systemd/matrix-symphony.service" ]; then
       resume_symphony_after_update
     fi
-    if [ -f "$extract_dir/systemd/matrix-hermes-dashboard.service" ]; then
+    if [ -f "$extract_dir/systemd/matrix-hermes.service" ]; then
+      sudo systemctl enable matrix-hermes.service
+      sudo systemctl restart --no-block matrix-hermes.service || true
+      log "Hermes release reconciliation scheduled"
+    elif [ -f "$extract_dir/systemd/matrix-hermes-dashboard.service" ]; then
       sudo systemctl enable matrix-hermes-dashboard.service
       sudo systemctl restart --no-block matrix-hermes-dashboard.service || true
       log "Hermes dashboard service refreshed"

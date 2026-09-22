@@ -95,6 +95,8 @@ Recommended target state:
 
 For production user VPSes, installing Hermes plus the Matrix skills is safe because the skills contain instructions only. Authenticated Matrix actions should still go through Matrix gateway/platform APIs.
 
+Customer VPS host bundles pin the managed Hermes source checkout to a reviewed upstream commit. Bundle updates rerun `matrix-hermes.service` asynchronously to reconcile that checkout while preserving owner-managed state under `$HERMES_HOME`, including config, credentials, skills, memory, sessions, and conversations. Change the release and commit defaults together in `/opt/matrix/bin/matrix-install-hermes`; do not replace the commit-pinned installer URL with upstream's moving `main` URL.
+
 For dev VPSes, also make the Hermes install path writable by the `matrix` user so `hermes`, Codex, and Claude CLIs can self-update without `EACCES`.
 
 ## Provisioning Hook
