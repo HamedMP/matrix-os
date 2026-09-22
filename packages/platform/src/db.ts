@@ -209,6 +209,30 @@ export interface AiFundedPromotionalGrantBalancesTable {
   revision: number;
 }
 
+export interface SpeechOperationsTable {
+  owner_id: string;
+  machine_id: string;
+  runtime_slot: string;
+  operation_id: string;
+  source_kind: string | null;
+  content_fingerprint: string | null;
+  policy_revision: string | null;
+  adapter_id: string | null;
+  model_id: string | null;
+  funding_reservation_id: string | null;
+  execution_state: string;
+  cancellation_requested: boolean;
+  tombstone: boolean;
+  dispatch_claimed_at: string | null;
+  safe_outcome_code: string | null;
+  audio_duration_ms: number | null;
+  reserved_microusd: number | null;
+  actual_microusd: number | null;
+  created_at: string;
+  updated_at: string;
+  expires_at: string;
+}
+
 export interface AiCreditCheckoutClaimsTable {
   request_id: string;
   owner_id: string;
@@ -736,6 +760,7 @@ export interface PlatformDatabase {
   ai_funded_credit_ledger: AiFundedCreditLedgerTable;
   ai_funded_promotional_grant_balances: AiFundedPromotionalGrantBalancesTable;
   ai_funded_runtime_balances: AiFundedRuntimeBalancesTable;
+  speech_operations: SpeechOperationsTable;
   ai_credit_checkout_claims: AiCreditCheckoutClaimsTable;
   ai_funded_credit_restrictions: AiFundedCreditRestrictionsTable;
   provisioning_jobs: ProvisioningJobsTable;

@@ -76,6 +76,7 @@ describe('platform schema registration (S01 foundation)', () => {
       'identity',
       'user-machines',
       'ai-funded',
+      'speech',
       'provisioning-jobs',
       'checkout',
       'onboarding',
