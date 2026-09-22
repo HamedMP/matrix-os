@@ -349,6 +349,69 @@ describe("S05 direct sessions on the home", () => {
     unsubscribe();
   });
 
+  it("refuses an in-flight renewal whose session was revoked while it waited", async () => {
+    const ownerKey = clientKey();
+    const owner = await service.create(sessionRequest(collaborationActors.owner, ownerKey).body);
+    const ended: Array<[string, string]> = [];
+    const unsubscribe = service.subscribeEnded((session, reason) => { ended.push([session.id, reason]); });
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    const authorize = authority.authorize.bind(authority);
+    const spy = vi.spyOn(authority, "authorize").mockImplementation((async (input: never) => {
+      await blocked;
+      return authorize(input);
+    }) as never);
+    const { body } = sessionRequest(collaborationActors.owner, ownerKey);
+    const renewal = service.renew(owner.id, { clientRequestId: randomUUID(), signedTicket: body.signedTicket });
+    await vi.waitFor(() => { expect(spy).toHaveBeenCalled(); });
+
+    // A pushed denial revokes the session while the renewal waits on the authority.
+    expect(service.revoke({ actorId: collaborationActors.owner, generation: 2, fencedAt: clock.toISOString(), ackDeadline: new Date(clock.getTime() + 25_000).toISOString(), state: "pending" } as never)).toEqual([owner.id]);
+    expect(ended).toEqual([[owner.id, "revoked"]]);
+    release();
+
+    // The holder of the detached record must refuse, and refuse the way a fresh call would.
+    await expect(renewal).rejects.toMatchObject({ code: "expired" });
+    // Already detached, so refusing must not end it again into registries mid-detach.
+    expect(ended).toHaveLength(1);
+    expect(service.liveSessionCount()).toBe(0);
+    unsubscribe();
+  });
+
+  it("refuses an in-flight signed request whose session was revoked during its evidence refresh", async () => {
+    const key = clientKey();
+    const session = await service.create(sessionRequest(collaborationActors.editor, key).body);
+    const ended: Array<[string, string]> = [];
+    const unsubscribe = service.subscribeEnded((entry, reason) => { ended.push([entry.id, reason]); });
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    const require = authority.organizationPrecondition.require.bind(authority.organizationPrecondition);
+    const spy = vi.spyOn(authority.organizationPrecondition, "require").mockImplementation((async (input: never) => {
+      await blocked;
+      return require(input);
+    }) as never);
+    clock = new Date(clock.getTime() + 21_000);
+    const signature = {
+      protocolVersion: 2, sessionId: session.id, method: "GET" as const, path: `/api/collaboration/scopes/${scopeId}`, query: "",
+      bodyDigest: sha256Hex(new Uint8Array()), conditionalHeadersDigest: sha256Hex(new Uint8Array()), nonce: randomUUID().replaceAll("-", ""), issuedAt: clock.toISOString(),
+    };
+    const pending = service.authenticate({
+      sessionId: session.id, signature, proof: key.sign(requestSigningPayload(signature)),
+      method: "GET", path: signature.path, query: "", body: new Uint8Array(),
+    });
+    await vi.waitFor(() => { expect(spy).toHaveBeenCalled(); });
+
+    expect(service.revoke({ actorId: collaborationActors.editor, generation: 2, fencedAt: clock.toISOString(), ackDeadline: new Date(clock.getTime() + 25_000).toISOString(), state: "pending" } as never)).toEqual([session.id]);
+    expect(ended).toEqual([[session.id, "revoked"]]);
+    release();
+
+    // Immediate revocation means no further request is authorized, not one more.
+    await expect(pending).rejects.toMatchObject({ code: "expired" });
+    expect(ended).toHaveLength(1);
+    expect(service.liveSessionCount()).toBe(0);
+    unsubscribe();
+  });
+
   it("bounds connections per actor, scope and home and refuses admission when replay retention cannot be kept", async () => {
     const session = await service.create(sessionRequest(collaborationActors.editor).body);
     const first = service.connections.open({ sessionId: session.id });
