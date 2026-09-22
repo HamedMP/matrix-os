@@ -2030,6 +2030,28 @@ describe("shell registry", () => {
     expect(adapter.deleteSession).toHaveBeenCalledWith("main", { force: true });
   });
 
+  it("withholds Contributor control by default at creation and bind until the owner opts in", async () => {
+    const root = await tempRoot();
+    const live = new Set<string>();
+    const adapter = {
+      listSessions: vi.fn(async () => Array.from(live)),
+      getSessionCreatedAt: vi.fn(async () => "2026-09-11T12:00:00.000Z"),
+      createSession: vi.fn(async ({ name }: { name: string }) => { live.add(name); }),
+      deleteSession: vi.fn(async () => undefined),
+    };
+    const registry = new ShellRegistry({ homePath: root, adapter });
+    const created = await registry.create({ name: "quiet-shell", collaboration: { creatorActorId: "user_owner", executionGeneration: 4 } });
+    expect(created.contributorControl).toBe(false);
+    const bound = await registry.bindCollaboration("quiet-shell", {
+      scopeId: "10000000-0000-4000-8000-000000000001", sessionIncarnation: created.sessionIncarnation!, executionGeneration: 4,
+    });
+    expect(bound.contributorControl).toBe(false);
+    await registry.setContributorControl("quiet-shell", {
+      scopeId: "10000000-0000-4000-8000-000000000001", sessionIncarnation: created.sessionIncarnation!, ownerId: "user_owner", contributorControl: true,
+    });
+    await expect(new ShellRegistry({ homePath: root, adapter }).get("quiet-shell")).resolves.toMatchObject({ contributorControl: true });
+  });
+
   it("persists collaboration-ready terminal identity and binds only the exact incarnation", async () => {
     const root = await tempRoot();
     const live = new Set<string>();
@@ -2043,12 +2065,13 @@ describe("shell registry", () => {
     const registry = new ShellRegistry({ homePath: root, adapter });
     const created = await registry.create({
       name: "shared-shell",
-      collaboration: { creatorActorId: "user_owner", executionGeneration: 4 },
+      collaboration: { creatorActorId: "user_owner", executionGeneration: 4, contributorControl: false },
     });
     expect(created).toMatchObject({
       creatorActorId: "user_owner",
       executionGeneration: 4,
       sharedControlMode: "eligible",
+      contributorControl: false,
       incarnationVerified: true,
     });
     expect(created.sessionIncarnation).toMatch(/^terminal-[a-f0-9]{32}$/);
@@ -2062,11 +2085,13 @@ describe("shell registry", () => {
       scopeId: "10000000-0000-4000-8000-000000000001",
       sessionIncarnation: created.sessionIncarnation!,
       executionGeneration: 4,
+      contributorControl: true,
     });
     expect(bound).toMatchObject({
       collaborationScopeId: "10000000-0000-4000-8000-000000000001",
       sharedControlMode: "shared",
       sessionIncarnation: created.sessionIncarnation,
+      contributorControl: true,
     });
 
     const reloaded = new ShellRegistry({ homePath: root, adapter });
@@ -2074,7 +2099,23 @@ describe("shell registry", () => {
       collaborationScopeId: "10000000-0000-4000-8000-000000000001",
       sessionIncarnation: created.sessionIncarnation,
       sharedControlMode: "shared",
+      contributorControl: true,
     });
+    await reloaded.setContributorControl("shared-shell", {
+      scopeId: "10000000-0000-4000-8000-000000000001",
+      sessionIncarnation: created.sessionIncarnation!,
+      ownerId: "user_owner",
+      contributorControl: false,
+    });
+    const withdrawn = new ShellRegistry({ homePath: root, adapter });
+    await expect(withdrawn.get("shared-shell")).resolves.toMatchObject({ contributorControl: false });
+    await expect(withdrawn.setContributorControl("shared-shell", {
+      scopeId: "10000000-0000-4000-8000-000000000001",
+      sessionIncarnation: created.sessionIncarnation!,
+      ownerId: "user_editor",
+      contributorControl: true,
+    })).rejects.toMatchObject({ code: "session_not_eligible" });
+    await expect(withdrawn.get("shared-shell")).resolves.toMatchObject({ contributorControl: false });
   });
 
   it("invalidates collaboration metadata when the runtime process is recreated", async () => {

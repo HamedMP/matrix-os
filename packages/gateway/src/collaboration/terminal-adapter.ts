@@ -1,10 +1,12 @@
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { sql } from "kysely";
 import { z } from "zod/v4";
 import type { CollaborationScopeRecord, CollaborationRepository } from "./repository.js";
 import type {
   CollaborationTerminalMetadata,
   CollaborationTerminalRuntime,
 } from "./terminal-dispatcher.js";
+import { resolveTerminalTaskPolicy } from "./terminal-task-profile.js";
 
 const PREFLIGHT_LIFETIME_MS = 60_000;
 const OPERATION_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
@@ -18,6 +20,13 @@ const TerminalSessionSchema = z.object({
   sessionIncarnation: z.string().regex(/^terminal-[a-f0-9]{32}$/).optional(),
   executionGeneration: z.number().int().positive().optional(),
   sharedControlMode: z.enum(["eligible", "shared"]).optional(),
+  /** S07: present only for a scope-runtime terminal launched under the sandbox policy. */
+  sandbox: z.object({
+    profileId: z.literal("scope-runtime-terminal-v1"),
+    policyDigest: z.string().regex(/^[a-f0-9]{64}$/),
+  }).strict().optional(),
+  /** S07: owner's explicit opt-in that Contributors may control this host shell; absent means withheld. */
+  contributorControl: z.boolean().optional(),
 }).passthrough();
 const PreflightPayloadSchema = z.object({
   version: z.literal(1),
@@ -63,11 +72,18 @@ export class CollaborationTerminalAdapter implements CollaborationTerminalRuntim
         scopeId: string;
         sessionIncarnation: string;
         executionGeneration: number;
+        contributorControl: boolean;
       }): Promise<unknown>;
       unbindCollaboration(name: string, input: {
         scopeId: string;
         sessionIncarnation: string;
       }): Promise<void>;
+      setContributorControl(name: string, input: {
+        scopeId: string;
+        sessionIncarnation: string;
+        ownerId: string;
+        contributorControl: boolean;
+      }): Promise<unknown>;
     };
     runtime: {
       input(input: { terminalId: string; data: string }): Promise<void>;
@@ -159,6 +175,8 @@ export class CollaborationTerminalAdapter implements CollaborationTerminalRuntim
         scopeId: scope.id,
         sessionIncarnation: confirmation.incarnation,
         executionGeneration: confirmation.executionGeneration,
+        // Sharing never opts Contributors in: only a previously recorded true survives the bind.
+        contributorControl: session.contributorControl === true,
       });
     } catch (error: unknown) {
       console.warn(
@@ -196,7 +214,28 @@ export class CollaborationTerminalAdapter implements CollaborationTerminalRuntim
       creatorActorId: session.creatorActorId,
       createdAt: session.createdAt,
       status: session.status,
+      ...resolveTerminalTaskPolicy(session),
     };
+  }
+
+  async setContributorControl(input: Parameters<CollaborationTerminalRuntime["setContributorControl"]>[0]): Promise<void> {
+    const current = await this.get(input.scopeId, input.terminalId);
+    // The dispatcher has already required the scope owner; the registry re-checks the creator on write.
+    if (!current || current.incarnation !== input.incarnation) throw new CollaborationTerminalAdapterError("conflict");
+    try {
+      await this.options.registry.setContributorControl(input.terminalId, {
+        scopeId: input.scopeId,
+        sessionIncarnation: input.incarnation,
+        ownerId: input.ownerId,
+        contributorControl: input.contributorControl,
+      });
+    } catch (error: unknown) {
+      console.warn(
+        "[collaboration-terminal] contributor control update failed",
+        error instanceof Error ? error.name : "UnknownError",
+      );
+      throw new CollaborationTerminalAdapterError("unavailable");
+    }
   }
 
   async input(input: Parameters<CollaborationTerminalRuntime["input"]>[0]): Promise<void> {
@@ -336,7 +375,7 @@ export class CollaborationTerminalAdapter implements CollaborationTerminalRuntim
         revision: 1,
         auth_epoch: 1,
         execution_generation: confirmation.executionGeneration,
-        execution_eligibility: this.options.executionEligibility,
+        execution_eligibility: jsonb(this.options.executionEligibility),
         updated_at: now,
       }).where("id", "=", scope.id).where("lifecycle", "=", "private").where("revision", "=", 0)
         .returningAll().executeTakeFirst();
@@ -351,7 +390,7 @@ export class CollaborationTerminalAdapter implements CollaborationTerminalRuntim
         revision: 1,
         authority_generation: Number(activated.authority_generation),
         event_type: "scope.shared",
-        payload: {},
+        payload: jsonb({}),
         created_at: now,
       }).execute();
       await trx.insertInto("collaboration_audit").values({
@@ -366,7 +405,7 @@ export class CollaborationTerminalAdapter implements CollaborationTerminalRuntim
       await trx.insertInto("collaboration_directory_outbox").values({
         event_id: eventId,
         scope_id: scope.id,
-        recipient_actor_ids: [{ actorId: input.ownerId }],
+        recipient_actor_ids: jsonb([{ actorId: input.ownerId }]),
         authority_runtime_id: this.options.runtimeId,
         authority_generation: Number(activated.authority_generation),
         resource_kind: "terminal",
@@ -382,7 +421,7 @@ export class CollaborationTerminalAdapter implements CollaborationTerminalRuntim
         operation_kind: "scope.create",
         payload_hash: input.payloadHash,
         status: "completed",
-        result_ref: { scopeId: scope.id },
+        result_ref: jsonb({ scopeId: scope.id }),
         expected_revision: confirmation.executionGeneration,
         accepted_auth_epoch: 1,
         created_at: now,
@@ -488,4 +527,8 @@ function rowToScope(row: {
     ...(row.organization_id === null || row.organization_id === undefined ? {} : { organizationId: row.organization_id }),
     executionEligibility: row.execution_eligibility,
   };
+}
+
+function jsonb(value: unknown) {
+  return sql`${JSON.stringify(value)}::jsonb`;
 }

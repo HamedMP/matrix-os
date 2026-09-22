@@ -35,6 +35,7 @@ import type {
 } from "./supervisor.js";
 import { scopeRuntimeWorkerFailureForExitCode } from "./worker.js";
 import {
+  SCOPE_RUNTIME_SANDBOX_CAPABILITY,
   assertSandboxEnvironment,
   buildSandboxSystemdProperties,
   validateSandboxMountSources,
@@ -86,7 +87,8 @@ export function buildFixedSystemdRunArgs(
 ): string[] {
   const runtimeHandle = RuntimeHandleSchema.parse(input.runtimeHandle);
   const scopeHandle = ScopeHandleSchema.parse(input.scopeHandle);
-  if (input.workload !== "chat_ai" || !isFixedChatAdapter(input.adapterId, input.harnessVersion)) {
+  // The advertised sandbox workloads are exactly what this launcher can start (no PTY adapter is installed).
+  if (!SCOPE_RUNTIME_SANDBOX_CAPABILITY.workloads.includes(input.workload) || !isFixedChatAdapter(input.adapterId, input.harnessVersion)) {
     throw new Error("Unsupported scope runtime adapter");
   }
   assertSandboxEnvironment(FIXED_SYSTEMD_ENVIRONMENT);

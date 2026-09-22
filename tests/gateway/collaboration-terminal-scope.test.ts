@@ -10,6 +10,7 @@ import {
   collaborationActors,
   collaborationIds,
   createCollaborationTestDatabase,
+  createRealCollaborationTestDatabase,
   type CollaborationTestDatabase,
 } from "./collaboration-test-support.js";
 
@@ -26,7 +27,9 @@ describe("CollaborationTerminalAdapter scope binding", () => {
   let adapter: CollaborationTerminalAdapter;
 
   beforeEach(async () => {
-    fixture = await createCollaborationTestDatabase();
+    fixture = process.env.MATRIX_TEST_POSTGRES_URL
+      ? await createRealCollaborationTestDatabase()
+      : await createCollaborationTestDatabase();
     await bootstrapChatDatabase(fixture.db);
     await bootstrapCollaborationDatabase(fixture.db);
     session = eligibleSession();
@@ -71,6 +74,8 @@ describe("CollaborationTerminalAdapter scope binding", () => {
   });
 
   it("activates one standalone scope for the exact running incarnation", async () => {
+    // No recorded owner decision: the bind withholds Contributor control.
+    delete session.contributorControl;
     const preflight = await adapter.preflight({ ownerId: collaborationActors.owner, organizationId: "org_matrix_team", terminalId });
     expect(preflight).toMatchObject({ eligible: true, resourceRevision: 4 });
 
@@ -95,14 +100,37 @@ describe("CollaborationTerminalAdapter scope binding", () => {
       scopeId: collaborationIds.scope,
       sessionIncarnation: incarnation,
       executionGeneration: 4,
+      contributorControl: false,
     });
     const persisted = await fixture.db.selectFrom("collaboration_scopes")
       .select(["execution_generation", "execution_eligibility"])
       .where("id", "=", collaborationIds.scope).executeTakeFirstOrThrow();
-    expect(persisted).toMatchObject({
+    expect({ ...persisted, execution_generation: Number(persisted.execution_generation) }).toMatchObject({
       execution_generation: 4,
       execution_eligibility: { profileId: "scope-runtime-terminal-v1" },
     });
+  });
+
+  it("records the owner's Contributor-control decision on the exact bound incarnation", async () => {
+    const preflight = await adapter.preflight({ ownerId: collaborationActors.owner, organizationId: "org_matrix_team", terminalId });
+    await adapter.shareTerminal({
+      ownerId: collaborationActors.owner, organizationId: "org_matrix_team", terminalId,
+      clientRequestId: "50000000-0000-4000-8000-000000000030", payloadHash: "a".repeat(64),
+      expectedResourceRevision: 4, confirmationToken: preflight.confirmationToken!,
+    });
+    await expect(adapter.get(collaborationIds.scope, terminalId)).resolves.toMatchObject({ taskProfile: "host_shell", contributorControl: false });
+    await adapter.setContributorControl({
+      scopeId: collaborationIds.scope, terminalId, incarnation, ownerId: collaborationActors.owner, contributorControl: true,
+    });
+    expect(registry.setContributorControl).toHaveBeenCalledWith(terminalId, {
+      scopeId: collaborationIds.scope, sessionIncarnation: incarnation, ownerId: collaborationActors.owner, contributorControl: true,
+    });
+    await expect(adapter.get(collaborationIds.scope, terminalId)).resolves.toMatchObject({ contributorControl: true });
+    // A stale incarnation never flips the setting.
+    await expect(adapter.setContributorControl({
+      scopeId: collaborationIds.scope, terminalId, incarnation: `terminal-${"b".repeat(32)}`, ownerId: collaborationActors.owner, contributorControl: false,
+    })).rejects.toMatchObject({ code: "conflict" });
+    await expect(adapter.get(collaborationIds.scope, terminalId)).resolves.toMatchObject({ contributorControl: true });
   });
 
   it("reopens the same shared terminal scope with a new actor-scoped request", async () => {
@@ -272,6 +300,10 @@ function registryFixture(readSession: () => Record<string, unknown>) {
     unbindCollaboration: vi.fn(async () => {
       delete readSession().collaborationScopeId;
       readSession().sharedControlMode = "eligible";
+    }),
+    setContributorControl: vi.fn(async (_name: string, input: { contributorControl: boolean }) => {
+      readSession().contributorControl = input.contributorControl;
+      return readSession();
     }),
   };
 }

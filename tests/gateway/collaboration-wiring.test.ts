@@ -202,6 +202,7 @@ describe("gateway collaboration wiring", () => {
         get: async () => { throw Object.assign(new Error("missing"), { code: "session_not_found" }); },
         bindCollaboration: async () => { throw new Error("not called"); },
         unbindCollaboration: async () => undefined,
+        setContributorControl: async () => { throw new Error("not called"); },
       },
       runtime: {
         input: async () => undefined,

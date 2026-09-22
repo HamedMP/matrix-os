@@ -54,6 +54,8 @@ describe("shared terminal WebSocket", () => {
       creatorActorId: collaborationActors.owner,
       createdAt: now.toISOString(),
       status: "active" as const,
+      // The owner has opted Contributors into controlling this host shell.
+      contributorControl: true,
     };
     const terminal = {
       get: vi.fn(async () => metadata),
@@ -165,6 +167,7 @@ describe("shared terminal WebSocket", () => {
         creatorActorId: collaborationActors.owner,
         createdAt: now.toISOString(),
         status: "active" as const,
+        contributorControl: true,
       })),
       input: vi.fn(async () => undefined),
       paste: vi.fn(async () => undefined),
