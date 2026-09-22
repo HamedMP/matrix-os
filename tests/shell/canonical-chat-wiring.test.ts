@@ -12,6 +12,7 @@ describe("Canvas and web desktop canonical Chat wiring", () => {
     const sharedChat = readFileSync(join(process.cwd(), "shell/src/components/chat/ShellChatCollaboration.tsx"), "utf8");
     const sharedTerminal = readFileSync(join(process.cwd(), "shell/src/components/terminal/ShellSharedTerminal.tsx"), "utf8");
     const userButton = readFileSync(join(process.cwd(), "shell/src/components/UserButton.tsx"), "utf8");
+    const providerChoices = readFileSync(join(process.cwd(), "packages/ui/src/compact-chat-provider-choices.tsx"), "utf8");
 
     expect(shellHome).toContain("const chatCollaborationView = terminalCollaborationView ? undefined : initialCollaborationView");
     expect(shellHome).toContain("useCanonicalChatState({ initialDraft: recipePrompt, initialCollaborationView: chatCollaborationView })");
@@ -25,7 +26,11 @@ describe("Canvas and web desktop canonical Chat wiring", () => {
     expect(canonicalState).not.toContain('type: "message"');
     expect(providerState).toContain("/api/chat-providers?refresh=true");
     expect(providerState).not.toContain("/api/ai/providers");
-    expect(providerState).toContain("onSetupAction(instance, action)");
+    // The setup action used to be invoked from an inline arrow in the shell component. It is now
+    // handed to the shared picker, which invokes it, so assert both halves: the shell must pass the
+    // handler through, and the picker must call it with the instance and the action.
+    expect(providerState).toContain("onSetupAction={onSetupAction}");
+    expect(providerChoices).toContain("onSetupAction(activeInstance, action)");
     expect(desktop).toContain("OPEN_PROVIDER_SETTINGS_EVENT");
     expect(desktop).toContain("OPEN_PROVIDER_TERMINAL_EVENT");
     expect(shellHome).toContain('terminalCollaborationView ? "__terminal__"');
