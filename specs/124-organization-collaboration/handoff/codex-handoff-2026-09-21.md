@@ -1201,3 +1201,40 @@ and the map tells you exactly which commits.
 merge rewrites the chain beneath them. Verify a restack actually took by checking that `assertServing` appears
 in `packages/gateway/src/collaboration/direct-sessions.ts` on every branch above the gateway layer — it is
 present 6 times there and 0 times on the stale branches.
+
+## 52. Some branches sit on integrated copies, not on their own layer — 2026-09-22 07:45 UTC
+
+**Refinement of section 51's "Group 2".** A branch whose own work is *not* contiguous at the tip is not
+necessarily a hard case. Check what its base actually is before concluding anything.
+
+`124/s09-run-hardening` looked like the hard shape: 144 commits, 21 own subjects, only a 4-commit contiguous
+tip. In fact its four own commits **are** clean and contiguous:
+
+```
+ad911f9b3 test(collaboration): cover S09 shared-run hardening findings
+83ff5b1d8 fix(collaboration): harden shared-run loss, retry and admission
+05848e070 fix(collaboration): wire the sandbox runtime registry into production
+57eb77680 fix(collaboration): require the shared adapter runtime registry and loss hook
+```
+
+The complication is its base, `a2e0d2315` = `docs(collaboration): record final integrated S15 typecheck`. That
+is a **flattened, fully integrated branch through S15**, not an S09 state. It is not an ancestor of `124/s09`,
+and `124/s09` does not contain it. So the branch is four commits on top of an integrated copy of the entire
+stack, and the 17 "own" subjects that are not at the tip are simply that integrated base's own commits.
+
+**Why this matters for every such branch.** The work is S09-concern hardening, so it belongs on the restacked
+`124/s09` layer, but it was written against a tree that already had S10, S12 and S15. A cherry-pick onto S09
+therefore only works if none of the four commits references a symbol, type, table, migration or call site that
+a later layer introduces. That question is being answered per file before anything is moved, because getting
+it wrong either breaks S09 or silently drags later-layer code down the stack.
+
+**The general rule for this release:** before planning any restack, resolve what the branch's base *is*, by
+reading the base commit's subject and testing ancestry against the layer the work belongs to. A commit count
+alone will mislead you — three different shapes (stale descendant, parallel copy, integrated-base graft) all
+look like "many commits ahead of main".
+
+**S09 hardening content is complete and gated**, on that stale base: all eight review findings plus five P3
+items in `83ff5b1d8`, with `shared-coding-execution` 32, `collaboration-owner-source` 42, `shared-ai-runtime`
+21, `collaboration-wiring` 17, `collaboration-chat-controls` 14, `collaboration-lifecycle` 7 and
+`collaboration-terminal-websocket` 3 passing against real Postgres, typecheck exit 0 and patterns clean. Those
+numbers are **not** evidence about the rebased parents and must be re-run after the move.
