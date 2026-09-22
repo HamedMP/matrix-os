@@ -126,8 +126,6 @@ export function ChatInput({
     else void speech.start();
   };
 
-  const speechIsActive = speechBusy;
-
   return (
     <div className="flex flex-col gap-2">
       <ChatMentionPicker listRef={mentionListRef} onDismiss={() => { setDismissedQuery(input); textareaRef.current?.focus(); }} client={agentClient} scope={scope} query={query} resources={resources} onSelect={(resource) => {
@@ -178,7 +176,6 @@ export function ChatInput({
               size="icon"
               variant="ghost"
               className={`size-8 rounded-full ${speech.phase === "recording" ? "text-destructive" : "text-muted-foreground hover:text-foreground"}`}
-              disabled={!connected && !speechIsActive}
               onClick={handleMicClick}
             >
               {speech.phase === "requesting_permission" ? <Loader2Icon className="size-4 animate-spin" />

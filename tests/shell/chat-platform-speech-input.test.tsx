@@ -56,11 +56,13 @@ function TestComposer({
   onSubmit,
   client = speechClient(),
   adapter = captureAdapter,
+  unavailablePlaceholder,
 }: {
   connected?: boolean;
   onSubmit: ReturnType<typeof vi.fn>;
   client?: BrowserSpeechClient;
   adapter?: PlatformSpeechCaptureAdapter;
+  unavailablePlaceholder?: string;
 }) {
   const composer = useChatComposerDraft("chat-1", "owner-1");
   return <ChatInput
@@ -70,6 +72,7 @@ function TestComposer({
     connected={connected}
     busy={false}
     onSubmit={onSubmit}
+    unavailablePlaceholder={unavailablePlaceholder}
     attachmentsEnabled={false}
     speechClient={client}
     speechCaptureAdapter={adapter}
@@ -120,6 +123,29 @@ describe("shared chat platform speech input", () => {
       await Promise.resolve();
     });
     expect(stopCapture).toHaveBeenCalledTimes(1);
+  });
+
+  it("creates a draft from ready dictation before an AI harness is connected", async () => {
+    const onSubmit = vi.fn();
+    render(
+      <TestComposer
+        connected={false}
+        onSubmit={onSubmit}
+        unavailablePlaceholder="AI harness unavailable"
+      />,
+    );
+
+    const microphone = await screen.findByRole("button", { name: "Start voice input" });
+    expect(microphone.hasAttribute("disabled")).toBe(false);
+    fireEvent.click(microphone);
+    const stop = await screen.findByRole("button", { name: "Stop recording" });
+    fireEvent.click(stop);
+
+    const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
+    await waitFor(() => expect(textarea.value).toBe("spoken addition"));
+    expect(textarea.hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("button", { name: "Send" }).hasAttribute("disabled")).toBe(true);
+    expect(onSubmit).not.toHaveBeenCalled();
   });
 
   it("allows a pending microphone permission request to be cancelled and fences a late stream", async () => {
