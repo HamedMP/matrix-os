@@ -193,7 +193,12 @@ export function createOwnerResourceDriver(options: {
           received += chunk.byteLength;
           if (received > input.size) throw new ResourceCatalogError("invalid");
           digest.update(chunk);
-          await file.write(chunk);
+          // A short write is legal on a regular file; keep writing until the chunk lands.
+          for (let offset = 0; offset < chunk.byteLength;) {
+            const { bytesWritten } = await file.write(chunk, offset, chunk.byteLength - offset);
+            if (bytesWritten <= 0) throw new ResourceCatalogError("unavailable");
+            offset += bytesWritten;
+          }
         }
         if (received !== input.size) throw new ResourceCatalogError("invalid");
         if (digest.digest("hex") !== input.sha256) throw new ResourceCatalogError("conflict");
