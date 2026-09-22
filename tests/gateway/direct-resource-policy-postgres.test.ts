@@ -75,8 +75,32 @@ class MemoryDriver implements CollaborationResourceDriver {
     if (!bytes) throw new ResourceCatalogError("not_found");
     return { size: bytes.byteLength, contentType: "application/octet-stream", stream: new Blob([bytes]).stream() };
   }
+  /** Contiguous buffers handed to the driver for the last write, in order. */
+  readonly writeChunkSizes = new Map<string, number[]>();
   async write(input: { ownerId: string; projectId: string | null; path: string; content: Uint8Array }) {
+    this.writeChunkSizes.set(this.key(input), [input.content.byteLength]);
     this.files.set(this.key(input), input.content);
+  }
+  async writeChunks(input: {
+    ownerId: string; projectId: string | null; path: string; size: number; sha256: string;
+    chunks: AsyncIterable<Uint8Array>;
+  }) {
+    const sizes: number[] = [];
+    const collected: Uint8Array[] = [];
+    const digest = createHash("sha256");
+    let received = 0;
+    for await (const chunk of input.chunks) {
+      received += chunk.byteLength;
+      if (received > input.size) throw new ResourceCatalogError("invalid");
+      sizes.push(chunk.byteLength);
+      collected.push(chunk);
+      digest.update(chunk);
+    }
+    // The owner driver renames the temp file into place only after these hold.
+    if (received !== input.size) throw new ResourceCatalogError("invalid");
+    if (digest.digest("hex") !== input.sha256) throw new ResourceCatalogError("conflict");
+    this.writeChunkSizes.set(this.key(input), sizes);
+    this.files.set(this.key(input), Buffer.concat(collected));
   }
   readonly removed: Array<{ path: string; kind: "file" | "folder" }> = [];
   async remove(input: { ownerId: string; projectId: string | null; path: string; kind: "file" | "folder" }) {
@@ -602,6 +626,41 @@ describe("S12 direct resource policy", () => {
       const again = await signed({ actorId: collaborationActors.editor, scopeId: PROJECT_SCOPE, method: "POST", path, body: commitBody });
       expect(again.status).toBe(200);
       expect(await again.json()).toMatchObject({ replayed: true });
+    });
+
+    it("commits staged parts as bounded chunks instead of one contiguous buffer", async () => {
+      const bytes = new TextEncoder().encode("replacement through two parts");
+      const first = bytes.slice(0, 12);
+      const second = bytes.slice(12);
+      const uploadId = requestId();
+      expect((await signed({ actorId: collaborationActors.editor, scopeId: PROJECT_SCOPE, method: "POST", path,
+        body: { type: "upload_stage", fileId: ids.readme, size: bytes.length, sha256: hash(bytes), clientRequestId: uploadId } })).status).toBe(200);
+      const part = (index: number, chunk: Uint8Array) => signed({ actorId: collaborationActors.editor, scopeId: PROJECT_SCOPE,
+        method: "POST", path, body: { type: "upload_part", uploadId, index, sha256: hash(chunk), chunk: Buffer.from(chunk).toString("base64") } });
+      expect((await part(0, first)).status).toBe(200);
+      expect((await part(1, second)).status).toBe(200);
+      const commit = await signed({ actorId: collaborationActors.editor, scopeId: PROJECT_SCOPE, method: "POST", path,
+        body: { type: "upload_commit", uploadId, expectedRevision: "0", clientRequestId: requestId() } });
+      expect(commit.status).toBe(201);
+      const key = `${collaborationActors.owner}:${PROJECT_ID}:README.md`;
+      // One buffer per staged part, never a single buffer holding the whole upload.
+      expect(driver.writeChunkSizes.get(key)).toEqual([first.byteLength, second.byteLength]);
+      expect(new TextDecoder().decode(driver.files.get(key))).toBe(new TextDecoder().decode(bytes));
+    });
+
+    it("writes nothing when the staged parts do not match the declared checksum", async () => {
+      const bytes = new TextEncoder().encode("declared one thing");
+      const staged = new TextEncoder().encode("delivered another!");
+      expect(staged.byteLength).toBe(bytes.byteLength);
+      const uploadId = requestId();
+      expect((await signed({ actorId: collaborationActors.editor, scopeId: PROJECT_SCOPE, method: "POST", path,
+        body: { type: "upload_stage", fileId: ids.readme, size: bytes.length, sha256: hash(bytes), clientRequestId: uploadId } })).status).toBe(200);
+      expect((await signed({ actorId: collaborationActors.editor, scopeId: PROJECT_SCOPE, method: "POST", path,
+        body: { type: "upload_part", uploadId, index: 0, sha256: hash(staged), chunk: Buffer.from(staged).toString("base64") } })).status).toBe(200);
+      const commit = await signed({ actorId: collaborationActors.editor, scopeId: PROJECT_SCOPE, method: "POST", path,
+        body: { type: "upload_commit", uploadId, expectedRevision: "0", clientRequestId: requestId() } });
+      expect(commit.status).toBe(409);
+      expect(new TextDecoder().decode(driver.files.get(`${collaborationActors.owner}:${PROJECT_ID}:README.md`))).toBe("# Alpha");
     });
 
     it("rejects a changed part and an incomplete commit", async () => {

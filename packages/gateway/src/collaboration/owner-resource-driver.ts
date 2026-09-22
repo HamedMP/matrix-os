@@ -1,5 +1,5 @@
 /** Filesystem driver for owner-home collaboration resources. Catalog IDs, never paths, reach this boundary. */
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { constants, createReadStream } from "node:fs";
 import { lstat, mkdir, open, readdir, realpath, rename, rm, stat } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
@@ -170,11 +170,56 @@ export function createOwnerResourceDriver(options: {
     }
   }
 
+  /**
+   * Streams a staged upload into the home without ever holding it whole. The
+   * temp file is renamed into place only after the stream delivered exactly
+   * `size` bytes hashing to `sha256`, so a short, oversized or altered upload
+   * leaves the existing file untouched.
+   */
+  async function writeFileFromChunks(input: Namespace & {
+    path: string; size: number; sha256: string; chunks: AsyncIterable<Uint8Array>;
+  }) {
+    if (input.size > MAX_STREAM_BYTES) throw new ResourceCatalogError("invalid");
+    const destination = await target(input, true);
+    trackDirectory(dirname(destination));
+    const temp = resolve(dirname(destination), `.matrix-upload-${randomUUID()}`);
+    let written = false;
+    try {
+      const file = await open(temp, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600);
+      try {
+        const digest = createHash("sha256");
+        let received = 0;
+        for await (const chunk of input.chunks) {
+          received += chunk.byteLength;
+          if (received > input.size) throw new ResourceCatalogError("invalid");
+          digest.update(chunk);
+          await file.write(chunk);
+        }
+        if (received !== input.size) throw new ResourceCatalogError("invalid");
+        if (digest.digest("hex") !== input.sha256) throw new ResourceCatalogError("conflict");
+        await file.sync();
+      } finally {
+        await file.close();
+      }
+      await rename(temp, destination);
+      written = true;
+    } catch (error: unknown) {
+      if (error instanceof ResourceCatalogError) throw error;
+      if (missing(error)) throw new ResourceCatalogError("not_found");
+      throw new ResourceCatalogError("unavailable");
+    } finally {
+      if (!written) await rm(temp, { force: true }).catch((error: unknown) => {
+        console.warn("[collaboration-resources] temp cleanup failed", error instanceof Error ? error.name : "UnknownError");
+      });
+    }
+  }
+
   return {
     sweepTemp,
     close: () => clearInterval(timer),
     read: readFile,
     write: writeFile,
+    writeChunks: writeFileFromChunks,
     async remove(input) {
       const path = await target(input, false);
       try {

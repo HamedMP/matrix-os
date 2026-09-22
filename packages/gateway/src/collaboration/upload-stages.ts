@@ -31,6 +31,8 @@ export interface CollaborationUploadStager {
 type StageRow = Awaited<ReturnType<typeof lockStage>>;
 const MAX_ACTIVE_PER_ACTOR_SCOPE = 4;
 const MAX_SIMULTANEOUS_COMMITS = 2;
+/** Parts read from Postgres per commit batch: the whole upload never sits in memory. */
+const COMMIT_PART_BATCH = 32;
 const SWEEP_INTERVAL_MS = 60 * 60 * 1_000;
 const TERMINAL_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
 
@@ -46,6 +48,25 @@ function upload(row: NonNullable<StageRow>): CollaborationUpload {
     expiresAt: new Date(row.expires_at).toISOString(),
   };
 }
+/** Yields the staged parts in index order, one bounded batch of rows at a time. */
+async function* readParts(
+  trx: Transaction<OwnerCollaborationDatabase>,
+  uploadId: string,
+  expectedParts: number,
+): AsyncGenerator<Uint8Array> {
+  for (let start = 0; start < expectedParts; start += COMMIT_PART_BATCH) {
+    const size = Math.min(COMMIT_PART_BATCH, expectedParts - start);
+    const rows = await trx.selectFrom("collaboration_upload_parts").select(["part_index", "bytes"])
+      .where("upload_id", "=", uploadId).where("part_index", ">=", start).where("part_index", "<", start + size)
+      .orderBy("part_index").execute();
+    if (rows.length !== size) throw new ResourceCatalogError("conflict");
+    for (const [offset, part] of rows.entries()) {
+      if (part.part_index !== start + offset) throw new ResourceCatalogError("conflict");
+      yield part.bytes;
+    }
+  }
+}
+
 function parentPath(path: string): string | null {
   const index = path.lastIndexOf("/");
   return index < 0 ? null : path.slice(0, index);
@@ -179,12 +200,10 @@ export function createCollaborationUploadStager(options: {
           return { entry: previous, replayed: true };
         }
         if (row.state !== "staging" || Number(row.received_bytes) !== Number(row.size)) throw new ResourceCatalogError("conflict");
-        const parts = await trx.selectFrom("collaboration_upload_parts").selectAll()
-          .where("upload_id", "=", row.id).orderBy("part_index").execute();
-        if (parts.length !== Number(row.next_index) || parts.some((part, index) => part.part_index !== index)) throw new ResourceCatalogError("conflict");
-        const digest = createHash("sha256");
-        for (const item of parts) digest.update(item.bytes);
-        if (digest.digest("hex") !== row.sha256) throw new ResourceCatalogError("conflict");
+        const expectedParts = Number(row.next_index);
+        const stored = await trx.selectFrom("collaboration_upload_parts").select(({ fn }) => fn.countAll<number>().as("count"))
+          .where("upload_id", "=", row.id).executeTakeFirstOrThrow();
+        if (Number(stored.count) !== expectedParts) throw new ResourceCatalogError("conflict");
         const namespace = await options.catalog.namespaceForScope(context, trx);
         let entry: CatalogEntryRecord;
         if (row.catalog_id) {
@@ -197,8 +216,12 @@ export function createCollaborationUploadStager(options: {
             kind: "file", parentId: row.parent_id, path: row.path, incarnation: "pending",
           }, trx);
         }
-        const bytes = Buffer.concat(parts.map((item) => Buffer.from(item.bytes)), Number(row.size));
-        await options.driver.write({ ownerId: namespace.ownerId, projectId: namespace.projectId, path: row.path, content: bytes });
+        // The driver hashes the stream and only then renames the file into place,
+        // so a contiguous buffer of the whole upload is never built here.
+        await options.driver.writeChunks({
+          ownerId: namespace.ownerId, projectId: namespace.projectId, path: row.path,
+          size: Number(row.size), sha256: row.sha256, chunks: readParts(trx, row.id, expectedParts),
+        });
         entry = await options.catalog.bump(trx, {
           id: entry.id, expectedRevision: Number(action.expectedRevision),
           incarnation: await options.driver.fingerprint({ ownerId: namespace.ownerId, projectId: namespace.projectId, path: row.path }),

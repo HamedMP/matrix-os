@@ -21,6 +21,11 @@ type FileAction = Extract<CollaborationFileActionRequest, { type: "write" | "cre
 export interface CollaborationResourceDriver {
   read(input: Namespace & { path: string }): Promise<{ stream: ReadableStream<Uint8Array>; size: number; contentType?: string }>;
   write(input: Namespace & { path: string; content: Uint8Array }): Promise<void>;
+  /**
+   * Atomic write of a large file the caller never holds whole: the bytes land
+   * only when the stream delivered exactly `size` bytes hashing to `sha256`.
+   */
+  writeChunks(input: Namespace & { path: string; size: number; sha256: string; chunks: AsyncIterable<Uint8Array> }): Promise<void>;
   remove(input: Namespace & { path: string; kind: "file" | "folder" }): Promise<void>;
   rename(input: Namespace & { from: string; to: string }): Promise<void>;
   mkdir(input: Namespace & { path: string }): Promise<void>;
