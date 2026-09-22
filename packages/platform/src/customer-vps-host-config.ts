@@ -2,7 +2,12 @@ import type { CustomerVpsConfig } from './customer-vps-config.js';
 import type { ProvisionRequest } from './customer-vps-schema.js';
 import type { HostBundleRef } from './customer-vps-host-bundle.js';
 import type { CustomerHostConfig } from './customer-vps-cloud-init.js';
-import { buildPlatformRuntimeVerificationToken, buildPlatformSyncVerificationToken, buildPlatformVerificationToken } from './platform-token.js';
+import {
+  buildPlatformRuntimeVerificationToken,
+  buildPlatformSpeechRuntimeVerificationToken,
+  buildPlatformSyncVerificationToken,
+  buildPlatformVerificationToken,
+} from './platform-token.js';
 import { DEFAULT_DEVELOPER_TOOLS, developerToolsShellList } from './developer-tools.js';
 
 export const DEFAULT_CLOUD_INIT_TEMPLATE = [
@@ -28,6 +33,9 @@ export const DEFAULT_CLOUD_INIT_TEMPLATE = [
   '      MATRIX_AUTH_TOKEN={{platformVerificationToken}}',
   '      MATRIX_SYNC_RUNTIME_TOKEN={{syncRuntimeToken}}',
   '      MATRIX_FUNDED_AI_RUNTIME_TOKEN={{fundedAiRuntimeToken}}',
+  '      MATRIX_PLATFORM_SPEECH_ENABLED={{platformSpeechEnabled}}',
+  '      MATRIX_PLATFORM_SPEECH_ORIGIN={{platformSpeechOrigin}}',
+  '      MATRIX_PLATFORM_SPEECH_RUNTIME_TOKEN={{platformSpeechRuntimeToken}}',
   '      MATRIX_CODE_PROXY_TOKEN={{platformVerificationToken}}',
   '      MATRIX_FUNDED_AI_ENABLED={{fundedAiEnabled}}',
   '      MATRIX_FUNDED_AI_RELAY_URL={{fundedAiRelayUrl}}',
@@ -62,6 +70,12 @@ export function buildHostConfig(
   postgresPassword: string,
   bundleRef: HostBundleRef,
 ): CustomerHostConfig {
+  const platformInternalUrl = new URL(config.platformRegisterUrl).origin;
+  const runtimeIdentity = {
+    handle: input.handle,
+    machineId,
+    runtimeSlot: input.runtimeSlot,
+  };
   return {
     machineId,
     clerkUserId: input.clerkUserId,
@@ -72,18 +86,13 @@ export function buildHostConfig(
     updateChannel: config.imageVersion,
     hostBundleUrl: bundleRef.hostBundleUrl,
     platformRegisterUrl: config.platformRegisterUrl,
-    platformInternalUrl: new URL(config.platformRegisterUrl).origin,
+    platformInternalUrl,
     platformVerificationToken: buildPlatformVerificationToken(input.handle, config.platformSecret),
-    syncRuntimeToken: buildPlatformSyncVerificationToken({
-      handle: input.handle,
-      machineId,
-      runtimeSlot: input.runtimeSlot,
-    }, config.platformSecret),
-    fundedAiRuntimeToken: buildPlatformRuntimeVerificationToken({
-      handle: input.handle,
-      machineId,
-      runtimeSlot: input.runtimeSlot,
-    }, config.platformSecret),
+    syncRuntimeToken: buildPlatformSyncVerificationToken(runtimeIdentity, config.platformSecret),
+    fundedAiRuntimeToken: buildPlatformRuntimeVerificationToken(runtimeIdentity, config.platformSecret),
+    platformSpeechEnabled: String(config.platformSpeechEnabled),
+    platformSpeechOrigin: platformInternalUrl,
+    platformSpeechRuntimeToken: buildPlatformSpeechRuntimeVerificationToken(runtimeIdentity, config.platformSecret),
     registrationToken,
     registrationTokenExpiresAt,
     postgresPassword,

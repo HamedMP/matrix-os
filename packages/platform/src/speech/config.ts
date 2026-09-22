@@ -27,18 +27,29 @@ interface EnabledSpeechConfigBase {
   limits: SpeechLimitsConfig;
 }
 
-export type PlatformSpeechConfig = { enabled: false } | (EnabledSpeechConfigBase & ({
+type OpenAiSpeechConfig = {
   provider: "openai";
-  fundingMode: "existing_wallet";
   apiKey: string;
   model: string;
+} & ({
+  fundingMode: "existing_wallet";
   allowedFundingSources: readonly ("promotional" | "addon")[];
 } | {
+  fundingMode: "preview_no_charge";
+  allowedFundingSources: readonly [];
+  previewMaximumOperationsPerRuntime: number;
+  previewNotAfter: string;
+});
+
+type FixtureSpeechConfig = {
   provider: "fixture";
   fundingMode: "fixture_no_charge";
   model: "fixture-transcribe";
   fixtureTranscript: string;
-}));
+};
+
+export type PlatformSpeechConfig = { enabled: false }
+  | (EnabledSpeechConfigBase & (OpenAiSpeechConfig | FixtureSpeechConfig));
 
 export class PlatformSpeechConfigError extends Error {
   constructor() {
@@ -112,6 +123,30 @@ export function loadPlatformSpeechConfig(env: NodeJS.ProcessEnv = process.env): 
   const apiKey = env.PLATFORM_SPEECH_OPENAI_API_KEY?.trim() ?? "";
   const model = ModelSchema.safeParse(env.PLATFORM_SPEECH_MODEL);
   if (apiKey.length < 16 || !model.success) return invalid();
+  const previewNoCharge = env.PLATFORM_PREVIEW === "true"
+    && env.PLATFORM_SPEECH_PREVIEW_NO_CHARGE === "true";
+  if (env.PLATFORM_SPEECH_PREVIEW_NO_CHARGE === "true" && !previewNoCharge) return invalid();
+  if (previewNoCharge) {
+    const previewNotAfter = z.string().datetime({ offset: true })
+      .safeParse(env.PLATFORM_SPEECH_PREVIEW_NOT_AFTER);
+    if (!previewNotAfter.success) return invalid();
+    return {
+      ...common,
+      provider,
+      fundingMode: "preview_no_charge",
+      apiKey,
+      model: model.data,
+      microusdPerMinute: 0,
+      allowedFundingSources: [],
+      previewMaximumOperationsPerRuntime: integer(
+        env.PLATFORM_SPEECH_PREVIEW_MAX_OPERATIONS_PER_RUNTIME,
+        undefined,
+        1,
+        10_000,
+      ),
+      previewNotAfter: previewNotAfter.data,
+    };
+  }
   return {
     ...common,
     provider,

@@ -72,6 +72,9 @@ describe('platform/customer-vps-cloud-init', () => {
     posthogApiHost: '/relay',
     fundedAiEnabled: 'true',
     fundedAiRelayUrl: 'https://relay.matrix-os.com',
+    platformSpeechEnabled: 'true',
+    platformSpeechOrigin: 'https://platform.example',
+    platformSpeechRuntimeToken: 'speech-runtime-verification-secret',
   };
 
   it('renders the registration deadline used to bound service retries', async () => {
@@ -414,6 +417,9 @@ exit 99
     expect(cloudInit).toContain('MATRIX_AUTH_TOKEN={{platformVerificationToken}}');
     expect(cloudInit).toContain('MATRIX_CODE_PROXY_TOKEN={{platformVerificationToken}}');
     expect(cloudInit).toContain('MATRIX_FUNDED_AI_RUNTIME_TOKEN={{fundedAiRuntimeToken}}');
+    expect(cloudInit).toContain('MATRIX_PLATFORM_SPEECH_ENABLED={{platformSpeechEnabled}}');
+    expect(cloudInit).toContain('MATRIX_PLATFORM_SPEECH_ORIGIN={{platformSpeechOrigin}}');
+    expect(cloudInit).toContain('MATRIX_PLATFORM_SPEECH_RUNTIME_TOKEN={{platformSpeechRuntimeToken}}');
     expect(cloudInit).toContain('PLATFORM_INTERNAL_URL={{platformInternalUrl}}');
     expect(cloudInit).toContain('POSTHOG_TOKEN={{posthogToken}}');
     expect(cloudInit).toContain('NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN={{posthogProjectToken}}');
@@ -734,7 +740,7 @@ exit 99
 
   it('redacts bootstrap secrets before logging rendered cloud-init', () => {
     const rendered = renderCloudInitTemplate(
-      'token={{registrationToken}}\npassword={{postgresPassword}}\nplatform={{platformVerificationToken}}\nfunded={{fundedAiRuntimeToken}}\n',
+      'token={{registrationToken}}\npassword={{postgresPassword}}\nplatform={{platformVerificationToken}}\nfunded={{fundedAiRuntimeToken}}\nspeech={{platformSpeechRuntimeToken}}\n',
       input,
     );
 
@@ -744,6 +750,7 @@ exit 99
     expect(redacted).not.toContain('postgres-secret');
     expect(redacted).not.toContain('platform-verification-secret');
     expect(redacted).not.toContain('funded-runtime-verification-secret');
+    expect(redacted).not.toContain('speech-runtime-verification-secret');
     expect(redacted).toContain('[redacted]');
   });
 

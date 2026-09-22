@@ -100,6 +100,21 @@ afterEach(async () => {
 });
 
 describe('Preview VPS provisioning workflow', () => {
+  it('publishes no privileged runtime credential in the exact-head handoff artifact', () => {
+    const workflow = YAML.parse(readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8'));
+    const deployStep = workflow.jobs.deploy.steps.find(
+      (step: { name?: string }) => step.name === 'Deploy preview bundle to preview VPS',
+    ).run as string;
+    const artifact = workflow.jobs.deploy.steps.find(
+      (step: { name?: string }) => step.name === 'Publish exact-head preview runtime route',
+    );
+
+    expect(deployStep).toContain("'{handle:$handle,address:$address}' > preview-runtime-route.json");
+    expect(deployStep).not.toContain('plaintext=/tmp/preview-runtime-access.json');
+    expect(deployStep).not.toContain('--arg token "$runtime_token"');
+    expect(artifact.with.path.trim()).toBe('preview-runtime-route.json');
+  });
+
   it('collects bounded updater diagnostics before an install timeout', () => {
     const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
     const deployStep = YAML.parse(workflow).jobs.deploy.steps.find(

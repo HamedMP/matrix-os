@@ -322,7 +322,7 @@ function runtimeToken(identity: {
 }, platformSecret: string): string {
   return createHmac("sha256", platformSecret)
     .update(JSON.stringify([
-      "matrix-funded-ai-runtime",
+      "matrix-platform-speech-runtime",
       1,
       identity.handle,
       identity.machineId,
@@ -396,7 +396,7 @@ export function createLocalSpeechFixturePlan(options: {
       MATRIX_RUNTIME_SLOT: identity.runtimeSlot,
       MATRIX_CLERK_USER_ID: identity.ownerId,
       MATRIX_USER_ID: identity.ownerId,
-      MATRIX_FUNDED_AI_RUNTIME_TOKEN: runtimeToken(identity, platformSecret),
+      MATRIX_PLATFORM_SPEECH_RUNTIME_TOKEN: runtimeToken(identity, platformSecret),
       MATRIX_AUTH_TOKEN: gatewayToken,
       UPGRADE_TOKEN: gatewayToken,
       MATRIX_HOME: homePath,

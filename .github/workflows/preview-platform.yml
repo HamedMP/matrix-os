@@ -53,6 +53,7 @@ on:
         default: false
 
 permissions:
+  actions: read
   contents: read
   id-token: write
   pull-requests: write
@@ -224,6 +225,31 @@ jobs:
             exit 1
           fi
 
+      - name: Verify preview speech secrets
+        if: steps.config.outputs.configured == 'true'
+        run: |
+          set -euo pipefail
+          for secret_name in platform-speech-openai-api-key-preview platform-speech-secret-preview; do
+            secret_tmpfile="$(mktemp)"
+            trap 'rm -f "$secret_tmpfile"' EXIT
+            gcloud secrets versions access latest --secret "$secret_name" \
+              --project "$GCP_PROJECT_ID" >"$secret_tmpfile"
+            test -s "$secret_tmpfile"
+            accessor_member="$(
+              gcloud secrets get-iam-policy "$secret_name" \
+                --project "$GCP_PROJECT_ID" \
+                --flatten='bindings[].members' \
+                --filter="bindings.role:roles/secretmanager.secretAccessor AND bindings.members:serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}" \
+                --format='value(bindings.members)' | head -1
+            )"
+            if [ "$accessor_member" != "serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}" ]; then
+              echo "Preview speech secret access is misconfigured." >&2
+              exit 1
+            fi
+            rm -f "$secret_tmpfile"
+            trap - EXIT
+          done
+
       - name: Deploy zero-traffic tagged revision to preview service
         if: steps.config.outputs.configured == 'true'
         run: |
@@ -242,6 +268,7 @@ jobs:
             funded_ai_env_bindings="${funded_ai_env_bindings}|MATRIX_FUNDED_AI_RELAY_URL=${MATRIX_FUNDED_AI_RELAY_URL}"
             funded_ai_secret_bindings=",AI_RELAY_CONTROL_TOKEN=ai-relay-control-token:latest,AI_FUNDED_CREDENTIAL_HASH_SECRET=ai-funded-credential-hash-secret:latest"
           fi
+          PREVIEW_SPEECH_NOT_AFTER="$(date -u -d '+24 hours' '+%Y-%m-%dT%H:%M:%S.000Z')"
           deploy_preview() {
             local api_origin="$1"
             local custom_mcp_secret_bindings=""
@@ -256,8 +283,8 @@ jobs:
               --tag "pr-${PR_NUMBER}" \
               --no-traffic \
               --allow-unauthenticated \
-              --set-env-vars "^|^PLATFORM_RUNTIME_MODE=cloud_run|PLATFORM_PORT=8080|PLATFORM_PREVIEW=true|CUSTOMER_VPS_ENABLED=true|CUSTOMER_VPS_IMAGE_VERSION=dev|CUSTOMER_VPS_CLOUD_INIT_PATH=distro/customer-vps/cloud-init.yaml|AUTH_SHELL_HOST=127.0.0.1|AUTH_SHELL_PORT=3200|MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED=false|MATRIX_STRIPE_BILLING_ENABLED=true|MATRIX_CARD_TRIALS_ENABLED=${MATRIX_CARD_TRIALS_ENABLED}|MATRIX_CARD_TRIAL_DAYS=${MATRIX_CARD_TRIAL_DAYS}|PLATFORM_PUBLIC_URL=${PREVIEW_PUBLIC_URL}|MATRIX_API_ORIGIN=${api_origin}|MATRIX_APP_URL=${PREVIEW_PUBLIC_URL}|MATRIX_APP_DOMAIN_HOSTS=${PREVIEW_DOMAIN},${api_origin#https://}|CUSTOMER_VPS_TLS_VERIFY=false|CUSTOM_MCP_ENABLED=${CUSTOM_MCP_ENABLED}|MCP_OAUTH_CALLBACK_URL=${api_origin}/api/mcp-servers/oauth/callback${funded_ai_env_bindings}" \
-              --set-secrets "PLATFORM_DATABASE_URL=platform-database-url-staging:latest,PLATFORM_SECRET=platform-preview-secret:latest,GOLDEN_SNAPSHOT_OPERATOR_SECRET=golden-snapshot-operator-secret-preview:latest,PLATFORM_JWT_SECRET=platform-preview-jwt-secret:latest,EDGE_ROUTER_SECRET=edge-router-preview-secret:latest,CLERK_SECRET_KEY=clerk-secret-key:latest,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=next-public-clerk-publishable-key:latest,R2_BUNDLES_ACCOUNT_ID=r2-bundles-account-id:latest,R2_BUNDLES_BUCKET=r2-bundles-bucket:latest,R2_BUNDLES_ENDPOINT=r2-bundles-endpoint:latest,R2_BUNDLES_ACCESS_KEY_ID=r2-bundles-access-key-id:latest,R2_BUNDLES_SECRET_ACCESS_KEY=r2-bundles-secret-access-key:latest,STRIPE_SECRET_KEY=stripe-secret-key-test:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret-test:latest,STRIPE_PRICE_MATRIX_STARTER_MONTHLY=stripe-price-matrix-starter-monthly-test:latest,STRIPE_PRICE_MATRIX_STARTER_ANNUAL=stripe-price-matrix-starter-annual-test:latest,STRIPE_PRICE_MATRIX_BUILDER_MONTHLY=stripe-price-matrix-builder-monthly-test:latest,STRIPE_PRICE_MATRIX_BUILDER_ANNUAL=stripe-price-matrix-builder-annual-test:latest,STRIPE_PRICE_MATRIX_MAX_MONTHLY=stripe-price-matrix-max-monthly-test:latest,STRIPE_PRICE_MATRIX_MAX_ANNUAL=stripe-price-matrix-max-annual-test:latest,STRIPE_LEGACY_PRICE_CATALOG_JSON=stripe-legacy-price-catalog-json-test:latest${custom_mcp_secret_bindings}${funded_ai_secret_bindings}" \
+              --set-env-vars "^|^PLATFORM_RUNTIME_MODE=cloud_run|PLATFORM_PORT=8080|PLATFORM_PREVIEW=true|CUSTOMER_VPS_ENABLED=true|CUSTOMER_VPS_IMAGE_VERSION=dev|CUSTOMER_VPS_CLOUD_INIT_PATH=distro/customer-vps/cloud-init.yaml|AUTH_SHELL_HOST=127.0.0.1|AUTH_SHELL_PORT=3200|MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED=false|MATRIX_STRIPE_BILLING_ENABLED=true|MATRIX_CARD_TRIALS_ENABLED=${MATRIX_CARD_TRIALS_ENABLED}|MATRIX_CARD_TRIAL_DAYS=${MATRIX_CARD_TRIAL_DAYS}|PLATFORM_PUBLIC_URL=${PREVIEW_PUBLIC_URL}|MATRIX_API_ORIGIN=${api_origin}|MATRIX_APP_URL=${PREVIEW_PUBLIC_URL}|MATRIX_APP_DOMAIN_HOSTS=${PREVIEW_DOMAIN},${api_origin#https://}|CUSTOMER_VPS_TLS_VERIFY=false|CUSTOM_MCP_ENABLED=${CUSTOM_MCP_ENABLED}|MCP_OAUTH_CALLBACK_URL=${api_origin}/api/mcp-servers/oauth/callback|MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED=true|PLATFORM_SPEECH_ENABLED=true|PLATFORM_SPEECH_PROVIDER=openai|PLATFORM_SPEECH_MODEL=gpt-4o-mini-transcribe|PLATFORM_SPEECH_POLICY_REVISION=preview-speech-v1|PLATFORM_SPEECH_PREVIEW_NO_CHARGE=true|PLATFORM_SPEECH_PREVIEW_MAX_OPERATIONS_PER_RUNTIME=25|PLATFORM_SPEECH_PREVIEW_NOT_AFTER=${PREVIEW_SPEECH_NOT_AFTER}|PLATFORM_SPEECH_OWNER_AUDIO_ENABLED=false${funded_ai_env_bindings}" \
+              --set-secrets "PLATFORM_DATABASE_URL=platform-database-url-staging:latest,PLATFORM_SECRET=platform-preview-secret:latest,GOLDEN_SNAPSHOT_OPERATOR_SECRET=golden-snapshot-operator-secret-preview:latest,PLATFORM_JWT_SECRET=platform-preview-jwt-secret:latest,EDGE_ROUTER_SECRET=edge-router-preview-secret:latest,CLERK_SECRET_KEY=clerk-secret-key:latest,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=next-public-clerk-publishable-key:latest,R2_BUNDLES_ACCOUNT_ID=r2-bundles-account-id:latest,R2_BUNDLES_BUCKET=r2-bundles-bucket:latest,R2_BUNDLES_ENDPOINT=r2-bundles-endpoint:latest,R2_BUNDLES_ACCESS_KEY_ID=r2-bundles-access-key-id:latest,R2_BUNDLES_SECRET_ACCESS_KEY=r2-bundles-secret-access-key:latest,STRIPE_SECRET_KEY=stripe-secret-key-test:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret-test:latest,STRIPE_PRICE_MATRIX_STARTER_MONTHLY=stripe-price-matrix-starter-monthly-test:latest,STRIPE_PRICE_MATRIX_STARTER_ANNUAL=stripe-price-matrix-starter-annual-test:latest,STRIPE_PRICE_MATRIX_BUILDER_MONTHLY=stripe-price-matrix-builder-monthly-test:latest,STRIPE_PRICE_MATRIX_BUILDER_ANNUAL=stripe-price-matrix-builder-annual-test:latest,STRIPE_PRICE_MATRIX_MAX_MONTHLY=stripe-price-matrix-max-monthly-test:latest,STRIPE_PRICE_MATRIX_MAX_ANNUAL=stripe-price-matrix-max-annual-test:latest,STRIPE_LEGACY_PRICE_CATALOG_JSON=stripe-legacy-price-catalog-json-test:latest,PLATFORM_SPEECH_OPENAI_API_KEY=platform-speech-openai-api-key-preview:latest,PLATFORM_SPEECH_SECRET=platform-speech-secret-preview:latest${custom_mcp_secret_bindings}${funded_ai_secret_bindings}" \
               --cpu 1 --memory 1Gi --concurrency 10 --timeout 300 --min-instances 0 --max-instances 2 \
               --quiet
           }
@@ -405,17 +432,62 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.connect_share_preview
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    outputs:
+      head_sha: ${{ steps.runtime.outputs.head_sha }}
     env:
       PR_NUMBER: ${{ inputs.pr }}
-      PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL || 'https://app.matrix-os.com' }}
-      PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}
+      GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - name: Select exact-head preview runtime artifact
+        id: runtime
+        run: |
+          set -euo pipefail
+          [[ "$PR_NUMBER" =~ ^[1-9][0-9]{0,8}$ ]]
+          pull_request="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
+          expected_head_sha="$(jq -er --arg repository "$GITHUB_REPOSITORY" '
+            select(.state == "open" and .head.repo.full_name == $repository)
+            | .head.sha
+            | select(type == "string" and test("^[a-f0-9]{40}$"))
+          ' <<< "$pull_request")"
+          expected_artifact="preview-runtime-access-$PR_NUMBER"
+          run_id=""
+          mapfile -t candidate_runs < <(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/preview-vps.yml/runs?head_sha=${expected_head_sha}&event=pull_request&status=success&per_page=20" \
+            --jq '.workflow_runs | sort_by(.created_at) | reverse | .[].id')
+          for candidate in "${candidate_runs[@]}"; do
+            artifact_id="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${candidate}/artifacts" | \
+              jq -r --arg name "$expected_artifact" '[.artifacts[] | select(.name == $name and .expired == false)] | .[0].id // empty')"
+            if [[ "$artifact_id" =~ ^[1-9][0-9]*$ ]]; then
+              run_id="$candidate"
+              break
+            fi
+          done
+          if ! [[ "$run_id" =~ ^[1-9][0-9]*$ ]]; then
+            echo "A successful exact-head Preview VPS run is required before connecting speech." >&2
+            exit 1
+          fi
+          echo "head_sha=$expected_head_sha" >> "$GITHUB_OUTPUT"
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@v8
         with:
-          node-version: 24
-      - name: Read the one existing preview route
-        run: node scripts/chat-share-preview-fixture.mjs --select
+          name: preview-runtime-access-${{ inputs.pr }}
+          path: preview-runtime-access
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.runtime.outputs.run_id }}
+          github-token: ${{ github.token }}
+      - name: Preserve exact-head preview runtime route
+        run: |
+          set -euo pipefail
+          public_route=preview-runtime-access/preview-runtime-route.json
+          test -s "$public_route"
+          test "$(wc -c < "$public_route")" -le 1024
+          jq -e --arg handle "pr-$PR_NUMBER" '
+            type == "object"
+            and keys == ["address", "handle"]
+            and .handle == $handle
+            and (.address | type == "string" and test("^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$"))
+          ' "$public_route" >/dev/null
+          cp "$public_route" preview-share-route.json
+          chmod 600 preview-share-route.json
       - uses: actions/upload-artifact@v4
         with:
           name: preview-share-route
@@ -432,7 +504,12 @@ jobs:
       GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
       GCP_REGION: ${{ vars.GCP_REGION }}
       CLOUD_RUN_PREVIEW_SERVICE: ${{ vars.CLOUD_RUN_PREVIEW_SERVICE }}
+      ARTIFACT_REPOSITORY: ${{ vars.ARTIFACT_REPOSITORY }}
       PR_NUMBER: ${{ inputs.pr }}
+      PREVIEW_CLERK_USER_ID: ${{ secrets.PREVIEW_CLERK_USER_ID }}
+      CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
+      EXPECTED_HEAD_SHA: ${{ needs.select-share-preview.outputs.head_sha }}
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/download-artifact@v4
@@ -452,14 +529,95 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$PR_NUMBER" =~ ^[1-9][0-9]{0,8}$ ]]
+          pr_head="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq '.head.sha')"
+          if [ "$pr_head" != "$EXPECTED_HEAD_SHA" ]; then
+            echo "The requested PR head changed before preview connection." >&2
+            exit 1
+          fi
           test "$CLOUD_RUN_PREVIEW_SERVICE" = matrix-platform-preview
           gcloud help secrets versions access >/dev/null
           preview_db="$(gcloud secrets versions access latest --secret platform-database-url-staging --project "$GCP_PROJECT_ID" --quiet)"
           echo "::add-mask::$preview_db"
-          PREVIEW_DATABASE_URL="$preview_db" node scripts/chat-share-preview-fixture.mjs
+          PREVIEW_DATABASE_URL="$preview_db" PREVIEW_CLERK_USER_ID="$PREVIEW_CLERK_USER_ID" \
+            node --input-type=module <<'NODE'
+          import { readFile } from "node:fs/promises";
+          import { Client } from "pg";
+          import { selectSharePreviewMachine } from "./scripts/chat-share-preview-fixture.mjs";
+
+          const actorId = process.env.PREVIEW_CLERK_USER_ID ?? "";
+          const prNumber = process.env.PR_NUMBER ?? "";
+          if (!/^user_[A-Za-z0-9]+$/.test(actorId)) {
+            console.error("Preview fixture authorization is invalid.");
+            process.exit(1);
+          }
+          const client = new Client({
+            connectionString: process.env.PREVIEW_DATABASE_URL,
+            connectionTimeoutMillis: 10_000,
+            statement_timeout: 10_000,
+          });
+          try {
+            const fixture = JSON.parse(await readFile("preview-share-route.json", "utf8"));
+            const { handle, address } = selectSharePreviewMachine({ machines: [{
+              handle: fixture.handle,
+              runtimeSlot: fixture.handle,
+              publicIPv4: fixture.address,
+              provisioningClass: "preview",
+              status: "running",
+            }] }, prNumber);
+            await client.connect();
+            const result = await client.query(`INSERT INTO user_machines
+              (machine_id, clerk_user_id, handle, runtime_slot, provisioning_class, public_ipv4,
+               status, provisioned_at, developer_tools, access_clerk_user_ids)
+              VALUES ($1, 'chat-share-preview-fixture', $2, $2, 'preview', $3,
+                      'running', $4, '[]', ARRAY[$5]::TEXT[])
+              ON CONFLICT (machine_id) DO UPDATE SET
+                public_ipv4 = EXCLUDED.public_ipv4,
+                status = 'running',
+                deleted_at = NULL,
+                provisioned_at = EXCLUDED.provisioned_at,
+                access_clerk_user_ids = CASE
+                  WHEN $5 = ANY(user_machines.access_clerk_user_ids)
+                    THEN user_machines.access_clerk_user_ids
+                  ELSE array_append(user_machines.access_clerk_user_ids, $5)
+                END
+              WHERE user_machines.clerk_user_id = 'chat-share-preview-fixture'
+                AND user_machines.handle = EXCLUDED.handle
+                AND user_machines.runtime_slot = EXCLUDED.runtime_slot
+                AND user_machines.provisioning_class = 'preview'
+                AND $5 <> user_machines.clerk_user_id
+                AND ($5 = ANY(user_machines.access_clerk_user_ids)
+                  OR cardinality(user_machines.access_clerk_user_ids) < 8)
+              RETURNING $5 = ANY(access_clerk_user_ids) AS authorized`, [
+              `chat-share-preview-${handle}`, handle, address, new Date().toISOString(), actorId,
+            ]);
+            if (result.rowCount !== 1 || result.rows[0]?.authorized !== true) {
+              throw new Error("authorization rejected");
+            }
+          } catch {
+            console.error("Preview fixture authorization failed.");
+            process.exitCode = 1;
+          } finally {
+            try {
+              await client.end();
+            } catch {
+              console.error("Preview fixture cleanup failed.");
+              process.exitCode = 1;
+            }
+          }
+          NODE
       - name: Enable the existing tagged host without moving traffic
         run: |
           set -euo pipefail
+          speech_config_response=/tmp/preview-speech-config.json
+          gateway_restart_response=/tmp/preview-gateway-restart.json
+          gateway_active_response=/tmp/preview-gateway-active.json
+          speech_capabilities_response=/tmp/preview-speech-capabilities.json
+          gateway_capabilities_response=/tmp/preview-gateway-capabilities.json
+          cleanup_preview_connection() {
+            rm -f "$speech_config_response" "$gateway_restart_response" "$gateway_active_response" \
+              "$speech_capabilities_response" "$gateway_capabilities_response"
+          }
+          trap cleanup_preview_connection EXIT
           gcloud help run services describe >/dev/null
           gcloud help run revisions describe >/dev/null
           gcloud help run deploy >/dev/null
@@ -467,9 +625,191 @@ jobs:
           revision="$(jq -er --arg tag "pr-$PR_NUMBER" '.status.traffic[] | select(.tag == $tag) | .revisionName' <<< "$service")"
           url="$(jq -er --arg tag "pr-$PR_NUMBER" '.status.traffic[] | select(.tag == $tag) | .url' <<< "$service")"
           image="$(gcloud run revisions describe "$revision" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(spec.containers[0].image)' --quiet)"
+          expected_image="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/matrix-platform:pr-${PR_NUMBER}-${EXPECTED_HEAD_SHA::12}"
+          expected_digest="$(gcloud artifacts docker images describe "$expected_image" \
+            --project "$GCP_PROJECT_ID" --format='value(image_summary.digest)' --quiet)"
+          expected_digest_image="${expected_image%:*}@${expected_digest}"
+          if [ -z "$expected_digest" ] || { [ "$image" != "$expected_image" ] && [ "$image" != "$expected_digest_image" ]; }; then
+            echo "The tagged platform preview does not match the exact PR head." >&2
+            exit 1
+          fi
           # Match the existing platform VPS-origin TLS policy (tracked in #410).
           # This applies only to the dedicated Preview service and registered VPS addresses.
           gcloud run deploy "$CLOUD_RUN_PREVIEW_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
             --image "$image" --tag "pr-$PR_NUMBER" --no-traffic \
             --update-env-vars "^@^MATRIX_APP_DOMAIN_HOSTS=preview.matrix-os.com,${url#https://}@CUSTOMER_VPS_TLS_VERIFY=false" --quiet
+          if ! [[ "$PREVIEW_CLERK_USER_ID" =~ ^user_[A-Za-z0-9]+$ ]]; then
+            echo "PREVIEW_CLERK_USER_ID is required for preview speech authorization." >&2
+            exit 1
+          fi
+          handle="pr-$PR_NUMBER"
+          machine_id="chat-share-preview-$handle"
+          if [ -z "${CLERK_SECRET_KEY:-}" ]; then
+            echo "Preview Clerk authentication is not configured." >&2
+            exit 1
+          fi
+          sessions="$(curl --fail --silent --show-error --max-time 30 \
+            "https://api.clerk.com/v1/sessions?user_id=${PREVIEW_CLERK_USER_ID}&status=active&limit=10" \
+            -H "authorization: Bearer ${CLERK_SECRET_KEY}" \
+            -H "Clerk-API-Version: 2025-11-10")"
+          session_id="$(jq -er \
+            'sort_by(.last_active_at // 0) | reverse | .[0].id | select(type == "string" and test("^sess_[A-Za-z0-9]+$"))' \
+            <<< "$sessions")"
+          session_token_payload="$(curl --fail --silent --show-error --max-time 30 \
+            -X POST "https://api.clerk.com/v1/sessions/${session_id}/tokens" \
+            -H "authorization: Bearer ${CLERK_SECRET_KEY}" \
+            -H "Clerk-API-Version: 2025-11-10" \
+            -H "content-type: application/json" \
+            --data-binary '{"expires_in_seconds":300}')"
+          preview_session_token="$(jq -er '.jwt | select(type == "string" and length <= 8192)' \
+            <<< "$session_token_payload")"
+          echo "::add-mask::$preview_session_token"
+          unset sessions session_token_payload
+          terminal_url="${url}/vm/${handle}/api/terminal/run"
+          preview_platform_secret="$(gcloud secrets versions access latest \
+            --secret platform-preview-secret --project "$GCP_PROJECT_ID" --quiet)"
+          echo "::add-mask::$preview_platform_secret"
+          speech_token="$(PREVIEW_SIGNING_SECRET="$preview_platform_secret" node --input-type=module -e '
+            import { createHmac } from "node:crypto";
+            process.stdout.write(createHmac("sha256", process.env.PREVIEW_SIGNING_SECRET).update(JSON.stringify([
+              "matrix-platform-speech-runtime", 1, process.argv[1], process.argv[2], process.argv[3],
+            ])).digest("hex"));
+          ' "$handle" "$machine_id" "$handle")"
+          echo "::add-mask::$speech_token"
+          runtime_config="$(jq -cn \
+            --arg origin "$url" \
+            --arg token "$speech_token" \
+            --arg owner "$PREVIEW_CLERK_USER_ID" \
+            --arg machine "$machine_id" \
+            --arg slot "$handle" \
+            '{
+              MATRIX_PREVIEW_RUNTIME:"true",
+              MATRIX_PLATFORM_SPEECH_ENABLED:"true",
+              MATRIX_PLATFORM_SPEECH_ORIGIN:$origin,
+              MATRIX_PLATFORM_SPEECH_RUNTIME_TOKEN:$token,
+              MATRIX_PLATFORM_SPEECH_REQUEST_OWNER_ID:$owner,
+              MATRIX_PLATFORM_SPEECH_OWNER_ID:"chat-share-preview-fixture",
+              MATRIX_PLATFORM_SPEECH_MACHINE_ID:$machine,
+              MATRIX_PLATFORM_SPEECH_RUNTIME_SLOT:$slot
+            }')"
+          read -r -d '' patch_script <<'PYTHON' || true
+          import json
+          import os
+          import re
+          import stat
+          import sys
+          import tempfile
+
+          path = "/opt/matrix/env/host.env"
+          config = json.loads(sys.argv[1])
+          if not isinstance(config, dict) or not config:
+              raise ValueError("invalid preview runtime configuration")
+          for key, value in config.items():
+              if not re.fullmatch(r"[A-Z][A-Z0-9_]{0,79}", key) or not isinstance(value, str):
+                  raise ValueError("invalid preview runtime configuration")
+              if not value or len(value) > 2048 or "\n" in value or "\r" in value or "\0" in value:
+                  raise ValueError("invalid preview runtime configuration")
+          metadata = os.lstat(path)
+          if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != 0 or metadata.st_size > 1024 * 1024:
+              raise ValueError("invalid host environment file")
+          with open(path, "r", encoding="utf-8") as source:
+              lines = source.read().splitlines()
+          keys = set(config)
+          lines = [line for line in lines if line.split("=", 1)[0] not in keys]
+          lines.extend(f"{key}={config[key]}" for key in sorted(keys))
+          directory = os.path.dirname(path)
+          fd, temporary = tempfile.mkstemp(prefix=".host.env.preview.", dir=directory, text=True)
+          try:
+              os.fchmod(fd, 0o640)
+              os.fchown(fd, 0, metadata.st_gid)
+              with os.fdopen(fd, "w", encoding="utf-8") as target:
+                  target.write("\n".join(lines) + "\n")
+                  target.flush()
+                  os.fsync(target.fileno())
+              os.replace(temporary, path)
+              directory_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+              try:
+                  os.fsync(directory_fd)
+              finally:
+                  os.close(directory_fd)
+          finally:
+              if os.path.exists(temporary):
+                  os.unlink(temporary)
+          PYTHON
+          send_runtime_command() {
+            local body="$1" response="$2"
+            curl --fail --silent --show-error --max-time 45 \
+              --retry 5 --retry-all-errors --retry-delay 2 --retry-max-time 30 \
+              -o "$response" -X POST "$terminal_url" \
+              -H "authorization: Bearer ${preview_session_token}" \
+              -H 'content-type: application/json' --data-binary "$body"
+            jq -e 'select(.exitCode==0 and .timedOut==false and .truncated==false and .signal==null)' \
+              "$response" >/dev/null
+          }
+          body="$(jq -cn --arg script "$patch_script" --arg config "$runtime_config" \
+            '{command:["/usr/bin/sudo","/usr/bin/python3","-c",$script,$config],timeoutMs:10000}')"
+          send_runtime_command "$body" "$speech_config_response"
+          body='{"command":["/usr/bin/sudo","/usr/bin/systemctl","restart","matrix-gateway.service"],"timeoutMs":30000}'
+          send_runtime_command "$body" "$gateway_restart_response"
+          body='{"command":["/usr/bin/systemctl","is-active","--quiet","matrix-gateway.service"],"timeoutMs":10000}'
+          send_runtime_command "$body" "$gateway_active_response"
+          capability_url="${url}/internal/containers/${handle}/speech/capabilities?runtimeSlot=${handle}"
+          curl --fail --silent --show-error --max-time 15 \
+            -H "authorization: Bearer ${speech_token}" "$capability_url" \
+            -o "$speech_capabilities_response"
+          jq -e '.fileTranscription.status == "ready" and .fileTranscription.dictation.enabled == true' \
+            "$speech_capabilities_response" >/dev/null
+          read -r -d '' gateway_probe_script <<'PYTHON' || true
+          import json
+          import os
+          import re
+          import stat
+          import urllib.request
+
+          path = "/opt/matrix/env/host.env"
+          fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+          try:
+              metadata = os.fstat(fd)
+              if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != 0 or metadata.st_size > 1024 * 1024:
+                  raise ValueError("invalid host environment file")
+              source = os.fdopen(fd, "r", encoding="utf-8")
+              fd = -1
+              with source:
+                  token_lines = [
+                      line.removeprefix("MATRIX_AUTH_TOKEN=")
+                      for line in source.read().splitlines()
+                      if line.startswith("MATRIX_AUTH_TOKEN=")
+                  ]
+          finally:
+              if fd >= 0:
+                  os.close(fd)
+          if len(token_lines) != 1:
+              raise ValueError("invalid gateway authentication configuration")
+          token = token_lines[0]
+          if re.fullmatch(r"[a-f0-9]{64}", token) is None:
+              raise ValueError("invalid gateway authentication configuration")
+          results = {}
+          for name, path in (
+              ("speech", "/api/speech/capabilities"),
+              ("providers", "/api/chat-providers"),
+          ):
+              request = urllib.request.Request(
+                  f"http://127.0.0.1:4000{path}",
+                  headers={"authorization": f"Bearer {token}"},
+              )
+              with urllib.request.urlopen(request, timeout=10) as response:
+                  if response.status != 200:
+                      raise RuntimeError("gateway preview probe failed")
+                  results[name] = json.load(response)
+          print(json.dumps(results, separators=(",", ":")))
+          PYTHON
+          body="$(jq -cn --arg script "$gateway_probe_script" \
+            '{command:["/usr/bin/python3","-c",$script],timeoutMs:30000}')"
+          send_runtime_command "$body" "$gateway_capabilities_response"
+          jq -e '
+            (.stdout | fromjson) as $result
+            | $result.speech.fileTranscription.status == "ready"
+            and $result.speech.fileTranscription.dictation.enabled == true
+            and ($result.providers | type == "object")
+          ' "$gateway_capabilities_response" >/dev/null
           echo "Share preview origin: $url" >> "$GITHUB_STEP_SUMMARY"

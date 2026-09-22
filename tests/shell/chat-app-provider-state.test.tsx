@@ -345,7 +345,7 @@ describe("Chat canonical provider state", () => {
     fireEvent.click(screen.getByRole("button", { name: "Choose model and connection" }));
     fireEvent.click(screen.getByText("Manage agents"));
     expect(await screen.findByText("Pi — Disabled in Settings")).toBeVisible();
-    const draft = screen.getByPlaceholderText("AI harness unavailable");
+    const draft = screen.getByPlaceholderText("Write or dictate a draft — connect a harness to send");
     expect(draft).toBeEnabled();
     fireEvent.change(draft, { target: { value: "Keep this offline draft" } });
     expect(draft).toHaveValue("Keep this offline draft");
@@ -392,7 +392,7 @@ describe("Chat canonical provider state", () => {
     />);
 
     expect(await screen.findByText("Connect a harness in Settings to start chatting.")).toBeVisible();
-    const draft = screen.getByPlaceholderText("AI harness unavailable");
+    const draft = screen.getByPlaceholderText("Write or dictate a draft — connect a harness to send");
     expect(draft).toBeEnabled();
     fireEvent.change(draft, { target: { value: "Keep this bound draft" } });
     expect(draft).toHaveValue("Keep this bound draft");
