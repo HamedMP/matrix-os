@@ -153,6 +153,43 @@ describe("workspace API routes", () => {
     );
   });
 
+  it("retries incomplete deletion without requiring active-project admission", async () => {
+    const getProject = vi.fn(async () => ({
+      ok: false as const,
+      status: 404,
+      error: { code: "not_found", message: "Project not found" },
+    }));
+    const getProjectForLifecycle = vi.fn(async () => ({
+      ok: true as const,
+      project: { id: "proj_repo", slug: "repo", name: "Repo", deletingAt: "2026-09-22T12:00:00.000Z" },
+    }));
+    const applyProjectLifecycleAction = vi.fn(async () => ({
+      ok: true as const,
+      action: "delete" as const,
+      projectSlug: "repo",
+    }));
+    const app = createWorkspaceRoutes({
+      homePath,
+      projectManager: { getProject, getProjectForLifecycle } as any,
+      projectLifecycleService: { applyProjectLifecycleAction },
+      terminalRuntime: { listWorkspaces: vi.fn(async () => []) } as never,
+      getOwnerScope: () => ({ type: "user", id: "user_123" }),
+    });
+
+    const response = await app.request(jsonRequest("/api/projects/repo/actions", {
+      type: "delete",
+      confirmation: "Repo",
+    }));
+
+    expect(response.status).toBe(200);
+    expect(getProject).not.toHaveBeenCalled();
+    expect(applyProjectLifecycleAction).toHaveBeenCalledWith(
+      { userId: "user_123", source: "configured-container" },
+      "repo",
+      { type: "delete", confirmation: "Repo" },
+    );
+  });
+
   it("blocks owner project mutations when collaboration requires the scoped route", async () => {
     const applyProjectLifecycleAction = vi.fn();
     const getProject = vi.fn(async () => ({

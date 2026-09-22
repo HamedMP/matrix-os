@@ -1,3 +1,5 @@
+import { createProjectMetadataService } from "./project-metadata.js";
+import { registerProjectMetadataRoutes } from "./project-metadata-routes.js";
 import { createProjectDeletionCleanup, type ProjectChatCleanup } from "./project-deletion-cleanup.js";
 import type { BackgroundAgentRuntime } from "./background-agent-runtime.js";
 import { Hono, type Context } from "hono";
@@ -348,7 +350,7 @@ export function createWorkspaceRoutes(options: {
     ownerScope: OwnerScope;
     projectSlug: string;
     kind: "write" | "run";
-    operation(): Promise<T>;
+    operation(projectId?: string): Promise<T>;
   }): Promise<
     | { ok: true; value: T }
     | { ok: false; status: number; body: { error: unknown } }
@@ -366,7 +368,7 @@ export function createWorkspaceRoutes(options: {
         ownerId: input.ownerScope.id,
         projectId: project.project.id,
         kind: input.kind,
-      }, input.operation);
+      }, () => input.operation(project.project.id));
       return { ok: true, value };
     } catch (err: unknown) {
       if (err instanceof ProjectFenceError) {
@@ -391,6 +393,11 @@ export function createWorkspaceRoutes(options: {
       };
     }
   }
+
+  registerProjectMetadataRoutes(app, {
+    update: createProjectMetadataService({ homePath: options.homePath, projectManager }),
+    getOwnerScope, principalError, admit: withLegacyProjectOperation,
+  });
 
   app.get("/api/github/status", async (c) => c.json(await projectManager.getGithubStatus()));
 
