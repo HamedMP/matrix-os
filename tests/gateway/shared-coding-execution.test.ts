@@ -479,6 +479,27 @@ describe("shared coding execution (S09)", () => {
       })).rejects.toMatchObject({ code: "unavailable" });
       expect(await repository.listSharedQueuedTurns(owner, collaborationIds.chat)).toEqual([]);
     });
+
+    it("keeps the latest cancel decision per request past the listed-history cap", async () => {
+      let ticks = 0;
+      const decisions = new CollaborationRunLossRepository(fixture.db, {
+        now: () => new Date(Date.parse(now) + (ticks += 1_000)),
+      });
+      const busy = "qturn_decision_retried";
+      const later = "qturn_decision_latest";
+      const cancel = (requestId: string, actorId: string, relation: "requester" | "scope_owner") => decisions.recordDecision({
+        runId: null, requestId, scopeId: collaborationIds.scope, kind: "cancel", actorId, relation,
+      });
+      // External cancellation failed and was retried, so one request owns more rows than the whole page.
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        await cancel(busy, collaborationActors.editor, "requester");
+      }
+      await cancel(busy, collaborationActors.owner, "scope_owner");
+      await cancel(later, collaborationActors.editor, "requester");
+      const latest = await decisions.decisionsFor([busy, later]);
+      expect(latest.get(busy)).toMatchObject({ actorId: collaborationActors.owner, relation: "scope_owner" });
+      expect(latest.get(later)).toMatchObject({ actorId: collaborationActors.editor, relation: "requester" });
+    });
   });
 
   describe("focused shared adapters", () => {

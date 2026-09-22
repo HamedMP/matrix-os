@@ -178,13 +178,20 @@ export class CollaborationRunLossRepository {
     }));
   }
 
-  /** Latest cancel or retry decision per request, bounded, for list projections. */
+  /**
+   * Latest cancel decision per request for list projections. A request can own
+   * more than one cancel row when an external cancellation failed and was
+   * retried, so the latest row is selected per request in SQL: a batch-wide
+   * history cap would drop the newest decisions and project a stale or absent
+   * `decidedBy`. The result is bounded by the number of requests asked for.
+   */
   async decisionsFor(requestIds: readonly string[]): Promise<Map<string, CollaborationRunDecision>> {
     const ids = [...new Set(requestIds)].slice(0, MAX_INTERRUPTION_LOOKUP);
     if (ids.length === 0) return new Map();
-    const rows = await this.db.selectFrom("collaboration_run_decisions").selectAll()
+    const rows = await this.db.selectFrom("collaboration_run_decisions").distinctOn("request_id").selectAll()
       .where("request_id", "in", ids).where("kind", "=", "cancel")
-      .orderBy("decided_at").orderBy("id").limit(MAX_LISTED_DECISIONS).execute();
+      .orderBy("request_id").orderBy("decided_at", "desc").orderBy("id", "desc")
+      .limit(ids.length).execute();
     const latest = new Map<string, CollaborationRunDecision>();
     for (const row of rows) {
       latest.set(row.request_id, {
