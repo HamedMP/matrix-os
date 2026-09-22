@@ -45,6 +45,8 @@ interface SessionRecord {
   actionsRemaining: number;
   pendingActions: number;
   budgetVersion: number;
+  /** Set when the record is detached, so a call holding it from before can refuse. */
+  ended?: boolean;
 }
 
 export type DirectSessionEndReason = "expired" | "denied" | "revoked" | "closed" | "shutdown" | "exhausted";
@@ -105,6 +107,17 @@ export class DirectSessionService {
   /** Refuses work once drained; called at entry and again after every await that can span a fence. */
   private assertServing(): void {
     if (this.closed) throw new DirectAuthError("unavailable", "Direct sessions are shutting down");
+  }
+
+  /**
+   * Refuses work on a record detached while the call was awaiting. Revocation is immediate,
+   * so a denial that lands mid-call must stop that call too, not let it complete one last
+   * operation. The record is already detached, so it is refused, never ended again: a second
+   * end would double-fire hooks into registries that may be mid-detach. The code matches what
+   * `live()` would now say, so an in-flight refusal is indistinguishable from a fresh call.
+   */
+  private assertRecordLive(record: SessionRecord): void {
+    if (record.ended) throw new DirectAuthError("expired", "Session is not active");
   }
 
   /** Sessions currently registered; the drain's observable, and zero once fenced. */
@@ -175,6 +188,7 @@ export class DirectSessionService {
     }
     const evidenceExpiresAt = await this.admit(ticket);
     this.assertServing();
+    this.assertRecordLive(record);
     this.options.verifier.consume(ticket);
     const issuedAt = this.now();
     const session = CollaborationDirectSessionSchema.parse({
@@ -225,6 +239,7 @@ export class DirectSessionService {
     // Checked after the refresh, never inside it: `refreshEvidence` ends the session on a
     // failure, and ending it here would notify registries the fence has already detached.
     this.assertServing();
+    this.assertRecordLive(record);
     return { ...record.session };
   }
 
@@ -474,6 +489,9 @@ export class DirectSessionService {
 
   private end(record: SessionRecord, reason: DirectSessionEndReason): void {
     if (!this.sessions.delete(record.session.id)) return;
+    // Flagged before notifying, matching the remove-before-notify ordering above, so a
+    // concurrent holder can never see a record that is detached but not yet flagged.
+    record.ended = true;
     for (const listener of [this.options.onEnded, ...this.endedListeners]) {
       if (!listener) continue;
       try {
