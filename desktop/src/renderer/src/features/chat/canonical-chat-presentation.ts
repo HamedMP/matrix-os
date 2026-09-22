@@ -150,6 +150,24 @@ function messageContent(
   return [...content, ...unmatched, ...images];
 }
 
+function promotedAssistantArtifacts(
+  messages: CanonicalChatMessage[],
+  finalMessage: CanonicalChatMessage,
+): ConversationMessageContentPresentation[] {
+  return messages
+    .filter((message) => message.id !== finalMessage.id)
+    .flatMap((message) => messageContent(message, messageText(message)))
+    .filter((segment) => segment.kind === "image"
+      || (segment.kind === "reference" && segment.referenceKind === "file"));
+}
+
+function withoutAttachmentReferences(message: CanonicalChatMessage): CanonicalChatMessage {
+  return {
+    ...message,
+    parts: message.parts.filter((part) => part.type !== "attachment_reference"),
+  };
+}
+
 function messageWork(message: CanonicalChatMessage): ConversationWorkPresentation[] {
   const toolRequests = new Map<string, Extract<CanonicalChatMessage["parts"][number], { type: "tool_request" }>>();
   const toolResults = new Map<string, Extract<CanonicalChatMessage["parts"][number], { type: "tool_result" }>>();
@@ -614,12 +632,25 @@ export function canonicalChatPresentation(input: {
       turn.id === latestTurnId,
     );
     const modelStatus = activeModelStatus(run);
+    const promotedArtifacts = finalMessage
+      ? promotedAssistantArtifacts(assistantMessages, finalMessage)
+      : [];
+    const finalPresentation = finalMessage
+      ? messagePresentation(finalMessage, "final")
+      : undefined;
     const unsortedWork = [
       ...(modelStatus ? [modelStatus] : []),
-      ...assistantMessages.filter((message) => message.id !== finalMessage?.id).flatMap((message) => [
-        ...messageWork(message),
-        ...(hasDisplayableMessageContent(message) ? [messagePresentation(message, "commentary")] : []),
-      ]),
+      ...assistantMessages.filter((message) => message.id !== finalMessage?.id).flatMap((message) => {
+        const visibleMessage = promotedArtifacts.length > 0
+          ? withoutAttachmentReferences(message)
+          : message;
+        return [
+          ...messageWork(message),
+          ...(hasDisplayableMessageContent(visibleMessage)
+            ? [messagePresentation(visibleMessage, "commentary")]
+            : []),
+        ];
+      }),
       ...(finalMessage ? messageWork(finalMessage) : []),
       ...live.work,
     ];
@@ -697,7 +728,15 @@ export function canonicalChatPresentation(input: {
       ...(finalMessage && hasDisplayableMessageContent(finalMessage)
         ? {
             final: {
-              ...messagePresentation(finalMessage, "final"),
+              ...finalPresentation!,
+              ...(promotedArtifacts.length > 0
+                ? {
+                    content: [
+                      ...promotedArtifacts,
+                      ...(finalPresentation?.content ?? []),
+                    ],
+                  }
+                : {}),
               ...(streamedMessageIds.has(finalMessage.id) ? { wasStreamed: true } : {}),
             },
           }
