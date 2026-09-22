@@ -237,12 +237,21 @@ export class CollaborationRelay {
       finish(503, "upstream_error", home.runtimeId);
       return plain("Collaboration unavailable", 503);
     }
-    // The home may answer before the upload is done. Waiting for the body to settle first
-    // makes the outcome deterministic: an overflow can never be discovered after the client
-    // has already been handed the home's status. The wait is bounded, and abandonment counts
-    // as settled, so an upload nobody is reading cannot stall the reply.
-    if (requestBody instanceof ReadableStream) {
-      await settleWithin(requestBodySettled, isExport ? this.limits.exportTimeoutMs : this.limits.requestTimeoutMs);
+    // The home may answer before the upload is done. The relay never answers for a body it
+    // did not see through to a settled end -- completed, overflowed, or cancelled by whoever
+    // was reading it -- so an overflow can never be discovered after the client has already
+    // been handed the home's status. The wait for that end is bounded so an upload nobody
+    // finishes cannot stall the reply; past the bound the relay has refused to finish
+    // forwarding the body, and the home's answer no longer describes the request that was
+    // made, so it is discarded rather than relayed. A truncated upload never reads as fine.
+    const settled = requestBody instanceof ReadableStream
+      ? await settleWithin(requestBodySettled, isExport ? this.limits.exportTimeoutMs : this.limits.requestTimeoutMs)
+      : true;
+    if (!settled) {
+      await response.body?.cancel();
+      console.warn("[collaboration-relay] request body did not settle before the upstream answer was due");
+      finish(503, "upstream_error", home.runtimeId);
+      return plain("Collaboration unavailable", 503);
     }
     if (overflowed) {
       await response.body?.cancel();
@@ -440,13 +449,16 @@ function boundedRequestStream(
   });
 }
 
-/** Waits for a settled signal without letting it become an unbounded wait. */
-async function settleWithin(settled: Promise<void>, timeoutMs: number): Promise<void> {
+/**
+ * Waits for a settled signal without letting it become an unbounded wait. Answers whether the
+ * signal arrived, so the caller can tell a finished body from one it gave up on.
+ */
+async function settleWithin(settled: Promise<void>, timeoutMs: number): Promise<boolean> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    await Promise.race([
-      settled,
-      new Promise<void>((resolve) => { timer = setTimeout(resolve, timeoutMs); timer.unref?.(); }),
+    return await Promise.race([
+      settled.then(() => true),
+      new Promise<boolean>((resolve) => { timer = setTimeout(() => resolve(false), timeoutMs); timer.unref?.(); }),
     ]);
   } finally {
     if (timer) clearTimeout(timer);
