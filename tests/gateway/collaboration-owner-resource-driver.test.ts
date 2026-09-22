@@ -48,6 +48,22 @@ describe("owner resource driver boundary", () => {
     expect(await driver.fingerprint(namespace)).toBe(incarnation);
   });
 
+  it("keeps a shared folder readable when a collaborator adds a file, and still catches a recreated one", async () => {
+    // The incarnation exists to refuse a path whose bytes were swapped underneath it. Including
+    // ctimeNs also made it refuse ordinary use, because a folder's ctime moves whenever an entry is
+    // added or removed. Both halves are asserted here so neither can regress silently.
+    await mkdir(join(project, "shared-folder"));
+    const namespace = { ownerId: OWNER, projectId: PROJECT, path: "shared-folder" };
+    const shared = await driver.fingerprint(namespace);
+
+    await writeFile(join(project, "shared-folder", "collaborator-note.md"), "added by a member");
+    expect(await driver.fingerprint(namespace)).toBe(shared);
+
+    await rm(join(project, "shared-folder"), { recursive: true });
+    await mkdir(join(project, "shared-folder"));
+    expect(await driver.fingerprint(namespace)).not.toBe(shared);
+  });
+
   it("checks the opened file identity before streaming a recreated path", async () => {
     const namespace = { ownerId: OWNER, projectId: PROJECT, path: "README.md" };
     await writeFile(join(project, "README.md"), "original");
