@@ -13,7 +13,7 @@ Users create a Chat from a project row without encountering a neighboring destru
 **Why this priority**: The current trash button is easily mistaken for New Chat.
 **Independent Test**: Hover/focus a row, create a Chat, and open both action menus.
 **Acceptance Scenarios**:
-1. Given a project row, when hovered or focused, then it exposes an ellipsis followed by New Chat; no inline Delete button is present.
+1. Given a project row, when hovered or focused, then it exposes an ellipsis followed by a square-pencil New Chat action; no inline Delete button is present.
 2. Given the ellipsis or right-click menu, when opened, then identical project actions appear; Delete is separated and destructive.
 3. Given Delete, when selected, then existing explicit confirmation is required; cancellation or failure preserves the project and Chats.
 

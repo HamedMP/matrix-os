@@ -1,6 +1,6 @@
 import { useRef } from "react";
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
-import { Folder, FolderOpen, SquarePen, PinIcon, PinOffIcon, Settings, Trash2 } from "@renderer/lib/hugeicons";
+import { Folder, FolderOpen, PencilEditIcon, PinIcon, PinOffIcon, Settings, Trash2 } from "@renderer/lib/hugeicons";
 import { ProjectActionsMenu, ProjectActionsButton, type ProjectMenuAction } from "./ProjectActionsMenu";
 import { ProjectEditDialog } from "./ProjectActionDialogs";
 import { useProjectActions } from "./use-project-actions";
@@ -81,7 +81,7 @@ export function WorkRailProjectGroup({
               className="flex size-6 items-center justify-center rounded-md outline-none hover:bg-[var(--bg-selected)] focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
               onClick={() => onNewChat(group.project)}
             >
-              <SquarePen size={15} aria-hidden />
+              <PencilEditIcon size={15} aria-hidden />
             </button>
           </div>
         </div>

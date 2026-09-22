@@ -1,7 +1,7 @@
 # Human Review
 
 1. Open Chat project navigation in Electron Desktop, both standalone and hosted window presentations. Web Desktop/Web Canvas/Web Mobile currently have no project-group navigation; see the spec limitation.
-2. Hover/focus a long project row: ellipsis precedes New Chat, no trash button, name does not overlap controls.
+2. Hover/focus a long project row: ellipsis precedes the square-pencil New Chat action, no trash button, name does not overlap controls.
 3. Compare ellipsis/right-click menus; use keyboard and Escape; verify focus returns.
 4. Pin, reload, unpin. Verify the project moves between Projects and Pinned, the project row has no standalone pin glyph, ordering is stable, and existing pinned Chats remain unchanged.
 5. Edit name/description; verify reload and other project projections. Invalid/failed save retains draft.

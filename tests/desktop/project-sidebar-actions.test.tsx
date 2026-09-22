@@ -2,6 +2,8 @@
 import React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
+import { PencilEdit02Icon } from "@hugeicons/core-free-icons";
+import { HugeiconsIcon } from "@hugeicons/react";
 import { WorkRailProjectGroup } from "@desktop/renderer/src/features/work/work-rail/WorkRailProjectGroup";
 import { buildWorkRailModel } from "@desktop/renderer/src/features/work/work-rail-model";
 import { useBoard, parseProject } from "@desktop/renderer/src/stores/board";
@@ -34,7 +36,10 @@ describe("project sidebar actions", () => {
     const { onNewChat } = setup();
     expect(screen.queryByRole("button", { name: "Delete Alpha project" })).toBeNull();
     expect(screen.getByRole("button", { name: "Actions for Alpha" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "New chat in Alpha" }));
+    const newChatButton = screen.getByRole("button", { name: "New chat in Alpha" });
+    const expectedIcon = render(<HugeiconsIcon icon={PencilEdit02Icon} size={15} aria-hidden />).container.querySelector("svg");
+    expect(newChatButton.querySelector("svg")?.innerHTML).toBe(expectedIcon?.innerHTML);
+    fireEvent.click(newChatButton);
     expect(onNewChat).toHaveBeenCalledWith(alpha);
   });
   it("exposes the same actions by ellipsis and right click", () => {
