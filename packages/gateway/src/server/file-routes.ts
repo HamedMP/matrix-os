@@ -17,6 +17,9 @@ import { listDirectory } from "../files-tree.js";
 import { getMissingFileFallback } from "../file-fallbacks.js";
 import { fileStat, fileMkdir, fileTouch, fileRename, fileCopy, fileDuplicate } from "../file-ops.js";
 import { createFileBlobRoutes } from "../file-blob-routes.js";
+import { createFilePreviewRoutes } from "../file-preview-routes.js";
+import type { FilePreviewService } from "../file-preview-service.js";
+import type { RequestPrincipal } from "../request-principal.js";
 import { fileSearch } from "../file-search.js";
 import { fileDelete, trashList, trashRestore, trashEmpty } from "../trash.js";
 import { listProjects } from "../projects.js";
@@ -28,12 +31,21 @@ import type { LegacyProjectPathAdmission } from "../collaboration/project-path-a
 export interface FileRouteDeps {
   homePath: string;
   getOwnerId?: (c: Context) => string;
+  getPrincipal?: (c: Context) => RequestPrincipal;
+  filePreviewService?: FilePreviewService;
   projectPathAdmission?: LegacyProjectPathAdmission;
 }
 
 export function registerFileRoutes(app: Hono, deps: FileRouteDeps): void {
   const { homePath } = deps;
   const fileBodyLimit = bodyLimit({ maxSize: 10 * 1024 * 1024 });
+
+  if (deps.filePreviewService && deps.getPrincipal) {
+    app.route("/api/file-previews", createFilePreviewRoutes({
+      service: deps.filePreviewService,
+      getPrincipal: deps.getPrincipal,
+    }));
+  }
 
   async function withProjectFileAdmission(
     c: Context,

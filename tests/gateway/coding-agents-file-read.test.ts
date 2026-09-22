@@ -4,7 +4,10 @@ import { Hono } from "hono";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { RuntimeSummarySchema } from "../../packages/contracts/src/index.js";
-import { createCodingAgentFileStore } from "../../packages/gateway/src/coding-agents/file-read.js";
+import {
+  createCodingAgentFileAccess,
+  createCodingAgentFileStore,
+} from "../../packages/gateway/src/coding-agents/file-read.js";
 import { createCodingAgentRoutes } from "../../packages/gateway/src/coding-agents/routes.js";
 import type { RequestPrincipal } from "../../packages/gateway/src/request-principal.js";
 import { MissingRequestPrincipalError } from "../../packages/gateway/src/request-principal.js";
@@ -90,6 +93,41 @@ async function createRouteHarness(options: {
 }
 
 describe("coding agent file read route", () => {
+  it("shares owner authorization and historical worktree resolution with preview reads", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-coding-agent-access-"));
+    const worktreeRoot = join(homePath, "historical-worktree");
+    await mkdir(worktreeRoot, { recursive: true });
+    const getProjectBySlug = vi.fn(async () => ({
+      ok: true as const,
+      project: { ownerScope: { type: "user" as const, id: testPrincipal.userId } },
+    }));
+    const access = createCodingAgentFileAccess({
+      homePath,
+      principalOwnerIds: [testPrincipal.userId],
+      projects: { getProjectBySlug },
+      worktrees: {
+        listWorktrees: async () => ({
+          ok: true as const,
+          worktrees: [{ id: worktreeId, path: worktreeRoot }],
+        }),
+      },
+    });
+    try {
+      await expect(access.resolveProjectRoot(testPrincipal, {
+        projectId,
+        worktreeId,
+      })).resolves.toBe(worktreeRoot);
+      expect(access.canAccessHome(testPrincipal)).toBe(true);
+
+      const other = { userId: "user_other", source: "jwt" as const };
+      await expect(access.resolveProjectRoot(other, { projectId })).resolves.toBeNull();
+      expect(access.canAccessHome(other)).toBe(false);
+      expect(getProjectBySlug).toHaveBeenCalledTimes(1);
+    } finally {
+      await rm(homePath, { recursive: true, force: true });
+    }
+  });
+
   it("blocks legacy coding-agent file writes after project sharing", async () => {
     const projectOperationAdmission = {
       withLegacyAdmission: vi.fn(async () => {

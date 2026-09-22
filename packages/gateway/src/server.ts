@@ -205,7 +205,11 @@ import {
 } from "./collaboration/wiring.js";
 import { createLegacyProjectPathAdmission } from "./collaboration/project-path-admission.js";
 import { createGatewayProjectInventorySource } from "./collaboration/project-inventory-source.js";
-import { createCodingAgentFileStore } from "./coding-agents/file-read.js";
+import {
+  createCodingAgentFileAccess,
+  createCodingAgentFileStore,
+} from "./coding-agents/file-read.js";
+import { createFilePreviewService } from "./file-preview-service.js";
 import { createCodingAgentSourceControlStore } from "./coding-agents/source-control.js";
 import { registerCodingAgentAttentionNotifications } from "./coding-agents/attention-notifications.js";
 import { createCodingAgentNotificationPreferenceStore } from "./coding-agents/notification-preferences.js";
@@ -634,14 +638,28 @@ export async function createGateway(config: GatewayConfig) {
   const codingAgentProjectManager = createProjectManager({ homePath });
   const conversationContextResolver = createConversationContextResolver(codingAgentProjectManager);
   const codingAgentWorktreeManager = createWorktreeManager({ homePath });
+  const codingAgentProjectOwnership = {
+    getProjectBySlug: (projectSlug: string) => codingAgentProjectManager.getProject(projectSlug),
+  };
+  const codingAgentFileAccess = createCodingAgentFileAccess({
+    homePath,
+    ownerId: process.env.MATRIX_USER_ID,
+    principalOwnerIds: codingAgentOwnerIds,
+    projects: codingAgentProjectOwnership,
+    worktrees: codingAgentWorktreeManager,
+  });
   const codingAgentFileStore = createCodingAgentFileStore({
     homePath,
     ownerId: process.env.MATRIX_USER_ID,
     principalOwnerIds: codingAgentOwnerIds,
-    projects: {
-      getProjectBySlug: (projectSlug) => codingAgentProjectManager.getProject(projectSlug),
-    },
+    projects: codingAgentProjectOwnership,
     worktrees: codingAgentWorktreeManager,
+  });
+  const filePreviewService = createFilePreviewService({
+    homePath,
+    canAccessHome: (principal) => codingAgentFileAccess.canAccessHome(principal),
+    resolveProjectRoot: (principal, resource) =>
+      codingAgentFileAccess.resolveProjectRoot(principal, resource),
   });
   const codingAgentSourceControlStore = createCodingAgentSourceControlStore({
     homePath,
@@ -3230,6 +3248,8 @@ export async function createGateway(config: GatewayConfig) {
 
   registerFileRoutes(app, {
     homePath,
+    filePreviewService,
+    getPrincipal: (c) => requireRequestPrincipal(c),
     ...(legacyProjectPathAdmission ? {
       getOwnerId: (c) => requireRequestPrincipal(c).userId,
       projectPathAdmission: legacyProjectPathAdmission,
