@@ -81,6 +81,22 @@ describe("owner runtime direct sessions", () => {
     await fixture.service.shutdown();
   });
 
+  it("ends the session renewably when the ticket action budget runs out", async () => {
+    const fixture = makeFixture();
+    const session = await fixture.service.create(fixture.create());
+    const path = `/api/collaboration/runtimes/vps%3A11111111-1111-4111-8111-111111111111/catalog/resolve`;
+    // The fixture ticket signs three actions; each authenticated setup call spends one.
+    for (let spent = 0; spent < 3; spent += 1) {
+      await expect(fixture.service.authenticate(fixture.signedRequest(session.id, path))).resolves.toMatchObject({ actorId: ownerId });
+    }
+    // Exhaustion ends the session, so the refusal must be the one the client renews on (401),
+    // not a capacity refusal (429) it surfaces as unavailable.
+    await expect(fixture.service.authenticate(fixture.signedRequest(session.id, path))).rejects.toMatchObject({ code: "expired" });
+    // A later request finds no session at all and must report the same renewable code.
+    await expect(fixture.service.authenticate(fixture.signedRequest(session.id, path))).rejects.toMatchObject({ code: "expired" });
+    await fixture.service.shutdown();
+  });
+
   it("denies a signed ticket naming another owner or organization before session admission", async () => {
     const fixture = makeFixture();
     await expect(fixture.service.create(fixture.create({ actorId: "user_other" }))).rejects.toMatchObject({ code: "denied" });
