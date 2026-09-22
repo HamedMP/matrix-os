@@ -3,12 +3,17 @@ import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
+import { z } from "zod/v4";
 import { createImageClient, loadIconStyle, buildIconPrompt, generateIconBatch } from "@matrix-os/kernel";
 import { listApps } from "../apps.js";
 import { renameApp, deleteApp } from "../app-ops.js";
 import { buildShellBootstrap } from "../shell-bootstrap.js";
 import { registerIconRoutes } from "../icon-routes.js";
 import { resolveDefaultAppIconUrl, resolveSystemIconUrl } from "../default-icons.js";
+
+const SAFE_APP_SLUG = /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/;
+const RenameAppBodySchema = z.object({ name: z.string().min(1).max(200) });
+const IconStyleBodySchema = z.object({ style: z.string().min(1).max(2000).optional() });
 
 const SAFE_ICON_STEM = /^[a-zA-Z0-9_-]+$/;
 function isSafeIconStem(value: unknown): value is string {
@@ -33,8 +38,24 @@ export function registerAppManagementRoutes(app: Hono, options: { homePath: stri
 
   app.put("/api/apps/:slug/rename", renameAppBodyLimit, async (c) => {
     const slug = c.req.param("slug");
-    const { name } = await c.req.json<{ name: string }>();
-    const result = renameApp(homePath, slug, name);
+    if (!SAFE_APP_SLUG.test(slug)) {
+      return c.json({ error: "Invalid slug" }, 400);
+    }
+    let rawBody: unknown;
+    try {
+      rawBody = await c.req.json();
+    } catch (err: unknown) {
+      if (err instanceof SyntaxError) {
+        return c.json({ error: "Invalid JSON body" }, 400);
+      }
+      console.error("[gateway] Failed to read app rename body:", err);
+      return c.json({ error: "Failed to read request body" }, 500);
+    }
+    const parsedBody = RenameAppBodySchema.safeParse(rawBody);
+    if (!parsedBody.success) {
+      return c.json({ error: "Invalid request body" }, 400);
+    }
+    const result = renameApp(homePath, slug, parsedBody.data.name);
     if (!result.success) {
       const status = result.error?.includes("not found") ? 404 : 400;
       return c.json({ error: result.error }, status);
@@ -44,6 +65,9 @@ export function registerAppManagementRoutes(app: Hono, options: { homePath: stri
 
   app.delete("/api/apps/:slug", deleteAppBodyLimit, async (c) => {
     const slug = c.req.param("slug");
+    if (!SAFE_APP_SLUG.test(slug)) {
+      return c.json({ error: "Invalid slug" }, 400);
+    }
     const result = deleteApp(homePath, slug);
     if (!result.success) {
       const status = result.error?.includes("not found") ? 404 : 400;
@@ -72,17 +96,22 @@ export function registerAppManagementRoutes(app: Hono, options: { homePath: stri
         generated: false,
       });
     }
+    let body: { style?: string } = {};
     try {
-      let body: { style?: string } = {};
-      try {
-        body = await c.req.json();
-      } catch (err: unknown) {
-        if (!(err instanceof SyntaxError)) {
-          console.error("[gateway] Failed to parse icon generation body:", err);
-          return c.json({ error: "Failed to read request body" }, 500);
-        }
+      const rawBody: unknown = await c.req.json();
+      const parsedBody = IconStyleBodySchema.safeParse(rawBody);
+      if (!parsedBody.success) {
+        return c.json({ error: "Invalid request body" }, 400);
       }
+      body = parsedBody.data;
+    } catch (err: unknown) {
+      if (!(err instanceof SyntaxError)) {
+        console.error("[gateway] Failed to parse icon generation body:", err);
+        return c.json({ error: "Failed to read request body" }, 500);
+      }
+    }
 
+    try {
       const iconStyle = body.style || loadIconStyle(homePath);
       const client = createImageClient(geminiKey);
       const apps = await listApps(homePath);
