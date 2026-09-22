@@ -1,4 +1,5 @@
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdtemp, mkdir, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -38,6 +39,32 @@ describe("owner resource driver boundary", () => {
     await driver.write({ ...namespace, content: new TextEncoder().encode("new content") });
     expect(await readFile(join(project, "README.md"), "utf8")).toBe("new content");
     expect(await driver.fingerprint(namespace)).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  it("streams chunks into place only when the whole upload matches its checksum", async () => {
+    await writeFile(join(project, "upload.bin"), "old");
+    const parts = ["first part ", "second part"].map((part) => new TextEncoder().encode(part));
+    const whole = Buffer.concat(parts);
+    const chunks = async function* () { for (const part of parts) yield part; };
+    await driver.writeChunks({
+      ownerId: OWNER, projectId: PROJECT, path: "upload.bin",
+      size: whole.byteLength, sha256: createHash("sha256").update(whole).digest("hex"),
+      chunks: chunks(),
+    });
+    expect(await readFile(join(project, "upload.bin"), "utf8")).toBe("first part second part");
+
+    // A stream that does not hash to the declared checksum leaves the file alone.
+    await expect(driver.writeChunks({
+      ownerId: OWNER, projectId: PROJECT, path: "upload.bin",
+      size: whole.byteLength, sha256: "0".repeat(64), chunks: chunks(),
+    })).rejects.toMatchObject({ code: "conflict" });
+    // A stream shorter than its declared size is refused the same way.
+    await expect(driver.writeChunks({
+      ownerId: OWNER, projectId: PROJECT, path: "upload.bin",
+      size: whole.byteLength + 1, sha256: createHash("sha256").update(whole).digest("hex"), chunks: chunks(),
+    })).rejects.toMatchObject({ code: "invalid" });
+    expect(await readFile(join(project, "upload.bin"), "utf8")).toBe("first part second part");
+    expect((await readdir(project)).filter((name) => name.startsWith(".matrix-upload-"))).toEqual([]);
   });
 
   it("refuses protected home paths and symlinks in every namespace", async () => {
