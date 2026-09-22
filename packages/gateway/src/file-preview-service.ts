@@ -116,7 +116,7 @@ async function safeResolvedPath(
     if (!options.canAccessHome(principal)) throw new FilePreviewError("not_found");
     const path = resolveExistingFileApiPath(options.homePath, ref.path);
     if (!path) throw new FilePreviewError("not_found");
-    return { path };
+    return { path, root: await realpath(options.homePath) };
   }
   if (ref.kind === "artifact") {
     const path = await options.resolveArtifactPath?.(principal, ref);
@@ -144,7 +144,7 @@ async function safeResolvedPath(
   }
 }
 
-async function openedPathIsAuthorized(path: string, info: BigIntStats, root?: string): Promise<boolean> {
+export async function openedPathIsAuthorized(path: string, info: BigIntStats, root?: string): Promise<boolean> {
   // The file descriptor is stable after open, but a writable parent can be
   // swapped between the initial realpath check and open(). Compare the file
   // actually opened with the path after open before reading any bytes.
@@ -258,6 +258,13 @@ export function createFilePreviewService(options: FilePreviewServiceOptions): Fi
           ETag: etag,
           "X-Content-Type-Options": "nosniff",
         };
+        if (descriptor.mimeType === "text/html") {
+          // The in-app viewer fetches source and renders it in a sandboxed
+          // frame. A direct content URL must never execute under the gateway.
+          headers["Content-Type"] = "text/plain; charset=utf-8";
+          headers["Content-Disposition"] = safeDisposition(descriptor.name, true);
+          headers["Content-Security-Policy"] = "sandbox; default-src 'none'; base-uri 'none'; form-action 'none'";
+        }
         if (range) headers["Content-Range"] = `bytes ${position}-${end}/${size}`;
         const status = range ? 206 : 200;
         if (request.head || size === 0) return new Response(null, { status, headers });

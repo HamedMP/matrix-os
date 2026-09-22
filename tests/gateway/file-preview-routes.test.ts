@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Hono } from "hono";
 import { createFilePreviewRoutes } from "../../packages/gateway/src/file-preview-routes.js";
-import { createFilePreviewService } from "../../packages/gateway/src/file-preview-service.js";
+import { createFilePreviewService, openedPathIsAuthorized } from "../../packages/gateway/src/file-preview-service.js";
 import { MissingRequestPrincipalError } from "../../packages/gateway/src/request-principal.js";
 
 describe("file preview routes", () => {
@@ -185,5 +185,25 @@ describe("file preview routes", () => {
       mimeType: "application/octet-stream",
       canDownload: true,
     });
+  });
+
+  it("serves HTML source inertly even when its direct content URL is opened", async () => {
+    await writeFile(join(projectPath, "page.html"), "<script>window.evil = true</script>");
+    const response = await app.request(
+      "/api/file-previews/content?kind=project&projectId=demo&path=page.html",
+      { headers: { Authorization: "Bearer owner" } },
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/plain");
+    expect(response.headers.get("content-security-policy")).toContain("default-src 'none'");
+    expect(response.headers.get("content-disposition")).toContain("attachment");
+    expect(await response.text()).toContain("<script>");
+  });
+
+  it("rejects an opened descriptor whose path escaped the canonical home root", async () => {
+    const outside = join(root, "outside-home.png");
+    await writeFile(outside, png);
+    const info = await lstat(outside, { bigint: true });
+    await expect(openedPathIsAuthorized(outside, info, homePath)).resolves.toBe(false);
   });
 });

@@ -136,8 +136,11 @@ export function extractCodexArtifactRecords(item) {
     content = item.result.content;
   }
   if (!content) return [];
-  return content
-    .map((entry, index) => contentRecord(item.id, entry, index))
-    .filter((entry) => entry !== null)
-    .slice(0, MAX_ARTIFACTS_PER_ITEM);
+  const records = [];
+  for (const entry of content) {
+    if (records.length >= MAX_ARTIFACTS_PER_ITEM) break;
+    const artifact = contentRecord(item.id, entry, records.length);
+    if (artifact) records.push(artifact);
+  }
+  return records;
 }

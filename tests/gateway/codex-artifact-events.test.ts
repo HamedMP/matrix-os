@@ -120,7 +120,7 @@ describe("Codex app-server artifact extraction", () => {
       id: "mcp_late_image",
       type: "mcpToolCall",
       result: { content: [...leadingText, ...content] },
-    })).toEqual(expect.arrayContaining([expect.objectContaining({ outputIndex: 8 })]));
+    })).toEqual(expect.arrayContaining([expect.objectContaining({ outputIndex: 0 })]));
     expect(extractCodexArtifactRecords({
       id: "mcp_late_image",
       type: "mcpToolCall",
