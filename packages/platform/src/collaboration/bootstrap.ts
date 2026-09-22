@@ -19,7 +19,7 @@ import {
 import { PlatformCollaborationIdentifierResolver } from "./identifier-resolver.js";
 import type { OrganizationPlatformDatabase } from "../organizations/database.js";
 import { createPlatformOrganizations } from "../organizations/wiring.js";
-import { createPlatformCollaborationDirect } from "./direct-wiring.js";
+import { createPlatformCollaborationDirect, loadCollaborationRelayOrigin } from "./direct-wiring.js";
 import { PlatformCollaborationRepository } from "./repository.js";
 import type { RuntimeEndpointPlatformDatabase } from "./runtime-endpoints.js";
 import { PlatformCollaborationCutover } from "./cutover.js";
