@@ -1978,3 +1978,57 @@ cancelled** — filed as #1838.
 Roughly **15 PRs instead of 40**: six for the upper chain with the hardening graft folded into S09, about five
 for S18, one for S19, one for this ledger. Two streams are running now — the S09 graft and the S18
 consolidation.
+
+## 68. The S18 regression was a security hole, not a type error — 2026-09-22 13:45 UTC
+
+**Sections 55 and 59 recorded this as `TS2741 setContributorControl is missing`. The type error was a
+symptom. The defect underneath is worse, and it is now fixed rather than deferred.**
+
+Verified directly on `124/s18-terminal-output`, in
+`packages/gateway/src/collaboration/canonical-terminal-bridge.ts`:
+
+```
+177:          contributorControl: true,
+```
+
+with **zero** occurrences of `setContributorControl` in that file. The bridge built its registry with no way
+to set the flag, dropped the bind-time opt-in, and **hardcoded `true` on every read**. Shipping it would have
+granted Contributors control of the owner's host shell on **every shared canonical terminal, regardless of the
+owner's choice** — silently undoing the fix in S15-only commit `d9918d84f`.
+
+The fix persists the opt-in on the binding (a `contributor_control` column on the not-yet-landed V15 table),
+reports the **persisted** value rather than a constant, and adds the owner-checked `setContributorControl`
+write. New test: *keeps Contributor control an owner opt-in across bind, read and withdrawal*, covering bind
+default, grant, foreign-owner rejection and withdrawal.
+
+**Why it hid so well.** It produced no conflict marker, because the file is new to S18. It produced no test
+failure, because S18's own tests were written against the pre-fix shape. It only surfaced as a type error, and
+only on the extraction path — on S18's own chain both sides predate the fix, so it compiles and passes. That
+is the whole argument for extracting onto the newer branch instead of rebasing: **the extraction fails loudly
+exactly where the naive rebase fails silently.**
+
+## 69. S18: 24 layers land as 5 PRs — 2026-09-22 13:45 UTC
+
+| # | branch | probe layers | additions | files |
+| --- | --- | --- | --- | --- |
+| 1 | `s18-consolidated/u1` | base, app-routes, terminal-ws | 1935 | 16 |
+| 2 | `s18-consolidated/u2` | server-composition | 2636 | 15 |
+| 3 | `s18-consolidated/u3` | cutover → secondary-reader (7 layers) | 2871 | 45 |
+| 4 | `s18-consolidated/u4` | personal-sync-inventory → gateway-direct-config (8 layers) | 1908 | **50** |
+| 5 | `s18-consolidated/u5` | terminal-wiring-probe → legacy-cleanup (5 layers) | 1510 | 49 |
+
+**All five pass the full `bun run typecheck` gate at exit 0** — and note that is the *composite* gate, which
+short-circuits (#1841), so each was confirmed rather than assumed.
+
+**The split is not arbitrary.** Every contiguous partition of the 24 layers was enumerated against both
+limits: **there is no valid 4-way split, and exactly three valid 5-way splits.** All three share the same last
+two cuts and all three land two units at 50 and 49 files, so the **file budget, not the addition budget, pins
+this**. The chosen one keeps unit 2 a pure gateway refactor and puts `cutover` with the cutover group.
+
+Two boundaries were forced rather than chosen: **u1/u2** splits one continuous gateway-extraction effort that
+is 4573 additions together, cut between extracting the leaf route modules and finishing `server.ts`
+composition; and **u4 sits at exactly 50 files**, unavoidable in any 5-way split. Test layers stayed with what
+they test.
+
+**141 duplicated base commits are discarded, never reviewed.** That is where the saving comes from: this is
+not 24 reviews compressed into 5, it is 5 reviews of the content that was actually this spec's own work.
