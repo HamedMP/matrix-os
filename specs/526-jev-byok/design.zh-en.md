@@ -4,7 +4,7 @@ Updated: 2026-09-22. [Governing spec](spec.md). The directory name is retained f
 
 ## Product decision / 产品决定
 
-首版把 Jev 做成 Matrix 的 built-in decision capability，但只交付一个完整场景：Gmail inbox triage。用户不需要 TypeSafe/Vercel key，也不需要把主模型切到 Matrix AI。每次 Jev 调用都由当前 owner 的 Matrix runtime credential 鉴权并从 Matrix AI credit 结算。
+首版把 Jev 做成 Matrix 的 built-in decision capability，但只交付一个完整场景：Gmail inbox triage。用户不需要 TypeSafe、Cloudflare 或 Vercel key，也不需要把主模型切到 Matrix AI。每次 Jev 调用都由当前 owner 的 Matrix runtime credential 鉴权并从 Matrix AI credit 结算。
 
 The implementation has three independently testable layers:
 
@@ -23,9 +23,9 @@ flowchart LR
   M -->|gmail list/get/labels| G[Local Matrix Gateway]
   M -->|jev_evaluate recipe + state| G
   G -->|owner-scoped funded credential| R[Matrix funded AI relay]
-  R -->|POST /v1/evaluate| V[Vercel AI Gateway]
-  V --> J[typesafe-ai/jev]
-  J --> V --> R --> G --> M --> S
+  R -->|POST /ai/run| C[Cloudflare AI REST API]
+  C --> J[typesafe/jev]
+  J --> C --> R --> G --> M --> S
   S -->|create_label / modify_message| M
 ```
 
@@ -36,8 +36,8 @@ The model/tool arguments never contain an owner ID, payer, service key, upstream
 - The bundled skill is synced by the existing Matrix skill distribution mechanism.
 - The existing `matrix-integrations` MCP adds one `jev_evaluate` tool beside the existing Gmail tools. It calls the authenticated local Gateway and contains no upstream credential.
 - The local Gateway adds `POST /api/jev/evaluate` and resolves `email-triage-v1`; callers cannot submit arbitrary questions or model IDs.
-- The funded relay adds a strict internal `POST /v1/evaluate` path for `typesafe-ai/jev`. Existing `/v1/messages`, `/v1/messages/count_tokens` and `/v1/chat/completions` behavior remains unchanged.
-- The funded relay calls the Vercel evaluation API because that modality is not exposed through OpenAI- or Anthropic-compatible chat endpoints.
+- The funded relay adds a strict internal `POST /v1/evaluate` path for `typesafe/jev`. Existing `/v1/messages`, `/v1/messages/count_tokens` and `/v1/chat/completions` behavior remains unchanged.
+- The funded relay calls Cloudflare's AI REST `POST /ai/run`, which supports Jev's native structured schema. It reuses the validated Cloudflare account, gateway ID and central Workers AI credential, and disables request/response payload logging for email evidence.
 
 An integration test must execute skill/tool contract → local Gateway → funded-relay adapter with a controlled upstream, proving that the registered dependencies and auth headers are the same ones used at runtime.
 
@@ -47,8 +47,8 @@ An integration test must execute skill/tool contract → local Gateway → funde
 |---|---|---|---|
 | `POST /api/jev/evaluate` | Local agent/MCP | Existing local Matrix bearer auth | Owner-scoped runtime; Matrix AI policy and credit required; private |
 | Acquire funded AI credential | Local Gateway | Existing platform-issued runtime identity | Credential is bound to the authenticated owner/runtime; private |
-| `POST /v1/evaluate` | Local Gateway | Short-lived funded relay bearer lease | Model must be `typesafe-ai/jev`; recipe-shaped bounds only; private |
-| Vercel `POST /v1/evaluate` | Funded relay | Server-held Vercel AI Gateway credential | Fixed upstream origin and model allowlist; external server-to-server |
+| `POST /v1/evaluate` | Local Gateway | Short-lived funded relay bearer lease | Model must be `typesafe/jev`; recipe-shaped bounds only; private |
+| Cloudflare `POST /accounts/{account}/ai/run` | Funded relay | Existing central Cloudflare token with Workers AI Read permission | Fixed `typesafe/jev`, validated account/gateway configuration and payload logging disabled; external server-to-server |
 | Gmail read actions | Agent skill via integrations MCP | Existing Matrix integration auth | Connected-account scope and current action policy; private |
 | Gmail label/mutation actions | Agent skill via integrations MCP | Existing Matrix integration auth | Explicit user/automation authorization; private |
 | Skill discovery | Supported local agent | Existing local runtime access | Bundled public-safe instructions, no credential or billable probe |
@@ -67,7 +67,7 @@ The caller supplies only:
 }
 ```
 
-The server maps that to one evaluation request using `model: "typesafe-ai/jev"` and seven questions with stable IDs:
+The server maps that to one Cloudflare evaluation request using `model: "typesafe/jev"` and seven `noul` questions with stable IDs:
 
 | ID | Question meaning |
 |---|---|
@@ -111,7 +111,9 @@ The workflow never sends, replies, forwards, trashes or deletes email.
 
 The skill derives a content fingerprint from the bounded normalized thread plus recipe version. The caller's idempotency key identifies mailbox, thread and fingerprint but is meaningful only inside the authenticated owner scope.
 
-The local Gateway and relay reuse existing funded admission: authorize owner policy, reserve a conservative bound, dispatch outside any database transaction, record actual usage/cost, then finalize or reconcile. When Vercel supplies Gateway cost metadata, settlement uses that trusted response value. A timeout with unknown upstream completion is not retried as a fresh billable request and is not reported as free.
+The local Gateway and relay reuse existing funded admission: authorize owner policy, reserve a conservative bound, dispatch outside any database transaction, record actual usage/cost, then finalize or reconcile. Settlement derives the provider cost from Cloudflare-returned input-token usage and the reviewed TypeSafe price of $0.042 per million input tokens, with an expiry horizon that fails closed when pricing needs review. A timeout with unknown upstream completion is not retried as a fresh billable request and is not reported as free.
+
+Matrix's TypeSafe account remains available for a future direct-provider path, but the first release does not need a TypeSafe or Vercel credential because Cloudflare exposes Jev through the same funded infrastructure already used by Matrix.
 
 Duplicate completed invocations return the stored typed outcome during the deduplication window and do not dispatch or mutate again. Raw email evidence is not part of normal operational logs or accounting records. Logs may contain request ID, recipe/version, status, latency, bounded usage/cost and a non-reversible content fingerprint.
 

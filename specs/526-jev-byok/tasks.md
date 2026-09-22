@@ -19,7 +19,7 @@
 - [ ] T008 [P] [US1] Add failing auth, policy, credit, timeout, idempotency and settlement tests in `tests/proxy/funded-relay-evaluation.test.ts`
 - [ ] T009 [US1] Implement strict Jev upstream serialization in `packages/proxy/src/funded-relay-evaluation-request.ts`
 - [ ] T010 [US1] Implement bounded Jev response and usage/cost normalization in `packages/proxy/src/funded-relay-evaluation-response.ts`
-- [ ] T011 [US1] Add fixed Vercel evaluation configuration and secret validation in `packages/proxy/src/funded-relay-config.ts`
+- [ ] T011 [US1] Reuse the validated Cloudflare account, gateway ID and Workers AI credential for fixed `typesafe/jev` evaluation in `packages/proxy/src/funded-relay-config.ts`
 - [ ] T012 [US1] Mount authenticated `POST /v1/evaluate` with admission, timeout, redirect rejection and settlement in `packages/proxy/src/funded-relay.ts`
 - [ ] T013 [US1] Run evaluation and existing funded-relay regression suites; inspect failure logs for secret/body leakage
 

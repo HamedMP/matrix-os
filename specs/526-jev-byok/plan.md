@@ -7,7 +7,7 @@ Updated: 2026-09-22. [Product spec](spec.md), [design](design.zh-en.md), [tasks]
 - Runtime: Node.js 24+, strict TypeScript, ES modules, Zod 4.
 - HTTP: Hono for the local Gateway and funded relay.
 - Existing infrastructure: owner-scoped funded AI credentials, admission/credit settlement, Matrix integrations MCP, Gmail integration actions and bundled skill sync.
-- External API: Vercel AI Gateway evaluation endpoint with fixed `typesafe-ai/jev` model.
+- External API: Cloudflare AI REST `POST /ai/run` with fixed `typesafe/jev` model and the existing central Workers AI credential.
 - Testing: Vitest contract, unit, route and controlled-upstream integration tests; tests precede implementation.
 - Persistence: reuse the existing Postgres/Kysely funded accounting and idempotency mechanisms. Do not add an embedded database or new ORM.
 
@@ -38,9 +38,9 @@ Likely paths:
 
 ## Phase 2 — Funded relay evaluation adapter
 
-Extend the funded relay with one strict `/v1/evaluate` route. Reuse bearer lease verification, owner policy, rate/concurrency admission, credit reservation, settlement and shutdown behavior. Accept only the fixed Jev model and bounded evaluation schema, call the fixed Vercel origin with an abort deadline and `redirect: "error"`, bound the response, validate all seven answers and normalize usage/cost metadata.
+Extend the funded relay with one strict `/v1/evaluate` route. Reuse bearer lease verification, owner policy, rate/concurrency admission, credit reservation, settlement and shutdown behavior. Accept only the fixed Jev model and bounded evaluation schema, call Cloudflare's fixed `/ai/run` origin with the account and gateway derived from validated operator configuration, an abort deadline and `redirect: "error"`, suppress payload logging, bound the response, validate all seven answers and normalize usage/cost metadata.
 
-No database transaction spans the external call. Actual settlement uses trusted Gateway cost metadata when present; missing or unknown cost follows an explicit conservative reconciliation path. No blind retry occurs after an ambiguous timeout.
+No database transaction spans the external call. Actual settlement uses Cloudflare-returned input-token usage and the reviewed Jev price table with a short expiry horizon; missing usage, expired pricing or unknown cost follows an explicit conservative reconciliation path. No blind retry occurs after an ambiguous timeout.
 
 Likely paths:
 

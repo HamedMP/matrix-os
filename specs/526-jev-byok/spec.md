@@ -5,7 +5,7 @@ Tracking: [OM-286](https://linear.app/matrix-os/issue/OM-286), [GitHub #1800](ht
 
 ## Product scope
 
-Ship one production-quality Jev workflow for Gmail inbox triage. Matrix supplies Jev through its AI Gateway; users do not enter a TypeSafe or Vercel key. The user's primary coding or conversational model remains unchanged, while Jev calls use the authenticated owner's Matrix AI eligibility and credits.
+Ship one production-quality Jev workflow for Gmail inbox triage. Matrix supplies Jev through its existing Cloudflare-backed AI relay; users do not enter a TypeSafe, Cloudflare or Vercel key. The user's primary coding or conversational model remains unchanged, while Jev calls use the authenticated owner's Matrix AI eligibility and credits.
 
 The capability has three explicit layers:
 
@@ -107,12 +107,13 @@ After a successful run, Matrix can process only new or changed Gmail threads and
 
 - Gmail is already connected through Matrix integrations; adding a new mail provider or OAuth flow is outside this feature.
 - Matrix's existing funded runtime credential and control-plane accounting remain the authority for Jev eligibility and credits.
-- The upstream evaluation provider supports one state with several Boolean questions and returns usage plus Gateway cost metadata.
+- Cloudflare's AI REST API exposes `typesafe/jev` through `POST /ai/run`, accepts one state with several Noul questions and returns typed answers plus token usage.
+- Jev settlement uses the reviewed TypeSafe input-token price with a short expiry horizon; missing usage or expired pricing follows conservative reconciliation.
 - The first public demo may use a controlled test mailbox. Production mailbox mutation still requires the same authorization rules.
 
 ## Non-goals
 
-- Personal TypeSafe/Vercel keys, user-selected Jev endpoints or a Jev credential settings page.
+- Personal provider keys, user-selected Jev endpoints or a Jev credential settings page.
 - Research-shortlist and task-routing recipes.
 - A generic `use-jevs` custom-workflow product, arbitrary user-authored recipes or a new workflow engine.
 - Jev Ultrafast, browser/computer use and native Matrix OS navigation.
