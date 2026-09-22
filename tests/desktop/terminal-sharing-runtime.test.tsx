@@ -15,7 +15,7 @@ vi.mock("@matrix-os/ui", () => ({
   createCollaborationBrowserApi: () => ({ baseUrl: "https://app.matrix-os.com" }),
   // The connection store now reaches the direct collaboration client, so this mock has to
   // cover it or the module graph fails to initialise and the button is never rendered.
-  createCollaborationDirectApi: () => ({ close: vi.fn() }),
+  createCollaborationDirectApi: () => ({ direct: { close: vi.fn() } }),
 }));
 
 describe("DesktopTerminalSharing", () => {
