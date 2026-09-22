@@ -54,6 +54,7 @@
     "#kernel-conversations": "./src/kernel-conversations.ts",
     "#provider-settings": "./src/provider-settings.ts",
     "#funded-ai": "./src/funded-ai.ts",
+    "#jev": "./src/jev.ts",
     "#getting-started": "./src/getting-started.ts",
     "#os-view": "./src/os-view.ts",
     "#provider-settings": "./src/provider-settings.ts",
