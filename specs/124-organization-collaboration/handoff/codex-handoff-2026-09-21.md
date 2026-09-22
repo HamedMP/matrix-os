@@ -1887,3 +1887,45 @@ that passed without exercising what it claimed to cover.**
 layer's diff? is `main` green on its last *completed* run? is this the only failure across recent runs? Only
 then re-run. #1805's failure was a genuine flake in a file absent from its diff; #1806's was real and in a file
 it modifies. Re-running first would have masked the second.
+
+## 66. Consolidation plan: ~40 remaining PRs down to ~15 — 2026-09-22 12:55 UTC
+
+**Measured, not estimated.** Repo limits are 3000 additions and 50 files per PR.
+
+### Upper chain: 8 layers → 6 PRs
+
+| unit | additions | files | verdict |
+| --- | --- | --- | --- |
+| `s09` (+ the hardening graft, see below) | 1725 | 28 | own PR |
+| `s10` | 1904 | 28 | own PR |
+| `s12` | 2793 | 32 | own PR, near the limit |
+| **`s12-app` + `s15-gateway` + `s15-directory`** | **1343** | **42** | **combine** |
+| `s15-direct` | 1361 | 31 | own PR |
+| `s15` | 867 | 25 | own PR |
+
+Rejected by measurement: `s09`+`s10` is **3627 additions** (over), `s15-direct`+`s15` is **56 files** (over),
+`s15-directory`+`s15-direct`+`s15` is **62 files** (over).
+
+### S18: 24 layers → ~5 PRs
+
+The extracted content is **10854 additions across 153 files** in 100 commits. The limits force a floor of
+four PRs (`10854/3000` and `153/50`), so ~5 respecting logical boundaries. **That is the single biggest saving
+in the release: 24 review-and-CI cycles become 5.** The 141 duplicated base commits are discarded by the
+extraction, never reviewed.
+
+### Fold the hardening graft into S09
+
+`124/s09-run-hardening`'s four commits must land with S09 or the loss recovery ships inert (section 64). S09
+is 1725 additions across 28 files and the graft is roughly +1083 across 24 heavily overlapping files, so the
+combined layer should sit near 2800 additions and about 40 files — **inside both limits**. Folding it in
+solves the dependency and removes a PR at the same time, and means the inert window never exists on `main`.
+
+### Net effect
+
+Remaining PRs go from roughly **40 to about 15**: two in the current queue, six for the upper chain
+(hardening folded into the first), five for S18, one for S19, one for the ledger.
+
+**Why this is safe rather than corner-cutting.** Combining adjacent layers changes review granularity, not
+content — every commit is preserved and each combined PR still carries its own Invariants section. The S18
+reduction is not combining at all: it is discarding duplicated base commits that were never this spec's own
+work and that a reviewer should never have been asked to read.
