@@ -1,3 +1,4 @@
+import { createInternalIntegrationGuard } from './internal-integration-guard.js';
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import {
@@ -128,7 +129,7 @@ import {
   collectTenantPublicTelemetryEnv,
 } from './platform-startup-env.js';
 import type { PlatformApp } from './platform-app-types.js';
-import type { PlatformCollaborationRuntime } from './collaboration/wiring.js';
+import type { PlatformCollaborationComposition } from './collaboration/wiring.js';
 export { escapeInlineScriptJson } from './auth-pages.js';
 export { buildPostAuthRedirectPath } from './request-routing.js';
 export type { PlatformApp } from './platform-app-types.js';
@@ -253,8 +254,9 @@ export function createApp(deps: {
   internalFundedAiRuntimeRoutes?: Hono<any>;
   internalFundedAiRelayRoutes?: Hono<any>;
   internalFundedAiOperatorRoutes?: Hono<any>;
+  internalSpeechRuntimeRoutes?: Hono<any>;
   fundedAiRepository?: import('./ai-funded-policy-repository.js').AiFundedPolicyRepository;
-  collaboration?: PlatformCollaborationRuntime;
+  collaboration?: PlatformCollaborationComposition;
   customerVpsService?: CustomerVpsService;
   goldenSnapshotService?: GoldenSnapshotService;
   goldenSnapshotConfig?: GoldenSnapshotRuntimeConfig;
@@ -596,6 +598,12 @@ export function createApp(deps: {
   // without a provisioned computer reach the owner's registered authority.
   deps.collaboration?.register(app);
 
+  // Runtime speech uses its own runtime-bound credential and must never fall
+  // through to Clerk session routing or the tenant proxy.
+  if (deps.internalSpeechRuntimeRoutes) {
+    app.route('/internal/containers/:handle/speech', deps.internalSpeechRuntimeRoutes);
+  }
+
   // Session-based routing:
   // - app.matrix-os.com -> Clerk session -> Matrix OS shell/gateway
   // - code.matrix-os.com -> Clerk session -> code-server on the user's VPS
@@ -635,10 +643,11 @@ export function createApp(deps: {
         internalContainerClerkUserId: string;
       };
     }>();
+    const integrationGuard = createInternalIntegrationGuard();
     internalIntegrationApp.use('*', async (c, next) => {
       const handle = c.req.param('handle');
-      if (!handle) {
-        return c.json({ error: 'Missing handle' }, 400);
+      if (!handle || !HANDLE_PATTERN.test(handle)) {
+        return c.json({ error: 'Invalid handle' }, 400);
       }
       if (!platformSecret) {
         return c.json({ error: 'Internal integrations not configured' }, 503);
@@ -650,19 +659,23 @@ export function createApp(deps: {
         return c.json({ error: 'Unauthorized' }, 401);
       }
 
-      // Customer and preview VPSes are persisted in user_machines. Keep the
-      // legacy containers lookup only as a compatibility fallback for older
-      // runtimes that have not migrated yet.
-      const record =
-        (await getRunningUserMachineByHandle(db, handle)) ??
-        (await getContainer(db, handle));
-      if (!record?.clerkUserId) {
-        return c.json({ error: 'Unknown handle' }, 404);
-      }
-
       c.set('internalContainerHandle', handle);
-      c.set('internalContainerClerkUserId', record.clerkUserId);
-      return next();
+      return integrationGuard.middleware(c, async () => {
+        // Customer and preview VPSes are persisted in user_machines. Keep the
+        // legacy containers lookup only as a compatibility fallback for older
+        // runtimes that have not migrated yet.
+        const record =
+          (await getRunningUserMachineByHandle(db, handle)) ??
+          (await getContainer(db, handle));
+        if (!record?.clerkUserId) {
+          c.res = c.json({ error: 'Unknown handle' }, 404);
+          return;
+        }
+
+        c.set('internalContainerHandle', handle);
+        c.set('internalContainerClerkUserId', record.clerkUserId);
+        await next();
+      });
     });
     internalIntegrationApp.route('/', deps.internalIntegrationRoutes);
     app.route('/internal/containers/:handle/integrations', internalIntegrationApp);

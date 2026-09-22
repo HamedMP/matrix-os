@@ -37,15 +37,15 @@ describe("platform collaboration identifier resolution", () => {
   it("resolves an exact internal actor ID without calling the identity provider", async () => {
     const fetchImpl = vi.fn();
     const resolver = resolverFixture({ fetchImpl });
-    await expect(resolver.resolve(owner.actorId)).resolves.toEqual(owner);
+    await expect(resolver.resolve(owner.actorId, "org_matrix_team")).resolves.toEqual(owner);
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
   it("resolves username casing and one optional leading at-sign by exact normalized Matrix username", async () => {
     const listAccountsByUsername = vi.fn(async (username: string) => username === "nimanaderi" ? [owner] : []);
     const resolver = resolverFixture({ listAccountsByUsername });
-    await expect(resolver.resolve("NimaNaderi")).resolves.toEqual(owner);
-    await expect(resolver.resolve("@NIMANADERI")).resolves.toEqual(owner);
+    await expect(resolver.resolve("NimaNaderi", "org_matrix_team")).resolves.toEqual(owner);
+    await expect(resolver.resolve("@NIMANADERI", "org_matrix_team")).resolves.toEqual(owner);
     expect(listAccountsByUsername).toHaveBeenNthCalledWith(1, "nimanaderi");
     expect(listAccountsByUsername).toHaveBeenNthCalledWith(2, "nimanaderi");
   });
@@ -64,32 +64,32 @@ describe("platform collaboration identifier resolution", () => {
       ]);
     });
     const resolver = resolverFixture({ fetchImpl });
-    await expect(resolver.resolve(" PERSON@example.COM ")).resolves.toEqual(owner);
+    await expect(resolver.resolve(" PERSON@example.COM ", "org_matrix_team")).resolves.toEqual(owner);
     expect(fetchImpl).toHaveBeenCalledOnce();
   });
 
   it("returns the same safe failure for unknown, ambiguous, duplicate, or inaccessible identifiers", async () => {
     const failures = [
-      resolverFixture({ listAccountsByUsername: async () => [] }).resolve("unknownuser"),
+      resolverFixture({ listAccountsByUsername: async () => [] }).resolve("unknownuser", "org_matrix_team"),
       resolverFixture({ listAccountsByUsername: async () => [owner, { ...owner, actorId: "user_duplicate" }] })
-        .resolve("nimanaderi"),
-      resolverFixture({ listAccountsByUsername: async () => [owner, owner] }).resolve("nimanaderi"),
+        .resolve("nimanaderi", "org_matrix_team"),
+      resolverFixture({ listAccountsByUsername: async () => [owner, owner] }).resolve("nimanaderi", "org_matrix_team"),
       resolverFixture({
         fetchImpl: async () => Response.json([
           clerkUser(owner.actorId, "person@example.com", "verified"),
           clerkUser("user_duplicate", "PERSON@example.com", "verified"),
         ]),
-      }).resolve("person@example.com"),
+      }).resolve("person@example.com", "org_matrix_team"),
       resolverFixture({
         fetchImpl: async () => Response.json([
           clerkUser(owner.actorId, "person@example.com", "verified"),
           clerkUser(owner.actorId, "PERSON@example.com", "verified"),
         ]),
-      }).resolve("person@example.com"),
+      }).resolve("person@example.com", "org_matrix_team"),
       resolverFixture({
         getAccountByActorId: async () => null,
         fetchImpl: async () => Response.json([clerkUser("user_inaccessible", "person@example.com", "verified")]),
-      }).resolve("person@example.com"),
+      }).resolve("person@example.com", "org_matrix_team"),
     ];
     for (const failure of failures) {
       await expect(failure).rejects.toMatchObject({
@@ -103,7 +103,7 @@ describe("platform collaboration identifier resolution", () => {
     const resolver = resolverFixture({
       fetchImpl: async () => new Response("Clerk database exploded", { status: 503 }),
     });
-    await expect(resolver.resolve("person@example.com")).rejects.toMatchObject({
+    await expect(resolver.resolve("person@example.com", "org_matrix_team")).rejects.toMatchObject({
       message: "Invitation target is unavailable",
     });
   });
@@ -115,6 +115,7 @@ function resolverFixture(overrides: Partial<ConstructorParameters<typeof Platfor
     getAccountByActorId: async (actorId) => actorId === owner.actorId ? owner : null,
     listAccountsByUsername: async (username) => username === "nimanaderi" ? [owner] : [],
     fetchImpl: async () => Response.json([]),
+    membershipProjection: { isCurrentMember: async ({ organizationId }) => organizationId === "org_matrix_team" },
     ...overrides,
   });
 }

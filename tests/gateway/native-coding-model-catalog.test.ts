@@ -64,7 +64,7 @@ describe("native coding model catalogs", () => {
       defaultModel: "anthropic:claude-sonnet-5",
     });
     const [command, args, options] = runCommand.mock.calls[0]!;
-    expect(command).toBe(kind === "pi" ? "pi" : "opencode");
+    expect(command).toBe(`/opt/matrix/runtime/node/bin/${kind}`);
     expect(args).toEqual(kind === "pi"
       ? [
           "--list-models",
@@ -79,7 +79,11 @@ describe("native coding model catalogs", () => {
     expect(options).toMatchObject({
       cwd: "/home/matrix/home",
       timeout: 5_000,
-      env: expect.objectContaining({ HOME: "/home/matrix/home", PATH: "/runtime/bin" }),
+      env: expect.objectContaining({
+        HOME: "/home/matrix/home",
+        MATRIX_NODE_PREFIX: "/opt/matrix/runtime/node",
+        PATH: "/opt/matrix/runtime/node/bin:/runtime/bin",
+      }),
     });
     expect(options.env).not.toHaveProperty("DATABASE_URL");
   });

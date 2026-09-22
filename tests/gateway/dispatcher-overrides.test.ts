@@ -172,6 +172,30 @@ describe("dispatcher per-message kernel overrides", () => {
     expect(configs[1].workingDirectory).toBeUndefined();
   });
 
+  it("injects the managed owner-audio dependency into serial and batch kernels", async () => {
+    const homePath = makeHomePath();
+    const configs: KernelConfig[] = [];
+    const ownerAudioTranscriber = {
+      transcribe: vi.fn(async () => ({ text: "managed", durationMs: 100 })),
+    };
+    const spawn = vi.fn<SpawnFn>(async function* (_message, config) {
+      configs.push(config);
+      yield resultEvent();
+    });
+    const dispatcher = createDispatcher({
+      homePath,
+      spawnFn: spawn,
+      maxConcurrency: 1,
+      ownerAudioTranscriber,
+    });
+
+    await dispatcher.dispatch("serial", undefined, () => {});
+    await dispatcher.dispatchBatch([{ taskId: "batch-1", message: "batch", onEvent: () => {} }]);
+
+    expect(configs).toHaveLength(2);
+    expect(configs.every((config) => config.ownerAudioTranscriber === ownerAudioTranscriber)).toBe(true);
+  });
+
   it("waits for async event admission before consuming the next kernel event", async () => {
     const order: string[] = [];
     const gate = Promise.withResolvers<void>();

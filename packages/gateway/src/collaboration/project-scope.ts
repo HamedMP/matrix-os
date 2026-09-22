@@ -20,6 +20,7 @@ const ProjectRecordSchema = z.object({
 const PreflightPayloadSchema = z.object({
   version: z.literal(1),
   ownerId: ActorIdSchema,
+  organizationId: z.string().min(5).max(128).regex(/^org_[A-Za-z0-9_-]+$/),
   projectId: ProjectIdSchema,
   projectRevision: RevisionSchema,
   expiresAt: z.iso.datetime(),
@@ -64,7 +65,7 @@ export class CollaborationProjectScopeService {
     this.createEventId = options.createEventId ?? randomUUID;
   }
 
-  async preflight(input: { ownerId: string; projectId: string }): Promise<{
+  async preflight(input: { ownerId: string; organizationId: string; projectId: string }): Promise<{
     eligible: true;
     projectRevision: number;
     confirmationToken: string;
@@ -72,11 +73,13 @@ export class CollaborationProjectScopeService {
     existingLifecycle?: CollaborationScopeRecord["lifecycle"];
   }> {
     const ownerId = ActorIdSchema.parse(input.ownerId);
+    const organizationId = z.string().min(5).max(128).regex(/^org_[A-Za-z0-9_-]+$/).parse(input.organizationId);
     const projectId = ProjectIdSchema.parse(input.projectId);
     const project = await this.readProject(ownerId, projectId);
     const payload = PreflightPayloadSchema.parse({
       version: 1,
       ownerId,
+      organizationId,
       projectId,
       projectRevision: project.revision,
       expiresAt: new Date(this.now().getTime() + PREFLIGHT_LIFETIME_MS).toISOString(),
@@ -95,6 +98,7 @@ export class CollaborationProjectScopeService {
 
   async prepare(input: {
     ownerId: string;
+    organizationId: string;
     projectId: string;
     clientRequestId: string;
     payloadHash: string;
@@ -103,6 +107,7 @@ export class CollaborationProjectScopeService {
   }): Promise<CollaborationScopeRecord> {
     const parsed = z.object({
       ownerId: ActorIdSchema,
+      organizationId: z.string().min(5).max(128).regex(/^org_[A-Za-z0-9_-]+$/),
       projectId: ProjectIdSchema,
       clientRequestId: z.uuid(),
       payloadHash: DigestSchema,
@@ -124,6 +129,7 @@ export class CollaborationProjectScopeService {
           id: proposedScopeId,
           owner_type: "personal",
           owner_id: parsed.ownerId,
+          organization_id: parsed.organizationId,
           kind: "project",
           resource_id: parsed.projectId,
           parent_scope_id: null,
@@ -155,7 +161,8 @@ export class CollaborationProjectScopeService {
           .forUpdate()
           .executeTakeFirst();
         if (!scope || scope.membership_mode !== "direct"
-          || (scope.lifecycle !== "private" && scope.lifecycle !== "preparing")) {
+          || (scope.lifecycle !== "private" && scope.lifecycle !== "preparing")
+          || scope.organization_id !== parsed.organizationId) {
           throw new CollaborationProjectScopeError("conflict");
         }
         const operation = await readCreateOperation(trx, scope.id, parsed.ownerId, parsed.clientRequestId);
@@ -172,6 +179,7 @@ export class CollaborationProjectScopeService {
             actor_id: parsed.ownerId,
             role: "owner",
             status: "accepted",
+            organization_id: parsed.organizationId,
             invitation_id: null,
             invited_by: parsed.ownerId,
             accepted_at: now,
@@ -272,6 +280,7 @@ export class CollaborationProjectScopeService {
 
   private verifyConfirmation(input: {
     ownerId: string;
+    organizationId: string;
     projectId: string;
     expectedProjectRevision: number;
     confirmationToken: string;
@@ -294,6 +303,7 @@ export class CollaborationProjectScopeService {
     }
     const payload = PreflightPayloadSchema.safeParse(value);
     if (!payload.success || payload.data.ownerId !== input.ownerId
+      || payload.data.organizationId !== input.organizationId
       || payload.data.projectId !== input.projectId
       || payload.data.projectRevision !== input.expectedProjectRevision
       || Date.parse(payload.data.expiresAt) <= this.now().getTime()) {
@@ -339,6 +349,7 @@ function scopeRecord(row: Awaited<ReturnType<typeof findProjectScope>> & {}): Co
     authorityRuntimeId: row.authority_runtime_id,
     authorityGeneration: Number(row.authority_generation),
     executionGeneration: row.execution_generation === null ? null : Number(row.execution_generation),
+    ...(row.organization_id === null || row.organization_id === undefined ? {} : { organizationId: row.organization_id }),
     executionEligibility: row.execution_eligibility,
   };
 }

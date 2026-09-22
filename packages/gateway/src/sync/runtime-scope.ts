@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
+import {
+  buildSyncStoragePrefix,
+  SyncScopeSchema,
+  type SyncScope,
+} from "@matrix-os/contracts";
 
-const SAFE_SYNC_ID = /^[A-Za-z0-9_-]{1,256}$/;
-const SAFE_RUNTIME_SLOT = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
 const MAX_SYNC_ID_LENGTH = 256;
 const MAX_PEER_ID_LENGTH = 128;
 
@@ -15,23 +18,55 @@ function capWithHash(value: string, maxLength: number): string {
   return `${value.slice(0, maxLength - suffix.length)}${suffix}`;
 }
 
+export function resolveSyncScope(input: {
+  ownerId: string;
+  runtimeSlot?: string;
+}): SyncScope {
+  return SyncScopeSchema.parse({
+    ownerId: input.ownerId.trim(),
+    runtimeSlot: input.runtimeSlot?.trim() || "primary",
+  });
+}
+
+/**
+ * Primary keeps the deployed prefix. Every other runtime uses a versioned,
+ * structurally unambiguous namespace so owner and runtime segments cannot be
+ * confused with legacy owner identifiers.
+ */
+export function buildSyncScopePrefix(scope: SyncScope): string {
+  return buildSyncStoragePrefix(scope);
+}
+
+export function syncScopeRegistryKey(scope: SyncScope): string {
+  const parsed = SyncScopeSchema.parse(scope);
+  return parsed.runtimeSlot === "primary"
+    ? parsed.ownerId
+    : `${parsed.ownerId}\0${parsed.runtimeSlot}`;
+}
+
 export function deriveHomeMirrorSyncIdentity(input: {
   baseUserId: string;
   runtimeSlot?: string;
 }): { syncUserId: string; peerId: string } {
-  const runtimeSlot = input.runtimeSlot?.trim() || "primary";
-  if (!SAFE_RUNTIME_SLOT.test(runtimeSlot)) {
-    throw new Error("Invalid MATRIX_RUNTIME_SLOT for home mirror sync identity");
-  }
-
-  const baseUserId = input.baseUserId.trim();
-  if (!SAFE_SYNC_ID.test(baseUserId)) {
+  let scope: SyncScope;
+  try {
+    scope = resolveSyncScope({
+      ownerId: input.baseUserId,
+      runtimeSlot: input.runtimeSlot,
+    });
+  } catch (err: unknown) {
+    if (!(err instanceof Error)) throw err;
+    console.warn("[sync] Invalid sync input", err.name);
+    const runtimeSlot = input.runtimeSlot?.trim() || "primary";
+    if (!/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(runtimeSlot)) {
+      throw new Error("Invalid MATRIX_RUNTIME_SLOT for home mirror sync identity");
+    }
     throw new Error("Invalid MATRIX_USER_ID for home mirror sync identity");
   }
 
-  const syncUserId = runtimeSlot === "primary"
-    ? baseUserId
-    : capWithHash(`${baseUserId}__slot_${runtimeSlot}`, MAX_SYNC_ID_LENGTH);
+  const syncUserId = scope.runtimeSlot === "primary"
+    ? scope.ownerId
+    : capWithHash(`${scope.ownerId}__slot_${scope.runtimeSlot}`, MAX_SYNC_ID_LENGTH);
 
   return {
     syncUserId,

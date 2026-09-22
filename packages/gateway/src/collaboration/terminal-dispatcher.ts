@@ -2,7 +2,6 @@ import {
   CollaborationTerminalActionResultSchema,
   CollaborationTerminalActionSchema,
   type CollaborationParticipant,
-  type CollaborationPolicy,
   type CollaborationTerminal,
   type CollaborationTerminalAction,
   type CollaborationTerminalActionResult,
@@ -70,7 +69,6 @@ export class CollaborationTerminalDispatcher {
       scopeId: string;
       actorId: string;
       action: "control_execution";
-      executionPolicy: CollaborationPolicy;
     }): Promise<AuthorizedCollaborationContext> };
     terminal: CollaborationTerminalRuntime;
     control: TerminalControlCoordinator;
@@ -90,7 +88,6 @@ export class CollaborationTerminalDispatcher {
     scopeId: string;
     actorId: string;
     connectionId: string;
-    policy: CollaborationPolicy;
     action: unknown;
   }): Promise<CollaborationTerminalActionResult> {
     try {
@@ -100,7 +97,6 @@ export class CollaborationTerminalDispatcher {
         scopeId: input.scopeId,
         actorId: input.actorId,
         action: "control_execution",
-        executionPolicy: input.policy,
       });
       if (context.actorId !== input.actorId || context.scopeId !== input.scopeId) {
         throw new CollaborationTerminalDispatcherError("forbidden");

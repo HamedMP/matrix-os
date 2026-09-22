@@ -24,10 +24,8 @@ import {
 } from "./websocket.js";
 
 const MAX_HYDRATION_CONCURRENCY = 4;
-const POLICY_LIFETIME_MS = 30_000;
 const RuntimeIdSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9:_-]+$/);
 const BearerTokenSchema = z.string().min(32).max(4_096).regex(/^[A-Za-z0-9._~-]+$/);
-const MilestoneSchema = z.enum(["m1", "m2", "m3", "m4"]);
 const DiscoveryCursorSchema = z.object({
   version: z.literal(1),
   actorId: CollaborationActorIdSchema,
@@ -49,7 +47,7 @@ export function createPlatformCollaborationRoutes(options: {
     bearerToken: string;
   }): Promise<{ runtimeId: string; ownerId: string } | null>;
   resolveParticipant(actorId: string): Promise<{ actorId: string; displayName: string } | null>;
-  resolveInvitationIdentifier(identifier: string): Promise<{ actorId: string; displayName: string } | null>;
+  resolveInvitationIdentifier(identifier: string, organizationId: string): Promise<{ actorId: string; displayName: string } | null>;
   hydrate(input: {
     actorId: string;
     entry: CollaborationDirectoryEntry;
@@ -57,7 +55,6 @@ export function createPlatformCollaborationRoutes(options: {
   now?: () => Date;
 }): Hono {
   const app = new Hono();
-  const now = options.now ?? (() => new Date());
 
   app.on(
     ["POST", "PUT", "PATCH", "DELETE"],
@@ -154,29 +151,6 @@ export function createPlatformCollaborationRoutes(options: {
   });
 
   registerInvitationIdentifierResolutionRoute(app, options);
-
-  app.get("/internal/collaboration/policy", async (c) => {
-    const runtime = await requireRuntime(c, options.authenticateRuntime);
-    if (!runtime) return safeJson(c, "Unauthorized", 401);
-    const milestone = MilestoneSchema.safeParse(c.req.query("milestone"));
-    if (!milestone.success) return safeJson(c, "Invalid request", 422);
-    try {
-      const stored = await options.repository.getPolicy(milestone.data);
-      const issuedAt = now();
-      const signed = options.signer.signPolicy({
-        milestone: stored.milestone,
-        revision: String(stored.revision),
-        mode: stored.mode,
-        cohort: stored.cohort,
-        issuedAt: issuedAt.toISOString(),
-        expiresAt: new Date(issuedAt.getTime() + POLICY_LIFETIME_MS).toISOString(),
-      });
-      c.header("Cache-Control", "private, no-store");
-      return c.json(signed);
-    } catch (error: unknown) {
-      return repositoryFailure(c, "policy lookup", error);
-    }
-  });
 
   return app;
 }

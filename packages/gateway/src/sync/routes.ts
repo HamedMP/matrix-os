@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import type { SyncScope } from "@matrix-os/contracts";
 import { bodyLimit } from "hono/body-limit";
 import { HTTPException } from "hono/http-exception";
 import {
@@ -22,7 +23,12 @@ import {
   PresignValidationError,
 } from "./presign.js";
 import { handleCommit, type CommitDeps } from "./commit.js";
-import { resolveWithinPrefix } from "./path-validation.js";
+import { buildFileKey, buildStagingKey } from "./r2-keys.js";
+import {
+  buildSyncScopePrefix,
+  resolveSyncScope,
+  syncScopeRegistryKey,
+} from "./runtime-scope.js";
 import {
   syncPresignRequestsTotal,
   syncPresignDuration,
@@ -47,17 +53,21 @@ import {
 import { createSyncRateLimiter } from "./rate-limiter.js";
 import { MissingSyncUserIdentityError } from "../auth.js";
 import { RequestPrincipalMisconfiguredError, isRequestPrincipalError } from "../request-principal.js";
+import { StagedObjectValidationError } from "./blob-publication.js";
 
 const SYNC_BODY_LIMIT = 65536;
 const MULTIPART_COMPLETE_BODY_LIMIT = 1024 * 1024;
+const SYNC_PUBLICATION_PROTOCOL_VERSION = 3;
 
 export interface SyncRouteDeps {
   r2: R2Client;
   db: ManifestDb;
   peerRegistry: PeerRegistry;
   sharing: SharingService;
-  getUserId: (c: any) => string;
+  getScope?: (c: any) => SyncScope;
+  getUserId?: (c: any) => string;
   getPeerId: (c: any) => string;
+  finalizeStagedObject?: CommitDeps["finalizeStagedObject"];
 }
 
 export function createSyncRoutes(deps: SyncRouteDeps): Hono {
@@ -74,9 +84,13 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
   // PR. Share CRUD/list endpoints ship here, but presign/commit still operate
   // only on the caller's own namespace until shared-folder daemon plumbing and
   // owner-scoped JWTs land (tracked in specs/066-file-sync/follow-ups.md).
-  const getUserId = (c: Parameters<SyncRouteDeps["getUserId"]>[0]): string => {
+  const getScope = (c: any): SyncScope => {
     try {
-      return deps.getUserId(c);
+      if (deps.getScope) return resolveSyncScope(deps.getScope(c));
+      if (deps.getUserId) {
+        return resolveSyncScope({ ownerId: deps.getUserId(c), runtimeSlot: "primary" });
+      }
+      throw new RequestPrincipalMisconfiguredError();
     } catch (err) {
       if (err instanceof MissingSyncUserIdentityError || (isRequestPrincipalError(err) && !(err instanceof RequestPrincipalMisconfiguredError))) {
         throw new HTTPException(401, { message: "Unauthorized" });
@@ -100,12 +114,28 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
     return c.json({ error: "Validation error" }, 400);
   }
 
+  function requiresProtocolUpgrade(body: unknown): boolean {
+    return (
+      typeof body !== "object"
+      || body === null
+      || !("protocolVersion" in body)
+      || (body as { protocolVersion?: unknown }).protocolVersion !== SYNC_PUBLICATION_PROTOCOL_VERSION
+    );
+  }
+
+  function protocolUpgradeRequired(c: Parameters<Hono["request"]>[0] extends never ? never : any) {
+    return c.json({
+      error: "sync_upgrade_required",
+      requiredProtocolVersion: SYNC_PUBLICATION_PROTOCOL_VERSION,
+    }, 426);
+  }
+
   // GET /manifest
   app.get("/manifest", async (c) => {
-    const userId = getUserId(c);
+    const scope = getScope(c);
     const ifNoneMatch = c.req.header("If-None-Match");
 
-    const result = await readManifest(store, userId);
+    const result = await readManifest(store, scope);
 
     if (ifNoneMatch && ifNoneMatch === result.etag) {
       return c.body(null, 304);
@@ -121,9 +151,10 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
 
   // POST /presign
   app.post("/presign", mutatingBodyLimit, async (c) => {
-    const userId = getUserId(c);
+    const scope = getScope(c);
+    const scopeKey = syncScopeRegistryKey(scope);
 
-    if (!presignLimiter.check(userId)) {
+    if (!presignLimiter.check(scopeKey)) {
       return c.json({ error: "Rate limit exceeded" }, 429);
     }
 
@@ -132,6 +163,9 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
       return c.json({ error: "Invalid JSON" }, 400);
     }
     const body = json.body;
+    if (requiresProtocolUpgrade(body)) {
+      return protocolUpgradeRequired(c);
+    }
     const parsed = PresignRequestSchema.safeParse(body);
 
     if (!parsed.success) {
@@ -140,7 +174,19 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
 
     const timer = syncPresignDuration.startTimer();
     try {
-      const urls = await generatePresignedUrls({ r2: deps.r2 }, userId, parsed.data.files);
+      let manifestPromise: ReturnType<typeof readManifest> | undefined;
+      const urls = await generatePresignedUrls({
+        r2: deps.r2,
+        resolveDownloadKey: async (path) => {
+          manifestPromise ??= readManifest(store, scope);
+          const current = await manifestPromise;
+          const entry = current.manifest.files[path];
+          if (!entry || entry.deleted) {
+            throw new PresignValidationError("File is not present in the accepted manifest");
+          }
+          return entry.objectKey ?? buildFileKey(scope, path);
+        },
+      }, scope, parsed.data.files);
 
       for (const file of parsed.data.files) {
         syncPresignRequestsTotal.inc({ action: file.action });
@@ -164,25 +210,34 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
 
   // POST /multipart/complete
   app.post("/multipart/complete", multipartCompleteBodyLimit, async (c) => {
-    const userId = getUserId(c);
-    if (!multipartCompleteLimiter.check(userId)) {
+    const scope = getScope(c);
+    const scopeKey = syncScopeRegistryKey(scope);
+    if (!multipartCompleteLimiter.check(scopeKey)) {
       return c.json({ error: "Rate limit exceeded" }, 429);
     }
     const json = await parseJsonBody(c);
     if (!json.ok) {
       return c.json({ error: "Invalid JSON" }, 400);
     }
+    if (requiresProtocolUpgrade(json.body)) {
+      return protocolUpgradeRequired(c);
+    }
     const parsed = CompleteMultipartRequestSchema.safeParse(json.body);
     if (!parsed.success) {
       return validationError(c);
     }
-    const pathCheck = resolveWithinPrefix(userId, parsed.data.path);
-    if (!pathCheck.valid) {
+    let objectKey: string;
+    try {
+      buildFileKey(scope, parsed.data.path);
+      objectKey = buildStagingKey(scope, parsed.data.stagingId);
+    } catch (err: unknown) {
+      if (!(err instanceof Error)) throw err;
+      console.warn("[sync] Invalid sync input", err.name);
       return c.json({ error: "Invalid request" }, 400);
     }
     try {
       const result = await deps.r2.completeMultipartUpload(
-        pathCheck.key,
+        objectKey,
         parsed.data.uploadId,
         parsed.data.parts,
       );
@@ -198,24 +253,33 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
 
   // POST /multipart/abort
   app.post("/multipart/abort", mutatingBodyLimit, async (c) => {
-    const userId = getUserId(c);
-    if (!multipartAbortLimiter.check(userId)) {
+    const scope = getScope(c);
+    const scopeKey = syncScopeRegistryKey(scope);
+    if (!multipartAbortLimiter.check(scopeKey)) {
       return c.json({ error: "Rate limit exceeded" }, 429);
     }
     const json = await parseJsonBody(c);
     if (!json.ok) {
       return c.json({ error: "Invalid JSON" }, 400);
     }
+    if (requiresProtocolUpgrade(json.body)) {
+      return protocolUpgradeRequired(c);
+    }
     const parsed = AbortMultipartRequestSchema.safeParse(json.body);
     if (!parsed.success) {
       return validationError(c);
     }
-    const pathCheck = resolveWithinPrefix(userId, parsed.data.path);
-    if (!pathCheck.valid) {
+    let objectKey: string;
+    try {
+      buildFileKey(scope, parsed.data.path);
+      objectKey = buildStagingKey(scope, parsed.data.stagingId);
+    } catch (err: unknown) {
+      if (!(err instanceof Error)) throw err;
+      console.warn("[sync] Invalid sync input", err.name);
       return c.json({ error: "Invalid request" }, 400);
     }
     try {
-      await deps.r2.abortMultipartUpload(pathCheck.key, parsed.data.uploadId);
+      await deps.r2.abortMultipartUpload(objectKey, parsed.data.uploadId);
       return c.json({ ok: true });
     } catch (err: unknown) {
       console.error(
@@ -228,9 +292,10 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
 
   // POST /commit
   app.post("/commit", mutatingBodyLimit, async (c) => {
-    const userId = getUserId(c);
+    const scope = getScope(c);
+    const scopeKey = syncScopeRegistryKey(scope);
     const peerId = deps.getPeerId(c);
-    if (!commitLimiter.check(userId)) {
+    if (!commitLimiter.check(scopeKey)) {
       return c.json({ error: "Rate limit exceeded" }, 429);
     }
     const json = await parseJsonBody(c);
@@ -238,6 +303,9 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
       return c.json({ error: "Invalid JSON" }, 400);
     }
     const body = json.body;
+    if (requiresProtocolUpgrade(body)) {
+      return protocolUpgradeRequired(c);
+    }
     const parsed = CommitRequestSchema.safeParse(body);
 
     if (!parsed.success) {
@@ -247,12 +315,14 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
     const timer = syncCommitDuration.startTimer();
     try {
       const commitDeps: CommitDeps = {
+        signal: c.req.raw.signal,
         r2: deps.r2,
         db: deps.db,
         broadcast: (uid, sender, msg) => deps.peerRegistry.broadcastChange(uid, sender, msg),
+        ...(deps.finalizeStagedObject ? { finalizeStagedObject: deps.finalizeStagedObject } : {}),
       };
 
-      const result = await handleCommit(commitDeps, userId, peerId, parsed.data);
+      const result = await handleCommit(commitDeps, scope, peerId, parsed.data);
 
       timer();
 
@@ -272,6 +342,9 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
       return c.json(result);
     } catch (err: unknown) {
       timer();
+      if (err instanceof StagedObjectValidationError) {
+        return c.json({ error: "Staged upload validation failed" }, 400);
+      }
       console.error("[sync/commit] Commit failed:", err instanceof Error ? err.message : String(err));
       return c.json({ error: "Commit failed" }, 500);
     }
@@ -279,9 +352,10 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
 
   // GET /status
   app.get("/status", async (c) => {
-    const userId = getUserId(c);
-    const peers = deps.peerRegistry.getPeers(userId);
-    const meta = await deps.db.getManifestMeta(userId);
+    const scope = getScope(c);
+    const scopeKey = syncScopeRegistryKey(scope);
+    const peers = deps.peerRegistry.getPeers(scopeKey);
+    const meta = await deps.db.getManifestMeta(scope);
     const aggregate = await deps.db.getAggregateManifestStats?.();
 
     syncConnectedPeers.set(deps.peerRegistry.getTotalPeerCount());
@@ -300,14 +374,22 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
       totalSize: Number(meta?.total_size ?? 0),
       lastSyncAt: meta?.updated_at?.getTime() ?? 0,
       pendingConflicts: 0,
+      protocolVersion: 3,
+      capabilities: {
+        stagedUploads: true,
+        immutableBlobs: true,
+        immutableManifestGenerations: true,
+      },
     });
   });
 
   // POST /resolve-conflict
   app.post("/resolve-conflict", mutatingBodyLimit, async (c) => {
-    const userId = getUserId(c);
+    const scope = getScope(c);
+    const scopeKey = syncScopeRegistryKey(scope);
+    const userId = scope.ownerId;
     const peerId = deps.getPeerId(c);
-    if (!commitLimiter.check(userId)) {
+    if (!commitLimiter.check(scopeKey)) {
       return c.json({ error: "Rate limit exceeded" }, 429);
     }
     const json = await parseJsonBody(c);
@@ -321,24 +403,32 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
       return validationError(c);
     }
 
-    if (!resolveWithinPrefix(userId, parsed.data.path).valid) {
+    try {
+      buildFileKey(scope, parsed.data.path);
+    } catch (err: unknown) {
+      if (!(err instanceof Error)) throw err;
+      console.warn("[sync] Invalid sync input", err.name);
       return c.json({ error: "Invalid path" }, 400);
     }
 
     if (parsed.data.conflictPath) {
-      const pathCheck = resolveWithinPrefix(userId, parsed.data.conflictPath);
-      if (!pathCheck.valid) {
+      let conflictObjectKey: string;
+      try {
+        conflictObjectKey = buildFileKey(scope, parsed.data.conflictPath);
+      } catch (err: unknown) {
+        if (!(err instanceof Error)) throw err;
+        console.warn("[sync] Invalid sync input", err.name);
         return c.json({ error: "Invalid conflict path" }, 400);
       }
       try {
-        const conflictPath = pathCheck.key.slice(`matrixos-sync/${userId}/files/`.length);
-        const deletion = await deps.db.withAdvisoryLock(userId, async (dbExecutor) => {
+        const conflictPath = conflictObjectKey.slice(`${buildSyncScopePrefix(scope)}/files/`.length);
+        const deletion = await deps.db.withAdvisoryLock(scope, async (dbExecutor) => {
           const lockedStore: ManifestStore = { ...store, dbExecutor };
-          const existing = await readManifest(lockedStore, userId);
+          const existing = await readManifest(lockedStore, scope);
           const entry = existing.manifest.files[conflictPath];
           const deleteConflictBlob = async (): Promise<void> => {
             try {
-              await deps.r2.deleteObject(pathCheck.key);
+              await deps.r2.deleteObject(conflictObjectKey);
             } catch (err: unknown) {
               console.warn(
                 "[sync/resolve-conflict] Failed to delete orphaned conflict blob after manifest update:",
@@ -354,7 +444,7 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
               peerId,
             );
             const manifestVersion = existing.manifestVersion + 1;
-            await writeManifest(lockedStore, userId, next, manifestVersion);
+            await writeManifest(lockedStore, scope, next, manifestVersion);
             await deleteConflictBlob();
             return {
               deleted: true,
@@ -371,7 +461,7 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
           };
         });
         if (deletion.deleted && deletion.hash) {
-          deps.peerRegistry.broadcastChange(userId, peerId, {
+          deps.peerRegistry.broadcastChange(scopeKey, peerId, {
             type: "sync:change",
             files: [{
               path: conflictPath,
@@ -398,7 +488,8 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
 
   // POST /share -- create sharing grant
   app.post("/share", mutatingBodyLimit, async (c) => {
-    const userId = getUserId(c);
+    const scope = getScope(c);
+    const userId = scope.ownerId;
     if (!shareLimiter.check(userId)) {
       return c.json({ error: "Rate limit exceeded" }, 429);
     }
@@ -433,7 +524,8 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
 
   // DELETE /share -- revoke sharing grant
   app.delete("/share", mutatingBodyLimit, async (c) => {
-    const userId = getUserId(c);
+    const scope = getScope(c);
+    const userId = scope.ownerId;
     if (!shareLimiter.check(userId)) {
       return c.json({ error: "Rate limit exceeded" }, 429);
     }
@@ -464,7 +556,8 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
 
   // POST /share/accept -- accept share invitation
   app.post("/share/accept", mutatingBodyLimit, async (c) => {
-    const userId = getUserId(c);
+    const scope = getScope(c);
+    const userId = scope.ownerId;
     if (!shareLimiter.check(userId)) {
       return c.json({ error: "Rate limit exceeded" }, 429);
     }
@@ -496,7 +589,8 @@ export function createSyncRoutes(deps: SyncRouteDeps): Hono {
 
   // GET /shares -- list active shares
   app.get("/shares", async (c) => {
-    const userId = getUserId(c);
+    const scope = getScope(c);
+    const userId = scope.ownerId;
     if (!shareLimiter.check(userId)) {
       return c.json({ error: "Rate limit exceeded" }, 429);
     }

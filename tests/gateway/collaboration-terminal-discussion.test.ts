@@ -10,6 +10,7 @@ import {
   collaborationIds,
   createCollaborationTestDatabase,
   type CollaborationTestDatabase,
+  allowAllOrganizationPrecondition,
 } from "./collaboration-test-support.js";
 
 const now = "2026-09-17T12:00:00.000Z";
@@ -28,7 +29,7 @@ describe("CollaborationDiscussionAdapter terminal discussion", () => {
     await bootstrapCollaborationDatabase(fixture.db);
     await seedTerminalScope(fixture);
     repository = new CollaborationRepository(fixture.db, { now: () => new Date(now) });
-    authority = new CollaborationAuthority(repository, { now: () => new Date(now) });
+    authority = new CollaborationAuthority(repository, { now: () => new Date(now), organizationPrecondition: allowAllOrganizationPrecondition });
     const chatAdapter = new CollaborationChatAdapter({
       db: fixture.db,
       authority,
@@ -211,6 +212,7 @@ async function seedTerminalScope(fixture: CollaborationTestDatabase) {
     owner_type: "personal",
     owner_id: collaborationActors.owner,
     kind: "terminal",
+    organization_id: "org_matrix_team",
     resource_id: "terminal_shared",
     parent_scope_id: null,
     membership_mode: "direct",

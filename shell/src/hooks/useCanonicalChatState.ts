@@ -28,6 +28,7 @@ import type { ChatState, ChatSubmitOptions } from "@/hooks/useChatState";
 import { getGatewayUrl } from "@/lib/gateway";
 import {
   createCanonicalShellChatClient,
+  canonicalShellChatFailureMessage,
   isDefinitiveCanonicalChatRejection,
 } from "@/lib/canonical-chat-client";
 import { projectCanonicalTranscript } from "@/lib/canonical-chat-terminal-notices";
@@ -245,9 +246,10 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView }
         if (event.chatId === activeChatId) {
           const current = detailRef.current;
           const next = current ? applyCanonicalChatContent(current, event.content) : null;
-          if (next) {
-            detailRef.current = next;
-            setDetail(next);
+          if (next && current) {
+            const merged = { ...next, record: mergeCanonicalChatRecord(current.record, next.record) };
+            detailRef.current = merged;
+            setDetail(merged);
             setSafeError(null);
           } else selectedRefresh.schedule();
         }
@@ -441,7 +443,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView }
           await Promise.allSettled(uploadedReferences.map((reference) => client.deleteAttachment(reference)));
         }
         console.warn("[canonical-chat] Shell Turn admission failed:", error instanceof Error ? error.name : "UnknownError");
-        if (activeChatIdRef.current === sourceChatId) setSafeError("Message could not be sent. Try again.");
+        if (activeChatIdRef.current === sourceChatId) setSafeError(canonicalShellChatFailureMessage(error));
         return turnAdmitted;
       }
     };

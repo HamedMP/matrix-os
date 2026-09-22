@@ -7,7 +7,9 @@ import {
   createProjectResourceAdapters,
 } from "../../packages/gateway/src/collaboration/project-adapters.js";
 import { CollaborationRepository } from "../../packages/gateway/src/collaboration/repository.js";
-import { createCollaborationTestDatabase, type CollaborationTestDatabase } from "./collaboration-test-support.js";
+import { createCollaborationTestDatabase, type CollaborationTestDatabase,
+  allowAllOrganizationPrecondition,
+} from "./collaboration-test-support.js";
 
 const SCOPE_ID = "10000000-0000-4000-8000-000000000111";
 const OWNER_ID = "user_project_owner";
@@ -32,6 +34,7 @@ describe("project collaboration resource authorization", () => {
       owner_type: "personal",
       owner_id: OWNER_ID,
       kind: "project",
+      organization_id: "org_matrix_team",
       resource_id: PROJECT_ID,
       parent_scope_id: null,
       membership_mode: "direct",
@@ -81,7 +84,7 @@ describe("project collaboration resource authorization", () => {
         updated_at: NOW,
       }).execute();
     }
-    authority = new CollaborationAuthority(new CollaborationRepository(fixture.db), { now: () => NOW });
+    authority = new CollaborationAuthority(new CollaborationRepository(fixture.db), { now: () => NOW, organizationPrecondition: allowAllOrganizationPrecondition });
     calls = [];
     projectFence = {
       withAdmission: vi.fn(async (_input, operation) => operation({ fenceEpoch: 1, authorityGeneration: 1 })),

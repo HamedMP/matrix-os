@@ -89,6 +89,7 @@ write_files:
       Group=matrix
       EnvironmentFile=/opt/matrix/env/host.env
       Environment=SYMPHONY_PORT=4766
+      Environment=MATRIX_NODE_PREFIX=/opt/matrix/runtime/node
       Environment=MATRIX_CODING_AGENTS_WORKSPACE_PROVIDERS=claude,codex,pi,opencode
       WorkingDirectory=/opt/matrix
       ExecStart=/opt/matrix/bin/matrix-gateway
@@ -387,18 +388,22 @@ write_files:
       MATRIX_CLERK_USER_ID={{clerkUserId}}
       MATRIX_HANDLE={{handle}}
       MATRIX_RUNTIME_SLOT={{runtimeSlot}}
+      MATRIX_NODE_PREFIX=/opt/matrix/runtime/node
       MATRIX_DEVELOPER_TOOLS='{{developerTools}}'
       MATRIX_IMAGE_VERSION={{imageVersion}}
       MATRIX_IMAGE_SOURCE={{imageSource}}
       MATRIX_TARGET_BUNDLE_SHA256={{targetBundleSha256}}
       MATRIX_SNAPSHOT_SOURCE_VERSION={{snapshotSourceVersion}}
       MATRIX_UPDATE_CHANNEL={{updateChannel}}
-      MATRIX_COLLABORATION_ENABLED=false
       MATRIX_PLATFORM_REGISTER_URL={{platformRegisterUrl}}
       PLATFORM_INTERNAL_URL={{platformInternalUrl}}
       UPGRADE_TOKEN={{platformVerificationToken}}
       MATRIX_AUTH_TOKEN={{platformVerificationToken}}
+      MATRIX_SYNC_RUNTIME_TOKEN={{syncRuntimeToken}}
       MATRIX_FUNDED_AI_RUNTIME_TOKEN={{fundedAiRuntimeToken}}
+      MATRIX_PLATFORM_SPEECH_ENABLED={{platformSpeechEnabled}}
+      MATRIX_PLATFORM_SPEECH_ORIGIN={{platformSpeechOrigin}}
+      MATRIX_PLATFORM_SPEECH_RUNTIME_TOKEN={{platformSpeechRuntimeToken}}
       MATRIX_CODE_PROXY_TOKEN={{platformVerificationToken}}
       MATRIX_FUNDED_AI_ENABLED={{fundedAiEnabled}}
       MATRIX_FUNDED_AI_RELAY_URL={{fundedAiRelayUrl}}
@@ -447,10 +452,7 @@ runcmd:
     fi
   - |
     set -eu
-    # Hetzner marks the root password expired when a server is created without
-    # SSH keys; expired accounts fail sudo/PAM account checks, which breaks
-    # every sudo-based installer (Hermes, tool pack). Clear expiry for the
-    # system accounts we transition between.
+    # Clear Hetzner's password expiry so sudo/PAM permits service installers.
     chage -d "$(date +%Y-%m-%d)" -M -1 -E -1 root || true
     chage -d "$(date +%Y-%m-%d)" -M -1 -E -1 matrix || true
   - |
@@ -569,10 +571,7 @@ runcmd:
     printf 'matrix ALL=(ALL) NOPASSWD:ALL\n' >/etc/sudoers.d/matrix
     chmod 0440 /etc/sudoers.d/matrix
     visudo -cf /etc/sudoers.d/matrix
-    # A golden builder may have enabled linger while validating the bundled
-    # user-systemd terminal runtime. Quiesce any inherited user manager before
-    # changing the clone-specific home; usermod refuses users with live
-    # processes and would otherwise abort cloud-init before restore starts.
+    # Quiesce inherited user processes before changing the clone home.
     matrix_uid="$(id -u matrix)"
     timeout --kill-after=5 30 loginctl disable-linger matrix >/dev/null 2>&1 || true
     timeout --kill-after=5 30 loginctl terminate-user matrix >/dev/null 2>&1 || true
@@ -716,7 +715,7 @@ runcmd:
     matrix_uid="$(id -u matrix)"
     runuser -u matrix -- env HOME=/home/matrix/home XDG_RUNTIME_DIR="/run/user/${matrix_uid}" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${matrix_uid}/bus" systemctl --user daemon-reload
     systemctl disable matrix-openclaw-gateway.service || true
-    systemctl enable matrix-restore.service matrix-scope-runtime.service matrix-gateway.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer nginx
+    systemctl enable matrix-restore.service matrix-scope-runtime.service matrix-gateway.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-sync-agent.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer nginx
     if [ -f /etc/systemd/system/matrix-integrations-agents.service ] && [ -x /opt/matrix/bin/matrix-register-integrations-mcp ]; then
       systemctl enable matrix-integrations-agents.service
     fi
@@ -724,7 +723,7 @@ runcmd:
       systemctl enable --now matrix-terminal-runtime.service
     fi
     systemctl start matrix-restore.service matrix-scope-runtime.service
-    systemctl start matrix-gateway.service matrix-shell.service matrix-sync-agent.service matrix-symphony.service
+    systemctl start matrix-gateway.service matrix-shell.service matrix-sync-agent.service
     if [ -f /etc/systemd/system/matrix-vps-registration.service ]; then
       systemctl enable --now matrix-vps-registration.service
     fi

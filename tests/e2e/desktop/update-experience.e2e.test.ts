@@ -66,7 +66,7 @@ suite("desktop update experience", () => {
     page = await app.firstWindow();
     const runningVersion = await app.evaluate(({ app: electronApp }) => electronApp.getVersion());
     await page.setViewportSize({ width: 1280, height: 800 });
-    await page.getByRole("button", { name: /continue in browser/i }).click();
+    await page.getByRole("button", { name: /create account/i }).click();
     await page.locator("aside button", { hasText: "Terminal" }).first().waitFor({ timeout: 15_000 });
     seedRelease(runningVersion);
     await page.reload();

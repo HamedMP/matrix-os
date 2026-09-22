@@ -32,7 +32,7 @@ suite("native Desktop Terminal links", () => {
       },
     });
     page = await app.firstWindow();
-    await page.getByRole("button", { name: /continue in browser/i }).click();
+    await page.getByRole("button", { name: /create account/i }).click();
     await page.locator("aside button", { hasText: "Terminal" }).first().waitFor({ timeout: 15_000 });
     await page.locator("aside button", { hasText: "Terminal" }).first().click();
     await page.getByRole("heading", { name: "Terminal" }).waitFor({ timeout: 10_000 });

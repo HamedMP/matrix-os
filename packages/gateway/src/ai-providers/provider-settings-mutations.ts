@@ -1,5 +1,5 @@
 import {
-  isPortableGenericHarnessCredentialRoute,
+  isSupportedGenericHarnessCredentialRoute,
   type AiProviderSnapshotV3,
   type ProviderAccessSource,
   type ProviderHarnessInstance,
@@ -23,8 +23,16 @@ function genericHarnessRouteIsSupported(
   harness: Pick<ProviderHarnessInstance, "harness" | "accessSourceId" | "route">,
   source: ProviderAccessSource | undefined,
 ): boolean {
-  return (harness.harness !== "pi" && harness.harness !== "opencode")
-    || isPortableGenericHarnessCredentialRoute(harness, source);
+  return isSupportedGenericHarnessCredentialRoute(harness, source);
+}
+
+function accountMatchesSource(
+  source: ProviderAccessSource,
+  account: ProviderSettingsSnapshot["accounts"][number] | null,
+): boolean {
+  return source.kind === "provider_account"
+    ? account?.id === source.accountId
+    : account === null;
 }
 
 export function applyProviderConfigurationMutation(input: {
@@ -52,7 +60,7 @@ export function applyProviderConfigurationMutation(input: {
         || input.snapshot.gatewayPolicy?.allowedModelIds.includes(mutation.route.modelId);
       if (!source || !gatewayAllowed || source.providerId !== mutation.route.providerId
         || !source.eligibleModelIds.includes(mutation.route.modelId)
-        || (source.kind === "matrix_gateway" ? account !== null : account?.id !== source.accountId)
+        || !accountMatchesSource(source, account)
         || !genericHarnessRouteIsSupported({
           harness: mutation.harness,
           accessSourceId: source.id,
@@ -106,6 +114,14 @@ export function applyProviderConfigurationMutation(input: {
       if (!harness || harness.route.kind !== "configurable") {
         throw new ProviderSettingsStoreError("invalid_route", 400);
       }
+      if (mutation.enableHarness === true) {
+        const driverId = resolveProviderSettingsDriverId({
+          driverId: harness.driverId, harness: harness.harness, canonical: input.canonical,
+        });
+        if (input.canonical.drivers.find((driver) => driver.id === driverId)?.installState !== "installed") {
+          throw new ProviderSettingsStoreError("invalid_request", 400);
+        }
+      }
       const source = input.snapshot.accessSources.find((candidate) => candidate.id === mutation.accessSourceId);
       const account = mutation.accountId === null
         ? null
@@ -114,7 +130,7 @@ export function applyProviderConfigurationMutation(input: {
         || input.snapshot.gatewayPolicy?.allowedModelIds.includes(mutation.route.modelId);
       if (!source || !gatewayAllowed || source.providerId !== mutation.route.providerId
         || !source.eligibleModelIds.includes(mutation.route.modelId)
-        || (source.kind === "matrix_gateway" ? account !== null : account?.id !== source.accountId)
+        || !accountMatchesSource(source, account)
         || !genericHarnessRouteIsSupported({
           harness: harness.harness,
           accessSourceId: source.id,
@@ -125,6 +141,7 @@ export function applyProviderConfigurationMutation(input: {
       harness.route = mutation.route;
       harness.accessSourceId = source.id;
       harness.selectedAccountId = account?.id ?? null;
+      if (mutation.enableHarness === true) harness.enabled = true;
       return true;
     }
     case "select_account": {
@@ -165,11 +182,12 @@ export function applyProviderConfigurationMutation(input: {
         ? input.snapshot.accessSources.find((candidate) => candidate.id === policy.accessSourceId)
         : undefined;
       if (!policy || !source
-        || mutation.allowedModelIds.some((modelId) => !source.eligibleModelIds.includes(modelId))) {
+        || mutation.allowedModelIds.some((modelId) => !input.snapshot.accessSources.some((candidate) =>
+          candidate.kind === "matrix_gateway" && candidate.eligibleModelIds.includes(modelId)))) {
         throw new ProviderSettingsStoreError("invalid_route", 400);
       }
       const activeGatewayModels = input.config.harnesses
-        .filter((candidate) => candidate.accessSourceId === policy.accessSourceId)
+        .filter((candidate) => input.snapshot.accessSources.some((source) => source.id === candidate.accessSourceId && source.kind === "matrix_gateway"))
         .map((candidate) => candidate.route.modelId);
       if (activeGatewayModels.some((modelId) => !mutation.allowedModelIds.includes(modelId))) {
         throw new ProviderSettingsStoreError("invalid_route", 400);

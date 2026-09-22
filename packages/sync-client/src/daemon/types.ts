@@ -1,11 +1,12 @@
 import { z } from "zod/v4";
 
 const Sha256HashSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
+const FileMtimeSchema = z.number().nonnegative().max(Number.MAX_SAFE_INTEGER);
 
 export const ManifestEntrySchema = z.object({
   hash: Sha256HashSchema,
   size: z.int().nonnegative(),
-  mtime: z.int().nonnegative(),
+  mtime: FileMtimeSchema,
   peerId: z.string().min(1).max(128),
   version: z.int().nonnegative(),
   deleted: z.boolean().optional(),
@@ -27,7 +28,7 @@ export type RemoteManifestEnvelope = z.infer<typeof RemoteManifestEnvelopeSchema
 
 export const LocalFileStateSchema = z.object({
   hash: Sha256HashSchema,
-  mtime: z.int().nonnegative(),
+  mtime: FileMtimeSchema,
   size: z.int().nonnegative(),
   lastSyncedHash: Sha256HashSchema.optional(),
   localOnly: z.boolean().optional(),

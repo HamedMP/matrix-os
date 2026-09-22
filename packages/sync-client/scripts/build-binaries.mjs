@@ -25,11 +25,7 @@ function run(command, args) {
     const child = spawn(command, args, {
       cwd: repoRoot,
       stdio: "inherit",
-      env: {
-        ...process.env,
-        MATRIX_CLI_VERSION: version,
-        MATRIX_CLI_STANDALONE: "1",
-      },
+      env: process.env,
     });
     child.on("error", reject);
     child.on("exit", (code, signal) => {
@@ -58,8 +54,10 @@ await Promise.all(
       target.bunTarget,
       "--outfile",
       outfile,
-      "--env",
-      "MATRIX_CLI_*",
+      "--define",
+      "process.env.MATRIX_CLI_STANDALONE=\"1\"",
+      "--define",
+      `process.env.MATRIX_CLI_VERSION=${JSON.stringify(version)}`,
     ]);
     await chmod(outfile, 0o755);
     const sha256 = createHash("sha256").update(await readFile(outfile)).digest("hex");

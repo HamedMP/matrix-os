@@ -8,19 +8,14 @@ import {
 } from "../../packages/gateway/src/collaboration/chat-scope.js";
 import {
   collaborationActors,
+  collaborationExecutionEligibility,
   collaborationIds,
   createCollaborationTestDatabase,
   type CollaborationTestDatabase,
 } from "./collaboration-test-support.js";
 
 const now = "2026-09-07T12:00:00.000Z";
-const executionEligibility = {
-  profileId: "scope-runtime-chat-v1",
-  profileVersion: 1,
-  profileDigest: "b".repeat(64),
-  adapterId: "claude-code" as const,
-  harnessVersion: "2.1.240",
-};
+const executionEligibility = collaborationExecutionEligibility();
 
 describe("CollaborationChatScopeService", () => {
   let fixture: CollaborationTestDatabase;
@@ -46,12 +41,14 @@ describe("CollaborationChatScopeService", () => {
   it("preflights and atomically converts one whole Chat to discussion-only sharing", async () => {
     const preflight = await service.preflight({
       ownerId: collaborationActors.owner,
+      organizationId: "org_matrix_team",
       chatId: collaborationIds.chat,
     });
     expect(preflight).toMatchObject({ eligible: true, chatRevision: 0 });
 
     const scope = await service.shareChat({
       ownerId: collaborationActors.owner,
+      organizationId: "org_matrix_team",
       chatId: collaborationIds.chat,
       clientRequestId: "50000000-0000-4000-8000-000000000010",
       payloadHash: "a".repeat(64),
@@ -83,9 +80,10 @@ describe("CollaborationChatScopeService", () => {
   });
 
   it("returns the existing logical scope for an idempotent retry without reusing preflight authority", async () => {
-    const preflight = await service.preflight({ ownerId: collaborationActors.owner, chatId: collaborationIds.chat });
+    const preflight = await service.preflight({ ownerId: collaborationActors.owner, organizationId: "org_matrix_team", chatId: collaborationIds.chat });
     const first = await service.shareChat({
       ownerId: collaborationActors.owner,
+      organizationId: "org_matrix_team",
       chatId: collaborationIds.chat,
       clientRequestId: "50000000-0000-4000-8000-000000000010",
       payloadHash: "a".repeat(64),
@@ -94,6 +92,7 @@ describe("CollaborationChatScopeService", () => {
     });
     const repeated = await service.shareChat({
       ownerId: collaborationActors.owner,
+      organizationId: "org_matrix_team",
       chatId: collaborationIds.chat,
       clientRequestId: "50000000-0000-4000-8000-000000000010",
       payloadHash: "a".repeat(64),
@@ -103,6 +102,7 @@ describe("CollaborationChatScopeService", () => {
     expect(repeated).toEqual(first);
     await expect(service.shareChat({
       ownerId: collaborationActors.owner,
+      organizationId: "org_matrix_team",
       chatId: collaborationIds.chat,
       clientRequestId: "50000000-0000-4000-8000-000000000010",
       payloadHash: "b".repeat(64),
@@ -111,12 +111,47 @@ describe("CollaborationChatScopeService", () => {
     })).rejects.toMatchObject({ code: "conflict" });
   });
 
+  it("never reuses a Chat scope that is shared inside another organization", async () => {
+    const preflight = await service.preflight({ ownerId: collaborationActors.owner, organizationId: "org_matrix_team", chatId: collaborationIds.chat });
+    await service.shareChat({
+      ownerId: collaborationActors.owner,
+      organizationId: "org_matrix_team",
+      chatId: collaborationIds.chat,
+      clientRequestId: "50000000-0000-4000-8000-000000000030",
+      payloadHash: "a".repeat(64),
+      expectedChatRevision: 0,
+      confirmationToken: preflight.confirmationToken!,
+    });
+    const other = await service.preflight({ ownerId: collaborationActors.owner, organizationId: "org_other_company", chatId: collaborationIds.chat });
+    await expect(service.shareChat({
+      ownerId: collaborationActors.owner,
+      organizationId: "org_other_company",
+      chatId: collaborationIds.chat,
+      clientRequestId: "50000000-0000-4000-8000-000000000031",
+      payloadHash: "a".repeat(64),
+      expectedChatRevision: 0,
+      confirmationToken: other.confirmationToken!,
+    })).rejects.toMatchObject({ code: "conflict" });
+    await expect(service.shareChat({
+      ownerId: collaborationActors.owner,
+      organizationId: "org_other_company",
+      chatId: collaborationIds.chat,
+      clientRequestId: "50000000-0000-4000-8000-000000000032",
+      payloadHash: "a".repeat(64),
+      expectedChatRevision: 0,
+      confirmationToken: preflight.confirmationToken!,
+    })).rejects.toBeInstanceOf(CollaborationChatScopeError);
+    expect(await fixture.db.selectFrom("collaboration_scopes").select("organization_id").execute())
+      .toEqual([{ organization_id: "org_matrix_team" }]);
+  });
+
   it("refuses conversion while private execution is active and leaves it intact", async () => {
     await seedActiveRun(fixture);
-    const preflight = await service.preflight({ ownerId: collaborationActors.owner, chatId: collaborationIds.chat });
+    const preflight = await service.preflight({ ownerId: collaborationActors.owner, organizationId: "org_matrix_team", chatId: collaborationIds.chat });
     expect(preflight).toEqual({ eligible: false, reason: "active_work", chatRevision: 0 });
     await expect(service.shareChat({
       ownerId: collaborationActors.owner,
+      organizationId: "org_matrix_team",
       chatId: collaborationIds.chat,
       clientRequestId: "50000000-0000-4000-8000-000000000010",
       payloadHash: "a".repeat(64),
@@ -129,9 +164,10 @@ describe("CollaborationChatScopeService", () => {
   });
 
   it("does not treat a standalone Chat scope as a project or sibling grant", async () => {
-    const preflight = await service.preflight({ ownerId: collaborationActors.owner, chatId: collaborationIds.chat });
+    const preflight = await service.preflight({ ownerId: collaborationActors.owner, organizationId: "org_matrix_team", chatId: collaborationIds.chat });
     await service.shareChat({
       ownerId: collaborationActors.owner,
+      organizationId: "org_matrix_team",
       chatId: collaborationIds.chat,
       clientRequestId: "50000000-0000-4000-8000-000000000010",
       payloadHash: "a".repeat(64),
@@ -154,9 +190,10 @@ describe("CollaborationChatScopeService", () => {
       { type: "personal", ownerId: collaborationActors.owner },
       collaborationIds.chat,
     )).resolves.toBeUndefined();
-    const preflight = await service.preflight({ ownerId: collaborationActors.owner, chatId: collaborationIds.chat });
+    const preflight = await service.preflight({ ownerId: collaborationActors.owner, organizationId: "org_matrix_team", chatId: collaborationIds.chat });
     await service.shareChat({
       ownerId: collaborationActors.owner,
+      organizationId: "org_matrix_team",
       chatId: collaborationIds.chat,
       clientRequestId: "50000000-0000-4000-8000-000000000010",
       payloadHash: "a".repeat(64),
@@ -170,9 +207,10 @@ describe("CollaborationChatScopeService", () => {
   });
 
   it("atomically reconciles the proven execution profile and generation for existing shared Chats", async () => {
-    const preflight = await service.preflight({ ownerId: collaborationActors.owner, chatId: collaborationIds.chat });
+    const preflight = await service.preflight({ ownerId: collaborationActors.owner, organizationId: "org_matrix_team", chatId: collaborationIds.chat });
     await service.shareChat({
       ownerId: collaborationActors.owner,
+      organizationId: "org_matrix_team",
       chatId: collaborationIds.chat,
       clientRequestId: "50000000-0000-4000-8000-000000000010",
       payloadHash: "a".repeat(64),
@@ -210,9 +248,10 @@ describe("CollaborationChatScopeService", () => {
       eligibility: executionEligibility,
     })).resolves.toEqual({ updated: 0 });
 
-    const preflight = await service.preflight({ ownerId: collaborationActors.owner, chatId: collaborationIds.chat });
+    const preflight = await service.preflight({ ownerId: collaborationActors.owner, organizationId: "org_matrix_team", chatId: collaborationIds.chat });
     await service.shareChat({
       ownerId: collaborationActors.owner,
+      organizationId: "org_matrix_team",
       chatId: collaborationIds.chat,
       clientRequestId: "50000000-0000-4000-8000-000000000010",
       payloadHash: "a".repeat(64),
@@ -230,9 +269,10 @@ describe("CollaborationChatScopeService", () => {
   });
 
   it("removes stored eligibility when the cached runtime capability is lost", async () => {
-    const preflight = await service.preflight({ ownerId: collaborationActors.owner, chatId: collaborationIds.chat });
+    const preflight = await service.preflight({ ownerId: collaborationActors.owner, organizationId: "org_matrix_team", chatId: collaborationIds.chat });
     await service.shareChat({
       ownerId: collaborationActors.owner,
+      organizationId: "org_matrix_team",
       chatId: collaborationIds.chat,
       clientRequestId: "50000000-0000-4000-8000-000000000010",
       payloadHash: "a".repeat(64),

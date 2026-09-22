@@ -9,10 +9,12 @@ const SAFE_SYNC_USER_VALUE = /^[A-Za-z0-9_-]{1,256}$/;
 
 export interface SyncManifestsTable {
   user_id: string;
+  runtime_slot: string;
   version: number;
   file_count: number;
   total_size: bigint;
   etag: string | null;
+  accepted_manifest_key: string | null;
   updated_at: Date;
 }
 
@@ -50,13 +52,51 @@ export interface SyncUserSeed {
 export async function migrateSyncTables(db: Kysely<SyncDatabase>): Promise<void> {
   await sql`
     CREATE TABLE IF NOT EXISTS sync_manifests (
-      user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      runtime_slot TEXT NOT NULL DEFAULT 'primary',
       version INTEGER NOT NULL DEFAULT 0,
       file_count INTEGER NOT NULL DEFAULT 0,
       total_size BIGINT NOT NULL DEFAULT 0,
       etag TEXT,
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      accepted_manifest_key TEXT,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (user_id, runtime_slot)
     )
+  `.execute(db);
+
+  await sql`
+    ALTER TABLE sync_manifests
+    ADD COLUMN IF NOT EXISTS accepted_manifest_key TEXT
+  `.execute(db);
+
+  await sql`
+    ALTER TABLE sync_manifests
+    ADD COLUMN IF NOT EXISTS runtime_slot TEXT NOT NULL DEFAULT 'primary'
+  `.execute(db);
+
+  await sql`
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'sync_manifests'::regclass
+          AND contype = 'p'
+          AND pg_get_constraintdef(oid) = 'PRIMARY KEY (user_id)'
+      ) THEN
+        ALTER TABLE sync_manifests DROP CONSTRAINT sync_manifests_pkey;
+      END IF;
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'sync_manifests'::regclass
+          AND contype = 'p'
+      ) THEN
+        ALTER TABLE sync_manifests
+          ADD CONSTRAINT sync_manifests_pkey PRIMARY KEY (user_id, runtime_slot);
+      END IF;
+    END
+    $$
   `.execute(db);
 
   await sql`

@@ -206,7 +206,7 @@ describe("desktop packaging", () => {
     }
   }, 30_000);
 
-  it("uses the minimal Electron hardened-runtime entitlements for macOS", () => {
+  it("uses the minimal Electron hardened-runtime and microphone entitlements for macOS", () => {
     const root = process.cwd();
     const raw = readFileSync(join(root, "desktop/electron-builder.yml"), "utf8");
     const config = parse(raw) as {
@@ -220,9 +220,10 @@ describe("desktop packaging", () => {
     const entitlements = readFileSync(join(root, "desktop/build/entitlements.mac.plist"), "utf8");
     const entitlementKeys = Array.from(entitlements.matchAll(/<key>([^<]+)<\/key>/g), (match) => match[1]);
 
-    expect(entitlementKeys).toHaveLength(3);
+    expect(entitlementKeys).toHaveLength(4);
     expect(entitlementKeys).toEqual(
       expect.arrayContaining([
+        "com.apple.security.device.audio-input",
         "com.apple.security.cs.allow-jit",
         "com.apple.security.cs.allow-unsigned-executable-memory",
         "com.apple.security.cs.disable-library-validation",

@@ -25,9 +25,8 @@ describe("platform collaboration wiring", () => {
   });
 
   it("fails closed on incomplete environment configuration", () => {
-    expect(loadPlatformCollaborationConfig({ MATRIX_COLLABORATION_ENABLED: "true" })).toBeNull();
+    expect(loadPlatformCollaborationConfig({})).toBeNull();
     expect(loadPlatformCollaborationConfig({
-      MATRIX_COLLABORATION_ENABLED: "true",
       MATRIX_COLLABORATION_ACTIVE_KEY_ID: "key-1",
       MATRIX_COLLABORATION_PROOF_KEYS: JSON.stringify({ "key-1": "a".repeat(32) }),
       MATRIX_COLLABORATION_ALLOWED_ORIGINS: "https://app.matrix-os.com",
@@ -128,13 +127,6 @@ describe("platform collaboration wiring", () => {
       metadataRevision: 1,
       recipients: [{ actorId: platformCollaborationActors.recipientWithoutComputer, status: "accepted" }],
     });
-    await runtime.repository.setPolicy({
-      milestone: "m1",
-      expectedRevision: 0,
-      mode: "enabled",
-      cohort: [],
-      changedBy: "operator_test",
-    });
     const app = new Hono();
     runtime.register(app);
     const response = await app.request(`/api/collaboration/scopes/${scopeId}`, {
@@ -165,13 +157,6 @@ describe("platform collaboration wiring", () => {
       metadataRevision: 1,
       recipients: [{ actorId: platformCollaborationActors.recipientWithoutComputer, status: "accepted" }],
     });
-    await runtime.repository.setPolicy({
-      milestone: "m3",
-      expectedRevision: 0,
-      mode: "enabled",
-      cohort: [],
-      changedBy: "operator_test",
-    });
     const terminalDiscovery = await app.request("/api/collaboration/shared", {
       headers: { "x-test-actor": platformCollaborationActors.recipientWithoutComputer },
     });
@@ -192,13 +177,6 @@ describe("platform collaboration wiring", () => {
       authorityGeneration: 2,
       metadataRevision: 1,
       recipients: [{ actorId: platformCollaborationActors.recipientWithoutComputer, status: "accepted" }],
-    });
-    await runtime.repository.setPolicy({
-      milestone: "m4",
-      expectedRevision: 0,
-      mode: "enabled",
-      cohort: [],
-      changedBy: "operator_test",
     });
     const projectDiscovery = await app.request("/api/collaboration/shared", {
       headers: { "x-test-actor": platformCollaborationActors.recipientWithoutComputer },

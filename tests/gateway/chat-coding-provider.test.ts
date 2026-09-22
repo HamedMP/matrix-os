@@ -1,14 +1,19 @@
+import { openToolOutput, sealToolOutput } from "../../packages/gateway/src/coding-agents/protected-tool-output.mjs";
 import {
   AgentThreadEventSchema,
   AgentThreadSnapshotSchema,
   type AgentThreadEvent,
   type AgentThreadSnapshot,
 } from "@matrix-os/contracts";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { createCanonicalCodingChatProviderAdapter } from "../../packages/gateway/src/chat/coding-provider-adapter.js";
-import type {
-  CodingAgentThreadStore,
-  CodingAgentTurnStore,
+import {
+  createCodingAgentThreadStore,
+  type CodingAgentThreadStore,
+  type CodingAgentTurnStore,
 } from "../../packages/gateway/src/coding-agents/thread-store.js";
 import type { CanonicalProviderRunEvent } from "../../packages/gateway/src/chat/provider-adapter.js";
 
@@ -351,6 +356,53 @@ describe("canonical coding Chat Provider adapter", () => {
     expect(JSON.stringify(events)).not.toMatch(/secret-value|API_TOKEN|\/Users\/private|tool\.output/);
   });
 
+  it.each([false, true])("keeps only protected results through live and snapshot replay (sealed=%s)", async (sealed) => {
+    const started = event({ type: "tool.started", eventId: "evt_details_start", toolCallId: "tool_details", displayName: "Run command", kind: "command", preview: "bun run test", previewKind: "command", detail: "Working directory: projects/demo" });
+    const protectedOutput = sealed ? sealToolOutput(Buffer.alloc(32, 4), "tool_details", "12 tests passed") : undefined;
+    const output = event({ type: "tool.output", eventId: "evt_details_output", toolCallId: "tool_details", text: "12 tests passed", truncated: false, ...(protectedOutput ? { protectedOutput } : {}) });
+    const completed = event({ type: "tool.completed", eventId: "evt_details_end", toolCallId: "tool_details", outcome: "success" });
+    const done = event({ type: "thread.completed", eventId: "evt_details_done", outcome: "completed" });
+    for (const live of [false, true]) {
+      const store = fakeStore(live ? [] : [started, output, completed, done]);
+      const adapter = createCanonicalCodingChatProviderAdapter({ providerId: "codex", threads: store.store, toolOutputKey: Buffer.alloc(32, 4) });
+      const events: CanonicalProviderRunEvent[] = [];
+      const collect = (async () => { for await (const value of adapter.start(input())) events.push(value); })();
+      if (live) {
+        await vi.waitFor(() => expect(store.createThread).toHaveBeenCalled());
+        store.publish([started, output, completed, done]);
+      }
+      await collect;
+      expect(events).toContainEqual({ type: "tool.output", toolCallId: "tool_details", text: "Tool output is private to its owner.", truncated: false, ...(protectedOutput ? { protectedOutput } : {}) });
+      expect(JSON.stringify(events)).not.toContain("12 tests passed");
+    }
+  });
+
+  it.each(["pi", "opencode"] as const)("protects %s results without discarding owner output", async (providerId) => {
+    for (const live of [false, true]) {
+      for (const available of [false, true]) {
+        const key = Buffer.alloc(32, 6);
+        const output = event({ type: "tool.output", eventId: "evt_other_output", toolCallId: "tool_other", text: "private-result-17", truncated: true });
+        const done = event({ type: "thread.completed", eventId: "evt_other_done", outcome: "completed" });
+        const store = fakeStore(live ? [] : [output, done]);
+        store.createThread.mockImplementation(async () => ({ snapshot: { ...snapshot(live ? [] : [output, done]), thread: { ...snapshot([]).thread, providerId } }, existing: false }));
+        const adapter = createCanonicalCodingChatProviderAdapter({ providerId, threads: store.store, ...(available ? { toolOutputKey: key } : {}) });
+        const events: CanonicalProviderRunEvent[] = [];
+        const collect = (async () => { for await (const value of adapter.start(input({ selection: { instanceId: `${providerId}_default`, model: "test-model" } }))) events.push(value); })();
+        if (live) {
+          await vi.waitFor(() => expect(store.createThread).toHaveBeenCalled());
+          store.publish([output, done]);
+        }
+        await collect;
+        const result = events.find((value) => value.type === "tool.output");
+        expect(result).toMatchObject({ type: "tool.output", text: "Tool output is private to its owner.", truncated: true });
+        expect(JSON.stringify(events)).not.toContain("private-result-17");
+        if (result?.type !== "tool.output") throw new Error("Missing output");
+        if (available) expect(openToolOutput(key, "tool_other", result.protectedOutput)).toBe("private-result-17");
+        else expect(result.protectedOutput).toBeUndefined();
+      }
+    }
+  });
+
   it("streams normalized Codex events from the shared Gateway thread seam", async () => {
     const started = event({
       type: "terminal.bound",
@@ -531,6 +583,80 @@ describe("canonical coding Chat Provider adapter", () => {
       expect.objectContaining({ userId: owner.ownerId }), "thread_native", "req_coding",
       { runRequestId: "req_async_answer" },
     );
+  });
+
+  it("starts a fresh backing thread when a failed initial coding run is not resumable", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-chat-stale-coding-thread-"));
+    let startCount = 0;
+    const threads = createCodingAgentThreadStore({
+      homePath,
+      providers: [{
+        providerId: "opencode",
+        startThread({ thread, now, nextEventId }) {
+          startCount += 1;
+          if (startCount === 1) throw new Error("fixture initial provider launch failed");
+          return {
+            events: [
+              {
+                type: "assistant.text.delta",
+                eventId: nextEventId(),
+                threadId: thread.id,
+                occurredAt: now().toISOString(),
+                messageId: "msg_fresh_reply",
+                delta: "Recovered.",
+              },
+              {
+                type: "thread.completed",
+                eventId: nextEventId(),
+                threadId: thread.id,
+                occurredAt: now().toISOString(),
+                outcome: "completed",
+              },
+            ],
+            resumeState: { conversationId: "provider_conversation_fresh" },
+          };
+        },
+        resumeTurn: vi.fn(),
+      }],
+      relationValidator: {
+        validateCreate: async () => undefined,
+        validateThread: async () => undefined,
+      },
+      now: () => new Date(occurredAt),
+    });
+    try {
+      const failed = await threads.createThread({ userId: owner.ownerId, source: "configured-container" }, {
+        providerId: "opencode",
+        prompt: "initial prompt",
+        mode: "default",
+        clientRequestId: "req_failed_initial",
+      });
+      const adapter = createCanonicalCodingChatProviderAdapter({ providerId: "opencode", threads });
+      const events = [];
+
+      for await (const candidate of adapter.resume!({
+        ...input({
+          selection: { instanceId: "opencode_default", model: "cloudflare:@cf/zai-org/glm-5.3-flash" },
+        }),
+        resumeState: { conversationId: failed.snapshot.thread.id },
+      })) events.push(candidate);
+
+      expect(failed.snapshot.thread.status).toBe("failed");
+      expect(startCount).toBe(2);
+      expect(events[0]).toMatchObject({
+        type: "state.updated",
+        state: { runId: "run_coding" },
+      });
+      expect(events[0]?.type === "state.updated" ? events[0].state.conversationId : undefined)
+        .not.toBe(failed.snapshot.thread.id);
+      expect(events.slice(1)).toEqual([
+        { type: "assistant.delta", messageId: "msg_fresh_reply", delta: "Recovered." },
+        { type: "run.completed", outcome: "completed" },
+      ]);
+    } finally {
+      await threads.shutdownTurns();
+      await rm(homePath, { recursive: true, force: true });
+    }
   });
 
   it("steers only the registered active canonical Run through the legacy thread seam", async () => {

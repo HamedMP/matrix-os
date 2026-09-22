@@ -21,7 +21,7 @@ export interface InvitationIdentifierResolutionRouteOptions {
     runtimeId: string;
     bearerToken: string;
   }): Promise<{ runtimeId: string; ownerId: string } | null>;
-  resolveInvitationIdentifier(identifier: string): Promise<{ actorId: string; displayName: string } | null>;
+  resolveInvitationIdentifier(identifier: string, organizationId: string): Promise<{ actorId: string; displayName: string } | null>;
 }
 
 export function registerInvitationIdentifierResolutionRoute(
@@ -56,7 +56,7 @@ export function registerInvitationIdentifierResolutionRoute(
       if (!input.success) return safeJson(c, "Invalid request", 422);
 
       try {
-        const participant = await options.resolveInvitationIdentifier(input.data.identifier);
+        const participant = await options.resolveInvitationIdentifier(input.data.identifier, input.data.organizationId);
         const parsed = ParticipantProjectionSchema.safeParse(participant);
         if (!parsed.success) return safeJson(c, "Invitation target unavailable", 404);
         c.header("Cache-Control", "private, no-store");

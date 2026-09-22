@@ -13,22 +13,41 @@ function tmpHome(): string {
 }
 
 describe("T135: System info", () => {
-  it("advertises collaboration only when the VPS flag is explicitly enabled", () => {
+  it("reports collaboration configuration health instead of a release flag", () => {
     const homePath = tmpHome();
-    const previous = process.env.MATRIX_COLLABORATION_ENABLED;
+    const keys = [
+      "MATRIX_COLLABORATION_ENABLED", "MATRIX_RUNTIME_ID", "MATRIX_MACHINE_ID",
+      "MATRIX_COLLABORATION_ACTIVE_KEY_ID", "MATRIX_COLLABORATION_PROOF_KEYS",
+      "MATRIX_COLLABORATION_PREFLIGHT_SECRET", "PLATFORM_INTERNAL_URL", "UPGRADE_TOKEN", "DATABASE_URL",
+    ] as const;
+    const previous = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
 
     try {
-      delete process.env.MATRIX_COLLABORATION_ENABLED;
+      for (const key of keys) delete process.env[key];
       expect(getSystemInfo(homePath).capabilities.collaboration).toBe(false);
 
-      process.env.MATRIX_COLLABORATION_ENABLED = "false";
-      expect(getSystemInfo(homePath).capabilities.collaboration).toBe(false);
-
+      // A legacy flag left in host.env is inert: it neither enables nor disables.
       process.env.MATRIX_COLLABORATION_ENABLED = "true";
+      expect(getSystemInfo(homePath).capabilities.collaboration).toBe(false);
+
+      process.env.MATRIX_RUNTIME_ID = "vps:11111111-1111-4111-8111-111111111111";
+      process.env.MATRIX_COLLABORATION_ACTIVE_KEY_ID = "key-1";
+      process.env.MATRIX_COLLABORATION_PROOF_KEYS = JSON.stringify({ "key-1": "a".repeat(32) });
+      process.env.MATRIX_COLLABORATION_PREFLIGHT_SECRET = "b".repeat(32);
+      process.env.PLATFORM_INTERNAL_URL = "https://platform.internal";
+      process.env.UPGRADE_TOKEN = "c".repeat(32);
+      expect(getSystemInfo(homePath).capabilities.collaboration).toBe(false);
+
+      process.env.DATABASE_URL = "postgres://owner@localhost/owner";
+      process.env.MATRIX_COLLABORATION_ENABLED = "false";
       expect(getSystemInfo(homePath).capabilities.collaboration).toBe(true);
+      expect(getSystemInfo(homePath, { collaborationConfigured: false }).capabilities.collaboration).toBe(false);
     } finally {
-      if (previous === undefined) delete process.env.MATRIX_COLLABORATION_ENABLED;
-      else process.env.MATRIX_COLLABORATION_ENABLED = previous;
+      for (const key of keys) {
+        const value = previous[key];
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
       rmSync(homePath, { recursive: true, force: true });
     }
   });

@@ -52,6 +52,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   CANONICAL_PROVIDER_SETUP_ERROR,
   executeCanonicalProviderSetupAction,
+  openProviderSettings,
 } from "@/lib/canonical-provider-setup";
 import {
   DEFAULT_HERMES_CHANNELS,
@@ -77,6 +78,7 @@ import {
   MessageSquareIcon,
   BotIcon,
   Settings2Icon,
+  ChevronDownIcon,
 } from "@/lib/hugeicons";
 
 type ConversationMeta = RenameableConversation;
@@ -470,7 +472,7 @@ function ChatAppContent({
 
       {/* Main content */}
       <ChatAgentsContent client={agentClient} scopeKey={sessionId ?? "draft"}>
-      <main className="flex flex-1 flex-col min-w-0">
+      <main className="relative flex flex-1 flex-col min-w-0">
         {/* Top bar */}
         <header data-slot="chat-session-header" className={`flex items-center gap-2 border-b px-3 ${mobile ? "surface-glass min-h-14" : "min-h-12 border-border/30"}`}>
           {!sidebarOpen && (
@@ -529,7 +531,7 @@ function ChatAppContent({
                     className={`max-w-full truncate rounded px-1 text-sm font-semibold leading-4 text-foreground outline-none enabled:hover:bg-accent/40 enabled:focus-visible:ring-2 enabled:focus-visible:ring-primary/40 ${mobile ? "min-h-11 py-2" : ""}`}
                     onClick={() => sessionId && activeConversationTitle && setEditingChat({ id: sessionId, source: "header" })}
                   >
-                    {activeConversationTitle ?? providerState.activeInstance?.displayName ?? "Matrix Agent"}
+                    {activeConversationTitle ?? providerState.activeInstance?.displayName ?? "Built-in AI"}
                   </button>
                 )}
                 <p className="truncate text-[10px] leading-3 text-muted-foreground">
@@ -543,13 +545,30 @@ function ChatAppContent({
           {!collaborationView && sessionId ? <ChatSharing key={sessionId} chatId={sessionId} /> : null}
           {collaborationView ? <div ref={setCollaborationHeaderContainer} className="flex shrink-0 items-center" /> : null}
           {!collaborationView ? <Button
+            data-chat-model-trigger
+            aria-label="Choose model and connection"
+            aria-haspopup="dialog"
+            aria-expanded={setupOpen}
             variant={setupOpen ? "secondary" : "ghost"}
             size="sm"
-            className="h-8 gap-1.5 px-2.5 text-xs"
+            className="h-8 max-w-[12rem] gap-1.5 px-2.5 text-xs"
             onClick={() => setSetupOpen((value) => !value)}
           >
+            <span className="truncate">{providerState.selected ? `${providerState.selected.harnessLabel}${providerState.selected.connectionLabel && providerState.selected.connectionLabel !== providerState.selected.harnessLabel ? ` · ${providerState.selected.connectionLabel}` : ""} · Model` : "Model"}</span>
+            <ChevronDownIcon className="size-3.5" aria-hidden="true" />
+          </Button> : null}
+          {!collaborationView ? <Button
+            aria-label="Open Agents & providers settings"
+            title="Agents & providers"
+            variant="ghost"
+            size="icon"
+            className="size-8 shrink-0"
+            onClick={() => {
+              setSetupOpen(false);
+              openProviderSettings();
+            }}
+          >
             <Settings2Icon className="size-3.5" aria-hidden="true" />
-            Setup
           </Button> : null}
           {!connected && (
             <span className="text-[10px] text-destructive font-medium">Offline</span>
@@ -557,6 +576,9 @@ function ChatAppContent({
         </header>
         {!collaborationView && setupOpen && (
           <ChatProviderSetupPanel
+            onDismiss={() => {
+              setSetupOpen(false);
+            }}
             catalog={providerState.catalog}
             choices={providerState.choices}
             selected={providerState.selected}
@@ -568,7 +590,6 @@ function ChatAppContent({
               void runProviderSetupAction(instance, action);
             }}
             lockedInstanceId={boundProviderInstanceId}
-            onNewChat={onNewChat}
             showChannels={providerState.selected?.driverKind === "hermes"}
             channels={channels}
             onToggleChannel={(channel) => {
@@ -686,7 +707,7 @@ function ChatAppContent({
                 draftRequest={activeDraftRequest}
                 onDraftConsumed={consumeDraftRequest}
                 unavailablePlaceholder={!providerState.loading && providerState.selected === null
-                  ? "AI harness unavailable"
+                  ? "Write or dictate a draft — connect a harness to send"
                   : undefined}
                 attachmentsEnabled={providerState.selected?.supportsFileAttachments ?? false}
               />
@@ -749,7 +770,7 @@ function EmptyState({
           autoFocus={!mobile}
           draftRequest={composerDraftRequest}
           onDraftConsumed={onComposerDraftConsumed}
-          unavailablePlaceholder={!providerReady ? "AI harness unavailable" : undefined}
+          unavailablePlaceholder={!providerReady ? "Write or dictate a draft — connect a harness to send" : undefined}
           attachmentsEnabled={attachmentsEnabled}
         />
 

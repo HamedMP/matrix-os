@@ -560,11 +560,11 @@ describe("Codex app-server control runtime", () => {
         displayName: "Use linear.get_issue",
         kind: "tool",
       });
-      expect(safeMcpOutput).toMatchObject({ type: "tool.output", text: "Tool returned a result.", truncated: true });
+      expect(safeMcpOutput).toMatchObject({ type: "tool.output", text: "Output withheld because it may contain private data.", truncated: true });
       expect(safeMcpCompleted).toMatchObject({ type: "tool.completed", outcome: "success" });
       expect(toolStarted).toMatchObject({ type: "tool.started", displayName: "Run command", kind: "command" });
       expect(toolStarted).not.toHaveProperty("preview");
-      expect(toolOutput).toMatchObject({ type: "tool.output", text: "Command produced output.", truncated: true });
+      expect(toolOutput).toMatchObject({ type: "tool.output", text: "Output withheld because it may contain private data.", truncated: true });
       expect(toolCompleted).toMatchObject({ type: "tool.completed", outcome: "success" });
       expect(finalDelta).toMatchObject({ type: "assistant.text.delta", delta: "The repository is ready." });
       expect(finalCompleted).toMatchObject({

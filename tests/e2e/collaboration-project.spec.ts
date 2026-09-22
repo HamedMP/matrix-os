@@ -4,6 +4,7 @@ import { expect, collaborationTest as test } from "./fixtures/collaboration";
 test("owner publishes one complete project, then viewer downgrade and revoke apply to the same account", async ({ collaborationJourney }) => {
   const config = collaborationJourney;
   const projectId = process.env.MATRIX_COLLABORATION_E2E_PROJECT_ID!;
+  const organizationId = process.env.MATRIX_COLLABORATION_E2E_ORGANIZATION_ID!;
   const editorActorId = config.editorActorId;
   const ownerRequest = config.owner.context.request;
   const editorRequest = config.editor.context.request;
@@ -14,7 +15,7 @@ test("owner publishes one complete project, then viewer downgrade and revoke app
   const platform = config.platformUrl;
 
   const preflightResponse = await ownerRequest.post(`${platform}/api/collaboration/runtimes/${runtimeId}/scopes/preflight`, {
-    data: { kind: "project", resourceId: projectId },
+    data: { kind: "project", resourceId: projectId, organizationId },
   });
   expect(preflightResponse.ok()).toBe(true);
   const preflight = await preflightResponse.json() as { eligible: boolean; resourceRevision: string; confirmationToken: string };
@@ -23,6 +24,7 @@ test("owner publishes one complete project, then viewer downgrade and revoke app
     data: {
       kind: "project",
       resourceId: projectId,
+      organizationId,
       clientRequestId: randomUUID(),
       expectedRevision: preflight.resourceRevision,
       confirmationToken: preflight.confirmationToken,
@@ -166,4 +168,151 @@ test("owner publishes one complete project, then viewer downgrade and revoke app
   expect(revoked.ok()).toBe(true);
   await expect.poll(async () => (await editorRequest.get(`${platform}/api/collaboration/scopes/${created.id}`)).status())
     .toBe(404);
+});
+
+test("two accounts complete an isolated Codex shared-Chat round trip", async ({ collaborationJourney }) => {
+  const config = collaborationJourney;
+  const owner = config.owner.context.request;
+  const editor = config.editor.context.request;
+  const runtimeInfo = await owner.get(`${config.runtimeUrl}/api/system/info`);
+  expect(runtimeInfo.ok()).toBe(true);
+  const machineId = (await runtimeInfo.json() as { runtime: { machineId: string } }).runtime.machineId;
+  const runtimeId = `vps:${machineId}`;
+  const platform = config.platformUrl;
+
+  const createdResponse = await owner.post(`${config.runtimeUrl}/api/chats`, {
+    data: { clientRequestId: `req_${randomUUID().replaceAll("-", "")}`, title: "Disposable Codex collaboration" },
+  });
+  expect(createdResponse.status()).toBe(201);
+  const created = await createdResponse.json() as { chat: { id: string; revision: number } };
+  const chatId = created.chat.id;
+  const initial = await owner.post(`${config.runtimeUrl}/api/chats/${chatId}/turns`, {
+    data: {
+      clientRequestId: `req_${randomUUID().replaceAll("-", "")}`,
+      baseRevision: created.chat.revision,
+      parts: [{ type: "text", text: "Reply with exactly: disposable owner binding ready" }],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default",
+      permissionMode: "supervised",
+    },
+  });
+  expect(initial.status()).toBe(202);
+  await expect.poll(async () => {
+    const detail = await owner.get(`${config.runtimeUrl}/api/chats/${chatId}`);
+    if (!detail.ok()) return "unavailable";
+    const body = await detail.json() as {
+      record: {
+        providerBinding?: { driverKind: string; instanceId: string };
+        activeRun?: unknown;
+      };
+    };
+    return !body.record.activeRun
+      && body.record.providerBinding?.driverKind === "codex"
+      && body.record.providerBinding.instanceId === "codex_default"
+      ? "ready"
+      : "pending";
+  }, { timeout: 120_000 }).toBe("ready");
+
+  const preflightResponse = await owner.post(
+    `${platform}/api/collaboration/runtimes/${runtimeId}/scopes/preflight`,
+    { data: { kind: "chat", resourceId: chatId } },
+  );
+  expect(preflightResponse.ok()).toBe(true);
+  const preflight = await preflightResponse.json() as {
+    eligible: boolean;
+    resourceRevision: string;
+    confirmationToken: string;
+  };
+  expect(preflight.eligible).toBe(true);
+  const sharedResponse = await owner.post(`${platform}/api/collaboration/runtimes/${runtimeId}/scopes`, {
+    data: {
+      kind: "chat",
+      resourceId: chatId,
+      clientRequestId: randomUUID(),
+      expectedRevision: preflight.resourceRevision,
+      confirmationToken: preflight.confirmationToken,
+    },
+  });
+  expect(sharedResponse.ok()).toBe(true);
+  const shared = await sharedResponse.json() as { id: string; revision: string };
+
+  const inviteResponse = await owner.post(`${platform}/api/collaboration/scopes/${shared.id}/invitations`, {
+    data: {
+      identifier: `@${config.editorUsername}`,
+      role: "editor",
+      clientRequestId: randomUUID(),
+      expectedRevision: shared.revision,
+    },
+  });
+  expect(inviteResponse.status()).toBe(201);
+  const invitation = await inviteResponse.json() as { id: string };
+  const invitationDetail = await editor.get(`${platform}/api/collaboration/invitations/${invitation.id}`);
+  expect(invitationDetail.ok()).toBe(true);
+  const invitationRevision = (await invitationDetail.json() as { revision: string }).revision;
+  const accepted = await editor.post(`${platform}/api/collaboration/invitations/${invitation.id}/accept`, {
+    data: { clientRequestId: randomUUID(), expectedRevision: invitationRevision },
+  });
+  expect(accepted.ok()).toBe(true);
+
+  const sharedChat = await editor.get(`${platform}/api/collaboration/scopes/${shared.id}/chat`);
+  expect(sharedChat.ok()).toBe(true);
+  const discussionRevision = (await sharedChat.json() as { revision: string }).revision;
+  const discussion = await editor.post(`${platform}/api/collaboration/scopes/${shared.id}/chat/messages`, {
+    data: {
+      clientRequestId: randomUUID(),
+      expectedRevision: discussionRevision,
+      text: "This is disposable two-account discussion state.",
+    },
+  });
+  expect(discussion.status()).toBe(201);
+
+  const capabilityResponse = await editor.get(`${platform}/api/collaboration/scopes/${shared.id}/chat/requests`);
+  expect(capabilityResponse.ok()).toBe(true);
+  const capability = await capabilityResponse.json() as {
+    capability: { status: string; effectiveSelection?: { instanceId: string; model: string } };
+    resourceRevision: string;
+  };
+  expect(capability.capability).toEqual({
+    status: "available",
+    effectiveSelection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+  });
+  const clientRequestId = randomUUID();
+  const submitted = await editor.post(`${platform}/api/collaboration/scopes/${shared.id}/chat/requests`, {
+    data: {
+      clientRequestId,
+      expectedRevision: capability.resourceRevision,
+      text: "Reply with exactly: isolated shared Codex ready",
+    },
+  });
+  expect(submitted.status()).toBe(201);
+  const submittedBody = await submitted.json() as { request: { id: string } };
+
+  await expect.poll(async () => {
+    const requests = await owner.get(`${platform}/api/collaboration/scopes/${shared.id}/chat/requests`);
+    if (!requests.ok()) return "unavailable";
+    const body = await requests.json() as {
+      requests: Array<{
+        id: string;
+        state: string;
+        actor: { actorId: string };
+        selection: { instanceId: string; model: string };
+      }>;
+    };
+    const request = body.requests.find((candidate) => candidate.id === submittedBody.request.id);
+    if (!request) return "missing";
+    expect(request.actor.actorId).toBe(config.editorActorId);
+    expect(request.selection).toEqual({ instanceId: "codex_default", model: "gpt-5.6-sol" });
+    return request.state;
+  }, { timeout: 120_000 }).toBe("completed");
+
+  const editorRequests = await editor.get(`${platform}/api/collaboration/scopes/${shared.id}/chat/requests`);
+  expect(editorRequests.ok()).toBe(true);
+  expect(await editorRequests.json()).toMatchObject({
+    requests: [expect.objectContaining({
+      id: submittedBody.request.id,
+      state: "completed",
+      actor: { actorId: config.editorActorId },
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+    })],
+  });
 });

@@ -1,12 +1,13 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AiProviderSnapshotV3Schema, type AiProviderSnapshotV3 } from "@matrix-os/contracts";
 import {
   AiProviderService,
   type AiProviderHealthProbe,
 } from "../../packages/gateway/src/ai-providers/service.js";
+import { initialProviderSettingsConfiguration } from "../../packages/gateway/src/ai-providers/provider-settings-persistence.js";
 import type { MatrixFundedCredentialProvider } from "../../packages/gateway/src/funded-ai-credential-manager.js";
 
 const NOW = new Date("2026-08-29T21:00:00.000Z");
@@ -50,6 +51,10 @@ describe("AiProviderService", () => {
         ? fundedProvider()
         : undefined,
       now: () => NOW,
+      fundedReadinessReader: { read: async () => ({
+        readiness: { state: "ready", checkedAt: NOW.toISOString(), staleAfter: new Date(NOW.getTime() + 30_000).toISOString(), action: "none", safeReason: null },
+        allowedModelIds: ["claude-sonnet-5"],
+      }) },
       healthProbe: options.healthProbe,
       healthTimeoutMs: options.healthTimeoutMs,
       driverInventory: options.driverInventory === undefined
@@ -57,6 +62,39 @@ describe("AiProviderService", () => {
         : async () => options.driverInventory!(),
     });
   }
+
+  it("requires an authoritative readiness reader even when funded credentials are configured", async () => {
+    const service = new AiProviderService({ homePath, fundedCredentialProvider: fundedProvider() });
+    const snapshot = await service.getSnapshot();
+    expect(snapshot.accessSources.find((source) => source.id === "matrix_included"))
+      .toMatchObject({ state: "unknown", eligibleModelIds: [] });
+    expect(snapshot.active.providerInstanceId).toBeNull();
+    service.close();
+  });
+
+  it("checks funded readiness without waiting for slow CLI inventory", async () => {
+    const inventory = Promise.withResolvers<AiProviderSnapshotV3["drivers"]>();
+    const driverInventory = vi.fn(() => inventory.promise);
+    const read = vi.fn(async () => ({
+      readiness: { state: "unavailable" as const, checkedAt: NOW.toISOString(), staleAfter: null, action: "retry" as const, safeReason: "timeout" as const },
+      allowedModelIds: [],
+    }));
+    const service = new AiProviderService({
+      homePath, fundedCredentialProvider: fundedProvider(), driverInventory,
+      fundedReadinessReader: { read }, now: () => NOW,
+    });
+    const pending = service.getSnapshot();
+    try {
+      await vi.waitFor(() => expect(driverInventory).toHaveBeenCalledOnce());
+      expect(read).toHaveBeenCalledOnce();
+    } finally {
+      inventory.resolve([]);
+      const snapshot = await pending;
+      expect(snapshot.accessSources.find((source) => source.id === "matrix_included"))
+        .toMatchObject({ state: "unavailable", eligibleModelIds: [] });
+      service.close();
+    }
+  });
 
   it("projects Matrix-funded readiness independently from disconnected owner accounts", async () => {
     const service = createService({ platformKey: "platform-secret" });
@@ -76,7 +114,12 @@ describe("AiProviderService", () => {
       expect.objectContaining({ id: "owner_openrouter", state: "setup_required", authMethod: null }),
     ]));
     expect(snapshot.drivers).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: "kernel", kind: "agent_sdk", health: "ready" }),
+      expect.objectContaining({
+        id: "kernel",
+        displayName: "Claude SDK",
+        kind: "agent_sdk",
+        health: "ready",
+      }),
     ]));
     expect(snapshot.active).toEqual({
       providerInstanceId: "kernel_matrix_included",
@@ -99,6 +142,43 @@ describe("AiProviderService", () => {
       }],
     }).getSnapshot();
     expect(snapshot.drivers.map((driver) => driver.id)).toEqual(["kernel", "codex"]);
+    expect(snapshot.accessSources).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "owner_openai_profile",
+        vendor: "openai",
+        state: "ready",
+      }),
+    ]));
+    expect(snapshot.accounts).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "owner_codex",
+        vendor: "openai",
+        authMethod: "provider_profile",
+        state: "ready",
+      }),
+    ]));
+    expect(snapshot.models).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "provider-default", vendor: "openai" }),
+    ]));
+    expect(snapshot.instances).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "codex_owner_openai_profile",
+        driverId: "codex",
+        vendor: "openai",
+        accountId: "owner_codex",
+        accessSourceId: "owner_openai_profile",
+        defaultModelId: "provider-default",
+      }),
+    ]));
+    expect(initialProviderSettingsConfiguration(snapshot).harnesses).toEqual([
+      expect.objectContaining({
+        id: "harness_codex",
+        harness: "codex",
+        displayName: "Codex",
+        enabled: true,
+        route: { kind: "fixed", providerId: "openai", modelId: "provider-default" },
+      }),
+    ]);
     expect(AiProviderSnapshotV3Schema.safeParse(snapshot).success).toBe(true);
   });
 

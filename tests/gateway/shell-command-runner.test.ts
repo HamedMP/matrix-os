@@ -58,6 +58,32 @@ describe("shell command runner", () => {
     }
   });
 
+  it("does not expose the gateway bearer token to terminal commands", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-shell-run-"));
+    try {
+      const runner = createShellCommandRunner({
+        homePath,
+        env: {
+          PATH: process.env.PATH,
+          MATRIX_AUTH_TOKEN: "gateway-secret",
+        },
+      });
+
+      const result = await runner.run({
+        command: [
+          process.execPath,
+          "-e",
+          "process.stdout.write(process.env.MATRIX_AUTH_TOKEN ?? 'missing')",
+        ],
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toBe("missing");
+    } finally {
+      await rm(homePath, { recursive: true, force: true });
+    }
+  });
+
   it("rejects cwd traversal before spawning", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "matrix-shell-run-"));
     try {

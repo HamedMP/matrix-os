@@ -29,7 +29,7 @@ export function createScopeRuntimeChatProviderAdapter(options: {
   client: ScopeRuntimeChatClient;
   scopeId: string;
   executionGeneration: string;
-  adapterId: "claude-code";
+  adapterId: "claude-code" | "codex";
   harnessVersion: string;
 }): CanonicalChatProviderAdapter<State> {
   const scopeHandle = `scope_${options.scopeId.replaceAll("-", "")}`;
@@ -56,7 +56,7 @@ export function createScopeRuntimeChatProviderAdapter(options: {
     }
   };
   return {
-    driverKind: "claude_code" satisfies CanonicalProviderDriverKind,
+    driverKind: (options.adapterId === "codex" ? "codex" : "claude_code") satisfies CanonicalProviderDriverKind,
     stateSchemaVersion: 1,
     parseState: (value) => StateSchema.parse(value),
     serializeState: (value) => StateSchema.parse(value),
@@ -123,7 +123,7 @@ export function createScopeRuntimeChatProviderAdapter(options: {
         yield CanonicalProviderRunEventSchema.parse({
           type: "run.completed",
           outcome: "completed",
-          provider: "anthropic",
+          provider: options.adapterId === "codex" ? "openai" : "anthropic",
         });
       } catch (error: unknown) {
         console.warn("[collaboration] isolated Chat execution failed", {

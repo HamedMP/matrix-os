@@ -14,6 +14,7 @@ import {
   collaborationIds,
   createCollaborationTestDatabase,
   type CollaborationTestDatabase,
+  allowAllOrganizationPrecondition,
 } from "./collaboration-test-support.js";
 
 const now = new Date("2026-09-07T12:00:00.000Z");
@@ -38,7 +39,7 @@ describe("shared Chat event WebSocket", () => {
 
   it("attaches only after scoped proof authorization and resumes without duplicate history", async () => {
     const repository = new CollaborationRepository(fixture.db, { now: () => now });
-    const authority = new CollaborationAuthority(repository, { now: () => now });
+    const authority = new CollaborationAuthority(repository, { now: () => now, organizationPrecondition: allowAllOrganizationPrecondition });
     registry = new CollaborationEventRegistry({
       db: fixture.db,
       authorize: (scopeId, actorId) => authority.authorize({ scopeId, actorId, action: "read" }),
@@ -112,6 +113,7 @@ async function seed(fixture: CollaborationTestDatabase): Promise<void> {
     owner_type: "personal",
     owner_id: collaborationActors.owner,
     kind: "chat",
+    organization_id: "org_matrix_team",
     resource_id: collaborationIds.chat,
     parent_scope_id: null,
     membership_mode: "direct",

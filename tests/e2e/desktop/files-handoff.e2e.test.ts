@@ -33,7 +33,7 @@ suite("MAT-298 Files handoff in Electron", () => {
     });
     page = await app.firstWindow();
     await page.setViewportSize({ width: 1280, height: 800 });
-    await page.getByRole("button", { name: /continue in browser/i }).click();
+    await page.getByRole("button", { name: /create account/i }).click();
     await page.locator("aside button", { hasText: "Files" }).first().waitFor({ timeout: 15_000 });
     await page.locator("aside button", { hasText: "Files" }).first().click();
     await page.getByRole("heading", { name: "Files" }).waitFor({ timeout: 10_000 });

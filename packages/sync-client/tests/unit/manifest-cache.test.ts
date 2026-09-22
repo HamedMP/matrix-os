@@ -156,13 +156,11 @@ describe("loadSyncState", () => {
     expect(backups.length).toBeGreaterThan(0);
   });
 
-  // Regression: a daemon shipped before mtime was tightened from z.number()
-  // to z.int() wrote floating-point millisecond timestamps into sync-state.json.
-  // The 0.2.4 schema rejected them and the daemon crash-looped on every
-  // existing install. This test pins the recovery behavior so a future schema
-  // tightening can't reproduce the same outage.
-  it("recovers when an old daemon wrote a non-integer mtime", async () => {
-    const corrupt = JSON.stringify({
+  // Regression: filesystem mtimeMs values legitimately have sub-millisecond
+  // precision. Tightening this field to z.int() made valid persisted state
+  // look corrupt and caused the daemon to crash-loop on existing installs.
+  it("preserves filesystem-precision mtimes", async () => {
+    const persisted = JSON.stringify({
       manifestVersion: 5,
       lastSyncAt: 1700000000000,
       files: {
@@ -173,16 +171,18 @@ describe("loadSyncState", () => {
         },
       },
     });
-    await writeFile(STATE_PATH, corrupt);
+    await writeFile(STATE_PATH, persisted);
     vi.spyOn(console, "warn").mockImplementation(() => {});
 
     const state = await loadSyncState(STATE_PATH);
 
-    expect(state.manifestVersion).toBe(0);
-    expect(Object.keys(state.files)).toHaveLength(0);
+    expect(state.manifestVersion).toBe(5);
+    expect(state.files["system/icons/folder.svg"]?.mtime).toBe(
+      1700000000000.123,
+    );
 
     const entries = await readdir(TEST_DIR);
-    expect(entries.some((e) => e.startsWith("sync-state.json.corrupt-"))).toBe(true);
+    expect(entries.some((e) => e.startsWith("sync-state.json.corrupt-"))).toBe(false);
   });
 });
 

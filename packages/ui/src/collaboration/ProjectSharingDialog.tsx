@@ -94,8 +94,8 @@ export function ProjectSharingDialog({
     <header>
       <h2 className="text-lg font-semibold">Share the whole {projectName} project?</h2>
       <p className="mt-2 text-sm" style={{ color: "var(--text-secondary)" }}>
-        Everything owned by this project shares together, including future project contents.
-        You can't exclude individual files, Chats, apps, layout, or terminals.
+        Everything owned by this project shares together, including future project contents, with
+        members of your organization only. You can't exclude individual files, Chats, apps, layout, or terminals.
       </p>
     </header>
 

@@ -1,19 +1,31 @@
-import type { CollaborationPolicy } from "@matrix-os/contracts";
+import {
+  CanonicalChatModelSelectionSchema,
+  type CanonicalChatModelSelection,
+  type CanonicalProviderDriverKind,
+} from "@matrix-os/contracts";
 import {
   SCOPE_RUNTIME_HARNESS_VERSION,
+  SCOPE_RUNTIME_CODEX_VERSION,
   SCOPE_RUNTIME_PROFILE_DIGEST,
   SCOPE_RUNTIME_PROFILE_ID,
   SCOPE_RUNTIME_PROFILE_VERSION,
 } from "@matrix-os/scope-runtime/profile";
 import type { Kysely } from "kysely";
 import type { CanonicalChatOrchestrator } from "../chat/orchestrator.js";
+import {
+  validateChatProviderSelection,
+  type ChatProviderCatalogService,
+} from "../chat/provider-catalog.js";
 import { SharedChatRunPreparationError } from "../chat/shared-execution-coordinator.js";
 import { CollaborationChatCommands } from "../chat/collaboration-commands.js";
 import type { ChatRepository } from "../chat/repository.js";
+import type { CodingAgentProviderRegistry } from "../coding-agents/provider-registry.js";
 import type { MatrixFundedCredentialProvider } from "../funded-ai-credential-manager.js";
 import {
   resolveKernelCredentialSources,
   type KernelCredentialAccessSourceId,
+  type KernelCredentialObservationState,
+  type KernelCredentialSources,
 } from "../kernel-credentials.js";
 import {
   CollaborationAuthorizationError,
@@ -21,16 +33,15 @@ import {
 } from "./authority.js";
 import {
   CollaborationChatExecutionAdapter,
-  parseCollaborationAiEligibility,
-  type CollaborationAiExecutionEligibility,
 } from "./chat-execution-adapter.js";
+import {
+  parseCollaborationAiEligibility,
+  sharedAiAdapterFor,
+  type CollaborationAiExecutionEligibility,
+} from "./shared-ai-eligibility.js";
 import type { CollaborationChatScopeService } from "./chat-scope.js";
 import type { OwnerCollaborationDatabase } from "./database.js";
 import type { CollaborationEventRegistry } from "./events.js";
-import {
-  CollaborationPolicyClient,
-  CollaborationPolicyClientError,
-} from "./policy-client.js";
 import { createScopeRuntimeBroker, createScopeRuntimeBrokerServer } from "./scope-runtime-broker.js";
 import { createScopeRuntimeChatProviderAdapter } from "./scope-runtime-chat-adapter.js";
 import {
@@ -53,6 +64,10 @@ const PROFILE_CATALOG: ScopeRuntimeProfileCatalog = {
         harnessVersions: [SCOPE_RUNTIME_HARNESS_VERSION],
         workloads: ["chat_ai"],
       },
+      codex: {
+        harnessVersions: [SCOPE_RUNTIME_CODEX_VERSION],
+        workloads: ["chat_ai"],
+      },
     },
   },
 };
@@ -60,8 +75,10 @@ const ELIGIBILITY: CollaborationAiExecutionEligibility = {
   profileId: SCOPE_RUNTIME_PROFILE_ID,
   profileVersion: SCOPE_RUNTIME_PROFILE_VERSION,
   profileDigest: SCOPE_RUNTIME_PROFILE_DIGEST,
-  adapterId: "claude-code",
-  harnessVersion: SCOPE_RUNTIME_HARNESS_VERSION,
+  adapters: [
+    { adapterId: "claude-code", harnessVersion: SCOPE_RUNTIME_HARNESS_VERSION },
+    { adapterId: "codex", harnessVersion: SCOPE_RUNTIME_CODEX_VERSION },
+  ],
 };
 export async function createSharedAiRuntime(options: {
   db: Kysely<OwnerCollaborationDatabase>;
@@ -81,6 +98,8 @@ export async function createSharedAiRuntime(options: {
   brokerSocket?: string;
   fetchImpl?: typeof fetch;
   resolveAccessSource?: () => Promise<KernelCredentialAccessSourceId>;
+  providerCatalog?: ChatProviderCatalogService;
+  codingProviders?: Pick<CodingAgentProviderRegistry, "listProviders">;
 }) {
   const client = createScopeRuntimeClient({
     socketPath: options.supervisorSocket ?? SUPERVISOR_SOCKET,
@@ -100,14 +119,19 @@ export async function createSharedAiRuntime(options: {
     await client.close();
     return { available: false as const, async shutdown(): Promise<void> {} };
   }
-  await options.chatScope.reconcileExecutionEligibility({ executionGeneration, eligibility: ELIGIBILITY });
-  const policy = new CollaborationPolicyClient({
-    platformBaseUrl: options.platformBaseUrl,
-    runtimeId: options.runtimeId,
-    serviceToken: options.serviceToken,
-    verifier: options.verifier,
-    ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
-  });
+  const eligibility: CollaborationAiExecutionEligibility = {
+    ...ELIGIBILITY,
+    adapters: ELIGIBILITY.adapters.filter((expected) => capability.supportedAdapters.some((actual) =>
+      actual.adapterId === expected.adapterId
+      && actual.harnessVersion === expected.harnessVersion
+      && actual.workloads.includes("chat_ai"))),
+  };
+  if (eligibility.adapters.length === 0) {
+    await options.chatScope.reconcileExecutionEligibility({ executionGeneration: null, eligibility: null });
+    await client.close();
+    return { available: false as const, async shutdown(): Promise<void> {} };
+  }
+  await options.chatScope.reconcileExecutionEligibility({ executionGeneration, eligibility });
   const registry = new SharedAiRuntimeRegistry();
   const resolveAccessSource = options.resolveAccessSource
     ?? (async () => (await resolveKernelCredentialSources(
@@ -121,7 +145,6 @@ export async function createSharedAiRuntime(options: {
       throw new Error("The fixed shared Chat adapter does not expose approval callbacks");
     },
     submitCancellation: createSharedAiCancellationDispatcher({
-      policy,
       authority: options.authority,
       orchestrator: options.orchestrator,
     }),
@@ -136,27 +159,52 @@ export async function createSharedAiRuntime(options: {
     }),
   });
   const dispatch = async (scopeId: string, chatId: string): Promise<void> => {
-    const preflightPolicy = await policy.getM2();
-    if (preflightPolicy.mode === "off" || preflightPolicy.mode === "read_only") return;
     await options.orchestrator.dispatchNextSharedQueued(
       { type: "personal", ownerId: await ownerIdFor(options.db, scopeId, chatId) },
       chatId,
       scopeId,
       async (execution) => {
         try {
-          const currentPolicy = await policy.getM2();
           const context = await options.authority.authorize({
             scopeId,
             actorId: execution.requestingActorId,
             action: "request_ai",
-            executionPolicy: currentPolicy,
           });
           if (context.resourceId !== chatId || context.ownerId.length === 0
             || execution.executionGeneration !== executionGeneration
-            || !eligibilityMatches(execution.executionEligibility)) {
+            || !eligibilityMatches(execution.executionEligibility, eligibility)) {
             throw new SharedChatRunPreparationError("unavailable");
           }
-          const accessSourceId = await resolveAccessSource();
+          const dispatchFence = await options.db.selectFrom("collaboration_scopes as scope")
+            .innerJoin("chats as chat", "chat.id", "scope.resource_id")
+            .select([
+              "scope.owner_id", "scope.resource_id", "scope.execution_generation",
+              "scope.execution_eligibility", "chat.lifecycle", "chat.bound_driver_kind",
+              "chat.bound_instance_id", "chat.current_selection",
+            ])
+            .where("scope.id", "=", scopeId)
+            .where("scope.kind", "=", "chat")
+            .where("scope.lifecycle", "=", "shared")
+            .whereRef("chat.owner_id", "=", "scope.owner_id")
+            .whereRef("chat.owner_type", "=", "scope.owner_type")
+            .executeTakeFirst();
+          if (!sharedDispatchFenceMatches(dispatchFence, {
+            ownerId: context.ownerId,
+            chatId,
+            executionGeneration: execution.executionGeneration,
+            executionEligibility: execution.executionEligibility,
+            driverKind: execution.driverKind,
+            selection: execution.selection,
+          })) throw new SharedChatRunPreparationError("unavailable");
+          const adapter = sharedAdapterFor(execution.driverKind, execution.selection.instanceId, eligibility);
+          if (!adapter) throw new SharedChatRunPreparationError("unavailable");
+          const providerIdentity = execution.driverKind === "codex"
+            ? { driverKind: "codex" as const, instanceId: "codex_default" as const }
+            : {
+                driverKind: "claude_code" as const,
+                instanceId: "claude_shared" as const,
+                accessSourceId: await resolveAccessSource(),
+              };
           return createScopeRuntimeChatProviderAdapter({
             client: scopedClient({
               client,
@@ -165,12 +213,12 @@ export async function createSharedAiRuntime(options: {
               chatId,
               ownerId: context.ownerId,
               actorId: context.actorId,
-              accessSourceId,
+              providerIdentity,
             }),
             scopeId,
             executionGeneration: capability.executionGeneration,
-            adapterId: "claude-code",
-            harnessVersion: SCOPE_RUNTIME_HARNESS_VERSION,
+            adapterId: adapter.adapterId,
+            harnessVersion: adapter.harnessVersion,
           });
         } catch (error: unknown) {
           if (error instanceof SharedChatRunPreparationError) throw error;
@@ -179,10 +227,8 @@ export async function createSharedAiRuntime(options: {
               error.code === "not_found" || error.code === "forbidden" ? "unauthorized" : "unavailable",
             );
           }
-          if (!(error instanceof CollaborationPolicyClientError)) {
-            console.warn("[collaboration] shared AI preparation unavailable",
-              error instanceof Error ? error.name : "UnknownError");
-          }
+          console.warn("[collaboration] shared AI preparation unavailable",
+            error instanceof Error ? error.name : "UnknownError");
           throw new SharedChatRunPreparationError("unavailable");
         }
       },
@@ -213,11 +259,38 @@ export async function createSharedAiRuntime(options: {
         .where("id", "=", scopeId).where("kind", "=", "chat")
         .where("lifecycle", "=", "shared").executeTakeFirst();
       if (!scope || Number(scope.execution_generation) !== executionGeneration
-        || !eligibilityMatches(scope.execution_eligibility)) {
+        || !eligibilityMatches(scope.execution_eligibility, eligibility)) {
         throw new Error("Shared AI execution eligibility changed");
       }
       return scope.execution_eligibility;
     },
+    resolveProviderReadiness: (ownerId, selection, boundDriverKind) => resolveSharedProviderReadiness({
+      resolveCredentialSources: () => resolveKernelCredentialSources(
+        options.homePath,
+        process.env,
+        options.fundedCredentialProvider,
+      ),
+      ...(options.codingProviders ? { codingProviders: options.codingProviders } : {}),
+      ...(options.providerCatalog ? { providerCatalog: options.providerCatalog } : {}),
+    }, ownerId, selection, boundDriverKind),
+    ...(options.providerCatalog ? {
+      resolveCanonicalProviderAuthority: async (ownerId, selection) => {
+        const catalog = await options.providerCatalog!.getCatalog({ userId: ownerId, source: "jwt" });
+        const validated = validateChatProviderSelection({
+          catalog,
+          selection,
+          requirements: SHARED_RUN_SELECTION_REQUIREMENTS,
+        });
+        if (!validated.ok) return null;
+        // The owner's first binding may only name a driver this runtime can
+        // execute in isolation; the queue re-verifies the signed eligibility.
+        const adapterId = sharedAiAdapterFor(validated.instance.driverKind, validated.selection.instanceId);
+        if (!adapterId || !eligibility.adapters.some((adapter) => adapter.adapterId === adapterId)) {
+          return null;
+        }
+        return { driverKind: validated.instance.driverKind, selection: validated.selection };
+      },
+    } : {}),
     requestDispatch: dispatch,
     onCommitted: (scopeId) => options.eventRegistry.broadcastScope(scopeId),
   });
@@ -229,12 +302,10 @@ export async function createSharedAiRuntime(options: {
       const binding = registry.lookup(request);
       if (!binding) return { allowed: false };
       try {
-        const currentPolicy = await policy.getM2();
         const context = await options.authority.authorize({
           scopeId: binding.scopeId,
           actorId: binding.actorId,
           action: "request_ai",
-          executionPolicy: currentPolicy,
         });
         if (context.resourceId !== binding.chatId || context.ownerId !== binding.ownerId) {
           return { allowed: false };
@@ -283,7 +354,6 @@ export async function createSharedAiRuntime(options: {
             .execute();
           return rows.map((row) => ({ scopeId: row.scope_id, chatId: row.chat_id }));
         },
-        getPolicy: () => policy.getM2(),
         dispatch,
       });
     } catch (error: unknown) {
@@ -312,17 +382,129 @@ export async function createSharedAiRuntime(options: {
   };
 }
 
+const SHARED_RUN_SELECTION_REQUIREMENTS = { interactionMode: "default", permissionMode: "supervised" } as const;
+
+export type SharedProviderReadiness = "ready" | "reconnect_required" | "unavailable";
+
+interface SharedProviderReadinessInput {
+  resolveCredentialSources(): Promise<KernelCredentialSources>;
+  codingProviders?: Pick<CodingAgentProviderRegistry, "listProviders">;
+  providerCatalog?: Pick<ChatProviderCatalogService, "getCatalog">;
+}
+
+/**
+ * Readiness follows the immutable bound driver, never an Instance id: the
+ * catalog does not reserve ids per driver, so a Claude binding may legitimately
+ * use any Instance id. An unbound Chat has no bound driver yet, so its candidate
+ * selection is classified through the trusted server-side catalog (a `codex`
+ * Instance takes the Codex route); without a catalog it follows the Claude
+ * default, and first-binding authority still requires a catalog to bind.
+ */
+export async function resolveSharedProviderReadiness(
+  input: SharedProviderReadinessInput,
+  ownerId: string,
+  selection?: CanonicalChatModelSelection | null,
+  boundDriverKind?: CanonicalProviderDriverKind | null,
+): Promise<SharedProviderReadiness> {
+  if (boundDriverKind === "codex") {
+    return selection ? resolveCodexProviderReadiness(input, ownerId, selection) : "unavailable";
+  }
+  if (boundDriverKind || !input.providerCatalog || !selection) {
+    return resolveClaudeProviderReadiness(input, ownerId, selection);
+  }
+  const catalog = await input.providerCatalog.getCatalog({ userId: ownerId, source: "jwt" });
+  const cached = { getCatalog: async () => catalog };
+  const candidate = catalog.instances.find((instance) => instance.id === selection.instanceId);
+  return candidate?.driverKind === "codex"
+    ? resolveCodexProviderReadiness({ providerCatalog: cached }, ownerId, selection)
+    : resolveClaudeProviderReadiness({ ...input, providerCatalog: cached }, ownerId, selection);
+}
+
+/**
+ * Codex owner identity lives in the owner's Codex auth file and is refreshed by
+ * the scope broker at inference time, so readiness is verified only through the
+ * trusted server-side provider catalog. Without a catalog it fails closed. An
+ * unauthenticated Codex Instance reports generic unavailability: the owner
+ * reconnect guidance names Claude credentials and must not be shown for Codex.
+ */
+async function resolveCodexProviderReadiness(
+  input: Pick<SharedProviderReadinessInput, "providerCatalog">,
+  ownerId: string,
+  selection: CanonicalChatModelSelection,
+): Promise<SharedProviderReadiness> {
+  if (!input.providerCatalog) return "unavailable";
+  const catalog = await input.providerCatalog.getCatalog({ userId: ownerId, source: "jwt" });
+  const validated = validateChatProviderSelection({
+    catalog,
+    selection,
+    requirements: SHARED_RUN_SELECTION_REQUIREMENTS,
+  });
+  return validated.ok && validated.instance.driverKind === "codex" ? "ready" : "unavailable";
+}
+
+/**
+ * Readiness follows the kernel credential access source the scoped run will
+ * actually use (see `scope-runtime-broker`): Matrix-included access, the owner's
+ * API key, or the owner's Claude profile. Matrix-included access is platform
+ * managed and needs no probe. Owner routes are never ready on credential material
+ * alone: the trusted server-side provider catalog must validate the complete
+ * bound selection (Instance, model, options, shared-run requirements), and an
+ * `authentication_required` Instance maps to reconnect guidance. Without a
+ * catalog, the owner-profile route falls back to the Claude login state and the
+ * owner API key route fails closed.
+ */
+export async function resolveClaudeProviderReadiness(
+  input: SharedProviderReadinessInput,
+  ownerId: string,
+  selection?: CanonicalChatModelSelection | null,
+): Promise<SharedProviderReadiness> {
+  const sources = await input.resolveCredentialSources();
+  if (sources.selectedAccessSourceId === "matrix_included") {
+    return sources.matrixIncluded.state === "ready" ? "ready" : "unavailable";
+  }
+  const observed = sources.selectedAccessSourceId === "owner_anthropic_key"
+    ? sources.ownerApiKey.state
+    : sources.ownerProfile.state;
+  if (!usableCredentialState(observed)) return "unavailable";
+  if (input.providerCatalog && selection) {
+    // Validate the complete canonical selection (Instance, model, options, and
+    // shared-run requirements) exactly as the first-binding path does, so a
+    // removed or disabled model never reports ready.
+    const catalog = await input.providerCatalog.getCatalog({ userId: ownerId, source: "jwt" });
+    const validated = validateChatProviderSelection({
+      catalog,
+      selection,
+      requirements: SHARED_RUN_SELECTION_REQUIREMENTS,
+    });
+    if (validated.ok) return validated.instance.driverKind === "claude_code" ? "ready" : "unavailable";
+    const instance = catalog.instances.find((candidate) => candidate.id === selection.instanceId);
+    return instance?.driverKind === "claude_code" && instance.unavailabilityReason === "authentication_required"
+      ? "reconnect_required"
+      : "unavailable";
+  }
+  if (sources.selectedAccessSourceId === "owner_anthropic_profile" && input.codingProviders) {
+    const summaries = await input.codingProviders.listProviders({ userId: ownerId, source: "jwt" });
+    const claude = summaries.find((provider) => provider.id === "claude" || provider.kind === "claude");
+    if (claude?.availability === "available" && claude.authStatus === "authenticated") return "ready";
+    if (claude?.availability === "auth_required" || claude?.authStatus === "expired") {
+      return "reconnect_required";
+    }
+  }
+  return "unavailable";
+}
+
+function usableCredentialState(state: KernelCredentialObservationState): boolean {
+  return state === "ready" || state === "unverified";
+}
+
 export async function recoverSharedAiQueue(options: {
   reconcilePendingApprovals(): Promise<void>;
   listQueued(): Promise<readonly { scopeId: string; chatId: string }[]>;
-  getPolicy(): Promise<Pick<CollaborationPolicy, "mode">>;
   dispatch(scopeId: string, chatId: string): Promise<void>;
 }): Promise<void> {
   await options.reconcilePendingApprovals();
   const rows = await options.listQueued();
   if (rows.length === 0) return;
-  const policy = await options.getPolicy();
-  if (policy.mode === "off" || policy.mode === "read_only") return;
   const scopes: Record<string, { scopeId: string; chatId: string }> = Object.create(null) as Record<
     string,
     { scopeId: string; chatId: string }
@@ -332,7 +514,6 @@ export async function recoverSharedAiQueue(options: {
 }
 
 export function createSharedAiCancellationDispatcher(options: {
-  policy: Pick<CollaborationPolicyClient, "getM2">;
   authority: Pick<CollaborationAuthority, "authorize">;
   orchestrator: Pick<CanonicalChatOrchestrator, "cancelSharedRun">;
 }) {
@@ -344,12 +525,10 @@ export function createSharedAiCancellationDispatcher(options: {
     clientRequestId: string;
     actorId: string;
   }): Promise<void> => {
-    const currentPolicy = await options.policy.getM2();
     const context = await options.authority.authorize({
       scopeId: input.scopeId,
       actorId: input.actorId,
       action: "control_execution",
-      executionPolicy: currentPolicy,
     });
     if (context.resourceKind !== "chat" || context.resourceId !== input.chatId) {
       throw new CollaborationAuthorizationError("not_found", "Shared Chat access is required");
@@ -397,17 +576,68 @@ export function createSharedAiApprovalReconciler(options: {
     throw new Error("Shared approval Run remains active after reconciliation");
   };
 }
-function eligibilityMatches(value: unknown): boolean {
+function eligibilityMatches(
+  value: unknown,
+  expected: CollaborationAiExecutionEligibility = ELIGIBILITY,
+): boolean {
   try {
     const parsed = parseCollaborationAiEligibility(value);
-    return parsed.profileId === ELIGIBILITY.profileId
-      && parsed.profileVersion === ELIGIBILITY.profileVersion
-      && parsed.profileDigest === ELIGIBILITY.profileDigest
-      && parsed.adapterId === ELIGIBILITY.adapterId
-      && parsed.harnessVersion === ELIGIBILITY.harnessVersion;
+    return parsed.profileId === expected.profileId
+      && parsed.profileVersion === expected.profileVersion
+      && parsed.profileDigest === expected.profileDigest
+      && JSON.stringify(parsed.adapters) === JSON.stringify(expected.adapters);
   } catch (error: unknown) {
     console.warn("[collaboration] shared AI eligibility validation failed",
       error instanceof Error ? error.name : "UnknownError");
+    return false;
+  }
+}
+
+function sharedAdapterFor(
+  driverKind: CanonicalProviderDriverKind,
+  instanceId: string,
+  eligibility: CollaborationAiExecutionEligibility,
+): CollaborationAiExecutionEligibility["adapters"][number] | undefined {
+  const adapterId = sharedAiAdapterFor(driverKind, instanceId);
+  return adapterId ? eligibility.adapters.find((adapter) => adapter.adapterId === adapterId) : undefined;
+}
+
+export function sharedDispatchFenceMatches(
+  current: {
+    owner_id: string;
+    resource_id: string;
+    execution_generation: number | null;
+    execution_eligibility: unknown;
+    lifecycle: string;
+    bound_driver_kind: string | null;
+    bound_instance_id: string | null;
+    current_selection: unknown;
+  } | undefined,
+  expected: {
+    ownerId: string;
+    chatId: string;
+    executionGeneration: number;
+    executionEligibility: unknown;
+    driverKind: CanonicalProviderDriverKind;
+    selection: { instanceId: string; model: string };
+  },
+): boolean {
+  if (!current || current.owner_id !== expected.ownerId || current.resource_id !== expected.chatId
+    || current.lifecycle !== "active"
+    || Number(current.execution_generation) !== expected.executionGeneration
+    || current.bound_driver_kind !== expected.driverKind
+    || current.bound_instance_id !== expected.selection.instanceId
+    || !eligibilityMatches(current.execution_eligibility, parseCollaborationAiEligibility(
+      expected.executionEligibility,
+    ))) return false;
+  try {
+    const raw = typeof current.current_selection === "string"
+      ? JSON.parse(current.current_selection) as unknown
+      : current.current_selection;
+    const selection = CanonicalChatModelSelectionSchema.parse(raw);
+    return JSON.stringify(selection) === JSON.stringify(expected.selection);
+  } catch (error: unknown) {
+    if (!(error instanceof Error)) throw new Error("Invalid shared execution selection");
     return false;
   }
 }
@@ -432,7 +662,9 @@ function scopedClient(input: {
   chatId: string;
   ownerId: string;
   actorId: string;
-  accessSourceId: KernelCredentialAccessSourceId;
+  providerIdentity:
+    | { driverKind: "claude_code"; instanceId: "claude_shared"; accessSourceId: KernelCredentialAccessSourceId }
+    | { driverKind: "codex"; instanceId: "codex_default" };
 }) {
   return {
     capability: () => input.client.capability(),
@@ -446,7 +678,7 @@ function scopedClient(input: {
           ownerId: input.ownerId,
           actorId: input.actorId,
           executionGeneration: created.executionGeneration,
-          accessSourceId: input.accessSourceId,
+          providerIdentity: input.providerIdentity,
         });
       } catch (error: unknown) {
         await input.client.stopRuntime({ runtimeHandle: created.runtimeHandle }).catch((stopError: unknown) => {

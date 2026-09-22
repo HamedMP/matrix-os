@@ -189,13 +189,6 @@ describe("platform collaboration routes", () => {
 
   it("issues an events-only ticket to an accepted current member", async () => {
     await repository.applyDirectoryEvent({ ...directoryEvent("accepted"), metadataRevision: 2 });
-    await repository.setPolicy({
-      milestone: "m1",
-      expectedRevision: 0,
-      mode: "enabled",
-      cohort: [],
-      changedBy: "operator_test",
-    });
     const response = await app.request(`/api/collaboration/scopes/${scopeId}/connection-tickets`, {
       method: "POST",
       headers: {
@@ -232,7 +225,7 @@ describe("platform collaboration routes", () => {
     const denied = await app.request("/internal/collaboration/participants/resolve", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ identifier: "nimanaderi" }),
+      body: JSON.stringify({ identifier: "nimanaderi", organizationId: "org_matrix_team" }),
     });
     expect(denied.status).toBe(401);
     expect(resolveInvitationIdentifier).not.toHaveBeenCalled();
@@ -244,14 +237,14 @@ describe("platform collaboration routes", () => {
         "content-type": "application/json",
         "x-matrix-runtime-id": "runtime_owner",
       },
-      body: JSON.stringify({ identifier: "nimanaderi" }),
+      body: JSON.stringify({ identifier: "nimanaderi", organizationId: "org_matrix_team" }),
     });
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
       actorId: platformCollaborationActors.recipientWithoutComputer,
       displayName: "Recipient",
     });
-    expect(resolveInvitationIdentifier).toHaveBeenCalledWith("nimanaderi");
+    expect(resolveInvitationIdentifier).toHaveBeenCalledWith("nimanaderi", "org_matrix_team");
 
     for (let index = 0; index < 9; index += 1) {
       const unresolved = await app.request("/internal/collaboration/participants/resolve", {
@@ -261,7 +254,7 @@ describe("platform collaboration routes", () => {
           "content-type": "application/json",
           "x-matrix-runtime-id": "runtime_owner",
         },
-        body: JSON.stringify({ identifier: `unknown-${index}` }),
+        body: JSON.stringify({ identifier: `unknown-${index}`, organizationId: "org_matrix_team" }),
       });
       expect(unresolved.status).toBe(404);
       expect(await unresolved.json()).toEqual({ error: "Invitation target unavailable" });
@@ -273,30 +266,12 @@ describe("platform collaboration routes", () => {
         "content-type": "application/json",
         "x-matrix-runtime-id": "runtime_owner",
       },
-      body: JSON.stringify({ identifier: "unknown-limited" }),
+      body: JSON.stringify({ identifier: "unknown-limited", organizationId: "org_matrix_team" }),
     });
     expect(limited.status).toBe(429);
     expect(resolveInvitationIdentifier).toHaveBeenCalledTimes(10);
   });
 
-  it("serves a short-lived signed rollout policy only to an authenticated runtime", async () => {
-    const denied = await app.request("/internal/collaboration/policy?milestone=m1");
-    expect(denied.status).toBe(401);
-    const response = await app.request("/internal/collaboration/policy?milestone=m1", {
-      headers: { authorization: `Bearer ${runtimeSecret}`, "x-matrix-runtime-id": "runtime_owner" },
-    });
-    expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({
-      policy: {
-        milestone: "m1",
-        revision: "0",
-        mode: "off",
-        issuedAt: now.toISOString(),
-        expiresAt: new Date(now.getTime() + 30_000).toISOString(),
-      },
-      keyId: "key-1",
-    });
-  });
 });
 
 function directoryEvent(status: "invited" | "accepted") {

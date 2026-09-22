@@ -13,6 +13,10 @@ import {
 } from '../../packages/platform/src/customer-vps-cloud-init.js';
 
 describe('platform/customer-vps-cloud-init', () => {
+  it('ships scoped sync credentials in the canonical host environment', async () => {
+    const rendered = renderCloudInitTemplate(await loadCustomerVpsCloudInitTemplate(), input);
+    expect(rendered).toContain('MATRIX_SYNC_RUNTIME_TOKEN=sync-runtime-verification-secret');
+  });
   it('rendered user_data stays under the Hetzner 32KiB limit with headroom', async () => {
     // Hetzner rejects servers whose user_data exceeds 32768 bytes with a
     // generic 422 invalid_input; the platform surfaces it as
@@ -33,6 +37,7 @@ describe('platform/customer-vps-cloud-init', () => {
         'https://app.matrix-os.com/system-bundles/0.0.0-pr10000.abcdef012345/matrix-host-bundle.tar.gz',
       registrationToken: 'r'.repeat(64),
       platformVerificationToken: 'v'.repeat(64),
+      syncRuntimeToken: 's'.repeat(64),
       fundedAiRuntimeToken: 'f'.repeat(64),
       postgresPassword: 'p'.repeat(48),
     };
@@ -55,6 +60,7 @@ describe('platform/customer-vps-cloud-init', () => {
     platformRegisterUrl: 'https://platform.example/vps/register',
     platformInternalUrl: 'https://platform.example',
     platformVerificationToken: 'platform-verification-secret',
+    syncRuntimeToken: 'sync-runtime-verification-secret',
     fundedAiRuntimeToken: 'funded-runtime-verification-secret',
     registrationToken: 'registration-secret',
     registrationTokenExpiresAt: '2026-08-29T20:45:00.000Z',
@@ -66,6 +72,9 @@ describe('platform/customer-vps-cloud-init', () => {
     posthogApiHost: '/relay',
     fundedAiEnabled: 'true',
     fundedAiRelayUrl: 'https://relay.matrix-os.com',
+    platformSpeechEnabled: 'true',
+    platformSpeechOrigin: 'https://platform.example',
+    platformSpeechRuntimeToken: 'speech-runtime-verification-secret',
   };
 
   it('renders the registration deadline used to bound service retries', async () => {
@@ -82,7 +91,7 @@ describe('platform/customer-vps-cloud-init', () => {
 
   function runRestoreWithFakeMatrixctl(
     existsStatus: number | { vpsMeta: number; latestPointer: number },
-    options: { preexistingRestoreFlag?: 'file' | 'symlink' } = {},
+    options: { preexistingRestoreFlag?: 'file' | 'symlink'; runtimeSlot?: string } = {},
   ) {
     const root = process.cwd();
     const tempDir = mkdtempSync(join(tmpdir(), 'second-restore-r2-'));
@@ -139,6 +148,7 @@ exit 99
         env: {
           ...process.env,
           SECOND_RESTORE_TEST_ROOT: tempDir,
+          MATRIX_RUNTIME_SLOT: options.runtimeSlot ?? 'primary',
         },
       });
       return {
@@ -217,8 +227,9 @@ exit 99
       'MATRIX_HOST_BUNDLE_URL=https://platform.example/system-bundles/stable/matrix-host-bundle.tar.gz',
     );
     expect(rendered).toContain('MATRIX_RUNTIME_SLOT=staging');
+    expect(rendered).toContain('MATRIX_NODE_PREFIX=/opt/matrix/runtime/node');
     expect(rendered).toContain('MATRIX_UPDATE_CHANNEL=stable');
-    expect(rendered).toContain('MATRIX_COLLABORATION_ENABLED=false');
+    expect(rendered).not.toContain('MATRIX_COLLABORATION_ENABLED');
     expect(rendered).toContain('MATRIX_IMAGE_VERSION=stable');
     expect(rendered).not.toContain('MATRIX_HOST_BUNDLE_URL=\n');
   });
@@ -327,16 +338,16 @@ exit 99
     expect(codeServerBlock).not.toContain('ExecStartPost=-/bin/systemctl start matrix-code.service');
     expect(cloudInit).toContain('TimeoutStartSec=1800');
     expect(cloudInit).toContain(
-      'systemctl enable matrix-restore.service matrix-scope-runtime.service matrix-gateway.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer nginx',
+      'systemctl enable matrix-restore.service matrix-scope-runtime.service matrix-gateway.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-sync-agent.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer nginx',
     );
     expect(cloudInit).toContain(
       'systemctl start matrix-restore.service matrix-scope-runtime.service',
     );
     expect(cloudInit).toContain(
-      'systemctl start matrix-gateway.service matrix-shell.service matrix-sync-agent.service matrix-symphony.service',
+      'systemctl start matrix-gateway.service matrix-shell.service matrix-sync-agent.service',
     );
     expect(cloudInit).not.toContain(
-      'systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service matrix-symphony.service',
+      'systemctl start matrix-restore.service matrix-gateway.service matrix-shell.service matrix-code.service matrix-sync-agent.service',
     );
     expect(cloudInit).toContain('systemctl start --no-block matrix-code-server.service || echo "matrix-host: code-server runtime install will retry via systemd" >&2');
     expect(cloudInit).toContain('systemctl start --no-block matrix-code.service || echo "matrix-host: code editor will retry via systemd" >&2');
@@ -391,7 +402,7 @@ exit 99
     const cloudInit = await loadCustomerVpsCloudInitTemplate();
 
     expect(cloudInit).toContain('runcmd:');
-    expect(cloudInit).toContain('systemctl enable matrix-restore.service matrix-scope-runtime.service matrix-gateway.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer');
+    expect(cloudInit).toContain('systemctl enable matrix-restore.service matrix-scope-runtime.service matrix-gateway.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-sync-agent.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer');
     expect(cloudInit).toContain('install -o root -g root -m 0644 /opt/matrix/systemd/*.service /etc/systemd/system/');
     expect(cloudInit).toContain('/opt/matrix/messaging /opt/matrix/messaging/bin');
     expect(cloudInit).toContain('if [ -x /opt/matrix/messaging/bin/synapse ] && [ -x /opt/matrix/messaging/bin/mautrix-telegram ] && [ -x /opt/matrix/messaging/bin/mautrix-whatsapp ]; then');
@@ -401,11 +412,14 @@ exit 99
     expect(cloudInit).toContain('MATRIX_HOST_BUNDLE_URL={{hostBundleUrl}}');
     expect(cloudInit).toContain('MATRIX_IMAGE_VERSION={{imageVersion}}');
     expect(cloudInit).toContain('MATRIX_UPDATE_CHANNEL={{updateChannel}}');
-    expect(cloudInit).toContain('MATRIX_COLLABORATION_ENABLED=false');
+    expect(cloudInit).not.toContain('MATRIX_COLLABORATION_ENABLED');
     expect(cloudInit).toContain('UPGRADE_TOKEN={{platformVerificationToken}}');
     expect(cloudInit).toContain('MATRIX_AUTH_TOKEN={{platformVerificationToken}}');
     expect(cloudInit).toContain('MATRIX_CODE_PROXY_TOKEN={{platformVerificationToken}}');
     expect(cloudInit).toContain('MATRIX_FUNDED_AI_RUNTIME_TOKEN={{fundedAiRuntimeToken}}');
+    expect(cloudInit).toContain('MATRIX_PLATFORM_SPEECH_ENABLED={{platformSpeechEnabled}}');
+    expect(cloudInit).toContain('MATRIX_PLATFORM_SPEECH_ORIGIN={{platformSpeechOrigin}}');
+    expect(cloudInit).toContain('MATRIX_PLATFORM_SPEECH_RUNTIME_TOKEN={{platformSpeechRuntimeToken}}');
     expect(cloudInit).toContain('PLATFORM_INTERNAL_URL={{platformInternalUrl}}');
     expect(cloudInit).toContain('POSTHOG_TOKEN={{posthogToken}}');
     expect(cloudInit).toContain('NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN={{posthogProjectToken}}');
@@ -726,7 +740,7 @@ exit 99
 
   it('redacts bootstrap secrets before logging rendered cloud-init', () => {
     const rendered = renderCloudInitTemplate(
-      'token={{registrationToken}}\npassword={{postgresPassword}}\nplatform={{platformVerificationToken}}\nfunded={{fundedAiRuntimeToken}}\n',
+      'token={{registrationToken}}\npassword={{postgresPassword}}\nplatform={{platformVerificationToken}}\nfunded={{fundedAiRuntimeToken}}\nspeech={{platformSpeechRuntimeToken}}\n',
       input,
     );
 
@@ -736,6 +750,7 @@ exit 99
     expect(redacted).not.toContain('postgres-secret');
     expect(redacted).not.toContain('platform-verification-secret');
     expect(redacted).not.toContain('funded-runtime-verification-secret');
+    expect(redacted).not.toContain('speech-runtime-verification-secret');
     expect(redacted).toContain('[redacted]');
   });
 
@@ -882,6 +897,18 @@ exit 99
     expect(backupWithoutMetadata.result.stderr).toContain('matrix-restore: failed to fetch latest pointer');
   });
 
+  it('uses only secondary-authorized keys for secondary restore preflight', () => {
+    const fresh = runRestoreWithFakeMatrixctl({ vpsMeta: 1, latestPointer: 44 }, { runtimeSlot: 'studio' });
+    expect(fresh.result.status, fresh.result.stderr).toBe(0);
+    expect(fresh.matrixctlCalls).not.toContain('system/vps-meta.json');
+    expect(fresh.matrixctlCalls).toContain('system/runtime-slots/studio/db/latest');
+    const failure = runRestoreWithFakeMatrixctl(1, { runtimeSlot: 'studio' });
+    expect(failure.result.status).toBe(1);
+    expect(failure.restoreFlagExists).toBe(false);
+    const backup = runRestoreWithFakeMatrixctl({ vpsMeta: 1, latestPointer: 0 }, { runtimeSlot: 'studio' });
+    expect(backup.matrixctlCalls).toContain('r2 get system/runtime-slots/studio/db/latest');
+  });
+
   it('keeps a completed local restore authoritative across ordinary reboots', () => {
     const reboot = runRestoreWithFakeMatrixctl(1, { preexistingRestoreFlag: 'file' });
 
@@ -923,7 +950,7 @@ exit 99
     expect(cloudInit).toContain('https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip');
     expect(cloudInit).toContain('/tmp/aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli');
     expect(cloudInit).toContain('docker run -d');
-    expect(cloudInit).toContain('systemctl enable matrix-restore.service matrix-scope-runtime.service matrix-gateway.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-sync-agent.service matrix-symphony.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer');
+    expect(cloudInit).toContain('systemctl enable matrix-restore.service matrix-scope-runtime.service matrix-gateway.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-sync-agent.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer');
   });
 
   it('includes a bounded matrixctl recovery wrapper', () => {

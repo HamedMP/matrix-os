@@ -13,7 +13,11 @@ export interface CustomerHostConfig {
   platformRegisterUrl: string;
   platformInternalUrl: string;
   platformVerificationToken: string;
+  syncRuntimeToken: string;
   fundedAiRuntimeToken: string;
+  platformSpeechEnabled: string;
+  platformSpeechOrigin: string;
+  platformSpeechRuntimeToken: string;
   registrationToken: string;
   registrationTokenExpiresAt: string;
   postgresPassword: string;
@@ -33,7 +37,9 @@ const SECRET_KEYS = [
   'registrationToken',
   'postgresPassword',
   'platformVerificationToken',
+  'syncRuntimeToken',
   'fundedAiRuntimeToken',
+  'platformSpeechRuntimeToken',
 ] as const;
 const REQUIRED_KEYS = ['hostBundleUrl', 'registrationTokenExpiresAt', ...SECRET_KEYS] as const;
 

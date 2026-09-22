@@ -12,6 +12,7 @@ import {
   collaborationIds,
   createCollaborationTestDatabase,
   type CollaborationTestDatabase,
+  allowAllOrganizationPrecondition,
 } from "./collaboration-test-support.js";
 
 const now = new Date("2026-09-07T12:00:00.000Z");
@@ -167,7 +168,7 @@ describe("Chat collaboration lifecycle", () => {
       collaborationIds.chat,
       firstSnapshot.id,
     );
-    const authority = new CollaborationAuthority(repository, { now: () => now });
+    const authority = new CollaborationAuthority(repository, { now: () => now, organizationPrecondition: allowAllOrganizationPrecondition });
     await expect(authority.authorize({
       scopeId: collaborationIds.scope,
       actorId: collaborationActors.editor,

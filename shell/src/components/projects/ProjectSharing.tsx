@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { useBrowserOrigin } from "@/hooks/useBrowserOrigin";
 import { getGatewayUrl } from "@/lib/gateway";
 import { collaborationRuntimeFromSystemInfo, createShellCollaborationApi } from "@/lib/collaboration";
+import { CollaborationOrganization } from "@/lib/collaboration-organization";
 
 export function ProjectSharing({ projectId, projectName }: { projectId: string; projectName: string }) {
   const platformHost = useBrowserOrigin();
@@ -26,6 +27,7 @@ export function ProjectSharing({ projectId, projectName }: { projectId: string; 
     return () => { active = false; };
   }, []);
   return api && runtimeId
-    ? <ProjectSharingButton api={api} runtimeId={runtimeId} projectId={projectId} projectName={projectName} />
+    ? <CollaborationOrganization>{(organizationId) => <ProjectSharingButton api={api} runtimeId={runtimeId}
+      organizationId={organizationId} projectId={projectId} projectName={projectName} />}</CollaborationOrganization>
     : null;
 }

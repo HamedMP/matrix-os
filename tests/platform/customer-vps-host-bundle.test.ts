@@ -289,6 +289,7 @@ describe('customer VPS host bundle', () => {
 
     expect(unit).toContain('Description=Matrix OS optional developer tools');
     expect(gatewayUnit).toContain('Environment=MATRIX_CODING_AGENTS_WORKSPACE_PROVIDERS=claude,codex,pi,opencode');
+    expect(gatewayUnit).toContain('Environment=MATRIX_NODE_PREFIX=/opt/matrix/runtime/node');
     expect(gatewayUnit).not.toContain('Environment=MATRIX_CODING_AGENTS_WORKSPACE_PROVIDER=1');
     expect(unit).toContain('After=network-online.target matrix-restore.service');
     expect(unit).toContain('EnvironmentFile=/opt/matrix/env/host.env');
@@ -1074,9 +1075,14 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
   it('host bundle release workflow waits for same-sha CI instead of duplicating the full suite', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/host-bundle-release.yml'), 'utf8');
+    const ciGate = workflow.slice(workflow.indexOf('\n  ci-gate:'), workflow.indexOf('\n  build:'));
 
     expect(workflow).toContain('actions: read');
     expect(workflow).toContain('name: Same-SHA CI gate');
+    expect(ciGate).toContain('timeout-minutes: 95');
+    expect(ciGate).toContain('CI_GATE_TIMEOUT_SECONDS: "5400"');
+    expect(ciGate).toContain('deadline=$((SECONDS + CI_GATE_TIMEOUT_SECONDS))');
+    expect(ciGate).not.toContain('deadline=$((SECONDS + 30 * 60))');
     expect(workflow).toContain('TARGET_SHA: ${{ github.sha }}');
     expect(workflow).toContain('CI_WORKFLOW_FILE: ci.yml');
     expect(workflow).toContain('--workflow "$CI_WORKFLOW_FILE"');

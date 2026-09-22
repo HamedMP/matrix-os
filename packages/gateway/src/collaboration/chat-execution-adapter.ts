@@ -1,5 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
+  type CanonicalChatModelSelection,
+  type CanonicalProviderDriverKind,
   CollaborationAiRequestAcceptedResponseSchema,
   CollaborationAiRequestSchema,
   CollaborationApprovalSchema,
@@ -8,35 +10,24 @@ import {
   type CollaborationAiRequestAcceptedResponse,
   type CollaborationAiRequest,
 } from "@matrix-os/contracts";
-import { z } from "zod/v4";
 import {
   CollaborationChatCommands,
   type CollaborationChatCommandResult,
 } from "../chat/collaboration-commands.js";
 import {
   type ChatRepository,
+  type CanonicalSharedProviderAuthority,
+  type SharedAiCapability,
   type SharedQueuedTurn,
 } from "../chat/repository.js";
 import {
   CollaborationAuthorizationError,
   type AuthorizedCollaborationContext,
 } from "./authority.js";
-
-const ScopeEligibilitySchema = z.object({
-  profileId: z.string().min(1).max(64),
-  profileVersion: z.number().int().min(1),
-  profileDigest: z.string().regex(/^[a-f0-9]{64}$/),
-  adapterId: z.literal("claude-code"),
-  harnessVersion: z.string().regex(/^[0-9]+\.[0-9]+\.[0-9]+$/),
-}).strict();
-
-export interface CollaborationAiExecutionEligibility {
-  profileId: string;
-  profileVersion: number;
-  profileDigest: string;
-  adapterId: "claude-code";
-  harnessVersion: string;
-}
+import {
+  parseCollaborationAiEligibility,
+  type CollaborationAiExecutionEligibility,
+} from "./shared-ai-eligibility.js";
 
 export class CollaborationChatExecutionAdapter {
   private readonly now: () => Date;
@@ -49,6 +40,15 @@ export class CollaborationChatExecutionAdapter {
     commands: Pick<CollaborationChatCommands, "cancel" | "retry" | "decideApproval">;
     resolveParticipant(actorId: string): Promise<{ actorId: string; displayName: string }>;
     resolveEligibility(scopeId: string): Promise<unknown>;
+    resolveProviderReadiness?(
+      ownerId: string,
+      selection: CanonicalChatModelSelection | null,
+      boundDriverKind: CanonicalProviderDriverKind | null,
+    ): Promise<"ready" | "reconnect_required" | "unavailable">;
+    resolveCanonicalProviderAuthority?(
+      ownerId: string,
+      selection: CollaborationAiRequest["selection"],
+    ): Promise<CanonicalSharedProviderAuthority | null>;
     resolveResourceRevision(scopeId: string, chatId: string): Promise<number | null>;
     requestDispatch(scopeId: string, chatId: string): Promise<void>;
     onCommitted?(scopeId: string): Promise<void>;
@@ -65,11 +65,7 @@ export class CollaborationChatExecutionAdapter {
     requests: readonly CollaborationAiRequest[],
   ) {
     requireChatContext(context, "read");
-    const capability = await this.options.repository.getSharedAiCapability(ownerFor(context), {
-      chatId: context.resourceId,
-      scopeId: context.scopeId,
-      actorId: context.actorId,
-    });
+    const { capability } = await this.resolveCapability(context);
     const pending = await this.options.repository.listSharedPendingApprovals(
       ownerFor(context), context.resourceId, context.scopeId,
     );
@@ -112,7 +108,13 @@ export class CollaborationChatExecutionAdapter {
   ): Promise<CollaborationAiRequestAcceptedResponse> {
     requireChatContext(context, "request_ai");
     const input = CollaborationCreateAiRequestSchema.parse(inputValue);
-    const eligibility = ScopeEligibilitySchema.parse(await this.options.resolveEligibility(context.scopeId));
+    const resolvedCapability = await this.resolveCapability(context);
+    if (resolvedCapability.capability.status !== "available") {
+      throw new CollaborationAuthorizationError("unavailable", "Shared AI is unavailable");
+    }
+    const eligibility = parseCollaborationAiEligibility(
+      await this.options.resolveEligibility(context.scopeId),
+    );
     const queued = await this.options.repository.enqueueSharedQueuedTurn(ownerFor(context), {
       chatId: context.resourceId,
       scopeId: context.scopeId,
@@ -141,6 +143,9 @@ export class CollaborationChatExecutionAdapter {
         permissionModes: ["supervised"],
       },
       acceptedAt: this.now().toISOString(),
+      ...(resolvedCapability.canonicalProviderAuthority ? {
+        canonicalProviderAuthority: resolvedCapability.canonicalProviderAuthority,
+      } : {}),
     });
     await this.notify(context.scopeId);
     if (!queued.alreadyAccepted) this.kickDispatch(context.scopeId, context.resourceId);
@@ -230,6 +235,67 @@ export class CollaborationChatExecutionAdapter {
     });
   }
 
+  private async resolveCapability(context: AuthorizedCollaborationContext): Promise<{
+    capability: SharedAiCapability;
+    canonicalProviderAuthority?: CanonicalSharedProviderAuthority;
+  }> {
+    const { boundDriverKind, ...capability } = await this.options.repository.getSharedAiCapability(
+      ownerFor(context),
+      { chatId: context.resourceId, scopeId: context.scopeId, actorId: context.actorId },
+    );
+    if (capability.status !== "available" && capability.status !== "owner_binding_required") {
+      return { capability };
+    }
+
+    let readiness: "ready" | "reconnect_required" | "unavailable" = "ready";
+    try {
+      // Readiness follows the immutable bound driver; an unbound Chat has none
+      // and the resolver classifies the candidate selection server-side.
+      readiness = await this.options.resolveProviderReadiness?.(
+        context.ownerId,
+        capability.effectiveSelection ?? null,
+        boundDriverKind ?? null,
+      ) ?? "ready";
+    } catch (error: unknown) {
+      console.warn("[collaboration] shared AI Provider readiness unavailable",
+        error instanceof Error ? error.name : "UnknownError");
+      readiness = "unavailable";
+    }
+    if (readiness !== "ready") {
+      return {
+        capability: {
+          ...capability,
+          status: readiness === "reconnect_required" && context.actorId === context.ownerId
+            ? "owner_reconnect_required"
+            : "unavailable",
+        },
+      };
+    }
+    if (capability.status === "available") return { capability };
+    if (context.actorId !== context.ownerId || !capability.effectiveSelection
+      || !this.options.resolveCanonicalProviderAuthority) {
+      return { capability };
+    }
+
+    try {
+      const canonicalProviderAuthority = await this.options.resolveCanonicalProviderAuthority(
+        context.ownerId,
+        capability.effectiveSelection,
+      );
+      if (!canonicalProviderAuthority) {
+        return { capability: { ...capability, status: "unavailable" } };
+      }
+      return {
+        capability: { ...capability, status: "available" },
+        canonicalProviderAuthority,
+      };
+    } catch (error: unknown) {
+      console.warn("[collaboration] canonical shared Provider authority unavailable",
+        error instanceof Error ? error.name : "UnknownError");
+      return { capability: { ...capability, status: "unavailable" } };
+    }
+  }
+
   private async notify(scopeId: string): Promise<void> {
     await this.options.onCommitted?.(scopeId);
   }
@@ -259,6 +325,5 @@ function digest(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
-export function parseCollaborationAiEligibility(value: unknown): CollaborationAiExecutionEligibility {
-  return ScopeEligibilitySchema.parse(value);
-}
+export { parseCollaborationAiEligibility } from "./shared-ai-eligibility.js";
+export type { CollaborationAiExecutionEligibility } from "./shared-ai-eligibility.js";

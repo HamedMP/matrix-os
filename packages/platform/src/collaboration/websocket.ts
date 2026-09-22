@@ -27,7 +27,6 @@ const FORWARDED_SOCKET_HEADERS = new Set([
 ]);
 
 type SignedProof = ReturnType<CollaborationProofSigner["signSocket"]>;
-type SignedPolicy = ReturnType<CollaborationProofSigner["signPolicy"]>;
 type Purpose = "events" | "terminal";
 
 export type CollaborationWebSocketErrorCode =
@@ -51,7 +50,6 @@ export interface CollaborationWebSocketUpgrade {
   scopeId: string;
   purpose: Purpose;
   signedProof: SignedProof;
-  signedPolicy: SignedPolicy;
 }
 
 export function isCollaborationWebSocketPath(rawPath: string): boolean {
@@ -82,7 +80,6 @@ export function buildCollaborationWebSocketUpgradeHeaders(input: {
   incomingHeaders: IncomingMessage["headers"];
   externalHost: string;
   signedProof: unknown;
-  signedPolicy: unknown;
 }): string {
   const headers = Object.entries(input.incomingHeaders).flatMap(([name, raw]) => {
     if (!FORWARDED_SOCKET_HEADERS.has(name) || raw === undefined) return [];
@@ -93,7 +90,6 @@ export function buildCollaborationWebSocketUpgradeHeaders(input: {
   headers.push(`x-forwarded-host: ${input.externalHost}`);
   headers.push("x-forwarded-proto: https");
   headers.push(`x-matrix-collaboration-proof: ${Buffer.from(JSON.stringify(input.signedProof)).toString("base64url")}`);
-  headers.push(`x-matrix-collaboration-policy: ${Buffer.from(JSON.stringify(input.signedPolicy)).toString("base64url")}`);
   return headers.join("\r\n");
 }
 
@@ -134,8 +130,7 @@ export class CollaborationWebSocketAuthorizer {
       clientRequestId: input.clientRequestId,
     });
     this.assertPurposeEnabled(request.purpose);
-    const directory = await this.requireAcceptedDirectory(input.scopeId, input.actorId, request.purpose);
-    const policy = await this.requirePolicy(input.actorId, directory.ownerId, input.scopeId, request.purpose);
+    await this.requireAcceptedDirectory(input.scopeId, input.actorId, request.purpose);
     const ticket = this.createToken();
     const expiresAt = new Date(this.now().getTime() + TICKET_LIFETIME_MS).toISOString();
     const response = CollaborationConnectionTicketResponseSchema.parse({
@@ -148,7 +143,6 @@ export class CollaborationWebSocketAuthorizer {
       actorId: input.actorId,
       scopeId: input.scopeId,
       purpose: request.purpose,
-      policyRevision: Number(policy.revision),
       expiresAt: response.expiresAt,
     });
     return response;
@@ -164,19 +158,15 @@ export class CollaborationWebSocketAuthorizer {
     const route = parseRoute(input.rawPath);
     this.assertPurposeEnabled(route.purpose);
     const directory = await this.requireAcceptedDirectory(route.scopeId, input.actorId, route.purpose);
-    const policy = await this.requirePolicy(input.actorId, directory.ownerId, route.scopeId, route.purpose);
     if (input.authentication === "ticket") {
       if (!route.ticket) throw new CollaborationWebSocketError("invalid_ticket", "Connection ticket is invalid");
       try {
-        const consumed = await this.options.repository.consumeConnectionTicket({
+        await this.options.repository.consumeConnectionTicket({
           token: route.ticket,
           actorId: input.actorId,
           scopeId: route.scopeId,
           purpose: route.purpose,
         });
-        if (consumed.policyRevision !== Number(policy.revision)) {
-          throw new CollaborationWebSocketError("invalid_ticket", "Connection ticket is stale");
-        }
       } catch (error: unknown) {
         if (error instanceof CollaborationWebSocketError) throw error;
         if (error instanceof PlatformCollaborationRepositoryError && error.code === "invalid_ticket") {
@@ -196,15 +186,6 @@ export class CollaborationWebSocketAuthorizer {
       path: route.path,
       query: route.query,
     });
-    const issuedAt = this.now();
-    const signedPolicy = this.options.signer.signPolicy({
-      milestone: policy.milestone,
-      revision: String(policy.revision),
-      mode: policy.mode,
-      cohort: policy.cohort,
-      issuedAt: issuedAt.toISOString(),
-      expiresAt: new Date(issuedAt.getTime() + TICKET_LIFETIME_MS).toISOString(),
-    });
     return {
       upstreamPath: `${route.path}${route.query ? `?${route.query}` : ""}`,
       runtimeId: directory.runtimeId,
@@ -212,7 +193,6 @@ export class CollaborationWebSocketAuthorizer {
       scopeId: route.scopeId,
       purpose: route.purpose,
       signedProof,
-      signedPolicy,
     };
   }
 
@@ -224,7 +204,7 @@ export class CollaborationWebSocketAuthorizer {
 
   private requireOrigin(origin: string | undefined, authentication: "session" | "bearer" | "ticket"): void {
     // A ticket is one-use, short-lived, and bound to the independently
-    // authenticated actor, scope, purpose, and current policy revision. Native
+    // authenticated actor, scope and purpose. Native
     // shells may therefore present an opaque file:// origin without weakening
     // the origin checks required for cookie-authenticated browser sessions.
     if (authentication === "ticket") return;
@@ -248,14 +228,6 @@ export class CollaborationWebSocketAuthorizer {
     return directory;
   }
 
-  private async requirePolicy(actorId: string, ownerId: string, scopeId: string, purpose: Purpose) {
-    const policy = await this.options.repository.getPolicy(purpose === "terminal" ? "m3" : "m1");
-    const participants = await this.options.repository.listScopeActors(scopeId);
-    if (!policyAllows(policy, actorId, ownerId, participants)) {
-      throw new CollaborationWebSocketError("disabled", "Collaboration socket is unavailable");
-    }
-    return policy;
-  }
 }
 
 function parseRoute(rawPath: string): {
@@ -315,14 +287,3 @@ function requireOrigin(value: string): string {
   }
 }
 
-function policyAllows(
-  policy: { mode: "off" | "internal" | "enabled" | "read_only"; cohort: string[] },
-  actorId: string,
-  ownerId: string,
-  participants: string[],
-): boolean {
-  if (policy.mode === "off") return false;
-  if (policy.mode === "enabled" || policy.mode === "read_only") return true;
-  const cohort = new Set(policy.cohort);
-  return cohort.has(actorId) && cohort.has(ownerId) && participants.every((actor) => cohort.has(actor));
-}

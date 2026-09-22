@@ -34,7 +34,7 @@ suite("Electron Desktop terminal snapshot recovery", () => {
       env: { ...process.env, OPERATOR_GATEWAY_URL: gateway.url, OPERATOR_USER_DATA_DIR: userDataDir },
     });
     page = await app.firstWindow();
-    await page.getByRole("button", { name: /continue in browser/i }).waitFor({ timeout: 15_000 });
+    await page.getByRole("button", { name: /create account/i }).waitFor({ timeout: 15_000 });
     await page.evaluate(async () => { await window.operator.invoke("auth:start-device-flow", {}); });
     await page.getByRole("button", { name: "Terminal", exact: true }).first().dblclick({ timeout: 15_000 });
     await page.getByRole("button", { name: "Open matrix-task-1" }).click({ timeout: 15_000 });

@@ -201,9 +201,34 @@ describe("real terminal renderer soft-grid resizing", () => {
             return { x: rect.left + rect.width / 120 * 5.5, y: rect.top + rect.height / 36 * 34.5 };
           });
           await page.mouse.move(point.x, point.y);
+          // mouse.wheel resolves before delivery. Wait for the gesture to be
+          // processed at this height before the next iteration resizes: a late
+          // wheel at 300px deliberately pans away from the cursor under test.
+          await page.evaluate(() => {
+            delete document.documentElement.dataset.fixtureWheelHandled;
+            document.addEventListener("wheel", () => {
+              requestAnimationFrame(() => requestAnimationFrame(() => {
+                document.documentElement.dataset.fixtureWheelHandled = "true";
+              }));
+            }, { capture: true, once: true });
+          });
           await page.mouse.wheel(0, -100);
-          await expect.poll(() => page.evaluate(() =>
+          await page.waitForFunction(() => document.documentElement.dataset.fixtureWheelHandled === "true");
+          expect(await page.evaluate(() =>
             (window as unknown as { fixtureInputs: string[] }).fixtureInputs.some((data) => data.includes("\x1b[<64;6;35M")))).toBe(false);
+          // Exercise a definite outer-grid pan before restoring bottom-follow.
+          // The pointer gesture above can land on the ownership banner when
+          // font metrics differ, so it is not sufficient to set pan state.
+          await page.locator("[data-terminal-viewport]").evaluate((host) => {
+            host.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: -2_000 }));
+          });
+          await expect.poll(async () => (await geometry(page)).panTop).toBe(0);
+          // The wheel gesture may pan the outer grid before xterm consumes its
+          // remainder. Restore bottom-follow so the next resize starts from
+          // the same state regardless of font metrics and banner hit-testing.
+          await page.locator("[data-terminal-viewport]").evaluate((host) => { host.scrollTop = host.scrollHeight; });
+          await expect.poll(async () => { const g = await geometry(page); return g.scrollHeight - g.clientHeight - g.panTop; })
+            .toBeLessThanOrEqual(1);
         }
         await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
         await page.screenshot({ fullPage: true, path: resolve(evidence, `${nativeElectron ? "native-" : ""}${surface}-${zoom}-${height}.png`) });
