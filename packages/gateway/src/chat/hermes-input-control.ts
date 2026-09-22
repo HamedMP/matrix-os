@@ -12,13 +12,14 @@ const QuestionSchema = z.object({
 });
 const RequestSchema = z.object({
   request_id: z.string().min(1).max(256), question: z.string().min(1).max(600).optional(),
+  reply_method: z.literal("request.answer").optional(),
   choices: QuestionSchema.shape.choices, multi_select: z.boolean().optional(),
   questions: z.array(QuestionSchema.extend({ qid: z.string().min(1).max(256) })).min(1).max(8).optional(),
 });
 type InputEvent = Extract<CanonicalProviderRunEvent, { type: "input.requested" }>;
 type Run = { owner: CanonicalOwnerScope; chatId: string; runId: string; client: HermesStdioClient; emit(event: CanonicalProviderRunEvent): void };
 export function createHermesInputController() {
-  const runs = new Map<string, Run & { pending: Map<string, { nativeId: string; questions: z.infer<typeof QuestionSchema>[]; event: InputEvent; sent: number; fingerprint?: string }>; submit: ReturnType<typeof inputSubmissionGate> }>();
+  const runs = new Map<string, Run & { pending: Map<string, { nativeId: string; questions: z.infer<typeof QuestionSchema>[]; batch: boolean; replyMethod?: "request.answer"; event: InputEvent; sent: number; fingerprint?: string }>; submit: ReturnType<typeof inputSubmissionGate> }>();
   function expire(runId: string, nativeId: string) {
     const run = runs.get(runId); const requestId = nativeInputId(nativeId);
     if (run?.pending.delete(requestId)) run.emit(CanonicalProviderRunEventSchema.parse({ type: "input.resolved", requestId, reason: "expired" }));
@@ -43,7 +44,8 @@ export function createHermesInputController() {
           multiSelect: question.multi_select ?? false, allowOther: true, secret: secretQuestion(question.question),
         })),
       }) as InputEvent;
-      run.pending.set(requestId, { nativeId: request.request_id, questions, event, sent: 0 });
+      run.pending.set(requestId, { nativeId: request.request_id, questions, batch: request.questions !== undefined,
+        replyMethod: request.reply_method, event, sent: 0 });
       return event;
     },
     expire,
@@ -54,6 +56,14 @@ export function createHermesInputController() {
       if (!pending || pending.sent) throw new Error("Input unavailable");
       // Claim before sending: an uncertain native acknowledgement must never be repeated.
       run.pending.delete(input.requestId);
+      if (pending.replyMethod === "request.answer") {
+        const result = pending.batch
+          ? { answers: Object.fromEntries(pending.questions.map(question => [question.qid!, ASYNC_QUESTION_NOTICE])) }
+          : { answer: ASYNC_QUESTION_NOTICE };
+        const response = await boundedOperation(() => run.client.request("request.answer", { id: pending.nativeId, result }), 10_000);
+        if (z.object({ status: z.enum(["ok", "expired"]) }).parse(response).status !== "ok") throw new Error("Input expired");
+        return;
+      }
       for (const question of pending.questions) {
         const response = await boundedOperation(() => run.client.request("clarify.respond", {
           request_id: pending.nativeId, ...(question.qid ? { question_id: question.qid } : {}), answer: ASYNC_QUESTION_NOTICE,
@@ -71,6 +81,22 @@ export function createHermesInputController() {
         const fingerprint = createHash("sha256").update(JSON.stringify(answers)).digest("hex");
         if (pending.sent > 0 && pending.fingerprint !== fingerprint) throw new Error("Input answers already partially submitted");
         pending.fingerprint = fingerprint;
+        if (pending.replyMethod === "request.answer") {
+          if (pending.sent) throw new Error("Input delivery unconfirmed");
+          const result = pending.batch
+            ? { answers: Object.fromEntries(pending.questions.map((question, index) => [
+              question.qid!, question.multi_select ? JSON.stringify(answers[index]) : answers[index]![0],
+            ])) }
+            : { answer: pending.questions[0]!.multi_select ? JSON.stringify(answers[0]) : answers[0]![0] };
+          pending.sent = 1;
+          const response = await boundedOperation(() => run.client.request("request.answer", { id: pending.nativeId, result }), 10_000);
+          if (z.object({ status: z.enum(["ok", "expired"]) }).parse(response).status === "expired") {
+            expire(input.runId, pending.nativeId); throw new Error("Input request expired");
+          }
+          run.pending.delete(input.requestId);
+          run.emit(CanonicalProviderRunEventSchema.parse({ type: "input.resolved", requestId: input.requestId, reason: "answered" }));
+          return;
+        }
         for (let index = pending.sent; index < pending.questions.length; index++) {
           const question = pending.questions[index]!;
           const result = await boundedOperation(() => run.client.request("clarify.respond", {

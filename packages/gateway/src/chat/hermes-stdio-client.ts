@@ -22,6 +22,12 @@ const HermesGatewayEventSchema = z.object({
     payload: z.unknown().optional(),
   }).passthrough(),
 }).strict();
+const HermesGatewayClarifyRequestSchema = z.object({
+  jsonrpc: z.literal("2.0"),
+  id: z.string().min(1).max(256),
+  method: z.literal("clarify"),
+  params: z.object({ session_id: z.string().min(1).max(512) }).passthrough(),
+}).strict();
 
 export type HermesGatewayEvent = z.infer<typeof HermesGatewayEventSchema>["params"];
 
@@ -206,6 +212,18 @@ export function createHermesStdioClient(options: {
           error,
           event.data.params.type,
         ));
+      }
+      return;
+    }
+    // v0.21.4 sends interactive clarification as a server-to-client JSON-RPC
+    // request. Preserve its native ID so request.answer can acknowledge it.
+    const clarify = HermesGatewayClarifyRequestSchema.safeParse(value);
+    if (clarify.success) {
+      try {
+        options.onEvent({ type: "clarify.request", session_id: clarify.data.params.session_id,
+          payload: { ...clarify.data.params, request_id: clarify.data.id, reply_method: "request.answer" } });
+      } catch (error: unknown) {
+        fail(new HermesGatewayProtocolError("event_invalid", "Hermes clarify request was invalid", error, "clarify.request"));
       }
       return;
     }

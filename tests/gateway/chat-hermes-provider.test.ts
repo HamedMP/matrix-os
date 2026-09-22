@@ -37,6 +37,23 @@ async function collectRaw(iterable: AsyncIterable<unknown>): Promise<unknown[]> 
 }
 
 describe("Hermes canonical Chat Provider adapter", () => {
+  it("projects upstream server-to-client clarify requests as answerable input", async () => {
+    const gateway = fakeGateway();
+    const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+    const eventsPromise = collect(adapter.start(baseInput));
+    await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+
+    gateway.sendRaw(`${JSON.stringify({ jsonrpc: "2.0", id: "srq-native", method: "clarify", params: {
+      session_id: "live_session", question: "Which color?", choices: ["Blue", "Red"],
+    } })}\n`);
+    gateway.event("message.complete", { text: "Blue", status: "complete" });
+
+    expect(await eventsPromise).toContainEqual(expect.objectContaining({
+      type: "input.requested", requestId: "srq-native",
+      questions: [expect.objectContaining({ question: "Which color?" })],
+    }));
+  });
+
   it("steers only the exact active Hermes session without starting another prompt", async () => {
     const gateway = fakeGateway();
     const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
