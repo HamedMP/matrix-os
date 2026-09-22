@@ -30,7 +30,24 @@ async function repository(): Promise<string> {
   return root;
 }
 
+const ambientHome = process.env.HOME;
+const ambientXdgConfigHome = process.env.XDG_CONFIG_HOME;
+
+/** Identity reads honour ordinary Git config precedence, so tests pin the owner home they assert against. */
+async function ownerHome(gitconfig?: string): Promise<string> {
+  const home = await mkdtemp(join(tmpdir(), "matrix-git-home-"));
+  rootPaths.push(home);
+  if (gitconfig) await writeFile(join(home, ".gitconfig"), gitconfig);
+  process.env.HOME = home;
+  delete process.env.XDG_CONFIG_HOME;
+  return home;
+}
+
 afterEach(async () => {
+  if (ambientHome === undefined) delete process.env.HOME;
+  else process.env.HOME = ambientHome;
+  if (ambientXdgConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
+  else process.env.XDG_CONFIG_HOME = ambientXdgConfigHome;
   await Promise.all(rootPaths.splice(0).map((path) => rm(path, { recursive: true, force: true })));
 });
 
@@ -60,6 +77,7 @@ describe("owner Git driver", () => {
 
   it("reports owner Git identity and forge readiness without exposing credentials", async () => {
     const root = await repository();
+    await ownerHome();
     const driver = createProjectGitDriver({ resolveProjectRoot: async () => root });
     const setup = await driver.getGitSetup({ ownerId: OWNER, projectId: PROJECT });
     expect(setup.identity).toEqual({ status: "ready", label: "Project Owner <owner@example.test>" });
@@ -68,6 +86,18 @@ describe("owner Git driver", () => {
     await git(root, "config", "--unset", "user.email");
     const missing = await driver.getGitSetup({ ownerId: OWNER, projectId: PROJECT });
     expect(missing.identity).toEqual({ status: "missing" });
+  });
+
+  it("resolves the owner identity from the owner's ordinary global Git configuration", async () => {
+    const root = await repository();
+    await git(root, "config", "--unset", "user.name");
+    await git(root, "config", "--unset", "user.email");
+    await ownerHome("[user]\n\tname = Global Owner\n\temail = global@example.test\n");
+    const driver = createProjectGitDriver({ resolveProjectRoot: async () => root });
+    expect(await driver.resolveOwnerIdentity({ ownerId: OWNER, projectId: PROJECT }))
+      .toEqual({ name: "Global Owner", email: "global@example.test", label: "Global Owner <global@example.test>" });
+    expect((await driver.getGitSetup({ ownerId: OWNER, projectId: PROJECT })).identity)
+      .toEqual({ status: "ready", label: "Global Owner <global@example.test>" });
   });
 
   it("rejects stale refs and a local or changed push remote before any remote effect", async () => {
