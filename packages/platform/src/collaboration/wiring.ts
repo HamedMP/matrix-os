@@ -14,7 +14,8 @@ export type { FailClosedPlatformCollaboration, PlatformCollaborationConfiguratio
 const MAX_ALLOWED_ORIGINS = 16;
 
 export interface PlatformCollaborationConfig {
-  ticketKeyring: TicketSigningKeyring;
+  /** Null when a present-but-unusable keyring leaves the ticket route unavailable; the platform still starts. */
+  ticketKeyring: TicketSigningKeyring | null;
   relayOrigin: string;
   allowedOrigins: readonly string[];
 }
@@ -46,9 +47,13 @@ export function describePlatformCollaborationConfiguration(
     console.warn("[platform-collaboration] origin configuration rejected", error instanceof Error ? error.name : "UnknownError");
     return { configured: false, reason: "origin_configuration_missing" };
   }
-  const ticketKeyring = loadTicketSigningKeyring(env);
-  if (!ticketKeyring) return { configured: false, reason: "signing_configuration_missing" };
-  return { configured: true, config: { ticketKeyring, relayOrigin, allowedOrigins: origins } };
+  // Absent ticket signing configuration is a platform misconfiguration. A configuration that is
+  // present but unusable (mistimed rotation, stray retirement entry) costs the ticket route only:
+  // the keyring loader documents that degradation, so do not promote it to a platform that will not start.
+  if (!env.MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID?.trim() || !env.MATRIX_COLLABORATION_TICKET_KEYS?.trim()) {
+    return { configured: false, reason: "signing_configuration_missing" };
+  }
+  return { configured: true, config: { ticketKeyring: loadTicketSigningKeyring(env), relayOrigin, allowedOrigins: origins } };
 }
 
 export async function createPlatformCollaboration(options: {
