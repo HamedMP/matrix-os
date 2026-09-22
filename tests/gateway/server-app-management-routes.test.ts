@@ -40,4 +40,49 @@ describe("gateway app management route registration", () => {
     });
     expect(response.status).toBe(413);
   });
+
+  it("rejects a non-string rename payload at the route boundary", async () => {
+    const app = await createApp();
+    const response = await app.request("/api/apps/notes/rename", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: 42 }),
+    });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "Invalid request body" });
+  });
+
+  it("rejects a malformed rename body without surfacing a parser failure", async () => {
+    const app = await createApp();
+    const response = await app.request("/api/apps/notes/rename", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: "{",
+    });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "Invalid JSON body" });
+  });
+
+  it("rejects an invalid slug on rename before touching the filesystem", async () => {
+    const app = await createApp();
+    const response = await app.request("/api/apps/bad.slug/rename", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Renamed" }),
+    });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "Invalid slug" });
+  });
+
+  it("rejects a non-string icon style at the route boundary", async () => {
+    vi.stubEnv("GEMINI_API_KEY", "test-key");
+    const app = await createApp();
+    const response = await app.request("/api/apps/notes/icon", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ style: { evil: true } }),
+    });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "Invalid request body" });
+  });
 });

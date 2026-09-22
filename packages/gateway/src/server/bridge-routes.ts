@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { mkdir as mkdirAsync, writeFile as writeFileAsync } from "node:fs/promises";
 import { join, normalize } from "node:path";
 import type { Hono, MiddlewareHandler } from "hono";
+import { z } from "zod/v4";
 import { BridgeQueryBodySchema } from "../app-db-contracts.js";
 import type { AppRegistry } from "../app-db-registry.js";
 import type { QueryEngine } from "../app-db-query.js";
@@ -20,6 +21,27 @@ export interface BridgeDataRouteOptions {
   dataBodyLimit: MiddlewareHandler;
   logUnexpectedJsonParseFailure(context: string, error: unknown): void;
 }
+
+/**
+ * The KV bridge is an action endpoint, so the body is a discriminated union.
+ * Without it an unrecognized action falls through to the write branch and
+ * mutates owner data. Values arrive pre-encoded as strings from the shell
+ * bridge (`encodeStoredValue`), so non-string values are rejected rather than
+ * coerced onto disk.
+ */
+const BridgeKvBodySchema = z.discriminatedUnion("action", [
+  z.object({
+    action: z.literal("read"),
+    app: z.string().min(1),
+    key: z.string().min(1),
+  }),
+  z.object({
+    action: z.literal("write"),
+    app: z.string().min(1),
+    key: z.string().min(1),
+    value: z.string().optional(),
+  }),
+]);
 
 export function registerBridgeDataRoutes(app: Hono, options: BridgeDataRouteOptions): void {
   const {
@@ -226,9 +248,9 @@ export function registerBridgeDataRoutes(app: Hono, options: BridgeDataRouteOpti
   });
 
   app.post("/api/bridge/data", dataBodyLimit, async (c) => {
-    let body: { action: "read" | "write"; app: string; key: string; value?: string };
+    let rawBody: unknown;
     try {
-      body = await c.req.json();
+      rawBody = await c.req.json();
     } catch (err: unknown) {
       if (err instanceof SyntaxError) {
         return c.json({ error: "Invalid JSON body" }, 400);
@@ -237,9 +259,11 @@ export function registerBridgeDataRoutes(app: Hono, options: BridgeDataRouteOpti
       return c.json({ error: "Failed to read request body" }, 500);
     }
 
-    if (!body.app || typeof body.app !== "string" || !body.key || typeof body.key !== "string") {
-      return c.json({ error: "app and key are required strings" }, 400);
+    const parsedBody = BridgeKvBodySchema.safeParse(rawBody);
+    if (!parsedBody.success) {
+      return c.json({ error: "Invalid request body" }, 400);
     }
+    const body = parsedBody.data;
 
     const safeApp = body.app.replace(/[^a-zA-Z0-9_-]/g, "");
     const safeKey = body.key.replace(/[^a-zA-Z0-9_-]/g, "");
@@ -288,8 +312,7 @@ export function registerBridgeDataRoutes(app: Hono, options: BridgeDataRouteOpti
     }
 
     await mkdirAsync(dataDir, { recursive: true });
-    const raw = body.value ?? "";
-    await writeFileAsync(filePath, typeof raw === "string" ? raw : String(raw), "utf-8");
+    await writeFileAsync(filePath, body.value ?? "", "utf-8");
     broadcast({ type: "data:change", app: safeApp, key: safeKey });
     return c.json({ ok: true });
   });

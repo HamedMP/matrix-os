@@ -64,4 +64,26 @@ describe("gateway bridge route registration", () => {
     expect(await read.json()).toEqual({ value: "dark" });
     expect(broadcast).toHaveBeenCalledWith({ type: "data:change", app: "board", key: "theme" });
   });
+
+  it("rejects an unrecognized KV action instead of falling through to a write", async () => {
+    const response = await app.request("/api/bridge/data", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "raed", app: "board", key: "theme", value: "hijacked" }),
+    });
+    expect(response.status).toBe(400);
+    expect(broadcast).not.toHaveBeenCalled();
+    const read = await app.request("/api/bridge/data?app=board&key=theme");
+    expect(await read.json()).toEqual({ value: null });
+  });
+
+  it("rejects a non-string KV value instead of coercing it onto disk", async () => {
+    const response = await app.request("/api/bridge/data", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "write", app: "board", key: "theme", value: { nested: true } }),
+    });
+    expect(response.status).toBe(400);
+    expect(broadcast).not.toHaveBeenCalled();
+  });
 });
