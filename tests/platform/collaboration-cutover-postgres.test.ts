@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { Hono } from "hono";
-import { Kysely, PostgresDialect, sql } from "kysely";
+import { Kysely, PostgresDialect, sql, type KyselyPlugin } from "kysely";
 import { Pool } from "pg";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -397,5 +397,64 @@ describe.skipIf(!connectionString)("collaboration cutover on real PostgreSQL (T0
     const disposition = await db.selectFrom("collaboration_cutover_dispositions").selectAll().where("scope_id", "=", legacyScopeId).executeTakeFirstOrThrow();
     expect(disposition).toMatchObject({ action: "terminated", notice_ref: "notice-1", home_receipt: "home-ended-1" });
     expect((await coordinator.resume(scopeId)).phase).toBe("active");
+  });
+
+  /**
+   * resume() reads the blocked journal, then writes. A recovery disable that commits inside that
+   * window must not be reopened by the stale resume write.
+   */
+  function racingCoordinator(ownerHome: ReturnType<typeof home>, onJournalRead: () => Promise<void>): PlatformCollaborationCutover {
+    let armed = true;
+    const plugin: KyselyPlugin = {
+      transformQuery: (args) => args.node,
+      transformResult: async (args) => {
+        if (armed && args.result.rows.some((row) => typeof row === "object" && row !== null && "resume_phase" in row)) {
+          armed = false;
+          await onJournalRead();
+        }
+        return args.result;
+      },
+    };
+    return new PlatformCollaborationCutover({
+      db: db.withPlugin(plugin),
+      resolveHome: vi.fn(async () => ({ status: "ready" as const, home: ownerHome })),
+      verifyCompatibleDirectBuild: vi.fn(async () => true),
+    });
+  }
+
+  it("keeps recovery disabled when it commits while a resume read is in flight", async () => {
+    const scopeId = await orgScope();
+    const ownerHome = home(scopeId);
+    ownerHome.freeze.mockRejectedValueOnce(new Error("home unavailable"));
+    const coordinator = cutover(ownerHome);
+    expect(await coordinator.run(scopeId, { backupRef: "restricted-backup-1" }))
+      .toMatchObject({ phase: "blocked", blockReason: "home_unavailable", resumePhase: "inventoried" });
+
+    const racing = racingCoordinator(ownerHome, async () => { await coordinator.rollback(scopeId, "disable"); });
+    expect(await racing.resume(scopeId)).toMatchObject({ phase: "blocked", blockReason: "disabled_for_recovery" });
+    expect(await db.selectFrom("collaboration_cutover_journal").select(["phase", "block_reason"])
+      .where("scope_id", "=", scopeId).executeTakeFirstOrThrow())
+      .toMatchObject({ phase: "blocked", block_reason: "disabled_for_recovery" });
+    expect(await cutoverTicketAdmission(db, scopeId)).toBe(false);
+    expect(ownerHome.activate).not.toHaveBeenCalled();
+  });
+
+  it("disables recovery even when a resume commits while the disable read is in flight", async () => {
+    const scopeId = await orgScope();
+    const ownerHome = home(scopeId);
+    ownerHome.freeze.mockRejectedValueOnce(new Error("home unavailable"));
+    const coordinator = cutover(ownerHome);
+    expect(await coordinator.run(scopeId, { backupRef: "restricted-backup-1" }))
+      .toMatchObject({ phase: "blocked", blockReason: "home_unavailable", resumePhase: "inventoried" });
+
+    // The resume reaches the active generation, so the disable read observes a stale blocked phase.
+    const racing = racingCoordinator(ownerHome, async () => {
+      expect(await coordinator.resume(scopeId)).toMatchObject({ phase: "active" });
+    });
+    expect(await racing.rollback(scopeId, "disable")).toMatchObject({ phase: "blocked", blockReason: "disabled_for_recovery" });
+    expect(await db.selectFrom("collaboration_cutover_journal").select(["phase", "block_reason", "resume_phase"])
+      .where("scope_id", "=", scopeId).executeTakeFirstOrThrow())
+      .toMatchObject({ phase: "blocked", block_reason: "disabled_for_recovery", resume_phase: null });
+    expect(await cutoverTicketAdmission(db, scopeId)).toBe(false);
   });
 });
