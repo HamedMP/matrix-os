@@ -1929,3 +1929,52 @@ Remaining PRs go from roughly **40 to about 15**: two in the current queue, six 
 content — every commit is preserved and each combined PR still carries its own Invariants section. The S18
 reduction is not combining at all: it is discarding duplicated base commits that were never this spec's own
 work and that a reviewer should never have been asked to read.
+
+## 67. The seven-layer merge queue is complete — 2026-09-22 13:20 UTC
+
+`main` is **`8a05f0c86`**. All seven main-path layers have landed, plus the two `main` repairs. The only open
+`124/*` PR is this ledger.
+
+| PR | layer |
+| --- | --- |
+| #1802 | register relay-routable homes and issue signed connection tickets |
+| #1803 | authenticate direct sessions on the home with single-use tickets |
+| #1804 | extract the transparent collaboration relay |
+| #1805 | bind shared runs to one owner-selected AI source |
+| #1806 | add the shared direct client and metadata-only discovery |
+| #1807 | add the sandbox mount manifest and policy for shared runs |
+| #1808 | enforce sandbox-only terminal control and revoke on lease loss |
+
+Plus #1835 and #1840, both repairs to a `main` broken by unrelated work.
+
+**Every merge met the same bar:** base verified as `main` immediately beforehand, a current-head Greptile 5/5,
+zero unresolved threads, and a **completed** CI run — not a cancelled one, and not a 60-second no-op.
+
+### What the queue actually cost, and why
+
+Three real defects in our own layers, all on #1806, all the same shape — *a test that passed without
+exercising what it claimed to cover*: a listener the mock could not see because it stored one callback per
+channel; a mock missing an export the layer newly required; and a mock whose shape did not match the
+production call path (`api.direct.close()`).
+
+Two apparent defects **disproved**: #1805's terminal-soft-grid failure was a genuine flake in a file absent
+from its diff, and #1807's "failing" Docker jobs were **cancelled** jobs that `gh pr checks` renders as `fail`.
+
+Two repairs to `main`, neither ours: a Vitest alias missing for a new package subpath, and two Chat suites
+left behind by the two-pane picker redesign. Both reached `main` because **a PR can merge while its CI run is
+cancelled** — filed as #1838.
+
+### The three status traps, all of which would have caused a wrong decision
+
+1. **A green run that tested nothing.** Every job success in 64 seconds, because the gate short-circuited
+   before the label was applied and each job took its no-op branch. Check duration.
+2. **A cancelled run reported as a failure.** `gh pr checks` shows cancelled jobs as `fail`. Check the run's
+   own conclusion.
+3. **A review summary that is not the bot's last comment.** Greptile's last comment is often an out-of-diff
+   note with no score, which reads as "never reviewed". Select the last comment matching `Confidence Score`.
+
+### Remaining work, now consolidated (section 66)
+
+Roughly **15 PRs instead of 40**: six for the upper chain with the hardening graft folded into S09, about five
+for S18, one for S19, one for this ledger. Two streams are running now — the S09 graft and the S18
+consolidation.
