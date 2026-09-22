@@ -27,19 +27,29 @@ describe("customer VPS Hermes release", () => {
 
     expect(installer).toContain('HERMES_HOME="${HERMES_HOME:-$MATRIX_RUNTIME_HOME/.hermes}"');
     expect(installer).not.toMatch(/rm\s+-rf\s+[^\n]*\$HERMES_HOME/);
+    expect(installer).toContain(
+      "systemctl is-active --quiet matrix-hermes-dashboard.service",
+    );
+    expect(installer).not.toContain(
+      "systemctl is-enabled --quiet matrix-hermes-dashboard.service",
+    );
     expect(installer).toContain("restore_hermes_dashboard");
     expect(installer).toContain("trap restore_hermes_dashboard EXIT");
   });
 
-  it("ships the installer unit and schedules upgrades after host-bundle updates", async () => {
+  it("ships the installer unit and schedules upgrades only after host-bundle commit", async () => {
     const service = await readFile(servicePath, "utf8");
     const updater = await readFile("distro/customer-vps/host-bin/matrix-sync-agent", "utf8");
+    const commitIndex = updater.indexOf("if commit_release_metadata; then");
+    const reconcileIndex = updater.indexOf("\n      reconcile_hermes_release", commitIndex);
 
     expect(service).toContain("ExecStart=/opt/matrix/bin/matrix-install-hermes");
     expect(service).toContain("TimeoutStartSec=1800");
-    expect(updater).toContain('if [ -f "$extract_dir/systemd/matrix-hermes.service" ]; then');
+    expect(updater).toContain('if [ -f "/etc/systemd/system/matrix-hermes.service" ]; then');
     expect(updater).toContain("systemctl enable matrix-hermes.service");
     expect(updater).toContain("systemctl restart --no-block matrix-hermes.service");
+    expect(commitIndex).toBeGreaterThan(-1);
+    expect(reconcileIndex).toBeGreaterThan(commitIndex);
     await expect(access(servicePath, constants.R_OK)).resolves.toBeUndefined();
   });
 });
