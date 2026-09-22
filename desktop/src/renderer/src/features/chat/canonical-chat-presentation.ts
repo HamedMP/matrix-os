@@ -1,6 +1,6 @@
 import { projectChatSubagent } from "@matrix-os/contracts";
 import { canonicalChatToolDetail } from "@matrix-os/contracts";
-import { chatAgentAttribution } from "@matrix-os/ui";
+import { chatAgentAttribution, filePreviewContentUrl } from "@matrix-os/ui";
 import { canonicalChatApprovals, canonicalChatInputs } from "@matrix-os/contracts";
 import type {
   CanonicalChatMessage,
@@ -41,6 +41,11 @@ function messageText(message: CanonicalChatMessage): string {
     previousWasText = part.type === "text";
   }
   return output;
+}
+
+function hasDisplayableMessageContent(message: CanonicalChatMessage): boolean {
+  return messageText(message).length > 0
+    || message.parts.some((part) => part.type === "attachment_reference");
 }
 
 function messagePresentation(
@@ -113,11 +118,12 @@ function messageContent(
       } else unmatched.push(segment);
     } else if (part.type === "attachment_reference") {
       if (part.kind === "image" && part.ownerReference) {
+        const resource = part.resource ?? { kind: "home" as const, path: part.ownerReference };
         images.push({
           kind: "image",
           id: part.attachmentId,
           label: part.label,
-          src: `/api/files/blob?path=${encodeURIComponent(part.ownerReference)}`,
+          src: filePreviewContentUrl(resource),
           path: part.ownerReference,
         });
       } else {
@@ -612,7 +618,7 @@ export function canonicalChatPresentation(input: {
       ...(modelStatus ? [modelStatus] : []),
       ...assistantMessages.filter((message) => message.id !== finalMessage?.id).flatMap((message) => [
         ...messageWork(message),
-        ...(messageText(message) ? [messagePresentation(message, "commentary")] : []),
+        ...(hasDisplayableMessageContent(message) ? [messagePresentation(message, "commentary")] : []),
       ]),
       ...(finalMessage ? messageWork(finalMessage) : []),
       ...live.work,
@@ -688,7 +694,7 @@ export function canonicalChatPresentation(input: {
       work,
       ...(timeline.length > 0 ? { timeline } : {}),
       ...(userFollowups.length > 0 ? { expandedByDefault: true } : {}),
-      ...(finalMessage && messageText(finalMessage)
+      ...(finalMessage && hasDisplayableMessageContent(finalMessage)
         ? {
             final: {
               ...messagePresentation(finalMessage, "final"),

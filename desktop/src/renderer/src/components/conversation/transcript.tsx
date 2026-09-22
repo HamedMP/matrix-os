@@ -1,4 +1,4 @@
-import { ChatContextReceipt, CanonicalChatInputForm } from "@matrix-os/ui";
+import { ChatAttachments, ChatContextReceipt, CanonicalChatInputForm, type ChatMessageAttachment } from "@matrix-os/ui";
 import { UserMessage } from "./user-message";
 import {
   CheckCircle2,
@@ -101,6 +101,11 @@ function ResponseMessage({
   const [visibleMarkdown, setVisibleMarkdown] = useState(() => (
     streaming || animateOnMount ? "" : message.markdown
   ));
+  const attachments = (message.content ?? []).flatMap<ChatMessageAttachment>((segment) => segment.kind === "image"
+    ? [{ ...segment, kind: "image" as const }]
+    : segment.kind === "reference" && segment.referenceKind === "file"
+      ? [{ ...segment, kind: "file" as const }]
+      : []);
 
   useEffect(() => {
     if (previousMessageId.current === message.id) return;
@@ -137,6 +142,13 @@ function ResponseMessage({
     <ConversationItem messageId={`${message.role}:${message.id}`} className="mt-4">
       <Message>
         <MessageContent className="gap-0">
+          {attachments.length > 0 ? (
+            <ChatAttachments
+              attachments={attachments}
+              open={callbacks.openAttachment}
+              loadImage={callbacks.loadImage}
+            />
+          ) : null}
           <Bubble variant="ghost">
             <BubbleContent className="w-full max-w-full overflow-visible">
               <MessageResponse className="text-md leading-relaxed" copyText={callbacks.copyText} openFile={callbacks.openFile} openWebLink={callbacks.openWebLink}>{visibleMarkdown}</MessageResponse>

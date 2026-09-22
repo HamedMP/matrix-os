@@ -511,10 +511,51 @@ describe("canonical Chat presentation adapter", () => {
         kind: "image",
         id: "attachment_screenshot",
         label: "Screenshot.png",
-        src: "/api/files/blob?path=temporary%2Fdesktop-chat%2FScreenshot.png",
+        src: "/api/file-previews/content?kind=home&path=temporary%2Fdesktop-chat%2FScreenshot.png",
         path: "temporary/desktop-chat/Screenshot.png",
       },
     ]);
+  });
+
+  it("projects generated assistant artifacts through the authenticated preview resource", () => {
+    const { snapshot } = createCanonicalChatFixture("completed");
+    const assistant = {
+      id: "msg_generated_artifacts",
+      chatId: snapshot.chat.id,
+      seq: 2,
+      role: "assistant" as const,
+      state: "committed" as const,
+      turnId: snapshot.turns[0]!.id,
+      runId: snapshot.runs[0]!.id,
+      parts: [{
+        type: "attachment_reference" as const,
+        attachmentId: "generated_image",
+        kind: "image" as const,
+        label: "Generated.png",
+        mimeType: "image/png",
+        ownerReference: "data/chat-artifacts/generated.png",
+        resource: { kind: "home" as const, path: "data/chat-artifacts/generated.png" },
+      }],
+      createdAt: snapshot.runs[0]!.updatedAt,
+    };
+
+    const [presented] = canonicalChatPresentation({
+      messages: [...snapshot.messages, assistant],
+      turns: snapshot.turns,
+      runs: snapshot.runs,
+      activities: snapshot.activities,
+    });
+
+    expect(presented?.final).toMatchObject({
+      id: "msg_generated_artifacts",
+      content: [{
+        kind: "image",
+        id: "generated_image",
+        label: "Generated.png",
+        src: "/api/file-previews/content?kind=home&path=data%2Fchat-artifacts%2Fgenerated.png",
+        path: "data/chat-artifacts/generated.png",
+      }],
+    });
   });
 
   it("keeps process text and activities in one chronological Work timeline and only the last result outside", () => {
