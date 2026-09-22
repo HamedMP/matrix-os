@@ -36,3 +36,19 @@ The active Codex desktop tool contract in this session separately exposes `open_
 6. Classify Office documents, archives, 3D assets and unknown binary formats explicitly. Promise only the renderer/converter coverage actually implemented; retain a usable download fallback.
 
 These are recommendations derived from the sources, not evidence that Matrix currently implements them. Reuse UX principles, not T3's persistence, runtime, authorization model, or numerical limits. Matrix's own auth matrix, owner boundaries and resource policies govern the implementation.
+
+## Codex app-server schema observation
+
+On 2026-09-22, the locally installed `codex-cli 0.153.4` generated `codex_app_server_protocol.schemas.json` through `codex app-server generate-json-schema --experimental`. This was a schema capture, not a successful paid/live image-generation run.
+
+Confirmed resource-bearing `ThreadItem` shapes are:
+
+- `imageGeneration`: `result`, `status`, optional `savedPath`, failure and prompt metadata. A completed item may deliver a saved local path or bounded data result.
+- `imageView`: an absolute `path`.
+- `functionCallOutput`: output content may include `input_image.image_url` and `input_audio.audio_url`.
+- `dynamicToolCall`: `contentItems` may include `inputImage.imageUrl` and `inputAudio.audioUrl`.
+- `mcpToolCall`: `result.content` is open MCP content and can carry standard image, audio, embedded resource and resource-link blocks.
+
+The same union also includes messages, plans, reasoning, commands, file changes, web search, sleep/review/compaction state and collaboration activity. Those are activity or text records, not automatic artifact deliveries. Command stdout, file-change paths and web-search results must not be scraped for file references.
+
+Implementation therefore normalizes the five explicit resource channels above. It admits local run files and bounded inline bytes. Remote HTTP(S) media remains an external reference until a separate authorized fetch policy exists; encrypted content and arbitrary text remain non-artifact output.

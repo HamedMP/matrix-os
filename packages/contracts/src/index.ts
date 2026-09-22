@@ -6,6 +6,8 @@ export type { AppAiInput, AppAiRequest, AppAiResult } from "#app-ai";
 export * from "#release-alignment";
 export * from "#runtime-compatibility";
 export * from "#chat-message-wire";
+export * from "#chat-artifacts";
+export * from "#file-preview";
 import { z } from "zod/v4";
 import { IsoTimestampSchema, ProviderModelReferenceSchema, SAFE_SLUG } from "#contract-primitives";
 import {

@@ -19,6 +19,32 @@ import {
 const now = "2026-08-25T00:00:00.000Z";
 
 describe("canonical Chat contracts", () => {
+  it("keeps enriched attachment resources optional for older text/file projections", () => {
+    const base = {
+      id: "msg_artifact",
+      chatId: "chat_artifact",
+      seq: 1,
+      role: "assistant" as const,
+      state: "committed" as const,
+      parts: [{
+        type: "attachment_reference" as const,
+        attachmentId: "artifact_whale",
+        kind: "image" as const,
+        label: "whale.png",
+        mimeType: "image/png",
+      }],
+      createdAt: now,
+    };
+    expect(CanonicalChatMessageSchema.parse(base).parts[0]).not.toHaveProperty("resource");
+    expect(CanonicalChatMessageSchema.parse({
+      ...base,
+      parts: [{
+        ...base.parts[0],
+        resource: { kind: "artifact", chatId: "chat_artifact", artifactId: "artifact_whale" },
+      }],
+    }).parts[0]).toMatchObject({ resource: { kind: "artifact" } });
+  });
+
   it("accepts namespaced Provider model references without accepting traversal", () => {
     expect(CanonicalChatModelSelectionSchema.parse({
       instanceId: "hermes_default",

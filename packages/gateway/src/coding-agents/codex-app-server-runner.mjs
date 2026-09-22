@@ -1,11 +1,12 @@
 import { createCodexSubagentRuntime } from "./codex-subagent-runtime.mjs";
+import { extractCodexArtifactRecords } from "./codex-artifact-events.mjs";
 import { tryLoadToolOutputKey } from "./protected-tool-output.mjs";
 import { codexToolHasPrivateContext, codexToolOutput } from "./codex-tool-output.mjs";
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
-import { chmod, lstat, mkdir, open, rm } from "node:fs/promises";
+import { chmod, lstat, mkdir, open, readdir, rm } from "node:fs/promises";
 import { createServer } from "node:net";
-import { dirname, isAbsolute, relative } from "node:path";
+import { basename, dirname, extname, isAbsolute, join, relative } from "node:path";
 import { createInterface } from "node:readline";
 import { CodexTransportError, MAX_CODEX_TRANSPORT_BYTES, consumeCodexProviderOutput } from "./codex-provider-output.mjs";
 import { z } from "zod/v4";
@@ -43,6 +44,8 @@ const STEER_RPC_TIMEOUT_MS = 60 * 1000;
 const CONTROL_SOCKET_TIMEOUT_MS = 60 * 1000;
 const PROVIDER_STOP_TIMEOUT_MS = 5_000;
 const SHUTDOWN_REPLAY_GRACE_MS = 250;
+const ARTIFACT_STAGING_RETENTION_MS = 24 * 60 * 60 * 1000;
+const MAX_STAGED_ARTIFACTS = 100;
 const TURN_FRAME_V1_PREFIX = "matrix-turn-v1:";
 const TURN_FRAME_V2_PREFIX = "matrix-turn-v2:";
 const UNSAFE_DISPLAY_TEXT = /(stack trace|\/home\/|\/tmp\/|\/var\/|\.ssh\/|id_rsa|bearer\s+[A-Za-z0-9._-]+|sk-[A-Za-z0-9_-]+)/i;
@@ -341,6 +344,12 @@ try {
 }
 
 const toolOutputKey = process.env.MATRIX_HOME ? await tryLoadToolOutputKey(process.env.MATRIX_HOME) : undefined;
+const artifactStagingDirectory = join(
+  dirname(eventPath),
+  "artifact-staging",
+  basename(eventPath, ".jsonl"),
+);
+let artifactStagingCleaned = false;
 
 const controlPath = eventPath.replace(/\.jsonl$/, ".sock");
 await mkdir(dirname(eventPath), { recursive: true });
@@ -763,6 +772,68 @@ async function handleInput(raw) {
   return true;
 }
 
+async function stageArtifactCandidate(candidate) {
+  if (candidate.source.type !== "inline_bytes") return candidate;
+  const bytes = Buffer.from(candidate.source.base64, "base64");
+  if (bytes.length === 0 || bytes.length > 8 * 1024 * 1024) {
+    throw new Error("Codex artifact bytes exceed the staging limit");
+  }
+  const rawExtension = extname(candidate.label).toLowerCase();
+  const extension = /^\.[a-z0-9]{1,10}$/.test(rawExtension) ? rawExtension : ".bin";
+  const digest = createHash("sha256").update(bytes).digest("hex");
+  await mkdir(artifactStagingDirectory, { recursive: true, mode: 0o700 });
+  if (!artifactStagingCleaned) {
+    const entries = [];
+    for (const name of await readdir(artifactStagingDirectory)) {
+      const path = join(artifactStagingDirectory, name);
+      const info = await lstat(path);
+      if (info.isSymbolicLink() || !info.isFile()) continue;
+      entries.push({ path, mtimeMs: info.mtimeMs });
+    }
+    entries.sort((left, right) => left.mtimeMs - right.mtimeMs);
+    const expiresBefore = Date.now() - ARTIFACT_STAGING_RETENTION_MS;
+    for (const [index, entry] of entries.entries()) {
+      if (entry.mtimeMs < expiresBefore || index < entries.length - MAX_STAGED_ARTIFACTS) {
+        await rm(entry.path, { force: true });
+      }
+    }
+    artifactStagingCleaned = true;
+  }
+  const path = join(artifactStagingDirectory, `${digest}${extension}`);
+  let stagedExists = false;
+  try {
+    const info = await lstat(path);
+    if (info.isSymbolicLink() || !info.isFile()) throw new Error("Codex artifact staging path is unsafe");
+    stagedExists = true;
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+  }
+  if (!stagedExists && (await readdir(artifactStagingDirectory)).length >= MAX_STAGED_ARTIFACTS) {
+    throw new Error("Codex artifact staging capacity reached");
+  }
+  let handle;
+  let created = false;
+  try {
+    handle = await open(path, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o600);
+    created = true;
+    await handle.writeFile(bytes);
+    await handle.sync();
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error;
+    const info = await lstat(path);
+    if (info.isSymbolicLink() || !info.isFile() || info.size !== bytes.length) {
+      throw new Error("Codex artifact staging collision");
+    }
+  } finally {
+    await handle?.close();
+    if (created) await chmod(path, 0o600);
+  }
+  return {
+    ...candidate,
+    source: { type: "run_file", path },
+  };
+}
+
 async function handleItemLifecycle(raw) {
   const parsed = ItemLifecycleSchema.safeParse(raw);
   if (!parsed.success) return false;
@@ -783,6 +854,11 @@ async function handleItemLifecycle(raw) {
       assistantItemsWithDelta.delete(matrixItemId);
     }
     return true;
+  }
+  if (parsed.data.method === "item/completed") {
+    for (const candidate of extractCodexArtifactRecords(item)) {
+      await persist(await stageArtifactCandidate(candidate));
+    }
   }
   if (!ToolLifecycleTypeSchema.options.includes(item.type)) {
     return true;
