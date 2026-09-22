@@ -1,4 +1,8 @@
 import { test, expect } from "@playwright/test";
+import { mkdirSync } from "node:fs";
+import { resolve } from "node:path";
+
+const GENERATED_EVIDENCE_DIR = resolve(__dirname, "../../output/playwright/pr-1620-disconnected-chat");
 
 function agentSettingsView() {
   const chat = {
@@ -87,6 +91,36 @@ function agentSettingsView() {
       },
     },
   };
+}
+
+async function exposeSpeechReady(page: import("@playwright/test").Page) {
+  await page.route("**/api/speech/capabilities", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({
+      contractVersion: 1,
+      fileTranscription: {
+        status: "ready",
+        dictation: {
+          enabled: true,
+          maxBytes: 10 * 1024 * 1024,
+          maxDurationMs: 120_000,
+          maxTranscriptChars: 32_000,
+          supportedMediaTypes: ["audio/wav"],
+          languageHints: false,
+        },
+        ownerAudio: { enabled: false },
+      },
+    }),
+  }));
+}
+
+async function openChatFromPalette(page: import("@playwright/test").Page) {
+  await page.keyboard.press("Meta+k");
+  await page.waitForTimeout(300);
+  await page.keyboard.type("Chat");
+  await page.keyboard.press("Enter");
+  await expect(page.getByText("Checking connection", { exact: true })).toBeHidden();
 }
 
 test.describe("Visual regression", () => {
@@ -181,6 +215,101 @@ test.describe("Visual regression", () => {
     await page.keyboard.press("Enter");
     await page.waitForTimeout(500);
     await expect(page).toHaveScreenshot("chat-sidebar.png", {
+      maxDiffPixelRatio: 0.01,
+    });
+  });
+
+  test("speech-ready chat exposes the manual recording entry point", async ({ page }) => {
+    await exposeSpeechReady(page);
+    await page.keyboard.press("Meta+k");
+    await page.waitForTimeout(300);
+    await page.keyboard.type("Chat");
+    await page.keyboard.press("Enter");
+    const microphone = page.getByRole("button", { name: "Start voice input" });
+    await expect(microphone).toBeVisible();
+    await expect(page).toHaveScreenshot("chat-speech-ready.png", {
+      maxDiffPixelRatio: 0.01,
+    });
+  });
+
+  test("disconnected Chat keeps its draft editable with voice input while Send stays disabled", async ({ page }) => {
+    await exposeSpeechReady(page);
+    await page.keyboard.press("Meta+k");
+    await page.waitForTimeout(300);
+    await page.keyboard.type("Chat");
+    await page.keyboard.press("Enter");
+
+    const draft = page.getByRole("textbox", { name: "Message chat" });
+    const microphone = page.getByRole("button", { name: "Start voice input" });
+    const send = page.getByRole("button", { name: "Send" });
+    await expect(page.getByText("Offline", { exact: true })).toBeVisible();
+    await expect(draft).toBeEditable();
+    await draft.fill("Draft stays editable while the AI harness reconnects.");
+    await expect(draft).toHaveValue("Draft stays editable while the AI harness reconnects.");
+    await expect(microphone).toBeEnabled();
+    await expect(send).toBeDisabled();
+    await page.mouse.move(720, 450);
+    mkdirSync(GENERATED_EVIDENCE_DIR, { recursive: true });
+    await page.screenshot({ path: resolve(GENERATED_EVIDENCE_DIR, "web-desktop.png") });
+  });
+
+  test("disconnected Chat keeps speech drafts editable while send stays unavailable", async ({ page }) => {
+    await exposeSpeechReady(page);
+    await page.route("**/api/chat-providers**", (route) => route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ revision: 1, instances: [] }),
+    }));
+    await openChatFromPalette(page);
+
+    const draft = page.getByPlaceholder("Write or dictate a draft — connect a harness to send");
+    await expect(draft).toBeEditable();
+    await draft.fill("A disconnected draft stays editable");
+    await expect(draft).toHaveValue("A disconnected draft stays editable");
+    await expect(page.getByRole("button", { name: "Start voice input" })).toBeEnabled();
+    await expect(page.getByRole("button", { name: "Send" })).toBeDisabled();
+    await draft.fill("");
+    await expect(draft).toHaveValue("");
+    await expect(page).toHaveScreenshot("chat-speech-disconnected-draft.png", {
+      maxDiffPixelRatio: 0.01,
+    });
+  });
+
+  test("speech recording shows the live nine-bar waveform", async ({ page }) => {
+    await exposeSpeechReady(page);
+    await openChatFromPalette(page);
+    const microphone = page.getByRole("button", { name: "Start voice input" });
+    await expect(microphone).toBeVisible();
+    await microphone.click();
+    await expect(page.getByRole("button", { name: "Stop recording" })).toBeVisible();
+    await expect(page.getByTestId("speech-input-waveform")).toBeVisible();
+    await page.waitForTimeout(250);
+    await expect(page).toHaveScreenshot("chat-speech-recording-waveform.png", {
+      maxDiffPixelRatio: 0.01,
+    });
+  });
+
+  test("speech-ready Chat exposes the manual recording entry point in Web Canvas", async ({ page }) => {
+    await exposeSpeechReady(page);
+    await page.keyboard.press("Meta+k");
+    await page.keyboard.type("Mode: Canvas");
+    await page.keyboard.press("Enter");
+    await expect(page.getByTestId("dock-settings")).toBeVisible();
+    await page.keyboard.press("Meta+k");
+    await page.keyboard.type("Chat");
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("button", { name: "Start voice input" })).toBeVisible();
+    await expect(page).toHaveScreenshot("chat-speech-ready-web-canvas.png", {
+      maxDiffPixelRatio: 0.01,
+    });
+  });
+
+  test("speech-ready Chat exposes the manual recording entry point in Web Mobile", async ({ page }) => {
+    await exposeSpeechReady(page);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto("/?launch=__chat__");
+    await expect(page.getByRole("button", { name: "Start voice input" })).toBeVisible();
+    await expect(page).toHaveScreenshot("chat-speech-ready-web-mobile.png", {
       maxDiffPixelRatio: 0.01,
     });
   });

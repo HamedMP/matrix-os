@@ -7,6 +7,9 @@ export default defineConfig({
       name: "chess-app-test-mock",
       enforce: "pre",
       resolveId(source, importer) {
+        if (source === "@matrix-os/ui") {
+          return path.resolve(__dirname, "packages/ui/src/index.ts");
+        }
         if (!importer) return null;
         const normalized = importer.split(path.sep).join("/");
         if (
@@ -45,6 +48,7 @@ export default defineConfig({
       "@matrix-os/brand/tokens": path.resolve(__dirname, "packages/brand/src/tokens.ts"),
       "@matrix-os/brand/marks": path.resolve(__dirname, "packages/brand/src/marks.ts"),
       "@matrix-os/brand": path.resolve(__dirname, "packages/brand/src/index.ts"),
+      "@matrix-os/contracts/collaboration": path.resolve(__dirname, "packages/contracts/src/collaboration.ts"),
       "@matrix-os/contracts": path.resolve(__dirname, "packages/contracts/src/index.ts"),
       "@matrix-os/observability/client": path.resolve(
         __dirname,

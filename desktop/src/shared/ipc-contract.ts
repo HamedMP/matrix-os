@@ -138,7 +138,7 @@ const BoundedJsonValue = z.unknown().refine(
 export const INVOKE_CHANNELS = {
   "analytics:flush-complete": { request: Empty, response: Ok },
   "auth:start-device-flow": {
-    request: Empty,
+    request: z.strictObject({ intent: z.enum(["sign-up", "sign-in"]).optional() }),
     response: z
       .object({
         userCode: z.string().min(1).max(32),

@@ -1,6 +1,7 @@
 import {
   CollaborationActorIdSchema,
   CollaborationInvitationIdentifierSchema,
+  CollaborationOrganizationIdSchema,
   CollaborationParticipantSchema,
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
@@ -26,6 +27,15 @@ export type NormalizedCollaborationIdentifier =
   | { kind: "actor_id"; value: string }
   | { kind: "email"; value: string }
   | { kind: "username"; value: string };
+
+/**
+ * Current-membership answer for one organization. S03 registers the Clerk
+ * membership projection; until then no projection exists and the resolver
+ * resolves nothing (S20 / T101).
+ */
+export interface CollaborationOrganizationMembershipProjection {
+  isCurrentMember(input: { organizationId: string; actorId: string }): Promise<boolean>;
+}
 
 export class CollaborationIdentifierResolutionError extends Error {
   constructor(public readonly code: "unresolved" | "unavailable" = "unresolved") {
@@ -64,20 +74,43 @@ export class PlatformCollaborationIdentifierResolver {
     clerkSecretKey?: string;
     getAccountByActorId(actorId: string): Promise<Participant | null>;
     listAccountsByUsername(username: string): Promise<Participant[]>;
+    membershipProjection?: CollaborationOrganizationMembershipProjection;
     fetchImpl?: typeof fetch;
   }) {
     this.fetchImpl = options.fetchImpl ?? fetch;
   }
 
-  async resolve(input: string): Promise<Participant> {
+  /**
+   * Resolves an identifier to a participant only when that participant is a
+   * current member of `organizationId`. Any account outside the organization,
+   * and every identifier while no membership projection is registered, yields
+   * the same safe failure as an unknown identifier.
+   */
+  async resolve(input: string, organizationIdInput: string): Promise<Participant> {
+    const organizationId = CollaborationOrganizationIdSchema.safeParse(organizationIdInput);
+    if (!organizationId.success) throw new CollaborationIdentifierResolutionError();
+    if (!this.options.membershipProjection) {
+      console.warn("[platform-collaboration] invitation identifier refused: no membership projection registered");
+      throw new CollaborationIdentifierResolutionError("unavailable");
+    }
     const identifier = normalizeCollaborationIdentifier(input);
-    if (identifier.kind === "actor_id") {
-      return this.requireSingle(await this.options.getAccountByActorId(identifier.value));
+    const participant = identifier.kind === "actor_id"
+      ? this.requireSingle(await this.options.getAccountByActorId(identifier.value))
+      : identifier.kind === "username"
+        ? this.requireUnique(await this.options.listAccountsByUsername(identifier.value))
+        : await this.resolveEmail(identifier.value);
+    let member: boolean;
+    try {
+      member = await this.options.membershipProjection.isCurrentMember({
+        organizationId: organizationId.data,
+        actorId: participant.actorId,
+      });
+    } catch (error: unknown) {
+      console.warn("[platform-collaboration] membership projection lookup failed", error instanceof Error ? error.name : "UnknownError");
+      throw new CollaborationIdentifierResolutionError("unavailable");
     }
-    if (identifier.kind === "username") {
-      return this.requireUnique(await this.options.listAccountsByUsername(identifier.value));
-    }
-    return this.resolveEmail(identifier.value);
+    if (!member) throw new CollaborationIdentifierResolutionError();
+    return participant;
   }
 
   private async resolveEmail(email: string): Promise<Participant> {

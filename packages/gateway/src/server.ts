@@ -1,3 +1,5 @@
+import { tryLoadToolOutputKey } from "./coding-agents/protected-tool-output.mjs";
+import { createOwnerToolOutputProjection } from "./chat/owner-tool-output.js";
 import { createProjectChatCleanup } from "./chat/project-deletion.js";
 import { createRuntimeAppAiRoutes } from "./app-ai/runtime.js";
 import { restoreBackgroundChatThread, createBackgroundChatProjection } from "./coding-agents/background-chat-recovery.js";
@@ -27,6 +29,9 @@ import {
   loadFundedAiRuntimeConfig,
 } from "./funded-ai-credential-manager.js";
 import { createFundedAiFundingSummaryClient } from "./funded-ai-funding-summary-client.js";
+import { createFundedAiReadinessReader } from "./funded-ai-readiness.js";
+import { createGatewaySpeechRuntime } from "./speech/gateway-runtime.js";
+import { buildKernelCredentialLaunch } from "./kernel-credentials.js";
 import { createAllowedOriginController } from "./allowed-origins.js";
 import { createAiGenerationRecorder } from "./ai-analytics.js";
 import { createWatcher, type Watcher } from "./watcher.js";
@@ -188,9 +193,14 @@ import {
   createUnavailableCanonicalChatService,
 } from "./chat/service.js";
 import { createDiscussionOnlyChatExecutionGuard } from "./collaboration/chat-scope.js";
+import { teardownOwnerDatabaseServices } from "./startup/owner-database-fallback.js";
 import {
+  constructGatewayCollaborationOrFailClosed,
   createGatewayCollaboration,
+  describeGatewayCollaborationConfiguration,
   loadGatewayCollaborationConfig,
+  registerFailClosedCollaborationRoutes,
+  type GatewayCollaborationConfigurationFailure,
   type GatewayCollaborationRuntime,
 } from "./collaboration/wiring.js";
 import { createLegacyProjectPathAdmission } from "./collaboration/project-path-admission.js";
@@ -280,6 +290,7 @@ import {
 import { createProviderDriverInventoryReader } from "./ai-providers/provider-driver-inventory.js";
 import { createProviderTerminalLoginCoordinator } from "./ai-providers/provider-terminal-login-coordinator.js";
 import { createDefaultProviderCliAccountLifecycleCoordinator } from "./ai-providers/provider-cli-account-lifecycle.js";
+import { createGenericHarnessModelCatalogReader } from "./ai-providers/generic-harness-model-catalog.js";
 import { createHermesRoutes } from "./routes/hermes.js";
 import {
   createHermesDashboardClient,
@@ -289,20 +300,17 @@ import {
   createAgentRuntimeServices,
   createLazyOpenClawRpc,
 } from "./agent-config/runtime-services.js";
-import { syncApp, createSyncRoutes, type SyncRouteDeps } from "./sync/routes.js";
-import { createR2Client, type R2Client, type R2ClientConfig } from "./sync/r2-client.js";
-import { createPlatformR2Client } from "./sync/platform-r2-client.js";
-import { createManifestDb, createKyselySharingDb } from "./sync/db-impl.js";
+import { syncApp, createSyncRoutes } from "./sync/routes.js";
+import { initializeSyncInfrastructure } from "./sync/infrastructure.js";
+import { createManifestDb } from "./sync/db-impl.js";
 import { createHomeMirror, type HomeMirror } from "./sync/home-mirror.js";
-import { deriveHomeMirrorSyncIdentity } from "./sync/runtime-scope.js";
-import { createPeerRegistry, type PeerRegistry } from "./sync/ws-events.js";
-import { createSyncPeerLifecycle } from "./sync/ws-peer-lifecycle.js";
-import { createSharingService, type SharingService } from "./sync/sharing.js";
-import { sanitizePeerId } from "./sync/peer-id.js";
 import {
-  deriveGatewaySyncUserSeeds,
-  ensureSyncUser,
-  migrateSyncTables,
+  deriveHomeMirrorSyncIdentity,
+  resolveSyncScope,
+  syncScopeRegistryKey,
+} from "./sync/runtime-scope.js";
+import { createSyncPeerLifecycle } from "./sync/ws-peer-lifecycle.js";
+import {
   type SyncDatabase,
 } from "./sync/sharing-db.js";
 import { sql, type Kysely } from "kysely";
@@ -433,6 +441,10 @@ export async function createGateway(config: GatewayConfig) {
   const fundedAiFundingSummaryReader = fundedAiRuntimeConfig
     ? createFundedAiFundingSummaryClient(fundedAiRuntimeConfig)
     : undefined;
+  const speechRuntime = createGatewaySpeechRuntime({
+    env: process.env,
+    getOwnerId: (c) => requireRequestPrincipal(c).userId,
+  });
   const runningVersion = getVersion(
     config.runningVersion ? { version: config.runningVersion } : undefined,
   );
@@ -616,6 +628,8 @@ export async function createGateway(config: GatewayConfig) {
   const terminalRuntimeOwnerIds = terminalRuntimeOwnerId
     ? [terminalRuntimeOwnerId]
     : process.env.NODE_ENV === "production" ? [] : ["default"];
+  const toolOutputKey = await tryLoadToolOutputKey(homePath);
+  const projectOwnerToolOutput = createOwnerToolOutputProjection(toolOutputKey, terminalRuntimeOwnerIds);
   const codingAgentProjectManager = createProjectManager({ homePath });
   const conversationContextResolver = createConversationContextResolver(codingAgentProjectManager);
   const codingAgentWorktreeManager = createWorktreeManager({ homePath });
@@ -911,13 +925,14 @@ export async function createGateway(config: GatewayConfig) {
   let canonicalChatCollaborationGuard: ReturnType<typeof createDiscussionOnlyChatExecutionGuard> | null = null;
   let gatewayCollaboration: GatewayCollaborationRuntime | null = null;
   let messagingRepository: MessagingKyselyRepository | null = null;
-  const collaborationConfig = loadGatewayCollaborationConfig(process.env);
-  if (process.env.MATRIX_COLLABORATION_ENABLED === "true" && !collaborationConfig) {
-    throw new Error("[collaboration] enabled with incomplete configuration");
-  }
-  if (collaborationConfig && !databaseUrl) {
-    throw new Error("[collaboration] enabled without owner Postgres");
-  }
+  // Collaboration wiring always constructs (S20): there is no release flag.
+  // Incomplete configuration or a missing owner database registers the
+  // fail-closed routes below instead of skipping construction.
+  const collaborationHealth = describeGatewayCollaborationConfiguration(process.env);
+  const collaborationConfig = collaborationHealth.configured ? loadGatewayCollaborationConfig(process.env) : null;
+  let collaborationFailClosedReason: GatewayCollaborationConfigurationFailure | null = collaborationHealth.configured
+    ? null
+    : collaborationHealth.reason;
   if (databaseUrl) {
     try {
       const { db, kysely } = createAppDb(databaseUrl);
@@ -939,9 +954,11 @@ export async function createGateway(config: GatewayConfig) {
       canonicalChatCollaborationGuard = createDiscussionOnlyChatExecutionGuard(chatRepository.kysely as Kysely<any>);
       await bootstrapChatSharing(chatRepository.kysely);
       if (collaborationConfig) {
-        gatewayCollaboration = await createGatewayCollaboration({
-          db: chatRepository.kysely as Kysely<any>,
-          chatRepository,
+        const ownerChatRepository = chatRepository;
+        const construction = await constructGatewayCollaborationOrFailClosed(
+          () => createGatewayCollaboration({
+          db: ownerChatRepository.kysely as Kysely<any>,
+          chatRepository: ownerChatRepository,
           config: collaborationConfig,
           projectSource: {
             getProject: async (ownerId, projectId) => {
@@ -957,63 +974,68 @@ export async function createGateway(config: GatewayConfig) {
               return { id: result.project.id, ownerId, revision };
             },
           },
-        });
-        await gatewayCollaboration.enableSharedProject({
-          homePath,
-          inventorySource: createGatewayProjectInventorySource({
+        }),
+          {
+          onPartialRuntime: (runtime) => runtime.enableSharedProject({
             homePath,
-            projects: {
-              get: async (ownerId, projectId) => {
-                const result = await codingAgentProjectManager.getProjectById(
-                  { type: "user", id: ownerId },
-                  projectId,
-                );
-                return result.ok ? {
-                  id: result.project.id,
-                  ownerId,
-                  rootPath: result.project.localPath,
-                  updatedAt: result.project.updatedAt,
-                } : null;
+            inventorySource: createGatewayProjectInventorySource({
+              homePath,
+              projects: {
+                get: async (ownerId, projectId) => {
+                  const result = await codingAgentProjectManager.getProjectById(
+                    { type: "user", id: ownerId },
+                    projectId,
+                  );
+                  return result.ok ? {
+                    id: result.project.id,
+                    ownerId,
+                    rootPath: result.project.localPath,
+                    updatedAt: result.project.updatedAt,
+                  } : null;
+                },
               },
-            },
-            chats: {
-              list: async (ownerId, projectId) => chatRepository!.kysely.selectFrom("chats")
-                .select(["id", "revision"])
-                .where("owner_type", "=", "personal")
-                .where("owner_id", "=", ownerId)
-                .where("project_id", "=", projectId)
-                .orderBy("id", "asc")
-                .limit(100_001)
-                .execute(),
-            },
-            canvases: {
-              getProjectCanvas: async (ownerId, projectId) => {
-                const rows = await canvasRepository!.kysely.selectFrom("canvas_documents")
-                  .select(["id", "revision", "nodes"])
-                  .where("owner_scope", "=", "personal")
+              chats: {
+                list: async (ownerId, projectId) => chatRepository!.kysely.selectFrom("chats")
+                  .select(["id", "revision"])
+                  .where("owner_type", "=", "personal")
                   .where("owner_id", "=", ownerId)
-                  .where("scope_type", "=", "project")
-                  .where("deleted_at", "is", null)
-                  .where(sql<boolean>`scope_ref ->> 'projectId' = ${projectId}`)
-                  .limit(2)
-                  .execute();
-                if (rows.length > 1) throw new Error("ProjectCanvasConflict");
-                return rows[0] ?? null;
+                  .where("project_id", "=", projectId)
+                  .orderBy("id", "asc")
+                  .limit(100_001)
+                  .execute(),
               },
-            },
-            apps: {
-              get: async (appId) => {
-                const app = await appRegistry!.get(appId);
-                return app ? { id: app.slug, collaborationMode: "scoped" as const } : null;
+              canvases: {
+                getProjectCanvas: async (ownerId, projectId) => {
+                  const rows = await canvasRepository!.kysely.selectFrom("canvas_documents")
+                    .select(["id", "revision", "nodes"])
+                    .where("owner_scope", "=", "personal")
+                    .where("owner_id", "=", ownerId)
+                    .where("scope_type", "=", "project")
+                    .where("deleted_at", "is", null)
+                    .where(sql<boolean>`scope_ref ->> 'projectId' = ${projectId}`)
+                    .limit(2)
+                    .execute();
+                  if (rows.length > 1) throw new Error("ProjectCanvasConflict");
+                  return rows[0] ?? null;
+                },
               },
-            },
-            sessions: {
-              list: () => terminalWorkspaceRuntime.listWorkspaces(),
-            },
-          }),
-        });
+              apps: {
+                get: async (appId) => {
+                  const app = await appRegistry!.get(appId);
+                  return app ? { id: app.slug, collaborationMode: "scoped" as const } : null;
+                },
+              },
+              sessions: {
+                list: () => terminalWorkspaceRuntime.listWorkspaces(),
+              },
+            }),
+          }) },
+        );
+        if (construction.ok) gatewayCollaboration = construction.runtime;
+        else collaborationFailClosedReason = construction.reason;
       }
       canonicalChatEventStream = createGatewayChatEventStream({
+        projectOwnerToolOutput,
         repository: chatRepository,
         reconcileOwner: (owner) => canonicalChatOrchestrator?.reconcileActiveRuns(owner) ?? Promise.resolve(),
         capture: (event, options) => posthogErrorTracker.captureEvent(event, options),
@@ -1140,11 +1162,25 @@ export async function createGateway(config: GatewayConfig) {
         console.error("[app-db] App registration error:", (regErr as Error).message);
       }
     } catch (err) {
-      await gatewayCollaboration?.shutdown();
-      gatewayCollaboration = null;
       console.error("[app-db] Failed to connect to Postgres:", (err as Error).message);
-      if (collaborationConfig) throw err;
+      // Collaboration fails closed without the owner database; the rest of the gateway keeps serving.
+      if (collaborationConfig) collaborationFailClosedReason = "owner_database_missing";
       console.log("[app-db] Falling back to file-based storage");
+      // Tear down every partially built database-backed service (event stream before its
+      // repository, pool last) so the gateway runs wholly in the file-storage fallback instead
+      // of a mixture of retained Postgres handles and files.
+      await teardownOwnerDatabaseServices({
+        collaboration: gatewayCollaboration,
+        chatEventStream: canonicalChatEventStream,
+        chatRepository,
+        canvasRepository,
+        appDb,
+      });
+      gatewayCollaboration = null;
+      canonicalChatEventStream = null;
+      chatRepository = null;
+      canonicalChatCollaborationGuard = null;
+      kyselyInstance = null;
       appDb = null;
       queryEngine = null;
       kvStore = null;
@@ -1180,79 +1216,16 @@ export async function createGateway(config: GatewayConfig) {
     onAiGeneration: recordAiGeneration,
     fundedCredentialProvider,
     osViewTools,
+    ownerAudioTranscriber: speechRuntime.ownerAudioTranscriber,
   });
 
-  // 066: Sync infrastructure (R2/S3 + ManifestDb + PeerRegistry + Sharing)
-  let syncR2: R2Client | null = null;
-  let syncPeerRegistry: PeerRegistry | null = null;
-  let syncSharing: SharingService | null = null;
-  let syncDeps: SyncRouteDeps | null = null;
-
-  const s3Endpoint = process.env.S3_ENDPOINT ?? process.env.R2_ENDPOINT;
-  const s3AccessKey = process.env.S3_ACCESS_KEY_ID ?? process.env.R2_ACCESS_KEY_ID;
-  const s3SecretKey = process.env.S3_SECRET_ACCESS_KEY ?? process.env.R2_SECRET_ACCESS_KEY;
-  const s3Bucket = process.env.S3_BUCKET ?? process.env.R2_BUCKET ?? "matrixos-sync";
-  const s3ForcePathStyle = process.env.S3_FORCE_PATH_STYLE === "true";
+  const { syncR2, syncPeerRegistry, syncSharing, syncDeps } = await initializeSyncInfrastructure(kyselyInstance);
 
   const geminiLiveConnection: GeminiLiveConnection =
     internalPlatformUrl && internalPlatformToken && internalHandle
       ? { proxy: { platformUrl: internalPlatformUrl, token: internalPlatformToken, handle: internalHandle } }
       : process.env.GEMINI_API_KEY ?? "";
 
-  if (((s3AccessKey && s3SecretKey) || (internalPlatformUrl && internalPlatformToken && internalHandle)) && kyselyInstance) {
-    try {
-      if (s3AccessKey && s3SecretKey) {
-        const r2Config: R2ClientConfig = {
-          accessKeyId: s3AccessKey,
-          secretAccessKey: s3SecretKey,
-          bucket: s3Bucket,
-          endpoint: s3Endpoint,
-          publicEndpoint: process.env.S3_PUBLIC_ENDPOINT ?? process.env.R2_PUBLIC_ENDPOINT,
-          accountId: process.env.R2_ACCOUNT_ID,
-          forcePathStyle: s3ForcePathStyle,
-        };
-        syncR2 = await createR2Client(r2Config);
-      } else {
-        syncR2 = createPlatformR2Client({
-          baseUrl: internalPlatformUrl!,
-          handle: internalHandle!,
-          token: internalPlatformToken!,
-        });
-      }
-
-      await migrateSyncTables(kyselyInstance as Kysely<SyncDatabase>);
-      for (const seed of deriveGatewaySyncUserSeeds()) {
-        await ensureSyncUser(kyselyInstance as Kysely<SyncDatabase>, seed);
-      }
-
-      const manifestDb = createManifestDb(kyselyInstance as Kysely<SyncDatabase>);
-      syncPeerRegistry = createPeerRegistry();
-      const sharingDb = createKyselySharingDb(kyselyInstance as Kysely<SyncDatabase>);
-      syncSharing = createSharingService({ db: sharingDb, peerRegistry: syncPeerRegistry });
-
-      syncDeps = {
-        r2: syncR2,
-        db: manifestDb,
-        peerRegistry: syncPeerRegistry,
-        sharing: syncSharing,
-        // Resolve userId per request through the canonical principal seam so
-        // sync storage keys follow the same source precedence as other
-        // protected owner-scoped routes.
-        getUserId: (c) => requireRequestPrincipal(c).userId,
-        getPeerId: (c) => sanitizePeerId(c.req.header("X-Peer-Id")),
-      };
-
-      console.log("[sync] Sync API initialized (storage:", s3AccessKey && s3SecretKey ? (s3Endpoint ?? "R2") : "platform-internal", ")");
-    } catch (err) {
-      console.error("[sync] Failed to initialize sync:", (err as Error).message);
-      syncR2 = null;
-      syncPeerRegistry = null;
-      syncSharing = null;
-      syncDeps = null;
-    }
-  } else {
-    console.log("[sync] No trusted sync storage configured, sync API disabled");
-  }
 
   // Container-side home mirror: watches the user's home directory and
   // pushes changes to the same R2 bucket the user's local daemon reads.
@@ -1286,7 +1259,11 @@ export async function createGateway(config: GatewayConfig) {
           "[home-mirror] MATRIX_USER_ID not set; using MATRIX_HANDLE fallback. This is dev-only behaviour.",
         );
       }
-      const { syncUserId, peerId } = deriveHomeMirrorSyncIdentity({
+      const scope = resolveSyncScope({
+        ownerId: baseUserId,
+        runtimeSlot: process.env.MATRIX_RUNTIME_SLOT,
+      });
+      const { peerId } = deriveHomeMirrorSyncIdentity({
         baseUserId,
         runtimeSlot: process.env.MATRIX_RUNTIME_SLOT,
       });
@@ -1295,7 +1272,8 @@ export async function createGateway(config: GatewayConfig) {
         r2: syncR2,
         manifestDb,
         homeRoot: homePath,
-        userId: syncUserId,
+        userId: scope.ownerId,
+        scope,
         peerId,
         // Subscribe to sync:change broadcasts from other peers so the
         // container's /home/matrixos/home/ stays in sync with what laptops
@@ -1714,6 +1692,7 @@ export async function createGateway(config: GatewayConfig) {
   const channelSessions = createSessionStore(join(homePath, "system", "sessions.json"));
 
   const telegramAdapter: TelegramAdapter = createTelegramAdapter();
+  telegramAdapter.setVoiceContext({ homePath, stt: speechRuntime.channelStt });
 
   const channelManager: ChannelManager = createChannelManager({
     config: channelsConfig,
@@ -2002,6 +1981,7 @@ export async function createGateway(config: GatewayConfig) {
         },
       })
     : undefined;
+  app.route("/api/speech", speechRuntime.routes);
   app.route("/api/onboarding", createReadinessRoutes({ service: readinessService }));
   app.route("/api/onboarding", createToolPackRoutes({ service: toolPackService }));
   app.route("/api/agents", createAgentCredentialRoutes({ service: agentCredentialService }));
@@ -2292,11 +2272,15 @@ export async function createGateway(config: GatewayConfig) {
       let connectionOwnerId: string | undefined;
       try {
         const wsPrincipal = requireRequestPrincipal(c);
-        const wsSyncUserId = wsPrincipal.userId;
-        connectionOwnerId = wsSyncUserId;
+        const wsScope = resolveSyncScope({
+          ownerId: wsPrincipal.userId,
+          runtimeSlot: process.env.MATRIX_RUNTIME_SLOT,
+        });
+        const wsSyncScopeKey = syncScopeRegistryKey(wsScope);
+        connectionOwnerId = wsPrincipal.userId;
         conversationOwnerScope = ownerScopeFromPrincipal(wsPrincipal);
         syncPeerLifecycle = syncPeerRegistry
-          ? createSyncPeerLifecycle(syncPeerRegistry, wsSyncUserId, {
+          ? createSyncPeerLifecycle(syncPeerRegistry, wsSyncScopeKey, {
               send: (data: string) => syncPeerSocket?.send(data),
               get readyState() {
                 return syncPeerSocket?.readyState ?? 3;
@@ -4236,6 +4220,12 @@ export async function createGateway(config: GatewayConfig) {
   const aiProviderService = new AiProviderService({
     homePath,
     fundedCredentialProvider,
+    fundedReadinessReader: fundedAiRuntimeConfig && fundedAiFundingSummaryReader
+      ? createFundedAiReadinessReader({
+        relayBaseUrl: fundedAiRuntimeConfig.relayBaseUrl,
+        summary: fundedAiFundingSummaryReader,
+      })
+      : undefined,
     driverInventory: createProviderDriverInventoryReader({
       detectAgentInstallations: agentCredentialLauncher.detectAgentInstallations,
       runtimeSource: agentRuntimeServices.source,
@@ -4261,6 +4251,12 @@ export async function createGateway(config: GatewayConfig) {
     ),
   });
   await reconcileProviderRuntimeAtStartup(providerGenericHarnessCoordinator);
+  const genericHarnessModelCatalog = createGenericHarnessModelCatalogReader({
+    homePath,
+    enabledHarnesses: codingAgentWorkspaceAgents.filter(
+      (agent): agent is "pi" | "opencode" => agent === "pi" || agent === "opencode",
+    ),
+  });
   providerSettingsStore = new ProviderSettingsStore({
     homePath,
     providerSnapshotReader: aiProviderService,
@@ -4268,6 +4264,7 @@ export async function createGateway(config: GatewayConfig) {
     accountLifecycle: providerAccountLifecycle,
     fundingSummaryReader: fundedAiFundingSummaryReader,
     runtimeCoordinator: providerGenericHarnessCoordinator,
+    genericModelCatalogReader: genericHarnessModelCatalog,
   });
   const canonicalExecutableDriverKinds = [
     "kernel" as const,
@@ -4311,7 +4308,7 @@ export async function createGateway(config: GatewayConfig) {
     });
     const canonicalAdapters: CanonicalChatProviderAdapter[] = [
       createKernelChatProviderAdapter({ dispatcher }),
-      createHermesChatProviderAdapter({ homePath }),
+      createHermesChatProviderAdapter({ homePath, toolOutputKey }),
       createOpenClawChatProviderAdapter({ rpc: openClawRpc, homePath }),
     ];
     if (codingAgentProviders.some((provider) => provider.providerId === "claude")) {
@@ -4325,6 +4322,7 @@ export async function createGateway(config: GatewayConfig) {
         canonicalAdapters.push(createCanonicalCodingChatProviderAdapter({
           providerId: "codex",
           threads: codingAgentThreadStore,
+          toolOutputKey,
           nativeInputProvider: codingAgentProviders.find(provider => provider.providerId === "codex"),
         }));
       }
@@ -4332,6 +4330,7 @@ export async function createGateway(config: GatewayConfig) {
         canonicalAdapters.push(createCanonicalCodingChatProviderAdapter({
           providerId: "pi",
           threads: codingAgentThreadStore,
+          toolOutputKey,
           nativeInputProvider: codingAgentProviders.find(provider => provider.providerId === "pi"),
         }));
       }
@@ -4339,6 +4338,7 @@ export async function createGateway(config: GatewayConfig) {
         canonicalAdapters.push(createCanonicalCodingChatProviderAdapter({
           providerId: "opencode",
           threads: codingAgentThreadStore,
+          toolOutputKey,
           nativeInputProvider: codingAgentProviders.find(provider => provider.providerId === "opencode"),
         }));
       }
@@ -4364,6 +4364,8 @@ export async function createGateway(config: GatewayConfig) {
       const sharedAi = await gatewayCollaboration.enableSharedAi({
         orchestrator: canonicalChatOrchestrator,
         homePath,
+        providerCatalog: canonicalChatProviderCatalog,
+        codingProviders: codingAgentProviderRegistry,
         ...(fundedCredentialProvider ? { fundedCredentialProvider } : {}),
       });
       console.log(`[collaboration] shared AI ${sharedAi.available ? "ready" : "disabled"}`);
@@ -4437,10 +4439,19 @@ export async function createGateway(config: GatewayConfig) {
     });
   }
   app.route("/", createChatSharingRoutes(chatRepository ? new ChatSharing(chatRepository.kysely) : null));
-  gatewayCollaboration?.register({ app, upgradeWebSocket });
+  if (gatewayCollaboration) {
+    gatewayCollaboration.register({ app, upgradeWebSocket });
+  } else {
+    registerFailClosedCollaborationRoutes({
+      app,
+      upgradeWebSocket,
+      reason: collaborationFailClosedReason ?? "owner_database_missing",
+    });
+  }
   app.route("/", createCanonicalChatRoutes({
     service: chatRepository
         ? createCanonicalChatService(chatRepository, {
+          projectOwnerToolOutput,
           ...(canonicalChatOrchestrator ? { orchestrator: canonicalChatOrchestrator } : {}),
           ...(canonicalChatExecutionRoots ? { executionRoots: canonicalChatExecutionRoots } : {}),
           ...(canonicalChatCollaborationGuard ? { collaborationGuard: canonicalChatCollaborationGuard } : {}),

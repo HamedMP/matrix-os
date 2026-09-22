@@ -196,6 +196,10 @@ export class CollaborationChatCommands {
         accepted_seq: acceptedSequence,
         payload_hash: identity.payloadHash,
         accepted_auth_epoch: authorized.authEpoch,
+        accepted_execution_generation: authorized.executionGeneration,
+        accepted_execution_eligibility: authorized.executionEligibility === null
+          ? null
+          : jsonb(authorized.executionEligibility),
         retry_of_queued_turn_id: requestId,
         position: pendingCount + 1,
         status: "queued",
@@ -469,6 +473,8 @@ async function authorizeCommand(
     role: member.role,
     authEpoch: Number(scope.auth_epoch),
     authorityGeneration: Number(scope.authority_generation),
+    executionGeneration: scope.execution_generation === null ? null : Number(scope.execution_generation),
+    executionEligibility: scope.execution_eligibility,
     at: now.toISOString(),
   };
 }

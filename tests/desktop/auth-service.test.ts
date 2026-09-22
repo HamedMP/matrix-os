@@ -352,6 +352,28 @@ describe("AuthService runtime selection", () => {
 });
 
 describe("AuthService device flow", () => {
+  it("selects the requested Clerk mode on the verification URL", async () => {
+    const fetchFn = vi.fn(async (url: string) => {
+      if (url.endsWith("/api/auth/device/code")) {
+        return jsonResponse({
+          deviceCode: "device-code",
+          userCode: "ABCD-EFGH",
+          verificationUri: "https://app.matrix-os.com/auth/device?user_code=ABCD-EFGH",
+          expiresIn: 1,
+          interval: 10,
+        });
+      }
+      return jsonResponse({ error: "authorization_pending" }, 428);
+    });
+    const { auth } = makeService({ now: 10_000, fetchFn });
+
+    const result = await auth.startDeviceFlow("sign-in");
+
+    expect(result.verificationUri).toBe(
+      "https://app.matrix-os.com/auth/device?user_code=ABCD-EFGH&mode=sign-in",
+    );
+  });
+
   it("does not restore a non-primary runtime after sign-out wins the exchange", async () => {
     const exchangeStarted = deferred<void>();
     const finishExchange = deferred<Response>();

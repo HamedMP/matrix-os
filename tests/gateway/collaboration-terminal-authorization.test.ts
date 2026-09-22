@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { CollaborationPolicy, CollaborationRole } from "@matrix-os/contracts";
+import type { CollaborationRole } from "@matrix-os/contracts";
 import { TerminalControlCoordinator } from "../../packages/gateway/src/collaboration/terminal-control.js";
 import {
   CollaborationTerminalDispatcher,
@@ -10,14 +10,6 @@ const scopeId = "10000000-0000-4000-8000-000000000001";
 const terminalId = "terminal_release";
 const incarnation = "terminal-incarnation-7";
 const requestId = "20000000-0000-4000-8000-000000000001";
-const policy: CollaborationPolicy = {
-  milestone: "m3",
-  revision: "1",
-  mode: "enabled",
-  cohort: [],
-  issuedAt: "2026-09-11T00:00:00.000Z",
-  expiresAt: "2026-09-11T00:00:30.000Z",
-};
 
 function setup(role: CollaborationRole, actorId = `user_${role}`, creatorActorId = "user_editor") {
   const runtime = {
@@ -75,7 +67,6 @@ describe("shared terminal authorization", () => {
         scopeId,
         actorId: "user_viewer",
         connectionId: "connection_viewer",
-        policy,
         action,
       })).rejects.toMatchObject({ code: "forbidden" });
       expect(runtime.input).not.toHaveBeenCalled();
@@ -92,7 +83,6 @@ describe("shared terminal authorization", () => {
       scopeId,
       actorId: "user_editor",
       connectionId: "connection_editor",
-      policy,
       action: { type: "acquire", clientRequestId: requestId, incarnation, connectionId: "connection_editor" },
     });
     const leaseEpoch = acquired.terminal.controller!.leaseEpoch;
@@ -106,7 +96,6 @@ describe("shared terminal authorization", () => {
         scopeId,
         actorId: "user_editor",
         connectionId: "connection_editor",
-        policy,
         action: {
           ...action,
           clientRequestId: crypto.randomUUID(),
@@ -124,7 +113,6 @@ describe("shared terminal authorization", () => {
       scopeId,
       actorId: "user_editor",
       connectionId: "connection_reconnected",
-      policy,
       action: {
         type: "input",
         clientRequestId: crypto.randomUUID(),
@@ -144,7 +132,6 @@ describe("shared terminal authorization", () => {
       scopeId,
       actorId: "user_editor",
       connectionId: "connection_editor",
-      policy,
       action: { type: "acquire", clientRequestId: requestId, incarnation, connectionId: "connection_editor" },
     });
     const firstEpoch = first.terminal.controller!.leaseEpoch;
@@ -158,7 +145,6 @@ describe("shared terminal authorization", () => {
       scopeId,
       actorId: "user_owner",
       connectionId: "connection_owner",
-      policy,
       action: { type: "takeover", clientRequestId: crypto.randomUUID(), incarnation, connectionId: "connection_owner" },
     });
     authority.authorize.mockResolvedValue({
@@ -170,7 +156,6 @@ describe("shared terminal authorization", () => {
       scopeId,
       actorId: "user_editor",
       connectionId: "connection_editor",
-      policy,
       action: {
         type: "paste", clientRequestId: crypto.randomUUID(), incarnation,
         connectionId: "connection_editor", leaseEpoch: firstEpoch, data: "stale paste",
@@ -182,7 +167,6 @@ describe("shared terminal authorization", () => {
       scopeId,
       actorId: "user_owner",
       connectionId: "connection_owner",
-      policy,
       action: {
         type: "resize", clientRequestId: crypto.randomUUID(), incarnation,
         connectionId: "connection_owner", leaseEpoch: "2", cols: 80, rows: 24,
@@ -199,7 +183,6 @@ describe("shared terminal authorization", () => {
       scopeId,
       actorId: "user_editor",
       connectionId: "connection_editor",
-      policy,
       action: { type: "stop", clientRequestId: requestId, incarnation },
     })).rejects.toMatchObject({ code: "forbidden" });
     expect(editor.runtime.stop).not.toHaveBeenCalled();
@@ -210,7 +193,6 @@ describe("shared terminal authorization", () => {
       scopeId,
       actorId: "user_owner",
       connectionId: "connection_owner",
-      policy,
       action: { type: "stop", clientRequestId: requestId, incarnation },
     })).resolves.toMatchObject({ action: "stopped" });
     expect(owner.runtime.stop).toHaveBeenCalledOnce();

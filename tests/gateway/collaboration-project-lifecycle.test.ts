@@ -11,6 +11,7 @@ import {
 const PROJECT_SCOPE_ID = "10000000-0000-4000-8000-000000000301";
 const CHAT_SCOPE_ID = "10000000-0000-4000-8000-000000000302";
 const UNRELATED_SCOPE_ID = "10000000-0000-4000-8000-000000000303";
+const ORGANIZATION_ID = "org_project_team";
 const OWNER_ID = "user_project_owner";
 const SUCCESSOR_ID = "user_project_successor";
 const VIEWER_ID = "user_project_viewer";
@@ -397,6 +398,7 @@ function directProject(id: string, resourceId: string) {
     id,
     owner_type: "personal" as const,
     owner_id: OWNER_ID,
+    organization_id: ORGANIZATION_ID,
     kind: "project" as const,
     resource_id: resourceId,
     parent_scope_id: null,
@@ -417,6 +419,7 @@ function directProject(id: string, resourceId: string) {
 function member(scopeId: string, actorId: string, role: "owner" | "editor" | "viewer") {
   return {
     scope_id: scopeId,
+    organization_id: ORGANIZATION_ID,
     actor_id: actorId,
     role,
     status: "accepted" as const,

@@ -268,7 +268,7 @@ export class CodingAgentThreadError extends Error {
 }
 
 export class CodingAgentTurnError extends Error {
-  constructor(readonly code: "thread_busy" | "thread_not_found" | "turn_unavailable") {
+  constructor(readonly code: "thread_busy" | "thread_not_found" | "thread_not_resumable" | "turn_unavailable") {
     super(code);
     this.name = "CodingAgentTurnError";
   }
@@ -1339,7 +1339,7 @@ export function createCodingAgentThreadStore(
           }
           const provider = providerFor(thread.providerId);
           if (!provider.resumeTurn || !thread.providerResumeState) {
-            throw new CodingAgentTurnError("turn_unavailable");
+            throw new CodingAgentTurnError("thread_not_resumable");
           }
           const acceptedAt = now().toISOString();
           const turnId = AgentTurnIdSchema.parse(`turn_${randomUUID()}`);

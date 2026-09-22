@@ -2,12 +2,14 @@ import { defineCommand } from "citty";
 import { resolve } from "node:path";
 import { mkdir } from "node:fs/promises";
 import {
-  loadConfig,
-  saveConfig,
   defaultSyncPath,
   generatePeerId,
   type SyncConfig,
 } from "../../lib/config.js";
+import {
+  loadProfileSyncConfig,
+  saveProfileSyncConfig,
+} from "../../lib/profile-sync-config.js";
 import {
   isDaemonClientError,
   sendCommand,
@@ -76,7 +78,10 @@ async function runStatus(json: boolean): Promise<void> {
     return;
   }
   console.log("Sync status:");
-  console.log(`  Syncing: ${status.syncing ? "yes" : "paused"}`);
+  const knownStatuses = ["paused", "conflict", "offline", "syncing", "synced", "error"];
+  const displayStatus = status.paused === true ? "paused"
+    : typeof status.status === "string" && knownStatuses.includes(status.status) ? status.status : "unknown";
+  console.log(`  Status: ${displayStatus}`);
   console.log(`  Manifest version: ${status.manifestVersion}`);
   console.log(`  Files tracked: ${status.fileCount}`);
   if (typeof status.lastSyncAt === "number" && status.lastSyncAt > 0) {
@@ -92,9 +97,9 @@ async function runStart(
   const syncPath = rawPath ? resolve(rawPath) : defaultSyncPath();
   await mkdir(syncPath, { recursive: true });
 
-  const previous = await loadConfig();
-  const currentRuntime = currentSyncDaemonRuntime();
   const profile = await resolveCliProfile(args);
+  const previous = (await loadProfileSyncConfig({ profileName: profile.name }))?.config ?? null;
+  const currentRuntime = currentSyncDaemonRuntime();
   const gatewayFolder = folder ?? previous?.gatewayFolder ?? "";
   const config = previous
     ? {
@@ -123,8 +128,19 @@ async function runStart(
   // Bouncing for no reason creates a race where `matrix sync status`
   // immediately after returns "not running" while the socket is being
   // recreated.
+  let live: Record<string, unknown> | null = null;
+  try {
+    live = await isDaemonRunning() ? await sendCommand("getConfig") : null;
+  } catch (err: unknown) {
+    console.warn("[sync] Live daemon probe failed; repairing service", err instanceof Error ? err.name : "unknown");
+  }
   if (
-    (await isDaemonRunning()) &&
+    live?.profile === profile.name &&
+    live.gatewayUrl === config.gatewayUrl &&
+    live.platformUrl === config.platformUrl &&
+    live.syncPath === syncPath &&
+    (live.gatewayFolder ?? "") === gatewayFolder &&
+    live.syncDaemonRuntime === currentRuntime &&
     shouldReuseRunningSyncService({
       previous,
       syncPath,
@@ -132,7 +148,7 @@ async function runStart(
       currentRuntime,
     })
   ) {
-    await saveConfig({ ...config, syncDaemonRuntime: currentRuntime });
+    await saveProfileSyncConfig({ ...config, syncDaemonRuntime: currentRuntime });
     console.log(`Sync already running for: ${syncPath}`);
     console.log(`Peer ID: ${config.peerId}`);
     if (gatewayFolder) console.log(`Gateway folder: ${gatewayFolder}`);
@@ -141,7 +157,7 @@ async function runStart(
 
   await installService(serviceCommand);
   const installedConfig = { ...config, syncDaemonRuntime: currentRuntime };
-  await saveConfig(installedConfig);
+  await saveProfileSyncConfig(installedConfig);
   await startService();
 
   console.log(`Sync started for: ${syncPath}`);

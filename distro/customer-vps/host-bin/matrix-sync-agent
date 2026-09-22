@@ -52,6 +52,16 @@ current_version() { cat "$VERSION_FILE" 2>/dev/null || echo "unknown"; }
 platform_url() { echo "${MATRIX_UPDATE_MANIFEST_BASE_URL:-${PLATFORM_INTERNAL_URL:-https://app.matrix-os.com}}"; }
 staged_release_metadata=""
 
+# The transaction records activity before stopping services. Enablement alone
+# is not intent: older bundles enabled Symphony on every VPS.
+resume_symphony_after_update() {
+  if [ -f "$UPDATE_TRANSACTION_DIR/systemd.activity" ] &&
+    grep -Fxq 'matrix-symphony.service:active' "$UPDATE_TRANSACTION_DIR/systemd.activity"; then
+    sudo systemctl start --no-block matrix-symphony.service
+    log "Resumed previously active Symphony"
+  fi
+}
+
 stop_runtime_services() {
   local service state
   local runtime_services=(matrix-symphony matrix-gateway matrix-shell)
@@ -1243,9 +1253,7 @@ apply_update() {
       log "Code editor service enabled"
     fi
     if [ -f "$extract_dir/systemd/matrix-symphony.service" ]; then
-      sudo systemctl enable matrix-symphony.service
-      sudo systemctl start --no-block matrix-symphony.service || true
-      log "Symphony service enabled"
+      resume_symphony_after_update
     fi
     if [ -f "$extract_dir/systemd/matrix-hermes-dashboard.service" ]; then
       sudo systemctl enable matrix-hermes-dashboard.service

@@ -1,23 +1,13 @@
+import { canonicalChatToolActivities, type CanonicalToolActivity } from "@matrix-os/contracts";
 import { canonicalChatInputs, type CanonicalChatInputView, canonicalChatApprovals, canonicalChatTerminalNotices, type CanonicalChatApprovalView } from "@matrix-os/contracts";
 import type {
   CanonicalChatDetailResponse,
   CanonicalChatMessage,
   CanonicalChatRun,
-  CanonicalChatRunActivity,
 } from "@matrix-os/contracts";
 
-export type TranscriptActivityState = "running" | "completed" | "partial" | "stopped" | "failed";
-
-export interface TranscriptActivity {
-  id: string;
-  /** reasoning | plan | command | file_change | mcp_tool | dynamic_tool | delegation | web_search | image_inspection | phase | tool */
-  kind: string;
-  state: TranscriptActivityState;
-  label: string;
-  preview?: string;
-  previewKind?: "command" | "path" | "text";
-  detail?: string;
-}
+export type TranscriptActivityState = CanonicalToolActivity["state"];
+export type TranscriptActivity = CanonicalToolActivity;
 
 export interface TranscriptToolCall {
   id: string;
@@ -72,88 +62,6 @@ function runElapsedSeconds(run: CanonicalChatRun | undefined): number | undefine
   return Math.max(0, Math.round((ended - started) / 1000));
 }
 
-function activityState(
-  status: "queued" | "running" | "completed" | "failed" | "cancelled" | "partial",
-): TranscriptActivityState {
-  if (status === "failed") return "failed";
-  if (status === "cancelled") return "stopped";
-  if (status === "partial") return "partial";
-  if (status === "completed") return "completed";
-  return "running";
-}
-
-function isDuplicateProviderModelStatus(
-  run: CanonicalChatRun,
-  activity: Extract<CanonicalChatRunActivity, { type: "agent.activity" }>,
-): boolean {
-  const namespaceSeparator = run.selection.model.indexOf(":");
-  const model = namespaceSeparator >= 0 ? run.selection.model.slice(namespaceSeparator + 1) : run.selection.model;
-  const expected = `Current model: ${model}`.toLowerCase();
-  return activity.kind === "phase"
-    && activity.label === "Working"
-    && [activity.summary, activity.preview].some((value) => value?.trim().toLowerCase() === expected);
-}
-
-/**
- * Merges a run's tool.progress + tool.output + agent.activity entries into
- * one ordered, deduplicated activity list -- mirrors desktop's
- * runPresentation (canonical-chat-presentation.ts) so mobile shows the same
- * range of activity kinds (reasoning, plan, command, file_change, mcp_tool,
- * dynamic_tool, delegation, web_search, image_inspection) and real tool
- * calls in progress, not just "reasoning"/"command" labels.
- */
-function runActivities(run: CanonicalChatRun, activities: CanonicalChatRunActivity[]): TranscriptActivity[] {
-  const ordered = activities
-    .filter((activity) => activity.runId === run.id)
-    .sort((left, right) => (left.sequence ?? 0) - (right.sequence ?? 0));
-
-  const toolProgress = new Map<string, Extract<CanonicalChatRunActivity, { type: "tool.progress" }>>();
-  const agentActivities = new Map<string, Extract<CanonicalChatRunActivity, { type: "agent.activity" }>>();
-  const toolOutput = new Map<string, string[]>();
-  const order: Array<{ type: "tool" | "agent"; id: string }> = [];
-
-  for (const activity of ordered) {
-    if (activity.type === "tool.progress") {
-      if (!toolProgress.has(activity.toolCallId)) order.push({ type: "tool", id: activity.toolCallId });
-      toolProgress.set(activity.toolCallId, activity);
-    } else if (activity.type === "agent.activity") {
-      if (isDuplicateProviderModelStatus(run, activity)) continue;
-      if (!agentActivities.has(activity.activityId)) order.push({ type: "agent", id: activity.activityId });
-      agentActivities.set(activity.activityId, activity);
-    } else if (activity.type === "tool.output") {
-      const output = toolOutput.get(activity.toolCallId) ?? [];
-      output.push(activity.text);
-      toolOutput.set(activity.toolCallId, output);
-    }
-  }
-
-  return order.flatMap(({ type, id }): TranscriptActivity[] => {
-    if (type === "agent") {
-      const activity = agentActivities.get(id);
-      if (!activity) return [];
-      const preview = activity.preview ?? activity.summary;
-      return [{
-        id: activity.activityId,
-        kind: activity.kind,
-        state: activityState(activity.status),
-        label: activity.label,
-        ...(preview ? { preview, previewKind: activity.previewKind ?? "text" } : {}),
-        ...(activity.detail ? { detail: activity.detail } : {}),
-      }];
-    }
-    const activity = toolProgress.get(id);
-    if (!activity) return [];
-    const detail = toolOutput.get(activity.toolCallId)?.join("\n");
-    return [{
-      id: activity.toolCallId,
-      kind: "tool",
-      state: activityState(activity.status),
-      label: activity.label,
-      ...(detail ? { detail } : {}),
-    }];
-  });
-}
-
 export function buildTranscript(detail: CanonicalChatDetailResponse | null): TranscriptMessage[] {
   if (!detail) return [];
   const runsById = new Map(detail.runs.map((run) => [run.id, run]));
@@ -181,7 +89,7 @@ export function buildTranscript(detail: CanonicalChatDetailResponse | null): Tra
       role: message.role,
       text: messageText(message),
       toolCalls: messageToolCalls(message),
-      activities: run && isRunsLastAssistantMessage ? runActivities(run, detail.activities) : [],
+      activities: run && isRunsLastAssistantMessage ? canonicalChatToolActivities(run, detail.activities) : [],
       elapsedSeconds: message.role === "assistant" ? runElapsedSeconds(run) : undefined,
       isRunning: run ? !TERMINAL_RUN_STATUSES.has(run.status) : false,
       createdAt: Date.parse(message.createdAt),
@@ -199,7 +107,7 @@ export function buildTranscript(detail: CanonicalChatDetailResponse | null): Tra
       role: "assistant",
       text: "",
       toolCalls: [],
-      activities: runActivities(run, detail.activities),
+      activities: canonicalChatToolActivities(run, detail.activities),
       elapsedSeconds: undefined,
       isRunning: true,
       createdAt: Date.parse(run.startedAt ?? run.createdAt),

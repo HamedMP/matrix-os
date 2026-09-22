@@ -48,6 +48,8 @@ import { CustomerVpsError } from './customer-vps-errors.js';
 import { dispatchBillingRuntimeActions } from './billing-runtime-actions.js';
 import { registerPlatformWebSocketUpgradeHandler } from './platform-websocket-upgrade.js';
 import { createAiFundedPolicyRepository, type AiFundedPolicyRepository } from './ai-funded-policy-repository.js';
+import { cleanupExpiredReservations } from './ai-funded-reservation-cleanup.js';
+import { createAiFundedReservationCleanupWorker } from './ai-funded-reservation-cleanup-worker.js';
 import {
   createAiFundedOperatorRoutes,
   createAiFundedRelayRoutes,
@@ -61,7 +63,13 @@ import {
   type R2CapabilityGate,
 } from './r2-capability.js';
 import { bootstrapPlatformCollaboration } from './collaboration/bootstrap.js';
-import type { PlatformCollaborationRuntime } from './collaboration/wiring.js';
+import type { PlatformCollaborationComposition } from './collaboration/wiring.js';
+import { createSpeechRuntimeRoutes } from './speech/routes.js';
+import {
+  PlatformSpeechConfigError,
+  loadPlatformSpeechConfig,
+} from './speech/config.js';
+import { createConfiguredPlatformSpeechService } from './speech/wiring.js';
 
 interface GatewayPlatformUser {
   id: string;
@@ -201,8 +209,9 @@ type CreatePlatformApp = (deps: {
   internalFundedAiRuntimeRoutes?: Hono<any>;
   internalFundedAiRelayRoutes?: Hono<any>;
   internalFundedAiOperatorRoutes?: Hono<any>;
+  internalSpeechRuntimeRoutes?: Hono<any>;
   fundedAiRepository?: AiFundedPolicyRepository;
-  collaboration?: PlatformCollaborationRuntime;
+  collaboration?: PlatformCollaborationComposition;
   customerVpsService?: CustomerVpsService;
   goldenSnapshotService?: GoldenSnapshotService;
   goldenSnapshotConfig?: GoldenSnapshotRuntimeConfig;
@@ -278,10 +287,13 @@ async function startPlatformServerWithCleanup(
   }
   const backgroundWorkersEnabled = process.env.PLATFORM_BACKGROUND_WORKERS_ENABLED !== 'false';
   let runtimeConfig;
+  let speechConfig;
   try {
     runtimeConfig = loadPlatformRuntimeConfig();
+    speechConfig = loadPlatformSpeechConfig(process.env);
+    if (speechConfig.enabled && platformSecret.length < 32) throw new PlatformSpeechConfigError();
   } catch (err: unknown) {
-    if (err instanceof PlatformStartupConfigError) {
+    if (err instanceof PlatformStartupConfigError || err instanceof PlatformSpeechConfigError) {
       console.error(`[platform] ${err.message}`);
       process.exit(1);
     }
@@ -303,6 +315,10 @@ async function startPlatformServerWithCleanup(
   let internalFundedAiRuntimeRoutes: Hono | undefined;
   let internalFundedAiRelayRoutes: Hono | undefined;
   let internalFundedAiOperatorRoutes: Hono | undefined;
+  const speechService = createConfiguredPlatformSpeechService({ db, config: speechConfig });
+  const internalSpeechRuntimeRoutes = platformSecret.length >= 32
+    ? createSpeechRuntimeRoutes({ db, platformSecret, service: speechService })
+    : undefined;
   let fundedAiRepository: AiFundedPolicyRepository | undefined;
   if (fundedAiConfig.enabled) {
     fundedAiRepository = createAiFundedPolicyRepository({
@@ -317,6 +333,7 @@ async function startPlatformServerWithCleanup(
       platformSecret: fundedAiConfig.platformSecret,
       repository: fundedAiRepository,
       topUpEnabled: loadAiCreditCheckoutConfig(process.env).enabled,
+      promotionalGrant: fundedAiConfig.promotionalGrant,
     });
     internalFundedAiRelayRoutes = createAiFundedRelayRoutes({
       relayControlToken: fundedAiConfig.relayControlToken,
@@ -951,6 +968,19 @@ async function startPlatformServerWithCleanup(
     }
   }
 
+  const fundedReservationCleanupWorker = backgroundWorkersEnabled
+    ? createAiFundedReservationCleanupWorker({
+        cleanupExpiredReservations: (input) => cleanupExpiredReservations({
+          db,
+          now: () => new Date(),
+        }, input),
+      })
+    : undefined;
+  registerCustomMcpStartupCleanup(async () => {
+    await fundedReservationCleanupWorker?.shutdown();
+    await customMcpShutdown?.();
+  });
+
   const appEnv = process.env;
   const legacyContainerRoutingEnabled =
     appEnv.MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED === 'true' && !customerVpsService;
@@ -969,6 +999,7 @@ async function startPlatformServerWithCleanup(
     internalFundedAiRuntimeRoutes,
     internalFundedAiRelayRoutes,
     internalFundedAiOperatorRoutes,
+    internalSpeechRuntimeRoutes,
     fundedAiRepository,
     collaboration,
     customerVpsService,
@@ -1023,6 +1054,8 @@ async function startPlatformServerWithCleanup(
         if (goldenSnapshotPromise) await goldenSnapshotPromise;
         await Promise.allSettled([
           collaboration?.shutdown(),
+          fundedReservationCleanupWorker?.shutdown(),
+          Promise.resolve(speechService.shutdown()),
           containerProxyDispatcher.close(),
           customerVpsProxyDispatcher.close(),
           customMcpShutdown?.(),

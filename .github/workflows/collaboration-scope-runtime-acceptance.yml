@@ -290,10 +290,23 @@ jobs:
               ($root + "/matrix-scope-native-acceptance.sh")],timeoutMs:180000
           }')"
           native_response="$RUNNER_TEMP/scope-runtime-native-run.json"
+          jq -cn '{status:"native-command-not-returned"}' >"$native_response"
           if ! send_signed_command "$run_body" "$native_response"; then
-            cp "$native_response" "$evidence" 2>/dev/null || true
+            if ! jq -e . "$native_response" >/dev/null 2>&1; then
+              jq -cn '{status:"native-command-transport-failed"}' >"$native_response"
+            fi
+            jq -cn --arg head "$HEAD_SHA" --arg version "$PREVIEW_VERSION" \
+              --slurpfile native "$native_response" '{
+                head:$head, previewVersion:$version,
+                nativeProof:$native[0], productionSupervisor:null
+              }' >"$evidence"
             exit 1
           fi
+          jq -cn --arg head "$HEAD_SHA" --arg version "$PREVIEW_VERSION" \
+            --slurpfile native "$native_response" '{
+              head:$head, previewVersion:$version,
+              nativeProof:$native[0], productionSupervisor:null
+            }' >"$evidence"
           if ! jq -e 'select(.exitCode == 0 and .timedOut == false and
             .truncated == false and .signal == null)' "$native_response" >/dev/null; then
             echo "The native proof command failed; inspect the bounded evidence artifact." >&2
@@ -306,6 +319,17 @@ jobs:
           fi
           jq -e 'select(
             (.stdout | contains("scope_runtime_acceptance=passed")))' "$native_response" >/dev/null
+
+          # The harness executes inside the gateway, so it can only schedule the
+          # gateway re-attach. Record the gateway's current activation stamp so the
+          # workflow can prove a later restart actually happened.
+          activation_body='{"command":["/usr/bin/systemctl","show","matrix-gateway.service","--property=ActiveEnterTimestampMonotonic","--value"]}'
+          activation_response="$RUNNER_TEMP/scope-runtime-gateway-activation.json"
+          send_signed_command "$activation_body" "$activation_response"
+          jq -e 'select(.exitCode == 0 and .timedOut == false and
+            .truncated == false and .signal == null)' "$activation_response" >/dev/null
+          gateway_activation_before="$(jq -er '.stdout | capture("^(?<value>[0-9]{1,20})").value' \
+            "$activation_response")"
 
           production_expected_head="MATRIX_SCOPE_EXPECTED_HEAD=$HEAD_SHA"
           production_body="$(jq -cn --arg expected "$production_expected_head" \
@@ -336,8 +360,49 @@ jobs:
           jq -e 'select(.exitCode == 0 and .timedOut == false and
             .truncated == false and .signal == null and
             (.stdout | contains("scope_runtime_production_acceptance=passed")) and
-            (.stdout | contains("scope_runtime_chat=passed")))' \
+            (.stdout | contains("scope_runtime_chat=passed")) and
+            (.stdout | contains("scope_runtime_codex_chat=passed")))' \
             "$production_response" >/dev/null
+
+          # When the supervisor was originally active, the harness stopped it, which
+          # removed the gateway-owned broker socket, and scheduled a deferred gateway
+          # restart. Verify that the gateway re-activated after the acceptance and
+          # recreated its broker socket; a scheduled-but-unverified re-attach fails.
+          reattach_status="not_required"
+          if jq -er '.stdout' "$production_response" |
+            grep -Fxq "scope_runtime_gateway_restart=scheduled"; then
+            reattach_status="pending"
+            broker_body='{"command":["/usr/bin/test","-S","/run/matrix-scope-runtime/broker.sock"]}'
+            reattach_deadline=$((SECONDS + 420))
+            while [ "$SECONDS" -lt "$reattach_deadline" ]; do
+              sleep 15
+              if send_signed_command "$activation_body" "$activation_response" 2>/dev/null &&
+                jq -e 'select(.exitCode == 0 and .timedOut == false and
+                  .truncated == false and .signal == null)' "$activation_response" >/dev/null; then
+                activation_after="$(jq -r '.stdout | capture("^(?<value>[0-9]{1,20})").value // ""' \
+                  "$activation_response")"
+                if [ -n "$activation_after" ] &&
+                  [ "$activation_after" -gt "$gateway_activation_before" ] &&
+                  send_command "$broker_body"; then
+                  reattach_status="verified"
+                  break
+                fi
+              fi
+            done
+          fi
+          jq -cn --arg head "$HEAD_SHA" --arg version "$PREVIEW_VERSION" \
+            --arg reattach "$reattach_status" --arg before "$gateway_activation_before" \
+            --slurpfile native "$native_response" --slurpfile production "$production_response" '{
+              head:$head, previewVersion:$version,
+              nativeProof:$native[0], productionSupervisor:$production[0],
+              gatewayReattach:{status:$reattach, activationBefore:$before}
+            }' >"$evidence"
+          if [ "$reattach_status" != "verified" ] && [ "$reattach_status" != "not_required" ]; then
+            echo "The gateway broker socket was not restored after the acceptance." >&2
+            exit 1
+          fi
+          jq -e 'select(.gatewayReattach.status == "verified" or .gatewayReattach.status == "not_required")' \
+            "$evidence" >/dev/null
 
       - name: Upload public-safe native evidence
         if: always()

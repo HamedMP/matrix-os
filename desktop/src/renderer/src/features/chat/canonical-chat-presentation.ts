@@ -1,3 +1,4 @@
+import { canonicalChatToolDetail } from "@matrix-os/contracts";
 import { chatAgentAttribution } from "@matrix-os/ui";
 import { canonicalChatApprovals, canonicalChatInputs } from "@matrix-os/contracts";
 import type {
@@ -6,6 +7,7 @@ import type {
   CanonicalChatRunActivity,
   CanonicalChatTurn,
 } from "@matrix-os/contracts";
+import { canonicalChatSafeFailureReason } from "@matrix-os/ui";
 import type {
   ConversationAttachmentPresentation,
   ConversationActivityGroupPresentation,
@@ -396,7 +398,7 @@ function runPresentation(
       setBounded(agentActivities, activity.activityId, activity, MAX_RUN_ACTIVITY_PROJECTIONS);
     } else if (activity.type === "tool.output") {
       const output = toolOutput.get(activity.toolCallId) ?? [];
-      output.push(activity.text);
+      output.push(activity.truncated ? `${activity.text}\nOutput was truncated for display.` : activity.text);
       setBounded(toolOutput, activity.toolCallId, output, MAX_RUN_ACTIVITY_PROJECTIONS);
     } else if (activity.type === "assistant.delta") {
       const current = streamed.get(activity.messageId);
@@ -458,7 +460,7 @@ function runPresentation(
     if (entry.type === "agent") {
       const activity = agentActivities.get(entry.id);
       if (!activity) continue;
-      const detail = activity.detail ?? activity.summary ?? toolOutput.get(activity.activityId)?.join("\n");
+      const detail = canonicalChatToolDetail(activity.detail ?? activity.summary, toolOutput.get(activity.activityId));
       activityGroups.push({
         kind: "activity-group",
         id: `${run.id}:activities:${activity.id}`,
@@ -481,7 +483,7 @@ function runPresentation(
     }
     const activity = toolProgress.get(entry.id);
     if (!activity) continue;
-    const detail = toolOutput.get(activity.toolCallId)?.join("\n");
+    const detail = canonicalChatToolDetail(undefined, toolOutput.get(activity.toolCallId));
     activityGroups.push({
       kind: "activity-group",
       id: `${run.id}:activities:${activity.id}`,
@@ -543,7 +545,9 @@ function runPresentation(
         phase: "final" as const,
         tone: stopped ? "stopped" as const : "failed" as const,
         label: stopped ? "Agent work stopped" : "Agent work failed",
-        markdown: stopped ? "Run was cancelled." : runError?.error.safeMessage ?? "The agent run failed.",
+        markdown: stopped ? "Run was cancelled."
+          : canonicalChatSafeFailureReason(runError?.error.code)
+            ?? canonicalChatSafeFailureReason("run_failed")!,
         timestamp: Date.parse(runError?.occurredAt ?? run.completedAt ?? run.updatedAt),
         ...(!stopped && allowRetry && runError?.error.retryable && runError.error.recoveryActions?.includes("retry")
           ? { actions: [{ kind: "retry" as const, turnId, label: "Retry" }] }

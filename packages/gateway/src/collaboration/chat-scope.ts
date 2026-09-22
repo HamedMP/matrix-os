@@ -13,6 +13,7 @@ const OPERATION_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
 const PreflightPayloadSchema = z.object({
   version: z.literal(1),
   ownerId: z.string().min(1).max(128),
+  organizationId: z.string().min(5).max(128),
   chatId: z.string().min(1).max(160),
   chatRevision: z.number().int().min(0),
   expiresAt: z.iso.datetime(),
@@ -60,7 +61,7 @@ export class CollaborationChatScopeService {
     this.createScopeId = options.createScopeId ?? randomUUID;
   }
 
-  async preflight(input: { ownerId: string; chatId: string }): Promise<{
+  async preflight(input: { ownerId: string; organizationId: string; chatId: string }): Promise<{
     eligible: boolean;
     reason?: "active_work";
     chatRevision: number;
@@ -81,6 +82,7 @@ export class CollaborationChatScopeService {
     const payload = PreflightPayloadSchema.parse({
       version: 1,
       ownerId: input.ownerId,
+      organizationId: input.organizationId,
       chatId: input.chatId,
       chatRevision,
       expiresAt: new Date(this.now().getTime() + PREFLIGHT_LIFETIME_MS).toISOString(),
@@ -94,6 +96,7 @@ export class CollaborationChatScopeService {
 
   async shareChat(input: {
     ownerId: string;
+    organizationId: string;
     chatId: string;
     clientRequestId: string;
     payloadHash: string;
@@ -116,6 +119,10 @@ export class CollaborationChatScopeService {
         const existing = await selectScope(trx, existingBinding.scopeId);
         if (existing && existing.kind === "chat" && existing.resource_id === input.chatId
           && existing.lifecycle === "shared") {
+          if (existing.organization_id !== input.organizationId) {
+            // The Chat is already shared inside another organization; never reuse that scope.
+            throw new CollaborationChatScopeError("conflict", "Chat is shared in another organization");
+          }
           const replay = await trx.selectFrom("collaboration_operations")
             .select(["payload_hash", "status"])
             .where("scope_id", "=", existing.id)
@@ -146,6 +153,7 @@ export class CollaborationChatScopeService {
         id: scopeId,
         owner_type: "personal",
         owner_id: input.ownerId,
+        organization_id: input.organizationId,
         kind: "chat",
         resource_id: input.chatId,
         parent_scope_id: null,
@@ -174,6 +182,9 @@ export class CollaborationChatScopeService {
         .where("deleted_at", "is", null)
         .forUpdate()
         .executeTakeFirstOrThrow();
+      if (scope.organization_id !== input.organizationId) {
+        throw new CollaborationChatScopeError("conflict", "Chat is shared in another organization");
+      }
       if (scope.lifecycle === "shared") return scopeRecord(scope);
       if (scope.lifecycle !== "private" || Number(scope.revision) !== 0) {
         throw new CollaborationChatScopeError("conflict", "Chat scope state changed");
@@ -184,6 +195,7 @@ export class CollaborationChatScopeService {
         actor_id: input.ownerId,
         role: "owner",
         status: "accepted",
+        organization_id: input.organizationId,
         invitation_id: null,
         invited_by: input.ownerId,
         accepted_at: now,
@@ -387,6 +399,7 @@ export class CollaborationChatScopeService {
 
   private verifyConfirmation(input: {
     ownerId: string;
+    organizationId: string;
     chatId: string;
     expectedChatRevision: number;
     confirmationToken: string;
@@ -407,6 +420,7 @@ export class CollaborationChatScopeService {
     }
     const payload = PreflightPayloadSchema.safeParse(value);
     if (!payload.success || payload.data.ownerId !== input.ownerId || payload.data.chatId !== input.chatId
+      || payload.data.organizationId !== input.organizationId
       || payload.data.chatRevision !== input.expectedChatRevision
       || Date.parse(payload.data.expiresAt) <= this.now().getTime()) throw invalidConfirmation();
   }
@@ -420,8 +434,7 @@ function eligibilityMatches(current: unknown, next: unknown): boolean {
     return left.profileId === right.profileId
       && left.profileVersion === right.profileVersion
       && left.profileDigest === right.profileDigest
-      && left.adapterId === right.adapterId
-      && left.harnessVersion === right.harnessVersion;
+      && JSON.stringify(left.adapters) === JSON.stringify(right.adapters);
   } catch (error: unknown) {
     console.warn("[collaboration] stored execution eligibility is invalid",
       error instanceof Error ? error.name : "UnknownError");
@@ -537,6 +550,7 @@ function scopeRecord(row: Awaited<ReturnType<typeof selectScope>> & {}): Collabo
     authorityRuntimeId: row.authority_runtime_id,
     authorityGeneration: Number(row.authority_generation),
     executionGeneration: row.execution_generation === null ? null : Number(row.execution_generation),
+    ...(row.organization_id === null || row.organization_id === undefined ? {} : { organizationId: row.organization_id }),
     executionEligibility: row.execution_eligibility,
   };
 }

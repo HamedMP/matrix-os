@@ -60,6 +60,19 @@ import * as Clipboard from "expo-clipboard";
 import ChatScreen from "../app/(drawer)/index";
 
 describe("drawer home screen", () => {
+  it("expands the exact tool command and bounded result", () => {
+    mockActiveChatId = "chat_tools";
+    mockDetail = { record: { chat: { id: mockActiveChatId } }, turns: [],
+      runs: [{ id: "run_tools", turnId: "cturn_tools", status: "running", selection: { model: "test" }, createdAt: "2026-09-20T00:00:00.000Z" }],
+      messages: [], activities: [
+        { id: "activity_tools", runId: "run_tools", type: "agent.activity", activityId: "tool_tests", kind: "command", label: "Run command", status: "running", preview: "bun run test", previewKind: "command", detail: "Working directory: projects/demo" },
+        { id: "activity_output", runId: "run_tools", type: "tool.output", toolCallId: "tool_tests", text: "12 tests passed", truncated: false },
+      ] };
+    render(<ChatScreen />);
+    fireEvent.press(screen.getByRole("button", { name: "Run command: bun run test" }));
+    expect(screen.getByText(/12 tests passed/)).toBeTruthy();
+  });
+
   afterEach(() => { mockActiveChatId = null; mockDetail = undefined; jest.restoreAllMocks(); });
   it("copies the displayed Native Mobile conversation ID by long-pressing its content", () => {
     mockActiveChatId = "chat_native_content";

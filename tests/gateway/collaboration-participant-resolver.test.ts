@@ -51,7 +51,7 @@ describe("CollaborationParticipantResolver", () => {
       expect(String(input)).toBe("https://platform.internal/internal/collaboration/participants/resolve");
       expect(init).toMatchObject({ method: "POST", redirect: "error" });
       expect(init?.signal).toBeInstanceOf(AbortSignal);
-      expect(JSON.parse(String(init?.body))).toEqual({ identifier: "@nimanaderi" });
+      expect(JSON.parse(String(init?.body))).toEqual({ identifier: "@nimanaderi", organizationId: "org_matrix_team" });
       return Response.json({ actorId: "user_editor", displayName: "Editor Person" });
     });
     const resolver = new CollaborationParticipantResolver({
@@ -60,7 +60,7 @@ describe("CollaborationParticipantResolver", () => {
       serviceToken: "s".repeat(32),
       fetchImpl,
     });
-    await expect(resolver.resolveInvitationIdentifier("@nimanaderi")).resolves.toEqual({
+    await expect(resolver.resolveInvitationIdentifier("@nimanaderi", "org_matrix_team")).resolves.toEqual({
       actorId: "user_editor",
       displayName: "Editor Person",
     });
@@ -92,7 +92,7 @@ describe("CollaborationParticipantResolver", () => {
       fetchImpl: async () => responses.shift()!,
     });
     for (const identifier of ["unknown", "duplicate", "inaccessible", "timeout"]) {
-      await expect(resolver.resolveInvitationIdentifier(identifier)).rejects.toMatchObject({
+      await expect(resolver.resolveInvitationIdentifier(identifier, "org_matrix_team")).rejects.toMatchObject({
         name: "CollaborationParticipantResolverError",
         message: "Participant identity is unavailable",
       });

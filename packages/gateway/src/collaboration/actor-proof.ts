@@ -1,10 +1,8 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import {
   CollaborationSignedActorProofSchema,
-  CollaborationSignedPolicySchema,
   type CollaborationActorProof,
   type CollaborationDeleteCondition,
-  type CollaborationPolicy,
 } from "@matrix-os/contracts";
 import type {
   AuthorizedCollaborationContext,
@@ -101,7 +99,6 @@ export class CollaborationActorProofVerifier {
     body: Uint8Array;
     conditionalHeaders?: CollaborationDeleteCondition;
     action: CollaborationAction;
-    executionPolicy?: CollaborationPolicy;
   }): Promise<AuthorizedCollaborationContext> {
     const proof = await this.verifyHttp(input);
     if (!proof.scopeId || !this.options.authority) {
@@ -111,7 +108,6 @@ export class CollaborationActorProofVerifier {
       scopeId: proof.scopeId,
       actorId: proof.actorId,
       action: input.action,
-      ...(input.executionPolicy ? { executionPolicy: input.executionPolicy } : {}),
     });
     if (context.ownerId !== proof.ownerId || context.authorityRuntimeId !== proof.runtimeId) {
       throw invalidProof();
@@ -153,23 +149,6 @@ export class CollaborationActorProofVerifier {
     return proof;
   }
 
-  verifyPolicy(input: unknown): CollaborationPolicy {
-    const parsed = CollaborationSignedPolicySchema.safeParse(input);
-    if (!parsed.success) throw invalidProof();
-    const key = this.options.keys[parsed.data.keyId];
-    if (!key || Buffer.byteLength(key) < 32
-      || !constantTimeSignatureMatches("policy", parsed.data.policy, key, parsed.data.signature)) {
-      throw invalidProof();
-    }
-    const now = this.now().getTime();
-    if (Date.parse(parsed.data.policy.issuedAt) > now + MAX_CLOCK_SKEW_MS
-      || Date.parse(parsed.data.policy.expiresAt) <= now
-      || Date.parse(parsed.data.policy.expiresAt) - Date.parse(parsed.data.policy.issuedAt) > MAX_PROOF_LIFETIME_MS) {
-      throw invalidProof();
-    }
-    return parsed.data.policy;
-  }
-
   shutdown(): void {
     this.seenNonces.clear();
   }
@@ -199,8 +178,8 @@ export class CollaborationActorProofVerifier {
 }
 
 function constantTimeSignatureMatches(
-  domain: "http" | "events" | "terminal" | "policy",
-  value: CollaborationActorProof | CollaborationPolicy,
+  domain: "http" | "events" | "terminal",
+  value: CollaborationActorProof,
   key: string,
   signature: string,
 ): boolean {

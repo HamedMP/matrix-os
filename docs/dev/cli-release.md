@@ -4,12 +4,12 @@ The installable Matrix CLI is the `@finnaai/matrix` package in `packages/sync-cl
 
 ## Current Prepared Release
 
-`0.3.16` is the prepared CLI patch release after `0.3.15`. It:
+`0.3.18` is the prepared CLI patch release after `0.3.17`. It:
 
-- adds a stdio MCP server backed by the authenticated Matrix CLI;
-- exposes bounded remote computer, terminal, file-transfer, and read-only chat tools;
-- adds stable terminal-tab addressing and owner-scoped runtime access; and
-- exports the shared hosted MCP tool definitions for the platform transport.
+- accepts filesystem-precision modification times already present in remote
+  manifests and local sync state; and
+- writes daemon logs through a direct destination so Bun-compiled binaries do
+  not fail while draining a worker-thread transport during error-path exit.
 
 ## Versioning
 
@@ -19,6 +19,14 @@ The installable Matrix CLI is the `@finnaai/matrix` package in `packages/sync-cl
 - Publish only the `@finnaai/matrix` package. The repo root package is private and must not be published.
 
 ## Preflight
+
+The CLI bundles the private `@matrix-os/contracts` workspace dependency. Pack
+with `pnpm --config.node-linker=hoisted`, as the release workflows do: plain
+`npm pack` preserves `workspace:*`, and a registry-only dependency cannot
+resolve this private package. The dedicated CLI workflow publishes that exact
+tarball through npm CLI using trusted-publisher OIDC. Keep the isolated
+package-runner check; it verifies bundled contract files and installs the
+tarball outside the repo.
 
 Run these from the repo root before dispatching the release workflow:
 
@@ -39,7 +47,18 @@ git tag -l 'cli-v*'
 
 ## Release
 
-Use the manual GitHub Actions workflow named `CLI Release` with `version=0.3.16` and `update_homebrew=true` after this release-preparation PR merges. The workflow:
+The npm package must trust the GitHub Actions publisher
+`HamedMP/matrix-os` / `cli-release.yml` with direct `npm publish` permission.
+The packaging job has read-only repository access and uploads the exact
+workspace-aware tarball. A separate publish-only job uses setup-node v7,
+Node 24, npm 11.5.1 or newer, and job-scoped `id-token: write`; it disables
+package-manager caching, does not configure a token-oriented `registry-url`,
+and must not receive a long-lived `NPM_TOKEN`. This is the sole exception to
+the repository's npm ban: installs still use pnpm and scripts still use bun,
+while the npm CLI is invoked only because npm trusted publishing performs the
+OIDC exchange during `npm publish`.
+
+Use the manual GitHub Actions workflow named `CLI Release` with `version=0.3.18` and `update_homebrew=true` after this release-preparation PR merges. The workflow:
 
 1. Validates the requested semver, local package version, npm availability, and `cli-v<version>` tag availability.
 2. Installs the workspace and runs the sync-client build, tests, and publish-shape check.
@@ -47,6 +66,11 @@ Use the manual GitHub Actions workflow named `CLI Release` with `version=0.3.16`
 4. Creates GitHub release `cli-v<version>`.
 5. Builds standalone Linux/macOS CLI binaries and attaches them to the GitHub release.
 6. Updates `FinnaAI/homebrew-tap` with the npm tarball URL and SHA-256 when `update_homebrew` is enabled.
+
+Manual releases must be dispatched from `main`. If npm publication succeeded
+but a downstream release job failed, select the existing `cli-v<version>` tag
+as the workflow ref and rerun with `allow_existing_npm=true`; this preserves the
+published source revision while completing the GitHub release and Homebrew work.
 
 ## Post-Release Verification
 
@@ -56,7 +80,7 @@ npm view @finnaai/matrix dist.tarball
 npx --yes @finnaai/matrix --version
 pnpm dlx @finnaai/matrix --version
 brew update && brew info finnaai/tap/matrix
-MATRIX_VERSION=0.3.16 sh scripts/install.sh
+MATRIX_VERSION=0.3.18 sh scripts/install.sh
 matrix --version
 matrix login --help
 matrix instance info --json
@@ -75,17 +99,17 @@ matrix forward 5173
 
 For standalone binaries, also verify the GitHub release contains:
 
-- `matrix-0.3.16-linux-x64`
-- `matrix-0.3.16-linux-arm64`
-- `matrix-0.3.16-darwin-x64`
-- `matrix-0.3.16-darwin-arm64`
+- `matrix-0.3.18-linux-x64`
+- `matrix-0.3.18-linux-arm64`
+- `matrix-0.3.18-darwin-x64`
+- `matrix-0.3.18-darwin-arm64`
 
-For macOS app packaging, also verify the GitHub release contains `MatrixSync-0.3.16.pkg` when the macOS job was enabled.
+For macOS app packaging, also verify the GitHub release contains `MatrixSync-0.3.18.pkg` when the macOS job was enabled.
 
 ## Rollback
 
-npm package versions are immutable. If a bad CLI release is published, ship a patch release such as `0.3.17` and update Homebrew through the release workflow. Only deprecate the bad npm version when the replacement is available:
+npm package versions are immutable. If a bad CLI release is published, ship a patch release such as `0.3.19` and update Homebrew through the release workflow. Only deprecate the bad npm version when the replacement is available:
 
 ```bash
-npm deprecate @finnaai/matrix@0.3.16 "Use @finnaai/matrix@0.3.17"
+npm deprecate @finnaai/matrix@0.3.18 "Use @finnaai/matrix@0.3.19"
 ```

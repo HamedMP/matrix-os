@@ -42,7 +42,7 @@ suite("Desktop release alignment through the built IPC and gateway", () => {
     page.setDefaultTimeout(8_000);
     // Authentication is confined to the loopback fixture's fake device flow.
     const initialInfo = page.waitForResponse((value) => value.url().endsWith("/api/system/info"));
-    await page.getByRole("button", { name: /continue in browser/i }).click();
+    await page.getByRole("button", { name: /create account/i }).click();
     await (await initialInfo).finished();
     await page.getByRole("button", { name: "Chat", exact: true }).waitFor({ timeout: 15_000 });
   }, 60_000);

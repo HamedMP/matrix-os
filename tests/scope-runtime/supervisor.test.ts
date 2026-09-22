@@ -20,7 +20,7 @@ function launcher(overrides: Partial<ScopeRuntimeLauncher> = {}): ScopeRuntimeLa
 }
 
 describe("scope runtime supervisor", () => {
-  it("advertises only the measured non-root Chat profile", async () => {
+  it("advertises only the measured non-root Chat adapters", async () => {
     const controller = await createScopeRuntimeController({
       launcher: launcher(),
       executionGeneration: "9",
@@ -45,12 +45,47 @@ describe("scope runtime supervisor", () => {
       uidMax: 65_519,
     });
     expect(SCOPE_RUNTIME_PROFILE.profileDigest)
-      .toBe("6650e74684fd322251882f65c36e1226149087dac346eee8a43da426a57fad8e");
-    expect(SCOPE_RUNTIME_PROFILE.adapters).toEqual([{
-      adapterId: "claude-code",
-      harnessVersion: "2.1.240",
-      workloads: ["chat_ai"],
-    }]);
+      .toBe("9f4e3e2ad9e63cb300854dfca7bc31370d4cbae6d15fab902841b2b50a6443c0");
+    expect(SCOPE_RUNTIME_PROFILE.adapters).toEqual([
+      {
+        adapterId: "claude-code",
+        harnessVersion: "2.1.240",
+        workloads: ["chat_ai"],
+      },
+      {
+        adapterId: "codex",
+        harnessVersion: "0.154.0",
+        workloads: ["chat_ai"],
+      },
+    ]);
+  });
+
+  it("maps the pinned Codex create request without caller-controlled provider fields", async () => {
+    const native = launcher();
+    const controller = await createScopeRuntimeController({
+      launcher: native,
+      executionGeneration: "10",
+      createRuntimeHandle: () => RUNTIME_HANDLE,
+    });
+
+    await expect(controller.handle({
+      version: 1,
+      type: "runtime.create",
+      requestId: REQUEST_ID,
+      scopeHandle: SCOPE_HANDLE,
+      profileId: SCOPE_RUNTIME_PROFILE.profileId,
+      workload: "chat_ai",
+      adapterId: "codex",
+      harnessVersion: "0.154.0",
+    })).resolves.toMatchObject({ ok: true, runtimeHandle: RUNTIME_HANDLE, state: "running" });
+    expect(native.start).toHaveBeenCalledWith({
+      runtimeHandle: RUNTIME_HANDLE,
+      scopeHandle: SCOPE_HANDLE,
+      workload: "chat_ai",
+      adapterId: "codex",
+      harnessVersion: "0.154.0",
+      executionGeneration: "10",
+    });
   });
 
   it("maps an opaque create request to the fixed launcher and stops by handle", async () => {

@@ -1,11 +1,16 @@
+import { randomUUID } from "node:crypto";
 import { sql, type Kysely } from "kysely";
+import type { GatewayCollaborationConfig } from "./config.js";
 import type { Hono } from "hono";
 import type { UpgradeWebSocket } from "hono/ws";
 import type { ChatRepository } from "../chat/repository.js";
 import type { CanonicalChatOrchestrator } from "../chat/orchestrator.js";
+import type { ChatProviderCatalogService } from "../chat/provider-catalog.js";
+import type { CodingAgentProviderRegistry } from "../coding-agents/provider-registry.js";
 import type { MatrixFundedCredentialProvider } from "../funded-ai-credential-manager.js";
 import { CollaborationActorProofVerifier } from "./actor-proof.js";
 import { CollaborationAuthority } from "./authority.js";
+import { CollaborationCapabilityRepository } from "./capability-repository.js";
 import { CollaborationChatAdapter } from "./chat-adapter.js";
 import { CollaborationChatScopeService } from "./chat-scope.js";
 import { bootstrapCollaborationDatabase, type OwnerCollaborationDatabase } from "./database.js";
@@ -14,6 +19,12 @@ import { CollaborationDiscussionAdapter } from "./discussion-adapter.js";
 import { registerCollaborationEventWebSocketRoute } from "./event-websocket-route.js";
 import { CollaborationEventRegistry } from "./events.js";
 import { CollaborationParticipantResolver } from "./participant-resolver.js";
+import {
+  createOrganizationPrecondition,
+  type OrganizationMembershipSource,
+  type OrganizationPrecondition,
+} from "./organization-precondition.js";
+import { OrganizationMembershipClient } from "./organization-membership-client.js";
 import { CollaborationRepository } from "./repository.js";
 import { createCollaborationRoutes } from "./routes.js";
 import { createSharedAiRuntime } from "./shared-ai-runtime.js";
@@ -42,59 +53,31 @@ import {
   type CollaborationProjectSource,
 } from "./project-scope.js";
 
-const MAX_PROOF_KEYS = 8;
 const ARTIFACT_CLEANUP_INTERVAL_MS = 60 * 60 * 1_000;
 const ARTIFACT_CLEANUP_BATCH_SIZE = 1_000;
-const MACHINE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-export interface GatewayCollaborationConfig {
-  runtimeId: string;
-  activeKeyId: string;
-  proofKeys: Readonly<Record<string, string>>;
-  preflightSecret: string;
-  platformBaseUrl: string;
-  serviceToken: string;
-}
-
-export function loadGatewayCollaborationConfig(env: NodeJS.ProcessEnv): GatewayCollaborationConfig | null {
-  if (env.MATRIX_COLLABORATION_ENABLED !== "true") return null;
-  const configuredRuntimeId = env.MATRIX_RUNTIME_ID?.trim();
-  const machineId = env.MATRIX_MACHINE_ID?.trim();
-  const runtimeId = configuredRuntimeId
-    || (machineId && MACHINE_ID_PATTERN.test(machineId) ? `vps:${machineId.toLowerCase()}` : undefined);
-  const activeKeyId = env.MATRIX_COLLABORATION_ACTIVE_KEY_ID?.trim();
-  const preflightSecret = env.MATRIX_COLLABORATION_PREFLIGHT_SECRET;
-  const platformBaseUrl = env.PLATFORM_INTERNAL_URL?.trim();
-  const serviceToken = env.UPGRADE_TOKEN;
-  if (!runtimeId || !activeKeyId || !preflightSecret || !platformBaseUrl || !serviceToken) return null;
-  let proofKeys: Record<string, string>;
-  try {
-    const parsed = JSON.parse(env.MATRIX_COLLABORATION_PROOF_KEYS ?? "null") as unknown;
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-    proofKeys = Object.fromEntries(Object.entries(parsed).filter(
-      (entry): entry is [string, string] => typeof entry[1] === "string",
-    ));
-  } catch (error: unknown) {
-    if (!(error instanceof SyntaxError)) {
-      console.warn("[collaboration] proof key configuration parse failed", error instanceof Error ? error.name : "UnknownError");
-    }
-    return null;
-  }
-  const entries = Object.entries(proofKeys);
-  if (entries.length < 1 || entries.length > MAX_PROOF_KEYS
-    || entries.some(([keyId, key]) => !/^[A-Za-z0-9_.-]{1,80}$/.test(keyId) || Buffer.byteLength(key) < 32)
-    || !proofKeys[activeKeyId] || Buffer.byteLength(preflightSecret) < 32 || Buffer.byteLength(serviceToken) < 32) {
-    return null;
-  }
-  return { runtimeId, activeKeyId, proofKeys, preflightSecret, platformBaseUrl, serviceToken };
-}
+export {
+  describeGatewayCollaborationConfiguration,
+  loadGatewayCollaborationConfig,
+  type GatewayCollaborationConfig,
+  type GatewayCollaborationConfigurationFailure,
+  type GatewayCollaborationConfigurationHealth,
+} from "./config.js";
+export { registerFailClosedCollaborationRoutes } from "./fail-closed.js";
+export { constructGatewayCollaborationOrFailClosed } from "./construct.js";
+export {
+  createOrganizationPrecondition,
+  type OrganizationMembershipAssertion,
+  type OrganizationMembershipSource,
+  type OrganizationPrecondition,
+} from "./organization-precondition.js";
 
 export async function createGatewayCollaboration(options: {
   db: Kysely<OwnerCollaborationDatabase>;
   chatRepository: ChatRepository;
   config: GatewayCollaborationConfig;
   resolveParticipant?(actorId: string): Promise<{ actorId: string; displayName: string }>;
-  resolveInvitationIdentifier?(identifier: string): Promise<{ actorId: string; displayName: string }>;
+  resolveInvitationIdentifier?(identifier: string, organizationId: string): Promise<{ actorId: string; displayName: string }>;
   outboxFetch?: typeof fetch;
   projectLifecycleDrivers?: {
     stageTransfer: ProjectTransferStager;
@@ -102,6 +85,13 @@ export async function createGatewayCollaboration(options: {
   };
   startTimers?: boolean;
   projectSource?: CollaborationProjectSource;
+  /**
+   * Optional membership source registered at construction. Production leaves
+   * this unset until the S03 projection registers itself, so every request
+   * is denied by the organization precondition (S20).
+   */
+  organizationMembershipSource?: OrganizationMembershipSource;
+  organizationPrecondition?: OrganizationPrecondition;
 }) {
   await bootstrapCollaborationDatabase(options.db);
   await cleanupExpiredArtifacts(options.db, new Date());
@@ -116,8 +106,14 @@ export async function createGatewayCollaboration(options: {
   const resolveParticipant = options.resolveParticipant
     ?? ((actorId: string) => participantResolver!.resolve(actorId));
   const resolveInvitationIdentifier = options.resolveInvitationIdentifier
-    ?? ((identifier: string) => participantResolver!.resolveInvitationIdentifier(identifier));
-  const authority = new CollaborationAuthority(repository);
+    ?? ((identifier: string, organizationId: string) => participantResolver!.resolveInvitationIdentifier(identifier, organizationId));
+  const organizationMembershipSource = options.organizationMembershipSource
+    ?? (options.organizationPrecondition ? undefined : createDefaultMembershipSource(options.config));
+  const organizationPrecondition = options.organizationPrecondition
+    ?? createOrganizationPrecondition(organizationMembershipSource ? { source: organizationMembershipSource } : {});
+  // S04: whole-project preset grants are the V1 membership; the authority resolves them at registration time.
+  const capabilities = new CollaborationCapabilityRepository(options.db, { now: () => new Date(), createId: randomUUID });
+  const authority = new CollaborationAuthority(repository, { organizationPrecondition, capabilities });
   const verifier = new CollaborationActorProofVerifier({
     runtimeId: options.config.runtimeId,
     keys: options.config.proofKeys,
@@ -183,7 +179,9 @@ export async function createGatewayCollaboration(options: {
 
   return {
     repository,
+    capabilities,
     authority,
+    organizationPrecondition,
     verifier,
     eventRegistry,
     chatScope,
@@ -214,6 +212,8 @@ export async function createGatewayCollaboration(options: {
       supervisorSocket?: string;
       brokerSocket?: string;
       fetchImpl?: typeof fetch;
+      providerCatalog?: ChatProviderCatalogService;
+      codingProviders?: Pick<CodingAgentProviderRegistry, "listProviders">;
     }): Promise<{ available: boolean }> {
       if (registered || closing || sharedAiRuntime) {
         throw new Error("Shared AI must be initialized exactly once before route registration");
@@ -231,6 +231,8 @@ export async function createGatewayCollaboration(options: {
         serviceToken: options.config.serviceToken,
         homePath: input.homePath,
         resolveParticipant,
+        ...(input.providerCatalog ? { providerCatalog: input.providerCatalog } : {}),
+        ...(input.codingProviders ? { codingProviders: input.codingProviders } : {}),
         ...(input.fundedCredentialProvider ? { fundedCredentialProvider: input.fundedCredentialProvider } : {}),
         ...(input.supervisorSocket ? { supervisorSocket: input.supervisorSocket } : {}),
         ...(input.brokerSocket ? { brokerSocket: input.brokerSocket } : {}),
@@ -367,6 +369,43 @@ export async function createGatewayCollaboration(options: {
         });
       }
     },
+    /**
+     * Synchronous fence for a startup fallback that cannot wait for a full
+     * drain: refuse new registrations and work, stop every timer and detach
+     * adapters/registries so nothing dispatches against dependencies the
+     * caller is about to destroy. Effective and idempotent even when
+     * shutdown() has already started and is still awaiting a drain: every
+     * detach below is safe to repeat, so a timed-out shutdown cannot leave a
+     * registry or adapter attached. Async drains are started best-effort.
+     */
+    fence(): void {
+      closing = true;
+      if (cleanupTimer) clearInterval(cleanupTimer);
+      const drainingSharedAi = sharedAiRuntime;
+      sharedAiRuntime = undefined;
+      chatExecutionAdapter = undefined;
+      eventRegistry.shutdown();
+      terminalEventRegistry?.shutdown();
+      terminalEventRegistry = undefined;
+      terminalControl?.close();
+      terminalControl = undefined;
+      terminalDispatcher = undefined;
+      terminalAdapter = undefined;
+      const drainingTransitions = projectTransitionCoordinator;
+      projectTransitionCoordinator = undefined;
+      projectSharing = undefined;
+      participantResolver?.shutdown();
+      verifier.shutdown();
+      for (const [name, drain] of [
+        ["shared AI", () => drainingSharedAi?.shutdown()],
+        ["project transitions", () => drainingTransitions?.shutdown()],
+        ["directory outbox", () => outbox.shutdown()],
+      ] as const) {
+        void Promise.resolve().then(drain).catch((error: unknown) => {
+          console.warn(`[collaboration] fenced ${name} drain failed`, error instanceof Error ? error.name : "UnknownError");
+        });
+      }
+    },
     async shutdown(): Promise<void> {
       if (closing) return;
       closing = true;
@@ -411,6 +450,24 @@ async function cleanupExpiredArtifacts(
       LIMIT ${ARTIFACT_CLEANUP_BATCH_SIZE}
     )
   `.execute(db);
+}
+
+/**
+ * S03: the platform's Clerk membership projection is the only membership
+ * source. Any configuration problem leaves no source registered, which the
+ * S20 precondition treats as "deny everything".
+ */
+function createDefaultMembershipSource(config: GatewayCollaborationConfig): OrganizationMembershipSource | undefined {
+  try {
+    return new OrganizationMembershipClient({
+      platformBaseUrl: config.platformBaseUrl,
+      runtimeId: config.runtimeId,
+      serviceToken: config.serviceToken,
+    });
+  } catch (error: unknown) {
+    console.warn("[collaboration] organization membership source unavailable", error instanceof Error ? error.name : "UnknownError");
+    return undefined;
+  }
 }
 
 export type GatewayCollaborationRuntime = Awaited<ReturnType<typeof createGatewayCollaboration>>;

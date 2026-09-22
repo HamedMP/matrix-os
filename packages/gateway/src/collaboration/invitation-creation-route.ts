@@ -24,9 +24,9 @@ type Participant = { actorId: string; displayName: string };
 
 interface InvitationCreationRouteOptions {
   repository: CollaborationRepository;
-  resolveInvitationIdentifier(identifier: string): Promise<Participant>;
+  resolveInvitationIdentifier(identifier: string, organizationId: string): Promise<Participant>;
   invitationResolutionRateLimiter?: RateLimiter;
-  authorize(c: Context, body: Uint8Array, scopeId: string): Promise<{ actorId: string }>;
+  authorize(c: Context, body: Uint8Array, scopeId: string): Promise<{ actorId: string; organizationId: string }>;
   projectInvitation(member: CollaborationMemberRecord): Promise<object>;
   notifyScope(scopeId: string): Promise<void>;
   handle(c: Context, operation: () => Promise<Response>): Promise<Response>;
@@ -49,7 +49,8 @@ export function createInvitationCreationHandler(options: InvitationCreationRoute
 
     let target: Participant;
     try {
-      target = await options.resolveInvitationIdentifier(input.identifier);
+      // Identifiers resolve only against current members of the scope's organization (S20 / T101).
+      target = await options.resolveInvitationIdentifier(input.identifier, context.organizationId);
     } catch (error: unknown) {
       if (error instanceof CollaborationParticipantResolverError) {
         return c.json({ error: "Invitation could not be created", code: "unavailable" }, 503);

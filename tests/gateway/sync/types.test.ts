@@ -63,6 +63,17 @@ describe("ManifestEntrySchema", () => {
     };
     expect(ManifestEntrySchema.parse(entry)).toEqual(entry);
   });
+
+  it("accepts filesystem-precision modification times", () => {
+    const entry = {
+      hash: "sha256:" + "c".repeat(64),
+      size: 45,
+      mtime: 1790004368082.777,
+      peerId: "matrix-home-mirror",
+      version: 1,
+    };
+    expect(ManifestEntrySchema.parse(entry)).toEqual(entry);
+  });
 });
 
 describe("ManifestSchema", () => {
@@ -94,6 +105,7 @@ describe("ManifestSchema", () => {
 describe("PresignRequestSchema", () => {
   it("accepts a valid presign request", () => {
     const req = {
+      protocolVersion: 3,
       files: [
         { path: "apps/test.txt", action: "put" as const, hash: "sha256:" + "d".repeat(64), size: 100 },
       ],
@@ -125,8 +137,9 @@ describe("PresignRequestSchema", () => {
 describe("CommitRequestSchema", () => {
   it("accepts a valid commit request", () => {
     const req = {
+      protocolVersion: 3,
       files: [
-        { path: "apps/test.txt", hash: "sha256:" + "e".repeat(64), size: 200 },
+        { path: "apps/test.txt", hash: "sha256:" + "e".repeat(64), size: 200, stagingId: "11111111-1111-4111-8111-111111111111" },
       ],
       expectedVersion: 5,
     };
@@ -215,7 +228,7 @@ describe("SyncStateSchema", () => {
       files: {
         "test.txt": {
           hash: "sha256:" + "f".repeat(64),
-          mtime: Date.now(),
+          mtime: Date.now() + 0.777,
           size: 100,
           lastSyncedHash: "sha256:" + "0".repeat(64),
         },

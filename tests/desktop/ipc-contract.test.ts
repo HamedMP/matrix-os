@@ -7,6 +7,15 @@ import {
 import type { CreateAgentThreadRequest } from "@matrix-os/contracts";
 
 describe("IPC contract", () => {
+  it("accepts only sign-up and sign-in intents for Electron Desktop device auth", () => {
+    const request = INVOKE_CHANNELS["auth:start-device-flow"].request;
+
+    expect(request.parse({ intent: "sign-up" })).toEqual({ intent: "sign-up" });
+    expect(request.parse({ intent: "sign-in" })).toEqual({ intent: "sign-in" });
+    expect(request.safeParse({}).success).toBe(true);
+    expect(request.safeParse({ intent: "other" }).success).toBe(false);
+  });
+
   it("defines every invoke channel from the contract doc", () => {
     const expected: InvokeChannel[] = [
       "auth:start-device-flow",

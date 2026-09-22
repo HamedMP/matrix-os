@@ -15,7 +15,6 @@ export const COLLABORATION_TERMINAL_FRAME_BYTE_LIMIT = 64 * 1024;
 export const COLLABORATION_CLIENT_REQUEST_ID_HEADER = "x-matrix-client-request-id";
 export const COLLABORATION_EXPECTED_REVISION_HEADER = "x-matrix-expected-revision";
 export const COLLABORATION_EXPECTED_MEMBER_REVISION_HEADER = "x-matrix-expected-member-revision";
-export const COLLABORATION_POLICY_HEADER = "x-matrix-collaboration-policy";
 
 export const CollaborationIdSchema = z.uuid();
 export const CollaborationActorIdSchema = z.string()
@@ -27,8 +26,14 @@ export const CollaborationInvitationIdentifierSchema = z.string()
   .min(1)
   .max(320)
   .regex(/^[^\u0000-\u001F\u007F]+$/, "Invalid invitation identifier");
+/** Clerk organization identifier: every scope is owned by exactly one organization (S20 / T101). */
+export const CollaborationOrganizationIdSchema = z.string()
+  .min(5)
+  .max(128)
+  .regex(/^org_[A-Za-z0-9_-]+$/, "Invalid organization identifier");
 export const CollaborationInvitationIdentifierRequestSchema = z.object({
   identifier: CollaborationInvitationIdentifierSchema,
+  organizationId: CollaborationOrganizationIdSchema,
 }).strict();
 export const CollaborationRuntimeIdSchema = referenceId(128);
 export const CollaborationResourceIdSchema = referenceId(160);
@@ -46,12 +51,6 @@ export const CollaborationLifecycleSchema = z.enum([
   "deleting",
   "deleted",
   "recovering",
-]);
-export const CollaborationCapabilityModeSchema = z.enum([
-  "off",
-  "internal",
-  "enabled",
-  "read_only",
 ]);
 export const CollaborationSafeErrorCodeSchema = z.enum([
   "not_found",
@@ -84,6 +83,7 @@ export const CollaborationCapabilitiesSchema = z.object({
 export const CollaborationScopeSchema = z.object({
   id: CollaborationIdSchema,
   ownerId: CollaborationActorIdSchema,
+  organizationId: CollaborationOrganizationIdSchema.optional(),
   kind: CollaborationScopeKindSchema,
   resourceId: CollaborationResourceIdSchema,
   parentScopeId: CollaborationIdSchema.optional(),
@@ -106,6 +106,7 @@ export const CollaborationScopeSchema = z.object({
 export const CollaborationScopePreflightRequestSchema = z.object({
   kind: CollaborationScopeKindSchema,
   resourceId: CollaborationResourceIdSchema,
+  organizationId: CollaborationOrganizationIdSchema,
 }).strict();
 
 export const CollaborationScopePreflightResponseSchema = z.object({
@@ -124,6 +125,7 @@ export const CollaborationScopePreflightResponseSchema = z.object({
 export const CollaborationCreateScopeRequestSchema = z.object({
   kind: CollaborationScopeKindSchema,
   resourceId: CollaborationResourceIdSchema,
+  organizationId: CollaborationOrganizationIdSchema,
   clientRequestId: CollaborationIdSchema,
   expectedRevision: CollaborationRevisionSchema,
   confirmationToken: z.string().min(64).max(4_096).regex(/^[A-Za-z0-9_.-]+$/),
@@ -542,7 +544,9 @@ export const CollaborationAiRequestsResponseSchema = z.object({
   requests: z.array(CollaborationAiRequestSchema).max(COLLABORATION_PAGE_LIMIT),
   approvals: z.array(CollaborationApprovalSchema).max(COLLABORATION_PAGE_LIMIT),
   capability: z.object({
-    status: z.enum(["available", "unavailable", "owner_binding_required"]),
+    status: z.enum([
+      "available", "unavailable", "owner_binding_required", "owner_reconnect_required",
+    ]),
     effectiveSelection: CanonicalChatModelSelectionSchema.optional(),
   }).strict(),
   resourceRevision: CollaborationRevisionSchema,
@@ -621,21 +625,6 @@ export const CollaborationActorProofSchema = z.object({
 
 export const CollaborationSignedActorProofSchema = z.object({
   proof: CollaborationActorProofSchema,
-  signature: z.string().min(43).max(172).regex(/^[A-Za-z0-9_-]+$/),
-}).strict();
-
-export const CollaborationPolicySchema = z.object({
-  milestone: z.enum(["m1", "m2", "m3", "m4"]),
-  revision: CollaborationRevisionSchema,
-  mode: CollaborationCapabilityModeSchema,
-  cohort: z.array(CollaborationActorIdSchema).max(1_000),
-  issuedAt: z.iso.datetime(),
-  expiresAt: z.iso.datetime(),
-}).strict();
-
-export const CollaborationSignedPolicySchema = z.object({
-  policy: CollaborationPolicySchema,
-  keyId: referenceId(80),
   signature: z.string().min(43).max(172).regex(/^[A-Za-z0-9_-]+$/),
 }).strict();
 
@@ -825,7 +814,6 @@ export type CollaborationLifecycleRequest = z.infer<typeof CollaborationLifecycl
 export type CollaborationMember = z.infer<typeof CollaborationMemberSchema>;
 export type CollaborationOperation = z.infer<typeof CollaborationOperationSchema>;
 export type CollaborationParticipant = z.infer<typeof CollaborationParticipantSchema>;
-export type CollaborationPolicy = z.infer<typeof CollaborationPolicySchema>;
 export type CollaborationProjectConfirmRequest = z.infer<typeof CollaborationProjectConfirmRequestSchema>;
 export type CollaborationProjectInventory = z.infer<typeof CollaborationProjectInventorySchema>;
 export type CollaborationProjectInventoryItem = z.infer<typeof CollaborationProjectInventoryItemSchema>;

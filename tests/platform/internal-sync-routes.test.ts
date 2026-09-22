@@ -4,6 +4,7 @@ import { createHmac } from "node:crypto";
 import { insertContainer, insertUserMachine, type PlatformDB } from "../../packages/platform/src/db.js";
 import { createInternalSyncRoutes } from "../../packages/platform/src/internal-sync-routes.js";
 import { createApp } from "../../packages/platform/src/main.js";
+import { buildPlatformSyncVerificationToken } from "../../packages/platform/src/platform-token.js";
 import type { Orchestrator } from "../../packages/platform/src/orchestrator.js";
 
 function bearerFor(handle: string, secret: string): string {
@@ -293,6 +294,72 @@ describe("platform/internal-sync-routes", () => {
     expect(r2.getPresignedGetUrl).toHaveBeenCalledWith(
       "matrixos-sync/user_bob/manifest.json",
       undefined,
+    );
+  });
+
+  it("isolates non-primary machine access to its DB-resolved runtime prefix", async () => {
+    await insertUserMachine(db, {
+      machineId: "machine-studio",
+      clerkUserId: "user_alice",
+      handle: "alice",
+      runtimeSlot: "studio",
+      hetznerServerId: 458,
+      publicIPv4: "203.0.113.14",
+      status: "running",
+      imageVersion: "matrix-os-host-dev",
+      provisionedAt: "2026-08-30T00:00:00.000Z",
+    });
+    const token = buildPlatformSyncVerificationToken({
+      handle: "alice",
+      machineId: "machine-studio",
+      runtimeSlot: "studio",
+    }, "platform-secret-123");
+    r2.getPresignedGetUrl.mockResolvedValue("https://platform.example/studio-get");
+    const app = createTestApp();
+    const headers = {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+      "x-matrix-machine-id": "machine-studio",
+      "x-matrix-runtime-slot": "studio",
+    };
+
+    const allowed = await app.request("/internal/containers/alice/sync/presign/get", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        key: "matrixos-sync/v2/owners/user_alice/runtimes/studio/manifest.json",
+      }),
+    });
+    const primary = await app.request("/internal/containers/alice/sync/presign/get", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ key: "matrixos-sync/user_alice/manifest.json" }),
+    });
+    const primaryBackup = await app.request(
+      "/internal/containers/alice/sync/system/presign/get",
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ key: "system/db/latest" }),
+      },
+    );
+    const studioBackup = await app.request(
+      "/internal/containers/alice/sync/system/presign/get",
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ key: "system/runtime-slots/studio/db/latest" }),
+      },
+    );
+
+    expect(allowed.status).toBe(200);
+    expect(primary.status).toBe(403);
+    expect(primaryBackup.status).toBe(400);
+    expect(studioBackup.status).toBe(200);
+    expect(r2.getPresignedGetUrl).toHaveBeenCalledTimes(2);
+    expect(r2.getPresignedGetUrl).toHaveBeenLastCalledWith(
+      "matrixos-sync/user_alice/system/runtime-slots/studio/db/latest",
+      300,
     );
   });
 

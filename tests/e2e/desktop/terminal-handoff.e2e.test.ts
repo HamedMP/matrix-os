@@ -29,10 +29,10 @@ async function launchDesktop(
     },
   });
   const page = await app.firstWindow();
-  const continueButton = page.getByRole("button", { name: /continue in browser/i });
+  const createAccountButton = page.getByRole("button", { name: /create account/i });
   const terminalNavigation = page.locator("aside button", { hasText: "Terminal" }).first();
   const needsAuthentication = await Promise.race([
-    continueButton.waitFor({ timeout: 15_000 }).then(() => true),
+    createAccountButton.waitFor({ timeout: 15_000 }).then(() => true),
     terminalNavigation.waitFor({ timeout: 15_000 }).then(() => false),
   ]);
 

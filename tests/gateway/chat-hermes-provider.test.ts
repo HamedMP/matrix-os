@@ -1,105 +1,8 @@
 import { ChatSteerNotDeliveredError } from "../../packages/gateway/src/chat/steer-delivery-error.js";
-import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 import { createHermesChatProviderAdapter } from "../../packages/gateway/src/chat/hermes-provider-adapter.js";
-import type {
-  HermesGatewayProcess,
-  HermesGatewaySpawn,
-} from "../../packages/gateway/src/chat/hermes-stdio-client.js";
 
-interface RpcRequest {
-  jsonrpc: "2.0";
-  id: number;
-  method: string;
-  params: Record<string, unknown>;
-}
-
-class FakeStream extends EventEmitter {}
-
-function fakeGateway(options: { emitReady?: boolean; ignoreMethods?: readonly string[] } = {}) {
-  const stdout = new FakeStream();
-  const stderr = new FakeStream();
-  const emitter = new EventEmitter();
-  const requests: RpcRequest[] = [];
-  const send = (frame: unknown) => stdout.emit("data", Buffer.from(`${JSON.stringify(frame)}\n`));
-  const respond = (request: RpcRequest, result: unknown) => send({ jsonrpc: "2.0", id: request.id, result });
-  const stdin = {
-    write: vi.fn((chunk: string) => {
-      for (const line of chunk.trim().split("\n")) {
-        const request = JSON.parse(line) as RpcRequest;
-        requests.push(request);
-        if (options.ignoreMethods?.includes(request.method)) continue;
-        queueMicrotask(() => {
-          if (request.method === "session.create") {
-            respond(request, { session_id: "live_session", stored_session_id: "durable_session" });
-          } else if (request.method === "session.resume") {
-            respond(request, { session_id: "live_session", session_key: request.params.session_id });
-          } else if (request.method === "prompt.submit") {
-            respond(request, { status: "streaming" });
-          } else if (request.method === "session.interrupt") {
-            respond(request, { status: "interrupted" });
-          } else if (request.method === "session.steer") {
-            respond(request, { status: "queued", text: request.params.text });
-          } else if (request.method === "config.set" && request.params.key === "yolo") {
-            respond(request, { key: "yolo", value: "1", scope: "session" });
-          } else if (request.method === "config.set" && request.params.key === "model") {
-            respond(request, { key: "model", value: request.params.value, confirm_required: false });
-          } else if (request.method === "session.cwd.set") {
-            respond(request, { cwd: request.params.cwd });
-          } else if (request.method === "approval.respond") {
-            respond(request, { resolved: true });
-          } else {
-            respond(request, {});
-          }
-        });
-      }
-      return true;
-    }),
-    end: vi.fn(() => queueMicrotask(() => emitter.emit("exit", 0, null))),
-  };
-  const kill = vi.fn((signal: NodeJS.Signals) => queueMicrotask(() => emitter.emit("exit", null, signal)));
-  const process = Object.assign(emitter, { stdin, stdout, stderr, kill }) as unknown as HermesGatewayProcess;
-  const spawnFn = vi.fn<HermesGatewaySpawn>(() => {
-    if (options.emitReady !== false) {
-      queueMicrotask(() => send({
-        jsonrpc: "2.0",
-        method: "event",
-        params: { type: "gateway.ready", payload: { change_events: true } },
-      }));
-    }
-    return process;
-  });
-  return {
-    process,
-    requests,
-    respond,
-    spawnFn,
-    sendRaw(value: string) {
-      stdout.emit("data", Buffer.from(value));
-    },
-    event(type: string, payload: unknown, sessionId = "live_session") {
-      send({
-        jsonrpc: "2.0",
-        method: "event",
-        params: { type, session_id: sessionId, payload },
-      });
-    },
-  };
-}
-
-const baseInput = {
-  owner: { type: "personal" as const, ownerId: "owner_hermes" },
-  chatId: "chat_hermes",
-  turnId: "cturn_hermes",
-  runId: "run_hermes",
-  prompt: "hello",
-  parts: [{ type: "text" as const, text: "hello" }],
-  selection: { instanceId: "hermes_default", model: "openai-codex:gpt-5.6-luna" },
-  interactionMode: "default",
-  permissionMode: "full_access",
-  executionRoot: "/safe/project",
-  signal: new AbortController().signal,
-};
+import { fakeGateway, baseInput } from "./hermes-test-gateway.js";
 
 async function collect(iterable: AsyncIterable<unknown>): Promise<unknown[]> {
   const events = [];
@@ -364,6 +267,7 @@ describe("Hermes canonical Chat Provider adapter", () => {
     expect(await eventsPromise).toEqual([
       { type: "agent.activity", activityId: "tool_success", kind: "command", label: "Run command", status: "running", preview: "printf OM134_OK", previewKind: "command" },
       { type: "agent.activity", activityId: "tool_success", kind: "command", label: "Run command", status: "completed", summary: "Command completed.", preview: "printf OM134_OK", previewKind: "command" },
+      { type: "tool.output", toolCallId: "tool_success", text: "Tool output is private to its owner.", truncated: false },
       { type: "agent.activity", activityId: "tool_failure", kind: "command", label: "Run command", status: "running", preview: "exit 7", previewKind: "command" },
       { type: "agent.activity", activityId: "tool_failure", kind: "command", label: "Run command", status: "failed", summary: "Command failed.", preview: "exit 7", previewKind: "command" },
       {
@@ -411,6 +315,7 @@ describe("Hermes canonical Chat Provider adapter", () => {
     expect(events).toEqual([
       { type: "agent.activity", activityId: "tool_failure", kind: "command", label: "Run command", status: "running" },
       { type: "agent.activity", activityId: "tool_failure", kind: "command", label: "Run command", status: "failed", summary: "Command failed." },
+      { type: "tool.output", toolCallId: "tool_failure", text: "Output withheld because it may contain private data.", truncated: true },
       { type: "assistant.delta", delta: "The command failed with output: [redacted tool output] and exit code 7." },
       { type: "state.updated", state: { sessionId: "durable_session" } },
       { type: "run.completed", outcome: "completed" },
@@ -1128,6 +1033,7 @@ describe("Hermes canonical Chat Provider adapter", () => {
       { type: "assistant.delta", delta: " the preview." },
       { type: "agent.activity", activityId: "tool_preview", kind: "command", label: "Run command", status: "running", preview: "pnpm preview", previewKind: "command" },
       { type: "agent.activity", activityId: "tool_preview", kind: "command", label: "Run command", status: "completed", summary: "Command completed.", preview: "pnpm preview", previewKind: "command" },
+      { type: "tool.output", toolCallId: "tool_preview", text: "Tool output is private to its owner.", truncated: false },
       { type: "assistant.delta", delta: "\n\nThe preview is ready." },
       { type: "state.updated", state: { sessionId: "durable_session" } },
       { type: "run.completed", outcome: "completed" },
@@ -1293,6 +1199,7 @@ describe("Hermes canonical Chat Provider adapter", () => {
       { type: "assistant.delta", delta: "Checking" },
       { type: "agent.activity", activityId: "tool_preview", kind: "command", label: "Run command", status: "running", preview: "pnpm preview", previewKind: "command" },
       { type: "agent.activity", activityId: "tool_preview", kind: "command", label: "Run command", status: "completed", summary: "Command completed.", preview: "pnpm preview", previewKind: "command" },
+      { type: "tool.output", toolCallId: "tool_preview", text: "Tool output is private to its owner.", truncated: false },
       { type: "assistant.delta", delta: " the preview." },
       { type: "state.updated", state: { sessionId: "durable_session" } },
       { type: "run.completed", outcome: "completed" },
@@ -1326,6 +1233,7 @@ describe("Hermes canonical Chat Provider adapter", () => {
       { type: "assistant.delta", delta: "Checking" },
       { type: "agent.activity", activityId: "tool_preview", kind: "command", label: "Run command", status: "running", preview: "pnpm preview", previewKind: "command" },
       { type: "agent.activity", activityId: "tool_preview", kind: "command", label: "Run command", status: "failed", summary: "Command failed.", preview: "pnpm preview", previewKind: "command" },
+      { type: "tool.output", toolCallId: "tool_preview", text: "Tool output is private to its owner.", truncated: false },
       { type: "assistant.delta", delta: "  the preview." },
       { type: "state.updated", state: { sessionId: "durable_session" } },
       { type: "run.completed", outcome: "completed" },
@@ -1364,6 +1272,7 @@ describe("Hermes canonical Chat Provider adapter", () => {
       { type: "assistant.delta", delta: "Hello" },
       { type: "agent.activity", activityId: "tool_preview", kind: "command", label: "Run command", status: "running", preview: "pnpm preview", previewKind: "command" },
       { type: "agent.activity", activityId: "tool_preview", kind: "command", label: "Run command", status: "failed", summary: "Command failed.", preview: "pnpm preview", previewKind: "command" },
+      { type: "tool.output", toolCallId: "tool_preview", text: "Tool output is private to its owner.", truncated: false },
       { type: "assistant.delta", delta: " world" },
       { type: "state.updated", state: { sessionId: "durable_session" } },
       { type: "run.completed", outcome: "completed" },
@@ -1408,8 +1317,10 @@ describe("Hermes canonical Chat Provider adapter", () => {
       { type: "assistant.delta", delta: "Checking" },
       { type: "agent.activity", activityId: "tool_build", kind: "command", label: "Run command", status: "running", preview: "pnpm build", previewKind: "command" },
       { type: "agent.activity", activityId: "tool_build", kind: "command", label: "Run command", status: "failed", summary: "Command failed.", preview: "pnpm build", previewKind: "command" },
+      { type: "tool.output", toolCallId: "tool_build", text: "Tool output is private to its owner.", truncated: false },
       { type: "agent.activity", activityId: "tool_preview", kind: "command", label: "Run command", status: "running", preview: "pnpm preview", previewKind: "command" },
       { type: "agent.activity", activityId: "tool_preview", kind: "command", label: "Run command", status: "failed", summary: "Command failed.", preview: "pnpm preview", previewKind: "command" },
+      { type: "tool.output", toolCallId: "tool_preview", text: "Tool output is private to its owner.", truncated: false },
       { type: "assistant.delta", delta: " the preview is ready." },
       { type: "state.updated", state: { sessionId: "durable_session" } },
       { type: "run.completed", outcome: "completed" },
@@ -1609,6 +1520,7 @@ describe("Hermes canonical Chat Provider adapter", () => {
       { type: "agent.activity", activityId: "tool_search_failure", kind: "web_search", label: "Search the web", status: "failed", summary: "Web search failed." },
       { type: "agent.activity", activityId: "tool_command_success", kind: "command", label: "Run command", status: "running", preview: "printf recovered", previewKind: "command" },
       { type: "agent.activity", activityId: "tool_command_success", kind: "command", label: "Run command", status: "completed", summary: "Command completed.", preview: "printf recovered", previewKind: "command" },
+      { type: "tool.output", toolCallId: "tool_command_success", text: "Tool output is private to its owner.", truncated: false },
       { type: "assistant.delta", delta: "Useful partial after recovery." },
       {
         type: "run.completed",
@@ -1657,6 +1569,7 @@ describe("Hermes canonical Chat Provider adapter", () => {
       { type: "agent.activity", activityId: "tool_search_failure", kind: "web_search", label: "Search the web", status: "failed", summary: "Web search failed." },
       { type: "agent.activity", activityId: "tool_command_success", kind: "command", label: "Run command", status: "running", preview: "printf recovered", previewKind: "command" },
       { type: "agent.activity", activityId: "tool_command_success", kind: "command", label: "Run command", status: "completed", summary: "Command completed.", preview: "printf recovered", previewKind: "command" },
+      { type: "tool.output", toolCallId: "tool_command_success", text: "Tool output is private to its owner.", truncated: false },
       { type: "assistant.delta", delta: "Recovered and completed." },
       { type: "state.updated", state: { sessionId: "durable_session" } },
       { type: "run.completed", outcome: "completed" },

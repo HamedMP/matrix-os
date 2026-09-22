@@ -1,6 +1,7 @@
 import { bootstrapChatMetadata } from "./metadata-schema.js";
 import { bootstrapChatAttribution } from "./attribution-repair.js";
 import { sql, type ColumnType, type Generated, type Kysely } from "kysely";
+import { bootstrapMessagePurpose, type ChatMessagePurpose } from "./message-purpose.js";
 
 type Timestamp = ColumnType<Date | string, Date | string | undefined, Date | string>;
 type NullableTimestamp = ColumnType<Date | string | null, Date | string | null | undefined, Date | string | null>;
@@ -59,11 +60,11 @@ export interface ChatMessagesTable {
   chat_id: string;
   seq: number;
   role: "user" | "assistant" | "tool" | "system";
+  purpose: ChatMessagePurpose;
   state: "pending" | "committed" | "failed";
   turn_id: string | null;
   run_id: string | null;
   actor_id: string | null;
-  purpose: "discussion" | "ai_request" | "assistant" | "system";
   parts: JsonValue;
   byte_count: number;
   search_text: string;
@@ -128,6 +129,8 @@ export interface ChatQueuedTurnsTable {
   accepted_seq: ColumnType<number | null, number | null | undefined, number | null>;
   payload_hash: ColumnType<string | null, string | null | undefined, string | null>;
   accepted_auth_epoch: ColumnType<number | null, number | null | undefined, number | null>;
+  accepted_execution_generation: ColumnType<number | null, number | null | undefined, number | null>;
+  accepted_execution_eligibility: ColumnType<unknown | null, unknown | null | undefined, unknown | null>;
   retry_of_queued_turn_id: ColumnType<string | null, string | null | undefined, string | null>;
   position: number;
   status: "queued" | "claimed" | "cancelled" | "interrupted" | "unauthorized" | "unavailable";
@@ -346,22 +349,7 @@ export async function bootstrapChatDatabase<Database extends ChatDatabase>(
   // Keep this migration on the canonical Chat bootstrap path so no Chat write
   // can run before the columns exist.
   await sql`ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS actor_id TEXT`.execute(db);
-  await sql`ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS purpose TEXT`.execute(db);
-  await sql`
-    UPDATE chat_messages
-    SET purpose = CASE role
-      WHEN 'user' THEN 'ai_request'
-      WHEN 'assistant' THEN 'assistant'
-      ELSE 'system'
-    END
-    WHERE purpose IS NULL
-  `.execute(db);
-  await sql`ALTER TABLE chat_messages ALTER COLUMN purpose SET NOT NULL`.execute(db);
-  await sql`ALTER TABLE chat_messages DROP CONSTRAINT IF EXISTS chat_messages_purpose_check`.execute(db);
-  await sql`
-    ALTER TABLE chat_messages ADD CONSTRAINT chat_messages_purpose_check
-    CHECK (purpose IN ('discussion', 'ai_request', 'assistant', 'system'))
-  `.execute(db);
+  await bootstrapMessagePurpose(db);
   await sql`
     CREATE TABLE IF NOT EXISTS chat_attachments (
       id TEXT PRIMARY KEY,
@@ -453,6 +441,8 @@ export async function bootstrapChatDatabase<Database extends ChatDatabase>(
       accepted_seq BIGINT,
       payload_hash TEXT,
       accepted_auth_epoch BIGINT,
+      accepted_execution_generation BIGINT,
+      accepted_execution_eligibility JSONB,
       retry_of_queued_turn_id TEXT REFERENCES chat_queued_turns(id) ON DELETE SET NULL,
       position INTEGER NOT NULL CHECK (position BETWEEN 1 AND 32),
       status TEXT NOT NULL CHECK (status IN ('queued', 'claimed', 'cancelled', 'interrupted', 'unauthorized', 'unavailable')),
@@ -481,6 +471,8 @@ export async function bootstrapChatDatabase<Database extends ChatDatabase>(
   await sql`ALTER TABLE chat_queued_turns ADD COLUMN IF NOT EXISTS accepted_seq BIGINT`.execute(db);
   await sql`ALTER TABLE chat_queued_turns ADD COLUMN IF NOT EXISTS payload_hash TEXT`.execute(db);
   await sql`ALTER TABLE chat_queued_turns ADD COLUMN IF NOT EXISTS accepted_auth_epoch BIGINT`.execute(db);
+  await sql`ALTER TABLE chat_queued_turns ADD COLUMN IF NOT EXISTS accepted_execution_generation BIGINT`.execute(db);
+  await sql`ALTER TABLE chat_queued_turns ADD COLUMN IF NOT EXISTS accepted_execution_eligibility JSONB`.execute(db);
   await sql`
     ALTER TABLE chat_queued_turns
     ADD COLUMN IF NOT EXISTS retry_of_queued_turn_id TEXT REFERENCES chat_queued_turns(id) ON DELETE SET NULL

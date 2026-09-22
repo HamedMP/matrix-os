@@ -425,6 +425,7 @@ read_env_value() {
 
 write_env() {
   local auth_token code_token postgres_password funded_ai_enabled funded_ai_relay_url funded_ai_runtime_token platform_internal_url
+  local platform_speech_enabled platform_speech_origin platform_speech_runtime_token
   auth_token="$(read_env_value /opt/matrix/env/host.env MATRIX_AUTH_TOKEN || random_secret)"
   code_token="$(read_env_value /opt/matrix/env/host.env MATRIX_CODE_PROXY_TOKEN || random_secret)"
   postgres_password="$(read_env_value /opt/matrix/env/postgres.env POSTGRES_PASSWORD || random_secret | tr '/+' 'ab')"
@@ -432,6 +433,9 @@ write_env() {
   funded_ai_relay_url="$(read_env_value /opt/matrix/env/host.env MATRIX_FUNDED_AI_RELAY_URL || true)"
   funded_ai_runtime_token="$(read_env_value /opt/matrix/env/host.env MATRIX_FUNDED_AI_RUNTIME_TOKEN || true)"
   platform_internal_url="$(read_env_value /opt/matrix/env/host.env PLATFORM_INTERNAL_URL || true)"
+  platform_speech_enabled="$(read_env_value /opt/matrix/env/host.env MATRIX_PLATFORM_SPEECH_ENABLED || printf 'false')"
+  platform_speech_origin="$(read_env_value /opt/matrix/env/host.env MATRIX_PLATFORM_SPEECH_ORIGIN || true)"
+  platform_speech_runtime_token="$(read_env_value /opt/matrix/env/host.env MATRIX_PLATFORM_SPEECH_RUNTIME_TOKEN || true)"
 
   cat >/opt/matrix/env/postgres.env <<EOF
 POSTGRES_DB=matrix
@@ -448,6 +452,7 @@ MATRIX_CLERK_USER_ID=self-host-${MATRIX_INSTALL_HANDLE}
 MATRIX_USER_ID=self-host-${MATRIX_INSTALL_HANDLE}
 MATRIX_HANDLE=${MATRIX_INSTALL_HANDLE}
 MATRIX_RUNTIME_SLOT=primary
+MATRIX_NODE_PREFIX=/opt/matrix/runtime/node
 MATRIX_DEVELOPER_TOOLS='${MATRIX_DEVELOPER_TOOLS}'
 MATRIX_IMAGE_VERSION=${DEFAULT_CHANNEL}
 MATRIX_UPDATE_CHANNEL=${DEFAULT_CHANNEL}
@@ -456,6 +461,9 @@ MATRIX_CODE_PROXY_TOKEN=${code_token}
 MATRIX_FUNDED_AI_ENABLED=${funded_ai_enabled}
 MATRIX_FUNDED_AI_RELAY_URL=${funded_ai_relay_url}
 MATRIX_FUNDED_AI_RUNTIME_TOKEN=${funded_ai_runtime_token}
+MATRIX_PLATFORM_SPEECH_ENABLED=${platform_speech_enabled}
+MATRIX_PLATFORM_SPEECH_ORIGIN=${platform_speech_origin}
+MATRIX_PLATFORM_SPEECH_RUNTIME_TOKEN=${platform_speech_runtime_token}
 PLATFORM_INTERNAL_URL=${platform_internal_url}
 MATRIX_HOST_BUNDLE_URL=${MATRIX_HOST_BUNDLE_URL}
 MATRIX_HOME=${MATRIX_HOME_DIR}

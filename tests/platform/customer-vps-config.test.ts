@@ -27,6 +27,16 @@ describe('customer VPS bootstrap configuration', () => {
     })).toThrow('Funded AI runtime is misconfigured');
   });
 
+  it('keeps managed speech disabled unless runtime provisioning explicitly enables it', () => {
+    expect(loadCustomerVpsConfig({}).platformSpeechEnabled).toBe(false);
+    expect(loadCustomerVpsConfig({
+      MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED: 'true',
+    }).platformSpeechEnabled).toBe(true);
+    expect(loadCustomerVpsConfig({
+      MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED: '1',
+    }).platformSpeechEnabled).toBe(false);
+  });
+
   it('keeps registration tokens at the bounded clean-bootstrap lifetime', () => {
     expect(loadCustomerVpsConfig({}).registrationTokenTtlMs).toBe(60 * 60 * 1000);
     expect(loadCustomerVpsConfig({

@@ -4,6 +4,7 @@ import { CollaborationChatScopeService } from "../../packages/gateway/src/collab
 import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
 import {
   collaborationActors,
+  collaborationExecutionEligibility,
   collaborationIds,
   createRealCollaborationTestDatabase,
   type CollaborationTestDatabase,
@@ -12,13 +13,7 @@ import {
 const realDescribe = process.env.MATRIX_TEST_POSTGRES_URL ? describe : describe.skip;
 const now = "2026-09-17T12:00:00.000Z";
 const affectedScopeId = "6aed8d12-f6c8-4c10-90b2-1e51fcc738e3";
-const eligibility = {
-  profileId: "scope-runtime-chat-v1",
-  profileVersion: 1,
-  profileDigest: "b".repeat(64),
-  adapterId: "claude-code" as const,
-  harnessVersion: "2.1.240",
-};
+const eligibility = collaborationExecutionEligibility();
 
 realDescribe("CollaborationChatScopeService PostgreSQL capability lifecycle", () => {
   let fixture: CollaborationTestDatabase;
@@ -58,12 +53,14 @@ realDescribe("CollaborationChatScopeService PostgreSQL capability lifecycle", ()
     const service = createService(fixture);
     const preflight = await service.preflight({
       ownerId: collaborationActors.owner,
+      organizationId: "org_matrix_team",
       chatId: collaborationIds.chat,
     });
 
     await Promise.all([
       service.shareChat({
         ownerId: collaborationActors.owner,
+        organizationId: "org_matrix_team",
         chatId: collaborationIds.chat,
         clientRequestId: "50000000-0000-4000-8000-000000000010",
         payloadHash: "a".repeat(64),

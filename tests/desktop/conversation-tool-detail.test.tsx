@@ -181,6 +181,15 @@ describe("AgentConversationView tool-call detail", () => {
     expect(screen.queryByText(/bounded output chunk/)).toBeNull();
   });
 
+  it("shows the provider's bounded command preview and working directory", () => {
+    const events = toolEvents({ id: "tc_preview", displayName: "Run command", kind: "command", outcome: "success" });
+    Object.assign(events[0]!, { preview: "bun run test", previewKind: "command", detail: "Working directory: projects/demo" });
+    render(<AgentConversationView status="ready" snapshot={snapshot(events)} error={null} canSendTurns />);
+    expect(screen.getByText("bun run test")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Tool call Run command" }));
+    expect(screen.getByText(/Working directory: projects\/demo/)).toBeTruthy();
+  });
+
   it("marks a running tool without a duration", () => {
     render(
       <AgentConversationView

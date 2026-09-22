@@ -25,6 +25,7 @@ describe("project collaboration inheritance", () => {
       owner_type: "personal",
       owner_id: OWNER_ID,
       kind: "project",
+      organization_id: "org_matrix_team",
       resource_id: "proj_alpha",
       parent_scope_id: null,
       membership_mode: "direct",
@@ -54,6 +55,24 @@ describe("project collaboration inheritance", () => {
       createScopeId: () => `40000000-0000-4000-8000-${String(sequence++).padStart(12, "0")}`,
     });
   }
+
+  it("refuses to stage inherited resources under a project that has no organization", async () => {
+    await fixture.db.updateTable("collaboration_scopes").set({ organization_id: null })
+      .where("id", "=", PROJECT_SCOPE_ID).execute();
+    await expect(resolver().bindOwnedResource({
+      projectScopeId: PROJECT_SCOPE_ID,
+      ownerId: OWNER_ID,
+      kind: "chat",
+      resourceId: "chat_alpha",
+      authorityRuntimeId: AUTHORITY_RUNTIME_ID,
+      authorityGeneration: 2,
+      revision: 4,
+      readiness: "ready",
+    })).rejects.toMatchObject({ code: "conflict" });
+    expect(await fixture.db.selectFrom("collaboration_scopes").select("id")
+      .where("kind", "!=", "project").execute()).toEqual([]);
+    expect(await fixture.db.selectFrom("collaboration_resource_bindings").selectAll().execute()).toEqual([]);
+  });
 
   it("atomically binds every existing owned resource kind to one project authority", async () => {
     const inheritance = resolver();
@@ -123,6 +142,7 @@ describe("project collaboration inheritance", () => {
       owner_type: "personal",
       owner_id: OWNER_ID,
       kind: "chat",
+      organization_id: "org_matrix_team",
       resource_id: "chat_direct",
       parent_scope_id: null,
       membership_mode: "direct",
@@ -212,6 +232,7 @@ describe("project collaboration inheritance", () => {
       owner_type: "personal",
       owner_id: OWNER_ID,
       kind: "project",
+      organization_id: "org_matrix_team",
       resource_id: "proj_beta",
       parent_scope_id: null,
       membership_mode: "direct",

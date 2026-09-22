@@ -468,7 +468,7 @@ export default function CommandPalette() {
                   key={app.slug}
                   icon={<LayoutGrid size={14} />}
                   label={app.name}
-                  onSelect={() => run(() => openTab({ kind: "app", slug: app.slug, title: app.name, ...(app.appIdentity ? { appIdentity: app.appIdentity } : {}), ...(appIconUrl(platformHost, app.slug, runtimeSlot) ? { icon: appIconUrl(platformHost, app.slug, runtimeSlot)! } : {}) }))}
+                  onSelect={() => run(() => openTab({ kind: "app", slug: app.slug, title: app.name, ...(app.appIdentity ? { appIdentity: app.appIdentity } : {}), ...(appIconUrl(platformHost, app, runtimeSlot) ? { icon: appIconUrl(platformHost, app, runtimeSlot)! } : {}) }))}
                 />
               ))}
             </Command.Group>

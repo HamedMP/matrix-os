@@ -606,6 +606,18 @@ jobs:
             sleep 15
           done
 
+          jq -cn --arg handle "$HANDLE" --arg address "$address" \
+            '{handle:$handle,address:$address}' > preview-runtime-route.json
+          chmod 600 preview-runtime-route.json
+
+      - name: Publish exact-head preview runtime route
+        uses: actions/upload-artifact@v4
+        with:
+          name: preview-runtime-access-${{ needs.gate.outputs.pr }}
+          path: preview-runtime-route.json
+          retention-days: 1
+          if-no-files-found: error
+
       - name: Comment preview URL on PR
         if: github.event_name == 'pull_request'
         env:

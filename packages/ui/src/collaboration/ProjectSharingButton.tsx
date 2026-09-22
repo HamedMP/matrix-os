@@ -15,9 +15,11 @@ import { ProjectSharingDialog } from "./ProjectSharingDialog.js";
 const MembersSchema = z.object({ members: z.array(CollaborationMemberSchema).max(8) }).strict();
 const buttonClass = "rounded-lg border px-3 py-2 text-sm transition-colors hover:enabled:bg-[var(--bg-hover)] disabled:opacity-50";
 
-export function ProjectSharingButton({ api, runtimeId, projectId, projectName }: {
+export function ProjectSharingButton({ api, runtimeId, organizationId, projectId, projectName }: {
   api: CollaborationApi;
   runtimeId: string | null;
+  /** The Clerk organization this share is scoped to; without one there is nothing to share with. */
+  organizationId: string | null;
   projectId: string;
   projectName: string;
 }) {
@@ -62,7 +64,7 @@ export function ProjectSharingButton({ api, runtimeId, projectId, projectName }:
   };
 
   const begin = async () => {
-    if (!runtimeId || pending) {
+    if (!runtimeId || !organizationId || pending) {
       setError(true);
       return;
     }
@@ -71,7 +73,7 @@ export function ProjectSharingButton({ api, runtimeId, projectId, projectName }:
     try {
       const preflight = CollaborationScopePreflightResponseSchema.parse(await api.post(
         `/api/collaboration/runtimes/${runtimeId}/scopes/preflight`,
-        { kind: "project", resourceId: projectId },
+        { kind: "project", resourceId: projectId, organizationId },
       ));
       if (!preflight.eligible || !preflight.confirmationToken) throw new Error("Project unavailable");
       if (preflight.existingScopeId) {
@@ -88,7 +90,7 @@ export function ProjectSharingButton({ api, runtimeId, projectId, projectName }:
         `/api/collaboration/runtimes/${runtimeId}/scopes`,
         {
           kind: "project",
-          resourceId: projectId,
+          resourceId: projectId, organizationId,
           clientRequestId: crypto.randomUUID(),
           expectedRevision: preflight.resourceRevision,
           confirmationToken: preflight.confirmationToken,
@@ -118,9 +120,9 @@ export function ProjectSharingButton({ api, runtimeId, projectId, projectName }:
   };
 
   return <div className="relative inline-flex shrink-0 items-center">
-    <button type="button" className={buttonClass} aria-label="Share project" disabled={pending || !runtimeId}
+    <button type="button" className={buttonClass} aria-label="Share project" disabled={pending || !runtimeId || !organizationId}
       aria-expanded={surface !== null} onClick={() => surface ? close() : void begin()}>
-      {pending || !runtimeId ? "Loading share…" : "Share"}
+      {pending || !runtimeId ? "Loading share…" : !organizationId ? "Join an organization to share" : "Share"}
     </button>
     {error ? <span role="alert" className="absolute right-0 top-full z-50 mt-2 w-72 rounded-lg border bg-[var(--bg-surface,var(--background))] p-3 shadow-lg">
       Project sharing is unavailable. The project remains private and unchanged.

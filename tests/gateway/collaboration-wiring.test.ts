@@ -20,6 +20,7 @@ import {
 } from "../../packages/gateway/src/collaboration/wiring.js";
 import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
 import {
+  allowAllOrganizationPrecondition,
   collaborationIds,
   createCollaborationTestDatabase,
   type CollaborationTestDatabase,
@@ -38,9 +39,8 @@ describe("gateway collaboration wiring", () => {
   });
 
   it("fails closed on incomplete environment configuration", () => {
-    expect(loadGatewayCollaborationConfig({ MATRIX_COLLABORATION_ENABLED: "true" })).toBeNull();
+    expect(loadGatewayCollaborationConfig({})).toBeNull();
     expect(loadGatewayCollaborationConfig({
-      MATRIX_COLLABORATION_ENABLED: "true",
       MATRIX_RUNTIME_ID: collaborationIds.runtime,
       MATRIX_COLLABORATION_ACTIVE_KEY_ID: "key-1",
       MATRIX_COLLABORATION_PROOF_KEYS: JSON.stringify({ "key-1": "a".repeat(32) }),
@@ -52,7 +52,6 @@ describe("gateway collaboration wiring", () => {
 
   it("derives the VPS runtime ID from the existing machine identity", () => {
     expect(loadGatewayCollaborationConfig({
-      MATRIX_COLLABORATION_ENABLED: "true",
       MATRIX_MACHINE_ID: "11111111-1111-4111-8111-111111111111",
       MATRIX_COLLABORATION_ACTIVE_KEY_ID: "key-1",
       MATRIX_COLLABORATION_PROOF_KEYS: JSON.stringify({ "key-1": "a".repeat(32) }),
@@ -64,6 +63,7 @@ describe("gateway collaboration wiring", () => {
 
   it("resolves dependencies before route registration and drains before database disposal", async () => {
     const runtime = await createGatewayCollaboration({
+      organizationPrecondition: allowAllOrganizationPrecondition,
       db: fixture.db,
       chatRepository: new ChatRepository(fixture.db),
       config: {
@@ -94,6 +94,8 @@ describe("gateway collaboration wiring", () => {
         { version: 4 },
         { version: 5 },
         { version: 6 },
+        { version: 7 },
+        { version: 8 },
       ]);
     await expect(app.request(`/api/collaboration/scopes/${collaborationIds.scope}/discussion/messages`))
       .resolves.toMatchObject({ status: 401 });
@@ -101,8 +103,77 @@ describe("gateway collaboration wiring", () => {
     await expect(runtime.outbox.runOnce()).resolves.toBe(0);
   });
 
+  it("authorizes an accepted preset grant through the wired authority on chat, project and terminal scopes", async () => {
+    const organizationId = "org_wiring_primary";
+    const members = new Set(["user_wiring_owner", "user_wiring_member"]);
+    const runtime = await createGatewayCollaboration({
+      organizationMembershipSource: {
+        async assertMembership({ actorId, organizationId: requested }) {
+          return requested === organizationId && members.has(actorId)
+            ? { member: true, expiresAt: new Date(Date.now() + 20_000).toISOString(), aiSubmission: "owner_only" as const, membershipEpoch: "1" }
+            : { member: false };
+        },
+      },
+      db: fixture.db,
+      chatRepository: new ChatRepository(fixture.db),
+      config: {
+        runtimeId: collaborationIds.runtime,
+        activeKeyId: "key-1",
+        proofKeys: { "key-1": "a".repeat(32) },
+        preflightSecret: "b".repeat(32),
+        platformBaseUrl: "https://platform.internal",
+        serviceToken: "c".repeat(32),
+      },
+      resolveParticipant: async (actorId) => ({ actorId, displayName: actorId }),
+      outboxFetch: async () => new Response(null, { status: 204 }),
+      startTimers: false,
+    });
+    const now = new Date().toISOString();
+    const scopes = [
+      { id: "10000000-0000-4000-8000-00000000a001", kind: "chat" as const, resourceId: "chat_wiring" },
+      { id: "10000000-0000-4000-8000-00000000a002", kind: "project" as const, resourceId: "project_wiring" },
+      { id: "10000000-0000-4000-8000-00000000a003", kind: "terminal" as const, resourceId: "terminal_wiring" },
+    ];
+    for (const scope of scopes) {
+      await fixture.db.insertInto("collaboration_scopes").values({
+        id: scope.id, owner_type: "personal", owner_id: "user_wiring_owner", organization_id: organizationId,
+        kind: scope.kind, resource_id: scope.resourceId, parent_scope_id: null, membership_mode: "direct", lifecycle: "shared",
+        revision: 1, auth_epoch: 1, authority_runtime_id: collaborationIds.runtime, authority_generation: 1,
+        execution_generation: null, execution_eligibility: null, deleted_at: null, created_at: now, updated_at: now,
+      }).execute();
+      await fixture.db.insertInto("collaboration_members").values({
+        scope_id: scope.id, actor_id: "user_wiring_owner", role: "owner", status: "accepted", organization_id: organizationId,
+        invitation_id: null, invited_by: "user_wiring_owner", accepted_at: now, expires_at: null, revision: 1, joined_at: now, updated_at: now,
+        dispositioned_at: null,
+      }).execute();
+      await expect(runtime.authority.authorize({ scopeId: scope.id, actorId: "user_wiring_member", action: "read" }))
+        .rejects.toMatchObject({ code: "not_found" });
+      const grant = await runtime.capabilities.createGrant({
+        scopeId: scope.id, actorId: "user_wiring_owner", clientRequestId: crypto.randomUUID(), expectedRevision: 1, payloadHash: "a".repeat(64),
+        audience: { kind: "member", actorId: "user_wiring_member" }, preset: "contributor", policyVersion: "v1",
+      });
+      await runtime.capabilities.acceptGrant({ grantId: grant.grantId, actorId: "user_wiring_member", membershipEvidenceEpoch: "1" });
+      await expect(runtime.authority.authorize({ scopeId: scope.id, actorId: "user_wiring_member", action: "read" }))
+        .resolves.toMatchObject({ role: "editor", organizationId, resourceKind: scope.kind });
+      await expect(runtime.authority.authorize({ scopeId: scope.id, actorId: "user_wiring_member", action: "discuss" }))
+        .resolves.toMatchObject({ role: "editor" });
+    }
+    // The event WebSocket path authorizes through the same wired authority.
+    const socket = { sent: [] as string[], closed: false, send(value: string) { this.sent.push(value); }, close() { this.closed = true; } };
+    const connection = await runtime.eventRegistry.open({
+      connectionId: "conn_wiring_member", scopeId: scopes[0]!.id, actorId: "user_wiring_member", authorityGeneration: 1, socket,
+    });
+    expect(socket.closed).toBe(false);
+    connection.close();
+    members.delete("user_wiring_member");
+    await expect(runtime.authority.authorize({ scopeId: scopes[0]!.id, actorId: "user_wiring_member", action: "read" }))
+      .rejects.toMatchObject({ code: "not_found" });
+    await runtime.shutdown();
+  });
+
   it("registers M3 routes only after terminal dependencies are resolved and drains them on shutdown", async () => {
     const runtime = await createGatewayCollaboration({
+      organizationPrecondition: allowAllOrganizationPrecondition,
       db: fixture.db,
       chatRepository: new ChatRepository(fixture.db),
       config: {
@@ -158,6 +229,7 @@ describe("gateway collaboration wiring", () => {
       owner_type: "personal",
       owner_id: "user_owner",
       kind: "chat",
+      organization_id: "org_matrix_team",
       resource_id: collaborationIds.chat,
       parent_scope_id: null,
       membership_mode: "direct",
@@ -179,6 +251,7 @@ describe("gateway collaboration wiring", () => {
     }).execute();
 
     const runtime = await createGatewayCollaboration({
+      organizationPrecondition: allowAllOrganizationPrecondition,
       db: fixture.db,
       chatRepository: new ChatRepository(fixture.db),
       config: {
@@ -205,6 +278,7 @@ describe("gateway collaboration wiring", () => {
     await bootstrapCollaborationDatabase(fixture.db);
     await seedSharedChat(fixture);
     const runtime = await createGatewayCollaboration({
+      organizationPrecondition: allowAllOrganizationPrecondition,
       db: fixture.db,
       chatRepository: new ChatRepository(fixture.db),
       config: {
@@ -259,9 +333,10 @@ describe("gateway collaboration wiring", () => {
         created_at: "2026-09-10T00:00:00.000Z",
         updated_at: "2026-09-10T00:00:00.000Z",
       }).execute();
-      const preflight = await runtime.chatScope.preflight({ ownerId: "user_owner", chatId: postStartupChatId });
+      const preflight = await runtime.chatScope.preflight({ ownerId: "user_owner", organizationId: "org_matrix_team", chatId: postStartupChatId });
       const created = await runtime.chatScope.shareChat({
         ownerId: "user_owner",
+        organizationId: "org_matrix_team",
         chatId: postStartupChatId,
         clientRequestId: "50000000-0000-4000-8000-000000000099",
         payloadHash: "e".repeat(64),
@@ -294,6 +369,7 @@ describe("gateway collaboration wiring", () => {
     await bootstrapCollaborationDatabase(fixture.db);
     await seedSharedChat(fixture);
     const runtime = await createGatewayCollaboration({
+      organizationPrecondition: allowAllOrganizationPrecondition,
       db: fixture.db,
       chatRepository: new ChatRepository(fixture.db),
       config: {
@@ -400,6 +476,7 @@ async function seedSharedChat(fixture: CollaborationTestDatabase): Promise<void>
     owner_type: "personal",
     owner_id: "user_owner",
     kind: "chat",
+    organization_id: "org_matrix_team",
     resource_id: collaborationIds.chat,
     parent_scope_id: null,
     membership_mode: "direct",

@@ -44,6 +44,25 @@ describe("isStandaloneRuntime", () => {
 });
 
 describe("shouldRunStandaloneDaemon", () => {
+  it("uses the baked marker after the build-only env variable is gone at runtime", async () => {
+    const previousMarker = process.env.MATRIX_CLI_STANDALONE;
+    process.env.MATRIX_CLI_STANDALONE = "1";
+    vi.resetModules();
+    const module = await import("../../src/cli/standalone-runtime.js");
+    delete process.env.MATRIX_CLI_STANDALONE;
+
+    try {
+      expect(module.shouldRunStandaloneDaemon(["__daemon"], undefined, { bun: "1.3.13" })).toBe(true);
+    } finally {
+      if (previousMarker === undefined) {
+        delete process.env.MATRIX_CLI_STANDALONE;
+      } else {
+        process.env.MATRIX_CLI_STANDALONE = previousMarker;
+      }
+      vi.resetModules();
+    }
+  });
+
   it("only dispatches __daemon inside standalone binaries", () => {
     expect(
       shouldRunStandaloneDaemon(

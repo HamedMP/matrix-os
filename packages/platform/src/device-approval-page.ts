@@ -47,7 +47,6 @@ export function approvalPage(
     var csrf = "${escapedCsrf}";
     var approvalUrl = window.location.href;
     var authMode = new URL(window.location.href).searchParams.get('mode') === 'sign-in' ? 'sign-in' : 'sign-up';
-    var nativeApp = ${isNativeApp ? 'true' : 'false'};
     var runtimeReady = false;
     var selectedRuntimeSlot = '';
     var computerSelectionRequired = true;
@@ -247,17 +246,6 @@ export function approvalPage(
       if (button) button.disabled = true;
     }
 
-    function showRuntimeSetupState() {
-      runtimeReady = false;
-      setConfirmReady(false);
-      renderActionState(
-        'Set up your Matrix computer',
-        'Create or activate your Matrix computer first, then return here to connect this device.',
-        'Open setup',
-        redirectToBillingSetup
-      );
-    }
-
     function showSignedInRecoveryState() {
       runtimeReady = false;
       setConfirmReady(false);
@@ -367,11 +355,7 @@ export function approvalPage(
           return;
         }
         if (res.status === 402 || res.status === 404) {
-          // Billing-required clients enter browser billing; only native no-runtime 404s keep dedicated setup copy.
-          if (nativeApp && res.status === 404) {
-            showRuntimeSetupState();
-            return;
-          }
+          // New and unprovisioned clients continue through browser billing and return here afterward.
           redirectToBillingSetup();
           return;
         }

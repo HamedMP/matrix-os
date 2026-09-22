@@ -10,7 +10,9 @@ import {
   type ProjectLayoutDatabase,
 } from "../../packages/gateway/src/collaboration/project-layout-adapter.js";
 import { CollaborationRepository } from "../../packages/gateway/src/collaboration/repository.js";
-import { createCollaborationTestDatabase, type CollaborationTestDatabase } from "./collaboration-test-support.js";
+import { createCollaborationTestDatabase, type CollaborationTestDatabase,
+  allowAllOrganizationPrecondition,
+} from "./collaboration-test-support.js";
 
 const PROJECT_SCOPE_ID = "10000000-0000-4000-8000-000000000101";
 const PROJECT_ID = "proj_alpha";
@@ -35,6 +37,7 @@ describe("project collaboration layout adapter", () => {
       owner_type: "personal",
       owner_id: OWNER_ID,
       kind: "project",
+      organization_id: "org_matrix_team",
       resource_id: PROJECT_ID,
       parent_scope_id: null,
       membership_mode: "direct",
@@ -104,7 +107,7 @@ describe("project collaboration layout adapter", () => {
       created_at: NOW,
       updated_at: NOW,
     }).execute();
-    authority = new CollaborationAuthority(new CollaborationRepository(fixture.db), { now: () => NOW });
+    authority = new CollaborationAuthority(new CollaborationRepository(fixture.db), { now: () => NOW, organizationPrecondition: allowAllOrganizationPrecondition });
   });
 
   afterEach(async () => {
