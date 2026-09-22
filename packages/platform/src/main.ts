@@ -604,6 +604,19 @@ export function createApp(deps: {
     app.route('/internal/containers/:handle/speech', deps.internalSpeechRuntimeRoutes);
   }
 
+  // Funded AI control routes authenticate with dedicated runtime, relay, or
+  // operator credentials. Mount them before Clerk session routing so those
+  // service credentials reach their own guards on app-domain hosts.
+  if (deps.internalFundedAiRuntimeRoutes) {
+    app.route('/internal/containers/:handle/ai', deps.internalFundedAiRuntimeRoutes);
+  }
+  if (deps.internalFundedAiRelayRoutes) {
+    app.route('/internal/ai/funded', deps.internalFundedAiRelayRoutes);
+  }
+  if (deps.internalFundedAiOperatorRoutes) {
+    app.route('/api/operator/ai/funded', deps.internalFundedAiOperatorRoutes);
+  }
+
   // Session-based routing:
   // - app.matrix-os.com -> Clerk session -> Matrix OS shell/gateway
   // - code.matrix-os.com -> Clerk session -> code-server on the user's VPS
@@ -682,15 +695,6 @@ export function createApp(deps: {
   }
   if (deps.internalSyncRoutes) {
     app.route('/internal/containers/:handle/sync', deps.internalSyncRoutes);
-  }
-  if (deps.internalFundedAiRuntimeRoutes) {
-    app.route('/internal/containers/:handle/ai', deps.internalFundedAiRuntimeRoutes);
-  }
-  if (deps.internalFundedAiRelayRoutes) {
-    app.route('/internal/ai/funded', deps.internalFundedAiRelayRoutes);
-  }
-  if (deps.internalFundedAiOperatorRoutes) {
-    app.route('/api/operator/ai/funded', deps.internalFundedAiOperatorRoutes);
   }
   app.get('/vps/releases', async (c) => {
     if (!platformSecret) {
