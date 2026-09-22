@@ -368,6 +368,9 @@ describe("connection event wiring", () => {
     };
 
     wireConnectionEvents();
+    // Registrations per wire cycle, so adding a listener does not invalidate the count below.
+    const registrationsPerWire = (window.operator.on as ReturnType<typeof vi.fn>).mock.calls.length;
+    expect(registrationsPerWire).toBeGreaterThan(0);
     listeners.get("auth:changed")?.({});
     await Promise.resolve();
 
@@ -384,7 +387,8 @@ describe("connection event wiring", () => {
     listeners.get("runtime:changed")?.({});
     await Promise.resolve();
 
-    expect(window.operator.on).toHaveBeenCalledTimes(4);
+    // Re-wiring must register the same listeners again, so the total is exactly two cycles.
+    expect(window.operator.on).toHaveBeenCalledTimes(registrationsPerWire * 2);
     expect(invoke).toHaveBeenCalledTimes(2);
   });
 });
