@@ -201,6 +201,27 @@ describe("project Git broker PostgreSQL boundary", () => {
     expect(reconcile).toHaveBeenCalledWith(expect.objectContaining({ operationId: first.id }));
   });
 
+  it("records an unresolved commit as unknown and reconciles it rather than recording a failure", async () => {
+    const run = vi.fn(async () => { throw new AmbiguousProjectGitEffect(); });
+    const reconcile = vi.fn(async () => ({ commitSha: "a".repeat(40) }));
+    const broker = createProjectGitBroker({
+      db: fixture.db,
+      authorize: async () => ({ ownerId: collaborationActors.owner, projectId: PROJECT }),
+      resolveOwnerIdentity: async () => ({ name: "Owner", email: "owner@example.test", label: "Owner <owner@example.test>" }),
+      driver: { run, reconcile },
+    });
+    const request = action("commit", { message: "feat: unresolved change", expectedHeadSha: "b".repeat(40) });
+    const first = await broker.submit({ scopeId: collaborationIds.scope, actorId: collaborationActors.editor, request });
+    expect(first.state).toBe("unknown");
+    const second = await broker.submit({ scopeId: collaborationIds.scope, actorId: collaborationActors.editor, request });
+    expect(second).toMatchObject({ id: first.id, state: "completed", commitSha: "a".repeat(40) });
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(reconcile).toHaveBeenCalledWith(expect.objectContaining({ operationId: first.id }));
+    const audit = await fixture.db.selectFrom("collaboration_audit").select(["action", "outcome", "reason_code"]).execute();
+    expect(audit).toContainEqual(expect.objectContaining({ action: "git.commit", outcome: "unknown", reason_code: "effect_unresolved" }));
+    expect(audit.some((row) => row.outcome === "failed")).toBe(false);
+  });
+
   it("reconciles an ambiguous push by operation ID before retrying the side effect", async () => {
     const run = vi.fn(async () => { throw new AmbiguousProjectGitEffect(); });
     const reconcile = vi.fn(async () => ({ remoteBranch: "feature/member" }));

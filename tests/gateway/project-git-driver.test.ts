@@ -100,6 +100,86 @@ describe("owner Git driver", () => {
       .toEqual({ status: "ready", label: "Global Owner <global@example.test>" });
   });
 
+  it("reconciles a landed commit by operation instead of leaving its effect unattested", async () => {
+    const root = await repository();
+    await ownerHome();
+    const driver = createProjectGitDriver({ resolveProjectRoot: async () => root });
+    const ownerIdentity = await driver.resolveOwnerIdentity({ ownerId: OWNER, projectId: PROJECT });
+    const before = await git(root, "rev-parse", "HEAD");
+    await writeFile(join(root, "README.md"), "member edit\n");
+    await git(root, "add", "README.md");
+    const execution = {
+      operationId: "80000000-0000-4000-8000-000000000001",
+      scopeId: "80000000-0000-4000-8000-000000000002",
+      ownerId: OWNER,
+      projectId: PROJECT,
+      requestingActorId: "user_member",
+      ownerIdentity,
+      request: {
+        type: "commit" as const,
+        clientRequestId: "80000000-0000-4000-8000-000000000003",
+        expectedRevision: "1",
+        payloadHash: "a".repeat(64),
+        message: "feat: shared edit",
+        expectedHeadSha: before,
+      },
+    };
+    expect(await driver.reconcile(execution)).toBeNull();
+    await driver.run(execution);
+    expect(await driver.reconcile(execution)).toEqual({ commitSha: await git(root, "rev-parse", "HEAD") });
+  });
+
+  it("does not claim an unrelated commit as the reconciled effect", async () => {
+    const root = await repository();
+    await ownerHome();
+    const driver = createProjectGitDriver({ resolveProjectRoot: async () => root });
+    const ownerIdentity = await driver.resolveOwnerIdentity({ ownerId: OWNER, projectId: PROJECT });
+    const before = await git(root, "rev-parse", "HEAD");
+    await git(root, "-c", "user.name=Someone Else", "-c", "user.email=other@example.test",
+      "commit", "--allow-empty", "-m", "chore: unrelated");
+    expect(await driver.reconcile({
+      operationId: "80000000-0000-4000-8000-000000000001",
+      scopeId: "80000000-0000-4000-8000-000000000002",
+      ownerId: OWNER,
+      projectId: PROJECT,
+      requestingActorId: "user_member",
+      ownerIdentity,
+      request: {
+        type: "commit" as const,
+        clientRequestId: "80000000-0000-4000-8000-000000000004",
+        expectedRevision: "1",
+        payloadHash: "b".repeat(64),
+        message: "feat: shared edit",
+        expectedHeadSha: before,
+      },
+    })).toBeNull();
+  });
+
+  it("keeps a commit failure that never moved HEAD a definite failure", async () => {
+    const root = await repository();
+    await ownerHome();
+    const driver = createProjectGitDriver({ resolveProjectRoot: async () => root });
+    const ownerIdentity = await driver.resolveOwnerIdentity({ ownerId: OWNER, projectId: PROJECT });
+    const before = await git(root, "rev-parse", "HEAD");
+    await expect(driver.run({
+      operationId: "80000000-0000-4000-8000-000000000001",
+      scopeId: "80000000-0000-4000-8000-000000000002",
+      ownerId: OWNER,
+      projectId: PROJECT,
+      requestingActorId: "user_member",
+      ownerIdentity,
+      request: {
+        type: "commit" as const,
+        clientRequestId: "80000000-0000-4000-8000-000000000005",
+        expectedRevision: "1",
+        payloadHash: "c".repeat(64),
+        message: "feat: nothing staged",
+        expectedHeadSha: before,
+      },
+    })).rejects.toMatchObject({ code: "unavailable" });
+    expect(await git(root, "rev-parse", "HEAD")).toBe(before);
+  });
+
   it("rejects stale refs and a local or changed push remote before any remote effect", async () => {
     const root = await repository();
     const driver = createProjectGitDriver({ resolveProjectRoot: async () => root });

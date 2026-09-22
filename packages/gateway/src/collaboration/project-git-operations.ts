@@ -1,5 +1,5 @@
 import { sql, type ColumnType, type Transaction } from "kysely";
-import type { CollaborationProjectGitSetup } from "@matrix-os/contracts";
+import type { CollaborationGitActionRequest, CollaborationProjectGitSetup } from "@matrix-os/contracts";
 import type { OwnerCollaborationDatabase } from "./database.js";
 
 type Timestamp = ColumnType<Date | string, Date | string | undefined, Date | string>;
@@ -68,6 +68,7 @@ import { validateGitHubUrl } from "../project-manager.js";
 import {
   AmbiguousProjectGitEffect,
   ProjectGitBrokerError,
+  type ProjectGitActionResult,
   type ProjectGitDriver,
   type ProjectGitExecution,
   type ProjectGitOwnerIdentity,
@@ -201,6 +202,44 @@ async function requireBranch(root: string, expected: string): Promise<void> {
   if (branch !== expected) throw new ProjectGitBrokerError("conflict");
 }
 
+/** Git applies whitespace cleanup to `-m` messages, so compare on the same normalised form. */
+function normalizeCommitMessage(value: string): string {
+  return value.split("\n").map((line) => line.replace(/\s+$/, "")).join("\n").replace(/^\n+|\n+$/g, "");
+}
+
+/**
+ * A commit failure is definite only when HEAD is still the revision the request
+ * expected. A moved or unreadable HEAD means the effect may already have landed,
+ * so the operation must settle as unresolved and be reconciled rather than
+ * recorded as a terminal failure.
+ */
+async function commitFailure(root: string, expectedHeadSha: string): Promise<Error> {
+  try {
+    if (await currentHead(root) === expectedHeadSha) return new ProjectGitBrokerError("unavailable");
+  } catch (error: unknown) {
+    if (!(error instanceof ProjectGitBrokerError)) throw error;
+    console.warn("[collaboration-git] commit outcome unverifiable", error.name);
+  }
+  return new AmbiguousProjectGitEffect();
+}
+
+/** Non-null only when the tip proves this operation's commit landed: our parent, our message, the owner's identity. */
+async function observeCommit(
+  root: string,
+  request: Extract<CollaborationGitActionRequest, { type: "commit" }>,
+  identity: ProjectGitOwnerIdentity,
+): Promise<ProjectGitActionResult | null> {
+  const head = await currentHead(root);
+  if (head === request.expectedHeadSha) return null;
+  const tip = await gitCommand(root, ["log", "--max-count=1", "--format=%H%x00%P%x00%cn%x00%ce%x00%B", head]);
+  const [sha, parents, committerName, committerEmail, ...body] = tip.stdout.split("\0");
+  if (sha !== head) return null;
+  if ((parents ?? "").trim() !== request.expectedHeadSha) return null;
+  if (committerName !== identity.name || committerEmail !== identity.email) return null;
+  if (normalizeCommitMessage(body.join("\0")) !== normalizeCommitMessage(request.message)) return null;
+  return { commitSha: GitShaSchema.parse(sha) };
+}
+
 /** Host-side Git/forge driver. Credentials remain in the owner host and never enter the scope runtime. */
 export function createProjectGitDriver(options: {
   resolveProjectRoot(input: { ownerId: string; projectId: string }): Promise<string>;
@@ -279,11 +318,17 @@ export function createProjectGitDriver(options: {
         try {
           // Contributors stage their exact files in the sandbox; the broker never runs clean filters over new paths.
           await gitCommand(cwd, ["commit", "--no-gpg-sign", "-m", request.message], input.ownerIdentity);
+        } catch (error: unknown) {
+          console.warn("[collaboration-git] commit failed", error instanceof Error ? error.name : "UnknownError");
+          throw await commitFailure(cwd, request.expectedHeadSha);
+        }
+        try {
           return { commitSha: await currentHead(cwd) };
         } catch (error: unknown) {
-          if (error instanceof ProjectGitBrokerError) throw error;
-          console.warn("[collaboration-git] commit failed", error instanceof Error ? error.name : "UnknownError");
-          throw new ProjectGitBrokerError("unavailable");
+          // The commit command succeeded, so a HEAD read failure leaves the effect unresolved, never failed.
+          if (!(error instanceof ProjectGitBrokerError)) throw error;
+          console.warn("[collaboration-git] commit landed with an unreadable HEAD", error.name);
+          throw new AmbiguousProjectGitEffect();
         }
       }
       if (request.type === "push") {
@@ -315,6 +360,9 @@ export function createProjectGitDriver(options: {
     async reconcile(input: ProjectGitExecution) {
       const cwd = await root(input);
       const request = input.request;
+      if (request.type === "commit") {
+        return observeCommit(cwd, request, input.ownerIdentity);
+      }
       if (request.type === "push") {
         const remote = await ownerRemote(cwd);
         const result = await gitCommand(cwd, ["ls-remote", remote.url, `refs/heads/${request.branch}`], input.ownerIdentity, true);
