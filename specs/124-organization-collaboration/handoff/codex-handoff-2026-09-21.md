@@ -1489,3 +1489,43 @@ layer's diff. **Pre-existing on `main`, invisible to CI.**
 
 **Environment note for anyone reproducing:** `bun` is not on `PATH` in a fresh shell (`exit 127`); prefix with
 `/home/nima/.bun/bin`. Toolchain: Node v24.14.1, bun 1.4.2, pnpm 10.33.4, PostgreSQL 16.13.
+
+## 58. Correcting "on real Postgres" in the S09 gate evidence — 2026-09-22 08:45 UTC
+
+**Section 56 and the S09 gate counts were reported as running "against real Postgres". That is true of three
+suites and false of four, and the ledger must say so.**
+
+| Suite | Backend actually exercised |
+| --- | --- |
+| `shared-coding-execution` | both, with env-guarded real cases |
+| `collaboration-owner-source` | both, with env-guarded real cases |
+| `collaboration-chat-controls` | both, with env-guarded real cases |
+| `collaboration-wiring` | **PGlite only** |
+| `collaboration-lifecycle` | **PGlite only** |
+| `collaboration-terminal-websocket` | **PGlite only** |
+| `shared-ai-runtime` | no database |
+
+The counts are honest; the blanket phrase was not. The four PGlite suites would report identical numbers with
+or without the environment sourced.
+
+**Which findings this affects.** P1-2 (retryable cancel and interrupt) and P2-6 (the network call outside the
+scope transaction) are concurrency claims, and their real-Postgres cases live in `shared-coding-execution` and
+`collaboration-owner-source`, which do carry env-guarded real coverage — properly evidenced. The **control-loss
+watchdog** and the **startup-order proof** live entirely in `collaboration-wiring`, which is PGlite only.
+Neither is a locking claim, so PGlite is adequate — but the receipt must state that per suite rather than let
+one phrase imply real-database coverage across the table.
+
+**This is not the #1836 defect, and the distinction is worth keeping.** `createRealCollaborationTestDatabase`
+has two guards: it throws without `MATRIX_TEST_POSTGRES_URL`, and throws again if the URL does not name a test
+database. Called directly it cannot silently produce a fake. The #1836 defect is a **call site** that defeats
+those guards by wrapping it in a ternary whose else-branch is the in-memory fixture, so the first guard can
+never fire — that is why `collaboration-direct-sessions` reports an identical 35 on both paths. The fix belongs
+at such call sites, not in the helper. #1836 has been amended to say so.
+
+**The shared hazard.** A suite holding both PGlite cases and env-guarded real cases reports the same totals
+whether the guarded cases ran or were skipped. Not a silent substitution, but the same consequence: it implies
+coverage the run did not have.
+
+**Rule for every remaining receipt in this release: state the backend per suite, and after a re-run confirm the
+env-guarded cases actually executed rather than skipped.** A skipped guard and a passing guard both read as
+green in the totals.
