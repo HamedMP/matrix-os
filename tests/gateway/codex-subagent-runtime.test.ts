@@ -72,3 +72,66 @@ for await (const line of createInterface({ input: process.stdin })) {
     await rm(home, { recursive: true, force: true });
   }
 }, 12_000);
+
+it("retains child metadata reads that exceed the shared RPC capacity", async () => {
+  const home = await mkdtemp("/tmp/csx-");
+  const eventPath = codexProviderEventPath(home, "sess_subagent_capacity_test");
+  const fake = join(home, "provider.mjs");
+  const childIds = Array.from({ length: 25 }, (_, index) => `native-child-${index + 1}`);
+  const agentsStates = Object.fromEntries(childIds.map((id) => [id, { status: "running" }]));
+  const notification = {
+    method: "item/completed",
+    params: {
+      threadId: "native-parent",
+      turnId: "parent-turn",
+      item: {
+        type: "collabAgentToolCall",
+        senderThreadId: "native-parent",
+        receiverThreadIds: childIds,
+        prompt: "Inspect one bounded part of the problem.",
+        agentsStates,
+      },
+    },
+  };
+  await writeFile(fake, `import { createInterface } from 'node:readline';
+const send = (value) => console.log(JSON.stringify(value));
+for await (const line of createInterface({ input: process.stdin })) {
+ const message = JSON.parse(line);
+ if (message.method === 'initialize') send({ id: message.id, result: { userAgent: 'test' } });
+ if (message.method === 'thread/start') send({ id: message.id, result: { thread: { id: 'native-parent' } } });
+ if (message.method === 'thread/read') setTimeout(() => send({ id: message.id, result: { thread: {
+   id: message.params.threadId, parentThreadId: 'native-parent', agentRole: 'worker',
+ } } }), 50);
+ if (message.method === 'turn/start') {
+   send({ id: message.id, result: { turn: { id: 'parent-turn' } } });
+   setTimeout(() => send(${JSON.stringify(notification)}), 20);
+   setTimeout(() => send({ method: 'turn/completed', params: {
+     threadId: 'native-parent', turn: { id: 'parent-turn', status: 'completed', items: [] },
+   } }), 600);
+ }
+}
+`);
+  const config = Buffer.from(JSON.stringify({ prompt: "Capacity test", approvalPolicy: "never", sandbox: "read-only", writableRoots: [home] })).toString("base64");
+  const child = spawn(process.execPath, [join(process.cwd(), "packages/gateway/src/coding-agents/codex-app-server-runner.mjs"), eventPath,
+    process.version.slice(1), process.execPath, fake, config], { cwd: home, stdio: ["ignore", "pipe", "pipe"] });
+  try {
+    const deadline = Date.now() + 8_000;
+    let transcript = "";
+    while (Date.now() < deadline) {
+      transcript = await readFile(eventPath, "utf8").catch(() => "");
+      if (transcript.includes('"type":"turn.completed"')) break;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    expect(transcript).toContain('"type":"turn.completed"');
+    let sequence = 0;
+    const events = transcript.trim().split("\n").flatMap((line) => parseCodexExecJsonLine(line, {
+      threadId: "thread_matrix", now: () => new Date(), nextEventId: () => `evt_${++sequence}`,
+    }).events);
+    const roleEvents = events.filter((event) => event.type === "subagent.activity" && event.subagent.role === "worker");
+    expect(new Set(roleEvents.map((event) => event.activityId)).size).toBe(childIds.length);
+  } finally {
+    child.kill("SIGTERM");
+    await new Promise<void>((resolve) => { if (child.exitCode !== null) resolve(); else child.once("close", () => resolve()); });
+    await rm(home, { recursive: true, force: true });
+  }
+}, 12_000);
