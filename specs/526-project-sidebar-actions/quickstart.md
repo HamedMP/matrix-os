@@ -3,7 +3,7 @@
 1. Open Chat project navigation in Electron Desktop, both standalone and hosted window presentations. Web Desktop/Web Canvas/Web Mobile currently have no project-group navigation; see the spec limitation.
 2. Hover/focus a long project row: ellipsis precedes New Chat, no trash button, name does not overlap controls.
 3. Compare ellipsis/right-click menus; use keyboard and Escape; verify focus returns.
-4. Pin, reload, unpin. Verify stable ordering and existing pinned Chats unchanged.
+4. Pin, reload, unpin. Verify the project moves between Projects and Pinned, the project row has no standalone pin glyph, ordering is stable, and existing pinned Chats remain unchanged.
 5. Edit name/description; verify reload and other project projections. Invalid/failed save retains draft.
 6. Show in Files: opens the full Files app at the actual project folder. Verify managed and imported folders, existing Files window reuse, repeated clicks and missing-folder errors. No project file modal or Finder invocation.
 7. Delete action requires existing typed confirmation. Cancel preserves project.
@@ -15,7 +15,7 @@
 - Workspace routes, board store, WorkRail, hosted sidebar and initial action tests: 107 passed.
 - Expanded final UI suites: 61 passed (12 action tests, 44 WorkRail tests, 5 hosted sidebar tests), including stale runtime/catalog results and duplicate submission.
 - Desktop and Gateway scoped TypeScript checks passed.
-- Browser component fixture: observed menu, icon/separator layout, Edit inputs, pin indicator and focus return after Cancel. This is not authenticated Electron/VPS Human Review.
+- Browser component fixture: observed menu, icon/separator layout, Edit inputs, Pinned section placement without a project-row pin glyph, and focus return after Cancel. This is not authenticated Electron/VPS Human Review.
 - Site documentation tests: 100 passed. Rendered docs checks were blocked by an existing undeclared `next-themes` import in `src/components/mdx/mermaid.tsx`; no dependency changes were made for this documentation-only PR.
 - Pending: authenticated runtime end-to-end and Human Review, CI and Greptile. No deployment or merge performed.
 

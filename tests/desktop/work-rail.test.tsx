@@ -157,6 +157,7 @@ describe("WorkRail", () => {
     pinnedSection = screen.getByRole("button", { name: "Pinned" }).closest("section");
     projectsSection = screen.getByRole("button", { name: "Projects" }).closest("section");
     expect(within(pinnedSection!).getByRole("button", { name: "Alpha" })).toBeTruthy();
+    expect(within(pinnedSection!).queryByLabelText("Pinned project")).toBeNull();
     expect(within(pinnedSection!).queryByRole("button", { name: "Beta" })).toBeNull();
     expect(within(projectsSection!).getByRole("button", { name: "Beta" })).toBeTruthy();
     expect(within(projectsSection!).queryByRole("button", { name: "Alpha" })).toBeNull();
