@@ -26,8 +26,30 @@ function forbiddenHomePath(path: string): boolean {
 function missing(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
 }
+/**
+ * Identity of the physical thing behind a share, used to refuse a path whose bytes were swapped
+ * underneath it.
+ *
+ * `dev:ino:birthtimeNs` is what catches that: deleting and recreating a file or folder at the same
+ * path yields a new inode or a new birth time, so the stored incarnation stops matching.
+ *
+ * `ctimeNs` is deliberately excluded when the filesystem reports a usable birth time. It changes on
+ * any metadata write, and for a *folder* it also changes whenever an entry is added or removed — so
+ * including it made an ordinary "collaborator adds a file to the shared folder" rotate the
+ * incarnation and 404 the share until the owner re-shared it. Measured: adding a file to a folder
+ * leaves dev, ino and birthtimeNs untouched while moving ctimeNs, and delete-and-recreate moves ino
+ * or birthtimeNs on both files and folders. So dropping it costs no defence and stops the share
+ * breaking under normal use.
+ *
+ * It is kept as a fallback where birth time is unavailable — some filesystems report 0 or simply
+ * mirror ctime — because there inode reuse could otherwise let a recreated path keep its identity.
+ */
 function physicalIncarnation(info: BigIntStats): string {
-  return createHash("sha256").update(`${info.dev}:${info.ino}:${info.birthtimeNs}:${info.ctimeNs}`).digest("hex");
+  const birthtimeUsable = info.birthtimeNs > 0n && info.birthtimeNs !== info.ctimeNs;
+  const identity = birthtimeUsable
+    ? `${info.dev}:${info.ino}:${info.birthtimeNs}`
+    : `${info.dev}:${info.ino}:${info.birthtimeNs}:${info.ctimeNs}`;
+  return createHash("sha256").update(identity).digest("hex");
 }
 
 function contentType(path: string): string {
