@@ -895,3 +895,52 @@ Above them: s09 `26ae6daeb`, s10 `05e77de23`, s12 `539c721c6`, s12-app `5cbd2084
 **Follow-up issues filed rather than patched mid-release:** #1828 (a relative *value* import breaks the contracts entrypoint under plain Node; type-only relative imports are erased and harmless, so the rule is about values), #1829 (the direct terminal WebSocket answers a bare 404 when a dependency is missing while the HTTP routes correctly report `unavailable`, plus a duplicated path regex), #1830 (**repo-root tests are never typechecked** — `bun run typecheck` runs per package and no package includes `tests/`, so fixture drift passes the mandatory pre-PR gate; scoped with the warning that enabling it surfaces a pre-existing backlog around Kysely generics and async-iterator typing, so run it non-blocking first).
 
 **Process correction:** CI was being dispatched on every restack, burning shared runner capacity on heads that were then superseded. From here: validate locally, then dispatch CI once on final heads.
+
+## 45. CI is not a usable gate right now — 2026-09-22 00:30 UTC
+
+**The merge queue is blocked by capacity, not by code.** No substantive CI run has executed on any of the seven
+main-path heads. Two independent causes stack:
+
+1. **The known structural gap.** `.github/workflows/ci.yml` triggers on `pull_request` only for bases
+   `main`, `stack/**`, `codex/**`. Six of the seven layers are based on a sibling branch, so they get no
+   automatic run at all. Only #1802 (base `main`) receives one.
+2. **Runner starvation from an unrelated workstream.** Six `codex/*` speech PRs have been cycling CI since
+   23:33 (repeatedly cancelled and re-queued). Every one of our runs sat at status `pending` with **zero jobs
+   assigned** for more than twenty minutes. `ci.yml` uses `concurrency: { group: ci-<ref>-shared, queue: max }`,
+   so superseded runs on the same ref hold their group's slot while parked.
+
+**Action taken.** Cancelled 38 superseded/duplicate spec-124 runs (every `workflow_dispatch` CI and Docker run
+on heads that the pending restack will rewrite, plus parked `pull_request` runs on old SHAs). Kept exactly one:
+the `pull_request` CI run on `124/s05` @ `53b7a698d`, the only head that the restack will not move. This both
+unblocks the shared queue for the other workstream and stops us holding concurrency groups we no longer need.
+
+**Consequence for the release: local gates are the merge gate.** Do not read a green check list on a stacked
+layer as evidence — `gh pr checks` on these PRs shows Docker, preview and review jobs only, with no typecheck
+and no unit tests. Before each merge, run `bun run typecheck`, `bun run check:patterns` and the layer's suites
+**in that layer's worktree**, and record exit codes rather than summary lines. A Postgres-backed suite that
+*skips* is not a suite that *passes*; say which it was.
+
+**Two process corrections, both mine.**
+
+- *Cite the commit that contains the fix.* I replied "Fixed in `945973db0`" on #1803's control-client thread;
+  that commit touches `direct-sessions.ts` only, and the control-client guard was still unwritten. Unresolved
+  the thread and posted the correction. A fix SHA is a checkable claim — verify with `git show --stat` before
+  posting it.
+- *Never select review threads by file path.* Twice a path filter replied to every thread on a file (five on
+  `control-client.ts`, five on `direct-streams.ts`) and the first instance also unresolved four threads that
+  earlier rounds had legitimately closed. Both were retracted and the four re-resolved. Select threads by
+  **node id**, after printing each thread's opening comment to confirm which one you mean.
+
+**Ancestry confirmed** (GitHub bases match the intended stack):
+`main` <- `124/s05` (#1802) <- `124/s05-gateway` (#1803) <- `124/s05-relay` (#1804) <- `124/s08` (#1805)
+<- `124/s06` (#1806) <- `124/s07` (#1807) <- `124/s07-terminal` (#1808).
+
+**Unpushed worker commits held deliberately** (one restack pass will carry them, so they are not pushed yet):
+`124/s05-gateway` 665104d64/945973db0/a18a0547a; `124/s05-relay` 77eb5e28a/1f9421127/72c65de30;
+`124/s06` 408ab27a9/2db95964b/e12c24bc2.
+
+**The stream-cap finding on #1806 stayed disproved.** A fix did land on that exact line, but as defensive
+hardening: evicting a scope's *last* stream prunes the scope, so a new handle could be inserted into a detached
+map holding live sockets. Unreachable while the cap is 8, because the victim is then never the scope's last
+stream. The durable win is the RED `408ab27a9` — the cap was correct but had **no test that pushed past it with
+fully-opened sockets**. It is asserted now.
