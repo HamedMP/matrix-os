@@ -102,9 +102,19 @@ export class DirectSessionService {
     }
   }
 
+  /** Refuses work once drained; called at entry and again after every await that can span a fence. */
+  private assertServing(): void {
+    if (this.closed) throw new DirectAuthError("unavailable", "Direct sessions are shutting down");
+  }
+
+  /** Sessions currently registered; the drain's observable, and zero once fenced. */
+  liveSessionCount(): number {
+    return this.sessions.size;
+  }
+
   /** `POST /api/collaboration/direct-sessions`: one-use ticket exchange with proof of possession. */
   async create(request: unknown): Promise<CollaborationDirectSession> {
-    if (this.closed) throw new DirectAuthError("unavailable", "Direct sessions are shutting down");
+    this.assertServing();
     assertProtocolVersion(request);
     const parsed = CollaborationDirectSessionRequestSchema.safeParse(request);
     if (!parsed.success) throw new DirectAuthError("invalid_ticket", "Session request is invalid");
@@ -113,6 +123,11 @@ export class DirectSessionService {
     this.options.verifier.requireClientOrigin(parsed.data.clientOrigin);
     this.options.verifier.verifyPossession({ ticket, proofPublicKey: parsed.data.proofPublicKey, possession: parsed.data.possession });
     const evidenceExpiresAt = await this.admit(ticket);
+    // Admission awaits the scope read, the membership evidence and the authority check, so the
+    // fence can land while this call is in flight. Refuse at the point of registration rather
+    // than register and end: an end hook would fire into registries the fence has detached,
+    // and the verifier it would consume through is torn down in the same pass.
+    this.assertServing();
     this.options.verifier.consume(ticket);
     if (this.sessions.size >= MAX_SESSIONS) this.sweep();
     if (this.sessions.size >= MAX_SESSIONS) throw new DirectAuthError("limit", "Too many direct sessions");
@@ -159,6 +174,7 @@ export class DirectSessionService {
       throw new DirectAuthError("invalid_ticket", "Renewal ticket does not match the session");
     }
     const evidenceExpiresAt = await this.admit(ticket);
+    this.assertServing();
     this.options.verifier.consume(ticket);
     const issuedAt = this.now();
     const session = CollaborationDirectSessionSchema.parse({
@@ -206,6 +222,9 @@ export class DirectSessionService {
     }
     this.options.verifier.admitRequestNonce(record.session.id, signature.nonce, issuedAt + REQUEST_WINDOW_MS + SKEW_MS);
     await this.refreshEvidence(record);
+    // Checked after the refresh, never inside it: `refreshEvidence` ends the session on a
+    // failure, and ending it here would notify registries the fence has already detached.
+    this.assertServing();
     return { ...record.session };
   }
 
@@ -381,7 +400,7 @@ export class DirectSessionService {
   }
 
   private live(sessionId: string): SessionRecord {
-    if (this.closed) throw new DirectAuthError("unavailable", "Direct sessions are shutting down");
+    this.assertServing();
     const record = this.sessions.get(sessionId);
     if (!record) throw new DirectAuthError("expired", "Session is not active");
     if (Date.parse(record.session.expiresAt) <= this.now().getTime()) {
