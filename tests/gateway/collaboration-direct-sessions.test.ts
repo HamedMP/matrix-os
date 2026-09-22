@@ -266,6 +266,89 @@ describe("S05 direct sessions on the home", () => {
     unsubscribe();
   });
 
+  it("refuses an admission already in flight when the fence lands, instead of registering it", async () => {
+    const ended: string[] = [];
+    const unsubscribe = service.subscribeEnded((session) => { ended.push(session.id); });
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    const authorize = authority.authorize.bind(authority);
+    const spy = vi.spyOn(authority, "authorize").mockImplementation((async (input: never) => {
+      await blocked;
+      return authorize(input);
+    }) as never);
+    const admission = service.create(sessionRequest(collaborationActors.editor).body);
+    // Past the closed check at the top of create and inside its awaited admission work.
+    await vi.waitFor(() => { expect(spy).toHaveBeenCalled(); });
+
+    service.fence();
+    release();
+
+    // The late arrival must refuse at the point of registration. Registering it and ending it
+    // is not equivalent: the end hook would fire into registries the fence has detached.
+    await expect(admission).rejects.toMatchObject({ code: "unavailable" });
+    expect(service.liveSessionCount()).toBe(0);
+    expect(ended).toEqual([]);
+    unsubscribe();
+  });
+
+  it("refuses an in-flight renewal when the fence lands", async () => {
+    const ownerKey = clientKey();
+    const owner = await service.create(sessionRequest(collaborationActors.owner, ownerKey).body);
+    const ended: string[] = [];
+    const unsubscribe = service.subscribeEnded((session) => { ended.push(session.id); });
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    const authorize = authority.authorize.bind(authority);
+    const spy = vi.spyOn(authority, "authorize").mockImplementation((async (input: never) => {
+      await blocked;
+      return authorize(input);
+    }) as never);
+    const { body } = sessionRequest(collaborationActors.owner, ownerKey);
+    const renewal = service.renew(owner.id, { clientRequestId: randomUUID(), signedTicket: body.signedTicket });
+    await vi.waitFor(() => { expect(spy).toHaveBeenCalled(); });
+
+    service.fence();
+    release();
+
+    await expect(renewal).rejects.toMatchObject({ code: "unavailable" });
+    expect(ended).toEqual([owner.id]);
+    expect(service.liveSessionCount()).toBe(0);
+    unsubscribe();
+  });
+
+  it("refuses an in-flight signed request whose evidence refresh outlived the fence", async () => {
+    const key = clientKey();
+    const session = await service.create(sessionRequest(collaborationActors.editor, key).body);
+    const ended: string[] = [];
+    const unsubscribe = service.subscribeEnded((entry) => { ended.push(entry.id); });
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    const require = authority.organizationPrecondition.require.bind(authority.organizationPrecondition);
+    const spy = vi.spyOn(authority.organizationPrecondition, "require").mockImplementation((async (input: never) => {
+      await blocked;
+      return require(input);
+    }) as never);
+    // Past the evidence deadline, so authenticate must refresh it and therefore await.
+    clock = new Date(clock.getTime() + 21_000);
+    const signature = {
+      protocolVersion: 2, sessionId: session.id, method: "GET" as const, path: `/api/collaboration/scopes/${scopeId}`, query: "",
+      bodyDigest: sha256Hex(new Uint8Array()), conditionalHeadersDigest: sha256Hex(new Uint8Array()), nonce: randomUUID().replaceAll("-", ""), issuedAt: clock.toISOString(),
+    };
+    const pending = service.authenticate({
+      sessionId: session.id, signature, proof: key.sign(requestSigningPayload(signature)),
+      method: "GET", path: signature.path, query: "", body: new Uint8Array(),
+    });
+    await vi.waitFor(() => { expect(spy).toHaveBeenCalled(); });
+
+    service.fence();
+    release();
+
+    // A signed request must not be answered for a runtime that has stopped serving.
+    await expect(pending).rejects.toMatchObject({ code: "unavailable" });
+    expect(ended).toEqual([session.id]);
+    unsubscribe();
+  });
+
   it("bounds connections per actor, scope and home and refuses admission when replay retention cannot be kept", async () => {
     const session = await service.create(sessionRequest(collaborationActors.editor).body);
     const first = service.connections.open({ sessionId: session.id });
