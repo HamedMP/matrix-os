@@ -89,21 +89,23 @@ describe("Chat collaboration sharing", () => {
     expect(snapshotApi.post).not.toHaveBeenCalled();
   });
 
-  it("keeps organization-pending cards visible without offering an unusable Open action", async () => {
+  it("keeps an organization-pending card visible and opens nothing until its grant is accepted", async () => {
     // grantId is required by the strict organization_pending schema, and dropping it does not fail
     // loudly: the whole discovery response is rejected and this card becomes a generic error card.
     const api = { baseUrl: "https://gateway.test", get: vi.fn(async (path: string) => path.endsWith("/inbox")
       ? { items: [{ scopeId, runtimeId: "runtime_owner", ownerId: "user_owner", kind: "chat", authorityGeneration: 1,
         status: "organization_pending", organizationId: "org_matrix_team",
-        grantId: "70000000-0000-4000-8000-000000000001" }] }
+        grantId: "20000000-0000-4000-8000-000000000402" }] }
       : { items: [] }), post: vi.fn(), delete: vi.fn() };
     const openChat = vi.fn();
     render(<ChatCollaboration view={{ kind: "home" }} api={api} actorId="user_editor" openChat={openChat} />);
     expect(await screen.findByText("Shared with your organization")).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Open" })).toBeNull();
-    expect(screen.queryByText(/opens when you join/i)).toBeNull();
-    expect(screen.getByText(/Access will be available when this share is enabled/i)).toBeVisible();
+    expect(screen.getByText(/opens when you join/i)).toBeVisible();
+    // A pending directory pointer is not authority to open content, so the card offers
+    // acceptance and nothing navigates until the member asks for it.
+    expect(screen.getByRole("button", { name: "Open" })).toBeEnabled();
     expect(openChat).not.toHaveBeenCalled();
+    expect(api.post).not.toHaveBeenCalled();
   });
 
   it("shows an authenticated invitation inbox and accepts into the shared Chat", async () => {
