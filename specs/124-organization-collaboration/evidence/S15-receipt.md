@@ -66,3 +66,12 @@ Review finding on #1850: both shells handed `ResourceSharingButton` a launch pat
 | Web viewer shares by resolved slug | `pnpm exec vitest run tests/shell/app-viewer-runtime-modes.test.ts -t 'hands the owner catalog'`: 1 failed / 19 skipped; the Share row was gated on `apps/` or `modules/` prefixes and passed the raw path. | 20/20 passed. The row is gated on the slug AppViewer already resolves through `extractSlug`, so a legacy file app or a `modules/` path no longer offers a Share that cannot resolve. AppViewer is not render-testable in this suite, so the invariant is asserted on its source, matching the existing tests in that file. |
 
 Combined: `pnpm exec vitest run tests/ui/collaboration-ready-to-work.test.tsx tests/desktop/app-launcher.test.tsx tests/shell/app-viewer-runtime-modes.test.ts tests/shell/app-viewer-slug.test.ts` passed **54/54, 0 skipped**. `bun run typecheck` and `bun run check:patterns` both exit **0** (five pre-existing repository warnings, zero violations). Three React files changed, so a react-doctor pass is owed on `shell`, `packages/ui` and `desktop`. Visual capture for the changed Share states is still unrun and is tracked with the other T079 surface evidence.
+
+## 2026-09-22 — stale organization-pending test on the branch
+
+Found while sweeping adjacent suites, not part of either review finding, and confirmed pre-existing by stashing the working tree: `tests/ui/chat-collaboration-sharing.test.tsx` failed **1 / 22** at `ce763d2b1` with no change of mine applied. Two separate staleness layers, both left behind by S15's own changes:
+
+1. `c72f1c733` made `grantId` required on an `organization_pending` discovery item, but this fixture never got one, so the item failed strict parsing and the card did not render at all.
+2. With the card rendering, the test still asserted the pre-S15 behavior — no Open action, no "opens when you join" copy — which S15 deliberately replaced with an Open that accepts the grant before navigating.
+
+The component is correct; the test was superseded. It now asserts what S15 ships: the pending card stays visible with its pending copy, offers an enabled Open, and neither posts nor navigates until the member asks. Activation and failure paths stay covered by `collaboration-ready-to-work`. `pnpm exec vitest run tests/ui/chat-collaboration-sharing.test.tsx` passes **22/22, 0 skipped**.
