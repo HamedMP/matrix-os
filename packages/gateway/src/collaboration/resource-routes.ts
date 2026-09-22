@@ -100,6 +100,8 @@ export function watchResourceStream(
       try {
         const next = await reader.read();
         if (closed) return;
+        // The lease can end while the read is pending; re-check it before any byte reaches the client.
+        if (!leaseActive()) { stop(controller); return; }
         if (next.done) {
           if (received !== declaredSize) { stop(controller); return; }
           closed = true;
