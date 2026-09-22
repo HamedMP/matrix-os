@@ -17,6 +17,7 @@ skills=(
   app-ui-patterns
   design-system
   integrations
+  jev-email-triage
   dev-vps
   debug-app
   landing-design

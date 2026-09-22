@@ -1,3 +1,8 @@
+import {
+  JevEmailTriageResultSchema,
+  JevEmailTriageScoresSchema,
+  evaluateEmailTriagePolicy,
+} from "@matrix-os/contracts";
 import { wrapExternalContent } from "../security/external-content.js";
 
 const GATEWAY_BASE = process.env.GATEWAY_URL ?? "http://localhost:4000";
@@ -27,11 +32,16 @@ export type GatewayFetcher = (
 
 interface ToolResult {
   [key: string]: unknown;
+  isError?: boolean;
   content: Array<{ type: "text"; text: string }>;
 }
 
 function textResult(text: string): ToolResult {
   return { content: [{ type: "text" as const, text }] };
+}
+
+function errorResult(text: string): ToolResult {
+  return { isError: true, content: [{ type: "text" as const, text }] };
 }
 
 function defaultFetcher(): GatewayFetcher {
@@ -313,6 +323,58 @@ export async function callServiceHandler(
   } catch (err: unknown) {
     console.error("[integrations] call_service error:", err instanceof Error ? err.message : err);
     return textResult("Integration service is temporarily unavailable. Please try again later.");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Matrix-funded Jev. The caller supplies only bounded evidence and a stable
+// idempotency key. Owner identity, recipe, model, payer, and upstream endpoint
+// remain server-owned.
+// ---------------------------------------------------------------------------
+
+export interface JevEvaluateInput {
+  state: string;
+  idempotency_key: string;
+  verified: boolean;
+  age_days: number;
+}
+
+export async function jevEvaluateHandler(
+  input: JevEvaluateInput,
+  fetcher: GatewayFetcher = defaultFetcher(),
+): Promise<ToolResult> {
+  try {
+    const response = await fetcher(`${GATEWAY_BASE}/api/jev/evaluate`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({
+        recipe: "email-triage-v1",
+        state: input.state,
+        idempotencyKey: input.idempotency_key,
+      }),
+      redirect: "error",
+      signal: AbortSignal.timeout(API_TIMEOUT_MS),
+    });
+    if (!response.ok) {
+      return errorResult("Jev evaluation is currently unavailable. No classification was produced.");
+    }
+    const result = JevEmailTriageResultSchema.safeParse(await response.json());
+    if (!result.success) {
+      console.warn("[jev] Invalid local Gateway response");
+      return errorResult("Jev evaluation is currently unavailable. No classification was produced.");
+    }
+    const scores = JevEmailTriageScoresSchema.parse(Object.fromEntries(
+      result.data.answers.map((answer) => [answer.id, answer.probability]),
+    ));
+    const decision = evaluateEmailTriagePolicy({
+      scores,
+      verified: input.verified,
+      ageDays: input.age_days,
+    });
+    return textResult(JSON.stringify({ evaluation: result.data, decision }));
+  } catch (error: unknown) {
+    console.error("[jev] Evaluation unavailable:", error instanceof Error ? error.name : "UnknownError");
+    return errorResult("Jev evaluation is currently unavailable. No classification was produced.");
   }
 }
 
