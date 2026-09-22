@@ -15,20 +15,30 @@ const BOARD = { slug: "board", created_at: "2026-01-02T03:04:05.000Z", tables: {
 
 describe("production project share inventory wiring", () => {
   it("constructs canonical Chat roots before composing the owner collaboration surfaces", async () => {
-    const server = await readFile(new URL("../../packages/gateway/src/server.ts", import.meta.url), "utf8");
-    const rootInitialization = server.indexOf("const ownerChatExecutionRoots = createChatExecutionRootResolver(");
-    const gitDriver = server.indexOf("const projectGitDriver = createProjectGitDriver(");
-    const composition = server.indexOf("onPartialRuntime: (runtime) => enableOwnerCollaborationSurfaces(runtime, {");
+    // The startup extraction moved this sequence out of the entry point: the
+    // owner-database startup builds the Chat execution roots, then hands them
+    // to collaboration construction, which builds the git driver and composes
+    // the surfaces. The cross-module half of the ordering is enforced by
+    // constructOwnerCollaboration requiring ownerChatExecutionRoots.
+    const [ownerDatabase, collaboration] = await Promise.all([
+      readFile(new URL("../../packages/gateway/src/startup/owner-database.ts", import.meta.url), "utf8"),
+      readFile(new URL("../../packages/gateway/src/startup/collaboration.ts", import.meta.url), "utf8"),
+    ]);
+    const rootInitialization = ownerDatabase.indexOf("const ownerChatExecutionRoots = createChatExecutionRootResolver(");
     expect(rootInitialization).toBeGreaterThan(-1);
-    expect(gitDriver).toBeGreaterThan(rootInitialization);
+    expect(collaboration).toContain("ownerChatExecutionRoots: ChatExecutionRootResolver;");
+    const gitDriver = collaboration.indexOf("const projectGitDriver = createProjectGitDriver(");
+    const composition = collaboration.indexOf("onPartialRuntime: (runtime) => enableOwnerCollaborationSurfaces(runtime, {");
+    expect(gitDriver).toBeGreaterThan(-1);
     expect(composition).toBeGreaterThan(gitDriver);
-    const passed = server.slice(composition, composition + 500);
+    const passed = collaboration.slice(composition, composition + 500);
     expect(passed).toContain("chatExecutionRoots: ownerChatExecutionRoots");
     expect(passed).toContain("projectGitDriver,");
   });
 
   it("keeps the gateway entry point out of the collaboration surface composition", async () => {
     const server = await readFile(new URL("../../packages/gateway/src/server.ts", import.meta.url), "utf8");
+    expect(server).toContain("initializeOwnerDatabaseServices({");
     for (const moved of [
       "createOwnerResourceDriver(",
       "createGatewayProjectInventorySource(",
