@@ -1847,3 +1847,43 @@ mandatory Invariants section grounded in the diff and the layer's evidence recei
 Surface matrices are present for `s10`, `s12` and `s15`; `s09`, `s12-app`, `s15-gateway` and `s15-directory`
 are stated backend-only. **`s15-direct` needs a matrix added before submission** — its only `packages/ui/`
 files render nothing, so a rationale was written instead, but the rule is written to require the matrix.
+
+## 65. Five layers merged; S06 took three rounds, all real — 2026-09-22 12:20 UTC
+
+`main` is `57daf78ce`. Merged: #1802, #1803, #1804, #1805, **#1806**. Remaining: #1807 (in CI), #1808.
+
+**#1806 failed CI twice and drew two review findings. None was churn, and all four shared one shape: a test
+that passed without exercising what it claimed to cover.**
+
+1. **Listener count.** The layer adds `onEvent("auth:changed", closeDesktopCollaborationSessions)`. The unwire
+   test asserted `operator.on` was called exactly 4 times across two wire cycles — two listeners times two
+   cycles. Three listeners makes six.
+2. **My first fix was weak, and the reviewer caught it.** I replaced the literal with a self-derived count.
+   Removing the listener *lowers* that count, the channel check still passes because another `auth:changed`
+   listener remains, and the test stays green. I had traded brittle for useless.
+3. **A deeper problem the count hid.** The mock stored **one callback per channel**
+   (`listeners.set(channel, callback)`), so the second `auth:changed` registration **overwrote the first** and
+   the cleanup handler was never reachable from the test at all. The mock now collects every listener per
+   channel and its teardown removes only its own callback, and the assertion is the handler itself:
+   `expect(listeners.get("auth:changed")).toContain(closeDesktopCollaborationSessions)`.
+   **Proved by deleting the listener and re-running: `1 failed | 11 passed`. Restored: `12 passed`.**
+4. **A second suite, a second mock gap.** `terminal-sharing-runtime` mocked `@matrix-os/ui` with two exports.
+   This layer makes the connection store reach the direct collaboration client, so the graph needs a third;
+   without it the component never rendered and the assertions compared against nothing.
+5. **And that mock had the wrong shape.** It returned a flat `close`, but production cleans up through
+   `api.direct.close()` — twice in `lib/collaboration.ts`, when evicting the oldest client past the cap and
+   when the desktop auth state changes. Render-only assertions pass either way, so it would have surfaced much
+   later as a confusing failure in whichever suite first exercised cleanup, looking like a bug in *that*
+   change.
+
+**Two rules worth carrying.**
+
+- **Verify a reviewer's claim against the source before accepting the suggestion.** Both findings here were
+  correct, and checking took one command each. Applying a suggestion on trust is how a wrong one lands.
+- **When you assert that a regression is caught, demonstrate it.** Deleting the listener and watching the test
+  fail took thirty seconds and converted a claim into evidence.
+
+**Triage order that separated two identical-looking CI failures this session:** is the failing file in the
+layer's diff? is `main` green on its last *completed* run? is this the only failure across recent runs? Only
+then re-run. #1805's failure was a genuine flake in a file absent from its diff; #1806's was real and in a file
+it modifies. Re-running first would have masked the second.
