@@ -177,7 +177,10 @@ describe("scope runtime canonical Chat adapter", () => {
       runChat: vi.fn(async () => ({ runtimeHandle, executionGeneration: "7", text: "Sandboxed answer" })),
       stopRuntime: vi.fn(async () => ({ state: "stopped" })),
     };
-    const base = { client, scopeId, executionGeneration: "7", adapterId: "claude-code" as const, harnessVersion: "2.1.240" };
+    const base = {
+      client, scopeId, executionGeneration: "7", adapterId: "claude-code" as const, harnessVersion: "2.1.240",
+      runtimes: noRuntimes, onLoss: noLoss,
+    };
     const bare = [];
     for await (const event of createScopeRuntimeChatProviderAdapter(base).start(runInput())) bare.push(event);
     expect(bare).toMatchObject([{ type: "run.completed", outcome: "failed", error: { code: "run_unavailable" } }]);

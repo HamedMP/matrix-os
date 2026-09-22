@@ -58,6 +58,12 @@ export function createScopeRuntimeChatProviderAdapter(options: {
 }): CanonicalChatProviderAdapter<State> {
   const scopeHandle = `scope_${options.scopeId.replaceAll("-", "")}`;
   if (!/^scope_[a-f0-9]{32}$/.test(scopeHandle)) throw new Error("Invalid collaboration scope handle");
+  // Both collaborators are resolved here, at registration: an absent one used to surface as a
+  // TypeError mid-run, which fails the member's run instead of the wiring that forgot them.
+  if (typeof options.onLoss !== "function") throw new Error("Shared Chat adapter requires the run loss hook");
+  if (typeof options.runtimes?.bind !== "function" || typeof options.runtimes.release !== "function") {
+    throw new Error("Shared Chat adapter requires the runtime binding registry");
+  }
   const sandbox = options.sandbox?.scopeHandle === scopeHandle ? options.sandbox : undefined;
   let stoppedRuntimeHandle: string | undefined;
   let stopInFlight: Promise<void> | undefined;
