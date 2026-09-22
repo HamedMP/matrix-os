@@ -1238,3 +1238,43 @@ items in `83ff5b1d8`, with `shared-coding-execution` 32, `collaboration-owner-so
 21, `collaboration-wiring` 17, `collaboration-chat-controls` 14, `collaboration-lifecycle` 7 and
 `collaboration-terminal-websocket` 3 passing against real Postgres, typecheck exit 0 and patterns clean. Those
 numbers are **not** evidence about the rebased parents and must be re-run after the move.
+
+## 53. S09 hardening grafts cleanly; the risk is re-anchoring, not dependency — 2026-09-22 07:50 UTC
+
+**Answer to section 52's open question: all four `124/s09-run-hardening` commits apply at S09. No later-layer
+dependency, so no split.** Verified by content rather than by SHA, so it survives the pending restack.
+
+Every symbol, table and call site the hardening acts on already exists at S09:
+
+- `shared-ai-runtime.ts` has `ownerSource`, `executionPolicies`, `runLoss`, `sandboxRuntimes`, `executionRoots`,
+  `SandboxRuntimeRegistry`, `admitRun`, `createSharedChatSandboxManifest`, and the `resolveAccessSource`
+  fallback the change deletes.
+- `shared-run-loss.ts` already exports `startControlLossWatchdog` — which *is* the P1 finding: the watchdog
+  exists and nothing calls it.
+- Tables touched are `chat_queued_turns`, `chat_runs`, `collaboration_scopes`, `collaboration_members`,
+  `collaboration_execution_policies`, `collaboration_run_bindings` and `collaboration_run_interruptions`, the
+  last being S09's own migration 11. **Nothing** from S10's git operations or S12's resource catalog and upload
+  stages.
+- A sweep of every identifier on the added lines found no S10, S12 or S15 symbol anywhere; the only absent
+  names are ones these commits introduce.
+
+**Seven files conflict, all from divergence, not dependency**: `scope-runtime-chat-adapter.ts`,
+`shared-ai-runtime.ts`, `wiring.ts`, and the orchestrator, owner-source, wiring and scope-runtime-adapter test
+files. S09 and the integrated S15 base edited the same regions.
+
+**The real risk is two `wiring.ts` hunks anchored on lines S09 does not have.** The return-object hunk sits
+after `ownerRuntimeSessions` (S15) and the close-path hunks beside `closeResourceServices()` (S12). S09 has
+equivalent anchors (`controlClient`, and both close paths with `closing = true`), so these need re-anchoring
+rather than redesign — but a close path is precisely where ordering is load-bearing. An earlier conflict in
+this same file turned on exactly that: both drains had to precede resource teardown, because sessions ending in
+the drain can still reach the catalog and file driver. **Any re-anchoring must justify why the new position is
+correct at S09**, and must say so if the ordering property differs there because S12 and S15 are absent.
+
+**Conflict-resolution rule restated**, because two of the conflicts are in files whose fixtures were fixed on
+higher layers: when a resolution forces a choice between the grafted version and a newer fixture, **take the
+newer one and say so**. Carrying an older fixture down the stack is the silent-revert failure mode that has
+already occurred once in this release.
+
+**Sequencing.** Nothing moves until the seven main-path layers land. The merge simulation above was run against
+`124/s09` @ `26ae6daeb`, which still sits on the pre-restack chain head, so the conflict set must be recomputed
+once S09 has its final parent.
