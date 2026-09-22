@@ -48,6 +48,7 @@ const SCOPE_ROUTES = [
   ["GET", new RegExp(`^/api/collaboration/scopes/(${UUID})/terminal$`)],
   ["POST", new RegExp(`^/api/collaboration/scopes/(${UUID})/terminal/actions$`)],
   ["GET", new RegExp(`^/api/collaboration/scopes/(${UUID})/project/inventory$`)],
+  ["GET", new RegExp(`^/api/collaboration/scopes/(${UUID})/project/readiness$`)],
   ["POST", new RegExp(`^/api/collaboration/scopes/(${UUID})/project/confirm$`)],
   ["GET", new RegExp(`^/api/collaboration/scopes/(${UUID})/project$`)],
   ["GET", new RegExp(`^/api/collaboration/scopes/(${UUID})/project/files$`)],
