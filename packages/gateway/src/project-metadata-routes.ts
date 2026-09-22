@@ -8,7 +8,7 @@ type Admission = <T>(input: {
   ownerScope: OwnerScope;
   projectSlug: string;
   kind: "write" | "run";
-  operation(): Promise<T>;
+  operation(projectId: string): Promise<T>;
 }) => Promise<{ ok: true; value: T } | { ok: false; status: number; body: { error: unknown } }>;
 
 export function registerProjectMetadataRoutes(app: Hono, options: {
@@ -30,7 +30,12 @@ export function registerProjectMetadataRoutes(app: Hono, options: {
     }
     const patch = ProjectMetadataPatchSchema.safeParse(raw);
     if (!slug.success || !patch.success) return c.json({ error: { code: "invalid_request", message: "Project update is invalid" } }, 400);
-    const admitted = await options.admit({ ownerScope, projectSlug: slug.data, kind: "write", operation: () => options.update(slug.data, ownerScope, patch.data) });
+    const admitted = await options.admit({
+      ownerScope,
+      projectSlug: slug.data,
+      kind: "write",
+      operation: projectId => options.update(slug.data, ownerScope, patch.data, projectId),
+    });
     if (!admitted.ok) return c.json(admitted.body, admitted.status as ContentfulStatusCode);
     const result = admitted.value;
     if (!result.ok) return c.json({ error: result.error }, result.status as ContentfulStatusCode);

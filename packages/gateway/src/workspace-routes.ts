@@ -350,17 +350,17 @@ export function createWorkspaceRoutes(options: {
     ownerScope: OwnerScope;
     projectSlug: string;
     kind: "write" | "run";
-    operation(): Promise<T>;
+    operation(projectId: string): Promise<T>;
   }): Promise<
     | { ok: true; value: T }
     | { ok: false; status: number; body: { error: unknown } }
   > {
-    if (!options.projectOperationAdmission) {
-      return { ok: true, value: await input.operation() };
-    }
     const project = await projectManager.getProject(input.projectSlug, input.ownerScope);
     if (!project.ok) {
       return { ok: false, status: project.status, body: { error: project.error } };
+    }
+    if (!options.projectOperationAdmission) {
+      return { ok: true, value: await input.operation(project.project.id) };
     }
     try {
       const value = await options.projectOperationAdmission.withLegacyAdmission({
@@ -368,7 +368,7 @@ export function createWorkspaceRoutes(options: {
         ownerId: input.ownerScope.id,
         projectId: project.project.id,
         kind: input.kind,
-      }, input.operation);
+      }, () => input.operation(project.project.id));
       return { ok: true, value };
     } catch (err: unknown) {
       if (err instanceof ProjectFenceError) {
