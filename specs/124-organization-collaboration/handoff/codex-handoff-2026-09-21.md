@@ -869,3 +869,29 @@ Above them, linear and pushed: s09 `652518aa7`, s10 `08dff9891`, s12 `f3d9ca153`
 **S09 run-hardening complete** at `83ff5b1d8`: all eight findings plus all four P3 items, `shared-coding-execution` 32 passing (25 before the layer). It also repaired a previous worker's flood test whose mock returned a promise that never settled, hanging the whole file past every timeout — which likely explains earlier failures attributed to host contention.
 
 **Coordinator error worth recording:** after resolving the S15 conflict by dropping a duplicate method in favour of the base's, that layer's separate import of the same type remained, duplicating one the base already had — two compile errors in a hand-merged file. Tests and the pattern scan passed; only the typecheck exit code caught it, and it was briefly reported as green from the test lines alone. Hand-resolved semantic conflicts are exactly where type errors hide. Check the exit code, not the summary lines.
+
+## 44. Final chain, all blockers closed — 2026-09-22 00:00 UTC
+
+Every review thread closed and both verdict-only blockers fixed. Fifteen layers linear from `main e0c7d5729`, all pushed:
+
+| PR | Branch | Head |
+| --- | --- | --- |
+| #1802 | `124/s05` | `53b7a698d` |
+| #1803 | `124/s05-gateway` | `bbedf6ffb` |
+| #1804 | `124/s05-relay` | `3348e4bc7` |
+| #1805 | `124/s08` | `31a3d7ee2` |
+| #1806 | `124/s06` | `dbb65e6b7` |
+| #1807 | `124/s07` | `e2210ada7` |
+| #1808 | `124/s07-terminal` | `7ffac5e05` |
+
+Above them: s09 `26ae6daeb`, s10 `05e77de23`, s12 `539c721c6`, s12-app `5cbd2084b`, s15-gateway `2645c97ce`, s15-directory `4ae3a4d74`, s15-direct `1c925aa7c`, s15 `e76713d23`. Side layers: `124/s10-git-hardening` `5b1df5d54`, `124/s09-run-hardening` `57eb77680` (awaiting restack onto the new S15).
+
+**The gateway fence drained nothing.** `wiring.ts fence()` never called into the control client, so a fenced runtime kept its control stream, reconnect timer and 5-minute re-registration interval; a later frame then ran `sessions.revoke`, membership eviction and `endActorGrants` against the very dependencies the caller was destroying, and acknowledged a fence for a runtime that had stopped serving. A frame already inside its grant cleanup also resumed and acknowledged. Both the control client and `DirectSessionService` now have **synchronous** `fence()` methods with `shutdown()` delegating to them — in both cases the async signature sat over a body that never awaited, so the drain is complete rather than best-effort. In-flight work is abandoned at its resumption points (a frame refuses to start once drained; a denial whose cleanup lands after returns without moving the fence; no acknowledgement is sent, so it completes at its lease deadline through the existing cleanup-failure branch). The shared-AI and outbox drains stay best-effort because theirs are genuinely async.
+
+**Streamed overflow now outranks an early answer.** Through a relay limited to 32 KiB, a 256 KiB body with the home answering 400 mid-upload delivered 400 to the client: the cap held and the source was cancelled, but the client was never told size ended the request. The bounded stream now signals settlement (completion, overflow or cancellation) and forwarding waits for it before committing an upstream response, bounded by the request's own timeout, with abandonment counting as settled and non-stream bodies skipping the wait. The mirror case is pinned with a 100 ms timeout so a regression to an unbounded wait hangs rather than passing quietly.
+
+**Root cause of the inert-code family, fixed at the source.** `runtimes` and `onLoss` are now **required** on the shared chat/coding adapters. The rule recorded for the next person: *a collaborator whose absence changes behaviour silently is required; one whose absence is reported to the caller may stay optional.* An audit of 619 exported symbols across the collaboration surface found 8 genuinely unreachable exports, all benign (a duplicate route surface, superseded adapters, retired-feature residue, two functions implementing explicitly deferred scope), and 55 optional collaborator inputs of which production supplies all but the documented fail-closed ones.
+
+**Follow-up issues filed rather than patched mid-release:** #1828 (a relative *value* import breaks the contracts entrypoint under plain Node; type-only relative imports are erased and harmless, so the rule is about values), #1829 (the direct terminal WebSocket answers a bare 404 when a dependency is missing while the HTTP routes correctly report `unavailable`, plus a duplicated path regex), #1830 (**repo-root tests are never typechecked** — `bun run typecheck` runs per package and no package includes `tests/`, so fixture drift passes the mandatory pre-PR gate; scoped with the warning that enabling it surfaces a pre-existing backlog around Kysely generics and async-iterator typing, so run it non-blocking first).
+
+**Process correction:** CI was being dispatched on every restack, burning shared runner capacity on heads that were then superseded. From here: validate locally, then dispatch CI once on final heads.
