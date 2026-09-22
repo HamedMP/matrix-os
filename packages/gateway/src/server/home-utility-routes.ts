@@ -36,6 +36,9 @@ export function registerHomeUtilityRoutes(options: HomeUtilityRouteOptions): voi
   const canvasBodyLimit = bodyLimit({ maxSize: 100_000 });
   const taskBodyLimit = bodyLimit({ maxSize: 64 * 1024 });
   const cronBodyLimit = bodyLimit({ maxSize: 64 * 1024 });
+  // The module proxy streams the request body to a local module, so the limit
+  // is generous, but an unbounded forward is still an unbounded forward.
+  const moduleProxyBodyLimit = bodyLimit({ maxSize: 5 * 1024 * 1024 });
   app.post("/api/conversations", conversationBodyLimit, async (c) => {
     let body: { channel?: string } = {};
     try {
@@ -126,7 +129,7 @@ export function registerHomeUtilityRoutes(options: HomeUtilityRouteOptions): voi
     return c.json(theme);
   });
 
-  app.all("/modules/:name/*", async (c) => {
+  app.all("/modules/:name/*", moduleProxyBodyLimit, async (c) => {
     const moduleName = c.req.param("name");
     const modulesPath = join(homePath, "system/modules.json");
 
@@ -232,7 +235,7 @@ export function registerHomeUtilityRoutes(options: HomeUtilityRouteOptions): voi
     return c.json(job, 201);
   });
 
-  app.delete("/api/cron/:id", (c) => {
+  app.delete("/api/cron/:id", cronBodyLimit, (c) => {
     const id = c.req.param("id");
     const removed = cronService.removeJob(id);
     if (!removed) return c.json({ error: "Not found" }, 404);
