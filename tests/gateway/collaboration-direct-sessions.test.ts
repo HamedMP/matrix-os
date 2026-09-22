@@ -700,6 +700,66 @@ describe("S05 direct sessions on the home", () => {
     }
   });
 
+  it("refuses a registration that was in flight when the fence landed and installs no interval", async () => {
+    vi.useFakeTimers();
+    try {
+      let registrations = 0;
+      let connects = 0;
+      let release!: () => void;
+      const blocked = new Promise<void>((resolve) => { release = resolve; });
+      const { client } = controlClient({
+        startTimers: true,
+        fetchImpl: (async () => {
+          registrations += 1;
+          await blocked;
+          return new Response(JSON.stringify({ protocolVersion: 2, runtime: { runtimeId: logicalRuntimeId, authorityGeneration: 1, registeredAt: clock.toISOString() }, platformSigningKeys: [{ keyId: "platform-key-1", algorithm: "ed25519", publicKey: platformPublicKey }], controlTicket: "t".repeat(43), relay: { origin: clientOrigin } }), { status: 200, headers: { "content-type": "application/json" } });
+        }) as never,
+        connect: () => { connects += 1; return { send: () => undefined, close: () => undefined }; },
+      });
+      const started = client.start();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(registrations).toBe(1);
+
+      client.fence();
+      release();
+      await started;
+
+      // A registration that lands after the fence must not commit: a fenced runtime publishes
+      // no platform keys and is never control-fresh.
+      expect(client.platformKeys()).toEqual([]);
+      expect(client.controlFresh()).toBe(false);
+      expect(connects).toBe(0);
+      // And no re-registration interval survives behind the fence, which would otherwise keep
+      // authenticating to the platform every five minutes.
+      await vi.advanceTimersByTimeAsync(20 * 60_000);
+      expect(registrations).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("closes a control socket that connected after the fence instead of adopting it", async () => {
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    let closes = 0;
+    const { client } = controlClient({
+      connect: async () => {
+        await blocked;
+        return { send: () => undefined, close: () => { closes += 1; } };
+      },
+    });
+    const registration = await client.register();
+    const pending = client.connectControl(registration.controlTicket);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    client.fence();
+    release();
+
+    await expect(pending).rejects.toThrow(/shutting down/i);
+    // The late socket is closed rather than left holding the platform control stream.
+    expect(closes).toBe(1);
+  });
+
   it("bounds the pending control frame queue and terminates the stream instead of acknowledging a backlog late", async () => {
     const sent: Array<Record<string, unknown>> = [];
     let closes = 0;
