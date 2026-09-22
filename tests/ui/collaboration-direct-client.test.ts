@@ -243,6 +243,31 @@ describe("collaboration direct client", () => {
     for (const id of ids.slice(1)) expect(socketFor(id).close).not.toHaveBeenCalled();
   });
 
+  it("keeps a scope's live streams at the per-scope cap, stopping the oldest as each new one opens", async () => {
+    // The cap has to be effective, not decorative: pushing well past it must leave exactly the
+    // cap's worth of sockets still running, and each evicted stream must actually be stopped
+    // rather than merely selected. Each stream is opened before the next subscribes, so the
+    // victims are live sockets rather than connections that never got dialled.
+    vi.useFakeTimers();
+    const direct = client();
+    const perScopeCap = 8;
+    const overshoot = 5;
+    for (let index = 0; index < perScopeCap + overshoot; index += 1) {
+      direct.subscribeEvents(scopeId, eventHandlers());
+      await vi.waitFor(() => expect(world.sockets).toHaveLength(index + 1));
+    }
+    const opened = world.sockets.filter((socket) => socket.url.includes(`/scopes/${scopeId}/`));
+    expect(opened).toHaveLength(perScopeCap + overshoot);
+    const live = opened.filter((socket) => socket.close.mock.calls.length === 0);
+    expect(live).toHaveLength(perScopeCap);
+    // The oldest registrations are the ones that went, in order.
+    expect(opened.slice(0, overshoot).every((socket) => socket.close.mock.calls.length > 0)).toBe(true);
+    expect(opened.slice(overshoot)).toEqual(live);
+    // Every survivor is still tracked under its scope: closing the scope stops all of them.
+    direct.close(scopeId);
+    expect(live.every((socket) => socket.close.mock.calls.length > 0)).toBe(true);
+  });
+
   it("evicts the least recently active stream scope, not the oldest registration, when the scope cap is reached", async () => {
     vi.useFakeTimers();
     const direct = client();
