@@ -31,6 +31,15 @@ import { wsConnectionsActive } from "../metrics.js";
 const CONVERSATION_REPLAY_BATCH_SIZE = 100;
 const CONVERSATION_RECONNECT_GRACE_MS = 30_000;
 const MAX_RECONNECTABLE_ABORT_CONTROLLERS = 100;
+/**
+ * Per-connection in-flight run bound. Every accepted run holds an abort
+ * controller for this connection until its dispatch settles, so a client that
+ * submits faster than the kernel settles would otherwise grow that map without
+ * limit. Evicting an entry would silently drop a live run's stop capability,
+ * so the submission is refused instead, at the same bound the shared
+ * reconnectable registry enforces.
+ */
+export const MAX_INFLIGHT_ABORT_CONTROLLERS = MAX_RECONNECTABLE_ABORT_CONTROLLERS;
 const CLIENT_KERNEL_ERROR_MESSAGE = "Request failed";
 
 type UpgradeWebSocket = ReturnType<typeof createNodeWebSocket>["upgradeWebSocket"];
@@ -307,6 +316,14 @@ export function registerMainWebSocketRoutes(options: MainWebSocketRouteOptions):
           }
 
           if (parsed.type === "message") {
+            if (parsed.requestId && abortControllers.size >= MAX_INFLIGHT_ABORT_CONTROLLERS) {
+              sendClientAck(ws, parsed, "rejected", true);
+              send(ws, {
+                type: "kernel:error",
+                message: "Too many runs in flight. Wait for one to finish.",
+              });
+              return;
+            }
             const requestedSessionId = parsed.sessionId;
             let admittedExistingConversation = false;
             void (async () => {
