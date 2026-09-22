@@ -26,6 +26,11 @@ describe('Custom MCP route boundary', () => {
   function app(enabled = false) {
     const routes = new Hono();
     routes.get('/', (c) => c.json([]));
+    routes.get('/oauth/callback', (c) => c.json({
+      ok: true,
+      code: c.req.query('code'),
+      state: c.req.query('state'),
+    }));
     return createApp({ db, orchestrator: stubOrchestrator(), platformSecret: secret,
       ...(enabled ? { customMcpRoutes: routes, internalCustomMcpRoutes: routes } : {}),
     });
@@ -52,6 +57,29 @@ describe('Custom MCP route boundary', () => {
     expect((await server.request(base, { headers: headers(internal) })).status).toBe(200);
     expect((await server.request(base + '/unknown/action', { headers: headers(internal) })).status).toBe(404);
   });
+
+  it.each(['api.matrix-os.com', 'app.matrix-os.com'])(
+    'lets the OAuth provider callback reach the enabled backend without a Matrix session on %s',
+    async (host) => {
+    const response = await app(true).request(
+      `${publicPath}/oauth/callback?code=provider-code&state=${'s'.repeat(32)}`,
+      { headers: { host } },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      ok: true,
+      code: 'provider-code',
+      state: 's'.repeat(32),
+    });
+    expect(response.headers.get('cache-control')).toBe('no-store, private');
+    expect(response.headers.get('cdn-cache-control')).toBe('no-store');
+    expect(response.headers.get('cloudflare-cdn-cache-control')).toBe('no-store');
+    expect((await app(true).request(publicPath, {
+      headers: { host },
+    })).status).toBe(401);
+    },
+  );
 
   it.each([false, true])('preserves authentication when disabled (internal=%s)', async (internal) => {
     const response = await app().request(internal ? internalPath : publicPath, {

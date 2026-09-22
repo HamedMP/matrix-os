@@ -480,6 +480,11 @@ export class ChatRepository {
   private readonly steering: ChatSteeringRepository;
   private readonly outboxDelivery: ChatOutboxDelivery;
 
+  /** Installed by the collaboration runtime before accepting shared requests. */
+  setSharedAuthorizer(authorize: import("../collaboration/shared-chat-authority.js").SharedChatAuthorizer): void {
+    this.queue.setSharedAuthorizer(authorize);
+  }
+
   constructor(
     dialectOrKysely: Dialect | Kysely<ChatDatabase>,
     transactionScoped = false,
@@ -1514,7 +1519,7 @@ export class ChatRepository {
     chatId: string;
     runId: string;
     outcome: "completed" | "failed" | "aborted";
-    sharedRequestState?: "interrupted" | "unauthorized" | "unavailable";
+    sharedRequestState?: "interrupted" | "unauthorized" | "unavailable" | "cancelled";
     completedAt: string;
     diagnostic?: ChatRunFailureDiagnostic;
     output?: CanonicalChatMessage;

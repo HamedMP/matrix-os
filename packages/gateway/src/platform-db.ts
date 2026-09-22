@@ -210,6 +210,7 @@ export interface PlatformDb {
     revision: number,
     encryptedCredentials: string,
     status: CustomMcpStatus,
+    advanceRevision?: boolean,
   ): Promise<boolean>;
   deleteCustomMcpServer(id: string, userId: string): Promise<boolean>;
   sweepPendingCustomMcpServers(now: Date): Promise<number>;
@@ -748,14 +749,17 @@ export function createPlatformDb(opts: string | { dialect: any }): PlatformDb {
       revision: number,
       encryptedCredentials: string,
       status: CustomMcpStatus,
+      advanceRevision = false,
     ): Promise<boolean> {
+      const values: Record<string, unknown> = {
+        encrypted_credentials: encryptedCredentials,
+        status,
+        updated_at: sql`now()`,
+      };
+      if (advanceRevision) values.revision = sql`revision + 1`;
       const row = await kysely
         .updateTable("custom_mcp_servers")
-        .set({
-          encrypted_credentials: encryptedCredentials,
-          status,
-          updated_at: sql`now()`,
-        })
+        .set(values as never)
         .where("id", "=", id)
         .where("user_id", "=", userId)
         .where("revision", "=", revision)

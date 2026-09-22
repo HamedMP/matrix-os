@@ -33,6 +33,7 @@ import {
 import { OrganizationMembershipClient } from "./organization-membership-client.js";
 import { CollaborationRepository } from "./repository.js";
 import { createCollaborationRoutes } from "./routes.js";
+import type { ChatExecutionRootResolver } from "../chat/execution-root.js";
 import { createSharedAiRuntime, type SharedChatSandboxManifestSource } from "./shared-ai-runtime.js";
 import type { ReadinessSubject } from "./readiness-evaluator.js";
 import { sandboxRequiredForResourceKind } from "./sandbox-readiness.js";
@@ -45,9 +46,11 @@ import {
 } from "./execution-policy.js";
 import { CollaborationRunBindingRepository } from "./run-account-binding.js";
 import { SharedRunOwnerSource } from "./shared-run-owner-source.js";
+import { CollaborationRunLossRepository, startControlLossWatchdog } from "./shared-run-loss.js";
 import type { CollaborationChatExecutionAdapter } from "./chat-execution-adapter.js";
 import { CollaborationTerminalAdapter } from "./terminal-adapter.js";
 import { TerminalControlCoordinator } from "./terminal-control.js";
+import { CollaborationRevocationEnforcer } from "./revocation-enforcer.js";
 import { CollaborationTerminalDispatcher } from "./terminal-dispatcher.js";
 import { CollaborationTerminalEventRegistry } from "./terminal-events.js";
 import { registerCollaborationTerminalWebSocketRoute } from "./terminal-websocket-route.js";
@@ -158,9 +161,12 @@ export async function createGatewayCollaboration(options: {
   const runBindings = eligibility && executionPolicies
     ? new CollaborationRunBindingRepository(options.db, { policies: executionPolicies, eligibility })
     : undefined;
-  const ownerSource = eligibility && executionPolicies
-    ? new SharedRunOwnerSource({ policies: executionPolicies, eligibility, ...(runBindings ? { bindings: runBindings } : {}) })
+  const ownerSource = eligibility && executionPolicies && runBindings
+    ? new SharedRunOwnerSource({ policies: executionPolicies, eligibility, bindings: runBindings })
     : undefined;
+  // S09: immutable loss reasons and run-control decisions; constructed here so the
+  // shared AI runtime, its commands and the request projection share one store.
+  const runLoss = new CollaborationRunLossRepository(options.db);
   const verifier = new CollaborationActorProofVerifier({
     runtimeId: options.config.runtimeId,
     keys: options.config.proofKeys,
@@ -180,10 +186,13 @@ export async function createGatewayCollaboration(options: {
     allowedClientOrigins: options.config.clientOrigins,
     replay: new DirectReplayCache(),
   });
+  // S07 / T039: lease loss releases terminal control, stops bound sandbox runtimes and refuses input.
+  let revocationEnforcer: CollaborationRevocationEnforcer | undefined;
   const directSessions = new DirectSessionService({
     verifier: directVerifier,
     authority,
     repository,
+    onAdmitted: (session) => revocationEnforcer?.admit(session.scopeId, session.actorId),
     // A pushed denial closes legacy event/terminal sockets for that actor at once; direct sockets subscribe themselves.
     onEnded: (session, reason) => {
       if (reason !== "revoked" && reason !== "denied") return;
@@ -193,6 +202,8 @@ export async function createGatewayCollaboration(options: {
     },
     startTimers: options.startTimers !== false,
   });
+  // S07 / T039: lease loss also releases terminal control, stops bound sandbox runtimes and refuses input.
+  directSessions.subscribeEnded((session, reason) => revocationEnforcer?.onSessionEnded(session, reason));
   if (options.config.ownerId && options.config.relayHandle) {
     controlClient = new CollaborationControlClient({
       platformBaseUrl: options.config.platformBaseUrl,
@@ -262,6 +273,7 @@ export async function createGatewayCollaboration(options: {
   let closing = false;
   let chatExecutionAdapter: CollaborationChatExecutionAdapter | undefined;
   let sharedAiRuntime: Awaited<ReturnType<typeof createSharedAiRuntime>> | undefined;
+  let controlLossWatchdog: ReturnType<typeof startControlLossWatchdog> | undefined;
   let terminalAdapter: CollaborationTerminalAdapter | undefined;
   let terminalControl: TerminalControlCoordinator | undefined;
   let terminalDispatcher: CollaborationTerminalDispatcher | undefined;
@@ -290,6 +302,9 @@ export async function createGatewayCollaboration(options: {
     directSessions,
     directVerifier,
     controlClient,
+    /** S07/S09: the live sandbox runtime registry, present only while shared AI is available. */
+    get sandboxRuntimes() { return sharedAiRuntime?.available ? sharedAiRuntime.sandboxRuntimes : undefined; },
+    get revocationEnforcer() { return revocationEnforcer; },
     projectOperationAdmission: {
       withLegacyAdmission<T>(input: {
         ownerType: "personal" | "organization";
@@ -314,9 +329,18 @@ export async function createGatewayCollaboration(options: {
       codingProviders?: Pick<CodingAgentProviderRegistry, "listProviders">;
       /** S07: mounts each shared run's authoritative root; without it shared AI stays disabled. */
       sandboxManifests?: SharedChatSandboxManifestSource;
+      /** S09: the canonical execution-root resolver used as the default manifest source. */
+      executionRoots?: Pick<ChatExecutionRootResolver, "resolve">;
     }): Promise<{ available: boolean }> {
       if (registered || closing || sharedAiRuntime) {
         throw new Error("Shared AI must be initialized exactly once before route registration");
+      }
+      if (!ownerSource || !executionPolicies) {
+        // Fail closed: without the owner's Provider V3 reader there is no execution
+        // policy, and no shared run may execute on a default credential.
+        console.warn("[collaboration] shared AI disabled: owner source and execution policies are unavailable");
+        await chatScope.reconcileExecutionEligibility({ executionGeneration: null, eligibility: null });
+        return { available: false };
       }
       sharedAiRuntime = await createSharedAiRuntime({
         db: options.db,
@@ -333,14 +357,28 @@ export async function createGatewayCollaboration(options: {
         resolveParticipant,
         ...(input.providerCatalog ? { providerCatalog: input.providerCatalog } : {}),
         ...(input.codingProviders ? { codingProviders: input.codingProviders } : {}),
-        ...(ownerSource ? { ownerSource } : {}),
+        ownerSource,
+        executionPolicies,
+        runLoss,
         ...(input.fundedCredentialProvider ? { fundedCredentialProvider: input.fundedCredentialProvider } : {}),
         ...(input.supervisorSocket ? { supervisorSocket: input.supervisorSocket } : {}),
         ...(input.brokerSocket ? { brokerSocket: input.brokerSocket } : {}),
         ...(input.fetchImpl ? { fetchImpl: input.fetchImpl } : {}),
         ...(input.sandboxManifests ? { sandboxManifests: input.sandboxManifests } : {}),
+        ...(input.executionRoots ? { executionRoots: input.executionRoots } : {}),
       });
       if (sharedAiRuntime.available) chatExecutionAdapter = sharedAiRuntime.chatExecutionAdapter;
+      // S09 / T048: losing the control stream past its lease loses every active
+      // shared run. The watchdog fires once per outage episode and never extends authority.
+      const control = controlClient;
+      if (sharedAiRuntime.available && control) {
+        const runtime = sharedAiRuntime;
+        controlLossWatchdog = startControlLossWatchdog({
+          controlFresh: () => control.controlFresh(),
+          onLost: () => runtime.interruptForLoss("control_partition"),
+          startTimer: options.startTimers !== false,
+        });
+      }
       return { available: sharedAiRuntime.available };
     },
     /**
@@ -354,6 +392,10 @@ export async function createGatewayCollaboration(options: {
     async sandboxSupported(subject: ReadinessSubject): Promise<boolean> {
       if (!sandboxRequiredForResourceKind(subject.resourceKind)) return true;
       return sharedAiRuntime?.available === true ? sharedAiRuntime.sandboxSupported(subject) : false;
+    },
+    /** Runs one control-lease check now (the watchdog's tick) and settles any interruption it starts. */
+    async checkSharedAiControlLease(): Promise<void> {
+      await controlLossWatchdog?.check();
     },
     enableSharedTerminal(input: {
       registry: ConstructorParameters<typeof CollaborationTerminalAdapter>[0]["registry"];
@@ -375,11 +417,21 @@ export async function createGatewayCollaboration(options: {
         startTimer: options.startTimers,
         onChanged: ({ scopeId }) => terminalEventRegistry?.publishState(scopeId),
       });
+      revocationEnforcer = new CollaborationRevocationEnforcer({
+        control: terminalControl,
+        // Late-bound: shared AI owns the registry because it owns the supervisor
+        // client, and it may be enabled before or after the shared terminal.
+        runtimes: {
+          stopForActor: (scopeId, actorId) =>
+            sharedAiRuntime?.available ? sharedAiRuntime.sandboxRuntimes.stopForActor(scopeId, actorId) : Promise.resolve(0),
+        },
+      });
       terminalDispatcher = new CollaborationTerminalDispatcher({
         authority,
         terminal: terminalAdapter,
         control: terminalControl,
         resolveParticipant,
+        revocations: revocationEnforcer,
       });
       terminalEventRegistry = new CollaborationTerminalEventRegistry({
         authorize: (scopeId, actorId) => authority.authorize({ scopeId, actorId, action: "read" }),
@@ -512,6 +564,12 @@ export async function createGatewayCollaboration(options: {
     fence(): void {
       closing = true;
       if (cleanupTimer) clearInterval(cleanupTimer);
+      // The control-loss watchdog stops before anything else drains. It reads control
+      // freshness and calls interruptForLoss, so a watchdog that outlives the control
+      // client's drain reads an ordinary shutdown as a partition and marks healthy runs
+      // interrupted.
+      controlLossWatchdog?.stop();
+      controlLossWatchdog = undefined;
       // The control client is drained first: its frames revoke sessions, evict membership
       // evidence and end grants, so it must stop before the registries detach and the
       // verifier shuts down. Its drain is synchronous, like this fence.
@@ -548,6 +606,12 @@ export async function createGatewayCollaboration(options: {
       if (closing) return;
       closing = true;
       if (cleanupTimer) clearInterval(cleanupTimer);
+      // The control-loss watchdog stops before anything else drains. It reads control
+      // freshness and calls interruptForLoss, so a watchdog that outlives the control
+      // client's drain reads an ordinary shutdown as a partition and marks healthy runs
+      // interrupted.
+      controlLossWatchdog?.stop();
+      controlLossWatchdog = undefined;
       await controlClient?.shutdown();
       await directSessions.shutdown();
       await sharedAiRuntime?.shutdown();

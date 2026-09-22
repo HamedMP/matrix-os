@@ -12,6 +12,7 @@ export interface WorkRailProjectGroup {
 
 export interface WorkRailModel {
   pinned: CanonicalChatRecord[];
+  pinnedProjects: WorkRailProjectGroup[];
   projects: WorkRailProjectGroup[];
   recents: CanonicalChatRecord[];
 }
@@ -145,5 +146,10 @@ export function buildWorkRailModel(
     }
     recents.push(record);
   }
-  return { pinned, projects: groups, recents };
+  return {
+    pinned,
+    pinnedProjects: groups.filter((group) => group.project.pinned),
+    projects: groups.filter((group) => !group.project.pinned),
+    recents,
+  };
 }

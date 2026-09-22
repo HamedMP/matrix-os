@@ -251,6 +251,29 @@ export interface CollaborationExecutionPoliciesTable {
 }
 
 /** S08: immutable per-run binding; carries no status (status lives on the canonical run). */
+export interface CollaborationRunInterruptionsTable {
+  run_id: string;
+  scope_id: string;
+  chat_id: string;
+  request_id: string;
+  requesting_actor_id: string;
+  reason: "gateway_restart" | "scope_runtime_crash" | "run_unit_exit" | "control_partition";
+  recorded_at: Timestamp;
+}
+
+export interface CollaborationRunDecisionsTable {
+  id: string;
+  run_id: string | null;
+  request_id: string;
+  scope_id: string;
+  kind: "cancel" | "tool_approval" | "retry";
+  actor_id: string;
+  relation: "requester" | "scope_owner";
+  approval_id: string | null;
+  decision: "approve" | "approve_for_session" | "decline" | "cancel" | null;
+  decided_at: Timestamp;
+}
+
 export interface CollaborationRunBindingsTable {
   run_id: string;
   request_id: string;
@@ -279,6 +302,8 @@ export interface CollaborationDatabase {
   collaboration_grant_activations: CollaborationGrantActivationsTable;
   collaboration_execution_policies: CollaborationExecutionPoliciesTable;
   collaboration_run_bindings: CollaborationRunBindingsTable;
+  collaboration_run_interruptions: CollaborationRunInterruptionsTable;
+  collaboration_run_decisions: CollaborationRunDecisionsTable;
   collaboration_scopes: CollaborationScopesTable;
   collaboration_members: CollaborationMembersTable;
   collaboration_operations: CollaborationOperationsTable;

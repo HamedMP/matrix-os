@@ -134,6 +134,8 @@ describe("collaboration gateway routes", () => {
           ? JSON.parse(row.execution_eligibility) as unknown
           : row?.execution_eligibility;
       },
+      // This fixture exercises the organization-enabled member submission path.
+      resolveEffectiveSubmitMode: async () => "members",
       resolveCanonicalProviderAuthority: async (_ownerId, selection) =>
         selection.instanceId === "claude_code_default" && selection.model === "opus"
           ? { driverKind: "claude_code", selection }
@@ -1608,6 +1610,31 @@ describe("collaboration gateway routes", () => {
         "x-matrix-collaboration-proof": Buffer.from(JSON.stringify(proof)).toString("base64url"),
       },
       body,
+    })).status).toBe(413);
+
+    // The shared mutation limit is registered for every mutating method on the collaboration
+    // composition, so the terminal PATCH is bounded before its handler buffers anything.
+    const terminalPath = `/api/collaboration/scopes/${collaborationIds.scope}/terminal`;
+    const patchBody = JSON.stringify({ contributorControl: true, padding: oversized });
+    const patchBytes = new TextEncoder().encode(patchBody);
+    const patchProof = signer.signHttp({
+      actorId: collaborationActors.owner,
+      ownerId: collaborationActors.owner,
+      runtimeId: collaborationIds.runtime,
+      scopeId: collaborationIds.scope,
+      method: "PATCH",
+      path: terminalPath,
+      query: "",
+      body: patchBytes,
+    });
+    expect((await app.request(terminalPath, {
+      method: "PATCH",
+      headers: {
+        "content-length": String(patchBytes.byteLength),
+        "content-type": "application/json",
+        "x-matrix-collaboration-proof": Buffer.from(JSON.stringify(patchProof)).toString("base64url"),
+      },
+      body: patchBody,
     })).status).toBe(413);
   });
 

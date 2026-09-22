@@ -44,6 +44,7 @@ export interface Project {
   repository?: string;
   defaultBranch?: string;
   description?: string;
+  pinned?: boolean;
   updatedAt?: string;
 }
 
@@ -76,6 +77,7 @@ const WireProjectSchema = z.object({
   kind: z.enum(["scratch", "github", "folder"]).optional(),
   archivedAt: z.string().datetime().optional(),
   description: z.string().max(1_000).optional(),
+  pinned: z.boolean().optional(),
   updatedAt: z.string().max(64).optional(),
   defaultBranch: z.string().min(1).max(200).optional(),
   github: z.object({ owner: z.string().min(1).max(200), repo: z.string().min(1).max(200) }).passthrough().optional(),
@@ -90,6 +92,7 @@ export function parseProject(raw: unknown): Project | null {
     name: parsed.data.name,
     kind: parsed.data.kind ?? (parsed.data.github ? "github" : "scratch"),
     ...(parsed.data.archivedAt ? { archivedAt: parsed.data.archivedAt } : {}),
+    ...(parsed.data.pinned !== undefined ? { pinned: parsed.data.pinned } : {}),
     ...(parsed.data.description ? { description: parsed.data.description } : {}),
     ...(parsed.data.updatedAt ? { updatedAt: parsed.data.updatedAt } : {}),
     ...(parsed.data.github ? { repository: `${parsed.data.github.owner}/${parsed.data.github.repo}` } : {}),
@@ -202,6 +205,7 @@ interface BoardState {
   refreshing: boolean;
   error: AppErrorCategory | null;
   loadProjects(api: ApiClient): Promise<boolean>;
+  applyProjectMetadata(project: Project): void;
   createProject(api: ApiClient, input: {
     name: string;
     description?: string;
@@ -221,6 +225,7 @@ interface BoardState {
 }
 
 export const useBoard = create<BoardState>()((set, get) => {
+  let projectListGeneration = 0;
   function replaceProjectCards(slug: string, cards: Card[]): void {
     set((state) => ({ cardsByProject: { ...state.cardsByProject, [slug]: cards } }));
   }
@@ -263,12 +268,18 @@ export const useBoard = create<BoardState>()((set, get) => {
     refreshing: false,
     error: null,
 
+    applyProjectMetadata: (project) => {
+      projectListGeneration += 1;
+      set(state => ({ projectsStatus: "ready", projects: state.projects.map(current => current.slug === project.slug && current.id === project.id ? project : current) }));
+    },
+
     loadProjects: async (api) => {
+      const loadGeneration = ++projectListGeneration;
       const runtimeGeneration = captureRuntimeGeneration();
       set({ projectsStatus: "loading", projectsError: null });
       try {
         const response = await api.get<{ projects: unknown[] }>("/api/workspace/projects");
-        if (!isCurrentRuntimeGeneration(runtimeGeneration)) return false;
+        if (!isCurrentRuntimeGeneration(runtimeGeneration) || loadGeneration !== projectListGeneration) return false;
         const projects: Project[] = [];
         for (const raw of response.projects ?? []) {
           const project = parseProject(raw);
@@ -277,7 +288,7 @@ export const useBoard = create<BoardState>()((set, get) => {
         set({ projects, projectsStatus: "ready", projectsError: null, error: null });
         return true;
       } catch (err: unknown) {
-        if (!isCurrentRuntimeGeneration(runtimeGeneration)) return false;
+        if (!isCurrentRuntimeGeneration(runtimeGeneration) || loadGeneration !== projectListGeneration) return false;
         console.error("[board] Failed to load projects:", err);
         const error = categoryOf(err);
         set({ projectsStatus: "error", projectsError: error, error });

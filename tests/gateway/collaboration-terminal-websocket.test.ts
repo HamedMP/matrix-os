@@ -54,6 +54,8 @@ describe("shared terminal WebSocket", () => {
       creatorActorId: collaborationActors.owner,
       createdAt: now.toISOString(),
       status: "active" as const,
+      // The owner has opted Contributors into controlling this host shell.
+      contributorControl: true,
     };
     const terminal = {
       get: vi.fn(async () => metadata),
@@ -165,6 +167,7 @@ describe("shared terminal WebSocket", () => {
         creatorActorId: collaborationActors.owner,
         createdAt: now.toISOString(),
         status: "active" as const,
+        contributorControl: true,
       })),
       input: vi.fn(async () => undefined),
       paste: vi.fn(async () => undefined),
@@ -244,6 +247,105 @@ describe("shared terminal WebSocket", () => {
       connectionId: "connection_read_only",
     }) } as never, ws as never);
     await vi.waitFor(() => expect(ws.close).toHaveBeenCalledWith(1008, "Invalid frame"));
+  });
+  it("closes a controller that floods frames faster than the dispatcher settles them", async () => {
+    let releaseInput = (): void => undefined;
+    const stalledInput = new Promise<void>((resolve) => { releaseInput = () => { resolve(); }; });
+    const repository = new CollaborationRepository(fixture.db, { now: () => now });
+    const authority = new CollaborationAuthority(repository, { now: () => now, organizationPrecondition: allowAllOrganizationPrecondition });
+    const terminal = {
+      get: vi.fn(async () => ({
+        scopeId: collaborationIds.scope,
+        terminalId,
+        incarnation,
+        executionGeneration: 4,
+        creatorActorId: collaborationActors.owner,
+        createdAt: now.toISOString(),
+        status: "active" as const,
+        contributorControl: true,
+      })),
+      // The first input stalls until the test releases it, so every later frame stays in flight behind it.
+      input: vi.fn(() => stalledInput),
+      paste: vi.fn(async () => undefined),
+      resize: vi.fn(async () => undefined),
+      stop: vi.fn(async () => undefined),
+    };
+    control = new TerminalControlCoordinator({ startTimer: false });
+    const dispatcher = new CollaborationTerminalDispatcher({
+      authority,
+      terminal,
+      control,
+      resolveParticipant: async (actorId) => ({ actorId, displayName: "Ada" }),
+    });
+    registry = new CollaborationTerminalEventRegistry({
+      authorize: (scopeId, actorId) => authority.authorize({ scopeId, actorId, action: "read" }),
+      getTerminal: terminal.get,
+      projectTerminal: (value) => dispatcher.project(value),
+      now: () => now,
+      startTimers: false,
+    });
+    let socketEvents: WSEvents<unknown> | undefined;
+    const upgradeWebSocket = ((factory: (context: Context) => WSEvents<unknown>) => (
+      async (context: Context) => {
+        socketEvents = factory(context);
+        return context.text("upgrade captured");
+      }
+    )) as unknown as UpgradeWebSocket;
+    const verifier = new CollaborationActorProofVerifier({
+      runtimeId: collaborationIds.runtime,
+      keys: { "collaboration-key-1": key },
+      now: () => now,
+      authority,
+    });
+    const app = new Hono();
+    registerCollaborationTerminalWebSocketRoute({
+      app, upgradeWebSocket, verifier, authority, dispatcher, registry, control,
+      createConnectionId: () => "connection_flood",
+      now: () => now,
+    });
+    const signer = new CollaborationProofSigner({
+      activeKeyId: "collaboration-key-1",
+      keys: { "collaboration-key-1": key },
+      now: () => now,
+      createNonce: () => "c".repeat(32),
+    });
+    const proof = signer.signSocket({
+      actorId: collaborationActors.editor,
+      ownerId: collaborationActors.owner,
+      runtimeId: collaborationIds.runtime,
+      scopeId: collaborationIds.scope,
+      purpose: "terminal",
+      path,
+    });
+    await app.request(path, { headers: { "x-matrix-collaboration-proof": encoded(proof) } });
+    const ws = { send: vi.fn(), close: vi.fn(), bufferedAmount: 0 };
+    socketEvents!.onOpen?.({} as never, ws as never);
+    await vi.waitFor(() => expect(parsedFrames(ws)).toContainEqual(expect.objectContaining({ type: "terminal.ready" })));
+    socketEvents!.onMessage?.({ data: JSON.stringify({
+      type: "acquire",
+      clientRequestId: "50000000-0000-4000-8000-000000000004",
+      incarnation,
+      connectionId: "connection_flood",
+    }) } as never, ws as never);
+    await vi.waitFor(() => expect(parsedFrames(ws)).toContainEqual(expect.objectContaining({ type: "terminal.state" })));
+
+    for (let index = 0; index < 64; index += 1) {
+      socketEvents!.onMessage?.({ data: JSON.stringify({
+        type: "input",
+        clientRequestId: `50000000-0000-4000-8000-${String(100 + index).padStart(12, "0")}`,
+        incarnation,
+        connectionId: "connection_flood",
+        leaseEpoch: "1",
+        data: "x",
+      }) } as never, ws as never);
+    }
+    await vi.waitFor(() => expect(ws.close).toHaveBeenCalledWith(1008, "Too many frames"));
+    // Only the first frame reached the dispatcher; the rest are queued behind it, and
+    // everything past the cap was refused without being queued at all.
+    expect(terminal.input.mock.calls.length).toBeLessThanOrEqual(1);
+    releaseInput();
+    // Drain the accepted frames so nothing is left pending when the fixture is destroyed.
+    await vi.waitFor(() => expect(terminal.input.mock.calls.length).toBe(16));
   });
 });
 

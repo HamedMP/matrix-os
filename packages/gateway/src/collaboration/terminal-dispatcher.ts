@@ -6,7 +6,7 @@ import {
   type CollaborationTerminalAction,
   type CollaborationTerminalActionResult,
 } from "@matrix-os/contracts";
-import { ZodError } from "zod/v4";
+import { z, ZodError } from "zod/v4";
 import {
   CollaborationAuthorizationError,
   type AuthorizedCollaborationContext,
@@ -17,6 +17,8 @@ import {
   type TerminalControlIdentity,
   type TerminalControlLease,
 } from "./terminal-control.js";
+import { CollaborationTerminalAdapterError } from "./terminal-adapter.js";
+import { terminalControlAllowed, type TerminalTaskProfile } from "./terminal-task-profile.js";
 
 export type CollaborationTerminalDispatcherErrorCode =
   | "invalid_request"
@@ -43,10 +45,20 @@ export interface CollaborationTerminalMetadata {
   createdAt: string;
   status: "active" | "exited";
   exitedAt?: string;
+  /** S07: sandbox-only terminals let a Contributor hold the controller; a host shell needs the owner's explicit opt-in. */
+  taskProfile?: TerminalTaskProfile;
+  contributorControl?: boolean;
 }
+
+/** Owner-only PATCH body: the single recorded decision about Contributor control on a host shell. */
+export const CollaborationTerminalControlSettingSchema = z.object({
+  contributorControl: z.boolean(),
+}).strict();
 
 export interface CollaborationTerminalRuntime {
   get(scopeId: string, terminalId: string): Promise<CollaborationTerminalMetadata | null>;
+  /** Records the owner's Contributor-control decision on the exact bound incarnation. */
+  setContributorControl(input: { scopeId: string; terminalId: string; incarnation: string; ownerId: string; contributorControl: boolean }): Promise<void>;
   input(input: TerminalRuntimeAction & { data: string }): Promise<void>;
   paste(input: TerminalRuntimeAction & { data: string }): Promise<void>;
   resize(input: TerminalRuntimeAction & { cols: number; rows: number }): Promise<void>;
@@ -73,6 +85,8 @@ export class CollaborationTerminalDispatcher {
     terminal: CollaborationTerminalRuntime;
     control: TerminalControlCoordinator;
     resolveParticipant?(actorId: string): Promise<CollaborationParticipant>;
+    /** S07 / T039: actors whose direct-session lease was lost are refused until re-admitted. */
+    revocations?: { isRevoked(scopeId: string, actorId: string): boolean };
   }) {}
 
   async read(context: AuthorizedCollaborationContext): Promise<CollaborationTerminal> {
@@ -82,6 +96,46 @@ export class CollaborationTerminalDispatcher {
     const terminal = await this.options.terminal.get(context.scopeId, context.resourceId);
     if (!terminal) throw new CollaborationTerminalDispatcherError("not_found");
     return this.project(terminal);
+  }
+
+  /**
+   * Owner-only: grants or withdraws Contributor control of a host shell. The
+   * decision is persisted on the session; withdrawing also drops a controller
+   * lease held by anyone but the owner so the change takes effect at once.
+   */
+  async setContributorControl(
+    context: AuthorizedCollaborationContext,
+    input: unknown,
+  ): Promise<{ terminal: CollaborationTerminal; contributorControl: boolean }> {
+    try {
+      const setting = CollaborationTerminalControlSettingSchema.parse(input);
+      if (context.resourceKind !== "terminal") throw new CollaborationTerminalDispatcherError("not_found");
+      if (context.role !== "owner" || context.capability !== "manage_members") {
+        throw new CollaborationTerminalDispatcherError("forbidden");
+      }
+      const terminal = await this.options.terminal.get(context.scopeId, context.resourceId);
+      if (!terminal || terminal.scopeId !== context.scopeId || terminal.terminalId !== context.resourceId || terminal.status !== "active") {
+        throw new CollaborationTerminalDispatcherError("not_found");
+      }
+      await this.options.terminal.setContributorControl({
+        scopeId: terminal.scopeId,
+        terminalId: terminal.terminalId,
+        incarnation: terminal.incarnation,
+        ownerId: context.actorId,
+        contributorControl: setting.contributorControl,
+      });
+      if (!setting.contributorControl) {
+        const holder = this.options.control.current(terminal.scopeId, terminal.terminalId, terminal.incarnation);
+        if (holder && holder.actorId !== context.ownerId) this.options.control.invalidateActor(terminal.scopeId, holder.actorId);
+      }
+      const updated = await this.options.terminal.get(context.scopeId, context.resourceId);
+      return {
+        terminal: await this.project(updated ?? { ...terminal, contributorControl: setting.contributorControl }),
+        contributorControl: (updated ?? terminal).contributorControl === true && setting.contributorControl,
+      };
+    } catch (error: unknown) {
+      throw mapDispatcherError(error);
+    }
   }
 
   async dispatch(input: {
@@ -108,6 +162,18 @@ export class CollaborationTerminalDispatcher {
       if (!terminal || terminal.scopeId !== context.scopeId || terminal.terminalId !== context.resourceId
         || terminal.incarnation !== action.incarnation || terminal.status !== "active") {
         throw new CollaborationTerminalDispatcherError("not_found");
+      }
+      if (this.options.revocations?.isRevoked(context.scopeId, context.actorId)) {
+        throw new CollaborationTerminalDispatcherError("forbidden");
+      }
+      if (context.role !== "owner" && !terminalControlAllowed({
+        role: context.role,
+        policy: {
+          taskProfile: terminal.taskProfile ?? "host_shell",
+          contributorControl: terminal.contributorControl === true,
+        },
+      })) {
+        throw new CollaborationTerminalDispatcherError("forbidden");
       }
       const identity: TerminalControlIdentity = {
         scopeId: context.scopeId,
@@ -252,6 +318,10 @@ function mapDispatcherError(error: unknown): CollaborationTerminalDispatcherErro
   }
   if (error instanceof CollaborationAuthorizationError) {
     return new CollaborationTerminalDispatcherError(error.code);
+  }
+  if (error instanceof CollaborationTerminalAdapterError) {
+    // The dispatcher reads current metadata before every runtime call, so a stale incarnation is a lost terminal.
+    return new CollaborationTerminalDispatcherError(error.code === "not_found" || error.code === "conflict" ? "not_found" : "unavailable");
   }
   console.warn(
     "[collaboration-terminal] action failed",

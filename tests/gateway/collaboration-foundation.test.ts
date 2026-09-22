@@ -62,6 +62,7 @@ const ROUTE_BASELINE: ReadonlyArray<readonly [string, string]> = [
   ["POST", "/api/collaboration/scopes/:scopeId/chat/approvals/:approvalId/decision"],
   ["GET", "/api/collaboration/scopes/:scopeId/terminal"],
   ["POST", "/api/collaboration/scopes/:scopeId/terminal/actions"],
+  ["PATCH", "/api/collaboration/scopes/:scopeId/terminal"],
   ["GET", "/api/collaboration/scopes/:scopeId/project"],
   ["GET", "/api/collaboration/scopes/:scopeId/project/inventory"],
   ["POST", "/api/collaboration/scopes/:scopeId/project/confirm"],
@@ -163,13 +164,13 @@ describe("gateway collaboration schema bootstrap (S01 foundation)", () => {
   });
 
   it("registers the versioned migrations in order and records every version idempotently", async () => {
-    expect(COLLABORATION_VERSIONED_MIGRATIONS.map((step) => step.version)).toEqual([3, 4, 5, 6, 7, 8, 9, 10]);
+    expect(COLLABORATION_VERSIONED_MIGRATIONS.map((step) => step.version)).toEqual([3, 4, 5, 6, 7, 8, 9, 10, 11]);
     expect(typeof applyCollaborationBaseSchema).toBe("function");
     await bootstrapCollaborationDatabase(fixture.db);
     await bootstrapCollaborationDatabase(fixture.db);
     const versions = await fixture.db.selectFrom("collaboration_schema_migrations")
       .select("version").orderBy("version").execute();
-    expect(versions.map((row) => Number(row.version))).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    expect(versions.map((row) => Number(row.version))).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
   });
 });
 

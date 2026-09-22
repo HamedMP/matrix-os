@@ -2,7 +2,7 @@
 
 **Feature Branch**: `codex/project-sidebar-actions`
 **Created**: 2026-09-20
-**Status**: Requirements corrected; implementation paused
+**Status**: Implemented; Human Review passed
 **Issue**: https://github.com/HamedMP/matrix-os/issues/1770
 **Input**: Codex-inspired project row; move accidental-delete affordance into a menu and add Pin, Edit, and Show in Files (open the existing mapped folder in the full Files app).
 
@@ -13,7 +13,7 @@ Users create a Chat from a project row without encountering a neighboring destru
 **Why this priority**: The current trash button is easily mistaken for New Chat.
 **Independent Test**: Hover/focus a row, create a Chat, and open both action menus.
 **Acceptance Scenarios**:
-1. Given a project row, when hovered or focused, then it exposes an ellipsis followed by New Chat; no inline Delete button is present.
+1. Given a project row, when hovered or focused, then it exposes an ellipsis followed by a square-pencil New Chat action; no inline Delete button is present.
 2. Given the ellipsis or right-click menu, when opened, then identical project actions appear; Delete is separated and destructive.
 3. Given Delete, when selected, then existing explicit confirmation is required; cancellation or failure preserves the project and Chats.
 
@@ -22,9 +22,10 @@ Users keep important projects near the top and edit their display information.
 **Why this priority**: Frequently used projects need quick access and recognizable names.
 **Independent Test**: Pin, reload, unpin, and edit a project without changing its Chats or folder.
 **Acceptance Scenarios**:
-1. Given an unpinned project, when Pin succeeds, then it is visibly pinned above unpinned projects and remains pinned after reload; Unpin reverses this.
-2. Given Edit, when a valid name and description are saved, then every project projection displays the new information while project identity, location, and Chat associations stay unchanged.
-3. Given invalid input or a failed save, then edits stay available with safe error feedback and no false success.
+1. Given an unpinned project, when Pin succeeds, then it moves into the existing Pinned section and remains there after reload; Unpin moves it back into Projects.
+2. Given a pinned project row, then its section placement communicates the state without a standalone pin glyph; Pin/Unpin remains available from the ellipsis and context menus.
+3. Given Edit, when a valid name and description are saved, then every project projection displays the new information while project identity, location, and Chat associations stay unchanged.
+4. Given invalid input or a failed save, then edits stay available with safe error feedback and no false success.
 
 ### User Story 3 - Locate project files (Priority: P2)
 Users open the actual project folder from its menu.
@@ -60,7 +61,7 @@ Users open the actual project folder from its menu.
 - Project action menu: one action model exposed through ellipsis and contextual invocation.
 
 ## Assumptions and Scope
-The screenshots are visual references, not instructions to copy every Codex feature. Section management, permanent worktrees and bulk Chat archival are excluded. Pin orders projects above other projects; it does not duplicate their Chats into the existing pinned-Chat section. Edit does not relocate folders. Human Review and production release are separate from implementation validation.
+The screenshots are visual references, not instructions to copy every Codex feature. Section management, permanent worktrees and bulk Chat archival are excluded. Pin moves a project into the existing Pinned section without adding a separate pin glyph to its row; the project retains its Chats. Edit does not relocate folders. Human Review and production release are separate from implementation validation.
 
 ## Success Criteria
 

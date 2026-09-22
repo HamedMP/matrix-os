@@ -625,7 +625,7 @@ describe("device routes", () => {
       });
     });
 
-    it("rejects a selected computer that is not owned by the approving user", async () => {
+    it("rejects a selected computer that is not accessible to the approving user", async () => {
       await insertUserMachine(db, {
         machineId: "machine_bob_preview",
         clerkUserId: "user_bob",
@@ -659,6 +659,59 @@ describe("device routes", () => {
 
       expect(approval.status).toBe(404);
       await expect(approval.json()).resolves.toEqual({ error: "computer_unavailable" });
+    });
+
+    it("issues a runtime-scoped token to an authorized preview collaborator", async () => {
+      await insertUserMachine(db, {
+        machineId: "machine_bob_preview_shared",
+        clerkUserId: "user_bob",
+        handle: "pr-993",
+        runtimeSlot: "pr-993",
+        provisioningClass: "preview",
+        accessClerkUserIds: ["user_alice"],
+        status: "running",
+        provisionedAt: new Date().toISOString(),
+      });
+      const code = await app.request("/api/auth/device/code", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ clientId: "matrix-os-desktop" }),
+      }).then((response) => response.json());
+      const approvalPage = await app.request(`/auth/device?user_code=${code.userCode}`);
+      const csrf = (approvalPage.headers.get("set-cookie") ?? "").match(/device_csrf=([^;]+)/)?.[1];
+
+      const approval = await app.request("/auth/device/approve", {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          authorization: "Bearer clerk-alice",
+          cookie: `device_csrf=${csrf}`,
+        },
+        body: new URLSearchParams({
+          userCode: code.userCode,
+          csrf: csrf ?? "",
+          runtimeSlot: "pr-993",
+        }).toString(),
+      });
+      expect(approval.status).toBe(200);
+
+      const tokenResponse = await app.request("/api/auth/device/token", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ deviceCode: code.deviceCode, clientId: "matrix-os-desktop" }),
+      });
+      expect(tokenResponse.status).toBe(200);
+      const tokenBody = await tokenResponse.json();
+      expect(tokenBody).toMatchObject({
+        userId: "user_alice",
+        handle: "pr-993",
+        runtimeSlot: "pr-993",
+      });
+      await expect(verifySyncJwt(tokenBody.accessToken, { secret: JWT_SECRET })).resolves.toMatchObject({
+        sub: "user_alice",
+        handle: "pr-993",
+        runtime_slot: "pr-993",
+      });
     });
 
     it("ignores stale legacy containers when issuing VPS-native device tokens", async () => {

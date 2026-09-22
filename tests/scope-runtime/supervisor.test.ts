@@ -4,6 +4,8 @@ import {
   createScopeRuntimeController,
   type ScopeRuntimeLauncher,
 } from "../../packages/scope-runtime/src/supervisor.js";
+import { buildFixedSystemdRunArgs } from "../../packages/scope-runtime/src/systemd-launcher.js";
+import { SCOPE_RUNTIME_HARNESS_VERSION } from "../../packages/scope-runtime/src/profile.js";
 
 const REQUEST_ID = "018f0ce5-7b4a-7f95-a7c8-acae0dc5c5d1";
 const SCOPE_HANDLE = "scope_11111111111111111111111111111111";
@@ -20,6 +22,36 @@ function launcher(overrides: Partial<ScopeRuntimeLauncher> = {}): ScopeRuntimeLa
 }
 
 describe("scope runtime supervisor", () => {
+  it("advertises exactly the workloads the fixed launcher can start", () => {
+    const paths = {
+      scopeRoot: "/var/lib/matrix-scope-runtime/runtimes/222/root",
+      sdkDirectory: "/opt/matrix/app/node_modules/sdk",
+      nativeDirectory: "/opt/matrix/app/node_modules/native",
+      workerFile: "/opt/matrix/app/packages/scope-runtime/dist/worker.js",
+      brokerSocket: "/run/matrix-scope-runtime/broker.sock",
+      readinessFile: "/var/lib/matrix-scope-runtime/runtimes/222/ready",
+      commandDirectory: "/var/lib/matrix-scope-runtime/runtimes/222/command",
+      nodeBinary: "/opt/matrix/runtime/node/bin/node",
+    };
+    const launcherSupported = (["chat_ai", "terminal"] as const).filter((workload) => {
+      try {
+        buildFixedSystemdRunArgs({
+          runtimeHandle: RUNTIME_HANDLE, scopeHandle: SCOPE_HANDLE, workload, adapterId: "claude-code",
+          harnessVersion: SCOPE_RUNTIME_HARNESS_VERSION, executionGeneration: "1",
+        }, paths);
+        return true;
+      } catch (error: unknown) {
+        if (!(error instanceof Error) || !/unsupported/i.test(error.message)) throw error;
+        return false;
+      }
+    });
+    expect(launcherSupported).toEqual(["chat_ai"]);
+    expect([...SCOPE_RUNTIME_PROFILE.sandbox.workloads].sort()).toEqual([...launcherSupported].sort());
+    for (const adapter of SCOPE_RUNTIME_PROFILE.adapters) {
+      expect(launcherSupported).toEqual(expect.arrayContaining([...adapter.workloads]));
+    }
+  });
+
   it("advertises only the measured non-root Chat adapters", async () => {
     const controller = await createScopeRuntimeController({
       launcher: launcher(),

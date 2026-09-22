@@ -1739,6 +1739,7 @@ export {
   getRunningUserMachineByHandle,
   getRunningUserMachineByClerkId,
   getAccessibleRunningUserMachineByClerkId,
+  getAccessibleRunningUserMachineByClerkIdForUpdate,
   getRunningUserMachineByClerkIdForUpdate,
   listUserMachines,
   listActiveUserMachinesByClerkId,

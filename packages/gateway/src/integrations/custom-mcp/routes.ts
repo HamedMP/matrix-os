@@ -43,7 +43,7 @@ const ToolCallSchema = z.object({
 
 export interface CustomMcpOAuthFlow {
   start(userId: string, serverId: string): Promise<string>;
-  complete(userId: string, state: string, code: string): Promise<{ serverId: string }>;
+  complete(state: string, code: string): Promise<{ serverId: string }>;
 }
 
 export interface CustomMcpRoutesOptions {
@@ -118,8 +118,6 @@ export function createCustomMcpRoutes(options: CustomMcpRoutesOptions): Hono {
   });
 
   app.get("/oauth/callback", async (context) => {
-    const userId = await requireUser(context);
-    if (typeof userId !== "string") return userId;
     const parsed = OAuthCallbackSchema.safeParse({
       state: context.req.query("state"),
       code: context.req.query("code"),
@@ -127,7 +125,7 @@ export function createCustomMcpRoutes(options: CustomMcpRoutesOptions): Hono {
     if (!parsed.success) return context.json({ error: "Invalid OAuth callback" }, 400);
     if (!options.oauth) return context.json({ error: "Custom MCP OAuth unavailable" }, 503);
     try {
-      const result = await options.oauth.complete(userId, parsed.data.state, parsed.data.code);
+      const result = await options.oauth.complete(parsed.data.state, parsed.data.code);
       return context.json({ ok: true, serverId: result.serverId });
     } catch (error) {
       return brokerError(context, error);

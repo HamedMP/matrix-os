@@ -30,6 +30,10 @@ export interface AuthorizedCollaborationContext {
   resourceId: string;
   role: CollaborationRole;
   authEpoch: number;
+  /** Separate epochs preserve the revoke fence when parent and child epochs differ. */
+  resourceAuthEpoch?: number;
+  membershipAuthEpoch?: number;
+  membershipEvidenceEpoch?: string;
   authorityRuntimeId: string;
   authorityGeneration: number;
   capability: CollaborationAction;
@@ -103,6 +107,9 @@ export class CollaborationAuthority {
       resourceId: scope.resource_id,
       role,
       authEpoch: Math.max(Number(scope.auth_epoch), Number(membershipScope.auth_epoch)),
+      resourceAuthEpoch: Number(scope.auth_epoch),
+      membershipAuthEpoch: Number(membershipScope.auth_epoch),
+      ...(evidence.membershipEpoch ? { membershipEvidenceEpoch: evidence.membershipEpoch } : {}),
       authorityRuntimeId: scope.authority_runtime_id,
       authorityGeneration: Number(scope.authority_generation),
       capability: input.action,
