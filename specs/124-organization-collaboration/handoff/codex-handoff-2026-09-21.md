@@ -1156,3 +1156,48 @@ treatment; S19 needs the same analysis before it is restacked.
 chain" made the shape obvious in a way that reading commit lists did not. Duplicated bases and contiguous tip
 blocks show up instantly, and it is what distinguished the ordinary staleness here from the genuine parallel
 copy in S18.
+
+## 51. Complete restack plan for everything above the merge queue — 2026-09-22 07:30 UTC
+
+**The stack has several generations.** Work was done at different times against different chain states and
+never reconciled, so branches fork from four distinct points: `2425202de` (`main~4`), `e62d3fc62`,
+`e0c7d5729`/`7ffac5e05` (the pre-restack chain head) and `d29312c91` (an old `s05-gateway` head).
+
+**Group 1 — clean nested stack, ordinary restack.** Confirmed linear, each contained in the next:
+
+```
+124/s07-terminal → s09 → s10 → s12 → s12-app → s15-gateway → s15-directory → s15-direct → s15
+```
+
+All share oldbase `7ffac5e05`. Rebase each `--onto` its new parent, bottom-up, after the seven main-path
+layers land. Own commits per layer: s09 15, s10 15, s12 19, s12-app 4, s15-gateway 16, s15-directory 5,
+s15-direct 7, s15 43.
+
+**Group 2 — own work is NOT contiguous, so `--onto` will not do.** For these, the tip block is far smaller
+than the count of commits that are genuinely theirs, which means their work is interleaved with duplicated
+base commits and must be cherry-picked selectively:
+
+| branch | commits | own subjects | contiguous tip |
+| --- | --- | --- | --- |
+| `124/s09-retry-jsonb` | 77 | 42 | **0** |
+| `124/s09-run-hardening` | 144 | 21 | 4 |
+| `124/s10-git-hardening` | 244 | 39 | 18 |
+| `124/s19-acceptance` | 156 | 58 | 16 |
+| `124/s18-startup` | 155 | 31 | **14** |
+
+A contiguous tip of 0 on `s09-retry-jsonb` means none of its own work sits at the end at all.
+
+**Cross-validation worth trusting.** The subject-map method computed `124/s18-startup`'s contiguous tip block
+as **14**, independently matching the 14 genuine commits a separate agent identified by reading content and
+comparing blobs. Two methods, same answer, so the technique is sound and can be applied to the rest.
+
+**The method, for reuse.** Build the set of commit subjects already canonical (`origin/main..124/s07-terminal`
+plus `7ffac5e05..124/s15`, currently 225 distinct). For any branch, walk its commits oldest-first and mark each
+as canonical or own. If the own commits form a block at the tip, `git rebase --onto <new parent> <last
+canonical commit> <branch>` replays only that block. If they do not, the branch needs selective cherry-picking
+and the map tells you exactly which commits.
+
+**Order of operations.** Do not restack any of this until the seven main-path layers have merged, because each
+merge rewrites the chain beneath them. Verify a restack actually took by checking that `assertServing` appears
+in `packages/gateway/src/collaboration/direct-sessions.ts` on every branch above the gateway layer — it is
+present 6 times there and 0 times on the stale branches.
