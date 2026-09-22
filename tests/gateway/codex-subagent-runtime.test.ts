@@ -30,11 +30,12 @@ it("routes real-protocol child lifecycle through the runner without mixing assis
   ];
   await writeFile(fake, `import { createInterface } from 'node:readline';
 const send = (value) => console.log(JSON.stringify(value));
+let metadataReads = 0;
 for await (const line of createInterface({ input: process.stdin })) {
  const message = JSON.parse(line);
  if (message.method === 'initialize') send({ id: message.id, result: { userAgent: 'test' } });
  if (message.method === 'thread/start') send({ id: message.id, result: { thread: { id: 'native-parent' } } });
- if (message.method === 'thread/read') send({ id: message.id, result: { thread: { id: message.params.threadId, parentThreadId: 'native-parent', agentRole: 'explorer' } } });
+ if (message.method === 'thread/read') send({ id: message.id, result: { thread: { id: message.params.threadId, parentThreadId: 'native-parent', agentRole: ++metadataReads === 1 ? null : 'explorer' } } });
  if (message.method === 'turn/start') {
    send({ id: message.id, result: { turn: { id: 'parent-turn' } } });
    setTimeout(() => { for (const [index, item] of ${JSON.stringify(notifications)}.entries()) setTimeout(() => send(item), index * 30); }, 30);

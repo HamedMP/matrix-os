@@ -76,3 +76,5 @@ and `thread/read` returned `agentRole=explorer` while still emitting no child
 `thread/started` event. Upstream tool construction gates `agent_type` on a nonempty
 configured role registry. Preserve user configuration; do not fabricate a role
 from a task name or install default role overrides on the user's behalf.
+
+Missing Codex role metadata receives at most one additional metadata-only read at observed child completion, capped at 128 completion rechecks per run in addition to the 128 initial reads. This handles early reads before persisted role metadata is available without polling or delaying parent output. Both reads keep the same attribution, timeout, and lineage checks.

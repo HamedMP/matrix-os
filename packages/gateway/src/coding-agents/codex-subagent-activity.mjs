@@ -25,6 +25,7 @@ export function createCodexSubagentActivity({ maxAgents = 128 } = {}) {
   const childTurns = new Map();
   let metadataBudget = 128;
   const metadataQueue = [];
+  const metadataRechecked = new Set();
   const capacity = Number.isInteger(maxAgents) ? Math.max(1, Math.min(128, maxAgents)) : 128;
   function update(id, parent, turn, patch, create = false) {
     const prior = agents.get(id);
@@ -35,6 +36,12 @@ export function createCodexSubagentActivity({ maxAgents = 128 } = {}) {
     }
     const subagent = { agentId: opaque(id), parentAgentId: opaque(parent), name: "Subagent", status: "unknown", ...prior?.subagent, ...patch };
     const next = { type: "matrix.codex.subagent.activity", activityId: opaque(turn, id), subagent };
+    // A child can become visible before its persisted role metadata is readable.
+    // One lifecycle-triggered recheck repairs that race without polling.
+    if (prior && terminal.has(subagent.status) && !subagent.role
+      && !metadataRechecked.has(id) && metadataRechecked.size < 128) {
+      metadataRechecked.add(id); metadataQueue.push(id);
+    }
     if (JSON.stringify(prior) === JSON.stringify(next)) return [];
     agents.set(id, next);
     if (!prior && metadataBudget > 0) { metadataBudget--; metadataQueue.push(id); }
@@ -42,7 +49,7 @@ export function createCodexSubagentActivity({ maxAgents = 128 } = {}) {
   }
   return {
     get size() { return agents.size; },
-    reset() { agents.clear(); childTurns.clear(); metadataQueue.length = 0; metadataBudget = 128; },
+    reset() { agents.clear(); childTurns.clear(); metadataQueue.length = 0; metadataBudget = 128; metadataRechecked.clear(); },
     takeMetadataRequests() { return metadataQueue.splice(0); },
     projectMetadata(id, thread, parent, turn) {
       const prior = agents.get(id);

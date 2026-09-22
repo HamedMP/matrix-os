@@ -154,3 +154,41 @@ it("hydrates only an attributed child's matching parent and bounds metadata read
   tracker.reset();
   expect(tracker.takeMetadataRequests()).toEqual([]);
 });
+
+
+it("rechecks missing role metadata once when a child completes", () => {
+  const tracker = createCodexSubagentActivity();
+  tracker.project(marker(), "parent", "turn");
+  expect(tracker.takeMetadataRequests()).toEqual(["child"]);
+  expect(tracker.projectMetadata("child", { id: "child", parentThreadId: "parent", agentRole: null }, "parent", "turn")).toEqual([]);
+  tracker.project(marker("completed", "done"), "parent", "turn");
+  expect(tracker.takeMetadataRequests()).toEqual(["child"]);
+  tracker.project(marker("completed", "done"), "parent", "turn");
+  expect(tracker.takeMetadataRequests()).toEqual([]);
+  const result = tracker.projectMetadata("child", { id: "child", parentThreadId: "parent", agentRole: "worker" }, "parent", "turn");
+  expect(result[0].subagent).toMatchObject({ role: "worker", status: "completed" });
+  tracker.project(marker("completed", "done"), "parent", "turn");
+  expect(tracker.takeMetadataRequests()).toEqual([]);
+});
+
+
+it("does not re-read a known role and caps completion rechecks across eviction", () => {
+  const tracker = createCodexSubagentActivity({ maxAgents: 2 });
+  tracker.project(marker(), "parent", "turn");
+  tracker.takeMetadataRequests();
+  tracker.projectMetadata("child", { id: "child", parentThreadId: "parent", agentRole: "worker" }, "parent", "turn");
+  tracker.project(marker("completed", "done"), "parent", "turn");
+  expect(tracker.takeMetadataRequests()).toEqual([]);
+  let rechecks = 0;
+  for (let i = 0; i < 150; i++) {
+    const start = marker(); start.params.item.agentThreadId = `child-${i}`;
+    tracker.project(start, "parent", "turn"); tracker.takeMetadataRequests();
+    const done = marker("completed", "done"); done.params.item.agentThreadId = `child-${i}`;
+    tracker.project(done, "parent", "turn"); rechecks += tracker.takeMetadataRequests().length;
+  }
+  expect(rechecks).toBe(128);
+  tracker.reset();
+  tracker.project(marker(), "parent", "turn"); tracker.takeMetadataRequests();
+  tracker.project(marker("completed", "done"), "parent", "turn");
+  expect(tracker.takeMetadataRequests()).toEqual(["child"]);
+});
