@@ -380,6 +380,21 @@ describe("S12 direct resource policy", () => {
       const recreated = await catalog.register({ ownerId: collaborationActors.owner, projectId: PROJECT_ID, kind: "file", path: "README.txt", incarnation: "inc-readme-3" });
       expect(recreated.id).not.toBe(ids.readme);
     });
+
+    it("moves and tombstones a folder's descendants in the standalone home namespace", async () => {
+      // The home namespace has no project id, so these statements match on NULL.
+      const owner = collaborationActors.owner;
+      const folder = await catalog.register({ ownerId: owner, projectId: null, kind: "folder", path: "notes", incarnation: "inc-notes-folder" });
+      const child = await catalog.get(ids.notes);
+      expect(child).toMatchObject({ path: "notes/today.md" });
+      await catalog.rename({ id: folder.id, path: "journal", expectedRevision: 0, incarnation: "inc-notes-folder-2" });
+      expect(await catalog.get(ids.notes)).toMatchObject({ path: "journal/today.md" });
+      const removed = await catalog.remove({ id: folder.id, expectedRevision: 1 });
+      expect(removed.deletedAt).not.toBeNull();
+      expect(await catalog.get(ids.notes)).toBeNull();
+      // A project file at the same relative path is a different namespace and survives.
+      expect(await catalog.get(ids.docsGuide)).not.toBeNull();
+    });
   });
 
   describe("project scope", () => {
