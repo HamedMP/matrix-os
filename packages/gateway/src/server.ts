@@ -166,33 +166,7 @@ import { createWorkspaceStartupRecovery } from "./workspace-startup-recovery.js"
 import { createWorktreeManager } from "./worktree-manager.js";
 
 import { type Kysely } from "kysely";
-import type { QueryEngine } from "./app-db-query.js";
-import { isSafeName, normalizeAppStorageSlug } from "./app-db-types.js";
-import type { KvStore } from "./app-db-kv.js";
-import type { PlatformDb } from "./platform-db.js";
-import { createIntegrationBridgeRoutes } from "./integrations/bridge-routes.js";
-import { createIntegrationProxyResponse } from "./integrations/proxy-response.js";
-import {
-  createPluginRegistry,
-  loadAllPlugins,
-  createHookRunner,
-  type PluginRegistry,
-  type HookRunner,
-  type LoadedPlugin,
-} from "./plugins/index.js";
-import { createSettingsRoutes } from "./routes/settings.js";
-import { AiProviderService } from "./ai-providers/service.js";
 import { createLazyProviderSnapshotReader } from "./collaboration/lazy-provider-snapshot-reader.js";
-import { ProviderSettingsStore } from "./ai-providers/provider-settings-store.js";
-import {
-  createProviderGenericHarnessCoordinator,
-  reconcileProviderRuntimeAtStartup,
-} from "./ai-providers/provider-generic-harness-coordinator.js";
-import { createProviderDriverInventoryReader } from "./ai-providers/provider-driver-inventory.js";
-import { createProviderTerminalLoginCoordinator } from "./ai-providers/provider-terminal-login-coordinator.js";
-import { createDefaultProviderCliAccountLifecycleCoordinator } from "./ai-providers/provider-cli-account-lifecycle.js";
-import { createGenericHarnessModelCatalogReader } from "./ai-providers/generic-harness-model-catalog.js";
-import { createHermesRoutes } from "./routes/hermes.js";
 import {
   createHermesDashboardClient,
   validateHermesDashboardUrl,
