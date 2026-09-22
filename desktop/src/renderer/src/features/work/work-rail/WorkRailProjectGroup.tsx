@@ -1,6 +1,9 @@
+import { useRef } from "react";
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
-import { Folder, FolderOpen, Plus, Trash2 } from "@renderer/lib/hugeicons";
-import { ContextMenu } from "../../../design/primitives";
+import { Folder, FolderOpen, PencilEditIcon, PinIcon, PinOffIcon, Settings, Trash2 } from "@renderer/lib/hugeicons";
+import { ProjectActionsMenu, ProjectActionsButton, type ProjectMenuAction } from "./ProjectActionsMenu";
+import { ProjectEditDialog } from "./ProjectActionDialogs";
+import { useProjectActions } from "./use-project-actions";
 import type { Project } from "../../../stores/board";
 import type { WorkRailProjectGroup as WorkRailProjectGroupModel } from "../work-rail-model";
 import { WorkRailChatRow } from "./WorkRailChatRow";
@@ -44,13 +47,17 @@ export function WorkRailProjectGroup({
   onPinChat: (record: CanonicalChatRecord) => void;
   onDeleteChat: (record: CanonicalChatRecord) => void;
 }) {
+  const actionButtonRef = useRef<HTMLButtonElement>(null);
+  const actions = useProjectActions(group.project);
+  const items: ProjectMenuAction[] = [
+    { label: group.project.pinned ? "Unpin" : "Pin", icon: group.project.pinned ? <PinOffIcon size={16} aria-hidden /> : <PinIcon size={16} aria-hidden />, disabled: !actions.available || actions.pending, onSelect: () => { void actions.update({ pinned: !group.project.pinned }); } },
+    { label: "Edit", icon: <Settings size={16} aria-hidden />, disabled: !actions.available || actions.pending, onSelect: () => actions.setDialog("edit") },
+    { label: "Show in Files", icon: <FolderOpen size={16} aria-hidden />, disabled: !actions.available || actions.pending, onSelect: () => { void actions.showInFiles(); } },
+    { label: "Delete project", icon: <Trash2 size={16} aria-hidden />, danger: true, disabled: actions.pending, onSelect: () => onDeleteProject(group.project) },
+  ];
   return (
     <div>
-      <ContextMenu items={[{
-        label: "Delete",
-        danger: true,
-        onSelect: () => onDeleteProject(group.project),
-      }]}>
+      <ProjectActionsMenu items={items}>
         <div className="group/project relative flex min-w-0 items-center rounded-md hover:bg-[var(--bg-hover)]">
           <button
             type="button"
@@ -65,7 +72,8 @@ export function WorkRailProjectGroup({
               : <Folder size={15} aria-hidden className="shrink-0" style={{ color: "var(--text-tertiary)" }} />}
             <span className="truncate">{group.name}</span>
           </button>
-          <div className="absolute right-1 flex items-center gap-0.5 opacity-0 transition-opacity group-hover/project:opacity-100 group-focus-within/project:opacity-100">
+          <div className="mr-1 flex shrink-0 items-center gap-0.5 opacity-100 transition-opacity [@media(hover:hover)]:opacity-0 group-hover/project:opacity-100 group-focus-within/project:opacity-100">
+            <ProjectActionsButton buttonRef={actionButtonRef} name={group.name} items={items} />
             <button
               type="button"
               aria-label={`New chat in ${group.name}`}
@@ -73,20 +81,13 @@ export function WorkRailProjectGroup({
               className="flex size-6 items-center justify-center rounded-md outline-none hover:bg-[var(--bg-selected)] focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
               onClick={() => onNewChat(group.project)}
             >
-              <Plus size={12} aria-hidden />
-            </button>
-            <button
-              type="button"
-              aria-label={`Delete ${group.name} project`}
-              title={`Delete ${group.name} project`}
-              className="flex size-6 items-center justify-center rounded-md outline-none hover:bg-[var(--danger-muted)] hover:text-[var(--danger)] focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-              onClick={() => onDeleteProject(group.project)}
-            >
-              <Trash2 size={12} aria-hidden />
+              <PencilEditIcon size={15} aria-hidden />
             </button>
           </div>
         </div>
-      </ContextMenu>
+      </ProjectActionsMenu>
+      {actions.error && actions.dialog !== "edit" ? <p role="alert" className="px-2 text-xs" style={{ color: "var(--danger)" }}>{actions.error}</p> : null}
+      {actions.dialog === "edit" ? <ProjectEditDialog returnFocusRef={actionButtonRef} project={group.project} pending={actions.pending} error={actions.error} onClose={() => actions.setDialog(null)} onSave={actions.update} /> : null}
       {expanded ? (
         <div className="flex flex-col gap-0.5 pl-5">
           {group.chats.map((record) => (

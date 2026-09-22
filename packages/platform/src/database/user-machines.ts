@@ -194,6 +194,25 @@ export async function getRunningUserMachineByClerkIdForUpdate(
   return row ? mapUserMachine(row) : undefined;
 }
 
+export async function getAccessibleRunningUserMachineByClerkIdForUpdate(
+  db: PlatformDB,
+  clerkUserId: string,
+  runtimeSlot: string,
+): Promise<UserMachineRecord | undefined> {
+  await db.ready;
+  const row = await db.executor
+    .selectFrom('user_machines')
+    .selectAll()
+    .where(accessibleUserMachinePredicate(clerkUserId))
+    .where('runtime_slot', '=', runtimeSlot)
+    .where('status', '=', 'running')
+    .where('activation_state', '=', 'authorized')
+    .where('deleted_at', 'is', null)
+    .forUpdate()
+    .executeTakeFirst();
+  return row ? mapUserMachine(row) : undefined;
+}
+
 export async function listUserMachines(
   db: PlatformDB,
   options: { includeDeleted?: boolean } = {},

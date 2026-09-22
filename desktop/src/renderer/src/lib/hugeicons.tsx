@@ -209,6 +209,7 @@ import { PanelsTopLeftIcon as PanelsTopLeftData } from "@hugeicons/core-free-ico
 import { Paperclip as PaperclipData } from "@hugeicons/core-free-icons";
 import { PaperclipIcon as PaperclipIconData } from "@hugeicons/core-free-icons";
 import { PencilIcon as PencilIconData } from "@hugeicons/core-free-icons";
+import { PencilEdit02Icon as PencilEditIconData } from "@hugeicons/core-free-icons";
 import { Pi as PiData } from "@hugeicons/core-free-icons";
 import { PinIcon as PinIconData } from "@hugeicons/core-free-icons";
 import { PinOffIcon as PinOffIconData } from "@hugeicons/core-free-icons";
@@ -508,6 +509,7 @@ export const PanelsTopLeft: LucideIcon = createIcon(PanelsTopLeftData);
 export const Paperclip: LucideIcon = createIcon(PaperclipData);
 export const PaperclipIcon: LucideIcon = createIcon(PaperclipIconData);
 export const PencilIcon: LucideIcon = createIcon(PencilIconData);
+export const PencilEditIcon: LucideIcon = createIcon(PencilEditIconData);
 export const Pi: LucideIcon = createIcon(PiData);
 export const PinIcon: LucideIcon = createIcon(PinIconData);
 export const PinOffIcon: LucideIcon = createIcon(PinOffIconData);

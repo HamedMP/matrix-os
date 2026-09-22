@@ -12,6 +12,8 @@ import { useConnection } from "../../desktop/src/renderer/src/stores/connection"
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 import { useDesktopEditor } from "../../desktop/src/renderer/src/features/editor/desktop-editor-store";
 
+import { useFilesNavigation } from "../../desktop/src/renderer/src/stores/files-navigation";
+
 const LIST: Record<string, { entries: Array<{ name: string; type: string }> }> = {
   "/api/files/list?path=": {
     entries: [
@@ -105,6 +107,23 @@ describe("Files workspace", () => {
     URL.revokeObjectURL = originalRevoke;
   });
 
+  it("consumes project navigation in the real Files browser and reuses the folder tab", async () => {
+    useFilesNavigation.getState().navigate("workspaces/matrix-os");
+    render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
+    expect(await screen.findByRole("button", { name: "Open package.json" })).toBeTruthy();
+    expect(api.get).toHaveBeenCalledWith("/api/files/list?path=workspaces%2Fmatrix-os");
+    act(() => { useFilesNavigation.getState().navigate("workspaces/matrix-os"); });
+    await waitFor(() => expect(useFilesNavigation.getState().request).toBeNull());
+    expect(screen.getAllByRole("tab", { name: "matrix-os" })).toHaveLength(1);
+    expect(screen.getByRole("tab", { name: "matrix-os" }).getAttribute("aria-selected")).toBe("true");
+  });
+  it("discards navigation queued for another runtime", async () => {
+    useFilesNavigation.getState().navigate("workspaces/matrix-os");
+    useConnection.setState({ runtimeSlot: "other" });
+    render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
+    await waitFor(() => expect(useFilesNavigation.getState().request).toBeNull());
+    expect(api.get).not.toHaveBeenCalledWith("/api/files/list?path=workspaces%2Fmatrix-os");
+  });
   it("keeps folders in one pane and opens a selected file in an optional preview", async () => {
     render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
     const workspaces = await screen.findByRole("button", { name: "Open workspaces" });

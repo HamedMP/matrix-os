@@ -1,4 +1,4 @@
-import { createProjectMetadataService } from "./project-metadata.js";
+import { createProjectFilesLocationService, createProjectMetadataService } from "./project-metadata.js";
 import { registerProjectMetadataRoutes } from "./project-metadata-routes.js";
 import { createProjectDeletionCleanup, type ProjectChatCleanup } from "./project-deletion-cleanup.js";
 import type { BackgroundAgentRuntime } from "./background-agent-runtime.js";
@@ -395,6 +395,7 @@ export function createWorkspaceRoutes(options: {
   }
 
   registerProjectMetadataRoutes(app, {
+    filesLocation: createProjectFilesLocationService({ homePath: options.homePath, projectManager }),
     update: createProjectMetadataService({ homePath: options.homePath, projectManager }),
     getOwnerScope, principalError, admit: withLegacyProjectOperation,
   });

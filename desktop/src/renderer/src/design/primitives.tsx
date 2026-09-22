@@ -82,6 +82,7 @@ export function Dialog({
   placement = "top",
   top = "18vh",
   preserveTitlebar = false,
+  onCloseAutoFocus,
 }: {
   open: boolean;
   onClose: () => void;
@@ -92,6 +93,7 @@ export function Dialog({
   placement?: "top" | "center";
   top?: string;
   preserveTitlebar?: boolean;
+  onCloseAutoFocus?: (event: Event) => void;
 }) {
   return (
     <RadixDialog.Root open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
@@ -110,6 +112,7 @@ export function Dialog({
           ...(preserveTitlebar ? { top: "var(--titlebar-height)" } : {}),
         }} />
         <RadixDialog.Content
+          onCloseAutoFocus={onCloseAutoFocus}
           role={role}
           aria-describedby={undefined}
           className={`dialog-fade-in fixed left-1/2 rounded-xl border focus:outline-none ${

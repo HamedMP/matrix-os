@@ -110,7 +110,8 @@ describe('platform db.ts export compatibility (S01 foundation)', () => {
       'insertUserMachine', 'getUserMachine', 'getActiveUserMachineByClerkId', 'accessibleUserMachinePredicate',
       'getAccessibleActiveUserMachineByClerkId', 'getActiveUserMachineByHandle', 'getRunningUserMachineByHandle',
       'getRunningUserMachineByClerkId', 'getAccessibleRunningUserMachineByClerkId',
-      'getRunningUserMachineByClerkIdForUpdate', 'listUserMachines', 'listActiveUserMachinesByClerkId',
+      'getRunningUserMachineByClerkIdForUpdate', 'getAccessibleRunningUserMachineByClerkIdForUpdate',
+      'listUserMachines', 'listActiveUserMachinesByClerkId',
       'listAccessibleActiveUserMachinesByClerkId', 'listNonDeletedUserMachinesByClerkId', 'updateUserMachine',
       'listRunningUserMachines', 'listAllUserMachines', 'listStaleUserMachines', 'lockUserMachineProvisioning',
     ] as const;

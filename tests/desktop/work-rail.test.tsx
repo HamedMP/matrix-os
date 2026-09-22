@@ -137,6 +137,38 @@ afterEach(() => {
 });
 
 describe("WorkRail", () => {
+  it("moves projects between Projects and Pinned when pin state changes", async () => {
+    const client = { list: vi.fn(async () => ({ items: [] })) } as unknown as CanonicalChatClient;
+    const actions = {
+      onNewGlobalChat: vi.fn(), onCreateProject: vi.fn(), onNewProjectChat: vi.fn(),
+      onSelectChat: vi.fn(), onCollapse: vi.fn(),
+    };
+    const { rerender } = render(<WorkRail client={client} projects={[alpha, beta]} active {...actions} />);
+
+    await waitFor(() => expect(client.list).toHaveBeenCalled());
+    let pinnedSection = screen.getByRole("button", { name: "Pinned" }).closest("section");
+    let projectsSection = screen.getByRole("button", { name: "Projects" }).closest("section");
+    expect(pinnedSection).toBeTruthy();
+    expect(projectsSection).toBeTruthy();
+    expect(within(pinnedSection!).queryByRole("button", { name: "Alpha" })).toBeNull();
+    expect(within(projectsSection!).getByRole("button", { name: "Alpha" })).toBeTruthy();
+
+    rerender(<WorkRail client={client} projects={[{ ...alpha, pinned: true }, beta]} active {...actions} />);
+    pinnedSection = screen.getByRole("button", { name: "Pinned" }).closest("section");
+    projectsSection = screen.getByRole("button", { name: "Projects" }).closest("section");
+    expect(within(pinnedSection!).getByRole("button", { name: "Alpha" })).toBeTruthy();
+    expect(within(pinnedSection!).queryByLabelText("Pinned project")).toBeNull();
+    expect(within(pinnedSection!).queryByRole("button", { name: "Beta" })).toBeNull();
+    expect(within(projectsSection!).getByRole("button", { name: "Beta" })).toBeTruthy();
+    expect(within(projectsSection!).queryByRole("button", { name: "Alpha" })).toBeNull();
+
+    rerender(<WorkRail client={client} projects={[alpha, beta]} active {...actions} />);
+    pinnedSection = screen.getByRole("button", { name: "Pinned" }).closest("section");
+    projectsSection = screen.getByRole("button", { name: "Projects" }).closest("section");
+    expect(within(pinnedSection!).queryByRole("button", { name: "Alpha" })).toBeNull();
+    expect(within(projectsSection!).getByRole("button", { name: "Alpha" })).toBeTruthy();
+  });
+
   it("applies a direct canonical projection without waiting for a stream refresh", async () => {
     const client = { list: vi.fn(async () => ({ items: [recent] })) } as unknown as CanonicalChatClient;
     const actions = {
@@ -1296,13 +1328,14 @@ describe("WorkRail", () => {
     expect(onChatDeleted).not.toHaveBeenCalled();
   });
 
-  it("opens Project deletion from both hover and right-click actions", async () => {
+  it("opens Project deletion from the project context menu", async () => {
     setup();
     const project = await screen.findByRole("button", { name: "Alpha" });
 
-    expect(screen.getByRole("button", { name: "Delete Alpha project" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Delete Alpha project" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Actions for Alpha" })).toBeTruthy();
     fireEvent.contextMenu(project, { clientX: 100, clientY: 140 });
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Delete project" }));
 
     expect(await screen.findByRole("alertdialog", { name: "Delete project permanently?" })).toBeTruthy();
   });

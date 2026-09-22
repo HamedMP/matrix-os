@@ -3,6 +3,8 @@ import { Folder, Plus, X } from "@renderer/lib/hugeicons";
 import { Button, Dialog } from "../../design/primitives";
 import RetainedPane from "../../design/RetainedPane";
 import { toUserMessage } from "../../lib/errors";
+import { useFilesNavigation } from "../../stores/files-navigation";
+import { isCurrentRuntimeGeneration } from "../../stores/runtime-generation";
 import { useConnection } from "../../stores/connection";
 import ComputerFileBrowser, { type BrowserSelection } from "./ComputerFileBrowser";
 import { PreviewPane, resolveActivePath, type FileSelection } from "./FilePreviewPane";
@@ -35,6 +37,7 @@ function joinPath(parent: string, name: string): string {
 }
 
 export default function FilesWorkspace() {
+  const navigation = useFilesNavigation(state => state.request);
   const download = useDesktopFileDownload();
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
   const authGeneration = useConnection((state) => state.authGeneration);
@@ -85,6 +88,13 @@ export default function FilesWorkspace() {
     setTabs([...tabs, tab].slice(-MAX_FILE_TABS));
     setActiveTabId(tab.id);
   }, [tabs]);
+
+  useEffect(() => {
+    if (!navigation) return;
+    useFilesNavigation.getState().consume(navigation);
+    if (navigation.runtimeSlot !== runtimeSlot || navigation.authGeneration !== authGeneration || !isCurrentRuntimeGeneration(navigation.generation)) return;
+    openFolderTab(navigation.path);
+  }, [navigation, runtimeSlot, authGeneration, openFolderTab]);
 
   const closeTab = useCallback((tabId: string) => {
     if (tabs.length === 1) return;
