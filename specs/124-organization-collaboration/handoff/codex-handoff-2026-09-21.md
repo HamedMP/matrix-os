@@ -1529,3 +1529,74 @@ coverage the run did not have.
 **Rule for every remaining receipt in this release: state the backend per suite, and after a re-run confirm the
 env-guarded cases actually executed rather than skipped.** A skipped guard and a passing guard both read as
 green in the totals.
+
+## 59. S18 silent-revert points, resolved — 2026-09-22 09:00 UTC
+
+Detail behind section 55. Three silent-revert points, classified by **how each announces itself**, which is the
+thing that decides whether it needs a named check.
+
+| | conflict marker | typecheck error | verdict |
+| --- | --- | --- | --- |
+| **SR-1** `startup/collaboration.ts`, Contributor control | **no** | yes, `TS2741` | loud, but only on the extraction path |
+| **SR-2** `server.ts` import block | yes | yes | loud, twice |
+| **SR-3a** `bootstrap.ts` signing semantics | yes | yes, duplicate `relayOrigin` | loud, twice |
+| **SR-3b** `collaboration-bootstrap.test.ts` timer test | yes | **no** | marker only |
+
+### SR-2 — the resolution is neither side wholesale
+
+Commit `4d5af1dc3` in `server-composition` deletes a 31-line import block, replacing it with
+`import { type Kysely } from "kysely";`. That drops 28 symbols, **24 of which are still referenced**. The one
+that matters is `createLazyProviderSnapshotReader`, backing S15's `collaborationProviderSnapshots =
+createLazyProviderSnapshotReader()` — S15's extraction of a previously inline throwing closure.
+
+**Correct resolution: S18's side, plus re-adding `createLazyProviderSnapshotReader`.** Keeping S15's block
+instead produces **48 duplicate-identifier errors**, because S18's own later commits in the same layer re-add
+the rest in sorted order. Four symbols are provably unused and safe either way: `createAiProviderRoutes`,
+`createProviderSettingsRoutes`, `registerCustomMcpGatewayRoutes`, `z`.
+
+### SR-3a — the two comments assert opposite behaviour
+
+`packages/platform/src/collaboration/bootstrap.ts`:
+
+- S18: *"signing keys are rejected by configuration validation before construction"*
+- S15: *"signing keys leave ticket issuance fail-closed without skipping construction"*
+
+These are **opposite claims about what happens on bad signing configuration**, not a wording difference. S15
+also binds `relayOrigin` at line 55 via `loadCollaborationRelayOrigin(options.env)` with an early fail-closed
+return at 56, so S18's added `const relayOrigin = config.relayOrigin;` redeclares it. Origin: S15-only
+`f40cd3405`, `9f79784f9`, `70791739c`.
+
+### SR-3b — the one that needs a named check
+
+`tests/platform/collaboration-bootstrap.test.ts`. S18 reinstates two older tests (16 lines) and drops S15's
+*"leaves no organization timers running when the relay origin is invalid"* (75 lines, asserting
+`vi.getTimerCount()` against a fixture baseline; from S15-only `ccbad97fe`, `b1f6b8483`).
+
+It raises a conflict marker, so it cannot slip past a rebase unnoticed — **but nothing downstream fails if
+someone resolves it toward S18**, because deleted test coverage is invisible to `tsc`. **Named check: after any
+S18 resolution, assert that file still contains `leaves no organization timers running when the relay origin is
+invalid` and a `getTimerCount()` baseline assertion.**
+
+### Conflicts 1 and 2 — verified by pre-image diff, not by reading markers
+
+Rather than trusting the conflict markers, S18's *removed pre-image* block was diffed against S15's HEAD block:
+
+- `0a7c01c61`: S18 removed 160 lines, S15 HEAD 150. Difference is 10 import lines the same commit removes
+  elsewhere in the file, plus **exactly one** in-block line.
+- `57b140a32`: S18 removed 214, S15 HEAD 197. Difference is 17 import lines outside the block, plus the **same
+  single** in-block line.
+
+That line is `providerSnapshotReader: lazyCollaborationProviderSnapshotReader` →
+`collaborationProviderSnapshots.reader`. Both extracted functions take `providerSnapshotReader` as a parameter
+typed `CanonicalProviderSnapshotReader`, so adapting the call-site argument sufficed: no signature change, no
+behaviour change. **This method is worth reusing — a marker shows you a region, a pre-image diff shows you what
+actually differs.**
+
+### Not a silent-revert point
+
+`server-extraction`, commit `61acc7f10`: S15's inline `if (gatewayCollaboration) { const sharedAi = await
+gatewayCollaboration.enableSharedAi({` versus S18's `await enableOwnerSharedAi({ gatewayCollaboration, input:
+{`. S18's helper keeps the null guard and the identical log line, and preserves the S09 sandbox seam. Cleared.
+
+**Conflict totals:** `server-composition` 1 of 13 commits, `server-extraction` 1 of 3, `t090-retirement` 1, plus
+the 2 in the base — 5 across 100 replayed commits.
