@@ -100,8 +100,6 @@ export function watchResourceStream(
       try {
         const next = await reader.read();
         if (closed) return;
-        // The lease can end while the read is pending; re-check it before any byte reaches the client.
-        if (!leaseActive()) { stop(controller); return; }
         if (next.done) {
           if (received !== declaredSize) { stop(controller); return; }
           closed = true;
@@ -111,6 +109,8 @@ export function watchResourceStream(
         }
         received += next.value.byteLength;
         if (received > declaredSize || received > MAX_STREAM_BYTES) { stop(controller); return; }
+        // The lease can end while the read is pending; re-check it before this chunk reaches the client.
+        if (!leaseActive()) { stop(controller); return; }
         controller.enqueue(next.value);
       } catch (readError: unknown) {
         console.warn("[collaboration-resources] stream read failed", readError instanceof Error ? readError.name : "UnknownError");
