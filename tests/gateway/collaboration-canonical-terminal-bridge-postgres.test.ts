@@ -184,6 +184,46 @@ describe("canonical terminal collaboration bridge", () => {
     expect(runtime.attach).toHaveBeenCalledOnce();
   });
 
+  async function sharedOutput(handlers: { output: ReturnType<typeof vi.fn>; exit: ReturnType<typeof vi.fn>; error: ReturnType<typeof vi.fn> }) {
+    const repository = new CollaborationRepository(fixture.db);
+    await repository.createDirectScope({ scopeId, ownerId, organizationId, kind: "terminal", resourceId: terminalId, authorityRuntimeId: runtimeId });
+    const bridge = createCanonicalTerminalCollaborationBridge({ db: fixture.db, ownerId, runtime: runtime as never });
+    const eligible = await bridge.registry.get(terminalId) as { sessionIncarnation: string; executionGeneration: number };
+    await bridge.registry.bindCollaboration(terminalId, {
+      scopeId, sessionIncarnation: eligible.sessionIncarnation, executionGeneration: eligible.executionGeneration,
+      contributorControl: false,
+    });
+    const connecting = bridge.connectOutput({
+      scopeId, terminalId, incarnation: eligible.sessionIncarnation,
+      executionGeneration: eligible.executionGeneration, creatorActorId: ownerId,
+      createdAt, status: "active",
+    }, handlers);
+    await vi.waitFor(() => expect(runtime.attach).toHaveBeenCalledOnce());
+    const callbacks = runtime.attach.mock.calls[0]![0];
+    callbacks.onFrame({ type: "attached", terminalRef: { workspaceId, tabId }, canonicalSize: { cols: 80, rows: 24 }, revision: 4, nextSeq: 0 });
+    return { source: await connecting, callbacks, stream: runtime.attach.mock.results[0]!.value as { send: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn> } };
+  }
+
+  it("pings the daemon so the shared viewer outlives its idle expiry", async () => {
+    const handlers = { output: vi.fn(async () => undefined), exit: vi.fn(async () => undefined), error: vi.fn() };
+    // Only interval timers are faked: the attach round trip still uses real timers and I/O.
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      const { source, stream } = await sharedOutput(handlers);
+      expect(stream.send).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(150_000);
+      expect(stream.send.mock.calls.length).toBeGreaterThanOrEqual(2);
+      for (const [frame] of stream.send.mock.calls) {
+        expect(frame).toEqual({ type: "ping", terminalRef: { workspaceId, tabId } });
+      }
+      const sent = stream.send.mock.calls.length;
+      source.close();
+      vi.advanceTimersByTime(150_000);
+      expect(stream.send).toHaveBeenCalledTimes(sent);
+      expect(handlers.error).not.toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
+  });
+
   it("preflights and shares the exact live tab, then refuses its stale binding", async () => {
     const repository = new CollaborationRepository(fixture.db);
     const bridge = createCanonicalTerminalCollaborationBridge({ db: fixture.db, ownerId, runtime: runtime as never });

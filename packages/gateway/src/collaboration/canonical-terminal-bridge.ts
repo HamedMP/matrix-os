@@ -9,6 +9,8 @@ type TerminalRuntime = Pick<TerminalRuntimeSocketClient,
   "listWorkspaces" | "writeInput" | "terminateTab" | "attach">;
 const MAX_PENDING_OUTPUT_BYTES = 2 * 1024 * 1024;
 const ATTACH_TIMEOUT_MS = 5_000;
+/** Output never refreshes the daemon viewer, which expires after two idle minutes. */
+const VIEWER_KEEPALIVE_MS = 30_000;
 
 export class CanonicalTerminalBridgeError extends Error {
   constructor() {
@@ -89,9 +91,16 @@ export function createCanonicalTerminalCollaborationBridge(options: {
       let attached = false;
       let pendingBytes = 0;
       let delivery = Promise.resolve();
+      let keepalive: ReturnType<typeof setInterval> | undefined;
+      const stopKeepalive = () => {
+        if (!keepalive) return;
+        clearInterval(keepalive);
+        keepalive = undefined;
+      };
       const close = () => {
         if (closed) return;
         closed = true;
+        stopKeepalive();
         stream?.close();
       };
       const failed = (error?: unknown) => {
@@ -151,6 +160,19 @@ export function createCanonicalTerminalCollaborationBridge(options: {
         throw error;
       }
       if (closed) throw new CanonicalTerminalBridgeError();
+      keepalive = setInterval(() => {
+        if (closed) {
+          stopKeepalive();
+          return;
+        }
+        try {
+          stream?.send({ type: "ping", terminalRef: current.ref });
+        } catch (error: unknown) {
+          console.warn("[canonical-terminal-bridge] viewer keepalive failed", error instanceof Error ? error.name : "UnknownError");
+          failed();
+        }
+      }, VIEWER_KEEPALIVE_MS);
+      keepalive.unref?.();
       return { close };
     },
     registry: {
