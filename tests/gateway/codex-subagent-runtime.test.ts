@@ -34,9 +34,10 @@ for await (const line of createInterface({ input: process.stdin })) {
  const message = JSON.parse(line);
  if (message.method === 'initialize') send({ id: message.id, result: { userAgent: 'test' } });
  if (message.method === 'thread/start') send({ id: message.id, result: { thread: { id: 'native-parent' } } });
+ if (message.method === 'thread/read') send({ id: message.id, result: { thread: { id: message.params.threadId, parentThreadId: 'native-parent', agentRole: 'explorer' } } });
  if (message.method === 'turn/start') {
    send({ id: message.id, result: { turn: { id: 'parent-turn' } } });
-   setTimeout(() => { for (const item of ${JSON.stringify(notifications)}) send(item); }, 30);
+   setTimeout(() => { for (const [index, item] of ${JSON.stringify(notifications)}.entries()) setTimeout(() => send(item), index * 30); }, 30);
  }
 }
 `);
@@ -58,7 +59,7 @@ for await (const line of createInterface({ input: process.stdin })) {
     }).events);
     expect(() => parseCodingAgentProviderEvents(events, "thread_matrix")).not.toThrow();
     const childEvents = events.filter((event) => event.type === "subagent.activity");
-    expect(childEvents.at(-1)).toMatchObject({ subagent: { name: "arithmetic", status: "completed", result: "437" } });
+    expect(childEvents.at(-1)).toMatchObject({ subagent: { name: "arithmetic", status: "completed", result: "437", role: "explorer" } });
     expect(new Set(childEvents.map((event) => event.activityId)).size).toBe(1);
     expect(events.filter((event) => event.type === "assistant.text.delta").map((event) => event.delta)).toEqual(["493"]);
     expect(JSON.stringify(childEvents)).not.toMatch(/native-child|child-turn|\/root/);

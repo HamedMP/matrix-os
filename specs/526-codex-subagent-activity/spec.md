@@ -36,8 +36,12 @@ Build the checked-out PR head with `flox activate -- pnpm --filter desktop run b
 Use a search icon for observed explorer/research roles, code for worker/implementer,
 and shield/check for reviewer. Missing or custom roles use a generic branch icon;
 never infer roles from names. Optional `thread/started` role metadata is accepted
-only for already attributed child threads. Runtimes that do not emit this metadata
-continue to show the generic icon. No additional provider read or execution authority.
+only for already attributed child threads. For runtimes without child metadata notifications,
+request metadata-only `thread/read` once for each admitted child, capped at 128 requests
+per run with a five-second timeout. Send without awaiting in the serial event consumer;
+project replies in that consumer only while the same parent turn is active, and require
+the returned child ID and parent ID to match attribution. No arbitrary thread reads
+or new execution authority. Unconfigured roles continue to use the generic icon.
 
 Run `flox activate -- pnpm exec tsx scripts/dev/preview-codex-subagents.ts` to open
 `http://127.0.0.1:5187/`. This renders the production shared component with synthetic
@@ -65,3 +69,10 @@ Regression coverage includes process mode, reverse-order concurrent completion,
 duplicate starts, ambiguous/unrelated completion, sensitive-text exclusion and capacity.
 Real Preview acceptance must demonstrate child results delivered to the parent in the
 same run, distinct expanded result rows, and persistent replay without duplicate rows.
+
+A second real Codex 0.153.4 spike registered an explorer description through a
+process-local config override. The spawn schema then exposed the role selector,
+and `thread/read` returned `agentRole=explorer` while still emitting no child
+`thread/started` event. Upstream tool construction gates `agent_type` on a nonempty
+configured role registry. Preserve user configuration; do not fabricate a role
+from a task name or install default role overrides on the user's behalf.

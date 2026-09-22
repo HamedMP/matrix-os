@@ -136,3 +136,21 @@ it("withholds natural-language credentials in child results before persistence",
   expect(events[0].subagent.status).toBe("completed");
   expect(events[0].subagent.result).toBeUndefined();
 });
+
+it("hydrates only an attributed child's matching parent and bounds metadata reads", () => {
+  const tracker = createCodexSubagentActivity();
+  tracker.project(marker(), "parent", "turn");
+  expect(tracker.takeMetadataRequests()).toEqual(["child"]);
+  expect(tracker.takeMetadataRequests()).toEqual([]);
+  expect(tracker.projectMetadata("child", { id: "child", parentThreadId: "unrelated", agentRole: "worker" }, "parent", "turn")).toEqual([]);
+  expect(tracker.projectMetadata("child", { id: "other", parentThreadId: "parent", agentRole: "worker" }, "parent", "turn")).toEqual([]);
+  expect(tracker.projectMetadata("child", { id: "child", parentThreadId: "parent", agentRole: "explorer" }, "parent", "turn")[0].subagent.role).toBe("explorer");
+  for (let i = 0; i < 140; i++) {
+    const event = marker(); event.params.item.agentThreadId = `child-${i}`;
+    tracker.project(event, "parent", "turn");
+  }
+  expect(tracker.takeMetadataRequests()).toHaveLength(127);
+  expect(tracker.projectMetadata("child", { id: "child", parentThreadId: "parent", agentRole: "worker" }, "parent", "turn")).toEqual([]);
+  tracker.reset();
+  expect(tracker.takeMetadataRequests()).toEqual([]);
+});

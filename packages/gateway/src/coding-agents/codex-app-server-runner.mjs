@@ -611,7 +611,7 @@ function sendProvider(value) {
   child.stdin.write(`${JSON.stringify(value)}\n`);
 }
 
-function request(method, params, timeoutMs = RPC_TIMEOUT_MS) {
+function request(method, params, timeoutMs = RPC_TIMEOUT_MS, subagentMetadata) {
   if (pendingRpc.size >= MAX_PENDING_REQUESTS) {
     return Promise.reject(new Error("provider_request_limit"));
   }
@@ -622,7 +622,7 @@ function request(method, params, timeoutMs = RPC_TIMEOUT_MS) {
       reject(new Error("provider_request_timeout"));
     }, timeoutMs);
     timeout.unref();
-    pendingRpc.set(id, { resolve, reject, timeout, method });
+    pendingRpc.set(id, { resolve, reject, timeout, method, subagentMetadata });
     sendProvider({ id, method, params });
   });
 }
@@ -849,7 +849,15 @@ async function handleProviderMessage(raw) {
     pendingRpc.delete(response.data.id);
     clearTimeout(pending.timeout);
     if (response.data.error !== undefined) pending.reject(providerRpcError(response.data.error));
-    else pending.resolve(response.data.result);
+    else {
+      const metadata = pending.subagentMetadata;
+      if (metadata && activeTurn && !executionExpired && nativeThreadId === metadata.parent
+        && activeNativeTurnId === metadata.turn) {
+        for (const activity of subagentActivity.projectMetadata(metadata.id, response.data.result?.thread,
+          metadata.parent, metadata.turn)) await persist(activity);
+      }
+      pending.resolve(response.data.result);
+    }
     return;
   }
   // A deadline settles this execution once. Do not accept late tool results,
@@ -861,6 +869,14 @@ async function handleProviderMessage(raw) {
   for (const activity of subagentActivity.project(raw, nativeThreadId, activeNativeTurnId)) {
     await persist(activity);
     executionWatchdog.progress(activity.activityId);
+  }
+  // Send without awaiting: replies must pass through this same serial consumer.
+  // Handle their display projection above, preserving event-write ordering.
+  for (const id of subagentActivity.takeMetadataRequests()) {
+    void request("thread/read", { threadId: id, includeTurns: false }, 5_000,
+      { id, parent: nativeThreadId, turn: activeNativeTurnId }).catch((error) => {
+        console.warn("[coding-agents] Child metadata unavailable:", error instanceof Error ? error.name : "UnknownError");
+      });
   }
   // Child output is evidence for its own row, never the parent assistant response.
   if (raw?.params?.threadId && raw.params.threadId !== nativeThreadId) {

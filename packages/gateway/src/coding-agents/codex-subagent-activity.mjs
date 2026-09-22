@@ -23,6 +23,8 @@ const terminal = new Set(["completed", "failed", "cancelled"]);
 export function createCodexSubagentActivity({ maxAgents = 128 } = {}) {
   const agents = new Map();
   const childTurns = new Map();
+  let metadataBudget = 128;
+  const metadataQueue = [];
   const capacity = Number.isInteger(maxAgents) ? Math.max(1, Math.min(128, maxAgents)) : 128;
   function update(id, parent, turn, patch, create = false) {
     const prior = agents.get(id);
@@ -35,11 +37,20 @@ export function createCodexSubagentActivity({ maxAgents = 128 } = {}) {
     const next = { type: "matrix.codex.subagent.activity", activityId: opaque(turn, id), subagent };
     if (JSON.stringify(prior) === JSON.stringify(next)) return [];
     agents.set(id, next);
+    if (!prior && metadataBudget > 0) { metadataBudget--; metadataQueue.push(id); }
     return [next];
   }
   return {
     get size() { return agents.size; },
-    reset() { agents.clear(); childTurns.clear(); },
+    reset() { agents.clear(); childTurns.clear(); metadataQueue.length = 0; metadataBudget = 128; },
+    takeMetadataRequests() { return metadataQueue.splice(0); },
+    projectMetadata(id, thread, parent, turn) {
+      const prior = agents.get(id);
+      if (!prior || thread?.id !== id || typeof thread.parentThreadId !== "string"
+        || opaque(thread.parentThreadId) !== prior.subagent.parentAgentId) return [];
+      const role = safeCodexSubagentText(thread.agentRole, 80);
+      return role ? update(id, parent, turn, { role }) : [];
+    },
     project(raw, parent, turn) {
       if (!parent || !turn || !raw || typeof raw !== "object") return [];
       const params = raw.params;
