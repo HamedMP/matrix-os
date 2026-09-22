@@ -33,7 +33,9 @@ import {
 import { OrganizationMembershipClient } from "./organization-membership-client.js";
 import { CollaborationRepository } from "./repository.js";
 import { createCollaborationRoutes } from "./routes.js";
-import { createSharedAiRuntime } from "./shared-ai-runtime.js";
+import { createSharedAiRuntime, type SharedChatSandboxManifestSource } from "./shared-ai-runtime.js";
+import type { ReadinessSubject } from "./readiness-evaluator.js";
+import { sandboxRequiredForResourceKind } from "./sandbox-readiness.js";
 import type { CanonicalProviderSnapshotReader } from "../ai-providers/provider-settings-coordinators.js";
 import { OwnerAccountEligibility } from "./account-eligibility.js";
 import {
@@ -310,6 +312,8 @@ export async function createGatewayCollaboration(options: {
       fetchImpl?: typeof fetch;
       providerCatalog?: ChatProviderCatalogService;
       codingProviders?: Pick<CodingAgentProviderRegistry, "listProviders">;
+      /** S07: mounts each shared run's authoritative root; without it shared AI stays disabled. */
+      sandboxManifests?: SharedChatSandboxManifestSource;
     }): Promise<{ available: boolean }> {
       if (registered || closing || sharedAiRuntime) {
         throw new Error("Shared AI must be initialized exactly once before route registration");
@@ -334,9 +338,22 @@ export async function createGatewayCollaboration(options: {
         ...(input.supervisorSocket ? { supervisorSocket: input.supervisorSocket } : {}),
         ...(input.brokerSocket ? { brokerSocket: input.brokerSocket } : {}),
         ...(input.fetchImpl ? { fetchImpl: input.fetchImpl } : {}),
+        ...(input.sandboxManifests ? { sandboxManifests: input.sandboxManifests } : {}),
       });
       if (sharedAiRuntime.available) chatExecutionAdapter = sharedAiRuntime.chatExecutionAdapter;
       return { available: sharedAiRuntime.available };
+    },
+    /**
+     * S07: the `supported` readiness input for shareable resources. Only projects and
+     * Chats execute, so only they need the pinned sandbox policy: they are supported
+     * while shared AI runs on a supervisor that advertises it, and unsupported
+     * otherwise rather than offered as a run that would fail at launch. Files,
+     * folders, app instances and observable terminals execute nothing and stay
+     * supported either way, which is the same rule the readiness probe applies.
+     */
+    async sandboxSupported(subject: ReadinessSubject): Promise<boolean> {
+      if (!sandboxRequiredForResourceKind(subject.resourceKind)) return true;
+      return sharedAiRuntime?.available === true ? sharedAiRuntime.sandboxSupported(subject) : false;
     },
     enableSharedTerminal(input: {
       registry: ConstructorParameters<typeof CollaborationTerminalAdapter>[0]["registry"];

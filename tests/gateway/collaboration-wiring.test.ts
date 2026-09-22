@@ -11,6 +11,10 @@ import {
   SCOPE_RUNTIME_PROFILE_ID,
   SCOPE_RUNTIME_PROFILE_VERSION,
 } from "@matrix-os/scope-runtime/profile";
+import {
+  SCOPE_RUNTIME_SANDBOX_POLICY_DIGEST,
+  SCOPE_RUNTIME_SANDBOX_POLICY_VERSION,
+} from "@matrix-os/scope-runtime/sandbox";
 import type { CanonicalChatOrchestrator } from "../../packages/gateway/src/chat/orchestrator.js";
 import { bootstrapChatDatabase } from "../../packages/gateway/src/chat/database.js";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
@@ -19,6 +23,7 @@ import {
   loadGatewayCollaborationConfig,
 } from "../../packages/gateway/src/collaboration/wiring.js";
 import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
+import { evaluateCollaborationReadiness, type ReadinessProbes } from "../../packages/gateway/src/collaboration/readiness-evaluator.js";
 import { OrganizationMembershipClient } from "../../packages/gateway/src/collaboration/organization-membership-client.js";
 import { createLazyProviderSnapshotReader } from "../../packages/gateway/src/collaboration/lazy-provider-snapshot-reader.js";
 import {
@@ -304,6 +309,7 @@ describe("gateway collaboration wiring", () => {
         homePath: temp,
         supervisorSocket,
         brokerSocket,
+        sandboxManifests,
       })).resolves.toEqual({ available: true });
       await expect(fixture.db.selectFrom("collaboration_scopes")
         .select(["execution_generation", "execution_eligibility"])
@@ -406,9 +412,135 @@ describe("gateway collaboration wiring", () => {
       await rm(temp, { recursive: true, force: true });
     }
   });
+  it.each([
+    { name: "the supervisor lacks the pinned sandbox policy", sandbox: false, source: sandboxManifests },
+    { name: "no sandbox manifest source is wired", sandbox: true, source: undefined },
+  ])("keeps shared AI disabled and eligibility empty when $name", async ({ sandbox, source }) => {
+    const temp = await mkdtemp(join(tmpdir(), "matrix-shared-ai-wiring-"));
+    const supervisorSocket = join(temp, "supervisor.sock");
+    const brokerSocket = join(temp, "broker.sock");
+    const supervisor = await startSupervisor(supervisorSocket, { sandbox });
+    await bootstrapCollaborationDatabase(fixture.db);
+    await seedSharedChat(fixture);
+    const runtime = await createGatewayCollaboration({
+      organizationPrecondition: allowAllOrganizationPrecondition,
+      db: fixture.db,
+      chatRepository: new ChatRepository(fixture.db),
+      config: {
+        runtimeId: collaborationIds.runtime,
+        activeKeyId: "key-1",
+        proofKeys: { "key-1": "a".repeat(32) },
+        preflightSecret: "b".repeat(32),
+        platformBaseUrl: "https://platform.internal",
+        serviceToken: "c".repeat(32),
+      },
+      resolveParticipant: async (actorId) => ({ actorId, displayName: actorId }),
+      outboxFetch: async () => new Response(null, { status: 204 }),
+      startTimers: false,
+    });
+    try {
+      await expect(runtime.enableSharedAi({
+        orchestrator: {} as unknown as CanonicalChatOrchestrator,
+        homePath: temp,
+        supervisorSocket,
+        brokerSocket,
+        ...(source ? { sandboxManifests: source } : {}),
+      })).resolves.toEqual({ available: false });
+      await expect(fixture.db.selectFrom("collaboration_scopes")
+        .select(["execution_generation", "execution_eligibility"])
+        .where("id", "=", collaborationIds.scope).executeTakeFirstOrThrow())
+        .resolves.toMatchObject({ execution_generation: null, execution_eligibility: null });
+      // The readiness seam the preflight composition reads is false whenever shared AI is not running,
+      // but only for the kinds that execute: a file or folder share needs no sandbox at all.
+      const subject = { ownerId: "user_owner", scopeId: collaborationIds.scope, organizationId: "org_1" };
+      for (const resourceKind of ["chat", "project"] as const) {
+        await expect(runtime.sandboxSupported({ ...subject, resourceKind })).resolves.toBe(false);
+      }
+      for (const resourceKind of ["file", "folder", "app_instance", "terminal"] as const) {
+        await expect(runtime.sandboxSupported({ ...subject, resourceKind })).resolves.toBe(true);
+      }
+    } finally {
+      await runtime.shutdown();
+      await new Promise<void>((resolve) => supervisor.close(() => resolve()));
+      await rm(temp, { recursive: true, force: true });
+    }
+  });
+
+  it("answers the readiness composition from the live supervisor: executing kinds are unsupported once the sandbox policy is gone", async () => {
+    const temp = await mkdtemp(join(tmpdir(), "matrix-shared-ai-wiring-"));
+    const supervisorSocket = join(temp, "supervisor.sock");
+    const brokerSocket = join(temp, "broker.sock");
+    const advertised = { sandbox: true };
+    const supervisor = await startSupervisor(supervisorSocket, { sandbox: () => advertised.sandbox });
+    await bootstrapCollaborationDatabase(fixture.db);
+    await seedSharedChat(fixture);
+    const runtime = await createGatewayCollaboration({
+      organizationPrecondition: allowAllOrganizationPrecondition,
+      db: fixture.db,
+      chatRepository: new ChatRepository(fixture.db),
+      config: {
+        runtimeId: collaborationIds.runtime,
+        activeKeyId: "key-1",
+        proofKeys: { "key-1": "a".repeat(32) },
+        preflightSecret: "b".repeat(32),
+        platformBaseUrl: "https://platform.internal",
+        serviceToken: "c".repeat(32),
+      },
+      resolveParticipant: async (actorId) => ({ actorId, displayName: actorId }),
+      outboxFetch: async () => new Response(null, { status: 204 }),
+      startTimers: false,
+    });
+    try {
+      await expect(runtime.enableSharedAi({
+        orchestrator: {} as unknown as CanonicalChatOrchestrator,
+        homePath: temp,
+        supervisorSocket,
+        brokerSocket,
+        sandboxManifests,
+      })).resolves.toEqual({ available: true });
+      // The preflight readiness composition reads `supported` from this seam.
+      const probes: ReadinessProbes = {
+        hostOnline: async () => true,
+        supported: (subject) => runtime.sandboxSupported(subject),
+        gitIdentity: async () => ({ configured: true }),
+        forgeCredential: async () => ({ configured: true }),
+        aiSource: async () => ({ configured: true, sourceKind: "owner_account" as const }),
+        submitMode: async () => "owner_only" as const,
+        chatRootInventory: async () => ({ chatRootCount: 1, dirtyRootCount: 0, unresolved: 0 }),
+      };
+      const subject = { ownerId: "user_owner", scopeId: collaborationIds.scope, organizationId: "org_1" };
+      for (const resourceKind of ["project", "chat"] as const) {
+        const readiness = await evaluateCollaborationReadiness({ ...subject, resourceKind }, probes);
+        expect(readiness.state).not.toBe("unsupported");
+      }
+      // A startup snapshot is not trusted: the host drops the pinned policy and the next check is unsupported.
+      advertised.sandbox = false;
+      for (const resourceKind of ["project", "chat"] as const) {
+        const readiness = await evaluateCollaborationReadiness({ ...subject, resourceKind }, probes);
+        expect(readiness.state).toBe("unsupported");
+      }
+      // Nothing executes for a file, so it stays shareable without the sandbox policy.
+      const file = await evaluateCollaborationReadiness({ ...subject, resourceKind: "file" }, probes);
+      expect(file.state).not.toBe("unsupported");
+    } finally {
+      await runtime.shutdown();
+      await new Promise<void>((resolve) => supervisor.close(() => resolve()));
+      await rm(temp, { recursive: true, force: true });
+    }
+  });
 });
 
-async function startSupervisor(path: string): Promise<Server> {
+const sandboxManifests = {
+  resolve: async (input: { scopeHandle: string; requestingActorId: string }) => ({
+    version: 1 as const,
+    scopeHandle: input.scopeHandle,
+    actorId: input.requestingActorId,
+    worktree: { hostPath: "/home/matrix/home/projects/launch-site", mode: "rw" as const, fingerprint: "a".repeat(64) },
+    network: "none" as const,
+  }),
+};
+
+async function startSupervisor(path: string, options: { sandbox?: boolean | (() => boolean) } = {}): Promise<Server> {
   const server = createServer((socket) => {
     socket.setEncoding("utf8");
     let body = "";
@@ -439,6 +571,11 @@ async function startSupervisor(path: string): Promise<Server> {
             harnessVersion: SCOPE_RUNTIME_HARNESS_VERSION,
             workloads: ["chat_ai"],
           }],
+          ...((typeof options.sandbox === "function" ? options.sandbox() : options.sandbox) === false ? {} : { sandbox: {
+            policyVersion: SCOPE_RUNTIME_SANDBOX_POLICY_VERSION,
+            policyDigest: SCOPE_RUNTIME_SANDBOX_POLICY_DIGEST,
+            workloads: ["chat_ai"],
+          } }),
         },
       })}\n`);
     });
