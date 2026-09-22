@@ -8,7 +8,7 @@ type Admission = <T>(input: {
   ownerScope: OwnerScope;
   projectSlug: string;
   kind: "write" | "run";
-  operation(projectId: string): Promise<T>;
+  operation(projectId?: string): Promise<T>;
 }) => Promise<{ ok: true; value: T } | { ok: false; status: number; body: { error: unknown } }>;
 
 export function registerProjectMetadataRoutes(app: Hono, options: {

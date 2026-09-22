@@ -350,17 +350,17 @@ export function createWorkspaceRoutes(options: {
     ownerScope: OwnerScope;
     projectSlug: string;
     kind: "write" | "run";
-    operation(projectId: string): Promise<T>;
+    operation(projectId?: string): Promise<T>;
   }): Promise<
     | { ok: true; value: T }
     | { ok: false; status: number; body: { error: unknown } }
   > {
+    if (!options.projectOperationAdmission) {
+      return { ok: true, value: await input.operation() };
+    }
     const project = await projectManager.getProject(input.projectSlug, input.ownerScope);
     if (!project.ok) {
       return { ok: false, status: project.status, body: { error: project.error } };
-    }
-    if (!options.projectOperationAdmission) {
-      return { ok: true, value: await input.operation(project.project.id) };
     }
     try {
       const value = await options.projectOperationAdmission.withLegacyAdmission({

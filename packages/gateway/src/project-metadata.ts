@@ -15,7 +15,7 @@ export function createProjectMetadataService(options: {
   projectManager: Pick<ReturnType<typeof createProjectManager>, "getProject">;
 }) {
   const registry = createProjectRegistry({ homePath: options.homePath });
-  return async (slug: string, ownerScope: OwnerScope, rawPatch: unknown, expectedProjectId: string) => {
+  return async (slug: string, ownerScope: OwnerScope, rawPatch: unknown, expectedProjectId?: string) => {
     const parsed = ProjectMetadataPatchSchema.safeParse(rawPatch);
     if (!parsed.success || !ProjectMetadataSlugSchema.safeParse(slug).success) {
       return { ok: false as const, status: 400, error: { code: "invalid_request", message: "Project update is invalid" } };
@@ -24,7 +24,7 @@ export function createProjectMetadataService(options: {
       try {
         const current = await options.projectManager.getProject(slug, ownerScope);
         if (!current.ok) return current;
-        if (current.project.id !== expectedProjectId) {
+        if (expectedProjectId !== undefined && current.project.id !== expectedProjectId) {
           return {
             ok: false as const,
             status: 409,
