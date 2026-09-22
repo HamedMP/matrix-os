@@ -1,4 +1,5 @@
 import {
+  CollaborationAppInstanceIdSchema,
   CollaborationIdSchema,
   CollaborationMemberSchema,
   CollaborationScopePreflightResponseSchema,
@@ -19,12 +20,31 @@ const CatalogResolutionSchema = z.object({
 }).strict();
 const MembersSchema = z.object({ members: z.array(CollaborationMemberSchema).max(8) }).strict();
 
-/** Standalone file, folder and app sharing uses an exact owner catalog identity. */
+/**
+ * The owner catalog identifies an app by its registry slug. A launch path such as
+ * `apps/notes/index.html` locates assets and never resolves, so the identifier is
+ * checked against the same contract schema the resolve request enforces.
+ */
+function identifies(kind: "file" | "folder" | "app", value: string): boolean {
+  return kind === "app"
+    ? CollaborationAppInstanceIdSchema.safeParse(value).success
+    : isSafeCollaborationRelativePath(value);
+}
+
+/**
+ * Standalone file, folder and app sharing uses an exact owner catalog identity.
+ *
+ * `path` is a safe relative path for a file or a folder, and the app's registry
+ * slug for an app. Callers hold that identity already: the Electron launcher
+ * reads it from `/api/apps`, and the web viewer resolves it before bridging the
+ * app, so neither has to send an asset location the catalog cannot resolve.
+ */
 export function ResourceSharingButton({ api, runtimeId, organizationId, kind, path }: {
   api: CollaborationApi;
   runtimeId: string | null;
   organizationId: string | null;
   kind: "file" | "folder" | "app";
+  /** Relative path for a file or folder; registry slug for an app. */
   path: string;
   projectId?: string;
 }) {
@@ -46,7 +66,7 @@ export function ResourceSharingButton({ api, runtimeId, organizationId, kind, pa
     return { scope: current, members: currentMembers };
   };
   const open = async () => {
-    if (!runtimeId || !organizationId || !isSafeCollaborationRelativePath(path) || pending) return;
+    if (!runtimeId || !organizationId || !identifies(kind, path) || pending) return;
     setPending(true); setError(false);
     try {
       const runtime = `/api/collaboration/runtimes/${encodeURIComponent(runtimeId)}`;
@@ -76,7 +96,7 @@ export function ResourceSharingButton({ api, runtimeId, organizationId, kind, pa
   };
   const label = kind === "app" ? "app" : kind;
   return <span className="inline-flex items-center gap-2">
-    <button type="button" aria-label={`Share ${label}`} disabled={pending || !runtimeId || !organizationId || !isSafeCollaborationRelativePath(path)}
+    <button type="button" aria-label={`Share ${label}`} disabled={pending || !runtimeId || !organizationId || !identifies(kind, path)}
       aria-expanded={scope !== null} onClick={() => scope ? setScope(null) : void open()}
       className="rounded-lg border px-3 py-1.5 text-xs disabled:opacity-50">{pending ? "Loading share…" : "Share"}</button>
     {error ? <span role="alert" className="text-xs">Sharing unavailable. The resource remains private.</span> : null}

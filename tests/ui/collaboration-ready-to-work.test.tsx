@@ -217,6 +217,32 @@ describe("organization ready-to-work presentation", () => {
     }));
   });
 
+  it("shares an app by its registry identifier and refuses a launch path", async () => {
+    const appId = "30000000-0000-4000-8000-000000000402";
+    const appScope = { ...scope, kind: "app" as const, resourceId: appId };
+    const api = { baseUrl: "http://localhost",
+      get: vi.fn(async (path: string) => path.endsWith("/members") ? { members: [] }
+        : path.endsWith("/grants") ? [] : appScope),
+      post: vi.fn(async (path: string) => path.endsWith("/catalog/resolve")
+        ? { id: appId, kind: "app", path: "notes", incarnation: "app_v1", revision: "1" }
+        : path.endsWith("/scopes/preflight") ? { eligible: true, resourceRevision: "1", confirmationToken: "a".repeat(64) }
+        : path.endsWith("/scopes") ? appScope
+        : undefined), delete: vi.fn() };
+    const { unmount } = render(<ResourceSharingButton api={api} runtimeId="vps:owner" organizationId="org_matrix_team" kind="app" path="notes" />);
+    fireEvent.click(screen.getByRole("button", { name: "Share app" }));
+    expect(await screen.findByRole("dialog", { name: "Invite collaborators" })).toBeVisible();
+    expect(api.post).toHaveBeenCalledWith("/api/collaboration/runtimes/vps%3Aowner/catalog/resolve", {
+      kind: "app", path: "notes", organizationId: "org_matrix_team",
+    });
+    unmount();
+    api.post.mockClear();
+    // A launch path locates an app's assets; the owner catalog resolves the registry
+    // identifier, so the surface must refuse rather than spend a doomed request.
+    render(<ResourceSharingButton api={api} runtimeId="vps:owner" organizationId="org_matrix_team" kind="app" path="apps/notes/index.html" />);
+    expect(screen.getByRole("button", { name: "Share app" })).toBeDisabled();
+    expect(api.post).not.toHaveBeenCalled();
+  });
+
   it("fails closed when catalog resolves a different folder path", async () => {
     const api = { baseUrl: "http://localhost", get: vi.fn(), post: vi.fn(async () => ({
       id: "30000000-0000-4000-8000-000000000401", kind: "folder", path: "notes", incarnation: "folder_v1", revision: "1",

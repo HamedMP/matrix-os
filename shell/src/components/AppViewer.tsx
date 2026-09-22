@@ -361,8 +361,8 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
 
   return (
     <div className="flex h-full w-full flex-col">
-      {path.startsWith("apps/") || path.startsWith("modules/") ? <div className="flex justify-end border-b px-3 py-1.5">
-        <FileResourceSharing kind="app" path={path} />
+      {slug ? <div className="flex justify-end border-b px-3 py-1.5">
+        <FileResourceSharing kind="app" path={slug} />
       </div> : null}
       <iframe
         ref={iframeRef}
