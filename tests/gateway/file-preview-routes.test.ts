@@ -172,4 +172,18 @@ describe("file preview routes", () => {
       canDownload: true,
     });
   });
+
+  it("keeps active SVG markup out of the image renderer", async () => {
+    await writeFile(join(projectPath, "external.svg"), '<svg xmlns="http://www.w3.org/2000/svg"><image href="https://example.invalid/tracker.png"/></svg>');
+    const response = await app.request(
+      "/api/file-previews/metadata?kind=project&projectId=demo&path=external.svg",
+      { headers: { Authorization: "Bearer owner" } },
+    );
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      kind: "unsupported",
+      mimeType: "application/octet-stream",
+      canDownload: true,
+    });
+  });
 });

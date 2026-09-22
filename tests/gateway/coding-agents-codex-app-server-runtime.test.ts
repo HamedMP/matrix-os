@@ -219,10 +219,17 @@ describe("Codex app-server control runtime", () => {
       expect(artifacts.map((entry) => entry.providerItemId)).toEqual([
         "generated-image", "function-media", "dynamic-media", "mcp-media",
       ]);
-      expect(artifacts[0]).toMatchObject({ source: { type: "run_file", path: generatedPath } });
-      expect(artifacts[1]).toMatchObject({ source: { type: "run_file" }, mimeType: "image/png" });
-      expect(artifacts[1].source.path).toContain("/artifact-staging/sess_artifacts_1/");
-      expect(await readFile(artifacts[1].source.path)).toEqual(Buffer.from("iVBORw0KGgo=", "base64"));
+      expect(artifacts[0]).toMatchObject({
+        ownerReference: expect.stringMatching(/^data\/chat-artifacts\/codex\/sha256\/[a-f0-9]{64}\.png$/),
+        mimeType: "image/png",
+        sizeBytes: 8,
+      });
+      expect(artifacts[1]).toMatchObject({
+        attachmentId: expect.stringMatching(/^attachment_codex_[a-f0-9]{32}$/),
+        ownerReference: expect.stringMatching(/^data\/chat-artifacts\/codex\/sha256\/[a-f0-9]{64}\.png$/),
+        mimeType: "image/png",
+      });
+      expect(await readFile(join(homePath, artifacts[1].ownerReference))).toEqual(Buffer.from("iVBORw0KGgo=", "base64"));
       expect(transcript).not.toContain("iVBORw0KGgo=");
     } finally {
       child.kill("SIGTERM");

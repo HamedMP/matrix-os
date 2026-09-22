@@ -96,8 +96,10 @@ function trustedMimeType(name: string, prefix: Uint8Array): { mimeType: string; 
       && Buffer.from(prefix.subarray(8, 12)).toString("ascii") === "WEBP");
   }
   if (declared === "image/svg+xml") {
-    const text = Buffer.from(prefix).toString("utf8").trimStart().replace(/^<\?xml[^>]*>\s*/i, "");
-    return checked(/^<svg(?:\s|>)/i.test(text));
+    // SVG is active markup and may reference network resources. Keep it out of
+    // the generic image renderer until a dedicated sanitizer/isolated viewer
+    // can prove those references are inert.
+    return { mimeType: "application/octet-stream", rejectedDeclaredType: true };
   }
   if (declared === "application/pdf") {
     return checked(Buffer.from(prefix.subarray(0, 5)).toString("ascii") === "%PDF-");
@@ -214,7 +216,9 @@ export function createFilePreviewService(options: FilePreviewServiceOptions): Fi
         clearTimeout(timer);
         request.signal?.removeEventListener("abort", abort!);
         try { await opened?.file.close(); }
-        catch { console.warn("[file-preview] source close failed"); }
+        catch (error: unknown) {
+          console.warn("[file-preview] source close failed", error instanceof Error ? error.name : "UnknownError");
+        }
         finally { opened = null; active -= 1; }
       })();
 

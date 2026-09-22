@@ -130,6 +130,12 @@ function normalizeEvent(
       delta: event.delta,
     })];
   }
+  if (event.type === "assistant.attachment") {
+    return [CanonicalProviderRunEventSchema.parse({
+      type: "assistant.attachment",
+      attachment: event.attachment,
+    })];
+  }
   if (event.type === "subagent.activity") {
     const status = event.subagent.status;
     return [CanonicalProviderRunEventSchema.parse({
