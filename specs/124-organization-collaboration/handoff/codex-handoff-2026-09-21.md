@@ -2094,3 +2094,61 @@ canonical terminal regardless of the owner's choice; **334 lines of loss recover
 **Telegram voice transcription silently dropped** by an incomplete extraction. All three are fixed, and each
 one was found by a different method — a type error on the extraction path, a wiring audit, and a
 block-versus-module diff during conflict resolution.
+
+## 71. Ten layers merged; the rest under parallel fix — 2026-09-22 17:10 UTC
+
+`main` is `fb15a762c`. Ten spec-124 layers have landed plus two `main` repairs. Ten PRs remain, each with a
+dedicated fix agent working it.
+
+### #1846 landed with four fixes, one disproof and rendered evidence
+
+**Disproved, not patched:** *"Missing Roots Become Ready"*. The fallback mirrors the canonical default rather
+than inventing a root — `queue-admission.ts:106` and `turn-admission.ts:83` compute the identical
+`input.executionRoot ?? (record.projectId ? { kind: "project", projectId: record.projectId } : undefined)`. So
+for a project Chat that has never queued a turn, that **is** the root it will execute in. Reporting
+`chat_root_unavailable` would block sharing for every newly created Chat while announcing a blocker that is not
+true. Pinned with a regression test carrying the rationale, green on arrival.
+
+**Fixed:**
+- *Detached roots blocked.* Measured: `git symbolic-ref --quiet --short HEAD` exits **1** when detached, while
+  a non-Git directory exits **128**. Only 128 was tolerated, so a valid detached root was reported blocked, and
+  the `Promise.all` discarded a good `status` read whenever the branch probe failed. Each probe is now
+  classified on its own exit status.
+- *Global Git identity hidden.* `HOME=/nonexistent`, `GIT_CONFIG_GLOBAL=/dev/null` and `GIT_CONFIG_NOSYSTEM=1`
+  were applied to the identity reads, so an owner configured in an ordinary `~/.gitconfig` was reported
+  identity-less and every mutation failed ahead of execution. **Mutating commands stay hermetic** — that
+  matters because `ownerRemote` inspects only `--local` url rewrites, and the check stays sound precisely
+  because a global `url.*.pushInsteadOf` cannot apply to a push.
+- *Completed commits recorded as failed*, and *the readiness route could not forward through the proxy*.
+
+**Side effect worth keeping:** the pre-existing `identity → missing` assertion only passed because global
+config was hidden. Once that changed it began reading the runner's real identity. The driver tests now pin the
+owner home they assert against, so the case is genuinely missing at every level rather than depending on the
+machine.
+
+### The delete-vs-modify conflict that looked like a silent revert
+
+u5 deletes `packages/platform/src/collaboration/proxy.ts` while retiring the V1 serving routes — the same file
+the readiness fix had just modified. Accepting the deletion **does not** drop that fix: after the cutover the
+platform stops proxying application paths entirely, and `direct-routes.ts` handles only home registration and
+connection-ticket issuance, so there is no allowlist for any route to be missing from. Verified before
+accepting, rather than assumed in either direction.
+
+### Screenshot evidence, and a parity question it surfaced
+
+Six Chromium renders committed under `evidence/S10-project-sharing/`, covering all three states of both new Git
+status lines plus both execution-root variants, with a README stating plainly what they do **not** cover.
+
+Capturing them found something the review had not: the same states carry **different copy** on two surfaces.
+The dialog says *"GitHub access is missing. Connect the owner's GitHub account before push or pull requests."*;
+the popover says only *"GitHub access is missing."* State semantics match and only the remediation differs,
+which is defensible — the dialog is where an owner acts — but the parity rule asks for divergence to be
+recorded rather than assumed, so it is recorded for a reviewer to accept or reject.
+
+### Flake triage held again
+
+#1846's E2E failure was `terminal-soft-grid`, *"keeps the final row visible in 'Electron Desktop' at zoom 1"*,
+`expected 60 to be less than or equal to 1` / `Matcher did not succeed in time` — the same signature already
+cleared on #1805. Triage first: **the file is not in the layer's diff**, and it was the only failure on the
+run. Only then re-run, which passed. Re-running before checking is how a genuine intermittent defect gets
+retried until it looks like a flake.
