@@ -1104,3 +1104,55 @@ workstream is already saturating.
 
 This matters beyond convenience: had the no-op green been taken at face value, an untested layer would have
 gone to `main` with a full column of passing checks next to it.
+
+## 50. The upper chain is stale, not duplicated — correcting section 48's scope — 2026-09-22 07:20 UTC
+
+**Correction first.** On seeing that no upper branch had `124/s07-terminal` as an ancestor, I briefly concluded
+that the whole upper chain was a set of parallel copies like S18. **That was wrong for S09, S10, S12 and S15**,
+and the ledger must not carry it. Section 48's finding stands for S18 only.
+
+**What is actually true.** `124/s09`, `124/s10`, `124/s12` and `124/s15` form a proper linear stack that was
+correctly built on `124/s07-terminal` — at its **pre-restack** head `7ffac5e05`. Today's restack moved that
+head to `ff12caf18`, which orphaned them. They are ordinary stale descendants. The ancestry check said "not a
+descendant" only because it compared against the *new* head.
+
+`7ffac5e05` is confirmed as the pre-restack head: it is exactly what
+`backup/20260922T0050/s07-terminal` points at.
+
+**Each branch has a clean three-part shape**, oldest first:
+
+```
+[21 pre-squash originals of S01-S04 work already in main]
+[121 commits of the S05..S07-terminal chain, as correct ancestry]
+[its own work, CONTIGUOUS AT THE TIP]
+```
+
+Tip blocks, all sharing oldbase `7ffac5e05`, and internally nested
+(`s09 ⊂ s10 ⊂ s12 ⊂ s15`):
+
+| branch | tip block | own commits vs its parent |
+| --- | --- | --- |
+| `124/s09` | 15 | 15 |
+| `124/s10` | 30 | 15 |
+| `124/s12` | 49 | 19 |
+| `124/s15` | 92 | 43 |
+
+**So the fix is the ordinary restack, not an extraction**: rebase each `--onto` its new parent with oldbase
+`7ffac5e05`, bottom-up, after the seven main-path layers have landed. Do it once, at the end, because every
+merge rewrites the chain beneath them.
+
+**They do not yet contain today's fixes.** `assertServing` — the fence guard added to
+`packages/gateway/src/collaboration/direct-sessions.ts` — appears 6 times on `124/s07-terminal` and **0 times**
+on `124/s09` and `124/s15`. That is expected for a stale descendant and is precisely what the restack brings in.
+It is also a ready-made check that a restack actually took: after rebasing, `assertServing` must appear on
+every branch above the gateway layer.
+
+**S18 and S19 remain genuinely anomalous.** Neither shares the `7ffac5e05` boundary. `124/s18-startup`'s last
+shared commit is `b5fe844d4` and `124/s19-acceptance`'s is `eb6a4b4c7`, and neither is any branch head, past or
+present — both were built on intermediate points of an older chain iteration. S18 keeps the section 48
+treatment; S19 needs the same analysis before it is restacked.
+
+**Method worth reusing.** Printing, per branch, a one-character-per-commit map of "is this subject also in the
+chain" made the shape obvious in a way that reading commit lists did not. Duplicated bases and contiguous tip
+blocks show up instantly, and it is what distinguished the ordinary staleness here from the genuine parallel
+copy in S18.
