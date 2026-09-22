@@ -81,13 +81,15 @@ function within(entry: { path: string }, root: CatalogEntryRecord): boolean {
 export class CollaborationResourceCatalog {
   private readonly now: () => Date;
   private readonly createId: () => string;
+  private readonly maxFolderDescendants: number;
 
   constructor(
     readonly db: Kysely<OwnerCollaborationDatabase>,
-    options: { now?: () => Date; createId?: () => string } = {},
+    options: { now?: () => Date; createId?: () => string; maxFolderDescendants?: number } = {},
   ) {
     this.now = options.now ?? (() => new Date());
     this.createId = options.createId ?? randomUUID;
+    this.maxFolderDescendants = options.maxFolderDescendants ?? MAX_FOLDER_DELETE;
   }
 
   /** Idempotent by live (owner, project, kind, path); a tombstoned path yields a fresh id. */
@@ -171,7 +173,26 @@ export class CollaborationResourceCatalog {
     return renamed;
   }
 
-  /** Tombstones the entry (and a folder's live descendants); the id never resolves again. */
+  /**
+   * Admission bound for a folder delete. This is the only place the descendant
+   * limit is enforced, and it must run before any irreversible side effect:
+   * `remove` itself rolls back with the transaction, but a filesystem tree the
+   * caller already deleted does not, so a bound that first fired inside
+   * `remove` would answer "conflict" over permanently destroyed bytes.
+   */
+  async assertFolderRemovable(entry: CatalogEntryRecord, executor: Executor = this.db): Promise<void> {
+    if (entry.kind !== "folder") return;
+    const descendants = await this.liveWhere(executor, entry.ownerId, entry.projectId)
+      .where("path", "like", `${escapeLike(entry.path)}/%`).select("id").limit(this.maxFolderDescendants + 1).execute();
+    if (descendants.length > this.maxFolderDescendants) throw new ResourceCatalogError("conflict");
+  }
+
+  /**
+   * Tombstones the entry (and a folder's live descendants); the id never
+   * resolves again. Callers admit a folder through `assertFolderRemovable`
+   * first; the descendant tombstone here is one set-based statement, so it
+   * cannot fail on size after the caller has already removed the bytes.
+   */
   async remove(input: { id: string; expectedRevision: number; executor?: Executor }): Promise<CatalogEntryRecord> {
     const executor = input.executor ?? this.db;
     const entry = await this.get(input.id, executor);
@@ -183,13 +204,12 @@ export class CollaborationResourceCatalog {
       .returningAll().executeTakeFirst();
     if (!row) throw new ResourceCatalogError("conflict");
     if (entry.kind === "folder") {
-      const descendants = await this.liveWhere(executor, entry.ownerId, entry.projectId)
-        .where("path", "like", `${escapeLike(entry.path)}/%`).select("id").limit(MAX_FOLDER_DELETE + 1).execute();
-      if (descendants.length > MAX_FOLDER_DELETE) throw new ResourceCatalogError("conflict");
-      if (descendants.length > 0) {
-        await executor.updateTable("collaboration_resource_catalog").set({ updated_at: timestamp, deleted_at: timestamp })
-          .where("id", "in", descendants.map((row) => row.id)).where("deleted_at", "is", null).execute();
-      }
+      await sql`
+        UPDATE collaboration_resource_catalog
+        SET updated_at = ${timestamp}, deleted_at = ${timestamp}
+        WHERE owner_id = ${entry.ownerId} AND project_id IS NOT DISTINCT FROM ${entry.projectId}
+          AND deleted_at IS NULL AND path LIKE ${`${escapeLike(entry.path)}/%`}
+      `.execute(executor);
     }
     return toRecord(row);
   }

@@ -78,9 +78,17 @@ class MemoryDriver implements CollaborationResourceDriver {
   async write(input: { ownerId: string; projectId: string | null; path: string; content: Uint8Array }) {
     this.files.set(this.key(input), input.content);
   }
-  async remove(input: { ownerId: string; projectId: string | null; path: string }) {
-    this.files.delete(this.key(input));
-    this.folders.delete(this.key(input));
+  readonly removed: Array<{ path: string; kind: "file" | "folder" }> = [];
+  async remove(input: { ownerId: string; projectId: string | null; path: string; kind: "file" | "folder" }) {
+    this.removed.push({ path: input.path, kind: input.kind });
+    const key = this.key(input);
+    this.files.delete(key);
+    this.folders.delete(key);
+    // The owner driver removes a folder with rm -r; a memory driver that only drops the
+    // folder key would hide the bytes a rolled-back folder delete destroys.
+    if (input.kind !== "folder") return;
+    for (const existing of [...this.files.keys()]) if (existing.startsWith(`${key}/`)) this.files.delete(existing);
+    for (const existing of [...this.folders]) if (existing.startsWith(`${key}/`)) this.folders.delete(existing);
   }
   async rename(input: { ownerId: string; projectId: string | null; from: string; to: string }) {
     const from = this.key({ ...input, path: input.from });
@@ -231,7 +239,8 @@ describe("S12 direct resource policy", () => {
       db: fixture.db, grants, organizationPrecondition: allowAllOrganizationPrecondition, now: () => NOW,
     });
     void evaluator;
-    catalog = new CollaborationResourceCatalog(fixture.db, { now: () => NOW });
+    // A small descendant bound keeps the over-bound folder delete cheap to prove.
+    catalog = new CollaborationResourceCatalog(fixture.db, { now: () => NOW, maxFolderDescendants: 2 });
     driver = new MemoryDriver();
     bridgeCalls = [];
     terminalActions = [];
@@ -427,6 +436,28 @@ describe("S12 direct resource policy", () => {
       expect(outside.status).toBe(404);
       const traversal = await signed({ actorId: collaborationActors.editor, scopeId: FOLDER_SCOPE, method: "POST", path: `/api/collaboration/scopes/${FOLDER_SCOPE}/files/actions`, body: { type: "create", kind: "file", parentId: ids.docs, path: "docs/../escape.md", content: "no", clientRequestId: requestId() } });
       expect(traversal.status).toBe(400);
+    });
+  });
+
+  describe("folder delete bounds", () => {
+    it("refuses a folder over the descendant bound before it removes any bytes", async () => {
+      const owner = collaborationActors.owner;
+      for (const name of ["a.md", "b.md", "c.md"]) {
+        await catalog.register({ ownerId: owner, projectId: PROJECT_ID, kind: "file", path: `docs/${name}`, incarnation: `inc-${name}` });
+        driver.files.set(`${owner}:${PROJECT_ID}:docs/${name}`, new TextEncoder().encode(name));
+      }
+      const response = await signed({
+        actorId: collaborationActors.editor, scopeId: PROJECT_SCOPE, method: "POST",
+        path: `/api/collaboration/scopes/${PROJECT_SCOPE}/files/actions`,
+        body: { type: "delete", fileId: ids.docs, expectedRevision: "0", clientRequestId: requestId() },
+      });
+      expect(response.status).toBe(409);
+      // The conflict is a database rollback; a filesystem delete before it cannot be undone.
+      expect(driver.removed).toEqual([]);
+      expect(driver.files.has(`${owner}:${PROJECT_ID}:docs/guide.md`)).toBe(true);
+      expect(driver.files.has(`${owner}:${PROJECT_ID}:docs/a.md`)).toBe(true);
+      expect(await catalog.get(ids.docs)).not.toBeNull();
+      expect(await catalog.get(ids.docsGuide)).not.toBeNull();
     });
   });
 

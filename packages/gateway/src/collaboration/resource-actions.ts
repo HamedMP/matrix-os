@@ -149,6 +149,9 @@ export function createFileActionExecutor(options: {
           entry = await options.catalog.rename({ id: locked.id, path: action.path, expectedRevision, incarnation: locked.incarnation, executor: trx });
         } else {
           if (namespace.root && namespace.root.id === locked.id) throw new ResourceCatalogError("forbidden");
+          // Admit the folder before the recursive filesystem delete: a bound that
+          // first fired inside the catalog would roll the rows back over lost bytes.
+          await options.catalog.assertFolderRemovable(locked, trx);
           await options.driver.remove({ ...ns, path: locked.path, kind: locked.kind === "folder" ? "folder" : "file" });
           entry = await options.catalog.remove({ id: locked.id, expectedRevision, executor: trx });
         }
