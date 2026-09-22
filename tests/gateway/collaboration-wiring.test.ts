@@ -581,11 +581,14 @@ describe("gateway collaboration wiring", () => {
 
   it("enables shared AI before the owner run reconcile loop so lost runs keep gateway_restart attribution", async () => {
     const server = await readFile(new URL("../../packages/gateway/src/server.ts", import.meta.url), "utf8");
-    const enable = server.indexOf("await gatewayCollaboration.enableSharedAi({");
+    const enable = server.indexOf("await enableOwnerSharedAi({");
     const reconcile = server.indexOf('await canonicalChatOrchestrator.reconcileActiveRuns({ type: "personal", ownerId });');
     expect(enable).toBeGreaterThan(-1);
     expect(reconcile).toBeGreaterThan(-1);
     expect(enable).toBeLessThan(reconcile);
+    // The extracted helper is what server.ts now awaits, so it must still await shared AI itself.
+    const startup = await readFile(new URL("../../packages/gateway/src/startup/collaboration.ts", import.meta.url), "utf8");
+    expect(startup).toContain("await options.gatewayCollaboration.enableSharedAi(options.input)");
   });
 
   it("marks runs the previous process lost as gateway_restart before shared AI reports ready", async () => {
