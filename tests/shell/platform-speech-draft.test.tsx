@@ -79,6 +79,37 @@ describe("platform speech draft recording", () => {
     expect(speech.transcribe).toHaveBeenCalledTimes(1);
   });
 
+  it("admits only one microphone request when start is invoked twice before rendering settles", async () => {
+    const permission = Promise.withResolvers<Awaited<ReturnType<PlatformSpeechCaptureAdapter["start"]>>>();
+    const adapter: PlatformSpeechCaptureAdapter = {
+      isSupported: () => true,
+      start: vi.fn(() => permission.promise),
+    };
+    const hook = renderHook(() => usePlatformSpeechDraft({
+      scopeKey: "chat-1",
+      client: client(),
+      captureAdapter: adapter,
+      onDraft: vi.fn(),
+      requestIdFactory: () => requestId,
+    }));
+    await waitFor(() => expect(hook.result.current.phase).toBe("idle"));
+
+    let first!: Promise<void>;
+    let second!: Promise<void>;
+    act(() => {
+      first = hook.result.current.start();
+      second = hook.result.current.start();
+    });
+    expect(adapter.start).toHaveBeenCalledTimes(1);
+    permission.resolve({
+      stop: vi.fn(async () => new Blob([new Uint8Array(44)], { type: "audio/wav" })),
+      cancel: vi.fn(async () => undefined),
+    });
+    await act(async () => Promise.all([first, second]));
+    expect(hook.result.current.phase).toBe("recording");
+    act(() => hook.result.current.cancel());
+  });
+
   it("fences late transcripts when the active chat changes and cancels the operation", async () => {
     let resolve!: (value: Awaited<ReturnType<BrowserSpeechClient["transcribe"]>>) => void;
     const pending = new Promise<Awaited<ReturnType<BrowserSpeechClient["transcribe"]>>>((done) => { resolve = done; });

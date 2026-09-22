@@ -66,6 +66,26 @@ describe("Chat-bound composer drafts", () => {
     expect(view.result.current.requestIdentity).not.toBe(first);
   });
 
+  it("applies delayed transcript inserts to the latest typed draft", () => {
+    const view = renderHook(() => useChatComposerDrafts({
+      clientIdentity: "client",
+      chatId: "chat_a",
+      projectId: null,
+      conversation: true,
+    }));
+    const reference = {
+      type: "resource" as const,
+      resource: { kind: "file" as const, id: "notes", label: "notes.md" },
+    };
+    act(() => {
+      view.result.current.setText("typed while transcribing");
+      view.result.current.setReferenceTokens([reference]);
+      view.result.current.setText((current) => `${current} spoken draft`);
+    });
+    expect(view.result.current.text).toBe("typed while transcribing spoken draft");
+    expect(view.result.current.referenceTokens).toEqual([reference]);
+  });
+
   it("isolates text and references across Chats, new Chat, deletion, and runtime changes", () => {
     const firstClient = {};
     const secondClient = {};
