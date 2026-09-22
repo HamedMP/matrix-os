@@ -1376,3 +1376,47 @@ second class only by luck — the file was new, so nothing conflicted, and only 
 Outstanding: SR-2 and SR-3 in detail; the remaining conflicts in `server-composition`, `server-extraction` and
 `t090-retirement`; and, decisively, **whether typecheck was run at every one of the 24 probe layers or only at
 the end** — if only at the end, further SR-1-shaped defects may be masked at intermediate layers.
+
+## 56. A finding downgraded on its own evidence — 2026-09-22 08:15 UTC
+
+**The S09 P2-8 finding was overstated and has been corrected by the agent that raised it, before it reached a
+receipt.** It was framed as submission being unguarded for a member on an owner-only scope. It is not.
+
+Verified independently: `requireSubmitMode` is defined at `chat-execution-adapter.ts:328` on `124/s09` and
+called from **both** `submit` (line 116) and `retry` (line 189). It returns early for the owner, resolves the
+effective mode, and throws `forbidden` for a member on an owner-only scope. **Submission is guarded twice, at
+submit and at dispatch.**
+
+**What the change actually fixes is narrower and different in kind:** `resolveCapability` reports `available`
+to a member whose submission would then be refused. That is a **truthfulness defect in a capability flag**, not
+an authorization hole. The hunk is still correct and still carries over; only the claim changes.
+
+This matters beyond wording. A receipt asserting that an authorization gap was closed would have misrepresented
+the layer's security posture, and a later reader would have drawn the wrong conclusion about what was ever
+exposed. **Restate the finding in the receipt; do not repeat the original wording.**
+
+### The accidental-correctness audit found one more, and cleared the rest
+
+Run deliberately before the graft rather than under restack pressure (see section 54 for the first case, the
+control-loss watchdog):
+
+- **Exhaustion pause** — the one most expected to be accidental, because S09's claim loop has two
+  preparation-failure sites and the guard covers only the second. **Correct:** the first site is the
+  scope-mismatch check, which always writes `interrupted` and never `unavailable`, so it cannot carry an
+  exhaustion signal. The second is the adapter-creation catch, where the owner source's `unavailable` surfaces.
+  Both bases have exactly two sites.
+- **The loss repository** — not accidental, and *more* necessary at S09 than at the integrated base. Verified:
+  `shared-ai-runtime.ts` has 8 `runLoss` occurrences, all optional and guarded, while `wiring.ts` has **zero**.
+  Nothing supplies it, so interruption records are **inert** there — the same shape as the sandbox registry.
+  The fix constructs it in wiring and makes it required.
+- **Startup order** — S09 still has the pre-fix order (reconcile at 4360, `enableSharedAi` at 4366). Live.
+- **Archive-time queue cancellation** — columns exist and the status check constraint already admits
+  `cancelled` and `interrupted`.
+
+One resolution note: S09 guards `ownerSource` construction on `eligibility && executionPolicies`; the graft adds
+`&& runBindings`. Take the three-condition form, since `runBindings` becomes required.
+
+**The practice worth keeping.** Auditing your own hunks for *accidental* correctness — right at the source base
+for reasons that do not hold at the target — found two things here: a real misplacement (the watchdog) and an
+overstated claim (this one). Both were found before any code moved, and neither would have produced a test
+failure.
