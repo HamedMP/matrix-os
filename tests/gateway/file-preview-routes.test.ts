@@ -119,6 +119,40 @@ describe("file preview routes", () => {
     expect(await response.text()).not.toContain(projectPath);
   });
 
+  it("allows a Chat owner to preview only their generated artifact path", async () => {
+    const ownedPath = `data/chat-artifacts/codex/sha256/${"a".repeat(64)}.png`;
+    const otherPath = `data/chat-artifacts/codex/sha256/${"b".repeat(64)}.png`;
+    await mkdir(join(homePath, "data/chat-artifacts/codex/sha256"), { recursive: true });
+    await writeFile(join(homePath, ownedPath), png);
+    await writeFile(join(homePath, otherPath), png);
+    const canAccessHomePath = vi.fn(async (principal: { userId: string }, path: string) => (
+      principal.userId === "chat-owner" && path === ownedPath
+    ));
+    const isolated = new Hono();
+    isolated.route("/api/file-previews", createFilePreviewRoutes({
+      service: createFilePreviewService({
+        homePath,
+        canAccessHome: () => false,
+        canAccessHomePath,
+        resolveProjectRoot: async () => null,
+      }),
+      getPrincipal: () => ({ userId: "chat-owner", source: "jwt" }),
+    }));
+
+    const owned = await isolated.request(
+      `/api/file-previews/content?kind=home&path=${encodeURIComponent(ownedPath)}`,
+    );
+    expect(owned.status).toBe(200);
+    expect(new Uint8Array(await owned.arrayBuffer())).toEqual(png);
+    expect((await isolated.request(
+      `/api/file-previews/content?kind=home&path=${encodeURIComponent(otherPath)}`,
+    )).status).toBe(404);
+    expect(canAccessHomePath).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: "chat-owner" }),
+      ownedPath,
+    );
+  });
+
   it("returns an authentication error when no request principal is available", async () => {
     const isolated = new Hono();
     isolated.route("/api/file-previews", createFilePreviewRoutes({

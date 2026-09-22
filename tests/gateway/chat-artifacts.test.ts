@@ -89,6 +89,7 @@ describe("canonical Chat artifacts", () => {
 
   it("keeps one captured artifact across replay and reload", async () => {
     const admitted = await admit();
+    const artifactPath = `data/chat-artifacts/codex/sha256/${"a".repeat(64)}.png`;
     const input = {
       ...admitted,
       messageId: "msg_artifact_1_assistant",
@@ -96,7 +97,7 @@ describe("canonical Chat artifacts", () => {
         id: "attachment_codex_fixture",
         kind: "image" as const,
         label: "whale.png",
-        path: "data/chat-artifacts/codex/sha256/fixture.png",
+        path: artifactPath,
         mimeType: "image/png",
         sizeBytes: 12,
       },
@@ -116,9 +117,14 @@ describe("canonical Chat artifacts", () => {
       attachmentId: "attachment_codex_fixture",
       resource: {
         kind: "home",
-        path: "data/chat-artifacts/codex/sha256/fixture.png",
+        path: artifactPath,
       },
     })]);
+    await expect(repository.ownsAttachmentPath(owner, artifactPath)).resolves.toBe(true);
+    await expect(repository.ownsAttachmentPath(
+      { type: "personal", ownerId: "user_other" },
+      artifactPath,
+    )).resolves.toBe(false);
     const rows = await repository.kysely.selectFrom("chat_attachments").selectAll().execute();
     expect(rows).toHaveLength(1);
 

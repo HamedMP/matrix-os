@@ -25,6 +25,7 @@ type ArtifactResourceRef = Extract<FileResourceRef, { kind: "artifact" }>;
 export interface FilePreviewServiceOptions {
   homePath: string;
   canAccessHome(principal: RequestPrincipal): boolean;
+  canAccessHomePath?(principal: RequestPrincipal, path: string): Promise<boolean>;
   resolveProjectRoot(principal: RequestPrincipal, ref: ProjectResourceRef): Promise<string | null>;
   resolveArtifactPath?: (principal: RequestPrincipal, ref: ArtifactResourceRef) => Promise<string | null>;
   maxConcurrent?: number;
@@ -113,7 +114,10 @@ async function safeResolvedPath(
   ref: FileResourceRef,
 ): Promise<{ path: string; root?: string }> {
   if (ref.kind === "home") {
-    if (!options.canAccessHome(principal)) throw new FilePreviewError("not_found");
+    if (!options.canAccessHome(principal)
+      && !await options.canAccessHomePath?.(principal, ref.path)) {
+      throw new FilePreviewError("not_found");
+    }
     const path = resolveExistingFileApiPath(options.homePath, ref.path);
     if (!path) throw new FilePreviewError("not_found");
     return { path, root: await realpath(options.homePath) };
