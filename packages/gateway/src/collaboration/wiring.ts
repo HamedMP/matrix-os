@@ -680,8 +680,10 @@ export async function createGatewayCollaboration(options: {
       // Direct sessions drain next, in the same order shutdown() uses: ending them notifies
       // the event and terminal registries through the end hooks, which the lines below detach.
       directSessions.fence();
-      // S12 resource services close after the drains: sessions ending above can still reach
-      // the catalog and file driver, so tearing them down first would pull them mid-notify.
+      // Resource services close after the *synchronous* drains above, whose end hooks reach
+      // the catalog and file driver. The detached drains below, owner runtime sessions
+      // included, are fire-and-forget because this fence cannot await: they may still settle
+      // after this line. shutdown() awaits each one and so closes resources strictly last.
       closeResourceServices();
       const drainingSharedAi = sharedAiRuntime;
       sharedAiRuntime = undefined;
