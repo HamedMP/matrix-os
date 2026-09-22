@@ -944,3 +944,54 @@ hardening: evicting a scope's *last* stream prunes the scope, so a new handle co
 map holding live sockets. Unreachable while the cap is 8, because the victim is then never the scope's last
 stream. The durable win is the RED `408ab27a9` — the cap was correct but had **no test that pushed past it with
 fully-opened sockets**. It is asserted now.
+
+## 46. What CI actually gates, and the remaining scope — 2026-09-22 00:55 UTC
+
+**CI is gated by a label, not only by base branch.** `.github/workflows/ci.yml` computes `should_run`
+and exits early unless one of these holds: the event is `workflow_dispatch` or `merge_group` (always
+runs), the PR action is `ready_for_review`, the action is `labeled` with **`ready-for-ci`**, or the
+action is `synchronize` **while the PR already carries `ready-for-ci`**. Of the seven main-path PRs,
+only **#1802 carries that label**. So even the layers that could receive a `pull_request` event would
+have produced an empty run.
+
+Combined with the base-branch filter (`main`, `stack/**`, `codex/**`), the rule for this stack is:
+
+- A layer based on `main`: add `ready-for-ci`, and every later push reruns CI automatically.
+- A layer based on a sibling branch: **no `pull_request` event fires at all**, labelled or not.
+  `gh workflow run ci.yml --ref <branch>` is the only route, and dispatch always runs CI in full.
+
+**This makes merge order do useful work.** When a layer merges, GitHub retargets the next PR's base to
+`main`, which makes it eligible for automatic CI. Merging strictly bottom-up therefore converts the
+stack into properly tested PRs as it goes. **Apply `ready-for-ci` to the next layer immediately after
+its predecessor merges**, not before — while the label is on, every push reruns CI, so applying it to a
+branch that is about to be rebased burns shared runner capacity for nothing.
+
+**Concurrency parks runs rather than cancelling them.** `concurrency: { group: ci-<ref>-shared,
+queue: max }` means superseded runs on the same ref sit in `pending` **with zero jobs assigned** and
+hold their group. They do not self-cancel. A head with several superseded runs can therefore look
+"queued" indefinitely while nothing is wrong with the code. Cancelling the stale runs releases the
+group and the next run starts immediately — that is exactly what unblocked #1802.
+
+**First substantive CI on this release passed its static gates.** On `124/s05` @ `53b7a698d`: Detect
+changes, React Doctor, Pattern Scan, Docs Contract Tests, Agent SDK compatibility, Type Check,
+Symphony Polling Safety, OS View Parity, Sync Client Package and Shell Production Build all
+**success**; the four Unit Tests shards were still running when this was written.
+
+**Remaining scope after the current seven.** Eight `124/*` PRs are open (the seven plus this ledger).
+**37 branches still have no PR at all**: `124/s09`, `124/s09-retry-jsonb`, `124/s09-run-hardening`,
+`124/s10`, `124/s10-git-hardening`, `124/s12`, `124/s12-app`, `124/s15`, `124/s15-direct`,
+`124/s15-directory`, `124/s15-gateway`, **25 `124/s18-*` branches**, and `124/s19-acceptance`. Each
+needs submission, a current-head Greptile 5/5, and a dispatched CI run. Plan for that volume rather
+than discovering it at the end.
+
+**Graphite is authenticated (v1.8.6) but its recorded ancestry is not trustworthy here.**
+`refs/branch-metadata/` is empty for all seven branches and `gt ls` shows `124/s07` as "needs restack"
+with an ordering that does not match the GitHub bases. Do **not** run `gt merge` against this state.
+Land with the documented last-resort procedure and its safety rules: verify `gh pr view <n> --json
+baseRefName` shows `main` before each merge, merge strictly one at a time, never pass
+`--delete-branch` while descendants are open, and never loop over the stack.
+
+**S19 evidence is committed** on `124/s19-acceptance` @ `bc018a4ab`: `47498d1d7` the kernel/gateway
+coverage measurement (gateway 73.34% statements, kernel 61.27%, against a 99/95/99/99 threshold, with
+the gap attributed to pre-existing untested composition entrypoints rather than to this spec) and
+`bc018a4ab` the quickstart acceptance matrix.
