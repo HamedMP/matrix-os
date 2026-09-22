@@ -2032,3 +2032,65 @@ they test.
 
 **141 duplicated base commits are discarded, never reviewed.** That is where the saving comes from: this is
 not 24 reviews compressed into 5, it is 5 reviews of the content that was actually this spec's own work.
+
+## 70. The whole release is submitted: 11 PRs — 2026-09-22 14:05 UTC
+
+`main` is `8a05f0c86`. The seven main-path layers and two `main` repairs have merged. Everything remaining is
+now open and correctly chained:
+
+```
+main
+ └ #1845 124/s09            (+2749 / 38 files)  ← run-hardening graft folded in
+   └ #1846 124/s10          (+1904 / 28)
+     └ #1847 124/s12        (+2796 / 32)
+       └ #1848 124/s15-directory  (+1343 / 42)  ← 3 layers combined
+         └ #1849 124/s15-direct   (+1368 / 31)
+           └ #1850 124/s15        (+867 / 25)
+             └ #1851 s18 u1       (+1935 / 16)
+               └ #1852 s18 u2     (+2642 / 15)
+                 └ #1853 s18 u3   (+2871 / 45)
+                   └ #1854 s18 u4 (+1911 / 50)
+                     └ #1855 s18 u5 (+1510 / 49)
+```
+
+Plus #1810, this ledger. **Eleven PRs instead of roughly forty**, every one inside the 3000-addition /
+50-file limits.
+
+### Three silent losses caught while replaying S18 onto the current chain
+
+**None would have failed a test**, and each came from the same pattern: an extraction replaces a block with a
+call into a module, and the module predates something the block acquired since.
+
+1. **Telegram voice transcription.** The channel extraction replaced 185 lines with a 3-line call, and the
+   module did not carry `telegramAdapter.setVoiceContext({ homePath, stt: speechRuntime.channelStt })`. Taking
+   the extraction as written silently stops voice notes transcribing. The speech-to-text handle is now an
+   explicit **required** option on the module.
+2. **`createGatewaySpeechRuntime`.** Dropped with a legacy import block that the incoming side deletes
+   wholesale; it exists only on the newer base and is used at four call sites. Re-added in sorted position.
+3. **A documented startup ordering.** The collaboration-startup extraction is faithful in *what* it calls, but
+   the current base documents an explicit ordering that the extracted call would have changed. **Ordering is
+   invisible to the type checker** and no test covered it.
+
+**The rule this establishes:** when a conflict replaces a block with a call into an extracted module, diff
+what the block *did* against what the module *does*. Do not assume the extraction is complete because it
+compiles — two of these three compiled fine.
+
+### Consolidation, recorded so the choice is auditable
+
+- **S18: 24 units → 5.** Not compression — **141 duplicated base commits are discarded and never reviewed.**
+  Every contiguous partition was enumerated against both limits: **no valid 4-way split, exactly three valid
+  5-way splits**, all pinned by the *file* budget. Two boundaries were forced: u1/u2 splits one continuous
+  4573-addition extraction, and u4 sits at exactly 50 files.
+- **Upper chain: 8 → 6.** `s12-app`, `s15-gateway` and `s15-directory` combine at 1343 additions / 42 files.
+  Rejected on measurement: `s09`+`s10` (3627 additions), `s15-direct`+`s15` (56 files),
+  `s15-directory`+`s15-direct`+`s15` (62 files).
+- **The hardening graft folded into S09** rather than shipping separately, which removes a PR *and* means the
+  window where `main` carries 334 lines of never-executing loss recovery never exists.
+
+### What this release nearly shipped
+
+Three defects, none of which any test would have caught: **Contributor control hardcoded on** for every shared
+canonical terminal regardless of the owner's choice; **334 lines of loss recovery that never execute**; and
+**Telegram voice transcription silently dropped** by an incomplete extraction. All three are fixed, and each
+one was found by a different method — a type error on the extraction path, a wiring audit, and a
+block-versus-module diff during conflict resolution.
