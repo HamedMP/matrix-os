@@ -54,6 +54,27 @@ describe("SessionAccessControl", () => {
     expect(screen.getByRole("button", { name: "Manage access" })).toBeVisible();
   });
 
+  it("shows project Chat root and owner Git readiness inside the access popover", async () => {
+    const projectScope = { ...scope, kind: "project" as const, resourceId: "proj_shared" };
+    const collaborationApi = api();
+    collaborationApi.get.mockImplementation(async (path: string) => {
+      if (path.endsWith("/members")) return { members };
+      if (path.endsWith("/readiness")) return {
+        scopeId: projectScope.id,
+        chatRoots: [{ chatId: "chat_one", executionRoot: { kind: "worktree", projectId: "proj_shared", worktreeId: "wt_one" }, branch: "feature/chat", dirty: true, readiness: "ready" }],
+        gitSetup: { identity: { status: "ready", label: "Owner <owner@example.test>" }, forgeCredential: { status: "missing" } },
+      };
+      return projectScope;
+    });
+    render(<SessionAccessControl api={collaborationApi} scope={projectScope} />);
+    fireEvent.click(screen.getByRole("button", { name: "Collaboration access" }));
+    expect(await screen.findByText(/Chat worktree wt_one/)).toBeVisible();
+    expect(screen.getByText(/feature\/chat/)).toBeVisible();
+    expect(screen.getByText(/Uncommitted changes/)).toBeVisible();
+    expect(screen.getByText(/Owner <owner@example.test>/)).toBeVisible();
+    expect(screen.getByText(/GitHub access is missing/)).toBeVisible();
+  });
+
   it("does not offer management to viewers or inherited members", async () => {
     const viewerScope = { ...scope, role: "viewer" as const, membershipMode: "inherited" as const,
       parentScopeId: "20000000-0000-4000-8000-000000000001",

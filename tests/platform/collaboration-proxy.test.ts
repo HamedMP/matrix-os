@@ -198,8 +198,13 @@ describe("CollaborationProxy", () => {
     expect(parseCollaborationProxyRoute("GET", `${base}/files`)).toEqual({ kind: "scope", identifier: scopeId });
     expect(parseCollaborationProxyRoute("POST", `${base}/apps/app_board/actions`))
       .toEqual({ kind: "scope", identifier: scopeId });
+    expect(parseCollaborationProxyRoute("GET", `${base}/readiness`)).toEqual({ kind: "scope", identifier: scopeId });
+    expect(parseCollaborationProxyRoute("GET", `${base}/git`)).toEqual({ kind: "scope", identifier: scopeId });
+    expect(parseCollaborationProxyRoute("POST", `${base}/git/actions`)).toEqual({ kind: "scope", identifier: scopeId });
     expect(parseCollaborationProxyRoute("GET", `${base}/files/private/escape`)).toBeNull();
     expect(parseCollaborationProxyRoute("POST", `${base}/apps/app_board/actions/extra`)).toBeNull();
+    expect(parseCollaborationProxyRoute("GET", `${base}/readiness/extra`)).toBeNull();
+    expect(parseCollaborationProxyRoute("POST", `${base}/readiness`)).toBeNull();
   });
 
   it("streams a completed owner export without applying the JSON API buffer limit", async () => {
