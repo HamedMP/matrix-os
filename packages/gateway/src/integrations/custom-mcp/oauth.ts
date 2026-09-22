@@ -7,7 +7,9 @@ import { request as httpsRequest } from "node:https";
 import { createPinnedCustomMcpLookup } from "./pinned-lookup.js";
 import type { PlatformDb, CustomMcpServerBrokerRow } from "../../platform-db.js";
 import {
+  decryptCustomMcpOAuthState,
   decryptCustomMcpCredential,
+  encryptCustomMcpOAuthState,
   encryptCustomMcpCredential,
 } from "./crypto.js";
 import { validateCustomMcpUrl } from "./security.js";
@@ -237,7 +239,7 @@ export class CustomMcpOAuthManager {
       ...(metadata.registration_endpoint ? [validateUrl(metadata.registration_endpoint)] : []),
     ]);
 
-    const state = randomBytes(32).toString("base64url");
+    const state = encryptCustomMcpOAuthState({ userId, serverId }, this.options.encryptionKey);
     const verifier = randomBytes(64).toString("base64url");
     const challenge = createHash("sha256").update(verifier).digest("base64url");
     const now = this.options.now?.() ?? new Date();
@@ -265,7 +267,7 @@ export class CustomMcpOAuthManager {
         scopes,
       },
     } as CustomMcpCredential;
-    await this.persistCredential(userId, row, credential, "auth_required");
+    await this.persistCredential(userId, row, credential, "auth_required", true);
 
     const authorizationUrl = new URL(metadata.authorization_endpoint);
     authorizationUrl.searchParams.set("response_type", "code");
@@ -279,19 +281,32 @@ export class CustomMcpOAuthManager {
     return authorizationUrl.href;
   }
 
-  async complete(userId: string, state: string, code: string): Promise<{ serverId: string }> {
-    const rows = await this.options.db.listCustomMcpOAuthServersForBroker(userId);
-    let match: { row: CustomMcpServerBrokerRow; credential: CustomMcpCredential } | undefined;
-    for (const row of rows) {
-      if (!row?.encrypted_credentials || row.auth_mode !== "oauth") continue;
-      const credential = this.decrypt(userId, row);
-      if (exactStateMatch(credential.oauth?.state, state)) {
-        match = { row, credential };
-        break;
+  async complete(state: string, code: string): Promise<{ serverId: string }> {
+    let binding: { userId: string; serverId: string };
+    try {
+      const decoded = decryptCustomMcpOAuthState<unknown>(state, this.options.encryptionKey);
+      if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) {
+        throw new Error("Invalid OAuth state payload");
       }
+      const { userId, serverId } = decoded as Record<string, unknown>;
+      if (typeof userId !== "string" || userId.length < 1 || userId.length > 128
+        || typeof serverId !== "string" || serverId.length < 1 || serverId.length > 128) {
+        throw new Error("Invalid OAuth state binding");
+      }
+      binding = { userId, serverId };
+    } catch (error: unknown) {
+      throw new CustomMcpBrokerError("invalid");
     }
-    if (!match?.credential.oauth) throw new CustomMcpBrokerError("invalid");
-    const oauth = match.credential.oauth as NonNullable<CustomMcpCredential["oauth"]> & {
+    const { userId, serverId } = binding;
+    const row = await this.options.db.getCustomMcpServerForBroker(serverId, userId);
+    if (!row?.encrypted_credentials || row.auth_mode !== "oauth") {
+      throw new CustomMcpBrokerError("invalid");
+    }
+    const credential = this.decrypt(userId, row);
+    if (!exactStateMatch(credential.oauth?.state, state) || !credential.oauth) {
+      throw new CustomMcpBrokerError("invalid");
+    }
+    const oauth = credential.oauth as NonNullable<CustomMcpCredential["oauth"]> & {
       clientId: string;
       redirectUri: string;
       scopes?: string[];
@@ -310,15 +325,13 @@ export class CustomMcpOAuthManager {
     const encryptedClaim = encryptCustomMcpCredential(
       claimedCredential,
       this.options.encryptionKey,
-      { userId, serverId: match.row.id },
+      { userId, serverId: row.id },
     );
-    const claimed = await this.options.db.updateCustomMcpServer(match.row.id, userId, match.row.revision, {
+    const claimed = await this.options.db.updateCustomMcpServer(row.id, userId, row.revision, {
       encryptedCredentials: encryptedClaim,
       status: "auth_required",
     });
     if (!claimed) throw new CustomMcpBrokerError("invalid");
-    const claimedRow = await this.options.db.getCustomMcpServerForBroker(match.row.id, userId);
-    if (!claimedRow) throw new CustomMcpBrokerError("not_found");
     const token = await this.exchangeToken(oauth.tokenEndpoint, {
       grant_type: "authorization_code",
       code,
@@ -340,8 +353,8 @@ export class CustomMcpOAuthManager {
           : undefined,
       },
     };
-    await this.persistCredential(userId, claimedRow, next, "disabled");
-    return { serverId: match.row.id };
+    await this.persistCredential(userId, { ...row, revision: claimed.revision }, next, "disabled");
+    return { serverId: row.id };
   }
 
   async resolveAuthorization(userId: string, row: CustomMcpServerBrokerRow): Promise<string | undefined> {
@@ -413,7 +426,9 @@ export class CustomMcpOAuthManager {
     });
     if (response.status < 200 || response.status >= 300) throw new CustomMcpBrokerError("upstream");
     const object = assertObject(response.body);
-    if (typeof object.access_token !== "string" || object.token_type !== "Bearer") {
+    if (typeof object.access_token !== "string"
+      || typeof object.token_type !== "string"
+      || object.token_type.toLowerCase() !== "bearer") {
       throw new CustomMcpBrokerError("upstream");
     }
     return object as unknown as OAuthTokenResponse;
@@ -462,13 +477,21 @@ export class CustomMcpOAuthManager {
     row: CustomMcpServerBrokerRow,
     credential: CustomMcpCredential,
     status: CustomMcpServerBrokerRow["status"],
+    advanceRevision = false,
   ): Promise<void> {
     const encrypted = encryptCustomMcpCredential(
       credential,
       this.options.encryptionKey,
       { userId, serverId: row.id },
     );
-    if (!await this.options.db.updateCustomMcpCredentials(row.id, userId, row.revision, encrypted, status)) {
+    if (!await this.options.db.updateCustomMcpCredentials(
+      row.id,
+      userId,
+      row.revision,
+      encrypted,
+      status,
+      advanceRevision,
+    )) {
       throw new CustomMcpBrokerError("conflict");
     }
   }
