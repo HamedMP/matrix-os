@@ -120,7 +120,13 @@ export function createDirectStreams(deps: {
     if (!subscriptions.has(scopeId) && subscriptions.size >= MAX_STREAM_SCOPES) evictLeastRecentlyActiveScope();
     let active = subscriptions.get(scopeId);
     if (!active) { active = new Map(); subscriptions.set(scopeId, active); }
+    // The key is the victim's own removal callback, so this both selects and invokes it:
+    // the handle is stopped, its socket closed, and its entry deleted before the new one goes in.
     if (active.size >= MAX_STREAMS_PER_SCOPE) active.keys().next().value?.();
+    // Removing the last stream of a scope prunes the scope itself, so re-attach the map
+    // before inserting. Unreachable while the cap is above one, but a detached map would
+    // hold live sockets that no sweep, scope close or dispose could ever reach.
+    if (subscriptions.get(scopeId) !== active) subscriptions.set(scopeId, active);
     const remove = () => {
       handle.stop();
       active!.delete(remove);
