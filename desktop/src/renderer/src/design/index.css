@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@source "../../../../../packages/ui/src/chat";
 @source "../../../../../packages/ui/src/chat-agents";
 @source "../../../../../packages/ui/src/collaboration";
 @import "@fontsource/inter/400.css";

@@ -1,4 +1,5 @@
 import { z } from "zod/v4";
+import { ChatSubagentSchema } from "#chat-subagent";
 import { ChatRunContextSchema, isChatAgentDriver } from "#chat-agent-context";
 import { IsoTimestampSchema, ProviderModelReferenceSchema } from "#contract-primitives";
 import { UserInputQuestionListSchema, MAX_AGENT_ATTACHMENT_BYTES, ProtectedToolOutputSchema } from "#agent-thread-contracts";
@@ -451,6 +452,7 @@ export const CanonicalChatAgentActivityStatusSchema = z.enum([
 export const CanonicalChatAgentActivityPayloadSchema = z.object({
   activityId: canonicalReferenceId(128),
   kind: CanonicalChatAgentActivityKindSchema,
+  subagent: ChatSubagentSchema.optional(),
   label: canonicalSafeLabel(240, 960),
   status: CanonicalChatAgentActivityStatusSchema,
   summary: canonicalSafeLabel(1_000, 4_000).optional(),
@@ -458,6 +460,9 @@ export const CanonicalChatAgentActivityPayloadSchema = z.object({
   previewKind: z.enum(["command", "path", "text"]).optional(),
   detail: canonicalSafeLabel(2_000, 8_000).optional(),
 }).strict().superRefine((activity, context) => {
+  if (activity.subagent && activity.kind !== "delegation") {
+    context.addIssue({ code: "custom", path: ["subagent"], message: "Child evidence belongs to delegation activity" });
+  }
   if ((activity.preview === undefined) !== (activity.previewKind === undefined)) {
     context.addIssue({
       code: "custom",

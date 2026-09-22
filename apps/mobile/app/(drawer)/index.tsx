@@ -28,6 +28,7 @@ import { useSendChatMessage } from "@/lib/queries/use-send-chat-message";
 import { canonicalChatRequestId } from "@/lib/requests";
 import {
   buildTranscript,
+  transcriptWorkLabel,
   type TranscriptMessage,
 } from "@/lib/canonical-chat-transcript";
 import { defaultCatalogSelection, defaultTurnModes } from "@/lib/canonical-chat-selection";
@@ -344,11 +345,7 @@ function AssistantMessage({ message }: { message: TranscriptMessage }) {
   const { theme } = useUnistyles();
   const expanded = manualExpanded ?? message.isRunning;
   const hasWork = message.toolCalls.length > 0 || message.activities.length > 0;
-  const workedLabel = message.isRunning
-    ? "Working…"
-    : message.elapsedSeconds != null
-      ? `Worked ${message.elapsedSeconds}s`
-      : null;
+  const workedLabel = transcriptWorkLabel(message);
   // Re-parses on every text change, which is exactly what a growing streamed
   // string needs -- markdown applies as the text arrives, not once at the end.
   const markdownNodes = useMemo(() => {

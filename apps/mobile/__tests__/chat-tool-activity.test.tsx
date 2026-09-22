@@ -11,3 +11,12 @@ it("expands and collapses bounded command results", () => {
   fireEvent.press(button);
   expect(screen.queryByText(/12 tests passed/)).toBeNull();
 });
+
+it("shows child status and attributed results using the shared presentation", () => {
+  render(<ChatToolActivity activity={{ id: "child", kind: "delegation", state: "completed", label: "Research", subagent: {
+    agentId: "agent_child", parentAgentId: "agent_parent", name: "Research", status: "completed", result: "Checked the tests",
+  } }} />);
+  fireEvent.press(screen.getByRole("button", { name: "Research · Completed" }));
+  expect(screen.getByText("Checked the tests")).toBeTruthy();
+  expect(screen.getByText(/Parent agent/)).toBeTruthy();
+});

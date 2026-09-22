@@ -1,3 +1,4 @@
+import { chatSubagentPresentation } from "@matrix-os/contracts/chat-subagent";
 import type { AgentAttachment, AgentThreadEvent, AgentThreadSnapshot, RuntimeSummary } from "@matrix-os/contracts";
 import {
   Check,
@@ -422,6 +423,7 @@ function eventCopy(event: AgentThreadEvent): { title: string; detail: string } {
     case "user.message": return { title: "You", detail: event.text };
     case "assistant.text.delta":
     case "assistant.text.completed": return { title: "Assistant update", detail: "Text update received" };
+    case "subagent.activity": return { title: event.subagent.name, detail: chatSubagentPresentation(event.subagent).status };
     case "tool.started":
     case "tool.output":
     case "tool.completed": return { title: "Tool activity", detail: "Tool state updated" };

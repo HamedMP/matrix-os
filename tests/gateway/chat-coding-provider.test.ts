@@ -953,3 +953,20 @@ it("detaches a live Codex projection on gateway shutdown without cancelling nati
   expect((await pending).done).toBe(true);
   expect(fake.abortThread).not.toHaveBeenCalled();
 });
+
+
+it.each([false, true])("projects child evidence identically for live=%s and replay", async (live) => {
+  const child = event({ type: "subagent.activity", eventId: "evt_child", activityId: "child_activity",
+    subagent: { agentId: "agent_child", parentAgentId: "agent_parent", name: "Research", status: "waiting", task: "Review tests" },
+  });
+  const done = event({ type: "thread.completed", eventId: "evt_done", outcome: "completed" });
+  const fake = fakeStore(live ? [] : [child, done]);
+  const adapter = createCanonicalCodingChatProviderAdapter({ providerId: "codex", threads: fake.store });
+  if (live) queueMicrotask(() => fake.publish([child, done]));
+  const result: CanonicalProviderRunEvent[] = [];
+  for await (const item of adapter.start(input())) result.push(item);
+  expect(result.filter((item) => item.type === "agent.activity")).toEqual([
+    expect.objectContaining({ activityId: "child_activity", kind: "delegation", status: "running", subagent: child.type === "subagent.activity" ? child.subagent : undefined }),
+  ]);
+  expect(result.some((item) => item.type === "assistant.delta")).toBe(false);
+});

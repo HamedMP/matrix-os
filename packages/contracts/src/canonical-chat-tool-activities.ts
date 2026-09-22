@@ -1,9 +1,11 @@
+import { projectChatSubagent, type ChatSubagent } from "#chat-subagent";
 import type { CanonicalChatRun, CanonicalChatRunActivity } from "./canonical-chat.js";
 import { canonicalChatToolDetail } from "#canonical-chat-tool-details";
 
 export type CanonicalToolActivityState = "running" | "completed" | "partial" | "stopped" | "failed";
 
 export interface CanonicalToolActivity {
+  subagent?: ChatSubagent;
   id: string;
   /** reasoning | plan | command | file_change | mcp_tool | dynamic_tool | delegation | web_search | image_inspection | phase | tool */
   kind: string;
@@ -80,6 +82,7 @@ export function canonicalChatToolActivities(run: CanonicalChatRun, activities: C
         kind: activity.kind,
         state: activityState(activity.status),
         label: activity.label,
+        ...(activity.subagent ? { subagent: projectChatSubagent(activity.subagent, run.status) } : {}),
         ...(preview ? { preview, previewKind: activity.previewKind ?? "text" } : {}),
         ...(detail ? { detail } : {}),
       }];

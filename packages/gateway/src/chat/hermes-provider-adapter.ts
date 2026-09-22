@@ -1,3 +1,4 @@
+import { createHermesSubagentActivity } from "./hermes-subagent-activity.js";
 import { hermesToolHasPrivateContext, hermesToolOutput } from "./hermes-tool-output.js";
 import { ChatSteerNotDeliveredError } from "./steer-delivery-error.js";
 import { createHermesInputController } from "./hermes-input-control.js";
@@ -65,14 +66,6 @@ const HermesStatusUpdateSchema = z.object({
 const HermesReasoningAvailableSchema = z.object({
   text: z.string().max(96 * 1024),
   verbose: z.boolean().optional(),
-}).passthrough();
-const HermesSubagentStartSchema = z.object({
-  subagent_id: z.string().min(1).max(256).optional(),
-  task_index: z.number().int().min(0).max(10_000),
-}).passthrough();
-const HermesSubagentCompleteSchema = z.object({
-  subagent_id: z.string().min(1).max(256).optional(),
-  status: z.string().trim().min(1).max(80),
 }).passthrough();
 const HermesClarifyRequestSchema = z.object({
   request_id: z.string().min(1).max(256),
@@ -335,7 +328,7 @@ export function createHermesChatProviderAdapter(options: {
     const unsafeToolFragments = new Set<string>();
     const toolActivities = new Map<string, { activity: Pick<HermesActivity, "kind" | "label" | "preview" | "previewKind" | "detail">; privateContext: boolean; name: string }>();
     const statusActivities = new Map<string, Pick<HermesActivity, "activityId" | "kind" | "label" | "summary">>();
-    let activeDelegationId: string | undefined;
+    const projectSubagent = createHermesSubagentActivity(input.runId);
     let releaseInputRun: (() => void) | undefined;
     let releaseApprovalRun: (() => void) | undefined;
     let releaseSteerRun: (() => void) | undefined;
@@ -567,38 +560,12 @@ export function createHermesChatProviderAdapter(options: {
           (stored?.privateContext ?? true) || hermesToolHasPrivateContext(parsed.data.args),
           options.toolOutputKey ? { key: options.toolOutputKey, toolCallId: activityId } : undefined);
         if (output) queue.push({ type: "tool.output", toolCallId: activityId, ...output });
-      } else if (event.type === "subagent.start" || event.type === "subagent.spawn_requested") {
-        const parsed = HermesSubagentStartSchema.parse(event.payload);
-        activeDelegationId = providerReference("subagent_", parsed.subagent_id ?? String(parsed.task_index));
-        emitAgentActivity({
-          activityId: activeDelegationId,
-          kind: "delegation",
-          label: "Delegated task",
-          status: "running",
-        });
-      } else if (event.type === "subagent.complete") {
-        const parsed = HermesSubagentCompleteSchema.parse(event.payload);
-        const activityId = parsed.subagent_id
-          ? providerReference("subagent_", parsed.subagent_id)
-          : activeDelegationId;
-        if (!activityId) return;
-        const normalizedStatus = parsed.status.toLowerCase();
-        const status = ["completed", "complete", "success", "succeeded"].includes(normalizedStatus)
-          ? "completed" as const
-          : ["cancelled", "canceled", "aborted", "interrupted"].includes(normalizedStatus)
-            ? "cancelled" as const
-            : "failed" as const;
-        if (status === "failed") recoverableActivityFailureObserved = true;
-        emitAgentActivity({
-          activityId,
-          kind: "delegation",
-          label: "Delegated task",
-          status,
-          summary: status === "completed"
-            ? "Delegated work completed."
-            : status === "cancelled" ? "Delegated work cancelled." : "Delegated work failed.",
-        });
-        if (activityId === activeDelegationId) activeDelegationId = undefined;
+      } else if (["subagent.start", "subagent.spawn_requested", "subagent.complete"].includes(event.type)) {
+        const activity = projectSubagent(event.type, event.payload);
+        if (activity) {
+          if (activity.subagent?.status === "failed") recoverableActivityFailureObserved = true;
+          emitAgentActivity(activity);
+        }
       } else if (event.type === "approval.request") {
         const parsed = HermesApprovalRequestSchema.parse(event.payload);
         const approvalId = parsed.request_id
@@ -636,6 +603,9 @@ export function createHermesChatProviderAdapter(options: {
         HERMES_PYTHON_SRC_ROOT: hermesRoot,
         PYTHONPATH: existingPythonPath ? `${hermesRoot}${delimiter}${existingPythonPath}` : hermesRoot,
         PYTHONUNBUFFERED: "1",
+        // This adapter owns one finite turn, not a persistent notification consumer.
+        // Hermes joins parallel children inline instead of detaching their results.
+        HERMES_SINGLE_QUERY_SESSION: "1",
       },
       spawnFn: options.spawnFn,
       readyTimeoutMs: options.readyTimeoutMs,

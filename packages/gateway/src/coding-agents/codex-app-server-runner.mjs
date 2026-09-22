@@ -1,3 +1,4 @@
+import { createCodexSubagentRuntime } from "./codex-subagent-runtime.mjs";
 import { tryLoadToolOutputKey } from "./protected-tool-output.mjs";
 import { codexToolHasPrivateContext, codexToolOutput } from "./codex-tool-output.mjs";
 import { createHash } from "node:crypto";
@@ -610,7 +611,7 @@ function sendProvider(value) {
   child.stdin.write(`${JSON.stringify(value)}\n`);
 }
 
-function request(method, params, timeoutMs = RPC_TIMEOUT_MS) {
+function request(method, params, timeoutMs = RPC_TIMEOUT_MS, subagentMetadata) {
   if (pendingRpc.size >= MAX_PENDING_REQUESTS) {
     return Promise.reject(new Error("provider_request_limit"));
   }
@@ -621,7 +622,7 @@ function request(method, params, timeoutMs = RPC_TIMEOUT_MS) {
       reject(new Error("provider_request_timeout"));
     }, timeoutMs);
     timeout.unref();
-    pendingRpc.set(id, { resolve, reject, timeout, method });
+    pendingRpc.set(id, { resolve, reject, timeout, method, subagentMetadata });
     sendProvider({ id, method, params });
   });
 }
@@ -839,6 +840,23 @@ async function handleItemLifecycle(raw) {
   return true;
 }
 
+const subagentRuntime = createCodexSubagentRuntime({
+  persist,
+  progress: (activityId) => executionWatchdog.progress(activityId),
+  warn: (error) => {
+    console.warn("[coding-agents] Child metadata unavailable:", error instanceof Error ? error.name : "UnknownError");
+  },
+});
+
+function dispatchSubagentMetadata() {
+  subagentRuntime.dispatchMetadata({
+    availableRequests: () => Math.max(0, MAX_PENDING_REQUESTS - pendingRpc.size),
+    parent: nativeThreadId,
+    turn: activeNativeTurnId,
+    request,
+  });
+}
+
 async function handleProviderMessage(raw) {
   const response = RpcResponseSchema.safeParse(raw);
   if (raw?.method === undefined && response.success && pendingRpc.has(response.data.id)) {
@@ -846,12 +864,28 @@ async function handleProviderMessage(raw) {
     pendingRpc.delete(response.data.id);
     clearTimeout(pending.timeout);
     if (response.data.error !== undefined) pending.reject(providerRpcError(response.data.error));
-    else pending.resolve(response.data.result);
+    else {
+      const metadata = pending.subagentMetadata;
+      if (metadata && activeTurn && !executionExpired && nativeThreadId === metadata.parent
+        && activeNativeTurnId === metadata.turn) {
+        await subagentRuntime.projectMetadata(metadata, response.data.result?.thread);
+      }
+      pending.resolve(response.data.result);
+    }
     return;
   }
   // A deadline settles this execution once. Do not accept late tool results,
   // approvals or a final answer while interruption/shutdown is in flight.
   if (executionExpired || !activeTurn) {
+    rejectCodexServerRequest(raw, sendProvider, -32000);
+    return;
+  }
+  await subagentRuntime.project(raw, nativeThreadId, activeNativeTurnId);
+  // Send without awaiting: replies must pass through this same serial consumer.
+  // Handle their display projection above, preserving event-write ordering.
+  dispatchSubagentMetadata();
+  // Child output is evidence for its own row, never the parent assistant response.
+  if (subagentRuntime.isChildMessage(raw, nativeThreadId)) {
     rejectCodexServerRequest(raw, sendProvider, -32000);
     return;
   }
@@ -1221,6 +1255,7 @@ async function runTurn(threadId, turn) {
     activeTurnOutcome = resolve;
   });
   activeTurn = true;
+  subagentRuntime.reset();
   executionExpired = false;
   activeTurnTokenUsage = undefined;
   try {

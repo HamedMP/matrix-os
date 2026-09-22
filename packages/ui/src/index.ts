@@ -161,3 +161,5 @@ export { McpServerDiagnostics } from "./McpServerDiagnostics.js";
 
 export { createTerminalNativeHistory } from "./terminal/terminal-native-history.js";
 export { canonicalChatSafeFailureReason } from "./canonical-chat-error-copy.js";
+
+export { ConversationSubagentActivity } from "./chat/subagent-activity";

@@ -62,6 +62,13 @@ function runElapsedSeconds(run: CanonicalChatRun | undefined): number | undefine
   return Math.max(0, Math.round((ended - started) / 1000));
 }
 
+/** A terminal child-only run still needs an accessible work toggle. */
+export function transcriptWorkLabel(message: TranscriptMessage): string | null {
+  if (message.isRunning) return "Working…";
+  if (message.elapsedSeconds != null) return `Worked ${message.elapsedSeconds}s`;
+  return message.activities.length || message.toolCalls.length ? "Agent activity" : null;
+}
+
 export function buildTranscript(detail: CanonicalChatDetailResponse | null): TranscriptMessage[] {
   if (!detail) return [];
   const runsById = new Map(detail.runs.map((run) => [run.id, run]));
@@ -101,16 +108,21 @@ export function buildTranscript(detail: CanonicalChatDetailResponse | null): Tra
   // is nothing to render at all during that window, so a fast final response
   // looks like it appeared in one shot.
   for (const run of detail.runs) {
-    if (TERMINAL_RUN_STATUSES.has(run.status) || runIdsWithAssistantMessage.has(run.id)) continue;
-    transcript.unshift({
+    if (runIdsWithAssistantMessage.has(run.id)) continue;
+    const activities = canonicalChatToolActivities(run, detail.activities);
+    const isRunning = !TERMINAL_RUN_STATUSES.has(run.status);
+    if (!isRunning && !activities.some((activity) => activity.subagent)) continue;
+    const createdAt = Date.parse(run.startedAt ?? run.createdAt);
+    const index = transcript.findIndex(message => message.createdAt <= createdAt);
+    transcript.splice(index < 0 ? transcript.length : index, 0, {
       id: `run-placeholder-${run.id}`,
       role: "assistant",
       text: "",
       toolCalls: [],
-      activities: canonicalChatToolActivities(run, detail.activities),
-      elapsedSeconds: undefined,
-      isRunning: true,
-      createdAt: Date.parse(run.startedAt ?? run.createdAt),
+      activities,
+      elapsedSeconds: run.completedAt ? runElapsedSeconds(run) : undefined,
+      isRunning,
+      createdAt,
     });
   }
 
