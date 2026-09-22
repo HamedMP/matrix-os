@@ -1077,3 +1077,30 @@ terminal-dispatcher, terminal-task-profile, wiring), `packages/gateway/src/serve
 **Indicated strategy: extract S18's own 14 commits plus the 23 clean upper layers onto the final S15, and
 discard the duplicated 141-commit base.** Do not `git rebase` the chain wholesale. This has not been executed
 and is the next major decision.
+
+## 49. A CI run can report success having tested nothing — 2026-09-22 07:00 UTC
+
+**Do not read `conclusion: success` as evidence that CI ran.** On `124/s05-gateway` @ `733e778c0`, run
+`35697218329` reported **every job green** — Type Check, Pattern Scan, all four Unit Test shards, Shell
+Production Build, E2E, CI Results — and completed in **64 seconds** (`06:57:30Z -> 06:58:34Z`). It tested
+nothing.
+
+**Cause.** The run fired on the `synchronize` event from the push, *before* `ready-for-ci` was applied. The
+`changes` job therefore emitted `should_run=false`, and each downstream job took its no-op branch (the
+`if: needs.changes.outputs.should_run != 'true'` step) and **exited success**. Only `Symphony Polling Safety`
+reported `skipped`; the rest reported `success` without doing work.
+
+**How to tell a real run from a no-op run:**
+
+- **Duration.** A genuine run on this repo takes tens of minutes. Under about two minutes means no-op.
+- **`Detect CI-relevant changes` job log**, which prints either `CI relevant changes: true` or
+  `CI trigger not requested; add the ready-for-ci label...`.
+- A real run has `E2E Tests` and four `Unit Tests (n/4)` shards that each take minutes.
+
+**Ordering rule that avoids it entirely.** Push first, then apply `ready-for-ci`. The push's `synchronize` run
+no-ops harmlessly, and the `labeled` event then fires one genuine run on the final head. Applying the label
+first means the label run and the push run both execute in full, wasting a shared runner pool that an unrelated
+workstream is already saturating.
+
+This matters beyond convenience: had the no-op green been taken at face value, an untested layer would have
+gone to `main` with a full column of passing checks next to it.
