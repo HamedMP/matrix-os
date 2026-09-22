@@ -995,3 +995,85 @@ baseRefName` shows `main` before each merge, merge strictly one at a time, never
 coverage measurement (gateway 73.34% statements, kernel 61.27%, against a 99/95/99/99 threshold, with
 the gap attributed to pre-existing untested composition entrypoints rather than to this spec) and
 `bc018a4ab` the quickstart acceptance matrix.
+
+## 47. S05 merged; chain restacked onto new main — 2026-09-22 01:30 UTC
+
+**#1802 is merged.** `main` is now `4f13d4c6d` (`feat(platform): register relay-routable homes and issue signed
+connection tickets`). It is the first spec-124 layer to merge with **full substantive CI green on its exact
+head**: all four unit shards, Type Check, Pattern Scan, React Doctor, Docs Contract Tests, Agent SDK
+compatibility, Symphony Polling Safety, OS View Parity, Sync Client Package, Shell Production Build and E2E.
+Greptile 5/5, zero unresolved threads, base verified `main` immediately before merging.
+
+**The whole chain was restacked twice and is clean.** First onto its fixed parents, then onto the new `main`
+after the squash merge. Eleven rebases, **zero conflicts**. Current heads, linear end to end:
+
+| PR | branch | head | own commits |
+| --- | --- | --- | --- |
+| #1803 | `124/s05-gateway` | `733e778c0` | 24 |
+| #1804 | `124/s05-relay` | `128aee713` | 31 |
+| #1805 | `124/s08` | `6a89d4fe3` | 13 |
+| #1806 | `124/s06` | `a8b26f0ac` | 31 |
+| #1807 | `124/s07` | `fef47cc52` | 19 |
+| #1808 | `124/s07-terminal` | `ff12caf18` | 15 |
+
+**#1803's base had to be retargeted by hand.** GitHub did *not* auto-retarget it to `main` after #1802 merged,
+because `124/s05` still exists (correctly — never delete a branch while descendants are open). `gh pr edit 1803
+--base main` was required, then `ready-for-ci` applied so the layer gets automatic CI. Expect to repeat both
+steps for every subsequent layer as it reaches the front.
+
+**A restack is not cosmetic here — it un-reverts fixes.** Before the restack, `git diff 124/s06..124/s07` showed
+the just-landed stream-cap hardening being *removed*, because the descendant still carried the pre-fix copy.
+After the restack the fix survives to the top of the chain. **Any diff taken against an unrebased parent is
+misleading**, and a "user-visible files" audit run against one produced a false positive for the same reason.
+
+**Three fixes landed on `124/s05-gateway` for one defect class**: in-flight work crossing a fence or a
+revocation. Sessions (`create`/`renew`/`authenticate` each await inside admission), the control client
+(`start`/`register`/`connectControl`, where adoption is the commit point), and a per-record `ended` flag for
+work that outlives a pushed revocation. All follow the same shape: revalidate at the commit point, refuse the
+late arrival, never cancel in flight and never commit-then-undo.
+
+**Two items deferred with issues, recorded in the PR bodies:** #1831 (an admission whose authority check
+predates a revocation is not refused; needs a revocation watermark at registration, which is new state, and the
+window's duration has never been measured) and #1832 (a deprecated `z.string().url()` spelling; not swapped
+because `z.url()` was not verified behaviourally identical, and changing validation semantics on a release
+branch without a pinning test is the wrong trade).
+
+**Correction recorded on #1806.** I described the stream-cap test as a RED. It never failed against the real
+code — it passed first time, and only failed when the line was rewritten into the form the reviewer described.
+There was no defect. The commit's value is a standing assertion plus a measurement, not a caught bug, and the
+thread now says so.
+
+## 48. S18 is a parallel copy of the stack, not a stale one — 2026-09-22 01:30 UTC
+
+**This is the largest structural problem in the release and it is not yet solved.**
+
+`124/s18-startup`, the bottom of the 24-branch S18 chain, forks off **`main~4` (`2425202de`)**, not off the S15
+group. `124/s15` is **not an ancestor of any S18 branch**. The two chains carry independent rebase copies of the
+same lower-layer work: 129 commit subjects appear in both, and 105 subjects exist only on the S15 side.
+
+The 24-branch chain is internally **linear and clean**, and the S15 group is clean and already on current main:
+`main → 124/s15-gateway → 124/s15-directory → 124/s15-direct → 124/s15`.
+
+**Of `124/s18-startup`'s 155 commits, only 14 are genuinely S18's own work** — the gateway startup and route
+extraction slices (`startup/owner-database.ts`, `startup/owner-database-fallback.ts`,
+`startup/platform-integrations.ts`, `startup/collaboration.ts`, `server/bridge-routes.ts`, plus `server.ts`,
+their tests and `S18-chain.md`). Another 12 look S18-only but are pre-squash originals of work already in
+`main`; 15 of the 20 files they touch are byte-identical to S15. **141 of the 155 base commits are replayable
+duplicates.**
+
+**A rebase would be actively dangerous, not merely expensive.** 47 of 59 files overlap between the 105 S15-only
+review-round fixes and the duplicated commits in `s18-startup`. All 43 files in the overlap differ, and the
+drift is uniformly one-directional: `git diff 124/s18-startup..124/s15` is **+4377 / -286**, S15 newer
+everywhere. Replaying S18's older copies over S15 would silently revert the review-round hardening — the same
+failure mode already observed today on a single file.
+
+Highest-risk overlapping files include `packages/contracts/src/collaboration.ts`, most of
+`packages/gateway/src/collaboration/*` (control-client, direct-sessions, execution-policy,
+revocation-enforcer, sandbox-readiness, scope-runtime-chat-adapter, shared-ai-runtime, terminal-adapter,
+terminal-dispatcher, terminal-task-profile, wiring), `packages/gateway/src/server.ts`,
+`packages/gateway/src/shell/registry.ts`, most of `packages/platform/src/collaboration/*`,
+`packages/platform/src/platform-websocket-upgrade.ts` and `packages/scope-runtime/src/systemd-launcher.ts`.
+
+**Indicated strategy: extract S18's own 14 commits plus the 23 clean upper layers onto the final S15, and
+discard the duplicated 141-commit base.** Do not `git rebase` the chain wholesale. This has not been executed
+and is the next major decision.
