@@ -132,7 +132,6 @@ describe("platform collaboration bootstrap", () => {
     }
   });
 
-  it("returns an owner-shutdown runtime when collaboration is configured", async () => {
   it("fails closed when only retired V1 proof keys are configured", async () => {
     const composition = await bootstrapPlatformCollaboration({
       env: {
