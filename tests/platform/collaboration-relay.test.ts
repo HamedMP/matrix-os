@@ -190,13 +190,58 @@ describe("CollaborationRelay", () => {
     expect(drained).toBeLessThanOrEqual(32 * 1024);
   });
 
+  it("refuses the upload rather than relaying an answer when the body never settles", async () => {
+    // The settlement wait is bounded so an upload nobody finishes cannot hold the reply. Past
+    // that bound the relay has refused to finish forwarding the body, so the home's answer no
+    // longer describes the request that was made: the client must not be handed it, least of
+    // all a successful one, even though the overflow only shows up afterwards.
+    let laterBytes = 0;
+    const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {
+      const body = (init as { body?: unknown }).body;
+      if (body instanceof ReadableStream) {
+        const reader = body.getReader();
+        await reader.read();
+        // Neither finished nor cancelled; the rest arrives long after the wait has expired.
+        setTimeout(() => {
+          void (async () => {
+            try {
+              for (;;) {
+                const chunk = await reader.read();
+                if (chunk.done) break;
+                laterBytes += chunk.value.byteLength;
+              }
+            } catch {
+              // Overflow errors the stream once the reply has already been decided.
+            }
+          })();
+        }, 150);
+      }
+      return new Response("ok", { status: 200 });
+    });
+    const { instance, metadata } = relay({ limits: { requestBytes: 32 * 1024, requestTimeoutMs: 50 } }, fetchImpl as never);
+    const response = await instance.forward({
+      actorId: "user_a", method: "POST", path: `/api/collaboration/scopes/${scopeId}/discussion/messages`,
+      query: "", headers: new Headers(), body: chunkedBody(256 * 1024),
+    });
+    expect(response.ok).toBe(false);
+    expect(response.status).toBe(503);
+    expect(await response.text()).not.toContain("ok");
+    expect(metadata.at(-1)?.outcome).toBe("upstream_error");
+  });
+
   it("relays an early upstream answer when the home stops reading before any overflow", async () => {
     // The mirror case: the home answers and abandons the upload. Nothing over the limit was
     // ever read, so there is no overflow to report and the home's answer is the truth. The
     // wait for the body to settle is bounded, so an abandoned upload cannot stall the reply.
     const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {
       const body = (init as { body?: unknown }).body;
-      if (body instanceof ReadableStream) await body.getReader().read();
+      if (body instanceof ReadableStream) {
+        const reader = body.getReader();
+        await reader.read();
+        // Abandoning an upload cancels it, which is what a real client does when it stops
+        // reading; the stream settles and the home's answer stands.
+        await reader.cancel();
+      }
       return new Response("early", { status: 400 });
     });
     const { instance } = relay({ limits: { requestBytes: 32 * 1024, requestTimeoutMs: 100 } }, fetchImpl as never);
