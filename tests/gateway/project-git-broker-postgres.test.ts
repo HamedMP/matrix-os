@@ -18,6 +18,9 @@ import {
 const NOW = "2026-09-21T10:00:00.000Z";
 const ORG = "org_git_broker_test";
 const PROJECT = "proj_git_broker";
+/** Row-lock races need a real server: PGlite runs every Kysely transaction on one
+ * session, so `SELECT ... FOR UPDATE` cannot exclude a concurrent transaction there. */
+const hasRealPostgres = Boolean(process.env.MATRIX_TEST_POSTGRES_URL);
 let requestNumber = 0;
 
 function action<T extends "commit" | "push" | "pr">(type: T, fields: Record<string, unknown>) {
@@ -36,7 +39,7 @@ describe("project Git broker PostgreSQL boundary", () => {
 
   beforeEach(async () => {
     requestNumber = 0;
-    fixture = process.env.MATRIX_TEST_POSTGRES_URL
+    fixture = hasRealPostgres
       ? await createRealCollaborationTestDatabase()
       : await createCollaborationTestDatabase();
     await bootstrapChatDatabase(fixture.db);
@@ -104,7 +107,31 @@ describe("project Git broker PostgreSQL boundary", () => {
     }));
   });
 
-  it("serializes distinct member Git mutations for one shared project", async () => {
+  it("refuses a second member Git mutation while another operation is active on the project", async () => {
+    const run = vi.fn(async () => ({ commitSha: "a".repeat(40) }));
+    const broker = createProjectGitBroker({
+      db: fixture.db,
+      authorize: async () => ({ ownerId: collaborationActors.owner, projectId: PROJECT }),
+      resolveOwnerIdentity: async () => ({ name: "Owner", email: "owner@example.test", label: "Owner <owner@example.test>" }),
+      driver: { run, reconcile: async () => null },
+    });
+    const first = await broker.submit({
+      scopeId: collaborationIds.scope,
+      actorId: collaborationActors.editor,
+      request: action("commit", { message: "feat: first change", expectedHeadSha: "b".repeat(40) }),
+    });
+    expect(first.state).toBe("completed");
+    await fixture.db.updateTable("collaboration_git_operations")
+      .set({ state: "running", updated_at: new Date() }).where("id", "=", first.id).execute();
+    await expect(broker.submit({
+      scopeId: collaborationIds.scope,
+      actorId: collaborationActors.editor,
+      request: action("commit", { message: "feat: second change", expectedHeadSha: "b".repeat(40) }),
+    })).rejects.toMatchObject({ code: "busy" });
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it.skipIf(!hasRealPostgres)("serializes distinct member Git mutations for one shared project on the scope lock (unrun on PGlite: real Postgres required)", async () => {
     let active = 0;
     let peak = 0;
     const run = vi.fn(async () => {
@@ -123,12 +150,18 @@ describe("project Git broker PostgreSQL boundary", () => {
     const requests = [
       action("commit", { message: "feat: first change", expectedHeadSha: "b".repeat(40) }),
       action("commit", { message: "feat: second change", expectedHeadSha: "b".repeat(40) }),
+      action("commit", { message: "feat: third change", expectedHeadSha: "b".repeat(40) }),
+      action("commit", { message: "feat: fourth change", expectedHeadSha: "b".repeat(40) }),
     ];
     const results = await Promise.all(requests.map((request) => broker.submit({
       scopeId: collaborationIds.scope, actorId: collaborationActors.editor, request,
     }).catch((error: unknown) => error)));
     expect(peak).toBe(1);
-    expect(results.some((result) => result instanceof ProjectGitBrokerError && result.code === "busy")).toBe(true);
+    const busy = results.filter((result) => result instanceof ProjectGitBrokerError && result.code === "busy");
+    const completed = results.filter((result) => !(result instanceof Error) && result.state === "completed");
+    expect(busy.length).toBeGreaterThanOrEqual(1);
+    expect(busy.length + completed.length).toBe(requests.length);
+    expect(run).toHaveBeenCalledTimes(completed.length);
   });
 
   it("denies a Viewer before creating an operation or running a side effect", async () => {
