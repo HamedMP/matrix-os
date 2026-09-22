@@ -236,6 +236,33 @@ describe("share-time project Chat root inventory", () => {
     expect((await inventory().list({ ownerId: OWNER, projectId: PROJECT })).map((root) => root.chatId)).toEqual(["chat_main"]);
   });
 
+  it("reports a detached worktree root as ready with its dirty state and no branch", async () => {
+    await git(worktreeRoot, "checkout", "--detach", "HEAD");
+    await writeFile(join(worktreeRoot, "draft.txt"), "uncommitted\n");
+    const feature = (await inventory().list({ ownerId: OWNER, projectId: PROJECT }))
+      .find((root) => root.chatId === "chat_feature");
+    expect(feature).toMatchObject({ readiness: "ready", dirty: true });
+    expect(feature).not.toHaveProperty("branch");
+  });
+
+  /**
+   * A project Chat that has never queued a turn has no persisted execution root.
+   * Canonical admission (chat/queue-admission.ts, chat/turn-admission.ts) defaults
+   * such a Chat to `{ kind: "project", projectId }`, so the inventory reports that
+   * same root rather than inventing one, and the Chat is shareable.
+   */
+  it("reports a never-run project Chat as ready on the canonical project root", async () => {
+    await seedChat(fixture.db, "chat_fresh");
+    const fresh = (await inventory().list({ ownerId: OWNER, projectId: PROJECT }))
+      .find((root) => root.chatId === "chat_fresh");
+    expect(fresh).toMatchObject({
+      readiness: "ready",
+      executionRoot: { kind: "project", projectId: PROJECT },
+      branch: "main",
+    });
+    expect(fresh).not.toHaveProperty("blocker");
+  });
+
   it("blocks sharing when a Chat root no longer resolves", async () => {
     await rm(worktreeRoot, { recursive: true, force: true });
     const roots = await inventory().list({ ownerId: OWNER, projectId: PROJECT });

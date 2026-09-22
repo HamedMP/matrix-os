@@ -29,7 +29,12 @@ export class ProjectChatRootInventoryError extends Error {
   }
 }
 
-async function inspectGitRoot(path: string): Promise<{ branch?: string; dirty?: boolean }> {
+type GitProbe =
+  | { status: "ok"; stdout: string }
+  /** `code` is the process exit status, or null when the process never produced one. */
+  | { status: "exit"; code: number | null };
+
+async function probeGitRoot(path: string, args: string[]): Promise<GitProbe> {
   const env = {
     PATH: process.env.PATH ?? "/usr/bin:/bin",
     HOME: "/nonexistent",
@@ -39,22 +44,30 @@ async function inspectGitRoot(path: string): Promise<{ branch?: string; dirty?: 
   };
   const common = ["--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null"];
   try {
-    const [branch, status] = await Promise.all([
-      exec("git", [...common, "symbolic-ref", "--quiet", "--short", "HEAD"], {
-        cwd: path, env, timeout: 10_000, maxBuffer: 64 * 1024,
-      }),
-      exec("git", [...common, "status", "--porcelain=v1", "--untracked-files=normal"], {
-        cwd: path, env, timeout: 10_000, maxBuffer: 64 * 1024,
-      }),
-    ]);
-    return { branch: branch.stdout.trim(), dirty: status.stdout.length > 0 };
+    const { stdout } = await exec("git", [...common, ...args], {
+      cwd: path, env, timeout: 10_000, maxBuffer: 64 * 1024,
+    });
+    return { status: "ok", stdout };
   } catch (error: unknown) {
-    // Non-Git projects can still be shared. The Git setup state is separately unavailable.
-    if (error instanceof Error && "code" in error && String((error as NodeJS.ErrnoException).code) === "128") {
-      return {};
-    }
-    throw new ProjectChatRootInventoryError();
+    const code = error instanceof Error && "code" in error ? Number((error as NodeJS.ErrnoException).code) : Number.NaN;
+    if (Number.isInteger(code)) return { status: "exit", code };
+    console.warn("[collaboration-project] Chat root Git probe failed", error instanceof Error ? error.name : "UnknownError");
+    return { status: "exit", code: null };
   }
+}
+
+async function inspectGitRoot(path: string): Promise<{ branch?: string; dirty?: boolean }> {
+  const [branch, status] = await Promise.all([
+    probeGitRoot(path, ["symbolic-ref", "--quiet", "--short", "HEAD"]),
+    probeGitRoot(path, ["status", "--porcelain=v1", "--untracked-files=normal"]),
+  ]);
+  // Non-Git projects can still be shared. The Git setup state is separately unavailable.
+  if (status.status === "exit" && status.code === 128) return {};
+  if (status.status !== "ok") throw new ProjectChatRootInventoryError();
+  // A detached HEAD is a valid root: `symbolic-ref` exits 1 because there is no branch, not because the root is broken.
+  if (branch.status === "exit" && branch.code !== 1) throw new ProjectChatRootInventoryError();
+  const name = branch.status === "ok" ? branch.stdout.trim() : "";
+  return { ...(name ? { branch: name } : {}), dirty: status.stdout.length > 0 };
 }
 
 /** Reads the most recent canonical turn root for every project Chat; no host path escapes this module. */
