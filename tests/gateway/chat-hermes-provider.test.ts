@@ -372,8 +372,8 @@ describe("Hermes canonical Chat Provider adapter", () => {
       { type: "agent.activity", activityId: "reasoning_summary", kind: "reasoning", label: "Reasoning complete", status: "completed" },
       { type: "agent.activity", activityId: "tool_search", kind: "web_search", label: "Search the web", status: "running" },
       { type: "agent.activity", activityId: "tool_search", kind: "web_search", label: "Search the web", status: "completed", summary: "Web search completed." },
-      { type: "agent.activity", activityId: "subagent_worker_1", kind: "delegation", label: "Delegated task", status: "running" },
-      { type: "agent.activity", activityId: "subagent_worker_1", kind: "delegation", label: "Delegated task", status: "completed", summary: "Delegated work completed." },
+      expect.objectContaining({ type: "agent.activity", kind: "delegation", status: "running", subagent: expect.objectContaining({ name: "Subagent 1", status: "running" }) }),
+      expect.objectContaining({ type: "agent.activity", kind: "delegation", status: "completed", subagent: expect.objectContaining({ name: "Subagent 1", status: "completed" }) }),
       {
         type: "approval.requested",
         approvalId: "approval_1",
@@ -849,6 +849,7 @@ describe("Hermes canonical Chat Provider adapter", () => {
         HERMES_PYTHON_SRC_ROOT: "/home/matrix/home/.hermes/hermes-agent",
         PYTHONPATH: "/home/matrix/home/.hermes/hermes-agent",
         PYTHONUNBUFFERED: "1",
+        HERMES_SINGLE_QUERY_SESSION: "1",
       },
     });
     expect(gateway.requests).toEqual(expect.arrayContaining([

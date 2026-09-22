@@ -44,3 +44,24 @@ Run `flox activate -- pnpm exec tsx scripts/dev/preview-codex-subagents.ts` to o
 role/status examples; it is not a full Web Desktop integration test. The Electron
 review launcher exercises the full Chat interface with the same schema. Both bind
 only to localhost and clean up servers on Ctrl-C.
+
+### Hermes finite-turn integration
+
+Matrix owns one Hermes process per canonical run and closes it after `message.complete`.
+Set `HERMES_SINGLE_QUERY_SESSION=1` for that process: Hermes's native finite-session
+contract joins delegated children within the turn instead of dispatching background
+results to a future notification consumer. Child tasks can still execute in parallel.
+The installed Preview revision `ea0c2b820bd30bace020a3791d8aef0b44002e0d`
+checks this marker in `tools/delegate_tool_dispatch.py::_resolve_async_wake_sid`.
+Do not emulate persistence with a sleep or retry the parent's prompt.
+
+Project Hermes child start/completion frames into the shared subagent schema, retaining
+bounded safe goal/result text and opaque identities. Keep concurrent children separate;
+an identity-free legacy completion may resolve only a single unambiguous child. A
+128-child per-run cap evicts oldest entries. Do not infer roles from task names: the
+observed Hermes payload has no role field. Unavailable roles use the branch icon.
+
+Regression coverage includes process mode, reverse-order concurrent completion,
+duplicate starts, ambiguous/unrelated completion, sensitive-text exclusion and capacity.
+Real Preview acceptance must demonstrate child results delivered to the parent in the
+same run, distinct expanded result rows, and persistent replay without duplicate rows.
