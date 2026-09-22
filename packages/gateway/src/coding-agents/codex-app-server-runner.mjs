@@ -173,6 +173,7 @@ const ToolLifecycleTypeSchema = z.enum([
   "webSearch",
   "plan",
   "reasoning",
+  "imageGeneration",
 ]);
 const AgentMessageLifecycleItemSchema = z.object({
   id: NativeReferenceSchema,
@@ -482,6 +483,7 @@ function toolPresentation(item) {
   if (item.type === "webSearch") return { displayName: "Search web", kind: "search" };
   if (item.type === "plan") return { displayName: "Update plan", kind: "plan" };
   if (item.type === "reasoning") return { displayName: "Thinking", kind: "reasoning" };
+  if (item.type === "imageGeneration") return { displayName: "Generating image", kind: "image_generation" };
   if (item.type === "collabAgentToolCall") return { displayName: "Coordinate agents", kind: "agent" };
   if (item.type === "mcpToolCall" && item.server && item.tool) {
     return { displayName: `Use ${item.server}.${item.tool}`, kind: "tool" };

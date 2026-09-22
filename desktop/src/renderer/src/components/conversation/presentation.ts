@@ -45,6 +45,7 @@ export type ConversationActivityKind =
   | "delegation"
   | "web_search"
   | "image_inspection"
+  | "image_generation"
   | "read"
   | "edit"
   | "search"

@@ -145,6 +145,7 @@ function ResponseMessage({
           {attachments.length > 0 ? (
             <ChatAttachments
               attachments={attachments}
+              align="start"
               open={callbacks.openAttachment}
               loadImage={callbacks.loadImage}
             />

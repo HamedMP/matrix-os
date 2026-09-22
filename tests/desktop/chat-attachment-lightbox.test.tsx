@@ -45,3 +45,14 @@ it("retains file attachment navigation", () => {
   fireEvent.click(screen.getByRole("button", { name: "Preview notes.txt" }));
   expect(open).toHaveBeenCalledWith("temporary/notes.txt");
 });
+
+it("allows assistant attachments to align with the left edge", () => {
+  const { container } = render(
+    <ChatAttachments
+      align="start"
+      attachments={[{ kind: "image", id: "image", label: "Generated.png", src: "/image.png" }]}
+    />,
+  );
+  expect(container.firstElementChild?.className).toContain("justify-start");
+  expect(container.firstElementChild?.className).not.toContain("ml-auto");
+});

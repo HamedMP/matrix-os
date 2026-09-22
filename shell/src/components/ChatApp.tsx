@@ -825,7 +825,7 @@ function AssistantBubble({
   return (
     <Message from="assistant">
       <MessageContent>
-        {attachments?.length ? <ChatAttachments attachments={attachments} open={openAttachment} loadImage={loadImage} /> : null}
+        {attachments?.length ? <ChatAttachments align="start" attachments={attachments} open={openAttachment} loadImage={loadImage} /> : null}
         {thinking && <Reasoning content={thinking} />}
         {planSteps && <Plan steps={planSteps} />}
         {taskData && <Task task={taskData} />}

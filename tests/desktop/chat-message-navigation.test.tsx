@@ -76,6 +76,20 @@ it("renders assistant artifacts and opens their owner reference in File Preview"
   expect(openAttachment).toHaveBeenCalledWith("data/report.pdf");
 });
 
+it("shows a glare image placeholder while image generation is running", () => {
+  render(<ConversationTranscript callbacks={{ copyText: vi.fn() }} turns={[{
+    id: "turn", startedAt: Date.now(), endedAt: Date.now(), active: true,
+    work: [{
+      kind: "activity-group", id: "generation", activities: [{
+        id: "image-generation", kind: "image_generation", state: "running", label: "Generating image",
+      }],
+    }],
+  }]} />);
+  const placeholder = screen.getByRole("status", { name: "Generating image" });
+  expect(placeholder.className).toContain("image-generation-glare");
+  expect(placeholder.getAttribute("data-state")).toBe("running");
+});
+
 it("preserves the source root when opening an absolute message file link", () => {
   const openFile = vi.fn(() => true);
   const path = "/home/matrix/home/apps/games/chess/src/App.tsx";

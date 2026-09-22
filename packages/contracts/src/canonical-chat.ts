@@ -441,6 +441,7 @@ export const CanonicalChatAgentActivityKindSchema = z.enum([
   "delegation",
   "web_search",
   "image_inspection",
+  "image_generation",
 ]);
 
 export const CanonicalChatAgentActivityStatusSchema = z.enum([

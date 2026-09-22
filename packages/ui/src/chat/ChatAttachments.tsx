@@ -9,12 +9,13 @@ export interface ChatMessageAttachment {
   src?: string;
 }
 
-export function ChatAttachments({ attachments, open, loadImage }: {
+export function ChatAttachments({ attachments, open, loadImage, align = "end" }: {
   attachments: ChatMessageAttachment[];
   open?: (path: string) => boolean | void;
   loadImage?: (src: string) => Promise<Blob>;
+  align?: "start" | "end";
 }) {
-  return <div className="ml-auto flex max-w-[min(85%,48rem)] flex-wrap justify-end gap-2">
+  return <div className={`flex max-w-[min(85%,48rem)] flex-wrap gap-2 ${align === "start" ? "justify-start" : "ml-auto justify-end"}`}>
     {attachments.map((attachment) => attachment.kind === "image" && attachment.src
       ? <AttachmentImage key={attachment.id} src={attachment.src} label={attachment.label} path={attachment.path} open={open} loadImage={loadImage} />
       : <div key={attachment.id} className="max-w-full overflow-hidden rounded-xl border bg-[var(--bg-surface,var(--background))]" style={{ borderColor: "var(--border-default, var(--border))" }}>

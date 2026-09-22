@@ -163,7 +163,7 @@ const MatrixCodexRecordSchema = z.discriminatedUnion("type", [
     type: z.literal("matrix.codex.tool.started"),
     toolCallId: CodexItemIdSchema,
     displayName: SafeDisplayStringSchema,
-    kind: z.enum(["command", "file_change", "tool", "agent", "search", "plan", "reasoning", "phase"]),
+    kind: z.enum(["command", "file_change", "tool", "agent", "search", "plan", "reasoning", "phase", "image_generation"]),
     // Display metadata is optional evidence. A rejected field must not erase
     // the tool identity and leave an orphan completion in Chat.
     preview: AgentToolPreviewSchema.optional().catch(undefined),

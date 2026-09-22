@@ -26,7 +26,7 @@ The supplied screenshots establish the visible symptoms: a textual success claim
 
 ## Interaction and format coverage
 
-Images use bounded, aspect-ratio-preserving thumbnails in Chat; click opens full preview. Multiple images form a compact group in message order. File cards show filename, type, size when known, Preview and Download. PDF/audio/video/Office files default to cards rather than expanding every large asset inline. Keyboard activation, Escape, focus restoration, alt text, loading and retry are required. Streaming incomplete Markdown must not repeatedly request malformed paths. A finalized bad reference becomes an error card with safe copy.
+Assistant images use left-aligned, bounded, aspect-ratio-preserving thumbnails in Chat; click opens full preview. While a structured `imageGeneration` item is running, Chat shows a left-aligned 96 px glare placeholder with an accessible “Generating image” status; the delivered image replaces that live state when capture completes. Multiple images form a compact group in message order. File cards show filename, type, size when known, Preview and Download. PDF/audio/video/Office files default to cards rather than expanding every large asset inline. Keyboard activation, Escape, focus restoration, alt text, loading and retry are required. Streaming incomplete Markdown must not repeatedly request malformed paths. A finalized bad reference becomes an error card with safe copy.
 
 | Format | Chat | File Preview | Delivery |
 | --- | --- | --- | --- |
