@@ -133,7 +133,8 @@ export class PlatformCollaborationCutover {
 
   async resume(scopeId: string): Promise<CutoverJournal> {
     const row = await this.requireRow(scopeId);
-    if (row.phase !== "blocked" || !row.resume_phase || row.block_reason === "disabled_for_recovery") {
+    if (row.phase !== "blocked" || !row.resume_phase || !row.block_reason
+      || row.block_reason === "disabled_for_recovery") {
       return publicJournal(row);
     }
     // The pre-read above cannot fence a concurrent disable: `rollback(..., "disable")`
@@ -187,7 +188,7 @@ export class PlatformCollaborationCutover {
       return publicJournal(await this.requireRow(scopeId));
     }
     // Disable the platform first so no new ticket can be admitted while the home fence is in flight.
-    const disabled = await this.block(row, "disabled_for_recovery", null, { fence: true });
+    const disabled = await this.disableJournal(row);
     const resolution = await this.readyHome(row);
     if (resolution.status === "ready") {
       try {
@@ -360,39 +361,28 @@ export class PlatformCollaborationCutover {
   }
 
   /**
-   * `fence` marks a block that is a security control rather than ordinary progress
-   * reporting: the recovery disable. An ordinary block that loses a race is benign — the
-   * newer phase simply wins — but a disable that silently matched zero rows would leave the
-   * journal active and ticket admission open while reporting success to its caller.
+   * Recovery disable is an explicit operator override, so it lands on whichever phase the journal
+   * holds when the row lock is taken rather than on a phase read before a concurrent transition.
+   * The lock is what makes this deterministic: the phase cannot move between the read and the
+   * write, so the fence cannot silently match zero rows.
    */
-  private async block(
-    row: JournalRow,
-    reason: string,
-    resumePhase: CutoverPhase | null,
-    options?: { fence?: boolean },
-  ): Promise<CutoverJournal> {
-    const write = (phase: CutoverPhase) => this.options.db.updateTable("collaboration_cutover_journal")
+  private async disableJournal(row: JournalRow): Promise<CutoverJournal> {
+    await this.options.db.transaction().execute(async (trx) => {
+      const current = await trx.selectFrom("collaboration_cutover_journal").select("phase")
+        .where("scope_id", "=", row.scope_id).forUpdate().executeTakeFirst();
+      if (!current) throw new Error("Cutover journal not found");
+      await trx.updateTable("collaboration_cutover_journal")
+        .set({ phase: "blocked", resume_phase: null, block_reason: "disabled_for_recovery", updated_at: new Date() })
+        .where("scope_id", "=", row.scope_id).where("phase", "=", current.phase).execute();
+    });
+    return publicJournal(await this.requireRow(row.scope_id));
+  }
+
+  private async block(row: JournalRow, reason: string, resumePhase: CutoverPhase | null): Promise<CutoverJournal> {
+    await this.options.db.updateTable("collaboration_cutover_journal")
       .set({ phase: "blocked", resume_phase: resumePhase, block_reason: reason, updated_at: new Date() })
-      .where("scope_id", "=", row.scope_id).where("phase", "=", phase)
-      .returning("scope_id").executeTakeFirst();
-
-    if (await write(row.phase)) return publicJournal(await this.requireRow(row.scope_id));
-
-    // Zero rows means the journal moved between the read and this write — for example an
-    // activation committing `verified` to `active`. Re-read and, for a fence, re-apply
-    // against the phase that actually won.
-    let current = await this.requireRow(row.scope_id);
-    if (!options?.fence) return publicJournal(current);
-    if (current.phase !== "blocked" && await write(current.phase)) {
-      current = await this.requireRow(row.scope_id);
-    }
-    if (current.phase !== "blocked") {
-      // Never report a fence as established when it is not. The caller disables the home
-      // next, and a home failure there is only logged, so a false success here would leave
-      // both sides open.
-      throw new Error("The collaboration recovery disable could not fence the journal");
-    }
-    return publicJournal(current);
+      .where("scope_id", "=", row.scope_id).where("phase", "=", row.phase).execute();
+    return publicJournal(await this.requireRow(row.scope_id));
   }
 
   private async activateDirectory(row: JournalRow): Promise<void> {
