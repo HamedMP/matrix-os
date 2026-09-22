@@ -99,6 +99,11 @@ function createWiring(input: {
 }
 
 describe("createGateway Chat terminal production wiring", () => {
+  // Composition-root wiring only: that createGateway still hands the extracted
+  // registrar its runtime dependencies, and that no retired Zellij path has
+  // been reintroduced. The route's own authorization order, Chat-binding
+  // checks and workspace admission are exercised behaviourally in
+  // tests/gateway/terminal-ws-routes.test.ts.
   it("keeps createGateway on the workspace/tab runtime without constructing a legacy Zellij registry", () => {
     const source = readFileSync(join(process.cwd(), "packages/gateway/src/server.ts"), "utf8");
     const routeSource = readFileSync(join(process.cwd(), "packages/gateway/src/server/terminal-ws-routes.ts"), "utf8");
@@ -107,27 +112,6 @@ describe("createGateway Chat terminal production wiring", () => {
     expect(routeSource).toContain('"/ws/terminal/tab"');
     expect(source).toContain("chatBoundShellRouteDeps");
     expect(source).toContain("chatBoundWorkspaceRouteDeps");
-    expect(routeSource).toContain("getTerminalBinding(");
-    expect(routeSource).toContain("listBoundTerminalSessionIds(");
-    expect(routeSource).toContain("const refAccess = await terminalRuntimeRefAccess(");
-    expect(routeSource).toContain('refAccess === "chat_required"');
-    expect(routeSource).toContain('refAccess === "repository_required"');
-    const workspaceSocket = routeSource.indexOf('"/ws/terminal/tab"');
-    const chatAuthorization = routeSource.indexOf("if (chatResult.data)", workspaceSocket);
-    const repositoryGuard = routeSource.indexOf("if (!terminalAuthorizationRepository)", chatAuthorization);
-    const ownerOnlyFallback = routeSource.indexOf("if (terminalAuthorizationRepository)", repositoryGuard);
-    expect(chatAuthorization).toBeGreaterThan(workspaceSocket);
-    expect(repositoryGuard).toBeGreaterThan(chatAuthorization);
-    expect(ownerOnlyFallback).toBeGreaterThan(repositoryGuard);
-    expect(ownerOnlyFallback).toBeLessThan(routeSource.indexOf("terminalWorkspaceRuntime.attach({", workspaceSocket));
-    const workspaceAdmission = routeSource.indexOf("terminalWorkspaceProjectAdmission.withWorkspace(", workspaceSocket);
-    const attach = routeSource.indexOf("terminalWorkspaceRuntime.attach({", workspaceSocket);
-    const frameAdmission = routeSource.indexOf("terminalWorkspaceProjectAdmission.withWorkspace(", workspaceAdmission + 1);
-    const frameSend = routeSource.indexOf("stream.send(frame)", frameAdmission);
-    expect(workspaceAdmission).toBeGreaterThan(ownerOnlyFallback);
-    expect(workspaceAdmission).toBeLessThan(attach);
-    expect(frameAdmission).toBeGreaterThan(attach);
-    expect(frameSend).toBeGreaterThan(frameAdmission);
     expect(source).not.toContain("createUserSystemdZellijAdapter({");
     expect(source).not.toContain("createUserSystemdTerminalRuntime({");
     expect(source).not.toContain("sweepOrphanedSessions()");

@@ -1,7 +1,117 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Hono } from "hono";
 import type { UpgradeWebSocket, WSEvents, WSContext } from "hono/ws";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { registerTerminalWebSocketRoutes } from "../../packages/gateway/src/server/terminal-ws-routes.js";
+
+const WORKSPACE_ID = "tws_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const TAB_ID = "tt_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+const TERMINAL_REF = { workspaceId: WORKSPACE_ID, tabId: TAB_ID };
+const REF_KEY = `${WORKSPACE_ID}:${TAB_ID}`;
+const OWNER_ID = "user_terminal_owner";
+
+const homes: string[] = [];
+afterEach(() => {
+  for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true });
+});
+
+/**
+ * Mount the real route against injected dependencies so authorization order is
+ * observed through the calls the route makes, not through the source text.
+ */
+interface RepositoryDouble {
+  getTerminalBinding: ReturnType<typeof vi.fn>;
+  listBoundTerminalSessionIds: ReturnType<typeof vi.fn>;
+}
+
+function authorizedRoutes(input: {
+  accessScope: "owner" | "chat" | "shared";
+  repository?: (order: string[]) => RepositoryDouble;
+}) {
+  const app = new Hono();
+  const order: string[] = [];
+  let events: WSEvents | undefined;
+  const upgradeWebSocket = ((createEvents: (context: never) => WSEvents | Promise<WSEvents>) =>
+    async (context: never) => {
+      events = await createEvents(context);
+      return new Response(null, { status: 200 });
+    }) as UpgradeWebSocket;
+
+  const send = vi.fn((frame: { type: string }) => { order.push(`runtime-send:${frame.type}`); });
+  const attach = vi.fn(async () => {
+    order.push("attach");
+    return { send, close: vi.fn() };
+  });
+  const listWorkspaces = vi.fn(async () => [{
+    id: WORKSPACE_ID,
+    tabs: [{ id: TAB_ID, accessScope: input.accessScope }],
+  }]);
+  const withWorkspace = vi.fn(async (
+    _ownerId: string,
+    _workspaceId: string,
+    action: string,
+    run: () => Promise<unknown>,
+  ) => {
+    order.push(`admission:${action}`);
+    return run();
+  });
+  const chatRepository = input.repository ? input.repository(order) : null;
+  const homePath = mkdtempSync(join(tmpdir(), "terminal-ws-routes-"));
+  homes.push(homePath);
+
+  registerTerminalWebSocketRoutes({
+    app,
+    upgradeWebSocket,
+    homePath,
+    terminalWorkspaceRuntime: { attach, listWorkspaces } as never,
+    terminalLiveOwnership: {
+      attach: vi.fn(),
+      detach: vi.fn(),
+      touch: vi.fn(),
+      role: vi.fn(() => "writer"),
+      leaseEpoch: vi.fn(() => 1),
+      allowsMutation: vi.fn(() => true),
+    } as never,
+    workspaceSessionRuntimeBridge: { consumeSessionAttachment: vi.fn() } as never,
+    terminalRuntimeOwnerIds: [OWNER_ID],
+    chatRepository: chatRepository as never,
+    terminalWorkspaceProjectAdmission: { withWorkspace } as never,
+    captureTerminalEvent: vi.fn(),
+    getPrincipal: vi.fn(() => ({ userId: OWNER_ID, source: "jwt" as const })),
+    logBestEffortFailure: vi.fn(),
+    logUnexpectedJsonParseFailure: vi.fn(),
+    logUnexpectedWsSendFailure: vi.fn(),
+  });
+
+  const socket = () => {
+    const sent: string[] = [];
+    const close = vi.fn();
+    return { sent, close, context: { send: (frame: string) => sent.push(frame), close } as unknown as WSContext };
+  };
+  return { app, socket, order, attach, withWorkspace, send, chatRepository, get events() { return events; } };
+}
+
+function repositoryDouble(bound: boolean) {
+  return (order: string[]): RepositoryDouble => ({
+    getTerminalBinding: vi.fn(async () => {
+      order.push("binding");
+      return bound ? { sessionCreatedAt: "2026-08-28T10:00:00.000Z" } : null;
+    }),
+    listBoundTerminalSessionIds: vi.fn(async (_owner: unknown, ids: readonly string[]) => {
+      order.push("bound-lookup");
+      return bound ? ids.filter((id) => id === REF_KEY) : [];
+    }),
+  });
+}
+
+async function openTab(routes: ReturnType<typeof authorizedRoutes>, query: string) {
+  await routes.app.request(`/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=browser${query}`);
+  const peer = routes.socket();
+  routes.events?.onOpen?.(new Event("open"), peer.context);
+  return peer;
+}
 
 function mountedRoutes() {
   const app = new Hono();
@@ -82,5 +192,74 @@ describe("terminal WebSocket route registration", () => {
     expect(routes.attachOwnership).not.toHaveBeenCalled();
     expect(routes.attach).not.toHaveBeenCalled();
     expect(peer.sent).toEqual([JSON.stringify({ type: "error", code: "attach_failed", message: "Shell attach failed" })]);
+  });
+
+  it("authorizes the Chat binding before the workspace admission and the runtime attach", async () => {
+    const routes = authorizedRoutes({ accessScope: "chat", repository: repositoryDouble(true) });
+    const peer = await openTab(routes, "&chat=chat_01hzzzzzzzzzzzzzzzzzzzzzzz");
+
+    await vi.waitFor(() => expect(routes.attach).toHaveBeenCalledOnce());
+    expect(routes.chatRepository?.getTerminalBinding).toHaveBeenCalledWith(
+      { type: "personal", ownerId: OWNER_ID },
+      "chat_01hzzzzzzzzzzzzzzzzzzzzzzz",
+      REF_KEY,
+    );
+    expect(routes.order).toEqual(["binding", "admission:run", "attach"]);
+    expect(routes.withWorkspace).toHaveBeenCalledWith(OWNER_ID, WORKSPACE_ID, "run", expect.any(Function));
+    expect(peer.sent).toEqual([]);
+  });
+
+  it("denies a Chat-scoped tab whose binding is missing before attaching", async () => {
+    const routes = authorizedRoutes({ accessScope: "chat", repository: repositoryDouble(false) });
+    const peer = await openTab(routes, "&chat=chat_01hzzzzzzzzzzzzzzzzzzzzzzz");
+
+    await vi.waitFor(() => expect(peer.close).toHaveBeenCalledOnce());
+    expect(routes.attach).not.toHaveBeenCalled();
+    expect(routes.withWorkspace).not.toHaveBeenCalled();
+    expect(peer.sent).toEqual([JSON.stringify({ type: "error", code: "attach_failed", message: "Shell attach failed" })]);
+  });
+
+  it("fails closed when a Chat-scoped tab is attached without Chat context", async () => {
+    const routes = authorizedRoutes({ accessScope: "chat", repository: repositoryDouble(true) });
+    const peer = await openTab(routes, "");
+
+    await vi.waitFor(() => expect(peer.close).toHaveBeenCalledOnce());
+    expect(routes.attach).not.toHaveBeenCalled();
+    expect(routes.withWorkspace).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when a shared tab needs the repository and none is wired", async () => {
+    const routes = authorizedRoutes({ accessScope: "shared" });
+    const peer = await openTab(routes, "");
+
+    await vi.waitFor(() => expect(peer.close).toHaveBeenCalledOnce());
+    expect(routes.attach).not.toHaveBeenCalled();
+  });
+
+  it("requires Chat context for an owner-scoped ref that is already Chat-bound", async () => {
+    const routes = authorizedRoutes({ accessScope: "owner", repository: repositoryDouble(true) });
+    const peer = await openTab(routes, "");
+
+    await vi.waitFor(() => expect(peer.close).toHaveBeenCalledOnce());
+    expect(routes.chatRepository?.listBoundTerminalSessionIds).toHaveBeenCalledWith(
+      { type: "personal", ownerId: OWNER_ID },
+      [REF_KEY],
+    );
+    expect(routes.attach).not.toHaveBeenCalled();
+  });
+
+  it("admits every client frame through the workspace admission before forwarding it", async () => {
+    const routes = authorizedRoutes({ accessScope: "owner", repository: repositoryDouble(false) });
+    const peer = await openTab(routes, "");
+    await vi.waitFor(() => expect(routes.attach).toHaveBeenCalledOnce());
+    routes.order.splice(0);
+
+    routes.events?.onMessage?.(
+      { data: JSON.stringify({ type: "ping", terminalRef: TERMINAL_REF }) } as never,
+      peer.context,
+    );
+
+    await vi.waitFor(() => expect(routes.send).toHaveBeenCalledOnce());
+    expect(routes.order).toEqual(["admission:run", "runtime-send:ping"]);
   });
 });
