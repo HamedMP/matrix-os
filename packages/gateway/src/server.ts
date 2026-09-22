@@ -207,7 +207,7 @@ import { createLegacyProjectPathAdmission } from "./collaboration/project-path-a
 import { createGatewayProjectInventorySource } from "./collaboration/project-inventory-source.js";
 import { createProjectChatRootInventory } from "./collaboration/project-chat-root-inventory.js";
 import { createProjectGitDriver } from "./collaboration/project-git-operations.js";
-import { createOwnerResourceDriver } from "./collaboration/owner-resource-driver.js";
+import { enableGatewaySharedResources } from "./collaboration/resource-wiring.js";
 import { createCodingAgentFileStore } from "./coding-agents/file-read.js";
 import { createCodingAgentSourceControlStore } from "./coding-agents/source-control.js";
 import { registerCodingAgentAttentionNotifications } from "./coding-agents/attention-notifications.js";
@@ -1000,24 +1000,7 @@ export async function createGateway(config: GatewayConfig) {
         }),
           {
           onPartialRuntime: (runtime) => {
-            const resourceDriver = createOwnerResourceDriver({
-              homePath,
-              resolveProjectWorkingDirectory: async (ownerId, projectId) => {
-                const result = await codingAgentProjectManager.getProjectById(
-                  { type: "user", id: ownerId }, projectId,
-                );
-                if (!result.ok) return null;
-                return codingAgentProjectManager.resolveProjectWorkingDirectory(result.project);
-              },
-              // The registered app's asset mapping is resolved by the S12 app bridge.
-              resolveAppAssetRoot: async () => null,
-            });
-            try {
-              runtime.enableSharedResources({ driver: resourceDriver });
-            } catch (error: unknown) {
-              resourceDriver.close();
-              throw error;
-            }
+            enableGatewaySharedResources({ runtime, homePath, projects: codingAgentProjectManager });
             const inventorySource = createGatewayProjectInventorySource({
               homePath,
               gitSetup: { get: projectGitDriver.getGitSetup },
