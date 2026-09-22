@@ -1802,3 +1802,48 @@ what distinguishes "flake" from "intermittent real defect".
 #1836 (database suites against a fake or skipped, plus a concurrency test that has never run), #1838 (`main`
 red from the picker change; now fixed), #1841 (typecheck short-circuits past four packages), #1830 (repo-root
 tests never typechecked), #1828/#1829 (contracts entrypoint, direct terminal WebSocket 404).
+
+## 64. S09 ships its loss recovery inert unless the hardening graft lands with it — 2026-09-22 10:55 UTC
+
+**This is now a hard dependency, not a follow-up.** Verified directly:
+
+| branch | `wiring.ts` | `server.ts` |
+| --- | --- | --- |
+| `124/s09` | `runLoss` **0**, `sandboxRuntimes` **0** | `runLoss` **0**, `sandboxRuntimes` **0** |
+| `124/s15` (chain tip) | `runLoss` **0**, `sandboxRuntimes` **0** | `runLoss` **0**, `sandboxRuntimes` **0** |
+| `124/s09-run-hardening` | `runLoss` **2** | — |
+
+`createSharedAiRuntime` accepts `runLoss` and `sandboxRuntimes`, and **nothing in the chain supplies either**,
+at S09 or anywhere up to the S15 tip. So **`shared-run-loss.ts`, 334 lines, is dead in production** along with
+its lease-driven runtime stops. The only branch that wires it is `124/s09-run-hardening`, which is **not in the
+chain**.
+
+**Consequence for sequencing:** the hardening graft must land **with or immediately after S09, and before
+S15** — otherwise the release ships a control-loss recovery path that never executes, while its tests pass in
+isolation because they inject the collaborator directly.
+
+This is the same defect class recorded earlier in this release, and the rule still holds: *a collaborator whose
+absence changes behaviour silently is required; one whose absence is reported to the caller may stay optional.*
+`runLoss` and `sandboxRuntimes` are optional and silent, which is exactly why this survived to the chain tip.
+The graft makes them required (`57eb77680`).
+
+### Three more sharp edges found while drafting the upper-chain PR bodies
+
+- **`124/s12-app` — the file incarnation hash includes `ctimeNs`.** `physicalIncarnation()` in
+  `owner-resource-driver.ts:29` hashes `dev:ino:birthtimeNs:ctimeNs`. Any metadata change — a `chmod`, a
+  `touch`, an out-of-band editor write that bypasses the collaboration write path — **rotates the incarnation
+  and makes an existing share 404 for members until the owner re-shares**. Intentional for the
+  delete-and-recreate attack it closes, but a far wider trigger than "recreated file". Worth a deliberate
+  decision rather than discovery in production.
+- **`124/s15-gateway` — `hostOnline()` returns a constant `true`.** In `gateway-readiness-probes.ts`, so the
+  readiness projection **can never report an offline home**. Recorded as deferred scope in that PR body.
+- **`124/s15-direct` — local I/O inside a held row lock.** `StandaloneResourceScopeService.create()` calls
+  `this.current(...)` inside the transaction while the catalog row is locked, reaching `driver.inspect`
+  (a filesystem `stat`) or `resolveAppIncarnation` (a separate DB read). Not a network call, so it does not
+  breach the letter of the no-network-in-transaction rule, but it holds a lock across I/O of unbounded latency.
+
+**Eight upper-chain PR bodies are drafted** at `/home/nima/.claude/jobs/76ad0cca/tmp/prbodies/`, each with the
+mandatory Invariants section grounded in the diff and the layer's evidence receipt, with no UNKNOWN answers.
+Surface matrices are present for `s10`, `s12` and `s15`; `s09`, `s12-app`, `s15-gateway` and `s15-directory`
+are stated backend-only. **`s15-direct` needs a matrix added before submission** — its only `packages/ui/`
+files render nothing, so a rationale was written instead, but the rule is written to require the matrix.
