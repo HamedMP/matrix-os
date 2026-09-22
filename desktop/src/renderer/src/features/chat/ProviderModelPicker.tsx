@@ -4,7 +4,7 @@ import type {
 import * as Popover from "@radix-ui/react-popover";
 import { ChevronDown, Cpu, Settings2Icon } from "@renderer/lib/hugeicons";
 import { useState } from "react";
-import { CompactChatProviderChoices, canonicalProviderAvailabilityLabel, deriveCanonicalProviderChoices } from "@matrix-os/ui";
+import { CompactChatProviderChoices, deriveCanonicalProviderChoices } from "@matrix-os/ui";
 import { changeCanonicalComposerInstance, createCanonicalComposerSelection, type CanonicalComposerSelection } from "./canonical-composer-state";
 import { ProviderDriverGlyph } from "./ProviderDriverGlyph";
 import { openProviderSettings } from "../settings/open-provider-settings";
@@ -39,13 +39,22 @@ export function ProviderModelPicker({ catalog, selection, instanceLocked, disabl
       </button>
     </Popover.Trigger>
     <Popover.Portal><Popover.Content side={menuSide} align="end" sideOffset={10} collisionPadding={16}
-      className="w-[376px] max-w-[calc(100vw-32px)] overflow-y-auto rounded-xl border p-3 shadow-xl"
+      className="w-[376px] max-w-[calc(100vw-32px)] overflow-hidden rounded-xl border shadow-xl"
       style={{ zIndex: DESKTOP_Z_INDEX.popover, maxHeight: "min(520px, calc(100vh - 32px))", borderColor: "var(--border-default)", background: "var(--bg-overlay)", color: "var(--text-primary)" }}
       data-slot="provider-model-picker" data-preferred-side={menuSide}>
-      <CompactChatProviderChoices choices={deriveCanonicalProviderChoices(catalog)}
+      <CompactChatProviderChoices catalog={catalog} choices={deriveCanonicalProviderChoices(catalog)}
+        renderDriverIcon={(kind) => <ProviderDriverGlyph kind={kind} size={17} />}
         renderIcon={(choice) => <ProviderDriverGlyph kind={choice.driverKind} size={13} />}
         selected={selection ? { instanceId: selection.instanceId, modelId: selection.model } : null}
         lockedInstanceId={instanceLocked ? selection?.instanceId : undefined}
+        onSetupAction={onSetupAction ? (instance, action) => {
+          setOpen(false);
+          onSetupAction(instance, action);
+        } : undefined}
+        onNewChat={onNewChat ? () => {
+          setOpen(false);
+          onNewChat();
+        } : undefined}
         onSelect={(choice) => {
           if (instanceLocked && choice.instanceId !== selection?.instanceId) return;
           const base = selection ? choice.instanceId === selection.instanceId ? selection
@@ -55,17 +64,6 @@ export function ProviderModelPicker({ catalog, selection, instanceLocked, disabl
           onChange({ ...base, model: choice.modelId });
           setOpen(false);
         }} />
-      <details className="mt-2 border-t border-[var(--border-subtle)] pt-2">
-        <summary className="cursor-pointer py-2 text-sm font-medium">Manage agents</summary>
-        {catalog.instances.filter((instance) => instance.availability !== "available").map((instance) => <div key={instance.id} className="py-2">
-          <p className="text-xs text-[var(--text-secondary)]">{instance.displayName} — {canonicalProviderAvailabilityLabel(instance)}</p>
-          {onSetupAction && instance.setupActions.map((action) => <button key={action.id} type="button"
-            className="mt-1 min-h-9 rounded-lg px-2 text-sm hover:bg-[var(--bg-hover)]"
-            onClick={() => { setOpen(false); onSetupAction(instance, action); }}>{action.label}</button>)}
-        </div>)}
-        {instanceLocked && onNewChat && <button type="button" className="min-h-9 text-sm"
-          onClick={() => { setOpen(false); onNewChat(); }}>Start a new chat</button>}
-      </details>
     </Popover.Content></Popover.Portal>
   </Popover.Root>
     <button type="button" aria-label="Open Agents & providers settings" title="Agents & providers"

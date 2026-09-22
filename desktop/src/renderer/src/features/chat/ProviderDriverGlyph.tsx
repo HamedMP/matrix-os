@@ -23,7 +23,7 @@ export function ProviderDriverGlyph({ kind, size = 15 }: {
     return <span aria-hidden data-provider-glyph={kind}
       className="inline-flex shrink-0 items-center justify-center overflow-hidden"
       style={{ background: artwork.background, borderRadius: Math.max(3, Math.round(size * 0.2)), height: size, width: size }}>
-      <img alt="" draggable={false} src={artwork.src} width={imageSize} height={imageSize}
+      <img alt="" draggable={false} src={`.${artwork.src}`} width={imageSize} height={imageSize}
         className="block object-contain" style={{ width: imageSize, height: imageSize }} />
     </span>;
   }
