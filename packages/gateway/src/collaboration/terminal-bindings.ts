@@ -11,6 +11,8 @@ export interface CollaborationTerminalBindingsTable {
   tab_incarnation: string;
   incarnation: string;
   execution_generation: number;
+  /** S07 owner opt-in: Contributors may control this host shell only when true. */
+  contributor_control: boolean;
   created_at: Date | string;
 }
 
@@ -26,6 +28,7 @@ export async function migrateTerminalBindingsV15(trx: Transaction<OwnerCollabora
       tab_incarnation TEXT NOT NULL CHECK (tab_incarnation ~ '^ti_[a-f0-9]{32}$'),
       incarnation TEXT NOT NULL CHECK (incarnation ~ '^terminal-[a-f0-9]{32}$'),
       execution_generation BIGINT NOT NULL CHECK (execution_generation > 0),
+      contributor_control BOOLEAN NOT NULL DEFAULT FALSE,
       created_at TIMESTAMPTZ NOT NULL,
       CHECK (terminal_id = workspace_id || ':' || tab_id)
     )

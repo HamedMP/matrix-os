@@ -174,11 +174,12 @@ export function createCanonicalTerminalCollaborationBridge(options: {
           executionGeneration: current.generation,
           sharedControlMode: binding ? "shared" : "eligible",
           ...(binding ? { collaborationScopeId: binding.scope_id } : {}),
-          contributorControl: true,
+          // The owner's opt-in is the only source of Contributor control; absent binding means withheld.
+          contributorControl: binding ? binding.contributor_control === true : false,
         };
       },
       bindCollaboration: async (terminalId: string, input: {
-        scopeId: string; sessionIncarnation: string; executionGeneration: number;
+        scopeId: string; sessionIncarnation: string; executionGeneration: number; contributorControl: boolean;
       }): Promise<unknown> => {
         const current = await currentTab(terminalId);
         if (!current || (current.tab.status !== "running" && current.tab.status !== "idle")
@@ -200,6 +201,7 @@ export function createCanonicalTerminalCollaborationBridge(options: {
             tab_incarnation: current.tabIncarnation,
             incarnation: current.incarnation,
             execution_generation: current.generation,
+            contributor_control: input.contributorControl,
             created_at: new Date().toISOString(),
           }).onConflict((conflict) => conflict.column("scope_id").doNothing()).execute();
           const binding = await trx.selectFrom("collaboration_terminal_bindings")
@@ -207,8 +209,33 @@ export function createCanonicalTerminalCollaborationBridge(options: {
           if (!binding || binding.terminal_id !== terminalId || binding.incarnation !== current.incarnation
             || binding.tab_incarnation !== current.tabIncarnation
             || Number(binding.execution_generation) !== current.generation) throw new CanonicalTerminalBridgeError();
+          if (binding.contributor_control !== input.contributorControl) {
+            // A replayed bind for the verified row carries the caller's opt-in forward inside this transaction.
+            await trx.updateTable("collaboration_terminal_bindings")
+              .set({ contributor_control: input.contributorControl })
+              .where("scope_id", "=", input.scopeId).where("terminal_id", "=", terminalId)
+              .where("incarnation", "=", current.incarnation).execute();
+            return { ...binding, contributor_control: input.contributorControl };
+          }
           return binding;
         });
+      },
+      /** The owner opts Contributors into host-shell control, or withdraws it, without unsharing the terminal. */
+      setContributorControl: async (terminalId: string, input: {
+        scopeId: string; sessionIncarnation: string; ownerId: string; contributorControl: boolean;
+      }): Promise<unknown> => {
+        if (input.ownerId !== ownerId) throw new CanonicalTerminalBridgeError();
+        const current = await boundTab(input.scopeId, terminalId, input.sessionIncarnation);
+        if (current.tab.status !== "running" && current.tab.status !== "idle") {
+          throw new CanonicalTerminalBridgeError();
+        }
+        const updated = await db.updateTable("collaboration_terminal_bindings")
+          .set({ contributor_control: input.contributorControl })
+          .where("scope_id", "=", input.scopeId).where("terminal_id", "=", terminalId)
+          .where("incarnation", "=", input.sessionIncarnation).where("owner_id", "=", ownerId)
+          .returningAll().executeTakeFirst();
+        if (!updated) throw new CanonicalTerminalBridgeError();
+        return updated;
       },
       unbindCollaboration: async (terminalId: string, input: {
         scopeId: string; sessionIncarnation: string;
