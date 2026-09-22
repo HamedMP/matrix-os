@@ -8,6 +8,7 @@ import { z } from "zod/v4";
 
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const MAX_SCOPES = 32;
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const TicketResponse = z.object({
   signedTicket: CollaborationSignedConnectionTicketSchema,
@@ -46,6 +47,9 @@ function keyPair(): Key {
 function origin(value: string): string {
   const url = new URL(value);
   if (!["https:", "http:"].includes(url.protocol) || url.username || url.password || url.pathname !== "/" || url.search || url.hash) throw unavailable();
+  // The owner bearer and the signed session requests only travel in the clear to a loopback
+  // development host; every other origin must be TLS.
+  if (url.protocol === "http:" && !LOOPBACK_HOSTS.has(url.hostname.replace(/^\[|\]$/g, ""))) throw unavailable();
   return url.origin;
 }
 async function boundedJson(response: Response): Promise<unknown> {

@@ -28,6 +28,39 @@ describe("525 CLI direct transport compatibility", () => {
     expect(world.platform.tickets).toHaveLength(1);
   });
 
+  it("never sends the owner bearer to a plaintext platform origin", () => {
+    expect(() => createCliCollaborationTransport({
+      platformUrl: "http://app.matrix-os.com", token: "actor-token", fetchImpl: world.fetchImpl, now: world.now,
+    })).toThrow();
+    expect(world.fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it.each(["http://127.0.0.1:3001", "http://localhost:3001", "http://[::1]:3001"])(
+    "keeps the %s development origin usable over plaintext HTTP", (platformUrl) => {
+      expect(() => createCliCollaborationTransport({
+        platformUrl, token: "actor-token", fetchImpl: world.fetchImpl, now: world.now, clientOrigin: platformUrl,
+      })).not.toThrow();
+    });
+
+  it("refuses a plaintext home endpoint advertised by the platform", async () => {
+    const seen: string[] = [];
+    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      const url = String(input instanceof Request ? input.url : input);
+      seen.push(url);
+      const response = await world.fetchImpl(input, init);
+      if (!url.endsWith("/api/collaboration/connections")) return response;
+      const body = await response.json() as { endpoint: { origin: string } };
+      body.endpoint.origin = RELAY.replace("https:", "http:");
+      return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+    });
+    const direct = createCliCollaborationTransport({
+      platformUrl: PLATFORM, token: "actor-token", fetchImpl, now: world.now, clientOrigin: CLIENT_ORIGIN,
+    });
+    await expect(direct.request(scopeId, "GET", `/api/collaboration/scopes/${scopeId}/chat`)).rejects.toThrow();
+    expect(seen.some((url) => url.startsWith("http://"))).toBe(false);
+    expect(world.home.requests).toHaveLength(0);
+  });
+
   it("renews before expiry and never sends a content request to the platform on home denial", async () => {
     const direct = transport();
     await direct.request(scopeId, "GET", `/api/collaboration/scopes/${scopeId}`);
