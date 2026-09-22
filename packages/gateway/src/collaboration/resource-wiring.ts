@@ -91,6 +91,10 @@ export function enableGatewaySharedResources<Project>(input: {
       const resolved = await resolveAppBySlug(join(input.homePath, "apps"), appId);
       return resolved.ok ? resolved.entry.appDir : null;
     },
+    resolveAppIncarnation: async (_ownerId, _projectId, appId) => {
+      const record = await registeredApp(appId);
+      return record ? appRegistryIncarnation(record) : null;
+    },
   });
   try {
     input.runtime.enableSharedResources({

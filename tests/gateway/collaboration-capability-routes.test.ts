@@ -19,6 +19,7 @@ const outsiderId = "user_capability_outsider";
 const organizationId = "org_capability_routes";
 const scopeId = "10000000-0000-4000-8000-00000000a915";
 const key = "a".repeat(32);
+const boardAppIncarnation = "d".repeat(64);
 
 const socketUpgrade = (() => (_context: Context) => new Response(null, { status: 426 })) as unknown as UpgradeWebSocket;
 
@@ -30,6 +31,7 @@ describe("collaboration capability HTTP routes", () => {
   let homePath: string;
   let projectRoot: string;
   let appRoot: string;
+  let resourceDriver: ReturnType<typeof createOwnerResourceDriver>;
 
   beforeEach(async () => {
     fixture = await createCollaborationTestDatabase();
@@ -73,12 +75,14 @@ describe("collaboration capability HTTP routes", () => {
     appRoot = join(homePath, "apps", "board");
     await Promise.all([mkdir(projectRoot, { recursive: true }), mkdir(appRoot, { recursive: true })]);
     await writeFile(join(homePath, "notes.txt"), "one");
-    runtime.enableSharedResources({ driver: createOwnerResourceDriver({
+    resourceDriver = createOwnerResourceDriver({
       homePath,
       listOwnedProjectIds: async () => ["proj_demo"],
       resolveProjectWorkingDirectory: async (_ownerId, projectId) => projectId === "proj_demo" ? projectRoot : null,
       resolveAppAssetRoot: async (_ownerId, projectId, appId) => projectId === null && appId === "board" ? appRoot : null,
-    }) });
+      resolveAppIncarnation: async (_ownerId, projectId, appId) => projectId === null && appId === "board" ? boardAppIncarnation : null,
+    });
+    runtime.enableSharedResources({ driver: resourceDriver });
     signer = new CollaborationProofSigner({
       activeKeyId: "key-1", keys: { "key-1": key }, now: () => new Date(), createNonce: () => randomUUID().replaceAll("-", ""),
     });
@@ -249,4 +253,18 @@ describe("collaboration capability HTTP routes", () => {
     })).status).toBe(404);
   });
 
+  it("registers the identity each resource kind's read path verifies", async () => {
+    const path = `/api/collaboration/runtimes/${collaborationIds.runtime}/catalog/resolve`;
+    const file = await signed({ actorId: ownerId, method: "POST", path, scopeId: null,
+      body: { kind: "file", path: "notes.txt" },
+    });
+    expect(file.status).toBe(200);
+    expect((await file.json() as { incarnation: string }).incarnation)
+      .toBe(await resourceDriver.fingerprint({ ownerId, projectId: null, path: "notes.txt" }));
+    const app = await signed({ actorId: ownerId, method: "POST", path, scopeId: null,
+      body: { kind: "app", path: "board" },
+    });
+    expect(app.status).toBe(200);
+    expect((await app.json() as { incarnation: string }).incarnation).toBe(boardAppIncarnation);
+  });
 });

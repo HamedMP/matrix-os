@@ -17,4 +17,14 @@ describe("production project share inventory wiring", () => {
     expect(gitSetupInjection).toBeGreaterThan(inventoryRegistration);
     expect(brokerRegistration).toBeGreaterThan(gitSetupInjection);
   });
+
+  it("resolves owner app catalog identities from the app registry, not the filesystem", async () => {
+    const server = await readFile(new URL("../../packages/gateway/src/server.ts", import.meta.url), "utf8");
+    const driver = server.indexOf("const resourceDriver = createOwnerResourceDriver({");
+    const assetRoot = server.indexOf("resolveAppAssetRoot: async (", driver);
+    const incarnation = server.indexOf("resolveAppIncarnation: async (", driver);
+    expect(driver).toBeGreaterThan(-1);
+    expect(incarnation).toBeGreaterThan(assetRoot);
+    expect(server.slice(incarnation, incarnation + 400)).toContain("appRegistryIncarnation(");
+  });
 });

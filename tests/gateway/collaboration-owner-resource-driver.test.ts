@@ -7,6 +7,7 @@ import { createOwnerResourceDriver } from "../../packages/gateway/src/collaborat
 
 const OWNER = "user_owner";
 const PROJECT = "project_alpha";
+const APP_REGISTRY_IDENTITY = "b".repeat(64);
 
 describe("owner resource driver boundary", () => {
   let base: string;
@@ -25,7 +26,9 @@ describe("owner resource driver boundary", () => {
       homePath: home,
       listOwnedProjectIds: async () => [PROJECT],
       resolveProjectWorkingDirectory: async (ownerId, projectId) => ownerId === OWNER && projectId === PROJECT ? project : null,
-      resolveAppAssetRoot: async (ownerId, projectId, appId) => ownerId === OWNER && projectId === PROJECT && appId === "board" ? assets : null,
+      resolveAppAssetRoot: async (ownerId, _projectId, appId) => ownerId === OWNER && appId === "board" ? assets : null,
+      resolveAppIncarnation: async (ownerId, projectId, appId) =>
+        ownerId === OWNER && projectId === null && appId === "board" ? APP_REGISTRY_IDENTITY : null,
     });
   });
 
@@ -106,5 +109,28 @@ describe("owner resource driver boundary", () => {
       .rejects.toMatchObject({ code: "unavailable" });
     await expect(driver.readAppAsset({ ownerId: OWNER, projectId: PROJECT, appId: "board", assetPath: ".env" }))
       .rejects.toMatchObject({ code: "forbidden" });
+  });
+
+  it("inspects a file as the same identity the read path verifies", async () => {
+    const namespace = { ownerId: OWNER, projectId: PROJECT, path: "README.md" };
+    await writeFile(join(project, "README.md"), "shared bytes");
+    const observed = await driver.inspect!({ ...namespace, kind: "file" });
+    expect(observed.incarnation).toBe(await driver.fingerprint(namespace));
+    const read = await driver.read({ ...namespace, expectedIncarnation: observed.incarnation });
+    expect(await new Response(read.stream).text()).toBe("shared bytes");
+  });
+
+  it("inspects a folder as the same identity the catalog records for its path", async () => {
+    await mkdir(join(project, "docs"));
+    const namespace = { ownerId: OWNER, projectId: PROJECT, path: "docs" };
+    const observed = await driver.inspect!({ ...namespace, kind: "folder" });
+    expect(observed.incarnation).toBe(await driver.fingerprint(namespace));
+  });
+
+  it("inspects an app as its registry identity, never a filesystem identity", async () => {
+    expect(await driver.inspect!({ ownerId: OWNER, projectId: null, kind: "app", path: "board" }))
+      .toEqual({ incarnation: APP_REGISTRY_IDENTITY });
+    await expect(driver.inspect!({ ownerId: OWNER, projectId: null, kind: "app", path: "absent" }))
+      .rejects.toMatchObject({ code: "not_found" });
   });
 });
