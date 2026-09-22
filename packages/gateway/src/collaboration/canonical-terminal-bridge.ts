@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { TerminalGridSizeSchema, TerminalRefSchema, type TerminalRef, type TerminalWorkspace } from "@matrix-os/contracts";
-import type { TerminalRuntimeSocketClient } from "@matrix-os/terminal-runtime";
+import { MAX_TERMINAL_SNAPSHOT_ANSI_BYTES, type TerminalRuntimeSocketClient } from "@matrix-os/terminal-runtime";
 import type { Kysely } from "kysely";
 import type { OwnerCollaborationDatabase } from "./database.js";
 import type { CollaborationTerminalMetadata } from "./terminal-dispatcher.js";
@@ -8,6 +8,8 @@ import type { CollaborationTerminalMetadata } from "./terminal-dispatcher.js";
 type TerminalRuntime = Pick<TerminalRuntimeSocketClient,
   "listWorkspaces" | "writeInput" | "terminateTab" | "attach">;
 const MAX_PENDING_OUTPUT_BYTES = 2 * 1024 * 1024;
+/** One attach snapshot carries the whole retained screen, which the daemon bounds separately. */
+const MAX_SNAPSHOT_BYTES = MAX_TERMINAL_SNAPSHOT_ANSI_BYTES;
 const ATTACH_TIMEOUT_MS = 5_000;
 /** Output never refreshes the daemon viewer, which expires after two idle minutes. */
 const VIEWER_KEEPALIVE_MS = 30_000;
@@ -111,9 +113,9 @@ export function createCanonicalTerminalCollaborationBridge(options: {
         close();
         handlers.error();
       };
-      const queueOutput = (data: string) => {
+      const queueOutput = (data: string, limit: number) => {
         const bytes = Buffer.byteLength(data);
-        if (bytes > MAX_PENDING_OUTPUT_BYTES || pendingBytes + bytes > MAX_PENDING_OUTPUT_BYTES) {
+        if (bytes > limit || pendingBytes + bytes > limit) {
           failed();
           return;
         }
@@ -146,7 +148,8 @@ export function createCanonicalTerminalCollaborationBridge(options: {
                 resolve();
               } else if (frame.type === "snapshot" || frame.type === "output") {
                 if (!attached) { rejectAttach(); return; }
-                queueOutput(frame.type === "snapshot" ? frame.ansi : frame.data);
+                if (frame.type === "snapshot") queueOutput(frame.ansi, MAX_SNAPSHOT_BYTES);
+                else queueOutput(frame.data, MAX_PENDING_OUTPUT_BYTES);
               } else if (frame.type === "exit") {
                 delivery = delivery.then(() => handlers.exit()).catch((error: unknown) => failed(error)).finally(close);
               }

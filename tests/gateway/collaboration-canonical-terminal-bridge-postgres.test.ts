@@ -224,6 +224,18 @@ describe("canonical terminal collaboration bridge", () => {
     } finally { vi.useRealTimers(); }
   });
 
+  it("delivers a retained snapshot the daemon is allowed to send instead of disconnecting viewers", async () => {
+    const handlers = { output: vi.fn(async () => undefined), exit: vi.fn(async () => undefined), error: vi.fn() };
+    const { callbacks } = await sharedOutput(handlers);
+    const ansi = "a".repeat(3 * 1024 * 1024);
+    callbacks.onFrame({
+      type: "snapshot", terminalRef: { workspaceId, tabId }, canonicalSize: { cols: 80, rows: 24 },
+      revision: 4, presentationRevision: 0, seq: 7, ansi, viewport: { top: 0, rows: 24 },
+    });
+    await vi.waitFor(() => expect(handlers.output).toHaveBeenCalledWith(ansi));
+    expect(handlers.error).not.toHaveBeenCalled();
+  });
+
   it("preflights and shares the exact live tab, then refuses its stale binding", async () => {
     const repository = new CollaborationRepository(fixture.db);
     const bridge = createCanonicalTerminalCollaborationBridge({ db: fixture.db, ownerId, runtime: runtime as never });
