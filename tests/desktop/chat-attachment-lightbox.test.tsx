@@ -20,6 +20,8 @@ it("opens a square thumbnail in a dismissible overlay without navigating to File
   expect(open).not.toHaveBeenCalled();
   expect(screen.getByRole("dialog")).toBeTruthy();
   expect(screen.getByRole("img", { name: "Full size Screenshot.png" }).getAttribute("src")).toBe("/image.png");
+  fireEvent.click(screen.getByRole("button", { name: "Open Screenshot.png in File Preview" }));
+  expect(open).toHaveBeenCalledWith("temporary/image.png");
   fireEvent.click(screen.getByRole("button", { name: "Close image preview" }));
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(document.activeElement).toBe(thumbnail);

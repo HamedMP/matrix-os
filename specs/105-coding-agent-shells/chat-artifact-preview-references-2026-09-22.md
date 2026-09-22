@@ -1,6 +1,6 @@
 # Chat artifact preview references
 
-Date: 2026-09-22. Research only; no implementation or live-product acceptance.
+Date: 2026-09-22. Source/schema research used by PR #1844; no live-product acceptance yet.
 
 ## T3 Code: verified source behavior
 
@@ -39,7 +39,7 @@ These are recommendations derived from the sources, not evidence that Matrix cur
 
 ## Codex app-server schema observation
 
-On 2026-09-22, the locally installed `codex-cli 0.153.4` generated `codex_app_server_protocol.schemas.json` through `codex app-server generate-json-schema --experimental`. This was a schema capture, not a successful paid/live image-generation run.
+On 2026-09-22, the locally installed `codex-cli 0.153.4` generated the TypeScript app-server protocol through `codex app-server generate-ts --experimental --out <temporary-directory>`. This was a schema capture, not a successful paid/live image-generation run.
 
 Confirmed resource-bearing `ThreadItem` shapes are:
 
@@ -51,4 +51,4 @@ Confirmed resource-bearing `ThreadItem` shapes are:
 
 The same union also includes messages, plans, reasoning, commands, file changes, web search, sleep/review/compaction state and collaboration activity. Those are activity or text records, not automatic artifact deliveries. Command stdout, file-change paths and web-search results must not be scraped for file references.
 
-Implementation therefore normalizes the five explicit resource channels above. It admits local run files and bounded inline bytes. Remote HTTP(S) media remains an external reference until a separate authorized fetch policy exists; encrypted content and arbitrary text remain non-artifact output.
+PR #1844 normalizes the five explicit resource channels above. It admits local run files and bounded inline bytes, then emits only owner-relative references. Remote HTTP(S) media remains an external reference until a separate authorized fetch policy exists; encrypted content and arbitrary text remain non-artifact output. `outputAudio/delta` belongs to the realtime voice stream rather than a durable completed `ThreadItem`, so it is intentionally not persisted as a Chat file by this change.

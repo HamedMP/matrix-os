@@ -14,12 +14,22 @@ export interface TranscriptToolCall {
   label: string;
 }
 
+export interface TranscriptAttachment {
+  id: string;
+  kind: "image" | "file";
+  label: string;
+  path: string;
+  mimeType?: string;
+  sizeBytes?: number;
+}
+
 export interface TranscriptMessage {
   input?: CanonicalChatInputView;
   approval?: CanonicalChatApprovalView;
   id: string;
   role: "user" | "assistant" | "tool" | "system";
   text: string;
+  attachments: TranscriptAttachment[];
   toolCalls: TranscriptToolCall[];
   /** Run activities (reasoning, plan, command, tool calls in progress, ...) for this message's run. */
   activities: TranscriptActivity[];
@@ -53,6 +63,19 @@ function messageToolCalls(message: CanonicalChatMessage): TranscriptToolCall[] {
     }
   }
   return calls;
+}
+
+function messageAttachments(message: CanonicalChatMessage): TranscriptAttachment[] {
+  return message.parts.flatMap((part) => part.type === "attachment_reference" && part.ownerReference
+    ? [{
+        id: part.attachmentId,
+        kind: part.kind === "image" ? "image" as const : "file" as const,
+        label: part.label,
+        path: part.ownerReference,
+        ...(part.mimeType ? { mimeType: part.mimeType } : {}),
+        ...(part.sizeBytes === undefined ? {} : { sizeBytes: part.sizeBytes }),
+      }]
+    : []);
 }
 
 function runElapsedSeconds(run: CanonicalChatRun | undefined): number | undefined {
@@ -95,6 +118,7 @@ export function buildTranscript(detail: CanonicalChatDetailResponse | null): Tra
       id: message.id,
       role: message.role,
       text: messageText(message),
+      attachments: messageAttachments(message),
       toolCalls: messageToolCalls(message),
       activities: run && isRunsLastAssistantMessage ? canonicalChatToolActivities(run, detail.activities) : [],
       elapsedSeconds: message.role === "assistant" ? runElapsedSeconds(run) : undefined,
@@ -118,6 +142,7 @@ export function buildTranscript(detail: CanonicalChatDetailResponse | null): Tra
       id: `run-placeholder-${run.id}`,
       role: "assistant",
       text: "",
+      attachments: [],
       toolCalls: [],
       activities,
       elapsedSeconds: run.completedAt ? runElapsedSeconds(run) : undefined,
@@ -134,21 +159,21 @@ export function buildTranscript(detail: CanonicalChatDetailResponse | null): Tra
     }
     const index = approval.beforeMessageId ? transcript.findIndex(message => message.id === approval.beforeMessageId) : -1;
     transcript.splice(index < 0 ? 0 : index + 1, 0, {
-      id: approval.id, role: "system", text: approval.title, toolCalls: [], activities: [],
+      id: approval.id, role: "system", text: approval.title, attachments: [], toolCalls: [], activities: [],
       isRunning: false, createdAt: approval.timestamp, approval,
     });
   }
   for (const input of canonicalChatInputs(detail)) {
     const index = input.beforeMessageId ? transcript.findIndex(message => message.id === input.beforeMessageId) : -1;
     transcript.splice(index < 0 ? 0 : index + 1, 0, {
-      id: input.id, role: "system", text: input.title, toolCalls: [], activities: [],
+      id: input.id, role: "system", text: input.title, attachments: [], toolCalls: [], activities: [],
       isRunning: false, createdAt: input.timestamp, input,
     });
   }
   for (const notice of canonicalChatTerminalNotices(detail)) {
     const index = notice.beforeMessageId ? transcript.findIndex((message) => message.id === notice.beforeMessageId) : -1;
     transcript.splice(index < 0 ? 0 : index + 1, 0, {
-      id: notice.id, role: "system", text: notice.text, toolCalls: [], activities: [],
+      id: notice.id, role: "system", text: notice.text, attachments: [], toolCalls: [], activities: [],
       isRunning: false, createdAt: notice.timestamp,
     });
   }
