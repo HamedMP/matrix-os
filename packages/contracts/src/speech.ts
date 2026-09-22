@@ -2,12 +2,14 @@ import { z } from "zod/v4";
 import { IsoTimestampSchema } from "#contract-primitives";
 
 export const SPEECH_CONTRACT_VERSION = 1 as const;
+export const SPEECH_MAX_TRANSCRIPT_CHARS = 32_000;
 export const SpeechRequestIdSchema = z.string()
   .min(33)
   .max(100)
   .regex(/^sp_[0-9]{13}_[A-Za-z0-9_-]{16,64}$/);
 export const SpeechSourceKindSchema = z.enum(["dictation", "owner_audio"]);
 export const SpeechMediaTypeSchema = z.enum(["audio/wav"]);
+export const SpeechLanguageHintsSchema = z.array(z.string().trim().min(1).max(35)).max(8);
 export const SpeechExecutionStateSchema = z.enum([
   "received",
   "reserved",
@@ -30,7 +32,7 @@ const SpeechEnabledSourcePolicySchema = z.object({
   enabled: z.literal(true),
   maxBytes: z.number().int().positive().max(64 * 1024 * 1024),
   maxDurationMs: z.number().int().positive().max(60 * 60_000),
-  maxTranscriptChars: z.number().int().positive().max(128_000),
+  maxTranscriptChars: z.number().int().positive().max(SPEECH_MAX_TRANSCRIPT_CHARS),
   supportedMediaTypes: z.array(SpeechMediaTypeSchema).min(1).max(8),
   languageHints: z.boolean(),
 }).strict();
@@ -39,7 +41,7 @@ const SpeechDictationPolicySchema = z.object({
   enabled: z.boolean(),
   maxBytes: z.number().int().positive().max(10 * 1024 * 1024),
   maxDurationMs: z.number().int().positive().max(120_000),
-  maxTranscriptChars: z.number().int().positive().max(32_000),
+  maxTranscriptChars: z.number().int().positive().max(SPEECH_MAX_TRANSCRIPT_CHARS),
   supportedMediaTypes: z.array(SpeechMediaTypeSchema).min(1).max(8),
   languageHints: z.boolean(),
 }).strict();
@@ -71,7 +73,7 @@ export const SpeechCapabilitiesResponseSchema = z.object({
   ]),
 }).strict();
 
-const TranscriptTextSchema = z.string().min(1).max(32_000).refine(
+const TranscriptTextSchema = z.string().min(1).max(SPEECH_MAX_TRANSCRIPT_CHARS).refine(
   (value) => new TextEncoder().encode(value).byteLength <= 128 * 1024,
   "Transcript exceeds byte limit",
 );
@@ -94,29 +96,100 @@ export const SpeechTranscriptionResponseSchema = z.discriminatedUnion("outcome",
   }).strict(),
 ]);
 
-export const SpeechStatusResponseSchema = z.object({
+const SpeechStatusBaseShape = {
   contractVersion: z.literal(SPEECH_CONTRACT_VERSION),
   requestId: SpeechRequestIdSchema,
-  executionState: SpeechExecutionStateSchema,
-  cancellationRequested: z.boolean(),
-  executionStarted: z.boolean(),
-  retrySafety: z.enum([
-    "same_request_safe_before_dispatch",
-    "new_request_may_consume_allowance",
-    "terminal_no_retry_needed",
-  ]),
-  outcomeCode: SpeechOutcomeCodeSchema.nullable(),
   createdAt: IsoTimestampSchema,
   updatedAt: IsoTimestampSchema,
-}).strict();
+};
 
-export const SpeechCancellationResponseSchema = z.object({
+export const SpeechStatusResponseSchema = z.discriminatedUnion("executionState", [
+  z.object({
+    ...SpeechStatusBaseShape,
+    executionState: z.literal("received"),
+    cancellationRequested: z.literal(false),
+    executionStarted: z.literal(false),
+    retrySafety: z.literal("same_request_safe_before_dispatch"),
+    outcomeCode: z.null(),
+  }).strict(),
+  z.object({
+    ...SpeechStatusBaseShape,
+    executionState: z.literal("reserved"),
+    cancellationRequested: z.literal(false),
+    executionStarted: z.literal(false),
+    retrySafety: z.literal("same_request_safe_before_dispatch"),
+    outcomeCode: z.null(),
+  }).strict(),
+  z.object({
+    ...SpeechStatusBaseShape,
+    executionState: z.literal("dispatching"),
+    cancellationRequested: z.boolean(),
+    executionStarted: z.literal(true),
+    retrySafety: z.literal("new_request_may_consume_allowance"),
+    outcomeCode: z.null(),
+  }).strict(),
+  z.object({
+    ...SpeechStatusBaseShape,
+    executionState: z.literal("succeeded"),
+    cancellationRequested: z.boolean(),
+    executionStarted: z.literal(true),
+    retrySafety: z.literal("terminal_no_retry_needed"),
+    outcomeCode: z.enum(["transcript", "no_speech"]),
+  }).strict(),
+  z.object({
+    ...SpeechStatusBaseShape,
+    executionState: z.literal("failed"),
+    cancellationRequested: z.boolean(),
+    executionStarted: z.literal(true),
+    retrySafety: z.literal("new_request_may_consume_allowance"),
+    outcomeCode: z.enum(["invalid_media", "timeout", "provider_failure"]),
+  }).strict(),
+  z.object({
+    ...SpeechStatusBaseShape,
+    executionState: z.literal("uncertain"),
+    cancellationRequested: z.boolean(),
+    executionStarted: z.literal(true),
+    retrySafety: z.literal("new_request_may_consume_allowance"),
+    outcomeCode: z.enum(["timeout", "provider_failure", "cancelled"]),
+  }).strict(),
+  z.object({
+    ...SpeechStatusBaseShape,
+    executionState: z.literal("cancelled"),
+    cancellationRequested: z.literal(true),
+    executionStarted: z.literal(false),
+    retrySafety: z.literal("terminal_no_retry_needed"),
+    outcomeCode: z.literal("cancelled"),
+  }).strict(),
+]).superRefine((status, context) => {
+  if (status.executionState === "uncertain"
+    && status.outcomeCode === "cancelled"
+    && !status.cancellationRequested) {
+    context.addIssue({
+      code: "custom",
+      message: "A cancelled uncertain outcome requires cancellation intent",
+      path: ["cancellationRequested"],
+    });
+  }
+});
+
+const SpeechCancellationBaseShape = {
   contractVersion: z.literal(SPEECH_CONTRACT_VERSION),
   requestId: SpeechRequestIdSchema,
-  executionState: SpeechExecutionStateSchema,
   cancellationRequested: z.literal(true),
-  executionStarted: z.boolean(),
-}).strict();
+};
+
+export const SpeechCancellationResponseSchema = z.discriminatedUnion("executionState", [
+  z.object({
+    ...SpeechCancellationBaseShape,
+    executionState: z.literal("cancelled"),
+    executionStarted: z.literal(false),
+  }).strict(),
+  ...(["dispatching", "succeeded", "failed", "uncertain"] as const).map((executionState) => z.object({
+    ...SpeechCancellationBaseShape,
+    executionState: z.literal(executionState),
+    executionStarted: z.literal(true),
+  }).strict()),
+]);
 
 export const SpeechSafeErrorResponseSchema = z.object({
   error: z.discriminatedUnion("code", [

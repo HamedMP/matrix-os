@@ -97,6 +97,7 @@ export function createSpeechGatewayRoutes(options: {
   if (typeof options.getOwnerId !== "function") throw new Error("Speech route owner resolver is missing");
   const app = new Hono();
   let activeTranscriptions = 0;
+  const authorizedTranscriptions = new WeakMap<Context, PlatformSpeechClient>();
   app.use("*", async (c, next) => {
     noStore(c);
     return next();
@@ -136,51 +137,64 @@ export function createSpeechGatewayRoutes(options: {
     }
   });
 
-  app.post("/transcriptions", bodyLimit({
-    maxSize: MAX_MULTIPART_BYTES,
-    onError: (c) => c.json(safeError("invalid_request"), 413),
-  }), async (c) => {
+  app.post("/transcriptions", async (c, next) => {
     const resolved = resolveClient(c);
     if ("response" in resolved) return resolved.response;
     const { client } = resolved;
-    if (!client) return c.json(safeError(options.client ? "not_found" : "unavailable"), options.client ? 404 : 503);
+    if (!client) {
+      return c.json(safeError(options.client ? "not_found" : "unavailable"), options.client ? 404 : 503);
+    }
+    authorizedTranscriptions.set(c, client);
+    try {
+      return await next();
+    } finally {
+      authorizedTranscriptions.delete(c);
+    }
+  }, async (c, next) => {
     if (activeTranscriptions >= MAX_ACTIVE_GATEWAY_TRANSCRIPTIONS) {
       return c.json(safeError("rate_limited"), 429);
     }
     activeTranscriptions += 1;
     try {
-      let body: Awaited<ReturnType<typeof c.req.parseBody>>;
-      try {
-        body = await c.req.parseBody({ all: true });
-      } catch (error: unknown) {
-        console.warn("[gateway-speech] multipart parse failed", error instanceof Error ? error.name : "UnknownError");
-        return c.json(safeError("invalid_request"), 400);
-      }
-      if (Object.keys(body).some((key) => key !== "requestId" && key !== "recording")) {
-        return c.json(safeError("invalid_request"), 400);
-      }
-      const requestId = SpeechRequestIdSchema.safeParse(single(body.requestId));
-      const recording = single(body.recording);
-      if (!requestId.success || !(recording instanceof File)) {
-        return c.json(safeError("invalid_request"), 400);
-      }
-      if (recording.type !== "audio/wav" || recording.size < 44 || recording.size > MAX_RECORDING_BYTES) {
-        return c.json(safeError("invalid_media"), 422);
-      }
-      try {
-        const result = await client.transcribe({
-          requestId: requestId.data,
-          sourceKind: "dictation",
-          audio: new Uint8Array(await recording.arrayBuffer()),
-          mediaType: "audio/wav",
-          signal: c.req.raw.signal,
-        });
-        return c.json(SpeechTranscriptionResponseSchema.parse(result), 200);
-      } catch (error: unknown) {
-        return clientError(c, error);
-      }
+      return await next();
     } finally {
       activeTranscriptions -= 1;
+    }
+  }, bodyLimit({
+    maxSize: MAX_MULTIPART_BYTES,
+    onError: (c) => c.json(safeError("invalid_request"), 413),
+  }), async (c) => {
+    const client = authorizedTranscriptions.get(c);
+    if (!client) return c.json(safeError("unavailable"), 503);
+    let body: Awaited<ReturnType<typeof c.req.parseBody>>;
+    try {
+      body = await c.req.parseBody({ all: true });
+    } catch (error: unknown) {
+      console.warn("[gateway-speech] multipart parse failed", error instanceof Error ? error.name : "UnknownError");
+      return c.json(safeError("invalid_request"), 400);
+    }
+    if (Object.keys(body).some((key) => key !== "requestId" && key !== "recording")) {
+      return c.json(safeError("invalid_request"), 400);
+    }
+    const requestId = SpeechRequestIdSchema.safeParse(single(body.requestId));
+    const recording = single(body.recording);
+    if (!requestId.success || !(recording instanceof File)) {
+      return c.json(safeError("invalid_request"), 400);
+    }
+    if (recording.type !== "audio/wav" || recording.size < 44 || recording.size > MAX_RECORDING_BYTES) {
+      return c.json(safeError("invalid_media"), 422);
+    }
+    try {
+      const result = await client.transcribe({
+        requestId: requestId.data,
+        sourceKind: "dictation",
+        audio: new Uint8Array(await recording.arrayBuffer()),
+        mediaType: "audio/wav",
+        signal: c.req.raw.signal,
+      });
+      return c.json(SpeechTranscriptionResponseSchema.parse(result), 200);
+    } catch (error: unknown) {
+      return clientError(c, error);
     }
   });
 

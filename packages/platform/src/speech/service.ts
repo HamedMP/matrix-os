@@ -2,7 +2,9 @@ import { createHmac } from "node:crypto";
 import type { Transaction } from "kysely";
 import {
   SPEECH_CONTRACT_VERSION,
+  SPEECH_MAX_TRANSCRIPT_CHARS,
   SpeechCancellationResponseSchema,
+  SpeechLanguageHintsSchema,
   SpeechMediaTypeSchema,
   SpeechRequestIdSchema,
   SpeechSourceKindSchema,
@@ -17,10 +19,10 @@ import { SpeechAdapterError, type FileTranscriptionAdapter } from "./adapters/op
 import { inspectSpeechWav, SpeechMediaError } from "./media.js";
 import {
   SpeechOperationConflictError,
+  SpeechOperationStateError,
   type SpeechOperationIdentity,
   type SpeechOperationRecord,
   type SpeechOperationsRepository,
-  SpeechOperationStateError,
 } from "./operations.js";
 
 const MAX_ACTIVE_TRANSCRIPTIONS = 4;
@@ -119,7 +121,7 @@ function validatePolicy(policy: PlatformSpeechPolicy): void {
     if (!source.enabled) continue;
     safeInteger(source.maxBytes, 44, 64 * 1024 * 1024, "byte limit");
     safeInteger(source.maxDurationMs, 1, 60 * 60_000, "duration limit");
-    safeInteger(source.maxTranscriptChars, 1, 32_000, "transcript limit");
+    safeInteger(source.maxTranscriptChars, 1, SPEECH_MAX_TRANSCRIPT_CHARS, "transcript limit");
     if (source.supportedMediaTypes.length < 1 || source.supportedMediaTypes.length > 8
       || source.supportedMediaTypes.some((mediaType) => mediaType !== "audio/wav")) {
       throw new Error("Speech media policy is invalid");
@@ -168,9 +170,10 @@ function contentFingerprint(
   secret: string,
   input: Pick<SpeechTranscriptionInput, "audio" | "mediaType" | "sourceKind">,
   policyRevision: string,
+  languageHints: readonly string[],
 ): string {
   const hash = createHmac("sha256", secret);
-  hash.update(`${input.sourceKind}\0${input.mediaType}\0${policyRevision}\0`, "utf8");
+  hash.update(`${input.sourceKind}\0${input.mediaType}\0${policyRevision}\0${JSON.stringify(languageHints)}\0`, "utf8");
   hash.update(input.audio);
   return hash.digest("hex");
 }
@@ -187,12 +190,17 @@ export function createPlatformSpeechService(options: {
   policy: PlatformSpeechPolicy;
   cleanupIntervalMs?: number;
   cleanupBatchSize?: number;
+  shutdownDrainTimeoutMs?: number;
 }): PlatformSpeechService {
   validatePolicy(options.policy);
   if (new TextEncoder().encode(options.fingerprintSecret).byteLength < 32) {
     throw new Error("Speech fingerprint secret is too short");
   }
-  const active = new Map<string, AbortController>();
+  const shutdownDrainTimeoutMs = options.shutdownDrainTimeoutMs ?? 8_000;
+  safeInteger(shutdownDrainTimeoutMs, 1, 10_000, "shutdown drain timeout");
+  const active = new Map<string, AbortController[]>();
+  const activeTasks = new Set<Promise<void>>();
+  const shutdownController = new AbortController();
   let activeSlots = 0;
   let shuttingDown = false;
   const cleanupIntervalMs = options.cleanupIntervalMs ?? 60 * 60_000;
@@ -213,6 +221,7 @@ export function createPlatformSpeechService(options: {
     cleanupPromise = running;
   }, cleanupIntervalMs);
   cleanupTimer.unref?.();
+  let shutdownPromise: Promise<void> | undefined;
 
   function capabilities(): SpeechCapabilitiesResponse {
     const dictation = { ...options.policy.dictation, supportedMediaTypes: [...options.policy.dictation.supportedMediaTypes] };
@@ -230,6 +239,7 @@ export function createPlatformSpeechService(options: {
 
   async function transcribe(input: SpeechTranscriptionInput): Promise<SpeechTranscriptionResponse> {
     if (shuttingDown || !options.policy.enabled) throw new SpeechServiceError("unavailable");
+    if (input.signal.aborted || shutdownController.signal.aborted) throw new SpeechServiceError("cancelled");
     const parsedRequestId = SpeechRequestIdSchema.safeParse(input.requestId);
     const parsedSource = SpeechSourceKindSchema.safeParse(input.sourceKind);
     const parsedMediaType = SpeechMediaTypeSchema.safeParse(input.mediaType);
@@ -241,7 +251,9 @@ export function createPlatformSpeechService(options: {
     if (!selectedPolicy.supportedMediaTypes.includes(parsedMediaType.data)) {
       throw new SpeechServiceError("invalid_media");
     }
-    if (input.languageHints && input.languageHints.length > 0 && !selectedPolicy.languageHints) {
+    const parsedLanguageHints = SpeechLanguageHintsSchema.safeParse(input.languageHints ?? []);
+    if (!parsedLanguageHints.success) throw new SpeechServiceError("invalid_request");
+    if (parsedLanguageHints.data.length > 0 && !selectedPolicy.languageHints) {
       throw new SpeechServiceError("invalid_request");
     }
     let durationMs: number;
@@ -255,8 +267,20 @@ export function createPlatformSpeechService(options: {
     activeSlots += 1;
     const maximumCostMicrousd = microusdForDuration(selectedPolicy.maxDurationMs, options.policy.microusdPerMinute);
     const actualCostMicrousd = microusdForDuration(durationMs, options.policy.microusdPerMinute);
-    const fingerprint = contentFingerprint(options.fingerprintSecret, input, options.policy.revision);
+    const fingerprint = contentFingerprint(
+      options.fingerprintSecret,
+      input,
+      options.policy.revision,
+      parsedLanguageHints.data,
+    );
     const operationKey = `${input.identity.ownerId}\0${input.identity.machineId}\0${input.identity.runtimeSlot}\0${input.requestId}`;
+    const controller = new AbortController();
+    const signal = AbortSignal.any([input.signal, controller.signal, shutdownController.signal]);
+    const operationControllers = active.get(operationKey) ?? [];
+    operationControllers.push(controller);
+    active.set(operationKey, operationControllers);
+    const taskCompletion = Promise.withResolvers<void>();
+    activeTasks.add(taskCompletion.promise);
     try {
       let admitted: SpeechOperationRecord;
       try {
@@ -281,72 +305,135 @@ export function createPlatformSpeechService(options: {
         throw error;
       }
       if (admitted.cancellationRequested) throw new SpeechServiceError("cancelled");
-      const claim = await options.operations.claimDispatch(input.identity, parsedRequestId.data);
-      if (!claim.claimed) {
-        if (claim.operation.cancellationRequested) throw new SpeechServiceError("cancelled");
-        throw new SpeechServiceError("result_not_replayable");
+      if (signal.aborted) {
+        await options.operations.cancel(input.identity, parsedRequestId.data, (trx, reservationId) => (
+          options.funding.release(trx, reservationId)
+        ));
+        throw new SpeechServiceError("cancelled");
       }
-      const controller = new AbortController();
-      active.set(operationKey, controller);
-      const signal = AbortSignal.any([input.signal, controller.signal]);
+      let cancellationAttempt: Promise<void> | undefined;
+      let cancellationFailure: { error: unknown } | undefined;
+      let completionCommitted = false;
+      const requestCancellation = () => {
+        if (completionCommitted) return;
+        cancellationAttempt ??= options.operations.cancel(
+          input.identity,
+          parsedRequestId.data,
+          (trx, reservationId) => options.funding.release(trx, reservationId),
+        ).then(
+          () => undefined,
+          (error: unknown) => { cancellationFailure = { error }; },
+        );
+      };
+      const persistCancellationIfAborted = async (signal: AbortSignal): Promise<boolean> => {
+        if (!signal.aborted) return false;
+        requestCancellation();
+        const attempt = cancellationAttempt;
+        if (attempt) await attempt;
+        if (cancellationFailure) throw cancellationFailure.error;
+        return true;
+      };
+      signal.addEventListener("abort", requestCancellation, { once: true });
       try {
-        const result = await options.adapter.transcribe({
-          audio: input.audio,
-          mediaType: parsedMediaType.data,
-          languageHints: input.languageHints,
-          signal,
-        });
-        const text = result.text.trim();
-        if (text.length > selectedPolicy.maxTranscriptChars
-          || new TextEncoder().encode(text).byteLength > 128 * 1024) {
+        const claim = await options.operations.claimDispatch(input.identity, parsedRequestId.data);
+        const cancelledAfterClaim = await persistCancellationIfAborted(signal);
+        if (!claim.claimed) {
+          if (cancelledAfterClaim || claim.operation.cancellationRequested) {
+            throw new SpeechServiceError("cancelled");
+          }
+          throw new SpeechServiceError("result_not_replayable");
+        }
+        try {
+          const beforeDispatch = await options.operations.get(input.identity, parsedRequestId.data);
+          if (!beforeDispatch || beforeDispatch.cancellationRequested
+            || await persistCancellationIfAborted(signal)) {
+            controller.abort();
+            throw new SpeechServiceError("cancelled");
+          }
+          const result = await options.adapter.transcribe({
+            audio: input.audio,
+            mediaType: parsedMediaType.data,
+            languageHints: parsedLanguageHints.data.length > 0 ? parsedLanguageHints.data : undefined,
+            signal,
+          });
+          if (await persistCancellationIfAborted(signal)) throw new SpeechServiceError("cancelled");
+          const text = result.text.trim();
+          if (text.length > selectedPolicy.maxTranscriptChars
+            || new TextEncoder().encode(text).byteLength > 128 * 1024) {
+            throw new SpeechServiceError("transcription_failed");
+          }
+          if (await persistCancellationIfAborted(signal)) throw new SpeechServiceError("cancelled");
+          await options.operations.complete(input.identity, parsedRequestId.data, {
+            executionState: "succeeded",
+            outcomeCode: text.length > 0 ? "transcript" : "no_speech",
+            actualCostMicrousd,
+          }, (trx, reservationId) => options.funding.settle(trx, reservationId, {
+            mode: "exact",
+            actualCostMicrousd,
+          }));
+          // A durable successful completion is the delivery boundary. An abort
+          // observed after this point cannot rewrite or suppress that result.
+          completionCommitted = true;
+          signal.removeEventListener("abort", requestCancellation);
+          if (cancellationAttempt) await cancellationAttempt;
+          if (cancellationFailure
+            && !(cancellationFailure.error instanceof SpeechOperationStateError)) {
+            console.warn(
+              "[platform-speech] late cancellation persistence failed",
+              cancellationFailure.error instanceof Error ? cancellationFailure.error.name : "UnknownError",
+            );
+          }
+          return text.length > 0
+            ? {
+                contractVersion: SPEECH_CONTRACT_VERSION,
+                requestId: parsedRequestId.data,
+                status: "succeeded",
+                outcome: "transcript",
+                text,
+                audioDurationMs: durationMs,
+              }
+            : {
+                contractVersion: SPEECH_CONTRACT_VERSION,
+                requestId: parsedRequestId.data,
+                status: "succeeded",
+                outcome: "no_speech",
+                audioDurationMs: durationMs,
+              };
+        } catch (error: unknown) {
+          let current = await options.operations.get(input.identity, parsedRequestId.data);
+          const cancelled = current?.cancellationRequested === true
+            || signal.aborted
+            || (error instanceof SpeechAdapterError && error.code === "cancelled")
+            || (error instanceof SpeechServiceError && error.code === "cancelled");
+          const timedOut = error instanceof SpeechAdapterError && error.code === "timeout";
+          if (cancelled && current && !current.cancellationRequested) {
+            current = await options.operations.cancel(
+              input.identity,
+              parsedRequestId.data,
+              (trx, reservationId) => options.funding.release(trx, reservationId),
+            );
+          }
+          if (current?.executionState === "dispatching") {
+            await options.operations.complete(input.identity, parsedRequestId.data, {
+              executionState: "uncertain",
+              outcomeCode: cancelled ? "cancelled" : timedOut ? "timeout" : "provider_failure",
+              actualCostMicrousd: current.reservedMicrousd ?? maximumCostMicrousd,
+            }, (trx, reservationId) => options.funding.settle(trx, reservationId, { mode: "conservative" }));
+          }
+          if (cancelled) throw new SpeechServiceError("cancelled");
+          if (timedOut) throw new SpeechServiceError("timeout");
           throw new SpeechServiceError("transcription_failed");
         }
-        const completed = await options.operations.complete(input.identity, parsedRequestId.data, {
-          executionState: "succeeded",
-          outcomeCode: text.length > 0 ? "transcript" : "no_speech",
-          actualCostMicrousd,
-        }, (trx, reservationId) => options.funding.settle(trx, reservationId, {
-          mode: "exact",
-          actualCostMicrousd,
-        }));
-        if (completed.cancellationRequested) throw new SpeechServiceError("cancelled");
-        return text.length > 0
-          ? {
-              contractVersion: SPEECH_CONTRACT_VERSION,
-              requestId: parsedRequestId.data,
-              status: "succeeded",
-              outcome: "transcript",
-              text,
-              audioDurationMs: durationMs,
-            }
-          : {
-              contractVersion: SPEECH_CONTRACT_VERSION,
-              requestId: parsedRequestId.data,
-              status: "succeeded",
-              outcome: "no_speech",
-              audioDurationMs: durationMs,
-            };
-      } catch (error: unknown) {
-        if (error instanceof SpeechServiceError && error.code === "cancelled") throw error;
-        const current = await options.operations.get(input.identity, parsedRequestId.data);
-        const providerTimedOut = error instanceof SpeechAdapterError && error.code === "timeout";
-        if (current?.executionState === "dispatching") {
-          await options.operations.complete(input.identity, parsedRequestId.data, {
-            executionState: "uncertain",
-            outcomeCode: current.cancellationRequested
-              ? "cancelled"
-              : providerTimedOut ? "timeout" : "provider_failure",
-            actualCostMicrousd: current.reservedMicrousd ?? maximumCostMicrousd,
-          }, (trx, reservationId) => options.funding.settle(trx, reservationId, { mode: "conservative" }));
-        }
-        if (current?.cancellationRequested || signal.aborted) throw new SpeechServiceError("cancelled");
-        if (providerTimedOut) throw new SpeechServiceError("timeout");
-        throw new SpeechServiceError("transcription_failed");
       } finally {
-        active.delete(operationKey);
+        signal.removeEventListener("abort", requestCancellation);
       }
     } finally {
+      const remainingControllers = (active.get(operationKey) ?? []).filter((entry) => entry !== controller);
+      if (remainingControllers.length > 0) active.set(operationKey, remainingControllers);
+      else active.delete(operationKey);
       activeSlots -= 1;
+      activeTasks.delete(taskCompletion.promise);
+      taskCompletion.resolve();
     }
   }
 
@@ -366,16 +453,39 @@ export function createPlatformSpeechService(options: {
       throw error;
     }
     const operationKey = `${identity.ownerId}\0${identity.machineId}\0${identity.runtimeSlot}\0${requestId}`;
-    active.get(operationKey)?.abort();
+    for (const controller of active.get(operationKey) ?? []) controller.abort();
     return cancellation(operation);
   }
 
-  async function shutdown(): Promise<void> {
+  function shutdown(): Promise<void> {
+    if (shutdownPromise) return shutdownPromise;
     shuttingDown = true;
     clearInterval(cleanupTimer);
-    for (const controller of active.values()) controller.abort();
-    active.clear();
-    await cleanupPromise;
+    shutdownController.abort();
+    for (const controllers of active.values()) {
+      for (const controller of controllers) controller.abort();
+    }
+    const pending = [...activeTasks, ...(cleanupPromise ? [cleanupPromise] : [])];
+    if (pending.length === 0) {
+      shutdownPromise = Promise.resolve();
+      return shutdownPromise;
+    }
+    shutdownPromise = new Promise<void>((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        resolve();
+      };
+      const timeout = setTimeout(() => {
+        console.warn("[platform-speech] shutdown drain timed out");
+        finish();
+      }, shutdownDrainTimeoutMs);
+      timeout.unref();
+      void Promise.all(pending).then(finish);
+    });
+    return shutdownPromise;
   }
 
   return { capabilities, transcribe, status, cancel, shutdown };

@@ -134,17 +134,39 @@ describe("gateway speech routes", () => {
         audioDurationMs: 1_000,
       };
     });
-    const root = app(speech);
+    const root = new Hono();
+    root.route("/api/speech", createSpeechGatewayRoutes({
+      client: speech,
+      getOwnerId: (c) => c.req.header("x-test-owner") ?? "user_alice",
+    }));
     const first = root.request("/api/speech/transcriptions", { method: "POST", body: recordingForm(requestId) });
     const secondId = "sp_1788998400001_bcdefghijklmnopq";
     const second = root.request("/api/speech/transcriptions", { method: "POST", body: recordingForm(secondId) });
     await vi.waitFor(() => expect(speech.transcribe).toHaveBeenCalledTimes(2));
 
-    const rejected = await root.request("/api/speech/transcriptions", {
+    const foreign = await root.request("/api/speech/transcriptions", {
       method: "POST",
+      headers: { "x-test-owner": "user_bob" },
       body: recordingForm("sp_1788998400002_cdefghijklmnopqr"),
     });
+    expect(foreign.status).toBe(404);
+
+    let pulledChunks = 0;
+    const rejectedBody = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulledChunks += 1;
+        controller.enqueue(new Uint8Array(1024 * 1024));
+        if (pulledChunks === 5) controller.close();
+      },
+    });
+    const rejected = await root.request(new Request("http://localhost/api/speech/transcriptions", {
+      method: "POST",
+      headers: { "content-type": "application/octet-stream" },
+      body: rejectedBody,
+      duplex: "half",
+    } as RequestInit & { duplex: "half" }));
     expect(rejected.status).toBe(429);
+    expect(pulledChunks).toBeLessThan(5);
     expect(speech.transcribe).toHaveBeenCalledTimes(2);
 
     finish();
