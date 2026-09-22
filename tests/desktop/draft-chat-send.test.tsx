@@ -366,12 +366,12 @@ describe("draft chat implicit thread creation", () => {
     fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
     const choices = screen.getByRole("listbox", { name: "Models and connections" });
     expect(within(choices).queryAllByRole("option")).toHaveLength(0);
-    expect(screen.getByRole("status").textContent)
-      .toBe("No ready connections. Open Manage agents to connect.");
-    if (providers.length > 0) {
-      fireEvent.click(screen.getByText("Manage agents"));
-      expect(screen.getByText(`Codex — ${availability}`)).toBeTruthy();
-      if (action) expect(screen.getByRole("button", { name: action })).toBeTruthy();
+    if (providers.length === 0) expect(screen.getByRole("status").textContent)
+      .toBe("No ready connections. Open Agents & providers settings to connect.");
+    if (providers.length > 0) expect(screen.getByRole("button", { name: `Codex agent, ${availability}` })).toBeTruthy();
+    if (action) {
+      fireEvent.click(screen.getByRole("button", { name: `Codex agent, ${availability}` }));
+      expect(screen.getByRole("button", { name: action })).toBeTruthy();
     }
     expect(composer.getAttribute("contenteditable")).toBe("true");
     expect(composer.textContent).toBe(prompt);

@@ -15,7 +15,7 @@ describe("Desktop Chat provider artwork", () => {
     const { container } = render(<ProviderDriverGlyph kind={kind} size={24} />);
     const glyph = container.querySelector(`[data-provider-glyph="${kind}"]`);
     expect(glyph).toHaveStyle({ height: "24px", width: "24px", background: option.color });
-    expect(glyph?.querySelector("img")).toHaveAttribute("src", option.logoSrc);
+    expect(glyph?.querySelector("img")).toHaveAttribute("src", `.${option.logoSrc}`);
     expect(glyph?.querySelector("img")).toHaveAttribute("alt", "");
     expect(glyph).toHaveAttribute("aria-hidden", "true");
   });
