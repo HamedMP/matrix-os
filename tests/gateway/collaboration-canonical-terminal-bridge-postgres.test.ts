@@ -77,6 +77,7 @@ describe("canonical terminal collaboration bridge", () => {
     expect(eligible).toMatchObject({ sharedControlMode: "eligible", creatorActorId: ownerId, incarnationVerified: true });
     await bridge.registry.bindCollaboration(terminalId, {
       scopeId, sessionIncarnation: eligible.sessionIncarnation, executionGeneration: eligible.executionGeneration,
+      contributorControl: false,
     });
     expect(await bridge.registry.get(terminalId)).toMatchObject({
       collaborationScopeId: scopeId, sessionIncarnation: eligible.sessionIncarnation, sharedControlMode: "shared",
@@ -94,6 +95,35 @@ describe("canonical terminal collaboration bridge", () => {
     expect(runtime.writeInput).not.toHaveBeenCalled();
   });
 
+  it("keeps Contributor control an owner opt-in across bind, read and withdrawal", async () => {
+    const repository = new CollaborationRepository(fixture.db);
+    await repository.createDirectScope({ scopeId, ownerId, organizationId, kind: "terminal", resourceId: terminalId, authorityRuntimeId: runtimeId });
+    const bridge = createCanonicalTerminalCollaborationBridge({ db: fixture.db, ownerId, runtime: runtime as never });
+    const eligible = await bridge.registry.get(terminalId) as { sessionIncarnation: string; executionGeneration: number };
+    // Sharing without the opt-in must not grant Contributors control of the owner's host shell.
+    await bridge.registry.bindCollaboration(terminalId, {
+      scopeId, sessionIncarnation: eligible.sessionIncarnation, executionGeneration: eligible.executionGeneration,
+      contributorControl: false,
+    });
+    expect(await bridge.registry.get(terminalId)).toMatchObject({ sharedControlMode: "shared", contributorControl: false });
+
+    await bridge.registry.setContributorControl(terminalId, {
+      scopeId, sessionIncarnation: eligible.sessionIncarnation, ownerId, contributorControl: true,
+    });
+    expect(await bridge.registry.get(terminalId)).toMatchObject({ contributorControl: true });
+
+    // Another owner never moves this opt-in, and withdrawal is recorded without unsharing.
+    await expect(bridge.registry.setContributorControl(terminalId, {
+      scopeId, sessionIncarnation: eligible.sessionIncarnation, ownerId: "user_other_owner", contributorControl: false,
+    })).rejects.toThrow("Shared terminal is unavailable");
+    expect(await bridge.registry.get(terminalId)).toMatchObject({ contributorControl: true });
+
+    await bridge.registry.setContributorControl(terminalId, {
+      scopeId, sessionIncarnation: eligible.sessionIncarnation, ownerId, contributorControl: false,
+    });
+    expect(await bridge.registry.get(terminalId)).toMatchObject({ sharedControlMode: "shared", contributorControl: false });
+  });
+
   it("revalidates each exact-tab write and refuses workspace-wide resize", async () => {
     const repository = new CollaborationRepository(fixture.db);
     await repository.createDirectScope({ scopeId, ownerId, organizationId, kind: "terminal", resourceId: terminalId, authorityRuntimeId: runtimeId });
@@ -101,6 +131,7 @@ describe("canonical terminal collaboration bridge", () => {
     const eligible = await bridge.registry.get(terminalId) as { sessionIncarnation: string; executionGeneration: number };
     await bridge.registry.bindCollaboration(terminalId, {
       scopeId, sessionIncarnation: eligible.sessionIncarnation, executionGeneration: eligible.executionGeneration,
+      contributorControl: false,
     });
     const revalidate = vi.fn(async () => undefined);
     const action = { terminalId, scopeId, incarnation: eligible.sessionIncarnation, actorId: ownerId,
@@ -121,6 +152,7 @@ describe("canonical terminal collaboration bridge", () => {
     const eligible = await bridge.registry.get(terminalId) as { sessionIncarnation: string; executionGeneration: number };
     await bridge.registry.bindCollaboration(terminalId, {
       scopeId, sessionIncarnation: eligible.sessionIncarnation, executionGeneration: eligible.executionGeneration,
+      contributorControl: false,
     });
     const output = vi.fn(async () => undefined);
     const exit = vi.fn(async () => undefined);
