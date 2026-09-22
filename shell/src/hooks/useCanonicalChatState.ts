@@ -246,9 +246,10 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView }
         if (event.chatId === activeChatId) {
           const current = detailRef.current;
           const next = current ? applyCanonicalChatContent(current, event.content) : null;
-          if (next) {
-            detailRef.current = next;
-            setDetail(next);
+          if (next && current) {
+            const merged = { ...next, record: mergeCanonicalChatRecord(current.record, next.record) };
+            detailRef.current = merged;
+            setDetail(merged);
             setSafeError(null);
           } else selectedRefresh.schedule();
         }

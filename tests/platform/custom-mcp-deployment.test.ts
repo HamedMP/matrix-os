@@ -40,6 +40,10 @@ function deploy(enabled: boolean) {
 }
 
 describe('Custom MCP Cloud Run deployment', () => {
+  it('keeps fixture environment names aligned with workflow inputs', () => {
+    expect(Object.keys(baseEnv).filter((name) => !(name in workflow.jobs.deploy.env))).toEqual([]);
+  });
+
   it('passes the broker configuration and dedicated secret to the actual deploy command', () => {
     for (const key of ['CUSTOM_MCP_ENABLED', 'MCP_OAUTH_CLIENT_ID', 'MCP_OAUTH_CALLBACK_URL']) {
       expect(workflow.jobs.deploy.env[key]).toContain(`vars.${key}`);
