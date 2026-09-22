@@ -424,7 +424,7 @@ describe("S08 owner-selected AI source", () => {
       expect((await policies.resolve(PROJECT_SCOPE))?.source).toEqual({ ...CLAUDE, harness: "claude_code" });
     });
 
-    it.skipIf(!hasRealPostgres)("resolves organization AI submission before taking the scope row lock (real Postgres)", async () => {
+    it.skipIf(!hasRealPostgres)("resolves the slow AI-submission preflight before the lock and the fenced re-read under it (real Postgres)", async () => {
       const policy = await ownerPolicy();
       const observed: string[] = [];
       aiSubmissionProbe = async () => {
@@ -437,7 +437,44 @@ describe("S08 owner-selected AI source", () => {
         }
       };
       await bindings.admit(admission(collaborationActors.editor, policy.revision));
-      expect(observed).toEqual(["unlocked"]);
+      // The unbounded preflight never holds the scope row; only the bounded fenced re-read does.
+      expect(observed).toEqual(["unlocked", "locked"]);
+    });
+
+    it("re-reads the organization submission mode under the admission fence, not only at preflight", async () => {
+      const policy = await ownerPolicy();
+      let lookups = 0;
+      aiSubmissionProbe = async () => {
+        lookups += 1;
+        // The organization turns member submission off after the slow preflight and before the binding is written.
+        if (lookups >= 2) aiSubmission = "owner_only";
+      };
+      await expect(bindings.admit(admission(collaborationActors.editor, policy.revision)))
+        .rejects.toMatchObject({ code: "owner_only" });
+      expect(lookups).toBeGreaterThanOrEqual(2);
+      expect(await bindings.list(PROJECT_CHAT_SCOPE)).toEqual([]);
+    });
+
+    it("fails the fenced submission re-read closed and releases the scope row when the lookup stalls", async () => {
+      const policy = await ownerPolicy();
+      const fenced = new CollaborationRunBindingRepository(fixture.db, {
+        now, policies, eligibility, authorityRecheckTimeoutMs: 25,
+      });
+      let release: (() => void) | undefined;
+      let lookups = 0;
+      aiSubmissionProbe = async () => {
+        lookups += 1;
+        if (lookups < 2) return;
+        await new Promise<void>((resolve) => { release = resolve; });
+      };
+      await expect(fenced.admit(admission(collaborationActors.editor, policy.revision)))
+        .rejects.toMatchObject({ code: "owner_only" });
+      release?.();
+      aiSubmissionProbe = undefined;
+      expect(await bindings.list(PROJECT_CHAT_SCOPE)).toEqual([]);
+      // The refused admission released the scope row, so the owner's own run still admits.
+      expect((await bindings.admit(admission(collaborationActors.owner, policy.revision))).requestingActorId)
+        .toBe(collaborationActors.owner);
     });
 
     it.skipIf(!hasRealPostgres)("re-validates the policy revision under the lock after the membership preflight (real Postgres)", async () => {
