@@ -1313,3 +1313,66 @@ ask what invariant the anchor encoded and whether that invariant exists at the t
 the nearest similar-looking line. Here the honest answer was that the S12 invariant is absent and a different,
 stronger one applies, which produced a better placement than mechanically preserving the original position
 would have.
+
+## 55. The S18 extraction works, and it exposes a silent security revert — 2026-09-22 08:05 UTC
+
+**The extraction strategy from section 48 is proven on throwaway branches.** All 24 layers replayed onto
+`124/s15` as `probe/s18-base` → `probe/s18-legacy-cleanup` in `/home/nima/matrix-os-124-s18-probe`. **100
+commits on top of S15** (14 base plus 86 across layers 2–24) against 241 for a naive rebase. **19 of 23 layers
+applied completely clean.** Five conflicts total, four of them touching only `packages/gateway/src/server.ts`,
+all from S18 extracting inline blocks that S15 has since edited. The real `124/*` branches were not touched.
+
+### SR-1: the Contributor-control opt-in would be silently reverted
+
+**This is the most important finding of the release.**
+
+`packages/gateway/src/startup/collaboration.ts` is **new** in S18, so it cherry-picks with **no conflict marker
+at all**. Only typecheck caught it:
+
+```
+src/startup/collaboration.ts(123,9): error TS2741: Property 'setContributorControl' is missing
+```
+
+S18's extracted construction block builds the terminal adapter against the **pre-fix** interface. The current
+interface comes from the S15-only commit **`d9918d84f fix(collaboration): withhold Contributor control of
+shared host shells until the owner opts in`** (test `1e83dab2b`).
+
+Verified independently:
+
+| branch | terminal-adapter | terminal-dispatcher | terminal-routes | shell/registry |
+| --- | --- | --- | --- | --- |
+| `124/s15` | 3 | 3 | 1 | 1 |
+| `124/s07-terminal` | 3 | 3 | 1 | 1 |
+| `124/s18-startup` | **0** | **0** | **0** | 1 |
+
+`d9918d84f` is an ancestor of `124/s15`, **not** of `124/s18-startup`, and **not** of `origin/main`.
+
+**`124/s07-terminal` already carries the fix**, and that branch is #1808 in the merge queue, so the fix reaches
+`main` through the ordinary queue and needs no rescue.
+
+**This is the argument for the extraction, not against it.** On S18's own chain the revert **compiles**,
+because S18's `wiring.ts` also predates the fix — both sides are old, so nothing flags it and owner opt-in for
+Contributor control of shared host shells is silently undone. Extracting onto S15 turns the same defect into a
+**hard typecheck failure**. The extraction fails loudly exactly where the naive rebase fails silently.
+
+Resolution is not "choose a side": S18's extracted file must be updated to S15's post-fix interface.
+
+### Conflicts 1 and 2: one substantive line, twice
+
+`0a7c01c61` (extract owner collaboration construction) and `57b140a32` (extract owner database startup
+services), both in `server.ts`, both the same divergence: `providerSnapshotReader:
+lazyCollaborationProviderSnapshotReader` versus `collaborationProviderSnapshots.reader`. S15 replaced that
+inline closure with `createLazyProviderSnapshotReader()` in `collaboration/lazy-provider-snapshot-reader.ts`,
+one of the 105 S15-only commits. S18's extracted files take `providerSnapshotReader` as a **parameter**, so the
+extraction itself is compatible and only the call sites needed adapting.
+
+### The rule this establishes
+
+**Classify every silent-revert point by how it announces itself**: conflict marker, typecheck error, or
+neither. A conflict marker is safe, because a human must look at it. A typecheck error is safe, because CI
+stops. **Neither is the dangerous class**, and each one needs a named check written for it. SR-1 was in the
+second class only by luck — the file was new, so nothing conflicted, and only the type system noticed.
+
+Outstanding: SR-2 and SR-3 in detail; the remaining conflicts in `server-composition`, `server-extraction` and
+`t090-retirement`; and, decisively, **whether typecheck was run at every one of the 24 probe layers or only at
+the end** — if only at the end, further SR-1-shaped defects may be masked at intermediate layers.
