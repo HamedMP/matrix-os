@@ -76,6 +76,7 @@ describe("CollaborationDirectoryOutbox", () => {
       runtimeId: collaborationIds.runtime,
       // S05: read inside the claim transaction, so a lookup failure leaves the event retryable.
       ownerId: collaborationActors.owner,
+      organizationId: "org_matrix_team",
       kind: "chat",
       authorityGeneration: 1,
       metadataRevision: 1,
