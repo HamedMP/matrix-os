@@ -1707,3 +1707,56 @@ where "0 skipped" is merely the absence of contrary evidence.
 retargeted to `main`, rebased, pushed, labelled, CI running. `124/s06` verified locally: typecheck 0, patterns
 0, **756 passed / 1 failed / 0 skipped** across 88 suites on real Postgres, the single failure being the known
 pre-existing publication-race test that is byte-identical to `main`.
+
+## 62. The S18 extraction has no masked defects — 2026-09-22 10:05 UTC
+
+**Section 55's open question is answered: no defect is introduced at one layer and masked by a later one.**
+`bun run typecheck` was run at **every one of the 24 probe layers**, bottom to top. Across all of them there
+are exactly **25 distinct normalized errors**, and every one is **contiguous from its first appearance through
+layer 24**. Nothing appears and then disappears, which is the signature that would have mattered.
+
+**Ancestry came from `git rev-list --topo-order`, not from names** — and name order is indeed wrong:
+`t090-retirement-tests` precedes `t090-retirement`, and `ui-relay-header` sits mid-chain at position 16. The
+chain is strictly linear with 0 merges, `124/s15` is an ancestor of the tip, and `probe/s18-base` carries 14
+commits rather than being a single commit above S15.
+
+### Three error families; only one is a real defect
+
+**1. `TS2300` duplicate identifiers in `packages/gateway/src/server.ts`, layers 04→24, 23 identifiers —
+probe replay artifact.** `server.ts` at the probe's layer 04 carries the `./ai-providers/*`,
+`./plugins/index.js`, `./app-db-*` import block **twice**; the real `124/s18-server-composition` and
+`124/s18-legacy-cleanup` carry it once. A conflict resolution in the probe kept both sides. **Not an S18
+defect** — but it does mean the probe's own resolution of SR-2 needs redoing when the extraction is performed
+for real.
+
+**2. `TS2741 setContributorControl` at `startup/collaboration.ts:123`, layers 21→24 — REAL.** Confirmed
+independently: `124/s15` has 3 references to `setContributorControl` in `collaboration/terminal-adapter.ts`;
+`124/s18-terminal-output` has **zero**, carrying a pre-fix copy. S18's new startup block builds the registry
+against that pre-fix interface. **Introduced at layer 21 (`probe/s18-terminal-output`), by commits
+`bf4787e48` / `7b089f09f`** — the only chain commits above base touching that file besides `ec613d153`. That
+pins section 55's SR-1 to an exact layer and pair of commits.
+
+**3. `TS2304 loadCollaborationRelayOrigin` at `platform/collaboration/bootstrap.ts:57`, layers 23→24 — probe
+replay artifact.** The real branch resolves `const relayOrigin = config.relayOrigin` at line 115 and makes no
+such call; the probe carries an older variant, and `24b65ebce` removes the import — correct for the real
+chain, broken for the replayed one.
+
+### A repo-wide gate gap found by the method, not the code
+
+**`bun run typecheck` is one `&&` chain of eight steps, so the first failing package suppresses every package
+after it.** From probe layer 04 onward the gateway step fails, which means **platform, proxy, edge-router and
+desktop were never typechecked at all** by the literal command. Running the steps **un-chained** is what
+surfaced the platform error above — the chained command stops two steps earlier and cannot report it.
+
+The practical harm is misattribution: someone fixes the gateway error, re-runs, and discovers a platform error
+that existed all along, now appearing to be caused by their fix. Filed as **#1841**.
+
+**This is the fourth gate in the same family**, and the pattern is now worth stating plainly: *a gate that
+cannot see part of the tree will report green over the part it cannot see.* The four are #1830 (repo-root
+`tests/` in no package's tsconfig, so fixtures are never typechecked), #1835 (a Vitest alias missing for a new
+package subpath), #1836 (database-backed suites running against a fake or skipped entirely), and #1841 (this
+one).
+
+**Method note worth reusing:** when a composite gate fails, re-run its steps individually before concluding
+anything about what is broken. The composite's exit code tells you that *something* failed, not that only that
+thing failed.
