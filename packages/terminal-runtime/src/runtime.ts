@@ -681,8 +681,17 @@ export class TerminalRuntime {
     if (observerFailure?.status === "rejected") throw observerFailure.reason;
   }
 
-  getSnapshot(ref: TerminalRef): Promise<TerminalSnapshot | undefined> {
-    return this.store.readSnapshot(TerminalRefSchema.parse(ref));
+  getSnapshot(ref: TerminalRef, expectedIncarnation?: string): Promise<TerminalSnapshot | undefined> {
+    const parsed = TerminalRefSchema.parse(ref);
+    if (!expectedIncarnation) return this.store.readSnapshot(parsed);
+    // A tab ID can be deleted and recreated, so the checkpoint read joins the workspace mutation
+    // that serializes tab creation and deletion and verifies the incarnation inside it.
+    return this.runWorkspaceMutation(async () => {
+      const workspace = await this.requireRuntimeWorkspace(parsed.workspaceId);
+      const tab = workspace.tabs[parsed.tabId];
+      if (!tab || terminalTabIncarnation(tab) !== expectedIncarnation) throw new TerminalRuntimeError("not_found");
+      return this.store.readSnapshot(parsed);
+    });
   }
 
   async flushCheckpoints(): Promise<void> {

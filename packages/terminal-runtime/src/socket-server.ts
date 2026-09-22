@@ -40,7 +40,7 @@ export interface TerminalRuntimeControlApi {
     command?: string[];
     agent?: TerminalTab["agent"];
   }): Promise<TerminalTab>;
-  getSnapshot(ref: { workspaceId: string; tabId: string }): Promise<TerminalSnapshot | undefined>;
+  getSnapshot(ref: { workspaceId: string; tabId: string }, expectedIncarnation?: string): Promise<TerminalSnapshot | undefined>;
   renameTab(ref: { workspaceId: string; tabId: string }, input: { name: string; baseRevision: number }): Promise<TerminalTab>;
   reorderTabs(workspaceId: string, input: { tabIds: string[]; baseRevision: number }): Promise<TerminalWorkspace>;
   terminateTab(ref: { workspaceId: string; tabId: string }, expectedIncarnation?: string): Promise<void>;
@@ -241,7 +241,9 @@ export class TerminalRuntimeSocketServer {
       : await this.options.runtime.resize(ref, { ...request.input, mode: "soft" });
     const tab = resized.tabs.find((candidate) => candidate.id === ref.tabId);
     if (!tab) throw new Error("Terminal tab not found");
-    const snapshot = await this.options.runtime.getSnapshot(ref);
+    const snapshot = request.input.expectedIncarnation
+      ? await this.options.runtime.getSnapshot(ref, request.input.expectedIncarnation)
+      : await this.options.runtime.getSnapshot(ref);
     const effectiveFromSeq = request.input.fromSeq === LIVE_TAIL_FROM_SEQ
       ? (snapshot?.seq ?? -1) + 1
       : request.input.fromSeq;
