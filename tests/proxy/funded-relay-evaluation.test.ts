@@ -6,13 +6,14 @@ import { Hono } from "hono";
 import { describe, expect, it, vi } from "vitest";
 import { createFundedRelay, resolveFundedRelayConfig } from "../../packages/proxy/src/funded-relay.js";
 import {
-  gatewayUsdToMicrousd,
+  jevInputTokensToMicrousd,
   normalizeFundedJevEvaluationResponse,
 } from "../../packages/proxy/src/funded-relay-evaluation.js";
 
 const CLOUDFLARE_URL =
   "https://gateway.ai.cloudflare.com/v1/0123456789abcdef0123456789abcdef/matrix/anthropic";
-const VERCEL_URL = "https://ai-gateway.vercel.sh";
+const CLOUDFLARE_AI_RUN_URL =
+  "https://api.cloudflare.com/client/v4/accounts/0123456789abcdef0123456789abcdef/ai/run";
 const PLATFORM_URL = "https://platform.internal.example";
 const CREDENTIAL = `sk-matrix-funded-credential_123.${"s".repeat(43)}`;
 const NOW = new Date("2026-09-22T10:00:00.000Z");
@@ -23,7 +24,7 @@ function environment(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     MATRIX_FUNDED_AI_RESERVATION_MODE: "usage",
     CLOUDFLARE_AI_GATEWAY_URL: CLOUDFLARE_URL,
     CLOUDFLARE_AI_GATEWAY_TOKEN: "cloudflare-token-12345678901234567890",
-    AI_GATEWAY_API_KEY: "vercel-gateway-key-12345678901234567890",
+    CLOUDFLARE_WORKERS_AI_TOKEN: "cloudflare-workers-ai-token-123456789012345",
     PLATFORM_INTERNAL_URL: PLATFORM_URL,
     AI_RELAY_CONTROL_TOKEN: "platform-control-token-123456789012345",
     AI_RELAY_METADATA_SECRET: "metadata-secret-12345678901234567890",
@@ -81,32 +82,35 @@ function json(value: unknown, status = 200): Response {
 }
 
 describe("funded Jev evaluation relay", () => {
-  it("normalizes decimal gateway cost conservatively and rejects incomplete answers", () => {
-    expect(gatewayUsdToMicrousd("0.00001155")).toBe(12);
-    expect(gatewayUsdToMicrousd("1.000000000001")).toBe(1_000_001);
+  it("settles Cloudflare Jev input usage conservatively and rejects incomplete answers", () => {
+    expect(jevInputTokensToMicrousd(275, NOW)).toBe(12);
+    expect(jevInputTokensToMicrousd(1_000_000, NOW)).toBe(42_000);
+    expect(() => jevInputTokensToMicrousd(275, new Date("2026-10-01T00:00:00.000Z")))
+      .toThrow(/pricing has expired/i);
     expect(() => normalizeFundedJevEvaluationResponse({
       requestId: "request_123",
       latencyMs: 1,
+      pricedAt: NOW,
       value: {
-        model: JEV_MODEL_ID,
-        answers: { urgent: { type: "boolean", probability: 0.5 } },
+        model: "jev-1.13.0",
+        answers: { urgent: { type: "noul", noul: 0.5 } },
+        usage: { input_tokens: 275, output_tokens: 20 },
       },
     })).toThrow();
   });
 
-  it("requires a distinct bounded server credential when Jev is configured", () => {
+  it("reuses the bounded Cloudflare Workers AI credential for Jev", () => {
     expect(resolveFundedRelayConfig(environment())).toMatchObject({
-      jevGatewayBaseUrl: VERCEL_URL,
-      jevGatewayApiKey: "vercel-gateway-key-12345678901234567890",
+      workersAiToken: "cloudflare-workers-ai-token-123456789012345",
       jevMaxCostMicrousd: 5_000,
     });
     expect(() => resolveFundedRelayConfig(environment({
-      AI_GATEWAY_API_KEY: "platform-control-token-123456789012345",
-    }))).toThrow(/distinct/i);
+      CLOUDFLARE_WORKERS_AI_TOKEN: "platform-control-token-123456789012345",
+    }))).toThrow(/internal relay authority/i);
     expect(() => resolveFundedRelayConfig(environment({ MATRIX_JEV_MAX_COST_MICROUSD: "0" }))).toThrow();
   });
 
-  it("forwards only the fixed recipe and settles the Vercel gateway cost once", async () => {
+  it("forwards only the fixed recipe through Cloudflare and settles input-token cost once", async () => {
     const events: string[] = [];
     const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input);
@@ -159,22 +163,29 @@ describe("funded Jev evaluation relay", () => {
       }
 
       events.push("evaluate");
-      expect(url).toBe(`${VERCEL_URL}/v1/evaluate`);
+      expect(url).toBe(CLOUDFLARE_AI_RUN_URL);
       expect(new Headers(init?.headers).get("authorization"))
-        .toBe("Bearer vercel-gateway-key-12345678901234567890");
+        .toBe("Bearer cloudflare-workers-ai-token-123456789012345");
+      expect(new Headers(init?.headers).get("cf-aig-gateway-id")).toBe("matrix");
+      expect(new Headers(init?.headers).get("cf-aig-collect-log-payload")).toBe("false");
       expect(init?.redirect).toBe("error");
       expect(body).toEqual({
-        ...JSON.parse(requestBody()),
-        providerOptions: { gateway: { zeroDataRetention: true, only: ["typesafe-ai"] } },
+        model: "typesafe/jev",
+        input: {
+          state: "From: sender@example.com\nSubject: hello\n\nCan we talk tomorrow?",
+          questions: Object.fromEntries(Object.entries(JEV_EMAIL_TRIAGE_INSTRUCTIONS).map(([id, instructions]) => [
+            id,
+            { type: "noul", instructions },
+          ])),
+        },
       });
       return json({
-        model: JEV_MODEL_ID,
+        model: "jev-1.13.0",
         answers: Object.fromEntries(Object.keys(JEV_EMAIL_TRIAGE_INSTRUCTIONS).map((id, index) => [
           id,
-          { type: "boolean", probability: index / 10 },
+          { type: "noul", noul: index / 10 },
         ])),
-        usage: { inputTokens: 275, outputTokens: 20 },
-        providerMetadata: { gateway: { gatewayCost: "0.00001155", generationId: "gen_123" } },
+        usage: { input_tokens: 275, output_tokens: 20 },
       });
     });
     const config = resolveFundedRelayConfig(environment());
@@ -211,9 +222,9 @@ describe("funded Jev evaluation relay", () => {
     await relay.close();
   });
 
-  it("keeps the route unavailable until the server-held Vercel key is configured", async () => {
+  it("keeps the route unavailable until the Cloudflare Workers AI token is configured", async () => {
     const fetchMock = vi.fn();
-    const config = resolveFundedRelayConfig(environment({ AI_GATEWAY_API_KEY: undefined }));
+    const config = resolveFundedRelayConfig(environment({ CLOUDFLARE_WORKERS_AI_TOKEN: undefined }));
     const relay = createFundedRelay({ ...config!, fetch: fetchMock as typeof fetch });
     const app = new Hono();
     relay.register(app);

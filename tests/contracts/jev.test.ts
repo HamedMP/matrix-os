@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   JEV_EMAIL_TRIAGE_ANSWER_IDS,
   JEV_EMAIL_TRIAGE_RECIPE_ID,
+  JEV_MODEL_ID,
   JevEmailTriageResultSchema,
   JevEvaluateRequestSchema,
 } from "@matrix-os/contracts";
@@ -44,7 +45,7 @@ describe("Jev evaluation contracts", () => {
     const valid = {
       requestId: "jev_req_0123456789abcdef",
       recipe: JEV_EMAIL_TRIAGE_RECIPE_ID,
-      model: "typesafe-ai/jev",
+      model: JEV_MODEL_ID,
       latencyMs: 127,
       answers: JEV_EMAIL_TRIAGE_ANSWER_IDS.map((id) => ({ id, type: "boolean", probability: probabilities[id] })),
       usage: { inputTokens: 91, outputTokens: 7 },

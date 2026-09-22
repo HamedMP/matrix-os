@@ -9,6 +9,10 @@ import {
 import { z } from "zod/v4";
 
 const MAX_STATE_BYTES = 32 * 1024;
+const JEV_INPUT_PRICE_NANOUSD_PER_TOKEN = 42n;
+const JEV_PRICING_VALID_THROUGH = "2026-09-30T23:59:59.999Z";
+const NANOUSD_PER_USD = 1_000_000_000n;
+const NANOUSD_PER_MICROUSD = 1_000n;
 const textEncoder = new TextEncoder();
 const BooleanQuestionSchema = z.object({
   type: z.literal("boolean"),
@@ -37,8 +41,8 @@ const FundedJevEvaluationRequestSchema = z.object({
 }).strict();
 
 const AnswerSchema = z.object({
-  type: z.literal("boolean"),
-  probability: z.number().finite().min(0).max(1),
+  type: z.literal("noul"),
+  noul: z.number().finite().min(0).max(1),
 }).strict();
 const AnswersSchema = z.object({
   urgent: AnswerSchema,
@@ -49,20 +53,14 @@ const AnswersSchema = z.object({
   newsletter: AnswerSchema,
   cold_outreach: AnswerSchema,
 }).strict();
-const GatewayCostSchema = z.string().regex(/^(?:0|[1-9]\d*)(?:\.\d{1,12})?$/);
 const UpstreamResponseSchema = z.object({
-  model: z.literal(JEV_MODEL_ID),
+  model: z.string().min(1).max(128).regex(/^jev-[a-zA-Z0-9._-]+$/),
   answers: AnswersSchema,
   usage: z.object({
-    inputTokens: z.number().int().nonnegative().max(10_000_000),
-    outputTokens: z.number().int().nonnegative().max(10_000_000),
-  }).strict().optional(),
-  providerMetadata: z.object({
-    gateway: z.object({
-      gatewayCost: GatewayCostSchema.optional(),
-    }),
-  }).optional(),
-});
+    input_tokens: z.number().int().nonnegative().max(10_000_000),
+    output_tokens: z.number().int().nonnegative().max(10_000_000),
+  }).strict(),
+}).strict();
 
 export interface SerializedFundedJevEvaluationRequest {
   request: z.infer<typeof FundedJevEvaluationRequestSchema>;
@@ -77,44 +75,75 @@ export interface NormalizedFundedJevEvaluation {
 export function serializeFundedJevEvaluationRequest(input: unknown): SerializedFundedJevEvaluationRequest {
   const request = FundedJevEvaluationRequestSchema.parse(input);
   const body = JSON.stringify({
-    ...request,
-    providerOptions: {
-      gateway: { zeroDataRetention: true, only: ["typesafe-ai"] },
+    model: JEV_MODEL_ID,
+    input: {
+      state: request.state,
+      questions: Object.fromEntries(JEV_EMAIL_TRIAGE_ANSWER_IDS.map((id) => [id, {
+        type: "noul",
+        instructions: request.questions[id].instructions,
+      }])),
     },
   });
   return { request, body };
 }
 
-export function gatewayUsdToMicrousd(value: string): number {
-  const parsed = GatewayCostSchema.parse(value);
-  const [whole, fraction = ""] = parsed.split(".");
-  const wholeMicrousd = BigInt(whole) * 1_000_000n;
-  const padded = fraction.padEnd(6, "0");
-  const fractionalMicrousd = BigInt(padded.slice(0, 6));
-  const remainder = padded.slice(6);
-  const rounded = wholeMicrousd + fractionalMicrousd + (/[1-9]/.test(remainder) ? 1n : 0n);
+export function jevInputTokensToMicrousd(inputTokens: number, pricedAt: Date): number {
+  if (pricedAt.getTime() > Date.parse(JEV_PRICING_VALID_THROUGH)) {
+    throw new Error("Jev pricing has expired");
+  }
+  const tokens = z.number().int().nonnegative().max(10_000_000).parse(inputTokens);
+  const nanoUsd = BigInt(tokens) * JEV_INPUT_PRICE_NANOUSD_PER_TOKEN;
+  const rounded = (nanoUsd + NANOUSD_PER_MICROUSD - 1n) / NANOUSD_PER_MICROUSD;
   if (rounded > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error("Jev gateway cost exceeds supported bounds");
   return Number(rounded);
+}
+
+function jevInputTokensToGatewayUsd(inputTokens: number): string {
+  const nanoUsd = BigInt(inputTokens) * JEV_INPUT_PRICE_NANOUSD_PER_TOKEN;
+  const whole = nanoUsd / NANOUSD_PER_USD;
+  const fraction = (nanoUsd % NANOUSD_PER_USD).toString().padStart(9, "0").replace(/0+$/, "");
+  return fraction === "" ? whole.toString() : `${whole}.${fraction}`;
 }
 
 export function normalizeFundedJevEvaluationResponse(input: {
   value: unknown;
   requestId: string;
   latencyMs: number;
+  pricedAt: Date;
 }): NormalizedFundedJevEvaluation {
   const upstream = UpstreamResponseSchema.parse(input.value);
-  const gatewayUsd = upstream.providerMetadata?.gateway.gatewayCost;
+  const gatewayUsd = jevInputTokensToGatewayUsd(upstream.usage.input_tokens);
   const result = JevEmailTriageResultSchema.parse({
     requestId: `jev_req_${input.requestId}`,
     recipe: JEV_EMAIL_TRIAGE_RECIPE_ID,
-    model: upstream.model,
+    model: JEV_MODEL_ID,
     latencyMs: input.latencyMs,
-    answers: JEV_EMAIL_TRIAGE_ANSWER_IDS.map((id) => ({ id, ...upstream.answers[id] })),
-    ...(upstream.usage ? { usage: upstream.usage } : {}),
-    ...(gatewayUsd ? { cost: { gatewayUsd } } : {}),
+    answers: JEV_EMAIL_TRIAGE_ANSWER_IDS.map((id) => ({
+      id,
+      type: "boolean",
+      probability: upstream.answers[id].noul,
+    })),
+    usage: {
+      inputTokens: upstream.usage.input_tokens,
+      outputTokens: upstream.usage.output_tokens,
+    },
+    cost: { gatewayUsd },
   });
   return {
     result,
-    actualCostMicrousd: gatewayUsd === undefined ? null : gatewayUsdToMicrousd(gatewayUsd),
+    actualCostMicrousd: jevInputTokensToMicrousd(upstream.usage.input_tokens, input.pricedAt),
+  };
+}
+
+export function cloudflareJevTarget(gatewayBaseUrl: string): { url: string; gatewayId: string } {
+  const parts = new URL(gatewayBaseUrl).pathname.split("/");
+  const accountId = parts[2];
+  const gatewayId = parts[3];
+  if (!/^[a-f0-9]{32}$/.test(accountId ?? "") || !/^[a-zA-Z0-9_-]{1,64}$/.test(gatewayId ?? "")) {
+    throw new Error("Invalid Cloudflare Jev gateway configuration");
+  }
+  return {
+    url: `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run`,
+    gatewayId: gatewayId!,
   };
 }

@@ -1,7 +1,7 @@
 import { z } from "zod/v4";
 
 export const JEV_EMAIL_TRIAGE_RECIPE_ID = "email-triage-v1" as const;
-export const JEV_MODEL_ID = "typesafe-ai/jev" as const;
+export const JEV_MODEL_ID = "typesafe/jev" as const;
 export const JEV_EMAIL_TRIAGE_ANSWER_IDS = [
   "urgent",
   "needs_reply",

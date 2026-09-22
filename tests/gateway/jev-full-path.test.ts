@@ -59,18 +59,17 @@ describe("Jev local Gateway to funded relay", () => {
       })),
     };
     const upstream = vi.fn(async () => new Response(JSON.stringify({
-      model: JEV_MODEL_ID,
+      model: "jev-1.13.0",
       answers: Object.fromEntries(JEV_EMAIL_TRIAGE_ANSWER_IDS.map((id) => [
-        id, { type: "boolean", probability: 0.5 },
+        id, { type: "noul", noul: 0.5 },
       ])),
-      usage: { inputTokens: 275, outputTokens: 20 },
-      providerMetadata: { gateway: { gatewayCost: "0.00001155" } },
+      usage: { input_tokens: 275, output_tokens: 20 },
     }), { status: 200, headers: { "content-type": "application/json" } }));
     const config = resolveFundedRelayConfig({
       MATRIX_FUNDED_AI_ENABLED: "1", MATRIX_FUNDED_AI_RESERVATION_MODE: "usage",
       CLOUDFLARE_AI_GATEWAY_URL: "https://gateway.ai.cloudflare.com/v1/0123456789abcdef0123456789abcdef/matrix/anthropic",
       CLOUDFLARE_AI_GATEWAY_TOKEN: "cloudflare-token-12345678901234567890",
-      AI_GATEWAY_API_KEY: "vercel-gateway-key-12345678901234567890",
+      CLOUDFLARE_WORKERS_AI_TOKEN: "cloudflare-workers-ai-token-123456789012345",
       PLATFORM_INTERNAL_URL: "https://platform.internal.example",
       AI_RELAY_CONTROL_TOKEN: "platform-control-token-123456789012345",
       AI_RELAY_METADATA_SECRET: "metadata-secret-12345678901234567890",
@@ -128,8 +127,16 @@ describe("Jev local Gateway to funded relay", () => {
     ));
     expect(upstream).toHaveBeenCalledTimes(1);
     const upstreamBody = JSON.parse(String(upstream.mock.calls[0]?.[1]?.body));
-    expect(upstreamBody.questions).toEqual(Object.fromEntries(
-      Object.entries(JEV_EMAIL_TRIAGE_INSTRUCTIONS).map(([id, instructions]) => [id, { type: "boolean", instructions }]),
-    ));
+    expect(upstreamBody).toEqual({
+      model: "typesafe/jev",
+      input: {
+        state: "hello",
+        questions: Object.fromEntries(
+          Object.entries(JEV_EMAIL_TRIAGE_INSTRUCTIONS).map(([id, instructions]) => [id, { type: "noul", instructions }]),
+        ),
+      },
+    });
+    expect(new Headers(upstream.mock.calls[0]?.[1]?.headers).get("cf-aig-gateway-id")).toBe("matrix");
+    expect(new Headers(upstream.mock.calls[0]?.[1]?.headers).get("cf-aig-collect-log-payload")).toBe("false");
   });
 });

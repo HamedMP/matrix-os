@@ -11,6 +11,7 @@ import { isFundedProxyApiKey } from "./auth.js";
 import { AdmissionController, type AdmissionLease } from "./funded-relay-admission.js";
 import { COUNT_TOKENS_BODY_LIMIT_BYTES, type FundedRelayConfig } from "./funded-relay-config.js";
 import {
+  cloudflareJevTarget,
   normalizeFundedJevEvaluationResponse,
   serializeFundedJevEvaluationRequest,
 } from "./funded-relay-evaluation.js";
@@ -527,7 +528,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
   }
 
   async function handleEvaluation(c: Context, state: ActiveRequestState): Promise<Response> {
-    if (!config.jevGatewayApiKey) {
+    if (!config.workersAiToken) {
       return errorResponse(c, 503, "api_error", "AI access is temporarily unavailable");
     }
     let requestBody: string;
@@ -620,10 +621,13 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         throw new Error("Funded AI start response did not match its reservation");
       }
       started = true;
-      const upstream = await fetchImpl(`${config.jevGatewayBaseUrl}${EVALUATE_PATH}`, {
+      const target = cloudflareJevTarget(config.gatewayBaseUrl);
+      const upstream = await fetchImpl(target.url, {
         method: "POST",
         headers: {
-          authorization: `Bearer ${config.jevGatewayApiKey}`,
+          authorization: `Bearer ${config.workersAiToken}`,
+          "cf-aig-gateway-id": target.gatewayId,
+          "cf-aig-collect-log-payload": "false",
           "content-type": "application/json",
         },
         body: requestBody,
@@ -652,6 +656,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         value,
         requestId,
         latencyMs: Math.max(0, now().getTime() - startedAt),
+        pricedAt: now(),
       });
       if (normalized.actualCostMicrousd === null
         || normalized.actualCostMicrousd > config.jevMaxCostMicrousd) {

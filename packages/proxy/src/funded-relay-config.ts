@@ -16,7 +16,6 @@ const DEFAULT_SETTLEMENT_RETRY_INTERVAL_MS = 5_000;
 const DEFAULT_SETTLEMENT_TTL_MS = 25 * 60_000;
 const DEFAULT_JEV_MAX_COST_MICROUSD = 5_000;
 const CLOUDFLARE_GATEWAY_HOST = "gateway.ai.cloudflare.com";
-const VERCEL_AI_GATEWAY_BASE_URL = "https://ai-gateway.vercel.sh";
 
 export const COUNT_TOKENS_BODY_LIMIT_BYTES = 256 * 1024;
 export const BETA_ID = /^[a-zA-Z0-9][a-zA-Z0-9._=-]{0,127}$/;
@@ -24,8 +23,6 @@ export const BETA_ID = /^[a-zA-Z0-9][a-zA-Z0-9._=-]{0,127}$/;
 export interface FundedRelayConfig {
   gatewayBaseUrl: string;
   gatewayToken: string;
-  jevGatewayBaseUrl: string;
-  jevGatewayApiKey?: string;
   jevMaxCostMicrousd: number;
   reservationMode: "cloudflare-count" | "usage";
   workersAiToken?: string;
@@ -159,8 +156,6 @@ export function resolveFundedRelayConfig(
   const gatewayBaseUrl = readGatewayBaseUrl(env);
   const platformBaseUrl = readPlatformBaseUrl(env);
   const gatewayToken = readSecret(env, "CLOUDFLARE_AI_GATEWAY_TOKEN");
-  const jevGatewayApiKey = env.AI_GATEWAY_API_KEY?.trim()
-    ? readSecret(env, "AI_GATEWAY_API_KEY") : undefined;
   const relayControlToken = readSecret(env, "AI_RELAY_CONTROL_TOKEN");
   const metadataSecret = readSecret(env, "AI_RELAY_METADATA_SECRET");
   const reservationMode = env.MATRIX_FUNDED_AI_RESERVATION_MODE?.trim() || "cloudflare-count";
@@ -172,15 +167,13 @@ export function resolveFundedRelayConfig(
   if (workersAiToken === relayControlToken || workersAiToken === metadataSecret) {
     throw new Error("Workers AI credential must not reuse internal relay authority");
   }
-  if (new Set([gatewayToken, relayControlToken, metadataSecret, jevGatewayApiKey].filter(Boolean)).size
-    !== [gatewayToken, relayControlToken, metadataSecret, jevGatewayApiKey].filter(Boolean).length) {
+  if (new Set([gatewayToken, relayControlToken, metadataSecret].filter(Boolean)).size
+    !== [gatewayToken, relayControlToken, metadataSecret].filter(Boolean).length) {
     throw new Error("Funded AI relay credentials must be distinct");
   }
   return {
     gatewayBaseUrl,
     gatewayToken,
-    jevGatewayBaseUrl: VERCEL_AI_GATEWAY_BASE_URL,
-    jevGatewayApiKey,
     jevMaxCostMicrousd: readInteger(
       env, "MATRIX_JEV_MAX_COST_MICROUSD", DEFAULT_JEV_MAX_COST_MICROUSD, 1, 1_000_000,
     ),
