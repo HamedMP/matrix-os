@@ -6,6 +6,7 @@ import {
   useConnection,
   wireConnectionEvents,
 } from "@desktop/renderer/src/stores/connection";
+import { closeDesktopCollaborationSessions } from "@desktop/renderer/src/lib/collaboration";
 import { useBoard } from "@desktop/renderer/src/stores/board";
 import { clearDraftChats, useDraftChat } from "@desktop/renderer/src/stores/draft-chat";
 import { desktopQueryClient } from "@desktop/renderer/src/lib/query-client";
@@ -351,7 +352,12 @@ describe("connection event wiring", () => {
   });
 
   it("unwires auth and runtime listeners so tests can reinitialize the bridge", async () => {
-    const listeners = new Map<string, Listener>();
+    // One channel carries several listeners, so collect them all rather than keeping the last.
+    const listeners = new Map<string, Listener[]>();
+    const fire = async (channel: string) => {
+      for (const callback of listeners.get(channel) ?? []) callback({});
+      await Promise.resolve();
+    };
     const invoke = vi.fn().mockResolvedValue({
       signedIn: false,
       platformHost: "https://platform.test",
@@ -360,17 +366,22 @@ describe("connection event wiring", () => {
     window.operator = {
       invoke,
       on: vi.fn((channel: string, callback: Listener) => {
-        listeners.set(channel, callback);
+        listeners.set(channel, [...(listeners.get(channel) ?? []), callback]);
         return () => {
-          listeners.delete(channel);
+          const rest = (listeners.get(channel) ?? []).filter((entry) => entry !== callback);
+          if (rest.length === 0) listeners.delete(channel);
+          else listeners.set(channel, rest);
         };
       }),
     };
 
     wireConnectionEvents();
-    listeners.get("auth:changed")?.({});
-    await Promise.resolve();
 
+    // Ending direct collaboration sessions on an authentication change is the point of this
+    // listener, so require the handler itself rather than a count a removal would simply lower.
+    expect(listeners.get("auth:changed")).toContain(closeDesktopCollaborationSessions);
+
+    await fire("auth:changed");
     expect(invoke).toHaveBeenCalledTimes(1);
     expect(listeners.has("auth:changed")).toBe(true);
     expect(listeners.has("runtime:changed")).toBe(true);
@@ -381,10 +392,11 @@ describe("connection event wiring", () => {
     expect(listeners.has("runtime:changed")).toBe(false);
 
     wireConnectionEvents();
-    listeners.get("runtime:changed")?.({});
-    await Promise.resolve();
 
-    expect(window.operator.on).toHaveBeenCalledTimes(4);
+    // Rewiring must restore every listener, including the collaboration cleanup.
+    expect(listeners.get("auth:changed")).toContain(closeDesktopCollaborationSessions);
+
+    await fire("runtime:changed");
     expect(invoke).toHaveBeenCalledTimes(2);
   });
 });

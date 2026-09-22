@@ -560,14 +560,25 @@ const CollaborationDirectoryBaseSchema = z.object({
   authorityGeneration: z.number().int().positive(),
 });
 
+/**
+ * S06 / T032: discovery is a platform metadata projection. `resource` is filled by
+ * the client from the resource's home; when that home is unreachable or denies the
+ * caller, the client marks the item with `home` instead. Organization-wide shares that
+ * this member has not opened yet appear as `organization_pending` (S04 activation).
+ */
+export const CollaborationDiscoveryHomeStateSchema = z.enum(["offline", "denied"]);
+
 export const CollaborationDiscoveryItemSchema = z.discriminatedUnion("status", [
   CollaborationDirectoryBaseSchema.extend({
     status: z.literal("invited"),
     invitationId: CollaborationIdSchema,
-    resource: CollaborationInvitationSchema,
+    organizationId: CollaborationOrganizationIdSchema.optional(),
+    resource: CollaborationInvitationSchema.optional(),
+    home: CollaborationDiscoveryHomeStateSchema.optional(),
   }).strict(),
   CollaborationDirectoryBaseSchema.extend({
     status: z.literal("accepted"),
+    organizationId: CollaborationOrganizationIdSchema.optional(),
     resource: z.union([
       z.object({
         scope: CollaborationScopeSchema.refine((scope) => scope.kind === "chat"),
@@ -581,9 +592,16 @@ export const CollaborationDiscoveryItemSchema = z.discriminatedUnion("status", [
         scope: CollaborationScopeSchema.refine((scope) => scope.kind === "project"),
         project: CollaborationProjectSchema,
       }).strict(),
-    ]),
+    ]).optional(),
+    home: CollaborationDiscoveryHomeStateSchema.optional(),
+  }).strict(),
+  CollaborationDirectoryBaseSchema.extend({
+    status: z.literal("organization_pending"),
+    organizationId: CollaborationOrganizationIdSchema,
+    home: CollaborationDiscoveryHomeStateSchema.optional(),
   }).strict(),
 ]).superRefine((item, context) => {
+  if (item.status === "organization_pending" || item.resource === undefined) return;
   const kind = item.status === "invited" ? item.resource.scopeKind : item.resource.scope.kind;
   if (item.kind !== kind) context.addIssue({ code: "custom", path: ["kind"], message: "Directory kind mismatch" });
   if (item.status === "invited" && item.scopeId !== item.resource.scopeId) {
@@ -742,6 +760,8 @@ export const CollaborationDirectoryEventSchema = z.object({
   kind: CollaborationScopeKindSchema,
   /** S05: the scope's owning organization so the platform can bind tickets to it; absent only for pre-organization rows. */
   organizationId: CollaborationOrganizationIdSchema.optional(),
+  /** S06: `organization` when an active organization-wide grant exists on the home, so the platform can list the share as pending for members. */
+  audience: z.enum(["members", "organization"]).optional(),
   authorityGeneration: z.number().int().positive(),
   metadataRevision: z.number().int().nonnegative(),
   recipients: z.array(z.object({

@@ -142,10 +142,9 @@ describe("platform collaboration wiring", () => {
       headers: { "x-test-actor": platformCollaborationActors.recipientWithoutComputer },
     });
     expect(discovery.status).toBe(200);
-    expect(await discovery.json()).toMatchObject({ items: [{ resource: {
-      scope: { id: scopeId, role: "editor" },
-      chat: { id: "chat_one", title: "Shared planning" },
-    } }] });
+    expect(await discovery.json()).toMatchObject({ items: [{ scopeId, status: "accepted", kind: "chat" }] });
+    // S06 / T032: discovery is metadata-only; the platform never hydrates content from the home.
+    expect(JSON.stringify(await (await app.request("/api/collaboration/shared", { headers: { "x-test-actor": platformCollaborationActors.recipientWithoutComputer } })).json())).not.toMatch(/resource|Shared planning|chat_one/);
 
     await runtime.repository.applyDirectoryEvent({
       eventId: "20000000-0000-4000-8000-000000000002",
@@ -162,10 +161,7 @@ describe("platform collaboration wiring", () => {
     });
     expect(terminalDiscovery.status).toBe(200);
     expect(await terminalDiscovery.json()).toMatchObject({ items: expect.arrayContaining([expect.objectContaining({
-      resource: expect.objectContaining({
-        scope: expect.objectContaining({ id: terminalScopeId, kind: "terminal", role: "viewer" }),
-        terminal: expect.objectContaining({ id: "terminal_release", status: "active" }),
-      }),
+      scopeId: terminalScopeId, kind: "terminal", status: "accepted",
     })]) });
 
     await runtime.repository.applyDirectoryEvent({
@@ -182,12 +178,11 @@ describe("platform collaboration wiring", () => {
       headers: { "x-test-actor": platformCollaborationActors.recipientWithoutComputer },
     });
     expect(projectDiscovery.status).toBe(200);
-    expect(await projectDiscovery.json()).toMatchObject({ items: expect.arrayContaining([expect.objectContaining({
-      resource: expect.objectContaining({
-        scope: expect.objectContaining({ id: projectScopeId, kind: "project", role: "editor" }),
-        project: expect.objectContaining({ id: "proj_alpha", status: "active" }),
-      }),
+    const projectPage = await projectDiscovery.json() as { items: Array<Record<string, unknown>> };
+    expect(projectPage).toMatchObject({ items: expect.arrayContaining([expect.objectContaining({
+      scopeId: projectScopeId, kind: "project", status: "accepted", authorityGeneration: 2,
     })]) });
+    expect(projectPage.items.every((item) => !("resource" in item))).toBe(true);
     await runtime.shutdown();
   });
 });

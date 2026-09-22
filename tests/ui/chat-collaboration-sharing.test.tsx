@@ -79,6 +79,20 @@ describe("Chat collaboration sharing", () => {
     expect(snapshotApi.post).not.toHaveBeenCalled();
   });
 
+  it("keeps organization-pending cards visible without offering an unusable Open action", async () => {
+    const api = { baseUrl: "https://gateway.test", get: vi.fn(async (path: string) => path.endsWith("/inbox")
+      ? { items: [{ scopeId, runtimeId: "runtime_owner", ownerId: "user_owner", kind: "chat", authorityGeneration: 1,
+        status: "organization_pending", organizationId: "org_matrix_team" }] }
+      : { items: [] }), post: vi.fn(), delete: vi.fn() };
+    const openChat = vi.fn();
+    render(<ChatCollaboration view={{ kind: "home" }} api={api} actorId="user_editor" openChat={openChat} />);
+    expect(await screen.findByText("Shared with your organization")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Open" })).toBeNull();
+    expect(screen.queryByText(/opens when you join/i)).toBeNull();
+    expect(screen.getByText(/Access will be available when this share is enabled/i)).toBeVisible();
+    expect(openChat).not.toHaveBeenCalled();
+  });
+
   it("shows an authenticated invitation inbox and accepts into the shared Chat", async () => {
     const invitationId = "30000000-0000-4000-8000-000000000001";
     const invitation = {

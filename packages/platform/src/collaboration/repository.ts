@@ -28,6 +28,7 @@ export interface DirectoryEventInput {
   ownerId: string;
   kind: "chat" | "terminal" | "project";
   organizationId?: string;
+  audience?: "members" | "organization";
   authorityGeneration: number;
   metadataRevision: number;
   recipients: Array<{
@@ -45,6 +46,17 @@ export interface CollaborationDirectoryEntry {
   authorityGeneration: number;
   status: "invited" | "accepted" | "revoked";
   invitationId?: string;
+  organizationId?: string;
+}
+
+/** An organization-wide share a current member has not opened (S06 / T032); content stays on the home. */
+export interface CollaborationOrganizationShareEntry {
+  scopeId: string;
+  runtimeId: string;
+  ownerId: string;
+  kind: "chat" | "terminal" | "project";
+  authorityGeneration: number;
+  organizationId: string;
 }
 
 export class PlatformCollaborationRepository {
@@ -76,6 +88,7 @@ export class PlatformCollaborationRepository {
         owner_id: input.ownerId,
         kind: input.kind,
         organization_id: input.organizationId ?? null,
+        audience: input.audience ?? null,
         authority_generation: input.authorityGeneration,
         metadata_revision: input.metadataRevision,
         last_event_id: input.eventId,
@@ -83,6 +96,7 @@ export class PlatformCollaborationRepository {
       }).onConflict((conflict) => conflict.column("scope_id").doUpdateSet({
         kind: input.kind,
         ...(input.organizationId ? { organization_id: input.organizationId } : {}),
+        audience: input.audience ?? null,
         authority_generation: input.authorityGeneration,
         metadata_revision: input.metadataRevision,
         last_event_id: input.eventId,
@@ -278,6 +292,7 @@ export class PlatformCollaborationRepository {
         "directory.runtime_id",
         "directory.owner_id",
         "directory.kind",
+        "directory.organization_id",
         "directory.authority_generation",
         "user_index.status",
         "user_index.invitation_id",
@@ -307,6 +322,50 @@ export class PlatformCollaborationRepository {
         authorityGeneration: Number(row.authority_generation),
         status: row.status,
         ...(row.invitation_id === null ? {} : { invitationId: row.invitation_id }),
+        ...(row.organization_id === null ? {} : { organizationId: row.organization_id }),
+      })),
+      ...(last ? { nextCursor: { updatedAt: toIso(last.updated_at), scopeId: last.scope_id } } : {}),
+    };
+  }
+
+  /**
+   * Organization-wide shares in the actor's current organizations that the actor has no index row
+   * for (never opened, accepted or declined) and does not own. Metadata only; bounded.
+   */
+  async listOrganizationSharesForActorPage(
+    actorId: string,
+    organizationIds: readonly string[],
+    options: { limit: number; after?: { updatedAt: string; scopeId: string } },
+  ): Promise<{ items: CollaborationOrganizationShareEntry[]; nextCursor?: { updatedAt: string; scopeId: string } }> {
+    const organizations = [...new Set(organizationIds)].filter((id) => id.length > 0 && id.length <= 128).slice(0, 100);
+    if (organizations.length === 0) return { items: [] };
+    const limit = Math.max(1, Math.min(100, Math.trunc(options.limit)));
+    let query = this.db.selectFrom("collaboration_directory as directory")
+      .select(["directory.scope_id", "directory.runtime_id", "directory.owner_id", "directory.kind", "directory.organization_id", "directory.authority_generation", "directory.updated_at"])
+      .where("directory.audience", "=", "organization")
+      .where("directory.organization_id", "in", organizations)
+      .where("directory.owner_id", "!=", actorId)
+      .where(({ not, exists, selectFrom }) => not(exists(
+        selectFrom("collaboration_user_index as user_index").select("user_index.scope_id")
+          .whereRef("user_index.scope_id", "=", "directory.scope_id").where("user_index.actor_id", "=", actorId),
+      )));
+    if (options.after) {
+      query = query.where(({ and, eb, or }) => or([
+        eb("directory.updated_at", "<", options.after!.updatedAt),
+        and([
+          eb("directory.updated_at", "=", options.after!.updatedAt),
+          eb("directory.scope_id", ">", options.after!.scopeId),
+        ]),
+      ]));
+    }
+    const rows = await query.orderBy("directory.updated_at", "desc").orderBy("directory.scope_id", "asc")
+      .limit(limit + 1).execute();
+    const page = rows.slice(0, limit);
+    const last = rows.length > limit ? page.at(-1) : undefined;
+    return {
+      items: page.map((row) => ({
+        scopeId: row.scope_id, runtimeId: row.runtime_id, ownerId: row.owner_id, kind: row.kind,
+        authorityGeneration: Number(row.authority_generation), organizationId: row.organization_id!,
       })),
       ...(last ? { nextCursor: { updatedAt: toIso(last.updated_at), scopeId: last.scope_id } } : {}),
     };

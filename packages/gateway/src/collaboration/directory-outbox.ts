@@ -20,6 +20,8 @@ interface ClaimedDirectoryEvent {
   discoveryState: "invited" | "accepted" | "revoked" | "deleted";
   /** S05: read inside the claim transaction so a lookup failure leaves the event unclaimed and retryable. */
   organizationId: string | null;
+  /** S06: `organization` when an active organization-wide grant exists; read inside the same claim transaction. */
+  audience: "organization" | null;
   attempt: number;
 }
 
@@ -81,7 +83,9 @@ export class CollaborationDirectoryOutbox {
     const claimed = await this.claimBatch();
     let delivered = 0;
     for (const event of claimed) {
+      // S05/S06: both resolved inside the claim transaction; a failed lookup leaves the event unclaimed.
       const organizationId = event.organizationId;
+      const audience = event.audience;
       const payload = CollaborationDirectoryEventSchema.parse({
         eventId: event.eventId,
         scopeId: event.scopeId,
@@ -89,6 +93,7 @@ export class CollaborationDirectoryOutbox {
         ownerId: event.ownerId,
         kind: event.kind,
         ...(organizationId ? { organizationId } : {}),
+        ...(audience ? { audience } : {}),
         authorityGeneration: event.authorityGeneration,
         metadataRevision: event.metadataRevision,
         recipients: event.recipientEntries.map((recipient) => ({
@@ -146,6 +151,12 @@ export class CollaborationDirectoryOutbox {
           "scope.owner_id",
           "scope.organization_id",
           "event.revision",
+          (eb) => eb.exists(
+            eb.selectFrom("collaboration_grants as grant").select("grant.id")
+              .whereRef("grant.scope_id", "=", "outbox.scope_id")
+              .where("grant.audience_kind", "=", "organization")
+              .where("grant.state", "=", "active"),
+          ).as("organization_audience"),
         ])
         .where("outbox.authority_runtime_id", "=", this.options.runtimeId)
         .where("outbox.delivered_at", "is", null)
@@ -194,6 +205,7 @@ export class CollaborationDirectoryOutbox {
           recipientEntries,
           discoveryState: row.discovery_state,
           organizationId: row.organization_id ?? null,
+          audience: row.organization_audience === true || Number(row.organization_audience) === 1 ? "organization" : null,
           attempt,
         });
       }
