@@ -535,9 +535,11 @@ export class ChatRepository {
 
   async ownsAttachmentPath(ownerInput: ChatOwner, pathInput: string): Promise<boolean> {
     const owner = validateOwner(ownerInput);
-    const path = z.string().regex(
+    const parsedPath = z.string().regex(
       /^data\/chat-artifacts\/codex\/sha256\/[a-f0-9]{64}\.[a-z0-9]{1,10}$/,
-    ).parse(pathInput);
+    ).safeParse(pathInput);
+    if (!parsedPath.success) return false;
+    const path = parsedPath.data;
     const row = await this.kysely
       .selectFrom("chat_attachments as attachment")
       .innerJoin("chats as chat", "chat.id", "attachment.chat_id")

@@ -125,6 +125,7 @@ describe("canonical Chat artifacts", () => {
       { type: "personal", ownerId: "user_other" },
       artifactPath,
     )).resolves.toBe(false);
+    await expect(repository.ownsAttachmentPath(owner, "projects/private.txt")).resolves.toBe(false);
     const rows = await repository.kysely.selectFrom("chat_attachments").selectAll().execute();
     expect(rows).toHaveLength(1);
 
