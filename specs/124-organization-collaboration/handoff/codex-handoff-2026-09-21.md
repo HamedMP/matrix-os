@@ -1600,3 +1600,62 @@ gatewayCollaboration.enableSharedAi({` versus S18's `await enableOwnerSharedAi({
 
 **Conflict totals:** `server-composition` 1 of 13 commits, `server-extraction` 1 of 3, `t090-retirement` 1, plus
 the 2 in the base — 5 across 100 replayed commits.
+
+## 60. Correcting the subject-map method, and the counts it produced — 2026-09-22 09:15 UTC
+
+**The method in sections 50, 51 and 52 has two flaws. The shapes it identified are right; several of the
+counts are inflated. Anyone reusing it must apply both fixes first.**
+
+### Flaw 1 — the canon set had a 21-commit hole
+
+Canon was built as `origin/main..124/s07-terminal` plus `7ffac5e05..124/s15`. After #1802 merged and the chain
+was rebased, **`124/s05` is no longer an ancestor of `124/s07-terminal`** — verified — because its 21 commits
+now live in `main` as the squash `4f13d4c6d`. So `origin/main..124/s07-terminal` returns 133 commits and
+excludes all 21.
+
+Those 21 are exactly the leading `1`-block I saw on every branch and described in section 50 as "21 pre-squash
+originals of S01-S04 work". **That attribution was wrong.** It is the S05 layer, missing from canon. It
+inflated the "own subjects" counts for `124/s10-git-hardening` and `124/s12-app` in particular.
+
+**Fix:** add `git log --format=%s origin/main..124/s05` to the canon file before mapping anything.
+
+### Flaw 2 — squash merges rename commits, so subject matching misses them
+
+A squash merge appends ` (#NNNN)` to the subject. A branch commit reading `feat(collaboration): gate every home
+operation on the organization precondition` therefore does **not** match `main`'s
+`feat(collaboration): gate every home operation on the organization precondition (#1817)`.
+
+Confirmed: comparing `124/s19-acceptance`'s 156 subjects against only the last 50 `main` subjects with the
+suffix stripped already yields 8 matches, and the true figure across full history is ~39. **Subject matching
+alone over-reports own work roughly threefold on the older-generation branches.**
+
+**Fix:** strip ` (#NNNN)` from `main`'s subjects and include them in canon.
+
+**A caution on the obvious alternative.** Patch-id (`git patch-id --stable`, `git cherry`) does **not** rescue
+this. `git cherry origin/main 124/s19-acceptance` reports all 156 commits as absent, because a squash is one
+commit whose patch-id matches none of the individuals it replaced. Patch-id is right for detecting *rebase
+copies*; it is blind to *squashed* content. **Use both: patch-id for copies, suffix-stripped subjects for
+squashes.**
+
+### Results after correction
+
+**`124/s12-app` — refuted, nothing to do.** It is not a stale descendant. It is exactly **4 commits above
+`124/s12`** and is already an ancestor of `124/s15-gateway`, `s15-directory`, `s15-direct` and `s15` — both
+verified. Its position is correct as it stands; oldbase `7ffac5e05` does not apply and no restack command is
+needed. Its own work is `129723280`, `35bc223a0`, `94407bd82`, `5cbd2084b`.
+
+**`124/s10-git-hardening` — integrated-base graft, grafts cleanly.** 209 commits above fork `d29312c91`, of
+which **190 are byte-identical copies by patch-id**, covering chain positions 39→233 monotonically: a flattened
+copy of the whole stack through `124/s15`'s head. Graft base `0d0df2c91`, the copy's twin of `e76713d23`
+(`124/s15` HEAD). **Own work: 18 commits, contiguous at the tip** — the Git broker hardening: member-writable
+config kept away from owner-credentialed remote operations, owner identity resolved from the owner's global
+config only, project roots required to own their repository, definite push failures settled with only the owner
+expiring unresolved effects, and PR bodies streamed over stdin with `gh` run in an empty private cwd.
+
+One commit below the graft base, `15d4eaa5c` *"mount owner resource services in gateway"*, is a stale variant of
+the chain's `85adc491f`; a rebase from `0d0df2c91` discards it, which is the correct outcome.
+
+### One more thing this surfaced
+
+`origin/main` is now `4f13d4c6d`, **11 commits ahead of the `e0c7d5729` that the `s05→s15` line is based on**.
+`124/s07-terminal` has been rebased onto it; the rest of that line has not. Factor that in when restacking.
