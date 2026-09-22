@@ -1420,3 +1420,72 @@ One resolution note: S09 guards `ownerSource` construction on `eligibility && ex
 for reasons that do not hold at the target — found two things here: a real misplacement (the watchdog) and an
 overstated claim (this one). Both were found before any code moved, and neither would have produced a test
 failure.
+
+## 57. `main` is red for an unrelated reason, and it blocks the whole queue — 2026-09-22 08:30 UTC
+
+**Every unit-test shard on `main` has failed since 04:38 UTC**, from PR #1815
+(`6be1c67d1 feat(chat): display delegated agent activity`). The previous main, `3cb53c6cd`, was green.
+
+```
+Error: Failed to resolve import "@matrix-os/contracts/chat-subagent" from
+"desktop/src/renderer/src/features/coding-agents/AgentConversationView.tsx"
+```
+
+Four desktop suites fail to collect: `coding-agent-conversation-approvals`, `draft-chat-send`,
+`mission-control-autoselect`, `project-chats-view-layout`.
+
+**Cause.** The package is fine — `packages/contracts/package.json` has
+`"./chat-subagent": "./src/chat-subagent.ts"`, the file exists, and the subpath resolves outside Vitest.
+`vitest.config.ts` aliases the package root to `src/index.ts`, and **Vite object aliases match by prefix**, so
+`@matrix-os/contracts/chat-subagent` hits that entry and resolves to a path *inside* `index.ts`. The config
+avoids this everywhere else by listing each subpath explicitly above the bare entry — `./collaboration` for
+contracts, and the same for brand, observability and kernel. The new subpath arrived without its alias.
+
+**Fix open as #1835** (`fix/vitest-contracts-chat-subagent-alias`), one line in the position the convention
+already uses, from a worktree off `main`. Verified locally: the four failing suites pass, **36 tests, exit 0**.
+
+**Deliberately not fixed in that PR:** the alias list must be hand-synced with each package's exports map and
+nothing enforces it — that gap *is* this bug, not a typo. A regex alias mirroring the exports map would remove
+the class entirely, but it changes a convention used across four packages and does not belong in a change
+unblocking a red `main`. Worth a follow-up.
+
+**Consequence for the release.** #1803's CI failure is **inherited, not caused**. The branch content is
+identical to `main` for every file involved. No layer can show a green run until #1835 lands.
+
+### Two more CI blind spots, both verified verbatim
+
+**1. A suite reports the same pass count against a fake database.**
+`tests/gateway/collaboration-direct-sessions.test.ts:101` picks its fixture at runtime with **no skip guard**:
+
+```ts
+fixture = process.env.MATRIX_TEST_POSTGRES_URL
+  ? await createRealCollaborationTestDatabase()
+  : await createCollaborationTestDatabase();
+```
+
+Without the variable it still reports **35/35 — against an in-memory fake**. CI has no Postgres URL, so CI's
+green on this suite is the fake path. The same 35 were independently re-run *with* the variable set: same
+number, much stronger claim. **A pass count is not evidence of which backend ran.**
+
+**2. Real-Postgres races are skipped entirely in CI.**
+`tests/gateway/collaboration-project-transition.test.ts:713`:
+
+```ts
+const realDescribe = process.env.MATRIX_TEST_POSTGRES_URL ? describe : describe.skip;
+```
+
+A genuine failure lives behind that gate: *"admits one preparation and publishes one authority under concurrent
+activation"* fails with **zero** preparations fulfilled, not two — both concurrent activations rejected, nothing
+published. It reproduces on two different worktrees on two different mains, and the file is not in any spec-124
+layer's diff. **Pre-existing on `main`, invisible to CI.**
+
+### Layers verified locally while the queue is blocked
+
+- **#1804 `124/s05-relay` @ `128aee713`** — typecheck 0, patterns 0 (5 pre-existing warnings, zero in touched
+  files), **80 passed / 0 skipped** across 7 suites, plus e2e 4 passed. The settlement-timeout fix confirmed
+  per-test: *"refuses the upload rather than relaying an answer when the body never settles"* passes, and both
+  neighbours pinning precedence ordering still pass, so the timeout case was not bought by breaking them.
+- **#1805 `124/s08` @ `6a89d4fe3`** — typecheck 0, patterns 0, 11 suites exit 0.
+
+**Environment note for anyone reproducing:** `bun` is not on `PATH` in a fresh shell (`exit 127`); prefix with
+`/home/nima/.bun/bin`. Toolchain: Node v24.14.1, bun 1.4.2, pnpm 10.33.4, PostgreSQL 16.13.
