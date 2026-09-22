@@ -1,52 +1,110 @@
-# Implementation plan: Jev recipes and use-jevs
+# Implementation plan: Jev email triage
 
-Updated: 2026-09-21. [Product spec](spec.md), [design](design.zh-en.md). All tasks below remain implementation work; this PR changes documents only.
+Updated: 2026-09-22. [Product spec](spec.md), [design](design.zh-en.md), [tasks](tasks.md).
 
-## 1. Confirm existing Gateway contract
+## Technical context
 
-- [ ] Locate Hamed's Jev API and record exact endpoint, evaluation schema, model mapping, scoped-runtime authentication, usage and billing semantics.
-- [ ] Verify a real owner-scoped call, correct credit settlement and zero-credit/policy rejection. No personal TypeSafe key in setup.
-- [ ] Confirm Gateway Jev eligibility is independent of the main model's provider selection. Record the minimal missing adapter/wiring if any; do not build another Gateway.
+- Runtime: Node.js 24+, strict TypeScript, ES modules, Zod 4.
+- HTTP: Hono for the local Gateway and funded relay.
+- Existing infrastructure: owner-scoped funded AI credentials, admission/credit settlement, Matrix integrations MCP, Gmail integration actions and bundled skill sync.
+- External API: Vercel AI Gateway evaluation endpoint with fixed `typesafe-ai/jev` model.
+- Testing: Vitest contract, unit, route and controlled-upstream integration tests; tests precede implementation.
+- Persistence: reuse the existing Postgres/Kysely funded accounting and idempotency mechanisms. Do not add an embedded database or new ORM.
 
-## 2. Shared decision tool
+## Constitution check
 
-Likely touch points: existing integrations MCP registration, focused Gateway adapter/contracts, existing funded runtime credentials and accounting. Verify current paths before editing; extract rather than expanding oversized composition files.
+- **Owner data**: email content stays in the owner's Gmail/Matrix runtime path; only bounded transient evidence is sent for evaluation. Normal logs and accounting do not persist bodies.
+- **AI kernel**: Jev is a typed decision tool available to agents, while final action policy remains with Matrix.
+- **Headless core**: Gateway/tool/skill work without a new UI and remain usable by every verified agent shell.
+- **Defense in depth**: exact auth matrix, strict schemas, body limits, fixed upstream, timeout, redirect rejection, safe errors, idempotency and integration wiring tests are specified.
+- **TDD**: each production slice begins with failing tests.
+- **Worktree/PR**: implementation uses a new manual worktree and stacked PR based on the spec PR.
+- **Public docs**: a separate Matrix site PR is a release deliverable.
 
-- [ ] Write failing contract tests for text/question bounds, stable IDs, choice membership, confidence/abstention and invalid response handling.
-- [ ] Write auth/accounting tests for cross-owner access, disabled policy, insufficient credit, duplicate dispatch, settlement replay and unknown timeout outcomes.
-- [ ] Implement one jev_judge tool calling the verified existing API; no key/payer/endpoint/approval input fields.
-- [ ] Reuse timeouts, bounded response handling, live policy, atomic accounting and idempotency; no automatic paid retries.
-- [ ] Register dependencies at startup and expose truthful capability/readiness. Run focused checks and existing tool/funded-path regression tests.
+## Phase 1 — Contracts and deterministic policy
 
-## 3. Bundle use-jevs
+Add shared Zod schemas for recipe request/result and the seven answer IDs. Add a pure `email-triage-v1` recipe definition and policy evaluator with the documented verification, label, Review and archive thresholds.
 
-- [ ] Use the repository's existing skill authoring/catalog/distribution paths; synchronize generated outputs through their source mechanism.
-- [ ] Write the skill guidance from the design: selective calls, compact evidence, batching, stable labels, hand_back, authorization and truthful outcomes.
-- [ ] Verify discoverability and actual shared-tool access from Matrix Hermes. Verify additional agents individually before naming them supported.
-- [ ] Test missing skill/tool, denied Matrix AI, imported workflows and primary model on a personal account. No global hooks, provider switch or separate credential setup.
+Tests cover request bounds, missing/duplicate/unknown answers, non-finite/out-of-range probability, all labels, overlapping labels, protected-category conflicts, recency, Review paths and the exact archive gate. This phase has no network or mailbox mutation.
 
-## 4. Build three initial recipes
+Likely paths:
 
-- [ ] Email triage: bounded categories and message IDs; safe fixture dataset; recommendations only.
-- [ ] Research shortlist: relevance judgments with stable source IDs; main-agent evidence verification.
-- [ ] Task routing: choose available skill/tool candidates with hand_back; retain independent action permissions.
-- [ ] Reuse existing recipe/skill references and add only necessary readiness/dependency semantics; no generic workflow engine.
-- [ ] For each recipe record inputs, successful real call/output, ambiguous judgment and unavailable/zero-credit behavior. Preserve old recipe compatibility.
+- `packages/contracts/src/jev.ts`
+- `packages/contracts/src/index.ts`
+- `packages/gateway/src/jev/email-triage-recipe.ts`
+- `packages/gateway/src/jev/email-triage-policy.ts`
+- `tests/contracts/jev.test.ts`
+- `tests/gateway/jev-email-triage-policy.test.ts`
 
-## 5. Minimal UI and runtime acceptance
+## Phase 2 — Funded relay evaluation adapter
 
-- [ ] Reuse recipe/skill discovery, Matrix AI status/top-up and Chat activity. Add no Jev settings panel, source selector or key form.
-- [ ] Verify optional fallback versus explicitly required-step blocking, truthful usage, owner/runtime switches and applicable OS presentation parity.
-- [ ] Demonstrate a personal-main-model run with only Jev steps charged to Matrix AI; verify actual owner accounting.
-- [ ] Measure success/latency/main-model and Jev usage on the fixed demos without assuming savings.
-- [ ] Perform exact-head Human Review and required checks, documenting actual supported agent/runtime combinations.
+Extend the funded relay with one strict `/v1/evaluate` route. Reuse bearer lease verification, owner policy, rate/concurrency admission, credit reservation, settlement and shutdown behavior. Accept only the fixed Jev model and bounded evaluation schema, call the fixed Vercel origin with an abort deadline and `redirect: "error"`, bound the response, validate all seven answers and normalize usage/cost metadata.
 
-## 6. Documentation and release
+No database transaction spans the external call. Actual settlement uses trusted Gateway cost metadata when present; missing or unknown cost follows an explicit conservative reconciliation path. No blind retry occurs after an ambiguous timeout.
 
-- [ ] Deliver a separate public documentation PR in the site repository covering recipes, use-jevs invocation, Matrix credit requirements, unchanged main-model provider and failure recovery.
-- [ ] Gate availability on actual Jev endpoint/auth/accounting readiness; feature disable stops future dispatch non-destructively.
-- [ ] Complete review/CI gates before any separately authorized rollout.
+Likely paths:
 
-## Explicitly deferred
+- `packages/proxy/src/funded-relay-evaluation-request.ts`
+- `packages/proxy/src/funded-relay-evaluation-response.ts`
+- `packages/proxy/src/funded-relay-config.ts`
+- `packages/proxy/src/funded-relay.ts`
+- `tests/proxy/funded-relay-evaluation.test.ts`
+- existing funded relay regression suites
 
-Personal Jev keys and source switching; Ultrafast/browser execution; native OS navigation; a generic MCP-dependency framework; universal coding-agent support. These do not block completion of the agreed first release.
+## Phase 3 — Local Gateway route and service
+
+Add `POST /api/jev/evaluate` behind the existing local Gateway bearer authentication and `bodyLimit`. Its schema accepts only recipe ID, state and idempotency key. Resolve the immutable recipe server-side, acquire the authenticated owner's funded credential, call the relay with a deadline, validate the normalized result and return safe typed errors.
+
+Idempotency is owner scoped. Completed duplicates do not re-dispatch. Requests with unknown upstream outcomes remain reconcilable and are not automatically repeated. Dependency resolution happens at route/service registration.
+
+Likely paths:
+
+- `packages/gateway/src/jev/service.ts`
+- `packages/gateway/src/jev/routes.ts`
+- the focused Gateway composition file that mounts authenticated routes
+- `tests/gateway/jev-routes.test.ts`
+- `tests/gateway/jev-service.test.ts`
+
+## Phase 4 — MCP tool and bundled skill
+
+Expose `jev_evaluate` through the existing `matrix-integrations` MCP. The tool delegates to the local Gateway using the same runtime authentication as existing integration calls. It does not accept credentials, owner IDs, model IDs or arbitrary questions.
+
+Bundle `matrix-jev-email-triage` through the existing skill source/sync path. The skill uses existing Gmail list/get/history/label actions, builds bounded snippet/full states, computes fingerprints, calls Jev, previews unauthorized mutations and applies only authorized labels/`INBOX` removal.
+
+Likely paths:
+
+- `packages/kernel/src/tools/integrations.ts`
+- `packages/integrations-mcp/src/server.ts`
+- `skills/matrix/jev-email-triage/SKILL.md`
+- skill sync/build tests and generated outputs, if any
+- `tests/integrations/mcp-server.test.ts`
+- `tests/deploy/customer-vps/integrations-mcp-registration.test.ts`
+- `tests/gateway/jev-email-triage-workflow.test.ts`
+
+## Phase 5 — Acceptance and documentation
+
+Run the focused suites, typecheck, pattern scanner and relevant full test suites. Verify one exact-head owner-scoped evaluation, credit settlement, zero-credit denial, personal-primary-model independence, supported-agent discovery/invocation and a controlled Gmail fixture/demo. Inspect logs for raw body/credential leakage.
+
+Create a separate PR in `FinnaAI/matrix-os-site` that documents Matrix-funded Jev access, unchanged primary-model selection, Gmail permissions, label/Review/archive behavior and recovery when credit, auth or Jev is unavailable.
+
+Availability remains disabled until runtime evidence and required CI/review gates pass. Production deployment is separately authorized.
+
+## Stacked PR plan
+
+| Stack | Scope | Base | Independent acceptance |
+|---|---|---|---|
+| A | Spec/design/tasks | `origin/main` | Spec checklist and prerequisite validation |
+| B | Contracts, policy, relay adapter and local route | A | Controlled upstream call settles once and returns seven valid probabilities |
+| C | MCP tool, skill and Gmail orchestration | B | Supported agent completes fixture-backed triage with safe mutations |
+| D | Public docs in site repository | Released product behavior | Docs build and reviewed screenshots/copy |
+
+Each code PR stays reviewable and demoable. Stack B must not wait for Gmail mutation; Stack C must not duplicate the relay client or recipe contract.
+
+## Risks and controls
+
+- **Double charge after timeout**: stable idempotency, no blind retry, existing reservation reconciliation.
+- **Unsafe archive**: full-context-only archive, strict conflict thresholds, pure policy tests and only `INBOX` removal.
+- **Prompt injection in email**: email is serialized as evidence under fixed server recipe; it cannot supply instructions or tool arguments.
+- **Credential leakage**: service keys remain in relay config; client schemas exclude them and safe errors/log tests assert absence.
+- **Unbounded inbox work**: bounded batches, state sizes, message count, rate/concurrency and incremental fingerprints.
+- **Advertised but unwired capability**: registration-time dependency checks and a full-path integration test.
