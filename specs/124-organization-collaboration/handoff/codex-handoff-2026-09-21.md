@@ -1760,3 +1760,45 @@ one).
 **Method note worth reusing:** when a composite gate fails, re-run its steps individually before concluding
 anything about what is broken. The composite's exit code tells you that *something* failed, not that only that
 thing failed.
+
+## 63. Four layers merged — 2026-09-22 10:45 UTC
+
+`main` is `096151518`. Merged in order, each with base verified as `main` immediately beforehand, a **current-head
+Greptile 5/5**, zero unresolved threads and a completed CI run:
+
+| PR | layer |
+| --- | --- |
+| #1802 | `feat(platform): register relay-routable homes and issue signed connection tickets` |
+| #1803 | `feat(collaboration): authenticate direct sessions on the home with single-use tickets` |
+| #1804 | `feat(platform): extract the transparent collaboration relay` |
+| #1805 | `feat(collaboration): bind shared runs to one owner-selected AI source` |
+
+Plus the two `main` repairs, #1835 and #1840. Three layers remain: #1806, #1807, #1808.
+
+**The working loop, which is now reliable.** Retarget the next PR's base to `main` (`gh pr edit N --base main`
+— GitHub does **not** do this automatically, because the parent branch still exists and must not be deleted
+while descendants are open); rebase everything above it `--onto origin/main` with the previous head as oldbase;
+push with `--force-with-lease`; let the retarget fire CI and add `ready-for-ci` only if absent; request one
+review per moved head; merge on green.
+
+**Duplicate runs are expected.** Retargeting and labelling can each fire a run, and the loser parks in the
+concurrency group with **zero jobs**. Cancel the empty one; the real run shows ~14–15 jobs.
+
+### Treating a red CI honestly without treating it as fatal
+
+#1805's first run failed on `tests/e2e/terminal-soft-grid.e2e.test.ts`,
+*"keeps the final row visible in 'Electron Desktop' at zoom 1"*, with `expected 60 to be less than or equal to
+1` and `Matcher did not succeed in time`. Before re-running, three things were checked:
+
+- **no terminal file appears in that layer's diff** (`git diff --name-only origin/main...124/s08`);
+- `main`'s last **completed** run was green;
+- it was the **only** CI failure across the last 40 runs, so not a systemic break.
+
+Only then was the job re-run, and it passed clean. **That order matters.** Re-running first and reasoning
+afterwards is how a real failure gets retried until it looks like a flake. The checks are cheap and they are
+what distinguishes "flake" from "intermittent real defect".
+
+**Still open across the release:** #1831 (revocation watermark at admission), #1832 (deprecated Zod spelling),
+#1836 (database suites against a fake or skipped, plus a concurrency test that has never run), #1838 (`main`
+red from the picker change; now fixed), #1841 (typecheck short-circuits past four packages), #1830 (repo-root
+tests never typechecked), #1828/#1829 (contracts entrypoint, direct terminal WebSocket 404).
