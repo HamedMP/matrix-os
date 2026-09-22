@@ -404,6 +404,9 @@ function ConversationTurn({
   initialFinalIds: ReadonlySet<string>;
 }) {
   const [expanded, setExpanded] = useState(turn.expandedByDefault ?? false);
+  const scopedCallbacks: ConversationPresentationCallbacks = turn.executionRoot && callbacks.openFile
+    ? { ...callbacks, openFile: (path) => callbacks.openFile!(path, turn.executionRoot) }
+    : callbacks;
   const showWork = turn.active || expanded;
   const hasWork = turn.work.length > 0;
   const terminalPartial = !turn.active
@@ -418,7 +421,7 @@ function ConversationTurn({
   ));
   return (
     <>
-      {turn.user ? <UserMessage message={turn.user} callbacks={callbacks} /> : null}
+      {turn.user ? <UserMessage message={turn.user} callbacks={scopedCallbacks} /> : null}
       <ChatContextReceipt context={turn.runContext} />
       {hasWork || turn.final || turn.active ? (
         <TurnReceipt
@@ -434,24 +437,24 @@ function ConversationTurn({
         visibleTimeline && visibleTimeline.length > 0 ? (
           <div data-turn-timeline className="flex min-w-0 flex-col gap-0.5">
             {visibleTimeline.map((entry) => entry.kind === "user-followup"
-              ? <UserMessage key={entry.message.id} message={entry.message} callbacks={callbacks} />
-              : <PresentationItem key={entry.item.id} item={entry.item} callbacks={callbacks} />)}
+              ? <UserMessage key={entry.message.id} message={entry.message} callbacks={scopedCallbacks} />
+              : <PresentationItem key={entry.item.id} item={entry.item} callbacks={scopedCallbacks} />)}
           </div>
         ) : null
       ) : visibleWork.length > 0 ? (
         <div data-work-items className="flex min-w-0 flex-col gap-0.5">
           {visibleWork.map((item) => (
-            <PresentationItem key={item.id} item={item} callbacks={callbacks} />
+            <PresentationItem key={item.id} item={item} callbacks={scopedCallbacks} />
           ))}
         </div>
       ) : null}
       {!timeline ? turn.userFollowups?.map((message) => (
-        <UserMessage key={message.id} message={message} callbacks={callbacks} />
+        <UserMessage key={message.id} message={message} callbacks={scopedCallbacks} />
       )) : null}
       {turn.final ? (
         <PresentationItem
           item={turn.final}
-          callbacks={callbacks}
+          callbacks={scopedCallbacks}
           showMetadata={!turn.active}
           streaming={turn.active}
           animateOnMount={

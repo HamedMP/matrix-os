@@ -1,6 +1,6 @@
 import { resolveChatMessageLink } from "@matrix-os/contracts";
 import type { InspectorFileTarget } from "../panels/InspectorFilesPanel";
-import type { CanonicalChatDetailResponse } from "@matrix-os/contracts";
+import type { CanonicalChatDetailResponse, CanonicalChatExecutionRootRef } from "@matrix-os/contracts";
 import type { Project } from "../../stores/board";
 
 export type WorkFilesScope =
@@ -48,4 +48,20 @@ export function resolveChatInspectorTarget(rawPath: string, scope: WorkFilesScop
   return scope.kind === "home" || ownerPath
     ? { kind: "home", path: link.path, label }
     : { kind: "project", projectId: scope.projectId, worktreeId: scope.worktreeId, path: link.path, label };
+}
+
+export function resolveChatInspectorTargetForRun(
+  rawPath: string,
+  scope: WorkFilesScope,
+  runRoot: CanonicalChatExecutionRootRef | undefined,
+  chatProjectId: string | undefined,
+): InspectorFileTarget | null {
+  if (runRoot && runRoot.projectId !== chatProjectId) return null;
+  const selectedScope = runRoot && scope.kind === "project"
+    ? {
+        ...scope,
+        worktreeId: runRoot.kind === "worktree" ? runRoot.worktreeId : undefined,
+      }
+    : scope;
+  return resolveChatInspectorTarget(rawPath, selectedScope);
 }

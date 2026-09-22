@@ -1,5 +1,5 @@
 import type { CanonicalChatDetailResponse } from "@matrix-os/contracts";
-import { resolveWorkFilesScope } from "@desktop/renderer/src/features/work/work-files-scope";
+import { resolveWorkFilesScope, resolveChatInspectorTargetForRun } from "@desktop/renderer/src/features/work/work-files-scope";
 import type { Project } from "@desktop/renderer/src/stores/board";
 import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat";
 import { describe, expect, it } from "vitest";
@@ -56,6 +56,21 @@ function detail(options: {
 }
 
 describe("resolveWorkFilesScope", () => {
+  it("opens a historical message in its originating worktree", () => {
+    const latest = resolveWorkFilesScope(detail({
+      projectId: "project_stable",
+      roots: [
+        { kind: "worktree", projectId: "project_stable", worktreeId: "wt_old" },
+        { kind: "worktree", projectId: "project_stable", worktreeId: "wt_new" },
+      ],
+    }), [project]);
+    expect(resolveChatInspectorTargetForRun("image.png", latest, {
+      kind: "worktree", projectId: "project_stable", worktreeId: "wt_old",
+    }, "project_stable")).toMatchObject({ kind: "project", path: "image.png", worktreeId: "wt_old" });
+    expect(resolveChatInspectorTargetForRun("image.png", latest, {
+      kind: "project", projectId: "project_stable",
+    }, "project_stable")).toMatchObject({ kind: "project", path: "image.png", worktreeId: undefined });
+  });
   it("uses Matrix Home for a Global Chat regardless of run roots", () => {
     expect(resolveWorkFilesScope(detail({
       roots: [{ kind: "worktree", projectId: "foreign", worktreeId: "wt_foreign" }],

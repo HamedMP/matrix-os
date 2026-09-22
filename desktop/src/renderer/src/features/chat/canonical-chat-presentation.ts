@@ -714,6 +714,7 @@ export function canonicalChatPresentation(input: {
     return {
       id: turn.id,
       ...(run?.context ? { runContext: run.context } : {}),
+      ...(run?.executionRoot ? { executionRoot: run.executionRoot } : {}),
       ...(chatAgentAttribution(run) ? { agentLabel: chatAgentAttribution(run) } : {}),
       startedAt,
       endedAt,
