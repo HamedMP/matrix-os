@@ -1,4 +1,17 @@
 import type { PlatformSpeechCapture, PlatformSpeechCaptureAdapter } from "./use-platform-speech-draft.js";
+import {
+  encodePcm16WavBytes,
+  normalizeSpeechInputLevel,
+  PlatformSpeechRecorderError,
+  smoothSpeechInputLevel,
+} from "./pcm.js";
+
+export {
+  encodePcm16WavBytes,
+  normalizeSpeechInputLevel,
+  PlatformSpeechRecorderError,
+  smoothSpeechInputLevel,
+} from "./pcm.js";
 
 const WAV_HEADER_BYTES = 44;
 const MAX_PCM_CHUNKS = 512;
@@ -7,57 +20,13 @@ const MAX_SAMPLE_RATE = 96_000;
 const WORKLET_ASSET_PATH = "speech-pcm-capture-worklet.js";
 const FLUSH_TIMEOUT_MS = 500;
 
-export class PlatformSpeechRecorderError extends Error {
-  constructor(readonly safeMessage: string) {
-    super(safeMessage);
-    this.name = "PlatformSpeechRecorderError";
-  }
-}
-
 export function resolveSpeechWorkletUrl(documentUrl: string = window.location.href): string {
   return new URL(`./${WORKLET_ASSET_PATH}`, documentUrl).toString();
 }
 
-function writeAscii(view: DataView, offset: number, value: string): void {
-  for (let index = 0; index < value.length; index += 1) view.setUint8(offset + index, value.charCodeAt(index));
-}
-
 export function encodePcm16Wav(chunks: readonly Int16Array[], sampleRate: number): Blob {
-  if (!Number.isSafeInteger(sampleRate) || sampleRate < MIN_SAMPLE_RATE || sampleRate > MAX_SAMPLE_RATE) {
-    throw new PlatformSpeechRecorderError("Unsupported microphone sample rate");
-  }
-  let sampleCount = 0;
-  for (const chunk of chunks) {
-    if (!(chunk instanceof Int16Array) || chunk.length === 0) continue;
-    sampleCount += chunk.length;
-    if (!Number.isSafeInteger(sampleCount) || sampleCount > (0xffff_ffff - WAV_HEADER_BYTES) / 2) {
-      throw new PlatformSpeechRecorderError("This recording is too large");
-    }
-  }
-  if (sampleCount === 0) throw new PlatformSpeechRecorderError("This recording is empty");
-  const bytes = new Uint8Array(WAV_HEADER_BYTES + sampleCount * 2);
-  const view = new DataView(bytes.buffer);
-  writeAscii(view, 0, "RIFF");
-  view.setUint32(4, bytes.byteLength - 8, true);
-  writeAscii(view, 8, "WAVE");
-  writeAscii(view, 12, "fmt ");
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true);
-  view.setUint16(22, 1, true);
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * 2, true);
-  view.setUint16(32, 2, true);
-  view.setUint16(34, 16, true);
-  writeAscii(view, 36, "data");
-  view.setUint32(40, sampleCount * 2, true);
-  let offset = WAV_HEADER_BYTES;
-  for (const chunk of chunks) {
-    for (let index = 0; index < chunk.length; index += 1) {
-      view.setInt16(offset, chunk[index] ?? 0, true);
-      offset += 2;
-    }
-  }
-  return new Blob([bytes], { type: "audio/wav" });
+  const bytes = encodePcm16WavBytes(chunks, sampleRate);
+  return new Blob([bytes.buffer as ArrayBuffer], { type: "audio/wav" });
 }
 
 function canCapturePcm(): boolean {
@@ -105,12 +74,18 @@ export function createWebPcmSpeechCaptureAdapter(options: { workletUrl?: string 
         const chunks: Int16Array[] = [];
         let pcmBytes = 0;
         let overflowed = false;
+        let smoothedLevel = 0;
         let flushComplete: (() => void) | undefined;
         worklet.port.onmessage = (event: MessageEvent<unknown>) => {
           if (!event.data || typeof event.data !== "object") return;
-          const message = event.data as { type?: unknown; bytes?: unknown };
+          const message = event.data as { type?: unknown; bytes?: unknown; level?: unknown };
           if (message.type === "flushed") {
             flushComplete?.();
+            return;
+          }
+          if (message.type === "level" && typeof message.level === "number") {
+            smoothedLevel = smoothSpeechInputLevel(smoothedLevel, normalizeSpeechInputLevel(message.level));
+            input.onLevel?.(smoothedLevel);
             return;
           }
           if (message.type !== "audio" || !(message.bytes instanceof ArrayBuffer)) return;

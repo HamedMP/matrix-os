@@ -115,6 +115,14 @@ async function exposeSpeechReady(page: import("@playwright/test").Page) {
   }));
 }
 
+async function openChatFromPalette(page: import("@playwright/test").Page) {
+  await page.keyboard.press("Meta+k");
+  await page.waitForTimeout(300);
+  await page.keyboard.type("Chat");
+  await page.keyboard.press("Enter");
+  await expect(page.getByText("Checking connection", { exact: true })).toBeHidden();
+}
+
 test.describe("Visual regression", () => {
   test.beforeEach(async ({ page }) => {
     // Match the platform-owned app shell request boundary so the server-rendered
@@ -252,9 +260,7 @@ test.describe("Visual regression", () => {
       contentType: "application/json",
       body: JSON.stringify({ revision: 1, instances: [] }),
     }));
-    await page.keyboard.press("Meta+k");
-    await page.keyboard.type("Chat");
-    await page.keyboard.press("Enter");
+    await openChatFromPalette(page);
 
     const draft = page.getByPlaceholder("Write or dictate a draft — connect a harness to send");
     await expect(draft).toBeEditable();
@@ -265,6 +271,20 @@ test.describe("Visual regression", () => {
     await draft.fill("");
     await expect(draft).toHaveValue("");
     await expect(page).toHaveScreenshot("chat-speech-disconnected-draft.png", {
+      maxDiffPixelRatio: 0.01,
+    });
+  });
+
+  test("speech recording shows the live nine-bar waveform", async ({ page }) => {
+    await exposeSpeechReady(page);
+    await openChatFromPalette(page);
+    const microphone = page.getByRole("button", { name: "Start voice input" });
+    await expect(microphone).toBeVisible();
+    await microphone.click();
+    await expect(page.getByRole("button", { name: "Stop recording" })).toBeVisible();
+    await expect(page.getByTestId("speech-input-waveform")).toBeVisible();
+    await page.waitForTimeout(250);
+    await expect(page).toHaveScreenshot("chat-speech-recording-waveform.png", {
       maxDiffPixelRatio: 0.01,
     });
   });

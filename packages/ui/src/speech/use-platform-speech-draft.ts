@@ -17,26 +17,39 @@ export interface UsePlatformSpeechDraftResult {
   error: string | null;
   isSupported: boolean;
   elapsedMs: number;
+  /** Current microphone energy, normalized to the inclusive range 0..1. */
+  inputLevel: number;
+  /** Monotonic meter sample sequence so equal consecutive levels still render. */
+  inputLevelSequence: number;
   start(): Promise<void>;
   stop(): void;
   cancel(): void;
 }
 
-export interface PlatformSpeechCapture {
-  stop(): Promise<Blob>;
+export interface PlatformSpeechRecording {
+  size: number;
+  type: string;
+}
+
+export interface PlatformSpeechCapture<TRecording extends PlatformSpeechRecording = Blob> {
+  stop(): Promise<TRecording>;
   cancel(): Promise<void>;
 }
 
-export interface PlatformSpeechCaptureAdapter {
+export interface PlatformSpeechCaptureAdapter<TRecording extends PlatformSpeechRecording = Blob> {
   isSupported(): boolean;
-  start(input: { maxBytes: number; signal: AbortSignal }): Promise<PlatformSpeechCapture>;
+  start(input: {
+    maxBytes: number;
+    signal: AbortSignal;
+    onLevel?: (level: number) => void;
+  }): Promise<PlatformSpeechCapture<TRecording>>;
 }
 
-export interface PlatformSpeechDraftClient {
+export interface PlatformSpeechDraftClient<TRecording extends PlatformSpeechRecording = Blob> {
   capabilities(signal?: AbortSignal): Promise<SpeechCapabilitiesResponse>;
   transcribe(input: {
     requestId: string;
-    recording: Blob;
+    recording: TRecording;
     signal: AbortSignal;
   }): Promise<
     | { outcome: "transcript"; text: string }
@@ -45,8 +58,8 @@ export interface PlatformSpeechDraftClient {
   cancel(requestId: string, signal?: AbortSignal): Promise<unknown>;
 }
 
-interface ActiveRecording {
-  capture: PlatformSpeechCapture;
+interface ActiveRecording<TRecording extends PlatformSpeechRecording> {
+  capture: PlatformSpeechCapture<TRecording>;
   generation: number;
   timeout: ReturnType<typeof setTimeout>;
   elapsedTimer: ReturnType<typeof setInterval>;
@@ -69,9 +82,9 @@ function defaultRequestId(): string {
   return `sp_${Date.now()}_${entropy}`;
 }
 
-function supportedMediaType(
+function supportedMediaType<TRecording extends PlatformSpeechRecording>(
   capabilities: SpeechCapabilitiesResponse | null,
-  captureAdapter: PlatformSpeechCaptureAdapter,
+  captureAdapter: PlatformSpeechCaptureAdapter<TRecording>,
 ): SpeechMediaType | undefined {
   if (!capabilities) return undefined;
   if (capabilities.fileTranscription.status !== "ready"
@@ -82,7 +95,9 @@ function supportedMediaType(
   return capabilities.fileTranscription.dictation.supportedMediaTypes.find((mediaType) => mediaType === "audio/wav");
 }
 
-async function cancelCaptureSafely(capture: PlatformSpeechCapture): Promise<void> {
+async function cancelCaptureSafely<TRecording extends PlatformSpeechRecording>(
+  capture: PlatformSpeechCapture<TRecording>,
+): Promise<void> {
   try {
     await capture.cancel();
   } catch (caught: unknown) {
@@ -90,11 +105,11 @@ async function cancelCaptureSafely(capture: PlatformSpeechCapture): Promise<void
   }
 }
 
-export function usePlatformSpeechDraft(options: {
+export function usePlatformSpeechDraft<TRecording extends PlatformSpeechRecording = Blob>(options: {
   scopeKey: string;
   onDraft(text: string): void;
-  client: PlatformSpeechDraftClient;
-  captureAdapter: PlatformSpeechCaptureAdapter;
+  client: PlatformSpeechDraftClient<TRecording>;
+  captureAdapter: PlatformSpeechCaptureAdapter<TRecording>;
   requestIdFactory?: () => string;
   safeErrorMessage?: (error: unknown) => string | undefined;
 }): UsePlatformSpeechDraftResult {
@@ -102,9 +117,10 @@ export function usePlatformSpeechDraft(options: {
   const [phase, setPhase] = useState<PlatformSpeechDraftPhase>("loading");
   const [error, setError] = useState<string | null>(null);
   const [elapsedMs, setElapsedMs] = useState(0);
+  const [inputMeter, setInputMeter] = useState({ level: 0, sequence: 0 });
   const [capabilities, setCapabilities] = useState<SpeechCapabilitiesResponse | null>(null);
   const generationRef = useRef(0);
-  const recordingRef = useRef<ActiveRecording | null>(null);
+  const recordingRef = useRef<ActiveRecording<TRecording> | null>(null);
   const requestRef = useRef<ActiveRequest | null>(null);
   const captureStartRef = useRef<AbortController | null>(null);
 
@@ -115,6 +131,7 @@ export function usePlatformSpeechDraft(options: {
   };
 
   const disposeActive = (notifyRemote: boolean) => {
+    setInputMeter({ level: 0, sequence: 0 });
     captureStartRef.current?.abort();
     captureStartRef.current = null;
     const recording = recordingRef.current;
@@ -167,14 +184,15 @@ export function usePlatformSpeechDraft(options: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [options.scopeKey]);
 
-  const finishRecording = async (active: ActiveRecording): Promise<void> => {
+  const finishRecording = async (active: ActiveRecording<TRecording>): Promise<void> => {
     if (active.stopping) return;
     active.stopping = true;
     clearTimeout(active.timeout);
     clearInterval(active.elapsedTimer);
+    setInputMeter({ level: 0, sequence: 0 });
     if (recordingRef.current === active) recordingRef.current = null;
     if (generationRef.current !== active.generation) return;
-    let recording: Blob;
+    let recording: TRecording;
     try {
       recording = await active.capture.stop();
     } catch (caught: unknown) {
@@ -229,14 +247,21 @@ export function usePlatformSpeechDraft(options: {
     const generation = ++generationRef.current;
     setError(null);
     setElapsedMs(0);
+    setInputMeter({ level: 0, sequence: 0 });
     setPhase("requesting_permission");
     const controller = new AbortController();
     captureStartRef.current = controller;
-    let capture: PlatformSpeechCapture;
+    let capture: PlatformSpeechCapture<TRecording>;
+    let active!: ActiveRecording<TRecording>;
     try {
       capture = await options.captureAdapter.start({
         maxBytes: capabilities.fileTranscription.dictation.maxBytes,
         signal: controller.signal,
+        onLevel: (level) => {
+          if (recordingRef.current !== active || generationRef.current !== generation) return;
+          const normalized = Number.isFinite(level) ? Math.max(0, Math.min(1, level)) : 0;
+          setInputMeter((current) => ({ level: normalized, sequence: current.sequence + 1 }));
+        },
       });
     } catch (caught: unknown) {
       if (captureStartRef.current === controller) captureStartRef.current = null;
@@ -253,7 +278,7 @@ export function usePlatformSpeechDraft(options: {
     }
     const policy = capabilities.fileTranscription.dictation;
     const startedAt = Date.now();
-    const active: ActiveRecording = {
+    active = {
       capture,
       generation,
       timeout: setTimeout(() => {
@@ -279,6 +304,7 @@ export function usePlatformSpeechDraft(options: {
     disposeActive(true);
     setError(null);
     setElapsedMs(0);
+    setInputMeter({ level: 0, sequence: 0 });
     setPhase(supportedMediaType(capabilities, options.captureAdapter) ? "idle" : "unavailable");
   }
 
@@ -289,6 +315,8 @@ export function usePlatformSpeechDraft(options: {
       && phase !== "unavailable"
       && supportedMediaType(capabilities, options.captureAdapter) !== undefined,
     elapsedMs,
+    inputLevel: inputMeter.level,
+    inputLevelSequence: inputMeter.sequence,
     start,
     stop,
     cancel,

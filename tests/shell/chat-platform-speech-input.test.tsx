@@ -125,6 +125,26 @@ describe("shared chat platform speech input", () => {
     expect(stopCapture).toHaveBeenCalledTimes(1);
   });
 
+  it("shows an input-reactive recording waveform and removes it after Stop", async () => {
+    let emitLevel: ((level: number) => void) | undefined;
+    const meteredCapture: PlatformSpeechCaptureAdapter = {
+      isSupported: () => true,
+      start: vi.fn(async (input) => {
+        emitLevel = input.onLevel;
+        return { stop: stopCapture, cancel: vi.fn(async () => undefined) };
+      }),
+    };
+    render(<TestComposer onSubmit={vi.fn()} adapter={meteredCapture} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Start voice input" }));
+    const waveform = await screen.findByTestId("speech-input-waveform");
+    expect(waveform.getAttribute("data-level")).toBe("0");
+    act(() => emitLevel?.(0.8));
+    await waitFor(() => expect(waveform.getAttribute("data-level")).toBe("0.8"));
+    fireEvent.click(screen.getByRole("button", { name: "Stop recording" }));
+    await waitFor(() => expect(screen.queryByTestId("speech-input-waveform")).toBeNull());
+  });
+
   it("allows ready dictation to create a draft before an AI harness is connected", async () => {
     const onSubmit = vi.fn();
     render(<TestComposer
