@@ -20,7 +20,9 @@ import {
   CollaborationRunLossRepository,
   classifySharedRunLoss,
   interruptActiveSharedRuns,
+  type CollaborationRunInterruptionInput,
   markLostSharedRunsOnStartup,
+  startControlLossWatchdog,
 } from "../../packages/gateway/src/collaboration/shared-run-loss.js";
 import { createSharedCodexAdapter } from "../../packages/gateway/src/collaboration/shared-codex-adapter.js";
 import {
@@ -331,28 +333,7 @@ describe("shared coding execution (S09)", () => {
     it("marks every lost run across startup batches, not only the first batch", async () => {
       const secondChat = "chat_collaboration_secondary";
       const secondScope = "10000000-0000-4000-8000-000000000077";
-      await fixture.db.insertInto("chats").values({
-        id: secondChat, owner_type: "personal", owner_id: collaborationActors.owner,
-        create_request_id: "req_s09_chat_2", project_id: null, title: "Shared coding 2",
-        lifecycle: "active", attention: "none", revision: 1, message_count: 0,
-        collaboration: JSON.stringify({ scopeId: secondScope, mode: "shared_ai", executionFenced: true }),
-        user_state: null, shell_state: null, fork_provenance: null, last_message_preview: null,
-        current_selection: JSON.stringify({ instanceId: "claude_shared", model: "claude-opus-4-6" }),
-        bound_driver_kind: "claude_code", bound_instance_id: "claude_shared", bound_at_turn_id: "cturn_s09_origin_2",
-        created_at: now, updated_at: now,
-      }).execute();
-      await fixture.db.insertInto("collaboration_scopes").values({
-        id: secondScope, owner_type: "personal", owner_id: collaborationActors.owner,
-        kind: "chat", resource_id: secondChat, parent_scope_id: null, membership_mode: "direct",
-        lifecycle: "shared", revision: 1, auth_epoch: 1, authority_runtime_id: collaborationIds.runtime,
-        authority_generation: 1, execution_generation: 1, organization_id: "org_collaboration_primary",
-        execution_eligibility: JSON.stringify(collaborationExecutionEligibility()),
-        deleted_at: null, created_at: now, updated_at: now,
-      }).execute();
-      await fixture.db.insertInto("collaboration_members").values([
-        { ...member(collaborationActors.owner, "owner"), scope_id: secondScope },
-        { ...member(collaborationActors.editor, "editor"), scope_id: secondScope },
-      ]).execute();
+      await seedSecondarySharedChat(fixture, { chatId: secondChat, scopeId: secondScope, tag: "2" });
       await repository.enqueueSharedQueuedTurn(owner, aiRequest(26, collaborationActors.editor));
       await repository.enqueueSharedQueuedTurn(owner, { ...aiRequest(27, collaborationActors.editor), chatId: secondChat, scopeId: secondScope });
       const first = await claim("batch_1");
@@ -478,6 +459,60 @@ describe("shared coding execution (S09)", () => {
         clientRequestId: uuid(88), expectedRevision: "1", text: "Do work",
       })).rejects.toMatchObject({ code: "unavailable" });
       expect(await repository.listSharedQueuedTurns(owner, collaborationIds.chat)).toEqual([]);
+    });
+
+    it("interrupts every active shared run when one loss record fails, and reports the episode incomplete", async () => {
+      const secondChat = "chat_collaboration_partition";
+      const secondScope = "10000000-0000-4000-8000-000000000078";
+      await seedSecondarySharedChat(fixture, { chatId: secondChat, scopeId: secondScope, tag: "3" });
+      await repository.enqueueSharedQueuedTurn(owner, aiRequest(86, collaborationActors.editor));
+      await repository.enqueueSharedQueuedTurn(owner, {
+        ...aiRequest(87, collaborationActors.editor), chatId: secondChat, scopeId: secondScope,
+      });
+      const first = await claim("partition_write_fail");
+      const second = await repository.claimNextQueuedTurn(owner, {
+        chatId: secondChat, turnId: "cturn_partition_ok", runId: "run_partition_ok",
+        messageId: "msg_partition_ok", claimedAt: now,
+      });
+      expect(second).not.toBeNull();
+      const recordInterruption = vi.fn(async (input: CollaborationRunInterruptionInput) => {
+        if (input.runId === first.run.id) throw new Error("interruption write failed");
+        await loss.recordInterruption(input);
+      });
+      const cancelSharedRun = vi.fn(async (
+        runOwner: typeof owner, _scopeId: string, chatId: string, runId: string,
+        options?: { sharedRequestState?: "cancelled" | "interrupted" },
+      ) => {
+        await repository.finishRun(runOwner, {
+          chatId, runId, outcome: "aborted", completedAt: now,
+          ...(options?.sharedRequestState ? { sharedRequestState: options.sharedRequestState } : {}),
+        });
+      });
+      // One failed attribution write must not leave later runs executing after the home lost control.
+      await expect(interruptActiveSharedRuns({
+        db: fixture.db, loss: { recordInterruption }, reason: "control_partition", orchestrator: { cancelSharedRun },
+      })).rejects.toMatchObject({ name: "SharedRunInterruptionIncompleteError" });
+      expect(cancelSharedRun.mock.calls.map((call) => call[3])).toEqual([first.run.id, second!.run.id]);
+      expect(await loss.getInterruption(second!.run.id)).toMatchObject({ reason: "control_partition" });
+      expect(await fixture.db.selectFrom("chat_queued_turns").select("status")
+        .where("claimed_run_id", "=", second!.run.id).executeTakeFirstOrThrow()).toEqual({ status: "interrupted" });
+    });
+
+    it("re-arms the control loss watchdog for the same outage when an episode did not complete", async () => {
+      const onLost = vi.fn()
+        .mockRejectedValueOnce(new Error("interruption incomplete"))
+        .mockResolvedValueOnce(["run_late"]);
+      const watchdog = startControlLossWatchdog({ controlFresh: () => false, onLost, startTimer: false });
+      try {
+        await watchdog.check();
+        await watchdog.check();
+        // The first episode failed, so the still-partitioned home must try again instead of staying latched.
+        expect(onLost).toHaveBeenCalledTimes(2);
+        await watchdog.check();
+        expect(onLost).toHaveBeenCalledTimes(2);
+      } finally {
+        watchdog.stop();
+      }
     });
 
     it("keeps the latest cancel decision per request past the listed-history cap", async () => {
@@ -750,6 +785,35 @@ async function seedSharedChat(fixture: CollaborationTestDatabase): Promise<void>
     member(collaborationActors.editor, "editor"),
     member(otherEditor, "editor"),
     member(collaborationActors.viewer, "viewer"),
+  ]).execute();
+}
+
+/** A second shared Chat scope in the same organization, so a batch or an interruption episode spans two runs. */
+async function seedSecondarySharedChat(
+  fixture: CollaborationTestDatabase,
+  input: { chatId: string; scopeId: string; tag: string },
+): Promise<void> {
+  await fixture.db.insertInto("chats").values({
+    id: input.chatId, owner_type: "personal", owner_id: collaborationActors.owner,
+    create_request_id: `req_s09_chat_${input.tag}`, project_id: null, title: `Shared coding ${input.tag}`,
+    lifecycle: "active", attention: "none", revision: 1, message_count: 0,
+    collaboration: JSON.stringify({ scopeId: input.scopeId, mode: "shared_ai", executionFenced: true }),
+    user_state: null, shell_state: null, fork_provenance: null, last_message_preview: null,
+    current_selection: JSON.stringify({ instanceId: "claude_shared", model: "claude-opus-4-6" }),
+    bound_driver_kind: "claude_code", bound_instance_id: "claude_shared", bound_at_turn_id: `cturn_s09_origin_${input.tag}`,
+    created_at: now, updated_at: now,
+  }).execute();
+  await fixture.db.insertInto("collaboration_scopes").values({
+    id: input.scopeId, owner_type: "personal", owner_id: collaborationActors.owner,
+    kind: "chat", resource_id: input.chatId, parent_scope_id: null, membership_mode: "direct",
+    lifecycle: "shared", revision: 1, auth_epoch: 1, authority_runtime_id: collaborationIds.runtime,
+    authority_generation: 1, execution_generation: 1, organization_id: "org_collaboration_primary",
+    execution_eligibility: JSON.stringify(collaborationExecutionEligibility()),
+    deleted_at: null, created_at: now, updated_at: now,
+  }).execute();
+  await fixture.db.insertInto("collaboration_members").values([
+    { ...member(collaborationActors.owner, "owner"), scope_id: input.scopeId },
+    { ...member(collaborationActors.editor, "editor"), scope_id: input.scopeId },
   ]).execute();
 }
 

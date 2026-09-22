@@ -298,10 +298,28 @@ export async function markLostSharedRunsOnStartup(options: {
 }
 
 /**
+ * Raised when an interruption episode visited every active run but could not
+ * finish all of them. The caller keeps its lost state and retries; a partial
+ * episode must never read as a completed one.
+ */
+export class SharedRunInterruptionIncompleteError extends Error {
+  constructor(public readonly incompleteRuns: number) {
+    super(`${incompleteRuns} shared run(s) could not be interrupted`);
+    this.name = "SharedRunInterruptionIncompleteError";
+  }
+}
+
+/**
  * The home lost its control authority (or its scope runtime): every active
  * shared run is recorded as lost with the given reason and stopped through the
  * orchestrator so the queued request settles as interrupted, never as a silent
  * cancel. Queued requests are untouched; they re-admit on fresh membership.
+ *
+ * Failures are handled per run: one bad attribution write must not skip the
+ * runs after it, and it must not skip the stop either, because a run that
+ * keeps executing after the home lost control is the harm this exists to
+ * prevent. Attribution is attempted first and best-effort; the episode then
+ * rejects so the watchdog retries instead of latching on a partial stop.
  */
 export async function interruptActiveSharedRuns(options: {
   db: Kysely<OwnerCollaborationDatabase>;
@@ -316,20 +334,33 @@ export async function interruptActiveSharedRuns(options: {
   scopeId?: string;
 }): Promise<string[]> {
   const interrupted: string[] = [];
+  let incomplete = 0;
   for (const run of await listActiveSharedRuns(options.db)) {
     if (options.scopeId && run.scopeId !== options.scopeId) continue;
-    await options.loss.recordInterruption({ ...omitOwner(run), reason: options.reason });
+    let attributed = true;
+    try {
+      await options.loss.recordInterruption({ ...omitOwner(run), reason: options.reason });
+    } catch (error: unknown) {
+      attributed = false;
+      incomplete += 1;
+      console.warn("[collaboration] lost shared run attribution failed",
+        error instanceof Error ? error.name : "UnknownError");
+    }
     try {
       // The queued request settles as `interrupted`, never as a member cancel, so the requester may retry it.
       await options.orchestrator.cancelSharedRun(
         { type: "personal", ownerId: run.ownerId }, run.scopeId, run.chatId, run.runId, { sharedRequestState: "interrupted" },
       );
     } catch (error: unknown) {
+      incomplete += 1;
       console.warn("[collaboration] lost shared run stop deferred to recovery",
         error instanceof Error ? error.name : "UnknownError");
+      // The run stays active, so the next attempt of this episode visits it again.
+      continue;
     }
-    interrupted.push(run.runId);
+    if (attributed) interrupted.push(run.runId);
   }
+  if (incomplete > 0) throw new SharedRunInterruptionIncompleteError(incomplete);
   return interrupted;
 }
 
@@ -339,8 +370,10 @@ function omitOwner(run: { runId: string; scopeId: string; chatId: string; reques
 
 /**
  * Drives control-partition interruption from the S05 control snapshot: when
- * freshness lapses past the lease the callback fires once per outage episode,
- * and a restored control stream re-arms it. Never extends authority.
+ * freshness lapses past the lease the callback fires once per completed outage
+ * episode, and a restored control stream re-arms it. A failed episode re-arms
+ * it immediately: incomplete interruption work is retried on the next tick of
+ * the same outage rather than swallowed. Never extends authority.
  * `check()` runs one tick on demand and settles its interruption, for callers
  * that own their own timers (and tests); `stop()` ends the periodic tick.
  */
@@ -361,6 +394,8 @@ export function startControlLossWatchdog(options: {
     inFlight = options.onLost().catch((error: unknown) => {
       console.warn("[collaboration] control loss interruption failed",
         error instanceof Error ? error.name : "UnknownError");
+      // The episode did not finish: re-arm so the still-partitioned home tries again.
+      lost = false;
     }).finally(() => { inFlight = undefined; });
     return inFlight;
   };
