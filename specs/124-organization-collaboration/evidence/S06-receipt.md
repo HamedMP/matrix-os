@@ -199,3 +199,42 @@ constructs the issuer without catching (`direct-wiring.ts:66`) and platform boot
 (`bootstrap.ts:118-123`), so that configuration aborts startup instead of degrading to an
 unavailable ticket route. Routed to the `124/s05` owner; the loader should apply the combined cap
 it already enforces per map.
+
+## Review round (2026-09-22, PR #1806 per-scope stream cap)
+
+**"When the per-scope stream limit is reached, this expression only evaluates the oldest
+removal callback without invoking it" (`packages/ui/src/collaboration/direct-streams.ts`).
+Not reproducible: the callback is invoked.** The map is keyed by each stream's own removal
+callback, so `active.keys().next().value` is the oldest `remove` function and `?.()` is an
+optional **call**, not a property access. Invoking it runs `handle.stop()`, which closes the
+socket, deletes the entry, and prunes the scope when it was the last stream. The cap holds.
+
+Measured rather than argued. Thirteen event streams on one scope, each opened fully before the
+next subscribes so the victims are live sockets: eight sockets remain open, the first five are
+closed in registration order, and closing the scope afterwards stops all eight survivors, so
+every one of them is still reachable from the registry. Rewriting the line as the thread
+describes it, `active.keys().next().value` with no call, leaves **13** live sockets, which is
+the unbounded growth the thread predicts. That is the difference the new test pins, and the
+cap had no such assertion before: nothing pushed past it and checked what survived.
+
+**Neighbouring caps, audited as asked.** The scope cap (`MAX_SCOPE_RECORDS` path,
+`evictLeastRecentlyActiveScope`) sweeps first, picks the scope whose streams have been silent
+longest, and closes it through `closeScope`, which calls every stream's removal callback and so
+stops every socket; two existing tests cover both that it evicts and that it prefers a dead peer
+over the oldest registration. The stale sweep closes the socket and lets the stream re-dial by
+design, and leaves no entry behind. Neither has the reported shape.
+
+**One adjacent shape found and hardened.** Removing a scope's last stream prunes the scope from
+the registry, and the new handle was then inserted into a map nothing pointed at, so its sockets
+would be unreachable from the stale sweep, scope close and dispose. The per-scope cap is eight,
+so the victim is never the last stream and this cannot happen today; the insert now re-attaches
+the scope rather than depending on that arithmetic. The new test's scope-close assertion is what
+would catch a regression here.
+
+`test(collaboration): pin the per-scope stream cap against live sockets` (`408ab27a9`);
+`fix(collaboration): re-attach a scope pruned by per-scope stream eviction` (`2db95964b`).
+
+Gates: `collaboration-direct-client` **20/20** and `collaboration-direct-hygiene` **4/4**, plus
+`collaboration-client`, `collaboration-direct-wiring` and `collaboration-runtime` -- **33/33**
+together. `bun run typecheck` exit 0; `bun run check:patterns` 0 violations, 5 inherited
+warnings. No `.tsx` files changed, so the React audit does not apply.
