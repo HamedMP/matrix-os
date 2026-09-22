@@ -49,6 +49,8 @@ export function createOwnerResourceDriver(options: {
   listOwnedProjectIds(ownerId: string): Promise<string[]>;
   resolveProjectWorkingDirectory(ownerId: string, projectId: string): Promise<string | null>;
   resolveAppAssetRoot(ownerId: string, projectId: string | null, appId: string): Promise<string | null>;
+  /** Registry identity of an installed app; null when no app is registered under that id. */
+  resolveAppIncarnation(ownerId: string, projectId: string | null, appId: string): Promise<string | null>;
 }): CollaborationResourceDriver & { sweepTemp(): Promise<number>; close(): void } {
   const homeRoot = resolve(options.homePath);
   // Bounded LRU of directories where this process placed an atomic write temp.
@@ -296,22 +298,29 @@ export function createOwnerResourceDriver(options: {
       }
     },
     async inspect(input) {
-      let inspectedPath: string;
+      // Each kind must be registered under the identity its own read path
+      // verifies, or the catalog entry is dead on arrival: a file is checked
+      // against its physical incarnation, an app against its registry row.
       if (input.kind === "app") {
         if (!/^[A-Za-z0-9_-]{1,256}$/.test(input.path)) throw new ResourceCatalogError("invalid");
-        const assetRoot = await options.resolveAppAssetRoot(input.ownerId, input.projectId, input.path);
-        if (!assetRoot || !isAbsolute(assetRoot)) throw new ResourceCatalogError("not_found");
-        inspectedPath = assetRoot;
-      } else {
-        inspectedPath = await target(input, false);
+        let incarnation: string | null;
+        try {
+          incarnation = await options.resolveAppIncarnation(input.ownerId, input.projectId, input.path);
+        } catch (error: unknown) {
+          console.warn("[collaboration-resources] app identity unavailable", error instanceof Error ? error.name : "UnknownError");
+          throw new ResourceCatalogError("unavailable");
+        }
+        if (incarnation === null) throw new ResourceCatalogError("not_found");
+        if (!/^[a-f0-9]{64}$/.test(incarnation)) throw new ResourceCatalogError("unavailable");
+        return { incarnation };
       }
+      const inspectedPath = await target(input, false);
       try {
         const info = await lstat(inspectedPath, { bigint: true });
         if (info.isSymbolicLink()
           || (input.kind === "file" && !info.isFile())
           || (input.kind !== "file" && !info.isDirectory())) throw new ResourceCatalogError("not_found");
-        return { incarnation: createHash("sha256")
-          .update(`${info.dev}:${info.ino}:${info.birthtimeNs}`).digest("hex") };
+        return { incarnation: physicalIncarnation(info) };
       } catch (error: unknown) {
         if (error instanceof ResourceCatalogError) throw error;
         if (missing(error)) throw new ResourceCatalogError("not_found");
