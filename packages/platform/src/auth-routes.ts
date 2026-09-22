@@ -22,7 +22,7 @@ import type { PlatformDB } from './db.js';
 import {
   getActiveUserMachineByClerkId,
   getActiveUserMachineByHandle,
-  getRunningUserMachineByClerkIdForUpdate,
+  getAccessibleRunningUserMachineByClerkIdForUpdate,
   getContainer,
   getContainerByClerkId,
 } from './db.js';
@@ -230,7 +230,7 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
     expiresInSec: DEVICE_EXPIRES_IN_SEC,
     now: config.now,
     resolveApprovalTarget: async (transactionDb, { clerkUserId, runtimeSlot }) => {
-      const machine = await getRunningUserMachineByClerkIdForUpdate(
+      const machine = await getAccessibleRunningUserMachineByClerkIdForUpdate(
         transactionDb,
         clerkUserId,
         runtimeSlot,
