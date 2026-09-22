@@ -41,7 +41,7 @@ describe("customer VPS Hermes release", () => {
     const service = await readFile(servicePath, "utf8");
     const updater = await readFile("distro/customer-vps/host-bin/matrix-sync-agent", "utf8");
     const commitIndex = updater.indexOf("if commit_release_metadata; then");
-    const reconcileIndex = updater.indexOf("\n      reconcile_hermes_release", commitIndex);
+    const reconcileIndex = updater.indexOf("reconcile_hermes_release ||", commitIndex);
 
     expect(service).toContain("ExecStart=/opt/matrix/bin/matrix-install-hermes");
     expect(service).toContain("TimeoutStartSec=1800");
@@ -51,5 +51,27 @@ describe("customer VPS Hermes release", () => {
     expect(commitIndex).toBeGreaterThan(-1);
     expect(reconcileIndex).toBeGreaterThan(commitIndex);
     await expect(access(servicePath, constants.R_OK)).resolves.toBeUndefined();
+  });
+
+  it("keeps failed post-commit Hermes scheduling retryable across poll cycles", async () => {
+    const updater = await readFile("distro/customer-vps/host-bin/matrix-sync-agent", "utf8");
+    const commitIndex = updater.indexOf("if commit_release_metadata; then");
+    const markIndex = updater.indexOf(
+      'mark_hermes_reconciliation_pending "$version"',
+      commitIndex,
+    );
+    const reconcileIndex = updater.indexOf("reconcile_hermes_release", markIndex);
+
+    expect(updater).toContain(
+      'readonly HERMES_RECONCILE_MARKER="$STAGING_DIR/hermes-reconcile-pending"',
+    );
+    expect(updater).toContain("mark_hermes_reconciliation_pending() {");
+    expect(updater).toContain("maybe_reconcile_hermes_release() {");
+    expect(updater).toContain('sudo rm -f -- "$HERMES_RECONCILE_MARKER"');
+    expect(markIndex).toBeGreaterThan(commitIndex);
+    expect(reconcileIndex).toBeGreaterThan(markIndex);
+    expect(updater).toMatch(
+      /maybe_reconcile_hermes_release \|\| log "WARN: Hermes release reconciliation retry failed"/,
+    );
   });
 });
