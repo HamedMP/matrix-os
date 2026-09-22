@@ -30,6 +30,7 @@ export function enableGatewaySharedResources<Project>(input: {
   runtime: SharedResourceRuntime;
   homePath: string;
   projects: OwnerResourceProjectSource<Project>;
+  /** Construction seam, like the `now` and `createId` seams elsewhere in this package. */
   createDriver?: typeof createOwnerResourceDriver;
 }): OwnerResourceDriverHandle {
   const driver = (input.createDriver ?? createOwnerResourceDriver)({
