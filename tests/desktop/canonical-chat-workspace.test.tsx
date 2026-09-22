@@ -927,7 +927,7 @@ describe("CanonicalChatWorkspace", () => {
 
     expect(await screen.findByRole("textbox", { name: "Reply to chat" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
-    fireEvent.click(screen.getByRole("button", { name: "Start a new chat" }));
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "New chat" }));
     await act(async () => {
       await new Promise((resolve) => window.setTimeout(resolve, 20));
     });

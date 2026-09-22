@@ -387,6 +387,7 @@ describe("draft chat replaces the selected thread", () => {
 
     const provider = await screen.findByRole("button", { name: "Choose model and provider" });
     fireEvent.click(provider);
+    fireEvent.click(screen.getByRole("button", { name: "Claude Code agent, Available" }));
     const claudeChoice = screen.getByRole("option", { name: "Provider default via Claude Code" });
     expect(claudeChoice.getAttribute("aria-selected")).toBe("false");
     fireEvent.click(claudeChoice);
