@@ -133,13 +133,18 @@ export class PlatformCollaborationCutover {
 
   async resume(scopeId: string): Promise<CutoverJournal> {
     const row = await this.requireRow(scopeId);
-    if (row.phase !== "blocked" || !row.resume_phase || row.block_reason === "disabled_for_recovery") {
+    if (row.phase !== "blocked" || !row.resume_phase || !row.block_reason
+      || row.block_reason === "disabled_for_recovery") {
       return publicJournal(row);
     }
-    await this.options.db.updateTable("collaboration_cutover_journal")
+    // The observed blocked state belongs in the write: a recovery disable that commits inside this
+    // window must not be reopened by a stale resume phase.
+    const resumed = await this.options.db.updateTable("collaboration_cutover_journal")
       .set({ phase: row.resume_phase, resume_phase: null, block_reason: null, updated_at: new Date() })
       .where("scope_id", "=", scopeId).where("phase", "=", "blocked")
-      .execute();
+      .where("resume_phase", "=", row.resume_phase).where("block_reason", "=", row.block_reason)
+      .executeTakeFirst();
+    if (resumed.numUpdatedRows !== 1n) return publicJournal(await this.requireRow(scopeId));
     return this.advance(scopeId);
   }
 
@@ -174,7 +179,7 @@ export class PlatformCollaborationCutover {
       return publicJournal(await this.requireRow(scopeId));
     }
     // Disable the platform first so no new ticket can be admitted while the home fence is in flight.
-    const disabled = await this.block(row, "disabled_for_recovery", null);
+    const disabled = await this.disableJournal(row);
     const resolution = await this.readyHome(row);
     if (resolution.status === "ready") {
       try {
@@ -344,6 +349,22 @@ export class PlatformCollaborationCutover {
     await this.options.db.updateTable("collaboration_cutover_journal")
       .set({ ...values, phase: next, resume_phase: null, block_reason: null, updated_at: new Date() })
       .where("scope_id", "=", row.scope_id).where("phase", "=", row.phase).execute();
+  }
+
+  /**
+   * Recovery disable is an explicit operator override, so it lands on whichever phase the journal
+   * holds when the row lock is taken rather than on a phase read before a concurrent transition.
+   */
+  private async disableJournal(row: JournalRow): Promise<CutoverJournal> {
+    await this.options.db.transaction().execute(async (trx) => {
+      const current = await trx.selectFrom("collaboration_cutover_journal").select("phase")
+        .where("scope_id", "=", row.scope_id).forUpdate().executeTakeFirst();
+      if (!current) throw new Error("Cutover journal not found");
+      await trx.updateTable("collaboration_cutover_journal")
+        .set({ phase: "blocked", resume_phase: null, block_reason: "disabled_for_recovery", updated_at: new Date() })
+        .where("scope_id", "=", row.scope_id).where("phase", "=", current.phase).execute();
+    });
+    return publicJournal(await this.requireRow(row.scope_id));
   }
 
   private async block(row: JournalRow, reason: string, resumePhase: CutoverPhase | null): Promise<CutoverJournal> {
