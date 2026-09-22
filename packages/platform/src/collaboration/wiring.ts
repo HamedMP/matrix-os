@@ -8,6 +8,7 @@ import { createPlatformCollaborationRoutes } from "./routes.js";
 import { CollaborationWebSocketAuthorizer } from "./websocket.js";
 import type { FailClosedPlatformCollaboration, PlatformCollaborationConfigurationFailure } from "./fail-closed.js";
 import type { PlatformOrganizations } from "../organizations/wiring.js";
+import type { PlatformCollaborationDirect } from "./direct-wiring.js";
 
 export type { FailClosedPlatformCollaboration, PlatformCollaborationConfigurationFailure } from "./fail-closed.js";
 
@@ -78,6 +79,8 @@ export async function createPlatformCollaboration(options: {
   config: PlatformCollaborationConfig;
   /** S03 organization projection, control authority and routes; registered and drained with the runtime. */
   organizations?: PlatformOrganizations;
+  /** S05 direct transport: runtime endpoints, tickets and the control stream; registered and drained with the runtime. */
+  direct?: PlatformCollaborationDirect;
   resolveActor(c: Context): Promise<string | null>;
   authenticateRuntime(input: {
     runtimeId: string;
@@ -160,16 +163,18 @@ export async function createPlatformCollaboration(options: {
     sockets,
     proxy,
     organizations: options.organizations,
+    direct: options.direct,
     register(app: Hono<any>): void {
       if (registered || closing) throw new Error("Platform collaboration routes are already registered or shutting down");
       registered = true;
       app.route("/", routes);
       options.organizations?.register(app);
+      options.direct?.register(app);
     },
     async shutdown(): Promise<void> {
       if (closing) return;
       closing = true;
-      await options.organizations?.shutdown();
+      await Promise.allSettled([options.direct?.shutdown(), options.organizations?.shutdown()]);
     },
   };
 }

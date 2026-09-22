@@ -740,6 +740,8 @@ export const CollaborationDirectoryEventSchema = z.object({
   runtimeId: CollaborationRuntimeIdSchema,
   ownerId: CollaborationActorIdSchema,
   kind: CollaborationScopeKindSchema,
+  /** S05: the scope's owning organization so the platform can bind tickets to it; absent only for pre-organization rows. */
+  organizationId: CollaborationOrganizationIdSchema.optional(),
   authorityGeneration: z.number().int().positive(),
   metadataRevision: z.number().int().nonnegative(),
   recipients: z.array(z.object({
