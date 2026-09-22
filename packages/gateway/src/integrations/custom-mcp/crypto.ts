@@ -7,6 +7,8 @@ import {
 const NONCE_BYTES = 12;
 const TAG_BYTES = 16;
 const ENVELOPE_VERSION = 1;
+const OAUTH_STATE_VERSION = 1;
+const OAUTH_STATE_AAD = Buffer.from("matrix-custom-mcp:oauth-state:v1", "utf8");
 
 export interface CustomMcpCredentialBinding {
   userId: string;
@@ -84,6 +86,54 @@ export function decryptCustomMcpCredential<T = unknown>(
     authTagLength: TAG_BYTES,
   });
   decipher.setAAD(additionalData(binding));
+  decipher.setAuthTag(tag);
+  const plaintext = Buffer.concat([
+    decipher.update(ciphertext),
+    decipher.final(),
+  ]).toString("utf8");
+  return JSON.parse(plaintext) as T;
+}
+
+export function encryptCustomMcpOAuthState(
+  payload: unknown,
+  key: Buffer,
+): string {
+  if (key.length !== 32) throw new Error("Custom MCP encryption key must be 32 bytes");
+  const nonce = randomBytes(NONCE_BYTES);
+  const cipher = createCipheriv("aes-256-gcm", key, nonce, {
+    authTagLength: TAG_BYTES,
+  });
+  cipher.setAAD(OAUTH_STATE_AAD);
+  const plaintext = Buffer.from(JSON.stringify(payload), "utf8");
+  const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return [
+    `s${OAUTH_STATE_VERSION}`,
+    nonce.toString("base64url"),
+    ciphertext.toString("base64url"),
+    tag.toString("base64url"),
+  ].join(".");
+}
+
+export function decryptCustomMcpOAuthState<T = unknown>(
+  state: string,
+  key: Buffer,
+): T {
+  if (key.length !== 32) throw new Error("Custom MCP encryption key must be 32 bytes");
+  const parts = state.split(".");
+  if (parts.length !== 4 || parts[0] !== `s${OAUTH_STATE_VERSION}`) {
+    throw new Error("Unsupported Custom MCP OAuth state");
+  }
+  const nonce = Buffer.from(parts[1]!, "base64url");
+  const ciphertext = Buffer.from(parts[2]!, "base64url");
+  const tag = Buffer.from(parts[3]!, "base64url");
+  if (nonce.length !== NONCE_BYTES || tag.length !== TAG_BYTES) {
+    throw new Error("Invalid Custom MCP OAuth state");
+  }
+  const decipher = createDecipheriv("aes-256-gcm", key, nonce, {
+    authTagLength: TAG_BYTES,
+  });
+  decipher.setAAD(OAUTH_STATE_AAD);
   decipher.setAuthTag(tag);
   const plaintext = Buffer.concat([
     decipher.update(ciphertext),
