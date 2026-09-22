@@ -495,3 +495,42 @@ RED `test(collaboration): expose the control client the gateway fence leaves run
 `DirectSessionService` gained the same synchronous `fence()`, with `shutdown()` delegating to it: its body never awaited either, so refusing new exchanges, stopping the sweep and ending every live session is deterministic rather than best-effort. `fence()` in `wiring.ts` drains it straight after the control client, in the order `shutdown()` uses, because ending a session is what notifies the event and terminal registries the next lines detach. `end()` removes a session before notifying and isolates each hook, so a second fence ends nothing twice and one failing hook cannot strand the sessions behind it. RED `test(collaboration): expose the direct sessions the gateway fence leaves live`; GREEN `fix(collaboration): drain direct sessions from the synchronous fence`. The shared-AI and outbox drains stay best-effort in that function because theirs are genuinely async.
 
 Gates: `collaboration-fence` + `collaboration-direct-sessions` **31/31** (29/31 RED), with wiring, database and foundation **49/49**, plus org-precondition, routes, chat-events and terminal-websocket **47/47**. `bun run typecheck` exit 0; `bun run check:patterns` 0 violations, 5 inherited warnings.
+
+## Verdict follow-up (2026-09-22, #1808: overflow after the settlement timeout)
+
+*"Streamed uploads can still return a non-413 response when overflow occurs after the
+settlement timeout."* Correct, and it is the boundary of the previous round's guard. That
+guard waits for the bounded request stream to settle before committing an upstream response,
+but the wait is bounded on purpose so an upload nobody finishes cannot hold the reply. Past
+the bound the previous round relayed the home's answer anyway, so overflow arriving later had
+nothing left to decide. Measured with a relay limited to 32 KiB, a 50 ms settlement wait and a
+home that answers 200 after one chunk and resumes reading 150 ms later: the client received
+**200** for a body the relay never finished forwarding.
+
+**The guarantee, stated rather than narrowed.** The relay answers for a body only when it saw
+that body through to a settled end: completed, overflowed, or cancelled by whoever was reading
+it. Shrinking the race window was not enough, so the expiry path now terminates instead of
+completing. Past the bound the relay has refused to finish forwarding the body, the home's
+answer no longer describes the request that was made, and it is discarded for a 503 rather
+than relayed. A client may be told the request was cancelled; it is never told a truncated
+upload was fine.
+
+The alternative -- wait until the body settles, whatever that takes -- was rejected: it
+reintroduces the stall the bound exists to prevent, and a relay that can be held open by a
+peer that simply stops reading is a worse failure than an honest abort.
+
+Unchanged: overflow inside the wait still answers 413 with a `limit` outcome; an abandoned
+upload that cancels its body still settles and still has the home's answer relayed; the home
+reads at most the cap; the source is cancelled on overflow; no path stalls; the relay makes no
+authorization decision and parses no payload. The mirror-case test now models an abandoning
+home the way a real client behaves, cancelling the body it stops reading, which is what undici
+does when a response completes early.
+
+RED `test(platform): refuse to answer for an upload the relay never finished forwarding`
+(`77eb5e28a`, 16/17). GREEN `fix(platform): discard an upstream answer for a body that never
+settled` (`1f9421127`). Removing the termination branch fails that one case and nothing else.
+
+Gates: `collaboration-relay` **17/17**, plus `collaboration-direct-upgrade`,
+`collaboration-websocket`, `collaboration-wiring`, `collaboration-routes`,
+`preview-terminal-flow` and `app-session-runtime-routing` -- **53/53** together.
+`bun run typecheck` exit 0; `bun run check:patterns` 0 violations, 5 inherited warnings.
