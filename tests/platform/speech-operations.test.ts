@@ -4,6 +4,7 @@ import type { PlatformDatabase } from "../../packages/platform/src/db.js";
 import {
   SpeechOperationConflictError,
   SpeechOperationStateError,
+  SpeechOperationRateLimitError,
   createSpeechOperationsRepository,
 } from "../../packages/platform/src/speech/operations.js";
 import { createTestPlatformDb, destroyTestPlatformDb } from "./platform-db-test-helper.js";
@@ -73,6 +74,69 @@ describe("speech operation repository", () => {
         .rejects.toBeInstanceOf(SpeechOperationConflictError);
     }
     expect(reserveCalls).toBe(1);
+  });
+
+  it("enforces a deployment-wide active-operation cap before reserving funding", async () => {
+    const repo = createSpeechOperationsRepository({
+      db,
+      now: () => now,
+      maximumActiveOperations: 1,
+    });
+    let reserveCalls = 0;
+    await repo.admit(admission, async () => {
+      reserveCalls += 1;
+      return { reservationId: "funding_1", reservedMicrousd: 20 };
+    });
+    await expect(repo.admit({
+      ...admission,
+      requestId: `sp_${now.getTime()}_qrstuvwxyzabcdef`,
+      contentFingerprint: "b".repeat(64),
+    }, async () => {
+      reserveCalls += 1;
+      return { reservationId: "funding_2", reservedMicrousd: 20 };
+    })).rejects.toBeInstanceOf(SpeechOperationRateLimitError);
+    expect(reserveCalls).toBe(1);
+  });
+
+  it("enforces an owner admission window after earlier work becomes terminal", async () => {
+    const repo = createSpeechOperationsRepository({
+      db,
+      now: () => now,
+      maximumAdmissionsPerOwner: 1,
+      admissionWindowMs: 60_000,
+    });
+    await repo.admit(admission, async () => ({ reservationId: "funding_1", reservedMicrousd: 20 }));
+    await repo.claimDispatch(identity, requestId);
+    await repo.complete(identity, requestId, {
+      executionState: "succeeded",
+      outcomeCode: "transcript",
+      actualCostMicrousd: 1,
+    }, async () => undefined);
+    await expect(repo.admit({
+      ...admission,
+      requestId: `sp_${now.getTime()}_qrstuvwxyzabcdef`,
+      contentFingerprint: "b".repeat(64),
+    }, async () => ({ reservationId: "funding_2", reservedMicrousd: 20 })))
+      .rejects.toBeInstanceOf(SpeechOperationRateLimitError);
+  });
+
+  it("evicts crashed active work from admission capacity before metadata expires", async () => {
+    let checked = now;
+    const repo = createSpeechOperationsRepository({
+      db,
+      now: () => checked,
+      maximumActiveOperations: 1,
+      activeOperationTtlMs: 60_000,
+    });
+    await repo.admit(admission, async () => ({ reservationId: "funding_1", reservedMicrousd: 20 }));
+    checked = new Date(now.getTime() + 60_001);
+    await expect(repo.admit({
+      ...admission,
+      requestId: `sp_${checked.getTime()}_qrstuvwxyzabcdef`,
+      contentFingerprint: "b".repeat(64),
+    }, async () => ({ reservationId: "funding_2", reservedMicrousd: 20 })))
+      .resolves.toMatchObject({ executionState: "reserved" });
+    expect(await db.executor.selectFrom("speech_operations").select("operation_id").execute()).toHaveLength(2);
   });
 
   it("grants one durable dispatch claim rather than replaying a start receipt", async () => {

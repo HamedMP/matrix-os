@@ -3,6 +3,25 @@ import type { PlatformMigrationExecutor } from '../migration-types.js';
 
 /** Platform-owned speech admission metadata. Transcript and audio content are never persisted here. */
 export async function migrateSpeech(db: PlatformMigrationExecutor): Promise<void> {
+  await sql`ALTER TABLE ai_runtime_credentials DROP CONSTRAINT IF EXISTS ai_runtime_credentials_audience_check`.execute(db);
+  await sql`ALTER TABLE ai_runtime_credentials DROP CONSTRAINT IF EXISTS ai_runtime_credentials_scope_check`.execute(db);
+  await sql`
+    DO $$
+    BEGIN
+      BEGIN
+        ALTER TABLE ai_runtime_credentials
+          ADD CONSTRAINT ai_runtime_credentials_audience_v2_check
+          CHECK (audience IN ('matrix-funded-relay', 'matrix-platform-speech'));
+      EXCEPTION WHEN duplicate_object THEN NULL;
+      END;
+      BEGIN
+        ALTER TABLE ai_runtime_credentials
+          ADD CONSTRAINT ai_runtime_credentials_scope_v2_check
+          CHECK (scope IN ('ai:invoke', 'speech:transcribe'));
+      EXCEPTION WHEN duplicate_object THEN NULL;
+      END;
+    END $$
+  `.execute(db);
   await sql`
     CREATE TABLE IF NOT EXISTS speech_operations (
       owner_id TEXT NOT NULL,

@@ -46,7 +46,7 @@ describe("gateway platform speech runtime composition", () => {
 
   it("keeps runtime client construction out of the gateway entrypoint", () => {
     const source = readFileSync(new URL("../../packages/gateway/src/server.ts", import.meta.url), "utf8");
-    expect(source).toContain("createGatewaySpeechRuntimeRoutes");
+    expect(source).toContain("createGatewaySpeechRuntime");
     expect(source).not.toContain("loadPlatformSpeechRuntimeConfig");
     expect(source).not.toContain("createPlatformSpeechClient");
   });

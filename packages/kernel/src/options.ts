@@ -11,6 +11,7 @@ import { join } from "node:path";
 import type { MatrixDB } from "./db.js";
 import { createIpcServer } from "./ipc-server.js";
 import type { OsViewAgentTools } from "./ipc-server.js";
+import type { OwnerAudioTranscriber } from "./tools/transcribe-audio.js";
 import { getCoreAgents, loadCustomAgents, loadCustomAgentMcpAllowlists } from "./agents.js";
 import { buildSystemPrompt } from "./prompt.js";
 import { ensureSdkSkillsMirror } from "./skills.js";
@@ -240,6 +241,7 @@ export interface KernelConfig {
   env?: Record<string, string | undefined>;
   requestApproval?: RequestApprovalFn;
   osViewTools?: OsViewAgentTools;
+  ownerAudioTranscriber?: OwnerAudioTranscriber;
 }
 
 export async function kernelOptions(config: KernelConfig) {
@@ -256,7 +258,12 @@ export async function kernelOptions(config: KernelConfig) {
   const model = config.model ?? fileKernel.model;
   const controls = resolveKernelSdkControls(model, config.effort ?? fileKernel.effort);
 
-  const ipcServer = await createIpcServer(db, homePath, config.osViewTools);
+  const ipcServer = await createIpcServer(
+    db,
+    homePath,
+    config.osViewTools,
+    config.ownerAudioTranscriber,
+  );
   const coreAgents = getCoreAgents(homePath);
   const customAgents = loadCustomAgents(`${homePath}/agents/custom`, homePath);
   const customAgentMcpAllowlists = loadCustomAgentMcpAllowlists(`${homePath}/agents/custom`);
