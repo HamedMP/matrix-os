@@ -129,4 +129,38 @@ describe("canonical Chat artifacts", () => {
       parts: [expect.objectContaining({ attachmentId: "attachment_codex_fixture" })],
     });
   });
+
+  it("keeps the first eight attachments and ignores later ones without failing the run", async () => {
+    const admitted = await admit();
+    const messageId = "msg_artifact_1_assistant";
+    for (let index = 0; index < 8; index += 1) {
+      await repository.appendAssistantAttachment(owner, {
+        ...admitted,
+        messageId,
+        attachment: {
+          id: `attachment_codex_${index}`,
+          kind: "image",
+          label: `${index}.png`,
+          path: `data/chat-artifacts/codex/sha256/${String(index).repeat(64)}.png`,
+        },
+        createdAt: now,
+      });
+    }
+    const revision = (await repository.get(owner, admitted.chatId)).chat.revision;
+    const capped = await repository.appendAssistantAttachment(owner, {
+      ...admitted,
+      messageId,
+      attachment: {
+        id: "attachment_codex_ninth",
+        kind: "image",
+        label: "ninth.png",
+        path: `data/chat-artifacts/codex/sha256/${"f".repeat(64)}.png`,
+      },
+      createdAt: now,
+    });
+    expect(capped.parts.filter((part) => part.type === "attachment_reference")).toHaveLength(8);
+    expect((await repository.get(owner, admitted.chatId)).chat.revision).toBe(revision);
+    expect(await repository.kysely.selectFrom("chat_attachments").selectAll().execute()).toHaveLength(8);
+    await expect(repository.finishRun(owner, { ...admitted, outcome: "completed", completedAt: now })).resolves.toBeDefined();
+  });
 });

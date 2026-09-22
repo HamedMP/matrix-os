@@ -4,7 +4,7 @@ import { tryLoadToolOutputKey } from "./protected-tool-output.mjs";
 import { codexToolHasPrivateContext, codexToolOutput } from "./codex-tool-output.mjs";
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
-import { chmod, lstat, mkdir, open, rm } from "node:fs/promises";
+import { chmod, lstat, mkdir, open, realpath, rm } from "node:fs/promises";
 import { createServer } from "node:net";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { createInterface } from "node:readline";
@@ -346,6 +346,14 @@ const toolOutputKey = process.env.MATRIX_HOME ? await tryLoadToolOutputKey(proce
 const artifactHomePath = resolve(dirname(eventPath), "../../..");
 const artifactStorageDirectory = join(artifactHomePath, "data", "chat-artifacts", "codex", "sha256");
 const artifactSessionId = basename(eventPath, extname(eventPath));
+const artifactRoots = await Promise.all([process.cwd(), ...config.writableRoots].map((root) => realpath(root)));
+
+function withinArtifactRoot(path) {
+  return artifactRoots.some((root) => {
+    const child = relative(root, path);
+    return child === "" || (child !== ".." && !child.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) && !isAbsolute(child));
+  });
+}
 
 const controlPath = eventPath.replace(/\.jsonl$/, ".sock");
 await mkdir(dirname(eventPath), { recursive: true });
@@ -775,10 +783,19 @@ async function stageArtifactCandidate(candidate) {
   } else {
     let source;
     try {
+      const resolved = await realpath(candidate.source.path);
+      if (!withinArtifactRoot(resolved)) throw new Error("Codex artifact file is outside the run roots");
       source = await open(candidate.source.path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
       const before = await source.stat({ bigint: true });
       if (!before.isFile() || before.size <= 0n || before.size > BigInt(MAX_CAPTURED_ARTIFACT_BYTES)) {
         throw new Error("Codex artifact file is unavailable");
+      }
+      // The provider controls the path. A parent directory can change after
+      // realpath, so bind the opened descriptor to the checked path identity.
+      const openedPath = await realpath(candidate.source.path);
+      const current = await lstat(openedPath, { bigint: true });
+      if (!withinArtifactRoot(openedPath) || before.dev !== current.dev || before.ino !== current.ino) {
+        throw new Error("Codex artifact file changed while being opened");
       }
       bytes = await source.readFile();
       const after = await source.stat({ bigint: true });
@@ -865,7 +882,14 @@ async function handleItemLifecycle(raw) {
   }
   if (parsed.data.method === "item/completed") {
     for (const candidate of extractCodexArtifactRecords(item)) {
-      await persist(await stageArtifactCandidate(candidate));
+      let artifact;
+      try {
+        artifact = await stageArtifactCandidate(candidate);
+      } catch (error) {
+        console.warn("[codex] artifact unavailable:", error instanceof Error ? error.name : "UnknownError");
+        continue;
+      }
+      await persist(artifact);
     }
   }
   if (!ToolLifecycleTypeSchema.options.includes(item.type)) {

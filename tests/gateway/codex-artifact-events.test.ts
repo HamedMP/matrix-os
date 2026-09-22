@@ -115,6 +115,17 @@ describe("Codex app-server artifact extraction", () => {
       index,
     }));
     expect(extractCodexArtifactRecords({ id: "mcp_many", type: "mcpToolCall", result: { content } })).toHaveLength(8);
+    const leadingText = Array.from({ length: 8 }, () => ({ type: "text", text: "status" }));
+    expect(extractCodexArtifactRecords({
+      id: "mcp_late_image",
+      type: "mcpToolCall",
+      result: { content: [...leadingText, ...content] },
+    })).toEqual(expect.arrayContaining([expect.objectContaining({ outputIndex: 8 })]));
+    expect(extractCodexArtifactRecords({
+      id: "mcp_late_image",
+      type: "mcpToolCall",
+      result: { content: [...leadingText, ...content] },
+    })).toHaveLength(8);
     expect(extractCodexArtifactRecords({
       id: "too_large",
       type: "functionCallOutput",

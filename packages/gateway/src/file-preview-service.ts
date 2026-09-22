@@ -111,17 +111,17 @@ async function safeResolvedPath(
   options: FilePreviewServiceOptions,
   principal: RequestPrincipal,
   ref: FileResourceRef,
-): Promise<string> {
+): Promise<{ path: string; root?: string }> {
   if (ref.kind === "home") {
     if (!options.canAccessHome(principal)) throw new FilePreviewError("not_found");
     const path = resolveExistingFileApiPath(options.homePath, ref.path);
     if (!path) throw new FilePreviewError("not_found");
-    return path;
+    return { path };
   }
   if (ref.kind === "artifact") {
     const path = await options.resolveArtifactPath?.(principal, ref);
     if (!path || !isAbsolute(path)) throw new FilePreviewError("not_found");
-    return path;
+    return { path };
   }
   const root = await options.resolveProjectRoot(principal, ref);
   if (!root) throw new FilePreviewError("not_found");
@@ -136,12 +136,22 @@ async function safeResolvedPath(
     if (lexical.isSymbolicLink() || !lexical.isFile()) throw new FilePreviewError("not_found");
     const targetReal = await realpath(target);
     if (!isWithin(rootReal, targetReal)) throw new FilePreviewError("not_found");
-    return targetReal;
+    return { path: targetReal, root: rootReal };
   } catch (error: unknown) {
     if (error instanceof FilePreviewError) throw error;
     if (unavailableFileError(error)) throw new FilePreviewError("not_found");
     throw error;
   }
+}
+
+async function openedPathIsAuthorized(path: string, info: BigIntStats, root?: string): Promise<boolean> {
+  // The file descriptor is stable after open, but a writable parent can be
+  // swapped between the initial realpath check and open(). Compare the file
+  // actually opened with the path after open before reading any bytes.
+  const currentPath = await realpath(path);
+  if (root && !isWithin(root, currentPath)) return false;
+  const current = await lstat(currentPath, { bigint: true });
+  return current.isFile() && current.dev === info.dev && current.ino === info.ino;
 }
 
 async function openResolvedFile(
@@ -150,16 +160,17 @@ async function openResolvedFile(
   rawRef: FileResourceRef,
 ): Promise<{ ref: FileResourceRef; path: string; file: FileHandle; info: BigIntStats }> {
   const ref = FileResourceRefSchema.parse(rawRef);
-  const path = await safeResolvedPath(options, principal, ref);
+  const { path, root } = await safeResolvedPath(options, principal, ref);
+  let file: FileHandle | undefined;
   try {
-    const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     const info = await file.stat({ bigint: true });
-    if (!info.isFile()) {
-      await file.close();
+    if (!info.isFile() || !await openedPathIsAuthorized(path, info, root)) {
       throw new FilePreviewError("not_found");
     }
     return { ref, path, file, info };
   } catch (error: unknown) {
+    await file?.close();
     if (error instanceof FilePreviewError) throw error;
     if (unavailableFileError(error)) throw new FilePreviewError("not_found");
     throw new FilePreviewError("unavailable");

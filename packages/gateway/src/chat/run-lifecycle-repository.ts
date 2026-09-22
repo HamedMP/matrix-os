@@ -707,7 +707,9 @@ export class ChatRunLifecycleRepository {
           replay = true;
         } else {
           if (current.parts.filter((candidate) => candidate.type === "attachment_reference").length >= 8) {
-            throw new ChatConflictError(chatId, Number(chat.revision));
+            // Provider output may contain more media than a canonical message allows.
+            // Keep the first eight; an extra artifact must not fail the agent run.
+            return current;
           }
           next = CanonicalChatMessageSchema.parse({ ...current, parts: [...current.parts, part] });
           await trx.updateTable("chat_messages").set({
