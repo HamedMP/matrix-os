@@ -123,6 +123,7 @@ export class CollaborationControlClient {
   }
 
   async register(): Promise<RegistrationResponse> {
+    if (this.closed) throw new Error("Control client is shutting down");
     const body = JSON.stringify({
       protocolVersion: COLLABORATION_DIRECT_PROTOCOL_VERSION,
       runtimeId: toLogicalRuntimeId(this.options.runtimeId),
@@ -142,6 +143,10 @@ export class CollaborationControlClient {
     if (!response.ok) throw new Error(`Registration rejected (${response.status})`);
     const parsed = RegistrationResponseSchema.safeParse(await response.json());
     if (!parsed.success || parsed.data.runtime.runtimeId !== toLogicalRuntimeId(this.options.runtimeId)) throw new Error("Registration response is invalid");
+    // The fence can land while this request is in flight. A registration that comes back
+    // afterwards must not commit: publishing platform keys or refreshing the control snapshot
+    // would make a runtime that has stopped serving look registered and control-fresh.
+    if (this.closed) throw new Error("Control client is shutting down");
     this.keys = parsed.data.platformSigningKeys;
     this.generation = Math.max(this.generation, parsed.data.runtime.authorityGeneration);
     this.snapshotExpiresAt = this.now().getTime() + CONTROL_SNAPSHOT_TTL_MS;
@@ -206,6 +211,18 @@ export class CollaborationControlClient {
       if (this.stream === handle) this.stream = undefined;
       this.scheduleReconnect();
     });
+    // Adoption is the commit point, and the fence may have landed while the socket was
+    // connecting. Close the late arrival instead of installing it: nothing would ever
+    // close a stream adopted behind the fence.
+    if (this.closed) {
+      terminated = true;
+      try {
+        socket.close(1001, "Control client closed");
+      } catch (error: unknown) {
+        console.warn("[collaboration-control-client] late socket close failed", error instanceof Error ? error.name : "UnknownError");
+      }
+      throw new Error("Control client is shutting down");
+    }
     this.stream = handle;
     return handle;
   }
@@ -257,6 +274,10 @@ export class CollaborationControlClient {
   async start(): Promise<void> {
     if (!this.options.startTimers) return;
     await this.registerAndConnect();
+    // Startup itself can span the fence: without this the interval is installed behind it and
+    // a fenced runtime keeps authenticating to the platform every five minutes, with nothing
+    // left to clear the timer.
+    if (this.closed) return;
     this.registerTimer = setInterval(() => {
       this.register().catch((error: unknown) => {
         console.warn("[collaboration-control-client] re-registration failed", error instanceof Error ? error.name : "UnknownError");
