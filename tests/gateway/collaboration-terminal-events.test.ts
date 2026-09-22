@@ -31,6 +31,35 @@ describe("CollaborationTerminalEventRegistry", () => {
     expect(closeSource).toHaveBeenCalledTimes(1);
   });
 
+  it("replaces retained history when a restarted source replays the daemon snapshot", async () => {
+    let publish!: (data: string, replacesHistory?: boolean) => Promise<void>;
+    const connectOutput = vi.fn(async (_metadata, handlers) => {
+      publish = handlers.output;
+      return { close: vi.fn() };
+    });
+    const fixture = setup({ connectOutput });
+    const first = socket();
+    const opened = await fixture.registry.open(connection(scopeA, "user_alice", "first", first));
+    await publish("screen one", true);
+    await publish("live output");
+    expect(frames(first).some((frame) => frame.type === "terminal.refresh_required")).toBe(false);
+    // The last viewer leaves, so the registry stops the source but keeps its records and sequence.
+    opened.close();
+    expect(connectOutput).toHaveBeenCalledTimes(1);
+
+    const resumed = socket();
+    await fixture.registry.open(connection(scopeA, "user_alice", "resumed", resumed, 2));
+    expect(connectOutput).toHaveBeenCalledTimes(2);
+    await publish("screen one\r\nlive output", true);
+    const seen = frames(resumed);
+    const refreshAt = seen.findIndex((frame) => frame.type === "terminal.refresh_required");
+    const snapshotAt = seen.findIndex((frame) => frame.type === "terminal.output"
+      && frame.data === "screen one\r\nlive output");
+    expect(refreshAt).toBeGreaterThanOrEqual(0);
+    expect(snapshotAt).toBeGreaterThan(refreshAt);
+    fixture.registry.shutdown();
+  });
+
   it("fails admission closed when the canonical output source cannot attach", async () => {
     const fixture = setup({ connectOutput: async () => { throw new Error("daemon unavailable"); } });
     const target = socket();

@@ -232,7 +232,7 @@ describe("canonical terminal collaboration bridge", () => {
       type: "snapshot", terminalRef: { workspaceId, tabId }, canonicalSize: { cols: 80, rows: 24 },
       revision: 4, presentationRevision: 0, seq: 7, ansi, viewport: { top: 0, rows: 24 },
     });
-    await vi.waitFor(() => expect(handlers.output).toHaveBeenCalledWith(ansi));
+    await vi.waitFor(() => expect(handlers.output).toHaveBeenCalledWith(ansi, true));
     expect(handlers.error).not.toHaveBeenCalled();
   });
 

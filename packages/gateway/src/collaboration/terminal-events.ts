@@ -90,7 +90,8 @@ export class CollaborationTerminalEventRegistry {
     maxReplayBytes?: number;
     maxSessions?: number;
     connectOutput?: (metadata: CollaborationTerminalMetadata, handlers: {
-      output(data: string): Promise<void>;
+      /** `replacesHistory` marks a daemon snapshot: it supersedes retained records, never extends them. */
+      output(data: string, replacesHistory?: boolean): Promise<void>;
       exit(): Promise<void>;
       error(): void;
     }) => Promise<{ close(): void }>;
@@ -155,7 +156,7 @@ export class CollaborationTerminalEventRegistry {
     try {
       if (this.options.connectOutput) {
         runtime.source ??= this.options.connectOutput(metadata, {
-          output: (data) => this.publishOutput(metadata.scopeId, metadata.incarnation, data),
+          output: (data, replacesHistory) => this.publishOutput(metadata.scopeId, metadata.incarnation, data, replacesHistory),
           exit: () => this.publishExit(metadata.scopeId, metadata.incarnation),
           error: () => this.sourceUnavailable(runtime),
         });
@@ -189,11 +190,12 @@ export class CollaborationTerminalEventRegistry {
     };
   }
 
-  async publishOutput(scopeId: string, incarnation: string, data: string): Promise<void> {
+  async publishOutput(scopeId: string, incarnation: string, data: string, replacesHistory = false): Promise<void> {
     const runtime = this.runtimes.get(scopeId);
     if (!runtime || runtime.metadata.incarnation !== incarnation || runtime.metadata.status !== "active") {
       throw new CollaborationTerminalEventError("unavailable");
     }
+    if (replacesHistory) this.replaceHistory(runtime);
     for (const chunk of byteChunks(data, MAX_FRAME_DATA_BYTES)) {
       runtime.sequence += 1;
       const record = { sequence: runtime.sequence, data: chunk, bytes: Buffer.byteLength(chunk) };
@@ -304,6 +306,23 @@ export class CollaborationTerminalEventRegistry {
       || current.filter((item) => item.scopeId === input.scopeId).length >= this.maxScopeConnections
       || current.filter((item) => item.scopeId === input.scopeId && item.actorId === input.actorId).length
         >= this.maxActorScopeConnections) throw new CollaborationTerminalEventError("capacity");
+  }
+
+  /**
+   * A restarted source replays the whole retained screen, so every subscriber is told to refresh
+   * before that snapshot arrives instead of appending it to the history it already rendered.
+   */
+  private replaceHistory(runtime: TerminalRuntime): void {
+    if (runtime.sequence === 0) return;
+    runtime.records = [];
+    runtime.replayBytes = 0;
+    runtime.evictedThrough = runtime.sequence;
+    for (const connectionId of [...runtime.connections]) {
+      const connection = this.connections.get(connectionId);
+      if (!connection) continue;
+      this.sendBestEffort(connection, refreshFrame(connection, runtime));
+      connection.lastSequence = runtime.sequence;
+    }
   }
 
   private async deliverReplay(connection: TerminalConnection, runtime: TerminalRuntime): Promise<void> {

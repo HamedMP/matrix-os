@@ -77,7 +77,7 @@ export function createCanonicalTerminalCollaborationBridge(options: {
 
   return {
     connectOutput: async (metadata: CollaborationTerminalMetadata, handlers: {
-      output(data: string): Promise<void>;
+      output(data: string, replacesHistory?: boolean): Promise<void>;
       exit(): Promise<void>;
       error(): void;
     }): Promise<{ close(): void }> => {
@@ -113,7 +113,7 @@ export function createCanonicalTerminalCollaborationBridge(options: {
         close();
         handlers.error();
       };
-      const queueOutput = (data: string, limit: number) => {
+      const queueOutput = (data: string, limit: number, replacesHistory = false) => {
         const bytes = Buffer.byteLength(data);
         if (bytes > limit || pendingBytes + bytes > limit) {
           failed();
@@ -121,7 +121,8 @@ export function createCanonicalTerminalCollaborationBridge(options: {
         }
         pendingBytes += bytes;
         delivery = delivery.then(async () => {
-          if (!closed) await handlers.output(data);
+          // Live output keeps the single-argument shape; only a snapshot declares a replacement.
+          if (!closed) await (replacesHistory ? handlers.output(data, true) : handlers.output(data));
         }).catch((error: unknown) => failed(error)).finally(() => { pendingBytes -= bytes; });
       };
       try {
@@ -148,7 +149,8 @@ export function createCanonicalTerminalCollaborationBridge(options: {
                 resolve();
               } else if (frame.type === "snapshot" || frame.type === "output") {
                 if (!attached) { rejectAttach(); return; }
-                if (frame.type === "snapshot") queueOutput(frame.ansi, MAX_SNAPSHOT_BYTES);
+                // The daemon snapshot is the whole retained screen, not more incremental output.
+                if (frame.type === "snapshot") queueOutput(frame.ansi, MAX_SNAPSHOT_BYTES, true);
                 else queueOutput(frame.data, MAX_PENDING_OUTPUT_BYTES);
               } else if (frame.type === "exit") {
                 delivery = delivery.then(() => handlers.exit()).catch((error: unknown) => failed(error)).finally(close);
