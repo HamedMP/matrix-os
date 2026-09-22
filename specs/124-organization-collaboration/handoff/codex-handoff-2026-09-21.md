@@ -1659,3 +1659,51 @@ the chain's `85adc491f`; a rebase from `0d0df2c91` discards it, which is the cor
 
 `origin/main` is now `4f13d4c6d`, **11 commits ahead of the `e0c7d5729` that the `s05→s15` line is based on**.
 `124/s07-terminal` has been rebased onto it; the rest of that line has not. Factor that in when restacking.
+
+## 61. Two more merges, and `main` repaired twice — 2026-09-22 09:50 UTC
+
+**Merged since section 47:** #1835 and #1840 (both `main` repairs) and **#1803**
+(`feat(collaboration): authenticate direct sessions on the home with single-use tickets`). `main` is
+`7eddfd964`. Twenty-seven spec-124 PRs have now landed.
+
+**`main` broke twice today, both times from unrelated work, both times blocking every layer.**
+
+The second was #1834 (`fix(chat): restore two-pane provider picker`), which left two suites asserting the
+pre-redesign shape. Fixed in #1840, test-only:
+
+- `canonical-chat-wiring` read the shell setup component as **raw text** and required
+  `onSetupAction(instance, action)`. The picker now receives the handler and invokes it at
+  `compact-chat-provider-choices.tsx:203` as `onSetupAction(activeInstance, action)`. **Respelling the
+  assertion would have been wrong** — the guarantee now spans two files, so the test asserts both halves: the
+  shell passes the handler through, and the picker calls it with the instance and the action. Matching only
+  the new spelling keeps the appearance of a guarantee while dropping the half that matters.
+- `canonical-chat-composer-preferences` needed three separate corrections: the control is now labelled
+  **"New chat"**, the picker is **two-pane** so a harness must be selected before its models are listed, and
+  the workspace has its **own icon-only** "New chat" control with the same accessible name, so the picker's is
+  now selected by visible label rather than position.
+
+**Both breakages share a root cause worth fixing:** #1834's CI run shows **`cancelled`**, not `success`. A PR
+can merge while its CI run is incomplete. Filed as #1838 along with the diagnosis.
+
+### Operational notes for the remaining merges
+
+- **Read Greptile's score from the summary comment, not the last comment.** The bot's *last* comment is often
+  a "Comments Outside Diff" note with no score, which reads as "never reviewed". Select the last comment
+  matching `Confidence Score`. This produced a false "two layers unscored" reading that was my own query bug.
+- **Cycling `ready-for-ci` creates a duplicate run** that parks in the concurrency group behind the real one.
+  Prefer retargeting the base to `main` (which triggers a run on its own) and labelling once. If a duplicate
+  appears, cancel the one with **zero jobs** — the real run shows ~14.
+- **A force-push does not reliably trigger a re-review.** After six PRs sat stale for 90 minutes, a single
+  `@greptileai please review` per PR returned all six to **5/5** within minutes. One request each is not the
+  spamming the repo guidance warns against; repeated nudging would be.
+
+### Verification standard that emerged
+
+For proving a suite ran against real PostgreSQL, **count the schemas it created on the server**. One sweep
+confirmed 46 distinct `collaboration_*` schemas during a run of exactly those tests. That is positive evidence,
+where "0 skipped" is merely the absence of contrary evidence.
+
+**Current state:** all six remaining layers at **5/5 on their current heads, zero unresolved threads**. #1804
+retargeted to `main`, rebased, pushed, labelled, CI running. `124/s06` verified locally: typecheck 0, patterns
+0, **756 passed / 1 failed / 0 skipped** across 88 suites on real Postgres, the single failure being the known
+pre-existing publication-race test that is byte-identical to `main`.
