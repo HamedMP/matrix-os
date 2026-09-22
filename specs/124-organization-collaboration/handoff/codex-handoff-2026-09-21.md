@@ -1278,3 +1278,38 @@ already occurred once in this release.
 **Sequencing.** Nothing moves until the seven main-path layers land. The merge simulation above was run against
 `124/s09` @ `26ae6daeb`, which still sits on the pre-restack chain head, so the conflict set must be recomputed
 once S09 has its final parent.
+
+## 54. The watchdog's shutdown position, and why it is not the S12 ordering — 2026-09-22 07:55 UTC
+
+**Section 53 flagged the `wiring.ts` re-anchoring as the risk. It has been answered before any code moved, and
+the answer is "the property does not exist yet", not "preserve the shape".**
+
+`closeResourceServices`, `resourceServices` and `standaloneScope` have **zero occurrences** in `wiring.ts` at
+`124/s09` — independently confirmed, and they are also absent at the current `124/s07-terminal`. The catalog
+and file driver arrive with S12. So the ordering I resolved earlier in this release (both drains must precede
+resource teardown, because sessions ending in the drain can still reach the catalog and file driver) **has
+nothing to constrain at S09**. It must not be asserted there as if it were live.
+
+**S09 has its own, stricter ordering**, stated in its own comments, and both shutdown paths mirror it, one
+synchronous and one awaited:
+
+1. Drain the **control client first** — its frames revoke sessions, evict membership evidence and end grants,
+   so it must stop before the registries detach and the verifier shuts down.
+2. Drain **direct sessions second** — ending them notifies the event and terminal registries through end hooks
+   that the following lines detach.
+
+**This gives the control-loss watchdog a correct position independent of S12.** It must stop *before* the
+control client drains, because it reads control freshness and calls `interruptForLoss`. If it survives that
+drain it will observe the control client going quiet, read that as a partition, and **mark healthy runs
+interrupted during an ordinary shutdown**. So `controlLossWatchdog?.stop()` belongs immediately after
+`closing = true` and the timer clear, before the control client drain, in both `fence()` and `shutdown()`.
+
+On the integrated base it currently sits next to `closeServices` by accident of surrounding context, which
+happens to be early enough. At S09 it will be placed against the control drain, which is the reason it needs to
+be early in the first place.
+
+**The general lesson for the remaining grafts.** When a hunk is anchored on a line a lower layer does not have,
+ask what invariant the anchor encoded and whether that invariant exists at the target — rather than looking for
+the nearest similar-looking line. Here the honest answer was that the S12 invariant is absent and a different,
+stronger one applies, which produced a better placement than mechanically preserving the original position
+would have.
