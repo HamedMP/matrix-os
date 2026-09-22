@@ -1,0 +1,64 @@
+# S08 receipt — single owner source and run funding (T040–T044)
+
+**Branch:** `124/s08` (parent `124/s05`, restacked once onto S05 @ 71818cc83 with S03 @ 1d4b09a42 and S04 @ f2e196f72 underneath; a second restack onto the final S20/S02/S03/S04 tips is pending the coordinator's go). **Base at start:** 124/s05 @ 6c4c06e19 (= S04 tip at the time).
+
+| Commit | Content |
+| --- | --- |
+| `b9fa6eabd` | T040 RED: `tests/gateway/collaboration-owner-source.test.ts` (module not found) |
+| `16785c5a5` | T041–T043: execution policy, account eligibility, run bindings, execution-policy routes, gateway migration 10, S01 characterization updates |
+| `43d23a80e` | T044 + wiring: shared-run owner source, `shared-ai-runtime.ts` hunks, `wiring.ts` construction, wiring test |
+| (this commit) | receipt |
+
+## Changed files
+
+- New: `packages/gateway/src/collaboration/{execution-policy,account-eligibility,run-account-binding,execution-policy-routes,shared-run-owner-source}.ts`
+- Edited: `database.ts` (two table types), `database-migrations.ts` (version 10 registered; 9 reserved for S05), `routes.ts` (registrar composed after the baseline), `route-support.ts` (`executionPolicies?` option), `shared-ai-runtime.ts` (see hunks), `wiring.ts` (options `providerSnapshotReader?`, `organizationAiSubmission?`; constructs eligibility/policies/bindings/owner source; passes `ownerSource` to the runtime and `executionPolicies` to the routes; returns `executionPolicies`, `runBindings`, `ownerSource`)
+- Tests: `tests/gateway/collaboration-owner-source.test.ts` (36), `collaboration-foundation.test.ts` (route baseline + migration lists include the two S08 routes and version 10), `collaboration-wiring.test.ts` (migration list 1–8, 10; S08 wiring test)
+
+### `shared-ai-runtime.ts` hunks (additive, #1765 also edits this file)
+
+1. Import: `import type { SharedRunOwnerSource } from "./shared-run-owner-source.js";`
+2. `createSharedAiRuntime` options: `ownerSource?: SharedRunOwnerSource;` after `resolveAccessSource?`.
+3. Dispatch callback, just before `providerIdentity`: `const ownerDecision = options.ownerSource ? await options.ownerSource.prepare({ scopeId, chatId, ownerId: context.ownerId, requestingActorId: execution.requestingActorId, driverKind: execution.driverKind }) : null;` and the Claude identity now uses `accessSourceId: ownerDecision?.accessSourceId ?? await resolveAccessSource()`.
+
+## Observed results
+
+- RED (`b9fa6eabd`): `Cannot find module '../../packages/gateway/src/collaboration/account-eligibility.js'`.
+- GREEN: `pnpm exec vitest run tests/gateway/collaboration-owner-source.test.ts` → 36/36 on PGlite and 36/36 with `MATRIX_TEST_POSTGRES_URL`/`CHAT_TEST_DATABASE_URL` → `matrixos_test_124` (real PostgreSQL 16).
+- Regression: `shared-ai-runtime`, `collaboration-chat-scope`, `collaboration-routes`, `collaboration-wiring`, `collaboration-foundation`, `collaboration-org-precondition`, `collaboration-authority`, `collaboration-readiness` → 7 files / 84 tests pass (one listed file has no tests). `collaboration-capabilities-postgres` (S04) → 27/28 on PGlite: "serializes concurrent accepts of different grants on one scope on the scope lock" fails identically on the parent commit 71818cc83 without S08 changes (PGlite single-connection race), so it is pre-existing here, not S08's.
+- `bun run typecheck` → exit 0 (all packages). `./scripts/review/check-patterns.sh` → 0 violations (5 pre-existing warnings). `git diff --check` clean. Full `bun run test` not run (shared-host load rule); CI covers it after retarget.
+
+## Migration
+
+Gateway `COLLABORATION_VERSIONED_MIGRATIONS` gains `{ version: 10, run: migrateExecutionPoliciesV10 }` (tables `collaboration_execution_policies`, `collaboration_run_bindings`, index on bindings by scope; records version 10). Version 9 is reserved for S05; if S05 lands 9 after this, the list must stay ordered 8, 9, 10. Rollback: drop both tables; no existing rows are affected on customer VPSes (no policy exists until an owner sets one).
+
+## Seams and open gates
+
+- **Organization AI submission projection**: `OrganizationAiSubmissionSource.resolve(organizationId)` (`execution-policy.ts`) defaults to `unknown` → owner-only. S03's internal membership assertion does not carry `collaboration.aiSubmission`; the platform needs to expose it (or extend the assertion frame) and gateway wiring must pass it as `organizationAiSubmission`. Until then member submission is owner-only by construction (fail-closed, spec-conformant).
+- **Provider snapshot reader**: `createGatewayCollaboration({ providerSnapshotReader })` must receive the gateway's `CanonicalProviderSnapshotReader` (server.ts owns that wiring; coordinator patch).
+- **Run binding admission**: the shared dispatch context (`ClaimedQueuedTurn.sharedExecution`) has no run id, request id or execution root, so `runBindings.admit(...)` is exposed on `ownerSource.bindings` for S09 T047/T048 to call from the coordinator with `runId`, `requestId`, `executionRoot`, `rootFingerprint`, `audienceGeneration`, `expectedPolicyRevision`. `CollaborationRunBindingRepository.list/get` serve the S15 run-queue attribution.
+- **Readiness**: `createOwnerSourceReadinessProbes({ policies, eligibility })` supplies `aiSource`/`submitMode` to S04's `evaluateCollaborationReadiness`; S10 supplies Git identity/forge/inventory.
+- Reparented onto `124/s05-relay` @ 6692ac0f2 (S05 took migration 9; list reads 8, 9, 10). `organizationAiSubmissionFromMembershipClient` is the marked adapter point for S03's `OrganizationMembershipClient.organizationAiSubmission` seam (124/s03 local commit 1ecb9c693, not yet in this ancestry); wiring still defaults to `unknown` → owner-only until that seam lands. No PR opened yet: coordinator holds submission.
+
+## Greptile round 1 (PR #1805 @ f4c6d3297, 2/5) — fixes
+
+1. **Production wiring was inert.** `server.ts` now passes a lazy `CanonicalProviderSnapshotReader` (backed by `AiProviderService`, assigned after the owner database boots; reads before that fail closed) into `createGatewayCollaboration`, and gateway `wiring.ts` derives `organizationAiSubmission` from the default `OrganizationMembershipClient` through `organizationAiSubmissionFromMembershipClient` (S03 seam, now in ancestry). New wiring test constructs the production path with a stubbed platform response and proves `executionPolicies`, `runBindings`, `ownerSource` exist and the membership client answers `members`.
+2. **Acknowledgement is part of the effective gate.** `effectiveSubmitModeWithAcknowledgement` gates `effectiveSubmitMode()`, the projection and run admission: a `follow_organization` policy without `provider_terms_acknowledged_at` resolves to owner-only even after the organization flips to `members`; the projection presents `organizationAiSubmission` as `owner_only` in that state so the frozen contract's refinement holds. Test added.
+3. **Generation floor after restart.** Bindings persist `session_key`; the generation is derived from the persisted latest binding (same key continues, any other key allocates strictly above the persisted maximum); the in-memory binder is only a cache. Test: admit, new repository instance, same key → same generation, changed key → strictly greater, back to old key → greater again.
+
+## Review fixes (2026-09-21)
+
+- **F4 network call under the scope lock (P2).** `CollaborationExecutionPolicyRepository.put` awaited `eligibility.resolveSelection` (provider snapshot) and the organization AI-submission lookup (platform fetch, 5 s timeout) inside `db.transaction()` while `collaboration_scopes` was locked `FOR UPDATE`. RED (real Postgres only, `it.skipIf(!hasRealPostgres)`): a second pool connection probing the scope row with `FOR UPDATE NOWAIT` during those calls saw `55P03` (`eligibility:locked`), and a scope revision change made during resolution hit the lock timeout instead of a conflict. GREEN: phase 1 resolves scope, owner, eligibility and organization policy with no lock; phase 2 opens the transaction, re-reads the scope `FOR UPDATE`, compares revision/owner/organization with the unlocked read (`conflict` on any change), checks replay, and writes the policy row with the existing `WHERE revision = current` guard. Probe now reports `eligibility:free`, `organization:free`; the changed-scope test gets `conflict` and no policy row.
+- Gates: `collaboration-owner-source` + `collaboration-wiring` + `collaboration-routes` 79/79 on real Postgres; gateway `tsc` clean; patterns 0 violations / 5 inherited warnings.
+
+## Review round (2026-09-21)
+
+Unresolved Greptile threads on #1805 at head `ee062afeb`:
+
+| Thread | Outcome |
+| --- | --- |
+| P1 `wiring.ts:161` production leaves feature disabled | Fixed by `94e85b4a4`: `server.ts` passes a lazy `CanonicalProviderSnapshotReader` into `createGatewayCollaboration` (formerly lines 658–665 and 969) and attaches `aiProviderService` once the owner database boots (line 4238), so `executionPolicies`, `runBindings`, `ownerSource` and the `GET`/`PUT …/execution-policy` routes exist in production. Greptile kept the thread because the conditional line still exists. This round adds a production-level lock: RED `0977e25d5` (module missing), GREEN `99dcf5623` extracts `createLazyProviderSnapshotReader()` (`collaboration/lazy-provider-snapshot-reader.ts`), used by `server.ts`; the test proves reads fail closed before attach, delegate after, a second attach throws, and the runtime constructed with that reader has policies/bindings/owner source. |
+| P1 `execution-policy.ts` acknowledgement can be bypassed (outdated) | Fixed by `94e85b4a4`: `effectiveSubmitModeWithAcknowledgement` (lines 125–133) gates the projection (`execution-policy.ts:385`) and run admission (`run-account-binding.ts:303`); a `follow_organization` policy without `provider_terms_acknowledged_at` stays owner-only after the organization flips to members. Locked by "stays owner-only without the provider-terms acknowledgement even after the organization enables members" (`collaboration-owner-source.test.ts:318`). |
+| P1 `run-account-binding.ts` session generations can collide (outdated) | Fixed by `94e85b4a4`: bindings persist `session_key`; the generation is derived from the persisted latest binding (`run-account-binding.ts:245–250`): same key continues it, any other key allocates strictly above; the in-memory binder is only a cache. Locked by "after a restart a changed key allocates strictly above the persisted generation and the same key continues it" (`collaboration-owner-source.test.ts:472`). |
+
+Checks: owner-source + wiring + routes on real Postgres **80/80**; `bun run typecheck` exit 0 (all packages, after the server.ts extraction); `bun run check:patterns` 0 violations, 5 pre-existing warnings.

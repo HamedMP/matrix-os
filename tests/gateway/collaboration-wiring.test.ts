@@ -4,7 +4,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:net";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   SCOPE_RUNTIME_HARNESS_VERSION,
   SCOPE_RUNTIME_PROFILE_DIGEST,
@@ -19,6 +19,8 @@ import {
   loadGatewayCollaborationConfig,
 } from "../../packages/gateway/src/collaboration/wiring.js";
 import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
+import { OrganizationMembershipClient } from "../../packages/gateway/src/collaboration/organization-membership-client.js";
+import { createLazyProviderSnapshotReader } from "../../packages/gateway/src/collaboration/lazy-provider-snapshot-reader.js";
 import {
   allowAllOrganizationPrecondition,
   collaborationIds,
@@ -97,6 +99,7 @@ describe("gateway collaboration wiring", () => {
         { version: 7 },
         { version: 8 },
         { version: 9 },
+        { version: 10 },
       ]);
     await expect(app.request(`/api/collaboration/scopes/${collaborationIds.scope}/discussion/messages`))
       .resolves.toMatchObject({ status: 401 });
@@ -491,3 +494,136 @@ async function seedSharedChat(fixture: CollaborationTestDatabase): Promise<void>
     deleted_at: null,
   }).execute();
 }
+
+describe("S08 owner source wiring", () => {
+  it("production path: the default membership client supplies organization AI submission and the lazy V3 reader constructs policies, bindings and the owner source", async () => {
+    const fixture = await createCollaborationTestDatabase();
+    await bootstrapChatDatabase(fixture.db);
+    const seen: string[] = [];
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const body = JSON.parse(String(init?.body)) as { actors: Array<{ organizationId: string; actorId: string }> };
+      seen.push(String(input));
+      const now = Date.now();
+      return new Response(JSON.stringify(body.actors.map((actor) => ({
+        protocolVersion: 2, type: "membership_assertion", organizationId: actor.organizationId, actorId: actor.actorId,
+        membershipEpoch: "3", member: true, aiSubmission: "members",
+        requestStartedAt: new Date(now).toISOString(), expiresAt: new Date(now + 15_000).toISOString(),
+      }))), { status: 200, headers: { "content-type": "application/json" } });
+    };
+    const client = new OrganizationMembershipClient({
+      platformBaseUrl: "https://platform.internal", runtimeId: collaborationIds.runtime, serviceToken: "c".repeat(32), fetchImpl,
+    });
+    const runtime = await createGatewayCollaboration({
+      // Same construction as server.ts: the membership client is the default source, no precondition override.
+      organizationMembershipSource: client,
+      db: fixture.db,
+      chatRepository: new ChatRepository(fixture.db),
+      config: {
+        runtimeId: collaborationIds.runtime,
+        activeKeyId: "key-1",
+        proofKeys: { "key-1": "a".repeat(32) },
+        preflightSecret: "b".repeat(32),
+        platformBaseUrl: "https://platform.internal",
+        serviceToken: "c".repeat(32),
+      },
+      resolveParticipant: async (actorId: string) => ({ actorId, displayName: actorId }),
+      resolveInvitationIdentifier: async (identifier: string) => ({ actorId: identifier, displayName: identifier }),
+      startTimers: false,
+      providerSnapshotReader: { async getSnapshot() { throw new Error("ProviderSnapshotUnavailable"); } },
+    });
+    try {
+      expect(runtime.executionPolicies).toBeDefined();
+      expect(runtime.runBindings).toBeDefined();
+      expect(runtime.ownerSource).toBeDefined();
+      expect(await runtime.executionPolicies!.organizationAiSubmissionFor("org_wiring_primary", "user_wiring_owner")).toBe("members");
+      expect(seen).toEqual(["https://platform.internal/internal/organizations/access/resolve"]);
+    } finally {
+      await runtime.shutdown();
+      await fixture.destroy();
+    }
+  });
+
+  it("gives production construction a lazy reader that fails closed until the provider service attaches", async () => {
+    // server.ts builds the collaboration runtime before the owner's Provider V3 service exists.
+    const lazy = createLazyProviderSnapshotReader();
+    await expect(lazy.reader.getSnapshot()).rejects.toThrow(/ProviderSnapshotUnavailable/);
+    const snapshot = { schemaVersion: 3 } as unknown as Awaited<ReturnType<typeof lazy.reader.getSnapshot>>;
+    const getSnapshot = vi.fn(async () => snapshot);
+    lazy.attach({ getSnapshot });
+    await expect(lazy.reader.getSnapshot({ refresh: true })).resolves.toBe(snapshot);
+    expect(getSnapshot).toHaveBeenCalledWith({ refresh: true });
+    expect(() => lazy.attach({ getSnapshot })).toThrow(/already attached/i);
+    const fixture = await createCollaborationTestDatabase();
+    await bootstrapChatDatabase(fixture.db);
+    await bootstrapCollaborationDatabase(fixture.db);
+    const runtime = await createGatewayCollaboration({
+      organizationPrecondition: allowAllOrganizationPrecondition,
+      db: fixture.db,
+      chatRepository: new ChatRepository(fixture.db),
+      config: {
+        runtimeId: collaborationIds.runtime,
+        activeKeyId: "key-1",
+        proofKeys: { "key-1": "a".repeat(32) },
+        preflightSecret: "b".repeat(32),
+        platformBaseUrl: "https://platform.internal",
+        serviceToken: "c".repeat(32),
+      },
+      resolveParticipant: async (actorId: string) => ({ actorId, displayName: actorId }),
+      startTimers: false,
+      providerSnapshotReader: lazy.reader,
+    });
+    try {
+      expect(runtime.executionPolicies).toBeDefined();
+      expect(runtime.runBindings).toBeDefined();
+      expect(runtime.ownerSource).toBeDefined();
+    } finally {
+      await runtime.shutdown();
+      await fixture.destroy();
+    }
+  });
+
+  it("constructs execution policies, run bindings and the owner source only when a V3 snapshot reader is provided", async () => {
+    const fixture = await createCollaborationTestDatabase();
+    await bootstrapChatDatabase(fixture.db);
+    const config = {
+      runtimeId: collaborationIds.runtime,
+      activeKeyId: "key-1",
+      proofKeys: { "key-1": "a".repeat(32) },
+      preflightSecret: "b".repeat(32),
+      platformBaseUrl: "https://platform.internal",
+      serviceToken: "c".repeat(32),
+    };
+    const base = {
+      organizationPrecondition: allowAllOrganizationPrecondition,
+      db: fixture.db,
+      chatRepository: new ChatRepository(fixture.db),
+      config,
+      resolveParticipant: async (actorId: string) => ({ actorId, displayName: actorId }),
+      resolveInvitationIdentifier: async (identifier: string) => ({ actorId: identifier, displayName: identifier }),
+      startTimers: false,
+    };
+    try {
+      const without = await createGatewayCollaboration(base);
+      expect(without.executionPolicies).toBeUndefined();
+      expect(without.runBindings).toBeUndefined();
+      expect(without.ownerSource).toBeUndefined();
+      await without.shutdown();
+
+      const withReader = await createGatewayCollaboration({
+        ...base,
+        providerSnapshotReader: { async getSnapshot() { throw new Error("snapshot never read at construction"); } },
+      });
+      expect(withReader.executionPolicies).toBeDefined();
+      expect(withReader.runBindings).toBeDefined();
+      expect(withReader.ownerSource).toBeDefined();
+      expect(await withReader.executionPolicies!.effectiveSubmitMode(collaborationIds.scope)).toBe("owner_only");
+      const app = new Hono();
+      withReader.register({ app, upgradeWebSocket: () => (async () => new Response(null, { status: 426 })) as never });
+      const policyRoutes = app.routes.filter((route) => route.path === "/api/collaboration/scopes/:scopeId/execution-policy" && route.method !== "ALL");
+      expect(policyRoutes.map((route) => route.method).sort()).toEqual(["GET", "PUT"]);
+      await withReader.shutdown();
+    } finally {
+      await fixture.destroy();
+    }
+  });
+});
