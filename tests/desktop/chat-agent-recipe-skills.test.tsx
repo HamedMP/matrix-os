@@ -4,7 +4,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ChatAgentRecipe, ChatAgentRecipeCatalog } from "@matrix-os/contracts";
 import { AgentRecipeEditor } from "../../packages/ui/src/chat-agents/AgentRecipeEditor.js";
-import { JEV_AGENT_INSTRUCTIONS, jevAgentRecipe } from "../../packages/ui/src/chat-agents/jev-agent-template.js";
+import { jevAgentInstructions, jevAgentRecipe } from "../../packages/ui/src/chat-agents/jev-agent-template.js";
 
 afterEach(cleanup);
 const skills = [
@@ -25,8 +25,9 @@ function Editor({ catalog = { enabled: true, skills, services: [] }, selected = 
 describe("installed Recipe skill selection", () => {
   it("binds Jev to the current user's connected Gmail account, never a template author's mailbox", () => {
     expect(jevAgentRecipe("my-work-gmail").integrations).toEqual([{ service: "gmail", accountLabel: "my-work-gmail" }]);
-    expect(JEV_AGENT_INSTRUCTIONS).toContain("current user's connected Gmail account");
-    expect(JEV_AGENT_INSTRUCTIONS).toContain("stop before reading mail");
+    expect(jevAgentInstructions("owner@example.com")).toContain('"owner@example.com"');
+    expect(jevAgentInstructions("owner@example.com")).toContain("stop before reading mail");
+    expect(() => jevAgentInstructions("gmail")).toThrow();
   });
   it("searches names and descriptions without dropping selections across searches", () => {
     render(<Editor />);

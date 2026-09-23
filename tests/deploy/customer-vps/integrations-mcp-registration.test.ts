@@ -15,9 +15,9 @@ describe("customer VPS integrations MCP wiring", () => {
     expect(launcher).toContain("exec /usr/bin/env -i");
     expect(launcher).toContain('MATRIX_AGENT_OWNER_ID="${MATRIX_AGENT_OWNER_ID:-}"');
     expect(launcher).toContain('MATRIX_AGENT_OWNER_PROOF="${MATRIX_AGENT_OWNER_PROOF:-}"');
-    expect(launcher).toContain('/proc/$parent_pid/environ');
-    expect(launcher).toContain('read_parent_run_value MATRIX_AGENT_OWNER_ID');
-    expect(launcher).toContain('read_parent_run_value MATRIX_AGENT_OWNER_PROOF');
+    expect(launcher).toContain('read_signed_ancestor_context');
+    expect(launcher).toContain('tui_gateway.entry');
+    expect(launcher).toContain('delegated identity is unavailable');
     expect(launcher).not.toContain("PIPEDREAM_");
     await expect(access(launcherPath, constants.X_OK)).resolves.toBeUndefined();
   });

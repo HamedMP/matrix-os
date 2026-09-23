@@ -7,7 +7,7 @@ import { deriveCanonicalProviderChoices } from "../canonical-provider-choice.js"
 import { accountForNewIntegration } from "./recipe-integrations.js";
 import { recipeSkillsFit } from "./recipe-skills.js";
 import { activeConnections } from "./recipe-integrations.js";
-import { JEV_AGENT_DESCRIPTION, JEV_AGENT_INSTRUCTIONS, JEV_AGENT_NAME, jevAgentRecipe } from "./jev-agent-template.js";
+import { JEV_AGENT_DESCRIPTION, JEV_AGENT_NAME, jevAgentInstructions, jevAgentRecipe } from "./jev-agent-template.js";
 import { AgentEditor, type AgentDraft } from "./AgentEditor.js";
 import { AgentAvatar } from "./AgentAvatar.js";
 import { AgentRecipesPanel } from "./AgentRecipesPanel.js";
@@ -144,7 +144,11 @@ export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, on
     : "";
   const createJev = async (accountLabel: string) => {
     if (jevPending || jevUnavailable || !onStartChat || state.agents.length >= 100) return;
-    if (!activeConnections("gmail", state.connections).some((account) => account.account_label === accountLabel)) return;
+    const matchingAccounts = activeConnections("gmail", state.connections).filter((account) => account.account_label === accountLabel);
+    if (matchingAccounts.length !== 1 || !matchingAccounts[0]?.account_email) {
+      setJevError("Choose a connected Gmail account with a verified email address before creating this Agent.");
+      return;
+    }
     const hermes = models.find((choice) => choice.driverKind === "hermes");
     const recipe = jevAgentRecipe(accountLabel);
     if (!hermes || !ChatAgentRecipeSchema.safeParse(recipe).success
@@ -157,7 +161,7 @@ export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, on
     setJevError("");
     try {
       const saved = await client.create({ name: JEV_AGENT_NAME, description: JEV_AGENT_DESCRIPTION,
-        instructions: JEV_AGENT_INSTRUCTIONS,
+        instructions: jevAgentInstructions(matchingAccounts[0].account_email),
         selection: { instanceId: hermes.instanceId, model: hermes.modelId,
           ...(hermes.selectedOptions.length ? { options: hermes.selectedOptions } : {}) },
         recipe, clientRequestId: jevCreateAttempt.current.requestId,

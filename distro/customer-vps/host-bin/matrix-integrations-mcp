@@ -13,23 +13,57 @@ read_host_value() {
   printf '%s\n' "$value"
 }
 
-# Hermes launches stdio MCP servers with a sanitized environment. Recover only
-# the signed Chat-run identity from the immediate parent; never inherit its
-# provider credentials or arbitrary variables into this process.
+# Hermes sanitizes the stdio MCP child's environment. An intermediate agent
+# process may also sit between the Chat gateway and this launcher. Recover only
+# a complete signed identity from one ancestor, never arbitrary credentials.
 parent_pid="$PPID"
-read_parent_run_value() {
-  local name="$1" entry
-  [ -r "/proc/$parent_pid/environ" ] || return 1
-  while IFS= read -r -d '' entry; do
-    case "$entry" in
-      "$name="*) printf '%s' "${entry#*=}"; return 0 ;;
-    esac
-  done < "/proc/$parent_pid/environ"
+ancestor_parent() {
+  awk '/^PPid:/ {print $2; exit}' "/proc/$1/status" 2>/dev/null
+}
+read_signed_ancestor_context() {
+  local pid="$parent_pid" depth entry owner proof
+  for depth in {1..8}; do
+    [ "$pid" -gt 1 ] 2>/dev/null || return 1
+    owner=""
+    proof=""
+    if [ -r "/proc/$pid/environ" ]; then
+      while IFS= read -r -d '' entry; do
+        case "$entry" in
+          MATRIX_AGENT_OWNER_ID=*) owner="${entry#*=}" ;;
+          MATRIX_AGENT_OWNER_PROOF=*) proof="${entry#*=}" ;;
+        esac
+      done < "/proc/$pid/environ"
+    fi
+    if [ -n "$owner" ] && [ -n "$proof" ]; then
+      printf '%s:%s' "$owner" "$proof"
+      return 0
+    fi
+    pid="$(ancestor_parent "$pid")"
+  done
   return 1
 }
-MATRIX_CLERK_CALLER_ID="${MATRIX_CLERK_USER_ID:-$(read_parent_run_value MATRIX_CLERK_USER_ID || true)}"
-MATRIX_AGENT_OWNER_ID="${MATRIX_AGENT_OWNER_ID:-$(read_parent_run_value MATRIX_AGENT_OWNER_ID || true)}"
-MATRIX_AGENT_OWNER_PROOF="${MATRIX_AGENT_OWNER_PROOF:-$(read_parent_run_value MATRIX_AGENT_OWNER_PROOF || true)}"
+has_hermes_chat_ancestor() {
+  local pid="$parent_pid" depth command
+  for depth in {1..8}; do
+    [ "$pid" -gt 1 ] 2>/dev/null || return 1
+    command="$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true)"
+    case "$command" in *tui_gateway.entry*) return 0 ;; esac
+    pid="$(ancestor_parent "$pid")"
+  done
+  return 1
+}
+MATRIX_CLERK_CALLER_ID="${MATRIX_CLERK_USER_ID:-}"
+if [ -z "${MATRIX_AGENT_OWNER_ID:-}" ] && [ -z "${MATRIX_AGENT_OWNER_PROOF:-}" ]; then
+  signed_context="$(read_signed_ancestor_context || true)"
+  if [ -n "$signed_context" ]; then
+    MATRIX_AGENT_OWNER_ID="${signed_context%%:*}"
+    MATRIX_AGENT_OWNER_PROOF="${signed_context#*:}"
+  fi
+fi
+if has_hermes_chat_ancestor && { [ -z "${MATRIX_AGENT_OWNER_ID:-}" ] || [ -z "${MATRIX_AGENT_OWNER_PROOF:-}" ]; }; then
+  echo "matrix-integrations-mcp: delegated identity is unavailable" >&2
+  exit 3
+fi
 
 if [ ! -r "$HOST_ENV_FILE" ]; then
   echo "matrix-integrations-mcp: Matrix identity is unavailable" >&2

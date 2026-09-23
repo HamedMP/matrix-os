@@ -154,6 +154,7 @@ describe("shared Agents entry", () => {
       recipe: { skills: ["matrix-jev-email-triage", "matrix-integrations"],
         integrations: [{ service: "gmail", accountLabel: "My Gmail" }] },
     });
+    expect(client.create.mock.calls[0]![0].instructions).toContain('"me@example.test"');
     await waitFor(() => expect(onStartChat).toHaveBeenCalledWith("", [
       { kind: "agent", id: saved.id, label: "Jev Inbox Triage", revision: "1" },
     ]));
