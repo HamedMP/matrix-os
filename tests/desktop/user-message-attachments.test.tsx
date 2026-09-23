@@ -98,6 +98,24 @@ describe("user message Markdown", () => {
     expect(screen.getByText("the file").closest("strong")).toBeTruthy();
   });
 
+  it("uses current reference data when an existing message updates in place", () => {
+    const renderMessage = (id: string, label: string) => <UserMessage message={{
+      kind: "message", id: "updating", role: "user", phase: "commentary", timestamp: 1000,
+      markdown: `**open [${label}](${id})**`, copyText: `**open [${label}](${id})**`,
+      content: [
+        { kind: "text", text: "**open " },
+        { kind: "reference", referenceKind: "resource", id, label },
+        { kind: "text", text: "**" },
+      ],
+    }} callbacks={{ copyText: vi.fn() }} />;
+    const { rerender, container } = render(renderMessage("first", "first file"));
+    expect(container.querySelector("strong")?.textContent).toBe("open first file");
+
+    rerender(renderMessage("second", "second file"));
+    expect(container.querySelector("strong")?.textContent).toBe("open second file");
+    expect(screen.queryByText("first file")).toBeNull();
+  });
+
   it("keeps controls in a collapsed long message out of keyboard navigation", () => {
     const markdown = `${"Introduction. ".repeat(65)} [hidden link](https://example.com)`;
     const { container } = show([{ kind: "text", text: markdown }], markdown);
