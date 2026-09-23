@@ -641,11 +641,17 @@ describe("PostHog error tracking", () => {
   });
 
   it("tracks terminal websocket lifecycle without terminal output payloads", async () => {
-    const [terminalPane, terminalRuntime, gatewayServer] = await Promise.all([
+    // The terminal websocket routes were extracted out of the composition root, so this
+    // guarantee now spans two files. Both are joined rather than checked separately: the
+    // negative assertion below is the load-bearing one, and scoping it to a single file
+    // would let input capture reappear in the other without failing.
+    const [terminalPane, terminalRuntime, gatewayServerRoot, gatewayTerminalRoutes] = await Promise.all([
       readFile("shell/src/components/terminal/TerminalPane.tsx", "utf8"),
       readFile("shell/src/components/terminal/terminal-xterm-runtime.ts", "utf8"),
       readFile("packages/gateway/src/server.ts", "utf8"),
+      readFile("packages/gateway/src/server/terminal-ws-routes.ts", "utf8"),
     ]);
+    const gatewayServer = [gatewayServerRoot, gatewayTerminalRoutes].join("\n");
 
     expect(terminalRuntime).toContain('capturePostHogEvent("shell_terminal_ws"');
     expect(terminalRuntime).toContain("capturePostHogLog");
