@@ -174,11 +174,46 @@ export class CollaborationResourceCatalog {
   }
 
   /**
+   * Serializes path-shape changes in one owner namespace, for the whole
+   * transaction.
+   *
+   * A row lock cannot carry this. Two mutations reach one namespace through
+   * different `collaboration_scopes` rows, so the scope lock serializes
+   * nothing between them, and what a folder delete has to exclude is the
+   * *insert* of a descendant that does not exist yet: no row exists to lock,
+   * and the subtree is a path predicate rather than a row set. Locking the
+   * live subtree `FOR UPDATE` is not enough either, because a `SELECT ... FOR
+   * UPDATE` fixes its result from the snapshot taken when the statement
+   * begins, so a create that commits while the delete waits stays invisible to
+   * the very statement that was meant to count it.
+   *
+   * `shared` admits any number of creates and writes at once and blocks only
+   * against a delete or a rename, which take the lock exclusively because they
+   * rewrite or destroy descendants they never read. A file delete or rename
+   * takes it exclusively too, although it touches one path: the kind is not
+   * known until the row is read, and paying for one immutable-kind peek before
+   * choosing the mode buys throughput this namespace does not need, since it
+   * belongs to a single owner.
+   */
+  async lockNamespace(
+    executor: Executor,
+    namespace: { ownerId: string; projectId: string | null },
+    mode: "shared" | "exclusive",
+  ): Promise<void> {
+    const key = `collaboration-catalog:${namespace.ownerId}\u001f${namespace.projectId ?? ""}`;
+    await (mode === "shared"
+      ? sql`SELECT pg_advisory_xact_lock_shared(hashtextextended(${key}, 0))`
+      : sql`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`).execute(executor);
+  }
+
+  /**
    * Admission bound for a folder delete. This is the only place the descendant
    * limit is enforced, and it must run before any irreversible side effect:
    * `remove` itself rolls back with the transaction, but a filesystem tree the
    * caller already deleted does not, so a bound that first fired inside
-   * `remove` would answer "conflict" over permanently destroyed bytes.
+   * `remove` would answer "conflict" over permanently destroyed bytes. The
+   * count is final only because the caller holds the namespace exclusively, so
+   * no create is in flight to land a descendant this missed.
    */
   async assertFolderRemovable(entry: CatalogEntryRecord, executor: Executor = this.db): Promise<void> {
     if (entry.kind !== "folder") return;
@@ -189,9 +224,11 @@ export class CollaborationResourceCatalog {
 
   /**
    * Tombstones the entry (and a folder's live descendants); the id never
-   * resolves again. Callers admit a folder through `assertFolderRemovable`
-   * first; the descendant tombstone here is one set-based statement, so it
-   * cannot fail on size after the caller has already removed the bytes.
+   * resolves again. Callers hold the namespace exclusively and admit a folder
+   * through `assertFolderRemovable` first; the descendant tombstone here is
+   * one set-based statement over a set no concurrent create can extend, so it
+   * cannot fail on size, or miss a child, after the caller has removed the
+   * bytes.
    */
   async remove(input: { id: string; expectedRevision: number; executor?: Executor }): Promise<CatalogEntryRecord> {
     const executor = input.executor ?? this.db;

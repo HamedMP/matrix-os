@@ -63,6 +63,23 @@ function requestId(): string {
   return `9${String(requestCounter).padStart(7, "0")}-0000-4000-8000-000000000000`;
 }
 
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((settle) => { resolve = settle; });
+  return { promise, resolve };
+}
+
+const delay = (ms: number) => new Promise<void>((resolve) => { setTimeout(resolve, ms); });
+
+/** Polls for an interleaving step instead of sleeping, so the hand-off is reached, not guessed. */
+async function reached(condition: () => boolean, label: string): Promise<void> {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    if (condition()) return;
+    await delay(10);
+  }
+  throw new Error(`timed out waiting for ${label}`);
+}
+
 class MemoryDriver implements CollaborationResourceDriver {
   readonly files = new Map<string, Uint8Array>();
   readonly folders = new Set<string>();
@@ -77,9 +94,16 @@ class MemoryDriver implements CollaborationResourceDriver {
   }
   /** Contiguous buffers handed to the driver for the last write, in order. */
   readonly writeChunkSizes = new Map<string, number[]>();
+  /**
+   * Interleaving seam: awaited after the bytes land and before the action's
+   * transaction commits, which is exactly where a real writer holds its row
+   * locks while its file already exists on disk.
+   */
+  onWrite?: (path: string) => Promise<void>;
   async write(input: { ownerId: string; projectId: string | null; path: string; content: Uint8Array }) {
     this.writeChunkSizes.set(this.key(input), [input.content.byteLength]);
     this.files.set(this.key(input), input.content);
+    if (this.onWrite) await this.onWrite(input.path);
   }
   async writeChunks(input: {
     ownerId: string; projectId: string | null; path: string; size: number; sha256: string;
@@ -589,6 +613,73 @@ describe("S12 direct resource policy", () => {
       })));
       expect(results.map((response) => response.status).sort()).toEqual([200, 409]);
       expect(await catalog.get(ids.readme)).toMatchObject({ revision: 1 });
+    });
+
+    /**
+     * Seeds `docs/sub` and `docs/sub/nested` and starts a create of
+     * `docs/sub/nested/<name>` through the folder scope, suspended inside the
+     * driver with its catalog row inserted, its bytes on disk and its
+     * transaction still open. The delete then runs through the project scope,
+     * which is a different `collaboration_scopes` row and therefore a
+     * different scope lock. The child is a grandchild on purpose: a direct
+     * child's foreign key takes `FOR KEY SHARE` on the folder being deleted
+     * and blocks the delete by accident, which hides the gap.
+     */
+    async function raceCreateAgainstFolderDelete(input: { name: string; extras?: readonly string[] }) {
+      const owner = collaborationActors.owner;
+      const sub = await catalog.register({ ownerId: owner, projectId: PROJECT_ID, kind: "folder", path: "docs/sub", incarnation: "inc-sub" });
+      const nested = await catalog.register({ ownerId: owner, projectId: PROJECT_ID, kind: "folder", path: "docs/sub/nested", incarnation: "inc-nested" });
+      driver.folders.add(`${owner}:${PROJECT_ID}:docs/sub`);
+      driver.folders.add(`${owner}:${PROJECT_ID}:docs/sub/nested`);
+      for (const extra of input.extras ?? []) {
+        await catalog.register({ ownerId: owner, projectId: PROJECT_ID, kind: "file", path: `docs/sub/${extra}`, incarnation: `inc-${extra}` });
+        driver.files.set(`${owner}:${PROJECT_ID}:docs/sub/${extra}`, new TextEncoder().encode(extra));
+      }
+      const childPath = `docs/sub/nested/${input.name}`;
+      const release = deferred();
+      driver.onWrite = async (path) => { if (path === childPath) await release.promise; };
+      const create = signed({
+        actorId: collaborationActors.editor, scopeId: FOLDER_SCOPE, method: "POST",
+        path: `/api/collaboration/scopes/${FOLDER_SCOPE}/files/actions`,
+        body: { type: "create", kind: "file", parentId: nested.id, path: childPath, content: "child", clientRequestId: requestId() },
+      });
+      await reached(() => driver.files.has(`${owner}:${PROJECT_ID}:${childPath}`), "the create to reach the driver");
+      const remove = signed({
+        actorId: collaborationActors.editor, scopeId: PROJECT_SCOPE, method: "POST",
+        path: `/api/collaboration/scopes/${PROJECT_SCOPE}/files/actions`,
+        body: { type: "delete", fileId: sub.id, expectedRevision: "0", clientRequestId: requestId() },
+      });
+      // Unserialized, the delete runs to completion here and this settles first;
+      // serialized, it waits on the folder row and only the timer settles.
+      await Promise.race([remove.then(() => undefined), delay(300)]);
+      release.resolve();
+      const [createResponse, removeResponse] = await Promise.all([create, remove]);
+      driver.onWrite = undefined;
+      return { childPath, sub, createResponse, removeResponse, childKey: `${owner}:${PROJECT_ID}:${childPath}` };
+    }
+
+    it("never leaves a child created through another scope live over bytes the folder delete destroyed", async () => {
+      const race = await raceCreateAgainstFolderDelete({ name: "deep.md" });
+      expect(race.createResponse.status).toBe(201);
+      const childId = (await race.createResponse.json() as { entry: { id: string } }).entry.id;
+      expect(race.removeResponse.status).toBe(200);
+      // One truth for the child: the delete removed its bytes, so its row must be a tombstone.
+      expect(await catalog.get(childId)).toBeNull();
+      expect(driver.files.has(race.childKey)).toBe(false);
+      expect(await catalog.get(race.sub.id)).toBeNull();
+    });
+
+    it("counts a child created through another scope against the folder descendant bound", async () => {
+      // `nested` plus `extra.md` already sit at the bound of two, so the racing
+      // child is the third descendant and the delete must be refused.
+      const race = await raceCreateAgainstFolderDelete({ name: "third.md", extras: ["extra.md"] });
+      expect(race.createResponse.status).toBe(201);
+      expect(race.removeResponse.status).toBe(409);
+      // A refusal is a database rollback, so it may not have destroyed any bytes.
+      expect(driver.removed).toEqual([]);
+      expect(driver.files.has(race.childKey)).toBe(true);
+      expect(driver.files.has(`${collaborationActors.owner}:${PROJECT_ID}:docs/sub/extra.md`)).toBe(true);
+      expect(await catalog.get(race.sub.id)).not.toBeNull();
     });
 
     it("denies a write that lands after the member was revoked", async () => {

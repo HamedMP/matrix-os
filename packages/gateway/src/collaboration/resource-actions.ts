@@ -130,6 +130,16 @@ export function createFileActionExecutor(options: {
       if (replayed) return replayed;
       const namespace = await options.catalog.namespaceForScope(context, trx);
       const ns: Namespace = { ownerId: namespace.ownerId, projectId: namespace.projectId };
+      // Path shape is namespace-wide, and the scope lock above only covers this
+      // scope: a delete and a create of one of its descendants arrive through
+      // different scope rows. Creates and writes share the namespace with each
+      // other; a rename or delete takes it alone, because those two rewrite the
+      // paths of descendants they never read, and a folder delete destroys their
+      // bytes. Every read below runs after this lock, so a create that waits
+      // behind a delete then resolves its parent as a tombstone, and a write that
+      // waits behind one cannot put bytes back where the tree used to be.
+      const shared = action.type === "create" || action.type === "write";
+      await options.catalog.lockNamespace(trx, namespace, shared ? "shared" : "exclusive");
       let entry: CatalogEntryRecord;
       if (action.type === "create") {
         const created = await options.catalog.createWithin(context, {
@@ -156,6 +166,7 @@ export function createFileActionExecutor(options: {
           if (namespace.root && namespace.root.id === locked.id) throw new ResourceCatalogError("forbidden");
           // Admit the folder before the recursive filesystem delete: a bound that
           // first fired inside the catalog would roll the rows back over lost bytes.
+          // The namespace lock above is what makes this count final.
           await options.catalog.assertFolderRemovable(locked, trx);
           await options.driver.remove({ ...ns, path: locked.path, kind: locked.kind === "folder" ? "folder" : "file" });
           entry = await options.catalog.remove({ id: locked.id, expectedRevision, executor: trx });

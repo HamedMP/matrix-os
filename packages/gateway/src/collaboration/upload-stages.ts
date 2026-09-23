@@ -205,6 +205,9 @@ export function createCollaborationUploadStager(options: {
           .where("upload_id", "=", row.id).executeTakeFirstOrThrow();
         if (Number(stored.count) !== expectedParts) throw new ResourceCatalogError("conflict");
         const namespace = await options.catalog.namespaceForScope(context, trx);
+        // A commit creates or rewrites a catalog path, so it shares the namespace
+        // with other creates and writes and waits behind a folder delete or rename.
+        await options.catalog.lockNamespace(trx, namespace, "shared");
         let entry: CatalogEntryRecord;
         if (row.catalog_id) {
           const file = await options.catalog.resolveForScope(context, row.catalog_id, trx);
