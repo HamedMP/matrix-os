@@ -175,7 +175,7 @@ export class PlatformCollaborationCutover {
       return publicJournal(await this.requireRow(scopeId));
     }
     // Disable the platform first so no new ticket can be admitted while the home fence is in flight.
-    const disabled = await this.block(row, "disabled_for_recovery", null);
+    const disabled = await this.block(row, "disabled_for_recovery", null, { fence: true });
     const resolution = await this.readyHome(row);
     if (resolution.status === "ready") {
       try {
@@ -347,11 +347,40 @@ export class PlatformCollaborationCutover {
       .where("scope_id", "=", row.scope_id).where("phase", "=", row.phase).execute();
   }
 
-  private async block(row: JournalRow, reason: string, resumePhase: CutoverPhase | null): Promise<CutoverJournal> {
-    await this.options.db.updateTable("collaboration_cutover_journal")
+  /**
+   * `fence` marks a block that is a security control rather than ordinary progress
+   * reporting: the recovery disable. An ordinary block that loses a race is benign — the
+   * newer phase simply wins — but a disable that silently matched zero rows would leave the
+   * journal active and ticket admission open while reporting success to its caller.
+   */
+  private async block(
+    row: JournalRow,
+    reason: string,
+    resumePhase: CutoverPhase | null,
+    options?: { fence?: boolean },
+  ): Promise<CutoverJournal> {
+    const write = (phase: CutoverPhase) => this.options.db.updateTable("collaboration_cutover_journal")
       .set({ phase: "blocked", resume_phase: resumePhase, block_reason: reason, updated_at: new Date() })
-      .where("scope_id", "=", row.scope_id).where("phase", "=", row.phase).execute();
-    return publicJournal(await this.requireRow(row.scope_id));
+      .where("scope_id", "=", row.scope_id).where("phase", "=", phase)
+      .returning("scope_id").executeTakeFirst();
+
+    if (await write(row.phase)) return publicJournal(await this.requireRow(row.scope_id));
+
+    // Zero rows means the journal moved between the read and this write — for example an
+    // activation committing `verified` to `active`. Re-read and, for a fence, re-apply
+    // against the phase that actually won.
+    let current = await this.requireRow(row.scope_id);
+    if (!options?.fence) return publicJournal(current);
+    if (current.phase !== "blocked" && await write(current.phase)) {
+      current = await this.requireRow(row.scope_id);
+    }
+    if (current.phase !== "blocked") {
+      // Never report a fence as established when it is not. The caller disables the home
+      // next, and a home failure there is only logged, so a false success here would leave
+      // both sides open.
+      throw new Error("The collaboration recovery disable could not fence the journal");
+    }
+    return publicJournal(current);
   }
 
   private async activateDirectory(row: JournalRow): Promise<void> {

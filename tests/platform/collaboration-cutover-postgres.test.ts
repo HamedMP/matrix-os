@@ -222,6 +222,44 @@ describe.skipIf(!connectionString)("collaboration cutover on real PostgreSQL (T0
     expect(journal.phase).toBe("blocked");
   });
 
+  it("fences the journal even when the phase moves under the recovery disable", async () => {
+    const scopeId = await orgScope();
+    const ownerHome = home(scopeId);
+    const coordinator = cutover(ownerHome);
+    await coordinator.run(scopeId, { backupRef: "restricted-backup-1" });
+
+    // Move the journal out from under the disable between its read and its write. The
+    // disable predicates on the phase it read, so without a re-apply it matches zero rows,
+    // the home disable failure is only logged, and the journal would stay admissible.
+    let raced = false;
+    const racingDb = db.withPlugin({
+      transformQuery: ({ node }: { node: unknown }) => node,
+      async transformResult(args: { result: { rows: unknown[] } }) {
+        const row = args.result.rows[0] as Record<string, unknown> | undefined;
+        if (!raced && args.result.rows.length === 1 && row && row.phase === "active" && "target_generation" in row) {
+          raced = true;
+          await db.updateTable("collaboration_cutover_journal")
+            .set({ phase: "verified", updated_at: new Date() })
+            .where("scope_id", "=", scopeId).execute();
+        }
+        return args.result;
+      },
+    } as never);
+
+    const disabled = await new PlatformCollaborationCutover({
+      db: racingDb,
+      resolveHome: vi.fn(async () => ({ status: "ready" as const, home: ownerHome })),
+    }).rollback(scopeId, "disable");
+
+    expect(raced).toBe(true);
+    expect(disabled.phase).toBe("blocked");
+    expect(disabled.blockReason).toBe("disabled_for_recovery");
+    const journal = await db.selectFrom("collaboration_cutover_journal")
+      .select(["phase", "block_reason"]).where("scope_id", "=", scopeId).executeTakeFirstOrThrow();
+    expect(journal.phase).toBe("blocked");
+    expect(journal.block_reason).toBe("disabled_for_recovery");
+  });
+
   it("allows only a compatible direct rollback or a disabled collaboration fence", async () => {
     const scopeId = await orgScope();
     const ownerHome = home(scopeId);
