@@ -119,6 +119,53 @@ No NEVER RUN row has an automated substitute, and none is inferred from a neighb
   provider credential was used in this session, so the row did not run at all. This row is **not**
   deferred — it is a release gate that has not been met.
 
+## Three finding classes, three different fixes
+
+Three distinct defect classes surfaced while this release was being assembled. They are recorded
+separately and deliberately: they share no cause and no fix, and collapsing them into "review more
+carefully" would lose the only actionable part of each.
+
+| Class | Instances in this release | What actually fixes it |
+| --- | --- | --- |
+| **Pre-read plus unpredicated write** | 5, the last 2 being security controls (`cutover.ts` `resume()` and `block()`) | Mechanical enforcement. The rule is already written in `CLAUDE.md` and `check-patterns.sh` has no check for it. |
+| **Retirement without a caller inventory** | 1 (`connection-tickets` 404 against `apps/mobile`) | A caller-enumeration gate on any layer that retires a route, not a route map written from intent. |
+| **Boundary-blind tests** | 2 (the `block()` suite, the mobile request suite) | Assertions on the far side of the boundary: affected-row counts, and a shared route constant both sides import. |
+
+Each is detailed below.
+
+## Boundary-blind tests: green because the assertion is on our side of the boundary
+
+Added 2026-09-23. Two tests in unrelated code, found on the same day, were green while sitting
+directly beside the defect they covered. Both failed the same way: **the assertion is on our side of
+a boundary, and the thing that broke is on the other side of it.** A test written that way can only
+confirm that we did not change our mind.
+
+| Instance | What it asserts | Why it cannot fail |
+| --- | --- | --- |
+| The `block()` coverage in the T095 cutover suite | The journal row after the call | A write matching zero rows and a write that succeeded leave the same row. The effect is on the database's side of the boundary, in the affected-row count, which nothing inspects. |
+| `apps/mobile/__tests__/requests-collaboration.test.ts:260,316` | That the client POSTs `/api/collaboration/scopes/:id/connection-tickets` | Whether that route is *served* is on the server's side. The test would only fail if the client stopped calling the path — the opposite of the defect. |
+
+The two differ in mechanism: one is an absent effect, the other an absent counterparty. They share
+the blind spot, and neither is fixed by adding assertions to the existing test, because the existing
+test never reaches the far side at all.
+
+**What fixes it.** For the database: assert the affected-row count, under interleaved writers.
+
+For the client, the mechanism **already exists and this retirement did not use it.**
+`packages/contracts/src/collaboration-direct.ts:397` exports `COLLABORATION_DIRECT_ROUTES`, commented
+"Exact V1 route allowlist", carrying every route with its method, authority, auth class and schemas.
+`apps/mobile` already depends on that package and already imports `@matrix-os/contracts/collaboration`
+(`app/(drawer)/shared.tsx:13`), so the dependency edge is in place. The retired path was simply never
+on the shared table: it lived as a string literal in the mobile client and as a regex in the platform
+router, with nothing connecting the two. Its replacement, `POST /api/collaboration/connections`
+returning `CollaborationSignedConnectionTicketSchema`, **is** on the table.
+
+So the fix is not new machinery. It is migrating the remaining literals onto the frozen table the
+spec already froze in S02, after which retiring a route breaks the **build** in every caller rather
+than returning 404 at runtime — the same lesson the atomicity class produced, that enforcement beats
+documentation. It also makes the caller inventory partly automatic: the compiler enumerates the
+callers.
+
 ## Cutover evidence measured against since-fixed security defects
 
 Added 2026-09-23, after the acceptance run. Greptile found two **P1** defects on #1860 in
@@ -165,16 +212,20 @@ Added 2026-09-23. Greptile returned #1864 at 4/5 with a P1. Verified against sou
 - **Caller.** `apps/mobile/lib/requests/collaboration.ts:407` POSTs exactly that path. The regex
   matches it. A `grep` of `apps/mobile` and `shell/src` on `origin/main` finds that call site and
   its two test assertions and nothing else, so **Native Mobile is the only affected surface**.
-- **Blast radius is larger than one call.** The ticket is the precondition for both sockets:
-  `collaborationEventsUrl` (:452) and `collaborationTerminalUrl` (:462) are built *from the returned
-  ticket*. A 404 at :407 means no ticket exists, so neither socket is attempted. One broken call
-  gates shared project, shared drawer and shared terminal on that surface.
+- **Failure radius is one call; fix radius is three.** The ticket is the precondition for both
+  sockets: `collaborationEventsUrl` (:452) and `collaborationTerminalUrl` (:462) are built *from the
+  returned ticket*, so a 404 at :407 means no ticket exists and neither socket is attempted. One
+  broken call gates shared project, shared drawer and shared terminal. But the sockets are **not**
+  fixed by restoring the ticket: both build `/ws/collaboration/scopes/:id/{events,terminal}`, while
+  `relay.ts:36` routes only `^/ws/collaboration/direct/scopes/(UUID)/(events|terminal)$`. The
+  mobile paths lack the `/direct/` segment and do not match. Worse, `isCollaborationWebSocketCandidate`
+  (:148) claims everything under `/ws/collaboration/`, so those sockets are taken by the relay and
+  then fail classification rather than falling through. All three call sites need migrating.
 
 **Why the layer's own tests were green.** `apps/mobile/__tests__/requests-collaboration.test.ts`
-asserts, at :260 and :316, that the client calls that URL. It asserts the client's *intent*, never
-the server's *contract*, so it cannot fail when the route stops existing — it would only fail if the
-client stopped calling it, which is the opposite of the defect. This is the same shape as the
-unchecked `.execute()` above: a test that structurally cannot observe the failure it sits next to.
+asserts, at :260 and :316, that the client calls that URL — an assertion on our side of the
+boundary, about a break that happens on the other side. That is a finding class of its own; see
+"Boundary-blind tests" below.
 
 **This is a different failure class from the five atomicity instances.** Those were a rule with no
 mechanical enforcement. This is a **retirement whose caller inventory was never taken**. The layer's
