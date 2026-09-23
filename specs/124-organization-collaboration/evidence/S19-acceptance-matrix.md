@@ -119,6 +119,33 @@ No NEVER RUN row has an automated substitute, and none is inferred from a neighb
   provider credential was used in this session, so the row did not run at all. This row is **not**
   deferred — it is a release gate that has not been met.
 
+## Cutover evidence measured against since-fixed security defects
+
+Added 2026-09-23, after the acceptance run. Greptile found two **P1** defects on #1860 in
+`packages/platform/src/collaboration/cutover.ts`. Both are fixed and merged (`13c4ca234`, verified
+present on `origin/main`), and both were in the code the cutover evidence was measured against:
+
+| Defect | Why the suite did not catch it |
+| --- | --- |
+| `resume()` pre-read the journal and wrote predicated only on `phase = "blocked"`. The recovery disable also leaves the phase `blocked` and changes only `block_reason`, so a disable committing between the read and the write was silently cleared, and `advance()` then re-blocked the scope for an unrelated reason leaving no trace the disable was issued. | The race needs a disable to commit inside the read-write window. The suite exercises `resume()` and the disable separately, never interleaved. |
+| `block()` never checked its affected-row result, so a disable racing an activation matched zero rows while reporting success to its caller. The home disable that follows only logs failures, so both sides could stay open with ticket admission continuing. | Same window. A zero-row write is indistinguishable from a successful one unless the result is inspected, which no assertion did. |
+
+**What this changes in this matrix.** Row 23 (Cutover) is `BLOCKED` and claims nothing, so no green
+row here is affected. The claim that is affected lives in `../implementation-log.md`: the T095
+cutover audit's **17/17 on real Postgres, including blocked compatible-direct rollback recovery**.
+That result stands as a fact about that run and does not demonstrate what it was read as
+demonstrating — the suite was green while both defects were present, so it evidences the
+non-concurrent cutover paths only. Cutover recovery under a racing security control was **never
+covered**, before or after the fix. Both annotations are recorded in that log.
+
+**Pattern count.** These are the **fourth and fifth** instances of pre-read-plus-unpredicated-write
+found in this release, and the first two where the racing writer was a **security control** rather
+than ordinary data — a cleared recovery fence and a falsely-reported disable, not a lost update.
+`CLAUDE.md` already requires that optimistic concurrency be enforced in the write statement rather
+than by a pre-read under READ COMMITTED. Five occurrences says the rule is not reaching the code at
+review time. A row that passes while the control it exercises is racing is exactly the kind of green
+this matrix exists to refuse.
+
 ## Rendered surface evidence: T079 is open
 
 S15 added four new shared sharing surfaces in `f05e10989`:
