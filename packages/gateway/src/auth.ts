@@ -160,6 +160,12 @@ const rateLimiter = createRateLimiter({
   lockoutMs: 300_000,
 });
 
+const previewMcpProjectionRateLimiter = createRateLimiter({
+  maxAttempts: 120,
+  windowMs: 60_000,
+  lockoutMs: 30_000,
+});
+
 // Dedicated limiter for HMAC-authenticated webhook paths. Legit providers
 // (Pipedream, Twilio, ElevenLabs) retry on failure so the ceiling has to
 // tolerate bursts, but we still need a hard cap -- without one, HMAC
@@ -279,6 +285,19 @@ export function authMiddleware(
       if (!rateLimiter.check(ip)) {
         return tooManyRequests(c);
       }
+      return nextWithReady(c, next);
+    }
+
+    // A disposable Preview VPS may delegate only MCP projection to its
+    // PR-tagged staging broker. The projection handler validates that separate
+    // bearer and owner ID; the ordinary runtime token remains required for all
+    // other routes.
+    if (process.env.MATRIX_PREVIEW_RUNTIME === 'true'
+      && process.env.MATRIX_PREVIEW_CUSTOM_MCP_TOKEN
+      && (normalizedPath === '/api/internal/mcp-projection'
+        || normalizedPath.startsWith('/api/internal/mcp-projection/'))) {
+      const ip = getClientIp(c);
+      if (!previewMcpProjectionRateLimiter.check(ip)) return tooManyRequests(c);
       return nextWithReady(c, next);
     }
 

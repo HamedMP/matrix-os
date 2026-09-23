@@ -507,6 +507,9 @@ jobs:
       ARTIFACT_REPOSITORY: ${{ vars.ARTIFACT_REPOSITORY }}
       PR_NUMBER: ${{ inputs.pr }}
       PREVIEW_CLERK_USER_ID: ${{ secrets.PREVIEW_CLERK_USER_ID }}
+      PREVIEW_CLERK_ACCESS_USER_IDS: ${{ secrets.PREVIEW_CLERK_ACCESS_USER_IDS }}
+      PREVIEW_VPS_CONTROL_URL: https://app.matrix-os.com
+      CUSTOM_MCP_ENABLED: ${{ inputs.custom_mcp }}
       CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
       EXPECTED_HEAD_SHA: ${{ needs.select-share-preview.outputs.head_sha }}
       GH_TOKEN: ${{ github.token }}
@@ -539,6 +542,7 @@ jobs:
           preview_db="$(gcloud secrets versions access latest --secret platform-database-url-staging --project "$GCP_PROJECT_ID" --quiet)"
           echo "::add-mask::$preview_db"
           PREVIEW_DATABASE_URL="$preview_db" PREVIEW_CLERK_USER_ID="$PREVIEW_CLERK_USER_ID" \
+            PREVIEW_CLERK_ACCESS_USER_IDS="${PREVIEW_CLERK_ACCESS_USER_IDS:-[]}" \
             node --input-type=module <<'NODE'
           import { readFile } from "node:fs/promises";
           import { Client } from "pg";
@@ -546,8 +550,19 @@ jobs:
 
           const actorId = process.env.PREVIEW_CLERK_USER_ID ?? "";
           const prNumber = process.env.PR_NUMBER ?? "";
+          const fixtureOwnerId = `chat-share-preview-fixture-pr-${prNumber}`;
           if (!/^user_[A-Za-z0-9]+$/.test(actorId)) {
             console.error("Preview fixture authorization is invalid.");
+            process.exit(1);
+          }
+          let accessUserIds;
+          try {
+            accessUserIds = JSON.parse(process.env.PREVIEW_CLERK_ACCESS_USER_IDS ?? "[]");
+            if (!Array.isArray(accessUserIds) || accessUserIds.length > 7
+              || accessUserIds.some((id) => typeof id !== "string" || !/^user_[A-Za-z0-9]+$/.test(id) || id === actorId)
+              || new Set(accessUserIds).size !== accessUserIds.length) throw new Error("invalid access list");
+          } catch {
+            console.error("Preview fixture access list is invalid.");
             process.exit(1);
           }
           const client = new Client({
@@ -568,27 +583,21 @@ jobs:
             const result = await client.query(`INSERT INTO user_machines
               (machine_id, clerk_user_id, handle, runtime_slot, provisioning_class, public_ipv4,
                status, provisioned_at, developer_tools, access_clerk_user_ids)
-              VALUES ($1, 'chat-share-preview-fixture', $2, $2, 'preview', $3,
-                      'running', $4, '[]', ARRAY[$5]::TEXT[])
+              VALUES ($1, $6, $2, $2, 'preview', $3,
+                      'running', $4, '[]', $5::TEXT[])
               ON CONFLICT (machine_id) DO UPDATE SET
+                clerk_user_id = EXCLUDED.clerk_user_id,
                 public_ipv4 = EXCLUDED.public_ipv4,
                 status = 'running',
                 deleted_at = NULL,
                 provisioned_at = EXCLUDED.provisioned_at,
-                access_clerk_user_ids = CASE
-                  WHEN $5 = ANY(user_machines.access_clerk_user_ids)
-                    THEN user_machines.access_clerk_user_ids
-                  ELSE array_append(user_machines.access_clerk_user_ids, $5)
-                END
-              WHERE user_machines.clerk_user_id = 'chat-share-preview-fixture'
+                access_clerk_user_ids = EXCLUDED.access_clerk_user_ids
+              WHERE user_machines.clerk_user_id IN ('chat-share-preview-fixture', $6)
                 AND user_machines.handle = EXCLUDED.handle
                 AND user_machines.runtime_slot = EXCLUDED.runtime_slot
                 AND user_machines.provisioning_class = 'preview'
-                AND $5 <> user_machines.clerk_user_id
-                AND ($5 = ANY(user_machines.access_clerk_user_ids)
-                  OR cardinality(user_machines.access_clerk_user_ids) < 8)
-              RETURNING $5 = ANY(access_clerk_user_ids) AS authorized`, [
-              `chat-share-preview-${handle}`, handle, address, new Date().toISOString(), actorId,
+              RETURNING access_clerk_user_ids @> $5::TEXT[] AS authorized`, [
+              `chat-share-preview-${handle}`, handle, address, new Date().toISOString(), [actorId, ...accessUserIds], fixtureOwnerId,
             ]);
             if (result.rowCount !== 1 || result.rows[0]?.authorized !== true) {
               throw new Error("authorization rejected");
@@ -644,6 +653,7 @@ jobs:
           fi
           handle="pr-$PR_NUMBER"
           machine_id="chat-share-preview-$handle"
+          fixture_owner_id="chat-share-preview-fixture-$handle"
           if [ -z "${CLERK_SECRET_KEY:-}" ]; then
             echo "Preview Clerk authentication is not configured." >&2
             exit 1
@@ -665,10 +675,15 @@ jobs:
             <<< "$session_token_payload")"
           echo "::add-mask::$preview_session_token"
           unset sessions session_token_payload
-          terminal_url="${url}/vm/${handle}/api/terminal/run"
+          terminal_url="${PREVIEW_VPS_CONTROL_URL}/vm/${handle}/api/terminal/run"
           preview_platform_secret="$(gcloud secrets versions access latest \
             --secret platform-preview-secret --project "$GCP_PROJECT_ID" --quiet)"
           echo "::add-mask::$preview_platform_secret"
+          mcp_token="$(PREVIEW_SIGNING_SECRET="$preview_platform_secret" node --input-type=module -e '
+            import { createHmac } from "node:crypto";
+            process.stdout.write(createHmac("sha256", process.env.PREVIEW_SIGNING_SECRET).update(process.argv[1]).digest("hex"));
+          ' "$handle")"
+          echo "::add-mask::$mcp_token"
           speech_token="$(PREVIEW_SIGNING_SECRET="$preview_platform_secret" node --input-type=module -e '
             import { createHmac } from "node:crypto";
             process.stdout.write(createHmac("sha256", process.env.PREVIEW_SIGNING_SECRET).update(JSON.stringify([
@@ -680,6 +695,7 @@ jobs:
             --arg origin "$url" \
             --arg token "$speech_token" \
             --arg owner "$PREVIEW_CLERK_USER_ID" \
+            --arg fixtureOwner "$fixture_owner_id" \
             --arg machine "$machine_id" \
             --arg slot "$handle" \
             '{
@@ -688,10 +704,18 @@ jobs:
               MATRIX_PLATFORM_SPEECH_ORIGIN:$origin,
               MATRIX_PLATFORM_SPEECH_RUNTIME_TOKEN:$token,
               MATRIX_PLATFORM_SPEECH_REQUEST_OWNER_ID:$owner,
-              MATRIX_PLATFORM_SPEECH_OWNER_ID:"chat-share-preview-fixture",
+              MATRIX_PLATFORM_SPEECH_OWNER_ID:$fixtureOwner,
               MATRIX_PLATFORM_SPEECH_MACHINE_ID:$machine,
               MATRIX_PLATFORM_SPEECH_RUNTIME_SLOT:$slot
             }')"
+          if [ "$CUSTOM_MCP_ENABLED" = true ]; then
+            runtime_config="$(jq -cn --argjson base "$runtime_config" --arg origin "$url" --arg mcpToken "$mcp_token" --arg fixtureOwner "$fixture_owner_id" '
+              $base + {
+                MATRIX_PREVIEW_CUSTOM_MCP_ORIGIN:$origin,
+                MATRIX_PREVIEW_CUSTOM_MCP_TOKEN:$mcpToken,
+                MATRIX_PREVIEW_CUSTOM_MCP_OWNER_ID:$fixtureOwner
+              }')"
+          fi
           read -r -d '' patch_script <<'PYTHON' || true
           import json
           import os
@@ -715,7 +739,8 @@ jobs:
           with open(path, "r", encoding="utf-8") as source:
               lines = source.read().splitlines()
           keys = set(config)
-          lines = [line for line in lines if line.split("=", 1)[0] not in keys]
+          preview_mcp_keys = {"MATRIX_PREVIEW_CUSTOM_MCP_ORIGIN", "MATRIX_PREVIEW_CUSTOM_MCP_TOKEN", "MATRIX_PREVIEW_CUSTOM_MCP_OWNER_ID"}
+          lines = [line for line in lines if line.split("=", 1)[0] not in keys | preview_mcp_keys]
           lines.extend(f"{key}={config[key]}" for key in sorted(keys))
           directory = os.path.dirname(path)
           fd, temporary = tempfile.mkstemp(prefix=".host.env.preview.", dir=directory, text=True)
