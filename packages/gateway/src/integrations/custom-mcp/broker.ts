@@ -253,15 +253,24 @@ export class CustomMcpBroker {
 
   async discover(userId: string, serverId: string): Promise<CustomMcpServer> {
     const row = await this.requirePrivate(userId, serverId);
-    const tools = await this.client.discover({
+    const discovered = await this.client.discover({
       serverId,
       url: row.url,
       authorization: await this.readAuthorization(userId, row),
     });
+    const previous = new Map(row.tools.map((tool) => [tool.name, tool]));
+    const tools = discovered.map((tool) => ({
+      ...tool,
+      enabled: previous.get(tool.name)?.enabled ?? true,
+      approval: previous.get(tool.name)?.approval ?? "always_ask",
+    }));
+    // First discovery activates the server. Later discoveries preserve a
+    // deliberate server disablement and each existing tool's policy.
+    const enabled = tools.length > 0 && (row.tools.length === 0 || row.enabled);
     const updated = await this.options.db.updateCustomMcpServer(serverId, userId, row.revision, {
       tools,
-      status: "disabled",
-      enabled: false,
+      status: enabled ? "ready" : "disabled",
+      enabled,
       actionRequiredReason: null,
     });
     if (!updated) throw new CustomMcpBrokerError("conflict");
