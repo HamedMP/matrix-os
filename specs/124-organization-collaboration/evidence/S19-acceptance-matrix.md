@@ -155,6 +155,47 @@ than by a pre-read under READ COMMITTED. Five occurrences says the rule is not r
 review time; the finding is recorded in `../implementation-log.md`. A row that passes while the
 control it exercises is racing is exactly the kind of green this matrix exists to refuse.
 
+## A route retired ahead of its callers, on the one surface with no evidence
+
+Added 2026-09-23. Greptile returned #1864 at 4/5 with a P1. Verified against source on both sides:
+
+- **Retirement.** `packages/platform/src/collaboration/routes.ts:16` defines
+  `RETIRED_CONNECTION_TICKET_PATH = /^\/api\/collaboration\/scopes\/[^/]+\/connection-tickets$/`
+  and line 67 returns 404 for any POST matching it.
+- **Caller.** `apps/mobile/lib/requests/collaboration.ts:407` POSTs exactly that path. The regex
+  matches it. A `grep` of `apps/mobile` and `shell/src` on `origin/main` finds that call site and
+  its two test assertions and nothing else, so **Native Mobile is the only affected surface**.
+- **Blast radius is larger than one call.** The ticket is the precondition for both sockets:
+  `collaborationEventsUrl` (:452) and `collaborationTerminalUrl` (:462) are built *from the returned
+  ticket*. A 404 at :407 means no ticket exists, so neither socket is attempted. One broken call
+  gates shared project, shared drawer and shared terminal on that surface.
+
+**Why the layer's own tests were green.** `apps/mobile/__tests__/requests-collaboration.test.ts`
+asserts, at :260 and :316, that the client calls that URL. It asserts the client's *intent*, never
+the server's *contract*, so it cannot fail when the route stops existing — it would only fail if the
+client stopped calling it, which is the opposite of the defect. This is the same shape as the
+unchecked `.execute()` above: a test that structurally cannot observe the failure it sits next to.
+
+**This is a different failure class from the five atomicity instances.** Those were a rule with no
+mechanical enforcement. This is a **retirement whose caller inventory was never taken**. The layer's
+own evidence document, `S18-T090-route-map.md`, is separately flagged as contradicting the code,
+which suggests the route map was written from intent rather than by enumerating callers. Neither the
+map nor the tests caught a shipped client still calling the retired path.
+
+**The finding: retirement layers need a caller inventory as a gate.** Not a route map written from
+what the layer meant to retire, but a search for every caller of each retired path across
+`shell/`, `apps/mobile/`, `packages/`, and the CLI, with the result recorded and reviewed. For this
+defect that gate is one `grep`.
+
+**What it cost to have no Native Mobile evidence.** Native Mobile is one of the five surfaces in the
+mandatory surface matrix. It is also the surface this release has no evidence for anywhere: S17 is
+deferred, and row 24 above records Native Mobile as a V1 limitation rather than a tested surface. So
+**the break landed on precisely the surface that had nothing watching it.** That is the cost of an
+`N/A`, made concrete. An `N/A` is a statement that a surface was not verified; it is not a statement
+that the surface is safe, and this release now has an example of the difference. The layer's own PR
+surface matrix would have carried `N/A` or `pass` for Native Mobile while shipping a 404 to it --
+the same overstatement this matrix was rewritten to remove, appearing in a PR body instead.
+
 ## Rendered surface evidence: T079 is open
 
 S15 added four new shared sharing surfaces in `f05e10989`:
