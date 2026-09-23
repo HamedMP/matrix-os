@@ -24,7 +24,13 @@ process.on("SIGTERM", () => {
 });
 for await (const line of input) {
   const message = JSON.parse(line);
-  await appendFile(requestsPath, `${JSON.stringify({ attempt, method: message.method })}\n`);
+  await appendFile(requestsPath, `${JSON.stringify({
+    attempt,
+    method: message.method,
+    ...(message.method === "thread/start" || message.method === "thread/resume"
+      ? { developerInstructions: message.params?.developerInstructions }
+      : {}),
+  })}\n`);
   if (message.method === "initialize") {
     initializeId = message.id;
     if (mode === "rejected") {

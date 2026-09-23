@@ -41,7 +41,7 @@ export async function startCodexStartupRunner(options: {
     async events(): Promise<Array<Record<string, unknown>>> {
       return (await readFile(eventPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
     },
-    async requests(): Promise<Array<{ attempt: number; method?: string; event?: string }>> {
+    async requests(): Promise<Array<{ attempt: number; method?: string; event?: string; developerInstructions?: string }>> {
       return (await readFile(requestsPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
     },
     async close() {
