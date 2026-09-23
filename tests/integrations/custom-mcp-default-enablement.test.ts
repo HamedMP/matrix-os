@@ -166,4 +166,21 @@ describe("Custom MCP discovery defaults", () => {
     expect(refreshed).toMatchObject({ enabled: false, status: "disabled" });
     expect(refreshed.tools).toEqual([{ ...discoveredTool("later"), enabled: true }]);
   });
+
+  it("rejects an oversized persisted tool policy before building its lookup", async () => {
+    const server = await createServer();
+    const oversized = Array.from({ length: 101 }, (_, index) => discoveredTool(`tool_${index}`));
+    await db.updateCustomMcpServer(server.id, userId, server.revision, { tools: oversized });
+
+    await expect(broker.discover(userId, server.id)).rejects.toMatchObject({ code: "invalid" });
+    expect(discover).not.toHaveBeenCalled();
+  });
+
+  it("rejects an oversized remote catalog before storing tool policy", async () => {
+    const server = await createServer();
+    discover.mockResolvedValueOnce(Array.from({ length: 101 }, (_, index) => discoveredTool(`tool_${index}`)));
+
+    await expect(broker.discover(userId, server.id)).rejects.toMatchObject({ code: "upstream" });
+    expect((await db.getCustomMcpServerForBroker(server.id, userId))?.tools).toEqual([]);
+  });
 });
