@@ -1,6 +1,6 @@
 import { projectChatSubagent } from "@matrix-os/contracts";
 import { canonicalChatToolDetail } from "@matrix-os/contracts";
-import { chatAgentAttribution } from "@matrix-os/ui";
+import { chatAgentAttribution, filePreviewContentUrl } from "@matrix-os/ui";
 import { canonicalChatApprovals, canonicalChatInputs } from "@matrix-os/contracts";
 import type {
   CanonicalChatMessage,
@@ -41,6 +41,11 @@ function messageText(message: CanonicalChatMessage): string {
     previousWasText = part.type === "text";
   }
   return output;
+}
+
+function hasDisplayableMessageContent(message: CanonicalChatMessage): boolean {
+  return messageText(message).length > 0
+    || message.parts.some((part) => part.type === "attachment_reference");
 }
 
 function messagePresentation(
@@ -113,11 +118,12 @@ function messageContent(
       } else unmatched.push(segment);
     } else if (part.type === "attachment_reference") {
       if (part.kind === "image" && part.ownerReference) {
+        const resource = part.resource ?? { kind: "home" as const, path: part.ownerReference };
         images.push({
           kind: "image",
           id: part.attachmentId,
           label: part.label,
-          src: `/api/files/blob?path=${encodeURIComponent(part.ownerReference)}`,
+          src: filePreviewContentUrl(resource),
           path: part.ownerReference,
         });
       } else {
@@ -142,6 +148,24 @@ function messageContent(
   }
   if (cursor < markdown.length) content.push({ kind: "text", text: markdown.slice(cursor) });
   return [...content, ...unmatched, ...images];
+}
+
+function promotedAssistantArtifacts(
+  messages: CanonicalChatMessage[],
+  finalMessage: CanonicalChatMessage,
+): ConversationMessageContentPresentation[] {
+  return messages
+    .filter((message) => message.id !== finalMessage.id)
+    .flatMap((message) => messageContent(message, messageText(message)))
+    .filter((segment) => segment.kind === "image"
+      || (segment.kind === "reference" && segment.referenceKind === "file"));
+}
+
+function withoutAttachmentReferences(message: CanonicalChatMessage): CanonicalChatMessage {
+  return {
+    ...message,
+    parts: message.parts.filter((part) => part.type !== "attachment_reference"),
+  };
 }
 
 function messageWork(message: CanonicalChatMessage): ConversationWorkPresentation[] {
@@ -608,12 +632,25 @@ export function canonicalChatPresentation(input: {
       turn.id === latestTurnId,
     );
     const modelStatus = activeModelStatus(run);
+    const promotedArtifacts = finalMessage
+      ? promotedAssistantArtifacts(assistantMessages, finalMessage)
+      : [];
+    const finalPresentation = finalMessage
+      ? messagePresentation(finalMessage, "final")
+      : undefined;
     const unsortedWork = [
       ...(modelStatus ? [modelStatus] : []),
-      ...assistantMessages.filter((message) => message.id !== finalMessage?.id).flatMap((message) => [
-        ...messageWork(message),
-        ...(messageText(message) ? [messagePresentation(message, "commentary")] : []),
-      ]),
+      ...assistantMessages.filter((message) => message.id !== finalMessage?.id).flatMap((message) => {
+        const visibleMessage = promotedArtifacts.length > 0
+          ? withoutAttachmentReferences(message)
+          : message;
+        return [
+          ...messageWork(message),
+          ...(hasDisplayableMessageContent(visibleMessage)
+            ? [messagePresentation(visibleMessage, "commentary")]
+            : []),
+        ];
+      }),
       ...(finalMessage ? messageWork(finalMessage) : []),
       ...live.work,
     ];
@@ -677,6 +714,7 @@ export function canonicalChatPresentation(input: {
     return {
       id: turn.id,
       ...(run?.context ? { runContext: run.context } : {}),
+      ...(run?.executionRoot ? { executionRoot: run.executionRoot } : {}),
       ...(chatAgentAttribution(run) ? { agentLabel: chatAgentAttribution(run) } : {}),
       startedAt,
       endedAt,
@@ -688,10 +726,18 @@ export function canonicalChatPresentation(input: {
       work,
       ...(timeline.length > 0 ? { timeline } : {}),
       ...(userFollowups.length > 0 ? { expandedByDefault: true } : {}),
-      ...(finalMessage && messageText(finalMessage)
+      ...(finalMessage && hasDisplayableMessageContent(finalMessage)
         ? {
             final: {
-              ...messagePresentation(finalMessage, "final"),
+              ...finalPresentation!,
+              ...(promotedArtifacts.length > 0
+                ? {
+                    content: [
+                      ...promotedArtifacts,
+                      ...(finalPresentation?.content ?? []),
+                    ],
+                  }
+                : {}),
               ...(streamedMessageIds.has(finalMessage.id) ? { wasStreamed: true } : {}),
             },
           }

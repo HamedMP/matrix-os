@@ -1,5 +1,5 @@
 import type { ChatSubagent } from "@matrix-os/contracts";
-import type { ChatRunContext, CanonicalChatInputView, CanonicalSubmitChatInputRequest } from "@matrix-os/contracts";
+import type { ChatRunContext, CanonicalChatExecutionRootRef, CanonicalChatInputView, CanonicalSubmitChatInputRequest } from "@matrix-os/contracts";
 export type ConversationMessageRole = "user" | "assistant";
 
 export interface ConversationAttachmentPresentation {
@@ -45,6 +45,7 @@ export type ConversationActivityKind =
   | "delegation"
   | "web_search"
   | "image_inspection"
+  | "image_generation"
   | "read"
   | "edit"
   | "search"
@@ -119,6 +120,7 @@ export type ConversationTurnTimelinePresentation =
 export interface ConversationTurnPresentation {
   agentLabel?: string;
   runContext?: ChatRunContext;
+  executionRoot?: CanonicalChatExecutionRootRef;
   id: string;
   startedAt: number;
   endedAt: number;
@@ -137,7 +139,7 @@ export interface ConversationPresentationCallbacks {
   submitInput?: (runId: string, requestId: string, input: Omit<CanonicalSubmitChatInputRequest, "clientRequestId">) => Promise<boolean>;
   performAction?: (action: ConversationActionPresentation, input?: string) => Promise<void>;
   canPerformAction?: (action: ConversationActionPresentation) => boolean;
-  openFile?: (path: string) => boolean;
+  openFile?: (path: string, executionRoot?: CanonicalChatExecutionRootRef) => boolean;
   openAttachment?: (path: string) => boolean;
   openWebLink?: (url: string) => boolean;
 }

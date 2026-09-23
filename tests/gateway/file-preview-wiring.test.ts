@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createCodingAgentFilePreviewWiring } from "../../packages/gateway/src/coding-agents/file-preview-wiring.js";
@@ -27,5 +27,27 @@ describe("coding agent file preview wiring", () => {
       .rejects.toMatchObject({ code: "not_found" });
     await expect(codingAgentFileStore.readFile(other, { projectId: "demo", path: "generated.png" }))
       .rejects.toMatchObject({ code: "file_not_found" });
+  });
+
+  it("passes narrowly owned chat attachment paths to the preview service", async () => {
+    homePath = await mkdtemp(join(tmpdir(), "matrix-preview-wiring-"));
+    await mkdir(join(homePath, "data", "chat-artifacts"), { recursive: true });
+    await writeFile(join(homePath, "data", "chat-artifacts", "output.png"), Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+    const path = "data/chat-artifacts/output.png";
+    const { filePreviewService } = createCodingAgentFilePreviewWiring({
+      homePath,
+      ownerId: "gateway-owner",
+      canAccessHomePath: async (principal, requestedPath) =>
+        principal.userId === "attachment-owner" && requestedPath === path,
+    });
+
+    await expect(filePreviewService.resolvePreview(
+      { userId: "attachment-owner", source: "jwt" },
+      { kind: "home", path },
+    )).resolves.toMatchObject({ kind: "image" });
+    await expect(filePreviewService.resolvePreview(
+      { userId: "other", source: "jwt" },
+      { kind: "home", path },
+    )).rejects.toMatchObject({ code: "not_found" });
   });
 });

@@ -189,6 +189,7 @@ describe("Codex app-server control runtime", () => {
       "  else if (message.method === 'thread/start') console.log(JSON.stringify({ id: message.id, result: { thread: { id: 'native-thread-artifacts' }, modelProvider: 'openai', cwd: '/private/project', approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: {} } }));",
       "  else if (message.method === 'turn/start') {",
       "    console.log(JSON.stringify({ id: message.id, result: { turn: { id: 'native-turn-artifacts' } } }));",
+      "    console.log(JSON.stringify({ method: 'item/started', params: { turnId: 'native-turn-artifacts', item: { id: 'generated-image', type: 'imageGeneration', status: 'inProgress' } } }));",
       `    console.log(JSON.stringify({ method: 'item/completed', params: { turnId: 'native-turn-artifacts', item: { id: 'generated-image', type: 'imageGeneration', status: 'completed', result: '', savedPath: ${JSON.stringify(generatedPath)} } } }));`,
       "    console.log(JSON.stringify({ method: 'item/completed', params: { turnId: 'native-turn-artifacts', item: { id: 'function-media', type: 'functionCallOutput', name: 'render', output: [{ type: 'input_image', image_url: 'data:image/png;base64,iVBORw0KGgo=' }] } } }));",
       `    console.log(JSON.stringify({ method: 'item/completed', params: { turnId: 'native-turn-artifacts', item: { id: 'dynamic-media', type: 'dynamicToolCall', status: 'completed', tool: 'voice', arguments: {}, contentItems: [{ type: 'inputAudio', audioUrl: ${JSON.stringify(`file://${audioPath}`)} }] } } }));`,
@@ -233,6 +234,16 @@ describe("Codex app-server control runtime", () => {
       });
       expect(await readFile(join(homePath, artifacts[1].ownerReference))).toEqual(Buffer.from("iVBORw0KGgo=", "base64"));
       expect(transcript).not.toContain("iVBORw0KGgo=");
+      const records = transcript.trim().split("\n").map((line) => JSON.parse(line));
+      const generationStarted = records.find((entry) => (
+        entry.type === "matrix.codex.tool.started" && entry.displayName === "Generating image"
+      ));
+      expect(generationStarted).toMatchObject({ kind: "image_generation" });
+      expect(records).toContainEqual(expect.objectContaining({
+        type: "matrix.codex.tool.completed",
+        toolCallId: generationStarted.toolCallId,
+        outcome: "success",
+      }));
     } finally {
       child.kill("SIGTERM");
       await rm(homePath, { recursive: true, force: true });

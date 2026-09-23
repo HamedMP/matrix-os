@@ -319,6 +319,27 @@ export function MessageResponse({
         callbacks.current.openWebLink?.(href!);
       } } : {})} />;
     },
+    img: ({ node: _node, src, alt, ...props }: React.ComponentProps<"img"> & { node?: unknown }) => {
+      const target = typeof src === "string" ? resolveChatMessageLink(src) : null;
+      const label = alt?.trim() || (target?.kind === "file" ? target.path.split("/").at(-1) : null) || "image";
+      if (target?.kind === "file") {
+        if (!hasFileNavigation) return <span aria-label={`Image file: ${label}`}>{label}</span>;
+        return (
+          <button
+            type="button"
+            aria-label={`Preview image ${label}`}
+            title={target.path}
+            onClick={() => callbacks.current.openFile?.(src!)}
+            className="inline-flex max-w-full items-center gap-1 rounded-md border border-[var(--border-default)] bg-[var(--bg-sunken)] px-2 py-1 align-middle text-xs text-[var(--highlight)] hover:bg-[var(--bg-hover)]"
+          >
+            <FileText size={13} aria-hidden className="shrink-0" />
+            <span className="truncate">{label}</span>
+          </button>
+        );
+      }
+      if (target?.kind === "web") return <img {...props} src={target.url} alt={alt ?? ""} />;
+      return <span aria-label={`Unavailable image: ${label}`}>{label}</span>;
+    },
     code: ({ node: _node, children: codeChildren, className, ...props }: React.ComponentProps<"code"> & { node?: unknown }) => {
       const value = String(codeChildren).replace(/\n$/, "");
       const blockLanguage = className?.match(/(?:^|\s)language-([^\s]+)/)?.[1];

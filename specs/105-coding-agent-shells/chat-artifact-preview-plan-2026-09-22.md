@@ -1,10 +1,10 @@
 # Chat artifacts and unified file preview implementation plan
 
-> **For agentic workers:** Use `superpowers:executing-plans` to implement this plan task-by-task after the user chooses to proceed. Keep each step's red/green evidence. Planning does not authorize deployment or replace Human Review.
+Status (2026-09-22): ENG-4 core is implemented in draft PR #1857 and is awaiting exact-head Human Review, live provider proof, production builds, Greptile and CI. ENG-5 owns Office and unsupported-image conversion. This plan records the intended full program; unchecked items remain future work and are not implied by the core PR.
 
 **Goal:** Deliver agent images inline and make file links open a reliable shared preview, including PDF, media, text, tables and a subsequent Office conversion increment.
 
-**Architecture:** Normalize provider output and Markdown references into owner/runtime-scoped resources. Use one Gateway authority path, one shared classifier and web preview host, and thin Electron/Web/Native Mobile adapters. Persist structured delivered artifacts independently of transient URLs and mutable workspace files.
+**Implemented core architecture:** Normalize completed provider output and Markdown references into owner-scoped resources. Use one Gateway authority path, one shared classifier and shared Web/Electron preview renderer, plus a Native Mobile attachment adapter. Persist captured bytes as immutable content-addressed owner files and persist canonical message/attachment rows transactionally.
 
 **Tech Stack:** Existing TypeScript/Zod 4, React, Hono, Kysely/Postgres, Vitest and authenticated runtime transports; PDF.js worker for portable PDF rendering; isolated owner-runtime conversion worker for Office/image conversion.
 
@@ -191,3 +191,5 @@ it('fails safely when conversion exceeds its deadline', async () => {
 2. **Document delivery:** Task 6 plus its Task 7 checks adds Office and image conversions. Fallback cards/downloads already work in core.
 
 No estimated dates or measured performance promises are implied. The main implementation risk is preserving resource authority across owner/project/worktree/provider-temp paths and replay; the converter is a separate runtime dependency. Product and engineering decisions above are the proposed defaults for review, not already-shipped behavior.
+
+Tracking: [ENG-4](https://linear.app/matrix-os/issue/ENG-4/featchat-display-agent-artifacts-and-unify-file-previews) covers the core implementation and [ENG-5](https://linear.app/matrix-os/issue/ENG-5/featfiles-add-isolated-office-and-image-conversion-previews) covers isolated Office/image conversion.

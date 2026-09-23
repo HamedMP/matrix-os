@@ -32,7 +32,7 @@ import { cn } from "../../lib/cn";
 import type { ConversationActionPresentation } from "../../components/conversation/presentation";
 import { normalizeDesktopEditorPath } from "../editor/desktop-editor-store";
 import { useChatFileNavigation } from "../work/ChatFileNavigation";
-import { resolveChatInspectorTarget, resolveWorkFilesScope } from "../work/work-files-scope";
+import { resolveChatInspectorTargetForRun, resolveWorkFilesScope } from "../work/work-files-scope";
 import type { ApiClient } from "../../lib/api";
 import { useBoard } from "../../stores/board";
 import { useConnection } from "../../stores/connection";
@@ -853,10 +853,12 @@ export function CanonicalChatWorkspace({
                 return true;
               },
               openWebLink: openChatWebLink,
-              openFile: (rawPath) => {
+              openFile: (rawPath, executionRoot) => {
                 if (!fileNavigation || !controller.detail) return false;
                 const scope = resolveWorkFilesScope(controller.detail, projects);
-                const target = resolveChatInspectorTarget(rawPath, scope);
+                const target = resolveChatInspectorTargetForRun(
+                  rawPath, scope, executionRoot, controller.detail.record.projectId,
+                );
                 if (!target) return false;
                 fileNavigation.open({ chatId: scope.chatId, target });
                 return true;

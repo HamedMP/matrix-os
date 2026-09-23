@@ -609,6 +609,7 @@ export async function createGateway(config: GatewayConfig) {
     },
   });
   let codingAgentThreadStore: (CodingAgentThreadStore & CodingAgentTurnStore) | undefined;
+  let chatRepository: ChatRepository | null = null;
   let codexEventBridge: CodexEventBridge | undefined;
   let codingAgentWorkspaceRuntime: WorkspaceSessionOrchestrator | null = null;
   let codingAgentApprovalsEnabled = false;
@@ -645,6 +646,10 @@ export async function createGateway(config: GatewayConfig) {
       getProjectBySlug: (projectSlug) => codingAgentProjectManager.getProject(projectSlug),
     },
     worktrees: codingAgentWorktreeManager,
+    canAccessHomePath: (principal, path) => chatRepository?.ownsAttachmentPath({
+      type: "personal",
+      ownerId: principal.userId,
+    }, path) ?? Promise.resolve(false),
   });
   const codingAgentSourceControlStore = createCodingAgentSourceControlStore({
     homePath,
@@ -924,7 +929,6 @@ export async function createGateway(config: GatewayConfig) {
   let canvasService: CanvasService | null = null;
   let canvasSubscriptionHub: CanvasSubscriptionHub | null = null;
   let canvasCleanupTimer: ReturnType<typeof setInterval> | null = null;
-  let chatRepository: ChatRepository | null = null;
   let chatIdleReaper: ReturnType<typeof createChatIdleReaper> | null = null;
   let canonicalChatEventStream: ReturnType<typeof createGatewayChatEventStream> | null = null;
   let canonicalChatOrchestrator: CanonicalChatOrchestrator | null = null;

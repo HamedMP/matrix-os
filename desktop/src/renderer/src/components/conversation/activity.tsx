@@ -30,6 +30,7 @@ const ACTIVITY_ICON: Record<ConversationActivityPresentation["kind"], ComponentT
   delegation: Wrench,
   web_search: Search,
   image_inspection: Eye,
+  image_generation: Eye,
   read: Eye,
   edit: FilePenLine,
   search: Search,
@@ -45,6 +46,22 @@ export function ConversationActivity({
 }) {
   const [open, setOpen] = useState(false);
   if (activity.subagent) return <ConversationSubagentActivity agent={activity.subagent} />;
+  if (activity.kind === "image_generation" && activity.state === "running") {
+    return (
+      <div className="flex w-fit flex-col gap-2">
+        <div
+          role="status"
+          aria-label={activity.label}
+          data-state={activity.state}
+          className="image-generation-glare size-24 overflow-hidden rounded-xl border motion-reduce:animate-none"
+          style={{ borderColor: "var(--border-default)", backgroundColor: "var(--bg-sunken)" }}
+        />
+        <Marker>
+          <MarkerContent className="shimmer font-medium">{activity.label}…</MarkerContent>
+        </Marker>
+      </div>
+    );
+  }
   const Icon = ACTIVITY_ICON[activity.kind];
   const accessibleLabel = activity.preview ? `${activity.label}: ${activity.preview}` : activity.label;
 

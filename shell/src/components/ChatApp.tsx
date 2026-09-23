@@ -667,7 +667,13 @@ function ChatAppContent({
                           } : undefined}
                         />
                       ) : (
-                    <AssistantBubble content={msg.content} onAction={submitWithHermesSetup} />
+                    <AssistantBubble
+                      content={msg.content}
+                      attachments={msg.attachments}
+                      openAttachment={openMessageFile}
+                      loadImage={loadShellChatImage}
+                      onAction={submitWithHermesSetup}
+                    />
                       )}
                     <ChatContextReceipt context={ChatRunContextSchema.safeParse(msg.metadata?.chatRunContext).data} />
                     </div>
@@ -796,9 +802,15 @@ function EmptyState({
 
 function AssistantBubble({
   content,
+  attachments,
+  openAttachment,
+  loadImage,
   onAction,
 }: {
   content: string;
+  attachments?: ChatMessage["attachments"];
+  openAttachment?: (path: string) => boolean | void;
+  loadImage?: (src: string) => Promise<Blob>;
   onAction?: (text: string) => void;
 }) {
   const { thinking, rest } = extractThinking(content);
@@ -813,11 +825,12 @@ function AssistantBubble({
   return (
     <Message from="assistant">
       <MessageContent>
+        {attachments?.length ? <ChatAttachments align="start" attachments={attachments} open={openAttachment} loadImage={loadImage} /> : null}
         {thinking && <Reasoning content={thinking} />}
         {planSteps && <Plan steps={planSteps} />}
         {taskData && <Task task={taskData} />}
         {displayContent && (
-          <RichContent onAction={onAction}>{displayContent}</RichContent>
+          <RichContent onAction={onAction} openFile={openAttachment}>{displayContent}</RichContent>
         )}
       </MessageContent>
     </Message>

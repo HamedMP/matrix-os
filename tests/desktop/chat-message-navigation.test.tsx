@@ -28,6 +28,14 @@ it("routes web links and file references through separate Chat actions", () => {
   expect(openFile).toHaveBeenCalledWith("reports/result.md");
 });
 
+it("turns a local Markdown image into File Preview navigation instead of a broken image", () => {
+  const openFile = vi.fn(() => true);
+  render(<MessageResponse copyText={vi.fn()} openFile={openFile}>{"![Generated whale](data/chat-artifacts/whale.png)"}</MessageResponse>);
+  expect(screen.queryByRole("img", { name: "Generated whale" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Preview image Generated whale" }));
+  expect(openFile).toHaveBeenCalledWith("data/chat-artifacts/whale.png");
+});
+
 it("shows a retryable image failure instead of loading forever", async () => {
   const loadImage = vi.fn(async () => { throw new Error("Missing"); });
   render(<ConversationTranscript callbacks={{ copyText: vi.fn(), loadImage }} turns={[{
@@ -50,6 +58,36 @@ it("opens an attached file using its owner reference instead of its display labe
   }]} />);
   fireEvent.click(screen.getByRole("button", { name: "Preview Report.pdf" }));
   expect(openAttachment).toHaveBeenCalledWith("uploads/report.pdf");
+});
+
+it("renders assistant artifacts and opens their owner reference in File Preview", () => {
+  const openAttachment = vi.fn(() => true);
+  render(<ConversationTranscript callbacks={{ copyText: vi.fn(), openAttachment }} turns={[{
+    id: "turn", startedAt: 1, endedAt: 2, active: false, work: [],
+    final: { kind: "message", id: "assistant", role: "assistant", phase: "final", markdown: "", copyText: "", timestamp: 2,
+      content: [
+        { kind: "image", id: "image", label: "Generated.png", src: "/api/file-previews/content?kind=home&path=data%2Fimage.png", path: "data/image.png" },
+        { kind: "reference", id: "report", referenceKind: "file", label: "Report.pdf", path: "data/report.pdf" },
+      ],
+    },
+  }]} />);
+  expect(screen.getByRole("button", { name: "Open image Generated.png" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Preview Report.pdf" }));
+  expect(openAttachment).toHaveBeenCalledWith("data/report.pdf");
+});
+
+it("shows a glare image placeholder while image generation is running", () => {
+  render(<ConversationTranscript callbacks={{ copyText: vi.fn() }} turns={[{
+    id: "turn", startedAt: Date.now(), endedAt: Date.now(), active: true,
+    work: [{
+      kind: "activity-group", id: "generation", activities: [{
+        id: "image-generation", kind: "image_generation", state: "running", label: "Generating image",
+      }],
+    }],
+  }]} />);
+  const placeholder = screen.getByRole("status", { name: "Generating image" });
+  expect(placeholder.className).toContain("image-generation-glare");
+  expect(placeholder.getAttribute("data-state")).toBe("running");
 });
 
 it("preserves the source root when opening an absolute message file link", () => {

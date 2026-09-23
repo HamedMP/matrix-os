@@ -12,3 +12,12 @@ it("shows the full command and result when a single canonical tool expands", () 
   expect(screen.getByText(/1 test failed/)).toBeTruthy();
   expect(screen.getAllByLabelText("Failed").length).toBeGreaterThan(0);
 });
+
+it("shows the image generation glare while the canonical activity is running", () => {
+  render(<ToolCallGroup tools={[{
+    id: "tool_image", role: "system", content: "Using Generating image", timestamp: 0,
+    tool: "Generating image",
+    toolDisplay: { id: "tool_image", kind: "image_generation", state: "running", label: "Generating image" },
+  }]} />);
+  expect(screen.getByRole("status", { name: "Generating image" }).className).toContain("image-generation-glare");
+});
