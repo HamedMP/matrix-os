@@ -1,5 +1,6 @@
 import { sql, type ColumnType, type Kysely, type Transaction } from "kysely";
 import { runPlatformMigration } from "../migration-runner.js";
+import type { CutoverCounts, CutoverPhase } from "./cutover.js";
 
 type Timestamp = ColumnType<Date | string, Date | string | undefined, Date | string>;
 type NullableTimestamp = ColumnType<Date | string | null, Date | string | null | undefined, Date | string | null>;
@@ -17,6 +18,12 @@ export interface CollaborationDirectoryTable {
   audience: "members" | "organization" | null;
   /** Opaque owner-home grant pointer used only for an explicit accept request. */
   organization_grant_id: string | null;
+  /**
+   * S18: false for every row that predates the cutover migration. Those rows
+   * are legacy and only their own activated journal admits them; rows created
+   * afterwards are direct from birth and default to true.
+   */
+  direct_native: ColumnType<boolean, boolean | undefined, boolean>;
   authority_generation: number;
   metadata_revision: number;
   last_event_id: string;
@@ -50,10 +57,48 @@ export interface CollaborationConnectionTicketsTable {
   created_at: Timestamp;
 }
 
+export interface CollaborationCutoverJournalTable {
+  scope_id: string;
+  cutover_id: string;
+  owner_id: string;
+  runtime_id: string;
+  organization_id: string;
+  source_generation: number;
+  target_generation: number;
+  source_metadata_revision: number;
+  phase: CutoverPhase;
+  resume_phase: CutoverPhase | null;
+  block_reason: string | null;
+  backup_ref: string;
+  backup_inventory_ref: string | null;
+  counts: CutoverCounts | null;
+  ids_digest: string | null;
+  ceiling_digest: string | null;
+  fence_epoch: number | null;
+  fence_digest: string | null;
+  interrupted_runs: number | null;
+  rollback_mode: "compatible_direct" | null;
+  updated_at: Timestamp;
+}
+
+export interface CollaborationCutoverDispositionTable {
+  scope_id: string;
+  action: "terminated";
+  owner_id: string;
+  runtime_id: string;
+  notice_ref: string;
+  backup_ref: string;
+  home_receipt: string;
+  index_rows: number;
+  decided_at: Timestamp;
+}
+
 export interface CollaborationPlatformDatabase {
   collaboration_directory: CollaborationDirectoryTable;
   collaboration_user_index: CollaborationUserIndexTable;
   collaboration_connection_tickets: CollaborationConnectionTicketsTable;
+  collaboration_cutover_journal: CollaborationCutoverJournalTable;
+  collaboration_cutover_dispositions: CollaborationCutoverDispositionTable;
 }
 
 export async function bootstrapPlatformCollaborationDatabase(
@@ -100,6 +145,15 @@ async function applyCollaborationSchema(trx: Transaction<CollaborationPlatformDa
   await sql`ALTER TABLE collaboration_directory ADD COLUMN IF NOT EXISTS audience TEXT
     CHECK (audience IS NULL OR audience IN ('members', 'organization'))`.execute(trx);
   await sql`ALTER TABLE collaboration_directory ADD COLUMN IF NOT EXISTS organization_grant_id UUID`.execute(trx);
+  // S18: the cutover migration is the boundary between legacy and direct scopes.
+  // The column is added without a default so every row that already exists
+  // backfills to false, then defaults to true so rows created after the
+  // migration are direct from birth. Ticket admission denies a legacy row until
+  // its own cutover journal activates, so journal absence can never admit one.
+  await sql`ALTER TABLE collaboration_directory ADD COLUMN IF NOT EXISTS direct_native BOOLEAN`.execute(trx);
+  await sql`UPDATE collaboration_directory SET direct_native = false WHERE direct_native IS NULL`.execute(trx);
+  await sql`ALTER TABLE collaboration_directory ALTER COLUMN direct_native SET DEFAULT true`.execute(trx);
+  await sql`ALTER TABLE collaboration_directory ALTER COLUMN direct_native SET NOT NULL`.execute(trx);
   await sql`
     CREATE TABLE IF NOT EXISTS collaboration_user_index (
       actor_id TEXT NOT NULL CHECK (char_length(actor_id) BETWEEN 1 AND 128),
@@ -146,4 +200,42 @@ async function applyCollaborationSchema(trx: Transaction<CollaborationPlatformDa
   // Pre-S20 tables declared policy_revision NOT NULL; relax it so tickets issued without a
   // policy revision can be stored while pre-S20 builds remain rollback targets (S18 drops it).
   await sql`ALTER TABLE collaboration_connection_tickets ALTER COLUMN policy_revision DROP NOT NULL`.execute(trx);
+  await sql`
+    CREATE TABLE IF NOT EXISTS collaboration_cutover_journal (
+      scope_id UUID PRIMARY KEY REFERENCES collaboration_directory(scope_id),
+      cutover_id UUID NOT NULL UNIQUE,
+      owner_id TEXT NOT NULL,
+      runtime_id TEXT NOT NULL,
+      organization_id TEXT NOT NULL,
+      source_generation BIGINT NOT NULL CHECK (source_generation > 0),
+      target_generation BIGINT NOT NULL CHECK (target_generation = source_generation + 1),
+      source_metadata_revision BIGINT NOT NULL CHECK (source_metadata_revision >= 0),
+      phase TEXT NOT NULL CHECK (phase IN ('pending', 'inventoried', 'fenced', 'drained', 'staged', 'verified', 'active', 'blocked')),
+      resume_phase TEXT CHECK (resume_phase IS NULL OR resume_phase IN ('pending', 'inventoried', 'fenced', 'drained', 'staged', 'verified')),
+      block_reason TEXT,
+      backup_ref TEXT NOT NULL,
+      backup_inventory_ref TEXT,
+      counts JSONB,
+      ids_digest TEXT CHECK (ids_digest IS NULL OR ids_digest ~ '^[a-f0-9]{64}$'),
+      ceiling_digest TEXT CHECK (ceiling_digest IS NULL OR ceiling_digest ~ '^[a-f0-9]{64}$'),
+      fence_epoch BIGINT CHECK (fence_epoch IS NULL OR fence_epoch > 0),
+      fence_digest TEXT CHECK (fence_digest IS NULL OR fence_digest ~ '^[a-f0-9]{64}$'),
+      interrupted_runs BIGINT CHECK (interrupted_runs IS NULL OR interrupted_runs >= 0),
+      rollback_mode TEXT CHECK (rollback_mode IS NULL OR rollback_mode = 'compatible_direct'),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `.execute(trx);
+  await sql`
+    CREATE TABLE IF NOT EXISTS collaboration_cutover_dispositions (
+      scope_id UUID PRIMARY KEY,
+      action TEXT NOT NULL CHECK (action = 'terminated'),
+      owner_id TEXT NOT NULL,
+      runtime_id TEXT NOT NULL,
+      notice_ref TEXT NOT NULL,
+      backup_ref TEXT NOT NULL,
+      home_receipt TEXT NOT NULL,
+      index_rows INTEGER NOT NULL CHECK (index_rows >= 0),
+      decided_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `.execute(trx);
 }

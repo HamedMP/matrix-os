@@ -96,6 +96,7 @@ describe("gateway collaboration wiring", () => {
     }) as unknown as UpgradeWebSocket;
     runtime.register({ app, upgradeWebSocket });
     expect(registeredSocket).toBe(true);
+    expect(app.routes.some((route) => route.path === "/internal/collaboration/cutover/:scopeId/:phase" && route.method === "POST")).toBe(true);
     expect(await fixture.db.selectFrom("collaboration_schema_migrations").select("version").execute())
       .toEqual([
         { version: 1 },
@@ -111,6 +112,7 @@ describe("gateway collaboration wiring", () => {
         { version: 11 },
         { version: 12 },
         { version: 13 },
+        { version: 14 },
       ]);
     await expect(app.request(`/api/collaboration/scopes/${collaborationIds.scope}/discussion/messages`))
       .resolves.toMatchObject({ status: 401 });

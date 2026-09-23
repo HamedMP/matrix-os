@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { sql, type Kysely } from "kysely";
 import type { CollaborationDirectoryKind, CollaborationPlatformDatabase } from "./database.js";
+import { lockLegacyDirectoryIngestion } from "./legacy-ingestion-lock.js";
 
 const MAX_OUTSTANDING_TICKETS = 20;
 const MAX_TICKET_LIFETIME_MS = 30_000;
@@ -74,11 +75,28 @@ export class PlatformCollaborationRepository {
   async applyDirectoryEvent(input: DirectoryEventInput): Promise<void> {
     const now = this.now().toISOString();
     await this.db.transaction().execute(async (trx) => {
+      // A person-to-person event is legacy ingestion: it must not commit inside
+      // the cutover's final inventory-to-activation interval, so it takes the
+      // shared ingestion lock first. Organization events skip it and stay
+      // parallel. The lock is always taken before any row lock, so the two
+      // paths cannot deadlock.
+      if (!input.organizationId) await lockLegacyDirectoryIngestion(trx);
       const existing = await trx.selectFrom("collaboration_directory")
         .selectAll()
         .where("scope_id", "=", input.scopeId)
         .forUpdate()
         .executeTakeFirst();
+      const cutover = await trx.selectFrom("collaboration_cutover_journal")
+        .select(["phase", "target_generation"])
+        .where("scope_id", "=", input.scopeId)
+        .executeTakeFirst();
+      // The cutover journal freezes directory writes under the same row lock
+      // used by generation activation. A delayed pre-cutover event cannot
+      // reopen an older authority generation after direct activation.
+      if (cutover && (cutover.phase !== "active"
+        || input.authorityGeneration < Number(cutover.target_generation))) {
+        throw new PlatformCollaborationRepositoryError("conflict", "Directory is fenced for collaboration cutover");
+      }
       if (existing && (existing.owner_id !== input.ownerId || existing.runtime_id !== input.runtimeId)) {
         throw new PlatformCollaborationRepositoryError("conflict", "Directory authority changed without transition");
       }
