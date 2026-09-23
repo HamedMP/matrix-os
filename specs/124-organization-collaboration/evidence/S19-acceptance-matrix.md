@@ -58,7 +58,7 @@ under which the run's log and JSON are stored.
 | 20 | Invite costs | NEVER RUN | — | Deferred from V1 (S14); no implementation claimed | — |
 | 21 | Ownership | NEVER RUN | — | Deferred from V1 (S14); no implementation claimed | — |
 | 22 | Transfer | NEVER RUN | — | Deferred from V1 (S13); no implementation claimed | — |
-| 23 | Cutover | **BLOCKED** | 25/30, 5 failed, 35s | Undecided until the restack; operator dry-run on a real host also unrun | `20-cutover` |
+| 23 | Cutover | **BLOCKED** | 25/30, 5 failed, 35s | Undecided until the restack; operator dry-run on a real host also unrun. **Cannot become green on re-run**: the retired-V1-paths clause is unmet by the 2026-09-23 deferral decision below | `20-cutover` |
 | 24 | Surfaces | AUTOMATED-ONLY | PASS for the five shell suites only, 15/15 in 17s, 5 files | Authenticated Web Canvas, Web Desktop and Electron Desktop owner/member/outsider parity; the four S15 sharing surfaces have no rendered capture at all; `bun run build:shell:production` and `bun run build:desktop` from the quickstart command list were not run in this session | `21-surfaces` |
 | 25 | Scale | AUTOMATED-ONLY | PASS for the in-process profile only, 4/4 in 2s, 1 file | Real bandwidth, egress cost and a two-host CPU/memory/network profile; the numbers here are deterministic synthetic byte counts | `22-scale` |
 | 26 | Matrix groups | NEVER RUN | — | Deferred from V1 (S16); no implementation claimed | — |
@@ -232,6 +232,30 @@ mechanical enforcement. This is a **retirement whose caller inventory was never 
 own evidence document, `S18-T090-route-map.md`, is separately flagged as contradicting the code,
 which suggests the route map was written from intent rather than by enumerating callers. Neither the
 map nor the tests caught a shipped client still calling the retired path.
+
+**Decision, 2026-09-23: the retirement is deferred; mobile is not migrated in this layer.** A
+three-call-site migration needs real-device validation per `docs/dev/mobile-shell.md`, and shipping
+it unvalidated on the one surface with no evidence is the failure this matrix exists to refuse. Two
+consequences follow, and both bind the re-run of rows 13/19/23 after the restack:
+
+1. **Row 23 (Cutover) cannot be recorded green on re-run.** `quickstart.md`'s required evidence for
+   that row includes "legacy proxy/WS/V1 paths, rollout flag and cohort policy removed". While
+   `/api/collaboration/scopes/:id/connection-tickets` remains served, that clause is unmet **by
+   decision**. The row is `BLOCKED` on stale ancestry today; when the ancestry is fixed and the
+   suites go green, the row still does not become `LIVE` or `PASS` — it becomes a row whose
+   automated part passes against a requirement the release has deliberately not met. Whoever re-runs
+   it must not read a green suite as a green row. This is the same distinction the seven corrected
+   `PASS` rows were about, arriving in advance rather than after the fact.
+2. **The deferral is required by row 24, not merely prudent.** `quickstart.md`'s required evidence
+   for Surfaces reads: "Native Mobile and CLI are a recorded V1 limitation **whose existing 525
+   shared Chat/terminal keep working**". Shipping the retirement would have stopped Native Mobile's
+   shared Chat and terminal working, which fails row 24 by its own written criterion. So the
+   decision is not a risk trade-off against an unstated standard; it is the standard the spec
+   already set, on the surface that had nothing watching it.
+
+Recording this as a **deferral by explicit decision**, not an unmet gate: the release is choosing to
+keep a legacy path served rather than failing to remove it. The migration itself remains owed, and
+belongs with the other unmet work rather than with the nine V1 deferrals.
 
 **The finding: retirement layers need a caller inventory as a gate.** Not a route map written from
 what the layer meant to retire, but a search for every caller of each retired path across
