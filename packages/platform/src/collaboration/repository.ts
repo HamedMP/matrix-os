@@ -84,7 +84,11 @@ export class PlatformCollaborationRepository {
       }
       if (existing && Number(existing.metadata_revision) >= input.metadataRevision) return;
 
-      await trx.insertInto("collaboration_directory").values({
+      // The pre-read cannot fence a concurrent event: FOR UPDATE locks nothing while the row is
+      // still absent, so two first-writers both pass the guard above and the loser's unconditional
+      // DO UPDATE would replay its stale metadata over the winner's. The revision test belongs in
+      // the write statement itself.
+      const applied = await trx.insertInto("collaboration_directory").values({
         scope_id: input.scopeId,
         runtime_id: input.runtimeId,
         owner_id: input.ownerId,
@@ -105,7 +109,11 @@ export class PlatformCollaborationRepository {
         metadata_revision: input.metadataRevision,
         last_event_id: input.eventId,
         updated_at: now,
-      })).execute();
+      }).where("collaboration_directory.metadata_revision", "<", input.metadataRevision))
+        .returning("collaboration_directory.scope_id")
+        .executeTakeFirst();
+      // No row returned means the DO UPDATE was fenced by a newer revision: the whole event is stale.
+      if (!applied) return;
 
       for (const recipient of input.recipients) {
         await trx.insertInto("collaboration_user_index").values({
