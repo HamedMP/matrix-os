@@ -543,7 +543,7 @@ runcmd:
       timeout --kill-after=30 600 env DEBIAN_FRONTEND=noninteractive apt-get install -y software-properties-common
       timeout --kill-after=30 120 add-apt-repository -y universe
       apt_get_update
-      timeout --kill-after=30 600 env DEBIAN_FRONTEND=noninteractive apt-get install -y bubblewrap build-essential ca-certificates cmatrix curl docker.io elixir erlang-base erlang-crypto erlang-inets erlang-public-key erlang-ssl erlang-tools file git postgresql-client procps nginx openssl socat sudo unzip zsh
+      timeout --kill-after=30 600 env DEBIAN_FRONTEND=noninteractive apt-get install -y bubblewrap build-essential ca-certificates cmatrix curl docker.io elixir erlang-base erlang-crypto erlang-inets erlang-public-key erlang-ssl erlang-tools file git postgresql-client procps python3-cryptography nginx openssl socat sudo unzip zsh
       install -d -o root -g root -m 0755 /etc/apparmor.d
       cat >/etc/apparmor.d/bwrap <<'EOF'
     abi <abi/4.0>,

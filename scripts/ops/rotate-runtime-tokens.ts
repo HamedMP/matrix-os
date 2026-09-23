@@ -1,4 +1,5 @@
 /** Operator-only two-phase rotation. Secret material is read from protected files, never argv. */
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { lstat, readFile, writeFile } from 'node:fs/promises';
 import { Kysely, PostgresDialect } from 'kysely';
 import pg from 'pg';
@@ -6,8 +7,10 @@ import {
   buildPlatformRuntimeVerificationToken,
   buildPlatformSpeechRuntimeVerificationToken,
   buildPlatformSyncVerificationToken,
+  buildPlatformVerificationToken,
 } from '../../packages/platform/src/platform-token.ts';
-import { encryptRuntimeTokenRotation } from '../../distro/customer-vps/host-bin/matrix-rotate-runtime-tokens.mjs';
+import { encryptRuntimeTokenRotation } from './runtime-token-envelope.mjs';
+import { targetRuntimeTokenEpoch } from './runtime-token-epoch.mjs';
 
 type Machine = {
   machine_id: string;
@@ -28,7 +31,7 @@ async function protectedText(path: string): Promise<string> {
 function flags(): Record<string, string> {
   const args = process.argv.slice(2);
   const action = args.shift();
-  if (action !== 'prepare' && action !== 'activate') throw new Error('Expected prepare or activate');
+  if (action !== 'prepare' && action !== 'prepare-recovery' && action !== 'activate') throw new Error('Expected prepare, prepare-recovery, or activate');
   if (args.length % 2) throw new Error('Expected flag/value pairs');
   const values: Record<string, string> = { action };
   for (let i = 0; i < args.length; i += 2) {
@@ -36,8 +39,10 @@ function flags(): Record<string, string> {
     values[args[i].slice(2)] = args[i + 1];
   }
   const required = action === 'prepare'
-    ? ['machine-id', 'db-file', 'secret-file', 'public-key-file', 'out']
-    : ['machine-id', 'db-file', 'expected-epoch'];
+    ? ['machine-id', 'db-file', 'secret-file', 'public-key-file', 'verifier-digest', 'out']
+    : action === 'prepare-recovery'
+      ? ['machine-id', 'db-file', 'secret-file', 'public-key-file', 'verifier-digest', 'host-epoch', 'out']
+      : ['machine-id', 'db-file', 'expected-epoch'];
   if (Object.keys(values).length !== required.length + 1 || required.some((key) => !values[key])) {
     throw new Error('Invalid rotation arguments');
   }
@@ -56,26 +61,41 @@ async function main(): Promise<void> {
       .where('machine_id', '=', options['machine-id'])
       .executeTakeFirst();
     if (!machine || machine.status !== 'running' || machine.deleted_at !== null) throw new Error('Machine is not active');
-    const nextEpoch = machine.runtime_token_epoch + 1;
-    if (!Number.isSafeInteger(nextEpoch) || nextEpoch > 2147483647) throw new Error('Epoch limit reached');
-    if (options.action === 'prepare') {
+    if (options.action === 'prepare' || options.action === 'prepare-recovery') {
+      const targetEpoch = targetRuntimeTokenEpoch(
+        machine.runtime_token_epoch,
+        options.action,
+        options.action === 'prepare-recovery' ? Number(options['host-epoch']) : undefined,
+      );
       const secret = await protectedText(options['secret-file']);
+      if (secret.length < 32 || secret !== secret.trim() || /[\r\n\0]/.test(secret)) {
+        throw new Error('Invalid platform secret file');
+      }
+      const digest = options['verifier-digest'];
+      if (!/^[a-f0-9]{64}$/.test(digest)) throw new Error('Invalid host verifier digest');
+      const expectedDigest = createHash('sha256')
+        .update(buildPlatformVerificationToken(machine.handle, secret))
+        .digest('hex');
+      if (!timingSafeEqual(Buffer.from(digest, 'hex'), Buffer.from(expectedDigest, 'hex'))) {
+        throw new Error('Platform secret does not match selected host');
+      }
       const publicKey = await protectedText(options['public-key-file']);
       const identity = { handle: machine.handle, machineId: machine.machine_id, runtimeSlot: machine.runtime_slot };
       const envelope = encryptRuntimeTokenRotation({
         machineId: machine.machine_id,
         runtimeSlot: machine.runtime_slot,
-        epoch: nextEpoch,
+        epoch: targetEpoch,
         tokens: {
-          sync: buildPlatformSyncVerificationToken(identity, secret, nextEpoch),
-          fundedAi: buildPlatformRuntimeVerificationToken(identity, secret, nextEpoch),
-          speech: buildPlatformSpeechRuntimeVerificationToken(identity, secret, nextEpoch),
+          sync: buildPlatformSyncVerificationToken(identity, secret, targetEpoch),
+          fundedAi: buildPlatformRuntimeVerificationToken(identity, secret, targetEpoch),
+          speech: buildPlatformSpeechRuntimeVerificationToken(identity, secret, targetEpoch),
         },
       }, publicKey);
       await writeFile(options.out, JSON.stringify(envelope), { flag: 'wx', mode: 0o600 });
-      process.stdout.write(`Prepared encrypted runtime token epoch ${nextEpoch}.\n`);
+      process.stdout.write(`Prepared encrypted runtime token epoch ${targetEpoch}.\n`);
       return;
     }
+    const nextEpoch = targetRuntimeTokenEpoch(machine.runtime_token_epoch, 'prepare');
     const expected = Number(options['expected-epoch']);
     if (!Number.isSafeInteger(expected) || expected !== nextEpoch) throw new Error('Unexpected epoch');
     const changed = await db.updateTable('user_machines')

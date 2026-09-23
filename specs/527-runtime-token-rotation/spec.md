@@ -15,10 +15,12 @@ An operator command can accidentally place a runtime bearer token in a host audi
 ## Operator sequence
 
 1. Deploy the epoch-aware platform and migrate its database. Confirm the selected row is active and at the expected epoch.
-2. On the selected host, run `matrix-rotate-runtime-tokens init` as root. Keep the private key under `/opt/matrix/env/` and transfer only the printed public key to the operator computer.
-3. Read the platform database URL and platform secret from a secret manager into separate local mode-0600 files. Run `bun scripts/ops/rotate-runtime-tokens.ts prepare` with those file paths, the selected machine ID, public-key path, and a new output path. It writes only an encrypted envelope. Remove the local secret files after preparation.
-4. Upload the envelope to the selected host. Use `activate` with the expected next epoch; this guarded database write revokes the old tokens for that machine. Then run `matrix-rotate-runtime-tokens apply <encrypted-file>` as root on that host and restart `matrix-gateway` and `matrix-sync-agent`. Delete the uploaded envelope after use.
+2. On the selected host, run `/opt/matrix/bin/matrix-rotate-runtime-tokens.py init` as root. Keep the private key under `/opt/matrix/env/` and transfer only the printed public key to the operator computer. Run `verifier-digest` on the host and retain its one-way digest, never the verifier token.
+3. Read the platform database URL and platform secret from a secret manager into separate local mode-0600 files. Use exact secret-manager bytes (no shell `echo` or added newline). Run `bun scripts/ops/rotate-runtime-tokens.ts prepare` with those file paths, the selected machine ID, public-key path, verifier digest, and a new output path. Preparation rejects a whitespace-altered or mismatched platform secret and writes only an encrypted envelope. Remove the local secret files after preparation.
+4. Upload the envelope to the selected host. Use `activate` with the expected next epoch; this guarded database write revokes the old tokens for that machine. Then run `/opt/matrix/bin/matrix-rotate-runtime-tokens.py apply <encrypted-file>` as root on that host and restart `matrix-gateway` and `matrix-sync-agent`. Delete the uploaded envelope after use.
 5. Verify old tokens fail against the platform's runtime authorization paths, current tokens succeed, and the host services are healthy. Keep the incident open until all checks pass. Do not roll the row back to the compromised epoch to recover service.
+
+If database activation succeeds but host application fails or the envelope is lost, read the host's unchanged epoch and run `prepare-recovery` with that `--host-epoch`. It is allowed only when the database is exactly one epoch ahead; it re-creates an envelope for the *current database epoch* without another database update. Apply that envelope on the host and repeat service checks. Never move the database back to the exposed epoch.
 
 The operator tooling accepts file paths and nonsecret IDs as command arguments. Token and database secret values must never appear in command arguments, logs, issue comments, or PRs. The public repository must not contain incident-specific machine identifiers or audit excerpts.
 
@@ -28,3 +30,7 @@ The operator tooling accepts file paths and nonsecret IDs as command arguments. 
 - After advancement, that machine's old funded AI, sync, and speech tokens are rejected; new tokens pass. Another machine at epoch 1 is unaffected.
 - Host-side tampering, wrong-machine envelopes, stale epochs, or duplicate token entries fail without changing `host.env`.
 - The rotation is checked in the production Main Computer runtime and documented with redacted evidence in the private issue.
+
+## Extraction plan
+
+`customer-vps.ts` currently owns the existing provisioning and recovery calls to `buildHostConfig` in a file over 3,000 lines. This change only passes the persisted epoch through those two existing calls. The next customer-VPS composition refactor should move all host-config construction, bundle selection, and cloud-init rendering from those paths into a focused provisioning module, then test that module directly before deleting the inline orchestration code.
