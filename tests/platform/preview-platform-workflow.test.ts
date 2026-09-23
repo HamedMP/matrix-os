@@ -188,4 +188,20 @@ describe("preview platform workflow", () => {
       expect(enableStep).toContain(`\"$${response}\"`);
     }
   });
+
+  it("schedules the gateway restart outside its own terminal request", () => {
+    const workflow = YAML.parse(readFileSync(
+      join(root, ".github/workflows/preview-platform.yml"),
+      "utf8",
+    ));
+    const enableStep = workflow.jobs["connect-share-preview"].steps.find(
+      (step: { name?: string }) => step.name === "Enable the existing tagged host without moving traffic",
+    ).run as string;
+
+    expect(enableStep).toContain('"/usr/bin/systemd-run"');
+    expect(enableStep).toContain('"--on-active=2s"');
+    expect(enableStep).not.toContain('command:["/usr/bin/sudo","/usr/bin/systemctl","restart","matrix-gateway.service"]');
+    expect(enableStep.indexOf('send_runtime_command "$body" "$gateway_restart_response"'))
+      .toBeLessThan(enableStep.indexOf('send_runtime_command "$body" "$gateway_active_response"'));
+  });
 });

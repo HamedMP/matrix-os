@@ -776,8 +776,12 @@ jobs:
           body="$(jq -cn --arg script "$patch_script" --arg config "$runtime_config" \
             '{command:["/usr/bin/sudo","/usr/bin/python3","-c",$script,$config],timeoutMs:10000}')"
           send_runtime_command "$body" "$speech_config_response"
-          body='{"command":["/usr/bin/sudo","/usr/bin/systemctl","restart","matrix-gateway.service"],"timeoutMs":30000}'
+          # A synchronous restart drops the gateway connection that carries this terminal request.
+          restart_unit="matrix-preview-gateway-restart-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          body="$(jq -cn --arg unit "--unit=$restart_unit" \
+            '{command:["/usr/bin/sudo","/usr/bin/systemd-run",$unit,"--on-active=2s","--collect","/usr/bin/systemctl","restart","matrix-gateway.service"],timeoutMs:10000}')"
           send_runtime_command "$body" "$gateway_restart_response"
+          sleep 5
           body='{"command":["/usr/bin/systemctl","is-active","--quiet","matrix-gateway.service"],"timeoutMs":10000}'
           send_runtime_command "$body" "$gateway_active_response"
           capability_url="${url}/internal/containers/${handle}/speech/capabilities?runtimeSlot=${handle}"
