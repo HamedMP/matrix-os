@@ -1246,7 +1246,9 @@ apply_update() {
   echo "$version" | sudo tee "$VERSION_FILE" >/dev/null
   log "Installed app $version"
   if [ -d "$extract_dir/bin" ]; then
-    if ! write_update_phase host-bin || ! install_host_bin_payload "$extract_dir/bin"; then
+    if ! write_update_phase host-bin \
+      || ! install_host_bin_payload "$extract_dir/bin" \
+      || ! sudo /usr/bin/timeout --kill-after=30 1800 "$BIN_DIR/matrix-prepare-host-prerequisites"; then
       log "ERROR: host-bin installation failed — rolling back"
       if do_rollback false; then
         write_update_error "post_install_host_bin_failed" "The host update helpers could not be installed and the previous release was restored." "$version"

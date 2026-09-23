@@ -65,6 +65,7 @@ export interface UserMachinesTable {
   clerk_user_id: string;
   handle: string;
   runtime_slot: string;
+  runtime_token_epoch: Generated<number>;
   provisioning_class: string;
   access_clerk_user_ids: string[];
   developer_tools: string;
@@ -867,6 +868,7 @@ export interface UserMachineRecord {
   clerkUserId: string;
   handle: string;
   runtimeSlot: string;
+  runtimeTokenEpoch: number;
   provisioningClass: UserMachineProvisioningClass;
   accessClerkUserIds: string[];
   developerTools: DeveloperToolId[];
@@ -1158,6 +1160,7 @@ export interface NewUserMachine {
   clerkUserId: string;
   handle: string;
   runtimeSlot?: string;
+  runtimeTokenEpoch?: number;
   provisioningClass?: UserMachineProvisioningClass;
   accessClerkUserIds?: string[];
   developerTools?: DeveloperToolId[];

@@ -491,6 +491,26 @@ describe("funded AI policy routes", () => {
     })).status).toBe(401);
   });
 
+  it("rejects the prior runtime token after this machine's epoch advances", async () => {
+    const { app } = await createTestApp();
+    await db.executor.updateTable("user_machines")
+      .set({ runtime_token_epoch: 2 })
+      .where("machine_id", "=", "machine_123")
+      .execute();
+
+    const request = (token: string) => app.request(fundedCredentialPath(), {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: "{}",
+    });
+    expect((await request(bearerFor("alice"))).status).toBe(401);
+    expect((await request(buildPlatformRuntimeVerificationToken(
+      { handle: "alice", machineId: "machine_123", runtimeSlot: "primary" },
+      platformSecret,
+      2,
+    ))).status).toBe(200);
+  });
+
   it("resolves the requested runtime slot before verifying exact machine proof", async () => {
     await insertUserMachine(db, {
       machineId: "machine_staging", clerkUserId: "user_alice", handle: "alice", runtimeSlot: "staging",

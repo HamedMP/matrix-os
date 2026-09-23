@@ -76,7 +76,7 @@ async function runtimeIdentity(
     handle: handle.data,
     machineId: machine.machineId,
     runtimeSlot: machine.runtimeSlot,
-  }, options.platformSecret);
+  }, options.platformSecret, machine.runtimeTokenEpoch);
   if (!timingSafeTokenEquals(actual, expected)) return undefined;
   return {
     ownerId: machine.clerkUserId,

@@ -34,6 +34,7 @@ export function mapUserMachine(row: Selectable<UserMachinesTable>): UserMachineR
     clerkUserId: row.clerk_user_id,
     handle: row.handle,
     runtimeSlot: row.runtime_slot,
+    runtimeTokenEpoch: row.runtime_token_epoch,
     provisioningClass: UserMachineProvisioningClassSchema.parse(row.provisioning_class),
     accessClerkUserIds: row.access_clerk_user_ids,
     developerTools: parseDeveloperToolsJson(row.developer_tools),
@@ -76,6 +77,7 @@ export function toUserMachineRow(record: NewUserMachine): Insertable<UserMachine
     clerk_user_id: record.clerkUserId,
     handle: record.handle,
     runtime_slot: record.runtimeSlot ?? 'primary',
+    runtime_token_epoch: record.runtimeTokenEpoch ?? 1,
     provisioning_class: record.provisioningClass ?? 'customer',
     access_clerk_user_ids: record.accessClerkUserIds ?? [],
     developer_tools: serializeDeveloperTools(record.developerTools ?? DEFAULT_DEVELOPER_TOOLS),
@@ -116,6 +118,7 @@ export function toUserMachineUpdate(values: Partial<NewUserMachine>): Updateable
   if (values.clerkUserId !== undefined) update.clerk_user_id = values.clerkUserId;
   if (values.handle !== undefined) update.handle = values.handle;
   if (values.runtimeSlot !== undefined) update.runtime_slot = values.runtimeSlot;
+  if (values.runtimeTokenEpoch !== undefined) update.runtime_token_epoch = values.runtimeTokenEpoch;
   if (values.provisioningClass !== undefined) update.provisioning_class = values.provisioningClass;
   if (values.accessClerkUserIds !== undefined) update.access_clerk_user_ids = values.accessClerkUserIds;
   if (values.developerTools !== undefined) update.developer_tools = serializeDeveloperTools(values.developerTools);
@@ -179,4 +182,3 @@ export function toProviderDeletionRow(record: NewProviderDeletionQueueRecord): P
     completed_at: record.completedAt ?? null,
   };
 }
-

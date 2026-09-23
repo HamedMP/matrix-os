@@ -1755,6 +1755,15 @@ json_field() { python3 -c "import json,sys; print(json.load(sys.stdin).get(sys.a
     expect(syncAgent).not.toContain('sudo find "$extract_dir/bin" -maxdepth 1 -type f -exec cp -a {} "$BIN_DIR/" \\;');
   });
 
+  it('verifies the rotation dependency during in-place host updates', () => {
+    const syncAgent = readFileSync(join(process.cwd(), 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
+    const install = syncAgent.indexOf('install_host_bin_payload "$extract_dir/bin"');
+    const prerequisites = syncAgent.indexOf('sudo /usr/bin/timeout --kill-after=30 1800 "$BIN_DIR/matrix-prepare-host-prerequisites"', install);
+    const services = syncAgent.indexOf('log "Installed systemd units"', install);
+    expect(prerequisites).toBeGreaterThan(install);
+    expect(services).toBeGreaterThan(prerequisites);
+  });
+
   it('gateway launcher leaves registration to the independent host service', () => {
     const root = process.cwd();
     const launcher = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-gateway'), 'utf8');
