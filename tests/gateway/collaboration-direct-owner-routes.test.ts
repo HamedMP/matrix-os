@@ -61,7 +61,10 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("S18 direct owner route r
         joined_at: status === "accepted" ? now : null, updated_at: now, dispositioned_at: null,
       }).execute();
     }
-    const repository = new CollaborationRepository(fixture.db);
+    // The fixture pins `now` and writes invitation expiries relative to it, so the
+    // repository has to read the same clock; on the real clock this suite expires
+    // its own invitations a day after the pinned date and fails by calendar.
+    const repository = new CollaborationRepository(fixture.db, { now: () => now });
     const precondition = createOrganizationPrecondition({
       source: { async assertMembership({ actorId }) { return actorId === ownerId || actorId === memberId
         ? { member: true, expiresAt: new Date(now.getTime() + 20_000).toISOString() } : { member: false }; } },
@@ -99,10 +102,12 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("S18 direct owner route r
     } as unknown as CollaborationRouteOptions));
   });
 
-  async function createSession(actorId: string): Promise<string> {
+  async function createSession(actorId: string, pendingGrantId?: string): Promise<string> {
     const ticket = {
       protocolVersion: COLLABORATION_DIRECT_PROTOCOL_VERSION, ticketId: randomUUID(), nonce: randomUUID().replaceAll("-", ""),
-      actorId, organizationId, resource: { scopeId, kind: "project" }, purpose: "direct_session",
+      actorId, organizationId,
+      resource: { scopeId, kind: "project", ...(pendingGrantId ? { pendingGrantId } : {}) },
+      purpose: "direct_session",
       runtime: { runtimeId: logicalRuntimeId, authorityGeneration: 1 }, proofKeyThumbprint: proofKeyThumbprint(proofPublicKey),
       maxActions: 100, issuedAt: now.toISOString(), expiresAt: new Date(now.getTime() + 30_000).toISOString(),
     };
@@ -121,6 +126,13 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("S18 direct owner route r
   });
 
   function signedRequest(method: "GET" | "POST" | "PUT" | "DELETE", path: string, body?: unknown, tamper = false): Promise<Response> {
+    return signedRequestAs(sessionId, method, path, body, tamper);
+  }
+
+  function signedRequestAs(
+    session: string, method: "GET" | "POST" | "PUT" | "DELETE", path: string, body?: unknown, tamper = false,
+  ): Promise<Response> {
+    const sessionId = session;
     const bytes = body === undefined ? new Uint8Array() : new TextEncoder().encode(JSON.stringify(body));
     const signature = {
       protocolVersion: COLLABORATION_DIRECT_PROTOCOL_VERSION, sessionId, method, path, query: "",
@@ -206,5 +218,28 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("S18 direct owner route r
     expect(response.status).toBe(200);
     expect(await fixture.db.selectFrom("collaboration_members").select("status")
       .where("invitation_id", "=", invitationId).executeTakeFirst()).toMatchObject({ status: "accepted" });
+  });
+
+  it("admits an invited member's direct session and keeps accept-only grant sessions off the invitation routes", async () => {
+    // A personally invited actor is recorded as `invited` in the platform user
+    // index, so their ticket never carries pendingGrantId; only an
+    // organization-wide grant recipient, who has no invitation at all, gets one.
+    const inviteeSession = await createSession(memberId);
+    expect((await signedRequestAs(inviteeSession, "GET", `/api/collaboration/invitations/${invitationId}`)).status).toBe(200);
+
+    const grantId = randomUUID();
+    await fixture.db.insertInto("collaboration_grants").values({
+      id: grantId, scope_id: scopeId, organization_id: organizationId, audience_kind: "organization",
+      audience_actor_id: null, preset: "contributor", state: "active", policy_version: 1,
+      source_id: null, legacy_ceiling: null, expires_at: null, revision: 1,
+      created_by: ownerId, created_at: now, updated_at: now, revoked_at: null,
+    }).execute();
+    const grantSession = await createSession(memberId, grantId);
+    // The accept-only session reaches its own grant route, never the invitation routes.
+    expect((await signedRequestAs(grantSession, "GET", `/api/collaboration/invitations/${invitationId}`)).status).toBe(401);
+
+    const accepted = await signedRequestAs(inviteeSession, "POST", `/api/collaboration/invitations/${invitationId}/accept`,
+      { clientRequestId: randomUUID(), expectedRevision: "1" });
+    expect(accepted.status).toBe(200);
   });
 });
