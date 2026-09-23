@@ -2,6 +2,7 @@ import {
   GRANOLA_PRESET,
   availableGranolaActions,
   planGranolaAction,
+  supportedGranolaListParams,
 } from "./granola-integration.js";
 
 interface GranolaPresetRow {
@@ -51,6 +52,7 @@ export interface ManagedMcpPresetBroker {
     last_used_at: null;
   }>>;
   listAvailableActions(userId: string, serviceId: string): Promise<readonly string[] | null>;
+  listAvailableActionParams(userId: string, serviceId: string): Promise<Record<string, readonly string[]> | null>;
   connect(userId: string, service: unknown): Promise<{ url: string }>;
   call(input: {
     userId: string;
@@ -76,6 +78,12 @@ export function createGranolaPresetBroker(dependencies: {
 }): ManagedMcpPresetBroker {
   const { broker, oauth } = dependencies;
   return {
+    listAvailableActionParams: async (userId, serviceId) => {
+      if (serviceId !== GRANOLA_PRESET.id) return null;
+      const row = await broker.getPreset(userId, GRANOLA_PRESET.id);
+      if (!row || row.status !== "ready") return null;
+      return { list_notes: supportedGranolaListParams(row.tools) };
+    },
     listAvailableActions: async (userId, serviceId) => {
       if (serviceId !== GRANOLA_PRESET.id) return null;
       let row = await broker.getPreset(userId, GRANOLA_PRESET.id);

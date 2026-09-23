@@ -446,6 +446,8 @@ async function startPlatformServerWithCleanup(
     listConnections: (userId: string) => managedMcpPresetBroker?.listConnections(userId) ?? Promise.resolve([]),
     listAvailableActions: (userId: string, serviceId: string) =>
       managedMcpPresetBroker?.listAvailableActions(userId, serviceId) ?? Promise.resolve(null),
+    listAvailableActionParams: (userId: string, serviceId: string) =>
+      managedMcpPresetBroker?.listAvailableActionParams(userId, serviceId) ?? Promise.resolve(null),
     connect: (userId: string, service: any) => {
       if (!managedMcpPresetBroker) throw new Error('Managed MCP preset broker unavailable');
       return managedMcpPresetBroker.connect(userId, service);

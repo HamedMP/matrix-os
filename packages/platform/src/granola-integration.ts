@@ -26,6 +26,14 @@ interface GranolaToolCall {
   arguments: Record<string, unknown>;
 }
 
+export class UnsupportedGranolaParameterError extends Error {
+  readonly code = "unsupported_granola_parameter";
+  constructor(readonly parameter: "folderId" | "timeRange" | "limit") {
+    super(`Granola list_meetings does not support ${parameter}`);
+    this.name = "UnsupportedGranolaParameterError";
+  }
+}
+
 export interface GranolaActionPlan {
   calls: GranolaToolCall[];
 }
@@ -103,18 +111,30 @@ function boundedLimit(value: unknown): number {
   return Math.min(Math.floor(value), 100);
 }
 
+const LIST_MAPPINGS = [
+  ["folderId", ["folder_id", "folderId"], (value: unknown) => boundedString(value, "folderId", 512)],
+  ["timeRange", ["time_range", "timeRange"], (value: unknown) => boundedString(value, "timeRange", 100)],
+  ["limit", ["limit", "page_size", "pageSize", "max_results", "maxResults"], boundedLimit],
+] as const;
+
+export function supportedGranolaListParams(tools: DiscoveredGranolaTool[]): string[] {
+  const properties = schemaProperties("list_meetings", tools);
+  return LIST_MAPPINGS
+    .filter(([, aliases]) => aliases.some((alias) => properties?.[alias]))
+    .map(([field]) => field);
+}
+
 function listArguments(
   params: Record<string, unknown>,
   tools: DiscoveredGranolaTool[],
 ): Record<string, unknown> {
-  const mappings = [
-    ["folderId", ["folder_id", "folderId"], (value: unknown) => boundedString(value, "folderId", 512)],
-    ["timeRange", ["time_range", "timeRange"], (value: unknown) => boundedString(value, "timeRange", 100)],
-    ["limit", ["limit", "page_size", "pageSize", "max_results", "maxResults"], boundedLimit],
-  ] as const;
-  return Object.fromEntries(mappings.flatMap(([field, aliases, normalize]) => {
+  const properties = schemaProperties("list_meetings", tools);
+  return Object.fromEntries(LIST_MAPPINGS.flatMap(([field, aliases, normalize]) => {
     const value = params[field];
     if (value === undefined) return [];
+    if (!aliases.some((alias) => properties?.[alias])) {
+      throw new UnsupportedGranolaParameterError(field);
+    }
     return Object.entries(mappedArgument("list_meetings", field, normalize(value), aliases, tools));
   }));
 }
