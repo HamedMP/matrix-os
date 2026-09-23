@@ -846,6 +846,7 @@ describe("Hermes canonical Chat Provider adapter", () => {
       env: {
         HOME: "/home/matrix/home",
         MATRIX_HOME: "/home/matrix/home",
+        MATRIX_CLERK_USER_ID: baseInput.owner.ownerId,
         HERMES_PYTHON_SRC_ROOT: "/home/matrix/home/.hermes/hermes-agent",
         PYTHONPATH: "/home/matrix/home/.hermes/hermes-agent",
         PYTHONUNBUFFERED: "1",

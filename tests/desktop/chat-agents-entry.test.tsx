@@ -130,8 +130,15 @@ describe("shared Agents entry", () => {
     expect(onStartChat).toHaveBeenCalledWith(expect.stringContaining("Account Research Desk"));
   });
 
-  it("starts the Jev bot setup through the same Build in Chat flow as other recipes", async () => {
+  it("creates Jev for the current user's sole connected Gmail, verifies the saved bot, then opens Chat", async () => {
     const client = clientFixture();
+    client.integrations.mockResolvedValue([{ service: "gmail", account_label: "My Gmail", account_email: "me@example.test", status: "active" }]);
+    client.recipeCatalog.mockResolvedValue({ ...recipeCatalog, skills: [...recipeCatalog.skills,
+      { id: "matrix-jev-email-triage", name: "Jev email triage", description: "Classify mail." }] });
+    client.list.mockResolvedValueOnce({ enabled: true, agents: [] }).mockImplementation(async () => ({
+      enabled: true, agents: client.create.mock.calls.length ? [{ ...saved, name: "Jev Inbox Triage",
+        recipe: client.create.mock.calls[0]![0].recipe }] : [],
+    }));
     const onStartChat = vi.fn();
     render(<ChatAgentsWorkspace><ChatAgentsRailSection client={client} onStartChat={onStartChat} />
       <ChatAgentsContent client={client} scopeKey="chat_one"><p>Chat canvas</p></ChatAgentsContent></ChatAgentsWorkspace>);
@@ -139,11 +146,52 @@ describe("shared Agents entry", () => {
     fireEvent.change(screen.getByRole("searchbox", { name: "Search recipes" }), { target: { value: "Jev" } });
     const useJev = screen.getByRole("button", { name: "Use Jev Inbox Triage" });
     expect(useJev.textContent).toBe("Build in Chat");
+    await waitFor(() => expect((useJev as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(useJev);
-    expect(onStartChat).toHaveBeenCalledWith(expect.stringContaining("create a Matrix agent named Jev Inbox Triage"));
-    expect(onStartChat.mock.calls[0]![0]).toContain("matrix-jev-email-triage");
-    expect(onStartChat.mock.calls[0]![0]).toContain("Hermes");
-    expect(client.create).not.toHaveBeenCalled();
+    await waitFor(() => expect(client.create).toHaveBeenCalledTimes(1));
+    expect(client.create.mock.calls[0]![0]).toMatchObject({
+      name: "Jev Inbox Triage", selection: { instanceId: "hermes_default" },
+      recipe: { skills: ["matrix-jev-email-triage", "matrix-integrations"],
+        integrations: [{ service: "gmail", accountLabel: "My Gmail" }] },
+    });
+    await waitFor(() => expect(onStartChat).toHaveBeenCalledWith("", [
+      { kind: "agent", id: saved.id, label: "Jev Inbox Triage", revision: "1" },
+    ]));
+  });
+
+  it("requires an explicit Gmail choice when several user accounts are connected", async () => {
+    const client = clientFixture();
+    client.recipeCatalog.mockResolvedValue({ ...recipeCatalog, skills: [...recipeCatalog.skills,
+      { id: "matrix-jev-email-triage", name: "Jev email triage", description: "Classify mail." }] });
+    const onStartChat = vi.fn();
+    render(<ChatAgentsWorkspace><ChatAgentsRailSection client={client} onStartChat={onStartChat} />
+      <ChatAgentsContent client={client} scopeKey="chat_one"><p>Chat canvas</p></ChatAgentsContent></ChatAgentsWorkspace>);
+    fireEvent.click(await screen.findByRole("button", { name: "Browse agent recipes" }));
+    const useJev = await screen.findByRole("button", { name: "Use Jev Inbox Triage" });
+    expect((useJev as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByRole("combobox", { name: "Gmail account for Jev" }), { target: { value: "Personal" } });
+    expect((useJev as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(useJev);
+    await waitFor(() => expect(client.create).toHaveBeenCalledTimes(1));
+    expect(client.create.mock.calls[0]![0].recipe?.integrations).toEqual([{ service: "gmail", accountLabel: "Personal" }]);
+  });
+
+  it("does not open Chat if the Jev bot is absent from the current user's readback", async () => {
+    const client = clientFixture();
+    client.integrations.mockResolvedValue([{ service: "gmail", account_label: "Mine", account_email: "mine@example.test", status: "active" }]);
+    client.recipeCatalog.mockResolvedValue({ ...recipeCatalog, skills: [...recipeCatalog.skills,
+      { id: "matrix-jev-email-triage", name: "Jev email triage", description: "Classify mail." }] });
+    const onStartChat = vi.fn();
+    render(<ChatAgentsWorkspace><ChatAgentsRailSection client={client} onStartChat={onStartChat} />
+      <ChatAgentsContent client={client} scopeKey="chat_one"><p>Chat canvas</p></ChatAgentsContent></ChatAgentsWorkspace>);
+    fireEvent.click(await screen.findByRole("button", { name: "Browse agent recipes" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Use Jev Inbox Triage" }));
+    await waitFor(() => expect(client.create).toHaveBeenCalledTimes(1));
+    expect(onStartChat).not.toHaveBeenCalled();
+    expect(await screen.findByRole("alert")).toHaveProperty("textContent", expect.stringContaining("could not be verified"));
+    fireEvent.click(screen.getByRole("button", { name: "Use Jev Inbox Triage" }));
+    await waitFor(() => expect(client.create).toHaveBeenCalledTimes(2));
+    expect(client.create.mock.calls[1]![0].clientRequestId).toBe(client.create.mock.calls[0]![0].clientRequestId);
   });
   it("replaces only the main pane and restores the same Chat draft and keyboard focus", async () => {
     render(<ChatAgentsEntry client={clientFixture()} />);

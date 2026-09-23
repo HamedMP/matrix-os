@@ -3,20 +3,28 @@ import {
   JevEmailTriageScoresSchema,
   evaluateEmailTriagePolicy,
 } from "@matrix-os/contracts";
+import { createHmac } from "node:crypto";
 import { wrapExternalContent } from "../security/external-content.js";
 
 const GATEWAY_BASE = process.env.GATEWAY_URL ?? "http://localhost:4000";
 const API_TIMEOUT_MS = 10_000;
 const ACTION_TIMEOUT_MS = 35_000; // Pipedream actions timeout at 30s
 
-function authHeaders(): Record<string, string> {
+export function gatewayAuthHeaders(): Record<string, string> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   const token = process.env.MATRIX_AUTH_TOKEN;
   const clerkUserId = process.env.MATRIX_CLERK_USER_ID;
   if (token) headers["Authorization"] = `Bearer ${token}`;
-  if (clerkUserId) headers["x-platform-user-id"] = clerkUserId;
+  // The local MCP process inherits the authenticated Chat run's owner ID.
+  // The gateway ignores an unsigned user header and otherwise falls back to
+  // the VPS owner, which can be a different user on a shared Preview computer.
+  if (token && clerkUserId && /^[A-Za-z0-9_-]{1,256}$/.test(clerkUserId)) {
+    headers["x-platform-user-id"] = clerkUserId;
+    headers["x-platform-verified"] = createHmac("sha256", token).update(clerkUserId).digest("hex");
+  }
   return headers;
 }
+const authHeaders = gatewayAuthHeaders;
 
 export interface GatewayFetchResponse {
   ok: boolean;

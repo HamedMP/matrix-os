@@ -1,5 +1,7 @@
-import { buildAgentRecipePrompt, buildJevInboxTriagePrompt } from "./recipe-handoff.js";
-import type { StartAgentChat } from "./client.js";
+import { buildAgentRecipePrompt } from "./recipe-handoff.js";
+import type { ChatAgentIntegrationConnection, StartAgentChat } from "./client.js";
+import { activeConnections } from "./recipe-integrations.js";
+import { JEV_AGENT_DESCRIPTION, JEV_AGENT_NAME } from "./jev-agent-template.js";
 import { useMemo, useState } from "react";
 import { agentInspirations, type AgentInspiration } from "./agent-inspirations.generated.js";
 import { RecipeRabbit } from "./RecipeRabbit.js";
@@ -7,14 +9,21 @@ import { chatAgentButtonClass, chatAgentInputClass, chatAgentMutedStyle } from "
 
 
 const jevRecipe = {
-  id: "jev-inbox-triage", name: "Jev Inbox Triage", category: "Productivity",
-  description: "Classify a connected Gmail inbox with Matrix-funded Jev and review proposed labels before changing mail.",
+  id: "jev-inbox-triage", name: JEV_AGENT_NAME, category: "Productivity",
+  description: JEV_AGENT_DESCRIPTION,
   skills: ["matrix-jev-email-triage", "matrix-integrations"], integrations: ["Gmail"],
 };
 export const AGENT_RECIPE_COUNT = agentInspirations.length + 1;
 
-export function AgentRecipesPanel({ onStartChat }: { onStartChat?: StartAgentChat }) {
+export function AgentRecipesPanel({ onStartChat, onCreateJev, connections = [], jevUnavailable = "", jevPending = false, jevError = "" }: {
+  onStartChat?: StartAgentChat; onCreateJev?: (accountLabel: string) => Promise<void>;
+  connections?: ChatAgentIntegrationConnection[]; jevUnavailable?: string; jevPending?: boolean; jevError?: string;
+}) {
   const [query, setQuery] = useState("");
+  const [selectedGmail, setSelectedGmail] = useState("");
+  const gmailAccounts = activeConnections("gmail", connections);
+  const accountLabel = gmailAccounts.length === 1 ? gmailAccounts[0]!.account_label
+    : gmailAccounts.some((account) => account.account_label === selectedGmail) ? selectedGmail : "";
   const normalized = query.trim().toLocaleLowerCase();
   const showJev = !normalized || [jevRecipe.name, jevRecipe.description, jevRecipe.category,
     ...jevRecipe.skills, ...jevRecipe.integrations].some((value) => value.toLocaleLowerCase().includes(normalized));
@@ -48,8 +57,20 @@ export function AgentRecipesPanel({ onStartChat }: { onStartChat?: StartAgentCha
         <div className="flex flex-wrap gap-1.5 text-[10px]" style={chatAgentMutedStyle}>
           {jevRecipe.skills.map((skill) => <span key={skill} className="matrix-chat-agent-chip rounded-full border px-2 py-1">{skill}</span>)}
         </div>
-        <button type="button" aria-label="Use Jev Inbox Triage" disabled={!onStartChat}
-          className={`${chatAgentButtonClass} justify-self-start`} onClick={() => onStartChat?.(buildJevInboxTriagePrompt())}>Build in Chat</button>
+        {gmailAccounts.length === 1 ? <p className="text-xs" style={chatAgentMutedStyle}>Gmail: {gmailAccounts[0]!.account_email ?? gmailAccounts[0]!.account_label}</p> :
+          gmailAccounts.length > 1 ? <label className="grid gap-1.5 text-xs">Gmail account for Jev
+            <select className={chatAgentInputClass} aria-label="Gmail account for Jev" value={accountLabel} disabled={jevPending}
+              onChange={(event) => setSelectedGmail(event.currentTarget.value)}>
+              <option value="">Choose an account</option>
+              {gmailAccounts.map((account) => <option key={account.account_label} value={account.account_label}>
+                {account.account_email ?? account.account_label}</option>)}
+            </select></label> : null}
+        {jevUnavailable || (gmailAccounts.length === 0 ? "Connect Gmail in Services to use this recipe." : "") ?
+          <p className="text-xs" role="status" style={chatAgentMutedStyle}>{jevUnavailable || "Connect Gmail in Services to use this recipe."}</p> : null}
+        {jevError ? <p role="alert" className="text-xs">{jevError}</p> : null}
+        <button type="button" aria-label="Use Jev Inbox Triage" disabled={!onCreateJev || !accountLabel || !!jevUnavailable || jevPending}
+          className={`${chatAgentButtonClass} justify-self-start`} onClick={() => { if (accountLabel) void onCreateJev?.(accountLabel); }}>
+          {jevPending ? "Creating…" : "Build in Chat"}</button>
       </article> : null}
       {matches.map((recipe) => {
         const category = recipe.categories.find((value) => value !== "From Grok Bot Team") ?? recipe.categories[0];

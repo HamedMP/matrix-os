@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { createHmac } from "node:crypto";
 import {
   connectServiceHandler,
   callServiceHandler,
@@ -102,6 +103,7 @@ describe("connect_service handler", () => {
 
   it("forwards x-platform-user-id when MATRIX_CLERK_USER_ID is set", async () => {
     process.env.MATRIX_CLERK_USER_ID = "user_clerk_123";
+    vi.stubEnv("MATRIX_AUTH_TOKEN", "test-only-runtime-token");
     const fetcher = mockFetcher({
       body: { url: "https://example.com", service: "gmail" },
     });
@@ -112,7 +114,9 @@ describe("connect_service handler", () => {
     expect(opts.headers).toMatchObject({
       "Content-Type": "application/json",
       "x-platform-user-id": "user_clerk_123",
+      "x-platform-verified": createHmac("sha256", "test-only-runtime-token").update("user_clerk_123").digest("hex"),
     });
+    vi.unstubAllEnvs();
   });
 });
 

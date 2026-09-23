@@ -600,6 +600,9 @@ export function createHermesChatProviderAdapter(options: {
       cwd: input.executionRoot ?? options.homePath,
       env: {
         ...buildAgentRuntimeEnvironment(options.homePath),
+        // The selected Chat owner may be a collaborator rather than the VPS
+        // owner. Bind local Matrix MCP calls to this authenticated Run owner.
+        MATRIX_CLERK_USER_ID: input.owner.ownerId,
         HERMES_PYTHON_SRC_ROOT: hermesRoot,
         PYTHONPATH: existingPythonPath ? `${hermesRoot}${delimiter}${existingPythonPath}` : hermesRoot,
         PYTHONUNBUFFERED: "1",

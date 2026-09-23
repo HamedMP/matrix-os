@@ -39,8 +39,9 @@
 - [x] T022 [US2] Add the authenticated local-Gateway Jev client in `packages/kernel/src/tools/integrations.ts`
 - [x] T023 [US2] Register `jev_evaluate` without credential/model/question arguments in `packages/integrations-mcp/src/server.ts`
 - [x] T024 [US2] Author `skills/matrix/jev-email-triage/SKILL.md` with Gmail evidence, prompt-injection, authorization and policy rules
-- [x] T024a [US2] Add Jev Inbox Triage as the 72nd Agent Recipes market card using the standard Build in Chat handoff and a fixed Hermes bot setup brief
-- [ ] T024b [US2] Verify Build in Chat creates the bot in the current user's Agent library with the same Gmail account shown in Services; resolve the cross-principal failure tracked in ENG-12
+- [x] T024a [US2] Add Jev Inbox Triage as the 72nd Agent Recipes market card using Build in Chat and a reviewed Hermes bot configuration
+- [ ] T024b [US2] Verify Build in Chat saves through the current user's authenticated Agent API and creates the bot in that user's Agent library with the selected Gmail account shown in Services; keep the generic MCP cross-principal failure tracked in ENG-12
+- [ ] T024c [US2] Bind Hermes local MCP calls to the authenticated Chat run owner with a gateway-verifiable proof; retest collaborator account inventory in Preview before reading mail
 - [x] T025 [US2] Synchronize generated skill artifacts through the repository's source mechanism and verify supported-agent discovery
 
 ## Phase 5: Gmail triage orchestration (Stack C)
