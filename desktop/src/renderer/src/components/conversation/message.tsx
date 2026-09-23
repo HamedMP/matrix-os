@@ -285,6 +285,8 @@ function MarkdownTable({
   );
 }
 
+const ReferenceLinkContext = React.createContext<((href: string) => React.ReactNode | undefined) | undefined>(undefined);
+
 export function MessageResponse({
   children,
   copyText,
@@ -308,9 +310,10 @@ export function MessageResponse({
   const hasFileNavigation = Boolean(openFile);
   const hasWebNavigation = Boolean(openWebLink);
   // Keep Markdown element types stable across focus and controller updates.
-  const markdownComponents = React.useMemo(() => ({
-    a: ({ node: _node, href, ...props }: React.ComponentProps<"a"> & { node?: unknown }) => {
-      const reference = typeof href === "string" ? renderReferenceLink?.(href) : undefined;
+  const markdownComponents = React.useMemo(() => {
+    function Anchor({ node: _node, href, ...props }: React.ComponentProps<"a"> & { node?: unknown }) {
+      const currentReferenceLink = React.useContext(ReferenceLinkContext);
+      const reference = typeof href === "string" ? currentReferenceLink?.(href) : undefined;
       if (reference !== undefined) return reference;
       const target = typeof href === "string" ? resolveChatMessageLink(href) : null;
       const external = target?.kind === "web";
@@ -322,7 +325,9 @@ export function MessageResponse({
         event.preventDefault();
         callbacks.current.openWebLink?.(href!);
       } } : {})} />;
-    },
+    }
+    return {
+    a: Anchor,
     img: ({ node: _node, src, alt, ...props }: React.ComponentProps<"img"> & { node?: unknown }) => {
       const target = typeof src === "string" ? resolveChatMessageLink(src) : null;
       const label = alt?.trim() || (target?.kind === "file" ? target.path.split("/").at(-1) : null) || "image";
@@ -396,7 +401,8 @@ export function MessageResponse({
     table: ({ node: _node, ...props }: React.ComponentProps<"table"> & { node?: unknown }) => (
       <MarkdownTable {...props} copyText={copy} />
     ),
-  }), [copy, hasFileNavigation, hasWebNavigation, renderReferenceLink]);
+    };
+  }, [copy, hasFileNavigation, hasWebNavigation]);
 
   return (
     <div
@@ -404,12 +410,14 @@ export function MessageResponse({
       style={{ color: "var(--text-primary)" }}
       data-selectable
     >
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        components={markdownComponents}
-      >
-        {children}
-      </ReactMarkdown>
+      <ReferenceLinkContext.Provider value={renderReferenceLink}>
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+          components={markdownComponents}
+        >
+          {children}
+        </ReactMarkdown>
+      </ReferenceLinkContext.Provider>
     </div>
   );
 }

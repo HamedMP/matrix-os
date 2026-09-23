@@ -116,6 +116,24 @@ describe("user message Markdown", () => {
     expect(screen.queryByText("first file")).toBeNull();
   });
 
+  it("preserves Markdown control state when an unchanged message rerenders", () => {
+    const renderMessage = () => <UserMessage message={{
+      kind: "message", id: "stable", role: "user", phase: "commentary", timestamp: 1000,
+      markdown: "```text\nlong code line\n```\n\n[the file](resource-id)",
+      copyText: "```text\nlong code line\n```\n\n[the file](resource-id)",
+      content: [
+        { kind: "text", text: "```text\nlong code line\n```\n\n" },
+        { kind: "reference", referenceKind: "resource", id: "resource-id", label: "the file" },
+      ],
+    }} callbacks={{ copyText: vi.fn() }} />;
+    const { rerender } = render(renderMessage());
+    fireEvent.click(screen.getByRole("button", { name: "Wrap code block" }));
+    expect(screen.getByRole("button", { name: "Disable code wrapping" }).getAttribute("aria-pressed")).toBe("true");
+
+    rerender(renderMessage());
+    expect(screen.getByRole("button", { name: "Disable code wrapping" }).getAttribute("aria-pressed")).toBe("true");
+  });
+
   it("keeps controls in a collapsed long message out of keyboard navigation", () => {
     const markdown = `${"Introduction. ".repeat(65)} [hidden link](https://example.com)`;
     const { container } = show([{ kind: "text", text: markdown }], markdown);
