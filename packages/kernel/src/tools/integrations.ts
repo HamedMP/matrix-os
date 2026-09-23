@@ -119,7 +119,7 @@ export async function describeServiceHandler(
   fetcher: GatewayFetcher = defaultFetcher(),
 ): Promise<ToolResult> {
   try {
-    const res = await fetcher(`${GATEWAY_BASE}/api/integrations/available`, {
+    const res = await fetcher(`${GATEWAY_BASE}/api/integrations/capabilities`, {
       method: "GET",
       headers: authHeaders(),
       signal: AbortSignal.timeout(API_TIMEOUT_MS),

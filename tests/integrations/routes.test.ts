@@ -182,6 +182,56 @@ describe("Integration Routes", () => {
       expect(data.find((service) => service.id === "granola")?.actions.list_notes.params).toEqual({});
     });
 
+    it("requires identity and projects live Granola parameters on the agent capability route", async () => {
+      const broker = {
+        listConnections: vi.fn().mockResolvedValue([]),
+        listAvailableActions: vi.fn().mockResolvedValue(["list_notes"]),
+        listAvailableActionParams: vi.fn().mockResolvedValue({ list_notes: [] }),
+        connect: vi.fn().mockResolvedValue({ url: "https://example.com/oauth" }),
+        call: vi.fn(), disconnect: vi.fn().mockResolvedValue(false),
+      };
+      const routes = createIntegrationRoutes({
+        db, pipedream, webhookSecret: WEBHOOK_SECRET,
+        resolveUserId: async () => userId,
+        mcpPresetBroker: broker,
+      });
+      const brokeredApp = new Hono();
+      brokeredApp.route("/api/integrations", routes);
+
+      const res = await brokeredApp.request("/api/integrations/capabilities");
+      expect(res.status).toBe(200);
+      const data = await res.json() as Array<{ id: string; actions: Record<string, { params: Record<string, unknown> }> }>;
+      expect(data.find((service) => service.id === "granola")?.actions.list_notes.params).toEqual({});
+      expect(broker.listAvailableActionParams).toHaveBeenCalledWith(userId, "granola");
+
+      const anonymousRoutes = createIntegrationRoutes({
+        db, pipedream, webhookSecret: WEBHOOK_SECRET,
+        resolveUserId: async () => null,
+        mcpPresetBroker: broker,
+      });
+      const anonymousApp = new Hono();
+      anonymousApp.route("/api/integrations", anonymousRoutes);
+      expect((await anonymousApp.request("/api/integrations/capabilities")).status).toBe(401);
+    });
+
+    it("does not advertise undiscovered MCP actions through the agent capability route", async () => {
+      const routes = createIntegrationRoutes({
+        db, pipedream, webhookSecret: WEBHOOK_SECRET,
+        resolveUserId: async () => userId,
+        mcpPresetBroker: {
+          listConnections: vi.fn().mockResolvedValue([]),
+          listAvailableActions: vi.fn().mockResolvedValue(null),
+          connect: vi.fn(), call: vi.fn(), disconnect: vi.fn(),
+        },
+      });
+      const brokeredApp = new Hono();
+      brokeredApp.route("/api/integrations", routes);
+      const res = await brokeredApp.request("/api/integrations/capabilities");
+      expect(res.status).toBe(200);
+      const data = await res.json() as Array<{ id: string; actions: Record<string, unknown> }>;
+      expect(data.find((service) => service.id === "granola")?.actions).toEqual({});
+    });
+
     it("fails closed when MCP capability identity resolution fails", async () => {
       const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
       const routes = createIntegrationRoutes({
