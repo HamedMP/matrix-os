@@ -558,7 +558,7 @@ jobs:
           let accessUserIds;
           try {
             accessUserIds = JSON.parse(process.env.PREVIEW_CLERK_ACCESS_USER_IDS ?? "[]");
-            if (!Array.isArray(accessUserIds) || accessUserIds.length > 7
+            if (!Array.isArray(accessUserIds) || accessUserIds.length > 8
               || accessUserIds.some((id) => typeof id !== "string" || !/^user_[A-Za-z0-9]+$/.test(id) || id === actorId)
               || new Set(accessUserIds).size !== accessUserIds.length) throw new Error("invalid access list");
           } catch {
