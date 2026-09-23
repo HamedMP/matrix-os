@@ -23,8 +23,8 @@ import {
 } from "./collaboration-test-support.js";
 
 const signing = {
-  MATRIX_COLLABORATION_ACTIVE_KEY_ID: "key-1",
-  MATRIX_COLLABORATION_PROOF_KEYS: JSON.stringify({ "key-1": "a".repeat(32) }),
+  MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID: "direct-key",
+  MATRIX_COLLABORATION_TICKET_KEYS: JSON.stringify({ "direct-key": Buffer.alloc(32, 1).toString("base64url") }),
 };
 
 describe("S20 platform organization precondition: fail-closed composition", () => {
@@ -102,7 +102,7 @@ describe("S20 platform organization precondition: fail-closed composition", () =
       customerVpsProxyDispatcher: undefined as unknown as Agent,
     });
     expect("failClosed" in composition && composition.failClosed.reason).toBe("runtime_authentication_missing");
-    expect(composition.sockets).toBeUndefined();
+    expect(composition.direct).toBeUndefined();
   });
 });
 
