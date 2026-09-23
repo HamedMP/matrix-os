@@ -5,6 +5,7 @@ import { Hono } from "hono";
 import type { UpgradeWebSocket, WSEvents, WSContext } from "hono/ws";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { registerTerminalWebSocketRoutes } from "../../packages/gateway/src/server/terminal-ws-routes.js";
+import { createShellClient } from "../../packages/sync-client/src/cli/shell-client.js";
 
 const WORKSPACE_ID = "tws_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const TAB_ID = "tt_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
@@ -261,5 +262,34 @@ describe("terminal WebSocket route registration", () => {
 
     await vi.waitFor(() => expect(routes.send).toHaveBeenCalledOnce());
     expect(routes.order).toEqual(["admission:run", "runtime-send:ping"]);
+  });
+  it("attaches the URL the CLI builds for a sized TTY as a hard writer", async () => {
+    const routes = authorizedRoutes({ accessScope: "owner", repository: repositoryDouble(false) });
+    const url = new URL(createShellClient({ gatewayUrl: "http://gateway" })
+      .createAttachUrl(TERMINAL_REF, { fromSeq: 0, size: { cols: 100, rows: 30 } }));
+    await routes.app.request(`${url.pathname}${url.search}`);
+    const peer = routes.socket();
+    routes.events?.onOpen?.(new Event("open"), peer.context);
+
+    await vi.waitFor(() => expect(routes.attach).toHaveBeenCalledOnce());
+    expect(routes.attach).toHaveBeenCalledWith(expect.objectContaining({ mode: "hard", size: { cols: 100, rows: 30 } }));
+    expect(peer.sent).toEqual([]);
+  });
+
+  it("keeps accepting the sized client=hard declaration from installed CLIs", async () => {
+    const routes = authorizedRoutes({ accessScope: "owner", repository: repositoryDouble(false) });
+    await routes.app.request(
+      `/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=hard&cols=100&rows=30&lease=exclusive&fromSeq=0`,
+    );
+    const peer = routes.socket();
+    routes.events?.onOpen?.(new Event("open"), peer.context);
+
+    await vi.waitFor(() => expect(routes.attach).toHaveBeenCalledOnce());
+    expect(routes.attach).toHaveBeenCalledWith(expect.objectContaining({
+      mode: "hard",
+      size: { cols: 100, rows: 30 },
+      viewerId: expect.stringMatching(/^cli:/),
+    }));
+    expect(peer.sent).toEqual([]);
   });
 });

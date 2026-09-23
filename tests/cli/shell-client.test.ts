@@ -243,6 +243,40 @@ describe("shell REST client", () => {
     );
   });
 
+  it("declares a sized TTY as a cli writer the gateway accepts", () => {
+    const client = createShellClient({ gatewayUrl: "https://gateway.example" });
+
+    expect(client.createAttachUrl(TERMINAL_REF, { fromSeq: 7, size: { cols: 100, rows: 30 } })).toBe(
+      `wss://gateway.example/ws/terminal/tab?workspaceId=${TERMINAL_REF.workspaceId}&tabId=${TERMINAL_REF.tabId}&client=cli&cols=100&rows=30&lease=exclusive&fromSeq=7`,
+    );
+  });
+
+  it("paints the runtime snapshot frame on attach", async () => {
+    const client = createShellClient({ gatewayUrl: "http://gateway", timeoutMs: 50 });
+    const input = new FakeTtyInput() as unknown as NodeJS.ReadStream;
+    const output = { write: vi.fn(), columns: 100, rows: 30 } as unknown as NodeJS.WriteStream;
+    const errorOutput = { write: vi.fn() } as unknown as NodeJS.WriteStream;
+
+    const attached = client.attachTab(TERMINAL_REF, { WebSocketImpl: ControlledWebSocket, input, output, errorOutput });
+    ControlledWebSocket.last?.emit("open");
+    ControlledWebSocket.last?.emit("message", serverFrame("attached", { canonicalSize: { cols: 100, rows: 30 }, nextSeq: 5 }));
+    // Exactly what the terminal runtime sends: presentationRevision is always present.
+    ControlledWebSocket.last?.emit("message", JSON.stringify({
+      type: "snapshot",
+      terminalRef: TERMINAL_REF,
+      canonicalSize: { cols: 100, rows: 30 },
+      revision: 1,
+      presentationRevision: 0,
+      seq: 4,
+      ansi: "user@matrix:~$ ",
+      viewport: { top: 0, rows: 30 },
+    }));
+
+    await vi.waitFor(() => expect(output.write).toHaveBeenCalledWith("\u001b[2J\u001b[Huser@matrix:~$ "));
+    ControlledWebSocket.last?.emit("message", serverFrame("exit", { exitCode: 0 }));
+    await expect(attached).resolves.toEqual({ detached: false, exitCode: 0 });
+  });
+
   it("terminates one tab without deleting its workspace", async () => {
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ ok: true })));
     const client = createShellClient({

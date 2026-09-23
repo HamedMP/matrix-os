@@ -54,17 +54,22 @@ const TerminalServerEventBaseSchema = z.object({
   terminalRef: TerminalRefSchema,
   revision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
 });
-const TerminalServerFrameSchema = z.discriminatedUnion("type", [
+// Keep in step with TerminalTabServerFrameSchema in @matrix-os/contracts: a missing
+// field makes the strict parse silently drop the frame (tests/cli/shell-client-frame-drift.test.ts).
+// The published CLI cannot import the contracts root, which pulls in chat-only dependencies.
+export const ShellServerFrameSchema = z.discriminatedUnion("type", [
   TerminalServerEventBaseSchema.extend({
     type: z.literal("attached"),
     canonicalSize: TerminalGridSizeSchema,
     nextSeq: z.number().int().min(0),
+    capabilities: z.array(z.string().min(1).max(80)).max(8).optional(),
     ownership: z.enum(["writer", "observer"]).optional(),
     leaseEpoch: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
   }).strict(),
   TerminalServerEventBaseSchema.extend({
     type: z.literal("snapshot"),
     canonicalSize: TerminalGridSizeSchema,
+    presentationRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
     seq: z.number().int().min(0),
     ansi: z.string().max(4 * 1024 * 1024),
     viewport: z.object({
@@ -556,11 +561,10 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
     url.searchParams.set("tabId", ref.tabId);
     url.searchParams.set("client", "cli");
     if (attachOptions.size) {
-      // Declare as a hard sizing client (spec 107 FR-007): a TTY cannot scale
-      // its render, so its size participates in canonical-size negotiation.
-      // Without a known size the declaration is omitted (legacy behavior) so
-      // an undeclared hard client can never pin the session to a fallback.
-      url.searchParams.set("client", "hard");
+      // Declare the TTY size (spec 107 FR-007): a TTY cannot scale its render,
+      // so the gateway treats a sized `cli` writer as a hard sizing client.
+      // Without a known size the declaration is omitted so an undeclared
+      // client can never pin the session to a fallback.
       url.searchParams.set("cols", String(attachOptions.size.cols));
       url.searchParams.set("rows", String(attachOptions.size.rows));
       url.searchParams.set("lease", "exclusive");
@@ -1359,7 +1363,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
             }
             return;
           }
-          const validated = TerminalServerFrameSchema.safeParse(parsed);
+          const validated = ShellServerFrameSchema.safeParse(parsed);
           if (!validated.success) {
             return;
           }

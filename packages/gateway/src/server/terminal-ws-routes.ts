@@ -46,7 +46,9 @@ export function registerTerminalWebSocketRoutes(options: TerminalWebSocketRouteO
         workspaceId: c.req.query("workspaceId"),
         tabId: c.req.query("tabId"),
       });
-      const clientResult = z.enum(["browser", "canvas", "desktop", "electron", "mobile", "cli"])
+      // CLIs released before the `cli` sizing fix declare a sized TTY as `client=hard`.
+      const clientResult = z.enum(["browser", "canvas", "desktop", "electron", "mobile", "cli", "hard"])
+        .transform((client) => client === "hard" ? "cli" as const : client)
         .safeParse(c.req.query("client"));
       const chatResult = c.req.query("chat") === undefined
         ? { success: true as const, data: undefined }
