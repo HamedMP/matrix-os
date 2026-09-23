@@ -91,7 +91,8 @@ export function createCanonicalTerminalCollaborationBridge(options: {
       let stream: ReturnType<TerminalRuntime["attach"]> | undefined;
       let closed = false;
       let attached = false;
-      let pendingBytes = 0;
+      let pendingOutputBytes = 0;
+      let pendingSnapshotBytes = 0;
       let delivery = Promise.resolve();
       let keepalive: ReturnType<typeof setInterval> | undefined;
       const stopKeepalive = () => {
@@ -113,17 +114,26 @@ export function createCanonicalTerminalCollaborationBridge(options: {
         close();
         handlers.error();
       };
-      const queueOutput = (data: string, limit: number, replacesHistory = false) => {
+      const queueOutput = (data: string, replacesHistory: boolean) => {
         const bytes = Buffer.byteLength(data);
-        if (bytes > limit || pendingBytes + bytes > limit) {
+        // The retained snapshot carries its own allowance, the one the daemon bounds it by.
+        // Charging it to the live backlog would let one large-but-legal snapshot, still in
+        // flight, reject the next output frame and disconnect every viewer of an active tab.
+        const limit = replacesHistory ? MAX_SNAPSHOT_BYTES : MAX_PENDING_OUTPUT_BYTES;
+        const pending = replacesHistory ? pendingSnapshotBytes : pendingOutputBytes;
+        if (bytes > limit || pending + bytes > limit) {
           failed();
           return;
         }
-        pendingBytes += bytes;
+        if (replacesHistory) pendingSnapshotBytes += bytes;
+        else pendingOutputBytes += bytes;
         delivery = delivery.then(async () => {
           // Live output keeps the single-argument shape; only a snapshot declares a replacement.
           if (!closed) await (replacesHistory ? handlers.output(data, true) : handlers.output(data));
-        }).catch((error: unknown) => failed(error)).finally(() => { pendingBytes -= bytes; });
+        }).catch((error: unknown) => failed(error)).finally(() => {
+          if (replacesHistory) pendingSnapshotBytes -= bytes;
+          else pendingOutputBytes -= bytes;
+        });
       };
       try {
         await new Promise<void>((resolve, reject) => {
@@ -150,8 +160,8 @@ export function createCanonicalTerminalCollaborationBridge(options: {
               } else if (frame.type === "snapshot" || frame.type === "output") {
                 if (!attached) { rejectAttach(); return; }
                 // The daemon snapshot is the whole retained screen, not more incremental output.
-                if (frame.type === "snapshot") queueOutput(frame.ansi, MAX_SNAPSHOT_BYTES, true);
-                else queueOutput(frame.data, MAX_PENDING_OUTPUT_BYTES);
+                if (frame.type === "snapshot") queueOutput(frame.ansi, true);
+                else queueOutput(frame.data, false);
               } else if (frame.type === "exit") {
                 delivery = delivery.then(() => handlers.exit()).catch((error: unknown) => failed(error)).finally(close);
               }

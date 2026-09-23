@@ -1,9 +1,8 @@
 /** Build the owner-backed collaboration runtime after Chat and canvas bootstrap. */
-import { join } from "node:path";
 import { createHash } from "node:crypto";
 import type { Hono } from "hono";
 import type { createNodeWebSocket } from "@hono/node-ws";
-import { sql, type Kysely } from "kysely";
+import type { Kysely } from "kysely";
 import type { TerminalRuntimeSocketClient } from "@matrix-os/terminal-runtime";
 import type { AppRegistry } from "../app-db-registry.js";
 import type { CanonicalProviderSnapshotReader } from "../ai-providers/provider-settings-coordinators.js";
@@ -12,10 +11,8 @@ import type { ChatExecutionRootResolver } from "../chat/execution-root.js";
 import type { ChatRepository } from "../chat/repository.js";
 import { enableOwnerCollaborationSurfaces } from "../collaboration/owner-runtime-surfaces.js";
 import { createProjectGitDriver } from "../collaboration/project-git-operations.js";
-import { createOwnerResourceDriver } from "../collaboration/owner-resource-driver.js";
 import { createCanonicalTerminalCollaborationBridge } from "../collaboration/canonical-terminal-bridge.js";
 import type { OwnerCollaborationDatabase } from "../collaboration/database.js";
-import { createScopedAppBridge } from "../collaboration/scoped-app-bridge.js";
 import { registerFailClosedCollaborationRoutes } from "../collaboration/fail-closed.js";
 import {
   constructGatewayCollaborationOrFailClosed,

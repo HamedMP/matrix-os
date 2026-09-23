@@ -236,6 +236,32 @@ describe("canonical terminal collaboration bridge", () => {
     expect(handlers.error).not.toHaveBeenCalled();
   });
 
+  it("keeps live output flowing while a retained snapshot is still being delivered", async () => {
+    // The snapshot budget and the live-output backlog are separate allowances: a
+    // snapshot the daemon is allowed to send must not spend the backlog the next
+    // output frame needs, or an active terminal disconnects its viewers on attach.
+    let releaseSnapshot: (() => void) | undefined;
+    const handlers = {
+      output: vi.fn(async (data: string) => {
+        if (data.length > 1024) await new Promise<void>((resolve) => { releaseSnapshot = resolve; });
+      }),
+      exit: vi.fn(async () => undefined),
+      error: vi.fn(),
+    };
+    const { callbacks } = await sharedOutput(handlers as never);
+    const ansi = "a".repeat(3 * 1024 * 1024);
+    callbacks.onFrame({
+      type: "snapshot", terminalRef: { workspaceId, tabId }, canonicalSize: { cols: 80, rows: 24 },
+      revision: 4, presentationRevision: 0, seq: 7, ansi, viewport: { top: 0, rows: 24 },
+    });
+    await vi.waitFor(() => expect(releaseSnapshot).toBeDefined());
+    callbacks.onFrame({ type: "output", terminalRef: { workspaceId, tabId }, revision: 4, seq: 8, data: "live output" });
+    expect(handlers.error).not.toHaveBeenCalled();
+    releaseSnapshot!();
+    await vi.waitFor(() => expect(handlers.output).toHaveBeenCalledWith("live output"));
+    expect(handlers.error).not.toHaveBeenCalled();
+  });
+
   it("preflights and shares the exact live tab, then refuses its stale binding", async () => {
     const repository = new CollaborationRepository(fixture.db);
     const bridge = createCanonicalTerminalCollaborationBridge({ db: fixture.db, ownerId, runtime: runtime as never });
