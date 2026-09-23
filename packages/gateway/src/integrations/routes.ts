@@ -503,7 +503,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
 
   // Agent capability discovery must resolve the caller's identity. The public
   // catalog cannot do that on the app domain, so it must not drive tool calls.
-  app.get("/capabilities", async (c) => {
+  app.get("/agent-catalog", async (c) => {
     let uid: string | null;
     try {
       uid = await resolveUserId(c);

@@ -170,7 +170,7 @@ describe("platform proxy routing", () => {
         platformHandle: c.get("platformHandle"),
       }),
     );
-    integrationRoutes.get("/capabilities", (c) =>
+    integrationRoutes.get("/agent-catalog", (c) =>
       c.json({
         platformUserId: c.get("platformUserId"),
         platformHandle: c.get("platformHandle"),
@@ -198,7 +198,7 @@ describe("platform proxy routing", () => {
       platformUserId: "user_alice",
       platformHandle: "alice",
     });
-    const capabilities = await app.request("/api/integrations/capabilities", {
+    const capabilities = await app.request("/api/integrations/agent-catalog", {
       headers: {
         host: "app.matrix-os.com",
         authorization: "Bearer clerk-session",

@@ -166,7 +166,7 @@ describe("integration discovery", () => {
     const result = await describeServiceHandler({ service: "gmail" }, fetcher);
 
     expect(fetcher).toHaveBeenCalledWith(
-      expect.stringContaining("/api/integrations/capabilities"),
+      expect.stringContaining("/api/integrations/agent-catalog"),
       expect.objectContaining({ method: "GET" }),
     );
     expect(result.content[0].text).toContain("Gmail actions");
