@@ -106,6 +106,7 @@ After a successful run, Matrix can process only new or changed Gmail threads and
 - **SC-006**: Normal logs contain no raw fixture body or credentials; observability still identifies recipe, request, latency, status and usage/cost outcome.
 - **SC-007**: An exact-head demo shows inbox labels and at least one authorized cold-outreach archive, plus the visible Review/failure behavior.
 - **SC-008**: The implementation, tests, public documentation and demo evidence pass required CI and review gates before release.
+- **SC-009**: A bot created through the Jev Recipe's Build in Chat flow appears in the same user's Agent library and uses the Gmail account visible in that user's Services view. A tool-level save response alone is insufficient acceptance evidence.
 
 ## Assumptions
 
