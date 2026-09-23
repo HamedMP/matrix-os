@@ -14,13 +14,15 @@ export async function waitForStartupText(path: string, text: string, timeoutMs =
 
 export async function startCodexStartupRunner(options: {
   homePath?: string; eventPath?: string; failures?: number; timeoutMs?: number;
-  mode?: string; readyGate?: string; stubProcess?: boolean;
+  mode?: string; readyGate?: string; stubProcess?: boolean; providerThreadId?: string;
 } = {}) {
   const dir = options.homePath ?? await mkdtemp("/tmp/matrix-startup-");
   const eventPath = options.eventPath ?? join(dir, "events.jsonl");
   const requestsPath = join(dir, "requests.jsonl");
   const config = Buffer.from(JSON.stringify({ prompt: "Reply once", approvalPolicy: "never",
-    sandbox: "workspace-write", writableRoots: [dir] })).toString("base64");
+    sandbox: "workspace-write", writableRoots: [dir],
+    ...(options.providerThreadId ? { providerThreadId: options.providerThreadId } : {}),
+  })).toString("base64");
   const runnerPath = join(process.cwd(), "packages/gateway/src/coding-agents/codex-app-server-runner.mjs");
   const fixturePath = join(process.cwd(), "tests/fixtures/codex-startup-process.mjs");
   const child = spawn(process.execPath, [
@@ -41,7 +43,7 @@ export async function startCodexStartupRunner(options: {
     async events(): Promise<Array<Record<string, unknown>>> {
       return (await readFile(eventPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
     },
-    async requests(): Promise<Array<{ attempt: number; method?: string; event?: string }>> {
+    async requests(): Promise<Array<{ attempt: number; method?: string; event?: string; developerInstructions?: string }>> {
       return (await readFile(requestsPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
     },
     async close() {
