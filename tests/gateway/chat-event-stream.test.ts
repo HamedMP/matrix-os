@@ -9,6 +9,7 @@ import {
   type CanonicalChatEventRepository,
 } from "../../packages/gateway/src/chat/event-stream.js";
 import { registerCanonicalChatEventHttpRoute } from "../../packages/gateway/src/chat/event-http-route.js";
+import { registerCollaborationChatRoutes } from "../../packages/gateway/src/server/collaboration-chat-routes.js";
 import { closeCanonicalChatEventLifecycle } from "../../packages/gateway/src/chat/routes.js";
 import type { ChatOutboxEvent, ChatOwner } from "../../packages/gateway/src/chat/records.js";
 import type { RequestPrincipal } from "../../packages/gateway/src/request-principal.js";
@@ -69,13 +70,35 @@ function eventCursors(sink: ReturnType<typeof frameSink>) {
 }
 
 describe("canonical Chat event stream", () => {
-  it("registers the exact event route before the dynamic Chat detail route", () => {
-    const source = readFileSync(join(process.cwd(), "packages/gateway/src/server.ts"), "utf8");
-    const eventRoute = source.indexOf("registerCanonicalChatEventHttpRoute({");
-    const chatRoutes = source.indexOf('app.route("/", createCanonicalChatRoutes({');
+  it("registers the exact event route before the dynamic Chat detail route", async () => {
+    // Hono matches in registration order, so registering /api/chats/:chatId
+    // first would swallow /api/chats/events. Mount the real registrar and let
+    // the response say which handler won: the event route rejects a non
+    // event-stream Accept with 406 before touching principal or stream, while
+    // the dynamic detail route would treat "events" as a chat id.
+    const app = new Hono();
+    registerCollaborationChatRoutes({
+      app,
+      upgradeWebSocket: ((create: unknown) => create) as never,
+      canonicalChatEventStream: { open: vi.fn() } as never,
+      chatRepository: null,
+      gatewayCollaboration: null,
+      collaborationFailClosedReason: null,
+      canonicalChatOrchestrator: null,
+      canonicalChatExecutionRoots: null,
+      canonicalChatCollaborationGuard: null,
+      projectOwnerToolOutput: {} as never,
+      canonicalChatRuntime: null,
+      canonicalChatProviderCatalog: {} as never,
+      aiProviderService: {} as never,
+      providerSettingsStore: {} as never,
+    });
 
-    expect(eventRoute).toBeGreaterThan(-1);
-    expect(chatRoutes).toBeGreaterThan(eventRoute);
+    const response = await app.request("/api/chats/events", {
+      headers: { accept: "application/json" },
+    });
+    expect(response.status).toBe(406);
+    expect(await response.json()).toEqual({ error: "Event stream required" });
   });
 
   it("subscribes before replay, buffers live commits, dedupes the overlap, and publishes safe metadata only", async () => {
