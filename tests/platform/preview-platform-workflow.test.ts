@@ -200,8 +200,13 @@ describe("preview platform workflow", () => {
 
     expect(enableStep).toContain('"/usr/bin/systemd-run"');
     expect(enableStep).toContain('"--on-active=2s"');
+    expect(enableStep).toContain('CUSTOM_MCP_ENABLED=${CUSTOM_MCP_ENABLED}');
+    expect(enableStep).toContain('MCP_CREDENTIAL_ENCRYPTION_KEY=mcp-credential-encryption-key-preview:1');
+    expect(enableStep).toContain('MCP_OAUTH_CALLBACK_URL=${url}/api/mcp-servers/oauth/callback');
+    expect(enableStep).toContain('("mcp", "/api/mcp-servers")');
+    expect(enableStep).toContain('$result.mcp | type == "array"');
     expect(enableStep).not.toContain('command:["/usr/bin/sudo","/usr/bin/systemctl","restart","matrix-gateway.service"]');
     expect(enableStep.indexOf('send_runtime_command "$body" "$gateway_restart_response"'))
-      .toBeLessThan(enableStep.indexOf('send_runtime_command "$body" "$gateway_active_response"'));
+      .toBeLessThan(enableStep.indexOf('wait_runtime_command "$body" "$gateway_active_response"'));
   });
 });
