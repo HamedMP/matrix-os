@@ -61,6 +61,8 @@ export function registerScopeRoutes(routes: Hono, options: CollaborationRouteOpt
             organizationId: input.organizationId,
             terminalId: input.resourceId,
           })
+        // The request schema admits only chat, terminal and project, so this branch
+        // is a project id; a catalog id must never reach the project service.
         : await requireProjectScope(options.projectScope).preflight({
             ownerId: proof.ownerId,
             organizationId: input.organizationId,

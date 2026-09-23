@@ -5,6 +5,7 @@ import { registerChatRoutes } from "./chat-routes.js";
 import { registerExecutionPolicyRoutes } from "./execution-policy-routes.js";
 import { registerLifecycleRoutes } from "./lifecycle-routes.js";
 import { registerProjectRoutes } from "./project-routes.js";
+import { registerResourceRoutes } from "./resource-routes.js";
 import type { CollaborationRouteOptions } from "./route-support.js";
 import { registerScopeRoutes } from "./scope-routes.js";
 import { registerTerminalRoutes } from "./terminal-routes.js";
@@ -35,6 +36,8 @@ export function createCollaborationRoutes(options: CollaborationRouteOptions): H
   registerLifecycleRoutes(routes, options);
   // S08: owner-selected execution policy (GET/PUT) registers after the baseline routes.
   registerExecutionPolicyRoutes(routes, options);
+  // S12: files, folders and app instances (project-bound and standalone) after the baseline routes.
+  registerResourceRoutes(routes, options);
 
   return routes;
 }

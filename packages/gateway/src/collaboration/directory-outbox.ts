@@ -13,7 +13,7 @@ interface ClaimedDirectoryEvent {
   eventId: string;
   scopeId: string;
   ownerId: string;
-  kind: "chat" | "terminal" | "project";
+  kind: "chat" | "terminal" | "project" | "file" | "folder" | "app";
   authorityGeneration: number;
   metadataRevision: number;
   recipientEntries: Array<{ actorId: string; invitationId?: string }>;

@@ -4,11 +4,13 @@ import { runPlatformMigration } from "../migration-runner.js";
 type Timestamp = ColumnType<Date | string, Date | string | undefined, Date | string>;
 type NullableTimestamp = ColumnType<Date | string | null, Date | string | null | undefined, Date | string | null>;
 
+export type CollaborationDirectoryKind = "chat" | "terminal" | "project" | "file" | "folder" | "app";
+
 export interface CollaborationDirectoryTable {
   scope_id: string;
   runtime_id: string;
   owner_id: string;
-  kind: "chat" | "terminal" | "project";
+  kind: CollaborationDirectoryKind;
   /** S05: owning organization from the directory event; null only for pre-organization rows. */
   organization_id: string | null;
   /** S06: `organization` when the home reports an active organization-wide grant. */
@@ -66,13 +68,29 @@ async function applyCollaborationSchema(trx: Transaction<CollaborationPlatformDa
       scope_id UUID PRIMARY KEY,
       runtime_id TEXT NOT NULL CHECK (char_length(runtime_id) BETWEEN 1 AND 128),
       owner_id TEXT NOT NULL CHECK (char_length(owner_id) BETWEEN 1 AND 128),
-      kind TEXT NOT NULL CHECK (kind IN ('chat', 'terminal', 'project')),
+      kind TEXT NOT NULL CHECK (kind IN ('chat', 'terminal', 'project', 'file', 'folder', 'app')),
       authority_generation BIGINT NOT NULL CHECK (authority_generation > 0),
       metadata_revision BIGINT NOT NULL CHECK (metadata_revision >= 0),
       last_event_id UUID NOT NULL,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
   `.execute(trx);
+  // Existing homes may have created the original three-kind directory table. Upgrade its
+  // constraint under the platform migration lock; leave an already widened table untouched.
+  await sql`DO $migration$
+    BEGIN
+      IF EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'collaboration_directory'::regclass
+          AND conname = 'collaboration_directory_kind_check'
+          AND pg_get_constraintdef(oid) NOT LIKE '%file%'
+      ) THEN
+        ALTER TABLE collaboration_directory DROP CONSTRAINT collaboration_directory_kind_check;
+        ALTER TABLE collaboration_directory ADD CONSTRAINT collaboration_directory_kind_check
+          CHECK (kind IN ('chat', 'terminal', 'project', 'file', 'folder', 'app'));
+      END IF;
+    END
+  $migration$`.execute(trx);
   // S05: the directory records each scope's organization so tickets bind to it.
   await sql`ALTER TABLE collaboration_directory ADD COLUMN IF NOT EXISTS organization_id TEXT
     CHECK (organization_id IS NULL OR char_length(organization_id) BETWEEN 1 AND 128)`.execute(trx);

@@ -14,7 +14,8 @@ export interface CollaborationScopesTable {
   owner_id: string;
   /** Owning organization (Clerk org ID). Null only on pre-S20 rows, which the precondition denies. */
   organization_id: string | null;
-  kind: "chat" | "terminal" | "project";
+  /** S12: file, folder and app scopes are standalone shares whose resource_id is a catalog id. */
+  kind: "chat" | "terminal" | "project" | "file" | "folder" | "app";
   resource_id: string;
   parent_scope_id: string | null;
   membership_mode: "direct" | "inherited";
@@ -66,7 +67,7 @@ export interface CollaborationEventsTable {
   scope_id: string;
   scope_seq: number;
   event_id: string;
-  resource_kind: "chat" | "terminal" | "project";
+  resource_kind: "chat" | "terminal" | "project" | "file" | "folder" | "app";
   resource_id: string;
   revision: number;
   authority_generation: number;
@@ -102,7 +103,7 @@ export interface CollaborationDirectoryOutboxTable {
   recipient_actor_ids: JsonValue;
   authority_runtime_id: string;
   authority_generation: number;
-  resource_kind: "chat" | "terminal" | "project";
+  resource_kind: "chat" | "terminal" | "project" | "file" | "folder" | "app";
   discovery_state: "invited" | "accepted" | "revoked" | "deleted";
   retry_after: Timestamp;
   attempts: ColumnType<number, number | undefined, number>;
@@ -299,7 +300,54 @@ export interface CollaborationRunBindingsTable {
   admitted_at: Timestamp;
 }
 
+/** S12 / T061: stable resource identities for files, folders and app instances. */
+export interface CollaborationResourceCatalogTable {
+  id: string;
+  owner_id: string;
+  project_id: string | null;
+  kind: "file" | "folder" | "app";
+  path: string;
+  parent_id: string | null;
+  incarnation: string;
+  revision: ColumnType<number, number | undefined, number>;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+  deleted_at: NullableTimestamp;
+}
+
+/** S12 / T062: staged uploads with immutable checksums and a TTL. */
+export interface CollaborationUploadStagesTable {
+  id: string;
+  scope_id: string;
+  actor_id: string;
+  catalog_id: string | null;
+  parent_id: string | null;
+  path: string;
+  size: number;
+  sha256: string;
+  received_bytes: ColumnType<number, number | undefined, number>;
+  next_index: ColumnType<number, number | undefined, number>;
+  state: "staging" | "committed" | "cancelled" | "expired";
+  staging_ref: string;
+  commit_request_id: string | null;
+  committed_revision: number | null;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+  expires_at: Timestamp;
+}
+
+export interface CollaborationUploadPartsTable {
+  upload_id: string;
+  part_index: number;
+  sha256: string;
+  bytes: Uint8Array;
+  byte_count: number;
+}
+
 export interface CollaborationDatabase {
+  collaboration_resource_catalog: CollaborationResourceCatalogTable;
+  collaboration_upload_stages: CollaborationUploadStagesTable;
+  collaboration_upload_parts: CollaborationUploadPartsTable;
   collaboration_grants: CollaborationGrantsTable;
   collaboration_grant_activations: CollaborationGrantActivationsTable;
   collaboration_execution_policies: CollaborationExecutionPoliciesTable;
