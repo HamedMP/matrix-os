@@ -198,7 +198,7 @@ describe("Integration Routes", () => {
       const brokeredApp = new Hono();
       brokeredApp.route("/api/integrations", routes);
 
-      const res = await brokeredApp.request("/api/integrations/capabilities");
+      const res = await brokeredApp.request("/api/integrations/agent-catalog");
       expect(res.status).toBe(200);
       const data = await res.json() as Array<{ id: string; actions: Record<string, { params: Record<string, unknown> }> }>;
       expect(data.find((service) => service.id === "granola")?.actions.list_notes.params).toEqual({});
@@ -211,7 +211,7 @@ describe("Integration Routes", () => {
       });
       const anonymousApp = new Hono();
       anonymousApp.route("/api/integrations", anonymousRoutes);
-      expect((await anonymousApp.request("/api/integrations/capabilities")).status).toBe(401);
+      expect((await anonymousApp.request("/api/integrations/agent-catalog")).status).toBe(401);
     });
 
     it("does not advertise undiscovered MCP actions through the agent capability route", async () => {
@@ -226,10 +226,34 @@ describe("Integration Routes", () => {
       });
       const brokeredApp = new Hono();
       brokeredApp.route("/api/integrations", routes);
-      const res = await brokeredApp.request("/api/integrations/capabilities");
+      const res = await brokeredApp.request("/api/integrations/agent-catalog");
       expect(res.status).toBe(200);
       const data = await res.json() as Array<{ id: string; actions: Record<string, unknown> }>;
       expect(data.find((service) => service.id === "granola")?.actions).toEqual({});
+    });
+
+    it("keeps onboarding capabilities separate from the agent action catalog", async () => {
+      const onboarding = new Hono();
+      onboarding.get("/capabilities", (c) => c.json({ capabilities: [] }));
+      const routes = createIntegrationRoutes({
+        db, pipedream, webhookSecret: WEBHOOK_SECRET,
+        resolveUserId: async () => userId,
+        mcpPresetBroker: {
+          listConnections: vi.fn().mockResolvedValue([]),
+          listAvailableActions: vi.fn().mockResolvedValue(["get_account"]),
+          connect: vi.fn(), call: vi.fn(), disconnect: vi.fn(),
+        },
+      });
+      const combined = new Hono();
+      combined.route("/api/integrations", onboarding);
+      combined.route("/api/integrations", routes);
+
+      const onboardingResponse = await combined.request("/api/integrations/capabilities");
+      expect(await onboardingResponse.json()).toEqual({ capabilities: [] });
+      const catalogResponse = await combined.request("/api/integrations/agent-catalog");
+      expect(catalogResponse.status).toBe(200);
+      const catalog = await catalogResponse.json() as Array<{ id: string; actions: Record<string, unknown> }>;
+      expect(Object.keys(catalog.find((service) => service.id === "granola")?.actions ?? {})).toEqual(["get_account"]);
     });
 
     it("fails closed when MCP capability identity resolution fails", async () => {
