@@ -1,4 +1,5 @@
 import { createInternalIntegrationGuard } from './internal-integration-guard.js';
+import { canClerkUserAccessMachine } from './customer-vps-preview.js';
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import {
@@ -117,6 +118,7 @@ import {
   resolveAppDomainIdentity,
 } from './session-routing-identity.js';
 import { createSessionRoutingMiddleware } from './session-routing-middleware.js';
+import { buildPlatformUserProof } from './session-routing-websocket.js';
 import {
   resolveContainerEndpoint,
 } from './container-endpoint.js';
@@ -677,16 +679,31 @@ export function createApp(deps: {
         // Customer and preview VPSes are persisted in user_machines. Keep the
         // legacy containers lookup only as a compatibility fallback for older
         // runtimes that have not migrated yet.
-        const record =
-          (await getRunningUserMachineByHandle(db, handle)) ??
-          (await getContainer(db, handle));
+        const machine = await getRunningUserMachineByHandle(db, handle);
+        const record = machine ?? (await getContainer(db, handle));
         if (!record?.clerkUserId) {
           c.res = c.json({ error: 'Unknown handle' }, 404);
           return;
         }
 
+        let actorId = record.clerkUserId;
+        const delegatedId = c.req.header('x-platform-user-id');
+        const delegatedProof = c.req.header('x-platform-verified');
+        if (delegatedId || delegatedProof) {
+          if (!delegatedId || !delegatedProof || !/^[A-Za-z0-9_-]{1,256}$/.test(delegatedId)
+            || !timingSafeTokenEquals(delegatedProof, buildPlatformUserProof(handle, delegatedId, platformSecret))) {
+            c.res = c.json({ error: 'Unauthorized' }, 401);
+            return;
+          }
+          if (machine ? !canClerkUserAccessMachine(machine, delegatedId) : delegatedId !== record.clerkUserId) {
+            c.res = c.json({ error: 'Forbidden' }, 403);
+            return;
+          }
+          actorId = delegatedId;
+        }
+
         c.set('internalContainerHandle', handle);
-        c.set('internalContainerClerkUserId', record.clerkUserId);
+        c.set('internalContainerClerkUserId', actorId);
         await next();
       });
     });

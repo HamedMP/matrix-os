@@ -14,6 +14,14 @@ function bearerFor(handle: string, secret: string): string {
   return createHmac("sha256", secret).update(handle).digest("hex");
 }
 
+function delegatedHeaders(handle: string, userId: string, secret = "platform-secret-123") {
+  return {
+    authorization: `Bearer ${bearerFor(handle, secret)}`,
+    "x-platform-user-id": userId,
+    "x-platform-verified": createHmac("sha256", bearerFor(handle, secret)).update(userId).digest("hex"),
+  };
+}
+
 describe("platform/internal-integration-routes", () => {
   let db: PlatformDB;
 
@@ -104,5 +112,57 @@ describe("platform/internal-integration-routes", () => {
 
     expect(res.status).toBe(200);
     await expect(res.json()).resolves.toEqual({ clerkUserId: "user_preview_owner" });
+  });
+
+  it("uses an authenticated Preview collaborator for integration calls", async () => {
+    await insertUserMachine(db, {
+      machineId: "00000000-0000-4000-8000-000000001299",
+      clerkUserId: "user_preview_owner",
+      handle: "pr-1299",
+      runtimeSlot: "pr-1299",
+      provisioningClass: "preview",
+      accessClerkUserIds: ["user_collaborator"],
+      status: "running",
+      provisionedAt: "2026-08-22T00:00:00.000Z",
+    });
+    const res = await createTestApp().request("/internal/containers/pr-1299/integrations/probe", {
+      headers: delegatedHeaders("pr-1299", "user_collaborator"),
+    });
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({ clerkUserId: "user_collaborator" });
+  });
+
+  it("rejects a delegated actor who cannot access the Preview machine", async () => {
+    await insertUserMachine(db, {
+      machineId: "00000000-0000-4000-8000-000000001300",
+      clerkUserId: "user_preview_owner",
+      handle: "pr-1300",
+      runtimeSlot: "pr-1300",
+      provisioningClass: "preview",
+      accessClerkUserIds: ["user_collaborator"],
+      status: "running",
+      provisionedAt: "2026-08-22T00:00:00.000Z",
+    });
+    const res = await createTestApp().request("/internal/containers/pr-1300/integrations/probe", {
+      headers: delegatedHeaders("pr-1300", "user_stranger"),
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it("rejects an invalid delegated identity instead of falling back to the machine owner", async () => {
+    const res = await createTestApp().request("/internal/containers/alice/integrations/probe", {
+      headers: {
+        ...delegatedHeaders("alice", "user_other"),
+        "x-platform-verified": "invalid",
+      },
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it("does not delegate a personal machine's integrations to another actor", async () => {
+    const res = await createTestApp().request("/internal/containers/alice/integrations/probe", {
+      headers: delegatedHeaders("alice", "user_collaborator"),
+    });
+    expect(res.status).toBe(403);
   });
 });

@@ -272,6 +272,7 @@ import { createIntegrationRoutes } from "./integrations/routes.js";
 import { createIntegrationBridgeRoutes } from "./integrations/bridge-routes.js";
 import { discoverComponentKeys } from "./integrations/registry.js";
 import { createIntegrationProxyResponse } from "./integrations/proxy-response.js";
+import { delegatedIntegrationHeaders } from "./integrations/delegated-identity.js";
 import { z } from "zod/v4";
 import {
   createPluginRegistry,
@@ -1372,6 +1373,15 @@ export async function createGateway(config: GatewayConfig) {
     }
     if (internalAuthToken) {
       headers.set("authorization", `Bearer ${internalAuthToken}`);
+      if (routePrefix === "/api/integrations") {
+        // The caller's local proof uses MATRIX_AUTH_TOKEN, which Platform
+        // cannot verify. Re-sign the authenticated principal with this
+        // machine's Platform token; never forward the caller's claimed ID.
+        const actorId = requireRequestPrincipal(c).userId;
+        for (const [key, value] of Object.entries(delegatedIntegrationHeaders(actorId, internalAuthToken))) {
+          headers.set(key, value);
+        }
+      }
     }
 
     const upstream = await fetch(upstreamUrl, {
