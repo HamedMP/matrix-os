@@ -1,8 +1,10 @@
 # S19 coverage measurement
 
 **Measured:** 2026-09-21, 18:37:55Z to 19:07:56Z UTC (30 minutes wall clock).
-**Tree:** `124/s19-acceptance` at `82fdab5e3`, which is an ancestor of the branch head `3b7af0e4d`
-(the two later commits are one test alignment and one docs commit).
+**Tree:** `124/s19-acceptance` at `82fdab5e3`. Two test commits sit between it and `3b7af0e4d`,
+where the suites below were re-measured: `87970e372` (real-Postgres binding reconciliation alignment)
+and `85ebbb9a9` (relay per-chunk accounting and per-home socket cap tests). Neither changes product
+code. The branch head is now `bc018a4ab`; the commits after `3b7af0e4d` are documentation only.
 **Scope:** every kernel and gateway test file, **624 files**, against **real PostgreSQL**
 (`MATRIX_TEST_POSTGRES_URL` set), with `--coverage` (V8 provider).
 **Raw artifacts:** `coverage-summary.json`, the full `results.json` and the run log, kept outside the
@@ -84,8 +86,7 @@ run must not be presented as if everything passed:
 - `tests/gateway/collaboration-project-lifecycle.test.ts` — "fences every membership mutation while an ownership transfer is staged"
 - `tests/gateway/shared-coding-execution.test.ts` — 2 tests, shared run loss migration order and retry attribution
 
-These were measured at `82fdab5e3`. Their status at the branch head `3b7af0e4d`, re-measured on
-2026-09-22:
+These were measured at `82fdab5e3`. Their status at `3b7af0e4d`, re-measured on 2026-09-22:
 
 - `chat-provider-binding-reconciliation.test.ts` and `collaboration-owner-resource-driver.test.ts`
   now **pass** (9/9 together). The first was addressed by
@@ -99,3 +100,11 @@ These were measured at `82fdab5e3`. Their status at the branch head `3b7af0e4d`,
 `S19-acceptance-matrix.md` records each of those four under the row that ran it, with the exact
 assertion deltas, and marks those rows as blocked pending the restack rather than passed or
 failed.
+
+## What this measurement does not say
+
+The percentages above are a **code** coverage measurement. They are not journey evidence. No row of
+`S19-acceptance-matrix.md` is verified live in this release: every passing row passed its in-process
+suites only, because no approved Clerk sandbox, provider credential, enrolled two-computer fixture,
+root systemd host or forge account was supplied to this run. A coverage percentage cannot substitute
+for a journey that never ran.
