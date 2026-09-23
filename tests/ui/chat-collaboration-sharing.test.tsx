@@ -80,9 +80,12 @@ describe("Chat collaboration sharing", () => {
   });
 
   it("keeps organization-pending cards visible without offering an unusable Open action", async () => {
+    // grantId is required by the strict organization_pending schema, and dropping it does not fail
+    // loudly: the whole discovery response is rejected and this card becomes a generic error card.
     const api = { baseUrl: "https://gateway.test", get: vi.fn(async (path: string) => path.endsWith("/inbox")
       ? { items: [{ scopeId, runtimeId: "runtime_owner", ownerId: "user_owner", kind: "chat", authorityGeneration: 1,
-        status: "organization_pending", organizationId: "org_matrix_team" }] }
+        status: "organization_pending", organizationId: "org_matrix_team",
+        grantId: "70000000-0000-4000-8000-000000000001" }] }
       : { items: [] }), post: vi.fn(), delete: vi.fn() };
     const openChat = vi.fn();
     render(<ChatCollaboration view={{ kind: "home" }} api={api} actorId="user_editor" openChat={openChat} />);

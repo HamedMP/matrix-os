@@ -164,11 +164,14 @@ describe("platform collaboration routes", () => {
 
   it("paginates organization-pending shares after ordinary invitations without losing any", async () => {
     await repository.applyDirectoryEvent(directoryEvent("invited"));
+    // Each organization share needs organizationGrantId below: pending discovery selects only rows
+    // with a live grant pointer, so a grant-less share is silently absent from the page.
     for (const suffix of ["071", "072", "073"]) {
       await repository.applyDirectoryEvent({
         ...directoryEvent("accepted"), scopeId: `10000000-0000-4000-8000-000000000${suffix}`,
         eventId: `20000000-0000-4000-8000-000000000${suffix}`,
         organizationId: "org_1", audience: "organization", recipients: [],
+        organizationGrantId: `70000000-0000-4000-8000-000000000${suffix}`,
       });
     }
     organizationIds = ["org_1"];
