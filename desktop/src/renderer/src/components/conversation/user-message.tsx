@@ -37,7 +37,7 @@ export function UserMessage({
           {hasBubbleContent ? <Bubble variant="secondary" align="end" className="max-w-[min(85%,48rem)]">
             <BubbleContent className="max-w-full [overflow-wrap:anywhere] rounded-2xl px-4 py-3 text-[14px] leading-relaxed"
               style={{ background: "color-mix(in srgb, var(--text-primary) 7%, var(--bg-surface))", borderColor: "color-mix(in srgb, var(--text-primary) 6%, transparent)" }} data-selectable>
-              <div className={collapsible && !expanded ? "max-h-[14rem] overflow-hidden" : undefined}>
+              <div className={collapsible && !expanded ? "max-h-[6rem] overflow-hidden" : undefined}>
                 {renderStructuredContent ? message.content!.map((segment, index) => {
                   if (segment.kind === "text") return <MessageResponse key={`text:${index}`} className="[&_p:first-child]:mt-0 [&_p:last-child]:mb-0" copyText={callbacks.copyText} openFile={callbacks.openFile} openWebLink={callbacks.openWebLink}>{segment.text}</MessageResponse>;
                   if (segment.kind === "image" || segment.referenceKind === "file") return null;
