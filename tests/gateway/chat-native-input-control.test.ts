@@ -3,6 +3,57 @@ import { createHermesInputController } from "../../packages/gateway/src/chat/her
 import { createClaudeInputController } from "../../packages/gateway/src/chat/claude-input-control.js";
 const identity = { owner: { type: "personal" as const, ownerId: "owner_test" }, chatId: "chat_test", runId: "run_test" };
 describe("native input controls", () => {
+  it("answers upstream Hermes clarify server requests through the acknowledged request.answer RPC", async () => {
+    const controller = createHermesInputController();
+    const request = vi.fn().mockResolvedValue({ status: "ok" });
+    const emit = vi.fn();
+    controller.registerRun({ ...identity, client: { request } as never, emit });
+    const event = controller.registerRequest(identity.runId, {
+      request_id: "srq-native", reply_method: "request.answer", question: "Which color?", choices: ["Blue", "Red"],
+    });
+    await controller.submit({ ...identity, requestId: event.requestId, clientRequestId: "req_answer", answer: "Blue" });
+    expect(request).toHaveBeenCalledWith("request.answer", { id: "srq-native", result: { answer: "Blue" } });
+    expect(emit).toHaveBeenCalledWith(expect.objectContaining({ type: "input.resolved", reason: "answered" }));
+  });
+
+  it("answers upstream Hermes batch clarify requests with original question ids", async () => {
+    const controller = createHermesInputController();
+    const request = vi.fn().mockResolvedValue({ status: "ok" });
+    controller.registerRun({ ...identity, client: { request } as never, emit: vi.fn() });
+    const event = controller.registerRequest(identity.runId, { request_id: "srq-batch", reply_method: "request.answer",
+      questions: [{ qid: "native/q1", question: "Color?" }, { qid: "native/q2", question: "Reason?" }] });
+    await controller.submit({ ...identity, requestId: event.requestId, clientRequestId: "req_batch", structuredAnswers: {
+      [event.questions![0]!.questionId]: ["Blue"], [event.questions![1]!.questionId]: ["Test"],
+    } });
+    expect(request).toHaveBeenCalledWith("request.answer", { id: "srq-batch", result: { answers: { "native/q1": "Blue", "native/q2": "Test" } } });
+  });
+
+  it("does not resend an upstream Hermes answer after an uncertain acknowledgement", async () => {
+    const controller = createHermesInputController();
+    const request = vi.fn().mockRejectedValue(new Error("connection lost"));
+    controller.registerRun({ ...identity, client: { request } as never, emit: vi.fn() });
+    const event = controller.registerRequest(identity.runId, {
+      request_id: "srq-uncertain", reply_method: "request.answer", question: "Which color?",
+    });
+    const input = { ...identity, requestId: event.requestId, clientRequestId: "req_answer", answer: "Blue" };
+    await expect(controller.submit(input)).rejects.toThrow("connection lost");
+    await expect(controller.submit(input)).rejects.toThrow("Input delivery unconfirmed");
+    expect(request).toHaveBeenCalledOnce();
+  });
+
+  it("releases an upstream Hermes request with an explicit non-answer notice", async () => {
+    const controller = createHermesInputController();
+    const request = vi.fn().mockResolvedValue({ status: "ok" });
+    controller.registerRun({ ...identity, client: { request } as never, emit: vi.fn() });
+    const event = controller.registerRequest(identity.runId, {
+      request_id: "srq-defer", reply_method: "request.answer", question: "Which color?",
+    });
+    await controller.defer({ ...identity, requestId: event.requestId });
+    expect(request).toHaveBeenCalledWith("request.answer", {
+      id: "srq-defer", result: { answer: expect.stringContaining("user has NOT answered") },
+    });
+  });
+
   it("answers Hermes batch questions using original native identities and resolves after acknowledgement", async () => {
     const controller = createHermesInputController();
     const request = vi.fn().mockResolvedValue({ status: "ok" });

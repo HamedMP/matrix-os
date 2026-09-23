@@ -23,6 +23,7 @@ import {
   CollaborationMemberPatchRequestSchema,
   CollaborationRoleSchema,
   CollaborationScopeSchema,
+  CollaborationScopeKindSchema,
   CollaborationScopePreflightRequestSchema,
   CollaborationTerminalActionSchema,
   CollaborationTerminalFrameSchema,
@@ -181,6 +182,30 @@ describe("collaboration contracts", () => {
       kind: "document",
       resourceId: "private-file",
     }).success).toBe(false);
+  });
+
+  it("admits only the scope kinds the home can create", () => {
+    for (const kind of ["chat", "terminal", "project"]) {
+      expect(CollaborationScopePreflightRequestSchema.safeParse({
+        kind, resourceId: "resource_release", organizationId: "org_matrix_team",
+      }).success).toBe(true);
+    }
+    // A catalog kind is served as a scope but has no creation path, and its
+    // catalog id is not a project id.
+    for (const kind of ["file", "folder", "app"]) {
+      expect(CollaborationScopePreflightRequestSchema.safeParse({
+        kind, resourceId: "70000000-0000-4000-8000-0000000000a1", organizationId: "org_matrix_team",
+      }).success).toBe(false);
+      expect(CollaborationCreateScopeRequestSchema.safeParse({
+        kind,
+        resourceId: "70000000-0000-4000-8000-0000000000a1",
+        organizationId: "org_matrix_team",
+        clientRequestId: requestId,
+        expectedRevision: "0",
+        confirmationToken: "a".repeat(64),
+      }).success).toBe(false);
+      expect(CollaborationScopeKindSchema.safeParse(kind).success).toBe(true);
+    }
   });
 
   it("keeps user state actor-local and rejects actor overrides", () => {

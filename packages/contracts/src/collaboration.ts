@@ -1,4 +1,5 @@
 import { z } from "zod/v4";
+import { CanonicalChatExecutionRootRefSchema } from "#canonical-chat-primitives";
 
 import {
   CanonicalChatApprovalDecisionSchema,
@@ -41,7 +42,15 @@ export const CollaborationRevisionSchema = z.string()
   .regex(/^(?:0|[1-9][0-9]{0,18})$/, "Invalid decimal revision");
 export const CollaborationRoleSchema = z.enum(["owner", "editor", "viewer"]);
 export const CollaborationInviteRoleSchema = z.enum(["editor", "viewer"]);
-export const CollaborationScopeKindSchema = z.enum(["chat", "terminal", "project"]);
+/** S12: file, folder and app instances are shareable standalone with the same two presets. */
+export const CollaborationScopeKindSchema = z.enum(["chat", "terminal", "project", "file", "folder", "app"]);
+/**
+ * The kinds the home can create a scope for today. A catalog kind (file,
+ * folder, app) is served and enforced as a scope but has no creation path
+ * yet, and its catalog id is not a project id, so accepting one here would
+ * route it at the project service and share the wrong resource.
+ */
+export const CollaborationCreatableScopeKindSchema = z.enum(["chat", "terminal", "project"]);
 export const CollaborationMembershipModeSchema = z.enum(["direct", "inherited"]);
 export const CollaborationLifecycleSchema = z.enum([
   "private",
@@ -104,7 +113,7 @@ export const CollaborationScopeSchema = z.object({
 });
 
 export const CollaborationScopePreflightRequestSchema = z.object({
-  kind: CollaborationScopeKindSchema,
+  kind: CollaborationCreatableScopeKindSchema,
   resourceId: CollaborationResourceIdSchema,
   organizationId: CollaborationOrganizationIdSchema,
 }).strict();
@@ -123,7 +132,7 @@ export const CollaborationScopePreflightResponseSchema = z.object({
 });
 
 export const CollaborationCreateScopeRequestSchema = z.object({
-  kind: CollaborationScopeKindSchema,
+  kind: CollaborationCreatableScopeKindSchema,
   resourceId: CollaborationResourceIdSchema,
   organizationId: CollaborationOrganizationIdSchema,
   clientRequestId: CollaborationIdSchema,
@@ -227,6 +236,10 @@ export const CollaborationProjectInventoryItemSchema = z.object({
   incarnation: z.string().min(1).max(256).regex(/^[A-Za-z0-9_-]+$/).optional(),
   contentHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   byteCount: z.number().int().nonnegative().max(100 * 1024 * 1024 * 1024).optional(),
+  executionRoot: CanonicalChatExecutionRootRefSchema.optional(),
+  rootFingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  branch: z.string().min(1).max(255).optional(),
+  dirty: z.boolean().optional(),
 }).strict().superRefine((item, context) => {
   if (item.compatibility === "blocked" && !item.blocker) {
     context.addIssue({ code: "custom", path: ["blocker"], message: "Blocked project items require a reason" });
@@ -255,6 +268,16 @@ export const CollaborationProjectMembershipEffectSchema = z.object({
   }
 });
 
+export const CollaborationProjectGitSetupSchema = z.object({
+  identity: z.object({
+    status: z.enum(["ready", "missing", "unavailable"]),
+    label: z.string().min(1).max(800).optional(),
+  }).strict(),
+  forgeCredential: z.object({ status: z.enum(["ready", "missing", "unavailable"]) }).strict(),
+}).strict();
+
+export type CollaborationProjectGitSetup = z.infer<typeof CollaborationProjectGitSetupSchema>;
+
 export const CollaborationProjectInventorySchema = z.object({
   scopeId: CollaborationIdSchema,
   projectId: CollaborationResourceIdSchema,
@@ -268,11 +291,25 @@ export const CollaborationProjectInventorySchema = z.object({
     code: z.string().min(1).max(96).regex(/^[a-z][a-z0-9_]{0,95}$/),
   }).strict()).max(100_000),
   membershipEffects: z.array(CollaborationProjectMembershipEffectSchema).max(1_000),
+  gitSetup: CollaborationProjectGitSetupSchema.optional(),
   inventoryHash: z.string().regex(/^[a-f0-9]{64}$/),
   membershipHash: z.string().regex(/^[a-f0-9]{64}$/),
   inventoryToken: z.string().min(64).max(4_096).regex(/^[A-Za-z0-9_.-]+$/),
   expiresAt: z.iso.datetime(),
 }).strict();
+
+export const CollaborationProjectAccessReadinessSchema = z.object({
+  scopeId: CollaborationIdSchema,
+  chatRoots: z.array(z.object({
+    chatId: z.string().min(1).max(4_096),
+    executionRoot: CanonicalChatExecutionRootRefSchema.optional(),
+    branch: z.string().min(1).max(255).optional(),
+    dirty: z.boolean().optional(),
+    readiness: z.enum(["ready", "blocked"]),
+  }).strict()).max(10_000),
+  gitSetup: CollaborationProjectGitSetupSchema,
+}).strict();
+export type CollaborationProjectAccessReadiness = z.infer<typeof CollaborationProjectAccessReadinessSchema>;
 
 export const CollaborationProjectConfirmRequestSchema = z.object({
   clientRequestId: CollaborationIdSchema,

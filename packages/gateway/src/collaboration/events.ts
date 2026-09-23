@@ -28,7 +28,7 @@ interface Connection {
   scopeId: string;
   actorId: string;
   resourceId: string;
-  resourceKind: "chat" | "terminal" | "project";
+  resourceKind: "chat" | "terminal" | "project" | "file" | "folder" | "app";
   authorityGeneration: number;
   lastSequence: number;
   lastTouchedAt: number;

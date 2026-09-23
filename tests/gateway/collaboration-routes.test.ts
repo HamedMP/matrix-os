@@ -385,6 +385,38 @@ describe("collaboration gateway routes", () => {
     expect(await fixture.db.selectFrom("collaboration_scopes").selectAll().execute()).toEqual([]);
   });
 
+  it("refuses to create a standalone resource scope through the project path", async () => {
+    const catalogId = "70000000-0000-4000-8000-0000000000a1";
+    for (const kind of ["file", "folder", "app"] as const) {
+      // A catalog id is not a project id: routing these kinds at the project service
+      // would look the id up as a project and, on a hit, share the whole project.
+      const preflight = await signedJson({
+        actorId: collaborationActors.owner,
+        method: "POST",
+        path: `/api/collaboration/runtimes/${collaborationIds.runtime}/scopes/preflight`,
+        body: { kind, resourceId: catalogId, organizationId: "org_matrix_team" },
+      });
+      expect(preflight.status).toBe(400);
+      const created = await signedJson({
+        actorId: collaborationActors.owner,
+        method: "POST",
+        path: `/api/collaboration/runtimes/${collaborationIds.runtime}/scopes`,
+        body: {
+          kind,
+          resourceId: catalogId,
+          organizationId: "org_matrix_team",
+          clientRequestId: "50000000-0000-4000-8000-0000000000b1",
+          expectedRevision: "0",
+          confirmationToken: "d".repeat(64),
+        },
+      });
+      expect(created.status).toBe(400);
+      const scopes = await fixture.db.selectFrom("collaboration_scopes").select("id")
+        .where("resource_id", "=", catalogId).execute();
+      expect(scopes).toEqual([]);
+    }
+  });
+
   it("preflights and converts an owner Chat without accepting participant identity", async () => {
     const preflight = await signedJson({
       actorId: collaborationActors.owner,

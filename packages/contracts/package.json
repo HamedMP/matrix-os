@@ -46,6 +46,7 @@
     "#collaboration-direct": "./src/collaboration-direct.ts",
     "#collaboration-execution": "./src/collaboration-execution.ts",
     "#collaboration-peer": "./src/collaboration-peer.ts",
+    "#collaboration-resources": "./src/collaboration-resources.ts",
     "#organization-billing": "./src/organization-billing.ts",
     "#contract-primitives": "./src/primitives.ts",
     "#custom-mcp-availability": "./src/custom-mcp-availability.ts",

@@ -9,8 +9,11 @@ import type { ChatProviderCatalogService } from "../chat/provider-catalog.js";
 import type { CodingAgentProviderRegistry } from "../coding-agents/provider-registry.js";
 import type { MatrixFundedCredentialProvider } from "../funded-ai-credential-manager.js";
 import { CollaborationActorProofVerifier } from "./actor-proof.js";
-import { CollaborationAuthority } from "./authority.js";
+import { CollaborationAuthority, CollaborationAuthorizationError } from "./authority.js";
 import { CollaborationCapabilityRepository } from "./capability-repository.js";
+import { CollaborationCapabilityEvaluator } from "./capability-evaluator.js";
+import { createProjectGitBroker, type ProjectGitDriver, type ProjectGitOwnerIdentity } from "./project-git-broker.js";
+import { createProjectAccessReadiness } from "./project-access-readiness.js";
 import { CollaborationChatAdapter } from "./chat-adapter.js";
 import { CollaborationChatScopeService } from "./chat-scope.js";
 import { bootstrapCollaborationDatabase, type OwnerCollaborationDatabase } from "./database.js";
@@ -32,6 +35,10 @@ import {
 } from "./organization-precondition.js";
 import { OrganizationMembershipClient } from "./organization-membership-client.js";
 import { CollaborationRepository } from "./repository.js";
+import { CollaborationResourceCatalog } from "./resource-catalog.js";
+import type { AppInstanceAdapter } from "./app-instance-adapter.js";
+import type { CollaborationResourceDriver, CollaborationResourceServices } from "./resource-routes.js";
+import { createCollaborationUploadStager } from "./upload-stages.js";
 import { createCollaborationRoutes } from "./routes.js";
 import type { ChatExecutionRootResolver } from "../chat/execution-root.js";
 import { createSharedAiRuntime, type SharedChatSandboxManifestSource } from "./shared-ai-runtime.js";
@@ -280,6 +287,16 @@ export async function createGatewayCollaboration(options: {
   let terminalEventRegistry: CollaborationTerminalEventRegistry | undefined;
   let projectSharing: ProjectSharingService | undefined;
   let projectTransitionCoordinator: ReturnType<typeof createProjectTransitionCoordinator> | undefined;
+  let projectGit: ReturnType<typeof createProjectGitBroker> | undefined;
+  let projectReadiness: ReturnType<typeof createProjectAccessReadiness> | undefined;
+  let resourceServices: CollaborationResourceServices | undefined;
+  let ownerResourceDriver: (CollaborationResourceDriver & { close?(): void }) | undefined;
+  function closeResourceServices(): void {
+    resourceServices?.uploads?.close();
+    ownerResourceDriver?.close?.();
+    resourceServices = undefined;
+    ownerResourceDriver = undefined;
+  }
 
   return {
     repository,
@@ -287,6 +304,8 @@ export async function createGatewayCollaboration(options: {
     executionPolicies,
     runBindings,
     ownerSource,
+    get projectGit() { return projectGit; },
+    get projectReadiness() { return projectReadiness; },
     authority,
     organizationPrecondition,
     verifier,
@@ -317,6 +336,58 @@ export async function createGatewayCollaboration(options: {
           authorityRuntimeId: options.config.runtimeId,
         }, () => operation());
       },
+    },
+    enableProjectGit(input: {
+      driver: ProjectGitDriver & {
+        resolveOwnerIdentity(input: { ownerId: string; projectId: string }): Promise<ProjectGitOwnerIdentity>;
+      };
+      source: Pick<ProjectInventoryResourceSource, "listChats" | "getGitSetup">;
+    }): void {
+      if (registered || closing || projectGit || projectReadiness) {
+        throw new Error("Project Git must be initialized exactly once before route registration");
+      }
+      const evaluator = new CollaborationCapabilityEvaluator({
+        db: options.db, grants: capabilities, organizationPrecondition,
+      });
+      projectGit = createProjectGitBroker({
+        db: options.db,
+        driver: input.driver,
+        resolveOwnerIdentity: input.driver.resolveOwnerIdentity,
+        authorize: async ({ scopeId, actorId, action }) => {
+          const context = await authority.authorize({ scopeId, actorId, action: "read" });
+          if (context.resourceKind !== "project" || context.scopeId !== context.membershipScopeId) {
+            throw new CollaborationAuthorizationError("not_found", "Project scope is unavailable");
+          }
+          if (action !== "read") await evaluator.requireAction({ scopeId, actorId, action });
+          return { ownerId: context.ownerId, projectId: context.resourceId };
+        },
+      });
+      projectReadiness = createProjectAccessReadiness({ repository, source: input.source });
+    },
+    enableSharedResources(input: {
+      driver: CollaborationResourceDriver & { close?(): void };
+      appsFactory?: (dependencies: {
+        db: Kysely<OwnerCollaborationDatabase>;
+        authority: CollaborationAuthority;
+        catalog: CollaborationResourceCatalog;
+        onCommitted(scopeId: string): Promise<void>;
+      }) => AppInstanceAdapter;
+    }): void {
+      if (registered || closing || resourceServices) {
+        throw new Error("Shared resources must be initialized exactly once before route registration");
+      }
+      const catalog = new CollaborationResourceCatalog(options.db);
+      const onCommitted = async (scopeId: string) => { eventRegistry.broadcastScope(scopeId); };
+      const uploads = createCollaborationUploadStager({ db: options.db, catalog, driver: input.driver, onCommitted });
+      try {
+        const apps = input.appsFactory?.({ db: options.db, authority, catalog, onCommitted });
+        resourceServices = { catalog, driver: input.driver, uploads, ...(apps ? { apps } : {}) };
+        ownerResourceDriver = input.driver;
+      } catch (error: unknown) {
+        uploads.close();
+        input.driver.close?.();
+        throw error;
+      }
     },
     async enableSharedAi(input: {
       orchestrator: CanonicalChatOrchestrator;
@@ -504,9 +575,12 @@ export async function createGatewayCollaboration(options: {
         ...(projectLifecycle ? { projectLifecycle } : {}),
         ...(projectScope ? { projectScope } : {}),
         ...(projectSharing ? { projectSharing } : {}),
+        ...(projectGit ? { projectGit } : {}),
+        ...(projectReadiness ? { projectReadiness } : {}),
         resolveParticipant,
         resolveInvitationIdentifier,
         ...(executionPolicies ? { executionPolicies } : {}),
+        ...(resourceServices ? { resources: resourceServices } : {}),
         onScopeCommitted: (scopeId) => eventRegistry.broadcastScope(scopeId),
         onRevoked: (scopeId, actorId) => {
           eventRegistry.notifyRevoked(scopeId, actorId);
@@ -577,6 +651,9 @@ export async function createGatewayCollaboration(options: {
       // Direct sessions drain next, in the same order shutdown() uses: ending them notifies
       // the event and terminal registries through the end hooks, which the lines below detach.
       directSessions.fence();
+      // S12 resource services close after the drains: sessions ending above can still reach
+      // the catalog and file driver, so tearing them down first would pull them mid-notify.
+      closeResourceServices();
       const drainingSharedAi = sharedAiRuntime;
       sharedAiRuntime = undefined;
       chatExecutionAdapter = undefined;
@@ -614,6 +691,10 @@ export async function createGatewayCollaboration(options: {
       controlLossWatchdog = undefined;
       await controlClient?.shutdown();
       await directSessions.shutdown();
+      // Resource services close after both drains: sessions ending above still reach the
+      // catalog and the file driver through their end hooks, so tearing these down first
+      // would pull them out from under a notify that is still in flight.
+      closeResourceServices();
       await sharedAiRuntime?.shutdown();
       sharedAiRuntime = undefined;
       chatExecutionAdapter = undefined;
