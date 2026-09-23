@@ -51,8 +51,10 @@ for await (const line of input) {
       }
     }
     console.log(JSON.stringify({ id: message.id, result: { userAgent: "test" } }));
-  } else if (message.method === "thread/start") {
-    console.log(JSON.stringify({ id: message.id, result: { thread: { id: "startup_thread" } } }));
+  } else if (message.method === "thread/start" || message.method === "thread/resume") {
+    console.log(JSON.stringify({ id: message.id, result: { thread: {
+      id: message.method === "thread/resume" ? message.params.threadId : "startup_thread",
+    } } }));
   } else if (message.method === "turn/start") {
     console.log(JSON.stringify({ id: message.id, result: { turn: { id: "startup_turn" } } }));
     console.log(JSON.stringify({ method: "item/agentMessage/delta", params: {
