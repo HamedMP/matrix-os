@@ -16,6 +16,11 @@ const organizationId = "org_runtime_share";
 const runtimeId = "vps:11111111-1111-4111-8111-111111111111";
 const logicalRuntimeId = "vps-11111111-1111-4111-8111-111111111111";
 const platformKey = ed25519PrivateKeyFromSeed(Buffer.alloc(32, 7).toString("base64url"));
+// The exhaustion test spends exactly this many actions, so it is shared with the ticket
+// fixture rather than restated. Hardcoding the count separately let the two drift: the
+// fixture budget was raised while the test still spent three, so the call that was meant to
+// find the budget empty still had five left and the exhaustion path stopped being exercised.
+const TICKET_MAX_ACTIONS = 8;
 
 function makeFixture() {
   let member = true;
@@ -37,7 +42,7 @@ function makeFixture() {
       protocolVersion: COLLABORATION_DIRECT_PROTOCOL_VERSION, ticketId: randomUUID(), nonce: randomUUID().replaceAll("-", ""),
       actorId: ownerId, organizationId, resource: { kind: "owner_runtime" }, purpose: "owner_runtime",
       runtime: { runtimeId: logicalRuntimeId, authorityGeneration: 1 }, proofKeyThumbprint: proofKeyThumbprint(proofPublicKey),
-      maxActions: 8, issuedAt: clock.toISOString(), expiresAt: new Date(clock.getTime() + 30_000).toISOString(),
+      maxActions: TICKET_MAX_ACTIONS, issuedAt: clock.toISOString(), expiresAt: new Date(clock.getTime() + 30_000).toISOString(),
       ...overrides,
     };
     return { ticket: value, keyId: "platform", signature: signEd25519(platformKey, ticketSigningPayload(value)) };
@@ -100,8 +105,8 @@ describe("owner runtime direct sessions", () => {
     const fixture = makeFixture();
     const session = await fixture.service.create(fixture.create());
     const path = `/api/collaboration/runtimes/vps%3A11111111-1111-4111-8111-111111111111/catalog/resolve`;
-    // The fixture ticket signs three actions; each authenticated setup call spends one.
-    for (let spent = 0; spent < 3; spent += 1) {
+    // Spend the whole signed budget; each authenticated setup call costs one action.
+    for (let spent = 0; spent < TICKET_MAX_ACTIONS; spent += 1) {
       await expect(fixture.service.authenticate(fixture.signedRequest(session.id, path))).resolves.toMatchObject({ actorId: ownerId });
     }
     // Exhaustion ends the session, so the refusal must be the one the client renews on (401),
