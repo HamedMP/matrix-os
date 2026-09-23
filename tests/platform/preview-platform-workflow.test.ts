@@ -96,6 +96,7 @@ describe("preview platform workflow", () => {
     expect(connectJob).toContain('terminal_url="${PREVIEW_VPS_CONTROL_URL}/vm/${handle}/api/terminal/run"');
     expect(connectJob).toContain('PREVIEW_VPS_CONTROL_URL: https://app.matrix-os.com');
     expect(connectJob).toContain('PREVIEW_CLERK_ACCESS_USER_IDS: ${{ secrets.PREVIEW_CLERK_ACCESS_USER_IDS }}');
+    expect(connectJob).toContain('accessUserIds.length > 7');
     expect(connectJob).toContain('MATRIX_PREVIEW_CUSTOM_MCP_ORIGIN:$origin');
     expect(connectJob).toContain('MATRIX_PREVIEW_CUSTOM_MCP_TOKEN:$mcpToken');
     expect(connectJob).toContain('MATRIX_PREVIEW_CUSTOM_MCP_OWNER_ID:$fixtureOwner');
