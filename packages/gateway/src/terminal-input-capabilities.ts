@@ -4,10 +4,6 @@ export function parseTerminalInputCapabilityRequest(value: string | undefined): 
   return value === "binary-input-v1";
 }
 
-export function parseTerminalScrollCapabilityRequest(value: string | undefined): boolean {
-  return value === "native-scroll-v1";
-}
-
 export function terminalFrameForInputCapabilities<T extends TerminalServerFrame>(
   frame: T,
   binaryInputRequested: boolean,

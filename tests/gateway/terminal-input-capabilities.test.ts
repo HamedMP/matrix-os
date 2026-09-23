@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import {
   parseTerminalInputCapabilityRequest,
-  parseTerminalScrollCapabilityRequest,
   terminalFrameForInputCapabilities,
 } from "../../packages/gateway/src/terminal-input-capabilities.js";
 
@@ -24,12 +23,6 @@ describe("terminal input capability negotiation", () => {
     expect(parseTerminalInputCapabilityRequest(undefined)).toBe(false);
     expect(parseTerminalInputCapabilityRequest("binary-input-v2")).toBe(false);
     expect(parseTerminalInputCapabilityRequest("binary-input-v1,other")).toBe(false);
-  });
-
-  it("accepts only an explicit native scroll capability request", () => {
-    expect(parseTerminalScrollCapabilityRequest("native-scroll-v1")).toBe(true);
-    expect(parseTerminalScrollCapabilityRequest(undefined)).toBe(false);
-    expect(parseTerminalScrollCapabilityRequest("native-scroll-v2")).toBe(false);
   });
 
   it("does not send new attached fields to older clients that did not opt in", () => {

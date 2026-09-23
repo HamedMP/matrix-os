@@ -200,6 +200,18 @@ describe("terminal WebSocket route registration", () => {
     expect(routes.attach).not.toHaveBeenCalled();
   });
 
+  it("rejects an unknown scroll capability before principal or runtime access", async () => {
+    const routes = mountedRoutes();
+    await routes.app.request(`/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=electron&scrollCapability=native-scroll-v2`);
+    const peer = routes.socket();
+    routes.events?.onOpen?.(new Event("open"), peer.context);
+
+    expect(peer.sent).toEqual([JSON.stringify({ type: "error", code: "invalid_request", message: "Invalid request" })]);
+    expect(peer.close).toHaveBeenCalledOnce();
+    expect(routes.getPrincipal).not.toHaveBeenCalled();
+    expect(routes.attach).not.toHaveBeenCalled();
+  });
+
   it("denies an unauthenticated valid tab before claiming the lease or attaching", async () => {
     const routes = mountedRoutes();
     await routes.app.request(
