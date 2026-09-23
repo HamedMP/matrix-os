@@ -41,9 +41,12 @@ describe("Codex provider contract checker", () => {
         "linux-x64": "ef803ac64161397389bc35428803c3ec8dcc94757c93d758a9fdf0ae6b5a944f",
       },
     });
-    expect(appServerContract.requiredServerProtocolSchemaDigests[
-      "item/started"
-    ]).toBe("7e1fcd8e3953999660d5c80e2ba4479697645e179ce3a95555712d4f60097d6b");
+    expect(appServerContract.requiredServerProtocolSchemaDigests).toMatchObject({
+      "mcpServer/elicitation/request": "d164b1519690cfb0b5f353c8e6eb37087f720e7dcd81df4c145bc964f9416d05",
+      "item/started": "7e1fcd8e3953999660d5c80e2ba4479697645e179ce3a95555712d4f60097d6b",
+      "item/completed": "33f9ba75a8594be59e8ad8c841c9a405df51917739cf2dd87da1a87b0f5e2b83",
+      "turn/completed": "7a68f912f14af36e22a922dca2466225aa8da9509cfd7ee61db6ef096139360f",
+    });
   });
 
   it("requires exact-version digests and protocol semantics to evolve together", () => {
