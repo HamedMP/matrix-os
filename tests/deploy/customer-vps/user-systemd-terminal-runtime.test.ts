@@ -107,7 +107,15 @@ describe("customer VPS user-systemd terminal runtime", () => {
   });
 
   it("connects the gateway only to the shared runtime socket", () => {
-    const server = readFileSync(join(root, "packages/gateway/src/server.ts"), "utf8");
+    // The shell terminal routes were extracted out of the composition root, so this
+    // guarantee spans two files. They are joined rather than checked separately: the six
+    // negative assertions below are the point of this test — they assert retired
+    // user-systemd and Zellij paths have not been reintroduced — and scoping them to
+    // server.ts alone would stop them covering the module that now owns those routes.
+    const server = [
+      readFileSync(join(root, "packages/gateway/src/server.ts"), "utf8"),
+      readFileSync(join(root, "packages/gateway/src/server/shell-terminal-routes.ts"), "utf8"),
+    ].join("\n");
     const build = readFileSync(join(root, "scripts/build-host-bundle.sh"), "utf8");
     const service = readFileSync(
       join(root, "distro/customer-vps/systemd/matrix-terminal-runtime.service"),

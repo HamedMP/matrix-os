@@ -684,12 +684,18 @@ describe("PostHog error tracking", () => {
   });
 
   it("tracks shell, gateway, and CLI/TUI product activity without content payloads", async () => {
-    const [billingGate, gatewayServer, platformAuthRoutes, platformMain] = await Promise.all([
+    // The main websocket routes were extracted out of the composition root, so the gateway
+    // half of this guarantee now spans two files. Both are joined rather than checked
+    // separately, because the negative assertion below is the load-bearing one: scoping it
+    // to server.ts alone would let terminal input capture reappear in the routes module.
+    const [billingGate, gatewayServerRoot, gatewayMainWsRoutes, platformAuthRoutes, platformMain] = await Promise.all([
       readFile("shell/src/components/BillingGate.tsx", "utf8"),
       readFile("packages/gateway/src/server.ts", "utf8"),
+      readFile("packages/gateway/src/server/main-ws-routes.ts", "utf8"),
       readFile("packages/platform/src/auth-routes.ts", "utf8"),
       readFile("packages/platform/src/main.ts", "utf8"),
     ]);
+    const gatewayServer = [gatewayServerRoot, gatewayMainWsRoutes].join("\n");
 
     expect(billingGate).toContain('"shell_access_state_changed"');
     expect(billingGate).toContain('"billing_checkout_confirmed"');

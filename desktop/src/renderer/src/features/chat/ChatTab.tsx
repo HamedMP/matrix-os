@@ -246,6 +246,7 @@ export function HermesPane({ active = true }: { active?: boolean } = {}) {
         <SharedChatComposer
           value={draft}
           onChange={setDraft}
+          draftScopeKey={sessionId ?? "new-chat"}
           referenceTokens={referenceTokens}
           onReferenceTokensChange={setReferenceTokens}
           onSubmit={(submission) => void submit(submission)}

@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -7,6 +8,15 @@ import YAML from "yaml";
 const root = process.cwd();
 
 describe("preview platform workflow", () => {
+  it("keeps both preview connector shell steps syntactically valid", () => {
+    const workflow = YAML.parse(readFileSync(join(root, ".github/workflows/preview-platform.yml"), "utf8"));
+    for (const name of ["Register only the PR preview route in staging", "Enable the existing tagged host without moving traffic"]) {
+      const script = workflow.jobs["connect-share-preview"].steps.find((step: { name?: string }) => step.name === name)?.run;
+      expect(typeof script).toBe("string");
+      const parsed = spawnSync("bash", ["-n"], { input: script, encoding: "utf8" });
+      expect(parsed.status, parsed.stderr).toBe(0);
+    }
+  });
   it("sources the deployed control-plane origin from the selected environment", () => {
     const workflow = readFileSync(
       join(root, ".github/workflows/platform-cloud-run.yml"),
@@ -83,7 +93,13 @@ describe("preview platform workflow", () => {
     expect(workflow).not.toContain("PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}");
     expect(workflow).toContain("systemctl\",\"is-active\",\"--quiet\",\"matrix-gateway.service");
     expect(workflow).toContain("--retry 5 --retry-all-errors --retry-delay 2 --retry-max-time 30");
-    expect(connectJob).toContain('terminal_url="${url}/vm/${handle}/api/terminal/run"');
+    expect(connectJob).toContain('terminal_url="${PREVIEW_VPS_CONTROL_URL}/vm/${handle}/api/terminal/run"');
+    expect(connectJob).toContain('PREVIEW_VPS_CONTROL_URL: https://app.matrix-os.com');
+    expect(connectJob).toContain('PREVIEW_CLERK_ACCESS_USER_IDS: ${{ secrets.PREVIEW_CLERK_ACCESS_USER_IDS }}');
+    expect(connectJob).toContain('accessUserIds.length > 7');
+    expect(connectJob).toContain('MATRIX_PREVIEW_CUSTOM_MCP_ORIGIN:$origin');
+    expect(connectJob).toContain('MATRIX_PREVIEW_CUSTOM_MCP_TOKEN:$mcpToken');
+    expect(connectJob).toContain('MATRIX_PREVIEW_CUSTOM_MCP_OWNER_ID:$fixtureOwner');
     expect(connectJob).toContain('-H "authorization: Bearer ${preview_session_token}"');
     expect(connectJob).toContain('CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}');
     expect(connectJob).toContain('echo "::add-mask::$preview_session_token"');
