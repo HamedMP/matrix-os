@@ -1,6 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, Notification, safeStorage, screen, session, shell } from "electron";
 import { join } from "node:path";
 import { createFileDownloadService } from "./files/file-download-service";
+import { importBrowserPages, listBrowserImportSources } from "./browser/import-pages";
 import { pathToFileURL } from "node:url";
 import { AuthService } from "./auth/auth-service";
 import { createAnalyticsBeforeQuit } from "./analytics-quit";
@@ -364,6 +365,13 @@ if (!gotLock) {
         store,
         embeds,
         openExternal: openExternalHttpUrl,
+        listBrowserImportSources: () => listBrowserImportSources(
+          process.env.OPERATOR_USER_DATA_DIR ? app.getPath("userData") : app.getPath("home"),
+        ),
+        importBrowserPages: (sourceId) => importBrowserPages(
+          process.env.OPERATOR_USER_DATA_DIR ? app.getPath("userData") : app.getPath("home"),
+          sourceId,
+        ),
         setBadgeCount: (count) => {
           app.setBadgeCount(count);
         },
