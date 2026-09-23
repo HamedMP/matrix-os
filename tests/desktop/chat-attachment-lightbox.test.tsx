@@ -22,7 +22,6 @@ it("opens a square thumbnail in a dismissible overlay without navigating to File
   expect(screen.getByRole("img", { name: "Full size Screenshot.png" }).getAttribute("src")).toBe("/image.png");
   fireEvent.click(screen.getByRole("button", { name: "Open Screenshot.png in File Preview" }));
   expect(open).toHaveBeenCalledWith("temporary/image.png");
-  fireEvent.click(screen.getByRole("button", { name: "Close image preview" }));
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(document.activeElement).toBe(thumbnail);
   fireEvent.click(thumbnail);
@@ -31,6 +30,13 @@ it("opens a square thumbnail in a dismissible overlay without navigating to File
   fireEvent.click(thumbnail);
   fireEvent.click(screen.getByRole("dialog"));
   expect(screen.queryByRole("dialog")).toBeNull();
+});
+
+it("keeps the enlarged image visible when File Preview declines the path", () => {
+  render(<ChatAttachments attachments={[{ kind: "image", id: "image", label: "Image.png", src: "/image.png", path: "invalid" }]} open={() => false} />);
+  fireEvent.click(screen.getByRole("button", { name: "Open image Image.png" }));
+  fireEvent.click(screen.getByRole("button", { name: "Open Image.png in File Preview" }));
+  expect(screen.getByRole("dialog")).toBeTruthy();
 });
 
 it("can enlarge an image without a filesystem path or navigation callback", () => {

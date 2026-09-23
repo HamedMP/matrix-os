@@ -90,7 +90,9 @@ function AttachmentImage({
           <span className="min-w-0 truncate text-sm">{label}</span>
           <div className="flex shrink-0 items-center gap-2">
             {path && open ? (
-              <button type="button" aria-label={`Open ${label} in File Preview`} onClick={() => open(path)} className="rounded-lg border px-3 py-1 text-sm">
+              <button type="button" aria-label={`Open ${label} in File Preview`} onClick={() => {
+                if (open(path) !== false) setEnlarged(false);
+              }} className="rounded-lg border px-3 py-1 text-sm">
                 File Preview
               </button>
             ) : null}
