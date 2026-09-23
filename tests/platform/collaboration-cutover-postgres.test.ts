@@ -183,6 +183,45 @@ describe.skipIf(!connectionString)("collaboration cutover on real PostgreSQL (T0
     expect((await coordinator.resume(scopeId)).phase).toBe("blocked");
   });
 
+  it("keeps a recovery disable authoritative against a resume that read the row first", async () => {
+    const scopeId = await orgScope();
+    const ownerHome = home(scopeId);
+    ownerHome.activate.mockImplementationOnce(async () => {
+      await db.updateTable("collaboration_directory").set({ authority_generation: 3 }).where("scope_id", "=", scopeId).execute();
+      return { authorityGeneration: 2 };
+    });
+    await cutover(ownerHome).run(scopeId, { backupRef: "restricted-backup-1" });
+
+    // Commit the disable after resume has read the journal but before it writes, which is
+    // the interleaving READ COMMITTED permits. The disable leaves the phase as `blocked`,
+    // so a write predicated on the phase alone still matches and would clear it.
+    let raced = false;
+    const racingDb = db.withPlugin({
+      transformQuery: ({ node }: { node: unknown }) => node,
+      async transformResult(args: { result: { rows: unknown[] } }) {
+        const row = args.result.rows[0] as Record<string, unknown> | undefined;
+        if (!raced && args.result.rows.length === 1 && row && "resume_phase" in row && row.resume_phase) {
+          raced = true;
+          await db.updateTable("collaboration_cutover_journal")
+            .set({ block_reason: "disabled_for_recovery", resume_phase: null, updated_at: new Date() })
+            .where("scope_id", "=", scopeId).execute();
+        }
+        return args.result;
+      },
+    } as never);
+
+    await new PlatformCollaborationCutover({
+      db: racingDb,
+      resolveHome: vi.fn(async () => ({ status: "ready" as const, home: ownerHome })),
+    }).resume(scopeId);
+
+    expect(raced).toBe(true);
+    const journal = await db.selectFrom("collaboration_cutover_journal")
+      .select(["phase", "block_reason"]).where("scope_id", "=", scopeId).executeTakeFirstOrThrow();
+    expect(journal.block_reason).toBe("disabled_for_recovery");
+    expect(journal.phase).toBe("blocked");
+  });
+
   it("allows only a compatible direct rollback or a disabled collaboration fence", async () => {
     const scopeId = await orgScope();
     const ownerHome = home(scopeId);

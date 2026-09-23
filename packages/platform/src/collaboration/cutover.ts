@@ -134,10 +134,23 @@ export class PlatformCollaborationCutover {
     if (row.phase !== "blocked" || !row.resume_phase || row.block_reason === "disabled_for_recovery") {
       return publicJournal(row);
     }
-    await this.options.db.updateTable("collaboration_cutover_journal")
+    // The pre-read above cannot fence a concurrent disable: `rollback(..., "disable")`
+    // leaves the phase as `blocked` and only changes `block_reason`, so a write predicated
+    // on the phase alone still matches and would clear the recovery fence. Carry the exact
+    // state this resume observed into the write, so a disable that commits in between
+    // matches zero rows and survives.
+    const applied = await this.options.db.updateTable("collaboration_cutover_journal")
       .set({ phase: row.resume_phase, resume_phase: null, block_reason: null, updated_at: new Date() })
       .where("scope_id", "=", scopeId).where("phase", "=", "blocked")
-      .execute();
+      .where("resume_phase", "=", row.resume_phase)
+      .where((eb) => row.block_reason === null
+        ? eb("block_reason", "is", null)
+        : eb("block_reason", "=", row.block_reason))
+      .returning("scope_id")
+      .executeTakeFirst();
+    // No row means the journal moved under us — most importantly a recovery disable. Report
+    // the current state rather than advancing on the strength of a stale read.
+    if (!applied) return publicJournal(await this.requireRow(scopeId));
     return this.advance(scopeId);
   }
 
