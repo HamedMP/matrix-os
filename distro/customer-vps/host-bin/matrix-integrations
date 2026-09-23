@@ -24,6 +24,11 @@ if [[ ! "$MATRIX_AUTH_TOKEN_VALUE" =~ ^[A-Za-z0-9._~+/=-]{16,512}$ ]] || \
   echo "matrix-integrations: Matrix identity is invalid" >&2
   exit 3
 fi
+if [ -n "${MATRIX_CLERK_USER_ID:-}" ] && [ "$MATRIX_CLERK_USER_ID" != "$MATRIX_CLERK_USER_ID_VALUE" ] && \
+   { [ -z "${MATRIX_AGENT_OWNER_ID:-}" ] || [ -z "${MATRIX_AGENT_OWNER_PROOF:-}" ]; }; then
+  echo "matrix-integrations: delegated identity is unavailable" >&2
+  exit 3
+fi
 if [ ! -x "$NODE_BIN" ] || [ ! -f "$COMMAND_PATH" ]; then
   echo "matrix-integrations: runtime is unavailable" >&2
   exit 3
@@ -34,4 +39,6 @@ exec /usr/bin/env -i \
   GATEWAY_URL="http://127.0.0.1:4000" \
   MATRIX_AUTH_TOKEN="$MATRIX_AUTH_TOKEN_VALUE" \
   MATRIX_CLERK_USER_ID="$MATRIX_CLERK_USER_ID_VALUE" \
+  MATRIX_AGENT_OWNER_ID="${MATRIX_AGENT_OWNER_ID:-}" \
+  MATRIX_AGENT_OWNER_PROOF="${MATRIX_AGENT_OWNER_PROOF:-}" \
   "$NODE_BIN" "$COMMAND_PATH" "$@"

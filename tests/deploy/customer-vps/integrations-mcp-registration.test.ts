@@ -7,12 +7,14 @@ const launcherPath = "distro/customer-vps/host-bin/matrix-integrations-mcp";
 const terminalPath = "distro/customer-vps/host-bin/matrix-integrations";
 
 describe("customer VPS integrations MCP wiring", () => {
-  it("ships an executable stdio launcher that sources only Matrix host identity", async () => {
+  it("ships an executable stdio launcher that isolates host credentials and forwards signed Run identity", async () => {
     const launcher = await readFile(launcherPath, "utf8");
 
     expect(launcher).toContain("/opt/matrix/env/host.env");
     expect(launcher).toContain("packages/integrations-mcp/dist/cli.js");
     expect(launcher).toContain("exec /usr/bin/env -i");
+    expect(launcher).toContain('MATRIX_AGENT_OWNER_ID="${MATRIX_AGENT_OWNER_ID:-}"');
+    expect(launcher).toContain('MATRIX_AGENT_OWNER_PROOF="${MATRIX_AGENT_OWNER_PROOF:-}"');
     expect(launcher).not.toContain("PIPEDREAM_");
     await expect(access(launcherPath, constants.X_OK)).resolves.toBeUndefined();
   });
@@ -21,6 +23,8 @@ describe("customer VPS integrations MCP wiring", () => {
     const terminal = await readFile(terminalPath, "utf8");
 
     expect(terminal).toContain("exec /usr/bin/env -i");
+    expect(terminal).toContain('MATRIX_AGENT_OWNER_ID="${MATRIX_AGENT_OWNER_ID:-}"');
+    expect(terminal).toContain('MATRIX_AGENT_OWNER_PROOF="${MATRIX_AGENT_OWNER_PROOF:-}"');
     expect(terminal).toContain("packages/integrations-mcp/dist/command-cli.js");
     expect(terminal).not.toContain("PIPEDREAM_");
     await expect(access(terminalPath, constants.X_OK)).resolves.toBeUndefined();

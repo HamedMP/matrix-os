@@ -254,11 +254,12 @@ export const useTabs = create<TabsState>()((set, get) => ({
   }),
 
   updateChatRoute: (id, route) => set((state) => ({
-    tabs: state.tabs.map((tab) => tab.id === id && tab.kind === "chat"
+    tabs: state.tabs.map((tab) => tab.id === id && (tab.kind === "chat" || (tab.kind === "work" && tab.workRoute === "chat"))
       ? {
           ...tab,
-          title: route.title,
+          title: tab.kind === "work" ? "Chat" : route.title,
           chatId: route.chatId,
+          chatTitle: tab.kind === "work" && route.chatId ? route.title : undefined,
           chatView: route.chatView,
           sharedScopeId: undefined,
         }

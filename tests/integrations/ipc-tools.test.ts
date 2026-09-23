@@ -7,6 +7,7 @@ import {
   disconnectServiceHandler,
   listConnectedServicesHandler,
   listIntegrationInventoryHandler,
+  gatewayAuthHeaders,
   type GatewayFetcher,
 } from "../../packages/kernel/src/tools/integrations.js";
 
@@ -28,9 +29,13 @@ function mockFetcher(overrides?: {
 }
 
 const originalClerkUserId = process.env.MATRIX_CLERK_USER_ID;
+const originalAgentOwnerId = process.env.MATRIX_AGENT_OWNER_ID;
+const originalAgentOwnerProof = process.env.MATRIX_AGENT_OWNER_PROOF;
 
 beforeEach(() => {
   delete process.env.MATRIX_CLERK_USER_ID;
+  delete process.env.MATRIX_AGENT_OWNER_ID;
+  delete process.env.MATRIX_AGENT_OWNER_PROOF;
 });
 
 afterEach(() => {
@@ -39,6 +44,10 @@ afterEach(() => {
   } else {
     process.env.MATRIX_CLERK_USER_ID = originalClerkUserId;
   }
+  if (originalAgentOwnerId === undefined) delete process.env.MATRIX_AGENT_OWNER_ID;
+  else process.env.MATRIX_AGENT_OWNER_ID = originalAgentOwnerId;
+  if (originalAgentOwnerProof === undefined) delete process.env.MATRIX_AGENT_OWNER_PROOF;
+  else process.env.MATRIX_AGENT_OWNER_PROOF = originalAgentOwnerProof;
 });
 
 describe("connect_service handler", () => {
@@ -116,6 +125,20 @@ describe("connect_service handler", () => {
       "x-platform-user-id": "user_clerk_123",
       "x-platform-verified": createHmac("sha256", "test-only-runtime-token").update("user_clerk_123").digest("hex"),
     });
+    vi.unstubAllEnvs();
+  });
+
+  it("uses a signed per-run owner instead of the VPS owner and rejects a forged delegation", () => {
+    vi.stubEnv("MATRIX_AUTH_TOKEN", "test-only-runtime-token");
+    process.env.MATRIX_CLERK_USER_ID = "preview_host_owner";
+    process.env.MATRIX_AGENT_OWNER_ID = "viewer_123";
+    process.env.MATRIX_AGENT_OWNER_PROOF = createHmac("sha256", "test-only-runtime-token").update("viewer_123").digest("hex");
+    expect(gatewayAuthHeaders()).toMatchObject({
+      "x-platform-user-id": "viewer_123",
+      "x-platform-verified": process.env.MATRIX_AGENT_OWNER_PROOF,
+    });
+    process.env.MATRIX_AGENT_OWNER_PROOF = "0".repeat(64);
+    expect(() => gatewayAuthHeaders()).toThrow("InvalidAgentOwnerProof");
     vi.unstubAllEnvs();
   });
 });

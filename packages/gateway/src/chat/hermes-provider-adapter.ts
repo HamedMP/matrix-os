@@ -3,7 +3,7 @@ import { hermesToolHasPrivateContext, hermesToolOutput } from "./hermes-tool-out
 import { ChatSteerNotDeliveredError } from "./steer-delivery-error.js";
 import { createHermesInputController } from "./hermes-input-control.js";
 import { delimiter, join } from "node:path";
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { z } from "zod/v4";
 import { CanonicalChatModelReferenceSchema } from "@matrix-os/contracts";
 import { buildAgentRuntimeEnvironment } from "../agent-launcher.js";
@@ -603,6 +603,11 @@ export function createHermesChatProviderAdapter(options: {
         // The selected Chat owner may be a collaborator rather than the VPS
         // owner. Bind local Matrix MCP calls to this authenticated Run owner.
         MATRIX_CLERK_USER_ID: input.owner.ownerId,
+        ...(process.env.MATRIX_AUTH_TOKEN ? {
+          MATRIX_AGENT_OWNER_ID: input.owner.ownerId,
+          MATRIX_AGENT_OWNER_PROOF: createHmac("sha256", process.env.MATRIX_AUTH_TOKEN)
+            .update(input.owner.ownerId).digest("hex"),
+        } : {}),
         HERMES_PYTHON_SRC_ROOT: hermesRoot,
         PYTHONPATH: existingPythonPath ? `${hermesRoot}${delimiter}${existingPythonPath}` : hermesRoot,
         PYTHONUNBUFFERED: "1",

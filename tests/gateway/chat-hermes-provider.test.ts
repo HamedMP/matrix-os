@@ -1,4 +1,5 @@
 import { ChatSteerNotDeliveredError } from "../../packages/gateway/src/chat/steer-delivery-error.js";
+import { createHmac } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import { createHermesChatProviderAdapter } from "../../packages/gateway/src/chat/hermes-provider-adapter.js";
 
@@ -37,6 +38,26 @@ async function collectRaw(iterable: AsyncIterable<unknown>): Promise<unknown[]> 
 }
 
 describe("Hermes canonical Chat Provider adapter", () => {
+  it("passes a signed Chat owner delegation to the integration MCP launcher", async () => {
+    vi.stubEnv("MATRIX_AUTH_TOKEN", "test-only-runtime-token");
+    try {
+      const gateway = fakeGateway();
+      const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
+      const events = collect(adapter.start(baseInput));
+      await vi.waitFor(() => expect(gateway.spawnFn).toHaveBeenCalled());
+      expect(gateway.spawnFn.mock.calls[0]?.[2]?.env).toMatchObject({
+        MATRIX_AGENT_OWNER_ID: baseInput.owner.ownerId,
+        MATRIX_AGENT_OWNER_PROOF: createHmac("sha256", "test-only-runtime-token")
+          .update(baseInput.owner.ownerId).digest("hex"),
+      });
+      await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
+      gateway.event("message.complete", { text: "done", status: "complete" });
+      await events;
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("steers only the exact active Hermes session without starting another prompt", async () => {
     const gateway = fakeGateway();
     const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });

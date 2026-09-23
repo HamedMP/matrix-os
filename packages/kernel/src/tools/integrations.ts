@@ -3,7 +3,7 @@ import {
   JevEmailTriageScoresSchema,
   evaluateEmailTriagePolicy,
 } from "@matrix-os/contracts";
-import { createHmac } from "node:crypto";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { wrapExternalContent } from "../security/external-content.js";
 
 const GATEWAY_BASE = process.env.GATEWAY_URL ?? "http://localhost:4000";
@@ -13,7 +13,16 @@ const ACTION_TIMEOUT_MS = 35_000; // Pipedream actions timeout at 30s
 export function gatewayAuthHeaders(): Record<string, string> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   const token = process.env.MATRIX_AUTH_TOKEN;
-  const clerkUserId = process.env.MATRIX_CLERK_USER_ID;
+  let clerkUserId = process.env.MATRIX_CLERK_USER_ID;
+  const agentOwnerId = process.env.MATRIX_AGENT_OWNER_ID;
+  const agentOwnerProof = process.env.MATRIX_AGENT_OWNER_PROOF;
+  if (agentOwnerId || agentOwnerProof) {
+    if (!token || !agentOwnerId || !agentOwnerProof || !/^[A-Za-z0-9_-]{1,256}$/.test(agentOwnerId)
+      || !/^[a-f0-9]{64}$/.test(agentOwnerProof)) throw new Error("InvalidAgentOwnerProof");
+    const expected = createHmac("sha256", token).update(agentOwnerId).digest();
+    if (!timingSafeEqual(Buffer.from(agentOwnerProof, "hex"), expected)) throw new Error("InvalidAgentOwnerProof");
+    clerkUserId = agentOwnerId;
+  }
   if (token) headers["Authorization"] = `Bearer ${token}`;
   // The local MCP process inherits the authenticated Chat run's owner ID.
   // The gateway ignores an unsigned user header and otherwise falls back to
