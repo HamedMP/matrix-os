@@ -208,11 +208,7 @@ import { createGatewayProjectInventorySource } from "./collaboration/project-inv
 import { createProjectChatRootInventory } from "./collaboration/project-chat-root-inventory.js";
 import { createProjectGitDriver } from "./collaboration/project-git-operations.js";
 import { enableGatewaySharedResources } from "./collaboration/resource-wiring.js";
-import {
-  createCodingAgentFileAccess,
-  createCodingAgentFileStore,
-} from "./coding-agents/file-read.js";
-import { createFilePreviewService } from "./file-preview-service.js";
+import { createCodingAgentFilePreviewWiring } from "./coding-agents/file-preview-wiring.js";
 import { createCodingAgentSourceControlStore } from "./coding-agents/source-control.js";
 import { registerCodingAgentAttentionNotifications } from "./coding-agents/attention-notifications.js";
 import { createCodingAgentNotificationPreferenceStore } from "./coding-agents/notification-preferences.js";
@@ -641,28 +637,14 @@ export async function createGateway(config: GatewayConfig) {
   const codingAgentProjectManager = createProjectManager({ homePath });
   const conversationContextResolver = createConversationContextResolver(codingAgentProjectManager);
   const codingAgentWorktreeManager = createWorktreeManager({ homePath });
-  const codingAgentProjectOwnership = {
-    getProjectBySlug: (projectSlug: string) => codingAgentProjectManager.getProject(projectSlug),
-  };
-  const codingAgentFileAccess = createCodingAgentFileAccess({
+  const { codingAgentFileStore, filePreviewService } = createCodingAgentFilePreviewWiring({
     homePath,
     ownerId: process.env.MATRIX_USER_ID,
     principalOwnerIds: codingAgentOwnerIds,
-    projects: codingAgentProjectOwnership,
+    projects: {
+      getProjectBySlug: (projectSlug) => codingAgentProjectManager.getProject(projectSlug),
+    },
     worktrees: codingAgentWorktreeManager,
-  });
-  const codingAgentFileStore = createCodingAgentFileStore({
-    homePath,
-    ownerId: process.env.MATRIX_USER_ID,
-    principalOwnerIds: codingAgentOwnerIds,
-    projects: codingAgentProjectOwnership,
-    worktrees: codingAgentWorktreeManager,
-  });
-  const filePreviewService = createFilePreviewService({
-    homePath,
-    canAccessHome: (principal) => codingAgentFileAccess.canAccessHome(principal),
-    resolveProjectRoot: (principal, resource) =>
-      codingAgentFileAccess.resolveProjectRoot(principal, resource),
   });
   const codingAgentSourceControlStore = createCodingAgentSourceControlStore({
     homePath,
