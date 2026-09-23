@@ -18,6 +18,7 @@ import {
   CollaborationRuntimeEndpointRegistrationSchema,
   CollaborationSignedConnectionTicketSchema,
   CollaborationTicketPurposeSchema,
+  toLogicalRuntimeId,
 } from "@matrix-os/contracts";
 import { describe, expect, it } from "vitest";
 
@@ -72,6 +73,19 @@ describe("collaboration direct transport contracts (S02 T011)", () => {
     expect(CollaborationOwnerRuntimeSessionSchema.parse(ownerSession)).toEqual(ownerSession);
     expect(CollaborationOwnerRuntimeSessionSchema.safeParse({ ...ownerSession, scopeId }).success).toBe(false);
   });
+  it("canonicalizes only a vps enrollment id and leaves every other logical runtime id's case alone", () => {
+    expect(toLogicalRuntimeId("vps:11111111-1111-4111-8111-111111111111"))
+      .toBe("vps-11111111-1111-4111-8111-111111111111");
+    expect(toLogicalRuntimeId("VPS:AAAAAAAA-1111-4111-8111-111111111111"))
+      .toBe("vps-aaaaaaaa-1111-4111-8111-111111111111");
+    // A logical runtime id is already the ticket form: rewriting its case here
+    // would make the platform's and the home's identical id look like a forgery.
+    for (const logical of ["Owner_Runtime", "owner_runtime", "Home-2", "vps-11111111-1111-4111-8111-111111111111"]) {
+      expect(toLogicalRuntimeId(logical)).toBe(logical);
+      expect(CollaborationConnectionTicketSchema.shape.runtime.shape.runtimeId.safeParse(logical).success).toBe(true);
+    }
+  });
+
   it("freezes the protocol version, purposes and limits", () => {
     expect(COLLABORATION_DIRECT_PROTOCOL_VERSION).toBe(2);
     expect(CollaborationTicketPurposeSchema.options).toEqual(["direct_session", "events", "terminal", "control", "peer"]);

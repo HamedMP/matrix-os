@@ -66,6 +66,21 @@ export const CollaborationTicketPurposeSchema = z.enum(["direct_session", "event
 export const CollaborationLogicalRuntimeIdSchema = referenceId(128)
   .refine((value) => !value.includes(".") && !value.includes(":"), { message: "Runtime id cannot be a hostname or address" });
 
+const VPS_ENROLLMENT_RUNTIME_ID = /^vps:([0-9a-f-]{36})$/i;
+
+/**
+ * The one canonicalization every side of the direct transport must agree on:
+ * customer-VPS enrollment names a home `vps:<machine-uuid>`, which the logical
+ * form writes as `vps-<machine-uuid>` because a ticket may never carry `:`.
+ * Every other enrolled runtime id is already logical and is returned verbatim,
+ * case included -- lowercasing one here would make a valid ticket look forged
+ * to whichever side canonicalized differently.
+ */
+export function toLogicalRuntimeId(runtimeId: string): string {
+  const vps = VPS_ENROLLMENT_RUNTIME_ID.exec(runtimeId);
+  return vps ? `vps-${vps[1]!.toLowerCase()}` : runtimeId;
+}
+
 export const CollaborationAuthorityGenerationSchema = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 
 export const CollaborationLogicalRuntimeRefSchema = z.object({

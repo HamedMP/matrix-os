@@ -20,6 +20,7 @@ import {
   type CollaborationConnectionTicket,
   type CollaborationDenial,
   type CollaborationDirectSession,
+  toLogicalRuntimeId,
 } from "@matrix-os/contracts";
 import { CollaborationAuthorizationError } from "./authority-error.js";
 import type { AuthorizedCollaborationContext, CollaborationAction, CollaborationAuthority } from "./authority.js";
@@ -453,7 +454,7 @@ export class DirectSessionService {
       .select(["id", "organization_id", "authority_runtime_id", "authority_generation", "kind", "membership_mode", "parent_scope_id", "deleted_at"])
       .where("id", "=", ticket.resource.scopeId).executeTakeFirst();
     if (!scope || scope.deleted_at !== null || scope.organization_id !== ticket.organizationId
-      || scope.kind !== ticket.resource.kind || toLogical(scope.authority_runtime_id) !== ticket.runtime.runtimeId) throw denied();
+      || scope.kind !== ticket.resource.kind || toLogicalRuntimeId(scope.authority_runtime_id) !== ticket.runtime.runtimeId) throw denied();
     if (Number(scope.authority_generation) !== ticket.runtime.authorityGeneration) {
       throw new DirectAuthError("stale_generation", "Ticket generation does not match the resource");
     }
@@ -541,11 +542,6 @@ function assertProtocolVersion(request: unknown): void {
   if (typeof version === "number" && version !== COLLABORATION_DIRECT_PROTOCOL_VERSION) {
     throw new DirectAuthError("upgrade_required", "Collaboration protocol version is not supported");
   }
-}
-
-function toLogical(runtimeId: string): string {
-  const vps = /^vps:([0-9a-f-]{36})$/i.exec(runtimeId);
-  return vps ? `vps-${vps[1]!.toLowerCase()}` : runtimeId;
 }
 
 function denied(): DirectAuthError {

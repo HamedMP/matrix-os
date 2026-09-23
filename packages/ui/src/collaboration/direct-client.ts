@@ -22,6 +22,7 @@ import {
   CollaborationOrganizationIdSchema,
   CollaborationRuntimeIdSchema,
   CollaborationSignedConnectionTicketSchema,
+  toLogicalRuntimeId,
   type CollaborationDirectSession,
   type CollaborationOwnerRuntimeSession,
 } from "@matrix-os/contracts";
@@ -214,7 +215,9 @@ export function createCollaborationDirectClient(options: CollaborationDirectClie
       throw new CollaborationDirectError("upgrade_required", "Collaboration client update required");
     }
     const issued = IssuedOwnerRuntimeTicketSchema.safeParse(raw);
-    const logicalRuntimeId = runtimeId.replace(/^vps:([0-9a-f-]{36})$/i, "vps-$1").toLowerCase();
+    // The same canonicalization the platform and the home apply: only a VPS
+    // enrollment id is rewritten, so a logical runtime id keeps its case.
+    const logicalRuntimeId = toLogicalRuntimeId(runtimeId);
     if (!issued.success || issued.data.signedTicket.ticket.organizationId !== organizationId
       || issued.data.signedTicket.ticket.runtime.runtimeId !== logicalRuntimeId) throw new CollaborationDirectError("invalid_response");
     const { signedTicket } = issued.data;

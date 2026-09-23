@@ -17,6 +17,7 @@ import {
   type CollaborationConnectionTicket,
   CollaborationSignedOwnerRuntimeTicketSchema,
   type CollaborationOwnerRuntimeTicket,
+  toLogicalRuntimeId,
 } from "@matrix-os/contracts";
 import { possessionPayload, proofKeyThumbprint, ticketSigningPayload, verifyEd25519 } from "./direct-crypto.js";
 
@@ -170,11 +171,6 @@ export class DirectTicketVerifier {
     }
     return parsed.data;
   }
-}
-
-export function toLogicalRuntimeId(runtimeId: string): string {
-  const vps = /^vps:([0-9a-f-]{36})$/i.exec(runtimeId);
-  return vps ? `vps-${vps[1]!.toLowerCase()}` : runtimeId;
 }
 
 function invalidTicket(): DirectAuthError {

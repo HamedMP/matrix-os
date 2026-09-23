@@ -15,10 +15,11 @@ import {
   COLLABORATION_DIRECT_LIMITS,
   COLLABORATION_DIRECT_PROTOCOL_VERSION,
   CollaborationControlAssertionSchema,
+  toLogicalRuntimeId,
   type CollaborationControlAck,
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
-import { type DirectSigningKey, toLogicalRuntimeId } from "./direct-auth.js";
+import { type DirectSigningKey } from "./direct-auth.js";
 import type { DirectSessionService } from "./direct-sessions.js";
 import type { CollaborationCapabilityRepository } from "./capability-repository.js";
 import { requireSecureCollaborationPlatformBaseUrl } from "./platform-base-url.js";

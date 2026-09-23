@@ -106,4 +106,38 @@ describe("owner runtime direct client", () => {
       .resolves.toMatchObject({ kind: "file", path: "notes.txt" });
     expect([tickets, sessions]).toEqual([2, 2]);
   });
+
+  it("keeps the case of a non-vps logical runtime id the platform returns verbatim", async () => {
+    const mixedCaseRuntimeId = "Owner_Runtime";
+    let proofPublicKey = "";
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/api/collaboration/owner-runtime/connections") {
+        proofPublicKey = (JSON.parse(String(init?.body)) as { proofPublicKey: string }).proofPublicKey;
+        const ticket = {
+          protocolVersion: 2, ticketId: "10000000-0000-4000-8000-000000000003", nonce: "c".repeat(64),
+          actorId: ownerId, organizationId, resource: { kind: "owner_runtime" }, purpose: "owner_runtime",
+          runtime: { runtimeId: mixedCaseRuntimeId, authorityGeneration: 1 },
+          proofKeyThumbprint: createHash("sha256").update(Buffer.from(proofPublicKey, "base64url")).digest("base64url"),
+          maxActions: 32, issuedAt: now.toISOString(), expiresAt: new Date(now.getTime() + 30_000).toISOString(),
+        };
+        return Response.json({ signedTicket: { ticket, keyId: "platform", signature: "a".repeat(86) }, endpoint: { origin: platform, protocolVersion: 2 } }, { status: 201 });
+      }
+      if (url.pathname === "/api/collaboration/owner-runtime/sessions") {
+        return Response.json({
+          protocolVersion: 2, id: "20000000-0000-4000-8000-000000000003",
+          actorId: ownerId, organizationId, runtimeId: mixedCaseRuntimeId, authorityGeneration: 1,
+          purpose: "owner_runtime", proofKeyThumbprint: createHash("sha256").update(Buffer.from(proofPublicKey, "base64url")).digest("base64url"),
+          issuedAt: now.toISOString(), expiresAt: new Date(now.getTime() + 300_000).toISOString(),
+          evidenceExpiresAt: new Date(now.getTime() + 20_000).toISOString(), renewAfter: new Date(now.getTime() + 240_000).toISOString(),
+        }, { status: 201 });
+      }
+      expect(url.pathname).toBe(`/api/collaboration/runtimes/${mixedCaseRuntimeId}/scopes/preflight`);
+      return Response.json({ eligible: true });
+    });
+    const api = createCollaborationDirectApi({ platformBaseUrl: platform, fetchImpl: fetchImpl as typeof fetch,
+      getHeaders: async () => ({ Authorization: "Bearer owner" }), clientOrigin: platform, now: () => now });
+    await expect(api.post(`/api/collaboration/runtimes/${mixedCaseRuntimeId}/scopes/preflight`, { organizationId }))
+      .resolves.toMatchObject({ eligible: true });
+  });
 });
